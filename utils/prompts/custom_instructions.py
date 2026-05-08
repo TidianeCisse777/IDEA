@@ -1,4 +1,7 @@
 # Custom instructions to LLM and OpenInterpreter (Generic Assistant), v04-2026
+from backend.state import HPC_ENABLED
+
+
 def get_custom_instructions(host, user_id, session_id, static_dir, upload_dir, user_first_name="User", mcp_tools=None):
     CODEX_HOME = "/app/.codex"
     CODEX_SANDBOX = f"/app/static/{user_id}/{session_id}/Codex_Sandbox"
@@ -168,7 +171,7 @@ Important notes:
             {mcp_section}
 
             CUSTOM FUNCTION USAGE NOTE (important):
-            -- The functions get_datetime, get_station_info, get_climate_index, web_search, and query_knowledge_base are already defined in the host environment (do not import them; Additional functions such as call_mcp_tool and list_mcp_tools are sometimes also available).
+            -- The functions get_datetime, get_station_info, get_climate_index, web_search, and query_knowledge_base are already defined in the host environment (do not import them; Additional functions such as call_mcp_tool and list_mcp_tools are sometimes also available{"." if not HPC_ENABLED else "; HPC functions submit_hpc_job, poll_hpc_job, get_hpc_job_output, cancel_hpc_job, list_hpc_jobs, and check_hpc_connection are also available when HPC is enabled."}).
             -- Call them directly as plain functions from executed code.
             -- Do not present runnable calls to these functions in Markdown code fences unless the user explicitly asks for example code rather than execution.
             -- If the task is computational, analytical, or file-based, use execute(...) rather than showing code in prose.

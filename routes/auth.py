@@ -1,7 +1,8 @@
+import logging
 import secrets
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session
 
 from backend import crud
@@ -17,20 +18,39 @@ from backend.auth import (
     get_db,
 )
 from backend.guest_manager import generate_guest_email
-from backend.state import redis_client, GUEST_USER_EXPIRY_ZSET
+from backend.state import redis_client, GUEST_USER_EXPIRY_ZSET, HPC_ENABLED
 from backend.models import LoginRequest, LoginResponse, UserCreate
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["auth"])
 
 
+def _warmup_hpc_connection() -> None:
+    """Establish (or verify) the HPC SSH connection in the background."""
+    if not HPC_ENABLED:
+        return
+    try:
+        from backend.hpc_manager import _get_ssh_client
+        _get_ssh_client()
+        logger.info("HPC SSH connection warmed up on login")
+    except Exception as exc:
+        logger.warning("HPC SSH warmup failed (will retry on first use): %s", exc)
+
+
 @router.post("/login", response_model=LoginResponse)
-async def login(login_request: LoginRequest, session: Session = Depends(get_db)):
+async def login(
+    login_request: LoginRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_db),
+):
     """Login endpoint to authenticate users"""
     user = verify_password(login_request.username, login_request.password, session)
     if user:
         token = generate_auth_token()
         expiry_time = datetime.now() + timedelta(seconds=SESSION_TIMEOUT)
         add_auth_session(token, user.id, expiry_time)
+        background_tasks.add_task(_warmup_hpc_connection)
         return LoginResponse(success=True, token=token, message="Login successful")
     else:
         raise HTTPException(status_code=401, detail="Invalid email or password")

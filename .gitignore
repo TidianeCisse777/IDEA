@@ -212,3 +212,6 @@ local_scripts/
 .codex/
 !.codex/config.toml
 !.codex/AGENTS.md
+
+# HPC SSH keys (never commit private keys)
+.ssh/

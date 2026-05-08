@@ -45,6 +45,22 @@ UPLOAD_RATE_LIMIT = "25/minute"
 MAX_UPLOADS_PER_SESSION = 100
 CHAT_RATE_LIMIT = "10/minute"
 
+# HPC cluster configuration
+HPC_HOST = os.getenv("HPC_HOST")
+HPC_USER = os.getenv("HPC_USER")
+HPC_SSH_KEY_PATH = os.getenv("HPC_SSH_KEY_PATH")
+HPC_SSH_PORT = int(os.getenv("HPC_SSH_PORT", "22"))
+HPC_SCRATCH_DIR = os.getenv("HPC_SCRATCH_DIR", "/scratch/idea_jobs")
+HPC_DEFAULT_PARTITION = os.getenv("HPC_DEFAULT_PARTITION", "shared")
+HPC_DEFAULT_ACCOUNT = os.getenv("HPC_DEFAULT_ACCOUNT", "")
+HPC_DEFAULT_WALLTIME = os.getenv("HPC_DEFAULT_WALLTIME", "01:00:00")
+HPC_DEFAULT_MEMORY = os.getenv("HPC_DEFAULT_MEMORY", "8G")
+HPC_CONDA_ENV = os.getenv("HPC_CONDA_ENV", "")
+HPC_MODULES = os.getenv("HPC_MODULES", "")
+HPC_MAX_JOBS_PER_USER = int(os.getenv("HPC_MAX_JOBS_PER_USER", "5"))
+_HPC_ENABLED_FLAG = os.getenv("HPC_ENABLED", "false").strip().lower()
+HPC_ENABLED = _HPC_ENABLED_FLAG == "true" and bool(HPC_HOST and HPC_USER and HPC_SSH_KEY_PATH)
+
 
 def make_session_key(user_id: str | int, session_id: str) -> str:
     return f"{user_id}:{session_id}"

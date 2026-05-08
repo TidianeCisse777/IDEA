@@ -81,7 +81,9 @@ attrs==24.2.0
 backoff==2.2.1
     # via unstructured
 bcrypt==4.3.0
-    # via passlib
+    # via
+    #   paramiko
+    #   passlib
 beautifulsoup4==4.12.3
     # via
     #   idea
@@ -136,6 +138,7 @@ cffi==1.17.1
     # via
     #   cryptography
     #   pygit2
+    #   pynacl
     #   pyzmq
     #   timezonefinder
     #   trio
@@ -206,12 +209,14 @@ cryptography==45.0.7 ; python_full_version >= '3.14' and platform_python_impleme
     # via
     #   idea
     #   msoffcrypto-tool
+    #   paramiko
     #   pdfminer-six
     #   unstructured-client
 cryptography==46.0.0 ; python_full_version < '3.14' or platform_python_implementation == 'PyPy'
     # via
     #   idea
     #   msoffcrypto-tool
+    #   paramiko
     #   pdfminer-six
     #   unstructured-client
 cycler==0.12.1
@@ -462,6 +467,8 @@ intake==2.0.7
     #   intake-xarray
 intake-xarray==0.7.0
     # via idea
+invoke==3.0.3
+    # via paramiko
 ipykernel==6.29.5
     # via idea
 ipython==8.27.0
@@ -731,6 +738,8 @@ paper-qa-pymupdf==2026.1.5
     # via paper-qa
 paper-qa-pypdf==2026.1.5
     # via paper-qa
+paramiko==4.0.0
+    # via idea
 parso==0.8.4
     # via
     #   idea
@@ -867,6 +876,8 @@ pymupdf==1.26.7
     # via
     #   idea
     #   paper-qa-pymupdf
+pynacl==1.5.0
+    # via paramiko
 pyogrio==0.11.1
     # via geopandas
 pyparsing==3.1.4

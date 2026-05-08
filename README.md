@@ -121,6 +121,90 @@ This uses `docker compose` with `docker-compose.yml` plus `docker-compose.overri
 
 Login with the credentials from your `.env` file.
 
+## HPC Cluster Integration (optional)
+
+IDEA can submit Python jobs to an HPC cluster via SLURM and retrieve the results directly in chat. This feature has been tested on the **University of Hawaiʻi Mānoa Koa HPC cluster**.
+
+### Overview
+
+When enabled, IDEA can:
+- Submit Python scripts as SLURM batch jobs
+- Poll job status without repeated authentication prompts
+- Retrieve stdout, stderr, and output files back into the session
+
+### 1. Generate an SSH Key Pair
+
+On your local machine (outside the container), create a dedicated key for IDEA:
+
+```bash
+mkdir -p .ssh
+ssh-keygen -t ed25519 -f .ssh/idea_hpc_key -N "" -C "idea-hpc"
+```
+
+This creates `.ssh/idea_hpc_key` (private key) and `.ssh/idea_hpc_key.pub` (public key).
+
+### 2. Install the Public Key on the Cluster
+
+```bash
+ssh-copy-id -i .ssh/idea_hpc_key.pub <your_hpc_username>@koa.its.hawaii.edu
+```
+
+You will be prompted for your HPC password and Duo 2FA to complete the installation. After this, the private key is used for authentication.
+
+### 3. Find Your SLURM Billing Account
+
+SSH into the cluster and run:
+
+```bash
+sacctmgr show associations user=$(whoami) format=account -n | head -5
+```
+
+Use one of the returned account names as your `HPC_DEFAULT_ACCOUNT`.
+
+### 4. Configure `.env`
+
+Add the following to your `.env` file. **`HPC_ENABLED` must be set to `true`** for any HPC functionality to activate — leaving it `false` (the default) disables the feature entirely with no side effects.
+
+```ini
+HPC_ENABLED=true
+
+HPC_HOST=koa.its.hawaii.edu
+HPC_USER=your_hpc_username
+HPC_SSH_KEY_PATH=/app/.ssh/idea_hpc_key
+HPC_SSH_PORT=22
+
+HPC_SCRATCH_DIR=/home/your_hpc_username/idea_jobs
+HPC_DEFAULT_PARTITION=shared
+HPC_DEFAULT_ACCOUNT=your_slurm_account
+HPC_DEFAULT_WALLTIME=01:00:00
+HPC_DEFAULT_MEMORY=8G
+
+# Optional — leave blank if not needed
+HPC_CONDA_ENV=
+HPC_MODULES=
+```
+
+- `HPC_CONDA_ENV` — conda environment to activate before running the job (e.g. `my-env`). Leave blank if not using conda.
+- `HPC_MODULES` — space-separated list of environment modules to load (e.g. `python/3.11 netcdf4/4.9`). Leave blank if not needed.
+
+### 5. Rebuild and Start
+
+```bash
+./local_start.sh
+```
+
+The `.ssh/` directory is mounted read-only into the container. On login, IDEA will automatically establish the SSH connection and send a Duo Push to your registered device — approve it on your phone. Subsequent HPC operations reuse the same connection without prompting again.
+
+### Usage
+
+Once configured, just ask IDEA in chat:
+
+- *"Submit a hello-world Python job to Koa"*
+- *"Check my running HPC jobs"*
+- *"Get the output from job 12345678"*
+
+---
+
 ## Deploying to Production (requires Docker)
 
 Use:

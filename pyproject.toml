@@ -223,6 +223,7 @@ dependencies = [
   "tadc @ git+https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator",
   "pymupdf",
   "numba",
+  "paramiko>=3.4.0",
 ]
 
 [tool.uv]

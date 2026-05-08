@@ -631,3 +631,8 @@ def query_knowledge_base(query, user_id, session_id=None):
     return loop.run_until_complete(_query_async())
     
 """
+
+from backend.state import HPC_ENABLED as _HPC_ENABLED
+if _HPC_ENABLED:
+    from utils.tools.hpc_functions import hpc_tool_string
+    custom_tool = custom_tool + hpc_tool_string

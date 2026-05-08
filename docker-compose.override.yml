@@ -13,6 +13,7 @@ services:
     volumes:
       - .:/app
       - ./static:/static
+      - ./.ssh:/app/.ssh:ro # HPC SSH keys directory (optional — place idea_hpc_key inside .ssh/)
     environment:
       - PYTHONUNBUFFERED=1
       - LOCAL_DEV=1

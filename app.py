@@ -25,6 +25,7 @@ from core.mcp_manager import mcp_manager
 from routes.knowledge_base import router as knowledge_base_router, MAX_PAPER_SIZE
 from routes.conversations import router as conversation_router
 from routes.mcp import router as mcp_router
+from routes.hpc import router as hpc_router
 from routes.auth import router as auth_router
 from routes.users import router as users_router
 from routes.prompts import router as prompts_router
@@ -55,6 +56,7 @@ app.include_router(files_router)
 app.include_router(knowledge_base_router)
 app.include_router(conversation_router, prefix="/conversations", tags=["conversations"])
 app.include_router(mcp_router)
+app.include_router(hpc_router)
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "")
 if cors_origins_env:
