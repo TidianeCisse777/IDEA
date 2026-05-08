@@ -7,8 +7,8 @@ from sqlmodel import Session
 
 from core.db import engine
 from core.security import create_access_token
-import crud
-from models import User
+from backend import crud
+from backend.models import User
 
 # Session timeout configuration
 SESSION_TIMEOUT = 24 * 60 * 60  # 24 hours in seconds

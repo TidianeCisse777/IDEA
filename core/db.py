@@ -19,8 +19,8 @@ def init_db(session: Session) -> None:
     # This works because the models are already imported and registered from models
     # SQLModel.metadata.create_all(engine)
 
-    from models import User, UserCreate
-    import crud
+    from backend.models import User, UserCreate
+    from backend import crud
 
     user = session.exec(
         select(User).where(User.email == settings.FIRST_SUPERUSER)

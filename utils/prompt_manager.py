@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 from sqlalchemy import update as sa_update
 
-from models import SystemPrompt
+from backend.models import SystemPrompt
 
 logger = logging.getLogger(__name__)
 

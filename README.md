@@ -144,20 +144,47 @@ Docker provides isolation, but it is not a complete security solution for sensit
 
 ```
 .
-├── app.py                         # FastAPI backend and Open Interpreter integration
-├── auth.py                        # Authentication utilities
+├── app.py                         # FastAPI app setup, middleware, router registration
 ├── Dockerfile                     # Container build configuration
 ├── docker-compose.yml             # Production Docker Compose configuration
 ├── docker-compose.override.yml    # Local development overrides
 ├── local_start.sh                 # Local development startup
 ├── production_start.sh            # Production startup
 ├── requirements.txt               # Python dependencies
+│
+├── backend/                       # All backend logic (no HTTP routing)
+│   ├── models.py                  # SQLModel/Pydantic data models
+│   ├── crud.py                    # Database CRUD operations
+│   ├── auth.py                    # Authentication utilities and session management
+│   ├── state.py                   # Shared state: Redis, interpreter instances, constants
+│   ├── auth_helpers.py            # Auth guard helpers (_ensure_superuser, etc.)
+│   ├── interpreter_manager.py     # OpenInterpreter lifecycle management
+│   ├── mcp_helpers.py             # MCP tool planning and execution
+│   ├── guest_manager.py           # Guest user creation and expiry
+│   └── mcp_tools.py               # Static MCP tool call helper
+│
+├── routes/                        # FastAPI route modules
+│   ├── auth.py                    # /login, /logout, /guest-login, /auth/verify
+│   ├── users.py                   # /users CRUD, /users/me, /users/change-password
+│   ├── prompts.py                 # /prompts CRUD, /prompts/set-active
+│   ├── chat.py                    # /chat, /history, /clear, /load-conversation, /transcribe
+│   ├── files.py                   # /upload, /files, /share/{token}
+│   ├── conversations.py           # Conversation persistence routes
+│   ├── knowledge_base.py          # PaperQA2 knowledge base routes
+│   └── mcp.py                     # MCP connection management routes
+│
+├── core/                          # Infrastructure: DB, security, config, MCP manager
+├── utils/
+│   ├── prompt_manager.py          # Dynamic prompt management
+│   ├── prompts/                   # System & custom instruction prompts
+│   ├── tools/                     # Custom tool functions for OpenInterpreter
+│   └── pqa/                       # PaperQA2 multi-tenant helpers
+│
+├── alembic/                       # Database migrations
 ├── data/                          # Datasets, benchmarks, metadata, papers
-├── frontend/                      # Static frontend assets (HTML/CSS/JS)
-├── nginx.conf                     # Local dev reverse-proxy/static server config
-├── static/                        # User artifacts and generated outputs
-└── utils/                          
-    └── system_prompt.py           # System prompt for the assistant
+├── docs/                          # Developer documentation (CLAUDE.md, feature notes)
+├── frontend/                      # Static web interface (HTML/CSS/JS)
+└── static/                        # User artifacts and generated outputs
 ```
 
 ## Citation

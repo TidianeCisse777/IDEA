@@ -8,12 +8,12 @@ from io import StringIO
 from datetime import datetime, timedelta, timezone
 from litellm import responses 
 from litellm import completion 
-from utils.station_list_appendix import station_list_appendix # Station List Appendix (id and name)
+from utils.tools.station_list_appendix import station_list_appendix # Station List Appendix (id and name)
 import os
 import re # required by get_climate_index's CPC parser
 
 # MCP Tools Support
-from mcp_tools import call_mcp_tool, list_available_tools as list_mcp_tools
+from backend.mcp_tools import call_mcp_tool, list_available_tools as list_mcp_tools
 import time as _time
 
 # In-memory Docs cache keyed by user_id -> {"docs": Docs, "revision": str}
@@ -437,7 +437,7 @@ def query_knowledge_base(query, user_id, session_id=None):
     from pathlib import Path
     from paperqa import Docs
     from paperqa.agents.search import get_directory_index
-    from utils.pqa_multi_tenant import get_user_settings
+    from utils.pqa.pqa_multi_tenant import get_user_settings
     
     # Apply nest_asyncio to allow nested event loops (needed when running from Open Interpreter)
     nest_asyncio.apply()
@@ -517,7 +517,7 @@ def query_knowledge_base(query, user_id, session_id=None):
             print("[PQA] Step 3: Reusing cached Docs object (in-memory cache hit).")
         else:
             # Try disk-based cache (pre-built during background index build)
-            from utils.pqa_multi_tenant import load_docs_from_disk, save_docs_to_disk
+            from utils.pqa.pqa_multi_tenant import load_docs_from_disk, save_docs_to_disk
             disk_docs = load_docs_from_disk(user_id, revision)
             
             if disk_docs is not None:

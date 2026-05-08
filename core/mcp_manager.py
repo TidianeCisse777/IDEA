@@ -13,7 +13,7 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 
 from core.crypto import decrypt_secret, SecretEncryptionError
-from models import MCPConnection, MCPTransportType
+from backend.models import MCPConnection, MCPTransportType
 
 logger = logging.getLogger(__name__)
 

@@ -5,8 +5,8 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
-from auth import get_db, get_auth_token, get_current_user
-from models import (
+from backend.auth import get_db, get_auth_token, get_current_user
+from backend.models import (
     User,
     Conversation,
     ConversationCreate,

@@ -5,11 +5,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-import crud
-from auth import get_auth_token, get_current_user, get_db
+from backend import crud
+from backend.auth import get_auth_token, get_current_user, get_db
 from core.crypto import SecretEncryptionError
 from core.mcp_manager import mcp_manager
-from models import (
+from backend.models import (
     MCPConnection,
     MCPConnectionCreate,
     MCPConnectionPublic,

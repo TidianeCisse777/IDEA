@@ -236,7 +236,7 @@ def get_user_settings(user_id: Any) -> Settings:
     user_manifest = get_user_manifest_path(user_id)
     
     # Use the Python-based settings module for comprehensive configuration
-    from utils.my_pqa_settings import create_pqa_settings
+    from utils.pqa.my_pqa_settings import create_pqa_settings
     
     settings = create_pqa_settings(
         paper_directory=user_papers_dir,

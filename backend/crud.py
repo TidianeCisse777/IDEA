@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from core.security import get_password_hash, verify_password
 from core.crypto import encrypt_secret
-from models import (
+from backend.models import (
     MCPConnection,
     MCPConnectionCreate,
     MCPConnectionPublic,

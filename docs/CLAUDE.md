@@ -17,12 +17,28 @@ IDEA (Intelligent Data Exploring Assistant) is a web-based AI assistant for geos
 
 ### Key Components
 
-- `app.py` - Main FastAPI application with all API endpoints
-- `auth.py` - Authentication system and session management
-- `utils/system_prompt.py` - Core system prompt that defines AI behavior
-- `utils/custom_instructions.py` - Domain-specific instructions for the AI
+- `app.py` - Slim FastAPI setup: middleware, router registration, startup/shutdown
+- `backend/models.py` - SQLModel/Pydantic data models
+- `backend/crud.py` - Database CRUD operations
+- `backend/auth.py` - Authentication system and session management
+- `backend/state.py` - Shared runtime state: Redis client, interpreter instances, constants
+- `backend/interpreter_manager.py` - OpenInterpreter lifecycle (create, clear, cleanup)
+- `backend/mcp_helpers.py` - MCP tool planning and execution helpers
+- `backend/guest_manager.py` - Guest user creation and expiry
+- `backend/auth_helpers.py` - Auth guard helpers (_ensure_superuser, _is_guest_user, etc.)
+- `routes/auth.py` - /login, /logout, /guest-login, /auth/verify
+- `routes/users.py` - /users CRUD, /users/me, /users/change-password
+- `routes/prompts.py` - /prompts CRUD, /prompts/set-active
+- `routes/chat.py` - /chat, /history, /clear, /load-conversation, /transcribe
+- `routes/files.py` - /upload, /files, /share/{token}
+- `routes/conversations.py` - Conversation persistence routes
+- `routes/knowledge_base.py` - PaperQA2 knowledge base routes
+- `routes/mcp.py` - MCP connection management routes
+- `utils/prompts/system_prompt.py` - Core system prompt defining AI behavior
+- `utils/prompts/custom_instructions.py` - Domain-specific instructions for the AI
 - `utils/prompt_manager.py` - Dynamic prompt management system
-- `knowledge_base_routes.py` - PaperQA2 integration for research papers
+- `utils/tools/custom_functions.py` - Custom tool functions for OpenInterpreter
+- `utils/pqa/pqa_multi_tenant.py` - PaperQA2 per-user settings and index management
 - `frontend/` - Static web interface (HTML, CSS, JavaScript)
 - `data/` - Data directory containing datasets, benchmarks, and research papers
 
@@ -55,7 +71,7 @@ docker logs -f <container_id>
 ```
 
 ### Environment Setup
-1. Copy `example.env` to `.env` and configure:
+1. Copy `.env.example` to `.env` and configure:
    - `OPENAI_API_KEY` - Required for AI functionality
    - `FIRST_SUPERUSER` and `FIRST_SUPERUSER_PASSWORD` - Authentication credentials
    - `LOCAL_DEV=1` for development, `LOCAL_DEV=0` for production
@@ -107,7 +123,7 @@ The AI behavior is controlled by `utils/system_prompt.py` which defines:
 
 ## Custom Function Integration
 
-The system supports custom tools via `utils/custom_functions.py` for domain-specific operations beyond standard Python capabilities.
+The system supports custom tools via `utils/tools/custom_functions.py` for domain-specific operations beyond standard Python capabilities.
 
 ## Development Notes
 

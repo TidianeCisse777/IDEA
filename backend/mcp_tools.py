@@ -46,11 +46,11 @@ def call_mcp_tool(tool_id: str, **kwargs) -> Dict[str, Any]:
     connection_id_prefix, tool_name = parts
 
     # Import here to avoid circular dependencies
-    from models import MCPConnection
+    from backend.models import MCPConnection
     from sqlmodel import Session, select
     from core.db import engine
     from core.mcp_manager import mcp_manager
-    import crud
+    from backend import crud
 
     # Query database for the connection by prefix matching
     with Session(engine) as session:
@@ -112,7 +112,7 @@ def list_available_tools() -> Dict[str, Any]:
     """
     from sqlmodel import Session
     from core.db import engine
-    import crud
+    from backend import crud
     from core.mcp_manager import mcp_manager
 
     tools_info = {}

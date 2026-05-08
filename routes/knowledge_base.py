@@ -6,8 +6,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File,
 from fastapi.responses import JSONResponse
 import shutil
 
-from auth import get_auth_token, get_current_user  # Import auth and user context
-from utils.pqa_multi_tenant import (
+from backend.auth import get_auth_token, get_current_user  # Import auth and user context
+from utils.pqa.pqa_multi_tenant import (
     get_user_papers_dir,
     get_user_index_dir,
     ensure_user_pqa_settings,

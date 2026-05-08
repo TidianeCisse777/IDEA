@@ -10,7 +10,7 @@ from sqlmodel import SQLModel
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 # Import your models here so they're registered with SQLModel
-import models  # This will register all models
+import backend.models  # This will register all models
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
