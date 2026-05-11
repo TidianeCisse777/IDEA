@@ -29,5 +29,11 @@ class Settings(BaseSettings):
     # Secret key for session management
     SECRET_KEY: str = os.getenv("SECRET_KEY", "changethis")
 
+    # LiteLLM proxy — set LITELLM_PROXY_URL to route all LLM calls through the proxy for tracking.
+    # Inside Docker: http://litellm:8080  |  Local dev (proxy running): http://localhost:8080
+    # Leave empty to call upstream providers directly (no proxy).
+    LITELLM_PROXY_URL: str = os.getenv("LITELLM_PROXY_URL", "")
+    LITELLM_MASTER_KEY: str = os.getenv("LITELLM_MASTER_KEY", "")
+
 
 settings = Settings()

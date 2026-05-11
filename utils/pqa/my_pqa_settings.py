@@ -8,6 +8,7 @@ The settings use the upgraded PaperQA library's utility classes for full
 customization of LLM, parsing, prompts, and agent behavior.
 """
 
+import os
 from pathlib import Path
 from typing import Optional, Union
 
@@ -147,6 +148,7 @@ def create_pqa_settings(
                         "model": llm,
                         "temperature": 1,  # Required for gpt-5+ models
                         "max_tokens": 16384,
+                        **({"api_base": os.getenv("LITELLM_PROXY_URL"), "api_key": os.getenv("LITELLM_MASTER_KEY")} if os.getenv("LITELLM_PROXY_URL") else {}),
                     },
                 }
             ],
@@ -206,6 +208,7 @@ def create_pqa_settings(
                         "model_name": llm,
                         "litellm_params": {
                             "model": llm,
+                            **({"api_base": os.getenv("LITELLM_PROXY_URL"), "api_key": os.getenv("LITELLM_MASTER_KEY")} if os.getenv("LITELLM_PROXY_URL") else {}),
                         },
                     }
                 ],

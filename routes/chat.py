@@ -28,6 +28,7 @@ from backend.state import (
     interpreter_instances,
     make_session_key,
 )
+from core.config import settings
 from utils.prompts.custom_instructions import get_custom_instructions
 from utils.prompts.transcription_prompt import transcription_prompt
 from utils.pqa.pqa_multi_tenant import ensure_user_pqa_settings
@@ -49,6 +50,10 @@ async def transcribe_audio(file: UploadFile = File(...)):
                 model="gpt-4o-mini-transcribe",
                 file=audio_file,
                 prompt=transcription_prompt,
+                **({
+                    "api_base": settings.LITELLM_PROXY_URL,
+                    "api_key": settings.LITELLM_MASTER_KEY,
+                } if settings.LITELLM_PROXY_URL else {}),
             )
 
         os.remove(temp_path)

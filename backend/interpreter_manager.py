@@ -14,6 +14,7 @@ from backend.state import (
     IDLE_TIMEOUT,
     STATIC_DIR,
 )
+from core.config import settings
 from utils.prompts.system_prompt import sys_prompt
 from utils.tools.custom_functions import custom_tool
 from utils.prompt_manager import get_prompt_manager
@@ -80,6 +81,11 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         # interpreter.llm.context_window = 128000
         # interpreter.llm.context_window = 1047576
         # interpreter.llm.max_tokens = 16383
+
+        ## LiteLLM proxy routing (tracks spend, virtual keys, fallbacks)
+        if settings.LITELLM_PROXY_URL:
+            interpreter.llm.api_base = settings.LITELLM_PROXY_URL
+            interpreter.llm.api_key = settings.LITELLM_MASTER_KEY
 
         ## General settings for computer interpreter
         #interpreter.max_output = 16383

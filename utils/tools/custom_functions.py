@@ -66,6 +66,8 @@ def extract_text_from_station_response(response_dict):
 
 def get_station_info(station_query):
     # LiteLLM 
+    _proxy_url = os.getenv("LITELLM_PROXY_URL") or None
+    _proxy_key = os.getenv("LITELLM_MASTER_KEY") or None
     station_query_response = responses(
         model="openai/gpt-5-mini-2025-08-07",
         reasoning={"effort": "low"},
@@ -73,7 +75,8 @@ def get_station_info(station_query):
             {"role": "system", "content": station_list_appendix},
             {"role": "user", "content": station_query}
         ],
-        stream=False
+        stream=False,
+        **(({"api_base": _proxy_url, "api_key": _proxy_key}) if _proxy_url else {}),
     )
     return extract_text_from_station_response(
         {"station_query_response": station_query_response}

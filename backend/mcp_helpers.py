@@ -9,6 +9,7 @@ from litellm import completion
 from sqlmodel import Session
 
 from backend import crud, models
+from core.config import settings
 from core.mcp_manager import mcp_manager
 
 logger = logging.getLogger(__name__)
@@ -240,6 +241,11 @@ async def plan_and_run_mcp_tools(
                 )
         planning_messages.append({"role": "user", "content": user_message})
 
+        proxy_kwargs = (
+            {"api_base": settings.LITELLM_PROXY_URL, "api_key": settings.LITELLM_MASTER_KEY}
+            if settings.LITELLM_PROXY_URL
+            else {}
+        )
         try:
             planner_response = await asyncio.to_thread(
                 completion,
@@ -247,6 +253,7 @@ async def plan_and_run_mcp_tools(
                 messages=planning_messages,
                 tools=tool_defs,
                 tool_choice="auto",
+                **proxy_kwargs,
             )
         except Exception as exc:
             logger.warning("MCP tool planner failed: %s", exc)

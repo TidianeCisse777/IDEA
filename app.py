@@ -31,12 +31,16 @@ from routes.users import router as users_router
 from routes.prompts import router as prompts_router
 from routes.chat import router as chat_router
 from routes.files import router as files_router
+from core.config import settings
 from utils.prompt_manager import init_prompt_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 litellm.request_timeout = 600
+if settings.LITELLM_PROXY_URL:
+    litellm.api_base = settings.LITELLM_PROXY_URL
+    litellm.api_key = settings.LITELLM_MASTER_KEY
 
 root_path = "/idea-api"
 
