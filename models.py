@@ -250,6 +250,7 @@ class MessageRecipient(str, Enum):
 # Conversation Models
 class ConversationBase(SQLModel):
     title: str | None = Field(default=None, max_length=255)
+    agent_type: str = Field(default="generic", max_length=64)
 
 
 class ConversationCreate(ConversationBase):
