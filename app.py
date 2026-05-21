@@ -31,6 +31,7 @@ from models import LoginRequest, LoginResponse, PromptCreateRequest, PromptUpdat
     PromptListResponse, SetActivePromptRequest, UpdatePassword, UserUpdate, UserCreate, UserPublic, GenericMessage, User
 import crud
 from core.security import verify_password as verify_password_hash
+from core.config import settings
 from sqlalchemy.exc import IntegrityError
 # import magic
 # import subprocess # For download_conversation (Puppeteer version, under development)
@@ -549,10 +550,10 @@ async def plan_and_run_mcp_tools(
 
     return executed_tools
 
-IDLE_TIMEOUT = 3600  # 1 hour in seconds
+IDLE_TIMEOUT = settings.SESSION_IDLE_TIMEOUT
 INTERPRETER_PREFIX = "interpreter:"
 LAST_ACTIVE_PREFIX = "last_active:"
-CLEANUP_INTERVAL = 1800  # Run cleanup every 30 minutes
+CLEANUP_INTERVAL = settings.SESSION_CLEANUP_INTERVAL
 
 # Constants for file upload
 STATIC_DIR = Path("./static") # Use relative path instead of absolute "/app/static"
@@ -1074,45 +1075,19 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
             active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
         interpreter.system_message = sys_prompt + active_prompt
 
-        # Enable vision
-        interpreter.llm.supports_vision = True
-
-        ## OpenAI Models
-        interpreter.llm.model = "gpt-5.4-2026-03-05" # "Reasoning" model
-        #interpreter.llm.model = "gpt-5.2-2025-12-11" # "Reasoning" model
-        #interpreter.llm.model = "gpt-5.1-2025-11-13" # "Reasoning" model
-        #interpreter.llm.model = "gpt-5-2025-08-07" # "Reasoning" model
-        #interpreter.llm.model = "gpt-4.1-2025-04-14" # "Intelligence" model
-        #interpreter.llm.model = "gpt-4o-2024-11-20" # "Intelligence" model
-        # interpreter.llm.model = "gpt-4o"
-        interpreter.llm.supports_functions = True
-
-        ## Jetstream2 Models (https://docs.jetstream-cloud.org/inference-service/api/)
-        # interpreter.llm.api_key = os.getenv("JETSTREAM2_API_KEY") # api key to send your model 
-        # interpreter.llm.api_base = "https://llm.jetstream-cloud.org/api" # add api base for OpenAI compatible provider
-        # interpreter.llm.model = "openai/DeepSeek-R1" # add openai/ prefix to route as OpenAI provider
-        # interpreter.llm.model = "openai/llama-4-scout" # add openai/ prefix to route as OpenAI provider    
-        # interpreter.llm.model = "openai/Llama-3.3-70B-Instruct" # add openai/ prefix to route as OpenAI provider    
-        # interpreter.llm.supports_functions = False  # Set to True if your model supports functions (optional)
-
-        ## Specific settings for LLMs
-        # Reasoning models (e.g, GPT5+)
-        interpreter.llm.reasoning_effort = "low" # GPT-5.1 "none" | "low" | "medium" | "high"
-        #interpreter.llm.reasoning_effort = "minimal" # GPT-5 "minimal" | "low" | "medium" | "high"
-        interpreter.llm.temperature = 0.2 # Temperature not used by reasoning models, set to default (e.g., GPT-5)
-        interpreter.llm.context_window = 400000 # GPT-5 (max context window)
-        interpreter.llm.max_completion_tokens = 64000 # GPT-5 (128K, previously max_tokens, max tokens generated per request (prompt + max_completion_tokens can not exceed context_window)
-
-        # # Intelligence models (e.g., GPT4.1)
-        # interpreter.llm.temperature = 0.2 # Temperature (0-2, float) --> fairly deterministic
-        # interpreter.llm.context_window = 128000 # Setting to maximum for gpt-4o as per documentation
-        # interpreter.llm.context_window = 1047576 # Setting to maximum for gpt-4.1 as per documentation
-        # interpreter.llm.max_tokens = 16383 # Max tokens generated per request (prompt + max_tokens can not exceed context_window)
-        # #interpreter.llm.max_budget = 0.03 # Commented (depreciated?)
-        
-        ## General settings for computer interpreter
-        #interpreter.max_output = 16383 # Max number of characters (not tokens) for code outputs (SEA web, GPT4.1)
-        interpreter.max_output = 64000 # Max number of characters (not tokens) for code outputs (SEA local, GPT5)
+        interpreter.llm.model = settings.LLM_MODEL
+        interpreter.llm.supports_vision = settings.LLM_SUPPORTS_VISION
+        interpreter.llm.supports_functions = settings.LLM_SUPPORTS_FUNCTIONS
+        interpreter.llm.temperature = settings.LLM_TEMPERATURE
+        interpreter.llm.context_window = settings.LLM_CONTEXT_WINDOW
+        interpreter.llm.max_completion_tokens = settings.LLM_MAX_COMPLETION_TOKENS
+        if settings.LLM_API_KEY:
+            interpreter.llm.api_key = settings.LLM_API_KEY
+        if settings.LLM_API_BASE:
+            interpreter.llm.api_base = settings.LLM_API_BASE
+        if settings.LLM_REASONING_EFFORT is not None:
+            interpreter.llm.reasoning_effort = settings.LLM_REASONING_EFFORT
+        interpreter.max_output = settings.LLM_MAX_OUTPUT
         interpreter.computer.import_computer_api = False
         interpreter.computer.run("python", custom_tool)
         interpreter.auto_run = True

@@ -1,118 +1,156 @@
-# CLAUDE.md
+# CLAUDE.md — IDEA · Assistant copépodes · NeoLab, Université Laval
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Ce projet en deux mots
 
-## Project Overview
+IDEA est une plateforme web FastAPI + OpenInterpreter forquée et spécialisée pour l'exploration de données de copépodes marins (EcoTaxa / EcoPart / Amundsen CTD). L'utilisateur pose des questions en langage naturel, IDEA exécute du code Python et répond avec des analyses, des graphiques et des sources citées.
 
-IDEA (Intelligent Data Exploring Assistant) is a web-based AI assistant for geoscientists that provides an interface to OpenAI's GPT models with code execution capabilities via OpenInterpreter. It's a single-user development tool that allows users to interact with data through natural language, execute Python code, and perform data analysis tasks.
+---
 
-### Core Architecture
+## Architecture des deux repos
 
-- **Backend**: FastAPI application (`app.py`) with authentication, file upload, and session management
-- **Frontend**: Static HTML/CSS/JavaScript interface served through NGINX
-- **Code Execution**: OpenInterpreter integration for running Python code in a controlled environment
-- **Authentication**: Simple username/password system with session tokens
-- **Data Storage**: Redis for caching, local filesystem for file uploads and data
-- **Knowledge Base**: PaperQA2 integration for research paper indexing and retrieval
+```
+PROJET_INFO/
+  assistant-copepodes-specs/   ← specs, TDD, package Python
+    polar_data_tools/          ← tools testés (pytest, TDD)
+    tests/                     ← suite de tests
+    TOOLS_SPEC.js              ← 22 tools spécifiés
+    TEST_SCENARIOS.md          ← 17 scénarios comportementaux
+    IMPLEMENTATION_ORDER.md    ← 8 phases, Sprint 1 = Phase 0–3
 
-### Key Components
+  IDEA/                        ← ce repo — runtime web
+    utils/
+      custom_functions.py      ← tools géoscience génériques (ne pas modifier)
+      copepod_functions.py     ← NOUVEAU : tools copépodes (à créer)
+      custom_instructions.py   ← instructions LLM (à étendre)
+    app.py                     ← point d'entrée FastAPI
+    pyproject.toml             ← dépend de polar-data-tools (local)
+```
 
-- `app.py` - Main FastAPI application with all API endpoints
-- `auth.py` - Authentication system and session management
-- `utils/system_prompt.py` - Core system prompt that defines AI behavior
-- `utils/custom_instructions.py` - Domain-specific instructions for the AI
-- `utils/prompt_manager.py` - Dynamic prompt management system
-- `knowledge_base_routes.py` - PaperQA2 integration for research papers
-- `frontend/` - Static web interface (HTML, CSS, JavaScript)
-- `data/` - Data directory containing datasets, benchmarks, and research papers
+**Règle :** on implémente et on teste dans `assistant-copepodes-specs/polar_data_tools/`. On expose dans IDEA via `copepod_functions.py`. On ne touche pas à `custom_functions.py`.
 
-## Development Commands
+---
 
-### Local Development
+## Comment les tools sont injectés dans OpenInterpreter
+
+`utils/custom_functions.py` définit une chaîne Python `custom_tool`. À l'initialisation de chaque session (`app.py` ligne ~1117) :
+
+```python
+interpreter.computer.run("python", custom_tool)
+```
+
+Toutes les fonctions définies dans cette chaîne deviennent disponibles pour le LLM pendant l'exécution de code. `copepod_functions.py` suivra exactement le même pattern :
+
+```python
+# utils/copepod_functions.py
+copepod_tool = """
+from polar_data_tools import session, context, data, columns, sources, ...
+
+def polar_set_mode(mode): ...
+def polar_inspect_data(path): ...
+"""
+```
+
+Et dans `app.py`, après la ligne existante :
+```python
+interpreter.computer.run("python", custom_tool)
+interpreter.computer.run("python", copepod_tool)   # ← à ajouter
+```
+
+---
+
+## Dépendance locale polar-data-tools
+
+`polar_data_tools` est développé dans `../assistant-copepodes-specs`. Pour l'installer dans IDEA :
+
 ```bash
-# Start local development environment (with hot reload)
+uv add "polar-data-tools @ file://../assistant-copepodes-specs"
+```
+
+Après chaque modification du package, relancer `uv sync` dans IDEA.
+
+---
+
+## Sprint 1 — ce qui est à implémenter maintenant
+
+Suivre `../assistant-copepodes-specs/IMPLEMENTATION_ORDER.md`.
+
+| Phase | Contenu | Repo où coder |
+|---|---|---|
+| 0 | `session.set_mode`, `session.get_mode`, `context.get_required_fields` | `assistant-copepodes-specs` |
+| 0.5 | Index RAG ChromaDB (5 docs) | `assistant-copepodes-specs` |
+| 1 | `data.inspect`, `data.validate`, `data.profile_missing` | `assistant-copepodes-specs` |
+| 2 | `columns.describe`, `columns.check_for_calculation` | `assistant-copepodes-specs` |
+| 3 | `context.validate_species` | `assistant-copepodes-specs` |
+
+Une fois une phase validée par les tests pytest, on l'expose dans IDEA via `copepod_functions.py`.
+
+---
+
+## Sources de données copépodes
+
+| Source | ID | Contenu |
+|---|---|---|
+| EcoTaxa UVP5 | `1165` | UVP5 Amundsen 2018, objets + morphométrie |
+| EcoPart | `105` | UVP5 Amundsen 2018, profils CTD + particules |
+| Amundsen CTD | `ca-cioos_ccin-12713` | CTD-Rosette officielle via ERDDAP |
+| EcoTaxa LOKI | `2331` | Copépodes lipides, taxonomie annotée |
+
+Credentials EcoTaxa/EcoPart dans `.env` — jamais commités.
+
+---
+
+## Architecture IDEA (original)
+
+- **Backend** : FastAPI (`app.py`, 1 816 lignes)
+- **Exécution de code** : OpenInterpreter (fork `M-J-W1/open-interpreter@responses_v3.0.4`)
+- **LLM** : LiteLLM — supporte OpenAI, Anthropic, Jetstream2
+- **Base de données** : PostgreSQL + pgvector, SQLModel ORM, Alembic migrations
+- **Cache/sessions** : Redis
+- **Littérature RAG** : PaperQA2 — indexe les PDF dans `data/papers/`
+- **Frontend** : HTML/CSS/JS vanilla, servi par NGINX
+
+---
+
+## Démarrage local
+
+```bash
+# Copier et remplir les variables d'environnement
+cp example.env .env
+cp frontend/config.example.js frontend/config.js
+
+# Démarrer (Docker requis)
 ./local_start.sh
-
-# Access application at http://localhost
+# → http://localhost
 ```
 
-### Production Deployment
-```bash
-# Deploy to production
-./production_start.sh
-```
+Variables `.env` minimum :
+- `OPENAI_API_KEY` ou `ANTHROPIC_API_KEY`
+- `FIRST_SUPERUSER` + `FIRST_SUPERUSER_PASSWORD`
+- `LOCAL_DEV=1`
 
-### Docker Operations
-```bash
-# Stop all containers
-docker compose down -v
+---
 
-# Build and start containers
-docker compose up -d --build
+## Ajouter un tool copépode (checklist)
 
-# View logs for specific container
-docker logs -f <container_id>
-```
+1. Implémenter la fonction dans `../assistant-copepodes-specs/polar_data_tools/`
+2. Écrire le test pytest dans `../assistant-copepodes-specs/tests/`
+3. Vérifier que le test passe (`uv run pytest tests/test_xxx.py`)
+4. Exposer la fonction dans `utils/copepod_functions.py` (chaîne Python)
+5. Étendre `utils/custom_instructions.py` si nécessaire
+6. Tester dans IDEA via `./local_start.sh`
 
-### Environment Setup
-1. Copy `example.env` to `.env` and configure:
-   - `OPENAI_API_KEY` - Required for AI functionality
-   - `FIRST_SUPERUSER` and `FIRST_SUPERUSER_PASSWORD` - Authentication credentials
-   - `LOCAL_DEV=1` for development, `LOCAL_DEV=0` for production
+---
 
-2. Configure frontend by copying `frontend/config.example.js` to `frontend/config.js`
+## Fichiers à ne pas modifier
 
-## Key System Behaviors
+| Fichier | Raison |
+|---|---|
+| `utils/custom_functions.py` | Tools géoscience génériques — upstream IDEA |
+| `utils/system_prompt.py` | Prompt de base — upstream IDEA |
+| `alembic/` | Migrations DB — ne pas altérer sans raison |
 
-### Authentication Flow
-- All endpoints except login require valid session tokens
-- Sessions expire after 24 hours
-- Single-user design - multiple simultaneous users will interfere with each other
+---
 
-### File Upload System
-- Supports: `.csv`, `.txt`, `.json`, `.nc`, `.xls`, `.xlsx`, `.doc`, `.docx`, `.ppt`, `.pptx`, `.pdf`, `.md`, `.mat`, `.tif`, `.png`, `.jpg`
-- Maximum file size: 10MB
-- Files stored in session-specific directories under `static/`
-- Rate limited to 5 uploads per minute, 10 files per session
+## Pas de suite de tests dans IDEA
 
-### AI System Prompt Configuration
-The AI behavior is controlled by `utils/system_prompt.py` which defines:
-- Role as geoscience data exploration assistant
-- Code execution capabilities via OpenInterpreter
-- Security restrictions (no destructive operations)
-- Output formatting preferences (Markdown, MathJax)
-- Package scanning requirements using `guarddog`
-
-### PaperQA2 Integration
-- Research papers stored in `data/papers/` are automatically indexed
-- Settings in `data/.pqa/settings/` control indexing behavior
-- Use `pqa` command in conversations to query research literature
-
-## Important Security Notes
-
-- **Single-user limitation**: Not designed for concurrent users
-- **Code execution**: Allows arbitrary Python code execution on host system
-- **File uploads**: Basic validation only - no comprehensive malware scanning
-- **Authentication**: Simple token-based system, not enterprise-grade
-- Package installation requires `guarddog` scanning before installation
-
-## Data Architecture
-
-- `data/altimetry/` - Altimetry datasets
-- `data/benchmarks/` - Performance benchmarks
-- `data/metadata/` - Geographic and metadata files
-- `data/papers/` - Research papers for PaperQA2
-- `data/prompts/` - Dynamic prompt configurations
-- `static/session-*/uploads/` - User-uploaded files per session
-
-## Custom Function Integration
-
-The system supports custom tools via `utils/custom_functions.py` for domain-specific operations beyond standard Python capabilities.
-
-## Development Notes
-
-- Backend uses uvicorn with hot reload in development
-- Frontend served via Python's http.server on port 8000 in development
-- NGINX handles reverse proxy and static files on port 80
-- Redis runs on port 6379 for session caching
-- No comprehensive test suite - manual testing required
+Les tests vivent dans `assistant-copepodes-specs/tests/`. IDEA n'a pas de suite pytest — les tools sont testés avant d'être intégrés.
