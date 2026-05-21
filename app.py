@@ -61,8 +61,11 @@ from auth import (
 )
 
 from utils.system_prompt import sys_prompt # New (for reasoning LLMs, like GPT-5), also contains Open Interpreter prompt
+import agents.generic_profile   # registers "generic" on import
+from agents.registry import get_profile, registered_types
 from utils.pqa_multi_tenant import ensure_user_pqa_settings
 from core.mcp_manager import mcp_manager
+from utils.session_utils import make_session_key, parse_session_key, session_dir_path, resolve_agent_type
 
 #import interpreter.core.llm.llm as llm_mod
 
@@ -702,10 +705,6 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
-def make_session_key(user_id: str | int, session_id: str) -> str:
-    return f"{user_id}:{session_id}"
-
-
 async def scan_file(file_path: Path) -> tuple[bool, str]:
     """Scan a file for viruses using ClamAV"""
     # TODO: Not implemented yet
@@ -1052,7 +1051,7 @@ async def set_active_prompt(request: SetActivePromptRequest, token: str = Depend
         raise HTTPException(status_code=500, detail="Failed to set active prompt")
 
 
-def get_or_create_interpreter(session_key: str, token: str | None = None, db: Session | None = None) -> OpenInterpreter:
+def get_or_create_interpreter(session_key: str, token: str | None = None, db: Session | None = None, agent_type: str = "generic") -> OpenInterpreter:
     """Get existing interpreter or create new one. If token+db provided, use per-user active prompt."""
     try:
         # Return existing instance if it exists
@@ -1073,7 +1072,8 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
         if not active_prompt and (token and db and user):
             # Fallback to previous file-backed default behavior for safety
             active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
-        interpreter.system_message = sys_prompt + active_prompt
+        profile = get_profile(agent_type)
+        interpreter.system_message = profile.get_system_message(active_prompt)
 
         interpreter.llm.model = settings.LLM_MODEL
         interpreter.llm.supports_vision = settings.LLM_SUPPORTS_VISION
@@ -1089,7 +1089,8 @@ def get_or_create_interpreter(session_key: str, token: str | None = None, db: Se
             interpreter.llm.reasoning_effort = settings.LLM_REASONING_EFFORT
         interpreter.max_output = settings.LLM_MAX_OUTPUT
         interpreter.computer.import_computer_api = False
-        interpreter.computer.run("python", custom_tool)
+        interpreter.computer.run("python", profile.get_tool_code())
+        profile.configure_interpreter(interpreter)
         interpreter.auto_run = True
 
         # Store the instance
@@ -1142,15 +1143,13 @@ def clear_session(session_key: str):
 
         # Remove session directory and all its contents (user_id/session_id structure)
         try:
-            user_id, raw_session_id = session_key.split(":", 1)
-            session_dir = STATIC_DIR / user_id / raw_session_id
+            session_dir = session_dir_path(session_key, STATIC_DIR)
             if session_dir.exists():
                 import shutil
                 shutil.rmtree(session_dir)
         except ValueError:
-            # Fallback for old session keys without user_id
-            raw_session_id = session_key
-            session_dir = STATIC_DIR / raw_session_id
+            # Fallback for malformed session keys
+            session_dir = STATIC_DIR / session_key
             if session_dir.exists():
                 import shutil
                 shutil.rmtree(session_dir)
@@ -1268,10 +1267,13 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
         user = get_current_user(token)
         if user is None:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
-        session_key = make_session_key(user.id, session_id)
+        agent_type = resolve_agent_type(
+            request.headers.get("x-agent-type"), registered_types()
+        )
+        session_key = make_session_key(user.id, session_id, agent_type)
 
         logger.info(f"Received messages for session {session_key}")
-        interpreter = get_or_create_interpreter(session_key, token, db)
+        interpreter = get_or_create_interpreter(session_key, token, db, agent_type)
 
         # Ensure user PQA directories and settings exist
         # Index building now happens lazily in query_knowledge_base()
@@ -1301,7 +1303,8 @@ async def chat_endpoint(request: Request, background_tasks: BackgroundTasks, tok
             logger.warning("Failed to gather MCP tools: %s", exc)
 
         #station_id = '000'  # Placeholder (do not use for IDEA)
-        interpreter.custom_instructions = get_custom_instructions(
+        profile = get_profile(agent_type)
+        interpreter.custom_instructions = profile.get_custom_instructions(
             host=host,
             user_id=str(user.id),
             session_id=session_id,
@@ -1421,7 +1424,10 @@ def history_endpoint(request: Request, token: str = Depends(get_auth_token)):
     user = get_current_user(token)
     if user is None:
         return {"error": "Invalid or expired token"}
-    session_key = make_session_key(user.id, session_id)
+    agent_type = request.headers.get("x-agent-type", "generic")
+    if agent_type not in registered_types():
+        agent_type = "generic"
+    session_key = make_session_key(user.id, session_id, agent_type)
 
     stored_messages = redis_client.get(f"messages:{session_key}")
     if stored_messages:
@@ -1439,7 +1445,10 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
         if user is None:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-        session_key = make_session_key(user.id, session_id)
+        agent_type = request.headers.get("x-agent-type", "generic")
+        if agent_type not in registered_types():
+            agent_type = "generic"
+        session_key = make_session_key(user.id, session_id, agent_type)
         clear_session(session_key)
         return {"status": "Chat history cleared"}
     except redis.RedisError as e:
@@ -1461,12 +1470,16 @@ async def load_conversation_endpoint(request: Request, token: str = Depends(get_
         user = get_current_user(token)
         if user is None:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
-            
+
+        agent_type = request.headers.get("x-agent-type", "generic")
+        if agent_type not in registered_types():
+            agent_type = "generic"
+
         # Get request body
         body = await request.json()
         messages = body.get("messages", [])
-        
-        session_key = make_session_key(user.id, session_id)
+
+        session_key = make_session_key(user.id, session_id, agent_type)
         
         # Convert frontend message format to interpreter format
         interpreter_messages = []
