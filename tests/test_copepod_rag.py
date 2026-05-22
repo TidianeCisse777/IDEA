@@ -81,7 +81,6 @@ class TestChunkDocs:
 def _rag_available():
     try:
         import chromadb  # noqa: F401
-        from sentence_transformers import SentenceTransformer  # noqa: F401
         return CHROMA_DIR.exists()
     except ImportError:
         return False

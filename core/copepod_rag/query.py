@@ -15,23 +15,23 @@ from typing import Optional
 
 CHROMA_DIR = Path(__file__).parent / "chroma_db"
 COLLECTION_NAME = "copepod_rag"
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
-_model = None
 _collection = None
 
 
 def _load():
-    global _model, _collection
+    global _collection
     if _collection is not None:
         return
 
-    from sentence_transformers import SentenceTransformer
     import chromadb
+    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
-    _model = SentenceTransformer(EMBED_MODEL)
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-    _collection = client.get_collection(COLLECTION_NAME)
+    _collection = client.get_collection(
+        name=COLLECTION_NAME,
+        embedding_function=DefaultEmbeddingFunction(),
+    )
 
 
 def query_copepod_rag(
@@ -52,9 +52,8 @@ def query_copepod_rag(
     """
     _load()
 
-    embedding = _model.encode([question], convert_to_list=True)[0]
     results = _collection.query(
-        query_embeddings=[embedding],
+        query_texts=[question],
         n_results=top_k,
         include=["documents", "metadatas", "distances"],
     )

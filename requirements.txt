@@ -5,9 +5,7 @@ affine==2.4.0
 chardet>=5.0
     # via copepod_data (inspect_file encoding detection)
 chromadb>=0.5
-    # via copepod_rag (vector store)
-sentence-transformers>=3.0
-    # via copepod_rag (all-MiniLM-L6-v2 embeddings)
+    # via copepod_rag (uses DefaultEmbeddingFunction — all-MiniLM-L6-v2 via ONNX, no torch)
 aiobotocore==2.19.0
     # via
     #   idea

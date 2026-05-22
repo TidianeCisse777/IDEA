@@ -1,5 +1,6 @@
 """
-Load chunks.json, embed with sentence-transformers, persist to ChromaDB.
+Load chunks.json, embed with ChromaDB's built-in ONNX embedding function
+(all-MiniLM-L6-v2 via onnxruntime — no PyTorch required), persist to ChromaDB.
 
 Run: python build_index.py
 Idempotent — deletes and rebuilds the collection each time.
@@ -10,20 +11,16 @@ from pathlib import Path
 CHUNKS_FILE = Path(__file__).parent / "chunks.json"
 CHROMA_DIR = Path(__file__).parent / "chroma_db"
 COLLECTION_NAME = "copepod_rag"
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 def main():
     chunks = json.loads(CHUNKS_FILE.read_text(encoding="utf-8"))
     print(f"Loaded {len(chunks)} chunks from {CHUNKS_FILE.name}")
 
-    from sentence_transformers import SentenceTransformer
     import chromadb
+    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
-    print(f"Embedding with {EMBED_MODEL}...")
-    model = SentenceTransformer(EMBED_MODEL)
-    texts = [c["content"] for c in chunks]
-    embeddings = model.encode(texts, show_progress_bar=True, convert_to_list=True)
+    embed_fn = DefaultEmbeddingFunction()  # all-MiniLM-L6-v2 via ONNX, no torch
 
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
 
@@ -32,12 +29,14 @@ def main():
 
     collection = client.create_collection(
         name=COLLECTION_NAME,
+        embedding_function=embed_fn,
         metadata={"hnsw:space": "cosine"},
     )
 
+    texts = [c["content"] for c in chunks]
+    print(f"Embedding {len(chunks)} chunks with all-MiniLM-L6-v2 (ONNX)...")
     collection.add(
         ids=[c["chunk_id"] for c in chunks],
-        embeddings=embeddings,
         documents=texts,
         metadatas=[
             {"doc": c["doc"], "title": c["title"], "char_count": c["char_count"]}
