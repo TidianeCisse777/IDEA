@@ -51,6 +51,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 litellm.request_timeout = 600  # 10 minutes
 
+# Langfuse observability — active si les clés sont présentes dans l'env
+if os.getenv("LANGFUSE_PUBLIC_KEY"):
+    litellm.success_callback = ["langfuse"]
+    litellm.failure_callback = ["langfuse"]
+
 # ---------------------------------------------------------------------------
 # Rate limiting
 # ---------------------------------------------------------------------------

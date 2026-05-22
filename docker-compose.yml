@@ -52,6 +52,27 @@ services:
       - idea_redis_data:/data
     command: redis-server --appendonly yes
 
+  langfuse:
+    image: langfuse/langfuse:latest
+    container_name: idea_langfuse
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/langfuse
+      - NEXTAUTH_SECRET=${SECRET_KEY}
+      - NEXTAUTH_URL=http://localhost:3000
+      - LANGFUSE_INIT_ORG_ID=neolab
+      - LANGFUSE_INIT_ORG_NAME=NeoLab
+      - LANGFUSE_INIT_PROJECT_ID=copepodes
+      - LANGFUSE_INIT_PROJECT_NAME=assistant-copepodes
+      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   idea_persistent_data:
   idea_redis_data:
