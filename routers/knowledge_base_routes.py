@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 import shutil
 
 from core.auth import get_auth_token, get_current_user  # Import auth and user context
-from utils.pqa_multi_tenant import (
+from core.rag_store import (
     get_user_papers_dir,
     get_user_index_dir,
     ensure_user_pqa_settings,

@@ -38,7 +38,7 @@ from routers.chat_routes import (
 )
 from routers.file_routes import router as file_router, MAX_FILE_SIZE
 
-from utils.prompt_manager import init_prompt_manager
+from core.prompt_store import init_prompt_manager
 
 # ---------------------------------------------------------------------------
 # Logging
