@@ -5,3 +5,4 @@ from . import climate_tools
 from . import web_tools
 from . import rag_tools
 from . import mcp_tools
+from . import copepod_data

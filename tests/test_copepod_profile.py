@@ -37,7 +37,7 @@ def test_copepod_profile_uses_copepod_system_prompt_and_appends_active_prompt():
     assert message.endswith("USER_ACTIVE_PROMPT")
 
 
-def test_copepod_profile_keeps_generic_instruction_blocks_for_first_increment():
+def test_copepod_profile_uses_safe_runtime_and_copepod_instruction_blocks():
     import_copepod_profile()
 
     profile = get_profile("copepod")
@@ -47,9 +47,86 @@ def test_copepod_profile_keeps_generic_instruction_blocks_for_first_increment():
         "session_metadata",
         "output_format",
         "cli_reference",
-        "tool_signatures",
+        "copepod_tool_signatures",
+        "copepod_mode_plan",
+        "copepod_mode_analyse",
         "mcp_tools_block",
     ]
+
+
+def test_copepod_custom_instructions_use_copepod_blocks_without_sea_level_leakage():
+    import_copepod_profile()
+
+    profile = get_profile("copepod")
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "## Copepod Plan Mode" in instructions
+    assert "## Copepod Analyse Mode" in instructions
+    assert "## Copepod Runtime Tools" in instructions
+    assert "get_station_info" not in instructions
+    assert "get_climate_index" not in instructions
+    assert "UHSLC" not in instructions
+    assert "tide gauge" not in instructions
+
+
+def test_copepod_profile_uses_copepod_instruction_blocks():
+    import_copepod_profile()
+
+    profile = get_profile("copepod")
+
+    assert "tool_signatures" not in profile.instruction_blocks
+    assert "copepod_tool_signatures" in profile.instruction_blocks
+    assert "copepod_mode_plan" in profile.instruction_blocks
+    assert "copepod_mode_analyse" in profile.instruction_blocks
+
+
+def test_copepod_plan_mode_establishes_context_from_loaded_data_before_analysis():
+    import_copepod_profile()
+
+    profile = get_profile("copepod")
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "establish and validate the scientific and technical context" in instructions
+    assert "inspect and profile them before asking for graph context or proposing a graph plan" in instructions
+    assert "what the user wants to do" in instructions
+    assert "column meanings and units" in instructions
+    assert "metadata available in the files" in instructions
+    assert "Before switching to Analyse Mode, validate your understanding with the user" in instructions
+    assert "It must not generate the final graph" in instructions
+
+
+def test_copepod_plan_mode_forces_two_phase_data_then_context_flow():
+    import_copepod_profile()
+
+    profile = get_profile("copepod")
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "Plan Mode is a two-phase workflow" in instructions
+    assert "Phase 1 - Data Understanding" in instructions
+    assert "Phase 2 - Context Framing" in instructions
+    assert instructions.index("Phase 1 - Data Understanding") < instructions.index("Phase 2 - Context Framing")
+    assert "Do not ask for graph context before summarizing the loaded data" in instructions
+    assert "Do not switch to Analyse Mode until the user validates or corrects this understanding" in instructions
+    assert "### Data Understanding" in instructions
+    assert "### Graph Context" in instructions
 
 
 def test_copepod_system_prompt_contains_domain_invariants():

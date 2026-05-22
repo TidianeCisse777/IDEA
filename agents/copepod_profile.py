@@ -16,7 +16,9 @@ class CopepodProfile(AssistantProfile):
         "session_metadata",
         "output_format",
         "cli_reference",
-        "tool_signatures",
+        "copepod_tool_signatures",
+        "copepod_mode_plan",
+        "copepod_mode_analyse",
         "mcp_tools_block",
     ]
 
