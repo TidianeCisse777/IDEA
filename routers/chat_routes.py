@@ -31,7 +31,7 @@ from agents.registry import get_profile, registered_types
 from core.auth import get_auth_token, get_current_user, get_db
 from core.config import settings
 from core.interpreter_store import interpreter_instances
-from core.mcp_manager import mcp_manager
+from core.mcp import mcp_manager
 from core.prompt_store import get_prompt_manager
 from core.rag_store import ensure_user_pqa_settings
 from utils.session_utils import make_session_key, parse_session_key, resolve_agent_type, session_dir_path
