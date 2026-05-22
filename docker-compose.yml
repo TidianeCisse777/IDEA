@@ -69,15 +69,16 @@ services:
       timeout: 5s
 
   langfuse:
-    image: langfuse/langfuse:latest
+    image: langfuse/langfuse:2
+    platform: linux/amd64
     container_name: idea_langfuse
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
       - NEXTAUTH_SECRET=${LANGFUSE_SALT}
       - SALT=${LANGFUSE_SALT}
-      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_URL=http://localhost:3001
       - TELEMETRY_ENABLED=false
       - LANGFUSE_INIT_ORG_ID=neolab
       - LANGFUSE_INIT_ORG_NAME=NeoLab
