@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 from core.db import engine
 from core.security import create_access_token
-import crud
+from core import crud
 from models import User
 
 # Session timeout configuration
@@ -76,4 +76,4 @@ def add_auth_session(token: str, user_id: Any, expiry_time: datetime):
 def remove_auth_session(token: str):
     """Remove an authentication session"""
     if token in auth_sessions:
-        del auth_sessions[token] 
+        del auth_sessions[token]

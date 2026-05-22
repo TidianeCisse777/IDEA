@@ -13,7 +13,7 @@ import os
 import re # required by get_climate_index's CPC parser
 
 # MCP Tools Support
-from mcp_tools import call_mcp_tool, list_available_tools as list_mcp_tools
+from core.mcp_tools import call_mcp_tool, list_available_tools as list_mcp_tools
 import time as _time
 
 # In-memory Docs cache keyed by user_id -> {"docs": Docs, "revision": str}

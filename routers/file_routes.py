@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from auth import get_auth_token, get_current_user
+from core.auth import get_auth_token, get_current_user
 
 logger = logging.getLogger(__name__)
 

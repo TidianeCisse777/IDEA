@@ -10,7 +10,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
-from auth import get_auth_token, get_db, get_current_user
+from core.auth import get_auth_token, get_db, get_current_user
 from models import (
     PromptCreateRequest,
     PromptListResponse,

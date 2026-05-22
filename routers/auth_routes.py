@@ -13,8 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
-import crud
-from auth import (
+from core import crud
+from core.auth import (
     generate_auth_token,
     verify_password,
     get_auth_token,
