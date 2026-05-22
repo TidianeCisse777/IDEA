@@ -553,7 +553,12 @@ async def chat_endpoint(
                     yield f"data: {data}\n\n"
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                err_str = str(e)
+                if "Bearer " in err_str or "api_key" in err_str.lower() or "AuthenticationError" in err_str:
+                    user_msg = "Clé API LLM manquante ou invalide. Configurez OPENAI_API_KEY dans le fichier .env et redémarrez le serveur."
+                else:
+                    user_msg = err_str
+                yield f"data: {json.dumps({'error': user_msg})}\n\n"
             finally:
                 session_store.write_messages(session_key, interpreter.messages)
 
