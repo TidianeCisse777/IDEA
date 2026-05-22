@@ -98,10 +98,29 @@ function deriveFirstName(fullName) {
 }
 
 function getWelcomeGreeting() {
-    if (currentUserFirstName) {
-        return `What should we work on, ${currentUserFirstName}?`;
-    }
-    return 'What should we work on?';
+    const mode = document.body.dataset.mode || 'analyse';
+    if (mode === 'contexte') return 'Décrivez votre contexte scientifique';
+    if (currentUserFirstName) return `Sur quoi travaillons-nous, ${currentUserFirstName} ?`;
+    return 'Sur quoi travaillons-nous ?';
+}
+
+function updateWelcomeExtras(welcomeEl, mode) {
+    const content = welcomeEl.querySelector('.chat-welcome-content');
+    if (!content) return;
+    content.querySelectorAll('.chat-welcome-body, .chat-welcome-hints').forEach(el => el.remove());
+    if (mode !== 'contexte') return;
+    const body = document.createElement('p');
+    body.className = 'chat-welcome-body';
+    body.innerHTML = "Quelle est votre question de recherche ou hypothèse ?<br>Comment les données de copépodes s'inscrivent-elles dans votre démarche ?";
+    content.appendChild(body);
+    const hints = document.createElement('ul');
+    hints.className = 'chat-welcome-hints';
+    ['Espèce ou groupe taxonomique ciblé', 'Zone géographique et période', "Variables d'intérêt"].forEach(text => {
+        const li = document.createElement('li');
+        li.textContent = text;
+        hints.appendChild(li);
+    });
+    content.appendChild(hints);
 }
 
 async function loadCurrentUserProfile() {
@@ -141,24 +160,25 @@ async function waitForNameOrTimeout(timeoutMs = 1000) {
 }
 
 async function renderWelcomeGreeting() {
-    // If we've already rendered once, just ensure it's visible and up to date.
+    const mode = document.body.dataset.mode || 'analyse';
     if (welcomeRendered) {
         const section = ensureWelcomeSection();
         const title = section?.welcome?.querySelector('.chat-welcome-title');
         if (title) {
             title.textContent = getWelcomeGreeting();
+            updateWelcomeExtras(section.welcome, mode);
             section.welcome.classList.remove('hidden');
         }
         return Promise.resolve();
     }
     if (welcomeRenderPromise) return welcomeRenderPromise;
     welcomeRenderPromise = (async () => {
-        const name = await waitForNameOrTimeout(1000);
-        const greeting = name ? `What should we work on, ${name}?` : 'What should we work on?';
+        await waitForNameOrTimeout(1000);
         const section = ensureWelcomeSection();
         const title = section?.welcome?.querySelector('.chat-welcome-title');
         if (!section || !title) return;
-        title.textContent = greeting;
+        title.textContent = getWelcomeGreeting();
+        updateWelcomeExtras(section.welcome, document.body.dataset.mode || 'analyse');
         section.welcome.classList.remove('hidden');
         welcomeRendered = true;
     })().finally(() => {
@@ -167,25 +187,44 @@ async function renderWelcomeGreeting() {
     return welcomeRenderPromise;
 }
 
-function applyTheme() {
-    document.body.classList.remove('theme-light', 'theme-dark');
-    document.body.classList.add('theme-light');
+window.refreshWelcome = function () {
+    welcomeRendered = false;
+    renderWelcomeGreeting();
+};
 
-    themeToggleInputs.forEach((input) => {
-        input.checked = false;
-    });
+function applyTheme(theme = 'dark') {
+    document.body.classList.remove('theme-light', 'theme-dark');
+    document.body.classList.add(`theme-${theme}`);
+    themeToggleInputs.forEach((input) => { input.checked = (theme === 'dark'); });
+    const iconDark = document.querySelector('.theme-icon-dark');
+    const iconLight = document.querySelector('.theme-icon-light');
+    if (iconDark) iconDark.style.display = theme === 'dark' ? 'inline' : 'none';
+    if (iconLight) iconLight.style.display = theme === 'light' ? 'inline' : 'none';
 }
 
 function initializeTheme() {
     try {
-        localStorage.setItem(THEME_STORAGE_KEY, 'light');
-        applyTheme();
+        const saved = localStorage.getItem(THEME_STORAGE_KEY) || 'dark';
+        localStorage.setItem(THEME_STORAGE_KEY, saved);
+        applyTheme(saved);
     } catch (error) {
-        console.error('Failed to initialize theme:', error);
+        applyTheme('dark');
     }
 }
 
 initializeTheme();
+
+document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('themeToggleButton');
+    if (btn) {
+        btn.addEventListener('click', () => {
+            const current = document.body.classList.contains('theme-dark') ? 'dark' : 'light';
+            const next = current === 'dark' ? 'light' : 'dark';
+            localStorage.setItem(THEME_STORAGE_KEY, next);
+            applyTheme(next);
+        });
+    }
+});
 
 //// Math formatting helpers
 
@@ -2149,7 +2188,7 @@ function initializeMobileNavigation() {
 
     // Close menu on escape key
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && navbarMobileMenu.classList.contains('active')) {
+        if (e.key === 'Escape' && navbarMobileMenu?.classList.contains('active')) {
             closeMobileMenu();
         }
     });

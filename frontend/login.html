@@ -1,167 +1,576 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IDEA- Login</title>
-    <link rel="stylesheet" href="styles.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IDEA Copépodes — NeoLab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=IBM+Plex+Sans:wght@300;400;500&family=IBM+Plex+Mono:wght@300;400&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@latest"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #050f1c;
+    --surface: #081525;
+    --surface2: #0c1e30;
+    --border: rgba(100,160,200,0.14);
+    --border-bright: rgba(120,180,220,0.25);
+    --accent: #5aacda;
+    --accent-dim: rgba(90,172,218,0.1);
+    --text: #d8eaf4;
+    --text-mid: #6e9ab5;
+    --text-dim: #3a5c72;
+    --success: #5dd8a8;
+    --error: #f07070;
+    --font-display: 'Cormorant Garamond', Georgia, serif;
+    --font-ui: 'IBM Plex Sans', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: var(--font-ui);
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+
+  .bg-field {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(ellipse 70% 50% at 15% 60%, rgba(0,60,120,0.2) 0%, transparent 65%),
+      var(--bg);
+  }
+
+  .bg-field::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image: radial-gradient(rgba(90,172,218,0.05) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+
+  .shell {
+    position: relative; z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    max-width: 940px;
+    width: 100%;
+    min-height: 580px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 32px 80px rgba(0,0,0,0.7), 0 0 120px rgba(0,50,100,0.25);
+    margin: 24px;
+  }
+
+  /* ── Left panel ── */
+  .panel-left {
+    background: linear-gradient(160deg, #071829 0%, #050f1c 100%);
+    padding: 44px 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+  }
+
+  /* SVG copepod radial ornament */
+  .ornament {
+    position: absolute;
+    right: -60px; top: 50%;
+    transform: translateY(-50%);
+    width: 260px; height: 260px;
+    opacity: 0.07;
+    pointer-events: none;
+  }
+
+  .lab-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: rgba(90,172,218,0.08);
+    border: 1px solid rgba(90,172,218,0.2);
+    border-radius: 6px;
+    padding: 5px 11px;
+    width: fit-content;
+  }
+
+  .lab-badge span {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  .lab-badge .dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.3; transform: scale(0.8); }
+  }
+
+  .panel-left h1 {
+    font-family: var(--font-display);
+    font-size: 42px;
+    font-weight: 400;
+    font-style: italic;
+    line-height: 1.1;
+    color: var(--text);
+    letter-spacing: -0.01em;
+    margin-top: 22px;
+  }
+
+  .panel-left h1 em {
+    font-style: normal;
+    color: var(--accent);
+  }
+
+  .panel-left .tagline {
+    margin-top: 14px;
+    font-size: 13px;
+    font-weight: 300;
+    color: var(--text-mid);
+    line-height: 1.65;
+  }
+
+  .divider-line {
+    width: 32px; height: 1px;
+    background: var(--border-bright);
+    margin: 24px 0;
+  }
+
+  .meta-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 10px;
+  }
+
+  .meta-item svg {
+    flex-shrink: 0;
+    color: var(--text-dim);
+  }
+
+  .meta-item span {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-weight: 300;
+  }
+
+  .institution {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: auto;
+  }
+
+  /* ── Right panel ── */
+  .panel-right {
+    background: var(--surface);
+    padding: 44px 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 28px;
+  }
+
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 0 0 12px;
+    margin-right: 24px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-dim);
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s;
+  }
+
+  .tab-btn::after {
+    content: '';
+    position: absolute;
+    bottom: -1px; left: 0; right: 0;
+    height: 1px;
+    background: var(--accent);
+    transform: scaleX(0);
+    transition: transform 0.2s;
+  }
+
+  .tab-btn.active {
+    color: var(--text);
+  }
+
+  .tab-btn.active::after {
+    transform: scaleX(1);
+  }
+
+  /* Forms */
+  .form-panel { display: none; }
+  .form-panel.active { display: block; }
+
+  .form-title {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 400;
+    color: var(--text);
+    margin-bottom: 6px;
+    letter-spacing: -0.01em;
+  }
+
+  .form-subtitle {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 24px;
+    font-weight: 300;
+  }
+
+  .field {
+    margin-bottom: 16px;
+  }
+
+  .field label {
+    display: block;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-mid);
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    margin-bottom: 7px;
+  }
+
+  .field input {
+    width: 100%;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 14px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 300;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+  }
+
+  .field input::placeholder { color: var(--text-dim); }
+
+  .field input:focus {
+    border-color: rgba(0,200,255,0.35);
+    background: rgba(0,200,255,0.03);
+    box-shadow: 0 0 0 3px rgba(0,200,255,0.06);
+  }
+
+  .field input:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0 30px #06111f inset !important;
+    -webkit-text-fill-color: var(--text) !important;
+  }
+
+  .btn-primary {
+    width: 100%;
+    background: var(--accent);
+    color: #030c18;
+    border: none;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: opacity 0.2s, transform 0.1s;
+    letter-spacing: 0.02em;
+  }
+
+  .btn-primary:hover { opacity: 0.9; }
+  .btn-primary:active { transform: scale(0.99); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Messages */
+  .msg {
+    display: none;
+    align-items: flex-start;
+    gap: 9px;
+    border-radius: 8px;
+    padding: 10px 13px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    font-weight: 300;
+    line-height: 1.5;
+  }
+
+  .msg.error {
+    background: rgba(255,107,107,0.08);
+    border: 1px solid rgba(255,107,107,0.2);
+    color: var(--error);
+  }
+
+  .msg.success {
+    background: rgba(0,229,160,0.08);
+    border: 1px solid rgba(0,229,160,0.2);
+    color: var(--success);
+  }
+
+  .msg svg { flex-shrink: 0; margin-top: 1px; }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    .shell { grid-template-columns: 1fr; min-height: unset; }
+    .panel-left { padding: 32px 28px; min-height: unset; }
+    .panel-left h1 { font-size: 32px; }
+    .ornament { display: none; }
+    .panel-right { padding: 32px 28px; }
+  }
+</style>
 </head>
-<body class="login-page theme-light">
-    <script>
-        (function () {
-            const THEME_STORAGE_KEY = 'idea-theme';
-            document.body.classList.remove('theme-light', 'theme-dark');
-            document.body.classList.add('theme-light');
-            try {
-                localStorage.setItem(THEME_STORAGE_KEY, 'light');
-            } catch (error) {
-                console.warn('Unable to persist theme preference:', error);
-            }
-        })();
-    </script>
-    <div class="login-container">
-        <div class="login-header">
-            <h1>IDEA</h1>
-            <p>Intelligent Data Exploring Assistant</p>
-        </div>
+<body>
 
-        <div id="errorMessage" class="error-message"></div>
-        <div id="successMessage" class="success-message"></div>
+<div class="bg-field"></div>
 
-        <form id="loginForm">
-            <div class="form-group">
-                <label for="username">Username</label>
-                <input 
-                    type="text" 
-                    id="username" 
-                    name="username" 
-                    required 
-                    autocomplete="username"
-                >
-            </div>
 
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input 
-                    type="password" 
-                    id="password" 
-                    name="password" 
-                    required 
-                    autocomplete="current-password"
-                >
-            </div>
+<div class="shell">
 
-            <button type="submit" class="login-button" id="loginButton">
-                Sign In
-            </button>
-        </form>
+  <!-- LEFT -->
+  <div class="panel-left">
+    <!-- SVG ornament: stylized copepod radial -->
+    <svg class="ornament" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="100" cy="100" r="12" stroke="#5aacda" stroke-width="1.5"/>
+      <circle cx="100" cy="100" r="30" stroke="#5aacda" stroke-width="0.6" stroke-dasharray="3 5"/>
+      <circle cx="100" cy="100" r="55" stroke="#5aacda" stroke-width="0.4" stroke-dasharray="2 8"/>
+      <circle cx="100" cy="100" r="82" stroke="#5aacda" stroke-width="0.3" stroke-dasharray="1 10"/>
+      <!-- appendages -->
+      <line x1="100" y1="88" x2="100" y2="30"  stroke="#5aacda" stroke-width="1" opacity="0.7"/>
+      <line x1="111" y1="94" x2="157" y2="64"  stroke="#5aacda" stroke-width="1" opacity="0.7"/>
+      <line x1="111" y1="106" x2="157" y2="136" stroke="#5aacda" stroke-width="1" opacity="0.7"/>
+      <line x1="100" y1="112" x2="100" y2="170" stroke="#5aacda" stroke-width="1" opacity="0.7"/>
+      <line x1="89"  y1="106" x2="43"  y2="136" stroke="#5aacda" stroke-width="1" opacity="0.7"/>
+      <line x1="89"  y1="94"  x2="43"  y2="64"  stroke="#5aacda" stroke-width="1" opacity="0.7"/>
+      <!-- secondary appendages -->
+      <line x1="100" y1="88" x2="122" y2="38"  stroke="#5aacda" stroke-width="0.5" opacity="0.4"/>
+      <line x1="100" y1="88" x2="78"  y2="38"  stroke="#5aacda" stroke-width="0.5" opacity="0.4"/>
+      <line x1="111" y1="106" x2="170" y2="100" stroke="#5aacda" stroke-width="0.5" opacity="0.4"/>
+      <line x1="89"  y1="106" x2="30"  y2="100" stroke="#5aacda" stroke-width="0.5" opacity="0.4"/>
+    </svg>
 
-        <div class="footer-text">
-            Need an account? Email <a href="mailto:idea-dev-grp@hawaii.edu">idea-dev-grp@hawaii.edu</a>.
-            <a href="https://github.com/uhsealevelcenter/IDEA" target="_blank" rel="noopener">More info on GitHub</a>
-        </div>
+    <div>
+      <div class="lab-badge">
+        <span class="dot"></span>
+        <span>NeoLab · Université Laval</span>
+      </div>
+
+      <h1>IDEA<br><em>Copépodes</em></h1>
+
+      <p class="tagline">
+        Exploration de données de copépodes marins —<br>
+        Océan Arctique &amp; Estuaire du Saint-Laurent
+      </p>
+
+      <div class="divider-line"></div>
+
+      <div class="meta-item">
+        <i data-lucide="database" style="width:13px;height:13px;stroke-width:1.5"></i>
+        <span>EcoTaxa · EcoPart · Amundsen CTD</span>
+      </div>
+      <div class="meta-item">
+        <i data-lucide="flask-conical" style="width:13px;height:13px;stroke-width:1.5"></i>
+        <span>Données du laboratoire NeoLab</span>
+      </div>
+      <div class="meta-item">
+        <i data-lucide="map-pin" style="width:13px;height:13px;stroke-width:1.5"></i>
+        <span>Arctique canadien · Saint-Laurent</span>
+      </div>
     </div>
 
-    <script src="config.js"></script>
-    <script>
-        const loginForm = document.getElementById('loginForm');
-        const loginButton = document.getElementById('loginButton');
-        const errorMessage = document.getElementById('errorMessage');
-        const successMessage = document.getElementById('successMessage');
+    <div class="institution">© 2026 NeoLab — Université Laval</div>
+  </div>
 
-        function showError(message) {
-            errorMessage.textContent = message;
-            errorMessage.style.display = 'block';
-            successMessage.style.display = 'none';
-        }
+  <!-- RIGHT -->
+  <div class="panel-right">
 
-        function showSuccess(message) {
-            successMessage.textContent = message;
-            successMessage.style.display = 'block';
-            errorMessage.style.display = 'none';
-        }
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" id="tab-signin" onclick="switchTab('signin')">Connexion</button>
+      <button class="tab-btn" id="tab-signup" onclick="switchTab('signup')">Créer un compte</button>
+    </div>
 
-        function hideMessages() {
-            errorMessage.style.display = 'none';
-            successMessage.style.display = 'none';
-        }
+    <!-- Messages -->
+    <div class="msg error" id="errorMsg">
+      <i data-lucide="alert-circle" style="width:14px;height:14px;stroke-width:1.5"></i>
+      <span id="errorText"></span>
+    </div>
+    <div class="msg success" id="successMsg">
+      <i data-lucide="check-circle" style="width:14px;height:14px;stroke-width:1.5"></i>
+      <span id="successText"></span>
+    </div>
 
-        loginForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            hideMessages();
+    <!-- Sign In -->
+    <div class="form-panel active" id="form-signin">
+      <div class="form-title">Bon retour</div>
+      <div class="form-subtitle">Connectez-vous à votre espace de recherche</div>
 
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
+      <form id="signinForm" onsubmit="handleSignin(event)">
+        <div class="field">
+          <label>Adresse courriel</label>
+          <input type="email" id="si-email" placeholder="vous@ulaval.ca" required autocomplete="email">
+        </div>
+        <div class="field">
+          <label>Mot de passe</label>
+          <input type="password" id="si-password" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn-primary" id="signinBtn">Se connecter</button>
+      </form>
+    </div>
 
-            if (!username || !password) {
-                showError('Please enter both username and password');
-                return;
-            }
+    <!-- Sign Up -->
+    <div class="form-panel" id="form-signup">
+      <div class="form-title">Créer un compte</div>
+      <div class="form-subtitle">Accès immédiat — aucune confirmation requise</div>
 
-            loginButton.disabled = true;
-            loginButton.textContent = 'Signing in...';
+      <form id="signupForm" onsubmit="handleSignup(event)">
+        <div class="field">
+          <label>Nom complet</label>
+          <input type="text" id="su-name" placeholder="Prénom Nom" required autocomplete="name">
+        </div>
+        <div class="field">
+          <label>Adresse courriel</label>
+          <input type="email" id="su-email" placeholder="vous@ulaval.ca" required autocomplete="email">
+        </div>
+        <div class="field">
+          <label>Mot de passe</label>
+          <input type="password" id="su-password" placeholder="••••••••" required minlength="8" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn-primary" id="signupBtn">Créer mon compte</button>
+      </form>
+    </div>
 
-            try {
-                const response = await fetch(config.getEndpoints().login, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        username: username,
-                        password: password
-                    })
-                });
+  </div>
+</div>
 
-                const data = await response.json();
+<script src="config.js"></script>
+<script>
+  lucide.createIcons();
 
-                if (response.ok && data.success) {
-                    // Store the authentication token
-                    localStorage.setItem('authToken', data.token);
-                    
-                    showSuccess('Login successful! Redirecting...');
-                    
-                    // Redirect to main application after a short delay
-                    setTimeout(() => {
-                        window.location.href = 'index.html';
-                    }, 1000);
-                } else {
-                    showError(data.detail || 'Invalid username or password');
-                }
-            } catch (error) {
-                console.error('Login error:', error);
-                showError('Login failed. Please check your connection and try again.');
-            } finally {
-                loginButton.disabled = false;
-                loginButton.textContent = 'Sign In';
-            }
-        });
+  function switchTab(tab) {
+    document.getElementById('form-signin').classList.toggle('active', tab === 'signin');
+    document.getElementById('form-signup').classList.toggle('active', tab === 'signup');
+    document.getElementById('tab-signin').classList.toggle('active', tab === 'signin');
+    document.getElementById('tab-signup').classList.toggle('active', tab === 'signup');
+    hideMessages();
+  }
 
-        // Check if user is already logged in
-        window.addEventListener('DOMContentLoaded', async () => {
-            const token = localStorage.getItem('authToken');
-            if (token) {
-                try {
-                    const response = await fetch(config.getEndpoints().verify, {
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        }
-                    });
+  function showError(msg) {
+    document.getElementById('errorText').textContent = msg;
+    document.getElementById('errorMsg').style.display = 'flex';
+    document.getElementById('successMsg').style.display = 'none';
+  }
 
-                    if (response.ok) {
-                        // User is already authenticated, redirect to main app
-                        window.location.href = 'index.html';
-                    } else {
-                        // Token is invalid, remove it
-                        localStorage.removeItem('authToken');
-                    }
-                } catch (error) {
-                    console.error('Auth verification error:', error);
-                    localStorage.removeItem('authToken');
-                }
-            }
-        });
-    </script>
+  function showSuccess(msg) {
+    document.getElementById('successText').textContent = msg;
+    document.getElementById('successMsg').style.display = 'flex';
+    document.getElementById('errorMsg').style.display = 'none';
+  }
+
+  function hideMessages() {
+    document.getElementById('errorMsg').style.display = 'none';
+    document.getElementById('successMsg').style.display = 'none';
+  }
+
+  async function handleSignin(e) {
+    e.preventDefault();
+    hideMessages();
+    const btn = document.getElementById('signinBtn');
+    btn.disabled = true;
+    btn.textContent = 'Connexion…';
+    try {
+      const res = await fetch(config.getEndpoints().login, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: document.getElementById('si-email').value,
+          password: document.getElementById('si-password').value
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        localStorage.setItem('authToken', data.token);
+        showSuccess('Connexion réussie — redirection…');
+        setTimeout(() => window.location.href = 'index.html', 900);
+      } else {
+        showError(data.detail || 'Identifiants incorrects.');
+      }
+    } catch {
+      showError('Impossible de contacter le serveur.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Se connecter';
+    }
+  }
+
+  async function handleSignup(e) {
+    e.preventDefault();
+    hideMessages();
+    const btn = document.getElementById('signupBtn');
+    btn.disabled = true;
+    btn.textContent = 'Création…';
+    try {
+      const res = await fetch(config.getEndpoints().login.replace('/login', '/register'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: document.getElementById('su-email').value,
+          password: document.getElementById('su-password').value,
+          full_name: document.getElementById('su-name').value
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showSuccess('Compte créé. Vous pouvez maintenant vous connecter.');
+        setTimeout(() => switchTab('signin'), 1800);
+      } else {
+        showError(data.detail || 'Erreur lors de la création du compte.');
+      }
+    } catch {
+      showError('Impossible de contacter le serveur.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Créer mon compte';
+    }
+  }
+
+  // Already authenticated?
+  window.addEventListener('DOMContentLoaded', async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    try {
+      const res = await fetch(config.getEndpoints().verify, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) window.location.href = 'index.html';
+      else localStorage.removeItem('authToken');
+    } catch { localStorage.removeItem('authToken'); }
+  });
+</script>
 </body>
-</html> 
+</html>

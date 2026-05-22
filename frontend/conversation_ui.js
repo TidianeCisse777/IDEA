@@ -25,7 +25,7 @@ function initializeConversationUI() {
 function setupConversationEventListeners() {
     // Open conversations modal
     document.getElementById('conversationsButton').addEventListener('click', openConversationsModal);
-    document.getElementById('conversationsButtonMobile').addEventListener('click', openConversationsModal);
+    document.getElementById('conversationsButtonMobile')?.addEventListener('click', openConversationsModal);
     
     // Close conversations modal
     document.getElementById('closeConversationsModal').addEventListener('click', closeConversationsModal);

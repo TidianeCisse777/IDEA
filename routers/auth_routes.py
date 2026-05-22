@@ -26,6 +26,7 @@ from core.auth import (
 )
 from core.security import verify_password as verify_password_hash
 from models import LoginRequest, LoginResponse, UpdatePassword, UserUpdate
+from models.db import UserCreate
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,16 @@ async def login(login_request: LoginRequest, session: Session = Depends(get_db))
         )
     else:
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+
+@router.post("/register", status_code=201)
+async def register(user_in: UserCreate, session: Session = Depends(get_db)):
+    """Public registration — no email confirmation required."""
+    existing = crud.get_user_by_email(session=session, email=user_in.email)
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    crud.create_user(session=session, user_create=user_in)
+    return {"success": True, "message": "Account created. You can now sign in."}
 
 
 @router.post("/logout")
