@@ -5,6 +5,8 @@ from typing import Optional
 
 class AssistantProfile(ABC):
     agent_type: str
+    tool_tags: set | None = None            # None = tous les tools
+    instruction_blocks: list | None = None  # None = tous les blocs
 
     @abstractmethod
     def get_system_message(self, active_user_prompt: str) -> str: ...
