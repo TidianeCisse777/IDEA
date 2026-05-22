@@ -193,8 +193,7 @@ data/**
 # Ignore outputs
 outputs
 
-# Ignore frontend config file
-/frontend/config.js
+# config.js is now committed — URLs are dynamic (window.location), no secrets
 
 # Node.js dependencies
 node_modules/

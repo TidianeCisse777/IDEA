@@ -10,6 +10,8 @@ The module-level ``session_store`` singleton is the object imported by routers.
 from __future__ import annotations
 
 import json
+import os
+import urllib.parse
 import redis
 from abc import ABC, abstractmethod
 from time import time
@@ -104,5 +106,13 @@ class InMemorySessionStore(SessionStore):
         return list(self._timestamps.keys())
 
 
-# Singleton used by routers — swap out in tests by patching this reference.
-session_store: SessionStore = RedisSessionStore()
+# Singleton — Railway injects REDIS_URL; local dev defaults to host=redis.
+_redis_url = os.getenv("REDIS_URL", "")
+if _redis_url:
+    _parsed = urllib.parse.urlparse(_redis_url)
+    session_store: SessionStore = RedisSessionStore(
+        host=_parsed.hostname or "redis",
+        port=_parsed.port or 6379,
+    )
+else:
+    session_store: SessionStore = RedisSessionStore()

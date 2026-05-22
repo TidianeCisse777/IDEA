@@ -1,0 +1,10 @@
+[build]
+dockerfilePath = "Dockerfile.railway"
+
+[deploy]
+startCommand = "supervisord -c /etc/supervisor/conf.d/idea.conf"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
+
+[[services]]
+name = "web"

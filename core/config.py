@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
+        # Railway injects DATABASE_URL directly; local dev uses individual vars
+        if url := os.getenv("DATABASE_URL"):
+            return url.replace("postgres://", "postgresql://", 1)
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
     # Auth settings (for initial superuser)
