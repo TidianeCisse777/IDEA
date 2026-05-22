@@ -9,7 +9,7 @@
 
 **Noms courants :** "le grand copépode de l'Arctique", "le gros Calanus"
 **Abréviation labo :** Chyp
-**AphiaID WoRMS :** 104464
+**AphiaID WoRMS :** 104467
 **Taille ♀ adulte :** 6–7 mm en Arctique, 4–5.5 mm en eaux plus tempérées
 **Ordre :** Calanoida | **Famille :** Calanidae
 
@@ -27,7 +27,7 @@ Espèce la plus grande du genre Calanus. Contenu lipidique extrêmement élevé 
 
 **Noms courants :** "le copépode arctique dominant", "le Calanus des plateaux"
 **Abréviation labo :** Cgla
-**AphiaID WoRMS :** 104466
+**AphiaID WoRMS :** 104465
 **Taille ♀ adulte :** 3.6–5.5 mm
 **Ordre :** Calanoida | **Famille :** Calanidae
 
@@ -49,7 +49,7 @@ Espèce dominante des plateaux arctiques. Distribution pan-arctique. Espèce cl�
 
 **Noms courants :** "le copépode boréal", "le Calanus de l'Atlantique Nord"
 **Abréviation labo :** Cfin
-**AphiaID WoRMS :** [À VALIDER — distinct de Chyp 104464]
+**AphiaID WoRMS :** 104464
 **Taille ♀ adulte :** 2.5–3.5 mm
 **Ordre :** Calanoida | **Famille :** Calanidae
 
@@ -68,7 +68,7 @@ Espèce boréale dominante de l'Atlantique Nord. Espèce clé du réseau trophiq
 # Qu'est-ce que Calanus helgolandicus ?
 
 **Abréviation labo :** Chel
-**AphiaID WoRMS :** 104467
+**AphiaID WoRMS :** 104466
 **Taille ♀ adulte :** ~2.5 mm
 **Ordre :** Calanoida | **Famille :** Calanidae
 

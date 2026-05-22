@@ -172,6 +172,9 @@ data/**
 !data/prompts/
 !data/prompts/*.json
 
+# Copepod RAG chunks (generated but committed — tests depend on it)
+!core/copepod_rag/chunks.json
+
 # # Except, allow UHSLC metadata (GEOJSON)
 # !data/metadata/
 # !data/metadata/*.geojson   

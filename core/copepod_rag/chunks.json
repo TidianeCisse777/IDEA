@@ -1,0 +1,513 @@
+[
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_000",
+    "title": "colonnes_instruments.md",
+    "content": "# colonnes_instruments.md\n# Colonnes exhaustives des exports EcoTaxa par instrument\n# Source officielle : Picheral & Mériguet 2025, https://doi.org/10.5281/zenodo.14704251\n# Format RAG — chaque section délimitée par --- est un chunk autonome",
+    "char_count": 241
+  },
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_001",
+    "title": "Comment identifier l'instrument depuis un fichier EcoTaxa ?",
+    "content": "# Comment identifier l'instrument depuis un fichier EcoTaxa ?\n\nColonne `acq_instrument` dans le header du TSV :\n- `uvp5` → UVP5\n- `uvp6` → UVP6\n- `zooscan` → ZooScan\n- `flowcam` → FlowCam\n\nSi la colonne est absente, vérifier le préfixe de `acq_id` :\n- commence par `uvp5` ou `sn0` → UVP5\n- commence par `zooscan` → ZooScan\n- commence par `flowcam` → FlowCam\n\nToutes les colonnes de mesure objet (`object_*`) sont identiques entre UVP5, UVP6, ZooScan et FlowCam — seules les colonnes `sample_*` et `acq_*` diffèrent par instrument.",
+    "char_count": 530
+  },
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_002",
+    "title": "Que signifient les colonnes sample_* dans un export UVP5 ?",
+    "content": "# Que signifient les colonnes sample_* dans un export UVP5 ?\n\nSource : Picheral & Mériguet 2025 — feuille UVP5\n\n| Colonne | Description | Unité |\n|---------|-------------|-------|\n| `sample_id` | Nom du sample (profil ou série temporelle) | texte |\n| `sample_profileid` | Nom du dossier brut de la séquence `[HDRYYYYMMDDHHMMSS]` | texte |\n| `sample_cruise` | Nom de la campagne | texte |\n| `sample_ship` | Nom du navire | texte |\n| `sample_stationid` | Nom de la station | texte |\n| `sample_bottomdepth` | Profondeur du fond à la position d'échantillonnage | m |\n| `sample_ctdrosettefilename` | Nom du fichier CTD associé | texte |\n| `sample_dn` | Flag jour/nuit | code |\n| `sample_yoyo` | Type de sample : D=descente, Y=yoyo, H=autre | code |\n| `sample_winddir` | Direction du vent | degrés |\n| `sample_windspeed` | Vitesse du vent | nœuds |\n| `sample_seastate` | État de la mer | échelle Beaufort |\n| `sample_nebuloussness` | Nébulosité | octa |\n| `sample_comment` | Commentaire | texte |\n| `sample_barcode` | Code-barre du sample | texte |",
+    "char_count": 1042
+  },
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_003",
+    "title": "Que signifient les colonnes acq_* dans un export UVP5 ?",
+    "content": "# Que signifient les colonnes acq_* dans un export UVP5 ?\n\nSource : Picheral & Mériguet 2025 — feuille UVP5\n\n| Colonne | Description | Unité |\n|---------|-------------|-------|\n| `acq_id` | uvp5 + sample_id | texte |\n| `acq_sn` | sn + numéro de série UVP5 | texte |\n| `acq_instrument` | `uvp5` | texte |\n| `acq_volimage` | Volume imagé par image | L |\n| `acq_pixel` | **Dimension d'un pixel dans le plan imagé — clé pour conversion mm** | mm |\n| `acq_aa` | Facteur de calibration Aa | — |\n| `acq_exp` | Facteur de calibration Exp | — |\n| `acq_threshold` | Seuil de segmentation niveaux de gris (0–255) | — |\n| `acq_smbase` | Taille minimale pour comptage/mesure | pixel² |\n| `acq_smzoo` | Taille minimale pour sauvegarde de la vignette | pixel² |\n| `acq_gain` | Gain | — |\n| `acq_shutterspeed` | Code obturateur UVP5SD | — |\n| `acq_exposure` | Durée obturateur UVP5HD + 60 | µs |\n| `acq_erase_border_blob` | Flag objets touchant les bords (0=non, 1=oui) | booléen |\n| `acq_choice` | Image complète [0] ou vignette [1] si objet > smzoo | booléen |\n| `acq_ratio` | Ratio d'agrandissement de la vignette | — |",
+    "char_count": 1106
+  },
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_004",
+    "title": "Que signifient les colonnes process_* dans un export UVP5 ?",
+    "content": "# Que signifient les colonnes process_* dans un export UVP5 ?\n\nSource : Picheral & Mériguet 2025 — feuille UVP5\n\n| Colonne | Description |\n|---------|-------------|\n| `process_id` | zooprocess + sample_id |\n| `process_software` | Version Zooprocess |\n| `process_date` | Date du traitement `[YYYYMMDD]` |\n| `process_time` | Heure du traitement `[HHMMSS]` |\n| `process_first_img` | Première image du profil |\n| `process_last_img` | Dernière image du profil |\n| `process_pixel` | Dimension pixel dans le plan imagé | mm |\n| `process_upper` | Seuil de segmentation |\n| `process_gamma` | Valeur gamma pour les vignettes EcoTaxa |\n| `process_esdmin` | Taille minimale objet | mm |\n| `process_esdmax` | Taille maximale objet | mm |\n| `process_calibration` | Date/heure calibration UVP5 `[YYYYMMDD_HHMM]` |",
+    "char_count": 798
+  },
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_005",
+    "title": "Que signifient les colonnes object_* de métadonnées et annotation ?",
+    "content": "# Que signifient les colonnes object_* de métadonnées et annotation ?\n\nCes colonnes sont communes à UVP5, UVP6 et ZooScan.\nSource : Picheral & Mériguet 2025\n\n| Colonne | Description | Unité |\n|---------|-------------|-------|\n| `object_id` | acq_id + numéro objet dans l'image traitée | texte |\n| `object_lat` | Latitude d'échantillonnage | degrés décimaux |\n| `object_lon` | Longitude d'échantillonnage | degrés décimaux |\n| `object_date` | Date UTC d'échantillonnage | YYYYMMDD |\n| `object_time` | Heure UTC d'échantillonnage | HHMMSS |\n| `object_depth_min` | Profondeur minimale d'échantillonnage | m |\n| `object_depth_max` | Profondeur maximale d'échantillonnage | m |\n| `object_annotation_status` | Statut EcoTaxa : V=validé, P=prédit, D=douteux, N=aucun | code |\n| `object_annotation_category` | Taxon dans EcoTaxa (display_name) | texte |\n| `object_annotation_hierarchy` | Lignée taxonomique dans EcoTaxa | texte |\n| `object_annotation_person_name` | Nom de l'annotateur | texte |\n| `object_annotation_date` | Date d'annotation | YYYYMMDD |\n| `object_rawvig` | Date/heure et index des images brutes sources | texte |\n| `object_lat_end` | Latitude fin (pour trait horizontal) | degrés |\n| `object_lon_end` | Longitude fin (pour trait horizontal) | degrés |\n| `complement_info` | Information complémentaire | texte |\n| `object_link` | Lien vers site web défini par l'utilisateur | URL |\n\n**Profondeur à utiliser :**\n```python\nobject_depth = (object_depth_min + object_depth_max) / 2\n```",
+    "char_count": 1491
+  },
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_006",
+    "title": "Que signifient les colonnes object_* de mesures morphométriques ?",
+    "content": "# Que signifient les colonnes object_* de mesures morphométriques ?\n\nCes colonnes sont les mesures d'image. Unités en **pixels** sauf indication.\nClés pour le labo Maps marquées **★**.\n\n| Colonne | Description | Usage labo |\n|---------|-------------|-----------|\n| `object_area` | Surface de l'objet | pixel² | — |\n| `object_area_exc` | Surface excluant les trous | pixel² | ★ taille réelle |\n| `object_%area` | % surface avec trous | % | — |\n| `object_feret` | **Diamètre de Feret — longueur max** | pixel | ★ proxy longueur prosome |\n| `object_major` | Grand axe de l'ellipse ajustée | pixel | ★ longueur |\n| `object_minor` | Petit axe de l'ellipse ajustée | pixel | — |\n| `object_esd` | Diamètre équivalent sphérique : 2×√(area/π) | pixel | — |\n| `object_elongation` | Indice d'élongation : major/minor | — | — |\n| `object_width` | Largeur du rectangle englobant | pixel | — |\n| `object_height` | Hauteur du rectangle englobant | pixel | — |\n| `object_mean` | **Gris moyen — proxy opacité/contenu intestinal** | 0–255 | ★ état alimentaire |\n| `object_stddev` | Écart-type des niveaux de gris | — | — |\n| `object_median` | Médiane des niveaux de gris | 0–255 | — |\n| `object_min` | Gris minimum (0=noir) | 0–255 | — |\n| `object_max` | Gris maximum (255=blanc) | 0–255 | — |\n| `object_cv` | Coeff. variation gris : 100×(stddev/mean) | % | — |\n| `object_circ.` | Circularité : (4π×area)/perim² — 1=cercle parfait | — | — |\n| `object_circex` | Circularité excluant trous | — | — |\n| `object_fractal` | Dimension fractale du contour | — | — |\n| `object_convarea` | Surface enveloppe convexe | pixel² | — |\n| `object_convperim` | Périmètre enveloppe convexe | pixel | — |\n| `object_perim.` | Longueur du contour externe | pixel | — |\n| `object_angle` | Angle entre axe major et axe x de l'image | degrés | — |\n| `object_intden` | Densité intégrée : area × mean | — | — |\n| `object_skelarea` | Surface du squelette de l'objet | pixel² | — |\n| `object_centroids` | Distance entre centroïde de masse et centroïde de gris | pixel | — |\n| `object_symetrieh` | Indice de symétrie bilatérale horizontale | — | — |\n| `object_symetriev` | Indice de symétrie bilatérale verticale | — | — |\n| `object_histcum1` | Gris au 1er quartile de l'histogramme cumulé | 0–255 | — |\n| `object_histcum2` | Gris au 2e quartile | 0–255 | — |\n| `object_histcum3` | Gris au 3e quartile | 0–255 | — |\n| `object_slope` | Pente de l'histogramme cumulé normalisé | — | — |\n| `object_skew` | Asymétrie de l'histogramme de gris | — | — |\n| `object_kurt` | Kurtosis de l'histogramme de gris | — | — |\n| `object_thickr` | Ratio épaisseur max / épaisseur moy | — | — |\n| `object_fcons` | Mesure de contraste (texture) | — | — |\n\n**Conversion pixels → mm (obligatoire avant toute analyse) :**\n```python\nlongueur_mm = object_feret * acq_pixel\nNote : `acq_pixel` correspond à la dimension d'un pixel en mm dans les colonnes `acq_*`.\n```",
+    "char_count": 2894
+  },
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_007",
+    "title": "Quelles sont les différences principales entre UVP6 et UVP5 ?",
+    "content": "# Quelles sont les différences principales entre UVP6 et UVP5 ?\n\nSource : Picheral & Mériguet 2025 — feuille UVP6\n\nColonnes `sample_*` et `acq_*` légèrement différentes. Les colonnes `object_*` de mesure sont identiques à UVP5, **sauf** :\n- Absent en UVP6 : `object_bx`, `object_by`, `object_xstart`, `object_ystart`, `object_xmg5`, `object_ymg5`, `object_nb1/2/3`, `object_comp*`, `object_sym*` (certains)\n- Ajouté en UVP6 : `object_vig_left_position`, `object_vig_top_position`\n\nNouvelles colonnes `sample_*` spécifiques UVP6 :\n| Colonne | Description |\n|---------|-------------|\n| `sample_sampletype` | P=pression, T=série temporelle |\n| `sample_integrationtime` | Temps d'intégration pour sampletype=T | s |\n| `sample_argoid` | ID du vecteur/plateforme hébergeant l'UVP6 |\n| `sample_sampledatetime` | Date/heure première image `[YYYYMMDD-HHMMSS]` |\n\nNouvelle colonne `acq_*` : `acq_instrument` = `uvp6`",
+    "char_count": 906
+  },
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_008",
+    "title": "Quelles colonnes sample_* sont spécifiques aux exports ZooScan ?",
+    "content": "# Quelles colonnes sample_* sont spécifiques aux exports ZooScan ?\n\nSource : Picheral & Mériguet 2025 — feuille ZooScan\n\nLe ZooScan traite des **échantillons de filet** — les colonnes sample_* contiennent donc les métadonnées du trait de filet.\n\n| Colonne | Description | Unité |\n|---------|-------------|-------|\n| `sample_id` | Nom du sample | texte |\n| `sample_ship` | Navire | texte |\n| `sample_program` | Nom du programme/campagne | texte |\n| `sample_stationid` | Station | texte |\n| `sample_bottomdepth` | Profondeur du fond | m |\n| `sample_scan_operator` | Opérateur du scan | texte |\n| `sample_tow_nb` | Nombre de traits dans le bocal | # |\n| `sample_tow_type` | Type de déploiement : 1=oblique, 2=horizontal, 3=vertical, 0=autre | code |\n| `sample_net_type` | Modèle de filet | texte |\n| `sample_tot_vol` | Volume total filtré | m³ |\n| `sample_net_mesh` | Maille du filet | µm |\n| `sample_zmax` | Profondeur minimale d'échantillonnage | m |\n| `sample_zmin` | Profondeur maximale d'échantillonnage | m |\n| `sample_net_surf` | Surface de la gueule du filet | m² |\n| `sample_comment` | Commentaires | texte |\n| `sample_duration` | Durée du trait | minutes |\n| `sample_ship_speed` | Vitesse du navire pendant le trait | nœuds |\n| `sample_cable_length` | Longueur de câble | m |\n| `sample_cable_angle` | Angle du câble | degrés |\n| `sample_tot_vol_qc` | QC volume : 1=flowmètre, 2=calculé, 3=estimé | code |\n| `sample_depth_qc` | QC profondeur : 1=capteur, 2=calculé, 3=estimé | code |\n| `sample_sample_qc` | QC 4 chiffres : étanchéité/richesse/conditionnement/perturbateurs | code |\n\n**Colonnes acq_* ZooScan spécifiques :**\n| Colonne | Description |\n|---------|-------------|\n| `acq_instrument` | `zooscan` (numéro de série) |\n| `acq_min_mesh` | Maille minimale fraction tamisée | µm |\n| `acq_max_mesh` | Maille maximale fraction tamisée | µm |\n| `acq_sub_part` | Facteur de sous-échantillonnage |\n| `acq_scan_resolution` | Résolution du scan | dpi |\n| `acq_pixel` | **Dimension pixel — obligatoire pour conversion mm** | mm |",
+    "char_count": 2032
+  },
+  {
+    "doc": "colonnes_instruments.md",
+    "chunk_id": "colonnes_instruments_009",
+    "title": "Quels sont les pièges courants dans les colonnes EcoTaxa ?",
+    "content": "# Quels sont les pièges courants dans les colonnes EcoTaxa ?\n\n| Piège | Règle |\n|-------|-------|\n| Utiliser `object_depth_min` seul | Toujours `(object_depth_min + object_depth_max) / 2` |\n| Convertir pixels sans `acq_pixel` | Jamais. `acq_pixel` est obligatoire |\n| Confondre `object_area` et `object_area_exc` | Pour taille réelle : `object_area_exc` (exclut trous) |\n| Utiliser annotations `P` ou `D` | Seul `object_annotation_status = V` (validé) est fiable |\n| Chercher le taxon dans `txo_display_name` | Ce nom existe dans certains projets — le nom officiel est `object_annotation_category` |\n| Confondre `object_feret` (longueur max) et `object_major` (axe ellipse) | Pour longueur prosome : `object_feret` est le plus robuste |\n| `object_mean` = opacité = contenu intestinal | Valeur haute = objet sombre = plein (nourri). Valeur basse = transparent = vide |\n\n*Source : Picheral M. & Mériguet Z. (2025). Description of the metadata and data issued from Zooprocess and UVPapp applications. https://doi.org/10.5281/zenodo.14704251*\n*Dernière mise à jour : mai 2026*",
+    "char_count": 1072
+  },
+  {
+    "doc": "colonnes_labo.md",
+    "chunk_id": "colonnes_labo_000",
+    "title": "colonnes_labo.md",
+    "content": "# colonnes_labo.md\n# Colonnes des fichiers de données labo — lipides, biomasse, variables dérivées\n# Sources : analyses biochimiques labo Maps + features image LOKI + variables calculées\n# Format RAG — chaque section délimitée par --- est un chunk autonome",
+    "char_count": 256
+  },
+  {
+    "doc": "colonnes_labo.md",
+    "chunk_id": "colonnes_labo_001",
+    "title": "Quelles colonnes retrouve-t-on typiquement dans un fichier de lipides labo ?",
+    "content": "# Quelles colonnes retrouve-t-on typiquement dans un fichier de lipides labo ?\n\n⚠️ **Règle fondamentale : les noms de colonnes dans ce document sont des noms TYPIQUES, pas des noms garantis.**\nLes fichiers labo ont une structure inconnue jusqu'à l'inspection. Toujours appeler `inspect_file(path)` en premier pour découvrir les vrais noms de colonnes. Utiliser ce document pour comprendre la signification des colonnes trouvées — pas pour les nommer à l'avance.\n\n**Workflow obligatoire :**\n```\n1. inspect_file(path)                → vrais noms de colonnes du fichier\n2. query_copepod_knowledge_base(...) → comprendre ce que ces colonnes signifient\n3. Travailler avec les vrais noms    → jamais avec les noms documentés ici\n```\n\nLes fichiers labo (CSV ou Excel uploadés par l'utilisateur) contiennent des mesures biochimiques produites sur des individus ou des fractions d'échantillons. Leur structure est découverte à la volée via `data.inspect`.\n\n**Colonnes d'identifiant fréquentes :**\n\n| Colonne typique | Définition | Notes |\n|-----------------|------------|-------|\n| `sample_id` | Identifiant de l'échantillon | Peut se lier à EcoTaxa ou EcoPart |\n| `station` | Station d'échantillonnage | Correspondance possible avec Amundsen |\n| `depth_m` / `depth` | Profondeur de collecte | m |\n| `date` / `collection_date` | Date de collecte | Format variable |\n| `species` / `taxon` | Espèce ou groupe analysé | Nom labo, pas forcément WoRMS |\n| `stage` | Stade de développement (CV, AF, CIV…) | Code labo |\n| `sex` | Sexe si discriminé | F / M / — |\n| `n_individuals` | Nombre d'individus dans l'échantillon | Fréquent pour pooled samples |\n| `replicate` | Numéro de réplica | pour analyses en triplicata |",
+    "char_count": 1703
+  },
+  {
+    "doc": "colonnes_labo.md",
+    "chunk_id": "colonnes_labo_002",
+    "title": "Quelles colonnes de lipides totaux et biochimie retrouve-t-on dans les fichiers labo ?",
+    "content": "# Quelles colonnes de lipides totaux et biochimie retrouve-t-on dans les fichiers labo ?\n\n**Lipides totaux :**\n\n| Colonne typique | Unité | Définition |\n|-----------------|-------|------------|\n| `total_lipids_mg_ind` | mg ind⁻¹ | Lipides totaux par individu |\n| `total_lipids_ug_ind` | µg ind⁻¹ | Lipides totaux (petites espèces) |\n| `lipid_content_pct_dw` | % poids sec | Lipides / poids sec |\n| `dry_weight_mg` | mg | Poids sec individuel |\n| `wet_weight_mg` | mg | Poids humide individuel |\n| `ash_free_dry_weight_mg` | mg | AFDW — poids sec sans cendres |\n\n**Classes de lipides :**\n\n| Colonne typique | Unité | Définition |\n|-----------------|-------|------------|\n| `wax_esters_pct` | % lipides totaux | Wax esters (WE) — stockage long terme chez *Calanus* en diapause |\n| `triacylglycerols_pct` | % lipides totaux | TAG — stockage court terme, énergie mobilisable rapidement |\n| `phospholipids_pct` | % lipides totaux | Phospholipides — membranes cellulaires |\n| `sterols_pct` | % lipides totaux | Stérols structuraux |\n| `free_fatty_acids_pct` | % lipides totaux | AGL — lipides dégradés ou en transit |",
+    "char_count": 1111
+  },
+  {
+    "doc": "colonnes_labo.md",
+    "chunk_id": "colonnes_labo_003",
+    "title": "Quelles colonnes d'acides gras retrouve-t-on dans les fichiers labo ?",
+    "content": "# Quelles colonnes d'acides gras retrouve-t-on dans les fichiers labo ?\n\nLes acides gras (fatty acids, FA) sont exprimés en pourcentage des acides gras totaux ou en µg par individu. Ce sont des marqueurs trophiques clés.\n\n| Colonne typique | Notation | Signification trophique |\n|-----------------|----------|------------------------|\n| `dha_pct` / `22_6n3_pct` | 22:6(n-3) | DHA — acide gras essentiel, qualité nutritive, marqueur diatomées/dinoflagellés |\n| `epa_pct` / `20_5n3_pct` | 20:5(n-3) | EPA — acide gras essentiel, marqueur diatomées |\n| `fa_16_1n7_pct` | 16:1(n-7) | Marqueur diatomes — régime herbivore printanier |\n| `fa_18_1n9_pct` | 18:1(n-9) | Marqueur omnivorie / carnivorie / bactéries |\n| `fa_18_1n7_pct` | 18:1(n-7) | Marqueur bactéries |\n| `fa_20_1n9_pct` | 20:1(n-9) | Composant des wax esters chez *Calanus* |\n| `fa_22_1n11_pct` | 22:1(n-11) | Composant des wax esters chez *Calanus* |\n| `dha_epa_ratio` | — | Ratio DHA/EPA — indicateur qualité nourriture |\n\n**Règle de lecture trophique :**\n- 16:1(n-7) élevé → régime herbivore (diatomes dominantes)\n- 18:1(n-9) élevé → régime omnivore ou carnivore\n- 20:1(n-9) + 22:1(n-11) élevés → copépode en diapause active (accumulation wax esters)",
+    "char_count": 1212
+  },
+  {
+    "doc": "colonnes_labo.md",
+    "chunk_id": "colonnes_labo_004",
+    "title": "Quelles colonnes de biomasse carbone retrouve-t-on dans les fichiers labo ?",
+    "content": "# Quelles colonnes de biomasse carbone retrouve-t-on dans les fichiers labo ?\n\nLa biomasse carbone est la variable centrale pour quantifier la contribution des copépodes au cycle du carbone.\n\n| Colonne typique | Unité | Définition |\n|-----------------|-------|------------|\n| `carbon_biomass_ugC_ind` | µgC ind⁻¹ | Carbone par individu |\n| `carbon_biomass_mgC_m3` | mgC m⁻³ | Carbone par volume d'eau — nécessite concentration |\n| `carbon_biomass_gCO2_m3` | g CO2 m⁻³ | Biomasse exprimée en équivalent CO2 volumique |\n| `carbon_content_pct_dw` | % poids sec | Carbone / poids sec |\n| `nitrogen_content_pct_dw` | % poids sec | Azote — pour ratio C:N |\n| `cn_ratio` | — | Ratio carbone:azote — indicateur condition nutritionnelle |\n\n**Conversion µgC → g CO2 :**\n```python\n# 1 mol C = 12 g C → 1 mol CO2 = 44 g CO2\n# facteur de conversion : 44/12 ≈ 3.667\ngCO2_m3 = ugC_per_ind * concentration_ind_m3 * 1e-6 * (44/12)\n```\n\n**Précaution :** la colonne `carbon_biomass_gCO2_m3` implique que la concentration (ind m⁻³) a déjà été calculée et jointe. Si elle vient d'un fichier labo seul, vérifier si c'est une valeur par individu ou par volume d'eau.",
+    "char_count": 1143
+  },
+  {
+    "doc": "colonnes_labo.md",
+    "chunk_id": "colonnes_labo_005",
+    "title": "Quelles colonnes de features lipidiques image retrouve-t-on dans LOKI (EcoTaxa 2331) ?",
+    "content": "# Quelles colonnes de features lipidiques image retrouve-t-on dans LOKI (EcoTaxa 2331) ?\n\nLe LOKI image des copépodes avec leur sac lipidique visible. Des features sont calculées depuis l'image pour estimer la condition lipidique sans analyse biochimique.\n\n**Colonnes LOKI spécifiques (observées dans les exports EcoTaxa 2331) :**\n\n| Colonne | Définition | Unité |\n|---------|------------|-------|\n| `object_mean` / `fre_mean_grey` | Gris moyen de l'objet — proxy opacité | 0–255 |\n| `fre_area` | Surface totale de l'objet | pixel² |\n| `fre_area_exc` | Surface excluant les trous (prosome compact) | pixel² |\n| `fre_feret` | Diamètre de Feret — longueur maximale — proxy longueur prosome | pixel |\n| `fre_major` | Grand axe ellipse — proxy longueur corps | pixel |\n| `fre_minor` | Petit axe ellipse — proxy largeur | pixel |\n| `fre_esd` | Diamètre équivalent sphérique | pixel |\n\n**Variables dérivées lipidiques calculées depuis les features LOKI :**\n\n| Variable dérivée | Calcul | Signification |\n|-----------------|--------|---------------|\n| `lipid_sac_area_px` | Détection zone claire interne (sac lipidique) | pixel² |\n| `prosome_area_px` | Surface du prosome = `fre_area_exc` | pixel² |\n| `lipid_fullness` | `lipid_sac_area_px / prosome_area_px` | 0–1, proxy condition lipidique |\n| `prosome_length_mm` | `fre_feret * acq_pixel` | mm |\n| `esd_mm` | `fre_esd * acq_pixel` | mm |\n\n**Interprétation lipid fullness :**\n- > 0.5 → individu en bonne condition, probablement en diapause ou pré-diapause\n- 0.2–0.5 → condition intermédiaire\n- < 0.2 → individu maigre, post-diapause ou environnement pauvre\n\n⚠️ `lipid_fullness` est un proxy non-invasif. La corrélation avec les wax esters biochimiques n'est pas parfaite — toujours indiquer la méthode dans le livrable.",
+    "char_count": 1764
+  },
+  {
+    "doc": "colonnes_labo.md",
+    "chunk_id": "colonnes_labo_006",
+    "title": "Comment calculer la concentration en copépodes (ind m⁻³) depuis EcoTaxa + EcoPart ?",
+    "content": "# Comment calculer la concentration en copépodes (ind m⁻³) depuis EcoTaxa + EcoPart ?\n\nLa concentration est une variable **dérivée** — elle n'existe dans aucune source brute. Elle nécessite la jointure EcoTaxa + EcoPart.\n\n**Formule :**\n```python\n# Pour un bin de profondeur\nconcentration_ind_m3 = (n_objects_taxon / sampled_volume_L) * 1000\n# Facteur 1000 : conversion L → m³\n```\n\n**Variables requises :**\n- `n_objects_taxon` — nombre d'objets annotés avec le taxon cible dans le bin (EcoTaxa)\n- `sampled_volume_L` — `Sampled volume [L]` du bin EcoPart correspondant (EcoPart)\n- Jointure validée : `obj_orig_id` → `profile_id` = `Profile` + `object_depth` ≈ `Depth [m]`\n\n**Colonnes créées après calcul :**\n\n| Colonne créée | Unité | Définition |\n|---------------|-------|------------|\n| `concentration_ind_m3` | ind m⁻³ | Concentration volumique du taxon |\n| `concentration_ind_m2` | ind m⁻² | Concentration intégrée sur la colonne d'eau |\n| `biomass_mgC_m3` | mgC m⁻³ | Biomasse carbone volumique (si carbone individuel connu) |\n| `biomass_gCO2_m3` | g CO2 m⁻³ | Biomasse en équivalent CO2 volumique |",
+    "char_count": 1102
+  },
+  {
+    "doc": "colonnes_labo.md",
+    "chunk_id": "colonnes_labo_007",
+    "title": "Quelles sont les précautions pour les fichiers labo uploadés par l'utilisateur ?",
+    "content": "# Quelles sont les précautions pour les fichiers labo uploadés par l'utilisateur ?\n\nLes fichiers labo ont une structure inconnue avant inspection. Règles à appliquer systématiquement :\n\n| Situation | Règle |\n|-----------|-------|\n| Structure inconnue | Toujours appeler `inspect_file` avant tout traitement |\n| Unités non indiquées | Demander confirmation à l'utilisateur avant calcul |\n| Colonnes lipides en µg/ind vs mg/ind | Vérifier l'ordre de grandeur — µg pour petites espèces, mg pour *C. hyperboreus* |\n| `carbon_biomass_gCO2_m3` sans concentration | La valeur est par individu ou par échantillon — clarifier avant d'interpréter |\n| Noms d'espèces non standardisés | Vérifier la correspondance avec WoRMS avant de croiser avec EcoTaxa |\n| Plusieurs réplicats | Ne pas moyenner sans vérifier l'homogénéité |\n| Valeurs manquantes dans lipides | Signaler comme lacune — ne pas imputer |\n\n*Sources : labo Maps (Université Laval) — données internes, non publiées sauf indication contraire*\n*Dernière mise à jour : mai 2026*",
+    "char_count": 1026
+  },
+  {
+    "doc": "colonnes_sources.md",
+    "chunk_id": "colonnes_sources_000",
+    "title": "colonnes_sources.md",
+    "content": "# colonnes_sources.md\n# Colonnes des sources de données — EcoTaxa / EcoPart / Amundsen\n# Basé sur exports réels : EcoTaxa projets 1165 (UVP5) et 2331 (LOKI), EcoPart projet 105\n# Format RAG — chaque section délimitée par --- est un chunk autonome",
+    "char_count": 246
+  },
+  {
+    "doc": "colonnes_sources.md",
+    "chunk_id": "colonnes_sources_001",
+    "title": "Comment les sources EcoTaxa, EcoPart et Amundsen s'articulent-elles ?",
+    "content": "# Comment les sources EcoTaxa, EcoPart et Amundsen s'articulent-elles ?\n\nTrois sources de données distinctes, complémentaires :\n\n```\nInstrument (UVP5, LOKI, ZooScan)\n        ↓\n    [EcoPart]   — particules agrégées + CTD + volume échantillonné (niveau profil/bin)\n        ↓\n    [EcoTaxa]   — classification taxonomique (niveau objet/vignette individuelle)\n\n    [Amundsen]  — CTD officielle navire (température, salinité, O2, nutrients)\n```\n\n**Règle fondamentale :**\n- EcoTaxa = objets individuels avec taxon, pas de volume échantillonné\n- EcoPart = profils agrégés avec volume, pas d'objets individuels\n- Pour calculer une concentration → jointure EcoTaxa + EcoPart obligatoire\n- Amundsen = référence physico-chimique officielle, indépendante du UVP",
+    "char_count": 748
+  },
+  {
+    "doc": "colonnes_sources.md",
+    "chunk_id": "colonnes_sources_002",
+    "title": "Quelles colonnes identifiants et position contient EcoTaxa 1165 ?",
+    "content": "# Quelles colonnes identifiants et position contient EcoTaxa 1165 ?\n\n**Source :** export EcoTaxa projet `1165` | **Confiance :** observé sur exports réels\n\n⚠️ Ce projet utilise le préfixe `obj_*` pour les métadonnées objet — différent du préfixe `object_*` du projet LOKI 2331. Ne pas homogénéiser.\n\n```\n1165 : object_id  +  obj_*  +  fre_*  +  txo_*\n2331 : object_id  +  object_*\n```\n\n| Colonne | Définition | Unité |\n|---------|------------|-------|\n| `object_id` | Identifiant interne EcoTaxa de l'objet | id |\n| `sample_id` | Identifiant d'échantillon EcoTaxa | id |\n| `obj_orig_id` | ID original instrument, ex. `ips_007_899` — **clé de jointure EcoPart** | texte |\n| `obj_objdate` | Date de l'acquisition | date |\n| `obj_objtime` | Heure de l'acquisition | time |\n| `obj_latitude` | Latitude de l'objet | degrés |\n| `obj_longitude` | Longitude de l'objet | degrés |\n| `obj_depth_min` | Profondeur minimum de l'objet | m |\n| `obj_depth_max` | Profondeur maximum de l'objet | m |\n| `txo_display_name` | Taxon affiché par EcoTaxa | texte |\n\n**Profondeur de l'objet à calculer :**\n```python\nobject_depth = (obj_depth_min + obj_depth_max) / 2\n```\nNe jamais utiliser `obj_depth_min` seul comme profondeur.",
+    "char_count": 1205
+  },
+  {
+    "doc": "colonnes_sources.md",
+    "chunk_id": "colonnes_sources_003",
+    "title": "Quelles colonnes de morphométrie fre_* contient EcoTaxa 1165 ?",
+    "content": "# Quelles colonnes de morphométrie fre_* contient EcoTaxa 1165 ?\n\n**Source :** export EcoTaxa projet `1165` | **Confiance :** observé sur exports réels\n\nColonnes de mesures de forme — unités en **pixels**, conversion en mm obligatoire.\n\n| Colonne | Définition |\n|---------|------------|\n| `fre_area` | Aire de l'objet |\n| `fre_major` | Grand axe de l'ellipse |\n| `fre_minor` | Petit axe de l'ellipse |\n| `fre_feret` | Diamètre de Feret — longueur maximale — **proxy longueur prosome** |\n| `fre_esd` | Diamètre équivalent sphérique |\n| `fre_width` | Largeur de la vignette |\n| `fre_height` | Hauteur de la vignette |\n\n**Conversion pixels → mm :**\n```python\nlongueur_mm = fre_feret * acq_pixel\n```\n`acq_pixel` dans les métadonnées du projet ou du sample.\n\n⚠️ `fre_*` = morphométrie image uniquement. Pas de poids, lipides ou biomasse.",
+    "char_count": 832
+  },
+  {
+    "doc": "colonnes_sources.md",
+    "chunk_id": "colonnes_sources_004",
+    "title": "Quelles colonnes d'annotation taxonomique contient EcoTaxa 2331 LOKI ?",
+    "content": "# Quelles colonnes d'annotation taxonomique contient EcoTaxa 2331 LOKI ?\n\n**Source :** export EcoTaxa projet `2331` | **Usage :** taxonomie et stades des copépodes | **Confiance :** observé\n\nSchéma différent du projet UVP5 — noms de colonnes distincts.\n\n| Colonne | Définition |\n|---------|------------|\n| `object_id` | Identifiant EcoTaxa |\n| `object_lat` | Latitude objet |\n| `object_lon` | Longitude objet |\n| `object_date` | Date objet |\n| `object_time` | Heure objet |\n| `object_depth_min` | Profondeur minimum |\n| `object_depth_max` | Profondeur maximum |\n| `object_annotation_status` | Statut annotation : `V` = validé, `P` = prédit |\n| `object_annotation_category` | **Taxon annoté — champ principal** |\n| `object_annotation_hierarchy` | Hiérarchie taxonomique complète |\n| `sample_id` | Identifiant échantillon |\n| `sample_profileid` | Identifiant de profil |\n| `sample_cruise` | Campagne |\n| `sample_ship` | Navire |\n| `sample_stationid` | Station |\n| `classif_auto_name` | Classification automatique proposée |\n| `classif_auto_score` | Score de confiance (0–1) |\n\n⚠️ Pas de colonnes morphométrie dans LOKI — pas de taille individuelle, poids, lipides.\n⚠️ Seul `object_annotation_status = V` (validé) est fiable pour les analyses.\n\n**Différence clé UVP5 vs LOKI :**\n- UVP5 (proj. 1165) : taxon dans `txo_display_name`\n- LOKI (proj. 2331) : taxon dans `object_annotation_category`",
+    "char_count": 1389
+  },
+  {
+    "doc": "colonnes_sources.md",
+    "chunk_id": "colonnes_sources_005",
+    "title": "Quelles colonnes de profil et CTD contient EcoPart 105 ?",
+    "content": "# Quelles colonnes de profil et CTD contient EcoPart 105 ?\n\n**Source :** export EcoPart `uvp5_sn008_ips_amundsen_2018` | **Confiance :** observé\n\nEcoPart travaille au niveau **profil + bin de profondeur**. Pas d'objets individuels.\n\n| Colonne | Définition | Unité |\n|---------|------------|-------|\n| `Profile` | Identifiant du profil UVP, ex. `ips_007` — **clé de jointure EcoTaxa** | texte |\n| `Rawfilename` | Nom du fichier source UVP | texte |\n| `yyyy-mm-dd hh:mm` | Date/heure du profil | datetime |\n| `Project` | Nom du projet EcoPart | texte |\n| `Depth [m]` | Profondeur du bin | m |\n| `Sampled volume [L]` | Volume d'eau échantillonné — **obligatoire pour concentration** | L |\n| `temperature [degc]` | Température du bin (capteur UVP) | degC |\n| `practical salinity [psu]` | Salinité pratique | psu |\n| `oxygen [umol kg-1]` | Oxygène dissous massique | µmol kg⁻¹ |\n| `oxygen [ml l-1]` | Oxygène dissous volumique | ml l⁻¹ |\n| `chloro fluo [mg chl m-3]` | Fluorescence chlorophylle | mg chl m⁻³ |\n| `nitrate [umol l-1]` | Nitrate | µmol l⁻¹ |\n| `pressure [db]` | Pression | db |\n| `LPM (...) [# l-1]` | Concentration particules par classe de taille | # l⁻¹ |\n| `LPM biovolume (...) [mm3 l-1]` | Biovolume particules par classe de taille | mm³ l⁻¹ |\n| `qc flag` | Indicateur qualité | code |\n\n⚠️ `temperature [degc]` d'EcoPart ≠ `TE90` d'Amundsen — deux capteurs distincts.",
+    "char_count": 1380
+  },
+  {
+    "doc": "colonnes_sources.md",
+    "chunk_id": "colonnes_sources_006",
+    "title": "Comment joindre EcoTaxa 1165 avec EcoPart 105 ?",
+    "content": "# Comment joindre EcoTaxa 1165 avec EcoPart 105 ?\n\nPour calculer une concentration de zooplancton (ind m⁻³), il faut joindre les deux sources.\n\n**Clés de jointure :**\n```\nEcoTaxa  obj_orig_id  →  extraire profile_id  →  EcoPart Profile\nEcoTaxa  object_depth →  matcher              →  EcoPart Depth [m]\n```\n\n**Étapes concrètes :**\n1. Extraire `profile_id` depuis `obj_orig_id` : enlever le suffixe numérique\n   ```python\n   # ex. \"ips_007_899\" → \"ips_007\"\n   profile_id = \"_\".join(obj_orig_id.split(\"_\")[:-1])\n   ```\n2. Joindre `profile_id` (EcoTaxa) = `Profile` (EcoPart)\n3. Calculer `object_depth = (obj_depth_min + obj_depth_max) / 2`\n4. Matcher au bin EcoPart le plus proche — tolérance recommandée : **±5 m**\n5. Récupérer `Sampled volume [L]` du bin matché\n\n**Colonnes créées par le script de jointure (absentes des sources brutes) :**\n\n| Colonne créée | Définition |\n|---------------|------------|\n| `profile_id` | Extrait de `obj_orig_id` |\n| `object_depth` | Midpoint `obj_depth_min` / `obj_depth_max` |\n| `ecopart_depth` | Profondeur du bin EcoPart matché |\n| `depth_delta_m` | Différence absolue de profondeur |\n| `depth_match_quality` | `within_5m_bin` / `outside_ecopart_sample_range` |",
+    "char_count": 1198
+  },
+  {
+    "doc": "colonnes_sources.md",
+    "chunk_id": "colonnes_sources_007",
+    "title": "Quelles colonnes physico-chimiques contient la CTD Amundsen ?",
+    "content": "# Quelles colonnes physico-chimiques contient la CTD Amundsen ?\n\n**Datasets Amundsen confirmés :**\n| Dataset | Contenu | Accès |\n|---------|---------|-------|\n| `ca-cioos_ccin-12713` | CTD officielle | ERDDAP direct |\n| `ca-cioos_ccin-12447` | Navigation GPS | ERDDAP direct |\n| `ca-cioos_ccin-13248` | Scientific Event Log | on-demand via formulaire |\n\n| Colonne | Définition | Unité |\n|---------|------------|-------|\n| `platform_name` | Nom du navire | texte |\n| `cruise_name` | Nom de la campagne | texte |\n| `cruise_number` | Numéro de campagne | texte/int |\n| `cast_number` | Numéro de cast CTD | int |\n| `station` | Station d'échantillonnage | texte |\n| `time` / `time (UTC)` | Heure initiale du cast | UTC |\n| `latitude` | Latitude initiale | degrees_north |\n| `longitude` | Longitude initiale | degrees_east |\n| `depth` | Profondeur | m |\n| `PRES` | Pression | decibars |\n| `TE90` | Température ITS-90 | degC |\n| `PSAL` | Salinité pratique | PSU |\n| `OXYM` | Oxygène dissous | µM |\n| `FLOR` | Fluorescence chlorophylle-a | µg/L |\n| `NTRA` | Nitrate NO3-N | mmol/m³ |\n\n**Équivalences langage naturel → colonne Amundsen :**\n```\n\"température\"           → TE90\n\"salinité\"              → PSAL\n\"oxygène\"               → OXYM\n\"fluorescence\" / \"chla\" → FLOR\n\"nitrate\"               → NTRA\n```\n\n**Jointure EcoPart → Amundsen — validée sur profil test :**\n```\nEcoPart Profile     = ips_007        →  Amundsen cast_number = 7, station = 1\nEcoPart time        = 2018-07-16 13:54:01\nAmundsen time       = 2018-07-16T13:57:04Z  (delta = 3.07 min)\nEcoPart lat/lon     = 68.3094 / -60.3926\nAmundsen lat/lon    = 68.3096 / -60.3925  (delta < 0.001°)\ndelta profondeur médian = 0.227 m / max = 0.484 m\n```\nLa liaison se fait par proximité **date/heure + lat/lon + profondeur** — pas par clé directe.\nValidée sur `ips_007` ; à généraliser aux autres profils par la même logique.",
+    "char_count": 1867
+  },
+  {
+    "doc": "colonnes_sources.md",
+    "chunk_id": "colonnes_sources_008",
+    "title": "Quels sont les pièges courants avec EcoTaxa, EcoPart et Amundsen ?",
+    "content": "# Quels sont les pièges courants avec EcoTaxa, EcoPart et Amundsen ?\n\n| Piège | Source | Règle |\n|-------|--------|-------|\n| Calculer concentration depuis EcoTaxa seul | EcoTaxa | `Sampled volume [L]` est dans EcoPart — jointure obligatoire |\n| Utiliser `obj_depth_min` comme profondeur | EcoTaxa UVP5 | Toujours utiliser le midpoint `(min + max) / 2` |\n| Chercher taxon dans `txo_display_name` sur un fichier LOKI | EcoTaxa LOKI | LOKI utilise `object_annotation_category` |\n| Faire confiance à `classif_auto_score` sans vérifier | EcoTaxa | Seul `object_annotation_status = V` est fiable |\n| Confondre température EcoPart et Amundsen | EcoPart/Amundsen | Deux capteurs distincts — ne pas mélanger |\n| Joindre EcoPart → Amundsen par clé directe | EcoPart/Amundsen | Pas de clé directe — jointure par proximité date/heure + lat/lon. Validée sur `ips_007` ↔ `cast_number=7`. À généraliser aux autres profils. |\n\n*Basé sur exports réels : EcoTaxa projets 1165 et 2331, EcoPart projet 105, Amundsen ERDDAP*\n*Jointure EcoPart↔Amundsen validée sur profil ips_007 — à généraliser*\n*Dernière mise à jour : mai 2026*",
+    "char_count": 1109
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_000",
+    "title": "copepodes_domaine.md",
+    "content": "# copepodes_domaine.md\n# Domaine scientifique — copépodes du labo Maps (Université Laval)\n# Périmètre : Arctique / Atlantique Nord / Estuaire et golfe du Saint-Laurent\n# Format RAG — chaque section délimitée par --- est un chunk autonome",
+    "char_count": 237
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_001",
+    "title": "Qu'est-ce que Calanus hyperboreus et quel est son rôle écologique ?",
+    "content": "# Qu'est-ce que Calanus hyperboreus et quel est son rôle écologique ?\n\n**Noms courants :** \"le grand copépode de l'Arctique\", \"le gros Calanus\"\n**Abréviation labo :** Chyp\n**AphiaID WoRMS :** 104467\n**Taille ♀ adulte :** 6–7 mm en Arctique, 4–5.5 mm en eaux plus tempérées\n**Ordre :** Calanoida | **Famille :** Calanidae\n\nEspèce la plus grande du genre Calanus. Contenu lipidique extrêmement élevé — réserves sous forme de wax esters. Aliment principal de la baleine noire dans l'estuaire et le golfe du Saint-Laurent. Son abondance est en chute libre depuis ~2020 dans le golfe.\n\n**Zones :** Océan Arctique central, baie de Baffin, mer du Labrador, golfe du Saint-Laurent, mer de Beaufort.\n\n**Diapause :** jusqu'à 1 an au stade CV — la plus longue du genre. Descend jusqu'à 2000–3000 m.\n\n**Groupes fonctionnels :** herbivore strict (C3–CV), producteur majeur de pelotes fécales denses.",
+    "char_count": 886
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_002",
+    "title": "Qu'est-ce que Calanus glacialis et quel est son rôle écologique ?",
+    "content": "# Qu'est-ce que Calanus glacialis et quel est son rôle écologique ?\n\n**Noms courants :** \"le copépode arctique dominant\", \"le Calanus des plateaux\"\n**Abréviation labo :** Cgla\n**AphiaID WoRMS :** 104465\n**Taille ♀ adulte :** 3.6–5.5 mm\n**Ordre :** Calanoida | **Famille :** Calanidae\n\nEspèce dominante des plateaux arctiques. Distribution pan-arctique. Espèce clé des écosystèmes de glace de mer — fortement couplée aux blooms printaniers sous la glace.\n\n**Zones :** plateaux arctiques canadiens, baie de Baffin, mer du Labrador, golfe du Saint-Laurent (zones côtières).\n\n**Diapause :** 6–8 mois au stade CV. Profondeur de diapause : 200–1000 m selon la bathymétrie.\n\n**Identification terrain (stade CV) :** prosome > 3 mm + antennes rouges — mais attention, cette règle n'est pas fiable à 100%.\n\n**⚠️ Problème d'identification critique :** La longueur du prosome seule ne discrimine pas fiablement *C. glacialis* et *C. finmarchicus* dans les zones de chevauchement (golfe du Saint-Laurent, fjords norvégiens). Les marqueurs moléculaires sont nécessaires pour confirmation. Toujours vérifier la méthode d'identification dans les métadonnées du fichier.\n\n**Groupes fonctionnels :** herbivore strict (C3–CV), producteur de pelotes fécales.",
+    "char_count": 1238
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_003",
+    "title": "Qu'est-ce que Calanus finmarchicus et quel est son rôle écologique ?",
+    "content": "# Qu'est-ce que Calanus finmarchicus et quel est son rôle écologique ?\n\n**Noms courants :** \"le copépode boréal\", \"le Calanus de l'Atlantique Nord\"\n**Abréviation labo :** Cfin\n**AphiaID WoRMS :** 104464\n**Taille ♀ adulte :** 2.5–3.5 mm\n**Ordre :** Calanoida | **Famille :** Calanidae\n\nEspèce boréale dominante de l'Atlantique Nord. Espèce clé du réseau trophique du golfe du Saint-Laurent. Biomasse en déclin depuis 2020 dans le golfe — développement particulièrement hâtif observé récemment.\n\n**Zones :** Atlantique Nord, mer du Labrador, golfe du Saint-Laurent, estuaire maritime.\n\n**Diapause :** 3–6 mois au stade CV. Moins profonde que *C. glacialis*.\n\n**⚠️ Problème d'identification critique :** Morphologiquement très similaire à *C. glacialis*. Dans les zones de chevauchement (golfe du Saint-Laurent), la longueur du prosome ne suffit pas. Marqueurs moléculaires requis pour discrimination fiable. Toujours vérifier la méthode d'identification dans les métadonnées.\n\n**Groupes fonctionnels :** herbivore, producteur de pelotes fécales.",
+    "char_count": 1043
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_004",
+    "title": "Qu'est-ce que Calanus helgolandicus ?",
+    "content": "# Qu'est-ce que Calanus helgolandicus ?\n\n**Abréviation labo :** Chel\n**AphiaID WoRMS :** 104466\n**Taille ♀ adulte :** ~2.5 mm\n**Ordre :** Calanoida | **Famille :** Calanidae\n\nEspèce d'eaux tempérées et côtières. Rare dans les zones d'intérêt principal du labo Maps. Présente surtout en Atlantique Nord-Est (mer du Nord, Manche). Peu représentée dans les données Arctique/Saint-Laurent.",
+    "char_count": 385
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_005",
+    "title": "Qu'est-ce que Metridia longa et quel est son comportement ?",
+    "content": "# Qu'est-ce que Metridia longa et quel est son comportement ?\n\n**Abréviation labo :** Mlon\n**AphiaID WoRMS :** 104520\n**Taille ♀ adulte :** ~3 mm\n**Ordre :** Calanoida\n\nEspèce omnivore à migration verticale nocturne marquée. Stades CI–CIII restent en profondeur le jour. Stades CIV–adulte migrent vers la surface la nuit pour se nourrir.\n\n**Zones :** Arctique, baie de Baffin, océan Arctique central, mer de Beaufort.\n\n**Diapause :** N'entre PAS en diapause — actif en hiver. Utilise ses réserves lipidiques pour la maturation des gonades en hivernage.\n\n**Groupes fonctionnels :** omnivore, filtreur opportuniste.\n\n**Lipides :** accumule des lipides mais moins que *Calanus*. Lipid fullness mesurable sur image UVP.",
+    "char_count": 715
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_006",
+    "title": "Qu'est-ce que Oithona similis et quel est son rôle dans le cycle du carbone ?",
+    "content": "# Qu'est-ce que Oithona similis et quel est son rôle dans le cycle du carbone ?\n\n**Abréviation labo :** Osim\n**AphiaID WoRMS :** 106485\n**Taille ♀ adulte :** ~0.6 mm\n**Ordre :** Cyclopoida ← ordre différent des autres espèces du labo\n\nPetite taille mais très abondante en Arctique et dans le Saint-Laurent. Rôle clé dans le recyclage du carbone en surface.\n\n**Zones :** cosmopolite — Arctique, Saint-Laurent, océan global.\n\n**Groupes fonctionnels :** omnivore/carnivore/détritivore. Consomme les pelotes fécales de *Calanus* → recycle le carbone en surface au lieu de le laisser sédimenter → contrecarre partiellement la pompe à carbone.\n\n**Lipides :** faible accumulation lipidique. Profil acides gras dominé par 18:1(n-9) → indicateur de régime omnivore/carnivore.\n\n**Note imagerie :** très petite taille — souvent en limite de détection UVP5. Mieux capturée au ZooScan ou FlowCam.",
+    "char_count": 883
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_007",
+    "title": "Qu'est-ce que Pseudocalanus minutus ?",
+    "content": "# Qu'est-ce que Pseudocalanus minutus ?\n\n**Abréviation labo :** Pmin\n**AphiaID WoRMS :** 104522\n**Taille ♀ adulte :** ~1 mm\n**Ordre :** Calanoida\n\nTrès abondant en Arctique. Herbivore au printemps (régime diatomes), omnivore le reste de l'année. Fort turnover lipidique — s'adapte rapidement au type de nourriture disponible.\n\n**Zones :** Arctique, Atlantique Nord, golfe du Saint-Laurent.\n\n**Groupes fonctionnels :** herbivore opportuniste / omnivore selon saison.\n\n**Lipides :** marqueurs 16:1(n-7) au printemps (diatomes) ; 18:1(n-9) en automne-hiver (omnivorie).",
+    "char_count": 566
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_008",
+    "title": "Qu'est-ce que Temora longicornis et pourquoi est-il utile au labo ?",
+    "content": "# Qu'est-ce que Temora longicornis et pourquoi est-il utile au labo ?\n\n**Abréviation labo :** Tlon [À VALIDER]\n**Ordre :** Calanoida\n\nPrésente dans le golfe du Saint-Laurent. Espèce bien documentée pour les taux de ponte (egg production rate, EPR). Herbivore.\n\n**Zones :** golfe du Saint-Laurent, Atlantique Nord-Est.\n\n**Usage labo :** référence pour mesures de taux de ponte (œufs ♀⁻¹ j⁻¹). Relation EPR–concentration nourriture bien établie.",
+    "char_count": 443
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_009",
+    "title": "Pourquoi Eurytemora affinis est-il un complexe cryptique important dans l'estuaire ?",
+    "content": "# Pourquoi Eurytemora affinis est-il un complexe cryptique important dans l'estuaire ?\n\n**Ordre :** Calanoida\n\nEspèce cryptique abondante dans l'estuaire du Saint-Laurent. Deux clades cohabitent : *Eurytemora affinis* (clade Nord-Atlantique) et *Eurytemora carolleeae*. Se ressemblent morphologiquement mais différent écologiquement (distribution spatio-temporelle, production d'œufs).\n\n**Zones :** estuaire du Saint-Laurent (eau saumâtre à salée), fjord du Saguenay.\n\n**Note identification :** marqueurs moléculaires nécessaires pour distinguer les deux espèces. Les données morphologiques seules sont insuffisantes.",
+    "char_count": 617
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_010",
+    "title": "Quels sont les stades de développement des copépodes ?",
+    "content": "# Quels sont les stades de développement des copépodes ?\n\nTous les copépodes calanides partagent la même séquence ontogénique :\n\n```\nŒuf\n └── Nauplius  N1 → N2 → N3 → N4 → N5 → N6\n      └── Copépodite  C1 → C2 → C3 → C4 → C5 (CV)\n           └── Adulte ♀ (AF) / Adulte ♂ (AM)\n```\n\n**Dans les données du labo Maps :**\n\n| Stade | Données d'imagerie | Pertinence |\n|-------|--------------------|------------|\n| N1–N6 | Rarement présents — trop petits pour UVP/ZooScan | Peu analysés |\n| C1–C3 | Présents dans ZooScan et UVP | Abondance, taille |\n| C4–C5 | Bien représentés | Lipides, condition |\n| CV | **Stade central** — accumulation lipidique maximale | Lipid fullness, diapause |\n| AF | Reproduction, ponte | Astaxanthine, EPR |\n| AM | Rare dans les échantillons | Souvent non différencié |\n\n**Abréviations dans les fichiers de données :**\n- NI–NVI = nauplii stades 1 à 6\n- CI–CV = copépodites stades 1 à 5\n- AF = adulte femelle\n- AM = adulte mâle",
+    "char_count": 947
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_011",
+    "title": "Qu'est-ce que la diapause chez les copépodes ?",
+    "content": "# Qu'est-ce que la diapause chez les copépodes ?\n\nLa diapause est une dormance hivernale en profondeur. L'individu cesse de se nourrir, ralentit son métabolisme et vit sur ses réserves lipidiques.\n\n**Déclencheur :** accumulation suffisante de lipides au stade CV → descente vers les eaux profondes.\n\n**Durées par espèce :**\n\n| Espèce | Durée diapause | Profondeur | Stade principal |\n|--------|---------------|------------|-----------------|\n| *C. hyperboreus* | jusqu'à 1 an | 2000–3000 m | CV |\n| *C. glacialis* | 6–8 mois | 200–1000 m | CV |\n| *C. finmarchicus* | 3–6 mois | 200–600 m | CV |\n| *Metridia longa* | **Pas de diapause** | — | actif en hiver |\n\n**Variable proxy de la diapause :** lipid fullness au stade CV. Un individu CV avec lipid fullness élevé (>0.5) est un candidat à la diapause ou en diapause.\n\n**Modèle Maps :** Maps et al. (2010, 2014) — contrôle de la dormance par le métabolisme lipidique chez *C. finmarchicus*.",
+    "char_count": 940
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_012",
+    "title": "Que signifient les variables de lipides chez les copépodes ?",
+    "content": "# Que signifient les variables de lipides chez les copépodes ?\n\nLes lipides sont la variable de condition corporelle centrale dans les données du labo Maps.\n\n**Variables mesurées par imagerie :**\n\n| Variable | Calcul | Signification |\n|----------|--------|---------------|\n| Lipid fullness | surface sac lipidique / surface prosome | Proxy non-invasif de la condition |\n| Opacité (mean grey) | valeur de gris moyenne de l'image | Proxy du contenu intestinal |\n\n**Variables biochimiques (analyses de laboratoire) :**\n\n| Variable | Unité | Signification |\n|----------|-------|---------------|\n| Lipides totaux | mg ind⁻¹ | Réserve énergétique totale |\n| Wax esters (WE) | % lipides | Stockage long terme — dominant chez *Calanus* en diapause |\n| Triacylglycérols (TAG) | % lipides | Stockage court terme |\n| DHA 22:6(n-3) | % lipides | Acide gras essentiel — qualité nutritive |\n| EPA 20:5(n-3) | % lipides | Acide gras essentiel |\n| 16:1(n-7) | % acides gras | Marqueur diatomées (régime herbivore) |\n| 18:1(n-9) | % acides gras | Marqueur omnivorie/carnivorie |\n\n**Astaxanthine :** pigment carotenoïde rouge visible sur image. Indicateur de fitness et de condition chez *Calanus*. Mesurable par intensité colorimétrique sur image ou par HPLC.",
+    "char_count": 1242
+  },
+  {
+    "doc": "copepodes_domaine.md",
+    "chunk_id": "copepodes_domaine_013",
+    "title": "Comment les groupes fonctionnels de copépodes participent-ils à la pompe à carbone ?",
+    "content": "# Comment les groupes fonctionnels de copépodes participent-ils à la pompe à carbone ?\n\n**Groupes fonctionnels du labo Maps :**\n\n| Groupe | Espèces | Rôle |\n|--------|---------|------|\n| Herbivores | *Calanus* spp. (C3–CV), *Pseudocalanus* (printemps) | Brouteurs de phytoplancton/diatomées |\n| Omnivores | *Metridia longa*, *Pseudocalanus* (automne-hiver) | Flexibles selon disponibilité nourriture |\n| Carnivores/détritivores | *Oithona similis* | Consomme pelotes fécales et protozoaires |\n\n**Pompe à carbone biologique — rôle des copépodes :**\n\nLes copépodes contribuent à l'export de carbone vers les profondeurs par deux mécanismes :\n\n1. **Migration verticale active** — les individus qui plongent en diapause transportent le carbone assimilé en surface vers les profondeurs (transport actif).\n2. **Pelotes fécales denses** — les *Calanus* spp. produisent des pelotes fécales lourdes qui sédimentent rapidement (pompe gravitationnelle).\n\n*Oithona similis* consomme une partie de ces pelotes en surface → recyclage partiel du carbone → rôle antagoniste à la pompe.\n\n**Pertinence pour le financement :** la quantification du lien copépodes → export de carbone est un argument central pour les demandes de subvention (voir UC-SL-11).\n\n*[À VALIDER avec doc scientifique du labo Maps]*\n*Dernière mise à jour : mai 2026*",
+    "char_count": 1320
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_000",
+    "title": "methodes_calcul.md",
+    "content": "# methodes_calcul.md\n# Méthodes de calcul utiles pour l'assistant scientifique copépodes\n# Format RAG — chaque section délimitée par --- est un chunk autonome",
+    "char_count": 158
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_001",
+    "title": "Comment calculer une concentration en ind m⁻³ depuis EcoTaxa et EcoPart ?",
+    "content": "# Comment calculer une concentration en ind m⁻³ depuis EcoTaxa et EcoPart ?\n\nLa concentration en individus par mètre cube se calcule en comptant les objets EcoTaxa correspondant au taxon ou au groupe cible, puis en divisant ce nombre par le volume échantillonné donné par EcoPart.\n\nFormule :\n```text\nvolume_m3 = Sampled volume [L] / 1000\nconcentration_ind_m3 = nombre_individus / volume_m3\n```\n\nColonnes requises :\n```text\nEcoTaxa :\n- object_id\n- obj_orig_id ou profile_id\n- txo_display_name ou object_annotation_category\n- obj_depth_min / obj_depth_max ou object_depth_min / object_depth_max\n\nEcoPart :\n- Profile\n- Depth [m]\n- Sampled volume [L]\n```\n\nUnités :\n```text\nnombre_individus : ind\nSampled volume [L] : L\nvolume_m3 : m3\nconcentration_ind_m3 : ind m-3\n```\n\nLimites :\n- EcoTaxa sert à compter les objets individuels.\n- EcoPart fournit le volume échantillonné.\n- La jointure doit se faire par `profile_id` puis par profondeur proche.\n- Si plusieurs bins EcoPart correspondent, garder `depth_delta_m` pour documenter le match.\n\nFeedback si le calcul n'est pas possible :\n- Si `Sampled volume [L]` est absent, expliquer que le comptage EcoTaxa reste un nombre brut, pas une concentration.\n- Si les objets EcoTaxa ne sont pas reliés à un `Profile` EcoPart, proposer de vérifier `obj_orig_id`, `profile_id` ou la table de liaison.\n- Si la profondeur de l'objet est hors de la plage EcoPart disponible, retourner le nombre d'objets et signaler que la concentration n'est pas fiable pour cette profondeur.\n- Si le taxon ou le groupe cible n'est pas défini, demander de préciser le groupe avant calcul.",
+    "char_count": 1602
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_002",
+    "title": "Pourquoi EcoTaxa seul ne suffit pas pour calculer une concentration ?",
+    "content": "# Pourquoi EcoTaxa seul ne suffit pas pour calculer une concentration ?\n\nEcoTaxa décrit des objets individuels et leurs annotations. Il ne fournit pas toujours le volume d'eau échantillonné nécessaire pour transformer un comptage en concentration.\n\nFormule :\n```text\nconcentration = nombre_individus / volume_echantillonne\n```\n\nColonnes requises :\n```text\nEcoTaxa :\n- object_id\n- taxon / annotation\n\nEcoPart :\n- Sampled volume [L]\n```\n\nUnités :\n```text\nnombre_individus : ind\nvolume_echantillonne : L ou m3\nconcentration : ind m-3\n```\n\nLimites :\n- EcoTaxa permet de compter des objets, mais un nombre brut n'est pas une concentration.\n- Le volume échantillonné dépend du profil, de la profondeur et de l'instrument.\n- Pour UVP, EcoPart est la source attendue pour le volume échantillonné.\n\nFeedback si le calcul n'est pas possible :\n- Si seul EcoTaxa est disponible, fournir un comptage par taxon, profil ou profondeur, mais preciser que ce n'est pas une concentration.\n- Si l'utilisateur demande une concentration sans volume, indiquer que la colonne attendue est `Sampled volume [L]` dans EcoPart.\n- Si le volume vient d'un autre profil ou d'une autre profondeur non reliée, expliquer que la jointure doit être validée avant usage.",
+    "char_count": 1233
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_003",
+    "title": "Comment calculer une biomasse en mg C m⁻² ?",
+    "content": "# Comment calculer une biomasse en mg C m⁻² ?\n\nLa biomasse integree en mg C m⁻² se calcule en deux etapes : obtenir une biomasse volumique par profondeur, puis sommer sur l'epaisseur des bins.\n\nFormule :\n```text\nbiomasse_mgC_m3 = concentration_ind_m3 * masse_carbone_mgC_ind\nbiomasse_mgC_m2 = somme(biomasse_mgC_m3 * epaisseur_bin_m)\n```\n\nColonnes requises :\n```text\n- concentration_ind_m3\n- masse_carbone_mgC_ind\n- epaisseur_bin_m\n```\n\nUnités :\n```text\nconcentration_ind_m3 : ind m-3\nmasse_carbone_mgC_ind : mg C ind-1\nepaisseur_bin_m : m\nbiomasse_mgC_m3 : mg C m-3\nbiomasse_mgC_m2 : mg C m-2\n```\n\nLimites :\n- La masse carbone individuelle doit venir d'une mesure directe ou d'une relation taille -> carbone validee.\n- La biomasse integree depend du choix des bins de profondeur.\n- La formule ne doit pas être appliquée à des taxons mélangés si la masse carbone diffère fortement entre groupes.\n\nFeedback si le calcul n'est pas possible :\n- Si `masse_carbone_mgC_ind` est absente, proposer de s'arrêter à la concentration ou au biovolume disponible.\n- Si aucune relation taille -> carbone validee n'est fournie, expliquer que la biomasse carbone serait une hypothese non documentee.\n- Si l'epaisseur des bins n'est pas connue, calculer seulement une biomasse volumique si les autres colonnes sont presentes.\n- Si les unités ne peuvent pas être converties de façon fiable, lister les unités trouvées et demander une convention de conversion.",
+    "char_count": 1441
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_004",
+    "title": "Quelles colonnes sont nécessaires pour calculer une biomasse ?",
+    "content": "# Quelles colonnes sont nécessaires pour calculer une biomasse ?\n\nPour calculer une biomasse, il faut au minimum une abondance ou concentration, une masse carbone individuelle, et une information de profondeur si l'on veut integrer sur la colonne d'eau.\n\nFormule :\n```text\nbiomasse_mgC_m3 = concentration_ind_m3 * masse_carbone_mgC_ind\nbiomasse_mgC_m2 = somme(biomasse_mgC_m3 * epaisseur_bin_m)\n```\n\nColonnes requises :\n```text\nObligatoires :\n- concentration_ind_m3\n- masse_carbone_mgC_ind\n\nPour integration verticale :\n- depth_min\n- depth_max\nou\n- Depth [m]\n- epaisseur_bin_m\n```\n\nUnités :\n```text\nconcentration_ind_m3 : ind m-3\nmasse_carbone_mgC_ind : mg C ind-1\ndepth / epaisseur_bin_m : m\n```\n\nLimites :\n- EcoPart peut fournir des concentrations/biovolumes agregees, mais pas toujours une biomasse carbone par individu.\n- EcoTaxa peut fournir des mesures image, mais pas directement une masse carbone.\n- Une conversion taille -> carbone doit être documentée avant usage.\n\nFeedback si le calcul n'est pas possible :\n- Si la masse carbone individuelle est inconnue, produire une table des colonnes disponibles et indiquer la colonne manquante.\n- Si la variable disponible est un biovolume sans conversion biovolume -> carbone, proposer de rapporter le biovolume au lieu de la biomasse carbone.\n- Si la demande mélange des unités incompatibles, afficher les unités détectées et demander quelle conversion appliquer.",
+    "char_count": 1416
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_005",
+    "title": "Comment calculer le lipid fullness depuis une image ?",
+    "content": "# Comment calculer le lipid fullness depuis une image ?\n\nLe lipid fullness est un ratio entre la surface du sac lipidique et la surface du prosome. C'est un proxy de condition corporelle, pas une masse de lipides directe.\n\nFormule :\n```text\nlipid_fullness = surface_lipide / surface_prosome\n```\n\nColonnes requises :\n```text\n- surface_lipide\n- surface_prosome\n```\n\nUnités :\n```text\nsurface_lipide : pixel2 ou mm2\nsurface_prosome : pixel2 ou mm2\nlipid_fullness : ratio sans unite\n```\n\nLimites :\n- Les deux surfaces doivent venir de la meme image ou du meme individu.\n- Les surfaces doivent être dans la même unité.\n- Le lipid fullness est un proxy image ; il ne remplace pas une mesure biochimique de lipides totaux.\n\nFeedback si le calcul n'est pas possible :\n- Si `surface_lipide` est absente, expliquer que l'export ne contient pas encore la segmentation du sac lipidique.\n- Si `surface_prosome` est absente, expliquer que le ratio ne peut pas être normalisé par la taille de l'individu.\n- Si les surfaces ne correspondent pas au meme individu, demander ou chercher un identifiant commun.\n- Si l'utilisateur demande une masse de lipides sans calibration, proposer de calculer seulement un indice relatif si les surfaces existent.",
+    "char_count": 1230
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_006",
+    "title": "Quelles colonnes sont nécessaires pour calculer le lipid fullness ?",
+    "content": "# Quelles colonnes sont nécessaires pour calculer le lipid fullness ?\n\nLe calcul necessite une mesure de surface du lipide et une mesure de surface du prosome. Les colonnes exactes dependent du pipeline d'imagerie du labo.\n\nFormule :\n```text\nlipid_fullness = surface_lipide / surface_prosome\n```\n\nColonnes requises :\n```text\nObligatoires :\n- surface_lipide\n- surface_prosome\n- identifiant_individu\n\nOptionnelles :\n- species / taxon\n- stage\n- station\n- date_time\n- depth\n```\n\nUnités :\n```text\nsurface_lipide : pixel2 ou mm2\nsurface_prosome : pixel2 ou mm2\nlipid_fullness : ratio sans unite\n```\n\nLimites :\n- Les exports EcoTaxa testés ne contiennent pas directement `surface_lipide` et `surface_prosome`.\n- Les colonnes peuvent venir d'un fichier labo local, pas d'EcoTaxa public.\n- Les noms réels des colonnes labo doivent être confirmés sur un fichier réel.\n\nFeedback si le calcul n'est pas possible :\n- Si les colonnes de surface ne sont pas présentes, dire que le fichier permet peut-être la taxonomie ou la morphométrie, mais pas le lipid fullness.\n- Si le fichier ne permet pas d'identifier l'individu, demander une colonne d'identifiant stable.\n- Si les surfaces sont déjà normalisées mais que leur définition est inconnue, demander la définition avant de comparer les valeurs.",
+    "char_count": 1282
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_007",
+    "title": "Comment calculer la longueur du prosome depuis fre_feret ?",
+    "content": "# Comment calculer la longueur du prosome depuis fre_feret ?\n\n`fre_feret` est une mesure morphométrique image. Pour l'interpréter comme longueur biologique, il faut convertir les pixels en millimètres avec la taille de pixel de l'acquisition.\n\nFormule :\n```text\nlongueur_mm = fre_feret * acq_pixel\n```\n\nColonnes requises :\n```text\nEcoTaxa :\n- fre_feret\n\nMétadonnées acquisition :\n- acq_pixel\n```\n\nUnités :\n```text\nfre_feret : pixel\nacq_pixel : mm pixel-1\nlongueur_mm : mm\n```\n\nLimites :\n- `fre_feret` est un proxy de longueur, pas toujours la longueur anatomique exacte du prosome.\n- L'objet doit être correctement segmenté.\n- La conversion depend de `acq_pixel`, qui peut varier selon l'instrument ou l'acquisition.\n\nFeedback si le calcul n'est pas possible :\n- Si `fre_feret` est absent, lister les autres mesures morphométriques disponibles.\n- Si `acq_pixel` est absent, garder `fre_feret` en pixels et signaler que la taille biologique en mm n'est pas calculable.\n- Si l'objet est un artefact, un detritus ou une classe non biologique, exclure l'objet du calcul et expliquer pourquoi.\n- Si l'utilisateur demande une identification espèce basée uniquement sur la longueur, rappeler que la taxonomie doit venir de l'annotation ou d'une validation experte.",
+    "char_count": 1257
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_008",
+    "title": "Pourquoi convertir fre_feret avant d'interpréter une taille biologique ?",
+    "content": "# Pourquoi convertir fre_feret avant d'interpréter une taille biologique ?\n\n`fre_feret` est mesure dans l'espace image. Sans conversion par `acq_pixel`, la valeur n'est pas une taille biologique comparable entre instruments, acquisitions ou projets.\n\nFormule :\n```text\nlongueur_mm = fre_feret * acq_pixel\n```\n\nColonnes requises :\n```text\n- fre_feret\n- acq_pixel\n- acq_instrument ou métadonnées instrument\n```\n\nUnités :\n```text\nfre_feret : pixel\nacq_pixel : mm pixel-1\nlongueur_mm : mm\n```\n\nLimites :\n- Deux images avec le même `fre_feret` peuvent correspondre à deux tailles réelles différentes si `acq_pixel` diffère.\n- Les mesures image ne corrigent pas toutes les erreurs de posture, orientation ou segmentation.\n- Pour distinguer certaines espèces proches, la taille seule peut être insuffisante.\n\nFeedback si le calcul n'est pas possible :\n- Si `acq_pixel` est manquant, autoriser seulement une comparaison interne en pixels dans le meme export, avec avertissement.\n- Si la calibration pixel n'est pas connue entre instruments, separer les resultats par instrument au lieu de les fusionner.\n- Si l'utilisateur veut une identification taxonomique fine avec `fre_feret` seul, repondre que la taille peut aider au filtrage mais ne suffit pas comme preuve taxonomique.",
+    "char_count": 1269
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_009",
+    "title": "Comment associer une variable CTD à un objet EcoTaxa ?",
+    "content": "# Comment associer une variable CTD à un objet EcoTaxa ?\n\nPour associer une variable CTD à un objet EcoTaxa, il faut relier l'objet à son profil, puis choisir la ligne CTD la plus proche en profondeur.\n\nFormule :\n```text\nprofile_id = extraire depuis obj_orig_id\nobject_depth = (obj_depth_min + obj_depth_max) / 2\nmatch = meme profile_id + profondeur CTD la plus proche\ndepth_delta_m = abs(object_depth - ctd_depth)\n```\n\nColonnes requises :\n```text\nEcoTaxa :\n- obj_orig_id\n- obj_depth_min\n- obj_depth_max\n\nEcoPart :\n- Profile\n- Depth [m]\n- temperature [degc]\n- practical salinity [psu]\n- oxygen [umol kg-1] ou oxygen [ml l-1]\n- chloro fluo [mg chl m-3]\n- nitrate [umol l-1]\n\nAmundsen optionnel :\n- cast_number\n- station\n- time\n- latitude / longitude\n- depth\n- TE90 / PSAL / OXYM / FLOR / NTRA\n```\n\nUnités :\n```text\ndepth_delta_m : m\ntemperature : degC\nsalinity : PSU/psu\noxygen : selon source\nfluorescence : selon source\nnitrate : selon source\n```\n\nLimites :\n- EcoPart est la source la plus directe pour associer CTD/particules aux objets UVP.\n- Amundsen est la CTD officielle ; elle se joint par proximite date/heure + lat/lon + profondeur.\n- Il faut conserver `depth_delta_m` pour documenter la qualite de la jointure.\n\nFeedback si le calcul n'est pas possible :\n- Si `profile_id` ne peut pas être extrait ou associé, proposer une vérification par date/heure, station et position.\n- Si aucune profondeur n'est disponible, expliquer que la CTD ne peut pas être associée à l'échelle individuelle.\n- Si le delta de profondeur est trop grand pour l'analyse demandee, retourner le meilleur match avec `depth_delta_m` et signaler la faible fiabilite.\n- Si la source CTD n'est pas citee, demander de choisir entre EcoPart et Amundsen officiel.",
+    "char_count": 1737
+  },
+  {
+    "doc": "methodes_calcul.md",
+    "chunk_id": "methodes_calcul_010",
+    "title": "Comment répondre quand un calcul scientifique n'est pas fiable ?",
+    "content": "# Comment répondre quand un calcul scientifique n'est pas fiable ?\n\nL'assistant doit éviter d'inventer un résultat. Quand les données sont incomplètes, il doit expliquer ce qui manque et proposer le niveau d'analyse encore possible.\n\nFormule :\n```text\nniveau_reponse = calcul_fiable\n              ou calcul_exploratoire_avec_avertissement\n              ou feedback_colonnes_manquantes\n```\n\nColonnes requises :\n```text\nPour chaque calcul :\n- variables sources\n- unités\n- identifiants de jointure\n- methode validee\n- source des données\n```\n\nUnités :\n```text\nLes unités doivent être explicites ou convertibles.\n```\n\nLimites :\n- Une réponse partielle doit expliquer ce qui manque.\n- Un graphique exploratoire peut être produit si ses limites sont explicites.\n- Une hypothèse scientifique doit être séparée d'un résultat calculé.\n\nFeedback si le calcul n'est pas possible :\n- Si les colonnes requises sont absentes, lister les colonnes manquantes et les colonnes disponibles proches.\n- Si les unités sont inconnues ou incompatibles, demander la définition ou proposer une inspection du dictionnaire de données.\n- Si la jointure entre sources n'est pas validee, produire d'abord un rapport de jointure avec deltas temps/position/profondeur.\n- Si le calcul demande une relation biologique non fournie, signaler que la relation doit venir de la litterature, du labo ou d'une specification.\n- Si l'utilisateur demande une conclusion taxonomique ou physiologique non supportée, reformuler en analyse exploratoire ou en vérification de données.",
+    "char_count": 1533
+  },
+  {
+    "doc": "sources_en_ligne.md",
+    "chunk_id": "sources_en_ligne_000",
+    "title": "sources_en_ligne.md",
+    "content": "# sources_en_ligne.md",
+    "char_count": 21
+  },
+  {
+    "doc": "sources_en_ligne.md",
+    "chunk_id": "sources_en_ligne_001",
+    "title": "Quelle source utiliser pour quelle question ?",
+    "content": "# Quelle source utiliser pour quelle question ?\n\n| Question du chercheur | Source à utiliser |\n|---|---|\n| \"Je veux les annotations taxonomiques de ma campagne\" | EcoTaxa |\n| \"Je veux les profils UVP avec CTD et volume échantillonné\" | EcoPart |\n| \"Je veux la CTD officielle du navire Amundsen\" | Amundsen ERDDAP |\n| \"Je veux mes données de comptage filet ou lipides\" | Données labo (fichier local) |\n| \"Est-ce que cette espèce a été observée dans cette zone par d'autres groupes ?\" | OBIS |\n| \"Quelles espèces sont attendues dans cette zone mais absentes de mes données ?\" | OBIS |\n| \"Qu'est-ce que mes données ne couvrent pas par rapport à ce qui existe mondialement ?\" | OBIS |\n| \"Je veux la température / glace de mer / salinité pour contextualiser\" | CMEMS |\n\n**Règle générale :**\n\n- Données du labo → EcoTaxa, EcoPart, Amundsen, fichiers locaux\n- Contexte mondial pour analyse de lacunes → OBIS\n- Comparaison taxonomique (espèces attendues vs observées) → OBIS + corpus RAG copépodes\n- Contexte environnemental → CMEMS",
+    "char_count": 1024
+  },
+  {
+    "doc": "sources_en_ligne.md",
+    "chunk_id": "sources_en_ligne_002",
+    "title": "Comment accéder à EcoTaxa ?",
+    "content": "# Comment accéder à EcoTaxa ?\n\n**Ce que ça contient :** annotations taxonomiques, morphométrie image, stades — au niveau objet individuel.\n\n**Accès :** compte requis — credentials dans `.env` (ne jamais committer).\n\n**Limite :** pas de poids, lipides ou biomasse dans les exports TSV.",
+    "char_count": 284
+  },
+  {
+    "doc": "sources_en_ligne.md",
+    "chunk_id": "sources_en_ligne_003",
+    "title": "Comment accéder à EcoPart ?",
+    "content": "# Comment accéder à EcoPart ?\n\n**Ce que ça contient :** profils UVP agrégés par bin de profondeur — CTD, volume échantillonné, particules. Indispensable pour calculer des concentrations.\n\n**Accès :** compte requis — mêmes credentials que EcoTaxa.\n\n**Dataset labo Maps :** `105` — uvp5_sn008_ips_amundsen_2018, lié au projet EcoTaxa `1165`.\n\n**Limite :** ne décrit pas les objets individuellement — toujours joindre avec EcoTaxa.",
+    "char_count": 428
+  },
+  {
+    "doc": "sources_en_ligne.md",
+    "chunk_id": "sources_en_ligne_004",
+    "title": "Comment accéder à la CTD officielle Amundsen ?",
+    "content": "# Comment accéder à la CTD officielle Amundsen ?\n\n**Ce que ça contient :** température, salinité, oxygène, fluorescence, nitrate — mesures officielles du navire par cast CTD.\n\n**Accès :** public, aucun compte requis — via ERDDAP.\n\n**URL :** `https://erddap.amundsenscience.com/erddap/tabledap/amundsen12713`\n\n**Paramètres de requête :** fenêtre temporelle, lat/lon, variables (`TE90`, `PSAL`, `OXYM`, `FLOR`, `NTRA`).\n\n**Limite :** Event Log (`ca-cioos_ccin-13248`) non disponible via ERDDAP — formulaire requis.",
+    "char_count": 512
+  },
+  {
+    "doc": "sources_en_ligne.md",
+    "chunk_id": "sources_en_ligne_005",
+    "title": "Comment accéder aux données internes du labo Maps ?",
+    "content": "# Comment accéder aux données internes du labo Maps ?\n\n**Ce que ça contient :** comptages filet, mesures lipides, stades manuels — fichiers CSV produits par le labo.\n\n**Accès :** fichiers locaux — pas d'API. Structure à confirmer lors de la réception d'un fichier réel.\n\n**Règle :** ne pas supposer les colonnes avant d'avoir vu le fichier.",
+    "char_count": 340
+  },
+  {
+    "doc": "sources_en_ligne.md",
+    "chunk_id": "sources_en_ligne_006",
+    "title": "Comment chercher des occurrences d'espèces dans OBIS ?",
+    "content": "# Comment chercher des occurrences d'espèces dans OBIS ?\n\n**Ce que ça contient :** occurrences biologiques marines mondiales géolocalisées — qui a observé quelle espèce, où, quand.\n\n**Accès :** public, aucun compte requis.\n\n**URL API :** `https://api.obis.org/v3/occurrence`\n\n**Paramètres clés :**\n\n- `taxonid` — AphiaID WoRMS de l'espèce (ex. `104464` pour _C. hyperboreus_)\n- `geometry` — zone en WKT\n- `startdate` / `enddate` — période\n\n**Package R :** `robis`\n\n**Quand l'utiliser :**\n\n- Analyse de lacunes (UC-SL-14, AG-V1-10) : comparer la couverture locale avec ce qui existe mondialement pour une zone et une période données. Argument pour demandes de financement.\n- Absences taxonomiques (UC-SL-12 ext. 3b, AG-V1-11) : récupérer la liste des espèces documentées dans OBIS pour la zone géographique du contexte, puis comparer avec les taxons observés dans les données locales pour identifier les absences.\n\n**Procédure comparaison taxonomique (UC-SL-12 ext. 3b) :**\n1. Extraire les taxons observés dans les données locales (colonne taxon, statut validé).\n2. Interroger OBIS pour la même zone et période : `GET /v3/occurrence?geometry=<WKT>&startdate=<>`.\n3. Lister les espèces présentes dans OBIS mais absentes des données locales.\n4. Signaler explicitement les espèces pour lesquelles l'absence peut être un biais d'observation (ex : stades hivernaux, profondeurs non échantillonnées).\n\n**Limite :** biais spatial (peu de données hivernales arctiques) ; identification incertaine _C. glacialis_ vs _C. finmarchicus_ dans les données historiques OBIS — toujours signaler ce biais lors d'une comparaison taxonomique.",
+    "char_count": 1622
+  },
+  {
+    "doc": "sources_en_ligne.md",
+    "chunk_id": "sources_en_ligne_007",
+    "title": "Comment accéder aux données environnementales via CMEMS ?",
+    "content": "# Comment accéder aux données environnementales via CMEMS ?\n\n**Ce que ça contient :** température, salinité, glace de mer, courants — données grillées globales et régionales Arctique.\n\n**Accès :** compte gratuit requis sur `marine.copernicus.eu`. Un seul compte pour toute l'équipe Maps.\n\n**Package Python :** `copernicusmarine` — `pip install copernicusmarine`\n\n**Paramètres clés :** `dataset_id`, variables, fenêtre spatiale (lon/lat), fenêtre temporelle, profondeur.\n\n**Datasets utiles labo Maps :**\n\n- Arctique physique : `cmems_mod_arc_phy_anfc_6km_detided_P1D-m`\n- Glace de mer Arctique : `cmems_obs-si_arc_physic_nrt_l4-obs_P1D`\n- Global (Saint-Laurent) : `cmems_mod_glo_phy_anfc_0.083deg_P1D-m`\n\n**Format retour :** NetCDF / Zarr — lire avec `xarray`.\n\n**Limite :** compte obligatoire à configurer avant premier usage.\n\n_Dernière mise à jour : mai 2026_",
+    "char_count": 861
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_000",
+    "title": "taxonomie_worms.md",
+    "content": "# taxonomie_worms.md\n# Classification taxonomique des copépodes et API WoRMS\n# Périmètre : espèces du labo Maps, Arctique / Atlantique Nord / Saint-Laurent\n# Format RAG — chaque section délimitée par --- est un chunk autonome",
+    "char_count": 225
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_001",
+    "title": "Quelle est l'arborescence complète de la classe Copepoda dans WoRMS ?",
+    "content": "# Quelle est l'arborescence complète de la classe Copepoda dans WoRMS ?\n\n```\nBiota\n└── Animalia (Règne)\n    └── Arthropoda (Embranchement)\n        └── Crustacea (Sous-embranchement)\n            └── Multicrustacea (Superclasse)\n                └── Copepoda (Classe — AphiaID : 1080)\n                    ├── Calanoida (Ordre — AphiaID : 1081)  ← copépodes du labo Maps\n                    │   ├── Calanidae (Famille — AphiaID : 106358)\n                    │   │   └── Calanus (Genre — AphiaID : 104421)\n                    │   │       ├── Calanus finmarchicus   (104464)\n                    │   │       ├── Calanus glacialis      (104465)\n                    │   │       ├── Calanus helgolandicus  (104466)\n                    │   │       └── Calanus hyperboreus    (104467)\n                    │   ├── Metridinidae (Famille)\n                    │   │   └── Metridia (Genre — AphiaID : 104517)\n                    │   │       └── Metridia longa         (104520)\n                    │   ├── Pseudocalanidae (Famille)\n                    │   │   └── Pseudocalanus (Genre)\n                    │   │       └── Pseudocalanus minutus  (104522)\n                    │   └── Temoridae (Famille)\n                    │       └── Temora (Genre)\n                    │           └── Temora longicornis\n                    ├── Cyclopoida (Ordre — AphiaID : 1089)  ← Oithona\n                    │   └── Oithonidae (Famille)\n                    │       └── Oithona (Genre — AphiaID : 106484)\n                    │           └── Oithona similis        (106485)\n                    └── Harpacticoida (Ordre)  ← hors périmètre labo Maps\n```\n\n**Points clés de l'arborescence :**\n- Tous les *Calanus* (spp.) appartiennent à l'ordre **Calanoida**, famille **Calanidae**.\n- *Oithona similis* est dans un ordre différent (**Cyclopoida**) — distinction importante pour les analyses par groupe fonctionnel.\n- Les Harpacticoida sont des copépodes benthiques — absents des données UVP5/LOKI du labo Maps.\n- La distinction Calanoida / Cyclopoida est visible dans EcoTaxa via `object_annotation_category`.",
+    "char_count": 2072
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_002",
+    "title": "Qu'est-ce que WoRMS et pourquoi est-il la référence pour les copépodes marins ?",
+    "content": "# Qu'est-ce que WoRMS et pourquoi est-il la référence pour les copépodes marins ?\n\nWoRMS (World Register of Marine Species) est le registre de référence mondial pour la nomenclature des espèces marines. Chaque taxon y est identifié par un **AphiaID** unique et stable.\n\n**Pourquoi utiliser WoRMS plutôt qu'une autre source ?**\n- Référence officielle acceptée par EcoTaxa, EcoPart, OBIS et la majorité des bases de données océanographiques.\n- EcoTaxa utilise directement les AphiaID WoRMS pour ses annotations taxonomiques.\n- Les exports EcoTaxa incluent souvent `object_annotation_category` qui correspond à un nom WoRMS.\n\n**URL de base :** https://www.marinespecies.org\n**API REST :** https://www.marinespecies.org/rest/",
+    "char_count": 721
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_003",
+    "title": "Quelle est la hiérarchie taxonomique des copépodes dans WoRMS ?",
+    "content": "# Quelle est la hiérarchie taxonomique des copépodes dans WoRMS ?\n\nLes copépodes sont un groupe de crustacés de la classe Copepoda. Voici la hiérarchie complète :\n\n```\nRègne      : Animalia\n  Embranchement : Arthropoda\n    Sous-embranchement : Crustacea\n      Classe : Copepoda (AphiaID : 1080)\n        Ordre : Calanoida  (AphiaID : 1080 → sous-taxon)\n          Famille : Calanidae\n            Genre : Calanus\n              Espèce : Calanus hyperboreus   (AphiaID : 104464)\n              Espèce : Calanus glacialis     (AphiaID : 104466)\n              Espèce : Calanus finmarchicus  (AphiaID : 104464*)\n              Espèce : Calanus helgolandicus (AphiaID : 104467)\n          Famille : Metridinidae\n            Genre : Metridia\n              Espèce : Metridia longa        (AphiaID : 104520)\n          Famille : Pseudocalanidae\n            Genre : Pseudocalanus\n              Espèce : Pseudocalanus minutus  (AphiaID : 104522)\n          Famille : Temoridae\n            Genre : Temora\n              Espèce : Temora longicornis\n        Ordre : Cyclopoida\n          Famille : Oithonidae\n            Genre : Oithona\n              Espèce : Oithona similis       (AphiaID : 106485)\n```\n\n**Note :** Les Calanoida regroupent la majorité des copépodes d'intérêt au labo Maps. Les Cyclopoida (Oithona) appartiennent à un ordre différent.",
+    "char_count": 1328
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_004",
+    "title": "Comment accéder à la hiérarchie d'un taxon via l'API WoRMS ?",
+    "content": "# Comment accéder à la hiérarchie d'un taxon via l'API WoRMS ?\n\nL'API WoRMS est publique, sans authentification. Elle retourne du JSON ou XML.\n\n## Obtenir la classification complète d'une espèce\n\n```\nGET https://www.marinespecies.org/rest/AphiaClassificationByAphiaID/{AphiaID}\n```\n\nExemple — hiérarchie de Calanus hyperboreus (AphiaID : 104464) :\n```\nhttps://www.marinespecies.org/rest/AphiaClassificationByAphiaID/104464\n```\n\nRetourne la chaîne complète du règne jusqu'à l'espèce.\n\n## Obtenir le détail d'un taxon par AphiaID\n\n```\nGET https://www.marinespecies.org/rest/AphiaRecordByAphiaID/{AphiaID}\n```\n\nRetourne : nom accepté, rang, statut, parent AphiaID, synonymes.\n\n## Trouver l'AphiaID d'une espèce par son nom\n\n```\nGET https://www.marinespecies.org/rest/AphiaIDByName/{name}?marine_only=true\n```\n\nExemple :\n```\nhttps://www.marinespecies.org/rest/AphiaIDByName/Calanus%20hyperboreus?marine_only=true\n```",
+    "char_count": 912
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_005",
+    "title": "Comment lister tous les enfants (sous-taxons) d'un groupe dans WoRMS ?",
+    "content": "# Comment lister tous les enfants (sous-taxons) d'un groupe dans WoRMS ?\n\nPour explorer la hiérarchie vers le bas (eg. toutes les espèces du genre Calanus) :\n\n```\nGET https://www.marinespecies.org/rest/AphiaChildrenByAphiaID/{AphiaID}\n```\n\nParamètres utiles :\n- `marine_only=true` — filtre les taxons marins uniquement\n- `offset=0` — pour paginer (100 résultats par appel maximum)\n\n**Exemple — toutes les espèces du genre Calanus :**\n\nL'AphiaID du genre Calanus est 104421.\n```\nhttps://www.marinespecies.org/rest/AphiaChildrenByAphiaID/104421?marine_only=true\n```\n\n**Exemple — tous les genres de la famille Calanidae :**\n\nL'AphiaID de Calanidae est 106358.\n```\nhttps://www.marinespecies.org/rest/AphiaChildrenByAphiaID/106358\n```",
+    "char_count": 729
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_006",
+    "title": "Comment rechercher un taxon par nom partiel dans WoRMS ?",
+    "content": "# Comment rechercher un taxon par nom partiel dans WoRMS ?\n\n```\nGET https://www.marinespecies.org/rest/AphiaRecordsByName/{name}?like=true&marine_only=true\n```\n\nExemple — toutes les espèces dont le nom contient \"Calanus\" :\n```\nhttps://www.marinespecies.org/rest/AphiaRecordsByName/Calanus?like=true&marine_only=true\n```\n\nRetourne une liste de correspondances avec AphiaID, nom accepté, rang et statut (accepté, synonyme, non résolu).\n\n**Champs importants dans la réponse :**\n- `AphiaID` : identifiant unique\n- `scientificname` : nom scientifique complet\n- `status` : `accepted` | `synonym` | `unaccepted`\n- `valid_AphiaID` : si synonyme, pointe vers le nom accepté\n- `rank` : `Species` | `Genus` | `Family` | etc.\n- `phylum`, `class`, `order`, `family`, `genus` : hiérarchie abrégée",
+    "char_count": 782
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_007",
+    "title": "AphiaID des taxons clés pour les données du labo Maps",
+    "content": "# AphiaID des taxons clés pour les données du labo Maps\n\n| Taxon | Rang | AphiaID |\n|-------|------|---------|\n| Copepoda | Classe | 1080 |\n| Calanoida | Ordre | 1081 |\n| Cyclopoida | Ordre | 1089 |\n| Calanidae | Famille | 106358 |\n| Calanus | Genre | 104421 |\n| Calanus finmarchicus | Espèce | 104464 |\n| Calanus glacialis | Espèce | 104465 |\n| Calanus helgolandicus | Espèce | 104466 |\n| Calanus hyperboreus | Espèce | 104467 |\n| Metridia | Genre | 104517 |\n| Metridia longa | Espèce | 104520 |\n| Pseudocalanus minutus | Espèce | 104522 |\n| Oithona | Genre | 106484 |\n| Oithona similis | Espèce | 106485 |\n| Eurytemora affinis | Espèce | 149081 |\n\n**Note :** L'AphiaID de *Calanus finmarchicus* est à valider — il est distinct de *C. hyperboreus* (104464). Requête recommandée :\n```\nhttps://www.marinespecies.org/rest/AphiaIDByName/Calanus%20finmarchicus\n```",
+    "char_count": 860
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_008",
+    "title": "Comment naviguer la hiérarchie depuis EcoTaxa vers WoRMS ?",
+    "content": "# Comment naviguer la hiérarchie depuis EcoTaxa vers WoRMS ?\n\nDans un export EcoTaxa, la colonne `object_annotation_category` contient le nom du taxon tel qu'entré par l'annotateur. Ce nom correspond généralement (mais pas toujours) à un nom WoRMS accepté.\n\n**Workflow recommandé :**\n\n1. Extraire les noms uniques d'`object_annotation_category`.\n2. Pour chaque nom, appeler :\n   ```\n   GET /AphiaRecordsByName/{name}?like=false&marine_only=true\n   ```\n3. Vérifier que `status = \"accepted\"`.\n4. Si `status = \"synonym\"`, utiliser `valid_AphiaID` pour obtenir le nom accepté.\n5. Récupérer la hiérarchie avec `AphiaClassificationByAphiaID`.\n\n**Cas courants dans les données LOKI (EcoTaxa 2331) :**\n- `\"Calanus\"` — genre, pas espèce — hiérarchie possible mais identification incomplète.\n- `\"Copepoda\"` — classe seulement — annotation trop large pour analyse espèce.\n- `\"Calanus_CV\"` — nomenclature labo (stade+genre) — ne correspond pas directement à WoRMS ; séparer le stade du nom scientifique.",
+    "char_count": 991
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_009",
+    "title": "Quelles précautions prendre avec la taxonomie WoRMS dans les données historiques ?",
+    "content": "# Quelles précautions prendre avec la taxonomie WoRMS dans les données historiques ?\n\n**Synonymes et révisions taxonomiques :**\n- WoRMS est mis à jour régulièrement. Un nom accepté en 2015 peut être devenu synonyme en 2023.\n- Toujours vérifier `status` avant d'utiliser un nom dans une analyse comparative.\n\n**Complexes cryptiques :**\n- *Calanus glacialis* / *C. finmarchicus* : morphologiquement similaires dans les zones de chevauchement. WoRMS les distingue correctement mais les données d'annotation terrain peuvent les confondre.\n- *Eurytemora affinis* / *E. carolleeae* : deux clades récemment séparés. Les données antérieures à ~2015 peuvent regrouper les deux sous *E. affinis*.\n\n**Données OBIS et WoRMS :**\nOBIS utilise WoRMS comme taxonomie de référence. Une requête OBIS filtrée par AphiaID est plus fiable qu'une requête par nom texte.",
+    "char_count": 847
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_010",
+    "title": "Quelles sont toutes les espèces du genre Calanus reconnues dans WoRMS ?",
+    "content": "# Quelles sont toutes les espèces du genre Calanus reconnues dans WoRMS ?\n\nLe genre Calanus (AphiaID : 104421, famille Calanidae) contient plusieurs dizaines d'espèces. Espèces présentes dans les données du labo Maps ou dans les zones d'intérêt (Arctique, Atlantique Nord, golfe du Saint-Laurent) :\n\n| Espèce | AphiaID | Zones principales | Notes |\n|--------|---------|-------------------|-------|\n| *Calanus finmarchicus* | 104464 | Atlantique Nord, mer du Labrador, golfe du Saint-Laurent | Espèce boréale dominante |\n| *Calanus glacialis* | 104465 | Plateaux arctiques, baie de Baffin, golfe du Saint-Laurent | Espèce de glace, confusion avec *C. finmarchicus* |\n| *Calanus helgolandicus* | 104466 | Atlantique Nord-Est, mer du Nord | Rare dans les données du labo |\n| *Calanus hyperboreus* | 104467 | Arctique central, baie de Baffin, mer du Labrador, golfe du Saint-Laurent | Plus grande espèce, diapause la plus longue |\n| *Calanus marshallae* | — | Pacifique Nord-Est | Hors périmètre labo Maps |\n| *Calanus pacificus* | — | Pacifique Nord | Hors périmètre labo Maps |\n| *Calanus sinicus* | — | Pacifique Nord-Ouest | Hors périmètre labo Maps |\n\n**Pour obtenir la liste complète et à jour des espèces Calanus :**\n```\nGET https://www.marinespecies.org/rest/AphiaChildrenByAphiaID/104421?marine_only=true\n```\n→ Utiliser le tool `lookup_worms_taxonomy(\"Calanus\", include_children=True)` pour une réponse live.",
+    "char_count": 1413
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_011",
+    "title": "Comment interpréter les annotations EcoTaxa pour les stades de Calanus ?",
+    "content": "# Comment interpréter les annotations EcoTaxa pour les stades de Calanus ?\n\nDans les exports EcoTaxa (colonne `object_annotation_category`), les annotations de copépodes mélangent souvent le nom du taxon WoRMS et le stade de développement. Ces noms composites ne correspondent PAS directement à des entrées WoRMS.\n\n**Règle de décodage :**\n\n| Annotation EcoTaxa | Genre WoRMS | Stade | AphiaID applicable |\n|--------------------|-------------|-------|-------------------|\n| `Calanus` | Calanus | indéterminé | 104421 (genre) |\n| `Calanus_CV` | Calanus | Copépodite stade V | 104421 (genre seulement) |\n| `Calanus_CIII` | Calanus | Copépodite stade III | 104421 |\n| `Calanus_CIV` | Calanus | Copépodite stade IV | 104421 |\n| `Calanus_AF` | Calanus | Adulte femelle | 104421 |\n| `Calanus_hyperboreus` | *C. hyperboreus* | indéterminé | 104464 |\n| `Calanus_glacialis_CV` | *C. glacialis* | CV | 104466 |\n| `Copepoda` | Copepoda | indéterminé | 1080 (classe) |\n\n**Règles importantes :**\n- Un stade (CV, CIII, AF) n'est PAS un taxon WoRMS — il doit être extrait séparément.\n- Si le genre seul est annoté (sans espèce), l'AphiaID applicable est celui du genre (104421), pas d'une espèce.\n- Pour les analyses nécessitant une espèce précise, vérifier si la méthode d'identification de l'annotateur discrimine *C. glacialis* et *C. finmarchicus*.",
+    "char_count": 1336
+  },
+  {
+    "doc": "taxonomie_worms.md",
+    "chunk_id": "taxonomie_worms_012",
+    "title": "Quand utiliser le RAG et quand utiliser le tool WoRMS ?",
+    "content": "# Quand utiliser le RAG et quand utiliser le tool WoRMS ?\n\n| Situation | Source recommandée |\n|-----------|-------------------|\n| Espèces documentées : *C. hyperboreus*, *C. glacialis*, *C. finmarchicus*, *Oithona similis*, *Metridia longa*, *Pseudocalanus minutus* | RAG (`query_copepod_knowledge_base`) |\n| Hiérarchie des taxons courants du labo | RAG |\n| Décoder une annotation EcoTaxa (Calanus_CV) | RAG |\n| Espèce non documentée dans le RAG | Tool WoRMS (`lookup_worms_taxonomy`) |\n| Liste live de toutes les espèces d'un genre | Tool WoRMS avec `include_children=True` |\n| Vérifier si un nom est accepté ou synonyme | Tool WoRMS |\n| AphiaID d'une espèce rare ou nouvelle | Tool WoRMS |\n\n*Dernière mise à jour : mai 2026*",
+    "char_count": 726
+  }
+]

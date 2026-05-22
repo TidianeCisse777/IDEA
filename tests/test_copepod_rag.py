@@ -24,15 +24,17 @@ class TestChunkDocs:
         chunks = json.loads(CHUNKS_FILE.read_text())
         assert len(chunks) >= 40, f"Expected ≥40 chunks, got {len(chunks)}"
 
-    def test_all_5_docs_represented(self):
+    def test_all_docs_represented(self):
         chunks = json.loads(CHUNKS_FILE.read_text())
         docs = {c["doc"] for c in chunks}
         expected = {
             "colonnes_instruments.md",
+            "colonnes_labo.md",
             "colonnes_sources.md",
             "copepodes_domaine.md",
             "methodes_calcul.md",
             "sources_en_ligne.md",
+            "taxonomie_worms.md",
         }
         assert expected == docs, f"Missing docs: {expected - docs}"
 
