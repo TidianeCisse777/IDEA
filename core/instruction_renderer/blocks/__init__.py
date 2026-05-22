@@ -4,3 +4,6 @@ from . import output_format
 from . import cli_reference
 from . import tool_signatures
 from . import mcp_tools_block
+from . import copepod_tool_signatures
+from . import copepod_mode_plan
+from . import copepod_mode_analyse

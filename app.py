@@ -21,6 +21,7 @@ import litellm
 
 # ── Bootstrap: import generic profile so the registry is populated on startup ──
 import agents.generic_profile  # noqa: F401
+import agents.copepod_profile  # noqa: F401
 
 from core.mcp import mcp_manager
 from routers.knowledge_base_routes import router as knowledge_base_router, MAX_PAPER_SIZE
