@@ -18,7 +18,7 @@ from models import (
     PromptUpdateRequest,
     SetActivePromptRequest,
 )
-from utils.prompt_manager import get_prompt_manager
+from core.prompt_store import get_prompt_manager
 
 logger = logging.getLogger(__name__)
 

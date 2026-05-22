@@ -28,7 +28,7 @@ def query_knowledge_base(query, user_id, session_id=None):
     from pathlib import Path
     from paperqa import Docs
     from paperqa.agents.search import get_directory_index
-    from utils.pqa_multi_tenant import get_user_settings
+    from core.rag_store import get_user_settings
 
     # Apply nest_asyncio to allow nested event loops (needed when running from Open Interpreter)
     nest_asyncio.apply()
@@ -108,7 +108,7 @@ def query_knowledge_base(query, user_id, session_id=None):
             print("[PQA] Step 3: Reusing cached Docs object (in-memory cache hit).")
         else:
             # Try disk-based cache (pre-built during background index build)
-            from utils.pqa_multi_tenant import load_docs_from_disk, save_docs_to_disk
+            from core.rag_store import load_docs_from_disk, save_docs_to_disk
             disk_docs = load_docs_from_disk(user_id, revision)
 
             if disk_docs is not None:
