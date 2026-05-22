@@ -15,6 +15,12 @@ if [ -f /app/scripts/fetch_data.sh ]; then
     chmod +x /app/scripts/fetch_data.sh
 fi
 
+# Build copepod RAG index if not already built
+if [ ! -d "/app/core/copepod_rag/chroma_db" ]; then
+    echo "Building copepod RAG index..."
+    python core/copepod_rag/chunk_docs.py && python core/copepod_rag/build_index.py || echo "RAG index build failed — continuing without it"
+fi
+
 # Run database initialization (migrations and initial data)
 echo "Running database initialization..."
 bash prestart.sh

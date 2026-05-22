@@ -211,3 +211,4 @@ local_scripts/
 .codex/
 !.codex/config.toml
 !.codex/AGENTS.md
+core/copepod_rag/chroma_db/

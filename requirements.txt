@@ -2,6 +2,12 @@
 #    uv export --format=requirements-txt --no-hashes --no-emit-project --output-file requirements.txt
 affine==2.4.0
     # via rasterio
+chardet>=5.0
+    # via copepod_data (inspect_file encoding detection)
+chromadb>=0.5
+    # via copepod_rag (vector store)
+sentence-transformers>=3.0
+    # via copepod_rag (all-MiniLM-L6-v2 embeddings)
 aiobotocore==2.19.0
     # via
     #   idea

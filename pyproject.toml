@@ -229,6 +229,9 @@ dependencies = [
   "tadc @ git+https://github.com/NOAA-CO-OPS/CO-OPS-Tidal-Analysis-Datum-Calculator",
   "pymupdf",
   "numba",
+  "sentence-transformers>=3.0",
+  "chromadb>=0.5",
+  "chardet>=5.0",
 ]
 
 [tool.uv]
