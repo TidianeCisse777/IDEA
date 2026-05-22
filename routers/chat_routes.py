@@ -18,7 +18,6 @@ from pathlib import Path
 from time import time
 from typing import Any
 
-import redis
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from interpreter.core.core import OpenInterpreter
@@ -31,9 +30,10 @@ from agents.registry import get_profile, registered_types
 from core.auth import get_auth_token, get_current_user, get_db
 from core.config import settings
 from core.interpreter_store import interpreter_instances
-from core.mcp_manager import mcp_manager
+from core.mcp import mcp_manager
 from core.prompt_store import get_prompt_manager
 from core.rag_store import ensure_user_pqa_settings
+from core.session_store import session_store
 from utils.session_utils import make_session_key, parse_session_key, resolve_agent_type, session_dir_path
 from utils.transcription_prompt import transcription_prompt
 
@@ -57,9 +57,6 @@ MCP_TOOL_PLANNER_PROMPT = (
     "Only call a tool if it is likely to provide data needed to answer the user. "
     "Otherwise, do not call any tool."
 )
-
-# Redis — same connection as app.py
-redis_client = redis.Redis(host="redis", port=6379, db=0)
 
 # Rate limiter reference — populated by app.py after the limiter is created
 _limiter = None
@@ -440,8 +437,7 @@ def clear_session(session_key: str):
             interpreter.reset()
             del interpreter_instances[session_key]
 
-        redis_client.delete(f"{LAST_ACTIVE_PREFIX}{session_key}")
-        redis_client.delete(f"messages:{session_key}")
+        session_store.evict(session_key)
 
         try:
             session_dir = session_dir_path(session_key, STATIC_DIR)
@@ -481,10 +477,9 @@ async def cleanup_idle_sessions():
         logger.info(f"interpreter_instances: {list(interpreter_instances.keys())}")
         for session_key in list(interpreter_instances.keys()):
             try:
-                last_active = redis_client.get(f"{LAST_ACTIVE_PREFIX}{session_key}")
-                if last_active:
-                    logger.info(f"Last active time for session {session_key}: {last_active}")
-                    last_active_time = float(last_active.decode("utf-8"))
+                last_active_time = session_store.get_last_active(session_key)
+                if last_active_time is not None:
+                    logger.info(f"Last active time for session {session_key}: {last_active_time}")
                     if current_time - last_active_time > IDLE_TIMEOUT:
                         clear_session(session_key)
             except Exception as e:
@@ -601,17 +596,17 @@ async def chat_endpoint(
             mcp_tools=mcp_tool_descriptions,
         )
 
-        redis_client.set(f"{LAST_ACTIVE_PREFIX}{session_key}", str(time()))
+        session_store.touch(session_key)
 
-        stored_messages = redis_client.get(f"messages:{session_key}")
-        if stored_messages:
+        stored_messages = session_store.read_messages(session_key)
+        if stored_messages is not None:
             try:
-                interpreter.messages = json.loads(stored_messages)
+                interpreter.messages = stored_messages
                 logger.info(
-                    f"Restored {len(interpreter.messages)} messages from Redis for session {session_key}"
+                    f"Restored {len(interpreter.messages)} messages from store for session {session_key}"
                 )
             except Exception as e:
-                logger.warning(f"Failed to restore messages from Redis: {str(e)}")
+                logger.warning(f"Failed to restore messages from store: {str(e)}")
 
         tool_runs = []
         try:
@@ -684,9 +679,7 @@ async def chat_endpoint(
                 logger.error(f"Error in chat stream: {str(e)}")
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
             finally:
-                redis_client.set(
-                    f"messages:{session_key}", json.dumps(interpreter.messages)
-                )
+                session_store.write_messages(session_key, interpreter.messages)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -708,9 +701,9 @@ def history_endpoint(request: Request, token: str = Depends(get_auth_token)):
         agent_type = "generic"
     session_key = make_session_key(user.id, session_id, agent_type)
 
-    stored_messages = redis_client.get(f"messages:{session_key}")
-    if stored_messages:
-        return json.loads(stored_messages)
+    stored_messages = session_store.read_messages(session_key)
+    if stored_messages is not None:
+        return stored_messages
     return []
 
 
@@ -730,9 +723,6 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
         session_key = make_session_key(user.id, session_id, agent_type)
         clear_session(session_key)
         return {"status": "Chat history cleared"}
-    except redis.RedisError as e:
-        logger.error(f"Redis error in clear_endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to clear chat history")
     except Exception as e:
         logger.error(f"Unexpected error in clear_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -792,7 +782,7 @@ async def load_conversation_endpoint(
                         interpreter_msg["format"] = msg.get("message_format")
                     interpreter_messages.append(interpreter_msg)
 
-        redis_client.set(f"messages:{session_key}", json.dumps(interpreter_messages))
+        session_store.write_messages(session_key, interpreter_messages)
 
         if session_key in interpreter_instances:
             try:
@@ -803,7 +793,7 @@ async def load_conversation_endpoint(
                 logger.warning(f"Error clearing existing interpreter: {str(e)}")
 
         logger.info(
-            f"Stored {len(interpreter_messages)} messages in Redis for session {session_key}"
+            f"Stored {len(interpreter_messages)} messages in store for session {session_key}"
         )
         return {"status": "Conversation loaded", "message_count": len(interpreter_messages)}
 

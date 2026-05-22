@@ -49,7 +49,7 @@ def call_mcp_tool(tool_id: str, **kwargs) -> Dict[str, Any]:
     from models import MCPConnection
     from sqlmodel import Session, select
     from core.db import engine
-    from core.mcp_manager import mcp_manager
+    from core.mcp.manager import mcp_manager
     from core import crud
 
     # Query database for the connection by prefix matching
@@ -113,7 +113,7 @@ def list_available_tools() -> Dict[str, Any]:
     from sqlmodel import Session
     from core.db import engine
     from core import crud
-    from core.mcp_manager import mcp_manager
+    from core.mcp.manager import mcp_manager
 
     tools_info = {}
 
