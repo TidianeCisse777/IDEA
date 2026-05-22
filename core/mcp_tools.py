@@ -50,12 +50,12 @@ def call_mcp_tool(tool_id: str, **kwargs) -> Dict[str, Any]:
     from sqlmodel import Session, select
     from core.db import engine
     from core.mcp_manager import mcp_manager
-    import crud
+    from core import crud
 
     # Query database for the connection by prefix matching
     with Session(engine) as session:
         connection = None
-        
+
         # Try full UUID first (32 chars)
         if len(connection_id_prefix) == 32:
             connection_id_formatted = f"{connection_id_prefix[:8]}-{connection_id_prefix[8:12]}-{connection_id_prefix[12:16]}-{connection_id_prefix[16:20]}-{connection_id_prefix[20:]}"
@@ -64,7 +64,7 @@ def call_mcp_tool(tool_id: str, **kwargs) -> Dict[str, Any]:
                 connection = session.get(MCPConnection, connection_uuid)
             except ValueError:
                 pass
-        
+
         # Fall back to prefix matching (12 chars)
         if connection is None and len(connection_id_prefix) >= 12:
             # Get all active connections and find one that matches the prefix
@@ -73,7 +73,7 @@ def call_mcp_tool(tool_id: str, **kwargs) -> Dict[str, Any]:
                 if conn.id.hex[:len(connection_id_prefix)] == connection_id_prefix:
                     connection = conn
                     break
-        
+
         if not connection:
             return {"error": f"MCP connection not found for prefix: {connection_id_prefix}"}
 
@@ -112,7 +112,7 @@ def list_available_tools() -> Dict[str, Any]:
     """
     from sqlmodel import Session
     from core.db import engine
-    import crud
+    from core import crud
     from core.mcp_manager import mcp_manager
 
     tools_info = {}
@@ -143,7 +143,7 @@ def list_available_tools() -> Dict[str, Any]:
                     prefix = f"mcp_{connection.id.hex[:12]}_"
                     slug = re.sub(r"[^a-zA-Z0-9_]", "_", str(tool_name)).lower()
                     tool_id = f"{prefix}{slug}"
-                    
+
                     tools_info[tool_id] = {
                         "connection_id": str(connection.id),
                         "connection_name": connection.name,

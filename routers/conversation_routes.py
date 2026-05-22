@@ -5,7 +5,7 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
-from auth import get_db, get_auth_token, get_current_user
+from core.auth import get_db, get_auth_token, get_current_user
 from models import (
     User,
     Conversation,
@@ -104,10 +104,10 @@ def read_conversation(
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     # Get messages for this conversation
     messages_statement = (
         select(Message)
@@ -115,7 +115,7 @@ def read_conversation(
         .order_by(Message.created_at)
     )
     messages = session.exec(messages_statement).all()
-    
+
     return ConversationWithMessages(
         id=conversation.id,
         title=conversation.title,
@@ -130,7 +130,7 @@ def read_conversation(
 
 @router.post("/", response_model=ConversationPublic)
 def create_conversation(
-    *, 
+    *,
     session: Session = Depends(get_db),
     conversation_in: ConversationCreate,
     current_user: User = Depends(get_current_user_dependency)
@@ -140,7 +140,7 @@ def create_conversation(
     """
     # Set a default title if none provided - will be updated when first message is added
     title = conversation_in.title if conversation_in.title and conversation_in.title.strip() else "New conversation"
-    
+
     conversation = Conversation(
         title=title,
         user_id=current_user.id
@@ -163,10 +163,10 @@ def delete_conversation(
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     session.delete(conversation)
     session.commit()
     return GenericMessage(message="Conversation deleted successfully")
@@ -186,18 +186,18 @@ def add_message(
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     # Check if this is the first user message and conversation needs a better title
-    if (message_in.role.value == "user" and 
-        (not conversation.title or conversation.title.strip() in ["New conversation", ""])):
+    if (message_in.role.value == "user" and
+            (not conversation.title or conversation.title.strip() in ["New conversation", ""])):
         # Set title to first 50 characters of the user's message
         title_content = message_in.content.strip()
         new_title = title_content[:50] + ("..." if len(title_content) > 50 else "")
         conversation.title = new_title
-    
+
     # Create user message
     message = Message(
         role=message_in.role,
@@ -215,7 +215,7 @@ def add_message(
     session.add(conversation)
     session.commit()
     session.refresh(message)
-    
+
     return message
 
 
@@ -233,10 +233,10 @@ def read_conversation_messages(
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     count_statement = select(Message).where(Message.conversation_id == conversation_id)
     count = len(session.exec(count_statement).all())
 
@@ -266,16 +266,16 @@ def update_conversation(
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     if conversation_in.title is not None:
         conversation.title = conversation_in.title
-    
+
     if conversation_in.is_favorite is not None:
         conversation.is_favorite = conversation_in.is_favorite
-    
+
     session.add(conversation)
     session.commit()
     session.refresh(conversation)
@@ -295,10 +295,10 @@ def toggle_favorite_conversation(
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     conversation.is_favorite = not conversation.is_favorite
     session.add(conversation)
     session.commit()
@@ -321,10 +321,10 @@ def create_share_link(
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     # Generate a unique share token if one doesn't exist
     if not conversation.share_token:
         conversation.share_token = secrets.token_urlsafe(32)
@@ -332,7 +332,7 @@ def create_share_link(
         session.add(conversation)
         session.commit()
         session.refresh(conversation)
-    
+
     # Build share URL that respects FastAPI root_path (e.g., /idea-api)
     root_path = (request.scope.get("root_path", "") or "").rstrip("/")
     share_path = f"{root_path}/share/{conversation.share_token}" if root_path else f"/share/{conversation.share_token}"
@@ -356,15 +356,15 @@ def remove_share_link(
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+
     conversation.share_token = None
     conversation.is_shared = False
     session.add(conversation)
     session.commit()
-    
+
     return GenericMessage(message="Share link removed successfully")
 
 
@@ -383,10 +383,10 @@ def get_shared_conversation(
             Conversation.is_shared == True
         )
     ).first()
-    
+
     if not conversation:
         raise HTTPException(status_code=404, detail="Shared conversation not found")
-    
+
     # Get messages for this conversation
     messages_statement = (
         select(Message)
@@ -394,7 +394,7 @@ def get_shared_conversation(
         .order_by(Message.created_at)
     )
     messages = session.exec(messages_statement).all()
-    
+
     return ConversationShared(
         id=conversation.id,
         title=conversation.title,

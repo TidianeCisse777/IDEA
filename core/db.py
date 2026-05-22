@@ -20,7 +20,7 @@ def init_db(session: Session) -> None:
     # SQLModel.metadata.create_all(engine)
 
     from models import User, UserCreate
-    import crud
+    from core import crud
 
     user = session.exec(
         select(User).where(User.email == settings.FIRST_SUPERUSER)

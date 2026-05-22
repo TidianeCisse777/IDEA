@@ -25,10 +25,10 @@ from interpreter.core.core import OpenInterpreter
 from litellm import completion, transcription
 from sqlmodel import Session
 
-import crud
+from core import crud
 import models
 from agents.registry import get_profile, registered_types
-from auth import get_auth_token, get_current_user, get_db
+from core.auth import get_auth_token, get_current_user, get_db
 from core.config import settings
 from core.interpreter_store import interpreter_instances
 from core.mcp_manager import mcp_manager

@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File,
 from fastapi.responses import JSONResponse
 import shutil
 
-from auth import get_auth_token, get_current_user  # Import auth and user context
+from core.auth import get_auth_token, get_current_user  # Import auth and user context
 from utils.pqa_multi_tenant import (
     get_user_papers_dir,
     get_user_index_dir,
@@ -259,4 +259,4 @@ async def get_knowledge_base_stats(token: str = Depends(get_auth_token)):
 
     except Exception as e:
         logger.error(f"Error getting knowledge base stats: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to get knowledge base statistics") 
+        raise HTTPException(status_code=500, detail="Failed to get knowledge base statistics")

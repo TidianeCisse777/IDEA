@@ -23,9 +23,9 @@ import litellm
 import agents.generic_profile  # noqa: F401
 
 from core.mcp_manager import mcp_manager
-from knowledge_base_routes import router as knowledge_base_router, MAX_PAPER_SIZE
-from conversation_routes import router as conversation_router
-from mcp_routes import router as mcp_router
+from routers.knowledge_base_routes import router as knowledge_base_router, MAX_PAPER_SIZE
+from routers.conversation_routes import router as conversation_router
+from routers.mcp_routes import router as mcp_router
 
 from routers.auth_routes import router as auth_router
 from routers.user_routes import router as user_router
