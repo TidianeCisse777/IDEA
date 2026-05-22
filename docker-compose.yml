@@ -52,17 +52,33 @@ services:
       - idea_redis_data:/data
     command: redis-server --appendonly yes
 
+  langfuse-db:
+    image: postgres:16-alpine
+    container_name: idea_langfuse_db
+    environment:
+      - POSTGRES_PASSWORD=langfuse
+      - POSTGRES_DB=langfuse
+      - POSTGRES_USER=langfuse
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      retries: 5
+      start_period: 20s
+      timeout: 5s
+
   langfuse:
     image: langfuse/langfuse:latest
     container_name: idea_langfuse
     ports:
       - "3000:3000"
-    env_file:
-      - .env
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/langfuse
-      - NEXTAUTH_SECRET=${SECRET_KEY}
+      - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      - NEXTAUTH_SECRET=${LANGFUSE_SALT}
+      - SALT=${LANGFUSE_SALT}
       - NEXTAUTH_URL=http://localhost:3000
+      - TELEMETRY_ENABLED=false
       - LANGFUSE_INIT_ORG_ID=neolab
       - LANGFUSE_INIT_ORG_NAME=NeoLab
       - LANGFUSE_INIT_PROJECT_ID=copepodes
@@ -70,10 +86,11 @@ services:
       - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY}
     depends_on:
-      db:
+      langfuse-db:
         condition: service_healthy
 
 volumes:
   idea_persistent_data:
   idea_redis_data:
   app-db-data:
+  langfuse-db-data:
