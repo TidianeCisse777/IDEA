@@ -14,13 +14,15 @@ Colonne `acq_instrument` dans le header du TSV :
 - `uvp6` → UVP6
 - `zooscan` → ZooScan
 - `flowcam` → FlowCam
+- `loki` ou metadata instrument `Loki` → LOKI
 
 Si la colonne est absente, vérifier le préfixe de `acq_id` :
 - commence par `uvp5` ou `sn0` → UVP5
 - commence par `zooscan` → ZooScan
 - commence par `flowcam` → FlowCam
+- export avec familles `obj_*`, `txo_*`, `fre_*`, `sample_*`, `acq_*` et `acq_pixel_um_size` → souvent LOKI
 
-Toutes les colonnes de mesure objet (`object_*`) sont identiques entre UVP5, UVP6, ZooScan et FlowCam — seules les colonnes `sample_*` et `acq_*` diffèrent par instrument.
+Les colonnes de mesure objet (`object_*`) sont largement partagées entre UVP5, UVP6, ZooScan et FlowCam. LOKI peut utiliser un schéma différent, avec mesures image sous `fre_*` et métadonnées objet sous `obj_*`.
 
 ---
 
@@ -362,6 +364,78 @@ Nouvelle colonne `acq_*` : `acq_instrument` = `uvp6`
 
 ---
 
+# Comment reconnaître et lire un export EcoTaxa LOKI ?
+
+Mots-clés : LOKI, obj_orig_id, txo_display_name, fre_equivalent_diameter_area, acq_pixel_um_size, CTD, fluorescence, filet
+
+Un export LOKI peut ne pas suivre le schéma UVP `object_*`. Les familles de colonnes typiques sont :
+
+| Famille | Exemple de colonnes | Rôle |
+|---------|---------------------|------|
+| Objet | `obj_orig_id`, `obj_latitude`, `obj_longitude`, `obj_objdate`, `obj_objtime`, `obj_depth_min`, `obj_depth_max` | Identifiant, position, temps, profondeur |
+| Taxonomie | `txo_display_name`, `txo_name`, `txo_id`, `txo_parent_id`, `txo_aphia_id` | Taxon affiché et identifiants taxonomiques |
+| Validation | `obj_classif_qual`, `obj_classif_id`, `obj_classif_who`, `obj_classif_when` | Statut et audit de classification |
+| Morphométrie | `fre_area`, `fre_axis_major_length`, `fre_axis_minor_length`, `fre_equivalent_diameter_area`, `fre_feret_diameter_max` | Taille et surface image |
+| Image/intensité | `fre_intensity_mean`, `fre_intensity_min`, `fre_intensity_max`, `fre_image_pixel_int_mean`, `fre_image_pixel_int_stddev` | Niveaux de gris et texture simple |
+| Sample | `sample_station_name`, `sample_deployment_datetime_start`, `sample_gear`, `sample_tow_type`, `sample_cast_number` | Station, trait, cast |
+| Filet | `sample_net_mesh_size`, `sample_net_mouth_aperture`, `sample_min_net_sampling_depth`, `sample_max_net_sampling_depth` | Propriétés du prélèvement |
+| Acquisition | `acq_temperature_ctd`, `acq_salinity_ctd`, `acq_oxygen_concent`, `acq_fluo1`, `acq_raw_depth`, `acq_pixel_um_size` | CTD/capteurs et calibration |
+| Process | `process_footer_height_px`, `process_python_img_feats_library` | Paramètres de traitement image |
+
+Dans l'API EcoTaxa, ces colonnes peuvent être demandées avec des points (`obj.orig_id`, `txo.display_name`, `fre.area`). Dans un TSV aplati, elles sont souvent transformées avec des underscores (`obj_orig_id`, `txo_display_name`, `fre_area`).
+
+---
+
+# Quelles colonnes LOKI sont prioritaires pour une analyse copépodes ?
+
+Mots-clés : LOKI, colonnes clés, copépodes, taxon, profondeur, taille, ESD, Feret, CTD, pixel_um_size
+
+| Besoin analytique | Colonnes prioritaires | Note |
+|-------------------|-----------------------|------|
+| Identifiant objet | `obj_orig_id` | Clé objet/source |
+| Position | `obj_latitude`, `obj_longitude`, sinon `sample_latitude`, `sample_longitude` | Préférer objet si disponible |
+| Temps | `obj_objdate`, `obj_objtime`, sinon `sample_deployment_datetime_start` | Harmoniser en UTC si possible |
+| Profondeur objet | `obj_depth_min`, `obj_depth_max` | Utiliser le midpoint |
+| Taxon validé | `txo_display_name`, `txo_name`, `obj_classif_qual` | `obj_classif_qual` contrôle le statut |
+| Taille | `fre_equivalent_diameter_area`, `fre_axis_major_length`, `fre_axis_minor_length`, `fre_feret_diameter_max`, `fre_area` | Mesures image, à convertir si besoin |
+| Forme | `fre_eccentricity`, `fre_extent`, `fre_solidity`, `fre_perimeter`, `fre_orientation` | Descripteurs skimage courants |
+| Intensité | `fre_intensity_mean`, `fre_intensity_min`, `fre_intensity_max`, `fre_image_pixel_int_mean` | Opacité/contraste image, pas biomasse directe |
+| Calibration | `acq_pixel_um_size` | µm/pixel ; convertir en mm avec `/ 1000` |
+| Contexte CTD | `acq_temperature_ctd`, `acq_salinity_ctd`, `acq_oxygen_concent`, `acq_oxygen_saturation`, `acq_fluo1` à `acq_fluo4` | Capteurs associés à l'acquisition |
+| Filet/trait | `sample_gear`, `sample_tow_type`, `sample_net_mesh_size`, `sample_net_mouth_aperture`, `sample_min_net_sampling_depth`, `sample_max_net_sampling_depth` | Contexte du prélèvement |
+
+Conversion LOKI recommandée si les mesures morphométriques sont en pixels :
+```python
+longueur_mm = longueur_pixels * (acq_pixel_um_size / 1000)
+surface_mm2 = surface_pixels * ((acq_pixel_um_size / 1000) ** 2)
+```
+
+Règle : ne pas supposer que `fre_equivalent_diameter_area` ou `fre_axis_major_length` sont déjà en millimètres. Vérifier la documentation du projet ou la calibration.
+
+---
+
+# Comment classer les colonnes fre_* LOKI ?
+
+Mots-clés : LOKI, fre_area, fre_moments, fre_intensity, fre_bbox, fre_centroid, skimage, morphométrie
+
+Les champs libres `fre_*` LOKI peuvent être nombreux. Les regrouper par usage évite de proposer des centaines de variables indifférenciées.
+
+| Catégorie | Colonnes typiques | Usage |
+|-----------|-------------------|-------|
+| Taille/surface | `fre_area`, `fre_area_bbox`, `fre_area_convex`, `fre_area_filled`, `fre_equivalent_diameter_area`, `fre_feret_diameter_max`, `fre_axis_major_length`, `fre_axis_minor_length` | Taille de l'objet |
+| Forme/contour | `fre_eccentricity`, `fre_extent`, `fre_orientation`, `fre_perimeter`, `fre_perimeter_crofton`, `fre_solidity`, `fre_euler_number` | Forme, compacité, orientation |
+| Position image | `fre_bbox_*`, `fre_centroid_*`, `fre_centroid_weighted_*` | Localisation dans la vignette |
+| Intensité | `fre_intensity_min`, `fre_intensity_mean`, `fre_intensity_max`, `fre_image_pixel_int_mean`, `fre_image_pixel_int_variance`, `fre_image_pixel_int_stddev` | Niveaux de gris |
+| Moments | `fre_moments_*`, `fre_moments_central_*`, `fre_moments_hu_*`, `fre_moments_weighted_*`, `fre_log_moments_*` | Descripteurs mathématiques avancés |
+| Détection/doublons | `fre_frame_ms`, `fre_frame_vignette_number`, `fre_vignette_x_pos`, `fre_vignette_y_pos`, `fre_double_prediction`, `fre_double_probability`, `fre_total_doubles` | Traçabilité image et contrôle qualité |
+
+Priorité RAG :
+1. proposer d'abord taille, forme, intensité et taxon ;
+2. proposer les moments seulement pour des questions de classification automatique ou morphométrie avancée ;
+3. traiter les colonnes de doublons comme contrôle qualité plutôt que variables biologiques.
+
+---
+
 # Quelles colonnes sample_* sont spécifiques aux exports ZooScan ?
 
 Mots-clés : ZooScan, sample_tow_nb, sample_net_type, sample_tot_vol, sample_net_mesh, sample_zmax, sample_zmin, acq_scan_resolution
@@ -417,13 +491,14 @@ Mots-clés : pièges EcoTaxa, profondeur midpoint, acq_pixel, object_area_exc, a
 | Convertir pixels sans `acq_pixel` | Jamais. `acq_pixel` est obligatoire |
 | Confondre `object_area` et `object_area_exc` | Pour taille réelle : `object_area_exc` (exclut trous) |
 | Utiliser annotations `P` ou `D` | Seul `object_annotation_status = V` (validé) est fiable |
-| Chercher le taxon dans `txo_display_name` | Ce nom existe dans certains projets — le nom officiel est `object_annotation_category` |
+| Supposer un seul nom de colonne pour le taxon | Utiliser `object_annotation_category` dans les schémas `object_*`, ou `txo_display_name` / `txo_name` dans les schémas `obj_*` / `txo_*` |
 | Confondre `object_feret` (longueur max) et `object_major` (axe ellipse) | Pour longueur prosome : `object_feret` est le plus robuste |
 | `object_mean` = opacité = contenu intestinal | Valeur haute = objet sombre = plein (nourri). Valeur basse = transparent = vide |
 | Utiliser une colonne constante comme variable | La déplacer en métadonnée globale du dataset |
 | Oublier qu'un export peut déjà être filtré sur les annotations validées | Si `object_annotation_status` est constant, le documenter comme filtre d'export |
-| Traiter `object_random_value` comme donnée scientifique | C'est une valeur interne EcoTaxa, à ignorer pour l'analyse |
+| Traiter `object_random_value` ou `obj_random_value` comme donnée scientifique | C'est une valeur interne EcoTaxa, à ignorer pour l'analyse |
+| Convertir un export LOKI avec `acq_pixel` alors que seule `acq_pixel_um_size` existe | Utiliser `acq_pixel_um_size / 1000` pour obtenir des mm/pixel |
 
 *Source : Picheral M. & Mériguet Z. (2025). Description of the metadata and data issued from Zooprocess and UVPapp applications. https://doi.org/10.5281/zenodo.14704251*
-*Observations génériques ajoutées à partir de profils null/constance d'exports EcoTaxa UVP5, mai 2026*
+*Observations génériques ajoutées à partir de profils null/constance d'exports EcoTaxa UVP5 et metadata EcoTaxa LOKI, mai 2026*
 *Dernière mise à jour : mai 2026*

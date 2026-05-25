@@ -44,8 +44,10 @@ Schémas fréquents :
 | Taxonomie validée | `object_annotation_category`, `object_annotation_hierarchy`, `txo_display_name` | Nom de taxon selon le schéma exporté |
 | Morphométrie objet | `object_area`, `object_feret`, `object_esd`, `object_major`, `object_minor` | Mesures image, souvent en pixels |
 | Morphométrie alternative | `fre_area`, `fre_feret`, `fre_esd`, `fre_major`, `fre_minor` | Mesures image sous préfixe `fre_*` |
+| Morphométrie LOKI / skimage | `fre_equivalent_diameter_area`, `fre_axis_major_length`, `fre_axis_minor_length`, `fre_feret_diameter_max`, `fre_intensity_mean` | Mesures image issues de champs libres EcoTaxa |
 | Sample/profil | `sample_id`, `sample_profileid`, `sample_stationid`, `sample_cruise` | Regroupement par profil, station ou campagne |
 | Acquisition | `acq_id`, `acq_instrument`, `acq_sn`, `acq_pixel`, `acq_volimage` | Instrument, calibration, volume par image |
+| Acquisition LOKI | `acq_temperature_ctd`, `acq_salinity_ctd`, `acq_oxygen_concent`, `acq_fluo1`, `acq_raw_depth`, `acq_pixel_um_size` | CTD embarquée, capteurs et calibration image |
 | Process | `process_id`, `process_software`, `process_pixel`, `process_calibration` | Traitement image et calibration |
 
 Ne pas homogénéiser à l'aveugle : il faut d'abord détecter les colonnes présentes dans le TSV, puis appliquer les alias.
@@ -60,13 +62,13 @@ Mots-clés : object_id, obj_orig_id, sample_id, sample_profileid, latitude, long
 |---------|--------------------|------------|-------|
 | Identifiant objet | `object_id`, `objid`, `obj_orig_id` | ID de l'objet ou ID original instrument | id/texte |
 | Identifiant sample | `sample_id`, `sample_id_internal` | ID d'échantillon ou de profil | id |
-| Profil instrument | `sample_profileid`, profil extrait de `obj_orig_id` | Profil UVP ou série instrument | texte |
-| Latitude | `object_lat`, `obj_latitude`, `sample_lat` | Latitude objet ou sample | degrés décimaux |
-| Longitude | `object_lon`, `obj_longitude`, `sample_long` | Longitude objet ou sample | degrés décimaux |
-| Date | `object_date`, `obj_objdate` | Date d'acquisition ou d'échantillonnage | date |
-| Heure | `object_time`, `obj_objtime` | Heure d'acquisition ou d'échantillonnage | time |
-| Profondeur min | `object_depth_min`, `obj_depth_min` | Profondeur minimale associée à l'objet | m |
-| Profondeur max | `object_depth_max`, `obj_depth_max` | Profondeur maximale associée à l'objet | m |
+| Profil instrument | `sample_profileid`, `sample_station_name`, profil extrait de `obj_orig_id` | Profil UVP, station LOKI ou série instrument | texte |
+| Latitude | `object_lat`, `obj_latitude`, `sample_lat`, `sample_latitude` | Latitude objet ou sample | degrés décimaux |
+| Longitude | `object_lon`, `obj_longitude`, `sample_long`, `sample_longitude` | Longitude objet ou sample | degrés décimaux |
+| Date | `object_date`, `obj_objdate`, `sample_deployment_date_start`, `sample_deployment_datetime_start` | Date d'acquisition ou d'échantillonnage | date |
+| Heure | `object_time`, `obj_objtime`, `sample_deployment_time_start`, `sample_deployment_time_start_str` | Heure d'acquisition ou d'échantillonnage | time |
+| Profondeur min | `object_depth_min`, `obj_depth_min`, `sample_min_net_sampling_depth` | Profondeur minimale associée à l'objet ou au trait | m |
+| Profondeur max | `object_depth_max`, `obj_depth_max`, `sample_max_net_sampling_depth` | Profondeur maximale associée à l'objet ou au trait | m |
 
 **Profondeur de l'objet à calculer :**
 ```python
@@ -87,7 +89,7 @@ Le champ taxonomique principal dépend du schéma exporté.
 |--------------------|------------------|
 | `object_annotation_category` | Schéma EcoTaxa avec préfixe `object_*`; champ principal pour le taxon annoté |
 | `object_annotation_hierarchy` | Hiérarchie taxonomique complète associée à `object_annotation_category` |
-| `txo_display_name` | Schéma avec préfixes `obj_*` / `txo_*`; champ d'affichage du taxon |
+| `txo_display_name` | Schéma avec préfixes `obj_*` / `txo_*`; champ d'affichage du taxon, souvent principal dans les exports LOKI |
 | `classif_auto_name` | Classification automatique proposée ; ne remplace pas une annotation validée |
 | `classif_auto_score` | Score de confiance automatique ; utile pour audit, pas pour taxonomie finale |
 
@@ -112,14 +114,23 @@ Les mesures morphométriques sont des mesures d'image. Elles sont généralement
 | Grand axe | `object_major`, `fre_major` | Grand axe de l'ellipse ajustée |
 | Petit axe | `object_minor`, `fre_minor` | Petit axe de l'ellipse ajustée |
 | ESD | `object_esd`, `fre_esd` | Diamètre équivalent sphérique |
+| ESD LOKI | `fre_equivalent_diameter_area` | Diamètre équivalent calculé depuis l'aire, souvent affiché comme `ESD` |
 | Forme | `object_elongation`, `object_circ.`, `object_fractal` | Élongation, circularité, contour |
+| Forme LOKI | `fre_eccentricity`, `fre_extent`, `fre_solidity`, `fre_perimeter`, `fre_orientation` | Forme, contour et orientation |
 | Intensité | `object_mean`, `object_stddev`, `object_median`, `object_min`, `object_max` | Niveaux de gris |
+| Intensité LOKI | `fre_intensity_mean`, `fre_intensity_min`, `fre_intensity_max`, `fre_image_pixel_int_mean` | Niveaux de gris et intensité image |
 | Texture | `object_skew`, `object_kurt`, `object_histcum1`, `object_histcum2`, `object_histcum3` | Distribution des niveaux de gris |
 
 **Conversion pixels → unités physiques :**
 ```python
 longueur_mm = longueur_pixels * acq_pixel
 surface_mm2 = surface_pixels * (acq_pixel ** 2)
+```
+
+Pour certains exports LOKI, la calibration est fournie en micromètres par pixel :
+```python
+longueur_mm = longueur_pixels * (acq_pixel_um_size / 1000)
+surface_mm2 = surface_pixels * ((acq_pixel_um_size / 1000) ** 2)
 ```
 
 ⚠️ La morphométrie image n'est pas un poids, une biomasse ou une mesure lipidique directe.
@@ -139,8 +150,9 @@ Mots-clés : table clean, colonnes prioritaires, spatio-temporel, profondeur, ta
 | Taille | `object_area`, `object_area_exc`, `object_esd`, `object_feret`, `object_major`, `object_minor`, ou alias `fre_*` | Taille en pixels, conversion avec calibration |
 | Forme | `object_elongation`, `object_circ.`, `object_fractal`, `object_convarea`, `object_convperim` | Descripteurs morphologiques |
 | Intensité/texture | `object_mean`, `object_stddev`, `object_median`, `object_min`, `object_max`, `object_skew`, `object_kurt` | Niveaux de gris et texture |
-| Sample/profil | `sample_id`, `sample_profileid`, `sample_stationid`, `sample_ctdrosettefilename` | Regroupement et liaison contexte |
-| Acquisition | `acq_id`, `acq_instrument`, `acq_sn`, `acq_volimage`, `acq_pixel` | Instrument, volume par image et calibration |
+| Sample/profil | `sample_id`, `sample_profileid`, `sample_stationid`, `sample_station_name`, `sample_ctdrosettefilename` | Regroupement et liaison contexte |
+| Acquisition | `acq_id`, `acq_instrument`, `acq_sn`, `acq_volimage`, `acq_pixel`, `acq_pixel_um_size` | Instrument, volume par image et calibration |
+| CTD/capteurs embarqués | `acq_temperature_ctd`, `acq_salinity_ctd`, `acq_oxygen_concent`, `acq_fluo1`, `acq_raw_depth` | Contexte physico-chimique associé à l'acquisition |
 
 Pour une question taxonomique, identifier d'abord la colonne de taxon validé présente dans le fichier.
 Pour une question de profondeur, calculer un midpoint.
@@ -173,6 +185,36 @@ Exemples de colonnes souvent supprimables selon le profil du TSV :
 | Données personnelles | `object_annotation_person_name`, `object_annotation_person_email` | À éviter dans exports publics |
 
 Attention : une colonne constante dans un projet peut être variable dans un autre. Toujours recalculer le profil null/constance pour chaque export.
+
+---
+
+# Comment lire un export EcoTaxa LOKI avec préfixes obj_*, txo_*, fre_*, sample_* et acq_* ?
+
+Mots-clés : LOKI, EcoTaxa, obj_orig_id, txo_display_name, fre_equivalent_diameter_area, pixel_um_size, CTD embarquée, filet, station
+
+Certains projets LOKI exposent les colonnes EcoTaxa sous forme de familles `obj_*`, `txo_*`, `fre_*`, `sample_*`, `acq_*` plutôt que sous le schéma `object_*`.
+
+Colonnes clés à chercher :
+
+| Famille | Colonnes prioritaires | Rôle |
+|---------|-----------------------|------|
+| Objet | `obj_orig_id`, `obj_latitude`, `obj_longitude`, `obj_objdate`, `obj_objtime`, `obj_depth_min`, `obj_depth_max` | Identifiant, position, temps, profondeur |
+| Taxonomie | `txo_display_name`, `txo_name`, `txo_id`, `obj_classif_qual` | Taxon affiché et statut de validation |
+| Classification auto | `obj_classif_auto_id`, `obj_classif_auto_score`, `obj_classif_auto_when` | Audit/pré-tri, pas taxon final |
+| Taille | `fre_equivalent_diameter_area`, `fre_axis_major_length`, `fre_axis_minor_length`, `fre_feret_diameter_max`, `fre_area` | Taille image |
+| Forme | `fre_eccentricity`, `fre_extent`, `fre_solidity`, `fre_perimeter`, `fre_orientation` | Forme et contour |
+| Intensité | `fre_intensity_mean`, `fre_intensity_min`, `fre_intensity_max`, `fre_image_pixel_int_mean`, `fre_image_pixel_int_stddev` | Niveaux de gris |
+| Sample | `sample_station_name`, `sample_deployment_datetime_start`, `sample_gear`, `sample_tow_type`, `sample_cast_number` | Station, trait, cast |
+| Filet | `sample_net_mesh_size`, `sample_net_mouth_aperture`, `sample_min_net_sampling_depth`, `sample_max_net_sampling_depth` | Propriétés du prélèvement |
+| Acquisition | `acq_temperature_ctd`, `acq_salinity_ctd`, `acq_oxygen_concent`, `acq_fluo1`, `acq_raw_depth`, `acq_pixel_um_size` | CTD/capteurs et calibration |
+
+En syntaxe API EcoTaxa, ces mêmes champs peuvent apparaître avec des points, par exemple `obj.orig_id`, `txo.display_name`, `fre.equivalent_diameter_area`, `acq.pixel_um_size`.
+
+Règles RAG :
+- Pour le taxon, privilégier `txo_display_name` ou `txo.name` selon la colonne disponible, puis vérifier `obj_classif_qual`.
+- Pour la profondeur objet, utiliser `obj_depth_min` et `obj_depth_max` si présents ; sinon documenter explicitement la profondeur alternative (`fre_Depth min`, `acq_raw_depth`, ou profondeur de trait).
+- Pour convertir la morphométrie LOKI, utiliser `acq_pixel_um_size` si les mesures sont en pixels.
+- Pour l'environnement, les colonnes `acq_*_ctd`, `acq_oxygen_*`, `acq_fluo*` sont des capteurs/acquisitions associées ; ne pas les confondre avec une CTD externe indépendante.
 
 ---
 
