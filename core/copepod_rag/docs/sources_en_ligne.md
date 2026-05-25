@@ -1,124 +1,195 @@
 # sources_en_ligne.md
+# Sources en ligne autorisées pour l'assistant copépodes
+# Format RAG — chaque section délimitée par --- est un chunk autonome
 
 ---
 
 # Quelle source utiliser pour quelle question ?
 
+Mots-clés : sources en ligne, EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE, données labo, Mode En Ligne
+
 | Question du chercheur | Source à utiliser |
 |---|---|
 | "Je veux les annotations taxonomiques de ma campagne" | EcoTaxa |
+| "Je veux les objets individuels et la morphométrie image" | EcoTaxa |
 | "Je veux les profils UVP avec CTD et volume échantillonné" | EcoPart |
-| "Je veux la CTD officielle du navire Amundsen" | Amundsen ERDDAP |
-| "Je veux mes données de comptage filet ou lipides" | Données labo (fichier local) |
-| "Est-ce que cette espèce a été observée dans cette zone par d'autres groupes ?" | OBIS |
-| "Quelles espèces sont attendues dans cette zone mais absentes de mes données ?" | OBIS |
-| "Qu'est-ce que mes données ne couvrent pas par rapport à ce qui existe mondialement ?" | OBIS |
-| "Je veux la température / glace de mer / salinité pour contextualiser" | CMEMS |
+| "Je veux calculer une concentration à partir d'objets EcoTaxa" | EcoTaxa + EcoPart |
+| "Je veux une CTD officielle de campagne" | CTD externe, priorité Amundsen ERDDAP si disponible |
+| "Je veux mes données de comptage filet, lipides ou biomasse" | Données labo, fichier local |
+| "Je veux contextualiser avec des données régionales du golfe du Saint-Laurent" | OGSL |
+| "Je veux extraire des conditions environnementales actuelles ou futures à des coordonnées" | Bio-ORACLE |
 
 **Règle générale :**
-
-- Données du labo → EcoTaxa, EcoPart, Amundsen, fichiers locaux
-- Contexte mondial pour analyse de lacunes → OBIS
-- Comparaison taxonomique (espèces attendues vs observées) → OBIS + corpus RAG copépodes
-- Contexte environnemental → CMEMS
+- Les sources en ligne ne sont jamais appelées silencieusement.
+- Le Mode En Ligne doit être activé par source.
+- Si une source n'est pas activée, l'agent travaille avec les fichiers chargés et le RAG local.
+- Les IDs de projets ou datasets sont découverts dynamiquement ou fournis par l'utilisateur ; ils ne sont pas des constantes système.
 
 ---
 
 # Comment accéder à EcoTaxa ?
 
-**Ce que ça contient :** annotations taxonomiques, morphométrie image, stades — au niveau objet individuel.
+Mots-clés : EcoTaxa, annotations taxonomiques, objets individuels, morphométrie, validation humaine, credentials, export authentifié
 
-**Accès :** compte requis — credentials dans `.env` (ne jamais committer).
+**Ce que ça contient :** annotations taxonomiques, statut de validation, morphométrie image, métadonnées d'objet et parfois images/vignettes.
 
-**Limite :** pas de poids, lipides ou biomasse dans les exports TSV.
+**Niveau :** objet individuel.
+
+**Accès :** compte requis pour les exports complets. Credentials locaux dans `.env`, jamais commités.
+
+**Workflow recommandé :**
+1. découvrir les projets accessibles à l'utilisateur ;
+2. sélectionner le projet demandé ;
+3. lancer un export authentifié ;
+4. attendre le job async ;
+5. télécharger le ZIP/TSV ;
+6. inspecter colonnes, validation, profondeur, taxon, morphométrie ;
+7. travailler sur une copie ou table dérivée.
+
+**Limites :**
+- EcoTaxa ne fournit pas nécessairement le volume échantillonné ;
+- poids, lipides et biomasse ne sont pas garantis dans les exports ;
+- les annotations automatiques ne remplacent pas une validation humaine.
 
 ---
 
 # Comment accéder à EcoPart ?
 
-**Ce que ça contient :** profils UVP agrégés par bin de profondeur — CTD, volume échantillonné, particules. Indispensable pour calculer des concentrations.
+Mots-clés : EcoPart, profils UVP, bins de profondeur, volume échantillonné, particules, CTD, concentration, jointure
 
-**Accès :** compte requis — mêmes credentials que EcoTaxa.
+**Ce que ça contient :** profils UVP agrégés par bin de profondeur, variables environnementales associées, volume échantillonné, particules et biovolume par classes de taille.
 
-**Dataset labo Maps :** `105` — uvp5_sn008_ips_amundsen_2018, lié au projet EcoTaxa `1165`.
+**Niveau :** profil + profondeur, pas objet individuel.
 
-**Limite :** ne décrit pas les objets individuellement — toujours joindre avec EcoTaxa.
+**Accès :** compte requis selon les datasets ; souvent mêmes identifiants que les services EcoTaxa/EcoPart.
 
----
+**Usage principal :**
+- récupérer `Sampled volume [L]` ;
+- rapprocher objets EcoTaxa et volume par `profile_id` + profondeur ;
+- calculer des concentrations quand la jointure est valide.
 
-# Comment accéder à la CTD officielle Amundsen ?
-
-**Ce que ça contient :** température, salinité, oxygène, fluorescence, nitrate — mesures officielles du navire par cast CTD.
-
-**Accès :** public, aucun compte requis — via ERDDAP.
-
-**URL :** `https://erddap.amundsenscience.com/erddap/tabledap/amundsen12713`
-
-**Paramètres de requête :** fenêtre temporelle, lat/lon, variables (`TE90`, `PSAL`, `OXYM`, `FLOR`, `NTRA`).
-
-**Limite :** Event Log (`ca-cioos_ccin-13248`) non disponible via ERDDAP — formulaire requis.
+**Limite :** EcoPart ne décrit pas les taxons individuels. Il doit être joint avec EcoTaxa pour les analyses taxonomiques objet-level.
 
 ---
 
-# Comment accéder aux données internes du labo Maps ?
+# Comment accéder à une CTD externe ?
 
-**Ce que ça contient :** comptages filet, mesures lipides, stades manuels — fichiers CSV produits par le labo.
+Mots-clés : CTD externe, Amundsen ERDDAP, température, salinité, oxygène, fluorescence, nitrate, cast, station, profondeur
 
-**Accès :** fichiers locaux — pas d'API. Structure à confirmer lors de la réception d'un fichier réel.
+**Ce que ça contient :** température, salinité, oxygène, fluorescence, nitrate et autres variables physico-chimiques mesurées indépendamment.
 
-**Règle :** ne pas supposer les colonnes avant d'avoir vu le fichier.
+**Accès :** dépend du fournisseur. Certains datasets sont publics via ERDDAP ; d'autres nécessitent formulaire ou compte.
+
+**Paramètres typiques :**
+- fenêtre temporelle ;
+- latitude/longitude ;
+- profondeur ou pression ;
+- variables (`temperature`, `salinity`, `oxygen`, `fluorescence`, `nitrate` ou alias).
+
+**Règle de jointure :** sauf clé explicite, joindre par proximité date/heure + latitude/longitude + profondeur.
+
+**Limite :** une CTD externe est une source distincte des capteurs associés à l'UVP. Ne pas mélanger les provenances sans métadonnées.
 
 ---
 
-# Comment chercher des occurrences d'espèces dans OBIS ?
+# Comment utiliser les données internes du labo ?
 
-**Ce que ça contient :** occurrences biologiques marines mondiales géolocalisées — qui a observé quelle espèce, où, quand.
+Mots-clés : données labo, fichier local, CSV, TSV, Excel, lipides, biomasse, comptage filet, structure inconnue
 
-**Accès :** public, aucun compte requis.
+**Ce que ça contient :** comptages filet, mesures lipidiques, biomasse carbone, stades manuels ou autres mesures produites par le labo.
 
-**URL API :** `https://api.obis.org/v3/occurrence`
+**Accès :** fichier local chargé par l'utilisateur.
 
-**Paramètres clés :**
+**Règle :** ne jamais supposer les colonnes avant inspection.
 
-- `taxonid` — AphiaID WoRMS de l'espèce (ex. `104464` pour _C. hyperboreus_)
-- `geometry` — zone en WKT
-- `startdate` / `enddate` — période
+Workflow :
+1. inspecter le fichier ;
+2. détecter séparateur, encodage, feuilles Excel si besoin ;
+3. inférer les rôles sémantiques des colonnes ;
+4. demander clarification si un rôle critique est ambigu ;
+5. créer une table de travail dérivée pour nettoyage ou jointure.
 
-**Package R :** `robis`
+---
+
+# Comment utiliser OGSL ?
+
+Mots-clés : OGSL, golfe du Saint-Laurent, source régionale, profils environnementaux, données complémentaires
+
+**Ce que ça contient :** données et métadonnées régionales utiles pour contextualiser des observations dans le golfe du Saint-Laurent, selon les jeux disponibles.
+
+**Accès :** à implémenter dans les tools ; consulter les métadonnées/source avant d'affirmer la disponibilité d'un jeu de données.
 
 **Quand l'utiliser :**
+- contexte régional ;
+- profils ou séries environnementales complémentaires ;
+- comparaison avec une couverture locale quand les données existent.
 
-- Analyse de lacunes (UC-SL-14, AG-V1-10) : comparer la couverture locale avec ce qui existe mondialement pour une zone et une période données. Argument pour demandes de financement.
-- Absences taxonomiques (UC-SL-12 ext. 3b, AG-V1-11) : récupérer la liste des espèces documentées dans OBIS pour la zone géographique du contexte, puis comparer avec les taxons observés dans les données locales pour identifier les absences.
+**Métadonnées obligatoires si utilisé :**
+- source OGSL ;
+- jeu de données ou profil ;
+- zone/station ;
+- période ;
+- variables ;
+- méthode d'extraction ;
+- limites de couverture connues.
 
-**Procédure comparaison taxonomique (UC-SL-12 ext. 3b) :**
-1. Extraire les taxons observés dans les données locales (colonne taxon, statut validé).
-2. Interroger OBIS pour la même zone et période : `GET /v3/occurrence?geometry=<WKT>&startdate=<>`.
-3. Lister les espèces présentes dans OBIS mais absentes des données locales.
-4. Signaler explicitement les espèces pour lesquelles l'absence peut être un biais d'observation (ex : stades hivernaux, profondeurs non échantillonnées).
-
-**Limite :** biais spatial (peu de données hivernales arctiques) ; identification incertaine _C. glacialis_ vs _C. finmarchicus_ dans les données historiques OBIS — toujours signaler ce biais lors d'une comparaison taxonomique.
+**Limite :** OGSL est complémentaire. Si une CTD officielle de campagne couvre le besoin, elle est prioritaire.
 
 ---
 
-# Comment accéder aux données environnementales via CMEMS ?
+# Comment utiliser Bio-ORACLE ?
 
-**Ce que ça contient :** température, salinité, glace de mer, courants — données grillées globales et régionales Arctique.
+Mots-clés : Bio-ORACLE, environnement, conditions futures, scénario, modèle, coordonnées, raster, extraction
 
-**Accès :** compte gratuit requis sur `marine.copernicus.eu`. Un seul compte pour toute l'équipe Maps.
+**Ce que ça contient :** variables environnementales actuelles ou futures, souvent sous forme de grilles/raster.
 
-**Package Python :** `copernicusmarine` — `pip install copernicusmarine`
+**Usage :**
+- extraire des conditions environnementales à des coordonnées ou dans une zone ;
+- contextualiser des observations locales avec des variables environnementales ;
+- préparer des graphiques couplés zooplancton/environnement.
 
-**Paramètres clés :** `dataset_id`, variables, fenêtre spatiale (lon/lat), fenêtre temporelle, profondeur.
+**Bio-ORACLE ne sert pas à :**
+- valider un taxon ;
+- confirmer une observation de copépode ;
+- interpréter biologiquement un résultat.
 
-**Datasets utiles labo Maps :**
+**Métadonnées obligatoires si utilisé :**
+- variable environnementale ;
+- scénario ou modèle si disponible ;
+- période ;
+- coordonnées ou zone ;
+- méthode d'extraction/interpolation ;
+- source Bio-ORACLE.
 
-- Arctique physique : `cmems_mod_arc_phy_anfc_6km_detided_P1D-m`
-- Glace de mer Arctique : `cmems_obs-si_arc_physic_nrt_l4-obs_P1D`
-- Global (Saint-Laurent) : `cmems_mod_glo_phy_anfc_0.083deg_P1D-m`
+---
 
-**Format retour :** NetCDF / Zarr — lire avec `xarray`.
+# Quelles sources sont exclues du prompt cible ?
 
-**Limite :** compte obligatoire à configurer avant premier usage.
+Mots-clés : sources exclues, OBIS, CMEMS, dette documentaire, prompt cible, source non autorisée
+
+Le prompt cible autorise EcoTaxa, EcoPart, CTD externe, OGSL, Bio-ORACLE et fichiers labo.
+
+OBIS et CMEMS peuvent apparaître dans d'anciennes specs, notes ou scénarios historiques, mais ne sont pas des sources autorisées dans le prompt cible actuel.
+
+Règle :
+- ne pas implémenter de requête OBIS/CMEMS sans décision explicite de réintégration ;
+- si un ancien scénario mentionne OBIS/CMEMS, le traiter comme dette documentaire à réviser ;
+- proposer OGSL, Bio-ORACLE, CTD externe ou RAG local selon la question.
+
+---
+
+# Quels sont les pièges courants avec les sources en ligne ?
+
+Mots-clés : pièges sources, credentials, Mode En Ligne, hardcode, source activée, données brutes, métadonnées
+
+| Piège | Règle |
+|---|---|
+| Appeler une source sans consentement | Exiger Mode En Ligne activé pour cette source |
+| Hardcoder un project_id | Découvrir dynamiquement ou utiliser l'ID fourni par l'utilisateur |
+| Exposer un credential | Ne jamais afficher token, mot de passe, cookie ou `.env` |
+| Écraser les données brutes | Toujours créer une table dérivée |
+| Mélanger sources sans méthode | Documenter jointure, filtres, unités et limites |
+| Confondre absence de donnée et absence biologique | Présenter comme limite technique, pas conclusion scientifique |
+| Répondre avec une source non autorisée | Bloquer ou proposer une source autorisée |
 
 _Dernière mise à jour : mai 2026_
