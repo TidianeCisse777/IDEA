@@ -2128,6 +2128,14 @@ function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
 
 window.hydrateChatWithMessages = hydrateChatWithMessages;
 
+function resetSessionForConversationLoad() {
+    sessionId = generateId('session');
+    localStorage.setItem('sessionId', sessionId);
+    sessionMode = 'plan';
+    updateSessionModeBadge('plan');
+}
+window.resetSessionForConversationLoad = resetSessionForConversationLoad;
+
 // Fetch and display chat history on load
 window.addEventListener('DOMContentLoaded', async () => {
     // Check authentication before doing anything else

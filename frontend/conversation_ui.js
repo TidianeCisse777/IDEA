@@ -238,6 +238,10 @@ async function loadConversation(conversationId) {
         const chatDisplay = document.getElementById('chatDisplay');
         const loadedMessages = conversationManager.getCurrentMessages() || [];
 
+        if (typeof window.resetSessionForConversationLoad === 'function') {
+            window.resetSessionForConversationLoad();
+        }
+
         if (typeof window.hydrateChatWithMessages === 'function') {
             window.hydrateChatWithMessages(loadedMessages, { persist: false });
         } else {
