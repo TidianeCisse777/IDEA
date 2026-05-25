@@ -585,7 +585,15 @@ async def chat_endpoint(
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
 
-                if plan_ready_emitted and session_store.get_session_mode(session_key) != "analyse":
+                user_turns = sum(
+                    1 for m in messages
+                    if isinstance(m, dict) and m.get("role") == "user"
+                )
+                if (
+                    plan_ready_emitted
+                    and user_turns >= 3
+                    and session_store.get_session_mode(session_key) != "analyse"
+                ):
                     action_chunk = {
                         "start": True,
                         "end": True,
