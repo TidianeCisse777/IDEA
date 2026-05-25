@@ -1378,7 +1378,7 @@ function appendSystemMessage(message) {
 
 // ── Session mode (plan ↔ analyse) ────────────────────────────────────────────
 
-function handleActionButtonChunk(chunk) {
+function handleActionButtonChunk(chunk, { persist = true } = {}) {
     const label = chunk.label || 'Valider et passer en Mode Analyse';
 
     const wrapper = document.createElement('div');
@@ -1395,6 +1395,16 @@ function handleActionButtonChunk(chunk) {
     wrapper.appendChild(btn);
     chatDisplay.appendChild(wrapper);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
+
+    if (persist && conversationManager) {
+        conversationManager.addMessage(
+            'computer',
+            JSON.stringify({ action: chunk.action || 'validate_plan', label }),
+            'action_button',
+            null,
+            null
+        ).catch(err => console.error('Failed to save action_button:', err));
+    }
 }
 
 async function switchToAnalyseMode() {
@@ -2069,6 +2079,19 @@ function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
             return;
         }
 
+        // Re-render action_button only if still in plan mode
+        if (rawMessage.type === 'action_button') {
+            if (sessionMode === 'plan') {
+                let parsed = {};
+                try { parsed = JSON.parse(rawMessage.content || '{}'); } catch (_) {}
+                handleActionButtonChunk(
+                    { action: parsed.action || 'validate_plan', label: parsed.label },
+                    { persist: false }
+                );
+            }
+            return;
+        }
+
         const normalized = normalizeStdStreamMessage({ ...rawMessage });
         if (normalized.type === 'console' && isTelemetryConsoleMessage(normalized)) {
             return;
@@ -2108,7 +2131,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     conversationManager = new ConversationManager();
 
     loadCurrentUserProfile();
-    initSessionMode();
+    await initSessionMode();
 
     try {
         const response = await fetch(config.getEndpoints().history, {
