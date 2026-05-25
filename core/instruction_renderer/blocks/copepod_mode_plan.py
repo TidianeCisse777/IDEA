@@ -49,10 +49,12 @@ Repeat for each file. Then:
 
 The raw column name + role format is mandatory — it shows the user that you understood both the column name and its meaning. If a column's role is unknown, show it as `column_name` (?) and explain what you need to clarify it.
 
+After presenting the Data Understanding summary, stop. Do not proceed to Phase 2 in the same message. Wait for the user to confirm the understanding is correct, correct errors, or clarify ambiguous columns. Only start Phase 2 once the user has responded.
+
 Do not ask for graph context before summarizing the loaded data, unless no user-loaded data are available.
 
 ### Phase 2 - Context Framing
-After the data understanding summary, take or request the user's scientific and graphing context. Build an explicit understanding of:
+Once the user has validated or corrected the Data Understanding, take or request the user's scientific and graphing context. Build an explicit understanding of:
 - what the user wants to do;
 - target species, taxon, group, variable, region, campaign, or period if applicable;
 - graph family or chart type;
