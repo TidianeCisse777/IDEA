@@ -322,8 +322,12 @@ function prismHighlightUnder(el) {
 }
 //// End of Math formatting helpers
 
-// Session Management
-let sessionId = generateId('session');
+// Session Management — sessionId persists in localStorage so F5 preserves history and session mode
+let sessionId = localStorage.getItem('sessionId') || (() => {
+    const newId = generateId('session');
+    localStorage.setItem('sessionId', newId);
+    return newId;
+})();
 let threadId = localStorage.getItem('threadId') || (() => {
     const newThreadId = generateId('thread');
     localStorage.setItem('threadId', newThreadId);
