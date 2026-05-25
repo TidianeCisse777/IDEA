@@ -30,3 +30,27 @@ def test_all_session_keys():
     keys = store.all_session_keys()
     assert "a:b:c" in keys
     assert "d:e:f" in keys
+
+
+def test_get_session_mode_defaults_to_plan():
+    store = InMemorySessionStore()
+    assert store.get_session_mode("user:sess:copepod") == "plan"
+
+
+def test_set_then_get_session_mode():
+    store = InMemorySessionStore()
+    store.set_session_mode("user:sess:copepod", "analyse")
+    assert store.get_session_mode("user:sess:copepod") == "analyse"
+
+
+def test_session_mode_isolated_per_key():
+    store = InMemorySessionStore()
+    store.set_session_mode("user1:sess1:copepod", "analyse")
+    assert store.get_session_mode("user2:sess2:copepod") == "plan"
+
+
+def test_session_mode_can_switch_back():
+    store = InMemorySessionStore()
+    store.set_session_mode("k", "analyse")
+    store.set_session_mode("k", "plan")
+    assert store.get_session_mode("k") == "plan"

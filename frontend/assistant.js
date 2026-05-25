@@ -342,10 +342,6 @@ const progressElement = progressBar ? progressBar.querySelector('.progress') : n
 async function handleFiles(files) {
     if (!files || files.length === 0) return;
 
-    if (sessionMode === 'analyse') {
-        appendSystemMessage('⚠️ Vous êtes en Mode Analyse. L\'ajout de nouvelles sources de données nécessite de revenir en Mode Plan. Les fichiers déposés ici seront traités comme des pièces jointes à votre message, pas comme de nouvelles sources de données.');
-    }
-
     hidePromptIdeas();
     if (progressBar) {
         progressBar.style.display = 'block';
