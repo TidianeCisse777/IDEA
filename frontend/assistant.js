@@ -1536,6 +1536,14 @@ async function clearChatHistory() {
             throw new Error("Failed to clear uploaded files");
         }
 
+        // Rotate sessionId so the new session is fully isolated
+        sessionId = generateId('session');
+        localStorage.setItem('sessionId', sessionId);
+
+        // Reset session mode to plan
+        sessionMode = 'plan';
+        updateSessionModeBadge('plan');
+
         // Clear frontend messages array
         messages = [];
         // Clear chat display
@@ -1544,7 +1552,7 @@ async function clearChatHistory() {
         chatDisplay.innerHTML = '';
         promptIdeasVisible = false;
         resetStdoutState();
-        
+
         // Clear uploaded files list in UI
         pendingUploads = [];
         renderPendingUploads();
