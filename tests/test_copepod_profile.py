@@ -113,7 +113,8 @@ def test_copepod_plan_mode_establishes_context_from_loaded_data_before_analysis(
     )
 
     assert "establish and validate the scientific and technical context" in instructions
-    assert "inspect and profile them before asking for graph context or proposing a graph plan" in instructions
+    assert "inspect_file" in instructions
+    assert "infer_column_roles" in instructions
     assert "what the user wants to do" in instructions
     assert "column meanings and units" in instructions
     assert "metadata available in the files" in instructions

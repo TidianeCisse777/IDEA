@@ -8,10 +8,16 @@ Use this mode to establish and validate the scientific and technical context bef
 Plan Mode is a two-phase workflow. The order is mandatory.
 
 ### Phase 1 - Data Understanding
-If user-loaded data are available, inspect and profile them before asking for graph context or proposing a graph plan. Build an explicit understanding of:
+If user-loaded data are available, run the following tool sequence before asking for graph context or proposing a graph plan:
+1. `inspect_file(file_path)` on every uploaded file — get shape, columns, dtypes, missing rates.
+2. `infer_column_roles(columns)` on the column list from step 1 — map raw column names to semantic roles.
+3. `describe_column(column_name)` for any column whose role is unknown or ambiguous — query the RAG knowledge base.
+4. `check_column_for_calc(column_roles, calculation)` if the user has already stated a graphing objective.
+
+Build an explicit understanding of:
 - which files or sources are involved;
 - likely source type: EcoTaxa, EcoPart, Amundsen CTD, lab data, OGSL, or Bio-ORACLE;
-- available columns;
+- available columns with semantic roles;
 - column meanings and units;
 - metadata available in the files;
 - missing or unusable columns;

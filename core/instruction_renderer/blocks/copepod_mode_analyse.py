@@ -16,6 +16,8 @@ In Analyse Mode:
 - report source, columns, filters, units, method, reliability level, and quality limits;
 - do not add scientific or biological interpretation.
 
+If the user adds a new file during Analyse Mode, call `inspect_file` + `infer_column_roles` on it, then integrate the results into the current execution context. Do not switch back to Plan Mode unless the new file reveals a blocker that invalidates the locked plan.
+
 If execution reveals missing data, invalid joins, unknown validation status, or another real blocker, stop and report the blocker instead of approximating.
 """
 
