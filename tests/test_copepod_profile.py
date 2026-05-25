@@ -1,9 +1,11 @@
 import importlib
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from agents.registry import get_profile, registered_types, _registry
+from core.session_store import InMemorySessionStore
 
 
 @pytest.fixture(autouse=True)
@@ -11,6 +13,18 @@ def fresh_registry():
     _registry.clear()
     yield
     _registry.clear()
+
+
+@pytest.fixture(autouse=True)
+def inmemory_session_store():
+    """Use InMemorySessionStore in all profile tests — no Redis needed.
+
+    Patch the source singleton so that importlib.reload() inside
+    import_copepod_profile() re-binds the mocked object, not RedisSessionStore.
+    """
+    store = InMemorySessionStore()
+    with patch("core.session_store.session_store", store):
+        yield
 
 
 def import_copepod_profile():
@@ -124,7 +138,7 @@ def test_copepod_plan_mode_forces_two_phase_data_then_context_flow():
     assert "Phase 2 - Context Framing" in instructions
     assert instructions.index("Phase 1 - Data Understanding") < instructions.index("Phase 2 - Context Framing")
     assert "Do not ask for graph context before summarizing the loaded data" in instructions
-    assert "Do not switch to Analyse Mode until the user validates or corrects this understanding" in instructions
+    assert "PLAN_READY" in instructions
     assert "### Data Understanding" in instructions
     assert "### Graph Context" in instructions
 

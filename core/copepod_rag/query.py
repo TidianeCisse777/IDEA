@@ -18,6 +18,27 @@ COLLECTION_NAME = "copepod_rag"
 
 _collection = None
 
+_QUERY_ALIASES = {
+    "obj orig id": ["obj_orig_id", "obj.orig_id"],
+    "obj.orig_id": ["obj_orig_id"],
+    "txo display name": ["txo_display_name", "txo.display_name"],
+    "txo.display_name": ["txo_display_name"],
+    "obj classif qual": ["obj_classif_qual", "obj.classif_qual"],
+    "obj.classif_qual": ["obj_classif_qual"],
+    "fre equivalent diameter area": ["fre_equivalent_diameter_area", "fre.equivalent_diameter_area"],
+    "fre.equivalent_diameter_area": ["fre_equivalent_diameter_area"],
+    "acq pixel um size": ["acq_pixel_um_size", "acq.pixel_um_size", "pixel_um_size"],
+    "acq.pixel_um_size": ["acq_pixel_um_size"],
+    "ctd embarquée": ["CTD embarquée", "acq_temperature_ctd", "acq_salinity_ctd"],
+    "ctd embarquee": ["CTD embarquée", "acq_temperature_ctd", "acq_salinity_ctd"],
+    "température salinité oxygène fluorescence": [
+        "acq_temperature_ctd",
+        "acq_salinity_ctd",
+        "acq_oxygen_concent",
+        "acq_fluo1",
+    ],
+}
+
 
 def _load():
     global _collection
@@ -51,27 +72,61 @@ def query_copepod_rag(
         score is cosine distance (lower = more similar).
     """
     _load()
+    expanded_question = _expand_query(question)
+    candidate_count = max(top_k, min(25, top_k * 5))
 
     results = _collection.query(
-        query_texts=[question],
-        n_results=top_k,
+        query_texts=[expanded_question],
+        n_results=candidate_count,
         include=["documents", "metadatas", "distances"],
     )
 
     chunks = []
     for i in range(len(results["ids"][0])):
+        content = results["documents"][0][i]
+        distance = round(results["distances"][0][i], 4)
         chunks.append({
             "chunk_id": results["ids"][0][i],
             "doc": results["metadatas"][0][i]["doc"],
             "title": results["metadatas"][0][i]["title"],
-            "content": results["documents"][0][i],
-            "score": round(results["distances"][0][i], 4),
+            "content": content,
+            "score": distance,
+            "_rank_score": distance - _lexical_boost(expanded_question, content),
         })
+    chunks.sort(key=lambda c: (c["_rank_score"], c["score"]))
+    chunks = [{k: v for k, v in c.items() if k != "_rank_score"} for c in chunks[:top_k]]
 
     if session_id:
         _trace_langfuse(question, chunks, session_id)
 
     return chunks
+
+
+def _expand_query(question: str) -> str:
+    lower = question.lower().replace("_", " ").replace(".", " ")
+    additions = []
+    for pattern, aliases in _QUERY_ALIASES.items():
+        if pattern in lower or pattern in question.lower():
+            additions.extend(aliases)
+    if "loki" in lower and "ctd" in lower:
+        additions.extend(["CTD embarquée", "acq_temperature_ctd", "acq_salinity_ctd", "acq_raw_depth"])
+    if not additions:
+        return question
+    return f"{question} {' '.join(dict.fromkeys(additions))}"
+
+
+def _lexical_boost(expanded_question: str, content: str) -> float:
+    content_lower = content.lower()
+    terms = {
+        term.lower()
+        for term in expanded_question.replace(",", " ").split()
+        if len(term) >= 3 and ("_" in term or "." in term or term.lower() in {"loki", "ctd"})
+    }
+    boost = 0.0
+    for term in terms:
+        if term in content_lower:
+            boost += 0.08
+    return min(boost, 0.4)
 
 
 def _trace_langfuse(question: str, chunks: list[dict], session_id: str):

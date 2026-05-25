@@ -548,9 +548,26 @@ async def chat_endpoint(
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
+                plan_ready_emitted = False
                 for result in interpreter.chat(messages[-1], stream=True):
+                    if isinstance(result, dict) and result.get("type") == "message":
+                        content = result.get("content", "")
+                        if isinstance(content, str) and "[PLAN_READY]" in content:
+                            result = dict(result)
+                            result["content"] = content.replace("[PLAN_READY]", "").rstrip()
+                            plan_ready_emitted = True
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
+                if plan_ready_emitted:
+                    action_chunk = {
+                        "start": True,
+                        "end": True,
+                        "role": "computer",
+                        "type": "action_button",
+                        "action": "validate_plan",
+                        "label": "Valider et passer en Mode Analyse",
+                    }
+                    yield f"data: {json.dumps(action_chunk)}\n\n"
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
                 err_str = str(e)

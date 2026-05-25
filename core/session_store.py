@@ -50,6 +50,16 @@ class SessionStore(ABC):
         """Return every session key that has a recorded last-active timestamp."""
         ...
 
+    @abstractmethod
+    def get_session_mode(self, session_key: str) -> str:
+        """Return the current session mode ('plan' or 'analyse'). Defaults to 'plan'."""
+        ...
+
+    @abstractmethod
+    def set_session_mode(self, session_key: str, mode: str) -> None:
+        """Persist the session mode for session_key."""
+        ...
+
 
 class RedisSessionStore(SessionStore):
     """Production implementation backed by a Redis server."""
@@ -78,6 +88,13 @@ class RedisSessionStore(SessionStore):
         keys = self._r.keys("last_active:*")
         return [k.decode().removeprefix("last_active:") for k in keys]
 
+    def get_session_mode(self, session_key: str) -> str:
+        raw = self._r.get(f"session_mode:{session_key}")
+        return raw.decode() if raw else "plan"
+
+    def set_session_mode(self, session_key: str, mode: str) -> None:
+        self._r.set(f"session_mode:{session_key}", mode)
+
 
 class InMemorySessionStore(SessionStore):
     """In-memory implementation for tests and local development (no Redis needed)."""
@@ -85,6 +102,7 @@ class InMemorySessionStore(SessionStore):
     def __init__(self):
         self._messages: dict[str, list[dict]] = {}
         self._timestamps: dict[str, float] = {}
+        self._modes: dict[str, str] = {}
 
     def read_messages(self, session_key: str) -> list[dict] | None:
         return self._messages.get(session_key)
@@ -104,6 +122,12 @@ class InMemorySessionStore(SessionStore):
 
     def all_session_keys(self) -> list[str]:
         return list(self._timestamps.keys())
+
+    def get_session_mode(self, session_key: str) -> str:
+        return self._modes.get(session_key, "plan")
+
+    def set_session_mode(self, session_key: str, mode: str) -> None:
+        self._modes[session_key] = mode
 
 
 # Singleton — Railway injects REDIS_URL; local dev defaults to host=redis.

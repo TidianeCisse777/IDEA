@@ -77,6 +77,45 @@ class TestChunkDocs:
         texts = " ".join(c["content"] for c in chunks)
         assert "biovolume" in texts.lower(), "biovolume not found in any chunk"
 
+    def test_loki_column_alias_chunk_exists(self):
+        chunks = json.loads(CHUNKS_FILE.read_text())
+        texts = " ".join(c["content"] for c in chunks)
+        expected_terms = [
+            "obj_orig_id",
+            "txo_display_name",
+            "fre_equivalent_diameter_area",
+            "acq_pixel_um_size",
+        ]
+        missing = [term for term in expected_terms if term not in texts]
+        assert not missing, f"LOKI alias terms missing from chunks.json: {missing}"
+
+    def test_loki_rag_chunks_are_autonomous(self):
+        chunks = json.loads(CHUNKS_FILE.read_text())
+        loki_chunks = [
+            c for c in chunks
+            if "LOKI" in c["content"] and (
+                "acq_pixel_um_size" in c["content"]
+                or "fre_equivalent_diameter_area" in c["content"]
+            )
+        ]
+        assert loki_chunks, "Expected at least one LOKI chunk with key column aliases"
+        for chunk in loki_chunks:
+            content = chunk["content"]
+            assert "Mots-clés" in content, f"LOKI chunk lacks keywords: {chunk['chunk_id']}"
+            assert chunk["title"].startswith(("Comment", "Quel"))
+
+    def test_loki_conversion_formula_chunk_exists(self):
+        chunks = json.loads(CHUNKS_FILE.read_text())
+        texts = " ".join(c["content"] for c in chunks)
+        assert "acq_pixel_um_size / 1000" in texts
+        assert "longueur_mm" in texts
+
+    def test_ctd_embarquee_distinct_from_ctd_externe_chunk_exists(self):
+        chunks = json.loads(CHUNKS_FILE.read_text())
+        texts = " ".join(c["content"] for c in chunks).lower()
+        assert "ctd embarquée" in texts or "ctd embarquee" in texts
+        assert "ctd externe" in texts
+
 
 # ── query (requires built index) ──────────────────────────────────────────────
 
@@ -139,6 +178,53 @@ class TestRagQuery:
     def test_session_id_does_not_crash(self, rag):
         results = rag("sources disponibles", session_id="test-session-123")
         assert len(results) > 0
+
+    @pytest.mark.parametrize(
+        ("question", "expected_doc", "expected_terms"),
+        [
+            (
+                "LOKI acq_pixel_um_size convertir pixels en mm",
+                "colonnes_instruments.md",
+                ["acq_pixel_um_size", "1000"],
+            ),
+            (
+                "colonne fre equivalent diameter area ESD LOKI",
+                "colonnes_instruments.md",
+                ["fre_equivalent_diameter_area", "taille"],
+            ),
+            (
+                "taxon validé txo display name obj classif qual",
+                "colonnes_sources.md",
+                ["txo_display_name", "obj_classif_qual"],
+            ),
+            (
+                "CTD embarquée LOKI température salinité oxygène fluorescence",
+                "colonnes_sources.md",
+                ["acq_temperature_ctd", "acq_salinity_ctd"],
+            ),
+        ],
+    )
+    def test_loki_edge_queries_find_expected_docs(self, rag, question, expected_doc, expected_terms):
+        results = rag(question, top_k=5)
+        docs_found = {r["doc"] for r in results}
+        combined = "\n".join(r["content"] for r in results)
+        assert expected_doc in docs_found
+        for term in expected_terms:
+            assert term in combined
+
+    def test_dot_notation_query_finds_flattened_loki_aliases(self, rag):
+        results = rag("obj.orig_id txo.display_name fre.area API EcoTaxa LOKI", top_k=5)
+        combined = "\n".join(r["content"] for r in results)
+        assert "obj.orig_id" in combined
+        assert "obj_orig_id" in combined
+        assert "txo.display_name" in combined
+        assert "txo_display_name" in combined
+
+    def test_loki_query_does_not_confuse_embedded_ctd_with_external_ctd(self, rag):
+        results = rag("LOKI CTD embarquée pas CTD externe indépendante", top_k=5)
+        combined = "\n".join(r["content"] for r in results).lower()
+        assert "ctd externe" in combined
+        assert "capteurs" in combined or "acquisition" in combined
 
 
 # ── tool registry integration ─────────────────────────────────────────────────

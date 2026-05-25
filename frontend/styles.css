@@ -3716,3 +3716,80 @@ body.main-app {
         text-align: center;
     }
 }
+
+/* ── Session mode badge ─────────────────────────────────────────────────────── */
+
+.session-mode-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    user-select: none;
+    transition: background 0.2s, color 0.2s;
+}
+
+.session-mode-plan {
+    background: rgba(100, 108, 255, 0.12);
+    color: #8b93ff;
+    border: 1px solid rgba(100, 108, 255, 0.25);
+}
+
+.session-mode-analyse {
+    background: rgba(34, 197, 120, 0.12);
+    color: #22c578;
+    border: 1px solid rgba(34, 197, 120, 0.25);
+}
+
+.session-mode-icon {
+    font-size: 0.9rem !important;
+}
+
+/* ── Validate plan button ───────────────────────────────────────────────────── */
+
+.action-button-chunk {
+    display: flex;
+    justify-content: flex-start;
+    padding: 0.5rem 1rem;
+    margin: 0.25rem 0;
+}
+
+.action-btn-valider {
+    padding: 0.55rem 1.2rem;
+    background: rgba(100, 108, 255, 0.15);
+    color: #8b93ff;
+    border: 1px solid rgba(100, 108, 255, 0.35);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.action-btn-valider:hover:not(:disabled) {
+    background: rgba(100, 108, 255, 0.25);
+    color: #b0b6ff;
+    border-color: rgba(100, 108, 255, 0.5);
+}
+
+.action-btn-valider:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ── Mode Analyse bandeau ───────────────────────────────────────────────────── */
+
+.session-mode-bandeau {
+    text-align: center;
+    font-size: 0.75rem;
+    color: #22c578;
+    letter-spacing: 0.06em;
+    padding: 0.4rem 0;
+    margin: 0.5rem 0;
+    border-top: 1px solid rgba(34, 197, 120, 0.15);
+    border-bottom: 1px solid rgba(34, 197, 120, 0.15);
+    opacity: 0.8;
+}

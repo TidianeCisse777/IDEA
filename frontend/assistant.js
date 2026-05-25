@@ -37,6 +37,10 @@ let userProfilePromise = null;
 let welcomeRenderPromise = null;
 let welcomeRendered = false;
 
+// Session mode for copepod agent (plan | analyse)
+let sessionMode = 'plan';
+const AGENT_TYPE = 'copepod';
+
 const THEME_STORAGE_KEY = 'idea-theme';
 const themeToggleInputs = document.querySelectorAll('[data-theme-toggle]');
 
@@ -338,7 +342,11 @@ const progressElement = progressBar ? progressBar.querySelector('.progress') : n
 async function handleFiles(files) {
     if (!files || files.length === 0) return;
 
-    hidePromptIdeas(); 
+    if (sessionMode === 'analyse') {
+        appendSystemMessage('⚠️ Vous êtes en Mode Analyse. L\'ajout de nouvelles sources de données nécessite de revenir en Mode Plan. Les fichiers déposés ici seront traités comme des pièces jointes à votre message, pas comme de nouvelles sources de données.');
+    }
+
+    hidePromptIdeas();
     if (progressBar) {
         progressBar.style.display = 'block';
     }
@@ -802,6 +810,7 @@ async function sendRequest(msgOverride=null) {
             headers: {
                 "Content-Type": "application/json",
                 "X-Session-Id": sessionId,
+                "X-Agent-Type": AGENT_TYPE,
                 ...getAuthHeaders()
             },
             body: JSON.stringify(params),
@@ -962,6 +971,12 @@ function processChunk(chunk) {
         if (chunk.type === 'console' && chunk.format === 'active_line') {
             //console.log(chunk); // Debug log for active line chunks
             handleActiveLineChunk(chunk.content);
+            resolve();
+            return;
+        }
+
+        if (chunk.type === 'action_button' && chunk.action === 'validate_plan') {
+            handleActionButtonChunk(chunk);
             resolve();
             return;
         }
@@ -1353,6 +1368,97 @@ function appendSystemMessage(message) {
     messageElement.appendChild(content);
     chatDisplay.appendChild(messageElement);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
+}
+
+// ── Session mode (plan ↔ analyse) ────────────────────────────────────────────
+
+function handleActionButtonChunk(chunk) {
+    const label = chunk.label || 'Valider et passer en Mode Analyse';
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'action-button-chunk';
+
+    const btn = document.createElement('button');
+    btn.className = 'action-btn-valider';
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+        btn.disabled = true;
+        switchToAnalyseMode();
+    });
+
+    wrapper.appendChild(btn);
+    chatDisplay.appendChild(wrapper);
+    chatDisplay.scrollTop = chatDisplay.scrollHeight;
+}
+
+async function switchToAnalyseMode() {
+    try {
+        const endpoint = config.getEndpoints().sessionMode;
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Session-Id': sessionId,
+                'X-Agent-Type': AGENT_TYPE,
+                ...getAuthHeaders(),
+            },
+            body: JSON.stringify({ mode: 'analyse' }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        sessionMode = 'analyse';
+        updateSessionModeBadge('analyse');
+        appendSessionModeBandeau();
+    } catch (err) {
+        console.error('Failed to switch to Analyse mode:', err);
+        appendSystemMessage('Erreur : impossible de passer en Mode Analyse. Veuillez réessayer.');
+    }
+}
+
+function updateSessionModeBadge(mode) {
+    const badge = document.getElementById('sessionModeBadge');
+    const label = document.getElementById('sessionModeLabel');
+    const icon = badge ? badge.querySelector('.session-mode-icon') : null;
+    if (!badge || !label) return;
+
+    badge.style.display = 'flex';
+    if (mode === 'analyse') {
+        badge.classList.remove('session-mode-plan');
+        badge.classList.add('session-mode-analyse');
+        label.textContent = 'Mode Analyse';
+        if (icon) icon.textContent = 'analytics';
+    } else {
+        badge.classList.remove('session-mode-analyse');
+        badge.classList.add('session-mode-plan');
+        label.textContent = 'Mode Plan';
+        if (icon) icon.textContent = 'edit_note';
+    }
+}
+
+function appendSessionModeBandeau() {
+    const bandeau = document.createElement('div');
+    bandeau.className = 'session-mode-bandeau';
+    bandeau.textContent = '──── Mode Analyse activé ────';
+    chatDisplay.appendChild(bandeau);
+    chatDisplay.scrollTop = chatDisplay.scrollHeight;
+}
+
+async function initSessionMode() {
+    try {
+        const endpoint = config.getEndpoints().sessionMode;
+        const resp = await fetch(endpoint, {
+            headers: {
+                'X-Session-Id': sessionId,
+                'X-Agent-Type': AGENT_TYPE,
+                ...getAuthHeaders(),
+            },
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        sessionMode = data.mode || 'plan';
+        updateSessionModeBadge(sessionMode);
+    } catch (err) {
+        console.warn('Could not fetch session mode:', err);
+    }
 }
 
 // Function to append confirmation chunks
@@ -1994,6 +2100,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     conversationManager = new ConversationManager();
 
     loadCurrentUserProfile();
+    initSessionMode();
 
     try {
         const response = await fetch(config.getEndpoints().history, {

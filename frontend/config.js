@@ -29,7 +29,8 @@ const config = {
             conversations: 'http://localhost/api/conversations',
             conversationMessages: 'http://localhost/api/conversations',
             conversationShare: 'http://localhost/conversations',
-            loadConversation: 'http://localhost/api/load-conversation'
+            loadConversation: 'http://localhost/api/load-conversation',
+            sessionMode: 'http://localhost/api/session/mode'
         },
         production: {
             chat: `${_base}/api/chat`,
@@ -53,7 +54,8 @@ const config = {
             conversations: `${_base}/conversations`,
             conversationMessages: `${_base}/conversations`,
             conversationShare: `${_base}/conversations`,
-            loadConversation: `${_base}/api/load-conversation`
+            loadConversation: `${_base}/api/load-conversation`,
+            sessionMode: `${_base}/api/session/mode`
         }
     },
 

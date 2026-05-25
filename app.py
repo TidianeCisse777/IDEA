@@ -38,6 +38,7 @@ from routers.chat_routes import (
     periodic_cleanup,
 )
 from routers.file_routes import router as file_router, MAX_FILE_SIZE
+from routers.session_routes import router as session_router
 
 from core.prompt_store import init_prompt_manager
 
@@ -178,6 +179,7 @@ app.include_router(user_router)
 app.include_router(prompt_router)
 app.include_router(chat_router)
 app.include_router(file_router)
+app.include_router(session_router)
 
 # ---------------------------------------------------------------------------
 # Lifecycle events
