@@ -549,15 +549,42 @@ async def chat_endpoint(
                         yield f"data: {json.dumps(chunk)}\n\n"
 
                 plan_ready_emitted = False
+                _TAG = "[PLAN_READY]"
+                _msg_buf: dict[str, str] = {}  # role → accumulated content
+
                 for result in interpreter.chat(messages[-1], stream=True):
                     if isinstance(result, dict) and result.get("type") == "message":
+                        role = result.get("role", "assistant")
                         content = result.get("content", "")
-                        if isinstance(content, str) and "[PLAN_READY]" in content:
-                            result = dict(result)
-                            result["content"] = content.replace("[PLAN_READY]", "").rstrip()
-                            plan_ready_emitted = True
+
+                        if isinstance(content, str):
+                            # Accumulate for split-tag detection
+                            if result.get("start"):
+                                _msg_buf[role] = content
+                            else:
+                                _msg_buf[role] = _msg_buf.get(role, "") + content
+
+                            # Fast path: tag fully in this single chunk
+                            if _TAG in content and not plan_ready_emitted:
+                                result = dict(result)
+                                result["content"] = content.replace(_TAG, "").rstrip()
+                                plan_ready_emitted = True
+
+                            # End of message: catch split tag across chunks
+                            elif result.get("end") and not plan_ready_emitted:
+                                if _TAG in _msg_buf.get(role, ""):
+                                    plan_ready_emitted = True
+                                    yield f"data: {json.dumps(result)}\n\n"
+                                    yield f"data: {json.dumps({'type': 'strip_tail', 'text': _TAG})}\n\n"
+                                    _msg_buf.pop(role, None)
+                                    continue
+
+                            if result.get("end"):
+                                _msg_buf.pop(role, None)
+
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
+
                 if plan_ready_emitted:
                     action_chunk = {
                         "start": True,

@@ -977,6 +977,16 @@ function processChunk(chunk) {
             return;
         }
 
+        if (chunk.type === 'strip_tail' && chunk.text) {
+            const lastMsg = messages[messages.length - 1];
+            if (lastMsg && typeof lastMsg.content === 'string' && lastMsg.content.includes(chunk.text)) {
+                lastMsg.content = lastMsg.content.replace(chunk.text, '').trimEnd();
+                updateMessageContent(lastMsg.id, lastMsg.content);
+            }
+            resolve();
+            return;
+        }
+
         let message = null;
 
         if (chunk.start) {
