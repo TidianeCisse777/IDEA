@@ -1422,11 +1422,13 @@ function updateSessionModeBadge(mode) {
         badge.classList.add('session-mode-analyse');
         label.textContent = 'Mode Analyse';
         if (icon) icon.textContent = 'analytics';
+        chatDisplay.classList.add('mode-analyse');
     } else {
         badge.classList.remove('session-mode-analyse');
         badge.classList.add('session-mode-plan');
         label.textContent = 'Mode Plan';
         if (icon) icon.textContent = 'edit_note';
+        chatDisplay.classList.remove('mode-analyse');
     }
 }
 
