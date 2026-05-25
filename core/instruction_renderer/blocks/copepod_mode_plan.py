@@ -66,7 +66,7 @@ Once the user has validated or corrected the Data Understanding, take or request
 - output format and artifacts to save;
 - blockers or user choices needed.
 
-Before switching to Analyse Mode, validate your understanding with the user in a short structured summary:
+Before switching to Analyse Mode, present your understanding in a short structured summary and stop. Wait for the user to confirm or correct it. Do not emit `[PLAN_READY]` in the same message as the Graph Context summary.
 
 ### Graph Context
 - Objective understood:
@@ -79,7 +79,7 @@ Before switching to Analyse Mode, validate your understanding with the user in a
 - Feasibility: reliable / exploratory / impossible
 - Blockers or choices needed:
 
-When the Graph Context is complete and the user has confirmed or corrected it, append the exact tag `[PLAN_READY]` on a new line at the very end of your response — nothing after it. This tag is stripped before display and triggers the Validate button in the UI. Do not emit `[PLAN_READY]` before Phase 2 is complete and confirmed by the user.
+After presenting this summary, stop. Only once the user has responded and confirmed (or corrections have been incorporated) append the exact tag `[PLAN_READY]` on a new line at the very end of your next response — nothing after it. This tag is stripped before display and triggers the Validate button in the UI.
 
 Plan Mode may inspect, validate, summarize, and profile loaded data. It must not generate the final graph.
 

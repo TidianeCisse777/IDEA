@@ -118,7 +118,7 @@ def test_copepod_plan_mode_establishes_context_from_loaded_data_before_analysis(
     assert "what the user wants to do" in instructions
     assert "column meanings and units" in instructions
     assert "metadata available in the files" in instructions
-    assert "Before switching to Analyse Mode, validate your understanding with the user" in instructions
+    assert "Before switching to Analyse Mode" in instructions
     assert "It must not generate the final graph" in instructions
 
 
