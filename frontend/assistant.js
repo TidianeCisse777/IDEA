@@ -2190,25 +2190,22 @@ window.addEventListener('DOMContentLoaded', async () => {
     resetStdoutState();
     conversationManager = new ConversationManager();
 
+    // Show a non-blocking warning when messages fail to persist, recover silently on retry
+    conversationManager.addEventListener('persistence_error', ({ queued }) => {
+        if (queued === 1) showNotification('Connexion lente — sauvegarde en cours…', 'warning');
+    });
+    conversationManager.addEventListener('persistence_recovered', () => {
+        showNotification('Messages sauvegardés', 'success');
+    });
+    conversationManager.addEventListener('persistence_failed', ({ count }) => {
+        showNotification(
+            `${count} message(s) n'ont pas pu être sauvegardés — rechargez pour vérifier`,
+            'error'
+        );
+    });
+
     loadCurrentUserProfile();
     await initSessionMode();
-
-    async function fetchSessionHistory() {
-        try {
-            const response = await fetch(config.getEndpoints().history, {
-                method: "GET",
-                headers: { "X-Session-Id": sessionId, "X-Agent-Type": AGENT_TYPE, ...getAuthHeaders() }
-            });
-            if (response.ok) {
-                const history = await response.json();
-                if (history.length === 0) showPromptIdeas();
-                else hydrateChatWithMessages(history, { persist: false });
-            }
-        } catch (error) {
-            console.error("Failed to fetch history:", error);
-            showPromptIdeas();
-        }
-    }
 
     const activeConversationId = localStorage.getItem('activeConversationId');
     if (activeConversationId) {
@@ -2226,27 +2223,26 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
             if (msgs.length > 0) {
                 hydrateChatWithMessages(msgs, { persist: false });
-                // Also reset the backend interpreter to this conversation's context
+                // Reset the backend interpreter to this conversation's context
                 // so new messages don't run in a stale Redis session
-                if (msgs.length > 0) {
-                    try {
-                        await fetch(config.getEndpoints().loadConversation, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, ...getAuthHeaders() },
-                            body: JSON.stringify({ messages: msgs })
-                        });
-                    } catch (_) { /* non-blocking */ }
-                }
+                try {
+                    await fetch(config.getEndpoints().loadConversation, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, ...getAuthHeaders() },
+                        body: JSON.stringify({ messages: msgs })
+                    });
+                } catch (_) { /* non-blocking — interpreter context is best-effort */ }
             } else {
                 showPromptIdeas();
             }
         } catch (error) {
-            console.warn('Stale activeConversationId, falling back to session history:', error);
+            // Conversation no longer exists (deleted from another tab, or stale localStorage)
+            console.warn('Stale activeConversationId, clearing:', error);
             localStorage.removeItem('activeConversationId');
-            await fetchSessionHistory();
+            showPromptIdeas();
         }
     } else {
-        await fetchSessionHistory();
+        showPromptIdeas();
     }
 });
 

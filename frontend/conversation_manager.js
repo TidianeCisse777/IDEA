@@ -27,7 +27,9 @@ class ConversationManager {
         this.pageSize = 100;
         this.totalCount = 0;
         this.isLoading = false;
-        
+        this._persistenceQueue = [];
+        this._retryScheduled = false;
+
         // Initialize conversation management
         this.init();
     }
@@ -209,7 +211,7 @@ class ConversationManager {
             
             const message = await response.json();
             this.currentMessages.push(message);
-            
+
             // Update the conversation's updated_at timestamp in our local list
             const conversationIndex = this.conversations.findIndex(c => c.id === this.currentConversationId);
             if (conversationIndex !== -1) {
@@ -218,13 +220,63 @@ class ConversationManager {
                 const conversation = this.conversations.splice(conversationIndex, 1)[0];
                 this.conversations.unshift(conversation);
             }
-            
+
             this.notifyConversationListeners('message_added', message);
             this.notifyConversationListeners('messages_updated', this.currentMessages);
             return message;
         } catch (error) {
             console.error('Error adding message:', error);
+            this._enqueueForRetry({
+                conversationId: this.currentConversationId,
+                data: {
+                    role,
+                    content,
+                    message_type: messageType,
+                    message_format: messageFormat,
+                    recipient,
+                    conversation_id: this.currentConversationId,
+                },
+            });
             throw error;
+        }
+    }
+
+    _enqueueForRetry(item) {
+        this._persistenceQueue.push(item);
+        if (!this._retryScheduled) {
+            this._retryScheduled = true;
+            setTimeout(() => this._flushPersistenceQueue(), 5000);
+        }
+        this.notifyConversationListeners('persistence_error', { queued: this._persistenceQueue.length });
+    }
+
+    async _flushPersistenceQueue() {
+        this._retryScheduled = false;
+        const queue = this._persistenceQueue.splice(0);
+        const failed = [];
+        for (const item of queue) {
+            if (!item.conversationId) { failed.push(item); continue; }
+            try {
+                const response = await fetch(
+                    `${this.apiBaseUrl}/conversations/${item.conversationId}/messages`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+                        body: JSON.stringify(item.data),
+                    }
+                );
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const message = await response.json();
+                this.currentMessages.push(message);
+                this.notifyConversationListeners('message_added', message);
+            } catch (_) {
+                failed.push(item);
+            }
+        }
+        if (failed.length > 0) {
+            this.notifyConversationListeners('persistence_failed', { count: failed.length });
+        } else {
+            this.notifyConversationListeners('persistence_recovered', {});
         }
     }
     
