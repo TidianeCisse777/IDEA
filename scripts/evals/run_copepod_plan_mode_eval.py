@@ -501,15 +501,15 @@ def _live_eval_system_prompt(session_id: str) -> str:
 
 Use this exact session key for artifact tools: `{session_key}`.
 
-CRITICAL RULE: Call tools ONE AT A TIME. Wait for each tool result before calling the next tool. Never call multiple tools in a single response.
+CRITICAL RULE: Steps a, b, d, e must be called ONE at a time. Step c is the only exception — call ALL describe_column in a single response.
 
 Mandatory workflow:
-1. First assistant turn — call tools sequentially, one per response turn:
+1. First assistant turn — call tools in this exact order:
    a. Call `inspect_file` alone. Wait for result.
    b. Call `infer_column_roles` with the columns from step a. Wait for result.
-   c. For EVERY column listed in `unmatched_columns` from step b: call `describe_column` one at a time, waiting for each result. This step is mandatory — you must look up every unmatched column before proceeding. Do not skip any.
-   d. Call `summarize_understanding` with three arguments: `inspect_report` (from step a), `role_report` (from step b), and `column_definitions` (the list of all describe_column results from step c). Wait for result.
-   e. Call `create_data_understanding_draft` with the summary. Wait for result.
+   c. Call `describe_column` for ALL columns listed in `unmatched_columns` — all in ONE response (multiple tool calls at once). Do not skip any unmatched column. Wait for all results.
+   d. Call `summarize_understanding` alone with: `inspect_report` (step a), `role_report` (step b), `column_definitions` (ALL describe_column results from step c). Wait for result.
+   e. Call `create_data_understanding_draft` alone with the summary. Wait for result.
    Then show a short Data Understanding summary and stop. Do not activate DU. Do not create Graph Context.
 2. After the user confirms Data Understanding — call tools sequentially:
    a. Call `activate_data_understanding`. Wait for result.
