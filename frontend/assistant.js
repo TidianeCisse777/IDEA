@@ -924,14 +924,22 @@ function saveCompletedAssistantMessage(message) {
     const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
     const messageType = validTypes.includes(message.type) ? message.type : 'message';
 
+    const frontendId = message.id;
     conversationManager.addMessage(
         message.role,
         message.content,
         messageType,
         message.format,
         message.recipient
-    ).catch(error => {
-        console.error('Failed to save completed message to conversation:', error);
+    ).then(saved => {
+        // Reconcile the DOM element's data-id to the stable backend UUID
+        if (frontendId && saved && saved.id && frontendId !== saved.id) {
+            const el = document.querySelector(`[data-id="${frontendId}"]`);
+            if (el) el.setAttribute('data-id', saved.id);
+            message.id = saved.id;
+        }
+    }).catch(() => {
+        // Persistence error is handled by ConversationManager's retry queue
     });
 }
 
@@ -1183,19 +1191,25 @@ function appendMessage(message, options = {}) {
 
     // Save user messages immediately to conversation (assistant/computer messages are saved when complete)
     if (persist && conversationManager && message.role === 'user' && message.content) {
-        // Validate message type against backend enums
         const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
         const messageType = validTypes.includes(message.type) ? message.type : 'message';
-        
-        // Save to conversation asynchronously
+        const frontendId = message.id;
+
         conversationManager.addMessage(
-            message.role, 
-            message.content, 
-            messageType, 
-            message.format, 
+            message.role,
+            message.content,
+            messageType,
+            message.format,
             message.recipient
-        ).catch(error => {
-            console.error('Failed to save user message to conversation:', error);
+        ).then(saved => {
+            // Reconcile the DOM element's data-id to the stable backend UUID
+            if (frontendId && saved && saved.id && frontendId !== saved.id) {
+                const el = document.querySelector(`[data-id="${frontendId}"]`);
+                if (el) el.setAttribute('data-id', saved.id);
+                message.id = saved.id;
+            }
+        }).catch(() => {
+            // Persistence error is handled by ConversationManager's retry queue
         });
     }
 }

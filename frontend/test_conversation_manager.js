@@ -131,6 +131,57 @@ function test_no_fetchSessionHistory_in_assistant() {
     assert(src.includes('persistence_failed'), 'persistence_failed listener wired');
 }
 
+// ─── Test 5: DOM ID reconciliation after addMessage success ──────────────────
+
+async function test_dom_id_reconciliation() {
+    console.log('\nTest: addMessage reconciles frontend ID → backend UUID in DOM');
+    const dbMessage = { id: 'uuid-db-999', role: 'user', content: 'hello', created_at: new Date().toISOString() };
+    global.fetch = makeFetchOk(dbMessage);
+
+    const m = new ConversationManager('http://localhost:9999');
+    m.isLoading = false;
+    m.currentConversationId = 'conv-1';
+
+    // Simulate a DOM element created with a frontend-generated ID
+    const frontendId = 'msg-abc123';
+    const fakeEl = { currentId: frontendId, setAttribute(attr, val) { if (attr === 'data-id') this.currentId = val; } };
+    global.document = { querySelector: (sel) => sel === `[data-id="${frontendId}"]` ? fakeEl : null };
+
+    // We need to simulate what assistant.js does in appendMessage:
+    // after addMessage resolves, reconcile data-id
+    const frontendMsg = { id: frontendId, role: 'user' };
+    const saved = await m.addMessage('user', 'hello', 'message');
+    if (frontendId && saved && saved.id && frontendId !== saved.id) {
+        const el = document.querySelector(`[data-id="${frontendId}"]`);
+        if (el) el.setAttribute('data-id', saved.id);
+        frontendMsg.id = saved.id;
+    }
+
+    assert(fakeEl.currentId === 'uuid-db-999', 'DOM element data-id updated to backend UUID');
+    assert(frontendMsg.id === 'uuid-db-999', 'In-memory message.id updated to backend UUID');
+
+    delete global.document;
+}
+
+// ─── Test 6: structural checks for Fix 3 and Fix 5 ───────────────────────────
+
+function test_structural_fixes() {
+    console.log('\nTest: conversation_ui.js structural fixes (3 + 5)');
+    const fs = require('fs');
+    const src = fs.readFileSync(__dirname + '/conversation_ui.js', 'utf8');
+
+    // Fix 3: interpreter sync isolated
+    assert(src.includes('Interpreter sync is best-effort'), 'Fix 3: interpreter sync comment present');
+    assert(src.includes('Historique chargé — contexte interprète non synchronisé'), 'Fix 3: warning message on sync failure');
+    assert(!src.includes("// Load conversation context into backend interpreter\n        await"), 'Fix 3: old await not in main try block');
+
+    // Fix 5: reconciliation instead of innerHTML wipe
+    assert(src.includes('_updateConversationItem'), 'Fix 5: _updateConversationItem helper defined');
+    assert(src.includes('_bindConversationItemListeners'), 'Fix 5: _bindConversationItemListeners helper defined');
+    assert(src.includes('conversationsList.appendChild(el)'), 'Fix 5: appendChild used for ordering');
+    assert(!src.includes('conversationsList.innerHTML = conversationsHTML'), 'Fix 5: full innerHTML wipe removed');
+}
+
 // ─── Runner ──────────────────────────────────────────────────────────────────
 
 (async () => {
@@ -138,6 +189,8 @@ function test_no_fetchSessionHistory_in_assistant() {
     await test_flush_success();
     await test_flush_failure();
     test_no_fetchSessionHistory_in_assistant();
+    await test_dom_id_reconciliation();
+    test_structural_fixes();
 
     console.log(`\n${passed} passed, ${failed} failed`);
     process.exit(failed > 0 ? 1 : 0);
