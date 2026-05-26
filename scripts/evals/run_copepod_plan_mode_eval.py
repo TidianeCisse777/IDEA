@@ -509,7 +509,7 @@ Mandatory workflow:
    b. Call `infer_column_roles` with the columns from step a. Wait for result.
    c. Call `describe_column` for ALL columns listed in `unmatched_columns` — all in ONE response (multiple tool calls at once). Do not skip any unmatched column. Wait for all results.
    d. Call `summarize_understanding` alone with: `inspect_report` (step a), `role_report` (step b), `column_definitions` (ALL describe_column results from step c). Wait for result.
-   e. Call `create_data_understanding_draft` alone with the summary. Wait for result.
+   e. Call `create_data_understanding_draft` alone with `artifact` = the COMPLETE JSON output of `summarize_understanding`, passed as-is without restructuring. Wait for result.
    Then show a short Data Understanding summary and stop. Do not activate DU. Do not create Graph Context.
 2. After the user confirms Data Understanding — call tools sequentially:
    a. Call `activate_data_understanding`. Wait for result.
@@ -993,10 +993,50 @@ def run_live_eval(
                     {"case_type": "live", "model": model_name},
                 ))
 
+                # --- edge cases: phase 1 quality & efficiency ---
+                phase1_msgs = messages[2:]  # skip system + first user
+                phase1_rounds = sum(1 for m in phase1_msgs if m.get("role") == "assistant")
+                describe_calls = sum(
+                    1
+                    for m in phase1_msgs
+                    if m.get("role") == "assistant"
+                    for tc in (m.get("tool_calls") or [])
+                    if (_tool_call_to_dict(tc).get("function") or {}).get("name") == "describe_column"
+                )
+                unmatched_count = 0
+                for m in phase1_msgs:
+                    if m.get("role") == "tool" and m.get("name") == "infer_column_roles":
+                        unmatched_count = len(json.loads(m.get("content", "{}")).get("unmatched_columns", []))
+                        break
+                results.append(_result(
+                    "live_describe_column_covered_all_unmatched",
+                    describe_calls >= unmatched_count > 0,
+                    f"describe_column called {describe_calls}× for {unmatched_count} unmatched columns.",
+                    {"case_type": "edge", "describe_calls": describe_calls, "unmatched_count": unmatched_count},
+                ))
+                results.append(_result(
+                    "live_phase1_efficient",
+                    phase1_rounds <= 10,
+                    f"Phase 1 completed in {phase1_rounds} rounds (limit: 10).",
+                    {"case_type": "edge", "rounds": phase1_rounds},
+                ))
+                du_payload = (du_draft.get("payload") or {}) if du_draft else {}
+                has_catalogue = (
+                    "column_catalogue" in du_payload
+                    and bool(du_payload["column_catalogue"])
+                )
+                results.append(_result(
+                    "live_du_payload_has_column_catalogue",
+                    has_catalogue,
+                    f"DU artifact payload contains column_catalogue with {len(du_payload.get('column_catalogue') or [])} entries.",
+                    {"case_type": "edge"},
+                ))
+
+                # --- unpredictable input: casual/ambiguous confirmation ---
                 messages.append(
                     {
                         "role": "user",
-                        "content": "Oui, je valide la compréhension des données. Continue avec la Phase 2.",
+                        "content": "Ouais ça m'a l'air bien, t'as tout ce qu'il faut. Vas-y pour la suite.",
                     }
                 )
                 if du_span is not None:
@@ -1066,10 +1106,25 @@ def run_live_eval(
                     {"case_type": "live", "model": model_name},
                 ))
 
+                # --- edge case: GC artifact has all required fields ---
+                gc_payload = (gc_draft.get("payload") or {}) if gc_draft else {}
+                required_gc_fields = {
+                    "data_understanding_version_id", "objective", "columns", "filters",
+                    "units", "chart_type", "language", "output_artifacts", "feasibility", "blockers",
+                }
+                missing_gc_fields = required_gc_fields - gc_payload.keys()
+                results.append(_result(
+                    "live_gc_payload_has_all_required_fields",
+                    not missing_gc_fields,
+                    f"GC artifact has all required fields. Missing: {sorted(missing_gc_fields) or 'none'}.",
+                    {"case_type": "edge", "missing": sorted(missing_gc_fields)},
+                ))
+
+                # --- unpredictable input: terse/ambiguous phase 3 confirmation ---
                 messages.append(
                     {
                         "role": "user",
-                        "content": "Oui, je valide le contexte scientifique et graphique.",
+                        "content": "Ok, c'est bon pour moi.",
                     }
                 )
                 if gc_span is not None:
