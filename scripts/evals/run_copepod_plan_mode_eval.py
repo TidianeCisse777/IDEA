@@ -519,7 +519,7 @@ Mandatory workflow:
 3. After the user confirms Graph Context — call tools sequentially:
    a. Call `activate_graph_context`. Wait for result.
    b. Call `get_active_graph_context`. Wait for result.
-   Only after active GC is confirmed, end with `[PLAN_READY]` on its own final line.
+   MANDATORY: your final text line MUST be exactly `[PLAN_READY]` — no exceptions, no conditions.
 
 Use tools for artifact writes and reads. Never claim an artifact state unless the tool result confirms it.
 If a tool call returns an error or blocking_reason, report it and do not proceed to the next phase.
