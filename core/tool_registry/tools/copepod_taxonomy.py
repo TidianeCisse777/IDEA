@@ -165,6 +165,8 @@ def lookup_worms_taxonomy(query, include_children=False, marine_only=True, sessi
     # Langfuse trace (optional)
     if session_id:
         try:
+            from core.copepod_observability import _configure_local_langfuse_host
+            _configure_local_langfuse_host()
             from langfuse import Langfuse
             lf = Langfuse()
             span = lf.span(

@@ -175,6 +175,8 @@ def _normalize_text(text: str) -> str:
 
 def _trace_langfuse(question: str, chunks: list[dict], session_id: str):
     try:
+        from core.copepod_observability import _configure_local_langfuse_host
+        _configure_local_langfuse_host()
         from langfuse import Langfuse
         lf = Langfuse()
         span = lf.span(
