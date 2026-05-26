@@ -1124,7 +1124,7 @@ function appendMessage(message, options = {}) {
         messageElement.classList.add('console-output-message');
         contentElement.setAttribute('aria-hidden', 'true');
     } else {
-        contentElement.innerHTML = message.content; 
+        contentElement.textContent = message.content;
     }
 
     // Tool-status messages: add compact UI classes
@@ -1336,7 +1336,7 @@ function updateMessageContent(id, content) {
             // 4) Now it's safe: run Markdown, restore math, inject HTML
             const parsedMarkdown = marked.parse(shielded);
             const htmlWithMath = restoreMath(parsedMarkdown, store);
-            contentDiv.innerHTML = htmlWithMath;
+            contentDiv.innerHTML = DOMPurify.sanitize(htmlWithMath);
 
             // 5) Highlight code blocks using Prism
             prismHighlightUnder(contentDiv);
@@ -1361,19 +1361,15 @@ function updateMessageContent(id, content) {
                     contentDiv.innerHTML = `<div class="image-placeholder"> Generating image… </div>`;
                 }
             } else if (message.format === 'path') {
-                // path-based images are usually already usable
-                contentDiv.innerHTML = `<img src="${content}" alt="Image">`;
+                const img = document.createElement('img');
+                img.src = content;
+                img.alt = 'Image';
+                contentDiv.appendChild(img);
             }
         } else if (message.type === 'code') {
             const preservedStdoutState = captureStdoutPanelState(message.id);
             if (message.format === "html") {
-                // contentDiv.innerHTML = content;
-                // do nothing
-                // return;
-                // const sanitizedHtml = DOMPurify.sanitize(content);
-                
-                contentDiv.innerHTML = content;
-                // return;
+                contentDiv.innerHTML = DOMPurify.sanitize(content);
             } else {
                 let codeBlock = contentDiv.querySelector('pre code');
                 if (!codeBlock) {
@@ -1396,8 +1392,12 @@ function updateMessageContent(id, content) {
                 }
             }
         } else if (message.type === 'file') {
-            contentDiv.innerHTML = `<a href="${content}" download>Download File</a>`;
-        } 
+            const a = document.createElement('a');
+            a.href = content;
+            a.download = '';
+            a.textContent = 'Download File';
+            contentDiv.appendChild(a);
+        }
     } catch (error) {
         handleError(error, 'Failed to update message content');
     }
@@ -1421,7 +1421,7 @@ function appendSystemMessage(message) {
     const content = document.createElement('div');
     content.classList.add('content');
     const parsedMarkdown = marked.parse(message);
-    content.innerHTML = parsedMarkdown;
+    content.innerHTML = DOMPurify.sanitize(parsedMarkdown);
     content.querySelectorAll('pre code').forEach((block) => {
         Prism.highlightElement(block);
         // hljs.highlightElement(block);

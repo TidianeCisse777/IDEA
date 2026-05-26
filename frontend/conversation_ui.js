@@ -353,15 +353,22 @@ function displayMessageInChat(message) {
     
     // Handle different message types and formats similar to updateMessageContent in assistant.js
     if (message.message_type === 'message') {
-        // Handle markdown content
-        contentElement.innerHTML = marked ? marked.parse(message.content) : message.content;
+        contentElement.innerHTML = marked
+            ? DOMPurify.sanitize(marked.parse(message.content))
+            : escapeHtml(message.content);
     } else if (message.message_type === 'image') {
         if (message.message_format === 'base64.png') {
             contentElement.innerHTML = `<img src="data:image/png;base64,${message.content}" alt="Image">`;
         } else if (message.message_format === 'path') {
-            contentElement.innerHTML = `<img src="${message.content}" alt="Image">`;
+            const img = document.createElement('img');
+            img.src = message.content;
+            img.alt = 'Image';
+            contentElement.appendChild(img);
         } else {
-            contentElement.innerHTML = `<img src="${message.content}" alt="Image">`;
+            const img = document.createElement('img');
+            img.src = message.content;
+            img.alt = 'Image';
+            contentElement.appendChild(img);
         }
     } else if (message.message_type === 'code') {
         if (message.message_format === 'html') {
