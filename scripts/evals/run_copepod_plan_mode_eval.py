@@ -403,7 +403,11 @@ def _run_llm_turn(
             except Exception as exc:
                 _log(f"  [ERROR] phase={phase} round={round_index+1} llm_exception={exc}")
                 if attempt == 0 and "rate limit" in str(exc).lower():
-                    time.sleep(12)
+                    import re as _re
+                    m = _re.search(r"try again in (\d+(?:\.\d+)?)s", str(exc), _re.IGNORECASE)
+                    wait = float(m.group(1)) + 2 if m else 30
+                    _log(f"  [WAIT]  rate_limit — sleeping {wait:.0f}s before retry")
+                    time.sleep(wait)
                     continue
                 raise
         message = _message_to_dict(_completion_message(response))
@@ -525,7 +529,8 @@ Use tools for artifact writes and reads. Never claim an artifact state unless th
 If a tool call returns an error or blocking_reason, report it and do not proceed to the next phase.
 
 Graph Context must include: data_understanding_version_id, objective, columns, filters, units, chart_type, language, output_artifacts, feasibility, blockers.
-Keep assistant text concise; tool outputs contain the evidence."""
+Keep assistant text concise; tool outputs contain the evidence.
+Always respond in French."""
 
 
 def _push_scores_to_langfuse(session_key: str, results: list[dict]) -> str | None:
