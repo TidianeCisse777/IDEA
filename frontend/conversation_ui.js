@@ -487,7 +487,8 @@ window.conversationUI = {
     openConversationsModal,
     closeConversationsModal,
     displayMessageInChat,
-    showNotification
+    showNotification,
+    displayConversations,
 };
 
 window.loadConversation = loadConversation;
