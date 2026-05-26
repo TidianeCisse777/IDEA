@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from core.auth import get_auth_token, get_current_user
 from core.copepod_observability import trace_copepod_event
+from core.copepod_plan_workflow import PLAN_READY
 from core.session_store import session_store
 from utils.session_utils import make_session_key, resolve_agent_type
 from agents.registry import registered_types
@@ -35,6 +36,12 @@ def _diagnose_plan_artifacts_block(session_key: str) -> str:
             "call activate_graph_context(session_key, version_id) first"
         )
     gc_du_ref = (active_gc.get("payload") or {}).get("data_understanding_version_id")
+    if gc_du_ref == active_du["version_id"]:
+        current_phase = session_store.get_copepod_plan_phase(session_key)
+        return (
+            f"workflow phase must be plan_ready before Analyse Mode "
+            f"(current phase: {current_phase})"
+        )
     return (
         f"Graph Context references Data Understanding '{gc_du_ref}' "
         f"but the active Data Understanding is '{active_du['version_id']}' — "
@@ -95,7 +102,10 @@ async def set_mode(
     if (
         agent_type == "copepod"
         and body.mode == "analyse"
-        and not session_store.has_active_copepod_plan_artifacts(session_key)
+        and (
+            session_store.get_copepod_plan_phase(session_key) != PLAN_READY
+            or not session_store.has_active_copepod_plan_artifacts(session_key)
+        )
     ):
         blocking_reason = _diagnose_plan_artifacts_block(session_key)
         trace_copepod_event(

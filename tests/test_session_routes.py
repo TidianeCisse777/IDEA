@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 import agents.copepod_profile  # noqa: F401 — initial registration
 from core.session_store import InMemorySessionStore
+from core.copepod_plan_workflow import PLAN_READY
 from routers.session_routes import router
 
 
@@ -138,6 +139,7 @@ class TestPostSessionMode:
             session_key, "data_understanding", data["version_id"]
         )
         store.activate_artifact_version(session_key, "graph_context", graph["version_id"])
+        store.set_copepod_plan_phase(session_key, PLAN_READY)
 
     def test_post_mode_sets_analyse(self, client):
         tc, store = client
@@ -264,6 +266,37 @@ class TestPostSessionMode:
             session_key="u1:s1:copepod",
             output={"mode": "analyse"},
         )
+
+    def test_post_mode_copepod_analyse_requires_plan_ready_phase(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        data = store.create_artifact_version(
+            session_key,
+            "data_understanding",
+            {"files": [{"file_path": "static/u1/s1/uploads/a.csv"}]},
+        )
+        graph = store.create_artifact_version(
+            session_key,
+            "graph_context",
+            {
+                "data_understanding_version_id": data["version_id"],
+                "objective": "vertical distribution",
+            },
+        )
+        store.activate_artifact_version(
+            session_key, "data_understanding", data["version_id"]
+        )
+        store.activate_artifact_version(session_key, "graph_context", graph["version_id"])
+
+        resp = tc.post(
+            "/session/mode",
+            json={"mode": "analyse"},
+            headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+        )
+
+        assert resp.status_code == 409
+        assert "plan_ready" in resp.json()["detail"]
+        assert store.get_session_mode(session_key) == "plan"
 
     def test_post_mode_generic_sets_plan_from_analyse(self, client):
         tc, store = client

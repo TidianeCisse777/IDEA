@@ -17,6 +17,8 @@ from abc import ABC, abstractmethod
 from time import time
 from uuid import uuid4
 
+from core.copepod_plan_workflow import DEFAULT_PHASE, VALID_PHASES
+
 
 ARTIFACT_VERSION_PREFIXES = {
     "data_understanding": "du",
@@ -120,6 +122,16 @@ class SessionStore(ABC):
         """Return whether required copepod plan artifacts are active."""
         ...
 
+    @abstractmethod
+    def get_copepod_plan_phase(self, session_key: str) -> str:
+        """Return the current copepod plan workflow phase."""
+        ...
+
+    @abstractmethod
+    def set_copepod_plan_phase(self, session_key: str, phase: str) -> None:
+        """Persist the copepod plan workflow phase."""
+        ...
+
 
 class RedisSessionStore(SessionStore):
     """Production implementation backed by a Redis server."""
@@ -146,6 +158,7 @@ class RedisSessionStore(SessionStore):
             f"messages:{session_key}",
             f"last_active:{session_key}",
             f"session_mode:{session_key}",
+            f"copepod_plan_phase:{session_key}",
             *self._r.keys(f"artifacts:{session_key}:*"),
         ]
         self._r.delete(*keys)
@@ -207,6 +220,15 @@ class RedisSessionStore(SessionStore):
             self.get_active_artifact(session_key, "graph_context"),
         )
 
+    def get_copepod_plan_phase(self, session_key: str) -> str:
+        raw = self._r.get(f"copepod_plan_phase:{session_key}")
+        return raw.decode() if raw else DEFAULT_PHASE
+
+    def set_copepod_plan_phase(self, session_key: str, phase: str) -> None:
+        if phase not in VALID_PHASES:
+            raise ValueError(f"Invalid copepod plan phase: {phase}")
+        self._r.set(f"copepod_plan_phase:{session_key}", phase)
+
 
 class InMemorySessionStore(SessionStore):
     """In-memory implementation for tests and local development (no Redis needed)."""
@@ -216,6 +238,7 @@ class InMemorySessionStore(SessionStore):
         self._timestamps: dict[str, float] = {}
         self._modes: dict[str, str] = {}
         self._artifacts: dict[tuple[str, str], list[dict]] = {}
+        self._copepod_plan_phases: dict[str, str] = {}
 
     def read_messages(self, session_key: str) -> list[dict] | None:
         return self._messages.get(session_key)
@@ -233,6 +256,7 @@ class InMemorySessionStore(SessionStore):
         self._messages.pop(session_key, None)
         self._timestamps.pop(session_key, None)
         self._modes.pop(session_key, None)
+        self._copepod_plan_phases.pop(session_key, None)
         for key in list(self._artifacts):
             if key[0] == session_key:
                 self._artifacts.pop(key, None)
@@ -284,6 +308,14 @@ class InMemorySessionStore(SessionStore):
             self.get_active_artifact(session_key, "data_understanding"),
             self.get_active_artifact(session_key, "graph_context"),
         )
+
+    def get_copepod_plan_phase(self, session_key: str) -> str:
+        return self._copepod_plan_phases.get(session_key, DEFAULT_PHASE)
+
+    def set_copepod_plan_phase(self, session_key: str, phase: str) -> None:
+        if phase not in VALID_PHASES:
+            raise ValueError(f"Invalid copepod plan phase: {phase}")
+        self._copepod_plan_phases[session_key] = phase
 
 
 # Singleton — selection strategy:

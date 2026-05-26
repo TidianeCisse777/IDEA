@@ -21,6 +21,7 @@ def chat_stream_events(
     *,
     user_turns: int,
     session_mode: str | None,
+    plan_ready_allowed: bool = True,
 ) -> Iterator[Any]:
     """Transform interpreter chunks into UI stream events."""
     plan_ready_emitted = False
@@ -85,5 +86,10 @@ def chat_stream_events(
 
         yield event
 
-    if plan_ready_emitted and user_turns >= 3 and session_mode != "analyse":
+    if (
+        plan_ready_emitted
+        and plan_ready_allowed
+        and user_turns >= 3
+        and session_mode != "analyse"
+    ):
         yield dict(VALIDATE_PLAN_ACTION)

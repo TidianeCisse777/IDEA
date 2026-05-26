@@ -102,6 +102,37 @@ def test_plan_ready_does_not_emit_button_when_session_already_in_analysis():
     ]
 
 
+def test_plan_ready_does_not_emit_button_when_backend_workflow_is_not_ready():
+    chunks = [
+        {
+            "start": True,
+            "end": True,
+            "role": "assistant",
+            "type": "message",
+            "content": "Le plan est valide. [PLAN_READY]",
+        }
+    ]
+
+    events = list(
+        chat_stream_events(
+            chunks,
+            user_turns=3,
+            session_mode="plan",
+            plan_ready_allowed=False,
+        )
+    )
+
+    assert events == [
+        {
+            "start": True,
+            "end": True,
+            "role": "assistant",
+            "type": "message",
+            "content": "Le plan est valide.",
+        }
+    ]
+
+
 def test_chunks_without_plan_ready_pass_through_unchanged():
     text_chunk = {"role": "assistant", "type": "message", "content": "Bonjour"}
     non_message_chunk = {"role": "computer", "type": "tool_status", "content": "done"}

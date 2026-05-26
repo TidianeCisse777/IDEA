@@ -562,11 +562,19 @@ async def chat_endpoint(
                     if isinstance(m, dict) and m.get("role") == "user"
                 )
                 current_mode = session_store.get_session_mode(session_key)
+                plan_ready_allowed = True
+                if agent_type == "copepod":
+                    plan_ready_allowed = (
+                        session_store.get_copepod_plan_phase(session_key)
+                        == "plan_ready"
+                        and session_store.has_active_copepod_plan_artifacts(session_key)
+                    )
                 total_chunks = 0
                 for result in chat_stream_events(
                     interpreter.chat(messages[-1], stream=True),
                     user_turns=user_turns,
                     session_mode=current_mode,
+                    plan_ready_allowed=plan_ready_allowed,
                 ):
                     total_chunks += 1
                     data = json.dumps(result) if isinstance(result, dict) else result

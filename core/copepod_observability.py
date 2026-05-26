@@ -35,13 +35,24 @@ def trace_copepod_event(
 
         _configure_local_langfuse_host()
         lf = Langfuse()
-        span = lf.span(
-            name=f"copepod_{event_name}",
-            session_id=session_key,
-            input=input or {},
-            output=output or {},
-            metadata=metadata or {},
-        )
+        eval_trace_id = os.getenv("COPEPOD_EVAL_LF_TRACE_ID")
+        if eval_trace_id:
+            # Attach to the running eval trace instead of creating an orphan
+            span = lf.span(
+                trace_id=eval_trace_id,
+                name=f"tool/{event_name}",
+                input=input or {},
+                output=output or {},
+                metadata={**(metadata or {}), "session_key": session_key},
+            )
+        else:
+            span = lf.span(
+                name=f"copepod_{event_name}",
+                session_id=session_key,
+                input=input or {},
+                output=output or {},
+                metadata=metadata or {},
+            )
         span.end()
     except Exception:
         return

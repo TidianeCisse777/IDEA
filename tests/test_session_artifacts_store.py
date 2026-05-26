@@ -150,3 +150,33 @@ def test_evict_clears_artifact_state():
     assert store.get_artifact_versions("session", "data_understanding") == []
     assert store.get_artifact_versions("session", "graph_context") == []
     assert store.has_active_copepod_plan_artifacts("session") is False
+
+
+def test_copepod_plan_phase_defaults_to_data_understanding_draft_required():
+    store = InMemorySessionStore()
+
+    assert (
+        store.get_copepod_plan_phase("session")
+        == "data_understanding_draft_required"
+    )
+
+
+def test_copepod_plan_phase_can_be_advanced_and_is_evicted_with_session():
+    store = InMemorySessionStore()
+
+    store.set_copepod_plan_phase(
+        "session",
+        "data_understanding_confirmation_required",
+    )
+
+    assert (
+        store.get_copepod_plan_phase("session")
+        == "data_understanding_confirmation_required"
+    )
+
+    store.evict("session")
+
+    assert (
+        store.get_copepod_plan_phase("session")
+        == "data_understanding_draft_required"
+    )

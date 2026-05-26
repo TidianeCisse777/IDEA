@@ -319,7 +319,8 @@ def infer_column_roles(columns, metadata=None):
         "lab_measurement":          ["lipid", "carbon", "biomass", "wax", "fatty", "drymass"],
     }
 
-    col_names = [c["name"] for c in columns] if columns and isinstance(columns[0], dict) else columns
+    columns_are_dicts = bool(columns) and isinstance(columns[0], dict)
+    col_names = [c["name"] for c in columns] if columns_are_dicts else [str(c) for c in columns]
 
     for col in col_names:
         col_lower = col.lower()
@@ -336,7 +337,7 @@ def infer_column_roles(columns, metadata=None):
                 matched.add(col)
                 found = True
                 break
-        if not found and isinstance(columns[0], dict):
+        if not found and columns_are_dicts:
             col_dict = next((c for c in columns if c["name"] == col), {})
             if col_dict.get("semantic_guess"):
                 roles.append({
@@ -362,21 +363,25 @@ def infer_column_roles(columns, metadata=None):
     }
 
 
-def summarize_understanding(inspect_report, role_report):
+def summarize_understanding(inspect_report, role_report, column_definitions=None):
     """Produce the structured data understanding summary for Mode Plan.
 
-    Call this after inspect_file and infer_column_roles (and optionally after
-    querying the knowledge base). The output is the documented snapshot the
-    agent uses to lock in context before generating a graph.
+    Call this after inspect_file, infer_column_roles, and all describe_column
+    calls. The output is the documented snapshot the agent uses to lock in
+    context before generating a graph.
 
     Does not decide which graph to produce. Does not interpret biologically.
 
     Args:
         inspect_report (dict): Output from inspect_file.
         role_report (dict): Output from infer_column_roles.
+        column_definitions (list, optional): List of describe_column results,
+            each a dict with keys: column, definition, unit, confidence,
+            critical_notes, rag_doc_ref.
 
     Returns:
-        dict: Structured summary for Mode Plan.
+        dict: Structured summary for Mode Plan, including enriched column
+            catalogue for use in graph generation.
     """
     quality_limits = []
     missing_or_ambiguous = []
@@ -389,13 +394,6 @@ def summarize_understanding(inspect_report, role_report):
             quality_limits.append(
                 f"Column '{col['name']}' has {round(rate * 100)}% missing values."
             )
-
-    # Unmatched columns
-    unmatched = role_report.get("unmatched_columns", [])
-    if unmatched:
-        missing_or_ambiguous.append(
-            f"Unmatched columns (role unknown): {', '.join(unmatched[:10])}"
-        )
 
     # Warnings from both reports
     for w in inspect_report.get("warnings", []) + role_report.get("warnings", []):
@@ -410,8 +408,23 @@ def summarize_understanding(inspect_report, role_report):
     elif "taxon" in role_names:
         tax_val = "missing"
 
-    # Useful columns (those with a matched role)
-    useful_columns = [r["column"] for r in roles]
+    # Columns with a role from pattern matching
+    role_columns = [r["column"] for r in roles]
+
+    # Columns resolved via RAG (describe_column)
+    defs = column_definitions or []
+    rag_columns = [d["column"] for d in defs if isinstance(d, dict) and d.get("column")]
+
+    # All known columns = role-matched + RAG-defined
+    all_known = list(dict.fromkeys(role_columns + rag_columns))
+
+    # Remaining unmatched (neither pattern nor RAG covered them)
+    unmatched = role_report.get("unmatched_columns", [])
+    still_unknown = [c for c in unmatched if c not in rag_columns]
+    if still_unknown:
+        missing_or_ambiguous.append(
+            f"Columns with no known definition: {', '.join(still_unknown[:10])}"
+        )
 
     # Possible joins
     if "profile_id" in role_names:
@@ -421,10 +434,29 @@ def summarize_understanding(inspect_report, role_report):
 
     source_guess = inspect_report.get("source_type_guess", {})
 
+    # Build enriched column catalogue for graph generation
+    column_catalogue = []
+    role_map = {r["column"]: r for r in roles}
+    rag_map = {d["column"]: d for d in defs if isinstance(d, dict) and d.get("column")}
+    for col_name in all_known:
+        entry = {"column": col_name}
+        if col_name in role_map:
+            entry["role"] = role_map[col_name]["role"]
+            entry["role_confidence"] = role_map[col_name]["confidence"]
+        if col_name in rag_map:
+            rag = rag_map[col_name]
+            entry["definition"] = rag.get("definition")
+            entry["unit"] = rag.get("unit")
+            entry["rag_confidence"] = rag.get("confidence")
+            if rag.get("critical_notes"):
+                entry["critical_notes"] = rag["critical_notes"]
+        column_catalogue.append(entry)
+
     return {
         "file_or_source": inspect_report.get("file_path", "unknown"),
         "probable_source_type": source_guess.get("value", "unknown"),
-        "useful_columns": useful_columns,
+        "useful_columns": all_known,
+        "column_catalogue": column_catalogue,
         "metadata_detected": inspect_report.get("metadata", {}),
         "quality_limits": quality_limits,
         "taxonomic_validation_status": tax_val,
