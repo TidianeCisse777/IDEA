@@ -12,13 +12,8 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initializeConversationUI() {
-    // Initialize conversation manager
-    conversationManager = new ConversationManager();
-    
-    // Set up event listeners for conversation UI
+    // conversationManager is initialized by assistant.js — do not reinitialize here
     setupConversationEventListeners();
-    
-    // Set up conversation manager listeners
     setupConversationManagerListeners();
 }
 
@@ -242,6 +237,8 @@ async function loadConversation(conversationId) {
             window.resetSessionForConversationLoad();
         }
 
+        localStorage.setItem('activeConversationId', conversationId);
+
         if (typeof window.hydrateChatWithMessages === 'function') {
             window.hydrateChatWithMessages(loadedMessages, { persist: false });
         } else {
@@ -282,11 +279,20 @@ async function toggleFavorite(conversationId) {
 
 async function deleteConversation(conversationId, title) {
     const confirmed = confirm(`Are you sure you want to delete "${title || 'this conversation'}"? This action cannot be undone.`);
-    
+
     if (confirmed) {
         try {
             await conversationManager.deleteConversation(conversationId);
             displayConversations();
+
+            // Si la conversation supprimée était active, vider le chat
+            if (localStorage.getItem('activeConversationId') === conversationId) {
+                localStorage.removeItem('activeConversationId');
+                const chatDisplay = document.getElementById('chatDisplay');
+                if (chatDisplay) chatDisplay.innerHTML = '';
+                if (typeof window.showPromptIdeas === 'function') window.showPromptIdeas();
+            }
+
             showNotification('Conversation deleted', 'success');
         } catch (error) {
             console.error('Error deleting conversation:', error);
@@ -468,3 +474,5 @@ window.conversationUI = {
     displayMessageInChat,
     showNotification
 };
+
+window.loadConversation = loadConversation;

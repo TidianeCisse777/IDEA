@@ -5,8 +5,9 @@ from typing import Optional
 from agents.base import AssistantProfile
 from agents.copepod_prompt import COPEPOD_SYSTEM_PROMPT
 from agents.registry import register
+from core import session_store as session_store_module
 from core.instruction_renderer import renderer as instruction_renderer
-from core.session_store import session_store
+from core.session_store import SessionStore
 from core.tool_registry import registry as tool_registry
 from utils.session_utils import make_session_key
 
@@ -37,6 +38,13 @@ class CopepodProfile(AssistantProfile):
     # instruction_blocks is dynamic — resolved per session in get_custom_instructions
     instruction_blocks = _BLOCKS_PLAN
 
+    def __init__(self, session_store: SessionStore | None = None):
+        self._session_store = session_store
+
+    @property
+    def session_store(self) -> SessionStore:
+        return self._session_store or session_store_module.session_store
+
     def get_system_message(self, active_user_prompt: str) -> str:
         return COPEPOD_SYSTEM_PROMPT + active_user_prompt
 
@@ -53,7 +61,7 @@ class CopepodProfile(AssistantProfile):
         mcp_tools: Optional[list[str]] = None,
     ) -> str:
         session_key = make_session_key(user_id, session_id, self.agent_type)
-        mode = session_store.get_session_mode(session_key)
+        mode = self.session_store.get_session_mode(session_key)
         blocks = _BLOCKS_ANALYSE if mode == "analyse" else _BLOCKS_PLAN
 
         context = {

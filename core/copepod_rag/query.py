@@ -10,6 +10,7 @@ Usage (CLI):
 """
 from __future__ import annotations
 
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,7 @@ _QUERY_ALIASES = {
     "fre equivalent diameter area": ["fre_equivalent_diameter_area", "fre.equivalent_diameter_area"],
     "fre.equivalent_diameter_area": ["fre_equivalent_diameter_area"],
     "acq pixel um size": ["acq_pixel_um_size", "acq.pixel_um_size", "pixel_um_size"],
+    "pixel um size": ["acq_pixel_um_size", "acq.pixel_um_size", "pixel_um_size"],
     "acq.pixel_um_size": ["acq_pixel_um_size"],
     "ctd embarquée": ["CTD embarquée", "acq_temperature_ctd", "acq_salinity_ctd"],
     "ctd embarquee": ["CTD embarquée", "acq_temperature_ctd", "acq_salinity_ctd"],
@@ -109,7 +111,15 @@ def _expand_query(question: str) -> str:
         if pattern in lower or pattern in question.lower():
             additions.extend(aliases)
     if "loki" in lower and "ctd" in lower:
-        additions.extend(["CTD embarquée", "acq_temperature_ctd", "acq_salinity_ctd", "acq_raw_depth"])
+        additions.extend([
+            "CTD embarquée",
+            "CTD externe indépendante",
+            "acq_temperature_ctd",
+            "acq_salinity_ctd",
+            "acq_raw_depth",
+            "capteurs/acquisitions associées",
+            "ne pas les confondre",
+        ])
     if not additions:
         return question
     return f"{question} {' '.join(dict.fromkeys(additions))}"
@@ -126,7 +136,41 @@ def _lexical_boost(expanded_question: str, content: str) -> float:
     for term in terms:
         if term in content_lower:
             boost += 0.08
-    return min(boost, 0.4)
+    boost += _business_context_boost(expanded_question, content)
+    return min(boost, 0.75)
+
+
+def _business_context_boost(expanded_question: str, content: str) -> float:
+    question = _normalize_text(expanded_question)
+    content_norm = _normalize_text(content)
+    boost = 0.0
+
+    if "loki" in question and "ctd" in question:
+        if "ctd embarquee" in content_norm and "ctd externe" in content_norm:
+            boost += 0.25
+        if "ne pas les confondre" in content_norm or "capteurs/acquisitions associees" in content_norm:
+            boost += 0.15
+
+    if "pixel_um_size" in expanded_question or "pixel um size" in question:
+        if "acq_pixel_um_size" in content and "/ 1000" in content:
+            boost += 0.2
+        if "longueur_mm" in content:
+            boost += 0.1
+
+    if "acq_pixel" in expanded_question and "acq_pixel_um_size" in expanded_question:
+        if "acq_pixel" in content and "acq_pixel_um_size" in content:
+            boost += 0.15
+
+    if ("null" in question or "constante" in question) and "tsv" in question:
+        if "contenu reel du tsv" in content_norm or "toujours recalculer" in content_norm:
+            boost += 0.2
+
+    return boost
+
+
+def _normalize_text(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text.lower())
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 
 def _trace_langfuse(question: str, chunks: list[dict], session_id: str):

@@ -1852,18 +1852,14 @@ pre {
     text-decoration: underline;
 }
 
-/* Mobile overlay for menu */
+/* Mobile overlay — covers chat area when sidebar is open on mobile */
 .mobile-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: var(--overlay-bg);
     display: none;
-    z-index: 998;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 99;
 }
-
 .mobile-overlay.active {
     display: block;
 }
@@ -3636,6 +3632,22 @@ body.main-app {
         flex-basis: 220px;
     }
 
+    /* collapsed is a desktop-only concept — restore labels when open on mobile */
+    .sidebar.mobile-open.collapsed {
+        width: 220px;
+        flex-basis: 220px;
+    }
+    .sidebar.mobile-open.collapsed .sidebar-btn-label {
+        opacity: 1;
+        width: auto;
+        pointer-events: auto;
+    }
+    .sidebar.mobile-open.collapsed .sidebar-brand-name {
+        opacity: 1;
+        width: auto;
+        overflow: visible;
+    }
+
     .sidebar-open-btn {
         display: flex;
     }
@@ -3799,4 +3811,114 @@ body.main-app {
 .chat-display.mode-analyse {
     background: color-mix(in srgb, var(--surface-alt) 96%, #22c578 4%);
     transition: background 0.6s ease;
+}
+
+/* ── Message action toolbar (copy / thumbs) ──────────────────────────────────── */
+
+.message-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+}
+
+.message.assistant:hover .message-actions,
+.message.user:hover .message-actions {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.message-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    flex-shrink: 0;
+}
+
+.message-action-btn:hover {
+    background: var(--button-secondary-hover);
+    color: var(--text-primary);
+    border-color: var(--primary);
+}
+
+.message-action-btn:active {
+    transform: scale(0.92);
+}
+
+.message-action-btn.active-thumb {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: rgba(15, 51, 72, 0.12);
+}
+
+body.theme-light .message-action-btn.active-thumb {
+    background: rgba(74, 158, 207, 0.12);
+}
+
+.message-action-btn.copy-done {
+    color: #22c55e;
+    border-color: #22c55e;
+}
+
+/* ── Send button active press state ─────────────────────────────────────────── */
+
+.chat-footer button:active:not(:disabled) {
+    transform: scale(0.96) translateY(0);
+    box-shadow: none;
+}
+
+/* ── Input focus ring — more visible ─────────────────────────────────────────  */
+
+.input-container:focus-within {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px rgba(15, 51, 72, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+}
+
+body.theme-light .input-container:focus-within {
+    box-shadow: 0 0 0 3px rgba(74, 158, 207, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+}
+
+/* ── Sidebar action buttons — hover/active ───────────────────────────────────── */
+
+.sidebar-btn {
+    transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+
+.sidebar-btn:active {
+    transform: scale(0.96);
+}
+
+/* ── Header buttons active ───────────────────────────────────────────────────── */
+
+.header-btn:active {
+    transform: scale(0.94);
+}
+
+/* ── Generating pulse on send button ─────────────────────────────────────────── */
+
+@keyframes send-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(15, 51, 72, 0.4); }
+    50%       { box-shadow: 0 0 0 6px rgba(15, 51, 72, 0); }
+}
+
+body.theme-light #sendButton.is-generating {
+    animation: send-pulse-light 1.4s ease infinite;
+}
+
+@keyframes send-pulse-light {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(74, 158, 207, 0.45); }
+    50%       { box-shadow: 0 0 0 6px rgba(74, 158, 207, 0); }
 }

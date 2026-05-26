@@ -79,21 +79,6 @@
                     <span class="material-icons">menu</span>
                 </button>
 
-                <!-- Center: mode switcher -->
-                <div class="mode-switcher-wrapper">
-                    <span class="mode-switcher-label">Mode</span>
-                    <div class="mode-switcher" id="modeSwitcher">
-                        <button class="mode-btn active" id="modeAnalyse" data-mode="analyse">
-                            <span class="material-icons">analytics</span>
-                            Analyse
-                        </button>
-                        <button class="mode-btn" id="modeContexte" data-mode="contexte">
-                            <span class="material-icons">biotech</span>
-                            Contexte scientifique
-                        </button>
-                    </div>
-                </div>
-
                 <!-- Session mode badge (copepod plan → analyse workflow) -->
                 <div id="sessionModeBadge" class="session-mode-badge session-mode-plan" style="display:none">
                     <span class="material-icons session-mode-icon">edit_note</span>
@@ -117,13 +102,23 @@
         <!-- Chat -->
         <div id="chatDisplay" class="chat-display">
             <div id="chatWelcome" class="chat-welcome">
-                <p class="chat-welcome-title">Sur quoi travaillons-nous ?</p>
+                <div class="message assistant chat-welcome-bubble">
+                    <div class="content chat-welcome-content">
+                        <p class="chat-welcome-title">Comment ça marche ?</p>
+                        <ol class="chat-welcome-hints">
+                            <li>Chargez un fichier</li>
+                            <li>Décrivez votre contexte scientifique</li>
+                            <li>Posez votre question</li>
+                            <li>Explorez les résultats</li>
+                        </ol>
+                    </div>
+                </div>
             </div>
         </div>
 
         <!-- Footer / input -->
         <footer class="chat-footer">
-            <input type="file" id="fileUpload" multiple accept=".csv,.txt,.json,.nc,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.pdf,.md,.mat,.tif,.png,.jpg" style="display: none">
+            <input type="file" id="fileUpload" multiple accept=".csv,.tsv,.txt,.json,.nc,.xls,.xlsx,.doc,.docx,.ppt,.pptx,.pdf,.md,.mat,.tif,.png,.jpg" style="display: none">
             <div class="prompt-row">
                 <div class="input-container">
                     <div class="input-header">
@@ -431,8 +426,14 @@ const SIDEBAR_KEY = 'idea-sidebar-collapsed';
 if (localStorage.getItem(SIDEBAR_KEY) === 'true') sidebar.classList.add('collapsed');
 
 sidebarToggle.addEventListener('click', () => {
-    sidebar.classList.toggle('collapsed');
-    localStorage.setItem(SIDEBAR_KEY, sidebar.classList.contains('collapsed'));
+    if (window.innerWidth <= 900) {
+        // Mobile: close the slide-over instead of collapsing to icon-strip
+        sidebar.classList.remove('mobile-open');
+        mobileOverlay.classList.remove('active');
+    } else {
+        sidebar.classList.toggle('collapsed');
+        localStorage.setItem(SIDEBAR_KEY, sidebar.classList.contains('collapsed'));
+    }
 });
 sidebarOpenBtn.addEventListener('click', () => {
     sidebar.classList.add('mobile-open');

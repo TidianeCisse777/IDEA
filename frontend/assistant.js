@@ -60,23 +60,21 @@ async function checkAuthentication() {
 
     try {
         const response = await fetch(config.getEndpoints().verify, {
-            headers: {
-                'Authorization': `Bearer ${authToken}`
-            }
+            headers: { 'Authorization': `Bearer ${authToken}` }
         });
 
-        if (!response.ok) {
+        if (response.status === 401) {
             localStorage.removeItem('authToken');
             redirectToLogin();
             return false;
         }
 
-        return true;
+        // Non-401 errors (5xx, network glitch during restart) — keep token, stay on page
+        return response.ok;
     } catch (error) {
-        console.error('Auth verification error:', error);
-        localStorage.removeItem('authToken');
-        redirectToLogin();
-        return false;
+        // Network error (container restarting) — do NOT clear token or redirect
+        console.warn('Auth check failed (server may be restarting):', error);
+        return true;
     }
 }
 
@@ -102,24 +100,20 @@ function deriveFirstName(fullName) {
 }
 
 function getWelcomeGreeting() {
-    const mode = document.body.dataset.mode || 'analyse';
-    if (mode === 'contexte') return 'Décrivez votre contexte scientifique';
-    if (currentUserFirstName) return `Sur quoi travaillons-nous, ${currentUserFirstName} ?`;
-    return 'Sur quoi travaillons-nous ?';
+    return '';
 }
 
-function updateWelcomeExtras(welcomeEl, mode) {
+function updateWelcomeExtras(welcomeEl) {
     const content = welcomeEl.querySelector('.chat-welcome-content');
     if (!content) return;
-    content.querySelectorAll('.chat-welcome-body, .chat-welcome-hints').forEach(el => el.remove());
-    if (mode !== 'contexte') return;
-    const body = document.createElement('p');
-    body.className = 'chat-welcome-body';
-    body.innerHTML = "Quelle est votre question de recherche ou hypothèse ?<br>Comment les données de copépodes s'inscrivent-elles dans votre démarche ?";
-    content.appendChild(body);
-    const hints = document.createElement('ul');
+    content.querySelectorAll('.chat-welcome-body, .chat-welcome-hints, .chat-welcome-title').forEach(el => el.remove());
+    const title = document.createElement('p');
+    title.className = 'chat-welcome-title';
+    title.textContent = 'Comment ça marche ?';
+    content.appendChild(title);
+    const hints = document.createElement('ol');
     hints.className = 'chat-welcome-hints';
-    ['Espèce ou groupe taxonomique ciblé', 'Zone géographique et période', "Variables d'intérêt"].forEach(text => {
+    ['Chargez un fichier', 'Décrivez votre contexte scientifique', 'Posez votre question', 'Explorez les résultats'].forEach(text => {
         const li = document.createElement('li');
         li.textContent = text;
         hints.appendChild(li);
@@ -164,25 +158,19 @@ async function waitForNameOrTimeout(timeoutMs = 1000) {
 }
 
 async function renderWelcomeGreeting() {
-    const mode = document.body.dataset.mode || 'analyse';
     if (welcomeRendered) {
         const section = ensureWelcomeSection();
-        const title = section?.welcome?.querySelector('.chat-welcome-title');
-        if (title) {
-            title.textContent = getWelcomeGreeting();
-            updateWelcomeExtras(section.welcome, mode);
+        if (section?.welcome) {
+            updateWelcomeExtras(section.welcome);
             section.welcome.classList.remove('hidden');
         }
         return Promise.resolve();
     }
     if (welcomeRenderPromise) return welcomeRenderPromise;
     welcomeRenderPromise = (async () => {
-        await waitForNameOrTimeout(1000);
         const section = ensureWelcomeSection();
-        const title = section?.welcome?.querySelector('.chat-welcome-title');
-        if (!section || !title) return;
-        title.textContent = getWelcomeGreeting();
-        updateWelcomeExtras(section.welcome, document.body.dataset.mode || 'analyse');
+        if (!section?.welcome) return;
+        updateWelcomeExtras(section.welcome);
         section.welcome.classList.remove('hidden');
         welcomeRendered = true;
     })().finally(() => {
@@ -460,11 +448,6 @@ function ensureWelcomeSection() {
         const content = document.createElement('div');
         content.className = 'content chat-welcome-content';
 
-        const title = document.createElement('p');
-        title.className = 'chat-welcome-title';
-        title.textContent = '';
-
-        content.appendChild(title);
         bubble.appendChild(content);
         welcome.appendChild(bubble);
     }
@@ -775,6 +758,7 @@ async function sendRequest(msgOverride=null) {
         // Input validation
 
         sendButton.disabled = true;
+        sendButton.classList.add('is-generating');
         stopButton.disabled = false;
 
         const userMessage = {
@@ -882,6 +866,7 @@ async function sendRequest(msgOverride=null) {
 function resetButtons() {
     removeWorkingIndicator();
     sendButton.disabled = false;
+    sendButton.classList.remove('is-generating');
     stopButton.disabled = true;
     controller = null;
     isGenerating = false;
@@ -965,6 +950,8 @@ function createImageMessageFromChunk(chunk, fallbackMessage) {
 
 // Function to process each chunk of the stream and create messages
 function processChunk(chunk) {
+    // Drop raw LLM tool_call chunks that leaked through without execution
+    if (chunk && chunk.tool_calls && !chunk.type) return Promise.resolve();
     chunk = normalizeIncomingChunk(chunk);
     return new Promise((resolve) => {
         removeWorkingIndicator();
@@ -1139,6 +1126,57 @@ function appendMessage(message, options = {}) {
     }
 
     messageElement.appendChild(contentElement);
+
+    // Action toolbar for assistant and user messages (copy + feedback)
+    const skipTypes = ['console', 'confirmation', 'action_button', 'tool_status'];
+    const isTextMsg = !skipTypes.includes(message.type) && message.format !== 'tool_status';
+    if (isTextMsg && (message.role === 'assistant' || message.role === 'user')) {
+        const actions = document.createElement('div');
+        actions.className = 'message-actions';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'message-action-btn';
+        copyBtn.title = 'Copier';
+        copyBtn.innerHTML = '<span class="material-icons" style="font-size:16px">content_copy</span>';
+        copyBtn.addEventListener('click', () => {
+            const text = contentElement.innerText || contentElement.textContent || '';
+            navigator.clipboard.writeText(text).then(() => {
+                copyBtn.classList.add('copy-done');
+                copyBtn.innerHTML = '<span class="material-icons" style="font-size:16px">check</span>';
+                setTimeout(() => {
+                    copyBtn.classList.remove('copy-done');
+                    copyBtn.innerHTML = '<span class="material-icons" style="font-size:16px">content_copy</span>';
+                }, 1800);
+            });
+        });
+        actions.appendChild(copyBtn);
+
+        if (message.role === 'assistant') {
+            const thumbUp = document.createElement('button');
+            thumbUp.className = 'message-action-btn';
+            thumbUp.title = 'Bonne réponse';
+            thumbUp.innerHTML = '<span class="material-icons" style="font-size:16px">thumb_up</span>';
+
+            const thumbDown = document.createElement('button');
+            thumbDown.className = 'message-action-btn';
+            thumbDown.title = 'Mauvaise réponse';
+            thumbDown.innerHTML = '<span class="material-icons" style="font-size:16px">thumb_down</span>';
+
+            [thumbUp, thumbDown].forEach((btn, idx) => {
+                btn.addEventListener('click', () => {
+                    thumbUp.classList.remove('active-thumb');
+                    thumbDown.classList.remove('active-thumb');
+                    btn.classList.add('active-thumb');
+                });
+            });
+
+            actions.appendChild(thumbUp);
+            actions.appendChild(thumbDown);
+        }
+
+        messageElement.appendChild(actions);
+    }
+
     chatDisplay.appendChild(messageElement);
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
     handleStdoutTrackingOnMessageStart(message);
@@ -1539,6 +1577,7 @@ async function clearChatHistory() {
         // Rotate sessionId so the new session is fully isolated
         sessionId = generateId('session');
         localStorage.setItem('sessionId', sessionId);
+        localStorage.removeItem('activeConversationId');
 
         // Reset session mode to plan
         sessionMode = 'plan';
@@ -2127,6 +2166,7 @@ function hydrateChatWithMessages(rawMessages, { persist = false } = {}) {
 }
 
 window.hydrateChatWithMessages = hydrateChatWithMessages;
+window.showPromptIdeas = showPromptIdeas;
 
 function resetSessionForConversationLoad() {
     sessionId = generateId('session');
@@ -2153,25 +2193,60 @@ window.addEventListener('DOMContentLoaded', async () => {
     loadCurrentUserProfile();
     await initSessionMode();
 
-    try {
-        const response = await fetch(config.getEndpoints().history, {
-            method: "GET",
-            headers: {
-                "X-Session-Id": sessionId,
-                ...getAuthHeaders()
+    async function fetchSessionHistory() {
+        try {
+            const response = await fetch(config.getEndpoints().history, {
+                method: "GET",
+                headers: { "X-Session-Id": sessionId, "X-Agent-Type": AGENT_TYPE, ...getAuthHeaders() }
+            });
+            if (response.ok) {
+                const history = await response.json();
+                if (history.length === 0) showPromptIdeas();
+                else hydrateChatWithMessages(history, { persist: false });
             }
-        });
-        if (response.ok) {
-            const history = await response.json();
-            if (history.length === 0) {
-                showPromptIdeas();
-            } else {
-                hydrateChatWithMessages(history, { persist: false });
-            }
+        } catch (error) {
+            console.error("Failed to fetch history:", error);
+            showPromptIdeas();
         }
-    } catch (error) {
-        console.error("Failed to fetch history:", error);
-        showPromptIdeas();
+    }
+
+    const activeConversationId = localStorage.getItem('activeConversationId');
+    if (activeConversationId) {
+        try {
+            const response = await fetch(`${window.API_BASE_URL}/conversations/${activeConversationId}`, {
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const conversation = await response.json();
+            const msgs = conversation.messages || [];
+            // Sync manager so new messages append to THIS conversation, not a fresh one
+            if (conversationManager) {
+                conversationManager.currentConversationId = activeConversationId;
+                conversationManager.currentMessages = msgs;
+            }
+            if (msgs.length > 0) {
+                hydrateChatWithMessages(msgs, { persist: false });
+                // Also reset the backend interpreter to this conversation's context
+                // so new messages don't run in a stale Redis session
+                if (msgs.length > 0) {
+                    try {
+                        await fetch(config.getEndpoints().loadConversation, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, ...getAuthHeaders() },
+                            body: JSON.stringify({ messages: msgs })
+                        });
+                    } catch (_) { /* non-blocking */ }
+                }
+            } else {
+                showPromptIdeas();
+            }
+        } catch (error) {
+            console.warn('Stale activeConversationId, falling back to session history:', error);
+            localStorage.removeItem('activeConversationId');
+            await fetchSessionHistory();
+        }
+    } else {
+        await fetchSessionHistory();
     }
 });
 

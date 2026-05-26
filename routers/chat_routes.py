@@ -29,6 +29,7 @@ from core import crud
 import models
 from agents.registry import get_profile, registered_types
 from core.auth import get_auth_token, get_current_user, get_db
+from core.chat_stream_events import chat_stream_events
 from core.config import settings
 from core.interpreter_session import (
     get_or_create_interpreter,
@@ -484,6 +485,13 @@ async def chat_endpoint(
             except Exception as e:
                 logger.warning(f"Failed to restore messages from store: {str(e)}")
 
+        # Persist the incoming user message immediately so F5 always sees it
+        incoming_user = messages[-1] if messages else None
+        if incoming_user and isinstance(incoming_user, dict) and incoming_user.get("role") == "user":
+            current = session_store.read_messages(session_key) or []
+            if not current or current[-1].get("content") != incoming_user.get("content"):
+                session_store.write_messages(session_key, current + [incoming_user])
+
         tool_runs = []
         try:
             last_user_message = ""
@@ -502,6 +510,7 @@ async def chat_endpoint(
             logger.warning("MCP planning/execution skipped: %s", exc)
 
         def event_stream():
+            fallback_sent = False
             try:
                 if tool_runs:
                     streamed_keys: set[str] = set()
@@ -548,66 +557,32 @@ async def chat_endpoint(
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
-                plan_ready_emitted = False
-                _TAG = "[PLAN_READY]"
-                _msg_buf: dict[str, str] = {}  # role → accumulated content
-
-                for result in interpreter.chat(messages[-1], stream=True):
-                    if isinstance(result, dict) and result.get("type") == "message":
-                        role = result.get("role", "assistant")
-                        content = result.get("content", "")
-
-                        if isinstance(content, str):
-                            # Accumulate for split-tag detection
-                            if result.get("start"):
-                                _msg_buf[role] = content
-                            else:
-                                _msg_buf[role] = _msg_buf.get(role, "") + content
-
-                            # Fast path: tag fully in this single chunk
-                            if _TAG in content and not plan_ready_emitted:
-                                result = dict(result)
-                                result["content"] = content.replace(_TAG, "").rstrip()
-                                plan_ready_emitted = True
-
-                            # End of message: catch split tag across chunks
-                            elif result.get("end") and not plan_ready_emitted:
-                                if _TAG in _msg_buf.get(role, ""):
-                                    plan_ready_emitted = True
-                                    yield f"data: {json.dumps(result)}\n\n"
-                                    yield f"data: {json.dumps({'type': 'strip_tail', 'text': _TAG})}\n\n"
-                                    _msg_buf.pop(role, None)
-                                    continue
-
-                            if result.get("end"):
-                                _msg_buf.pop(role, None)
-
-                    data = json.dumps(result) if isinstance(result, dict) else result
-                    yield f"data: {data}\n\n"
-
                 user_turns = sum(
                     1 for m in messages
                     if isinstance(m, dict) and m.get("role") == "user"
                 )
-                if (
-                    plan_ready_emitted
-                    and user_turns >= 3
-                    and session_store.get_session_mode(session_key) != "analyse"
+                current_mode = session_store.get_session_mode(session_key)
+                total_chunks = 0
+                for result in chat_stream_events(
+                    interpreter.chat(messages[-1], stream=True),
+                    user_turns=user_turns,
+                    session_mode=current_mode,
                 ):
-                    action_chunk = {
-                        "start": True,
-                        "end": True,
-                        "role": "computer",
-                        "type": "action_button",
-                        "action": "validate_plan",
-                        "label": "Valider et passer en Mode Analyse",
-                    }
-                    yield f"data: {json.dumps(action_chunk)}\n\n"
+                    total_chunks += 1
+                    data = json.dumps(result) if isinstance(result, dict) else result
+                    yield f"data: {data}\n\n"
+                if total_chunks == 0 and not fallback_sent:
+                    fallback_sent = True
+                    fallback = {"start": True, "end": True, "role": "assistant", "type": "message",
+                                "content": "⚠️ Le modèle n'a pas retourné de réponse. Vérifiez la compatibilité du LLM configuré."}
+                    yield f"data: {json.dumps(fallback)}\n\n"
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
                 err_str = str(e)
-                if "Bearer " in err_str or "api_key" in err_str.lower() or "AuthenticationError" in err_str:
-                    user_msg = "Clé API LLM manquante ou invalide. Configurez OPENAI_API_KEY dans le fichier .env et redémarrez le serveur."
+                if "RateLimitError" in err_str or "rate_limit" in err_str.lower() or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str:
+                    user_msg = "⏳ Quota API atteint. Attendez quelques secondes et réessayez, ou vérifiez les limites de votre plan LLM."
+                elif "Bearer " in err_str or "api_key" in err_str.lower() or "AuthenticationError" in err_str:
+                    user_msg = "Clé API LLM manquante ou invalide. Configurez la clé dans le fichier .env et redémarrez le serveur."
                 else:
                     user_msg = err_str
                 yield f"data: {json.dumps({'error': user_msg})}\n\n"

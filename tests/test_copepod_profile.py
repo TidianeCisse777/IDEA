@@ -24,7 +24,7 @@ def inmemory_session_store():
     """
     store = InMemorySessionStore()
     with patch("core.session_store.session_store", store):
-        yield
+        yield store
 
 
 def import_copepod_profile():
@@ -142,6 +142,71 @@ def test_copepod_plan_mode_forces_two_phase_data_then_context_flow():
     assert "PLAN_READY" in instructions
     assert "### Data Understanding" in instructions
     assert "### Graph Context" in instructions
+
+
+def test_copepod_profile_renders_default_plan_instructions_with_memory_store():
+    module = import_copepod_profile()
+    profile = module.CopepodProfile(session_store=InMemorySessionStore())
+
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "## Copepod Plan Mode" in instructions
+    assert "## Copepod Analyse Mode" in instructions
+    assert "Phase 1 - Data Understanding" in instructions
+    assert "PLAN_READY" in instructions
+
+
+def test_copepod_profile_renders_only_analyse_mode_blocks_with_memory_store():
+    module = import_copepod_profile()
+    store = InMemorySessionStore()
+    store.set_session_mode("user-1:session-1:copepod", "analyse")
+    profile = module.CopepodProfile(session_store=store)
+
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "## Copepod Analyse Mode" in instructions
+    assert "## Copepod Plan Mode" not in instructions
+    assert "Phase 1 - Data Understanding" not in instructions
+    assert "PLAN_READY" not in instructions
+
+
+def test_copepod_profile_session_mode_isolated_by_three_segment_key():
+    module = import_copepod_profile()
+    store = InMemorySessionStore()
+    store.set_session_mode("user-1:session-1:copepod", "analyse")
+    profile = module.CopepodProfile(session_store=store)
+
+    analyse_instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+    plan_instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-2",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "## Copepod Analyse Mode" in analyse_instructions
+    assert "## Copepod Plan Mode" not in analyse_instructions
+    assert "## Copepod Plan Mode" in plan_instructions
+    assert "## Copepod Analyse Mode" in plan_instructions
 
 
 def test_copepod_system_prompt_contains_domain_invariants():

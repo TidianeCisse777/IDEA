@@ -1,7 +1,8 @@
+import json
 import os
 import secrets
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Any
 from fastapi import HTTPException, Header, Depends
 from sqlmodel import Session
 
@@ -13,8 +14,12 @@ from models import User
 # Session timeout configuration
 SESSION_TIMEOUT = 24 * 60 * 60  # 24 hours in seconds
 
-# Authentication session storage (in production, use Redis or database)
-auth_sessions: Dict[str, Dict[str, Any]] = {}
+_AUTH_PREFIX = "auth_session:"
+
+
+def _redis():
+    from core.session_store import session_store
+    return session_store._r
 
 
 def get_db():
@@ -34,26 +39,17 @@ def verify_password(email: str, password: str, session: Session) -> User | None:
 
 
 def is_authenticated(token: str) -> bool:
-    """Check if authentication token is valid and not expired"""
-    if token not in auth_sessions:
-        return False
-    session_data = auth_sessions[token]
-    # Check if token has expired
-    if datetime.now() > session_data["expires"]:
-        del auth_sessions[token]
-        return False
-    return True
+    """Check if authentication token is valid (session stored in Redis, survives restarts)"""
+    raw = _redis().get(f"{_AUTH_PREFIX}{token}")
+    return raw is not None
 
 
 def get_current_user(token: str) -> User | None:
     """Get current user from token"""
-    if token not in auth_sessions:
+    raw = _redis().get(f"{_AUTH_PREFIX}{token}")
+    if raw is None:
         return None
-    session_data = auth_sessions[token]
-    # Check if token has expired
-    if datetime.now() > session_data["expires"]:
-        del auth_sessions[token]
-        return None
+    session_data = json.loads(raw)
     with Session(engine) as db_session:
         return crud.get_user_by_id(session=db_session, user_id=session_data["user_id"])
 
@@ -69,11 +65,11 @@ def get_auth_token(authorization: str = Header(None)) -> str:
 
 
 def add_auth_session(token: str, user_id: Any, expiry_time: datetime):
-    """Add a new authentication session"""
-    auth_sessions[token] = {"user_id": user_id, "expires": expiry_time}
+    """Add a new authentication session (persisted in Redis, survives container restarts)"""
+    ttl = max(1, int((expiry_time - datetime.now()).total_seconds()))
+    _redis().setex(f"{_AUTH_PREFIX}{token}", ttl, json.dumps({"user_id": str(user_id)}))
 
 
 def remove_auth_session(token: str):
     """Remove an authentication session"""
-    if token in auth_sessions:
-        del auth_sessions[token]
+    _redis().delete(f"{_AUTH_PREFIX}{token}")

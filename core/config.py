@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     #   OpenAI   : LLM_MODEL=gpt-5.4-2026-03-05
     #   Anthropic: LLM_MODEL=claude-sonnet-4-6  LLM_API_KEY=$ANTHROPIC_API_KEY
     #   Jetstream: LLM_MODEL=openai/Llama-3.3-70B-Instruct  LLM_API_BASE=https://llm.jetstream-cloud.org/api
+    #   Gemini   : LLM_MODEL=gemini/gemini-2.0-flash  GEMINI_API_KEY=...  LLM_REASONING_EFFORT=
     LLM_MODEL: str = "gpt-5.4-2026-03-05"
     LLM_API_KEY: str | None = None
     LLM_API_BASE: str | None = None

@@ -34,7 +34,7 @@ services:
       volumes:
         - ./frontend:/app/frontend:delegated  # Added delegated for better performance
       working_dir: /app/frontend
-      command: python -m http.server 8000
+      command: python serve.py
       environment:
         - PYTHONUNBUFFERED=1
       depends_on:
