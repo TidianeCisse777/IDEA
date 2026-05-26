@@ -27,17 +27,41 @@ class ConversationManager {
         this.pageSize = 100;
         this.totalCount = 0;
         this.isLoading = false;
-        
+        this._persistenceQueue = [];
+        this._retryScheduled = false;
+        this._creatingConversation = null;
+
         // Initialize conversation management
         this.init();
     }
     
-    /**
-     * Get authentication headers for API requests
-     */
     getAuthHeaders() {
         const authToken = localStorage.getItem('authToken');
         return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+    }
+
+    _handle401() {
+        localStorage.removeItem('authToken');
+        if (typeof redirectToLogin === 'function') {
+            redirectToLogin();
+        } else {
+            window.location.href = 'login.html';
+        }
+    }
+
+    async _fetchWithAuth(url, options = {}) {
+        const response = await fetch(url, {
+            ...options,
+            headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders(), ...(options.headers || {}) },
+        });
+        if (response.status === 401) {
+            this._handle401();
+            throw new Error('Session expirée');
+        }
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response;
     }
     
     /**
@@ -68,15 +92,7 @@ class ConversationManager {
             url.searchParams.set('skip', skip);
             url.searchParams.set('limit', limit);
 
-            const response = await fetch(url.toString(), {
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...this.getAuthHeaders()
-                }
-            });
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+            const response = await this._fetchWithAuth(url.toString());
             const data = await response.json();
             const fetched = data.data || [];
             const total = typeof data.count === 'number' ? data.count : null;
@@ -117,27 +133,17 @@ class ConversationManager {
      */
     async createConversation(title = null) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/`, {
+            const response = await this._fetchWithAuth(`${this.apiBaseUrl}/conversations/`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...this.getAuthHeaders()
-                },
-                body: JSON.stringify({
-                    title: title
-                }),
+                body: JSON.stringify({ title }),
             });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
+
             const conversation = await response.json();
             this.conversations.unshift(conversation);
             this.totalCount += 1;
             this.currentConversationId = conversation.id;
             this.currentMessages = [];
-            
+
             this.notifyConversationListeners('conversation_created', conversation);
             this.notifyConversationListeners('conversation_changed', conversation);
             return conversation;
@@ -152,20 +158,11 @@ class ConversationManager {
      */
     async loadConversation(conversationId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}`, {
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...this.getAuthHeaders()
-                }
-            });
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
+            const response = await this._fetchWithAuth(`${this.apiBaseUrl}/conversations/${conversationId}`);
             const conversation = await response.json();
             this.currentConversationId = conversationId;
             this.currentMessages = conversation.messages || [];
-            
+
             this.notifyConversationListeners('conversation_loaded', conversation);
             this.notifyConversationListeners('messages_updated', this.currentMessages);
             return conversation;
@@ -180,36 +177,32 @@ class ConversationManager {
      */
     async addMessage(role, content, messageType = MESSAGE_TYPES.MESSAGE, messageFormat = null, recipient = null) {
         if (!this.currentConversationId) {
-            // Create a new conversation if none exists
-            await this.createConversation();
+            // Serialize concurrent calls so only one conversation is created
+            if (!this._creatingConversation) {
+                this._creatingConversation = this.createConversation().finally(() => {
+                    this._creatingConversation = null;
+                });
+            }
+            await this._creatingConversation;
         }
-        
+
         try {
             const messageData = {
-                role: role,
-                content: content,
+                role,
+                content,
                 message_type: messageType,
                 message_format: messageFormat,
-                recipient: recipient,
-                conversation_id: this.currentConversationId
+                recipient,
+                conversation_id: this.currentConversationId,
             };
-            
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${this.currentConversationId}/messages`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...this.getAuthHeaders()
-                },
-                body: JSON.stringify(messageData),
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
+
+            const response = await this._fetchWithAuth(
+                `${this.apiBaseUrl}/conversations/${this.currentConversationId}/messages`,
+                { method: 'POST', body: JSON.stringify(messageData) }
+            );
             const message = await response.json();
             this.currentMessages.push(message);
-            
+
             // Update the conversation's updated_at timestamp in our local list
             const conversationIndex = this.conversations.findIndex(c => c.id === this.currentConversationId);
             if (conversationIndex !== -1) {
@@ -218,13 +211,58 @@ class ConversationManager {
                 const conversation = this.conversations.splice(conversationIndex, 1)[0];
                 this.conversations.unshift(conversation);
             }
-            
+
             this.notifyConversationListeners('message_added', message);
             this.notifyConversationListeners('messages_updated', this.currentMessages);
             return message;
         } catch (error) {
             console.error('Error adding message:', error);
+            this._enqueueForRetry({
+                conversationId: this.currentConversationId,
+                data: {
+                    role,
+                    content,
+                    message_type: messageType,
+                    message_format: messageFormat,
+                    recipient,
+                    conversation_id: this.currentConversationId,
+                },
+            });
             throw error;
+        }
+    }
+
+    _enqueueForRetry(item) {
+        this._persistenceQueue.push(item);
+        if (!this._retryScheduled) {
+            this._retryScheduled = true;
+            setTimeout(() => this._flushPersistenceQueue(), 5000);
+        }
+        this.notifyConversationListeners('persistence_error', { queued: this._persistenceQueue.length });
+    }
+
+    async _flushPersistenceQueue() {
+        this._retryScheduled = false;
+        const queue = this._persistenceQueue.splice(0);
+        const failed = [];
+        for (const item of queue) {
+            if (!item.conversationId) { failed.push(item); continue; }
+            try {
+                const response = await this._fetchWithAuth(
+                    `${this.apiBaseUrl}/conversations/${item.conversationId}/messages`,
+                    { method: 'POST', body: JSON.stringify(item.data) }
+                );
+                const message = await response.json();
+                this.currentMessages.push(message);
+                this.notifyConversationListeners('message_added', message);
+            } catch (_) {
+                failed.push(item);
+            }
+        }
+        if (failed.length > 0) {
+            this.notifyConversationListeners('persistence_failed', { count: failed.length });
+        } else {
+            this.notifyConversationListeners('persistence_recovered', {});
         }
     }
     
@@ -233,34 +271,22 @@ class ConversationManager {
      */
     async deleteConversation(conversationId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}`, {
+            await this._fetchWithAuth(`${this.apiBaseUrl}/conversations/${conversationId}`, {
                 method: 'DELETE',
-                headers: {
-                    ...this.getAuthHeaders()
-                }
             });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
-            // Remove from local list
+
             this.conversations = this.conversations.filter(c => c.id !== conversationId);
-            if (this.totalCount > 0) {
-                this.totalCount -= 1;
-            }
-            
-            // If this was the current conversation, clear it
+            if (this.totalCount > 0) this.totalCount -= 1;
+
             if (this.currentConversationId === conversationId) {
                 this.currentConversationId = null;
                 this.currentMessages = [];
                 this.notifyConversationListeners('conversation_changed', null);
                 this.notifyConversationListeners('messages_updated', []);
             }
-            
+
             this.notifyConversationListeners('conversation_deleted', conversationId);
             this.notifyConversationListeners('conversations_loaded', this.conversations);
-            
         } catch (error) {
             console.error('Error deleting conversation:', error);
             throw error;
@@ -272,27 +298,15 @@ class ConversationManager {
      */
     async updateConversation(conversationId, updates) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}`, {
+            const response = await this._fetchWithAuth(`${this.apiBaseUrl}/conversations/${conversationId}`, {
                 method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...this.getAuthHeaders()
-                },
                 body: JSON.stringify(updates),
             });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
             const updatedConversation = await response.json();
-            
-            // Update in local list
+
             const index = this.conversations.findIndex(c => c.id === conversationId);
-            if (index !== -1) {
-                this.conversations[index] = updatedConversation;
-            }
-            
+            if (index !== -1) this.conversations[index] = updatedConversation;
+
             this.notifyConversationListeners('conversation_updated', updatedConversation);
             this.notifyConversationListeners('conversations_loaded', this.conversations);
             return updatedConversation;
@@ -307,25 +321,15 @@ class ConversationManager {
      */
     async toggleFavorite(conversationId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}/favorite`, {
-                method: 'POST',
-                headers: {
-                    ...this.getAuthHeaders()
-                }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
+            const response = await this._fetchWithAuth(
+                `${this.apiBaseUrl}/conversations/${conversationId}/favorite`,
+                { method: 'POST' }
+            );
             const updatedConversation = await response.json();
-            
-            // Update in local list
+
             const index = this.conversations.findIndex(c => c.id === conversationId);
-            if (index !== -1) {
-                this.conversations[index] = updatedConversation;
-            }
-            
+            if (index !== -1) this.conversations[index] = updatedConversation;
+
             this.notifyConversationListeners('conversation_updated', updatedConversation);
             this.notifyConversationListeners('conversations_loaded', this.conversations);
             return updatedConversation;
@@ -340,27 +344,15 @@ class ConversationManager {
      */
     async createShareLink(conversationId) {
         try {
-            const response = await fetch(`${this.apiBaseUrl}/conversations/${conversationId}/share`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...this.getAuthHeaders()
-                },
-                body: JSON.stringify({}),
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
+            const response = await this._fetchWithAuth(
+                `${this.apiBaseUrl}/conversations/${conversationId}/share`,
+                { method: 'POST', body: JSON.stringify({}) }
+            );
             const shareData = await response.json();
-            
-            // Update conversation in local list to reflect shared status
+
             const index = this.conversations.findIndex(c => c.id === conversationId);
-            if (index !== -1) {
-                this.conversations[index].is_shared = true;
-            }
-            
+            if (index !== -1) this.conversations[index].is_shared = true;
+
             this.notifyConversationListeners('share_created', shareData);
             return shareData;
         } catch (error) {

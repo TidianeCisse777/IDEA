@@ -158,6 +158,8 @@ cython_debug/
 
 *.pkl
 *.json
+!package.json
+!package-lock.json
 *.csv
 *.png
 

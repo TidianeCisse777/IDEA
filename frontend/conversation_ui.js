@@ -92,20 +92,11 @@ function displayConversations() {
     const conversationsList = document.getElementById('conversationsList');
     const conversations = conversationManager.getAllConversations();
     const searchTerm = document.getElementById('conversationSearch').value.toLowerCase();
-    
-    // Filter conversations
+
     let filteredConversations = conversations;
-    
-    if (isShowingFavorites) {
-        filteredConversations = conversations.filter(conv => conv.is_favorite);
-    }
-    
-    if (searchTerm) {
-        filteredConversations = filteredConversations.filter(conv => 
-            (conv.title && conv.title.toLowerCase().includes(searchTerm))
-        );
-    }
-    
+    if (isShowingFavorites) filteredConversations = conversations.filter(c => c.is_favorite);
+    if (searchTerm) filteredConversations = filteredConversations.filter(c => c.title && c.title.toLowerCase().includes(searchTerm));
+
     if (filteredConversations.length === 0) {
         conversationsList.innerHTML = `
             <div class="empty-state">
@@ -117,51 +108,78 @@ function displayConversations() {
         updateLoadMoreState();
         return;
     }
-    
-    const conversationsHTML = filteredConversations.map(conversation => createConversationItem(conversation)).join('');
-    conversationsList.innerHTML = conversationsHTML;
-    
-    // Add event listeners to conversation items
+
+    // Remove stale empty-state if the list now has items
+    conversationsList.querySelector('.empty-state')?.remove();
+
+    const currentConvId = conversationManager.getCurrentConversationId();
+    const filteredIds = new Set(filteredConversations.map(c => c.id));
+
+    // Remove items no longer in the filtered list
+    conversationsList.querySelectorAll('.conversation-item').forEach(el => {
+        if (!filteredIds.has(el.id.replace('conversation-', ''))) el.remove();
+    });
+
+    // Reconcile: update existing items in-place, create missing ones.
+    // appendChild on an existing node moves it — this reorders to match filteredConversations.
     filteredConversations.forEach(conversation => {
-        const conversationElement = document.getElementById(`conversation-${conversation.id}`);
-        if (conversationElement) {
-            // Load conversation on click
-            conversationElement.addEventListener('click', (e) => {
-                if (!e.target.closest('.conversation-actions')) {
-                    loadConversation(conversation.id);
-                }
-            });
-            
-            // Favorite button
-            const favoriteBtn = conversationElement.querySelector('.favorite-btn');
-            if (favoriteBtn) {
-                favoriteBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    toggleFavorite(conversation.id);
-                });
-            }
-            
-            // Delete button
-            const deleteBtn = conversationElement.querySelector('.delete-btn');
-            if (deleteBtn) {
-                deleteBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    deleteConversation(conversation.id, conversation.title);
-                });
-            }
-            
-            // Share button
-            const shareBtn = conversationElement.querySelector('.share-btn');
-            if (shareBtn) {
-                shareBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    shareConversation(conversation.id);
-                });
-            }
+        let el = document.getElementById(`conversation-${conversation.id}`);
+        if (el) {
+            _updateConversationItem(el, conversation, currentConvId);
+        } else {
+            const tmp = document.createElement('div');
+            tmp.innerHTML = createConversationItem(conversation);
+            el = tmp.firstElementChild;
+            _bindConversationItemListeners(el, conversation);
         }
+        conversationsList.appendChild(el);
     });
 
     updateLoadMoreState();
+}
+
+function _updateConversationItem(el, conversation, currentConvId) {
+    el.classList.toggle('current', conversation.id === currentConvId);
+
+    const title = conversation.title || 'Untitled Conversation';
+    const titleEl = el.querySelector('.conversation-title');
+    if (titleEl && titleEl.textContent !== title) titleEl.textContent = title;
+
+    const favBtn = el.querySelector('.favorite-btn');
+    if (favBtn) {
+        favBtn.classList.toggle('active', !!conversation.is_favorite);
+        favBtn.title = conversation.is_favorite ? 'Remove from favorites' : 'Add to favorites';
+        const icon = favBtn.querySelector('.material-icons');
+        if (icon) icon.textContent = conversation.is_favorite ? 'star' : 'star_border';
+    }
+
+    const meta = el.querySelector('.conversation-meta');
+    if (meta) {
+        const favIndicator = meta.querySelector('.favorite-indicator');
+        if (conversation.is_favorite && !favIndicator) {
+            meta.insertAdjacentHTML('beforeend', '<span class="material-icons favorite-indicator">star</span>');
+        } else if (!conversation.is_favorite && favIndicator) {
+            favIndicator.remove();
+        }
+    }
+}
+
+function _bindConversationItemListeners(el, conversation) {
+    el.addEventListener('click', (e) => {
+        if (!e.target.closest('.conversation-actions')) loadConversation(conversation.id);
+    });
+    el.querySelector('.favorite-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFavorite(conversation.id);
+    });
+    el.querySelector('.delete-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteConversation(conversation.id, conversation.title);
+    });
+    el.querySelector('.share-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        shareConversation(conversation.id);
+    });
 }
 
 function updateLoadMoreState() {
@@ -226,43 +244,40 @@ function createConversationItem(conversation) {
 async function loadConversation(conversationId) {
     try {
         const conversation = await conversationManager.loadConversation(conversationId);
-        
-        // Close the modal
+
         closeConversationsModal();
-        
+
         const chatDisplay = document.getElementById('chatDisplay');
         const loadedMessages = conversationManager.getCurrentMessages() || [];
 
         if (typeof window.resetSessionForConversationLoad === 'function') {
             window.resetSessionForConversationLoad();
         }
-
         localStorage.setItem('activeConversationId', conversationId);
 
         if (typeof window.hydrateChatWithMessages === 'function') {
             window.hydrateChatWithMessages(loadedMessages, { persist: false });
         } else {
             chatDisplay.innerHTML = '';
-            if (typeof window.resetStdoutState === 'function') {
-                window.resetStdoutState();
-            }
-            loadedMessages.forEach(message => {
-                displayMessageInChat(message);
-            });
+            if (typeof window.resetStdoutState === 'function') window.resetStdoutState();
+            loadedMessages.forEach(message => displayMessageInChat(message));
         }
-        
-        // Load conversation context into backend interpreter
-        await loadConversationIntoInterpreter(loadedMessages);
-        
-        // Update the current conversation indicator
+
         displayConversations();
-        
-        // Notify that conversation was loaded
         showNotification(`Loaded conversation: ${conversation.title || 'Untitled'}`, 'success');
-        
+
+        // Interpreter sync is best-effort: a failure here does NOT mean the conversation
+        // failed to load — the DB history is already displayed. Surface it as a warning only.
+        try {
+            await loadConversationIntoInterpreter(loadedMessages);
+        } catch (syncError) {
+            console.warn('Interpreter sync failed after conversation load:', syncError);
+            showNotification('Historique chargé — contexte interprète non synchronisé', 'warning');
+        }
+
     } catch (error) {
         console.error('Error loading conversation:', error);
-        showNotification('Failed to load conversation', 'error');
+        showNotification('Impossible de charger la conversation', 'error');
     }
 }
 
@@ -338,15 +353,22 @@ function displayMessageInChat(message) {
     
     // Handle different message types and formats similar to updateMessageContent in assistant.js
     if (message.message_type === 'message') {
-        // Handle markdown content
-        contentElement.innerHTML = marked ? marked.parse(message.content) : message.content;
+        contentElement.innerHTML = marked
+            ? DOMPurify.sanitize(marked.parse(message.content))
+            : escapeHtml(message.content);
     } else if (message.message_type === 'image') {
         if (message.message_format === 'base64.png') {
             contentElement.innerHTML = `<img src="data:image/png;base64,${message.content}" alt="Image">`;
         } else if (message.message_format === 'path') {
-            contentElement.innerHTML = `<img src="${message.content}" alt="Image">`;
+            const img = document.createElement('img');
+            img.src = message.content;
+            img.alt = 'Image';
+            contentElement.appendChild(img);
         } else {
-            contentElement.innerHTML = `<img src="${message.content}" alt="Image">`;
+            const img = document.createElement('img');
+            img.src = message.content;
+            img.alt = 'Image';
+            contentElement.appendChild(img);
         }
     } else if (message.message_type === 'code') {
         if (message.message_format === 'html') {
@@ -472,7 +494,8 @@ window.conversationUI = {
     openConversationsModal,
     closeConversationsModal,
     displayMessageInChat,
-    showNotification
+    showNotification,
+    displayConversations,
 };
 
 window.loadConversation = loadConversation;

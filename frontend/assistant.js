@@ -924,14 +924,22 @@ function saveCompletedAssistantMessage(message) {
     const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
     const messageType = validTypes.includes(message.type) ? message.type : 'message';
 
+    const frontendId = message.id;
     conversationManager.addMessage(
         message.role,
         message.content,
         messageType,
         message.format,
         message.recipient
-    ).catch(error => {
-        console.error('Failed to save completed message to conversation:', error);
+    ).then(saved => {
+        // Reconcile the DOM element's data-id to the stable backend UUID
+        if (frontendId && saved && saved.id && frontendId !== saved.id) {
+            const el = document.querySelector(`[data-id="${frontendId}"]`);
+            if (el) el.setAttribute('data-id', saved.id);
+            message.id = saved.id;
+        }
+    }).catch(() => {
+        // Persistence error is handled by ConversationManager's retry queue
     });
 }
 
@@ -1116,7 +1124,7 @@ function appendMessage(message, options = {}) {
         messageElement.classList.add('console-output-message');
         contentElement.setAttribute('aria-hidden', 'true');
     } else {
-        contentElement.innerHTML = message.content; 
+        contentElement.textContent = message.content;
     }
 
     // Tool-status messages: add compact UI classes
@@ -1183,19 +1191,25 @@ function appendMessage(message, options = {}) {
 
     // Save user messages immediately to conversation (assistant/computer messages are saved when complete)
     if (persist && conversationManager && message.role === 'user' && message.content) {
-        // Validate message type against backend enums
         const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
         const messageType = validTypes.includes(message.type) ? message.type : 'message';
-        
-        // Save to conversation asynchronously
+        const frontendId = message.id;
+
         conversationManager.addMessage(
-            message.role, 
-            message.content, 
-            messageType, 
-            message.format, 
+            message.role,
+            message.content,
+            messageType,
+            message.format,
             message.recipient
-        ).catch(error => {
-            console.error('Failed to save user message to conversation:', error);
+        ).then(saved => {
+            // Reconcile the DOM element's data-id to the stable backend UUID
+            if (frontendId && saved && saved.id && frontendId !== saved.id) {
+                const el = document.querySelector(`[data-id="${frontendId}"]`);
+                if (el) el.setAttribute('data-id', saved.id);
+                message.id = saved.id;
+            }
+        }).catch(() => {
+            // Persistence error is handled by ConversationManager's retry queue
         });
     }
 }
@@ -1322,7 +1336,7 @@ function updateMessageContent(id, content) {
             // 4) Now it's safe: run Markdown, restore math, inject HTML
             const parsedMarkdown = marked.parse(shielded);
             const htmlWithMath = restoreMath(parsedMarkdown, store);
-            contentDiv.innerHTML = htmlWithMath;
+            contentDiv.innerHTML = DOMPurify.sanitize(htmlWithMath);
 
             // 5) Highlight code blocks using Prism
             prismHighlightUnder(contentDiv);
@@ -1347,19 +1361,15 @@ function updateMessageContent(id, content) {
                     contentDiv.innerHTML = `<div class="image-placeholder"> Generating image… </div>`;
                 }
             } else if (message.format === 'path') {
-                // path-based images are usually already usable
-                contentDiv.innerHTML = `<img src="${content}" alt="Image">`;
+                const img = document.createElement('img');
+                img.src = content;
+                img.alt = 'Image';
+                contentDiv.appendChild(img);
             }
         } else if (message.type === 'code') {
             const preservedStdoutState = captureStdoutPanelState(message.id);
             if (message.format === "html") {
-                // contentDiv.innerHTML = content;
-                // do nothing
-                // return;
-                // const sanitizedHtml = DOMPurify.sanitize(content);
-                
-                contentDiv.innerHTML = content;
-                // return;
+                contentDiv.innerHTML = DOMPurify.sanitize(content);
             } else {
                 let codeBlock = contentDiv.querySelector('pre code');
                 if (!codeBlock) {
@@ -1382,8 +1392,12 @@ function updateMessageContent(id, content) {
                 }
             }
         } else if (message.type === 'file') {
-            contentDiv.innerHTML = `<a href="${content}" download>Download File</a>`;
-        } 
+            const a = document.createElement('a');
+            a.href = content;
+            a.download = '';
+            a.textContent = 'Download File';
+            contentDiv.appendChild(a);
+        }
     } catch (error) {
         handleError(error, 'Failed to update message content');
     }
@@ -1407,7 +1421,7 @@ function appendSystemMessage(message) {
     const content = document.createElement('div');
     content.classList.add('content');
     const parsedMarkdown = marked.parse(message);
-    content.innerHTML = parsedMarkdown;
+    content.innerHTML = DOMPurify.sanitize(parsedMarkdown);
     content.querySelectorAll('pre code').forEach((block) => {
         Prism.highlightElement(block);
         // hljs.highlightElement(block);
@@ -2201,25 +2215,22 @@ window.addEventListener('DOMContentLoaded', async () => {
     resetStdoutState();
     conversationManager = new ConversationManager();
 
+    // Show a non-blocking warning when messages fail to persist, recover silently on retry
+    conversationManager.addEventListener('persistence_error', ({ queued }) => {
+        if (queued === 1) showNotification('Connexion lente — sauvegarde en cours…', 'warning');
+    });
+    conversationManager.addEventListener('persistence_recovered', () => {
+        showNotification('Messages sauvegardés', 'success');
+    });
+    conversationManager.addEventListener('persistence_failed', ({ count }) => {
+        showNotification(
+            `${count} message(s) n'ont pas pu être sauvegardés — rechargez pour vérifier`,
+            'error'
+        );
+    });
+
     loadCurrentUserProfile();
     await initSessionMode();
-
-    async function fetchSessionHistory() {
-        try {
-            const response = await fetch(config.getEndpoints().history, {
-                method: "GET",
-                headers: { "X-Session-Id": sessionId, "X-Agent-Type": AGENT_TYPE, ...getAuthHeaders() }
-            });
-            if (response.ok) {
-                const history = await response.json();
-                if (history.length === 0) showPromptIdeas();
-                else hydrateChatWithMessages(history, { persist: false });
-            }
-        } catch (error) {
-            console.error("Failed to fetch history:", error);
-            showPromptIdeas();
-        }
-    }
 
     const activeConversationId = localStorage.getItem('activeConversationId');
     if (activeConversationId) {
@@ -2237,27 +2248,26 @@ window.addEventListener('DOMContentLoaded', async () => {
             }
             if (msgs.length > 0) {
                 hydrateChatWithMessages(msgs, { persist: false });
-                // Also reset the backend interpreter to this conversation's context
+                // Reset the backend interpreter to this conversation's context
                 // so new messages don't run in a stale Redis session
-                if (msgs.length > 0) {
-                    try {
-                        await fetch(config.getEndpoints().loadConversation, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, ...getAuthHeaders() },
-                            body: JSON.stringify({ messages: msgs })
-                        });
-                    } catch (_) { /* non-blocking */ }
-                }
+                try {
+                    await fetch(config.getEndpoints().loadConversation, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, ...getAuthHeaders() },
+                        body: JSON.stringify({ messages: msgs })
+                    });
+                } catch (_) { /* non-blocking — interpreter context is best-effort */ }
             } else {
                 showPromptIdeas();
             }
         } catch (error) {
-            console.warn('Stale activeConversationId, falling back to session history:', error);
+            // Conversation no longer exists (deleted from another tab, or stale localStorage)
+            console.warn('Stale activeConversationId, clearing:', error);
             localStorage.removeItem('activeConversationId');
-            await fetchSessionHistory();
+            showPromptIdeas();
         }
     } else {
-        await fetchSessionHistory();
+        showPromptIdeas();
     }
 });
 

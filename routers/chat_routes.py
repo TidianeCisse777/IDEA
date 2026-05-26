@@ -591,6 +591,8 @@ async def chat_endpoint(
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error in chat_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -631,6 +633,8 @@ def clear_endpoint(request: Request, token: str = Depends(get_auth_token)):
         session_key = make_session_key(user.id, session_id, agent_type)
         clear_session(session_key)
         return {"status": "Chat history cleared"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error in clear_endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -705,6 +709,8 @@ async def load_conversation_endpoint(
         )
         return {"status": "Conversation loaded", "message_count": len(interpreter_messages)}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error loading conversation: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to load conversation: {str(e)}")
