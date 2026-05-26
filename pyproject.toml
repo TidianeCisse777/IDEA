@@ -231,7 +231,7 @@ dependencies = [
   "numba",
   "chromadb>=0.5",
   "chardet>=5.0",
-  "langfuse>=2.0",
+  "langfuse==2.60.3",
 ]
 
 [tool.uv]
@@ -245,4 +245,3 @@ packages = [
   "core",
   "utils",
 ]
-

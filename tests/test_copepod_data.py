@@ -86,6 +86,36 @@ class TestInspectFile:
         assert "delimiter" in meta
         assert "sheet_names" in meta
 
+    def test_tsv_delimiter_reported_as_tab(self, tools):
+        r = tools["inspect_file"](str(ECOTAXA))
+        assert r["metadata"]["delimiter"] == "\t"
+
+    def test_semicolon_csv_delimiter_detected(self, tools, tmp_path):
+        f = tmp_path / "semicolon.csv"
+        f.write_text("col_a;col_b;col_c\n1;2;3\n4;5;6\n", encoding="utf-8")
+        r = tools["inspect_file"](str(f))
+        assert r["metadata"]["delimiter"] == ";"
+        assert r["n_columns"] == 3
+
+    def test_ecotaxa_type_row_detected_and_skipped(self, tools, tmp_path):
+        f = tmp_path / "ecotaxa_with_type_row.tsv"
+        f.write_text(
+            "object_id\tobject_lat\tobject_depth_min\tobject_annotation_status\n"
+            "[t]\t[f]\t[f]\t[t]\n"
+            "obj_001\t68.3\t10.5\tvalidated\n"
+            "obj_002\t68.4\t12.0\tvalidated\n",
+            encoding="utf-8",
+        )
+        r = tools["inspect_file"](str(f))
+        assert r["metadata"].get("ecotaxa_type_row_skipped") is True
+        assert any("type row" in w.lower() for w in r["warnings"])
+        # First data row must be actual data, not [t]/[f] values.
+        sample_vals = {v for col in r["columns"] for v in col["sample_values"]}
+        assert "[t]" not in sample_vals
+        assert "[f]" not in sample_vals
+        # Row count must exclude the type row.
+        assert r["n_rows"] == 2
+
 
 # ── infer_column_roles ────────────────────────────────────────────────────────
 

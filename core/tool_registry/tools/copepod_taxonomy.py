@@ -1,7 +1,7 @@
 from core.tool_registry.registry import Tool, registry
 
 _code = '''
-def lookup_worms_taxonomy(query, include_children=False, session_id=None):
+def lookup_worms_taxonomy(query, include_children=False, marine_only=True, session_id=None):
     """Query the WoRMS API to get the full taxonomic classification of a marine organism.
 
     Use this when the user asks about:
@@ -19,6 +19,8 @@ def lookup_worms_taxonomy(query, include_children=False, session_id=None):
     Args:
         query (str | int): Scientific name (e.g. "Calanus hyperboreus") or AphiaID (e.g. 104464).
         include_children (bool): If True, also return direct child taxa (default False).
+        marine_only (bool): Restrict search to marine taxa (default True). Set to False for
+            brackish or freshwater copepods (e.g. Eurytemora, some Cyclopoida).
         session_id (str, optional): Session ID for Langfuse tracing.
 
     Returns:
@@ -30,6 +32,7 @@ def lookup_worms_taxonomy(query, include_children=False, session_id=None):
             valid_aphia_id  — AphiaID of accepted name if synonym
             rank            — taxonomic rank (Species, Genus, Family, Order, Class, ...)
             classification  — list of dicts {rank, scientific_name, aphia_id} from kingdom to taxon
+                              (always follows the accepted name's classification, even for synonyms)
             children        — list of dicts {aphia_id, scientific_name, rank, status} if include_children=True
             source          — "WoRMS REST API"
             error           — error message if the query failed, else None
@@ -37,6 +40,7 @@ def lookup_worms_taxonomy(query, include_children=False, session_id=None):
     import requests
 
     BASE = "https://www.marinespecies.org/rest"
+    marine_param = "true" if marine_only else "false"
     result = {
         "query": str(query),
         "aphia_id": None,
@@ -76,12 +80,12 @@ def lookup_worms_taxonomy(query, include_children=False, session_id=None):
             record = r.json()
         else:
             search_url = f"{BASE}/AphiaRecordsByName/{requests.utils.quote(str(query))}"
-            r = requests.get(search_url, params={"like": "false", "marine_only": "true"}, timeout=10)
+            r = requests.get(search_url, params={"like": "false", "marine_only": marine_param}, timeout=10)
             r.raise_for_status()
             records = r.json() if r.content else []
             if not records:
                 # retry with fuzzy match
-                r2 = requests.get(search_url, params={"like": "true", "marine_only": "true"}, timeout=10)
+                r2 = requests.get(search_url, params={"like": "true", "marine_only": marine_param}, timeout=10)
                 r2.raise_for_status()
                 records = (r2.json() if r2.content else []) or []
             if not records:
@@ -98,8 +102,13 @@ def lookup_worms_taxonomy(query, include_children=False, session_id=None):
         result["valid_aphia_id"] = record.get("valid_AphiaID")
         result["rank"] = record.get("rank")
 
-        # Step 2 — full classification hierarchy
-        cls_url = f"{BASE}/AphiaClassificationByAphiaID/{aphia_id}"
+        # Step 2 — full classification hierarchy.
+        # For synonyms, follow valid_AphiaID so the classification reflects the accepted name.
+        cls_aphia_id = aphia_id
+        if result["status"] != "accepted" and result["valid_aphia_id"]:
+            cls_aphia_id = result["valid_aphia_id"]
+
+        cls_url = f"{BASE}/AphiaClassificationByAphiaID/{cls_aphia_id}"
         rc = requests.get(cls_url, timeout=10)
         rc.raise_for_status()
         cls_data = rc.json() if rc.content else None
@@ -118,12 +127,24 @@ def lookup_worms_taxonomy(query, include_children=False, session_id=None):
         _flatten(cls_data, flat)
         result["classification"] = flat
 
-        # Step 3 — children (optional)
+        # Step 3 — children (optional), paginated to retrieve all results.
         if include_children:
             ch_url = f"{BASE}/AphiaChildrenByAphiaID/{aphia_id}"
-            rch = requests.get(ch_url, params={"marine_only": "true", "offset": 0}, timeout=10)
-            rch.raise_for_status()
-            children_raw = (rch.json() if rch.content else None) or []
+            all_children = []
+            offset = 0
+            page_size = 50
+            while True:
+                rch = requests.get(
+                    ch_url,
+                    params={"marine_only": marine_param, "offset": offset},
+                    timeout=10,
+                )
+                rch.raise_for_status()
+                page = (rch.json() if rch.content else None) or []
+                all_children.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += page_size
             result["children"] = [
                 {
                     "aphia_id": c.get("AphiaID"),
@@ -131,7 +152,7 @@ def lookup_worms_taxonomy(query, include_children=False, session_id=None):
                     "rank": c.get("rank"),
                     "status": c.get("status"),
                 }
-                for c in children_raw
+                for c in all_children
             ]
 
     except requests.exceptions.Timeout:

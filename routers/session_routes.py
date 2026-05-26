@@ -21,6 +21,27 @@ ARTIFACT_ROUTE_TYPES = {
 }
 
 
+def _diagnose_plan_artifacts_block(session_key: str) -> str:
+    active_du = session_store.get_active_artifact(session_key, "data_understanding")
+    active_gc = session_store.get_active_artifact(session_key, "graph_context")
+    if active_du is None:
+        return (
+            "no active Data Understanding artifact — "
+            "call activate_data_understanding(session_key, version_id) first"
+        )
+    if active_gc is None:
+        return (
+            "no active Graph Context artifact — "
+            "call activate_graph_context(session_key, version_id) first"
+        )
+    gc_du_ref = (active_gc.get("payload") or {}).get("data_understanding_version_id")
+    return (
+        f"Graph Context references Data Understanding '{gc_du_ref}' "
+        f"but the active Data Understanding is '{active_du['version_id']}' — "
+        "create and activate a new Graph Context that references the current active Data Understanding"
+    )
+
+
 class SessionModeRequest(BaseModel):
     mode: str
 
@@ -76,25 +97,13 @@ async def set_mode(
         and body.mode == "analyse"
         and not session_store.has_active_copepod_plan_artifacts(session_key)
     ):
+        blocking_reason = _diagnose_plan_artifacts_block(session_key)
         trace_copepod_event(
             "analyse_mode_blocked",
             session_key=session_key,
-            output={
-                "requested_mode": body.mode,
-                "blocking_reason": (
-                    "active Data Understanding and active Graph Context artifacts are required, "
-                    "and the Graph Context must reference the active Data Understanding"
-                ),
-            },
+            output={"requested_mode": body.mode, "blocking_reason": blocking_reason},
         )
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Copepod analyse mode requires active Data Understanding and "
-                "active Graph Context artifacts, with the Graph Context linked "
-                "to the active Data Understanding"
-            ),
-        )
+        raise HTTPException(status_code=409, detail=blocking_reason)
 
     session_store.set_session_mode(session_key, body.mode)
     if agent_type == "copepod" and body.mode == "analyse":

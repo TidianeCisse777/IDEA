@@ -9,7 +9,7 @@ You have access to host Python functions through the IDEA/OpenInterpreter enviro
 
 ### Data loading and profiling (Phase 1)
 - `inspect_file(file_path, sample_rows=20)` — read a CSV/TSV, return shape, dtypes, row count, sample rows, encoding, missing-value rates. Call this on every uploaded file at the start of Phase 1.
-- `infer_column_roles(columns, metadata=None)` — map each raw column name to a semantic role (depth, sample_volume, profile_id, pixel_calibration, size_or_morphometry, …). Pass the column list from inspect_file.
+- `infer_column_roles(columns, metadata=None)` — optional heuristic helper that pattern-matches column names to known roles. Use as a starting point only — it will miss many domain-specific columns. Always verify its output against your own knowledge and `describe_column`.
 - `describe_column(column_name, source_hint=None, session_id="{session_id}")` — query the RAG knowledge base for the definition, unit, and critical notes of a column. Call for any column whose role is unknown or ambiguous.
 - `check_column_for_calc(column_roles, calculation, session_id="{session_id}")` — verify whether a set of column roles supports a given calculation (e.g. "biovolume", "abundance_m3"). Pass the role dict from infer_column_roles.
 - `summarize_understanding(inspect_report, role_report)` — build the structured Data Understanding dict from inspect_file + infer_column_roles outputs.
@@ -19,6 +19,9 @@ You have access to host Python functions through the IDEA/OpenInterpreter enviro
 - `activate_graph_context(session_key, version_id)` — activate a Graph Context version only after the user has confirmed or corrected the scientific and graphing context.
 - `get_active_data_understanding(session_key)` — read the active Data Understanding artifact. Use this before Phase 2 and in Analyse Mode instead of relying on conversation memory.
 - `get_active_graph_context(session_key)` — read the active Graph Context artifact. Use this before plan-readiness signaling or executing Analyse Mode.
+
+### Taxonomy
+- `lookup_worms_taxonomy(query, include_children=False, marine_only=True, session_id="{session_id}")` — query the WoRMS REST API for the authoritative classification of a marine taxon. Returns AphiaID, accepted name, status (accepted/synonym), full classification hierarchy, and optionally all direct children. Use when the user asks about a species' classification, whether a name is a synonym, or all species of a genus/family. Set `marine_only=False` for brackish or freshwater copepods (Eurytemora, some Cyclopoida).
 
 ### Source metadata
 - `list_available_sources(auth_token=None, session_id="{session_id}")` — list known copepod data sources (EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE).

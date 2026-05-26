@@ -200,7 +200,11 @@ class TestPostSessionMode:
             )
 
         assert resp.status_code == 409
-        assert "active data understanding" in resp.json()["detail"].lower()
+        detail = resp.json()["detail"].lower()
+        if "data_understanding" not in active_artifacts:
+            assert "active data understanding" in detail
+        else:
+            assert "active graph context" in detail
         assert store.get_session_mode(session_key) == "plan"
         trace_event.assert_called_once()
         assert trace_event.call_args.args[0] == "analyse_mode_blocked"

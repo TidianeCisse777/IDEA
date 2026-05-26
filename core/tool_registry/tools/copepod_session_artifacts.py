@@ -51,7 +51,8 @@ def create_graph_context_draft(session_key, artifact):
     """Create a draft Graph Context artifact version for a copepod session."""
     from core.copepod_observability import trace_copepod_event
 
-    if not artifact.get("data_understanding_version_id"):
+    du_version_id = artifact.get("data_understanding_version_id")
+    if not du_version_id:
         result = {
             "created": False,
             "blocking_reason": "Graph Context requires data_understanding_version_id.",
@@ -63,8 +64,27 @@ def create_graph_context_draft(session_key, artifact):
         )
         return result
 
-    from copy import deepcopy
     from core import session_store as session_store_module
+
+    active_du = session_store_module.session_store.get_active_artifact(
+        session_key, "data_understanding"
+    )
+    if active_du is None or active_du.get("version_id") != du_version_id:
+        active_id = active_du.get("version_id") if active_du else None
+        blocking = (
+            f"data_understanding_version_id '{du_version_id}' does not match the active "
+            f"Data Understanding version ('{active_id}'). "
+            "Call get_active_data_understanding(session_key) to get the correct version_id."
+        )
+        result = {"created": False, "blocking_reason": blocking}
+        trace_copepod_event(
+            "graph_context_draft_blocked",
+            session_key=session_key,
+            output={"blocking_reason": blocking},
+        )
+        return result
+
+    from copy import deepcopy
 
     draft = session_store_module.session_store.create_artifact_version(
         session_key,
@@ -77,7 +97,7 @@ def create_graph_context_draft(session_key, artifact):
         output={
             "version_id": draft["version_id"],
             "status": draft["status"],
-            "data_understanding_version_id": artifact["data_understanding_version_id"],
+            "data_understanding_version_id": du_version_id,
         },
     )
     return deepcopy(draft)

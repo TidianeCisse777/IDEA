@@ -286,7 +286,10 @@ class InMemorySessionStore(SessionStore):
         )
 
 
-# Singleton — Railway injects REDIS_URL; local dev defaults to host=redis.
+# Singleton — selection strategy:
+#   REDIS_URL set        → Redis at that URL (Railway / any hosted env)
+#   LOCAL_DEV env set    → Redis at host=redis (Docker Compose service name)
+#   LOCAL_DEV not set    → InMemorySessionStore (bare local Python, no Docker)
 _redis_url = os.getenv("REDIS_URL", "")
 if _redis_url:
     _parsed = urllib.parse.urlparse(_redis_url)
@@ -294,5 +297,7 @@ if _redis_url:
         host=_parsed.hostname or "redis",
         port=_parsed.port or 6379,
     )
-else:
+elif os.getenv("LOCAL_DEV") is not None:
     session_store: SessionStore = RedisSessionStore()
+else:
+    session_store: SessionStore = InMemorySessionStore()

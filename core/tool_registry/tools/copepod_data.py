@@ -52,6 +52,7 @@ def inspect_file(file_path, sample_rows=20):
 
     # ── CSV / TSV ──────────────────────────────────────────────────────────────
     if suffix in (".csv", ".tsv", ".txt"):
+        import csv as _csv
         import pandas as pd
         import chardet
 
@@ -61,18 +62,39 @@ def inspect_file(file_path, sample_rows=20):
         encoding = detected.get("encoding") or "utf-8"
         result["metadata"]["encoding"] = encoding
 
-        delimiter = "\t" if suffix == ".tsv" else None
+        # Detect delimiter: trust extension for .tsv, sniff for .csv/.txt.
+        if suffix == ".tsv":
+            delimiter = "\t"
+        else:
+            try:
+                sample_text = raw.decode(encoding, errors="replace")
+                sniffed = _csv.Sniffer().sniff(sample_text[:4096], delimiters=",;\t|")
+                delimiter = sniffed.delimiter
+            except _csv.Error:
+                delimiter = ","
+        result["metadata"]["delimiter"] = delimiter
+
         try:
             df_sample = pd.read_csv(path, sep=delimiter, encoding=encoding,
                                     nrows=sample_rows, on_bad_lines="skip",
                                     engine="python")
-            result["metadata"]["delimiter"] = df_sample.attrs.get("sep", delimiter or "auto-detected")
+
+            # Detect EcoTaxa 2-row header: second line contains [t], [f], [n] type codes.
+            skip_rows = []
+            if _is_ecotaxa_type_row(df_sample):
+                skip_rows = [1]
+                result["metadata"]["ecotaxa_type_row_skipped"] = True
+                warnings.append("EcoTaxa type row ([t]/[f]/[n]) detected and skipped.")
+                df_sample = pd.read_csv(path, sep=delimiter, encoding=encoding,
+                                        nrows=sample_rows, skiprows=skip_rows,
+                                        on_bad_lines="skip", engine="python")
+
             result["format"] = "tsv" if suffix == ".tsv" else "csv"
 
             try:
                 df_full = pd.read_csv(path, sep=delimiter, encoding=encoding,
-                                      on_bad_lines="skip", engine="python",
-                                      usecols=lambda c: True)
+                                      skiprows=skip_rows, on_bad_lines="skip",
+                                      engine="python", usecols=lambda c: True)
                 result["n_rows"] = len(df_full)
             except Exception:
                 result["n_rows"] = f">{sample_rows} (sample only)"
@@ -148,6 +170,22 @@ def inspect_file(file_path, sample_rows=20):
         warnings.append(f"Unsupported format: {suffix}. Supported: csv, tsv, xlsx, xls, nc, json.")
 
     return result
+
+
+def _is_ecotaxa_type_row(df):
+    """Return True if the first data row looks like an EcoTaxa type-annotation row.
+
+    EcoTaxa bulk TSV exports insert a second header line where every cell is
+    one of [t] (text), [f] (float), or [n] (numeric). Detecting this prevents
+    the type row from corrupting dtype inference and row counts.
+    """
+    import re as _re
+    if len(df) == 0:
+        return False
+    _TYPE_RE = _re.compile("^\\[([tfnTs])\\]$")
+    first_row = df.iloc[0].astype(str).str.strip()
+    non_empty = [v for v in first_row if v not in ("nan", "", "NaN")]
+    return len(non_empty) > 0 and all(_TYPE_RE.match(v) for v in non_empty)
 
 
 def _describe_columns(df):

@@ -42,9 +42,12 @@ class CopepodProfile(AssistantProfile):
         "copepod_sources_meta",
         "copepod_rag",
         "copepod_artifacts",
+        "copepod_taxonomy",
     }
 
-    # instruction_blocks is dynamic — resolved per session in get_custom_instructions
+    # Plan-mode default exposed for tests and introspection. Rendering NEVER reads this
+    # attribute directly — get_custom_instructions() selects _BLOCKS_PLAN or _BLOCKS_ANALYSE
+    # based on session mode. Do not use self.instruction_blocks for rendering.
     instruction_blocks = _BLOCKS_PLAN
 
     def __init__(self, session_store: SessionStore | None = None):

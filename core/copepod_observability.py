@@ -2,6 +2,21 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.request import Request, urlopen
+
+
+def _configure_local_langfuse_host() -> None:
+    host = os.getenv("LANGFUSE_HOST") or os.getenv("LANGFUSE_BASE_URL") or ""
+    if "://langfuse:3000" not in host:
+        return
+    try:
+        req = Request("http://localhost:3001/api/public/projects", method="GET")
+        urlopen(req, timeout=1)
+    except Exception as exc:
+        if getattr(exc, "code", None) not in {200, 401}:
+            return
+    os.environ["LANGFUSE_HOST"] = "http://localhost:3001"
+    os.environ["LANGFUSE_BASE_URL"] = "http://localhost:3001"
 
 
 def trace_copepod_event(
@@ -18,6 +33,7 @@ def trace_copepod_event(
     try:
         from langfuse import Langfuse
 
+        _configure_local_langfuse_host()
         lf = Langfuse()
         span = lf.span(
             name=f"copepod_{event_name}",

@@ -35,7 +35,8 @@ def test_single_chunk_plan_ready_strips_tag_and_emits_button_after_three_user_tu
     ]
 
 
-def test_split_plan_ready_tag_emits_strip_tail_after_end_chunk():
+def test_split_plan_ready_tag_reconstructed_without_visible_fragment():
+    # Tag split across two chunks: "[PLA" held back, "[PLAN_READY]" assembled on next chunk.
     chunks = [
         {"start": True, "role": "assistant", "type": "message", "content": "Le plan est valide. [PLA"},
         {"end": True, "role": "assistant", "type": "message", "content": "N_READY]"},
@@ -43,11 +44,13 @@ def test_split_plan_ready_tag_emits_strip_tail_after_end_chunk():
 
     events = list(chat_stream_events(chunks, user_turns=3, session_mode="plan"))
 
-    assert events[:3] == [
-        {"start": True, "role": "assistant", "type": "message", "content": "Le plan est valide. [PLA"},
-        {"end": True, "role": "assistant", "type": "message", "content": "N_READY]"},
-        {"type": "strip_tail", "text": "[PLAN_READY]"},
-    ]
+    # First chunk: partial tag prefix held back, safe content emitted without "[PLA".
+    assert events[0] == {"start": True, "role": "assistant", "type": "message", "content": "Le plan est valide. "}
+    # Second chunk: held "[PLA" + "N_READY]" = "[PLAN_READY]" reconstructed and stripped.
+    assert events[1] == {"end": True, "role": "assistant", "type": "message", "content": ""}
+    # No strip_tail event — tag was stripped in-flight, not retroactively.
+    assert not any(e.get("type") == "strip_tail" for e in events if isinstance(e, dict))
+    # Button still emitted.
     assert events[-1]["type"] == "action_button"
 
 

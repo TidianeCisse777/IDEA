@@ -63,30 +63,35 @@ def test_create_and_activate_data_understanding_via_tools():
 def test_create_graph_context_requires_data_understanding_version_reference():
     store = InMemorySessionStore()
     tools = _load_tools()
+    session_key = "u1:s1:copepod"
 
     with (
         patch("core.session_store.session_store", store),
         patch("core.copepod_observability.trace_copepod_event") as trace_event,
     ):
+        # Must have an active DU artifact before creating a GC draft.
+        du = store.create_artifact_version(session_key, "data_understanding", {"columns": []})
+        store.activate_artifact_version(session_key, "data_understanding", du["version_id"])
+
         result = tools["create_graph_context_draft"](
-            "u1:s1:copepod",
+            session_key,
             {
                 "objective": "Distribution verticale",
-                "data_understanding_version_id": "du-123",
+                "data_understanding_version_id": du["version_id"],
                 "language": "Python",
                 "feasibility": "reliable",
             },
         )
 
     assert result["artifact_type"] == "graph_context"
-    assert result["payload"]["data_understanding_version_id"] == "du-123"
+    assert result["payload"]["data_understanding_version_id"] == du["version_id"]
     trace_event.assert_called_with(
         "graph_context_draft_created",
-        session_key="u1:s1:copepod",
+        session_key=session_key,
         output={
             "version_id": result["version_id"],
             "status": "draft",
-            "data_understanding_version_id": "du-123",
+            "data_understanding_version_id": du["version_id"],
         },
     )
 
