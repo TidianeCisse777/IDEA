@@ -12,7 +12,7 @@ VALIDATE_PLAN_ACTION = {
     "role": "computer",
     "type": "action_button",
     "action": "validate_plan",
-    "label": "Valider et passer en Mode Analyse",
+    "label": "Passer en Mode Analyse",
 }
 
 

@@ -33,7 +33,16 @@ _BLOCKS_ANALYSE = [
 
 class CopepodProfile(AssistantProfile):
     agent_type = "copepod"
-    tool_tags = {"core", "rag", "mcp"}
+    tool_tags = {
+        "core",
+        "rag",
+        "mcp",
+        "copepod_data",
+        "copepod_columns",
+        "copepod_sources_meta",
+        "copepod_rag",
+        "copepod_artifacts",
+    }
 
     # instruction_blocks is dynamic — resolved per session in get_custom_instructions
     instruction_blocks = _BLOCKS_PLAN

@@ -1421,7 +1421,7 @@ function appendSystemMessage(message) {
 // ── Session mode (plan ↔ analyse) ────────────────────────────────────────────
 
 function handleActionButtonChunk(chunk, { persist = true } = {}) {
-    const label = chunk.label || 'Valider et passer en Mode Analyse';
+    const label = chunk.label || 'Passer en Mode Analyse';
 
     const wrapper = document.createElement('div');
     wrapper.className = 'action-button-chunk';
@@ -1429,9 +1429,12 @@ function handleActionButtonChunk(chunk, { persist = true } = {}) {
     const btn = document.createElement('button');
     btn.className = 'action-btn-valider';
     btn.textContent = label;
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
         btn.disabled = true;
-        switchToAnalyseMode();
+        const switched = await switchToAnalyseMode();
+        if (!switched) {
+            btn.disabled = false;
+        }
     });
 
     wrapper.appendChild(btn);
@@ -1462,13 +1465,21 @@ async function switchToAnalyseMode() {
             },
             body: JSON.stringify({ mode: 'analyse' }),
         });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        if (!resp.ok) {
+            const errorData = await resp.json().catch(() => ({}));
+            if (resp.status === 409) {
+                throw new Error(errorData.detail || 'Le contexte validé est incomplet pour passer en Mode Analyse.');
+            }
+            throw new Error(errorData.detail || `HTTP ${resp.status}`);
+        }
         sessionMode = 'analyse';
         updateSessionModeBadge('analyse');
         appendSessionModeBandeau();
+        return true;
     } catch (err) {
         console.error('Failed to switch to Analyse mode:', err);
-        appendSystemMessage('Erreur : impossible de passer en Mode Analyse. Veuillez réessayer.');
+        appendSystemMessage(`Erreur : impossible de passer en Mode Analyse. ${err.message}`);
+        return false;
     }
 }
 

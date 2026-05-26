@@ -56,7 +56,16 @@ def test_copepod_profile_uses_safe_runtime_and_copepod_instruction_blocks():
 
     profile = get_profile("copepod")
 
-    assert profile.tool_tags == {"core", "rag", "mcp"}
+    assert profile.tool_tags == {
+        "core",
+        "rag",
+        "mcp",
+        "copepod_data",
+        "copepod_columns",
+        "copepod_sources_meta",
+        "copepod_rag",
+        "copepod_artifacts",
+    }
     assert profile.instruction_blocks == [
         "session_metadata",
         "output_format",
@@ -142,6 +151,47 @@ def test_copepod_plan_mode_forces_two_phase_data_then_context_flow():
     assert "PLAN_READY" in instructions
     assert "### Data Understanding" in instructions
     assert "### Graph Context" in instructions
+
+
+def test_copepod_instructions_require_artifact_tools_before_plan_ready():
+    import_copepod_profile()
+    profile = get_profile("copepod")
+
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "create_data_understanding_draft" in instructions
+    assert "activate_data_understanding" in instructions
+    assert "create_graph_context_draft" in instructions
+    assert "activate_graph_context" in instructions
+    assert "Do not emit `[PLAN_READY]` until `activate_graph_context` has succeeded" in instructions
+    assert "Passer en Mode Analyse" in instructions
+
+
+def test_copepod_plan_mode_uses_strict_numbered_protocol():
+    import_copepod_profile()
+    profile = get_profile("copepod")
+
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "### Phase 1 Protocol" in instructions
+    assert "### Data Understanding Confirmation Protocol" in instructions
+    assert "### Phase 2 Protocol" in instructions
+    assert "### Graph Context Confirmation Protocol" in instructions
+    assert "get_active_data_understanding" in instructions
+    assert "get_active_graph_context" in instructions
+    assert "Do not infer active artifacts from conversation memory" in instructions
 
 
 def test_copepod_profile_renders_default_plan_instructions_with_memory_store():

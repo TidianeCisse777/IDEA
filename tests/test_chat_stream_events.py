@@ -30,7 +30,7 @@ def test_single_chunk_plan_ready_strips_tag_and_emits_button_after_three_user_tu
             "role": "computer",
             "type": "action_button",
             "action": "validate_plan",
-            "label": "Valider et passer en Mode Analyse",
+            "label": "Passer en Mode Analyse",
         },
     ]
 

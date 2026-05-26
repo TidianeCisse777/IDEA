@@ -6,4 +6,7 @@ from . import web_tools
 from . import rag_tools
 from . import mcp_tools
 from . import copepod_data
+from . import copepod_columns
+from . import copepod_sources_meta
 from . import copepod_rag
+from . import copepod_session_artifacts
