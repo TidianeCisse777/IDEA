@@ -175,19 +175,31 @@ def _normalize_text(text: str) -> str:
 
 def _trace_langfuse(question: str, chunks: list[dict], session_id: str):
     try:
+        import os
         from core.copepod_observability import _configure_local_langfuse_host
         _configure_local_langfuse_host()
         from langfuse import Langfuse
         lf = Langfuse()
-        span = lf.span(
-            name="copepod_rag_query",
-            session_id=session_id,
-            input={"question": question},
-            output={"top_k": len(chunks), "chunks": [
-                {"chunk_id": c["chunk_id"], "title": c["title"], "score": c["score"]}
-                for c in chunks
-            ]},
-        )
+        output = {"top_k": len(chunks), "chunks": [
+            {"chunk_id": c["chunk_id"], "title": c["title"], "score": c["score"]}
+            for c in chunks
+        ]}
+        eval_trace_id = os.getenv("COPEPOD_EVAL_LF_TRACE_ID")
+        if eval_trace_id:
+            span = lf.span(
+                trace_id=eval_trace_id,
+                name="tool/rag_query",
+                input={"question": question},
+                output=output,
+                metadata={"session_id": session_id},
+            )
+        else:
+            span = lf.span(
+                name="copepod_rag_query",
+                session_id=session_id,
+                input={"question": question},
+                output=output,
+            )
         span.end()
     except Exception:
         pass  # Langfuse optional — never crash the query path
