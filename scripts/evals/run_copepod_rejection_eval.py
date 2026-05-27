@@ -40,7 +40,7 @@ from run_copepod_plan_mode_eval import (
     _tool_call_to_dict,
     _completion_message,
     _compact_tool_result,
-    _live_eval_system_prompt,
+    _build_eval_system_message,
     _live_eval_runtime_context,
     _data_understanding_artifact,
     ECOTAXA,
@@ -74,27 +74,28 @@ def _synthetic_history_post_plan_ready(
     session_id: str,
     du_version_id: str,
     gc_version_id: str,
+    store=None,
 ) -> list[dict]:
     runtime_context = _live_eval_runtime_context(session_id)
     return [
-        {"role": "system", "content": _live_eval_system_prompt()},
+        {"role": "system", "content": _build_eval_system_message(store, session_id) if store else ""},
         {
             "role": "user",
             "content": f"{runtime_context}\n\nFichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
         },
         {
             "role": "assistant",
-            "content": "J'ai inspecté le fichier et créé le Data Understanding draft. Voici le résumé...",
+            "content": "### Analyse du fichier\n\n#### Fichier 1 — `ecotaxa_sample_50.tsv`\n\n- **Type de source** : `likely_ecotaxa` — confiance : élevée\n- **Colonnes utilisables** : `object_depth_min` → profondeur minimale (m), `object_depth_max` → profondeur maximale (m)\n- **Qualité / limitations** : aucune colonne inutilisable détectée\n- **Validation taxonomique** : non applicable\n\nEst-ce que cette analyse vous convient ?",
         },
         {"role": "user", "content": "Ouais ça m'a l'air bien. Vas-y pour la suite."},
         {
             "role": "assistant",
-            "content": f"J'ai activé le Data Understanding (version {du_version_id}) et créé le Graph Context draft.",
+            "content": "### Configuration du graphique\n\n- **Objectif** : distribution verticale EcoTaxa\n- **Données / source** : `ecotaxa_sample_50.tsv`\n- **Colonnes retenues** :\n  - `object_depth_min` → axe Y (profondeur)\n- **Langage** : Python\n- **Artefacts de sortie** : png\n- **Faisabilité** : exploratoire\n\nConfirmez-vous ces paramètres ?",
         },
         {"role": "user", "content": "Ok, c'est bon pour moi."},
         {
             "role": "assistant",
-            "content": f"J'ai activé le Graph Context (version {gc_version_id}). Le contexte scientifique est validé.\n\n[PLAN_READY]",
+            "content": f"La configuration est validée.\n\n[PLAN_READY]",
         },
     ]
 
@@ -151,7 +152,7 @@ def run_rejection_eval(
                 upload_adu = _upload_fixture(client_adu, session_id_adu, ECOTAXA)
                 uploaded_adu = _uploaded_path(session_id_adu, upload_adu["filename"])
                 messages_adu: list[dict] = [
-                    {"role": "system", "content": _live_eval_system_prompt()},
+                    {"role": "system", "content": _build_eval_system_message(store, session_id_adu)},
                     {
                         "role": "user",
                         "content": (
@@ -221,7 +222,7 @@ def run_rejection_eval(
                 upload_agc = _upload_fixture(client_agc, session_id_agc, ECOTAXA)
                 uploaded_agc = _uploaded_path(session_id_agc, upload_agc["filename"])
                 messages_agc: list[dict] = [
-                    {"role": "system", "content": _live_eval_system_prompt()},
+                    {"role": "system", "content": _build_eval_system_message(store, session_id_agc)},
                     {
                         "role": "user",
                         "content": (
@@ -335,7 +336,7 @@ def run_rejection_eval(
                 gc_active_version_id_cdu = gc_cdu["version_id"]
 
                 messages_cdu = _synthetic_history_post_plan_ready(
-                    session_id_cdu, du_active_version_id_cdu, gc_active_version_id_cdu
+                    session_id_cdu, du_active_version_id_cdu, gc_active_version_id_cdu, store=store
                 )
                 messages_cdu.append(
                     {
@@ -410,7 +411,7 @@ def run_rejection_eval(
                 gc_active_version_id_cgc = gc_cgc["version_id"]
 
                 messages_cgc = _synthetic_history_post_plan_ready(
-                    session_id_cgc, du_active_version_id_cgc, gc_active_version_id_cgc
+                    session_id_cgc, du_active_version_id_cgc, gc_active_version_id_cgc, store=store
                 )
                 messages_cgc.append(
                     {

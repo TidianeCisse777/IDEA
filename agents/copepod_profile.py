@@ -14,17 +14,14 @@ from utils.session_utils import make_session_key
 
 _BLOCKS_PLAN = [
     "output_format",
-    "cli_reference",
     "copepod_tool_signatures",
     "copepod_mode_plan",
-    "copepod_mode_analyse",
     "mcp_tools_block",
     "session_metadata",
 ]
 
 _BLOCKS_ANALYSE = [
     "output_format",
-    "cli_reference",
     "copepod_tool_signatures",
     "copepod_mode_analyse",
     "mcp_tools_block",

@@ -40,7 +40,7 @@ from run_copepod_plan_mode_eval import (
     _tool_call_to_dict,
     _completion_message,
     _compact_tool_result,
-    _live_eval_system_prompt,
+    _build_eval_system_message,
     _live_eval_runtime_context,
     _data_understanding_artifact,
     ECOTAXA,
@@ -108,7 +108,7 @@ def run_direct_analysis_eval(
                 uploaded_a = _uploaded_path(session_id_a, upload_a["filename"])
 
                 messages_a: list[dict] = [
-                    {"role": "system", "content": _live_eval_system_prompt()},
+                    {"role": "system", "content": _build_eval_system_message(store, session_id_a)},
                     {
                         "role": "user",
                         "content": (
@@ -187,24 +187,24 @@ def run_direct_analysis_eval(
 
                 runtime_context_c = _live_eval_runtime_context(session_id_c)
                 synthetic_history: list[dict] = [
-                    {"role": "system", "content": _live_eval_system_prompt()},
+                    {"role": "system", "content": _build_eval_system_message(store, session_id_c)},
                     {
                         "role": "user",
                         "content": f"{runtime_context_c}\n\nFichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
                     },
                     {
                         "role": "assistant",
-                        "content": "J'ai inspecté le fichier et créé le Data Understanding draft. Voici le résumé...",
+                        "content": "### Analyse du fichier\n\n#### Fichier 1 — `ecotaxa_sample_50.tsv`\n\n- **Type de source** : `likely_ecotaxa` — confiance : élevée\n- **Colonnes utilisables** : `object_depth_min` → profondeur minimale (m), `object_depth_max` → profondeur maximale (m)\n- **Qualité / limitations** : aucune colonne inutilisable détectée\n- **Validation taxonomique** : non applicable\n\nEst-ce que cette analyse vous convient ?",
                     },
                     {"role": "user", "content": "Ouais ça m'a l'air bien. Vas-y pour la suite."},
                     {
                         "role": "assistant",
-                        "content": f"J'ai activé le Data Understanding (version {du_version_id}) et créé le Graph Context draft.",
+                        "content": "### Configuration du graphique\n\n- **Objectif** : distribution verticale EcoTaxa\n- **Données / source** : `ecotaxa_sample_50.tsv`\n- **Colonnes retenues** :\n  - `object_depth_min` → axe Y (profondeur)\n- **Langage** : Python\n- **Artefacts de sortie** : png\n- **Faisabilité** : exploratoire\n\nConfirmez-vous ces paramètres ?",
                     },
                     {"role": "user", "content": "Ok, c'est bon pour moi."},
                     {
                         "role": "assistant",
-                        "content": f"J'ai activé le Graph Context (version {gc_version_id}). Le contexte scientifique est validé.\n\n[PLAN_READY]",
+                        "content": f"La configuration est validée.\n\n[PLAN_READY]",
                     },
                     {
                         "role": "user",

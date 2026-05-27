@@ -41,7 +41,7 @@ from run_copepod_plan_mode_eval import (
     _tool_call_to_dict,
     _completion_message,
     _compact_tool_result,
-    _live_eval_system_prompt,
+    _build_eval_system_message,
     _live_eval_runtime_context,
     ECOTAXA,
     DATASET_NAME,
@@ -98,24 +98,18 @@ def run_offtopic_eval(
                 upload = _upload_fixture(client, session_id, ECOTAXA)
                 uploaded_ecotaxa = _uploaded_path(session_id, upload["filename"])
                 tool_impls = _live_tool_impls(tools, session_key)
-                system_prompt = _live_eval_system_prompt()
                 runtime_context = _live_eval_runtime_context(session_id)
                 messages: list[dict] = [
                     {
                         "role": "system",
-                        "content": (
-                            system_prompt
-                            + "\n\nYou are running a Langfuse live evaluation. "
-                            "Follow the Plan Mode protocol exactly. Use the provided tools; "
-                            "do not claim an artifact is created or active unless the tool result confirms it."
-                        ),
+                        "content": _build_eval_system_message(store, session_id),
                     },
                     {
                         "role": "user",
                         "content": (
                             f"{runtime_context}\n\n"
                             f"Fichier chargé: `{uploaded_ecotaxa}`. Objectif final: produire une distribution "
-                            "verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
+                            f"verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
                             "Phase 1. Tu dois appeler les outils maintenant avant de répondre."
                         ),
                     },

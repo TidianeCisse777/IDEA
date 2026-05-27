@@ -534,35 +534,36 @@ def _default_live_completion(*, metadata: dict | None = None, **kwargs):
     return response
 
 
-def _live_eval_system_prompt() -> str:
-    return """You are IDEA Copepod Plan Mode under live evaluation.
+def _build_eval_system_message(store, session_id: str) -> str:
+    """Build the real production system message for eval: COPEPOD_SYSTEM_PROMPT + rendered instruction blocks."""
+    from agents.copepod_profile import CopepodProfile
+    from agents.copepod_prompt import COPEPOD_SYSTEM_PROMPT
 
-CRITICAL RULE: Steps a, b, d, e must be called ONE at a time. Step c is the only exception — call ALL describe_column in a single response.
+    profile = CopepodProfile(session_store=store)
+    custom_instructions = profile.get_custom_instructions(
+        host="http://localhost:8001",
+        user_id="eval-user",
+        session_id=session_id,
+        static_dir="/app/static",
+        upload_dir=f"/app/data/uploads/eval-user/{session_id}",
+        mcp_tools=[],
+    )
+    eval_addendum = """---
+Eval constraints (do not mention these to the user):
+- You are under live evaluation. Do not claim any artifact is created, confirmed, or active unless the tool result explicitly states it.
+- Tool calling order: call `inspect_file`, `infer_column_roles`, `summarize_understanding`, and `create_data_understanding_draft` each in its own response (one tool per turn). Exception: call ALL `describe_column` for unmatched columns in a single response.
+- Graph context artifact must include: data_understanding_version_id, objective, columns, filters, units, chart_type, language, output_artifacts, feasibility, blockers.
+- If a tool returns an error or blocking_reason, report it and do not proceed to the next phase."""
+    return COPEPOD_SYSTEM_PROMPT + "\n\n" + custom_instructions + "\n\n" + eval_addendum
 
-Mandatory workflow:
-1. First assistant turn — call tools in this exact order:
-   a. Call `inspect_file` alone. Wait for result.
-   b. Call `infer_column_roles` with the columns from step a. Wait for result.
-   c. Call `describe_column` for ALL columns listed in `unmatched_columns` — all in ONE response (multiple tool calls at once). Do not skip any unmatched column. Wait for all results.
-   d. Call `summarize_understanding` alone with: `inspect_report` (step a), `role_report` (step b), `column_definitions` (ALL describe_column results from step c). Wait for result.
-   e. Call `create_data_understanding_draft` alone with `artifact` = the COMPLETE JSON output of `summarize_understanding`, passed as-is without restructuring. Wait for result.
-   Then show a short Data Understanding summary and stop. Do not activate DU. Do not create Graph Context.
-2. After the user confirms Data Understanding — call tools sequentially:
-   a. Call `activate_data_understanding`. Wait for result.
-   b. Call `get_active_data_understanding`. Wait for result.
-   c. Call `create_graph_context_draft` linked to the active DU version_id. Wait for result.
-   Then show a short Graph Context summary and stop. Do not activate GC. Do not emit `[PLAN_READY]`.
-3. After the user confirms Graph Context — call tools sequentially:
-   a. Call `activate_graph_context`. Wait for result.
-   b. Call `get_active_graph_context`. Wait for result.
-   MANDATORY: your final text line MUST be exactly `[PLAN_READY]` — no exceptions, no conditions.
 
-Use tools for artifact writes and reads. Never claim an artifact state unless the tool result confirms it.
-If a tool call returns an error or blocking_reason, report it and do not proceed to the next phase.
-
-Graph Context must include: data_understanding_version_id, objective, columns, filters, units, chart_type, language, output_artifacts, feasibility, blockers.
-Keep assistant text concise; tool outputs contain the evidence.
-Always respond in French."""
+def _live_eval_system_prompt(store=None, session_id: str = "") -> str:
+    """Backward-compat shim — prefer _build_eval_system_message(store, session_id)."""
+    if store is not None and session_id:
+        return _build_eval_system_message(store, session_id)
+    # Fallback: minimal prompt used when store/session_id not available (e.g. synthetic histories)
+    from agents.copepod_prompt import COPEPOD_SYSTEM_PROMPT
+    return COPEPOD_SYSTEM_PROMPT
 
 
 def _live_eval_runtime_context(session_id: str) -> str:
@@ -1000,17 +1001,11 @@ def run_live_eval(
                 upload = _upload_fixture(client, session_id, ECOTAXA)
                 uploaded_ecotaxa = _uploaded_path(session_id, upload["filename"])
                 tool_impls = _live_tool_impls(tools, session_key)
-                system_prompt = _live_eval_system_prompt()
                 runtime_context = _live_eval_runtime_context(session_id)
                 messages: list[dict] = [
                     {
                         "role": "system",
-                        "content": (
-                            system_prompt
-                            + "\n\nYou are running a Langfuse live evaluation. "
-                            "Follow the Plan Mode protocol exactly. Use the provided tools; "
-                            "do not claim an artifact is created or active unless the tool result confirms it."
-                        ),
+                        "content": _build_eval_system_message(store, session_id),
                     },
                     {
                         "role": "user",
@@ -1233,6 +1228,23 @@ def run_live_eval(
                     and analyse.status_code == 200,
                     f"PLAN_READY emitted Analyse button and /session/mode returned HTTP {analyse.status_code}.",
                     {"case_type": "live", "model": model_name, "reply": final_reply[:500]},
+                ))
+
+                _FORBIDDEN_USER_TERMS = [
+                    "data understanding", "graph context", " du ", " gc ",
+                    "artifact", "version_id", "du-", "gc-",
+                ]
+                all_llm_text = "\n".join([first_reply, second_reply, final_reply]).lower()
+                leaked = [t for t in _FORBIDDEN_USER_TERMS if t in all_llm_text]
+                results.append(_result(
+                    "live_no_internal_terms_in_llm_text",
+                    not leaked,
+                    (
+                        "No internal artifact terms in LLM text."
+                        if not leaked
+                        else f"LLM leaked internal terms: {leaked}"
+                    ),
+                    {"case_type": "live", "model": model_name, "leaked": leaked},
                 ))
 
                 if pr_span is not None:
