@@ -501,14 +501,21 @@ def _default_live_completion(*, metadata: dict | None = None, **kwargs):
 
     if lf_phase_span is not None:
         try:
-            usage = getattr(response, "usage", None)
-            usage_details = None
-            if usage is not None:
-                usage_details = {
-                    "input": getattr(usage, "prompt_tokens", 0) or 0,
-                    "output": getattr(usage, "completion_tokens", 0) or 0,
-                    "total": getattr(usage, "total_tokens", 0) or 0,
+            raw_usage = getattr(response, "usage", None)
+            lf_usage = None
+            lf_usage_details = None
+            if raw_usage is not None:
+                prompt_tokens = getattr(raw_usage, "prompt_tokens", 0) or 0
+                completion_tokens = getattr(raw_usage, "completion_tokens", 0) or 0
+                lf_usage = {
+                    "input": prompt_tokens,
+                    "output": completion_tokens,
+                    "total": getattr(raw_usage, "total_tokens", 0) or 0,
                 }
+                details = getattr(raw_usage, "prompt_tokens_details", None)
+                cached = getattr(details, "cached_tokens", None) if details else None
+                if cached:
+                    lf_usage_details = {"input_cached": cached}
             tool_calls_out = message.get("tool_calls") or []
             tool_names_out = [c.get("function", {}).get("name") for c in tool_calls_out]
             lf_phase_span.generation(
@@ -516,7 +523,8 @@ def _default_live_completion(*, metadata: dict | None = None, **kwargs):
                 model=model,
                 input={"messages": messages[-2:] if messages else [], "tools_count": len(tools or [])},
                 output={"tool_calls": tool_names_out, "content": message.get("content") or ""},
-                usage_details=usage_details,
+                usage=lf_usage,
+                usage_details=lf_usage_details,
                 level="DEFAULT",
                 metadata={"phase": phase, "round": round_index, "tool_calls": tool_names_out},
             )
@@ -637,20 +645,26 @@ def run_langfuse_trace_smoke(
         **({"reasoning_effort": settings.LLM_REASONING_EFFORT} if settings.LLM_REASONING_EFFORT is not None else {}),
     )
     output = response.choices[0].message.content or ""
-    usage = getattr(response, "usage", None)
-    usage_details = None
-    if usage is not None:
-        usage_details = {
-            "input": getattr(usage, "prompt_tokens", 0) or 0,
-            "output": getattr(usage, "completion_tokens", 0) or 0,
-            "total": getattr(usage, "total_tokens", 0) or 0,
+    raw_usage = getattr(response, "usage", None)
+    lf_usage = None
+    lf_usage_details = None
+    if raw_usage is not None:
+        lf_usage = {
+            "input": getattr(raw_usage, "prompt_tokens", 0) or 0,
+            "output": getattr(raw_usage, "completion_tokens", 0) or 0,
+            "total": getattr(raw_usage, "total_tokens", 0) or 0,
         }
+        details = getattr(raw_usage, "prompt_tokens_details", None)
+        cached = getattr(details, "cached_tokens", None) if details else None
+        if cached:
+            lf_usage_details = {"input_cached": cached}
     trace.generation(
         name="trace-smoke-prompt",
         model=model_name,
         input=prompt,
         output=output,
-        usage_details=usage_details,
+        usage=lf_usage,
+        usage_details=lf_usage_details,
         level="DEFAULT",
         metadata={"purpose": "verify trace and level"},
     )
