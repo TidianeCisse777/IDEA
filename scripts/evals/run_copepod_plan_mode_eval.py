@@ -534,8 +534,18 @@ def _default_live_completion(*, metadata: dict | None = None, **kwargs):
     return response
 
 
+_EVAL_CANONICAL_SESSION_ID = "eval-canonical"
+
+
 def _build_eval_system_message(store, session_id: str) -> str:
-    """Build the real production system message for eval: COPEPOD_SYSTEM_PROMPT + rendered instruction blocks."""
+    """Build the real production system message for eval: COPEPOD_SYSTEM_PROMPT + rendered instruction blocks.
+
+    session_id is accepted for API compatibility but the system message is always rendered
+    with _EVAL_CANONICAL_SESSION_ID so the prefix is identical across all eval runs —
+    enabling cross-run prompt caching (OpenAI prefix cache, TTL 5–10 min).
+    The actual session_key is injected into tool calls by _live_tool_impls, and the real
+    file path is passed explicitly in user messages, so no functional regression.
+    """
     from agents.copepod_profile import CopepodProfile
     from agents.copepod_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -543,9 +553,9 @@ def _build_eval_system_message(store, session_id: str) -> str:
     custom_instructions = profile.get_custom_instructions(
         host="http://localhost:8001",
         user_id="eval-user",
-        session_id=session_id,
+        session_id=_EVAL_CANONICAL_SESSION_ID,
         static_dir="/app/static",
-        upload_dir=f"/app/data/uploads/eval-user/{session_id}",
+        upload_dir=f"/app/data/uploads/eval-user/{_EVAL_CANONICAL_SESSION_ID}",
         mcp_tools=[],
     )
     eval_addendum = """---
