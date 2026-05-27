@@ -186,6 +186,44 @@ Tous les copépodes calanides partagent la même séquence ontogénique :
 
 ---
 
+# Quelles colonnes NeoLab correspondent à chaque stade de développement ?
+
+Mots-clés : stade copépodite, stade nauplius, C1, C2, C3, C4, C5, CV, adulte femelle F, adulte mâle M, COP_NS, COPEPODID, N1, N2, N3, N4, N5, N6, NAUP_NS, NAUPLIUS, ALL_STAGES, colonne NeoLab, abondance par stade, biomasse par stade
+
+Dans les fichiers NeoLab (Taxonomy Samples and Analyses Data), chaque stade biologique correspond à un préfixe de colonne. Les colonnes de biomasse existent uniquement pour les stades copépodites.
+
+**Correspondance stade biologique → préfixe colonne NeoLab :**
+
+| Stade biologique | Préfixe NeoLab | Colonnes abondance | Colonnes biomasse |
+|------------------|---------------|-------------------|-------------------|
+| Copépodite stade 1 (CI) | `C1_` | `C1_SAMPLE_ABUND`, `C1_ABUND (ind./m3 depth vol.)`, `C1_ABUND (ind./m3 flowmeter vol.)` | `C1_BIOMASS (µg C m-3 depth vol.)`, `C1_BIOMASS (µg C m-3 flowmeter vol.)` |
+| Copépodite stade 2 (CII) | `C2_` | `C2_SAMPLE_ABUND`, `C2_ABUND (ind./m3 depth vol.)`, `C2_ABUND (ind./m3 flowmeter vol.)` | `C2_BIOMASS (µg C m-3 depth vol.)`, `C2_BIOMASS (µg C m-3 flowmeter vol.)` |
+| Copépodite stade 3 (CIII) | `C3_` | `C3_SAMPLE_ABUND`, `C3_ABUND (ind./m3 depth vol.)`, `C3_ABUND (ind./m3 flowmeter vol.)` | `C3_BIOMASS (µg C m-3 depth vol.)`, `C3_BIOMASS (µg C m-3 flowmeter vol.)` |
+| Copépodite stade 4 (CIV) | `C4_` | `C4_SAMPLE_ABUND`, `C4_ABUND (ind./m3 depth vol.)`, `C4_ABUND (ind./m3 flowmeter vol.)` | `C4_BIOMASS (µg C m-3 depth vol.)`, `C4_BIOMASS (µg C m-3 flowmeter vol.)` |
+| Copépodite stade 5 (CV) | `C5_` | `C5_SAMPLE_ABUND`, `C5_ABUND (ind./m3 depth vol.)`, `C5_ABUND (ind./m3 flowmeter vol.)` | `C5_BIOMASS (µg C m-3 depth vol.)`, `C5_BIOMASS (µg C m-3 flowmeter vol.)` |
+| Adulte mâle (AM) | `M_` | `M_SAMPLE_ABUND`, `M_ABUND (ind./m3 depth vol.)`, `M_ABUND (ind./m3 flowmeter vol.)` | `M_BIOMASS (µg C m-3 depth vol.)`, `M_BIOMASS (µg C m-3 flowmeter vol.)` |
+| Adulte femelle (AF) | `F_` | `F_SAMPLE_ABUND`, `F_ABUND (ind./m3 depth vol.)`, `F_ABUND (ind./m3 flowmeter vol.)` | `F_BIOMASS (µg C m-3 depth vol.)`, `F_BIOMASS (µg C m-3 flowmeter vol.)` |
+| Copépodite stade non spécifié | `COP_NS_` | `COP_NS_ABUND (ind./m3 depth vol.)`, `COP_NS_ABUND (ind./m3 flowmeter vol.)` | `COP_NS_BIOMASS (µg C m-3 depth vol.)`, `COP_NS_BIOMASS (µg C m-3 flowmeter vol.)` |
+| Tous copépodites agrégés (CI–CV + M + F + COP_NS) | `COPEPODID_` | `COPEPODID_ABUND (ind./m3 depth vol.)`, `COPEPODID_ABUND (ind./m3 flowmeter vol.)` | `COPEPODID_BIOMASS (µg C m-3 depth vol.)`, `COPEPODID_BIOMASS (µg C m-3 flowmeter vol.)` |
+| Nauplius stade 1 (NI) | `N1_` | `N1_ABUND (ind./m3 depth vol.)`, `N1_ABUND (ind./m3 flowmeter vol.)` | — |
+| Nauplius stade 2 (NII) | `N2_` | `N2_ABUND (ind./m3 depth vol.)`, `N2_ABUND (ind./m3 flowmeter vol.)` | — |
+| Nauplius stade 3 (NIII) | `N3_` | `N3_ABUND (ind./m3 depth vol.)`, `N3_ABUND (ind./m3 flowmeter vol.)` | — |
+| Nauplius stade 4 (NIV) | `N4_` | `N4_ABUND (ind./m3 depth vol.)`, `N4_ABUND (ind./m3 flowmeter vol.)` | — |
+| Nauplius stade 5 (NV) | `N5_` | `N5_ABUND (ind./m3 depth vol.)`, `N5_ABUND (ind./m3 flowmeter vol.)` | — |
+| Nauplius stade 6 (NVI) | `N6_` | `N6_ABUND (ind./m3 depth vol.)`, `N6_ABUND (ind./m3 flowmeter vol.)` | — |
+| Nauplius stade non spécifié | `NAUP_NS_` | `NAUP_NS_ABUND (ind./m3 depth vol.)`, `NAUP_NS_ABUND (ind./m3 flowmeter vol.)` | — |
+| Tous nauplii agrégés (NI–NVI + NAUP_NS) | `NAUPLIUS_` | `NAUPLIUS_ABUND (ind./m3 depth vol.)`, `NAUPLIUS_ABUND (ind./m3 flowmeter vol.)` | — |
+| Tous stades confondus (COPEPODID + NAUPLIUS) | `ALL_STAGES_` | `ALL_STAGES_ABUND (ind./m3 depth vol.)`, `ALL_STAGES_ABUND (ind./m3 flowmeter vol.)` | — |
+
+**Règles de lecture :**
+- Pour l'abondance d'un stade spécifique : lire `X_ABUND (ind./m3 depth vol.)` si V-Tow avec profondeurs connues, sinon `X_ABUND (ind./m3 flowmeter vol.)`.
+- Pour le comptage brut non normalisé : lire `X_SAMPLE_ABUND (nbr of ind.)`.
+- Pour la biomasse : uniquement disponible pour les stades copépodites (C1–C5, M, F, COP_NS, COPEPODID) — absente pour les nauplii.
+- CV correspond à C5 dans la nomenclature NeoLab.
+- AF correspond à F, AM correspond à M.
+
+---
+
 # Qu'est-ce que la diapause chez les copépodes ?
 
 La diapause est une dormance hivernale en profondeur. L'individu cesse de se nourrir, ralentit son métabolisme et vit sur ses réserves lipidiques.
