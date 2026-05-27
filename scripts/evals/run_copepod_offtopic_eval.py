@@ -105,9 +105,10 @@ def run_offtopic_eval(
                     {
                         "role": "user",
                         "content": (
-                            f"Fichier chargé: `{uploaded_ecotaxa}`. Objectif final: produire une distribution "
-                            "verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
-                            "Phase 1. Tu dois appeler les outils maintenant avant de répondre."
+                            f"J'ai chargé un export EcoTaxa de la campagne Green Edge : `{uploaded_ecotaxa}`. "
+                            "Je souhaite explorer la distribution verticale des organismes pour voir comment "
+                            "ils se répartissent en profondeur — idéalement un graphique Python en PNG. "
+                            "Commence par analyser le fichier."
                         ),
                     },
                 ]

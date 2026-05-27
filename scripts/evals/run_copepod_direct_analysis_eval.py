@@ -111,9 +111,9 @@ def run_direct_analysis_eval(
                     {
                         "role": "user",
                         "content": (
-                            f"J'ai chargé un fichier de données EcoTaxa: `{uploaded_a}`. "
-                            "Génère-moi directement le code Python pour une distribution verticale "
-                            "avec profondeur en mètres. Je n'ai pas besoin du processus de validation."
+                            f"J'ai chargé un export EcoTaxa de la campagne Green Edge : `{uploaded_a}`. "
+                            "Je voudrais directement le code Python pour visualiser la distribution "
+                            "verticale des organismes par profondeur — pas besoin de tout le processus de validation."
                         ),
                     },
                 ]
@@ -187,16 +187,16 @@ def run_direct_analysis_eval(
                     {"role": "system", "content": _build_eval_system_message(store, session_id_c)},
                     {
                         "role": "user",
-                        "content": "Fichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
+                        "content": "J'ai chargé un export EcoTaxa de la campagne Green Edge : `ecotaxa_green_edge_sample_200.tsv`. Je souhaite explorer la distribution verticale des organismes par profondeur, en Python, PNG.",
                     },
                     {
                         "role": "assistant",
-                        "content": "### Analyse du fichier\n\n#### Fichier 1 — `ecotaxa_sample_50.tsv`\n\n- **Type de source** : `likely_ecotaxa` — confiance : élevée\n- **Colonnes utilisables** : `object_depth_min` → profondeur minimale (m), `object_depth_max` → profondeur maximale (m)\n- **Qualité / limitations** : aucune colonne inutilisable détectée\n- **Validation taxonomique** : non applicable\n\nEst-ce que cette analyse vous convient ?",
+                        "content": "### Analyse du fichier\n\n#### Fichier 1 — `ecotaxa_green_edge_sample_200.tsv`\n\n- **Type de source** : `likely_ecotaxa` — confiance : élevée\n- **Colonnes utilisables** :\n  - `object_depth_min` → profondeur minimale (m)\n  - `object_depth_max` → profondeur maximale (m)\n  - `object_annotation_category` → catégorie taxonomique validée\n  - `object_lat` / `object_lon` → coordonnées géographiques\n  - `object_date` → date de l'observation\n- **Métadonnées détectées** : 200 lignes, encodage UTF-8, délimiteur tabulation\n- **Qualité / limitations** : données validées, profondeurs 0.5–358 m\n- **Validation taxonomique** : disponible (`object_annotation_category`)\n\nEst-ce que cette analyse vous convient ?",
                     },
                     {"role": "user", "content": "Ouais ça m'a l'air bien. Vas-y pour la suite."},
                     {
                         "role": "assistant",
-                        "content": "### Configuration du graphique\n\n- **Objectif** : distribution verticale EcoTaxa\n- **Données / source** : `ecotaxa_sample_50.tsv`\n- **Colonnes retenues** :\n  - `object_depth_min` → axe Y (profondeur)\n- **Langage** : Python\n- **Artefacts de sortie** : png\n- **Faisabilité** : exploratoire\n\nConfirmez-vous ces paramètres ?",
+                        "content": "### Configuration du graphique\n\n- **Objectif** : distribution verticale EcoTaxa — répartition des organismes par profondeur\n- **Données / source** : `ecotaxa_green_edge_sample_200.tsv` (campagne Green Edge)\n- **Colonnes retenues** :\n  - `object_depth_min` → axe Y (profondeur, m)\n  - `object_annotation_category` → filtre taxonomique\n- **Langage** : Python\n- **Artefacts de sortie** : png\n- **Faisabilité** : exploratoire\n\nConfirmez-vous ces paramètres ?",
                     },
                     {"role": "user", "content": "Ok, c'est bon pour moi."},
                     {
