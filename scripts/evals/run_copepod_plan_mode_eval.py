@@ -160,23 +160,26 @@ def _result(name: str, passed: bool, detail: str, metadata: dict | None = None) 
     }
 
 
-def _json_dumps(data: Any) -> str:
-    return json.dumps(data, ensure_ascii=False, default=str)
-
-
 def _configure_local_langfuse_host() -> None:
-    """Use the host-mapped Langfuse URL when running from the local shell."""
     host = os.getenv("LANGFUSE_HOST") or os.getenv("LANGFUSE_BASE_URL") or ""
     if "://langfuse:3000" not in host:
         return
+    fallback = os.getenv("LANGFUSE_HOST_LOCAL")
+    if not fallback:
+        return
     try:
-        req = Request("http://localhost:3001/api/public/projects", method="GET")
+        req = Request(f"{fallback}/api/public/projects", method="GET")
         urlopen(req, timeout=2)
     except Exception as exc:
         if getattr(exc, "code", None) not in {200, 401}:
             return
-    os.environ["LANGFUSE_HOST"] = "http://localhost:3001"
-    os.environ["LANGFUSE_BASE_URL"] = "http://localhost:3001"
+    os.environ["LANGFUSE_HOST"] = fallback
+    os.environ["LANGFUSE_BASE_URL"] = fallback
+
+
+def _json_dumps(data: Any) -> str:
+    return json.dumps(data, ensure_ascii=False, default=str)
+
 
 
 def _compact_tool_result(name: str | None, result: Any) -> Any:
@@ -555,7 +558,6 @@ def _push_scores_to_langfuse(session_key: str, results: list[dict]) -> str | Non
         return None
     try:
         from langfuse import Langfuse
-
         _configure_local_langfuse_host()
         lf = Langfuse()
         trace = lf.trace(

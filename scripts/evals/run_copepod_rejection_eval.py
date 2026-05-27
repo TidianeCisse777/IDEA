@@ -180,8 +180,8 @@ def run_rejection_eval(
                     {
                         "role": "user",
                         "content": (
-                            "Non, ce Data Understanding n'est pas correct. "
-                            "La colonne object_depth_min est mal catégorisée. Refais-le complètement."
+                            "Non, ce n'est pas correct. "
+                            "La colonne object_depth_min est mal catégorisée. Refais l'analyse du fichier complètement."
                         ),
                     }
                 )
@@ -268,9 +268,9 @@ def run_rejection_eval(
                     {
                         "role": "user",
                         "content": (
-                            "Non, ce Graph Context ne convient pas. "
+                            "Non, ça ne convient pas. "
                             "Il manque les colonnes taxonomiques. "
-                            "Refais-le en incluant les colonnes de classification."
+                            "Refais la configuration du graphique en incluant les colonnes de classification."
                         ),
                     }
                 )
@@ -342,7 +342,7 @@ def run_rejection_eval(
                     {
                         "role": "user",
                         "content": (
-                            "Finalement, je veux revoir le Data Understanding. "
+                            "Finalement, je veux revoir l'analyse du fichier. "
                             "Il y a une erreur dans l'interprétation des colonnes."
                         ),
                     }
@@ -417,8 +417,10 @@ def run_rejection_eval(
                     {
                         "role": "user",
                         "content": (
-                            "Finalement, je veux changer le Graph Context. "
-                            "L'objectif n'est pas tout à fait ce que je voulais."
+                            "Finalement, je veux changer la configuration du graphique. "
+                            "Je veux utiliser la biomasse (mg/m³) en axe Y au lieu de l'abondance, "
+                            "et garder la profondeur en axe X. Même fichier EcoTaxa, même type de graphique. "
+                            "Refais ça."
                         ),
                     }
                 )

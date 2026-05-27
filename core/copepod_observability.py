@@ -9,14 +9,17 @@ def _configure_local_langfuse_host() -> None:
     host = os.getenv("LANGFUSE_HOST") or os.getenv("LANGFUSE_BASE_URL") or ""
     if "://langfuse:3000" not in host:
         return
+    fallback = os.getenv("LANGFUSE_HOST_LOCAL")
+    if not fallback:
+        return
     try:
-        req = Request("http://localhost:3001/api/public/projects", method="GET")
+        req = Request(f"{fallback}/api/public/projects", method="GET")
         urlopen(req, timeout=1)
     except Exception as exc:
         if getattr(exc, "code", None) not in {200, 401}:
             return
-        os.environ["LANGFUSE_HOST"] = "http://localhost:3001"
-        os.environ["LANGFUSE_BASE_URL"] = "http://localhost:3001"
+    os.environ["LANGFUSE_HOST"] = fallback
+    os.environ["LANGFUSE_BASE_URL"] = fallback
 
 
 def should_enable_langfuse() -> bool:
