@@ -405,26 +405,40 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
         "activate_graph_context",
         "get_active_graph_context",
     }
+    # Cache full (non-compact) results so summarize_understanding receives
+    # complete inspect_report and role_report without the LLM re-serializing them.
+    _cache: dict[str, Any] = {}
 
     def call_tool(name: str, arguments: dict) -> Any:
         if name in session_scoped:
             arguments = {**arguments, "session_key": session_key}
         if name == "describe_column" and not arguments.get("session_id"):
             arguments["session_id"] = session_key.split(":")[1]
-        return tools[name](**arguments)
+        result = tools[name](**arguments)
+        if name == "inspect_file":
+            _cache["inspect_report"] = result
+        elif name == "infer_column_roles":
+            _cache["role_report"] = result
+        return result
 
-    return {name: (lambda _name=name, **kwargs: call_tool(_name, kwargs)) for name in {
-        "inspect_file",
-        "infer_column_roles",
-        "describe_column",
-        "summarize_understanding",
-        "create_data_understanding_draft",
-        "activate_data_understanding",
-        "get_active_data_understanding",
-        "create_graph_context_draft",
-        "activate_graph_context",
-        "get_active_graph_context",
-    }}
+    def call_summarize(**kwargs) -> Any:
+        inspect_report = _cache.get("inspect_report") or kwargs.get("inspect_report")
+        role_report = _cache.get("role_report") or kwargs.get("role_report") or {
+            "roles": [], "unmatched_columns": [], "warnings": []
+        }
+        return tools["summarize_understanding"](
+            inspect_report, role_report, kwargs.get("column_definitions")
+        )
+
+    tool_names = {
+        "inspect_file", "infer_column_roles", "describe_column",
+        "summarize_understanding", "create_data_understanding_draft",
+        "activate_data_understanding", "get_active_data_understanding",
+        "create_graph_context_draft", "activate_graph_context", "get_active_graph_context",
+    }
+    impls = {name: (lambda _name=name, **kwargs: call_tool(_name, kwargs)) for name in tool_names}
+    impls["summarize_understanding"] = call_summarize
+    return impls
 
 
 def _run_llm_turn(

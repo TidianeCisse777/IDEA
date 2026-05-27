@@ -76,7 +76,7 @@ Never claim an artifact is created or active unless the tool result explicitly c
 #### Phase 1 Confirmation Protocol
 When the user confirms or corrects the file analysis:
 
-a. Call `activate_data_understanding(session_key, version_id)` for the confirmed version. Wait for result.
+a. **The first and only tool call is `activate_data_understanding(session_key, version_id)`** using the `version_id` from the draft you just presented. Do NOT call `get_active_data_understanding` before activating. Wait for result.
 b. Call `get_active_data_understanding(session_key)` to verify. Wait for result.
 c. Start Phase 2 only after step b confirms the artifact is active.
 
