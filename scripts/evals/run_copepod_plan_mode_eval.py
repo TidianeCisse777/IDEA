@@ -191,20 +191,57 @@ def _json_dumps(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
+def _cleanup_old_logs(log_dir: Path, prefix: str, keep: int = 3) -> None:
+    logs = sorted(log_dir.glob(f"{prefix}*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in logs[keep:]:
+        old.unlink(missing_ok=True)
+
+
 
 def _compact_tool_result(name: str | None, result: Any) -> Any:
     if not isinstance(result, dict):
         return result
     if name == "inspect_file":
+        # Group columns by semantic role (compact summary).
+        # For large groups (>5), show count only. For small groups, show names.
+        # Unknown columns (no semantic_guess) get the full list — LLM needs
+        # them to decide which describe_column calls to make.
         cols = result.get("columns") or []
-        slim_cols = [
-            {k: v for k, v in col.items() if k != "sample_values"}
-            for col in cols
-        ]
+        by_role: dict[str, list[str]] = {}
+        unknown: list[str] = []
+        for c in cols:
+            role = c.get("semantic_guess")
+            if role:
+                by_role.setdefault(role, []).append(c["name"])
+            else:
+                unknown.append(c["name"])
+        known_summary = {
+            role: names if len(names) <= 5 else {"count": len(names), "examples": names[:3]}
+            for role, names in by_role.items()
+        }
         return {
-            "metadata": result.get("metadata"),
-            "columns": slim_cols,
+            "n_rows": result.get("n_rows"),
+            "n_columns": result.get("n_columns"),
             "source_type_guess": result.get("source_type_guess"),
+            "known_by_role": known_summary,
+            "unknown_columns": unknown,
+            "warnings": result.get("warnings") or [],
+        }
+    if name == "infer_column_roles":
+        # LLM only needs the unmatched list to decide which describe_column to call.
+        return {
+            "matched_count": len(result.get("roles") or []),
+            "unmatched_columns": result.get("unmatched_columns") or [],
+            "warnings": result.get("warnings") or [],
+        }
+    if name == "summarize_understanding":
+        # LLM doesn't need the full catalogue in context — just confirmation.
+        return {
+            "status": "ok",
+            "file_or_source": result.get("file_or_source"),
+            "probable_source_type": result.get("probable_source_type"),
+            "taxonomic_validation_status": result.get("taxonomic_validation_status"),
+            "column_count": len(result.get("column_catalogue") or []),
         }
     if name in {
         "create_data_understanding_draft",
@@ -214,13 +251,11 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
         "get_active_data_understanding",
         "get_active_graph_context",
     }:
+        # Strip payload — LLM only needs version_id + status to proceed.
         return {
             "version_id": result.get("version_id"),
             "artifact_type": result.get("artifact_type"),
             "status": result.get("status"),
-            "payload": result.get("payload"),
-            "created_at": result.get("created_at"),
-            "activated_at": result.get("activated_at"),
             "created": result.get("created"),
             "blocking_reason": result.get("blocking_reason"),
             "error": result.get("error"),
@@ -1279,6 +1314,7 @@ def run_live_eval(
 
     passed_count = sum(1 for result in results if result["passed"])
     trace_url = _close_eval_trace(lf, eval_trace, results, push_scores=push_langfuse)
+    _cleanup_old_logs(log_dir, "live_eval_")
     print(f"eval log → {log_path}")
     report = {
         "dataset": DATASET_NAME,

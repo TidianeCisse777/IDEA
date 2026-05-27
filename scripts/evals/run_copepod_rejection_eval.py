@@ -42,6 +42,7 @@ from run_copepod_plan_mode_eval import (
     _compact_tool_result,
     _build_eval_system_message,
     _data_understanding_artifact,
+    _cleanup_old_logs,
     ECOTAXA,
     DATASET_NAME,
 )
@@ -481,6 +482,7 @@ def run_rejection_eval(
 
     passed_count = sum(1 for r in results if r["passed"])
     trace_url = _close_eval_trace(lf, eval_trace, results, push_scores=push_langfuse)
+    _cleanup_old_logs(log_dir, "rejection_eval_")
     print(f"eval log → {log_path}")
     report = {
         "dataset": DATASET_NAME,
