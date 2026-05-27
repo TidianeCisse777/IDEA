@@ -1013,12 +1013,9 @@ def run_live_eval(
                         ),
                     },
                     {
-                        "role": "system",
-                        "content": runtime_context,
-                    },
-                    {
                         "role": "user",
                         "content": (
+                            f"{runtime_context}\n\n"
                             "Fichier chargé: "
                             f"`{uploaded_ecotaxa}`. Objectif final: produire une distribution verticale "
                             "EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la Phase 1. "

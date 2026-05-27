@@ -78,10 +78,9 @@ def _synthetic_history_post_plan_ready(
     runtime_context = _live_eval_runtime_context(session_id)
     return [
         {"role": "system", "content": _live_eval_system_prompt()},
-        {"role": "system", "content": runtime_context},
         {
             "role": "user",
-            "content": "Fichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
+            "content": f"{runtime_context}\n\nFichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
         },
         {
             "role": "assistant",
@@ -153,10 +152,10 @@ def run_rejection_eval(
                 uploaded_adu = _uploaded_path(session_id_adu, upload_adu["filename"])
                 messages_adu: list[dict] = [
                     {"role": "system", "content": _live_eval_system_prompt()},
-                    {"role": "system", "content": _live_eval_runtime_context(session_id_adu)},
                     {
                         "role": "user",
                         "content": (
+                            f"{_live_eval_runtime_context(session_id_adu)}\n\n"
                             f"Fichier chargé: `{uploaded_adu}`. Objectif final: produire une distribution "
                             "verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
                             "Phase 1. Tu dois appeler les outils maintenant avant de répondre."
@@ -223,10 +222,10 @@ def run_rejection_eval(
                 uploaded_agc = _uploaded_path(session_id_agc, upload_agc["filename"])
                 messages_agc: list[dict] = [
                     {"role": "system", "content": _live_eval_system_prompt()},
-                    {"role": "system", "content": _live_eval_runtime_context(session_id_agc)},
                     {
                         "role": "user",
                         "content": (
+                            f"{_live_eval_runtime_context(session_id_agc)}\n\n"
                             f"Fichier chargé: `{uploaded_agc}`. Objectif final: produire une distribution "
                             "verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
                             "Phase 1. Tu dois appeler les outils maintenant avant de répondre."

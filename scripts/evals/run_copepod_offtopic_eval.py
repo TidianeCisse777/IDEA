@@ -110,10 +110,10 @@ def run_offtopic_eval(
                             "do not claim an artifact is created or active unless the tool result confirms it."
                         ),
                     },
-                    {"role": "system", "content": runtime_context},
                     {
                         "role": "user",
                         "content": (
+                            f"{runtime_context}\n\n"
                             f"Fichier chargé: `{uploaded_ecotaxa}`. Objectif final: produire une distribution "
                             "verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
                             "Phase 1. Tu dois appeler les outils maintenant avant de répondre."

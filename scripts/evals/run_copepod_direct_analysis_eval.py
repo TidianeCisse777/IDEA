@@ -109,10 +109,10 @@ def run_direct_analysis_eval(
 
                 messages_a: list[dict] = [
                     {"role": "system", "content": _live_eval_system_prompt()},
-                    {"role": "system", "content": _live_eval_runtime_context(session_id_a)},
                     {
                         "role": "user",
                         "content": (
+                            f"{_live_eval_runtime_context(session_id_a)}\n\n"
                             f"J'ai chargé un fichier de données EcoTaxa: `{uploaded_a}`. "
                             "Génère-moi directement le code Python pour une distribution verticale "
                             "avec profondeur en mètres. Je n'ai pas besoin du processus de validation."
@@ -188,10 +188,9 @@ def run_direct_analysis_eval(
                 runtime_context_c = _live_eval_runtime_context(session_id_c)
                 synthetic_history: list[dict] = [
                     {"role": "system", "content": _live_eval_system_prompt()},
-                    {"role": "system", "content": runtime_context_c},
                     {
                         "role": "user",
-                        "content": "Fichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
+                        "content": f"{runtime_context_c}\n\nFichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
                     },
                     {
                         "role": "assistant",
