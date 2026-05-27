@@ -41,7 +41,6 @@ from run_copepod_plan_mode_eval import (
     _completion_message,
     _compact_tool_result,
     _build_eval_system_message,
-    _live_eval_runtime_context,
     _data_understanding_artifact,
     ECOTAXA,
     DATASET_NAME,
@@ -112,7 +111,6 @@ def run_direct_analysis_eval(
                     {
                         "role": "user",
                         "content": (
-                            f"{_live_eval_runtime_context(session_id_a)}\n\n"
                             f"J'ai chargé un fichier de données EcoTaxa: `{uploaded_a}`. "
                             "Génère-moi directement le code Python pour une distribution verticale "
                             "avec profondeur en mètres. Je n'ai pas besoin du processus de validation."
@@ -185,12 +183,11 @@ def run_direct_analysis_eval(
                 tools["activate_graph_context"](session_key_c, gc["version_id"])
                 gc_version_id = gc["version_id"]
 
-                runtime_context_c = _live_eval_runtime_context(session_id_c)
                 synthetic_history: list[dict] = [
                     {"role": "system", "content": _build_eval_system_message(store, session_id_c)},
                     {
                         "role": "user",
-                        "content": f"{runtime_context_c}\n\nFichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
+                        "content": "Fichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
                     },
                     {
                         "role": "assistant",

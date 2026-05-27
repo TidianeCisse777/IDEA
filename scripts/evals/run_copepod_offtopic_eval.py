@@ -42,7 +42,6 @@ from run_copepod_plan_mode_eval import (
     _completion_message,
     _compact_tool_result,
     _build_eval_system_message,
-    _live_eval_runtime_context,
     ECOTAXA,
     DATASET_NAME,
 )
@@ -98,7 +97,6 @@ def run_offtopic_eval(
                 upload = _upload_fixture(client, session_id, ECOTAXA)
                 uploaded_ecotaxa = _uploaded_path(session_id, upload["filename"])
                 tool_impls = _live_tool_impls(tools, session_key)
-                runtime_context = _live_eval_runtime_context(session_id)
                 messages: list[dict] = [
                     {
                         "role": "system",
@@ -107,9 +105,8 @@ def run_offtopic_eval(
                     {
                         "role": "user",
                         "content": (
-                            f"{runtime_context}\n\n"
                             f"Fichier chargé: `{uploaded_ecotaxa}`. Objectif final: produire une distribution "
-                            f"verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
+                            "verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
                             "Phase 1. Tu dois appeler les outils maintenant avant de répondre."
                         ),
                     },

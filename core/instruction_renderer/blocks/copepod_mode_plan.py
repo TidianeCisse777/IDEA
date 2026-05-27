@@ -49,19 +49,36 @@ Plan Mode is a two-phase workflow. The order is mandatory.
 If user-loaded data are available, follow this exact protocol before asking for graph context or proposing a graph plan.
 
 #### Phase 1 Protocol
-1. `inspect_file(file_path)` on every uploaded file — get shape, columns, dtypes, missing rates, source type guess.
-2. Read the column list. Use your knowledge and the column names to infer the meaning of each column. For any column you do not immediately recognise or are uncertain about, call `describe_column(column_name)` to query the RAG documentation — it contains the definitions for EcoTaxa, EcoPart, Amundsen CTD, OGSL, and lab data columns.
-3. `check_column_for_calc(column_roles, calculation)` if the user has already stated a graphing objective.
-4. `create_data_understanding_draft(session_key, artifact)` with the structured analysis.
-5. Display the analysis summary using the format below.
-6. Stop. Do not proceed to Phase 2 in the same message.
+
+Call tools in this exact order. Call each tool alone in its own response — one tool per turn — except step c which is the single exception.
+
+a. Call `inspect_file(file_path)` alone. Wait for result.
+b. Call `infer_column_roles(columns)` with the column list from step a. Wait for result.
+c. Call `describe_column(column_name)` for **every** column listed in `unmatched_columns` — all in ONE response (multiple parallel tool calls). Do not skip any unmatched column. Wait for all results.
+d. Call `summarize_understanding(inspect_report, role_report, column_definitions)` alone, passing: `inspect_report` = step a output, `role_report` = step b output, `column_definitions` = ALL step c results combined. Wait for result.
+e. Call `create_data_understanding_draft(session_key, artifact)` alone with `artifact` = the **complete JSON output** of `summarize_understanding`, passed as-is without restructuring. Wait for result.
+f. Present the file analysis summary using the format below. Stop. Do not proceed to Phase 2 in the same message.
+
+When presenting the summary, use the `summarize_understanding` output directly — do not rewrite from memory:
+- `column_catalogue` → populate `**Colonnes utilisables**` using the `column → role` format
+- `probable_source_type` → `**Type de source**`
+- `quality_limits` → `**Qualité / limitations**`
+- `taxonomic_validation_status` → `**Validation taxonomique**`
+- `possible_joins_or_couplings` → `**Jointures détectées**`
+- `missing_or_ambiguous_data` → `**Données manquantes ou ambiguës**`
+
+Optional: call `check_column_for_calc(column_roles, calculation)` between steps b and c if the user has already stated a graphing objective.
+
+Never claim an artifact is created or active unless the tool result explicitly confirms it. If a tool returns an error or `blocking_reason`, report it and do not proceed to the next step.
 
 #### Phase 1 Confirmation Protocol
 When the user confirms or corrects the file analysis:
-1. Incorporate corrections into the artifact if needed.
-2. Call `activate_data_understanding(session_key, version_id)` for the confirmed version.
-3. Call `get_active_data_understanding(session_key)` to verify the active artifact exists.
-4. Start Phase 2 only after this verification.
+
+a. Call `activate_data_understanding(session_key, version_id)` for the confirmed version. Wait for result.
+b. Call `get_active_data_understanding(session_key)` to verify. Wait for result.
+c. Start Phase 2 only after step b confirms the artifact is active.
+
+**Mixed message — confirmation + scientific question:** If the user confirms the file analysis AND asks a scientific or taxonomic question in the same message, do both in the same response: complete steps a, b, and all of Phase 2 (including `create_graph_context_draft`), then include a brief answer to the scientific question in your final text response.
 
 Build an explicit understanding of:
 - which files or sources are involved;
@@ -132,19 +149,20 @@ For each missing field, ask **one targeted question** before creating the draft.
 Before switching to Analyse Mode, the graph context must be drafted, shown to the user, corrected if needed, and confirmed.
 
 #### Phase 2 Protocol
-1. Call `get_active_data_understanding(session_key)` and use its `version_id`.
-2. Build the graph context from the active file analysis and the user's scientific objective.
-3. Call `create_graph_context_draft(session_key, artifact)` and include the active `data_understanding_version_id`.
-4. Display the graph context summary using the format below.
-5. Stop. Do not emit `[PLAN_READY]` in the same message as the graph context summary.
+
+Call tools sequentially — one per response:
+
+a. Call `get_active_data_understanding(session_key)` alone. Wait for result. Use its `version_id` for the next step.
+b. Call `create_graph_context_draft(session_key, artifact)` alone. The artifact **must** include: `data_understanding_version_id`, `objective`, `columns`, `filters`, `units`, `chart_type`, `language`, `output_artifacts`, `feasibility`, `blockers`. Wait for result.
+c. Present the graph context summary using the format below. Stop. Do not emit `[PLAN_READY]` in the same response.
 
 #### Phase 2 Confirmation Protocol
 When the user confirms or corrects the scientific and graphing context:
-1. Incorporate corrections into the artifact if needed.
-2. Call `activate_graph_context(session_key, version_id)`.
-3. Call `get_active_graph_context(session_key)` to verify the active artifact exists.
-4. Do not emit `[PLAN_READY]` until `activate_graph_context` has succeeded.
-5. Once activation has succeeded, append `[PLAN_READY]` on a new line at the very end of the response.
+
+a. Call `activate_graph_context(session_key, version_id)`. Wait for result.
+b. Call `get_active_graph_context(session_key)` to verify the active artifact exists. Wait for result.
+c. Do not emit `[PLAN_READY]` until `get_active_graph_context` confirms the artifact is active.
+d. Once confirmed, append `[PLAN_READY]` on a new line at the very end of the response — nothing after it.
 
 ---
 

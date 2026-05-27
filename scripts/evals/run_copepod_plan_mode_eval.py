@@ -1001,7 +1001,6 @@ def run_live_eval(
                 upload = _upload_fixture(client, session_id, ECOTAXA)
                 uploaded_ecotaxa = _uploaded_path(session_id, upload["filename"])
                 tool_impls = _live_tool_impls(tools, session_key)
-                runtime_context = _live_eval_runtime_context(session_id)
                 messages: list[dict] = [
                     {
                         "role": "system",
@@ -1010,10 +1009,8 @@ def run_live_eval(
                     {
                         "role": "user",
                         "content": (
-                            f"{runtime_context}\n\n"
-                            "Fichier chargé: "
-                            f"`{uploaded_ecotaxa}`. Objectif final: produire une distribution verticale "
-                            "EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la Phase 1. "
+                            f"Fichier chargé: `{uploaded_ecotaxa}`. Objectif final: produire une distribution "
+                            "verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la Phase 1. "
                             "Tu dois appeler les outils maintenant avant de répondre."
                         ),
                     },

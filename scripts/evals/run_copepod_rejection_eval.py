@@ -41,7 +41,6 @@ from run_copepod_plan_mode_eval import (
     _completion_message,
     _compact_tool_result,
     _build_eval_system_message,
-    _live_eval_runtime_context,
     _data_understanding_artifact,
     ECOTAXA,
     DATASET_NAME,
@@ -76,12 +75,11 @@ def _synthetic_history_post_plan_ready(
     gc_version_id: str,
     store=None,
 ) -> list[dict]:
-    runtime_context = _live_eval_runtime_context(session_id)
     return [
         {"role": "system", "content": _build_eval_system_message(store, session_id) if store else ""},
         {
             "role": "user",
-            "content": f"{runtime_context}\n\nFichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
+            "content": "Fichier chargé: `ecotaxa_sample_50.tsv`. Objectif: distribution verticale Python PNG.",
         },
         {
             "role": "assistant",
@@ -156,7 +154,6 @@ def run_rejection_eval(
                     {
                         "role": "user",
                         "content": (
-                            f"{_live_eval_runtime_context(session_id_adu)}\n\n"
                             f"Fichier chargé: `{uploaded_adu}`. Objectif final: produire une distribution "
                             "verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
                             "Phase 1. Tu dois appeler les outils maintenant avant de répondre."
@@ -226,7 +223,6 @@ def run_rejection_eval(
                     {
                         "role": "user",
                         "content": (
-                            f"{_live_eval_runtime_context(session_id_agc)}\n\n"
                             f"Fichier chargé: `{uploaded_agc}`. Objectif final: produire une distribution "
                             "verticale EcoTaxa en Python, en PNG, avec profondeur en metres. Commence par la "
                             "Phase 1. Tu dois appeler les outils maintenant avant de répondre."
