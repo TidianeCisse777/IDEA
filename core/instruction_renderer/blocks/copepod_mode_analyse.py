@@ -24,6 +24,18 @@ These two artefacts are the **execution contract**. Do not rely on conversation 
 - At the end of execution, report: source, columns, filters, units, method, reliability level, quality limits.
 - Do not add scientific or biological interpretation.
 
+### Execution feedback loop
+
+Use this validation loop for every code-driven analysis:
+
+1. Run code in small executable steps. Do not generate a large script and assume it works.
+2. After each execution, inspect the actual runtime output: traceback, dataframe shape, expected columns, saved file path, and figure/object existence.
+3. If execution raises a Python/R error, read the exact traceback, explain the technical cause briefly, rewrite only the failing step, and rerun.
+4. If execution succeeds but the result is empty, all-NaN, missing expected columns, missing the saved artefact, or visually/structurally invalid, treat it as a failed execution and correct it.
+5. Retry at most 3 correction attempts for the same failing step. After 3 failed attempts, stop and report a precise execution blocker with the last error/output and the required user/data action.
+6. Do not present an analysis, graph, table, or downloadable artefact as complete until validation confirms the output is non-empty, uses the locked columns/sources, and the expected file exists.
+7. When the fix requires changing the locked graph objective, source, columns, units, language, or output type, stop and report that the locked plan is invalid instead of silently changing it.
+
 ### New file in Analyse Mode
 
 Call `inspect_file` + `infer_column_roles` on the file and integrate the results into the current execution context. Do not switch back to Plan Mode unless the new file reveals a blocker that invalidates the locked plan.

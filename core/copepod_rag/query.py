@@ -10,13 +10,17 @@ Usage (CLI):
 """
 from __future__ import annotations
 
+import os
 import unicodedata
 from pathlib import Path
 from typing import Optional
 
+from core.copepod_observability import should_enable_langfuse
+
 CHROMA_DIR = Path(__file__).parent / "chroma_db"
 COLLECTION_NAME = "copepod_rag"
 
+_client = None
 _collection = None
 
 _QUERY_ALIASES = {
@@ -43,18 +47,31 @@ _QUERY_ALIASES = {
 
 
 def _load():
-    global _collection
+    global _client, _collection
     if _collection is not None:
         return
 
     import chromadb
     from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
-    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-    _collection = client.get_collection(
+    _client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+    _collection = _client.get_collection(
         name=COLLECTION_NAME,
         embedding_function=DefaultEmbeddingFunction(),
     )
+
+
+def _close():
+    global _client, _collection
+    if _client is None:
+        return
+    try:
+        _client.close()
+    except Exception:
+        pass
+    finally:
+        _client = None
+        _collection = None
 
 
 def query_copepod_rag(
@@ -74,34 +91,36 @@ def query_copepod_rag(
         score is cosine distance (lower = more similar).
     """
     _load()
-    expanded_question = _expand_query(question)
-    candidate_count = max(top_k, min(25, top_k * 5))
+    try:
+        expanded_question = _expand_query(question)
+        candidate_count = max(top_k, min(25, top_k * 5))
 
-    results = _collection.query(
-        query_texts=[expanded_question],
-        n_results=candidate_count,
-        include=["documents", "metadatas", "distances"],
-    )
+        results = _collection.query(
+            query_texts=[expanded_question],
+            n_results=candidate_count,
+            include=["documents", "metadatas", "distances"],
+        )
 
-    chunks = []
-    for i in range(len(results["ids"][0])):
-        content = results["documents"][0][i]
-        distance = round(results["distances"][0][i], 4)
-        chunks.append({
-            "chunk_id": results["ids"][0][i],
-            "doc": results["metadatas"][0][i]["doc"],
-            "title": results["metadatas"][0][i]["title"],
-            "content": content,
-            "score": distance,
-            "_rank_score": distance - _lexical_boost(expanded_question, content),
-        })
-    chunks.sort(key=lambda c: (c["_rank_score"], c["score"]))
-    chunks = [{k: v for k, v in c.items() if k != "_rank_score"} for c in chunks[:top_k]]
-
-    if session_id:
-        _trace_langfuse(question, chunks, session_id)
-
-    return chunks
+        chunks = []
+        for i in range(len(results["ids"][0])):
+            content = results["documents"][0][i]
+            distance = round(results["distances"][0][i], 4)
+            chunks.append({
+                "chunk_id": results["ids"][0][i],
+                "doc": results["metadatas"][0][i]["doc"],
+                "title": results["metadatas"][0][i]["title"],
+                "content": content,
+                "score": distance,
+                "_rank_score": distance - _lexical_boost(expanded_question, content),
+            })
+        chunks.sort(key=lambda c: (c["_rank_score"], c["score"]))
+        chunks = [{k: v for k, v in c.items() if k != "_rank_score"} for c in chunks[:top_k]]
+        if session_id and should_enable_langfuse():
+            _trace_langfuse(question, chunks, session_id)
+        return chunks
+    finally:
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            _close()
 
 
 def _expand_query(question: str) -> str:

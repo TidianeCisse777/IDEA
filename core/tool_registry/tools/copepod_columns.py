@@ -57,38 +57,64 @@ def describe_column(column_name, source_hint=None, session_id=None):
 
     try:
         from core.copepod_rag.query import query_copepod_rag
-        results = query_copepod_rag(query, top_k=5, session_id=session_id)
+        results = query_copepod_rag(query, top_k=8, session_id=session_id)
     except Exception:
         return _NOT_FOUND
 
-    # Search each chunk for a markdown table row containing the column name
-    # Row pattern: | `col` | description | unit |
-    pattern = re.compile(
-        "[|][^|]*`" + re.escape(column_name) + "`[^|]*[|]([^|]+)[|]([^|]*)[|]?",
-        re.IGNORECASE
-    )
+    def _clean_cell(value):
+        return re.sub("[*`]+", "", value).strip()
 
-    for r in results:
+    def _normalise_unit(value):
+        unit = _clean_cell(value)
+        if not unit or unit in {"-", "—", "–", "None"}:
+            return None
+        return unit
+
+    def _row_definition(content):
+        """Return (definition, unit) from common RAG markdown table layouts."""
+        for line in content.splitlines():
+            if "`" + column_name.lower() + "`" not in line.lower():
+                continue
+            cells = [_clean_cell(c) for c in line.strip().strip("|").split("|")]
+            if len(cells) < 3:
+                continue
+            col_idx = next((i for i, c in enumerate(cells) if c.lower() == column_name.lower()), None)
+            if col_idx is None:
+                continue
+
+            # Supported layouts:
+            # | Colonne | Description | Unité |
+            # | Colonne | Type | Unité | Description |
+            # | # | Colonne | Description | Unité |
+            after = cells[col_idx + 1 :]
+            if len(after) >= 3:
+                return after[2], _normalise_unit(after[1])
+            if len(after) >= 2:
+                return after[0], _normalise_unit(after[1])
+        return None
+
+    exact_rows = []
+    for index, r in enumerate(results):
         content = r.get("content", "")
-        match = pattern.search(content)
-        if match:
-            raw_def = match.group(1).strip()
-            # Remove markdown bold markers
-            definition = re.sub("[*]+", "", raw_def).strip()
-            unit_raw = match.group(2).strip()
-            unit = unit_raw if unit_raw else None
+        parsed = _row_definition(content)
+        if parsed:
+            exact_rows.append((0 if r.get("doc") == "colonnes_labo.md" else 1, index, r, parsed, content))
 
-            critical_notes = _extract_critical_notes(column_name, definition, content)
+    for _, _, r, (raw_def, unit), content in sorted(exact_rows, key=lambda item: (item[0], item[1])):
+        # Remove markdown bold markers
+        definition = re.sub("[*]+", "", raw_def).strip()
 
-            return {
-                "column": column_name,
-                "definition": definition,
-                "unit": unit,
-                "confidence": "reliable",
-                "critical_notes": critical_notes,
-                "rag_doc_ref": r.get("doc"),
-                "source_file": r.get("doc"),
-            }
+        critical_notes = _extract_critical_notes(column_name, definition, content)
+
+        return {
+            "column": column_name,
+            "definition": definition,
+            "unit": unit,
+            "confidence": "reliable",
+            "critical_notes": critical_notes,
+            "rag_doc_ref": r.get("doc"),
+            "source_file": r.get("doc"),
+        }
 
     # Column name appears in a chunk but not as a table row
     for r in results:

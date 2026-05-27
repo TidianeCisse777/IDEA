@@ -247,6 +247,99 @@ def test_copepod_profile_renders_only_analyse_mode_blocks_with_memory_store():
     assert "## Copepod Plan Mode" not in instructions
     assert "Phase 1 — Data Understanding" not in instructions
     assert "PLAN_READY" not in instructions
+    assert "## Locked Analyse Context" in instructions
+
+
+def test_copepod_analyse_mode_requires_feedback_loop_validation():
+    module = import_copepod_profile()
+    store = InMemorySessionStore()
+    store.set_session_mode("user-1:session-1:copepod", "analyse")
+    profile = module.CopepodProfile(session_store=store)
+
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "### Execution feedback loop" in instructions
+    assert "Run code in small executable steps" in instructions
+    assert "read the exact traceback" in instructions
+    assert "all-NaN" in instructions
+    assert "Retry at most 3 correction attempts" in instructions
+    assert "Do not present an analysis, graph, table, or downloadable artefact as complete" in instructions
+    assert "stop and report that the locked plan is invalid" in instructions
+
+
+def test_copepod_analyse_instructions_include_active_locked_artifacts():
+    module = import_copepod_profile()
+    store = InMemorySessionStore()
+    session_key = "user-1:session-1:copepod"
+    du = store.create_artifact_version(
+        session_key,
+        "data_understanding",
+        {
+            "files": [{"original_filename": "ecotaxa.tsv"}],
+            "global": {"missing_or_ambiguous_data": []},
+        },
+    )
+    gc = store.create_artifact_version(
+        session_key,
+        "graph_context",
+        {
+            "data_understanding_version_id": du["version_id"],
+            "objective": "Tracer la distribution verticale",
+            "columns": ["object_depth_min", "object_depth_max"],
+            "language": "Python",
+        },
+    )
+    store.activate_artifact_version(session_key, "data_understanding", du["version_id"])
+    store.activate_artifact_version(session_key, "graph_context", gc["version_id"])
+    store.set_session_mode(session_key, "analyse")
+    profile = module.CopepodProfile(session_store=store)
+
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "## Locked Analyse Context" in instructions
+    assert '"data_understanding"' in instructions
+    assert '"graph_context"' in instructions
+    assert du["version_id"] in instructions
+    assert gc["version_id"] in instructions
+    assert "ecotaxa.tsv" in instructions
+    assert "Tracer la distribution verticale" in instructions
+
+
+def test_copepod_plan_instructions_do_not_include_locked_analyse_context():
+    module = import_copepod_profile()
+    store = InMemorySessionStore()
+    session_key = "user-1:session-1:copepod"
+    du = store.create_artifact_version(
+        session_key,
+        "data_understanding",
+        {"files": [{"original_filename": "ecotaxa.tsv"}]},
+    )
+    store.activate_artifact_version(session_key, "data_understanding", du["version_id"])
+    profile = module.CopepodProfile(session_store=store)
+
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "## Copepod Plan Mode" in instructions
+    assert "## Locked Analyse Context" not in instructions
+    assert "ecotaxa.tsv" not in instructions
 
 
 def test_copepod_profile_session_mode_isolated_by_three_segment_key():

@@ -29,6 +29,7 @@ from core import crud
 import models
 from agents.registry import get_profile, registered_types
 from core.auth import get_auth_token, get_current_user, get_db
+from core.chat_observability import ChatRuntimeTracer
 from core.chat_stream_events import chat_stream_events
 from core.config import settings
 from core.interpreter_session import (
@@ -511,11 +512,40 @@ async def chat_endpoint(
 
         def event_stream():
             fallback_sent = False
+            user_turns = sum(
+                1 for m in messages
+                if isinstance(m, dict) and m.get("role") == "user"
+            )
+            current_mode = session_store.get_session_mode(session_key)
+            active_du = None
+            active_gc = None
+            plan_phase = None
+            if agent_type == "copepod":
+                plan_phase = session_store.get_copepod_plan_phase(session_key)
+                active_du = session_store.get_active_artifact(session_key, "data_understanding")
+                active_gc = session_store.get_active_artifact(session_key, "graph_context")
+            tracer = ChatRuntimeTracer.from_env(
+                session_key=session_key,
+                user_id=str(user.id),
+                agent_type=agent_type,
+                session_mode=current_mode,
+                model=interpreter.llm.model,
+                plan_phase=plan_phase,
+                active_data_understanding_version_id=(
+                    active_du.get("version_id") if active_du else None
+                ),
+                active_graph_context_version_id=(
+                    active_gc.get("version_id") if active_gc else None
+                ),
+                user_input=messages[-1] if messages else {},
+                round_index=max(1, user_turns),
+            )
             try:
                 if tool_runs:
                     streamed_keys: set[str] = set()
                     repos_summary = None
                     for run in tool_runs:
+                        tracer.record_mcp_tool_run(run)
                         connection = run["connection"]
                         tool = run["tool"]
                         arguments = run["arguments"]
@@ -557,11 +587,6 @@ async def chat_endpoint(
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
-                user_turns = sum(
-                    1 for m in messages
-                    if isinstance(m, dict) and m.get("role") == "user"
-                )
-                current_mode = session_store.get_session_mode(session_key)
                 plan_ready_allowed = True
                 if agent_type == "copepod":
                     plan_ready_allowed = (
@@ -569,12 +594,27 @@ async def chat_endpoint(
                         == "plan_ready"
                         and session_store.has_active_copepod_plan_artifacts(session_key)
                     )
+                if agent_type == "copepod":
+                    try:
+                        interpreter.computer.run(
+                            "python",
+                            (
+                                "import os\n"
+                                f"os.environ['IDEA_RUNTIME_SESSION_KEY'] = {json.dumps(session_key)}\n"
+                                f"os.environ['IDEA_RUNTIME_ROUND'] = {json.dumps(str(max(1, user_turns)))}\n"
+                            ),
+                        )
+                    except Exception:
+                        pass
                 total_chunks = 0
-                for result in chat_stream_events(
+                stream_events = chat_stream_events(
                     interpreter.chat(messages[-1], stream=True),
                     user_turns=user_turns,
                     session_mode=current_mode,
                     plan_ready_allowed=plan_ready_allowed,
+                )
+                for result in tracer.observe_stream(
+                    stream_events
                 ):
                     total_chunks += 1
                     data = json.dumps(result) if isinstance(result, dict) else result
@@ -583,6 +623,7 @@ async def chat_endpoint(
                     fallback_sent = True
                     fallback = {"start": True, "end": True, "role": "assistant", "type": "message",
                                 "content": "⚠️ Le modèle n'a pas retourné de réponse. Vérifiez la compatibilité du LLM configuré."}
+                    tracer.record_event(fallback)
                     yield f"data: {json.dumps(fallback)}\n\n"
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
@@ -593,8 +634,10 @@ async def chat_endpoint(
                     user_msg = "Clé API LLM manquante ou invalide. Configurez la clé dans le fichier .env et redémarrez le serveur."
                 else:
                     user_msg = err_str
+                tracer.record_route_error(user_msg)
                 yield f"data: {json.dumps({'error': user_msg})}\n\n"
             finally:
+                tracer.close()
                 session_store.write_messages(session_key, interpreter.messages)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -66,14 +66,16 @@ def run_direct_analysis_eval(
     completion_fn = completion_fn or _default_live_completion
     results: list[dict] = []
 
-    # A single trace covering both scenarios.
+    run_id = uuid.uuid4().hex[:10]
+    # Session key shared by the trace so both scenarios appear in the same Langfuse session.
+    trace_session_key = f"eval-user:direct-analysis-{run_id}:copepod"
+
     lf, eval_trace = None, None
     if push_langfuse:
         try:
             from langfuse import Langfuse
             _configure_local_langfuse_host()
             lf = Langfuse()
-            trace_session_key = f"eval-user:direct-analysis-{uuid.uuid4().hex[:8]}:copepod"
             eval_trace = lf.trace(
                 name=TRACE_NAME,
                 user_id="eval-user",
@@ -86,7 +88,6 @@ def run_direct_analysis_eval(
 
     log_dir = ROOT / "logs" / "evals"
     log_dir.mkdir(parents=True, exist_ok=True)
-    run_id = uuid.uuid4().hex[:10]
     log_path = log_dir / f"direct_analysis_eval_{run_id}.log"
 
     client_a, stack_a = _test_client(store)

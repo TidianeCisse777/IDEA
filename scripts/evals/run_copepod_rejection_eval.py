@@ -111,13 +111,16 @@ def run_rejection_eval(
     completion_fn = completion_fn or _default_live_completion
     results: list[dict] = []
 
+    run_id = uuid.uuid4().hex[:10]
+    # Session key shared by the trace so all scenarios appear in the same Langfuse session.
+    trace_session_key = f"eval-user:rejection-{run_id}:copepod"
+
     lf, eval_trace = None, None
     if push_langfuse:
         try:
             from langfuse import Langfuse
             _configure_local_langfuse_host()
             lf = Langfuse()
-            trace_session_key = f"eval-user:rejection-{uuid.uuid4().hex[:8]}:copepod"
             eval_trace = lf.trace(
                 name=TRACE_NAME,
                 user_id="eval-user",
@@ -130,7 +133,6 @@ def run_rejection_eval(
 
     log_dir = ROOT / "logs" / "evals"
     log_dir.mkdir(parents=True, exist_ok=True)
-    run_id = uuid.uuid4().hex[:10]
     log_path = log_dir / f"rejection_eval_{run_id}.log"
 
     with open(log_path, "w", encoding="utf-8") as log_fh:

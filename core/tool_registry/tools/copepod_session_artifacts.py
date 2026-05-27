@@ -14,7 +14,7 @@ def create_data_understanding_draft(session_key, artifact):
 
     store = session_store_module.session_store
     phase = store.get_copepod_plan_phase(session_key)
-    if phase not in {DATA_UNDERSTANDING_DRAFT_REQUIRED, PLAN_READY}:
+    if phase not in {DATA_UNDERSTANDING_DRAFT_REQUIRED, DATA_UNDERSTANDING_CONFIRMATION_REQUIRED, PLAN_READY}:
         result = {
             "created": False,
             "blocking_reason": (
@@ -100,6 +100,7 @@ def create_graph_context_draft(session_key, artifact):
     from core.copepod_plan_workflow import (
         GRAPH_CONTEXT_CONFIRMATION_REQUIRED,
         GRAPH_CONTEXT_DRAFT_REQUIRED,
+        PLAN_READY,
     )
 
     du_version_id = artifact.get("data_understanding_version_id")
@@ -119,7 +120,7 @@ def create_graph_context_draft(session_key, artifact):
 
     store = session_store_module.session_store
     phase = store.get_copepod_plan_phase(session_key)
-    if phase != GRAPH_CONTEXT_DRAFT_REQUIRED:
+    if phase not in {GRAPH_CONTEXT_DRAFT_REQUIRED, GRAPH_CONTEXT_CONFIRMATION_REQUIRED, PLAN_READY}:
         blocking = (
             "create_graph_context_draft requires phase "
             f"'{GRAPH_CONTEXT_DRAFT_REQUIRED}', current phase is '{phase}'."
@@ -135,7 +136,17 @@ def create_graph_context_draft(session_key, artifact):
     active_du = session_store_module.session_store.get_active_artifact(
         session_key, "data_understanding"
     )
-    if active_du is None or active_du.get("version_id") != du_version_id:
+    # When retracting at PLAN_READY or re-drafting at CONFIRMATION_REQUIRED, the active DU is
+    # already validated — use its version_id regardless of what the LLM provided.
+    if phase in {GRAPH_CONTEXT_CONFIRMATION_REQUIRED, PLAN_READY}:
+        if active_du is None:
+            blocking = "No active Data Understanding found. Cannot create Graph Context draft."
+            result = {"created": False, "blocking_reason": blocking}
+            trace_copepod_event("graph_context_draft_blocked", session_key=session_key, output={"blocking_reason": blocking})
+            return result
+        du_version_id = active_du["version_id"]
+        artifact = {**artifact, "data_understanding_version_id": du_version_id}
+    elif active_du is None or active_du.get("version_id") != du_version_id:
         active_id = active_du.get("version_id") if active_du else None
         blocking = (
             f"data_understanding_version_id '{du_version_id}' does not match the active "
@@ -157,7 +168,8 @@ def create_graph_context_draft(session_key, artifact):
         "graph_context",
         artifact,
     )
-    store.set_copepod_plan_phase(session_key, GRAPH_CONTEXT_CONFIRMATION_REQUIRED)
+    if phase == GRAPH_CONTEXT_DRAFT_REQUIRED:
+        store.set_copepod_plan_phase(session_key, GRAPH_CONTEXT_CONFIRMATION_REQUIRED)
     trace_copepod_event(
         "graph_context_draft_created",
         session_key=session_key,

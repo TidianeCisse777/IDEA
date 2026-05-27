@@ -41,6 +41,7 @@ from routers.file_routes import router as file_router, MAX_FILE_SIZE
 from routers.session_routes import router as session_router
 
 from core.prompt_store import init_prompt_manager
+from core.copepod_observability import should_enable_langfuse
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -53,8 +54,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 litellm.request_timeout = 600  # 10 minutes
 
-# Langfuse observability — active si les clés sont présentes dans l'env
-if os.getenv("LANGFUSE_PUBLIC_KEY"):
+# Langfuse observability — active seulement hors tests ou opt-in explicite
+if should_enable_langfuse():
     litellm.success_callback = ["langfuse"]
     litellm.failure_callback = ["langfuse"]
 

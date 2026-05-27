@@ -182,7 +182,7 @@ def _is_ecotaxa_type_row(df):
     import re as _re
     if len(df) == 0:
         return False
-    _TYPE_RE = _re.compile("^\\[([tfnTs])\\]$")
+    _TYPE_RE = _re.compile(r"^\\[([tfnTs])\\]$")
     first_row = df.iloc[0].astype(str).str.strip()
     non_empty = [v for v in first_row if v not in ("nan", "", "NaN")]
     return len(non_empty) > 0 and all(_TYPE_RE.match(v) for v in non_empty)
@@ -303,6 +303,7 @@ def infer_column_roles(columns, metadata=None):
     matched = set()
 
     role_patterns = {
+        "lab_measurement":          ["lipid", "carbon", "biomass", "wax", "fatty", "drymass"],
         "depth":                    ["depth", "profondeur"],
         "latitude":                 ["lat", "latitude"],
         "longitude":                ["lon", "longitude"],
@@ -316,7 +317,6 @@ def infer_column_roles(columns, metadata=None):
         "pixel_calibration":        ["acq_pixel", "process_pixel"],
         "size_or_morphometry":      ["area", "esd", "major", "minor", "perimeter", "feret", "width", "height"],
         "environmental_variable":   ["te90", "psal", "oxym", "fluo", "temp", "sal", "oxygen"],
-        "lab_measurement":          ["lipid", "carbon", "biomass", "wax", "fatty", "drymass"],
     }
 
     columns_are_dicts = bool(columns) and isinstance(columns[0], dict)

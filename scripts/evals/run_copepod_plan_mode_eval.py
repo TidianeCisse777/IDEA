@@ -41,6 +41,7 @@ from routers.session_routes import router as session_router
 import core.instruction_renderer.blocks.copepod_mode_plan  # noqa: F401
 import core.instruction_renderer.blocks.copepod_tool_signatures  # noqa: F401
 from core.copepod_plan_workflow import PLAN_READY
+from core.copepod_observability import should_enable_langfuse
 
 
 DATASET_NAME = "copepod-plan-mode-v1"
@@ -399,16 +400,18 @@ def _run_llm_turn(
     for round_index in range(max_tool_rounds):
         for attempt in range(2):
             try:
+                _use_reasoning = settings.LLM_REASONING_EFFORT is not None
                 completion_kwargs = {
                     "model": model,
                     "messages": messages,
                     "tools": _tool_specs(),
                     "tool_choice": "auto",
-                    "temperature": float(os.getenv("LLM_TEMPERATURE", settings.LLM_TEMPERATURE)),
                     "metadata": {**metadata, "round": round_index + 1},
                 }
-                if settings.LLM_REASONING_EFFORT is not None:
+                if _use_reasoning:
                     completion_kwargs["reasoning_effort"] = settings.LLM_REASONING_EFFORT
+                else:
+                    completion_kwargs["temperature"] = float(os.getenv("LLM_TEMPERATURE", settings.LLM_TEMPERATURE))
                 response = completion_fn(
                     **completion_kwargs,
                 )
@@ -550,6 +553,8 @@ def _live_eval_runtime_context(session_id: str) -> str:
 
 
 def _push_scores_to_langfuse(session_key: str, results: list[dict]) -> str | None:
+    if not should_enable_langfuse():
+        return None
     try:
         from langfuse import Langfuse
 
@@ -584,6 +589,16 @@ def run_langfuse_trace_smoke(
     *,
     prompt: str,
 ) -> dict:
+    if not should_enable_langfuse():
+        return {
+            "dataset": DATASET_NAME,
+            "mode": "trace-smoke",
+            "model": settings.LLM_MODEL,
+            "session_key": None,
+            "passed": False,
+            "response": "",
+            "langfuse_trace_url": None,
+        }
     from langfuse import Langfuse
     from openai import OpenAI
 
@@ -887,6 +902,8 @@ def run_mock_eval(*, push_langfuse: bool = False) -> dict:
 
 def _make_eval_trace(session_key: str, session_id: str, model_name: str, tags: list[str]):
     """Create the top-level Langfuse trace for one live eval run."""
+    if not should_enable_langfuse():
+        return None, None
     try:
         from langfuse import Langfuse
         _configure_local_langfuse_host()
@@ -905,7 +922,7 @@ def _make_eval_trace(session_key: str, session_id: str, model_name: str, tags: l
 
 
 def _close_eval_trace(lf, trace, results: list[dict], push_scores: bool = False) -> str | None:
-    if trace is None:
+    if trace is None or not should_enable_langfuse():
         return None
     try:
         passed = sum(1 for r in results if r["passed"])
