@@ -13,6 +13,7 @@ services:
     volumes:
       - .:/app
       - ./static:/static
+      - ../assistant-copepodes-specs:/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs:ro
     environment:
       - PYTHONUNBUFFERED=1
       - LOCAL_DEV=1
