@@ -127,3 +127,67 @@ logs/evals/rejection_eval_9d599536ba.log      # crash rate limit
 logs/evals/offtopic_eval_offtopic-eval-21d40c6876.log
 logs/evals/direct_analysis_eval_cadbfaeec5.log
 ```
+
+---
+
+## Guide opérationnel — pour les autres agents
+
+### Conteneur Docker
+
+L'application tourne dans `idea_container`. Vérifier avec :
+```bash
+docker ps --format "{{.Names}}" | grep idea
+# → idea_container, idea_langfuse, idea_langfuse_db, idea-redis-1, idea-db-1, ...
+```
+
+### Lancer les evals
+
+**Toujours lancer en séquentiel** — les 4 scripts en parallèle dépassent la limite TPM (200k/min) et le rejection eval crashe.
+
+```bash
+# Un script à la fois, depuis le conteneur
+docker exec idea_container python scripts/evals/run_copepod_plan_mode_eval.py --live
+docker exec idea_container python scripts/evals/run_copepod_rejection_eval.py
+docker exec idea_container python scripts/evals/run_copepod_offtopic_eval.py
+docker exec idea_container python scripts/evals/run_copepod_direct_analysis_eval.py
+
+# En arrière-plan (résultats dans /tmp/)
+docker exec -d idea_container bash -c "cd /app && python scripts/evals/run_copepod_plan_mode_eval.py --live > /tmp/eval_plan.out 2>&1"
+# Suivre : docker exec idea_container tail -f /tmp/eval_plan.out
+```
+
+Les logs sont écrits dans `logs/evals/`. Auto-nettoyage : 3 logs max par type après chaque run.
+
+### Fixture EcoTaxa
+
+```
+scripts/evals/fixtures/ecotaxa_green_edge_sample_200.tsv
+```
+200 lignes, 161 colonnes, campagne Green Edge. Profondeurs 0.5–358 m, 12 taxa validés.
+Chemin dans Docker : `/app/scripts/evals/fixtures/ecotaxa_green_edge_sample_200.tsv`
+
+### Erreurs connues et solutions
+
+| Erreur | Cause | Solution |
+|---|---|---|
+| `RateLimitError 429 TPM` | 4 evals en parallèle = >200k tokens/min | Lancer en séquentiel |
+| `Unterminated string at char 15211` | LLM re-sérialise `inspect_report` (161 cols) dans les args JSON | Résolu : `_live_tool_impls` cache les résultats et les injecte dans `summarize_understanding` |
+| `No such container: idea-app` | Mauvais nom de conteneur | Utiliser `idea_container` |
+| `ModuleNotFoundError: No module named 'redis'` | Exécution hors Docker | Toujours lancer via `docker exec idea_container` |
+| `activate_data_understanding → blocked` | LLM appelle `get_active_data_understanding` avant d'activer | Résolu dans le prompt : activation obligatoire en premier |
+
+### Variables d'environnement nécessaires
+
+Dans `.env` à la racine :
+- `LLM_MODEL` — ex: `gpt-5.4-mini`
+- `LLM_API_KEY` — clé OpenAI
+- `OPENAI_API_KEY` — idem (alias utilisé par certains modules)
+
+### Structure des scripts evals
+
+Tous les scripts importent depuis `run_copepod_plan_mode_eval.py` qui contient :
+- `_load_tools()` — charge les tools copepod dans un namespace Python
+- `_live_tool_impls(tools, session_key)` — wrappers avec cache et injection session_key
+- `_compact_tool_result(name, result)` — réduit les résultats de tools avant injection dans le contexte LLM (~94% réduction Phase 1)
+- `_build_eval_system_message(store, session_id)` — system message avec `_EVAL_CANONICAL_SESSION_ID` fixe pour le prefix caching
+- `_cleanup_old_logs(log_dir, prefix, keep=3)` — purge automatique des vieux logs
