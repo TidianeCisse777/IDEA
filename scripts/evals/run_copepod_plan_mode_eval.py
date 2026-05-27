@@ -160,6 +160,16 @@ def _result(name: str, passed: bool, detail: str, metadata: dict | None = None) 
     }
 
 
+def _browser_trace_url(url: str | None) -> str | None:
+    """Replace the internal Docker hostname with the browser-accessible one if set."""
+    if not url:
+        return url
+    fallback = os.getenv("LANGFUSE_HOST_LOCAL")
+    if fallback and "://langfuse:3000" in url:
+        return url.replace("http://langfuse:3000", fallback.rstrip("/"))
+    return url
+
+
 def _configure_local_langfuse_host() -> None:
     host = os.getenv("LANGFUSE_HOST") or os.getenv("LANGFUSE_BASE_URL") or ""
     if "://langfuse:3000" not in host:
@@ -580,7 +590,7 @@ def _push_scores_to_langfuse(session_key: str, results: list[dict]) -> str | Non
                 comment=result["detail"],
             )
         lf.flush()
-        return trace.get_trace_url()
+        return _browser_trace_url(trace.get_trace_url())
     except Exception:
         return None
 
@@ -659,7 +669,7 @@ def run_langfuse_trace_smoke(
         "session_key": session_key,
         "passed": bool(output.strip()),
         "response": output,
-        "langfuse_trace_url": trace.get_trace_url(),
+        "langfuse_trace_url": _browser_trace_url(trace.get_trace_url()),
     }
 
 
@@ -940,7 +950,7 @@ def _close_eval_trace(lf, trace, results: list[dict], push_scores: bool = False)
                 )
         lf.flush()
         os.environ.pop("COPEPOD_EVAL_LF_TRACE_ID", None)
-        return trace.get_trace_url()
+        return _browser_trace_url(trace.get_trace_url())
     except Exception:
         return None
 
