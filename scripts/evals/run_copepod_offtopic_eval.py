@@ -106,8 +106,7 @@ def run_offtopic_eval(
                         "role": "user",
                         "content": (
                             f"J'ai chargé un export EcoTaxa de la campagne Green Edge : `{uploaded_ecotaxa}`. "
-                            "Je souhaite explorer la distribution verticale des organismes pour voir comment "
-                            "ils se répartissent en profondeur — idéalement un graphique Python en PNG. "
+                            "Je veux explorer comment les organismes planctoniques se répartissent en profondeur. "
                             "Commence par analyser le fichier."
                         ),
                     },
@@ -136,7 +135,9 @@ def run_offtopic_eval(
                     {
                         "role": "user",
                         "content": (
-                            "Ouais ça m'a l'air bien, vas-y pour la suite. Au fait, c'est quoi exactement "
+                            "Oui, l'analyse est correcte. Je veux un histogramme de distribution verticale "
+                            "de tous les organismes confondus, profondeur en mètres, en Python, PNG en sortie. "
+                            "Vas-y pour la configuration. Au fait, c'est quoi exactement "
                             "la différence entre un copépode calanoïde et un cyclopoïde, et pourquoi EcoTaxa "
                             "distingue-t-il ces deux ordres dans sa taxonomie ?"
                         ),

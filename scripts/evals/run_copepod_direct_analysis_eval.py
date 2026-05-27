@@ -112,8 +112,8 @@ def run_direct_analysis_eval(
                         "role": "user",
                         "content": (
                             f"J'ai chargé un export EcoTaxa de la campagne Green Edge : `{uploaded_a}`. "
-                            "Je voudrais directement le code Python pour visualiser la distribution "
-                            "verticale des organismes par profondeur — pas besoin de tout le processus de validation."
+                            "Donne-moi directement le code Python pour visualiser la distribution verticale "
+                            "des organismes par profondeur — je n'ai pas besoin du processus de validation."
                         ),
                     },
                 ]

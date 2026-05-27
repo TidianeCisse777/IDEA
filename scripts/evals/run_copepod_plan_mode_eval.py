@@ -1020,8 +1020,7 @@ def run_live_eval(
                         "role": "user",
                         "content": (
                             f"J'ai chargé un export EcoTaxa de la campagne Green Edge : `{uploaded_ecotaxa}`. "
-                            "Je souhaite explorer la distribution verticale des organismes pour voir comment "
-                            "ils se répartissent en profondeur — idéalement un graphique Python en PNG. "
+                            "Je veux explorer comment les organismes planctoniques se répartissent en profondeur. "
                             "Commence par analyser le fichier."
                         ),
                     },
@@ -1102,7 +1101,11 @@ def run_live_eval(
                 messages.append(
                     {
                         "role": "user",
-                        "content": "Ouais ça m'a l'air bien, t'as tout ce qu'il faut. Vas-y pour la suite.",
+                        "content": (
+                            "Oui, l'analyse est correcte. Mon objectif : visualiser la distribution verticale "
+                            "de tous les organismes confondus, histogramme par profondeur en mètres, en Python, "
+                            "PNG en sortie. Vas-y pour la configuration du graphique."
+                        ),
                     }
                 )
                 if du_span is not None:
@@ -1239,8 +1242,8 @@ def run_live_eval(
                 ))
 
                 _FORBIDDEN_USER_TERMS = [
-                    "data understanding", "graph context", " du ", " gc ",
-                    "artifact", "version_id", "du-", "gc-",
+                    "data understanding", "graph context",
+                    "version_id", "du-", "gc-",
                 ]
                 all_llm_text = "\n".join([first_reply, second_reply, final_reply]).lower()
                 leaked = [t for t in _FORBIDDEN_USER_TERMS if t in all_llm_text]

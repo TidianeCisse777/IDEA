@@ -79,7 +79,7 @@ def _synthetic_history_post_plan_ready(
         {"role": "system", "content": _build_eval_system_message(store, session_id) if store else ""},
         {
             "role": "user",
-            "content": "J'ai chargé un export EcoTaxa de la campagne Green Edge : `ecotaxa_green_edge_sample_200.tsv`. Je souhaite explorer la distribution verticale des organismes par profondeur, en Python, PNG.",
+            "content": "J'ai chargé un export EcoTaxa de la campagne Green Edge : `ecotaxa_green_edge_sample_200.tsv`. Je veux explorer comment les organismes planctoniques se répartissent en profondeur.",
         },
         {
             "role": "assistant",
@@ -155,8 +155,7 @@ def run_rejection_eval(
                         "role": "user",
                         "content": (
                             f"J'ai chargé un export EcoTaxa de la campagne Green Edge : `{uploaded_adu}`. "
-                            "Je souhaite explorer la distribution verticale des organismes pour voir comment "
-                            "ils se répartissent en profondeur — idéalement un graphique Python en PNG. "
+                            "Je veux explorer comment les organismes planctoniques se répartissent en profondeur. "
                             "Commence par analyser le fichier."
                         ),
                     },
@@ -225,8 +224,7 @@ def run_rejection_eval(
                         "role": "user",
                         "content": (
                             f"J'ai chargé un export EcoTaxa de la campagne Green Edge : `{uploaded_agc}`. "
-                            "Je souhaite explorer la distribution verticale des organismes pour voir comment "
-                            "ils se répartissent en profondeur — idéalement un graphique Python en PNG. "
+                            "Je veux explorer comment les organismes planctoniques se répartissent en profondeur. "
                             "Commence par analyser le fichier."
                         ),
                     },
