@@ -12,6 +12,10 @@ ECOTAXA  = FIXTURES / "ecotaxa_sample_50.tsv"
 ECOPART  = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"
 CTD      = FIXTURES / "amundsen_12713_ctd_2018_sample.tsv"
 
+NEOLABS_DIR      = Path("/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/Donnée Neolabs Taxon")
+NEOLABS_COMBINED = NEOLABS_DIR / "IDEA Taxonomy Samples and Analyses Data Metadata May 26 2026.csv"
+NEOLABS_ABUND    = NEOLABS_DIR / "IDEA Taxonomy Zooplankton Abundances Data May 26 2026.csv"
+
 
 @pytest.fixture(scope="module")
 def tools():
@@ -213,3 +217,120 @@ class TestSummarizeUnderstanding:
         tools["infer_column_roles"](r["columns"])
         content_after = hashlib.md5(ECOTAXA.read_bytes()).hexdigest()
         assert content_before == content_after
+
+
+# ── inspect_file — NeoLab Taxonomy ────────────────────────────────────────────
+
+class TestInspectFileNeoLabs:
+    def test_combined_never_modifies_file(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        assert r["raw_file_modified"] is False
+
+    def test_combined_format_is_csv(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        assert r["format"] == "csv"
+
+    def test_combined_has_93_columns(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        assert r["n_columns"] == 93
+
+    def test_combined_source_not_ecotaxa(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        assert r["source_type_guess"]["value"] != "likely_ecotaxa"
+
+    def test_combined_source_not_ecopart(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        assert r["source_type_guess"]["value"] != "likely_ecopart"
+
+    def test_combined_volume_columns_present(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        col_names = [c["name"] for c in r["columns"]]
+        assert "DEPTH_CALC_NET_FILTERED_VOL" in col_names
+        assert "FLOWMETER_CALC_VOL" in col_names
+
+    def test_combined_c1_abund_columns_present(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        col_names = [c["name"] for c in r["columns"]]
+        assert "C1_ABUND (ind./m3 depth vol.)" in col_names
+        assert "C1_ABUND (ind./m3 flowmeter vol.)" in col_names
+
+    def test_combined_biomass_columns_present(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        col_names = [c["name"] for c in r["columns"]]
+        assert "C1_BIOMASS (µg C m-3 depth vol.)" in col_names
+        assert "COPEPODID_BIOMASS (µg C m-3 flowmeter vol.)" in col_names
+
+    def test_combined_nauplius_columns_present(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        col_names = [c["name"] for c in r["columns"]]
+        assert "NAUPLIUS_ABUND (ind./m3 depth vol.)" in col_names
+        assert "ALL_STAGES_ABUND (ind./m3 depth vol.)" in col_names
+
+    def test_combined_all_stages_no_biomass_column(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        col_names = [c["name"] for c in r["columns"]]
+        # Nauplii and ALL_STAGES have no BIOMASS column in this file
+        assert "ALL_STAGES_BIOMASS (µg C m-3 depth vol.)" not in col_names
+        assert "NAUPLIUS_BIOMASS (µg C m-3 depth vol.)" not in col_names
+
+    def test_abund_file_never_modifies_file(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        assert r["raw_file_modified"] is False
+
+    def test_abund_file_format_is_csv(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        assert r["format"] == "csv"
+
+    def test_abund_file_has_zooplankton_category(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        col_names = [c["name"] for c in r["columns"]]
+        assert "ZOOPLANKTON_CATEGORY" in col_names
+
+    def test_abund_file_has_fraction_columns(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        col_names = [c["name"] for c in r["columns"]]
+        assert "Large Fract (ind./m3 depth vol)" in col_names
+        assert "Small Fract (ind./m3 depth vol)" in col_names
+        assert "Total abundance (ind./m3 depth vol)" in col_names
+
+
+# ── infer_column_roles — NeoLab Taxonomy ──────────────────────────────────────
+
+class TestInferColumnRolesNeoLabs:
+    def test_volume_columns_get_sample_volume_role(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        roles = tools["infer_column_roles"](r["columns"])
+        role_names = [x["role"] for x in roles["roles"]]
+        assert "sample_volume" in role_names
+
+    def test_depth_columns_get_depth_role(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        roles = tools["infer_column_roles"](r["columns"])
+        role_names = [x["role"] for x in roles["roles"]]
+        assert "depth" in role_names
+
+    def test_taxon_column_gets_taxon_role(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        roles = tools["infer_column_roles"](r["columns"])
+        role_names = [x["role"] for x in roles["roles"]]
+        assert "taxon" in role_names
+
+    def test_date_column_gets_time_role(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        roles = tools["infer_column_roles"](r["columns"])
+        role_names = [x["role"] for x in roles["roles"]]
+        assert "time" in role_names
+
+    def test_biomass_columns_get_lab_measurement_role(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        roles = tools["infer_column_roles"](r["columns"])
+        role_names = [x["role"] for x in roles["roles"]]
+        assert "lab_measurement" in role_names
+
+    def test_unmatched_columns_preserved(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        roles = tools["infer_column_roles"](r["columns"])
+        all_col_names = {c["name"] for c in r["columns"]}
+        matched = {x["column"] for x in roles["roles"]}
+        unmatched = set(roles["unmatched_columns"])
+        assert matched | unmatched == all_col_names

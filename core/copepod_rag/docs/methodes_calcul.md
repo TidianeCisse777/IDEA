@@ -371,6 +371,112 @@ Feedback si le calcul n'est pas possible :
 - Si la source CTD n'est pas citee, demander de choisir entre EcoPart et Amundsen officiel.
 
 ---
+# Comment est calculée l'abondance normalisée par volume depth (DEPTH_CALC_NET_FILTERED_VOL) dans la Taxonomie NeoLab ?
+
+Mots-clés : DEPTH_CALC_NET_FILTERED_VOL, abondance depth vol, V-Tow, volume filtré profondeur, ind./m3 depth vol, MIN_SAMPLE_DEPTH, MAX_SAMPLE_DEPTH, surface ouverture filet
+
+La normalisation par volume depth est disponible uniquement pour les **V-Tow** (traits verticaux) quand les profondeurs MIN et MAX sont connues.
+
+**Formule (appliquée en amont par NeoLab) :**
+```text
+DEPTH_CALC_NET_FILTERED_VOL (m³) = (MAX_SAMPLE_DEPTH - MIN_SAMPLE_DEPTH) × surface_ouverture_filet (m²)
+
+X_ABUND (ind./m3 depth vol.) = X_SAMPLE_ABUND (nbr of ind.) / DEPTH_CALC_NET_FILTERED_VOL
+```
+
+**Colonnes requises :**
+```text
+- X_SAMPLE_ABUND (nbr of ind.)   — comptage brut du stade X
+- DEPTH_CALC_NET_FILTERED_VOL    — m³, colonne 14 du fichier
+- MIN_SAMPLE_DEPTH / MAX_SAMPLE_DEPTH — m, profondeurs du trait
+```
+
+**Unités :**
+```text
+X_SAMPLE_ABUND        : ind
+DEPTH_CALC_NET_FILTERED_VOL : m³
+X_ABUND (ind./m3 depth vol.) : ind m⁻³
+```
+
+**Limites :**
+- `DEPTH_CALC_NET_FILTERED_VOL` est NULL pour les O-Tow (traits obliques) — la méthode ne s'applique pas.
+- `DEPTH_CALC_NET_FILTERED_VOL` est NULL si MIN_SAMPLE_DEPTH ou MAX_SAMPLE_DEPTH est absent.
+- Les colonnes `X_ABUND (ind./m3 depth vol.)` sont déjà calculées dans le fichier — lire directement la colonne normalisée.
+
+**Feedback si le calcul n'est pas possible :**
+- Si `DEPTH_CALC_NET_FILTERED_VOL` est NULL, vérifier TOW_TYPE : si O-Tow, utiliser `FLOWMETER_CALC_VOL` à la place.
+- Si les deux volumes sont NULL pour une ligne, l'abondance normalisée n'est pas calculable — retourner `SAMPLE_ABUND` brut avec avertissement.
+
+---
+# Comment est calculée l'abondance normalisée par volume flowmeter (FLOWMETER_CALC_VOL) dans la Taxonomie NeoLab ?
+
+Mots-clés : FLOWMETER_CALC_VOL, abondance flowmeter vol, V-Tow, O-Tow, débitmètre, volume filtré flowmeter, ind./m3 flowmeter vol, tours débitmètre
+
+La normalisation par volume flowmeter est disponible pour **V-Tow et O-Tow** quand le débitmètre était opérationnel pendant le trait.
+
+**Formule (appliquée en amont par NeoLab) :**
+```text
+FLOWMETER_CALC_VOL (m³) = tours_débitmètre × constante_débitmètre × surface_ouverture_filet (m²)
+
+X_ABUND (ind./m3 flowmeter vol.) = X_SAMPLE_ABUND (nbr of ind.) / FLOWMETER_CALC_VOL
+```
+
+**Colonnes requises :**
+```text
+- X_SAMPLE_ABUND (nbr of ind.)   — comptage brut du stade X
+- FLOWMETER_CALC_VOL             — m³, colonne 15 du fichier
+```
+
+**Unités :**
+```text
+X_SAMPLE_ABUND              : ind
+FLOWMETER_CALC_VOL          : m³
+X_ABUND (ind./m3 flowmeter vol.) : ind m⁻³
+```
+
+**Limites :**
+- `FLOWMETER_CALC_VOL` est NULL si le débitmètre n'était pas opérationnel lors du trait.
+- Pour les O-Tow, c'est la **seule** normalisation disponible (pas de depth vol).
+- Les colonnes `X_ABUND (ind./m3 flowmeter vol.)` sont déjà calculées — lire directement la colonne normalisée.
+- Ne pas mélanger depth vol et flowmeter vol dans une même analyse comparative sans le documenter.
+
+**Feedback si le calcul n'est pas possible :**
+- Si `FLOWMETER_CALC_VOL` est NULL et TOW_TYPE = O-Tow, aucune normalisation n'est possible pour ce trait.
+- Si les deux volumes sont NULL, signaler la ligne comme non normalisable et retourner uniquement le comptage brut.
+
+---
+# Comment lire les colonnes de biomasse µg C m⁻³ dans la source Taxonomie NeoLab ?
+
+Mots-clés : biomasse µg C m-3, biomasse depth vol, biomasse flowmeter vol, C1 biomass, C2 biomass, C3 biomass, C4 biomass, C5 biomass, M biomass, F biomass, COP_NS biomass, COPEPODID biomass, µg C m-3 depth vol, µg C m-3 flowmeter vol
+
+La biomasse en µg C m⁻³ est une colonne **déjà calculée** (`is_computed=1`) dans le fichier combiné (copepod abund & biomass). La méthode de calcul utilisée en amont par NeoLab n'est pas exposée dans ce fichier.
+
+**Colonnes disponibles :**
+```text
+- X_BIOMASS (µg C m-3 depth vol.)     — normalisation par DEPTH_CALC_NET_FILTERED_VOL
+- X_BIOMASS (µg C m-3 flowmeter vol.) — normalisation par FLOWMETER_CALC_VOL
+```
+
+**Unités :**
+```text
+X_BIOMASS : µg C m⁻³
+```
+
+**Stades disponibles avec biomasse :** C1, C2, C3, C4, C5, M (mâle adulte), F (femelle adulte), COP_NS, COPEPODID (agrégé).
+
+**Stades sans biomasse dans ce fichier :** N1, N2, N3, N4, N5, N6, NAUP_NS, NAUPLIUS, ALL_STAGES.
+
+**Limites :**
+- La méthode de calcul (relation taille-carbone ou autre) n'est pas dans les CSV — ne pas l'inférer.
+- Les colonnes biomasse sont NULL quand le volume correspondant est NULL.
+- Ne pas recalculer la biomasse depuis d'autres colonnes du fichier sans obtenir la méthode auprès de NeoLab.
+
+**Feedback si la biomasse n'est pas disponible :**
+- Si l'utilisateur demande la biomasse des nauplii, expliquer qu'elle n'est pas dans ce fichier — proposer `NAUPLIUS_SAMPLE_ABUND` comme comptage brut.
+- Si la biomasse est NULL pour un stade, vérifier si le volume correspondant est NULL ou si le comptage brut est zéro.
+- Si l'utilisateur demande la méthode de calcul de la biomasse, répondre qu'elle n'est pas documentée dans le fichier et orienter vers l'équipe NeoLab.
+
+---
 # Comment répondre quand un calcul scientifique n'est pas fiable ?
 
 L'assistant doit éviter d'inventer un résultat. Quand les données sont incomplètes, il doit expliquer ce qui manque et proposer le niveau d'analyse encore possible.

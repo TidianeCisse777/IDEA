@@ -194,6 +194,96 @@ class TestCheckColumnForCalc:
         r = tools["check_column_for_calc"]({"roles": []}, "concentration", session_id="ses-abc")
         assert "feasible" in r
 
+    def test_concentration_feasible_with_neolabs_volume_roles(self, tools):
+        # DEPTH_CALC_NET_FILTERED_VOL and FLOWMETER_CALC_VOL both match "vol" → sample_volume role
+        roles = _roles("sample_volume", "depth", "profile_id")
+        r = tools["check_column_for_calc"](roles, "concentration")
+        assert r["feasible"] is True
+        assert r["missing_roles"] == []
+
+    def test_concentration_infeasible_without_neolabs_volume(self, tools):
+        # Only taxonomy and date — no volume role
+        roles = _roles("taxon", "time", "station")
+        r = tools["check_column_for_calc"](roles, "concentration")
+        assert r["feasible"] is False
+        assert "sample_volume" in r["missing_roles"]
+
+
+# ── describe_column — NeoLab Taxonomy ─────────────────────────────────────────
+
+class TestDescribeColumnNeoLabs:
+    def test_depth_calc_vol_unit_is_m3(self, tools):
+        r = tools["describe_column"]("DEPTH_CALC_NET_FILTERED_VOL")
+        assert r["unit"] is not None
+        assert "m" in r["unit"].lower()
+
+    def test_depth_calc_vol_confidence_not_unknown(self, tools):
+        r = tools["describe_column"]("DEPTH_CALC_NET_FILTERED_VOL")
+        assert r["confidence"] != "unknown"
+
+    def test_depth_calc_vol_cites_colonnes_labo(self, tools):
+        r = tools["describe_column"]("DEPTH_CALC_NET_FILTERED_VOL")
+        assert r["rag_doc_ref"] is not None
+        assert "colonnes_labo" in r["rag_doc_ref"]
+
+    def test_flowmeter_calc_vol_unit_is_m3(self, tools):
+        r = tools["describe_column"]("FLOWMETER_CALC_VOL")
+        assert r["unit"] is not None
+        assert "m" in r["unit"].lower()
+
+    def test_flowmeter_calc_vol_confidence_not_unknown(self, tools):
+        r = tools["describe_column"]("FLOWMETER_CALC_VOL")
+        assert r["confidence"] != "unknown"
+
+    def test_c1_abund_depth_vol_confidence_not_unknown(self, tools):
+        r = tools["describe_column"]("C1_ABUND (ind./m3 depth vol.)")
+        assert r["confidence"] != "unknown"
+
+    def test_c1_abund_depth_vol_unit_is_ind_m3(self, tools):
+        r = tools["describe_column"]("C1_ABUND (ind./m3 depth vol.)")
+        assert r["unit"] is not None
+        unit = r["unit"].lower()
+        assert "ind" in unit or "m" in unit
+
+    def test_c1_biomass_depth_vol_confidence_not_unknown(self, tools):
+        r = tools["describe_column"]("C1_BIOMASS (µg C m-3 depth vol.)")
+        assert r["confidence"] != "unknown"
+
+    def test_c1_biomass_depth_vol_unit_contains_ug_or_c(self, tools):
+        r = tools["describe_column"]("C1_BIOMASS (µg C m-3 depth vol.)")
+        assert r["unit"] is not None
+        unit = r["unit"].lower()
+        assert "µg" in unit or "ug" in unit or "c" in unit or "m" in unit
+
+    def test_zooplankton_category_confidence_not_unknown(self, tools):
+        r = tools["describe_column"]("ZOOPLANKTON_CATEGORY")
+        assert r["confidence"] != "unknown"
+
+    def test_all_stages_abund_depth_vol_confidence_not_unknown(self, tools):
+        r = tools["describe_column"]("ALL_STAGES_ABUND (ind./m3 depth vol.)")
+        assert r["confidence"] != "unknown"
+
+    def test_nauplius_abund_depth_vol_confidence_not_unknown(self, tools):
+        r = tools["describe_column"]("NAUPLIUS_ABUND (ind./m3 depth vol.)")
+        assert r["confidence"] != "unknown"
+
+    def test_c1_sample_abund_unit_is_ind(self, tools):
+        r = tools["describe_column"]("C1_SAMPLE_ABUND (nbr of ind.)")
+        assert r["confidence"] != "unknown"
+        if r["unit"] is not None:
+            assert "ind" in r["unit"].lower()
+
+    def test_result_has_all_required_keys(self, tools):
+        r = tools["describe_column"]("FLOWMETER_CALC_VOL")
+        required = ["column", "definition", "unit", "confidence", "critical_notes",
+                    "rag_doc_ref", "source_file"]
+        for key in required:
+            assert key in r, f"Missing key: {key}"
+
+    def test_column_field_echoes_input(self, tools):
+        r = tools["describe_column"]("DEPTH_CALC_NET_FILTERED_VOL")
+        assert r["column"] == "DEPTH_CALC_NET_FILTERED_VOL"
+
 
 # ── tool registry integration ──────────────────────────────────────────────────
 
