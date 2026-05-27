@@ -28,6 +28,33 @@ export LANGFUSE_HOST=http://localhost:3001
 
 ---
 
+## Éviter les resets de clés
+
+Les clés Langfuse ne doivent pas être régénérées à chaque redémarrage. La source de vérité doit rester stable dans `.env`, et le volume local Langfuse doit être conservé.
+
+Règles à respecter :
+- Garder une seule paire `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` dans `.env`
+- Ne pas lancer `docker compose down -v`
+- Ne pas lancer `docker volume prune`
+- Redémarrer Langfuse avec `docker compose up -d langfuse langfuse-db`
+- Si le projet Langfuse existe déjà, créer de nouvelles clés seulement pour une rotation volontaire
+
+Quand les clés semblent “reset”, la cause la plus fréquente est l’un de ces cas :
+- le projet a été recréé dans l’UI Langfuse
+- le volume `langfuse-db-data` a été supprimé ou recréé
+- un autre `.env` est utilisé au démarrage
+- `LANGFUSE_INIT_*` a été modifié alors que le projet existait déjà
+
+Pour vérifier rapidement l’état local :
+
+```bash
+docker volume inspect idea_langfuse-db-data
+docker compose ps langfuse langfuse-db
+curl -s http://localhost:3001/api/public/projects
+```
+
+---
+
 ## Lancer les evals et pousser vers Langfuse
 
 ```bash

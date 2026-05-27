@@ -34,6 +34,7 @@ import agents.copepod_profile  # noqa: F401
 from core.auth import get_auth_token
 from core.chat_stream_events import chat_stream_events
 from core.config import settings
+from core.langfuse_guard import validate_langfuse_configuration
 from core.session_store import InMemorySessionStore
 from routers.file_routes import router as file_router
 from routers.session_routes import router as session_router
@@ -635,6 +636,7 @@ def _push_scores_to_langfuse(session_key: str, results: list[dict]) -> str | Non
     if not should_enable_langfuse():
         return None
     try:
+        validate_langfuse_configuration()
         from langfuse import Langfuse
         _configure_local_langfuse_host()
         lf = Langfuse()
@@ -677,6 +679,7 @@ def run_langfuse_trace_smoke(
             "response": "",
             "langfuse_trace_url": None,
         }
+    validate_langfuse_configuration()
     from langfuse import Langfuse
     from openai import OpenAI
 
@@ -989,6 +992,7 @@ def _make_eval_trace(session_key: str, session_id: str, model_name: str, tags: l
     if not should_enable_langfuse():
         return None, None
     try:
+        validate_langfuse_configuration()
         from langfuse import Langfuse
         _configure_local_langfuse_host()
         lf = Langfuse()
