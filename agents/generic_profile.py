@@ -10,7 +10,13 @@ from utils.system_prompt import sys_prompt
 class GenericProfile(AssistantProfile):
     agent_type = "generic"
     tool_tags = {"core", "station", "climate", "web", "rag", "mcp"}
-    instruction_blocks = ["session_metadata", "output_format", "cli_reference", "tool_signatures", "mcp_tools_block"]
+    instruction_blocks = [
+        "output_format",
+        "cli_reference",
+        "tool_signatures",
+        "mcp_tools_block",
+        "session_metadata",
+    ]
 
     def get_system_message(self, active_user_prompt: str) -> str:
         return sys_prompt + active_user_prompt

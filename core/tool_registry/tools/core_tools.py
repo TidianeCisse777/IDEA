@@ -9,10 +9,13 @@ from io import StringIO
 from datetime import datetime, timedelta, timezone
 from litellm import responses
 from litellm import completion
+from core.config import settings
 from utils.station_list_appendix import station_list_appendix # Station List Appendix (id and name)
 import os
 import re # required by get_climate_index's CPC parser
-import time as _time'''
+import time as _time
+
+LLM_MODEL = settings.LLM_MODEL'''
 
 _code = '''def get_datetime():
     now_utc = datetime.now(timezone.utc)

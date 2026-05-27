@@ -140,14 +140,12 @@ COPY . .
 # exec "$@"' > /entrypoint.sh && \
 # chmod +x /entrypoint.sh
 
-# Setup paper-qa settings
-# RUN pqa -s default_setting --llm gpt-4o-mini --summary-llm gpt-4o-mini save
+# PaperQA model selection is configured at runtime via LLM_MODEL.
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Setup paper-qa settings
-# RUN pqa -s default_setting --llm gpt-4o-mini --summary-llm gpt-4o-mini save
+# PaperQA model selection is configured at runtime via LLM_MODEL.
 
 EXPOSE 8001
 ENTRYPOINT ["/entrypoint.sh"]

@@ -23,6 +23,7 @@ class PromptManager {
         this.promptDescription = document.getElementById('promptDescription');
         this.promptContent = document.getElementById('promptContent');
         this.editorTitle = document.getElementById('editorTitle');
+        this.scopeNotice = document.getElementById('promptScopeNotice');
     }
 
     attachEventListeners() {
@@ -91,7 +92,27 @@ class PromptManager {
     async openModal() {
         this.modal.style.display = 'block';
         document.body.style.overflow = 'hidden';
+        this.renderScopeNotice();
         await this.loadPrompts();
+    }
+
+    getAgentType() {
+        return typeof AGENT_TYPE !== 'undefined' ? AGENT_TYPE : 'generic';
+    }
+
+    promptsApplyToCurrentAgent() {
+        return this.getAgentType() === 'generic';
+    }
+
+    renderScopeNotice() {
+        if (!this.scopeNotice) return;
+        if (this.promptsApplyToCurrentAgent()) {
+            this.scopeNotice.style.display = 'none';
+            this.scopeNotice.textContent = '';
+            return;
+        }
+        this.scopeNotice.style.display = 'block';
+        this.scopeNotice.textContent = 'Ces prompts globaux ne s’appliquent pas au profil IDEA Copépodes. Le profil utilise ses instructions intégrées.';
     }
 
     closeModal() {
@@ -169,7 +190,7 @@ class PromptManager {
                 <button class="btn btn-sm btn-primary edit-prompt" title="Edit">
                     <span class="material-icons">edit</span>
                 </button>
-                ${!prompt.is_active ? `
+                ${!prompt.is_active && this.promptsApplyToCurrentAgent() ? `
                     <button class="btn btn-sm btn-success activate-prompt" title="Set as Active">
                         <span class="material-icons">check_circle</span>
                     </button>
@@ -251,7 +272,7 @@ class PromptManager {
                     <span class="material-icons">edit</span>
                     Edit Prompt
                 </button>
-                ${!prompt.is_active ? `
+                ${!prompt.is_active && this.promptsApplyToCurrentAgent() ? `
                     <button class="btn btn-success" onclick="promptManager.setActivePrompt('${prompt.id}')">
                         <span class="material-icons">check_circle</span>
                         Set as Active
@@ -374,6 +395,10 @@ class PromptManager {
     }
 
     async setActivePrompt(promptId) {
+        if (!this.promptsApplyToCurrentAgent()) {
+            this.showError('Les prompts globaux ne peuvent pas remplacer les instructions intégrées du profil Copepod.');
+            return;
+        }
         try {
             const response = await fetch(config.getEndpoints().setActivePrompt, {
                 method: 'POST',
@@ -547,6 +572,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Add some additional CSS for the toast notifications and preview
 const additionalCSS = `
+    .prompt-scope-notice {
+        margin-bottom: 1rem;
+        padding: 0.75rem 1rem;
+        border: 1px solid #c9d7e8;
+        border-radius: 8px;
+        background: #f2f7fd;
+        color: #24415f;
+        font-size: 0.9rem;
+        line-height: 1.4;
+    }
+
     .prompt-description {
         font-style: italic;
         color: #666;
@@ -610,4 +646,4 @@ const additionalCSS = `
 // Inject additional CSS
 const style = document.createElement('style');
 style.textContent = additionalCSS;
-document.head.appendChild(style); 
+document.head.appendChild(style);

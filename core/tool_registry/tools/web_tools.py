@@ -20,8 +20,7 @@ _code = '''def extract_web_query_response(web_query_response):
 
 def web_search(web_query):
     web_query_response = responses(
-        model="openai/gpt-5-mini-2025-08-07",
-        reasoning={"effort": "low"},
+        model=LLM_MODEL,
         input=[
             {"role": "system", "content": "You are a concise research assistant that only searches the web and only responds with search results."},
             {"role": "user", "content": web_query}

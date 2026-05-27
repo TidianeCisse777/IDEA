@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import sys
@@ -63,6 +64,13 @@ def _load_tools() -> dict[str, Any]:
 
 
 def _test_client(store: InMemorySessionStore) -> tuple[TestClient, ExitStack]:
+    # Some tests clear the global profile registry; eval routes need copepod registered.
+    import agents.copepod_profile
+    import agents.generic_profile
+
+    importlib.reload(agents.generic_profile)
+    importlib.reload(agents.copepod_profile)
+
     app = FastAPI()
     app.include_router(file_router)
     app.include_router(session_router)
@@ -391,13 +399,18 @@ def _run_llm_turn(
     for round_index in range(max_tool_rounds):
         for attempt in range(2):
             try:
+                completion_kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "tools": _tool_specs(),
+                    "tool_choice": "auto",
+                    "temperature": float(os.getenv("LLM_TEMPERATURE", settings.LLM_TEMPERATURE)),
+                    "metadata": {**metadata, "round": round_index + 1},
+                }
+                if settings.LLM_REASONING_EFFORT is not None:
+                    completion_kwargs["reasoning_effort"] = settings.LLM_REASONING_EFFORT
                 response = completion_fn(
-                    model=model,
-                    messages=messages,
-                    tools=_tool_specs(),
-                    tool_choice="auto",
-                    temperature=float(os.getenv("LLM_TEMPERATURE", settings.LLM_TEMPERATURE)),
-                    metadata={**metadata, "round": round_index + 1},
+                    **completion_kwargs,
                 )
                 break
             except Exception as exc:
@@ -468,7 +481,7 @@ def _default_live_completion(*, metadata: dict | None = None, **kwargs):
         max_retries=0,
     ).chat.completions.create(
         **kwargs,
-        max_tokens=4000,
+        max_completion_tokens=4000,
     )
     message = _message_to_dict(_completion_message(response))
 
@@ -499,11 +512,8 @@ def _default_live_completion(*, metadata: dict | None = None, **kwargs):
     return response
 
 
-def _live_eval_system_prompt(session_id: str) -> str:
-    session_key = f"eval-user:{session_id}:copepod"
-    return f"""You are IDEA Copepod Plan Mode under live evaluation.
-
-Use this exact session key for artifact tools: `{session_key}`.
+def _live_eval_system_prompt() -> str:
+    return """You are IDEA Copepod Plan Mode under live evaluation.
 
 CRITICAL RULE: Steps a, b, d, e must be called ONE at a time. Step c is the only exception — call ALL describe_column in a single response.
 
@@ -531,6 +541,12 @@ If a tool call returns an error or blocking_reason, report it and do not proceed
 Graph Context must include: data_understanding_version_id, objective, columns, filters, units, chart_type, language, output_artifacts, feasibility, blockers.
 Keep assistant text concise; tool outputs contain the evidence.
 Always respond in French."""
+
+
+def _live_eval_runtime_context(session_id: str) -> str:
+    session_key = f"eval-user:{session_id}:copepod"
+    return f"""Runtime context:
+- Use this exact session key for artifact tools: `{session_key}`."""
 
 
 def _push_scores_to_langfuse(session_key: str, results: list[dict]) -> str | None:
@@ -567,13 +583,12 @@ def _push_scores_to_langfuse(session_key: str, results: list[dict]) -> str | Non
 def run_langfuse_trace_smoke(
     *,
     prompt: str,
-    model: str | None = None,
 ) -> dict:
     from langfuse import Langfuse
     from openai import OpenAI
 
     _configure_local_langfuse_host()
-    model_name = model or os.getenv("LLM_MODEL") or settings.LLM_MODEL
+    model_name = settings.LLM_MODEL
     session_key = f"eval-user:trace-smoke-{uuid.uuid4().hex[:8]}:copepod"
     lf = Langfuse()
     trace = lf.trace(
@@ -593,7 +608,8 @@ def run_langfuse_trace_smoke(
             {"role": "system", "content": "Reply concisely in French."},
             {"role": "user", "content": prompt},
         ],
-        max_tokens=80,
+        max_completion_tokens=80,
+        **({"reasoning_effort": settings.LLM_REASONING_EFFORT} if settings.LLM_REASONING_EFFORT is not None else {}),
     )
     output = response.choices[0].message.content or ""
     usage = getattr(response, "usage", None)
@@ -916,14 +932,13 @@ def run_live_eval(
     *,
     push_langfuse: bool = False,
     completion_fn: Callable[..., Any] | None = None,
-    model: str | None = None,
 ) -> dict:
     """Run the Plan Mode workflow with a real LLM driving the artifact tools."""
     store = InMemorySessionStore()
     tools = _load_tools()
     session_id = f"live-eval-{uuid.uuid4().hex[:10]}"
     session_key = f"eval-user:{session_id}:copepod"
-    model_name = model or os.getenv("LLM_MODEL") or settings.LLM_MODEL
+    model_name = settings.LLM_MODEL
     completion_fn = completion_fn or _default_live_completion
     results: list[dict] = []
     tags = ["eval", "copepod", "plan-mode", "live"]
@@ -944,7 +959,8 @@ def run_live_eval(
                 upload = _upload_fixture(client, session_id, ECOTAXA)
                 uploaded_ecotaxa = _uploaded_path(session_id, upload["filename"])
                 tool_impls = _live_tool_impls(tools, session_key)
-                system_prompt = _live_eval_system_prompt(session_id)
+                system_prompt = _live_eval_system_prompt()
+                runtime_context = _live_eval_runtime_context(session_id)
                 messages: list[dict] = [
                     {
                         "role": "system",
@@ -954,6 +970,10 @@ def run_live_eval(
                             "Follow the Plan Mode protocol exactly. Use the provided tools; "
                             "do not claim an artifact is created or active unless the tool result confirms it."
                         ),
+                    },
+                    {
+                        "role": "system",
+                        "content": runtime_context,
                     },
                     {
                         "role": "user",
@@ -1244,15 +1264,14 @@ def main() -> int:
         default="Dis simplement que la trace Langfuse fonctionne.",
         help="Prompt for --trace-smoke.",
     )
-    parser.add_argument("--model", help="Override LLM model for --live evals.")
     parser.add_argument("--push-langfuse", action="store_true", help="Push eval scores to Langfuse.")
     parser.add_argument("--json", action="store_true", help="Print JSON report.")
     args = parser.parse_args()
 
     if args.trace_smoke:
-        report = run_langfuse_trace_smoke(prompt=args.prompt, model=args.model)
+        report = run_langfuse_trace_smoke(prompt=args.prompt)
     elif args.live:
-        report = run_live_eval(push_langfuse=args.push_langfuse, model=args.model)
+        report = run_live_eval(push_langfuse=args.push_langfuse)
     else:
         report = run_mock_eval(push_langfuse=args.push_langfuse)
     if args.json:

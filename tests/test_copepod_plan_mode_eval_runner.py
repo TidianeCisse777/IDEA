@@ -1,6 +1,12 @@
 import json
 
-from scripts.evals.run_copepod_plan_mode_eval import run_live_eval, run_mock_eval
+from core.config import settings
+from scripts.evals.run_copepod_plan_mode_eval import (
+    _live_eval_runtime_context,
+    _live_eval_system_prompt,
+    run_live_eval,
+    run_mock_eval,
+)
 
 
 def test_mock_eval_runner_passes_context_workflow():
@@ -32,6 +38,14 @@ def test_mock_eval_runner_passes_context_workflow():
     assert scores["artifact_debug_routes_are_copepod_only"]["passed"] is True
 
 
+def test_live_eval_prompt_keeps_session_context_out_of_static_prefix():
+    system_prompt = _live_eval_system_prompt()
+    runtime_context = _live_eval_runtime_context("session-abc")
+
+    assert "session-abc" not in system_prompt
+    assert "eval-user:session-abc:copepod" in runtime_context
+
+
 def _tool_call(call_id: str, name: str, arguments: dict) -> dict:
     return {
         "id": call_id,
@@ -50,7 +64,8 @@ def _latest_tool_result(messages: list[dict], tool_name: str) -> dict:
     raise AssertionError(f"Missing tool result for {tool_name}")
 
 
-def test_live_eval_runner_drives_llm_tool_workflow_without_real_api():
+def test_live_eval_runner_drives_llm_tool_workflow_without_real_api(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_MODEL", "fake-live-model")
     calls = {"count": 0}
 
     def fake_completion(*, messages, **kwargs):
@@ -194,7 +209,6 @@ def test_live_eval_runner_drives_llm_tool_workflow_without_real_api():
     report = run_live_eval(
         push_langfuse=False,
         completion_fn=fake_completion,
-        model="fake-live-model",
     )
 
     assert report["mode"] == "live"
@@ -216,7 +230,8 @@ def test_live_eval_runner_drives_llm_tool_workflow_without_real_api():
     # Edge cases that require a real LLM (describe_column + column_catalogue) — not checked here
 
 
-def test_live_eval_runner_scores_premature_plan_ready_text_but_backend_blocks_button():
+def test_live_eval_runner_scores_premature_plan_ready_text_but_backend_blocks_button(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_MODEL", "fake-live-model")
     calls = {"count": 0}
 
     def fake_completion(*, messages, **kwargs):
@@ -355,7 +370,6 @@ def test_live_eval_runner_scores_premature_plan_ready_text_but_backend_blocks_bu
     report = run_live_eval(
         push_langfuse=False,
         completion_fn=fake_completion,
-        model="fake-live-model",
     )
 
     scores = {item["name"]: item for item in report["results"]}

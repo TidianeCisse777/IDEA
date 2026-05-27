@@ -66,10 +66,10 @@ This is the default command before any live run.
 Only run this when live API calls are intended.
 
 ```bash
-python scripts/evals/run_copepod_plan_mode_eval.py --live --push-langfuse --model gpt-4o-mini
+python scripts/evals/run_copepod_plan_mode_eval.py --live --push-langfuse
 ```
 
-This calls OpenAI and pushes boolean scores to Langfuse.
+This uses `LLM_MODEL` from the environment, calls OpenAI, and pushes boolean scores to Langfuse.
 
 Do not run `--live`, `--trace-smoke`, or `--push-langfuse` during local-only debugging.
 

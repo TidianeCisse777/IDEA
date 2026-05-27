@@ -21,7 +21,7 @@
 | `analyse_blocked_when_graph_context_references_stale_data_understanding` | Un GC lié à un DU périmé est bloqué |
 | `artifact_debug_routes_are_copepod_only` | Les routes debug artifacts sont restreintes à `agent_type=copepod` |
 
-### Live eval (LLM réel, gpt-4o-mini)
+### Live eval (LLM réel, via `LLM_MODEL`)
 
 13 checks automatiques par run, organisés en 3 phases :
 
@@ -90,7 +90,7 @@
 
 ### Couverture multi-modèle (non couverte)
 
-- La suite est systématiquement testée sur `gpt-4o-mini`. Résultats sur `claude-haiku-4-5`, `claude-sonnet-4-6`, `gpt-4o` ?
+- La suite teste uniquement le modèle sélectionné par `LLM_MODEL` pour le run courant.
 - Régression détectée entre deux versions du même modèle ?
 
 ### Intégration end-to-end (non couverte)

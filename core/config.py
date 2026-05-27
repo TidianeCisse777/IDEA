@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     #   Anthropic: LLM_MODEL=claude-sonnet-4-6  LLM_API_KEY=$ANTHROPIC_API_KEY
     #   Jetstream: LLM_MODEL=openai/Llama-3.3-70B-Instruct  LLM_API_BASE=https://llm.jetstream-cloud.org/api
     #   Gemini   : LLM_MODEL=gemini/gemini-2.0-flash  GEMINI_API_KEY=...  LLM_REASONING_EFFORT=
-    LLM_MODEL: str = "gpt-5.4-2026-03-05"
+    LLM_MODEL: str
     LLM_API_KEY: str | None = None
     LLM_API_BASE: str | None = None
     LLM_SUPPORTS_VISION: bool = True
@@ -46,8 +46,8 @@ class Settings(BaseSettings):
     LLM_CONTEXT_WINDOW: int = 400000
     LLM_MAX_COMPLETION_TOKENS: int = 64000
     LLM_MAX_OUTPUT: int = 64000
-    # Set to None for providers that don't support reasoning_effort (Anthropic, Jetstream2)
-    LLM_REASONING_EFFORT: str | None = "low"
+    # Set explicitly in .env only for models that support reasoning_effort.
+    LLM_REASONING_EFFORT: str | None = None
 
     # Session settings
     SESSION_IDLE_TIMEOUT: int = 3600

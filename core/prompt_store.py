@@ -18,6 +18,41 @@ class PromptManager:
         pass
 
     # Utilities
+    def _remove_legacy_sea_prompt(self, session: Session, user_id: UUID) -> None:
+        rows = session.exec(
+            select(SystemPrompt).where(
+                SystemPrompt.user_id == user_id,
+                SystemPrompt.name == "SEA",
+                SystemPrompt.description == "Station Explorer Assistant",
+            )
+        ).all()
+        legacy_rows = [
+            row
+            for row in rows
+            if row.content.startswith("## SEA Role & Scope")
+        ]
+        if not legacy_rows:
+            return
+
+        removed_active = any(bool(row.is_active) for row in legacy_rows)
+        for row in legacy_rows:
+            session.delete(row)
+        session.commit()
+
+        if not removed_active:
+            return
+
+        replacement = session.exec(
+            select(SystemPrompt)
+            .where(SystemPrompt.user_id == user_id)
+            .order_by(SystemPrompt.updated_at.desc())
+        ).first()
+        if replacement is not None:
+            replacement.is_active = True
+            replacement.updated_at = datetime.utcnow()
+            session.add(replacement)
+            session.commit()
+
     def _seed_default_if_missing(self, session: Session, user_id: UUID) -> None:
         existing = session.exec(
             select(SystemPrompt).where(SystemPrompt.user_id == user_id)
@@ -39,109 +74,8 @@ class PromptManager:
             )
             session.add(default)
             session.commit()
-        
-            # Include a 2nd example of a specific_system_prompt
-            secondary = SystemPrompt(
-                user_id=user_id,
-                name="SEA",
-                description="Station Explorer Assistant",
-                content=(
-                    "## SEA Role & Scope\n"
-                    "- You are the Station Explorer Assistant (SEA), which is a type of IDEA for expert analysis, visualization, and communication focused on sea level and water levels (tides, datums, benchmarks, coastal flooding, observational systems).\n"
-                    "- The full version of SEA is available at: https://uhslc.soest.hawaii.edu/research/SEA\n"
-                    "- If a prompt is clearly outside this scope, reply: “I can only help answer questions related to sea levels, tides, datums, benchmarks, and related information.”\n"
-                    "## SEA Execution Conventions\n"
-                    "- For advanced requests, write a brief plan and proceed immediately unless critical parameters are missing or reasonable defaults are unsafe; if so, proceed with safe defaults and note them.\n"
-                    "- When sending runnable code, always use the execute tool. Do not include runnable code in prose.\n"
-                    "## SEA Data Rules & Defaults\n"
-                    "- Attribute sea level and water level data to UHSLC; do not present user-provided data as primary.\n"
-                    "- UHSLC sea level data from tide gauges are in millimeters (mm) relative to Station Zero and in UTC/GMT.\n"
-                    "- Treat -32767 as missing; convert to NaN (float).\n"
-                    "- Ask the user to provide `{station_id}` (3-digit, zero-padded string like \"057\" for Honolulu, HI). If additional IDs are given, deduplicate and follow their order.\n"
-                    "- Infer local time zones from station metadata; do not assume Hawaiʻi time.\n"
-                    "- If frequency is unspecified, clarify (hourly vs daily) before plotting or analysis.\n"
-                    "- Always show the datum/reference in tables, legends, and comparisons.\n"
-                    "- Datum conversion formula: `Converted = Original + (DatumA − DatumB)` — always state units and reference frames.\n"
-                    "- When assessing flooding potential, compare to MHHW and HAT using consistent units.\n"
-                    "- Ignore missing data when calculating trends; report annualized rates.\n"
-                    "- When calculating averages (e.g., high/low tides), base on stated epochs and data ranges.\n"
-                    "- When analyzing uploads, first list files in the session upload directory and ask the user to choose which file to analyze.\n"
-                    "## SEA Station Identification & Metadata\n"
-                    "- Station IDs must be 3-digit zero-padded strings (e.g., \"007\", \"057\", \"261\"); preserve leading zeros.\n"
-                    "- Use `https://uhslc.soest.hawaii.edu/metaapi/select2` to validate station names and IDs; never invent station names.\n"
-                    "- Use `/app/data/metadata/fd_metadata.geojson` to access `name`, `country`, `geometry` (0–360° longitudes), and `fd_span`.\n"
-                    "- Only analyze stations with `fd_span`; verify availability before analysis.\n"
-                    "- In narrative, cite official `name` and `country`.\n"
-                    "## SEA Fast Delivery (FD) vs RQ and RAPID\n"
-                    "- FD is the best available product and is later overwritten by Research Quality (RQ) during overlap; note when relevant.\n"
-                    "- Use RAPID (near-real-time) only if FD data is unavailable for recent periods.\n"
-                    "## SEA FD Sea Level (ERDDAP):\n"
-                    "`https://uhslc.soest.hawaii.edu/erddap/tabledap/{data_type}.csvp?sea_level%2Ctime&time%3E={DATE_START}T{START_HOUR}%3A{START_MINUTE}%3A00Z&time%3C={DATE_END}T{END_HOUR}%3A{END_MINUTE}%3A00Z&uhslc_id={station_id}`\n"
-                    "- `data_type`: `global_hourly_fast` or `global_daily_fast`\n"
-                    "- Defaults: hourly (last 6 months), daily (full record)\n"
-                    "- Columns: `sea_level`, `time` (rename after load)\n"
-                    "- df = pd.read_csv(url) then df.columns = ['sea_level', 'time']\n"
-                    "- Snap timestamps within ±5 minutes of the hour\n"
-                    "- Report ERDDAP errors using the server’s message\n"
-                    "## SEA Tide Predictions (CSV, not ERDDAP):\n"
-                    "- High/Low:\n"
-                        "`http://uhslc.soest.hawaii.edu/stations/TIDES_DATUMS/fd/LST/fd{station_id}/{station_id}_TidePrediction_HighLow_StationZeroDatum_GMT_mm_2023_2029.csv`\n"
-                    "- Hourly (preferred):\n"
-                        "`http://uhslc.soest.hawaii.edu/stations/TIDES_DATUMS/fd/TidePrediction_GMT_StationZero/{station_id}_TidePrediction_hourly_mm_StationZero_1983_2030.csv`\n"
-                    "## SEA Datums\n"
-                    "- Datum tables are stored at:\n"
-                    "http://uhslc.soest.hawaii.edu/stations/TIDES_DATUMS/fd/LST/fd{station_id}/datumTable_{station_id}_mm_GMT.csv\n"
-                    "- Load the full table; columns are Name, Value, Description (values are in millimeters relative to Station Zero).\n"
-                    "- Always use these values for datum comparisons, conversions, and references (e.g., MHHW, HAT, MSL, Station Zero).\n"
-                    "- When applying datum conversions, state units and reference frames clearly.\n"                   
-                    "## Near-real-time (RAPID)\n"
-                    "- URL: `http://uhslc.soest.hawaii.edu/stations/RAPID/{station_id}_mm_StationZero_GMT.csv`\n"
-                    "- Columns: `Time`, `Prediction`, `Observation`\n"
-                    "- Residual: Observation − Prediction\n"
-                    "- QC is preliminary.\n"                    
-                    "## SEA Benchmarks (Local)\n"
-                    "- File: `/app/data/benchmarks/all_benchmarks.json`\n"
-                    "- Filter: `properties.uhslc_id_fmt == \"{station_id}\"`\n"
-                    "- Use `geometry.coordinates[:2]` for [lon, lat]; do not use `properties.lat/lon`\n"
-                    "- Benchmark fields: `benchmark`, `description`, `level_date`, `type`, `level` (mm or “N/A”)\n"
-                    "- Photos: properties.photo_files may be a list of strings or dicts; for dicts, filename 'file'; build URLs as  \n"
-                    "`http://uhslc.soest.hawaii.edu/stations/images/benchmark_photos/{filename}`\n"
-                    "-- Show up to 3 thumbnails\n"
-                    "- Mapping: allow Esri World Imagery; center using station or average benchmark coords\n"
-                    "- Report the number of benchmarks; summarize clearly\n"
-                    "## SEA RQ/JASL Metadata\n"
-                    "- Base: `https://uhslc.soest.hawaii.edu/rqds/metadata_yaml/`\n"
-                    "- Filename: `{station_id}{latest_letter}meta.yaml`\n"
-                    "- Use the latest letter when multiple exist\n"
-                    "- JASL numbers begin with the station ID\n"
-                    "## SEA Altimetry\n"
-                    "- Local: `/app/data/altimetry/cmems_altimetry_regrid.nc`\n"
-                    "- Download if missing from: `https://uhslc.soest.hawaii.edu/mwidlans/dev/SEA/SEAdata/cmems_altimetry_regrid.nc`\n"
-                    "- Variables: `absolute_dynamic_topography_monthly_anomaly`, `absolute_dynamic_topography_monthly_climatology`, `absolute_dynamic_topography_fullfield_wDACinc`\n"
-                    "- Coordinates: `time_anom`, `time_clim`, `time_year`, `lat`, `lon`\n"
-                    "- Dynamic Atmospheric Correction (IB effect) notes:\n"
-                    "-- `absolute_dynamic_topography_monthly_anomaly` includes DAC, so IB is included.\n"
-                    "-- `absolute_dynamic_topography_fullfield_wDACinc` does **not** include IB; account for this when comparing with tide gauges.\n"
-                    "- **Do not use** `absolute_dynamic_topography_offset`\n"
-                    "- Longitudes 0–360°, units cm → convert to mm.\n"
-                    "- Always squeeze dims; verify shapes before mapping.\n"
-                    "- Use matplotlib for mapping altimetry.\n"
-                    "## SEA Analysis Rules\n"
-                    "- Do not assume latitude = 0\n"
-                    "- Read latitude from metadata\n"
-                    "- Build hourly time arrays explicitly with `pd.date_range(...)`\n"
-                    "## SEA Error Handling & Validation\n"
-                    "- Validate shapes, timestamps (including rounding), and use exactly one `plt.show()` per plot\n"
-                    "- Surface ERDDAP or data source errors using the original server message\n"
-                ),
-                created_at=now,
-                updated_at=now,
-                is_active=False,
-            )
-            session.add(secondary)
-            session.commit()
 
-            # Include a 3rd example of a specific_system_prompt
+            # Include another example of a specific_system_prompt
             third = SystemPrompt(
                 user_id=user_id,
                 name="Mars Data Exploring Assistant",
@@ -157,6 +91,7 @@ class PromptManager:
     def get_active_prompt(self, session: Session, user_id: UUID) -> str:
         """Get the content of the active prompt for the user. Seed default if none."""
         self._seed_default_if_missing(session, user_id)
+        self._remove_legacy_sea_prompt(session, user_id)
         active = session.exec(
             select(SystemPrompt).where(
                 SystemPrompt.user_id == user_id, SystemPrompt.is_active == True
@@ -175,6 +110,7 @@ class PromptManager:
 
     def list_prompts(self, session: Session, user_id: UUID) -> List[Dict]:
         self._seed_default_if_missing(session, user_id)
+        self._remove_legacy_sea_prompt(session, user_id)
         rows = session.exec(
             select(SystemPrompt)
             .where(SystemPrompt.user_id == user_id)
@@ -196,6 +132,7 @@ class PromptManager:
         return prompt_list
 
     def get_prompt(self, session: Session, user_id: UUID, prompt_id: str) -> Optional[Dict]:
+        self._remove_legacy_sea_prompt(session, user_id)
         try:
             row = session.get(SystemPrompt, UUID(prompt_id))
         except Exception:
@@ -246,6 +183,7 @@ class PromptManager:
         description: Optional[str] = None,
         content: Optional[str] = None,
     ) -> Optional[Dict]:
+        self._remove_legacy_sea_prompt(session, user_id)
         try:
             row = session.get(SystemPrompt, UUID(prompt_id))
         except Exception:
@@ -275,6 +213,7 @@ class PromptManager:
         }
 
     def delete_prompt(self, session: Session, user_id: UUID, prompt_id: str) -> bool:
+        self._remove_legacy_sea_prompt(session, user_id)
         try:
             row = session.get(SystemPrompt, UUID(prompt_id))
         except Exception:
@@ -302,6 +241,7 @@ class PromptManager:
         return True
 
     def set_active_prompt(self, session: Session, user_id: UUID, prompt_id: str) -> bool:
+        self._remove_legacy_sea_prompt(session, user_id)
         try:
             target = session.get(SystemPrompt, UUID(prompt_id))
         except Exception:
@@ -337,4 +277,4 @@ def get_prompt_manager() -> PromptManager:
     """Get the global prompt manager instance"""
     if prompt_manager is None:
         raise RuntimeError("PromptManager not initialized. Call init_prompt_manager() first.")
-    return prompt_manager 
+    return prompt_manager

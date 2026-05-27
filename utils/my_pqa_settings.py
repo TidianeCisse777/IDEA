@@ -33,6 +33,7 @@ from paperqa.settings import (
     ParsingSettings,
     PromptSettings,
 )
+from core.config import settings as app_settings
 
 # Try to import pymupdf parser for better image extraction
 try:
@@ -41,8 +42,8 @@ try:
 except ImportError:
     PDF_PARSER = None  # Will use default parser
 
-# Default LLM model - prefixed with openai/ for LiteLLM provider routing
-DEFAULT_LLM = "openai/gpt-5.2-2025-12-11"
+# PaperQA follows the same model selection as the rest of the app.
+DEFAULT_LLM = app_settings.LLM_MODEL
 
 # Custom summary prompt that emphasizes page numbers for figures/tables
 CUSTOM_SUMMARY_JSON_SYSTEM = (
@@ -68,8 +69,6 @@ CUSTOM_SUMMARY_JSON_SYSTEM = (
 def create_pqa_settings(
     paper_directory: Union[str, Path],
     index_directory: Union[str, Path],
-    llm: str = DEFAULT_LLM,
-    summary_llm: Optional[str] = None,
     embedding: str = "text-embedding-3-small",
     verbosity: int = 1,
     manifest_file: Optional[Union[str, Path]] = None,
@@ -84,8 +83,6 @@ def create_pqa_settings(
     Parameters:
         paper_directory: Path to the directory containing papers
         index_directory: Path to the directory for storing indexes
-        llm: The LLM model to use (default: gpt-5.2-2025-12-11)
-        summary_llm: The LLM for summaries (default: same as llm)
         embedding: The embedding model to use (default: text-embedding-3-small)
         verbosity: Logging verbosity level (default: 1)
         manifest_file: Optional path to a manifest CSV for Docs reuse.
@@ -100,10 +97,8 @@ def create_pqa_settings(
     index_directory = Path(index_directory)
     if manifest_file is not None:
         manifest_file = Path(manifest_file)
-    
-    # Use same LLM for summary if not specified
-    if summary_llm is None:
-        summary_llm = llm
+    llm = app_settings.LLM_MODEL
+    summary_llm = llm
     
     # Build parsing settings based on PaperQA 2026.1.5+ source
     # Valid fields: page_size_limit, use_doc_details, reader_config, multimodal,

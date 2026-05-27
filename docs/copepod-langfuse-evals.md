@@ -17,8 +17,9 @@ Run:
 ```bash
 python scripts/evals/run_copepod_plan_mode_eval.py --mock
 python scripts/evals/run_copepod_plan_mode_eval.py --live --push-langfuse
-python scripts/evals/run_copepod_plan_mode_eval.py --live --push-langfuse --model gpt-4o-mini
 ```
+
+The live eval uses `LLM_MODEL` from the environment.
 
 Do not run `--live`, `--trace-smoke`, or `--push-langfuse` unless live OpenAI and Langfuse calls are intended.
 

@@ -72,6 +72,18 @@ class TestGenericProfile:
         assert isinstance(result, str)
         assert len(result) > 0
 
+    def test_custom_instructions_put_static_blocks_before_session_metadata(self):
+        result = self.p.get_custom_instructions(
+            host="http://localhost",
+            user_id="123",
+            session_id="abc",
+            static_dir="static",
+            upload_dir="uploads",
+        )
+
+        assert result.index("VISION SUPPORT") < result.index("The user_id is 123")
+        assert result.index("CUSTOM FUNCTIONS") < result.index("The session_id is abc")
+
     def test_configure_interpreter_is_noop(self):
         mock_interpreter = MagicMock()
         self.p.configure_interpreter(mock_interpreter)  # ne doit pas lever

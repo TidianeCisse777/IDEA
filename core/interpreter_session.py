@@ -65,17 +65,17 @@ def get_or_create_interpreter(
 
         interpreter = OpenInterpreter()
 
+        profile = get_profile(agent_type)
         active_prompt = ""
         user = None
-        if token and db is not None:
+        if agent_type == "generic" and token and db is not None:
             from core.auth import get_current_user
             user = get_current_user(token)
             if user:
                 active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
-        if not active_prompt and (token and db and user):
+        if agent_type == "generic" and not active_prompt and (token and db and user):
             active_prompt = get_prompt_manager().get_active_prompt(db, user.id)
 
-        profile = get_profile(agent_type)
         interpreter.system_message = profile.get_system_message(active_prompt)
 
         interpreter.llm.model = settings.LLM_MODEL

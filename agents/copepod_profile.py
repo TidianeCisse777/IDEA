@@ -12,22 +12,22 @@ from core.tool_registry import registry as tool_registry
 from utils.session_utils import make_session_key
 
 _BLOCKS_PLAN = [
-    "session_metadata",
     "output_format",
     "cli_reference",
     "copepod_tool_signatures",
     "copepod_mode_plan",
     "copepod_mode_analyse",
     "mcp_tools_block",
+    "session_metadata",
 ]
 
 _BLOCKS_ANALYSE = [
-    "session_metadata",
     "output_format",
     "cli_reference",
     "copepod_tool_signatures",
     "copepod_mode_analyse",
     "mcp_tools_block",
+    "session_metadata",
 ]
 
 
@@ -58,7 +58,7 @@ class CopepodProfile(AssistantProfile):
         return self._session_store or session_store_module.session_store
 
     def get_system_message(self, active_user_prompt: str) -> str:
-        return COPEPOD_SYSTEM_PROMPT + active_user_prompt
+        return COPEPOD_SYSTEM_PROMPT
 
     def get_tool_code(self) -> str:
         return tool_registry.render(self.tool_tags)

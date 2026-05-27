@@ -40,7 +40,7 @@ def test_copepod_profile_registers_under_copepod_agent_type():
     assert get_profile("copepod").agent_type == "copepod"
 
 
-def test_copepod_profile_uses_copepod_system_prompt_and_appends_active_prompt():
+def test_copepod_profile_uses_copepod_system_prompt_and_ignores_global_active_prompt():
     import_copepod_profile()
     from agents.copepod_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -48,7 +48,7 @@ def test_copepod_profile_uses_copepod_system_prompt_and_appends_active_prompt():
     message = profile.get_system_message("\nUSER_ACTIVE_PROMPT")
 
     assert message.startswith(COPEPOD_SYSTEM_PROMPT)
-    assert message.endswith("USER_ACTIVE_PROMPT")
+    assert "USER_ACTIVE_PROMPT" not in message
 
 
 def test_copepod_profile_uses_safe_runtime_and_copepod_instruction_blocks():
@@ -68,13 +68,13 @@ def test_copepod_profile_uses_safe_runtime_and_copepod_instruction_blocks():
         "copepod_taxonomy",
     }
     assert profile.instruction_blocks == [
-        "session_metadata",
         "output_format",
         "cli_reference",
         "copepod_tool_signatures",
         "copepod_mode_plan",
         "copepod_mode_analyse",
         "mcp_tools_block",
+        "session_metadata",
     ]
 
 
@@ -97,6 +97,22 @@ def test_copepod_custom_instructions_use_copepod_blocks_without_sea_level_leakag
     assert "get_climate_index" not in instructions
     assert "UHSLC" not in instructions
     assert "tide gauge" not in instructions
+
+
+def test_copepod_custom_instructions_put_static_blocks_before_session_metadata():
+    import_copepod_profile()
+
+    profile = get_profile("copepod")
+    instructions = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert instructions.index("## Copepod Runtime Tools") < instructions.index("The user_id is user-1")
+    assert instructions.index("## Copepod Plan Mode") < instructions.index("The session_id is session-1")
 
 
 def test_copepod_profile_uses_copepod_instruction_blocks():
