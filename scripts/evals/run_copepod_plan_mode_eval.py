@@ -400,18 +400,16 @@ def _run_llm_turn(
     for round_index in range(max_tool_rounds):
         for attempt in range(2):
             try:
-                _use_reasoning = settings.LLM_REASONING_EFFORT is not None
                 completion_kwargs = {
                     "model": model,
                     "messages": messages,
                     "tools": _tool_specs(),
                     "tool_choice": "auto",
+                    "temperature": float(os.getenv("LLM_TEMPERATURE", settings.LLM_TEMPERATURE)),
                     "metadata": {**metadata, "round": round_index + 1},
                 }
-                if _use_reasoning:
+                if settings.LLM_REASONING_EFFORT is not None:
                     completion_kwargs["reasoning_effort"] = settings.LLM_REASONING_EFFORT
-                else:
-                    completion_kwargs["temperature"] = float(os.getenv("LLM_TEMPERATURE", settings.LLM_TEMPERATURE))
                 response = completion_fn(
                     **completion_kwargs,
                 )
