@@ -38,6 +38,7 @@ class CopepodProfile(AssistantProfile):
         "copepod_data",
         "copepod_columns",
         "copepod_sources_meta",
+        "copepod_remote_sources",
         "copepod_rag",
         "copepod_artifacts",
         "copepod_taxonomy",

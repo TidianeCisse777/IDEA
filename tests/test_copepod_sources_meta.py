@@ -139,6 +139,67 @@ class TestDescribeSource:
         assert r["id"] == "ecotaxa_1165"
 
 
+# ── plan_remote_source_request ────────────────────────────────────────────────
+
+class TestPlanRemoteSourceRequest:
+    def test_detects_bio_oracle_from_message_and_extracts_scenario_and_variable(self, tools):
+        r = tools["plan_remote_source_request"](
+            "Va me chercher Bio-ORACLE pour le scénario SSP126 de 2020 à 2050 sur la variable si_mean."
+        )
+
+        assert r["source_id"] == "bio_oracle"
+        assert r["intent"] == "fetch"
+        assert r["parameters"]["scenario"] == "SSP126"
+        assert r["parameters"]["variable"] == "si_mean"
+        assert r["parameters"]["period"]["start"] == 2020
+        assert r["parameters"]["period"]["end"] == 2050
+        assert r["recommended_next_step"] == "ask_clarification"
+        assert "zone" in r["missing_fields"]
+
+    def test_detects_ogsl_from_message_and_extracts_period_and_station(self, tools):
+        r = tools["plan_remote_source_request"](
+            "Va me chercher OGSL pour la station 12 entre 2024-01-01 et 2024-03-31 avec TE90 et PSAL."
+        )
+
+        assert r["source_id"] == "ogsl"
+        assert r["intent"] == "fetch"
+        assert r["parameters"]["station"] == "12"
+        assert r["parameters"]["period"]["start"] == "2024-01-01"
+        assert r["parameters"]["period"]["end"] == "2024-03-31"
+        assert "TE90" in r["parameters"]["variables"]
+        assert "PSAL" in r["parameters"]["variables"]
+        assert r["recommended_next_step"] == "ask_clarification"
+        assert "zone_or_station_or_mission" not in r["missing_fields"]
+
+    def test_detects_ogsl_mission_from_message(self, tools):
+        r = tools["plan_remote_source_request"](
+            "Va me chercher OGSL pour la mission 2024_06 BioDiv de 2024-05-02 à 2024-05-05 avec TE90 et PSAL."
+        )
+
+        assert r["source_id"] == "ogsl"
+        assert r["parameters"]["cruise_id"] == "2024_06 BioDiv"
+        assert r["recommended_next_step"] == "ask_clarification"
+
+    def test_hint_overrides_ambiguous_text(self, tools):
+        r = tools["plan_remote_source_request"](
+            "extrais la variable sur cette zone",
+            source_hint="bio_oracle",
+        )
+
+        assert r["source_id"] == "bio_oracle"
+        assert r["intent"] == "fetch"
+        assert r["recommended_next_step"] == "ask_clarification"
+        assert "variable" in r["missing_fields"]
+        assert "scenario" in r["missing_fields"]
+
+    def test_unknown_request_returns_unknown_source(self, tools):
+        r = tools["plan_remote_source_request"]("fais quelque chose avec des données")
+
+        assert r["source_id"] == "unknown"
+        assert r["recommended_next_step"] == "ask_clarification"
+        assert "source" in r["missing_fields"]
+
+
 # ── tool registry integration ──────────────────────────────────────────────────
 
 class TestToolRegistration:
@@ -148,6 +209,7 @@ class TestToolRegistration:
         code = registry.render({"copepod_sources_meta"})
         assert "list_available_sources" in code
         assert "describe_source" in code
+        assert "plan_remote_source_request" in code
 
     def test_rendered_code_is_executable(self):
         from core.tool_registry import registry
@@ -157,6 +219,7 @@ class TestToolRegistration:
         exec(code, ns)
         assert "list_available_sources" in ns
         assert "describe_source" in ns
+        assert "plan_remote_source_request" in ns
 
     def test_functions_have_docstrings(self):
         from core.tool_registry import registry
@@ -166,3 +229,4 @@ class TestToolRegistration:
         exec(code, ns)
         assert ns["list_available_sources"].__doc__ is not None
         assert ns["describe_source"].__doc__ is not None
+        assert ns["plan_remote_source_request"].__doc__ is not None

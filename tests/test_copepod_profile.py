@@ -65,6 +65,7 @@ def test_copepod_profile_uses_safe_runtime_and_copepod_instruction_blocks():
         "copepod_data",
         "copepod_columns",
         "copepod_sources_meta",
+        "copepod_remote_sources",
         "copepod_rag",
         "copepod_artifacts",
         "copepod_taxonomy",
@@ -92,6 +93,8 @@ def test_copepod_custom_instructions_use_copepod_blocks_without_sea_level_leakag
 
     assert "## Copepod Plan Mode" in instructions
     assert "## Copepod Runtime Tools" in instructions
+    assert "plan_remote_source_request" in instructions
+    assert "fetch_remote_source_preview" in instructions
     assert "get_station_info" not in instructions
     assert "get_climate_index" not in instructions
     assert "UHSLC" not in instructions

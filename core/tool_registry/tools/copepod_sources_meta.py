@@ -244,6 +244,253 @@ def describe_source(source_id, session_id=None):
     result = dict(SOURCES[source_id])
     result["found"] = True
     return result
+
+
+def plan_remote_source_request(message, source_hint=None, session_id=None):
+    """Plan a remote OGSL/Bio-ORACLE request from a natural-language message.
+
+    This helper does not fetch data. It turns the user request into a
+    structured plan that can be used by the runtime to ask for missing
+    parameters, route the request to the right source, and later call the
+    corresponding MCP connector.
+
+    Use this when:
+    - the user asks to fetch OGSL or Bio-ORACLE data in natural language;
+    - you need to decide whether the request can proceed or needs clarification;
+    - you want a structured payload for a future MCP request.
+
+    Args:
+        message (str): User request in natural language.
+        source_hint (str, optional): Explicit source hint such as "ogsl" or
+            "bio_oracle". When provided, it wins over message heuristics.
+        session_id (str, optional): Session ID for Langfuse tracing.
+
+    Returns:
+        dict:
+            source_id                — resolved source family or "unknown"
+            source_label              — resolved human-readable label
+            intent                    — "fetch" | "couple" | "describe" | "unknown"
+            parameters                — parsed parameters for the remote source
+            missing_fields            — list of missing parameters
+            recommended_next_step     — "proceed" | "ask_clarification"
+            clarification_question    — short question to ask the user next
+            found                     — True if the source family is recognized
+    """
+
+    def _clean_text(value):
+        return " ".join(str(value or "").replace("\\n", " ").split()).strip()
+
+    def _source_from_hint_or_message(text, hint):
+        hint_text = _clean_text(hint).lower().replace("-", "_")
+        if hint_text in {"ogsl", "bio_oracle"}:
+            return hint_text
+        lowered = text.lower()
+        if "bio-oracle" in lowered or "bio oracle" in lowered:
+            return "bio_oracle"
+        if "ogsl" in lowered or "saint-laurent" in lowered or "saint laurent" in lowered or "golfe du saint-laurent" in lowered or "golfe du saint laurent" in lowered:
+            return "ogsl"
+        return "unknown"
+
+    def _extract_period(text, source_id):
+        import re
+
+        date_matches = re.findall(r"\\b(?:19|20)\\d{2}-\\d{2}-\\d{2}\\b", text)
+        year_matches = [int(y) for y in re.findall(r"\\b(?:19|20)\\d{2}\\b", text)]
+
+        if source_id == "ogsl":
+            if len(date_matches) >= 2:
+                return {"start": date_matches[0], "end": date_matches[1], "granularity": "date"}
+            if len(year_matches) >= 2:
+                return {"start": str(year_matches[0]), "end": str(year_matches[1]), "granularity": "year"}
+        if source_id == "bio_oracle":
+            if len(year_matches) >= 2:
+                return {"start": year_matches[0], "end": year_matches[1], "granularity": "year"}
+            if len(date_matches) >= 2:
+                return {"start": date_matches[0], "end": date_matches[1], "granularity": "date"}
+        return {"start": None, "end": None, "granularity": None}
+
+    def _extract_station(text):
+        import re
+
+        match = re.search(r"\\bstation\\s+([A-Za-z0-9_-]+)", text, flags=re.IGNORECASE)
+        return match.group(1) if match else None
+
+    def _extract_cruise_id(text):
+        import re
+
+        patterns = [
+            r"\\b(?:mission|cruise|campagne|expedition|expédition)\\s+([A-Za-z0-9_./ -]{3,})",
+            r"\\bcruiseID\\s*[:=]\\s*([A-Za-z0-9_./ -]{3,})",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                candidate = match.group(1).strip()
+                candidate = re.split(r"\\b(?:avec|sur|pour|entre|de|du|des|et|à|a)\\b", candidate, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+                if candidate:
+                    return candidate
+        return None
+
+    def _extract_zone(text):
+        import re
+
+        match = re.search(r"\\bzone\\s+([A-Za-z0-9À-ÿ _-]+)", text, flags=re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip()
+            candidate = re.split(r"\\b(?:avec|sur|pour|entre|de|du|des|et|à|a)\\b", candidate, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+            return candidate or None
+        return None
+
+    def _extract_scenario(text):
+        import re
+
+        lowered = text.lower()
+        match = re.search(r"\\bssp\\s?(\\d{3})\\b", lowered, flags=re.IGNORECASE)
+        if match:
+            return f"SSP{match.group(1)}"
+        if "historical" in lowered or "historique" in lowered:
+            return "historical"
+        return None
+
+    def _extract_variables(text, source_id):
+        import re
+
+        lowered = text.lower()
+        bio_vars = {
+            "si_mean": "si_mean",
+            "si": "si",
+            "sst": "sst",
+            "temperature": "temperature",
+            "salinity": "salinity",
+            "chlorophyll": "chlorophyll",
+            "chl": "chl",
+            "oxygen": "oxygen",
+            "nitrate": "nitrate",
+            "ph": "ph",
+        }
+        ogsl_vars = {
+            "pres": "PRES",
+            "te90": "TE90",
+            "psal": "PSAL",
+            "oxym": "OXYM",
+            "flor": "FLOR",
+            "doxy": "DOXY",
+            "temp": "TEMP",
+            "salinity": "salinity",
+            "temperature": "temperature",
+            "oxygen": "oxygen",
+            "turb": "TURB",
+        }
+        candidates = bio_vars if source_id == "bio_oracle" else ogsl_vars
+        found = []
+        for var, canonical in candidates.items():
+            pattern = rf"\\b{re.escape(var)}\\b"
+            if re.search(pattern, lowered, flags=re.IGNORECASE):
+                found.append(canonical)
+        unique = []
+        for item in found:
+            if item not in unique:
+                unique.append(item)
+        return unique
+
+    def _clarification_question(source_id, missing_fields):
+        if source_id == "bio_oracle":
+            if "variable" in missing_fields:
+                return "Quelle variable Bio-ORACLE voulez-vous extraire ?"
+            if "scenario" in missing_fields:
+                return "Quel scénario Bio-ORACLE faut-il utiliser ?"
+            if "zone" in missing_fields:
+                return "Quelle zone ou quelles coordonnées faut-il cibler ?"
+            if "period" in missing_fields:
+                return "Quelle période faut-il couvrir ?"
+            if "output_format" in missing_fields:
+                return "Quel format de sortie voulez-vous ?"
+            return "Pouvez-vous préciser le contexte Bio-ORACLE ?"
+        if source_id == "ogsl":
+            if "period" in missing_fields:
+                return "Quelle période OGSL faut-il couvrir ?"
+            if "variables" in missing_fields:
+                return "Quelles variables OGSL voulez-vous extraire ?"
+            if "zone_or_station_or_mission" in missing_fields:
+                return "Quelle station, mission ou zone OGSL faut-il cibler ?"
+            if "output_format" in missing_fields:
+                return "Quel format de sortie voulez-vous ?"
+            return "Pouvez-vous préciser le contexte OGSL ?"
+        if "source" in missing_fields:
+            return "Quelle source voulez-vous utiliser: OGSL ou Bio-ORACLE ?"
+        return "Pouvez-vous préciser le contexte attendu ?"
+
+    text = _clean_text(message)
+    source_id = _source_from_hint_or_message(text, source_hint)
+    source_meta = describe_source(source_id) if source_id != "unknown" else {
+        "id": "unknown",
+        "label": "Unknown",
+        "content_summary": "",
+        "join_keys": [],
+        "known_limitations": [],
+        "requires_credentials": False,
+        "found": False,
+    }
+
+    parameters = {
+        "period": _extract_period(text, source_id),
+        "station": _extract_station(text) if source_id == "ogsl" else None,
+        "cruise_id": _extract_cruise_id(text) if source_id == "ogsl" else None,
+        "zone": _extract_zone(text),
+        "scenario": _extract_scenario(text) if source_id == "bio_oracle" else None,
+        "variables": _extract_variables(text, source_id) if source_id in {"ogsl", "bio_oracle"} else [],
+        "variable": None,
+        "raw_message": text,
+    }
+    if source_id == "bio_oracle" and parameters["variables"]:
+        parameters["variable"] = parameters["variables"][0]
+
+    if source_id == "bio_oracle":
+        intent = "fetch"
+        missing_fields = []
+        if not parameters["scenario"]:
+            missing_fields.append("scenario")
+        if not parameters["variables"]:
+            missing_fields.append("variable")
+        if not parameters["period"]["start"] or not parameters["period"]["end"]:
+            missing_fields.append("period")
+        if not parameters["zone"]:
+            missing_fields.append("zone")
+        if not parameters["zone"]:
+            missing_fields.append("output_format")
+    elif source_id == "ogsl":
+        intent = "fetch"
+        missing_fields = []
+        if not parameters["period"]["start"] or not parameters["period"]["end"]:
+            missing_fields.append("period")
+        if not parameters["variables"]:
+            missing_fields.append("variables")
+        if not (parameters["station"] or parameters["zone"]):
+            missing_fields.append("zone_or_station_or_mission")
+        if not parameters["zone"]:
+            missing_fields.append("output_format")
+    else:
+        intent = "unknown"
+        missing_fields = ["source"]
+
+    # de-duplicate while preserving order
+    deduped_missing = []
+    for field in missing_fields:
+        if field not in deduped_missing:
+            deduped_missing.append(field)
+
+    recommended_next_step = "proceed" if not deduped_missing else "ask_clarification"
+
+    return {
+        "source_id": source_id,
+        "source_label": source_meta.get("label", "Unknown"),
+        "intent": intent,
+        "parameters": parameters,
+        "missing_fields": deduped_missing,
+        "recommended_next_step": recommended_next_step,
+        "clarification_question": _clarification_question(source_id, deduped_missing),
+        "found": bool(source_meta.get("found", source_id != "unknown")),
+    }
 '''
 
 registry.register(Tool(
