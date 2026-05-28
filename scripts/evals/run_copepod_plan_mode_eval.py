@@ -23,13 +23,16 @@ except Exception:
 
 # --- public re-exports (tests and external scripts import from here) ---
 from scripts.evals.copepod.eval_du import run_live_du_only_eval  # noqa: F401
+from scripts.evals.copepod.eval_du_multi import run_live_du_multi_eval  # noqa: F401
 from scripts.evals.copepod.eval_gc import run_live_gc_only_eval  # noqa: F401
 from scripts.evals.copepod.eval_live import run_live_eval  # noqa: F401
 from scripts.evals.copepod.eval_mock import run_mock_eval  # noqa: F401
 from scripts.evals.copepod.eval_smoke import run_langfuse_trace_smoke  # noqa: F401
 from scripts.evals.copepod.fixtures import (  # noqa: F401
+    AMUNDSEN_CTD,
     ECOTAXA,
     ECOPART,
+    NEOLABS_TAXON,
     _data_understanding_artifact,
     _upload_fixture,
     _uploaded_path,
@@ -88,6 +91,7 @@ def main() -> int:
     parser.add_argument("--mock", action="store_true", help="Run deterministic no-LLM evals.")
     parser.add_argument("--live-gc-only", action="store_true", help="Run live LLM evals through Graph Context only.")
     parser.add_argument("--live-du-only", action="store_true", help="Run live LLM evals through Data Understanding only.")
+    parser.add_argument("--live-du-multi", action="store_true", help="Run live LLM evals for multi-file Data Understanding.")
     parser.add_argument("--live", action="store_true", help="Run live LLM-driven evals.")
     parser.add_argument("--trace-smoke", action="store_true", help="Send one prompt and verify Langfuse trace/level/score.")
     parser.add_argument(
@@ -100,6 +104,11 @@ def main() -> int:
         "--gc-scenarios",
         default="",
         help="Comma-separated GC-only scenario slugs to run (rich,poor,offtopic,analysis-jump).",
+    )
+    parser.add_argument(
+        "--du-scenarios",
+        default="",
+        help="Comma-separated DU-multi scenario slugs to run (ecotaxa_ecopart,ecotaxa_amundsen,ecotaxa_neolabs).",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON report.")
     args = parser.parse_args()
@@ -114,6 +123,12 @@ def main() -> int:
         )
     elif args.live_du_only:
         report = run_live_du_only_eval(push_langfuse=args.push_langfuse)
+    elif args.live_du_multi:
+        scenario_slugs = [slug.strip() for slug in args.du_scenarios.split(",") if slug.strip()]
+        report = run_live_du_multi_eval(
+            push_langfuse=args.push_langfuse,
+            scenario_slugs=scenario_slugs or None,
+        )
     elif args.live:
         report = run_live_eval(push_langfuse=args.push_langfuse)
     else:

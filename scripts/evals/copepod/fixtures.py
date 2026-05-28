@@ -15,6 +15,8 @@ FIXTURES = Path(
 )
 ECOTAXA = FIXTURES / "ecotaxa_green_edge_sample_200.tsv"
 ECOPART = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"
+AMUNDSEN_CTD = FIXTURES / "amundsen_12713_ctd_2018_sample.tsv"
+NEOLABS_TAXON = FIXTURES / "neolabs_taxon_zooplankton_abundances.csv"
 
 
 def _stage_fixture(session_id: str, path: Path) -> dict:
