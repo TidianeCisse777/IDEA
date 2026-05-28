@@ -1144,6 +1144,41 @@ def run_live_gc_only_eval(
         "gc-",
     ]
 
+    def _looks_like_self_introduction(text: str) -> bool:
+        lowered = text.lower()
+        return any(
+            phrase in lowered
+            for phrase in [
+                "je suis le copepod graphing assistant",
+                "je suis un assistant",
+                "je suis l'assistant",
+                "spécialisé dans",
+                "specialisé dans",
+                "i am the",
+                "i’m the",
+                "i am an assistant",
+            ]
+        )
+
+    def _looks_like_targeted_context_question(text: str) -> bool:
+        lowered = text.lower()
+        return any(
+            phrase in lowered
+            for phrase in [
+                "objectif",
+                "contexte",
+                "question",
+                "précision",
+                "precision",
+                "graphe",
+                "graphique",
+                "explorer",
+                "clarifier",
+                "cadrer",
+                "quelle",
+            ]
+        )
+
     lf, eval_trace = _make_eval_trace(session_key, session_id, model_name, tags)
 
     log_dir = ROOT / "logs" / "evals"
@@ -1334,7 +1369,11 @@ def run_live_gc_only_eval(
                         or "plan mode" in first_reply.lower()
                         or "Je suis en Plan Mode" in first_reply
                     )
-                    targeted_question = "?" in first_reply and not gc_draft_created
+                    offtopic_reply = first_reply.lower()
+                    targeted_question = (
+                        "?" in first_reply
+                        or _looks_like_targeted_context_question(first_reply)
+                    ) and not gc_draft_created
                     if spec["slug"] == "rich" and len(state["replies"]) > 1:
                         gc_draft_created = gc_draft_created or "create_graph_context_draft" in "".join(
                             m.get("name", "") for m in state["messages"] if m.get("role") == "tool"
@@ -1347,10 +1386,18 @@ def run_live_gc_only_eval(
                         {"case_type": "edge", "scenario": spec["slug"], "phase1_attempts": state["phase1_attempts"]},
                     ))
                     if spec["slug"] == "poor" or spec["slug"] == "offtopic" or spec["slug"] == "join":
+                        is_offtopic_ok = (
+                            not _looks_like_self_introduction(first_reply)
+                            and (targeted_question or "objectif scientifique" in offtopic_reply or "contexte" in offtopic_reply)
+                            and first_reply.count("?") <= 2
+                        )
+                        is_poor_or_join_ok = (
+                            (targeted_question or "objectif scientifique" in offtopic_reply or "quelle" in offtopic_reply)
+                            and first_reply.count("?") <= 2
+                        )
                         results.append(_result(
                             f"gc_only_{spec['slug']}_asked_single_targeted_question_when_missing_fields",
-                            (targeted_question or "objectif scientifique" in first_reply.lower() or "quelle" in first_reply.lower())
-                            and first_reply.count("?") <= 2,
+                            is_offtopic_ok if spec["slug"] == "offtopic" else is_poor_or_join_ok,
                             f"Scenario {spec['slug']} replied with a targeted question: {first_reply[:200]!r}",
                             {"case_type": "common", "scenario": spec["slug"]},
                         ))

@@ -75,7 +75,8 @@ Le user parle autour du sujet, mais ne fournit pas assez d'information pour fige
 Attendus:
 
 - le modèle recentre la discussion;
-- il demande le contexte manquant;
+- il demande le contexte manquant avec une question courte et ciblée;
+- il ne se présente pas à nouveau;
 - il ne retourne pas en DU;
 - il ne saute pas en Analyse.
 
@@ -202,4 +203,3 @@ Le runner devra suivre la même architecture que les autres evals:
 - un mode dédié `--live-gc-only`.
 
 Le runner devra partir d'un DU actif injecté dans la session avant le premier message utilisateur du GC-only.
-
