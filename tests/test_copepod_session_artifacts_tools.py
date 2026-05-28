@@ -1,6 +1,7 @@
 import pytest
 
 from unittest.mock import patch
+from pathlib import Path
 
 from core.session_store import InMemorySessionStore
 
@@ -84,6 +85,91 @@ def test_data_understanding_draft_advances_to_confirmation_phase():
         store.get_copepod_plan_phase(session_key)
         == "data_understanding_confirmation_required"
     )
+
+
+def test_data_understanding_draft_normalizes_missing_summary_fields():
+    store = InMemorySessionStore()
+    tools = _load_tools()
+    session_key = "u1:s1:copepod"
+
+    with patch("core.session_store.session_store", store):
+        draft = tools["create_data_understanding_draft"](
+            session_key,
+            {
+                "files": [
+                    {
+                        "file_path": "static/u1/s1/uploads/a.csv",
+                        "original_filename": "a.csv",
+                        "columns": [
+                            {"name": "depth", "semantic_guess": "depth", "confidence": "high", "unit_guess": "m"},
+                            {"name": "taxon", "semantic_guess": "taxon", "confidence": "medium"},
+                        ],
+                        "roles": [
+                            {"column": "depth", "role": "depth", "confidence": "high"},
+                        ],
+                    }
+                ]
+            },
+        )
+
+    payload = draft["payload"]
+    assert payload["column_catalogue"]
+    assert payload["coverage_assessment"]["status"] in {"sufficient", "partial"}
+    assert any(entry["column"] == "depth" for entry in payload["column_catalogue"])
+
+
+def test_data_understanding_draft_rebuilds_from_file_path_when_summary_missing():
+    store = InMemorySessionStore()
+    tools = _load_tools()
+    session_key = "u1:s1:copepod"
+    fixture = "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv/ecotaxa_green_edge_sample_200.tsv"
+
+    with patch("core.session_store.session_store", store):
+        draft = tools["create_data_understanding_draft"](
+            session_key,
+            {
+                "files": [
+                    {
+                        "file_path": fixture,
+                        "original_filename": "ecotaxa_green_edge_sample_200.tsv",
+                    }
+                ]
+            },
+        )
+
+    payload = draft["payload"]
+    assert payload["column_catalogue"]
+    assert payload["coverage_assessment"]["status"] == "sufficient"
+    assert any(entry["column"] == "object_depth_min" for entry in payload["column_catalogue"])
+
+
+def test_data_understanding_draft_rebuilds_from_session_upload_filename():
+    store = InMemorySessionStore()
+    tools = _load_tools()
+    session_key = "u1:s1:copepod"
+    fixture_name = "ecotaxa_green_edge_sample_200.tsv"
+    fixture_path = "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv/ecotaxa_green_edge_sample_200.tsv"
+
+    upload_dir = Path("static") / "u1" / "s1" / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    (upload_dir / fixture_name).write_bytes(Path(fixture_path).read_bytes())
+
+    with patch("core.session_store.session_store", store):
+        draft = tools["create_data_understanding_draft"](
+            session_key,
+            {
+                "files": [
+                    {
+                        "original_filename": fixture_name,
+                    }
+                ]
+            },
+        )
+
+    payload = draft["payload"]
+    assert payload["column_catalogue"]
+    assert payload["coverage_assessment"]["status"] == "sufficient"
+    assert any(entry["column"] == "object_depth_min" for entry in payload["column_catalogue"])
 
 
 def test_data_understanding_activation_blocks_until_confirmation_phase():

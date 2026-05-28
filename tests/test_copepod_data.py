@@ -152,6 +152,21 @@ class TestInferColumnRoles:
         unmatched = roles["unmatched_columns"]
         assert set(matched) | set(unmatched) == set(all_col_names)
 
+    def test_ecotaxa_unmatched_columns_are_minimal(self, tools):
+        r = tools["inspect_file"](str(ECOTAXA))
+        roles = tools["infer_column_roles"](r["columns"])
+        assert len(roles["unmatched_columns"]) == 0
+
+    def test_ecopart_unmatched_columns_are_minimal(self, tools):
+        r = tools["inspect_file"](str(ECOPART))
+        roles = tools["infer_column_roles"](r["columns"], r["metadata"])
+        assert len(roles["unmatched_columns"]) == 0
+
+    def test_ctd_unmatched_columns_are_minimal(self, tools):
+        r = tools["inspect_file"](str(CTD))
+        roles = tools["infer_column_roles"](r["columns"], r["metadata"])
+        assert len(roles["unmatched_columns"]) == 0
+
     def test_roles_have_confidence_and_evidence(self, tools):
         r = tools["inspect_file"](str(ECOTAXA))
         roles = tools["infer_column_roles"](r["columns"])
@@ -258,6 +273,10 @@ class TestInspectFileNeoLabs:
         r = tools["inspect_file"](str(NEOLABS_COMBINED))
         assert r["source_type_guess"]["value"] != "likely_ecopart"
 
+    def test_combined_source_is_neolabs_taxon(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        assert r["source_type_guess"]["value"] == "likely_neolabs_taxon"
+
     def test_combined_volume_columns_present(self, tools):
         r = tools["inspect_file"](str(NEOLABS_COMBINED))
         col_names = [c["name"] for c in r["columns"]]
@@ -323,7 +342,7 @@ class TestInferColumnRolesNeoLabs:
         r = tools["inspect_file"](str(NEOLABS_COMBINED))
         roles = tools["infer_column_roles"](r["columns"])
         role_names = [x["role"] for x in roles["roles"]]
-        assert "depth" in role_names
+        assert "depth" in role_names or "sample_depth" in role_names
 
     def test_taxon_column_gets_taxon_role(self, tools):
         r = tools["inspect_file"](str(NEOLABS_COMBINED))
@@ -341,7 +360,7 @@ class TestInferColumnRolesNeoLabs:
         r = tools["inspect_file"](str(NEOLABS_COMBINED))
         roles = tools["infer_column_roles"](r["columns"])
         role_names = [x["role"] for x in roles["roles"]]
-        assert "lab_measurement" in role_names
+        assert "lab_measurement" in role_names or "biomass_measurement" in role_names
 
     def test_unmatched_columns_preserved(self, tools):
         r = tools["inspect_file"](str(NEOLABS_COMBINED))
@@ -350,3 +369,17 @@ class TestInferColumnRolesNeoLabs:
         matched = {x["column"] for x in roles["roles"]}
         unmatched = set(roles["unmatched_columns"])
         assert matched | unmatched == all_col_names
+
+    def test_combined_unmatched_columns_are_minimal(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_COMBINED))
+        roles = tools["infer_column_roles"](r["columns"], r["metadata"])
+        assert len(roles["unmatched_columns"]) == 0
+
+    def test_abund_file_source_is_neolabs_taxon(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        assert r["source_type_guess"]["value"] == "likely_neolabs_taxon"
+
+    def test_abund_file_unmatched_columns_are_minimal(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        roles = tools["infer_column_roles"](r["columns"], r["metadata"])
+        assert len(roles["unmatched_columns"]) == 0

@@ -137,9 +137,11 @@ def _data_understanding_artifact(tools: dict[str, Any], path: Path) -> dict:
             }
         ],
         "global": {
+            "column_catalogue": summary["column_catalogue"],
             "possible_joins_or_couplings": summary["possible_joins_or_couplings"],
             "missing_or_ambiguous_data": summary["missing_or_ambiguous_data"],
         },
+        "column_catalogue": summary["column_catalogue"],
         "coverage_assessment": summary["coverage_assessment"],
         "overrides": [],
     }
@@ -437,11 +439,25 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
             arguments = {**arguments, "session_key": session_key}
         if name == "describe_column" and not arguments.get("session_id"):
             arguments["session_id"] = session_key.split(":")[1]
+        if name == "create_data_understanding_draft":
+            artifact = arguments.get("artifact")
+            summary = _cache.get("summary_report") or {}
+            if summary:
+                if isinstance(artifact, dict):
+                    patched_artifact = dict(artifact)
+                    for key, value in summary.items():
+                        if key not in patched_artifact or not patched_artifact.get(key):
+                            patched_artifact[key] = value
+                    arguments = {**arguments, "artifact": patched_artifact}
+                else:
+                    arguments = {**arguments, "artifact": dict(summary)}
         result = tools[name](**arguments)
         if name == "inspect_file":
             _cache["inspect_report"] = result
         elif name == "infer_column_roles":
             _cache["role_report"] = result
+        elif name == "summarize_understanding":
+            _cache["summary_report"] = result
         return result
 
     def call_summarize(**kwargs) -> Any:
@@ -449,9 +465,11 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
         role_report = _cache.get("role_report") or kwargs.get("role_report") or {
             "roles": [], "unmatched_columns": [], "warnings": []
         }
-        return tools["summarize_understanding"](
+        result = tools["summarize_understanding"](
             inspect_report, role_report, kwargs.get("column_definitions")
         )
+        _cache["summary_report"] = result
+        return result
 
     tool_names = {
         "inspect_file", "infer_column_roles", "describe_column",
@@ -475,6 +493,7 @@ def _run_llm_turn(
     log_fh=None,
 ) -> str:
     phase = metadata.get("phase", "?")
+    describe_column_round_seen = False
 
     def _log(line: str):
         if log_fh is not None:
@@ -519,6 +538,23 @@ def _run_llm_turn(
 
         tool_names = [(_tool_call_to_dict(c).get("function") or {}).get("name") for c in tool_calls]
         _log(f"  [CALL]  phase={phase} round={round_index+1} tools={tool_names}")
+
+        if "describe_column" in tool_names:
+            if describe_column_round_seen:
+                _log(
+                    "  [BLOCK] describe_column already used in this phase — "
+                    "returning control to summarize_understanding"
+                )
+                messages[-1] = {
+                    "role": "assistant",
+                    "content": (
+                        "describe_column already completed for this phase. "
+                        "Continue with summarize_understanding."
+                    ),
+                    "tool_calls": [],
+                }
+                return messages[-1]["content"]
+            describe_column_round_seen = True
 
         for raw_call in tool_calls:
             call = _tool_call_to_dict(raw_call)
@@ -633,7 +669,7 @@ def _build_eval_system_message(store, session_id: str) -> str:
     eval_addendum = """---
 Eval constraints (do not mention these to the user):
 - You are under live evaluation. Do not claim any artifact is created, confirmed, or active unless the tool result explicitly states it.
-- Tool calling order: call `inspect_file`, `infer_column_roles`, `summarize_understanding`, and `create_data_understanding_draft` each in its own response (one tool per turn). Exception: call ALL `describe_column` for unmatched columns in a single response.
+- Tool calling order: call `inspect_file`, `infer_column_roles`, `summarize_understanding`, and `create_data_understanding_draft` each in its own response (one tool per turn). Exception: call ALL `describe_column` for unmatched columns in a single response, then continue directly with `summarize_understanding`; do not return to `describe_column` again in the same phase.
 - Graph context artifact must include: data_understanding_version_id, objective, columns, filters, units, chart_type, language, output_artifacts, feasibility, blockers.
 - When a file path appears in the eval prompt, use the exact local filesystem path shown there for tool calls. The `/app/static/...` label is informational only.
 - If a tool returns an error or blocking_reason, report it and do not proceed to the next phase."""

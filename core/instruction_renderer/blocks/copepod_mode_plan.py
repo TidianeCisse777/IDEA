@@ -54,11 +54,11 @@ Call tools in this exact order. Call each tool alone in its own response — one
 
 a. Call `inspect_file(file_path)` alone. Wait for result.
 b. Call `infer_column_roles(columns)` with the column list from step a. Wait for result.
-c. Call `describe_column(column_name)` for unmatched columns that are **relevant to the stated objective or genuinely ambiguous** — all in ONE response (multiple parallel tool calls). Wait for all results.
+c. Call `describe_column(column_name)` for unmatched columns that are **relevant to the stated objective or genuinely ambiguous** — all in ONE response (multiple parallel tool calls). Do not come back to `describe_column` again in the same phase; once the batch is sent, continue with `summarize_understanding`. Wait for all results.
 
    Filter rule: skip `describe_column` for columns where `inspect_file` already returned a clear `semantic_guess` (e.g. `depth`, `taxon`, `latitude`, `time`, `image_id`, `size_or_morphometry`) AND the name matches a well-known EcoTaxa/EcoPart pattern (e.g. `object_area`, `object_feret`, `object_major`, `object_compentropy`, `object_symetrie*`, `object_hist*`, `acq_*`, `process_*`). Only call `describe_column` for columns where the meaning is truly unclear given the objective. If all unmatched columns are covered by this filter, skip step c entirely.
 d. Call `summarize_understanding(inspect_report, role_report, column_definitions)` alone, passing: `inspect_report` = step a output, `role_report` = step b output, `column_definitions` = ALL step c results combined. Wait for result.
-e. Call `create_data_understanding_draft(session_key, artifact)` alone with `artifact` = the **complete JSON output** of `summarize_understanding`, passed as-is without restructuring. Wait for result.
+e. Call `create_data_understanding_draft(session_key, artifact)` alone with `artifact` = the **complete JSON output** of `summarize_understanding`, passed as-is without restructuring or dropping `column_catalogue` / `coverage_assessment`. Wait for result.
 f. Present the file analysis summary using the format below. Stop. Do not proceed to Phase 2 in the same message.
 
 When presenting the summary, use the `summarize_understanding` output directly — do not rewrite from memory:

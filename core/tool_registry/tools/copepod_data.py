@@ -244,7 +244,8 @@ def _guess_source_type(column_names, metadata):
     names_lower = [c.lower() for c in column_names]
     evidence = []
     scores = {"likely_ecotaxa": 0, "likely_ecopart": 0,
-              "likely_amundsen_ctd": 0, "likely_lab_data": 0}
+              "likely_amundsen_ctd": 0, "likely_lab_data": 0,
+              "likely_neolabs_taxon": 0}
 
     ecotaxa_signals = ["classif_id", "classif_qual", "object_id", "obj_depth",
                        "acq_", "process_", "img_file", "object_lat", "object_lon"]
@@ -254,6 +255,17 @@ def _guess_source_type(column_names, metadata):
                    "latitude", "longitude", "station"]
     lab_signals = ["lipid", "carbon", "biomass", "drymass", "wax_ester",
                    "fatty_acid", "tl_", "dw_"]
+    neolabs_taxon_signals = [
+        "sample_id", "analysis_id", "analysis_contract", "zooplankton_category",
+        "taxon_life_development_stage", "taxon_size_category",
+        "depth_calc_net_filtered_vol", "depth_calc_vol", "flowmeter_calc_vol",
+        "c1_abund", "c2_abund", "c3_abund", "c4_abund", "c5_abund",
+        "m_abund", "f_abund", "cop_ns_abund", "copepodid_abund",
+        "n1_abund", "n2_abund", "large fract", "small fract", "total abundance",
+        "c1_biomass", "c2_biomass", "c3_biomass", "c4_biomass", "c5_biomass",
+        "m_biomass", "f_biomass", "cop_ns_biomass", "copepodid_biomass",
+        "n1_biomass", "n2_biomass",
+    ]
 
     for sig in ecotaxa_signals:
         if any(sig in n for n in names_lower):
@@ -274,6 +286,11 @@ def _guess_source_type(column_names, metadata):
         if any(sig in n for n in names_lower):
             scores["likely_lab_data"] += 1
             evidence.append(f"column matching lab data pattern: {sig}")
+
+    for sig in neolabs_taxon_signals:
+        if any(sig in n for n in names_lower):
+            scores["likely_neolabs_taxon"] += 1
+            evidence.append(f"column matching NeoLabs taxonomy pattern: {sig}")
 
     best = max(scores, key=scores.get)
     top_score = scores[best]
@@ -301,26 +318,137 @@ def infer_column_roles(columns, metadata=None):
     """
     roles = []
     matched = set()
-
-    role_patterns = {
-        "lab_measurement":          ["lipid", "carbon", "biomass", "wax", "fatty", "drymass"],
-        "depth":                    ["depth", "profondeur"],
-        "latitude":                 ["lat", "latitude"],
-        "longitude":                ["lon", "longitude"],
-        "time":                     ["time", "date", "datetime", "timestamp"],
-        "taxon":                    ["classif_id", "classif_auto_id", "taxon", "taxonom", "species"],
-        "taxonomic_validation_status": ["classif_qual", "valid"],
-        "profile_id":               ["profile_id", "profileid", "profile"],
-        "station":                  ["station", "sta_"],
-        "sample_volume":            ["vol", "volume"],
-        "image_id":                 ["object_id", "obj_id", "img_file", "image"],
-        "pixel_calibration":        ["acq_pixel", "process_pixel"],
-        "size_or_morphometry":      ["area", "esd", "major", "minor", "perimeter", "feret", "width", "height"],
-        "environmental_variable":   ["te90", "psal", "oxym", "fluo", "temp", "sal", "oxygen"],
-    }
-
     columns_are_dicts = bool(columns) and isinstance(columns[0], dict)
     col_names = [c["name"] for c in columns] if columns_are_dicts else [str(c) for c in columns]
+    source_type = (metadata or {}).get("source_type_guess", {}).get("value")
+    if not source_type or source_type == "unknown":
+        source_type = _guess_source_type(col_names, metadata or {}).get("value", "unknown")
+
+    common_patterns = {
+        "sample_metadata":          ["sample_id", "analysis_id", "analysis_contract", "sampling_net_id"],
+        "campaign_context":         ["project", "cruise", "deployment", "gear", "tow_type", "mesh_size", "cast_number"],
+        "file_name":                ["filename", "rawfilename", "file_name"],
+        "platform":                 ["platform_name", "platform_id"],
+        "station":                  ["station", "sta_"],
+        "profile_id":               ["profile_id", "profileid", "profile"],
+        "depth":                    ["depth", "profondeur"],
+        "sample_depth":             ["sample_depth", "depth_min", "depth_max", "min_sample_depth", "max_sample_depth"],
+        "latitude":                 ["lat", "latitude"],
+        "longitude":                ["lon", "longitude"],
+        "time":                     ["time", "date", "datetime", "timestamp", "yyyy-mm-dd", "hh:mm", "utc"],
+        "cast_number":              ["cast_number", "cast"],
+        "taxon":                    ["classif_id", "classif_auto_id", "taxon", "taxonom", "species"],
+        "taxonomic_validation_status": ["classif_qual", "valid"],
+        "taxonomic_rank":           ["kingdom", "phylum", "class", "order", "family"],
+        "taxon_life_stage":         ["life_development_stage", "development_stage", "life_stage"],
+        "taxon_size_category":      ["size_category"],
+        "abundance_measurement":    ["abund", "abundance", "nbr of ind", "ind./m3", "ind./l", "total abundance"],
+        "biomass_measurement":      ["biomass", "µg c", "ug c", "mg c"],
+        "sample_volume":            ["sampled volume", "volume_analyzed", "volume analyzed", "depth_calc_net_filtered_vol", "depth_calc_vol", "flowmeter_calc_vol", "volume"],
+        "image_id":                 ["object_id", "obj_id", "objid", "img_file", "image"],
+        "pixel_calibration":        ["acq_pixel", "process_pixel"],
+        "size_or_morphometry":      ["area", "esd", "major", "minor", "perimeter", "feret", "width", "height"],
+        "environmental_variable":   ["te90", "psal", "oxym", "flor", "fluo", "temp", "sal", "oxygen", "cpar", "fcdom", "density anomaly", "potential temperature", "practical salinity", "conductivity", "par", "spar", "nitrate"],
+        "pressure":                 ["pres", "pressure"],
+        "fluorescence":             ["flor", "fluorescence"],
+        "nitrate":                  ["ntra", "nitrate"],
+        "conductivity":             ["conductivity"],
+        "par":                      ["par"],
+        "quality_flag":             ["qc flag", "quality_flag", "flag"],
+        "auxiliary_field":          ["extrames", "aux"],
+        "size_fraction_concentration": ["lpm", "# l-1"],
+        "size_fraction_biovolume":  ["biovolume", "mm3 l-1"],
+    }
+
+    ecotaxa_patterns = {
+        "taxon":                    ["object_class"],
+        "annotation_metadata":      [
+            "object_annotation", "annotation_person", "annotation_email",
+            "annotation_date", "annotation_time", "annotation_status",
+            "annotation_category", "annotation_hierarchy", "complement_info",
+            "object_link",
+        ],
+        "sample_metadata":          ["sample_"],
+        "acquisition_metadata":     ["acq_"],
+        "processing_metadata":      ["process_", "processid"],
+        "technical_metadata":       ["object_random_value", "object_sunpos"],
+        "image_geometry":           [
+            "object_bx", "object_by", "object_angle", "object_tag",
+            "object_range", "object_centroids", "object_cv", "object_sr",
+            "object_cdexc",
+        ],
+        "image_morphometry":        [
+            "object_mean", "object_stddev", "object_mode", "object_min", "object_max",
+            "object_x", "object_y", "object_xm", "object_ym", "object_perim",
+            "object_circ", "object_intden", "object_median", "object_skew",
+            "object_kurt", "object_xstart", "object_ystart", "object_fractal",
+            "object_slope", "object_histcum", "object_xmg", "object_ymg",
+            "object_nb", "object_comp", "object_symetrie", "object_convperim",
+            "object_fcons", "object_thickr",
+        ],
+    }
+
+    ecopart_patterns = {
+        "sample_volume":            ["sampled volume", "volume_analyzed", "volume", "vol", "sampled volume [l]"],
+        "depth":                    ["depth_min", "depth_max", "depth", "depth [m]"],
+        "taxon":                    ["taxon", "species", "classif"],
+        "profile_id":               ["profile_id", "profile"],
+        "station":                  ["station"],
+        "lab_measurement":          ["biovolume", "biomass"],
+        "campaign_context":         ["project", "rawfilename"],
+        "quality_flag":             ["qc flag"],
+        "auxiliary_field":          ["extrames"],
+        "environmental_variable":   ["chloro fluo", "conductivity", "cpar", "fcdom", "in situ density anomaly", "nitrate", "oxygen", "par", "potential density anomaly", "potential temperature", "practical salinity", "temperature"],
+    }
+
+    ctd_patterns = {
+        "campaign_context":         ["filename", "cruise_name", "cruise_number", "cast_number", "platform_name", "platform_id"],
+        "station":                  ["station"],
+        "latitude":                 ["latitude", "lat"],
+        "longitude":                ["longitude", "lon"],
+        "time":                     ["time", "date", "datetime", "timestamp"],
+        "environmental_variable":   ["te90", "psal", "oxym", "flor", "fluo", "temp", "sal", "oxygen", "sigt", "tur9", "ntra", "par"],
+        "pressure":                 ["pres"],
+    }
+
+    neolabs_taxon_patterns = {
+        "time":                     ["deployment_date_start", "deployment_time_start", "sample_time", "sampling_date", "date", "time"],
+        "sample_volume":            ["depth_calc_net_filtered_vol", "depth_calc_vol", "flowmeter_calc_vol"],
+        "sample_depth":             ["min_sample_depth", "max_sample_depth", "depth [m]", "sample_depth"],
+        "sample_metadata":          ["sample_id", "analysis_id", "analysis_contract", "sampling_net_id"],
+        "campaign_context":         ["station_name", "cast_number", "gear", "tow_type", "net_mesh_size"],
+        "taxon":                    ["taxon_id", "zooplankton_category"],
+        "taxonomic_rank":           ["kingdom", "phylum", "class", "order", "family"],
+        "taxon_life_stage":         ["taxon_life_development_stage"],
+        "taxon_size_category":      ["taxon_size_category"],
+        "abundance_measurement":    ["sample_abund", "abund (ind./m3", "abundance", "large fract", "small fract", "total abundance"],
+        "biomass_measurement":      ["biomass"],
+    }
+
+    lab_patterns = {
+        "lab_measurement":          ["lipid", "carbon", "biomass", "drymass", "wax_ester", "fatty_acid", "tl_", "dw_"],
+        "sample_volume":            ["volume", "vol"],
+        "taxon":                    ["taxon", "species", "classif"],
+        "taxonomic_rank":           ["kingdom", "phylum", "class", "order", "family"],
+        "time":                     ["time", "date", "datetime", "timestamp"],
+        "campaign_context":         ["project", "gear", "tow_type"],
+    }
+
+    source_specific_patterns = {
+        "likely_ecotaxa": ecotaxa_patterns,
+        "likely_ecopart": ecopart_patterns,
+        "likely_amundsen_ctd": ctd_patterns,
+        "likely_neolabs_taxon": neolabs_taxon_patterns,
+        "likely_lab_data": lab_patterns,
+    }
+
+    role_patterns = {}
+    for role, keywords in source_specific_patterns.get(source_type, {}).items():
+        role_patterns.setdefault(role, [])
+        role_patterns[role].extend(keywords)
+    for role, keywords in common_patterns.items():
+        role_patterns.setdefault(role, [])
+        role_patterns[role].extend(keywords)
 
     for col in col_names:
         col_lower = col.lower()
