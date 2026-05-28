@@ -1119,6 +1119,7 @@ def run_live_gc_only_eval(
     *,
     push_langfuse: bool = False,
     completion_fn: Callable[..., Any] | None = None,
+    scenario_slugs: list[str] | None = None,
 ) -> dict:
     """Run the live LLM through Graph Context only, starting from an already active DU."""
     store = InMemorySessionStore()
@@ -1337,6 +1338,15 @@ def run_live_gc_only_eval(
                     },
                 ]
 
+                if scenario_slugs:
+                    wanted = {slug.strip() for slug in scenario_slugs if slug.strip()}
+                    scenario_specs = [spec for spec in scenario_specs if spec["slug"] in wanted]
+                    if not scenario_specs:
+                        raise ValueError(
+                            f"No GC-only scenarios matched {sorted(wanted)!r}. "
+                            "Available: rich, poor, offtopic, analysis-jump, join."
+                        )
+
                 scenario_states = []
                 for spec in scenario_specs:
                     scenario_session_id = f"{session_id}-{spec['slug']}"
@@ -1400,6 +1410,14 @@ def run_live_gc_only_eval(
                             is_offtopic_ok if spec["slug"] == "offtopic" else is_poor_or_join_ok,
                             f"Scenario {spec['slug']} replied with a targeted question: {first_reply[:200]!r}",
                             {"case_type": "common", "scenario": spec["slug"]},
+                        ))
+                    if spec["slug"] == "join":
+                        join_starts_with_config = first_reply.lstrip().startswith("### Configuration du graphique")
+                        results.append(_result(
+                            "gc_only_join_did_not_start_configuration_before_join_strategy",
+                            not join_starts_with_config,
+                            f"Join scenario should clarify before drafting a configuration. First reply: {first_reply[:240]!r}",
+                            {"case_type": "edge", "scenario": spec["slug"]},
                         ))
                     if spec["slug"] == "analysis-jump":
                         results.append(_result(
@@ -2157,13 +2175,22 @@ def main() -> int:
         help="Prompt for --trace-smoke.",
     )
     parser.add_argument("--push-langfuse", action="store_true", help="Push eval scores to Langfuse.")
+    parser.add_argument(
+        "--gc-scenarios",
+        default="",
+        help="Comma-separated GC-only scenario slugs to run (rich,poor,offtopic,analysis-jump,join).",
+    )
     parser.add_argument("--json", action="store_true", help="Print JSON report.")
     args = parser.parse_args()
 
     if args.trace_smoke:
         report = run_langfuse_trace_smoke(prompt=args.prompt)
     elif args.live_gc_only:
-        report = run_live_gc_only_eval(push_langfuse=args.push_langfuse)
+        scenario_slugs = [slug.strip() for slug in args.gc_scenarios.split(",") if slug.strip()]
+        report = run_live_gc_only_eval(
+            push_langfuse=args.push_langfuse,
+            scenario_slugs=scenario_slugs or None,
+        )
     elif args.live_du_only:
         report = run_live_du_only_eval(push_langfuse=args.push_langfuse)
     elif args.live:

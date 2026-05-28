@@ -484,6 +484,35 @@ def test_cli_dispatches_gc_only_mode(monkeypatch):
     assert calls == {"gc_only": 1, "du_only": 0, "live": 0, "mock": 0}
 
 
+@pytest.mark.tool_contract
+def test_cli_dispatches_gc_only_filtered_scenarios(monkeypatch):
+    import sys
+
+    calls = {"gc_only": 0, "scenario_slugs": None}
+
+    def fake_gc_only_eval(**kwargs):
+        calls["gc_only"] += 1
+        calls["scenario_slugs"] = kwargs.get("scenario_slugs")
+        return {
+            "dataset": "copepod-plan-mode-v1",
+            "mode": "live-gc-only",
+            "passed": True,
+            "passed_count": 1,
+            "total_count": 1,
+            "results": [],
+            "langfuse_trace_url": None,
+        }
+
+    monkeypatch.setattr(
+        "scripts.evals.run_copepod_plan_mode_eval.run_live_gc_only_eval",
+        fake_gc_only_eval,
+    )
+    monkeypatch.setattr(sys, "argv", ["run_copepod_plan_mode_eval.py", "--live-gc-only", "--gc-scenarios", "offtopic,join"])
+
+    assert main() == 0
+    assert calls == {"gc_only": 1, "scenario_slugs": ["offtopic", "join"]}
+
+
 @pytest.mark.llm_protocol
 def test_live_gc_only_runner_starts_from_active_du(monkeypatch):
     monkeypatch.setattr(settings, "LLM_MODEL", "fake-live-model")
@@ -862,6 +891,7 @@ def test_live_gc_only_runner_blocks_gc_draft_and_plan_ready_for_poor_and_analysi
     assert scores["gc_only_poor_asked_single_targeted_question_when_missing_fields"]["passed"] is True
     assert scores["gc_only_offtopic_asked_single_targeted_question_when_missing_fields"]["passed"] is True
     assert scores["gc_only_join_asked_single_targeted_question_when_missing_fields"]["passed"] is True
+    assert scores["gc_only_join_did_not_start_configuration_before_join_strategy"]["passed"] is True
     assert scores["gc_only_reasks_for_join_strategy_when_implicit"]["passed"] is True
     assert scores["gc_only_no_internal_terms_in_llm_text"]["passed"] is True
 
