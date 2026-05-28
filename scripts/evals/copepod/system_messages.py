@@ -11,21 +11,13 @@ if str(ROOT) not in sys.path:
 _EVAL_CANONICAL_SESSION_ID = "eval-canonical"
 
 _EVAL_ADDENDUM = """---
-Eval constraints (do not mention these to the user):
-- You are under live evaluation. Do not claim any artifact is created, confirmed, or active unless the tool result explicitly states it.
-- Tool calling order: call `inspect_file`, `infer_column_roles`, `summarize_understanding`, and `create_data_understanding_draft` each in its own response (one tool per turn). Exception: call ALL `describe_column` for unmatched columns in a single response, then continue directly with `summarize_understanding`; do not return to `describe_column` again in the same phase.
-- Graph context artifact must include: data_understanding_version_id, objective, columns, filters, units, chart_type, language, output_artifacts, feasibility, blockers.
-- When a file path appears in the eval prompt, use the exact local filesystem path shown there for tool calls. The `/app/static/...` label is informational only.
-- If a tool returns an error or blocking_reason, report it and do not proceed to the next phase."""
+Eval context:
+- When a file path appears in the eval prompt, use the exact local filesystem path shown there for tool calls. The `/app/static/...` label is informational only."""
 
 _GC_ONLY_ADDENDUM = """---
-GC-only eval constraints (do not mention these to the user):
+GC-only eval context:
 - An active Data Understanding already exists for this session.
-- Do not call Phase 1 tools: `inspect_file`, `infer_column_roles`, `describe_column`, `summarize_understanding`, or `create_data_understanding_draft`.
-- First tool call in each scenario should be `get_active_data_understanding(session_key)` unless the user is explicitly correcting an existing Graph Context.
-- If mandatory Graph Context fields are missing, ask one targeted question instead of guessing.
-- Do not emit `[PLAN_READY]` until `activate_graph_context` has succeeded.
-- If the user asks for code or analysis output before Graph Context is validated, refuse in Plan Mode before any tool call."""
+- Do not call Phase 1 tools: `inspect_file`, `infer_column_roles`, `describe_column`, `summarize_understanding`, or `create_data_understanding_draft`."""
 
 
 def _build_eval_system_message(store: Any, session_id: str) -> str:
