@@ -54,6 +54,22 @@
 | `live_llm_activated_graph_context` | Le LLM active bien le GC après confirmation |
 | `live_plan_ready_enables_analyse_mode` | `[PLAN_READY]` dans le texte → bouton SSE → `/session/mode` HTTP 200 |
 
+### Live DU-only eval (LLM réel, via `LLM_MODEL`)
+
+9 checks automatiques par run, limités à la compréhension du dataset :
+
+| Check | Ce qui est vérifié |
+|---|---|
+| `live_du_only_created_data_understanding_draft` | Le LLM crée un artifact DU `draft` |
+| `live_du_only_waited_for_data_understanding_confirmation` | Le LLM s'arrête avant l'activation, jusqu'à la confirmation utilisateur |
+| `live_du_only_phase1_efficient` | La phase DU reste courte et sans boucles inutiles |
+| `live_du_only_payload_has_column_catalogue` | L'artifact DU contient un `column_catalogue` non vide |
+| `live_du_only_payload_has_sufficient_coverage` | Le résumé DU marque la couverture comme `sufficient` |
+| `live_du_only_describe_column_covered_all_unmatched` | `describe_column` couvre les colonnes ambiguës quand il y en a |
+| `live_du_only_activated_data_understanding` | Le LLM active bien le DU après confirmation |
+| `live_du_only_no_graph_context_created` | Aucun Graph Context n'est créé dans ce mode |
+| `live_du_only_no_internal_terms_in_llm_text` | Le texte LLM ne fuit pas de termes internes de la phase suivante |
+
 ---
 
 ## Ce qui manque

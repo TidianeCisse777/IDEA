@@ -92,6 +92,24 @@ This uses `LLM_MODEL` from the environment, calls OpenAI, and pushes boolean sco
 
 Do not run `--live`, `--trace-smoke`, or `--push-langfuse` during local-only debugging.
 
+### 3b. DU-Only Live Eval
+
+Use this when you want the cheapest live signal for Data Understanding only.
+
+```bash
+python scripts/evals/run_copepod_plan_mode_eval.py --live-du-only --push-langfuse
+```
+
+This mode:
+
+- creates a DU draft
+- waits for DU confirmation
+- activates the DU
+- checks `column_catalogue` and `coverage_assessment`
+- stops before Graph Context, `[PLAN_READY]`, and Analyse Mode
+
+It is the right preflight when you want to validate dataset comprehension without spending tokens on the full plan workflow.
+
 ## Important Scores
 
 The main live scores are:
@@ -106,6 +124,17 @@ The main live scores are:
 - `live_llm_activated_graph_context`
 - `live_du_payload_has_sufficient_coverage`
 - `live_plan_ready_enables_analyse_mode`
+
+The DU-only live mode uses:
+
+- `live_du_only_created_data_understanding_draft`
+- `live_du_only_waited_for_data_understanding_confirmation`
+- `live_du_only_phase1_efficient`
+- `live_du_only_payload_has_column_catalogue`
+- `live_du_only_payload_has_sufficient_coverage`
+- `live_du_only_describe_column_covered_all_unmatched`
+- `live_du_only_activated_data_understanding`
+- `live_du_only_no_graph_context_created`
 
 Interpretation:
 
