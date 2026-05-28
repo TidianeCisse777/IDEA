@@ -1323,19 +1323,6 @@ def run_live_gc_only_eval(
                         ],
                         "should_confirm_gc": False,
                     },
-                    {
-                        "slug": "join",
-                        "label": "Jointure implicite",
-                        "seed_paths": [ECOTAXA, ECOPART],
-                        "user_messages": [
-                            (
-                                "Je veux joindre EcoTaxa et EcoPart pour explorer la relation "
-                                "entre organismes et particules en profondeur, mais la clé de jointure "
-                                "n'est pas encore fixée."
-                            )
-                        ],
-                        "should_confirm_gc": False,
-                    },
                 ]
 
                 if scenario_slugs:
@@ -1344,7 +1331,7 @@ def run_live_gc_only_eval(
                     if not scenario_specs:
                         raise ValueError(
                             f"No GC-only scenarios matched {sorted(wanted)!r}. "
-                            "Available: rich, poor, offtopic, analysis-jump, join."
+                            "Available: rich, poor, offtopic, analysis-jump."
                         )
 
                 scenario_states = []
@@ -1395,29 +1382,21 @@ def run_live_gc_only_eval(
                         f"Scenario {spec['slug']} did not reopen Phase 1.",
                         {"case_type": "edge", "scenario": spec["slug"], "phase1_attempts": state["phase1_attempts"]},
                     ))
-                    if spec["slug"] == "poor" or spec["slug"] == "offtopic" or spec["slug"] == "join":
+                    if spec["slug"] == "poor" or spec["slug"] == "offtopic":
                         is_offtopic_ok = (
                             not _looks_like_self_introduction(first_reply)
                             and (targeted_question or "objectif scientifique" in offtopic_reply or "contexte" in offtopic_reply)
                             and first_reply.count("?") <= 2
                         )
-                        is_poor_or_join_ok = (
+                        is_poor_ok = (
                             (targeted_question or "objectif scientifique" in offtopic_reply or "quelle" in offtopic_reply)
                             and first_reply.count("?") <= 2
                         )
                         results.append(_result(
                             f"gc_only_{spec['slug']}_asked_single_targeted_question_when_missing_fields",
-                            is_offtopic_ok if spec["slug"] == "offtopic" else is_poor_or_join_ok,
+                            is_offtopic_ok if spec["slug"] == "offtopic" else is_poor_ok,
                             f"Scenario {spec['slug']} replied with a targeted question: {first_reply[:200]!r}",
                             {"case_type": "common", "scenario": spec["slug"]},
-                        ))
-                    if spec["slug"] == "join":
-                        join_starts_with_config = first_reply.lstrip().startswith("### Configuration du graphique")
-                        results.append(_result(
-                            "gc_only_join_did_not_start_configuration_before_join_strategy",
-                            not join_starts_with_config,
-                            f"Join scenario should clarify before drafting a configuration. First reply: {first_reply[:240]!r}",
-                            {"case_type": "edge", "scenario": spec["slug"]},
                         ))
                     if spec["slug"] == "analysis-jump":
                         results.append(_result(
@@ -1433,7 +1412,7 @@ def run_live_gc_only_eval(
                             "Scenario rich created a Graph Context draft.",
                             {"case_type": "common", "scenario": spec["slug"]},
                         ))
-                    if spec["slug"] in {"poor", "offtopic", "analysis-jump", "join"}:
+                    if spec["slug"] in {"poor", "offtopic", "analysis-jump"}:
                         results.append(_result(
                             f"gc_only_{spec['slug']}_created_graph_context_draft",
                             not gc_draft_created,
@@ -1453,7 +1432,7 @@ def run_live_gc_only_eval(
                             "PLAN_READY was emitted only after Graph Context activation.",
                             {"case_type": "common", "scenario": spec["slug"]},
                         ))
-                    if spec["slug"] in {"poor", "offtopic", "analysis-jump", "join"}:
+                    if spec["slug"] in {"poor", "offtopic", "analysis-jump"}:
                         results.append(_result(
                             f"gc_only_{spec['slug']}_did_not_emit_plan_ready",
                             not plan_ready_emitted,
@@ -1464,14 +1443,6 @@ def run_live_gc_only_eval(
                             f"gc_only_{spec['slug']}_did_not_activate_graph_context",
                             not gc_activated,
                             f"Scenario {spec['slug']} did not activate Graph Context.",
-                            {"case_type": "edge", "scenario": spec["slug"]},
-                        ))
-                    if spec["slug"] == "join":
-                        join_text = "\n".join(state["replies"]).lower()
-                        results.append(_result(
-                            "gc_only_reasks_for_join_strategy_when_implicit",
-                            "jointure" in join_text or "join" in join_text or "clé" in join_text,
-                            f"Join scenario asked for or discussed a join strategy: {join_text[:240]!r}",
                             {"case_type": "edge", "scenario": spec["slug"]},
                         ))
 
@@ -2178,7 +2149,7 @@ def main() -> int:
     parser.add_argument(
         "--gc-scenarios",
         default="",
-        help="Comma-separated GC-only scenario slugs to run (rich,poor,offtopic,analysis-jump,join).",
+        help="Comma-separated GC-only scenario slugs to run (rich,poor,offtopic,analysis-jump).",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON report.")
     args = parser.parse_args()

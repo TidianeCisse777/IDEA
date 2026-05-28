@@ -47,7 +47,7 @@ La suite doit couvrir plusieurs profils d'entrée, pas seulement le happy path.
 
 ### 1. Contexte riche
 
-Le user fournit un objectif clair, des colonnes, des unités, un type de graphe et éventuellement une jointure.
+Le user fournit un objectif clair, des colonnes, des unités et un type de graphe.
 
 Attendus:
 
@@ -97,22 +97,12 @@ Le DU actif couvre plusieurs fichiers CSV/TSV.
 
 Attendus:
 
-- le modèle comprend qu'il faut peut-être une jointure ou une sélection;
+- le modèle comprend qu'il faut peut-être une sélection ou un couplage;
 - il demande la stratégie si elle manque;
-- il ne suppose pas une jointure sans base solide;
-- il peut construire un GC qui explicite la jointure retenue.
+- il ne suppose pas un couplage sans base solide;
+- il attend un contexte explicite avant de figer le GC.
 
-### 6. Jointure implicite
-
-Le user dit seulement "fais une jointure et analyse".
-
-Attendus:
-
-- le modèle demande la clé ou la stratégie de jointure;
-- il précise le périmètre si nécessaire;
-- il ne saute pas à l'Analyse.
-
-### 7. Unités ambiguës
+### 6. Unités ambiguës
 
 L'objectif est clair mais les unités de sortie ne le sont pas.
 
@@ -122,7 +112,7 @@ Attendus:
 - pas d'invention;
 - pas de draft GC final tant que l'ambiguïté reste bloquante.
 
-### 8. Type de graphe ambigu
+### 7. Type de graphe ambigu
 
 L'objectif est clair mais le type de graphe ne l'est pas.
 
@@ -132,7 +122,7 @@ Attendus:
 - pas de création prématurée du GC;
 - pas de retour en Phase 1.
 
-### 9. Correction du contexte
+### 8. Correction du contexte
 
 Le user corrige seulement l'objectif, les colonnes ou les filtres du GC.
 
@@ -142,7 +132,7 @@ Attendus:
 - il re-draft uniquement le GC;
 - il ne repart pas en Phase 1.
 
-### 10. Question mixte
+### 9. Question mixte
 
 Le user confirme partiellement le contexte et pose une question scientifique.
 
@@ -168,8 +158,6 @@ Le GC-only live doit tracer au minimum:
 
 Selon le scénario, on peut ajouter:
 
-- `gc_only_handles_multifile_join_context`
-- `gc_only_reasks_for_join_strategy_when_implicit`
 - `gc_only_preserves_multi_turn_context_corrections`
 
 ## Critères de réussite
