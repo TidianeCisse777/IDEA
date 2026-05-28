@@ -389,15 +389,24 @@ def _run_llm_turn(
             if describe_column_round_seen:
                 _log(
                     "  [BLOCK] describe_column already used in this phase — "
-                    "continuing to let LLM call summarize_understanding"
+                    "injecting tool rejection, next step must be summarize_understanding"
                 )
-                messages[-1] = {
-                    "role": "assistant",
-                    "content": (
-                        "describe_column already completed for this phase. "
-                        "Continue with summarize_understanding."
-                    ),
-                }
+                # Keep the assistant message with its tool_calls intact.
+                # Append a tool response for every blocked call so the API sees
+                # a valid assistant→tool sequence and the LLM gets a clear rejection.
+                for raw_call in tool_calls:
+                    call = _tool_call_to_dict(raw_call)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call.get("id"),
+                        "name": (call.get("function") or {}).get("name") or "describe_column",
+                        "content": _json_dumps({
+                            "error": (
+                                "describe_column already used for this file. "
+                                "You MUST call summarize_understanding now."
+                            )
+                        }),
+                    })
                 continue
             describe_column_round_seen = True
 
