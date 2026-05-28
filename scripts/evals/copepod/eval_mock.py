@@ -5,7 +5,7 @@ import uuid
 from core.chat_stream_events import chat_stream_events
 
 from .fixtures import ECOTAXA, ECOPART, _data_understanding_artifact, _stage_fixture, _uploaded_path
-from .harness import EvalHarness, _plan_ready_allowed, _post_analyse, _push_scores_to_langfuse
+from .harness import EvalHarness, _plan_ready_allowed, _post_analyse
 
 
 def run_mock_eval(*, push_langfuse: bool = False) -> dict:
@@ -15,7 +15,7 @@ def run_mock_eval(*, push_langfuse: bool = False) -> dict:
         log_prefix="mock_eval_",
         tags=["eval", "copepod", "plan-mode", "mock"],
         mode="mock",
-        push_langfuse=False,
+        push_langfuse=push_langfuse,
     ) as ctx:
         upload = _stage_fixture(ctx.session_id, ECOTAXA)
         uploaded_ecotaxa = _uploaded_path(ctx.session_id, upload["filename"])
@@ -209,8 +209,4 @@ def run_mock_eval(*, push_langfuse: bool = False) -> dict:
             {"case_type": "edge"},
         )
 
-    if push_langfuse:
-        ctx.report["langfuse_trace_url"] = _push_scores_to_langfuse(
-            ctx.session_key, ctx._results
-        )
     return ctx.report
