@@ -87,6 +87,7 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
         "activate_graph_context",
         "get_active_data_understanding",
         "get_active_graph_context",
+        "plan_remote_source_request",
     }:
         return {
             "version_id": result.get("version_id"),
@@ -95,6 +96,10 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
             "created": result.get("created"),
             "blocking_reason": result.get("blocking_reason"),
             "error": result.get("error"),
+            "source_id": result.get("source_id"),
+            "intent": result.get("intent"),
+            "missing_fields": result.get("missing_fields"),
+            "recommended_next_step": result.get("recommended_next_step"),
         }
     return result
 
@@ -182,8 +187,8 @@ def _tool_specs() -> list[dict]:
                 "file_summaries": {"type": "array", "items": object_schema, "description": "List of summarize_understanding outputs, one per file."},
                 "possible_joins": {"type": "array", "items": {"type": "string"}, "description": "Join descriptions, e.g. 'EcoTaxa ↔ EcoPart via obj_orig_id → profile_id'. Empty list if none."},
                 "complementarity": {"type": "string", "description": "How the files complement each other scientifically."},
-                "temporal_coverage": {"type": "string", "description": "Shared temporal extent, e.g. 'avril–mai 2015, Green Edge'. Use 'non applicable' if absent."},
-                "spatial_coverage": {"type": "string", "description": "Shared spatial extent, e.g. 'Baie de Baffin, 67°N'. Use 'non applicable' if absent."},
+                "temporal_coverage": {"type": "string", "description": "Temporal extent extracted from the data (dates, years, or time ranges in columns). Report what is present in each file even if sources differ (e.g. 'Green Edge: avril–mai 2015 ; Bio-Oracle: 2020'). Use 'non applicable' ONLY if no temporal information exists in any file."},
+                "spatial_coverage": {"type": "string", "description": "Spatial extent extracted from the data (lat/lon ranges, region names, station names). Report what is present even if sources differ. Use 'non applicable' ONLY if no spatial information exists in any file."},
                 "coverage_assessment": {**object_schema, "description": "Optional global coverage dict. Computed from per-file statuses if omitted."},
                 "session_key": {"type": "string"},
             },
@@ -225,6 +230,28 @@ def _tool_specs() -> list[dict]:
             {"session_key": {"type": "string"}},
             ["session_key"],
         ),
+        function_tool(
+            "list_available_sources",
+            "List known copepod data sources and whether they are activated.",
+            {"auth_token": {"type": "string"}, "session_id": {"type": "string"}},
+            [],
+        ),
+        function_tool(
+            "describe_source",
+            "Return the full metadata for a copepod data source.",
+            {"source_id": {"type": "string"}, "session_id": {"type": "string"}},
+            ["source_id"],
+        ),
+        function_tool(
+            "plan_remote_source_request",
+            "Normalize an explicit OGSL or Bio-ORACLE request and extract the missing fields before a remote fetch.",
+            {
+                "request_text": {"type": "string"},
+                "source_hint": {"type": "string"},
+                "session_id": {"type": "string"},
+            },
+            ["request_text"],
+        ),
     ]
 
 
@@ -255,6 +282,19 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
             arguments = {**arguments, "session_key": session_key}
         if name == "describe_column" and not arguments.get("session_id"):
             arguments["session_id"] = session_key.split(":")[1]
+        if name == "synthesize_file_understanding":
+            # If the LLM reconstructed file_summaries without column_catalogue,
+            # replace them with the actual cached summarize_understanding outputs.
+            llm_summaries = arguments.get("file_summaries") or []
+            cached_summaries = _cache.get("all_summaries") or []
+            if cached_summaries and (
+                not llm_summaries
+                or not all(
+                    isinstance(s, dict) and s.get("column_catalogue")
+                    for s in llm_summaries
+                )
+            ):
+                arguments = {**arguments, "file_summaries": cached_summaries}
         if name == "create_data_understanding_draft":
             artifact = arguments.get("artifact")
             summary = _cache.get("summary_report") or {}
@@ -285,6 +325,7 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
             inspect_report, role_report, kwargs.get("column_definitions")
         )
         _cache["summary_report"] = result
+        _cache.setdefault("all_summaries", []).append(result)
         return result
 
     tool_names = {

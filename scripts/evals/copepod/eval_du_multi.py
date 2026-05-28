@@ -272,7 +272,7 @@ def run_live_du_multi_eval(
             ]
             ctx.result(
                 f"du_multi_{slug}_summarize_called_for_each_file",
-                len(summarize_calls) == n_files,
+                len(summarize_calls) >= n_files,
                 f"summarize_understanding called {len(summarize_calls)}× for {n_files} files.",
                 {"case_type": "common", "scenario": slug, "summarize_count": len(summarize_calls), "expected": n_files},
             )

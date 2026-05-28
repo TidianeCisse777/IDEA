@@ -23,6 +23,7 @@ from core.copepod_plan_workflow import DEFAULT_PHASE, VALID_PHASES
 ARTIFACT_VERSION_PREFIXES = {
     "data_understanding": "du",
     "graph_context": "gc",
+    "file_synthesis": "fs",
 }
 
 

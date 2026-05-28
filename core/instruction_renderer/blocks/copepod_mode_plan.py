@@ -76,8 +76,8 @@ e. **MANDATORY — Multi-file only (N ≥ 2 files). If you processed 2 or more f
    - `file_summaries` = list of all step d outputs
    - `possible_joins` = list of join descriptions between files (e.g. `"EcoTaxa ↔ EcoPart via obj_orig_id → profile_id"`); use `[]` if none
    - `complementarity` = how the files complement each other scientifically
-   - `temporal_coverage` = shared temporal extent (e.g. `"avril–mai 2015, Green Edge"`); use `"non applicable"` if absent or from different campaigns
-   - `spatial_coverage` = shared spatial extent (e.g. `"Baie de Baffin, 67°N"`); use `"non applicable"` if absent or incompatible
+   - `temporal_coverage` = temporal extent extracted from the data (dates, years, or time ranges visible in columns). Always extract what is present — even when files come from different campaigns, report each (e.g. `"Green Edge: avril–mai 2015 ; Bio-Oracle: 2020"`). Use `"non applicable"` ONLY if no temporal information exists in any file.
+   - `spatial_coverage` = spatial extent extracted from the data (lat/lon ranges, region names, station names visible in columns). Always extract what is present — even when files come from different sources, report each (e.g. `"Baie de Baffin (EcoTaxa) ; global raster 0.25° (Bio-Oracle)"`). Use `"non applicable"` ONLY if no spatial information exists in any file.
 
    Be explicit — do not omit `possible_joins` if a join key exists. If you cannot determine the join, write `[]` and mention the ambiguity in `complementarity`.
 

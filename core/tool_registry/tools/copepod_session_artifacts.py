@@ -167,6 +167,29 @@ def _normalize_data_understanding_payload(session_key, artifact):
                 payload["global"].setdefault("possible_joins_or_couplings", summary.get("possible_joins_or_couplings") or [])
                 payload["global"].setdefault("missing_or_ambiguous_data", summary.get("missing_or_ambiguous_data") or [])
 
+    # Last-resort recovery: if column_catalogue is still empty, pull it from
+    # the cached file_synthesis artifact (synthesize_file_understanding result).
+    # Handles the case where the LLM reconstructed the artifact instead of
+    # passing synthesize output verbatim, so file entries lack column_catalogue.
+    if not payload.get("column_catalogue"):
+        try:
+            from core import session_store as _ss_mod
+            synth_versions = _ss_mod.session_store.get_artifact_versions(session_key, "file_synthesis")
+            if synth_versions:
+                cached_summaries = (synth_versions[-1].get("payload") or {}).get("file_summaries") or []
+                merged = []
+                seen_cols: set = set()
+                for summary in cached_summaries:
+                    for col in (summary.get("column_catalogue") or []):
+                        col_name = col.get("column") if isinstance(col, dict) else None
+                        if col_name and col_name not in seen_cols:
+                            merged.append(col)
+                            seen_cols.add(col_name)
+                if merged:
+                    payload["column_catalogue"] = merged
+        except Exception:
+            pass
+
     coverage = payload.get("coverage_assessment")
     if not isinstance(coverage, dict) or not coverage:
         payload["coverage_assessment"] = {
