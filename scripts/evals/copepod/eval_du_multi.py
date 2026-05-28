@@ -290,18 +290,18 @@ def run_live_du_multi_eval(
             )
 
             # ── protocol: create_data_understanding_draft called ─────────────
-            # Read status from the phase-1 tool message, before phase-2 activation changes it.
-            _draft_tool_msg = next(
-                (m for m in phase1_msgs
-                 if m.get("role") == "tool" and m.get("name") == "create_data_understanding_draft"),
-                None,
-            )
+            # Accept ANY successful call (status=draft) — if the first call errored
+            # (e.g. garbled kwargs) the LLM may retry and succeed on a later call.
             _draft_status_at_creation = None
-            if _draft_tool_msg:
-                try:
-                    _draft_status_at_creation = json.loads(_draft_tool_msg.get("content", "{}")).get("status")
-                except Exception:
-                    pass
+            for _msg in phase1_msgs:
+                if _msg.get("role") == "tool" and _msg.get("name") == "create_data_understanding_draft":
+                    try:
+                        _s = json.loads(_msg.get("content", "{}")).get("status")
+                        if _s == "draft":
+                            _draft_status_at_creation = _s
+                            break
+                    except Exception:
+                        pass
             ctx.result(
                 f"du_multi_{slug}_draft_created",
                 _draft_status_at_creation == "draft",

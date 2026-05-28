@@ -283,12 +283,13 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
         if name == "describe_column" and not arguments.get("session_id"):
             arguments["session_id"] = session_key.split(":")[1]
         if name == "synthesize_file_understanding":
-            # If the LLM reconstructed file_summaries without column_catalogue,
-            # replace them with the actual cached summarize_understanding outputs.
+            # If the LLM passed fewer or incomplete file_summaries, replace with
+            # the actual cached summarize_understanding outputs.
             llm_summaries = arguments.get("file_summaries") or []
             cached_summaries = _cache.get("all_summaries") or []
             if cached_summaries and (
                 not llm_summaries
+                or len(llm_summaries) < len(cached_summaries)
                 or not all(
                     isinstance(s, dict) and s.get("column_catalogue")
                     for s in llm_summaries
