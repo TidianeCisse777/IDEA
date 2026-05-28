@@ -10,6 +10,14 @@
         return token ? { 'Authorization': `Bearer ${token}` } : {};
     }
 
+    function getSessionHeaders() {
+        const sessionId = localStorage.getItem('sessionId') || '';
+        return {
+            'X-Session-Id': sessionId,
+            'X-Agent-Type': 'copepod',
+        };
+    }
+
     function openModal(modal) {
         if (!modal) return;
         modal.style.display = 'block';
@@ -33,14 +41,17 @@
         const newEl = document.getElementById('newPasswordInput');
         const confirmEl = document.getElementById('confirmPasswordInput');
         const messageEl = document.getElementById('accountSettingsMessage');
+        const onlineModeToggle = document.getElementById('onlineModeToggle');
 
         if (openBtn) openBtn.addEventListener('click', () => {
             openModal(modal);
             loadUserProfile();
+            loadOnlineMode();
         });
         if (openBtnMobile) openBtnMobile.addEventListener('click', () => {
             openModal(modal);
             loadUserProfile();
+            loadOnlineMode();
             const navbarMobileMenu = document.getElementById('navbarMobileMenu');
             const navbarToggle = document.getElementById('navbarToggle');
             const mobileOverlay = document.getElementById('mobileOverlay');
@@ -57,6 +68,12 @@
                 closeModal(modal);
             }
         });
+
+        if (onlineModeToggle) {
+            onlineModeToggle.addEventListener('change', async () => {
+                await persistOnlineMode(onlineModeToggle.checked);
+            });
+        }
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && modal && modal.style.display === 'block') {
@@ -147,9 +164,75 @@
                 userEmailDisplay.value = 'Unable to load email';
             }
         }
+
+        function setOnlineModeUi(enabled, allowedSources) {
+            const badge = document.getElementById('onlineModeBadge');
+            const label = document.getElementById('onlineModeLabel');
+            const allowed = document.getElementById('onlineModeAllowedSources');
+            const toggle = document.getElementById('onlineModeToggle');
+            if (toggle) toggle.checked = Boolean(enabled);
+            if (badge) badge.style.display = 'flex';
+            if (label) label.textContent = `Mode En Ligne: ${enabled ? 'ON' : 'OFF'}`;
+            if (allowed) {
+                allowed.textContent = Array.isArray(allowedSources) && allowedSources.length
+                    ? allowedSources.join(', ')
+                    : 'Aucune source autorisée';
+            }
+        }
+
+        async function loadOnlineMode() {
+            const endpoints = getEndpoints();
+            const url = endpoints.onlineMode || '/api/session/online-mode';
+            try {
+                const res = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...getSessionHeaders(),
+                        ...getAuthHeaders(),
+                    },
+                });
+
+                if (!res.ok) {
+                    throw new Error('Failed to load online mode');
+                }
+
+                const payload = await res.json();
+                setOnlineModeUi(payload.enabled, payload.allowed_sources || []);
+            } catch (err) {
+                console.error('Error loading online mode:', err);
+            }
+        }
+
+        async function persistOnlineMode(enabled) {
+            const endpoints = getEndpoints();
+            const url = endpoints.onlineMode || '/api/session/online-mode';
+            try {
+                const res = await fetch(url, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...getSessionHeaders(),
+                        ...getAuthHeaders(),
+                    },
+                    body: JSON.stringify({ enabled }),
+                });
+
+                if (!res.ok) {
+                    throw new Error('Failed to persist online mode');
+                }
+
+                const payload = await res.json();
+                setOnlineModeUi(payload.enabled, payload.allowed_sources || []);
+            } catch (err) {
+                console.error('Error saving online mode:', err);
+                setMessage(err.message || 'Failed to update online mode', 'error');
+                if (onlineModeToggle) {
+                    onlineModeToggle.checked = !enabled;
+                }
+            }
+        }
     }
 
     document.addEventListener('DOMContentLoaded', attachEvents);
 })();
-
-

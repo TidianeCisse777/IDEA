@@ -365,6 +365,49 @@ class TestPostSessionMode:
         assert resp.json()["mode"] == "analyse"
 
 
+# ---------------------------------------------------------------------------
+# GET/PUT /session/online-mode
+# ---------------------------------------------------------------------------
+
+class TestOnlineModeRoutes:
+    def test_get_online_mode_defaults_off(self, client):
+        tc, _ = client
+        resp = tc.get(
+            "/session/online-mode",
+            headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["enabled"] is False
+        assert payload["allowed_sources"] == ["ogsl", "bio_oracle"]
+
+    def test_put_online_mode_can_enable_and_persist(self, client):
+        tc, store = client
+        resp = tc.put(
+            "/session/online-mode",
+            json={"enabled": True},
+            headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["enabled"] is True
+        assert store.get_online_mode("u1:s1:copepod") is True
+
+    def test_put_online_mode_can_disable(self, client):
+        tc, store = client
+        store.set_online_mode("u1:s1:copepod", True)
+
+        resp = tc.put(
+            "/session/online-mode",
+            json={"enabled": False},
+            headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["enabled"] is False
+        assert store.get_online_mode("u1:s1:copepod") is False
+
+
 class TestGetSessionArtifacts:
     def test_get_data_understanding_returns_versions_and_active_for_copepod(
         self, client

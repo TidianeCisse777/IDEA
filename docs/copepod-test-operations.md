@@ -25,12 +25,13 @@ If the LLM fails but the backend blocks the action, the application is protected
 
 ## Current State
 
-As of 2026-05-27, the recommended baseline is:
+As of 2026-05-28, the recommended baseline is:
 
 - `--mock`: green
 - `--live-du-only --push-langfuse`: green
 - `--live-gc-only --push-langfuse`: green on the current pack
 - `--live`: still reserved for the final end-to-end workflow check
+- `Mode En Ligne` policy is implemented and documented in [`docs/copepod-online-mode-policy.md`](./copepod-online-mode-policy.md)
 
 Current GC-only scope:
 
@@ -101,6 +102,16 @@ Practical rule:
 - prompt change = production contract;
 - harness change = test orchestration;
 - score change = measurement only.
+
+### Online mode policy checkpoints
+
+When you add a new source or extend the online-mode policy:
+
+1. Update [`docs/copepod-online-mode-policy.md`](./copepod-online-mode-policy.md) first.
+2. Update the prompt wording in `agents/copepod_prompt.py` and the relevant mode block.
+3. Keep the backend route and session state as the source of truth.
+4. Update the UI only after the backend contract is stable.
+5. Add one focused test for each layer instead of one large noisy end-to-end test.
 
 ### 2. Mock Workflow Eval
 
@@ -178,6 +189,24 @@ Current live pack note:
 
 - the active pack currently runs `rich`, `poor`, `offtopic`, and `analysis-jump`;
 - `join` has been removed from the pack to keep the signal stable and to avoid overfitting the GC-only tests to one ambiguous case.
+
+### Online Mode live-test checklist
+
+Before the first real live online-source test, confirm:
+
+1. `Mode En Ligne` is enabled in the UI.
+2. The request names OGSL or Bio-ORACLE explicitly.
+3. The request is complete enough to avoid a clarification round.
+4. The selected source is listed in the allowlist returned by `/session/online-mode`.
+5. The live trace shows only the requested online source being used.
+
+Recommended live command for the end-to-end workflow:
+
+```bash
+python scripts/evals/run_copepod_plan_mode_eval.py --live --push-langfuse
+```
+
+For source-specific live validation, turn on `Mode En Ligne` first, then send a single explicit request for OGSL or Bio-ORACLE in the UI.
 
 Implementation note:
 

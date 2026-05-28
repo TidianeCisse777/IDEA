@@ -132,6 +132,16 @@ class SessionStore(ABC):
         """Persist the copepod plan workflow phase."""
         ...
 
+    @abstractmethod
+    def get_online_mode(self, session_key: str) -> bool:
+        """Return whether online mode is enabled for the session."""
+        ...
+
+    @abstractmethod
+    def set_online_mode(self, session_key: str, enabled: bool) -> None:
+        """Persist the online mode flag for the session."""
+        ...
+
 
 class RedisSessionStore(SessionStore):
     """Production implementation backed by a Redis server."""
@@ -229,6 +239,13 @@ class RedisSessionStore(SessionStore):
             raise ValueError(f"Invalid copepod plan phase: {phase}")
         self._r.set(f"copepod_plan_phase:{session_key}", phase)
 
+    def get_online_mode(self, session_key: str) -> bool:
+        raw = self._r.get(f"online_mode:{session_key}")
+        return raw.decode() == "1" if raw else False
+
+    def set_online_mode(self, session_key: str, enabled: bool) -> None:
+        self._r.set(f"online_mode:{session_key}", "1" if enabled else "0")
+
 
 class InMemorySessionStore(SessionStore):
     """In-memory implementation for tests and local development (no Redis needed)."""
@@ -239,6 +256,7 @@ class InMemorySessionStore(SessionStore):
         self._modes: dict[str, str] = {}
         self._artifacts: dict[tuple[str, str], list[dict]] = {}
         self._copepod_plan_phases: dict[str, str] = {}
+        self._online_modes: dict[str, bool] = {}
 
     def read_messages(self, session_key: str) -> list[dict] | None:
         return self._messages.get(session_key)
@@ -257,6 +275,7 @@ class InMemorySessionStore(SessionStore):
         self._timestamps.pop(session_key, None)
         self._modes.pop(session_key, None)
         self._copepod_plan_phases.pop(session_key, None)
+        self._online_modes.pop(session_key, None)
         for key in list(self._artifacts):
             if key[0] == session_key:
                 self._artifacts.pop(key, None)
@@ -316,6 +335,12 @@ class InMemorySessionStore(SessionStore):
         if phase not in VALID_PHASES:
             raise ValueError(f"Invalid copepod plan phase: {phase}")
         self._copepod_plan_phases[session_key] = phase
+
+    def get_online_mode(self, session_key: str) -> bool:
+        return self._online_modes.get(session_key, False)
+
+    def set_online_mode(self, session_key: str, enabled: bool) -> None:
+        self._online_modes[session_key] = bool(enabled)
 
 
 # Singleton — selection strategy:

@@ -30,6 +30,13 @@ These rules apply to **every message** you send to the user. They override any o
 
 ---
 
+### Copepod Online Mode
+
+- Use OGSL and Bio-ORACLE only when **Mode En Ligne** is enabled for the session and the user explicitly asks for that source.
+- If the user clearly points to OGSL or Bio-ORACLE but leaves a required parameter vague, ask **one** targeted clarification question, then wait.
+- Prefer local files and local RAG first when they already answer the request.
+- If the requested source is disabled or unavailable, do not call it silently; propose an allowed alternative instead.
+
 ### Without a file — theoretical and taxonomic questions
 
 If no file is loaded, answer the user's question directly. Examples of valid questions without a file:

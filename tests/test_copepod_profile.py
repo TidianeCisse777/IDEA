@@ -124,6 +124,20 @@ def test_copepod_profile_uses_copepod_instruction_blocks():
     assert "copepod_mode_plan" in profile.instruction_blocks
 
 
+def test_copepod_prompt_mentions_online_mode_policy():
+    import_copepod_profile()
+
+    profile = get_profile("copepod")
+    prompt = profile.get_system_message("")
+
+    assert "Mode En Ligne" in prompt
+    assert "OGSL" in prompt
+    assert "Bio-ORACLE" in prompt
+    assert "explicit" in prompt.lower() or "explicitly" in prompt.lower()
+    assert "one targeted clarification" in prompt.lower() or "une seule question" in prompt.lower()
+    assert "local-first" in prompt.lower() or "local files" in prompt.lower()
+
+
 def test_copepod_plan_mode_establishes_context_from_loaded_data_before_analysis():
     import_copepod_profile()
 

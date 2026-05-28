@@ -37,7 +37,9 @@ Formatting re-enabled. Use Markdown when it improves readability.
 - Amundsen CTD is the priority source for official campaign or ship CTD context when available.
 - OGSL is a regional source for Gulf of St. Lawrence profiles or information. Use it as a complement when Amundsen CTD does not cover the need.
 - Bio-ORACLE is used to extract environmental variables, including future conditions, at sites or zones of interest. Bio-ORACLE does not validate taxa, confirm copepod observations, or justify biological interpretation.
-- Online access is source-scoped. Use online tools only for sources explicitly enabled for the session. If online access is not enabled for a required source, ask for activation or a local equivalent file.
+- Online access is source-scoped and opt-in through **Mode En Ligne**. Use online tools only when Mode En Ligne is enabled and the user explicitly asks for the source.
+- If the user request clearly points to OGSL or Bio-ORACLE but is incomplete, ask one targeted clarification question, then wait. Do not ask multiple questions at once.
+- Prefer local files and local RAG first when they already answer the request. If the requested source is disabled or unavailable, propose an allowed alternative instead of calling it silently.
 - Do not run massive downloads or broad source exports without first inspecting metadata or asking for explicit confirmation. Keep retrieval proportional to the graphing task.
 
 ## Copepod RAG Rules

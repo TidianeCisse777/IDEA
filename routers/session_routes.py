@@ -16,6 +16,7 @@ from agents.registry import registered_types
 router = APIRouter(prefix="/session", tags=["session"])
 
 VALID_MODES = {"plan", "analyse"}
+ONLINE_MODE_ALLOWED_SOURCES = ["ogsl", "bio_oracle"]
 ARTIFACT_ROUTE_TYPES = {
     "data-understanding": "data_understanding",
     "graph-context": "graph_context",
@@ -53,6 +54,10 @@ class SessionModeRequest(BaseModel):
     mode: str
 
 
+class OnlineModeRequest(BaseModel):
+    enabled: bool
+
+
 def _authenticated_session_context(request: Request, token: str) -> tuple[str, str, str]:
     session_id = request.headers.get("x-session-id")
     if not session_id:
@@ -78,6 +83,21 @@ async def get_mode(
     _, session_key, _ = _authenticated_session_context(request, token)
     mode = session_store.get_session_mode(session_key)
     return {"mode": mode, "session_key": session_key}
+
+
+@router.get("/online-mode")
+async def get_online_mode(
+    request: Request,
+    token: str = Depends(get_auth_token),
+):
+    agent_type, session_key, _ = _authenticated_session_context(request, token)
+    if agent_type != "copepod":
+        raise HTTPException(status_code=404, detail="Online mode route not found")
+    return {
+        "enabled": session_store.get_online_mode(session_key),
+        "session_key": session_key,
+        "allowed_sources": ONLINE_MODE_ALLOWED_SOURCES,
+    }
 
 
 @router.post("/mode")
@@ -123,6 +143,24 @@ async def set_mode(
             output={"mode": body.mode},
         )
     return {"mode": body.mode, "session_key": session_key}
+
+
+@router.put("/online-mode")
+async def set_online_mode(
+    body: OnlineModeRequest,
+    request: Request,
+    token: str = Depends(get_auth_token),
+):
+    agent_type, session_key, _ = _authenticated_session_context(request, token)
+    if agent_type != "copepod":
+        raise HTTPException(status_code=404, detail="Online mode route not found")
+
+    session_store.set_online_mode(session_key, body.enabled)
+    return {
+        "enabled": session_store.get_online_mode(session_key),
+        "session_key": session_key,
+        "allowed_sources": ONLINE_MODE_ALLOWED_SOURCES,
+    }
 
 
 @router.get("/artifacts/{artifact_slug}")

@@ -21,7 +21,7 @@ Mots-clés : sources en ligne, EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE,
 
 **Règle générale :**
 - Les sources en ligne ne sont jamais appelées silencieusement.
-- Le Mode En Ligne doit être activé par source.
+- Le Mode En Ligne doit être activé pour la session dans l'UI, puis la source doit être explicitement demandée par l'utilisateur.
 - Si une source n'est pas activée, l'agent travaille avec les fichiers chargés et le RAG local.
 - Les IDs de projets ou datasets sont découverts dynamiquement ou fournis par l'utilisateur ; ils ne sont pas des constantes système.
 

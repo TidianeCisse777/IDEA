@@ -84,6 +84,10 @@
                     <span class="material-icons session-mode-icon">edit_note</span>
                     <span id="sessionModeLabel">Mode Plan</span>
                 </div>
+                <div id="onlineModeBadge" class="session-mode-badge session-mode-online" style="display:none">
+                    <span class="material-icons session-mode-icon">cloud</span>
+                    <span id="onlineModeLabel">Mode En Ligne: OFF</span>
+                </div>
 
                 <!-- Right: actions -->
                 <div class="header-actions">
@@ -269,6 +273,20 @@
                 <div class="form-group">
                     <label for="userEmailDisplay">Courriel</label>
                     <input type="email" id="userEmailDisplay" readonly disabled>
+                </div>
+            </div>
+            <hr>
+            <div class="account-info-section">
+                <h3>Mode En Ligne</h3>
+                <div class="form-group checkbox-group">
+                    <label>
+                        <input type="checkbox" id="onlineModeToggle">
+                        <span>Activer le Mode En Ligne</span>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Sources autorisées</label>
+                    <div id="onlineModeAllowedSources" class="form-helper"></div>
                 </div>
             </div>
             <hr>
