@@ -30,9 +30,18 @@ from scripts.evals.copepod.eval_mock import run_mock_eval  # noqa: F401
 from scripts.evals.copepod.eval_smoke import run_langfuse_trace_smoke  # noqa: F401
 from scripts.evals.copepod.fixtures import (  # noqa: F401
     AMUNDSEN_CTD,
+    AMUNDSEN_CTD_IPS007,
+    BIO_ORACLE,
     ECOTAXA,
+    ECOTAXA_JOIN_PREVIEW,
+    ECOTAXA_SMALL,
+    ECOTAXA_UVP5,
+    ECOTAXA_UVP5_ENRICHED,
     ECOPART,
+    ECOPART_CTD_COMPARE,
+    NEOLABS_LOKI,
     NEOLABS_TAXON,
+    OGSL,
     _data_understanding_artifact,
     _upload_fixture,
     _uploaded_path,

@@ -13,10 +13,26 @@ if str(ROOT) not in sys.path:
 FIXTURES = Path(
     "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv"
 )
-ECOTAXA = FIXTURES / "ecotaxa_green_edge_sample_200.tsv"
-ECOPART = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"
-AMUNDSEN_CTD = FIXTURES / "amundsen_12713_ctd_2018_sample.tsv"
-NEOLABS_TAXON = FIXTURES / "neolabs_taxon_zooplankton_abundances.csv"
+# ── primary sources (raw, single-origin) ─────────────────────────────────────
+ECOTAXA = FIXTURES / "ecotaxa_green_edge_sample_200.tsv"       # EcoTaxa project 2331, Green Edge
+ECOTAXA_SMALL = FIXTURES / "ecotaxa_sample_50.tsv"             # EcoTaxa project 1165, 50 objects
+ECOTAXA_UVP5 = FIXTURES / "uvp_amundsen_1165_ecotaxa_object_sample.tsv"  # EcoTaxa 1165, UVP5 Amundsen
+
+ECOPART = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"  # EcoPart UVP5 Amundsen 105
+
+AMUNDSEN_CTD = FIXTURES / "amundsen_12713_ctd_2018_sample.tsv"          # CTD Amundsen full survey
+AMUNDSEN_CTD_IPS007 = FIXTURES / "amundsen_12713_ctd_ips007_match_sample.tsv"  # CTD matched to station IPS007
+
+NEOLABS_TAXON = FIXTURES / "neolabs_taxon_zooplankton_abundances.csv"   # NeoLabs taxonomy counts
+NEOLABS_LOKI = FIXTURES / "neolabs_loki_profils_sample.csv"             # NeoLabs LOKI profil deployments
+
+BIO_ORACLE = FIXTURES / "bio_oracle_si_ssp126_sample.csv"      # Bio-Oracle silicate SSP126 2020
+OGSL = FIXTURES / "ogsl_ctd_biodiv_sample.csv"                  # OGSL CTD biodiversity 2024
+
+# ── derived / pre-joined files (enriched or comparison outputs) ───────────────
+ECOPART_CTD_COMPARE = FIXTURES / "uvp_amundsen_105_ecopart_vs_amundsen_ctd_compare.tsv"
+ECOTAXA_UVP5_ENRICHED = FIXTURES / "uvp_amundsen_1165_105_enriched_nearest_depth.tsv"
+ECOTAXA_JOIN_PREVIEW = FIXTURES / "uvp_amundsen_1165_105_join_preview.tsv"
 
 
 def _stage_fixture(session_id: str, path: Path) -> dict:
