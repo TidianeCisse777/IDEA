@@ -28,6 +28,15 @@ Elle ne remplace pas:
 
 Elle complète ces modes en testant le verrou scientifique entre le DU et l'Analyse.
 
+## État actuel
+
+Ce document décrit le pack GC-only réellement en service au 2026-05-27:
+
+- scénarios actifs: `rich`, `poor`, `offtopic`, `analysis-jump`;
+- scénario `join` retiré du pack pour éviter un signal trop bruité;
+- le prompt principal est responsable du recentrage hors sujet et de la demande de clarification unique;
+- le harness ne doit pas injecter de comportement métier artificiel pour faire passer les tests.
+
 ## Principe de test
 
 Le runner GC-only injecte un DU actif dans le `session_store`, puis observe comment le modèle construit le Graph Context à partir d'un contexte utilisateur plus ou moins complet.
@@ -191,3 +200,25 @@ Le runner devra suivre la même architecture que les autres evals:
 - un mode dédié `--live-gc-only`.
 
 Le runner devra partir d'un DU actif injecté dans la session avant le premier message utilisateur du GC-only.
+
+## Procédure de travail recommandée
+
+Quand un comportement GC-only dérive:
+
+1. vérifier d'abord la trace Langfuse et le log local;
+2. distinguer:
+   - problème de prompt;
+   - problème de backend;
+   - score trop strict;
+3. corriger le contrat au bon endroit:
+   - prompt principal si le comportement doit être réel en prod;
+   - backend si le garde-fou doit être structurel;
+   - scorecard seulement si la métrique est trop étroite;
+4. relancer uniquement le pack concerné, pas tout le workflow.
+
+Pour ajouter un nouveau scénario:
+
+- partir d'un cas métier qui mérite un vrai garde-fou;
+- écrire d'abord l'attendu de prod;
+- ajouter le scénario dans le runner seulement s'il apporte un signal stable;
+- éviter les cas qui ne font que mesurer la forme d'une phrase sans changer le contrat.

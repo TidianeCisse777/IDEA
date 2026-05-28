@@ -1,5 +1,24 @@
 # Plan Mode Eval — Couverture et lacunes
 
+## État actuel
+
+Au 2026-05-27, le socle de workflow est validé localement:
+
+- `--mock` passe.
+- `--live-du-only --push-langfuse` passe.
+- `--live-gc-only --push-langfuse` passe avec le pack courant.
+- Le pack GC-only a volontairement été réduit à:
+  - `rich`
+  - `poor`
+  - `offtopic`
+  - `analysis-jump`
+
+Ce qui reste à revalider plus tard:
+
+- le `--live` complet Plan -> Analyse;
+- les cas multi-fichiers plus complexes;
+- la qualité scientifique fine des Graph Context produits.
+
 ## Ce qui est couvert
 
 ### Mock eval (backend pur, sans LLM)
@@ -72,7 +91,7 @@
 
 ### Live GC-only eval (LLM réel, via `LLM_MODEL`)
 
-9 checks automatiques par run, limités à la construction du Graph Context à partir d'un DU déjà actif :
+Le run GC-only actif produit 20 résultats booléens au total, limités à la construction du Graph Context à partir d'un DU déjà actif:
 
 | Check | Ce qui est vérifié |
 |---|---|
@@ -83,6 +102,32 @@
 | `gc_only_offtopic_asked_single_targeted_question_when_missing_fields` | Le LLM recentre la discussion quand le contexte est hors sujet |
 | `gc_only_analysis-jump_refused_direct_analysis_request_before_gc` | Le LLM refuse une demande directe de code/analyse avant validation du GC |
 | `gc_only_no_internal_terms_in_llm_text` | Le texte LLM ne fuit pas de termes internes de phase |
+
+Le pack GC-only ne contient plus de scénario `join`.
+Le comportement attendu sur contexte partiellement ambigu est maintenant couvert par:
+
+- `poor` pour les champs GC manquants;
+- `offtopic` pour le recentrage hors sujet;
+- `analysis-jump` pour le refus du saut direct vers Analyse;
+- `rich` pour le happy path complet.
+
+## Comment ajouter un test sans biaiser la prod
+
+Quand tu ajoutes ou modifies un test, garde cette règle:
+
+- si le comportement doit exister en prod, le fix va dans le prompt principal ou dans le backend;
+- si le comportement sert seulement à rendre le test observable, le fix va dans le harness ou dans la scorecard, mais il ne doit pas changer le contrat métier;
+- si un scénario devient trop bruité ou trop coûteux, retire-le du pack live plutôt que de forcer le modèle avec un prompt de test artificiel.
+
+Ordre conseillé pour travailler sur un nouveau comportement:
+
+1. écrire le cas dans le test le plus proche du vrai contrat;
+2. vérifier si le prompt ou le backend doit être corrigé;
+3. seulement ensuite, enrichir le harness si le signal doit être rendu mesurable;
+4. valider avec le bon niveau:
+   - `pytest -m "workflow or tool_contract" -q`
+   - `pytest tests/test_copepod_plan_mode_eval_runner.py -q`
+   - puis un seul live ciblé si nécessaire.
 
 ---
 

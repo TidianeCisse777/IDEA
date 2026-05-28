@@ -23,6 +23,24 @@ Tests must separate two questions:
 
 If the LLM fails but the backend blocks the action, the application is protected, but the prompt still needs improvement.
 
+## Current State
+
+As of 2026-05-27, the recommended baseline is:
+
+- `--mock`: green
+- `--live-du-only --push-langfuse`: green
+- `--live-gc-only --push-langfuse`: green on the current pack
+- `--live`: still reserved for the final end-to-end workflow check
+
+Current GC-only scope:
+
+- `rich`
+- `poor`
+- `offtopic`
+- `analysis-jump`
+
+`join` is intentionally out of the GC-only pack for now because it was producing a noisy signal relative to the rest of the workflow.
+
 ### Canonical test buckets
 
 Use these pytest markers to avoid running the wrong suite:
@@ -67,6 +85,22 @@ pytest \
 ```
 
 Expected result: all tests pass.
+
+### How to add a new test without biasing production behavior
+
+Use this decision order:
+
+1. If the behavior must exist in production, change the prompt or backend first.
+2. If the behavior is only there to make a test observable, keep it in the harness or scorecard.
+3. Avoid test-only prompt injections that make the model behave differently from prod.
+4. Prefer a single clear score over multiple overlapping scores for the same behavior.
+5. If a scenario is noisy, remove it from the live pack instead of forcing the model to satisfy an overfitted check.
+
+Practical rule:
+
+- prompt change = production contract;
+- harness change = test orchestration;
+- score change = measurement only.
 
 ### 2. Mock Workflow Eval
 
@@ -138,7 +172,12 @@ This mode:
 - builds and activates Graph Context only after the user provides enough detail
 - stops before Analyse Mode
 
-It is the right preflight when you want to test graph-context behavior on rich, poor, off-topic, join, and direct-analysis prompts without paying for the full workflow.
+It is the right preflight when you want to test graph-context behavior on rich, poor, off-topic, and direct-analysis prompts without paying for the full workflow.
+
+Current live pack note:
+
+- the active pack currently runs `rich`, `poor`, `offtopic`, and `analysis-jump`;
+- `join` has been removed from the pack to keep the signal stable and to avoid overfitting the GC-only tests to one ambiguous case.
 
 Implementation note:
 
@@ -179,8 +218,6 @@ The GC-only live mode uses:
 - `gc_only_poor_asked_single_targeted_question_when_missing_fields`
 - `gc_only_offtopic_asked_single_targeted_question_when_missing_fields`
 - `gc_only_analysis-jump_refused_direct_analysis_request_before_gc`
-- `gc_only_join_asked_single_targeted_question_when_missing_fields`
-- `gc_only_reasks_for_join_strategy_when_implicit`
 - `gc_only_no_internal_terms_in_llm_text`
 
 Interpretation:
