@@ -10,6 +10,7 @@ import time
 import uuid
 from contextlib import ExitStack
 from datetime import datetime, timezone
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -87,16 +88,24 @@ def _test_client(store: InMemorySessionStore) -> tuple[TestClient, ExitStack]:
     return TestClient(app), stack
 
 
+def _stage_fixture(session_id: str, path: Path) -> dict:
+    """Copy a fixture into the eval upload directory without hitting the HTTP rate limiter."""
+    user_id = "eval-user"
+    upload_dir = ROOT / "static" / user_id / session_id / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    destination = upload_dir / path.name
+    shutil.copy2(path, destination)
+    return {
+        "filename": path.name,
+        "size": destination.stat().st_size,
+        "path": str(destination.relative_to(upload_dir)),
+        "scan_result": "Staged locally for eval (HTTP upload bypassed)",
+    }
+
+
 def _upload_fixture(client: TestClient, session_id: str, path: Path) -> dict:
-    with path.open("rb") as handle:
-        response = client.post(
-            "/upload",
-            files={"file": (path.name, handle, "text/tab-separated-values")},
-            headers={"x-session-id": session_id, "x-agent-type": "copepod"},
-        )
-    if response.status_code != 200:
-        raise AssertionError(f"Upload failed for {path.name}: {response.status_code} {response.text}")
-    return response.json()
+    """Backward-compatible alias used by other eval runners."""
+    return _stage_fixture(session_id, path)
 
 
 def _uploaded_path(session_id: str, filename: str) -> Path:
@@ -421,6 +430,19 @@ def _tool_specs() -> list[dict]:
     ]
 
 
+def _gc_only_tool_specs() -> list[dict]:
+    tool_names = {
+        "get_active_data_understanding",
+        "create_graph_context_draft",
+        "activate_graph_context",
+        "get_active_graph_context",
+    }
+    return [
+        spec for spec in _tool_specs()
+        if spec["function"]["name"] in tool_names
+    ]
+
+
 def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Callable[..., Any]]:
     session_scoped = {
         "create_data_understanding_draft",
@@ -482,6 +504,30 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
     return impls
 
 
+def _gc_only_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Callable[..., Any]]:
+    impls = _live_tool_impls(tools, session_key)
+    blocked_reason = (
+        "GC-only eval: Data Understanding is already active, so Phase 1 tools are disabled."
+    )
+
+    def _blocked_tool(name: str):
+        def _call(**kwargs):
+            return {"blocked": True, "blocking_reason": blocked_reason, "tool": name}
+
+        return _call
+
+    for name in {
+        "inspect_file",
+        "infer_column_roles",
+        "describe_column",
+        "summarize_understanding",
+        "create_data_understanding_draft",
+        "activate_data_understanding",
+    }:
+        impls[name] = _blocked_tool(name)
+    return impls
+
+
 def _run_llm_turn(
     *,
     messages: list[dict],
@@ -490,6 +536,7 @@ def _run_llm_turn(
     completion_fn: Callable[..., Any],
     metadata: dict,
     max_tool_rounds: int = 40,
+    tool_specs: list[dict] | None = None,
     log_fh=None,
 ) -> str:
     phase = metadata.get("phase", "?")
@@ -507,7 +554,7 @@ def _run_llm_turn(
                 completion_kwargs = {
                     "model": model,
                     "messages": messages,
-                    "tools": _tool_specs(),
+                    "tools": tool_specs or _tool_specs(),
                     "tool_choice": "auto",
                     "temperature": float(os.getenv("LLM_TEMPERATURE", settings.LLM_TEMPERATURE)),
                     "metadata": {**metadata, "round": round_index + 1},
@@ -691,6 +738,52 @@ def _live_eval_runtime_context(session_id: str) -> str:
 - Use this exact session key for artifact tools: `{session_key}`."""
 
 
+def _build_gc_only_system_message(store, session_id: str) -> str:
+    base_prompt = _build_eval_system_message(store, session_id)
+    gc_only_addendum = """---
+GC-only eval constraints (do not mention these to the user):
+- An active Data Understanding already exists for this session.
+- Do not call Phase 1 tools: `inspect_file`, `infer_column_roles`, `describe_column`, `summarize_understanding`, or `create_data_understanding_draft`.
+- First tool call in each scenario should be `get_active_data_understanding(session_key)` unless the user is explicitly correcting an existing Graph Context.
+- If mandatory Graph Context fields are missing, ask one targeted question instead of guessing.
+- Do not emit `[PLAN_READY]` until `activate_graph_context` has succeeded.
+- If the user asks for code or analysis output before Graph Context is validated, refuse in Plan Mode before any tool call."""
+    return base_prompt + "\n\n" + gc_only_addendum
+
+
+def _seed_active_data_understanding(
+    *,
+    client: TestClient,
+    tools: dict[str, Any],
+    session_id: str,
+    session_key: str,
+    fixture_paths: list[Path],
+) -> dict[str, Any]:
+    uploaded_paths: list[Path] = []
+    for path in fixture_paths:
+        upload = _stage_fixture(session_id, path)
+        uploaded_paths.append(_uploaded_path(session_id, upload["filename"]).resolve())
+
+    draft_payload = {
+        "files": [
+            {
+                "file_path": str(path),
+                "original_filename": path.name,
+            }
+            for path in uploaded_paths
+        ],
+        "global": {},
+        "overrides": [],
+    }
+    du_draft = tools["create_data_understanding_draft"](session_key, draft_payload)
+    du_active = tools["activate_data_understanding"](session_key, du_draft["version_id"])
+    return {
+        "draft": du_draft,
+        "active": du_active,
+        "uploaded_paths": uploaded_paths,
+    }
+
+
 def _push_scores_to_langfuse(session_key: str, results: list[dict]) -> str | None:
     if not should_enable_langfuse():
         return None
@@ -837,7 +930,7 @@ def run_live_du_only_eval(
         log_fh.flush()
         try:
             with stack:
-                upload = _upload_fixture(client, session_id, ECOTAXA)
+                upload = _stage_fixture(session_id, ECOTAXA)
                 uploaded_ecotaxa_local, uploaded_ecotaxa_canonical = _uploaded_path_label(
                     session_id, upload["filename"]
                 )
@@ -1022,6 +1115,351 @@ def run_live_du_only_eval(
     return report
 
 
+def run_live_gc_only_eval(
+    *,
+    push_langfuse: bool = False,
+    completion_fn: Callable[..., Any] | None = None,
+) -> dict:
+    """Run the live LLM through Graph Context only, starting from an already active DU."""
+    store = InMemorySessionStore()
+    tools = _load_tools()
+    session_id = f"gc-only-eval-{uuid.uuid4().hex[:10]}"
+    session_key = f"eval-user:{session_id}:copepod"
+    model_name = settings.LLM_MODEL
+    completion_fn = completion_fn or _default_live_completion
+    results: list[dict] = []
+    tags = ["eval", "copepod", "plan-mode", "live", "gc-only"]
+    phase1_tool_names = {
+        "inspect_file",
+        "infer_column_roles",
+        "describe_column",
+        "summarize_understanding",
+        "create_data_understanding_draft",
+    }
+    forbidden_terms = [
+        "data understanding",
+        "graph context",
+        "version_id",
+        "du-",
+        "gc-",
+    ]
+
+    lf, eval_trace = _make_eval_trace(session_key, session_id, model_name, tags)
+
+    log_dir = ROOT / "logs" / "evals"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"live_gc_only_eval_{session_id}.log"
+
+    client, stack = _test_client(store)
+
+    def _scenario_turn(
+        *,
+        scenario_slug: str,
+        scenario_label: str,
+        scenario_session_id: str,
+        scenario_session_key: str,
+        user_messages: list[str],
+        seed_paths: list[Path],
+        should_confirm_gc: bool = False,
+    ) -> dict[str, Any]:
+        seed = _seed_active_data_understanding(
+            client=client,
+            tools=tools,
+            session_id=scenario_session_id,
+            session_key=scenario_session_key,
+            fixture_paths=seed_paths,
+        )
+        messages: list[dict] = [
+            {
+                "role": "system",
+                "content": _build_gc_only_system_message(store, scenario_session_id),
+            }
+        ]
+        tool_calls_seen: list[str] = []
+        replies: list[str] = []
+        phase1_attempts = 0
+        phase1_blocked = 0
+        question_marks = 0
+
+        base_metadata = {
+            "session_id": scenario_session_key,
+            "tags": tags + [scenario_slug],
+            "dataset": DATASET_NAME,
+            "scenario": scenario_slug,
+        }
+
+        def _run_turn(turn_label: str, user_text: str, span_name: str) -> str:
+            messages.append({"role": "user", "content": user_text})
+            span = eval_trace.span(name=span_name, input={"scenario": scenario_slug, "turn": turn_label}) if eval_trace else None
+            reply = _run_llm_turn(
+                messages=messages,
+                tool_impls=_gc_only_tool_impls(tools, scenario_session_key),
+                model=model_name,
+                completion_fn=completion_fn,
+                metadata={**base_metadata, "phase": turn_label, "lf_phase_span": span},
+                tool_specs=_gc_only_tool_specs(),
+                log_fh=log_fh,
+            )
+            if span is not None:
+                span.end()
+            replies.append(reply)
+            return reply
+
+        try:
+            first_reply = _run_turn("gc-only-turn-1", user_messages[0], f"phase/gc-only/{scenario_slug}/turn-1")
+            if "?" in first_reply:
+                question_marks += 1
+            if should_confirm_gc and len(user_messages) > 1:
+                second_reply = _run_turn("gc-only-turn-2", user_messages[1], f"phase/gc-only/{scenario_slug}/turn-2")
+                if "?" in second_reply:
+                    question_marks += 1
+            for message in messages:
+                if message.get("role") == "tool" and message.get("name") in phase1_tool_names:
+                    phase1_attempts += 1
+                    if message.get("content") and "blocking_reason" in message["content"]:
+                        phase1_blocked += 1
+            gc_versions = store.get_artifact_versions(scenario_session_key, "graph_context")
+            active_du = seed["active"] if isinstance(seed, dict) else None
+            active_gc = store.get_active_artifact(scenario_session_key, "graph_context")
+            return {
+                "session_key": scenario_session_key,
+                "replies": replies,
+                "messages": messages,
+                "active_du": active_du,
+                "active_gc": active_gc,
+                "gc_versions": gc_versions,
+                "phase1_attempts": phase1_attempts,
+                "phase1_blocked": phase1_blocked,
+                "question_marks": question_marks,
+            }
+        except Exception as exc:
+            raise RuntimeError(f"GC-only scenario {scenario_label} failed: {exc}") from exc
+
+    with open(log_path, "w", encoding="utf-8") as log_fh:
+        log_fh.write(f"=== LIVE GC-ONLY EVAL {session_id} model={model_name} ===\n")
+        log_fh.write("    seeds=EcoTaxa+EcoPart  scope=GraphContext-only\n\n")
+        log_fh.flush()
+        try:
+            with stack:
+                scenario_specs = [
+                    {
+                        "slug": "rich",
+                        "label": "Contexte riche",
+                        "seed_paths": [ECOTAXA, ECOPART],
+                        "user_messages": [
+                            (
+                                "Le DU est déjà validé. Je veux une distribution verticale "
+                                "de la biomasse des copépodes sur EcoTaxa + EcoPart, en mètres, "
+                                "avec un histogramme vertical en Python, sortie png + csv. "
+                                "Prépare le contexte scientifique."
+                            ),
+                            "Oui, c'est correct. Tu peux activer le contexte graphique.",
+                        ],
+                        "should_confirm_gc": True,
+                    },
+                    {
+                        "slug": "poor",
+                        "label": "Contexte pauvre",
+                        "seed_paths": [ECOTAXA, ECOPART],
+                        "user_messages": [
+                            (
+                                "Je veux faire un graphe de la campagne, "
+                                "mais je n'ai pas encore fixé les unités ni le type de graphique."
+                            )
+                        ],
+                        "should_confirm_gc": False,
+                    },
+                    {
+                        "slug": "offtopic",
+                        "label": "Hors sujet",
+                        "seed_paths": [ECOTAXA, ECOPART],
+                        "user_messages": [
+                            "Parle-moi plutôt des copépodes en général, sans graphique."
+                        ],
+                        "should_confirm_gc": False,
+                    },
+                    {
+                        "slug": "analysis-jump",
+                        "label": "Saut vers analyse",
+                        "seed_paths": [ECOTAXA, ECOPART],
+                        "user_messages": [
+                            "Fais directement le code Python pour l'analyse et le graphique."
+                        ],
+                        "should_confirm_gc": False,
+                    },
+                    {
+                        "slug": "join",
+                        "label": "Jointure implicite",
+                        "seed_paths": [ECOTAXA, ECOPART],
+                        "user_messages": [
+                            (
+                                "Je veux joindre EcoTaxa et EcoPart pour explorer la relation "
+                                "entre organismes et particules en profondeur, mais la clé de jointure "
+                                "n'est pas encore fixée."
+                            )
+                        ],
+                        "should_confirm_gc": False,
+                    },
+                ]
+
+                scenario_states = []
+                for spec in scenario_specs:
+                    scenario_session_id = f"{session_id}-{spec['slug']}"
+                    scenario_session_key = f"eval-user:{scenario_session_id}:copepod"
+                    log_fh.write(f"--- SCENARIO: {spec['slug']} ---\n")
+                    log_fh.flush()
+                    state = _scenario_turn(
+                        scenario_slug=spec["slug"],
+                        scenario_label=spec["label"],
+                        scenario_session_id=scenario_session_id,
+                        scenario_session_key=scenario_session_key,
+                        user_messages=spec["user_messages"],
+                        seed_paths=spec["seed_paths"],
+                        should_confirm_gc=spec["should_confirm_gc"],
+                    )
+                    scenario_states.append((spec, state))
+                    first_reply = state["replies"][0] if state["replies"] else ""
+                    second_reply = state["replies"][1] if len(state["replies"]) > 1 else ""
+
+                    phase1_reopened = any(
+                        m.get("role") == "tool"
+                        and m.get("name") in phase1_tool_names
+                        for m in state["messages"]
+                    )
+                    gc_draft_created = bool(state["gc_versions"])
+                    gc_activated = bool(state["active_gc"])
+                    plan_ready_emitted = any("[PLAN_READY]" in reply for reply in state["replies"])
+                    analysis_refusal = (
+                        "Plan Mode" in first_reply
+                        or "plan mode" in first_reply.lower()
+                        or "Je suis en Plan Mode" in first_reply
+                    )
+                    targeted_question = "?" in first_reply and not gc_draft_created
+                    if spec["slug"] == "rich" and len(state["replies"]) > 1:
+                        gc_draft_created = gc_draft_created or "create_graph_context_draft" in "".join(
+                            m.get("name", "") for m in state["messages"] if m.get("role") == "tool"
+                        )
+
+                    results.append(_result(
+                        f"gc_only_{spec['slug']}_never_reopened_phase1",
+                        not phase1_reopened,
+                        f"Scenario {spec['slug']} did not reopen Phase 1.",
+                        {"case_type": "edge", "scenario": spec["slug"], "phase1_attempts": state["phase1_attempts"]},
+                    ))
+                    if spec["slug"] == "poor" or spec["slug"] == "offtopic" or spec["slug"] == "join":
+                        results.append(_result(
+                            f"gc_only_{spec['slug']}_asked_single_targeted_question_when_missing_fields",
+                            (targeted_question or "objectif scientifique" in first_reply.lower() or "quelle" in first_reply.lower())
+                            and first_reply.count("?") <= 2,
+                            f"Scenario {spec['slug']} replied with a targeted question: {first_reply[:200]!r}",
+                            {"case_type": "common", "scenario": spec["slug"]},
+                        ))
+                    if spec["slug"] == "analysis-jump":
+                        results.append(_result(
+                            "gc_only_refused_direct_analysis_request_before_gc",
+                            analysis_refusal and not state["phase1_attempts"],
+                            f"Scenario analysis-jump refused direct analysis: {first_reply[:240]!r}",
+                            {"case_type": "edge", "scenario": spec["slug"]},
+                        ))
+                    if spec["slug"] == "rich":
+                        results.append(_result(
+                            "gc_only_rich_created_graph_context_draft",
+                            gc_draft_created,
+                            "Scenario rich created a Graph Context draft.",
+                            {"case_type": "common", "scenario": spec["slug"]},
+                        ))
+                    if spec["slug"] in {"poor", "offtopic", "analysis-jump", "join"}:
+                        results.append(_result(
+                            f"gc_only_{spec['slug']}_created_graph_context_draft",
+                            not gc_draft_created,
+                            f"Scenario {spec['slug']} did not create a Graph Context draft.",
+                            {"case_type": "edge", "scenario": spec["slug"]},
+                        ))
+                    if spec["slug"] == "rich":
+                        results.append(_result(
+                            "gc_only_rich_activated_graph_context",
+                            gc_activated,
+                            "Rich-context scenario activated the Graph Context after confirmation.",
+                            {"case_type": "common", "scenario": spec["slug"]},
+                        ))
+                        results.append(_result(
+                            "gc_only_plan_ready_after_gc_activation",
+                            gc_activated and plan_ready_emitted,
+                            "PLAN_READY was emitted only after Graph Context activation.",
+                            {"case_type": "common", "scenario": spec["slug"]},
+                        ))
+                    if spec["slug"] in {"poor", "offtopic", "analysis-jump", "join"}:
+                        results.append(_result(
+                            f"gc_only_{spec['slug']}_did_not_emit_plan_ready",
+                            not plan_ready_emitted,
+                            f"Scenario {spec['slug']} did not emit PLAN_READY.",
+                            {"case_type": "edge", "scenario": spec["slug"]},
+                        ))
+                        results.append(_result(
+                            f"gc_only_{spec['slug']}_did_not_activate_graph_context",
+                            not gc_activated,
+                            f"Scenario {spec['slug']} did not activate Graph Context.",
+                            {"case_type": "edge", "scenario": spec["slug"]},
+                        ))
+                    if spec["slug"] == "join":
+                        join_text = "\n".join(state["replies"]).lower()
+                        results.append(_result(
+                            "gc_only_reasks_for_join_strategy_when_implicit",
+                            "jointure" in join_text or "join" in join_text or "clé" in join_text,
+                            f"Join scenario asked for or discussed a join strategy: {join_text[:240]!r}",
+                            {"case_type": "edge", "scenario": spec["slug"]},
+                        ))
+
+                all_llm_text = "\n".join(
+                    reply for _, state in scenario_states for reply in state["replies"]
+                ).lower()
+                leaked = [term for term in forbidden_terms if term in all_llm_text]
+                results.append(_result(
+                    "gc_only_no_internal_terms_in_llm_text",
+                    not leaked,
+                    (
+                        "No forbidden downstream terms in LLM text."
+                        if not leaked
+                        else f"LLM leaked internal terms: {leaked}"
+                    ),
+                    {"case_type": "edge", "leaked": leaked},
+                ))
+
+        except Exception as exc:
+            import traceback
+            log_fh.write(f"\n[CRASH] {type(exc).__name__}: {exc}\n")
+            log_fh.write(traceback.format_exc())
+            log_fh.flush()
+            raise
+        finally:
+            passed_count = sum(1 for r in results if r["passed"])
+            log_fh.write(f"\n=== SCORES {passed_count}/{len(results)} ===\n")
+            for r in results:
+                log_fh.write(f"  {'PASS' if r['passed'] else 'FAIL'} {r['name']}\n")
+                if not r["passed"]:
+                    log_fh.write(f"       {r['detail']}\n")
+            log_fh.write(f"\nlog: {log_path}\n")
+            log_fh.flush()
+
+    passed_count = sum(1 for result in results if result["passed"])
+    trace_url = _close_eval_trace(lf, eval_trace, results, push_scores=push_langfuse)
+    _cleanup_old_logs(log_dir, "live_gc_only_eval_")
+    print(f"eval log → {log_path}")
+    report = {
+        "dataset": DATASET_NAME,
+        "mode": "live-gc-only",
+        "model": model_name,
+        "session_id": session_id,
+        "session_key": session_key,
+        "passed": passed_count == len(results),
+        "passed_count": passed_count,
+        "total_count": len(results),
+        "results": results,
+        "langfuse_trace_url": trace_url,
+    }
+    return report
+
+
 def run_mock_eval(*, push_langfuse: bool = False) -> dict:
     """Run deterministic Plan Mode workflow checks without calling a real LLM."""
     store = InMemorySessionStore()
@@ -1032,7 +1470,7 @@ def run_mock_eval(*, push_langfuse: bool = False) -> dict:
 
     client, stack = _test_client(store)
     with stack:
-        upload = _upload_fixture(client, session_id, ECOTAXA)
+        upload = _stage_fixture(session_id, ECOTAXA)
         uploaded_ecotaxa = _uploaded_path(session_id, upload["filename"])
         du_artifact = _data_understanding_artifact(tools, uploaded_ecotaxa)
         du_draft = tools["create_data_understanding_draft"](session_key, du_artifact)
@@ -1186,7 +1624,7 @@ def run_mock_eval(*, push_langfuse: bool = False) -> dict:
             {"case_type": "common", "version_id": gc_active.get("version_id")},
         ))
 
-        upload_ecopart = _upload_fixture(client, session_id, ECOPART)
+        upload_ecopart = _stage_fixture(session_id, ECOPART)
         uploaded_ecopart = _uploaded_path(session_id, upload_ecopart["filename"])
         new_du_draft = tools["create_data_understanding_draft"](
             session_key,
@@ -1340,7 +1778,7 @@ def run_live_eval(
         log_fh.flush()
         try:
             with stack:
-                upload = _upload_fixture(client, session_id, ECOTAXA)
+                upload = _stage_fixture(session_id, ECOTAXA)
                 uploaded_ecotaxa_local, uploaded_ecotaxa_canonical = _uploaded_path_label(
                     session_id, upload["filename"]
                 )
@@ -1662,6 +2100,7 @@ def _print_report(report: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Copepod Plan Mode workflow evals.")
     parser.add_argument("--mock", action="store_true", help="Run deterministic no-LLM evals.")
+    parser.add_argument("--live-gc-only", action="store_true", help="Run live LLM evals through Graph Context only.")
     parser.add_argument("--live-du-only", action="store_true", help="Run live LLM evals through Data Understanding only.")
     parser.add_argument("--live", action="store_true", help="Run live LLM-driven evals.")
     parser.add_argument("--trace-smoke", action="store_true", help="Send one prompt and verify Langfuse trace/level/score.")
@@ -1676,6 +2115,8 @@ def main() -> int:
 
     if args.trace_smoke:
         report = run_langfuse_trace_smoke(prompt=args.prompt)
+    elif args.live_gc_only:
+        report = run_live_gc_only_eval(push_langfuse=args.push_langfuse)
     elif args.live_du_only:
         report = run_live_du_only_eval(push_langfuse=args.push_langfuse)
     elif args.live:

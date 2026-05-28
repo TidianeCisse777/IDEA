@@ -80,6 +80,12 @@ Expected result: all workflow gates pass.
 
 This is the default command before any live run.
 
+Implementation note:
+
+- the eval harness stages fixtures directly into `static/eval-user/.../uploads`
+- it does not depend on the HTTP `/upload` route during eval runs
+- this keeps the workflow realistic while avoiding SlowAPI rate-limit noise
+
 ### 3. Live Eval
 
 Only run this when live API calls are intended.
@@ -110,6 +116,35 @@ This mode:
 
 It is the right preflight when you want to validate dataset comprehension without spending tokens on the full plan workflow.
 
+Implementation note:
+
+- fixtures are staged locally into the session upload directory before the first DU turn
+- the harness avoids the HTTP upload rate limiter so the run stays deterministic
+
+### 3c. GC-Only Live Eval
+
+Use this when the DU is already active and you want to validate only the Graph Context phase and user-context handling.
+
+```bash
+python scripts/evals/run_copepod_plan_mode_eval.py --live-gc-only --push-langfuse
+```
+
+This mode:
+
+- seeds an active DU before the first user turn
+- keeps Phase 1 disabled
+- checks whether the model waits for user scientific context
+- checks targeted questions when required fields are missing
+- builds and activates Graph Context only after the user provides enough detail
+- stops before Analyse Mode
+
+It is the right preflight when you want to test graph-context behavior on rich, poor, off-topic, join, and direct-analysis prompts without paying for the full workflow.
+
+Implementation note:
+
+- fixtures are staged locally into the session upload directory before the first GC turn
+- the harness does not call `/upload` for these evals, so the upload rate limit cannot interfere
+
 ## Important Scores
 
 The main live scores are:
@@ -136,12 +171,25 @@ The DU-only live mode uses:
 - `live_du_only_activated_data_understanding`
 - `live_du_only_no_graph_context_created`
 
+The GC-only live mode uses:
+
+- `gc_only_rich_created_graph_context_draft`
+- `gc_only_rich_activated_graph_context`
+- `gc_only_plan_ready_after_gc_activation`
+- `gc_only_poor_asked_single_targeted_question_when_missing_fields`
+- `gc_only_offtopic_asked_single_targeted_question_when_missing_fields`
+- `gc_only_analysis-jump_refused_direct_analysis_request_before_gc`
+- `gc_only_join_asked_single_targeted_question_when_missing_fields`
+- `gc_only_reasks_for_join_strategy_when_implicit`
+- `gc_only_no_internal_terms_in_llm_text`
+
 Interpretation:
 
 - `live_llm_*` failures usually mean prompt or model behavior needs work.
 - `live_backend_*` failures mean the application guard is broken and must be fixed first.
 - `live_du_payload_has_sufficient_coverage` means the DU summary did not reach the minimum coverage threshold and the Phase 1 analysis should be improved before live runs.
 - `live_plan_ready_enables_analyse_mode` confirms the final transition works after validated artifacts exist.
+- `gc_only_*` failures usually mean the model is not waiting for user context, is reopening Phase 1, or is skipping the Graph Context validation step.
 
 ## Checking Results In Langfuse
 

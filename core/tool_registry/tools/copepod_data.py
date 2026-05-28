@@ -362,6 +362,8 @@ def infer_column_roles(columns, metadata=None):
 
     ecotaxa_patterns = {
         "taxon":                    ["object_class"],
+        "profile_id":               ["profile_id", "profile"],
+        "pixel_calibration":        ["acq_pixel", "process_pixel"],
         "annotation_metadata":      [
             "object_annotation", "annotation_person", "annotation_email",
             "annotation_date", "annotation_time", "annotation_status",

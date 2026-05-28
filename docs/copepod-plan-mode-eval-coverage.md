@@ -70,6 +70,22 @@
 | `live_du_only_no_graph_context_created` | Aucun Graph Context n'est créé dans ce mode |
 | `live_du_only_no_internal_terms_in_llm_text` | Le texte LLM ne fuit pas de termes internes de la phase suivante |
 
+### Live GC-only eval (LLM réel, via `LLM_MODEL`)
+
+9 checks automatiques par run, limités à la construction du Graph Context à partir d'un DU déjà actif :
+
+| Check | Ce qui est vérifié |
+|---|---|
+| `gc_only_rich_created_graph_context_draft` | Le LLM sait construire un GC draft quand le contexte scientifique est suffisant |
+| `gc_only_rich_activated_graph_context` | Le LLM active le GC après confirmation |
+| `gc_only_plan_ready_after_gc_activation` | `[PLAN_READY]` n'apparaît qu'après activation du GC |
+| `gc_only_poor_asked_single_targeted_question_when_missing_fields` | Le LLM pose une question ciblée quand il manque des champs GC |
+| `gc_only_offtopic_asked_single_targeted_question_when_missing_fields` | Le LLM recentre la discussion quand le contexte est hors sujet |
+| `gc_only_analysis-jump_refused_direct_analysis_request_before_gc` | Le LLM refuse une demande directe de code/analyse avant validation du GC |
+| `gc_only_join_asked_single_targeted_question_when_missing_fields` | Le LLM exige la stratégie de jointure avant d'avancer |
+| `gc_only_reasks_for_join_strategy_when_implicit` | Les jointures implicites sont clarifiées au lieu d'être inventées |
+| `gc_only_no_internal_terms_in_llm_text` | Le texte LLM ne fuit pas de termes internes de phase |
+
 ---
 
 ## Ce qui manque

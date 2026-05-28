@@ -8,6 +8,7 @@ from scripts.evals.run_copepod_plan_mode_eval import (
     _live_eval_runtime_context,
     _live_eval_system_prompt,
     main,
+    run_live_gc_only_eval,
     run_live_du_only_eval,
     run_live_eval,
     run_mock_eval,
@@ -445,6 +446,424 @@ def test_cli_dispatches_du_only_mode(monkeypatch):
 
     assert main() == 0
     assert calls == {"du_only": 1, "live": 0, "mock": 0}
+
+
+@pytest.mark.tool_contract
+def test_cli_dispatches_gc_only_mode(monkeypatch):
+    import sys
+
+    calls = {"gc_only": 0, "du_only": 0, "live": 0, "mock": 0}
+
+    monkeypatch.setattr(
+        "scripts.evals.run_copepod_plan_mode_eval.run_live_gc_only_eval",
+        lambda **kwargs: calls.__setitem__("gc_only", calls["gc_only"] + 1) or {
+            "dataset": "copepod-plan-mode-v1",
+            "mode": "live-gc-only",
+            "passed": True,
+            "passed_count": 1,
+            "total_count": 1,
+            "results": [],
+            "langfuse_trace_url": None,
+        },
+    )
+    monkeypatch.setattr(
+        "scripts.evals.run_copepod_plan_mode_eval.run_live_du_only_eval",
+        lambda **kwargs: calls.__setitem__("du_only", calls["du_only"] + 1) or None,
+    )
+    monkeypatch.setattr(
+        "scripts.evals.run_copepod_plan_mode_eval.run_live_eval",
+        lambda **kwargs: calls.__setitem__("live", calls["live"] + 1) or None,
+    )
+    monkeypatch.setattr(
+        "scripts.evals.run_copepod_plan_mode_eval.run_mock_eval",
+        lambda **kwargs: calls.__setitem__("mock", calls["mock"] + 1) or None,
+    )
+    monkeypatch.setattr(sys, "argv", ["run_copepod_plan_mode_eval.py", "--live-gc-only"])
+
+    assert main() == 0
+    assert calls == {"gc_only": 1, "du_only": 0, "live": 0, "mock": 0}
+
+
+@pytest.mark.llm_protocol
+def test_live_gc_only_runner_starts_from_active_du(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_MODEL", "fake-live-model")
+    calls = {"count": 0}
+
+    def fake_completion(*, messages, metadata=None, **kwargs):
+        calls["count"] += 1
+        scenario = (metadata or {}).get("scenario")
+        phase = (metadata or {}).get("phase")
+        round_index = (metadata or {}).get("round")
+
+        if scenario == "rich":
+            if phase == "gc-only-turn-1" and round_index == 1:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    _tool_call(
+                                        "call-gc-active",
+                                        "get_active_data_understanding",
+                                        {"session_key": "eval-user:ignored:copepod"},
+                                    )
+                                ],
+                            }
+                        }
+                    ]
+                }
+            if phase == "gc-only-turn-1" and round_index == 2:
+                du = _latest_tool_result(messages, "get_active_data_understanding")
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    _tool_call(
+                                        "call-gc-draft",
+                                        "create_graph_context_draft",
+                                        {
+                                            "session_key": "eval-user:ignored:copepod",
+                                            "artifact": {
+                                                "data_understanding_version_id": du["version_id"],
+                                                "objective": "Distribution verticale",
+                                                "columns": ["object_depth_min"],
+                                                "filters": [],
+                                                "units": {"depth": "m"},
+                                                "chart_type": "vertical distribution",
+                                                "language": "Python",
+                                                "output_artifacts": ["png"],
+                                                "feasibility": "exploratory",
+                                                "blockers": [],
+                                            },
+                                        },
+                                    )
+                                ],
+                            }
+                        }
+                    ]
+                }
+            if phase == "gc-only-turn-2" and round_index == 1:
+                gc = _latest_tool_result(messages, "create_graph_context_draft")
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    _tool_call(
+                                        "call-gc-active",
+                                        "activate_graph_context",
+                                        {
+                                            "session_key": "eval-user:ignored:copepod",
+                                            "version_id": gc["version_id"],
+                                        },
+                                    ),
+                                    _tool_call(
+                                        "call-gc-read",
+                                        "get_active_graph_context",
+                                        {"session_key": "eval-user:ignored:copepod"},
+                                    ),
+                                ],
+                            }
+                        }
+                    ]
+                }
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Contexte validé. [PLAN_READY]",
+                        }
+                    }
+                ]
+            }
+
+        if scenario == "poor":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Il me manque encore une précision: quel type de graphique souhaitez-vous ?",
+                        }
+                    }
+                ]
+            }
+
+        if scenario == "offtopic":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Je peux cadrer le contexte graphique, mais il me faut un objectif scientifique précis avant d'avancer.",
+                        }
+                    }
+                ]
+            }
+
+        if scenario == "analysis-jump":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Je suis en Plan Mode. Je ne peux pas générer de code ou de graphique avant que le Plan Mode soit complété.",
+                        }
+                    }
+                ]
+            }
+
+        if scenario == "join":
+            if round_index == 1:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "Quelle clé de jointure voulez-vous utiliser entre EcoTaxa et EcoPart ?",
+                            }
+                        }
+                    ]
+                }
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "D'accord, j'attends la clé de jointure avant de rédiger le contexte graphique.",
+                        }
+                    }
+                ]
+            }
+
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Contexte validé. [PLAN_READY]",
+                    }
+                }
+            ]
+        }
+
+    report = run_live_gc_only_eval(
+        push_langfuse=False,
+        completion_fn=fake_completion,
+    )
+
+    assert report["mode"] == "live-gc-only"
+    assert report["passed"] is True
+    assert calls["count"] >= 7
+
+
+@pytest.mark.llm_protocol
+def test_live_gc_only_runner_limits_tool_surface_to_gc_tools(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_MODEL", "fake-live-model")
+    observed_tools = []
+
+    def fake_completion(*, tools=None, metadata=None, **kwargs):
+        observed_tools.append([tool["function"]["name"] for tool in tools or []])
+        scenario = (metadata or {}).get("scenario")
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Contexte validé. [PLAN_READY]",
+                    }
+                }
+            ]
+        }
+
+    report = run_live_gc_only_eval(push_langfuse=False, completion_fn=fake_completion)
+
+    assert report["mode"] == "live-gc-only"
+    assert observed_tools, "The fake completion should have observed the tool surface."
+    first_surface = observed_tools[0]
+    assert "inspect_file" not in first_surface
+    assert "infer_column_roles" not in first_surface
+    assert "describe_column" not in first_surface
+    assert "summarize_understanding" not in first_surface
+    assert "create_data_understanding_draft" not in first_surface
+    assert "get_active_data_understanding" in first_surface
+    assert "create_graph_context_draft" in first_surface
+    assert "activate_graph_context" in first_surface
+
+
+@pytest.mark.llm_protocol
+def test_live_gc_only_runner_blocks_gc_draft_and_plan_ready_for_poor_and_analysis_jump(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_MODEL", "fake-live-model")
+    calls = {"count": 0}
+
+    def fake_completion(*, messages=None, metadata=None, **kwargs):
+        calls["count"] += 1
+        scenario = (metadata or {}).get("scenario")
+        phase = (metadata or {}).get("phase")
+        round_index = (metadata or {}).get("round")
+        if scenario == "rich":
+            if phase == "gc-only-turn-1" and round_index == 1:
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    _tool_call(
+                                        "call-gc-active",
+                                        "get_active_data_understanding",
+                                        {"session_key": "eval-user:ignored:copepod"},
+                                    )
+                                ],
+                            }
+                        }
+                    ]
+                }
+            if phase == "gc-only-turn-1" and round_index == 2:
+                du = _latest_tool_result(messages, "get_active_data_understanding")
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    _tool_call(
+                                        "call-gc-draft",
+                                        "create_graph_context_draft",
+                                        {
+                                            "session_key": "eval-user:ignored:copepod",
+                                            "artifact": {
+                                                "data_understanding_version_id": du["version_id"],
+                                                "objective": "Distribution verticale",
+                                                "columns": ["object_depth_min"],
+                                                "filters": [],
+                                                "units": {"depth": "m"},
+                                                "chart_type": "vertical distribution",
+                                                "language": "Python",
+                                                "output_artifacts": ["png"],
+                                                "feasibility": "exploratory",
+                                                "blockers": [],
+                                            },
+                                        },
+                                    )
+                                ],
+                            }
+                        }
+                    ]
+                }
+            if phase == "gc-only-turn-2" and round_index == 1:
+                gc = _latest_tool_result(messages, "create_graph_context_draft")
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    _tool_call(
+                                        "call-gc-active",
+                                        "activate_graph_context",
+                                        {
+                                            "session_key": "eval-user:ignored:copepod",
+                                            "version_id": gc["version_id"],
+                                        },
+                                    ),
+                                    _tool_call(
+                                        "call-gc-read",
+                                        "get_active_graph_context",
+                                        {"session_key": "eval-user:ignored:copepod"},
+                                    ),
+                                ],
+                            }
+                        }
+                    ]
+                }
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Contexte validé. [PLAN_READY]",
+                        }
+                    }
+                ]
+            }
+        if scenario == "poor":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Il me manque encore une précision: quel type de graphique souhaitez-vous ?",
+                        }
+                    }
+                ]
+            }
+        if scenario == "analysis-jump":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Je suis en Plan Mode. Je ne peux pas générer de code ou de graphique avant que le Plan Mode soit complété.",
+                        }
+                    }
+                ]
+            }
+        if scenario == "offtopic":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Quel objectif scientifique voulez-vous cadrer pour ce contexte ?",
+                        }
+                    }
+                ]
+            }
+        if scenario == "join":
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Quelle clé de jointure voulez-vous utiliser entre EcoTaxa et EcoPart ?",
+                        }
+                    }
+                ]
+            }
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "Contexte validé. [PLAN_READY]",
+                    }
+                }
+            ]
+        }
+
+    report = run_live_gc_only_eval(push_langfuse=False, completion_fn=fake_completion)
+    scores = {item["name"]: item for item in report["results"]}
+
+    assert report["mode"] == "live-gc-only"
+    assert calls["count"] >= 3
+    assert scores["gc_only_poor_created_graph_context_draft"]["passed"] is True
+    assert scores["gc_only_poor_asked_single_targeted_question_when_missing_fields"]["passed"] is True
+    assert scores["gc_only_offtopic_asked_single_targeted_question_when_missing_fields"]["passed"] is True
+    assert scores["gc_only_join_asked_single_targeted_question_when_missing_fields"]["passed"] is True
+    assert scores["gc_only_reasks_for_join_strategy_when_implicit"]["passed"] is True
+    assert scores["gc_only_no_internal_terms_in_llm_text"]["passed"] is True
 
 
 @pytest.mark.llm_protocol
