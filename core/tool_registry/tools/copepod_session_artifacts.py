@@ -30,6 +30,20 @@ def _normalize_data_understanding_payload(session_key, artifact):
         payload.setdefault("files", payload.pop("file_summaries"))
         payload.setdefault("global", {})
 
+    # Shape 1b — LLM passed a reconstructed artifact instead of synthesize output verbatim.
+    # Recover file_summaries from the cached file_synthesis artifact if available.
+    if not payload.get("files"):
+        try:
+            from core import session_store as _ss_mod
+            synth_versions = _ss_mod.session_store.get_artifact_versions(session_key, "file_synthesis")
+            if synth_versions:
+                cached = (synth_versions[-1].get("payload") or {})
+                if cached.get("file_summaries"):
+                    payload["files"] = list(cached["file_summaries"])
+                    payload.setdefault("global", cached.get("global") or {})
+        except Exception:
+            pass
+
     file_entries = payload.get("files") or []
 
     # Shape 2 — pre-summarized files (summarize_understanding output per file)
@@ -206,6 +220,13 @@ def synthesize_file_understanding(
         "file_summaries": list(file_summaries or []),
         "global": global_block,
     }
+    # Cache so _normalize can recover if LLM passes a reconstructed artifact
+    if session_key:
+        try:
+            from core import session_store as _ss_mod
+            _ss_mod.session_store.create_artifact_version(session_key, "file_synthesis", result)
+        except Exception:
+            pass
     trace_copepod_event(
         "multi_file_synthesis_created",
         session_key=session_key or "",

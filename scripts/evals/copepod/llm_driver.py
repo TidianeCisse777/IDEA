@@ -394,7 +394,6 @@ def _run_llm_turn(
                         "describe_column already completed for this phase. "
                         "Continue with summarize_understanding."
                     ),
-                    "tool_calls": [],
                 }
                 return messages[-1]["content"]
             describe_column_round_seen = True
