@@ -6,6 +6,8 @@ TDD — these tests were written before the implementation.
 import pytest
 from pathlib import Path
 
+pytestmark = pytest.mark.tool_contract
+
 FIXTURES = Path("/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv")
 ECOTAXA_FILE = FIXTURES / "ecotaxa_sample_50.tsv"
 ECOPART_FILE = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"

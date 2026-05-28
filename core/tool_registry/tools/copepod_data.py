@@ -434,6 +434,39 @@ def summarize_understanding(inspect_report, role_report, column_definitions=None
 
     source_guess = inspect_report.get("source_type_guess", {})
 
+    supported_formats = {"csv", "tsv", "xlsx", "netcdf", "json"}
+    file_format = inspect_report.get("format", "unknown")
+    structural_signals = []
+    semantic_signals = []
+    coverage_gaps = []
+
+    if file_format in supported_formats:
+        structural_signals.append(f"format:{file_format}")
+    if file_format in {"csv", "tsv"}:
+        if inspect_report.get("metadata", {}).get("encoding"):
+            structural_signals.append("encoding")
+        if inspect_report.get("metadata", {}).get("delimiter"):
+            structural_signals.append("delimiter")
+    elif file_format == "xlsx":
+        if inspect_report.get("metadata", {}).get("sheet_names"):
+            structural_signals.append("sheet_names")
+    elif file_format == "netcdf":
+        if inspect_report.get("metadata", {}).get("netcdf_dimensions"):
+            structural_signals.append("netcdf_dimensions")
+        if inspect_report.get("metadata", {}).get("netcdf_variables"):
+            structural_signals.append("netcdf_variables")
+    elif file_format == "json":
+        structural_signals.append("json_structure")
+
+    if inspect_report.get("columns"):
+        structural_signals.append(f"columns:{len(inspect_report.get('columns') or [])}")
+    if source_guess.get("value") and source_guess.get("value") != "unknown":
+        semantic_signals.append(f"source_type:{source_guess.get('value')}")
+    if roles:
+        semantic_signals.append(f"roles:{len(roles)}")
+    if defs:
+        semantic_signals.append(f"rag_definitions:{len(defs)}")
+
     # Build enriched column catalogue for graph generation
     column_catalogue = []
     role_map = {r["column"]: r for r in roles}
@@ -452,6 +485,24 @@ def summarize_understanding(inspect_report, role_report, column_definitions=None
                 entry["critical_notes"] = rag["critical_notes"]
         column_catalogue.append(entry)
 
+    if file_format == "unknown":
+        coverage_gaps.append("unsupported_or_unparsed_format")
+    if file_format in supported_formats and not structural_signals:
+        coverage_gaps.append("no_structural_signals_detected")
+    if not all_known:
+        coverage_gaps.append("no_useful_columns_identified")
+    if not column_catalogue:
+        coverage_gaps.append("no_column_catalogue_built")
+    if source_guess.get("value", "unknown") == "unknown":
+        coverage_gaps.append("source_type_unknown")
+
+    if file_format == "unknown" or "unsupported_or_unparsed_format" in coverage_gaps:
+        coverage_status = "insufficient"
+    elif column_catalogue and semantic_signals:
+        coverage_status = "sufficient"
+    else:
+        coverage_status = "partial"
+
     return {
         "file_or_source": inspect_report.get("file_path", "unknown"),
         "probable_source_type": source_guess.get("value", "unknown"),
@@ -461,7 +512,14 @@ def summarize_understanding(inspect_report, role_report, column_definitions=None
         "quality_limits": quality_limits,
         "taxonomic_validation_status": tax_val,
         "possible_joins_or_couplings": possible_joins,
-        "missing_or_ambiguous_data": missing_or_ambiguous
+        "missing_or_ambiguous_data": missing_or_ambiguous,
+        "coverage_assessment": {
+            "status": coverage_status,
+            "format": file_format,
+            "structural_signals": structural_signals,
+            "semantic_signals": semantic_signals,
+            "gaps": coverage_gaps,
+        },
     }
 '''
 

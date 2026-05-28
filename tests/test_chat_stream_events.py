@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from core.chat_stream_events import chat_stream_events
+
+pytestmark = pytest.mark.workflow
 
 
 def test_single_chunk_plan_ready_strips_tag_and_emits_button_after_three_user_turns():

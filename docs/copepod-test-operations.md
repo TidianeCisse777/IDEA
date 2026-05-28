@@ -23,6 +23,28 @@ Tests must separate two questions:
 
 If the LLM fails but the backend blocks the action, the application is protected, but the prompt still needs improvement.
 
+### Canonical test buckets
+
+Use these pytest markers to avoid running the wrong suite:
+
+- `workflow`: end-to-end plan/analyse lifecycle checks
+- `tool_contract`: tool semantics, artifact contracts, and source interpretation
+- `llm_protocol`: fake-LLM runner and prompt orchestration checks
+
+Recommended routine pack before any live evaluation:
+
+```bash
+pytest -m "workflow or tool_contract" -q
+```
+
+Run `llm_protocol` only when changing the eval runner, prompt blocks, or LLM-facing orchestration:
+
+```bash
+pytest -m llm_protocol -q
+```
+
+Avoid running the full suite unless you are changing shared infrastructure or hunting a cross-cutting regression.
+
 ## Test Levels
 
 ### 1. Unit and Integration Tests
@@ -30,10 +52,7 @@ If the LLM fails but the backend blocks the action, the application is protected
 Use these first. They do not call OpenAI or Langfuse.
 
 ```bash
-pytest tests/test_copepod_plan_mode_eval_runner.py -q
-pytest tests/test_copepod_session_artifacts_tools.py -q
-pytest tests/test_session_routes.py -q
-pytest tests/test_chat_stream_events.py -q
+pytest -m "workflow or tool_contract" -q
 ```
 
 Recommended focused regression:
@@ -41,8 +60,8 @@ Recommended focused regression:
 ```bash
 pytest \
   tests/test_copepod_plan_mode_eval_runner.py \
-  tests/test_chat_stream_events.py \
-  tests/test_session_routes.py::TestPostSessionMode::test_post_mode_copepod_analyse_requires_plan_ready_phase \
+  tests/test_copepod_plan_to_analyse_integration.py \
+  tests/test_session_routes.py::TestPostSessionMode::test_post_mode_copepod_analyse_requires_active_plan_artifacts \
   tests/test_session_routes.py::TestPostSessionMode::test_post_mode_copepod_analyse_allowed_when_active_plan_artifacts_exist \
   -q
 ```
@@ -85,12 +104,14 @@ The main live scores are:
 - `live_backend_blocked_premature_plan_ready_button`
 - `live_llm_waited_for_graph_context_confirmation`
 - `live_llm_activated_graph_context`
+- `live_du_payload_has_sufficient_coverage`
 - `live_plan_ready_enables_analyse_mode`
 
 Interpretation:
 
 - `live_llm_*` failures usually mean prompt or model behavior needs work.
 - `live_backend_*` failures mean the application guard is broken and must be fixed first.
+- `live_du_payload_has_sufficient_coverage` means the DU summary did not reach the minimum coverage threshold and the Phase 1 analysis should be improved before live runs.
 - `live_plan_ready_enables_analyse_mode` confirms the final transition works after validated artifacts exist.
 
 ## Checking Results In Langfuse

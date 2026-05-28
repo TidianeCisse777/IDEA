@@ -7,6 +7,8 @@ before or after calling them. Tests verify correct structured output on real fix
 import pytest
 from pathlib import Path
 
+pytestmark = pytest.mark.tool_contract
+
 FIXTURES = Path("/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv")
 ECOTAXA  = FIXTURES / "ecotaxa_sample_50.tsv"
 ECOPART  = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"
@@ -205,10 +207,24 @@ class TestSummarizeUnderstanding:
         required_keys = [
             "file_or_source", "probable_source_type", "useful_columns",
             "metadata_detected", "quality_limits", "taxonomic_validation_status",
-            "possible_joins_or_couplings", "missing_or_ambiguous_data"
+            "possible_joins_or_couplings", "missing_or_ambiguous_data",
+            "coverage_assessment",
         ]
         for key in required_keys:
             assert key in summary, f"Missing key: {key}"
+        assert summary["coverage_assessment"]["status"] in {"sufficient", "partial", "insufficient"}
+
+    def test_unsupported_format_reports_insufficient_coverage(self, tools, tmp_path):
+        f = tmp_path / "unsupported.bin"
+        f.write_bytes(b"\x00\x01\x02")
+
+        inspected = tools["inspect_file"](str(f))
+        roles = tools["infer_column_roles"](inspected["columns"], inspected["metadata"])
+        summary = tools["summarize_understanding"](inspected, roles)
+
+        assert inspected["format"] == "unknown"
+        assert summary["coverage_assessment"]["status"] == "insufficient"
+        assert "unsupported_or_unparsed_format" in summary["coverage_assessment"]["gaps"]
 
     def test_raw_file_never_modified(self, tools):
         import hashlib

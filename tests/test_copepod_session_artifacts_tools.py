@@ -1,6 +1,10 @@
+import pytest
+
 from unittest.mock import patch
 
 from core.session_store import InMemorySessionStore
+
+pytestmark = pytest.mark.tool_contract
 
 
 def _load_tools():

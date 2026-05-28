@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from unittest.mock import patch
+
+pytestmark = pytest.mark.tool_contract
 
 
 def test_copepod_tool_registry_wraps_critical_tools_for_runtime_tracing(monkeypatch):

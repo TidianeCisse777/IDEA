@@ -1,9 +1,13 @@
 import json
 
+import pytest
+
 from core.config import settings
 from scripts.evals.run_copepod_offtopic_eval import run_offtopic_eval
 from scripts.evals.run_copepod_direct_analysis_eval import run_direct_analysis_eval
 from scripts.evals.run_copepod_rejection_eval import run_rejection_eval
+
+pytestmark = pytest.mark.llm_protocol
 
 
 def _tool_call(call_id: str, name: str, arguments: dict) -> dict:

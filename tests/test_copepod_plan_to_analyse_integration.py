@@ -15,6 +15,8 @@ from core.chat_stream_events import chat_stream_events
 from core.session_store import InMemorySessionStore
 from routers.session_routes import router
 
+pytestmark = pytest.mark.workflow
+
 
 FIXTURES = Path(
     "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv"

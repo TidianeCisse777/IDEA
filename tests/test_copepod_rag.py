@@ -9,6 +9,8 @@ import json
 import pytest
 from pathlib import Path
 
+pytestmark = pytest.mark.tool_contract
+
 RAG_DIR = Path(__file__).parent.parent / "core" / "copepod_rag"
 CHUNKS_FILE = RAG_DIR / "chunks.json"
 CHROMA_DIR = RAG_DIR / "chroma_db"

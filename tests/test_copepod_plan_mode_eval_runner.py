@@ -1,14 +1,17 @@
 import json
 
+import pytest
+
 from core.config import settings
 from scripts.evals.run_copepod_plan_mode_eval import (
+    _compact_tool_result,
     _live_eval_runtime_context,
     _live_eval_system_prompt,
     run_live_eval,
     run_mock_eval,
 )
 
-
+@pytest.mark.workflow
 def test_mock_eval_runner_passes_context_workflow():
     report = run_mock_eval(push_langfuse=False)
 
@@ -17,8 +20,9 @@ def test_mock_eval_runner_passes_context_workflow():
     assert report["dataset"] == "copepod-plan-mode-v1"
 
     scores = {item["name"]: item for item in report["results"]}
-    assert report["total_count"] >= 12
+    assert report["total_count"] >= 13
     assert scores["upload_ecotaxa_creates_data_understanding"]["passed"] is True
+    assert scores["data_understanding_coverage_is_sufficient"]["passed"] is True
     assert scores["analyse_blocked_before_active_artifacts"]["passed"] is True
     assert scores[
         "graph_context_without_data_understanding_version_is_blocked"
@@ -38,12 +42,54 @@ def test_mock_eval_runner_passes_context_workflow():
     assert scores["artifact_debug_routes_are_copepod_only"]["passed"] is True
 
 
+@pytest.mark.workflow
 def test_live_eval_prompt_keeps_session_context_out_of_static_prefix():
     system_prompt = _live_eval_system_prompt()
     runtime_context = _live_eval_runtime_context("session-abc")
 
     assert "session-abc" not in system_prompt
     assert "eval-user:session-abc:copepod" in runtime_context
+
+
+@pytest.mark.tool_contract
+def test_compact_inspect_file_keeps_column_metadata_for_infer_column_roles():
+    compact = _compact_tool_result(
+        "inspect_file",
+        {
+            "n_rows": 10,
+            "n_columns": 2,
+            "source_type_guess": {"value": "likely_ecotaxa"},
+            "columns": [
+                {
+                    "name": "depth_m",
+                    "dtype": "float64",
+                    "semantic_guess": "depth",
+                    "unit_guess": "m",
+                    "confidence": "high",
+                    "missing_rate": 0.0,
+                    "missing_count": 0,
+                    "sample_values": [1.0],
+                },
+                {
+                    "name": "taxon",
+                    "dtype": "string",
+                    "semantic_guess": None,
+                    "unit_guess": None,
+                    "confidence": "low",
+                    "missing_rate": 0.1,
+                    "missing_count": 1,
+                    "sample_values": ["copepod"],
+                },
+            ],
+            "warnings": [],
+        },
+    )
+
+    assert compact["n_columns"] == 2
+    assert compact["columns"][0]["name"] == "depth_m"
+    assert compact["columns"][1]["name"] == "taxon"
+    assert compact["unknown_columns"] == ["taxon"]
+    assert compact["known_by_role"]["depth"] == ["depth_m"]
 
 
 def _tool_call(call_id: str, name: str, arguments: dict) -> dict:
@@ -64,6 +110,7 @@ def _latest_tool_result(messages: list[dict], tool_name: str) -> dict:
     raise AssertionError(f"Missing tool result for {tool_name}")
 
 
+@pytest.mark.llm_protocol
 def test_live_eval_runner_drives_llm_tool_workflow_without_real_api(monkeypatch):
     monkeypatch.setattr(settings, "LLM_MODEL", "fake-live-model")
     calls = {"count": 0}
@@ -97,6 +144,20 @@ def test_live_eval_runner_drives_llm_tool_workflow_without_real_api(monkeypatch)
                                             ],
                                             "global": {},
                                             "overrides": [],
+                                            "column_catalogue": [
+                                                {
+                                                    "column": "object_depth_min",
+                                                    "role": "depth",
+                                                    "role_confidence": "high",
+                                                }
+                                            ],
+                                            "coverage_assessment": {
+                                                "status": "sufficient",
+                                                "format": "tsv",
+                                                "structural_signals": ["format:tsv", "columns:1"],
+                                                "semantic_signals": ["source_type:likely_ecotaxa", "roles:1"],
+                                                "gaps": [],
+                                            },
                                         },
                                     },
                                 )
@@ -226,10 +287,13 @@ def test_live_eval_runner_drives_llm_tool_workflow_without_real_api(monkeypatch)
     assert scores["live_llm_waited_for_graph_context_confirmation"]["passed"] is True
     assert scores["live_plan_ready_enables_analyse_mode"]["passed"] is True
     assert scores["live_phase1_efficient"]["passed"] is True
+    assert scores["live_du_payload_has_column_catalogue"]["passed"] is True
+    assert scores["live_du_payload_has_sufficient_coverage"]["passed"] is True
     assert scores["live_gc_payload_has_all_required_fields"]["passed"] is True
-    # Edge cases that require a real LLM (describe_column + column_catalogue) — not checked here
+    # The live runner must keep column_catalogue non-empty even in a fake-LLM test.
 
 
+@pytest.mark.llm_protocol
 def test_live_eval_runner_scores_premature_plan_ready_text_but_backend_blocks_button(monkeypatch):
     monkeypatch.setattr(settings, "LLM_MODEL", "fake-live-model")
     calls = {"count": 0}
@@ -263,6 +327,20 @@ def test_live_eval_runner_scores_premature_plan_ready_text_but_backend_blocks_bu
                                             ],
                                             "global": {},
                                             "overrides": [],
+                                            "column_catalogue": [
+                                                {
+                                                    "column": "object_depth_min",
+                                                    "role": "depth",
+                                                    "role_confidence": "high",
+                                                }
+                                            ],
+                                            "coverage_assessment": {
+                                                "status": "sufficient",
+                                                "format": "tsv",
+                                                "structural_signals": ["format:tsv", "columns:1"],
+                                                "semantic_signals": ["source_type:likely_ecotaxa", "roles:1"],
+                                                "gaps": [],
+                                            },
                                         },
                                     },
                                 )
@@ -378,4 +456,6 @@ def test_live_eval_runner_scores_premature_plan_ready_text_but_backend_blocks_bu
     ]["passed"] is False
     assert scores["live_backend_blocked_premature_plan_ready_button"]["passed"] is True
     assert scores["live_plan_ready_enables_analyse_mode"]["passed"] is True
+    assert scores["live_du_payload_has_column_catalogue"]["passed"] is True
+    assert scores["live_du_payload_has_sufficient_coverage"]["passed"] is True
     # report["passed"] is False because premature PLAN_READY score failed (expected)

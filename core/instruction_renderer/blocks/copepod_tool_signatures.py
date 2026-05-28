@@ -12,7 +12,7 @@ You have access to host Python functions through the IDEA/OpenInterpreter enviro
 - `infer_column_roles(columns, metadata=None)` — optional heuristic helper that pattern-matches column names to known roles. Use as a starting point only — it will miss many domain-specific columns. Always verify its output against your own knowledge and `describe_column`.
 - `describe_column(column_name, source_hint=None, session_id="{session_id}")` — query the RAG knowledge base for the definition, unit, and critical notes of a column. Call for any column whose role is unknown or ambiguous.
 - `check_column_for_calc(column_roles, calculation, session_id="{session_id}")` — verify whether a set of column roles supports a given calculation (e.g. "biovolume", "abundance_m3"). Pass the role dict from infer_column_roles.
-- `summarize_understanding(inspect_report, role_report)` — build the structured Data Understanding dict from inspect_file + infer_column_roles outputs.
+- `summarize_understanding(inspect_report, role_report, column_definitions=None)` — build the structured Data Understanding dict from `inspect_file` + `infer_column_roles` outputs, then enrich it with all `describe_column` results passed in `column_definitions`.
 - `create_data_understanding_draft(session_key, artifact)` — persist the structured Data Understanding draft after file inspection. Include file identity fields (`file_path`, `original_filename`, `size_bytes`, `content_hash`, `uploaded_at`, `inspection_tool_version`), column roles, quality limits, taxonomic validation status, joins, and user overrides when present.
 - `activate_data_understanding(session_key, version_id)` — activate a Data Understanding version only after the user has confirmed or corrected it.
 - `create_graph_context_draft(session_key, artifact)` — persist the structured Graph Context draft. It must include `data_understanding_version_id`, objective, source/data selection, columns, filters, units, chart type, language, output artifacts, feasibility, and blockers.
@@ -34,7 +34,7 @@ You have access to host Python functions through the IDEA/OpenInterpreter enviro
 - `list_mcp_tools()` — discover available MCP tools when needed.
 
 ### Rules
-- When files are present in the session, always call `inspect_file` first, then `infer_column_roles`, then `describe_column` for unknown columns.
+- When files are present in the session, always call `inspect_file` first, then `infer_column_roles`, then `describe_column` for unknown or ambiguous columns that are still relevant to the objective.
 - Build `session_key` as `{{user_id}}:{{session_id}}:copepod` when calling artifact tools. For this session, use `{user_id}:{session_id}:copepod`.
 - Do not infer active artifacts from conversation memory. Read them with `get_active_data_understanding` or `get_active_graph_context` when their status matters.
 - Do not use station, sea-level, tide-gauge, datum, or climate-index tools for this profile.

@@ -5,6 +5,8 @@ TDD — these tests were written before the implementation.
 """
 import pytest
 
+pytestmark = pytest.mark.tool_contract
+
 KNOWN_SOURCE_FAMILIES = {"ecotaxa", "ecopart", "amundsen_ctd", "ogsl", "bio_oracle"}
 
 

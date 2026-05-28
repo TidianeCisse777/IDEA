@@ -23,7 +23,7 @@
 
 ### Live eval (LLM réel, via `LLM_MODEL`)
 
-13 checks automatiques par run, organisés en 3 phases :
+14 checks automatiques par run, organisés en 3 phases :
 
 **Phase 1 — Data Understanding**
 
@@ -34,6 +34,7 @@
 | `live_describe_column_covered_all_unmatched` | `describe_column` appelé au moins autant de fois qu'il y a de colonnes `unmatched` |
 | `live_phase1_efficient` | Phase 1 complétée en ≤ 10 rounds (détecte les boucles séquentielles) |
 | `live_du_payload_has_column_catalogue` | L'artifact DU contient un `column_catalogue` non vide (RAG utilisé) |
+| `live_du_payload_has_sufficient_coverage` | Le résumé DU marque la couverture comme `sufficient` |
 
 **Phase 2 — Graph Context**
 

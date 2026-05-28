@@ -28,8 +28,10 @@ def inmemory_session_store():
 
 
 def import_copepod_profile():
+    import core.instruction_renderer.blocks  # noqa: F401
     import agents.copepod_profile
 
+    importlib.reload(core.instruction_renderer.blocks)
     return importlib.reload(agents.copepod_profile)
 
 
@@ -69,10 +71,8 @@ def test_copepod_profile_uses_safe_runtime_and_copepod_instruction_blocks():
     }
     assert profile.instruction_blocks == [
         "output_format",
-        "cli_reference",
         "copepod_tool_signatures",
         "copepod_mode_plan",
-        "copepod_mode_analyse",
         "mcp_tools_block",
         "session_metadata",
     ]
@@ -91,7 +91,6 @@ def test_copepod_custom_instructions_use_copepod_blocks_without_sea_level_leakag
     )
 
     assert "## Copepod Plan Mode" in instructions
-    assert "## Copepod Analyse Mode" in instructions
     assert "## Copepod Runtime Tools" in instructions
     assert "get_station_info" not in instructions
     assert "get_climate_index" not in instructions
@@ -123,7 +122,6 @@ def test_copepod_profile_uses_copepod_instruction_blocks():
     assert "tool_signatures" not in profile.instruction_blocks
     assert "copepod_tool_signatures" in profile.instruction_blocks
     assert "copepod_mode_plan" in profile.instruction_blocks
-    assert "copepod_mode_analyse" in profile.instruction_blocks
 
 
 def test_copepod_plan_mode_establishes_context_from_loaded_data_before_analysis():
@@ -141,8 +139,9 @@ def test_copepod_plan_mode_establishes_context_from_loaded_data_before_analysis(
     assert "establish and validate the scientific and technical context" in instructions
     assert "inspect_file" in instructions
     assert "infer_column_roles" in instructions
-    assert "What the user wants to visualise" in instructions
-    assert "what each column means" in instructions
+    assert "Phase 1 — File Analysis" in instructions
+    assert "Phase 2 — Scientific Context" in instructions
+    assert "column_catalogue" in instructions
     assert "metadata available in the files" in instructions
     assert "Before switching to Analyse Mode" in instructions
     assert "It must not generate the final graph" in instructions
@@ -161,13 +160,14 @@ def test_copepod_plan_mode_forces_two_phase_data_then_context_flow():
     )
 
     assert "Plan Mode is a two-phase workflow" in instructions
-    assert "Phase 1 — Data Understanding" in instructions
-    assert "Phase 2 — Context Framing" in instructions
-    assert instructions.index("Phase 1 — Data Understanding") < instructions.index("Phase 2 — Context Framing")
+    assert "Phase 1 — File Analysis" in instructions
+    assert "Phase 2 — Scientific Context" in instructions
+    assert instructions.index("Phase 1 — File Analysis") < instructions.index("Phase 2 — Scientific Context")
     assert "Do not ask for graph context before summarizing the loaded data" in instructions
     assert "PLAN_READY" in instructions
-    assert "### Data Understanding" in instructions
-    assert "### Graph Context" in instructions
+    assert "### Analyse du fichier" in instructions
+    assert "### Configuration du graphique" in instructions
+    assert "summarize_understanding(inspect_report, role_report, column_definitions)" in instructions
 
 
 def test_copepod_instructions_require_artifact_tools_before_plan_ready():
@@ -188,6 +188,7 @@ def test_copepod_instructions_require_artifact_tools_before_plan_ready():
     assert "activate_graph_context" in instructions
     assert "Do not emit `[PLAN_READY]` until `activate_graph_context` has succeeded" in instructions
     assert "Switch to Analyse Mode" in instructions
+    assert "column_definitions" in instructions
 
 
 def test_copepod_plan_mode_uses_strict_numbered_protocol():
@@ -203,12 +204,12 @@ def test_copepod_plan_mode_uses_strict_numbered_protocol():
     )
 
     assert "### Phase 1 Protocol" in instructions
-    assert "### Data Understanding Confirmation Protocol" in instructions
+    assert "#### Phase 1 Confirmation Protocol" in instructions
     assert "### Phase 2 Protocol" in instructions
-    assert "### Graph Context Confirmation Protocol" in instructions
+    assert "#### Phase 2 Confirmation Protocol" in instructions
     assert "get_active_data_understanding" in instructions
     assert "get_active_graph_context" in instructions
-    assert "Do not infer active artefacts from conversation memory" in instructions
+    assert "Do not infer active artifacts from conversation memory" in instructions
 
 
 def test_copepod_profile_renders_default_plan_instructions_with_memory_store():
@@ -224,8 +225,8 @@ def test_copepod_profile_renders_default_plan_instructions_with_memory_store():
     )
 
     assert "## Copepod Plan Mode" in instructions
-    assert "## Copepod Analyse Mode" in instructions
-    assert "Phase 1 — Data Understanding" in instructions
+    assert "## Copepod Analyse Mode" not in instructions
+    assert "Phase 1 — File Analysis" in instructions
     assert "PLAN_READY" in instructions
 
 
@@ -366,7 +367,7 @@ def test_copepod_profile_session_mode_isolated_by_three_segment_key():
     assert "## Copepod Analyse Mode" in analyse_instructions
     assert "## Copepod Plan Mode" not in analyse_instructions
     assert "## Copepod Plan Mode" in plan_instructions
-    assert "## Copepod Analyse Mode" in plan_instructions
+    assert "## Copepod Analyse Mode" not in plan_instructions
 
 
 def test_copepod_system_prompt_contains_domain_invariants():

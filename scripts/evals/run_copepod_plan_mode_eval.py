@@ -103,6 +103,13 @@ def _uploaded_path(session_id: str, filename: str) -> Path:
     return Path("static") / "eval-user" / session_id / "uploads" / filename
 
 
+def _uploaded_path_label(session_id: str, filename: str) -> tuple[str, str]:
+    """Return the local tool path plus the canonical /app/static label."""
+    local_path = _uploaded_path(session_id, filename).resolve()
+    canonical_path = Path("/app/static") / "eval-user" / session_id / "uploads" / filename
+    return str(local_path), str(canonical_path)
+
+
 def _file_entry(path: Path, inspect_report: dict) -> dict:
     return {
         "file_path": str(path),
@@ -133,6 +140,7 @@ def _data_understanding_artifact(tools: dict[str, Any], path: Path) -> dict:
             "possible_joins_or_couplings": summary["possible_joins_or_couplings"],
             "missing_or_ambiguous_data": summary["missing_or_ambiguous_data"],
         },
+        "coverage_assessment": summary["coverage_assessment"],
         "overrides": [],
     }
 
@@ -208,6 +216,19 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
         # Unknown columns (no semantic_guess) get the full list — LLM needs
         # them to decide which describe_column calls to make.
         cols = result.get("columns") or []
+        compact_columns = [
+            {
+                "name": col.get("name"),
+                "dtype": col.get("dtype"),
+                "semantic_guess": col.get("semantic_guess"),
+                "unit_guess": col.get("unit_guess"),
+                "confidence": col.get("confidence"),
+                "missing_rate": col.get("missing_rate"),
+                "missing_count": col.get("missing_count"),
+            }
+            for col in cols
+            if isinstance(col, dict)
+        ]
         by_role: dict[str, list[str]] = {}
         unknown: list[str] = []
         for c in cols:
@@ -224,6 +245,7 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
             "n_rows": result.get("n_rows"),
             "n_columns": result.get("n_columns"),
             "source_type_guess": result.get("source_type_guess"),
+            "columns": compact_columns,
             "known_by_role": known_summary,
             "unknown_columns": unknown,
             "warnings": result.get("warnings") or [],
@@ -613,6 +635,7 @@ Eval constraints (do not mention these to the user):
 - You are under live evaluation. Do not claim any artifact is created, confirmed, or active unless the tool result explicitly states it.
 - Tool calling order: call `inspect_file`, `infer_column_roles`, `summarize_understanding`, and `create_data_understanding_draft` each in its own response (one tool per turn). Exception: call ALL `describe_column` for unmatched columns in a single response.
 - Graph context artifact must include: data_understanding_version_id, objective, columns, filters, units, chart_type, language, output_artifacts, feasibility, blockers.
+- When a file path appears in the eval prompt, use the exact local filesystem path shown there for tool calls. The `/app/static/...` label is informational only.
 - If a tool returns an error or blocking_reason, report it and do not proceed to the next phase."""
     return COPEPOD_SYSTEM_PROMPT + "\n\n" + custom_instructions + "\n\n" + eval_addendum
 
@@ -771,6 +794,13 @@ def run_mock_eval(*, push_langfuse: bool = False) -> dict:
             and du_draft["payload"]["files"][0]["source_type_guess"]["value"] == "likely_ecotaxa",
             f"Data Understanding draft {du_draft['version_id']} created after upload.",
             {"case_type": "common", "version_id": du_draft["version_id"]},
+        ))
+        du_coverage = (du_draft.get("payload") or {}).get("coverage_assessment") or {}
+        results.append(_result(
+            "data_understanding_coverage_is_sufficient",
+            du_coverage.get("status") == "sufficient",
+            f"Data Understanding coverage status is {du_coverage.get('status')!r}.",
+            {"case_type": "common", "coverage": du_coverage},
         ))
 
         blocked = _post_analyse(client, session_id)
@@ -1062,7 +1092,9 @@ def run_live_eval(
         try:
             with stack:
                 upload = _upload_fixture(client, session_id, ECOTAXA)
-                uploaded_ecotaxa = _uploaded_path(session_id, upload["filename"])
+                uploaded_ecotaxa_local, uploaded_ecotaxa_canonical = _uploaded_path_label(
+                    session_id, upload["filename"]
+                )
                 tool_impls = _live_tool_impls(tools, session_key)
                 messages: list[dict] = [
                     {
@@ -1072,7 +1104,9 @@ def run_live_eval(
                     {
                         "role": "user",
                         "content": (
-                            f"J'ai chargé un export EcoTaxa de la campagne Green Edge : `{uploaded_ecotaxa}`. "
+                            f"J'ai chargé un export EcoTaxa de la campagne Green Edge. "
+                            f"Chemin réel à utiliser pour `inspect_file` : `{uploaded_ecotaxa_local}`. "
+                            f"Chemin canonique du projet : `{uploaded_ecotaxa_canonical}`. "
                             "Je veux explorer comment les organismes planctoniques se répartissent en profondeur. "
                             "Commence par analyser le fichier."
                         ),
@@ -1149,15 +1183,22 @@ def run_live_eval(
                     f"DU artifact payload contains column_catalogue with {len(du_payload.get('column_catalogue') or [])} entries.",
                     {"case_type": "edge"},
                 ))
+                coverage_assessment = du_payload.get("coverage_assessment") or {}
+                results.append(_result(
+                    "live_du_payload_has_sufficient_coverage",
+                    coverage_assessment.get("status") == "sufficient",
+                    f"DU artifact coverage status is {coverage_assessment.get('status')!r}.",
+                    {"case_type": "edge", "coverage": coverage_assessment},
+                ))
 
                 # --- unpredictable input: casual/ambiguous confirmation ---
                 messages.append(
                     {
                         "role": "user",
                         "content": (
-                            "Oui, l'analyse est correcte. Mon objectif : visualiser la distribution verticale "
-                            "de tous les organismes confondus, histogramme par profondeur en mètres, en Python, "
-                            "PNG en sortie. Vas-y pour la configuration du graphique."
+                            "Oui, c'est correct. "
+                            "Je veux explorer la distribution verticale des organismes par profondeur. "
+                            "Vas-y pour la configuration du graphique."
                         ),
                     }
                 )

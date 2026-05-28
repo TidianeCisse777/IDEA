@@ -245,3 +245,10 @@ packages = [
   "core",
   "utils",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+  "workflow: end-to-end workflow checks for the copepod plan/analyse lifecycle",
+  "tool_contract: unit/integration checks for copepod tools and artifact contracts",
+  "llm_protocol: fake-LLM protocol checks for eval runners and prompt orchestration",
+]

@@ -18,6 +18,8 @@ from core.session_store import InMemorySessionStore
 from core.copepod_plan_workflow import PLAN_READY
 from routers.session_routes import router
 
+pytestmark = pytest.mark.workflow
+
 
 @pytest.fixture(autouse=True)
 def ensure_copepod_registered():

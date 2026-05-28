@@ -21,6 +21,8 @@ LOKI_COLUMNS_METADATA = Path(
     "data_exploration/ecotaxa_14622_probe/outputs/sample/columns_metadata.tsv"
 )
 
+pytestmark = pytest.mark.tool_contract
+
 
 @pytest.fixture(scope="module")
 def tools():
@@ -68,6 +70,7 @@ class TestModePlanDataUnderstandingWorkflow:
         assert summary["probable_source_type"] == "likely_ecotaxa"
         assert summary["taxonomic_validation_status"] == "available"
         assert "object_depth_min" in summary["useful_columns"]
+        assert summary["coverage_assessment"]["status"] in {"sufficient", "partial"}
 
     def test_ecopart_workflow_allows_concentration_with_required_roles(self, tools):
         inspected, roles, calc, summary = _understand_file(tools, ECOPART, "concentration")
@@ -81,6 +84,7 @@ class TestModePlanDataUnderstandingWorkflow:
         assert "Profile" in summary["useful_columns"]
         assert "Sampled volume [L]" in summary["useful_columns"]
         assert len(summary["possible_joins_or_couplings"]) > 0
+        assert summary["coverage_assessment"]["status"] == "sufficient"
 
     def test_ctd_workflow_documents_environmental_context_not_concentration_inputs(self, tools):
         inspected, roles, calc, summary = _understand_file(tools, CTD, "concentration")
@@ -94,6 +98,7 @@ class TestModePlanDataUnderstandingWorkflow:
         assert summary["probable_source_type"] == "likely_amundsen_ctd"
         assert summary["taxonomic_validation_status"] == "not_applicable"
         assert "TE90 (degC)" in summary["useful_columns"]
+        assert summary["coverage_assessment"]["status"] in {"sufficient", "partial"}
 
     def test_acq_pixel_um_size_is_pixel_calibration_or_documented_by_rag(self, tools):
         column_descriptor = {
@@ -137,4 +142,3 @@ class TestModePlanDataUnderstandingWorkflow:
         assert set(calc["missing_roles"]) == {"sample_volume", "depth", "profile_id"}
         assert summary["file_or_source"] == str(LOKI_COLUMNS_METADATA)
         assert len(summary["missing_or_ambiguous_data"]) > 0
-
