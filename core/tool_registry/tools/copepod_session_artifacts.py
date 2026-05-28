@@ -1,8 +1,20 @@
 from core.tool_registry.registry import Tool, registry
 
 _code = '''
+def _is_presummarized(entry):
+    """Return True if a file entry is already a summarize_understanding output (has column_catalogue)."""
+    return isinstance(entry, dict) and bool(entry.get("column_catalogue"))
+
+
 def _normalize_data_understanding_payload(session_key, artifact):
-    """Ensure a DU draft keeps the summary fields the UI/tests rely on."""
+    """Ensure a DU draft keeps the summary fields the UI/tests rely on.
+
+    Handles three input shapes:
+    1. synthesize_file_understanding output: payload has file_summaries[] + global{}
+    2. Pre-summarized files: payload has files[] where each entry has column_catalogue
+    3. Raw file entries: payload has files[] with file_path/original_filename only
+       (fallback — re-runs inspect_file; legacy single-file path)
+    """
     from copy import deepcopy
     from pathlib import Path
     from routers.file_routes import STATIC_DIR, UPLOAD_DIR
@@ -12,109 +24,197 @@ def _normalize_data_understanding_payload(session_key, artifact):
     user_id, session_id, *_ = (session_key or "::").split(":")
     upload_root = STATIC_DIR / user_id / session_id / UPLOAD_DIR
 
-    def _load_data_tools():
-        from core.tool_registry import registry
-        from core.tool_registry.tools import copepod_data  # noqa: F401
+    # Shape 1 — synthesize_file_understanding output
+    # Normalize file_summaries → files, keep global block as-is
+    if payload.get("file_summaries"):
+        payload.setdefault("files", payload.pop("file_summaries"))
+        payload.setdefault("global", {})
 
-        ns = {}
-        exec(registry.render({"copepod_data"}), ns)
-        return ns
+    file_entries = payload.get("files") or []
 
-    def _rebuild_from_file_entries(file_entries):
-        tools = _load_data_tools()
-        columns = []
-        roles = []
-        inspect_report = None
-        candidate_entries = list(file_entries or [])
-        if not candidate_entries and upload_root.exists():
-            candidate_entries = [
-                {"file_path": str(path), "original_filename": path.name}
-                for path in sorted(upload_root.iterdir())
-                if path.is_file()
+    # Shape 2 — pre-summarized files (summarize_understanding output per file)
+    if file_entries and all(_is_presummarized(e) for e in file_entries):
+        merged = []
+        seen: set = set()
+        for entry in file_entries:
+            for col in (entry.get("column_catalogue") or []):
+                col_name = col.get("column") if isinstance(col, dict) else None
+                if col_name and col_name not in seen:
+                    merged.append(col)
+                    seen.add(col_name)
+        if merged:
+            payload["column_catalogue"] = merged
+
+        # Global coverage: most pessimistic across files
+        if not payload.get("coverage_assessment"):
+            statuses = [
+                (e.get("coverage_assessment") or {}).get("status", "partial")
+                for e in file_entries
             ]
-        for entry in candidate_entries:
-            file_path = entry.get("file_path")
-            original_filename = entry.get("original_filename")
-            candidate_paths = []
-            if file_path:
-                candidate_paths.append(Path(file_path))
-            if original_filename:
-                candidate_paths.append(upload_root / original_filename)
-            file_path_obj = next((p for p in candidate_paths if p and p.exists()), None)
-            if file_path_obj is None:
-                continue
-            inspect_report = tools["inspect_file"](str(file_path_obj))
-            role_report = tools["infer_column_roles"](
-                inspect_report.get("columns") or [],
-                inspect_report.get("metadata") or {},
+            global_status = (
+                "insufficient" if "insufficient" in statuses
+                else ("partial" if "partial" in statuses else "sufficient")
             )
-            summary = tools["summarize_understanding"](inspect_report, role_report)
-            columns.extend(summary.get("column_catalogue") or [])
-            roles.extend(role_report.get("roles") or [])
-        return inspect_report, columns, roles, summary if "summary" in locals() else None
+            payload["coverage_assessment"] = {"status": global_status, "structural_signals": [], "semantic_signals": [], "gaps": []}
 
-    column_catalogue = payload.get("column_catalogue") or []
-    if not column_catalogue:
-        derived = []
-        seen = set()
-        for file_entry in payload.get("files") or []:
-            columns = file_entry.get("columns") or []
-            roles = {
-                r.get("column"): r
-                for r in (file_entry.get("roles") or [])
-                if isinstance(r, dict) and r.get("column")
-            }
-            for col in columns:
-                if isinstance(col, dict):
-                    col_name = col.get("name")
-                    semantic_guess = col.get("semantic_guess")
-                    unit_guess = col.get("unit_guess")
-                    confidence = col.get("confidence")
-                else:
-                    col_name = str(col)
-                    semantic_guess = None
-                    unit_guess = None
-                    confidence = None
-                if not col_name or col_name in seen:
+        # Per-file metadata: store on each entry rather than clobbering the root
+        for entry in file_entries:
+            entry.setdefault("metadata_detected", entry.get("metadata_detected") or {})
+
+    else:
+        # Shape 3 — raw file entries or empty files list: legacy rebuild path
+        def _load_data_tools():
+            from core.tool_registry import registry
+            from core.tool_registry.tools import copepod_data  # noqa: F401
+            ns = {}
+            exec(registry.render({"copepod_data"}), ns)
+            return ns
+
+        def _rebuild_from_file_entries(entries):
+            tools = _load_data_tools()
+            columns = []
+            candidate_entries = list(entries or [])
+            if not candidate_entries and upload_root.exists():
+                candidate_entries = [
+                    {"file_path": str(path), "original_filename": path.name}
+                    for path in sorted(upload_root.iterdir())
+                    if path.is_file()
+                ]
+            last_inspect = None
+            last_summary = None
+            for entry in candidate_entries:
+                file_path = entry.get("file_path")
+                original_filename = entry.get("original_filename")
+                candidate_paths = []
+                if file_path:
+                    candidate_paths.append(Path(file_path))
+                if original_filename:
+                    candidate_paths.append(upload_root / original_filename)
+                file_path_obj = next((p for p in candidate_paths if p and p.exists()), None)
+                if file_path_obj is None:
                     continue
-                entry = {"column": col_name}
-                role = roles.get(col_name)
-                if role:
-                    entry["role"] = role.get("role")
-                    entry["role_confidence"] = role.get("confidence")
-                elif semantic_guess:
-                    entry["role"] = semantic_guess
-                    entry["role_confidence"] = confidence or "low"
-                if unit_guess:
-                    entry["unit"] = unit_guess
-                derived.append(entry)
-                seen.add(col_name)
-        if derived:
-            payload["column_catalogue"] = derived
+                inspect_report = tools["inspect_file"](str(file_path_obj))
+                role_report = tools["infer_column_roles"](
+                    inspect_report.get("columns") or [],
+                    inspect_report.get("metadata") or {},
+                )
+                summary = tools["summarize_understanding"](inspect_report, role_report)
+                columns.extend(summary.get("column_catalogue") or [])
+                # Store metadata on the entry itself, not only on the last one
+                entry["metadata_detected"] = inspect_report.get("metadata") or {}
+                last_inspect = inspect_report
+                last_summary = summary
+            return last_inspect, columns, last_summary
 
-    # If the model sent only a shell of the DU draft, rebuild from the file(s).
-    if not payload.get("column_catalogue") or not payload.get("coverage_assessment"):
-        inspect_report, rebuilt_catalogue, _, summary = _rebuild_from_file_entries(payload.get("files") or [])
-        if rebuilt_catalogue:
-            payload["column_catalogue"] = rebuilt_catalogue
-        if summary:
-            payload["coverage_assessment"] = summary.get("coverage_assessment") or payload.get("coverage_assessment")
-            payload.setdefault("global", {})
-            payload["global"].setdefault("possible_joins_or_couplings", summary.get("possible_joins_or_couplings") or [])
-            payload["global"].setdefault("missing_or_ambiguous_data", summary.get("missing_or_ambiguous_data") or [])
-            payload["metadata_detected"] = inspect_report.get("metadata") if inspect_report else payload.get("metadata_detected")
+        column_catalogue = payload.get("column_catalogue") or []
+        if not column_catalogue:
+            derived = []
+            seen: set = set()
+            for file_entry in file_entries:
+                raw_cols = file_entry.get("columns") or []
+                roles = {
+                    r.get("column"): r
+                    for r in (file_entry.get("roles") or [])
+                    if isinstance(r, dict) and r.get("column")
+                }
+                for col in raw_cols:
+                    if isinstance(col, dict):
+                        col_name = col.get("name")
+                        semantic_guess = col.get("semantic_guess")
+                        unit_guess = col.get("unit_guess")
+                        confidence = col.get("confidence")
+                    else:
+                        col_name = str(col)
+                        semantic_guess = unit_guess = confidence = None
+                    if not col_name or col_name in seen:
+                        continue
+                    col_entry = {"column": col_name}
+                    role = roles.get(col_name)
+                    if role:
+                        col_entry["role"] = role.get("role")
+                        col_entry["role_confidence"] = role.get("confidence")
+                    elif semantic_guess:
+                        col_entry["role"] = semantic_guess
+                        col_entry["role_confidence"] = confidence or "low"
+                    if unit_guess:
+                        col_entry["unit"] = unit_guess
+                    derived.append(col_entry)
+                    seen.add(col_name)
+            if derived:
+                payload["column_catalogue"] = derived
+
+        if not payload.get("column_catalogue") or not payload.get("coverage_assessment"):
+            inspect_report, rebuilt_catalogue, summary = _rebuild_from_file_entries(file_entries)
+            if rebuilt_catalogue:
+                payload["column_catalogue"] = rebuilt_catalogue
+            if summary:
+                payload["coverage_assessment"] = summary.get("coverage_assessment") or payload.get("coverage_assessment")
+                payload.setdefault("global", {})
+                payload["global"].setdefault("possible_joins_or_couplings", summary.get("possible_joins_or_couplings") or [])
+                payload["global"].setdefault("missing_or_ambiguous_data", summary.get("missing_or_ambiguous_data") or [])
 
     coverage = payload.get("coverage_assessment")
     if not isinstance(coverage, dict) or not coverage:
         payload["coverage_assessment"] = {
-            "status": "sufficient" if payload.get("column_catalogue") and payload.get("files") else "partial",
-            "format": payload.get("coverage_assessment", {}).get("format") if isinstance(coverage, dict) else None,
+            "status": "sufficient" if payload.get("column_catalogue") and file_entries else "partial",
+            "format": None,
             "structural_signals": [],
             "semantic_signals": [],
             "gaps": [],
         }
 
     return payload
+
+
+def synthesize_file_understanding(
+    file_summaries,
+    possible_joins,
+    complementarity,
+    temporal_coverage,
+    spatial_coverage,
+    coverage_assessment=None,
+    session_key=None,
+):
+    """Synthesize the global Data Understanding block for a multi-file session.
+
+    Passthrough structuré — the LLM provides the semantic synthesis (joins,
+    coverage, complementarity). This tool validates the structure and returns
+    a ready-to-use payload for create_data_understanding_draft.
+
+    Args:
+        file_summaries: list of summarize_understanding outputs, one per file.
+        possible_joins: list of join descriptions; [] if none detected.
+        complementarity: how the files complement each other scientifically.
+        temporal_coverage: shared temporal extent, or "non applicable".
+        spatial_coverage: shared spatial extent, or "non applicable".
+        coverage_assessment: optional global coverage dict; computed from
+            per-file statuses if omitted.
+        session_key: optional — used for Langfuse tracing only.
+    """
+    from core.copepod_observability import trace_copepod_event
+
+    global_block = {
+        "possible_joins": list(possible_joins or []),
+        "complementarity": str(complementarity or ""),
+        "temporal_coverage": str(temporal_coverage or "non applicable"),
+        "spatial_coverage": str(spatial_coverage or "non applicable"),
+    }
+    if coverage_assessment and isinstance(coverage_assessment, dict):
+        global_block["coverage_assessment"] = coverage_assessment
+
+    result = {
+        "file_summaries": list(file_summaries or []),
+        "global": global_block,
+    }
+    trace_copepod_event(
+        "multi_file_synthesis_created",
+        session_key=session_key or "",
+        output={
+            "file_count": len(file_summaries or []),
+            "joins_detected": len(possible_joins or []),
+        },
+    )
+    return result
 
 
 def create_data_understanding_draft(session_key, artifact):

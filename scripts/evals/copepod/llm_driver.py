@@ -69,6 +69,17 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
             "taxonomic_validation_status": result.get("taxonomic_validation_status"),
             "column_count": len(result.get("column_catalogue") or []),
         }
+    if name == "synthesize_file_understanding":
+        global_block = result.get("global") or {}
+        return {
+            "file_count": len(result.get("file_summaries") or []),
+            "global": {
+                "possible_joins": global_block.get("possible_joins"),
+                "complementarity": (global_block.get("complementarity") or "")[:200],
+                "temporal_coverage": global_block.get("temporal_coverage"),
+                "spatial_coverage": global_block.get("spatial_coverage"),
+            },
+        }
     if name in {
         "create_data_understanding_draft",
         "activate_data_understanding",
@@ -165,6 +176,20 @@ def _tool_specs() -> list[dict]:
             ["inspect_report", "role_report"],
         ),
         function_tool(
+            "synthesize_file_understanding",
+            "Synthesize the global Data Understanding block for a multi-file session. Call this after all per-file summarize_understanding calls, before create_data_understanding_draft. Provide the semantic synthesis: join possibilities, temporal/spatial coverage, and how the files complement each other.",
+            {
+                "file_summaries": {"type": "array", "items": object_schema, "description": "List of summarize_understanding outputs, one per file."},
+                "possible_joins": {"type": "array", "items": {"type": "string"}, "description": "Join descriptions, e.g. 'EcoTaxa ↔ EcoPart via obj_orig_id → profile_id'. Empty list if none."},
+                "complementarity": {"type": "string", "description": "How the files complement each other scientifically."},
+                "temporal_coverage": {"type": "string", "description": "Shared temporal extent, e.g. 'avril–mai 2015, Green Edge'. Use 'non applicable' if absent."},
+                "spatial_coverage": {"type": "string", "description": "Shared spatial extent, e.g. 'Baie de Baffin, 67°N'. Use 'non applicable' if absent."},
+                "coverage_assessment": {**object_schema, "description": "Optional global coverage dict. Computed from per-file statuses if omitted."},
+                "session_key": {"type": "string"},
+            },
+            ["file_summaries", "possible_joins", "complementarity", "temporal_coverage", "spatial_coverage"],
+        ),
+        function_tool(
             "create_data_understanding_draft",
             "Persist a draft Data Understanding artifact.",
             {"session_key": {"type": "string"}, "artifact": object_schema},
@@ -215,6 +240,7 @@ def _gc_only_tool_specs() -> list[dict]:
 
 def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Callable[..., Any]]:
     session_scoped = {
+        "synthesize_file_understanding",
         "create_data_understanding_draft",
         "activate_data_understanding",
         "get_active_data_understanding",
@@ -263,7 +289,8 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
 
     tool_names = {
         "inspect_file", "infer_column_roles", "describe_column",
-        "summarize_understanding", "create_data_understanding_draft",
+        "summarize_understanding", "synthesize_file_understanding",
+        "create_data_understanding_draft",
         "activate_data_understanding", "get_active_data_understanding",
         "create_graph_context_draft", "activate_graph_context", "get_active_graph_context",
     }
