@@ -382,11 +382,14 @@ def _run_llm_turn(
         ]
         _log(f"  [CALL]  phase={phase} round={round_index+1} tools={tool_names}")
 
+        if "inspect_file" in tool_names:
+            describe_column_round_seen = False
+
         if "describe_column" in tool_names:
             if describe_column_round_seen:
                 _log(
                     "  [BLOCK] describe_column already used in this phase — "
-                    "returning control to summarize_understanding"
+                    "continuing to let LLM call summarize_understanding"
                 )
                 messages[-1] = {
                     "role": "assistant",
@@ -395,7 +398,7 @@ def _run_llm_turn(
                         "Continue with summarize_understanding."
                     ),
                 }
-                return messages[-1]["content"]
+                continue
             describe_column_round_seen = True
 
         for raw_call in tool_calls:
