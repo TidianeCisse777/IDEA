@@ -1,9 +1,12 @@
 """
-Tests for copepod_sources_meta tools: list_available_sources, describe_source.
+Tests for copepod_sources_meta tools: list_available_sources, describe_source,
+plan_remote_source_request, fetch_remote_source_dataset.
 
 TDD — these tests were written before the implementation.
 """
 import pytest
+from pathlib import Path
+from unittest.mock import patch
 
 pytestmark = pytest.mark.tool_contract
 
@@ -13,8 +16,9 @@ KNOWN_SOURCE_FAMILIES = {"ecotaxa", "ecopart", "amundsen_ctd", "ogsl", "bio_orac
 @pytest.fixture(scope="module")
 def tools():
     from core.tool_registry import registry
+    from core.tool_registry.tools import copepod_remote_sources  # noqa: F401
     from core.tool_registry.tools import copepod_sources_meta  # noqa: F401
-    code = registry.render({"copepod_sources_meta"})
+    code = registry.render({"copepod_sources_meta", "copepod_remote_sources"})
     ns = {}
     exec(code, ns)
     return ns
@@ -191,33 +195,227 @@ class TestPlanRemoteSourceRequest:
         assert "source" in r["missing_fields"]
 
 
+# ── fetch_remote_source_dataset ───────────────────────────────────────────────
+
+class TestFetchRemoteSourceDataset:
+    def test_bio_oracle_request_is_persisted_as_derived_csv(self, tools, tmp_path, monkeypatch):
+        import requests
+
+        static_dir = tmp_path / "static"
+        monkeypatch.setattr("routers.file_routes.STATIC_DIR", static_dir)
+
+        search_payload = {
+            "table": {
+                "columnNames": ["griddap", "Subset", "tabledap", "Make A Graph", "wms", "files", "Title", "Summary", "FGDC", "ISO 19115", "Info", "Background Info", "RSS", "Email", "Institution", "Dataset ID"],
+                "rows": [
+                    [
+                        "https://erddap.bio-oracle.org/erddap/griddap/si_ssp126_2020_2100_depthmean",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "Bio-Oracle Silicate [depthMean] SSP126 2020-2100.",
+                        "",
+                        "",
+                        "",
+                        "https://erddap.bio-oracle.org/erddap/info/si_ssp126_2020_2100_depthmean/index.json",
+                        "",
+                        "",
+                        "",
+                        "Bio-Oracle consortium: https://www.bio-oracle.org",
+                        "si_ssp126_2020_2100_depthmean",
+                    ]
+                ],
+            }
+        }
+        info_payload = {
+            "table": {
+                "rows": [
+                    ["dimension", "time", "", "double", "nValues=2, evenlySpaced=false"],
+                    ["dimension", "latitude", "", "float", "nValues=3600, evenlySpaced=true, averageSpacing=0.05"],
+                    ["dimension", "longitude", "", "float", "nValues=7200, evenlySpaced=true, averageSpacing=0.05"],
+                    ["attribute", "NC_GLOBAL", "geospatial_lat_min", "double", "-89.975"],
+                    ["attribute", "NC_GLOBAL", "geospatial_lon_min", "double", "-179.975"],
+                    ["attribute", "NC_GLOBAL", "geospatial_lat_resolution", "double", "0.05"],
+                    ["attribute", "NC_GLOBAL", "geospatial_lon_resolution", "double", "0.05"],
+                ]
+            }
+        }
+        csv_payload = (
+            "time,latitude,longitude,si_mean\n"
+            "UTC,degrees_north,degrees_east,MMol' 'M-3\n"
+            "2020-01-01T00:00:00Z,48.225,-68.375,1.25\n"
+            "2030-01-01T00:00:00Z,48.225,-68.375,1.50\n"
+        )
+
+        def fake_get(url, *args, **kwargs):
+            class FakeResponse:
+                def __init__(self, status_code, payload=None, text=None, headers=None):
+                    self.status_code = status_code
+                    self._payload = payload
+                    self.text = text or ""
+                    self.headers = headers or {}
+
+                def json(self):
+                    return self._payload
+
+                @property
+                def content(self):
+                    return (self.text or "").encode("utf-8")
+
+                def raise_for_status(self):
+                    if self.status_code >= 400:
+                        raise AssertionError(f"HTTP {self.status_code}: {url}")
+
+            url = str(url)
+            if "erddap.bio-oracle.org/erddap/search/index.json" in url:
+                return FakeResponse(200, search_payload, headers={"content-type": "application/json"})
+            if "erddap.bio-oracle.org/erddap/info/si_ssp126_2020_2100_depthmean/index.json" in url:
+                return FakeResponse(200, info_payload, headers={"content-type": "application/json"})
+            if "erddap.bio-oracle.org/erddap/griddap/si_ssp126_2020_2100_depthmean.csv" in url:
+                return FakeResponse(200, text=csv_payload, headers={"content-type": "text/csv"})
+            raise AssertionError(f"Unexpected URL: {url}")
+
+        monkeypatch.setattr(requests, "get", fake_get)
+
+        with patch("core.copepod_observability.trace_copepod_event"):
+            result = tools["fetch_remote_source_dataset"](
+                "u1:s1:copepod",
+                "bio_oracle",
+                {
+                    "scenario": "SSP126",
+                    "period": {"start": 2020, "end": 2030},
+                    "variable": "si_mean",
+                    "zone": {"latitude": 48.2, "longitude": -68.4},
+                },
+            )
+
+        derived_path = Path(result["file_path"])
+        assert result["source_id"] == "bio_oracle"
+        assert result["status"] == "persisted"
+        assert derived_path.exists()
+        assert derived_path.parent == static_dir / "u1" / "s1" / "uploads"
+        assert derived_path.suffix == ".csv"
+        text = derived_path.read_text()
+        assert "si_mean" in text
+        assert result["row_count"] == 2
+        assert result["source_dataset_id"] == "si_ssp126_2020_2100_depthmean"
+
+    def test_ogsl_request_is_persisted_as_derived_csv(self, tools, tmp_path, monkeypatch):
+        import requests
+
+        static_dir = tmp_path / "static"
+        monkeypatch.setattr("routers.file_routes.STATIC_DIR", static_dir)
+
+        package_payload = {
+            "success": True,
+            "result": {
+                "results": [
+                    {
+                        "title": "Données CTD de la mission printemps BioDiv 2024 dans le golfe du Saint-Laurent",
+                        "name": "ca-cioos_603e59c5-1edb-47b5-85dc-64d690bd3f99",
+                        "resources": [
+                            {
+                                "name": "Base de données CTD - BioDiv 2024_06 ERDDAP",
+                                "format": "HTML",
+                                "url": "https://erddap.ogsl.ca/erddap/tabledap/ismerSgdeCtd.html?longitude%2Clatitude%2Ctime%2CcruiseID%2C%2CPRES%2CTE90%2CNTRA%2CPSAL%2CSIGT%2COXYM%2CFLOR%2CPSAR%2CTRB%2CASAL%2Ccruise_start_date%2Ccruise_end_date%2Ccruise_chief_scientist%2Cplatform_name%2Cinstrument%2CstationID%2Ccast_number&time%3E=2024-05-02T07%3A00%3A00Z&cruiseID=%222024_06%20BioDiv%22",
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+        csv_payload = (
+            "longitude,latitude,time,cruiseID,PRES,TE90,NTRA,PSAL,SIGT,OXYM,FLOR,PSAR,TRB,ASAL,cruise_start_date,cruise_end_date,cruise_chief_scientist,platform_name,instrument,stationID,cast_number\n"
+            "-68.5,48.2,2024-05-02T07:00:00Z,2024_06 BioDiv,1,4.2,0.1,32.1,25.1,200,0.3,32.1,1.2,32.1,2024-05-02,2024-05-10,Chief,Ship,CTD,12,1\n"
+        )
+
+        def fake_get(url, *args, **kwargs):
+            class FakeResponse:
+                def __init__(self, status_code, payload=None, text=None, headers=None):
+                    self.status_code = status_code
+                    self._payload = payload
+                    self.text = text or ""
+                    self.headers = headers or {}
+
+                def json(self):
+                    return self._payload
+
+                @property
+                def content(self):
+                    return (self.text or "").encode("utf-8")
+
+                def raise_for_status(self):
+                    if self.status_code >= 400:
+                        raise AssertionError(f"HTTP {self.status_code}: {url}")
+
+            url = str(url)
+            if "catalogue.ogsl.ca/api/3/action/package_search" in url:
+                return FakeResponse(200, package_payload, headers={"content-type": "application/json"})
+            if "erddap.ogsl.ca/erddap/tabledap/ismerSgdeCtd.csv" in url:
+                return FakeResponse(200, text=csv_payload, headers={"content-type": "text/csv"})
+            raise AssertionError(f"Unexpected URL: {url}")
+
+        monkeypatch.setattr(requests, "get", fake_get)
+
+        with patch("core.copepod_observability.trace_copepod_event"):
+            result = tools["fetch_remote_source_dataset"](
+                "u1:s1:copepod",
+                "ogsl",
+                {
+                    "mission": "2024_06 BioDiv",
+                    "period": {"start": "2024-05-02", "end": "2024-05-03"},
+                    "station": "12",
+                    "variables": ["TE90", "PSAL"],
+                },
+            )
+
+        derived_path = Path(result["file_path"])
+        assert result["source_id"] == "ogsl"
+        assert result["status"] == "persisted"
+        assert derived_path.exists()
+        assert derived_path.parent == static_dir / "u1" / "s1" / "uploads"
+        assert derived_path.suffix == ".csv"
+        text = derived_path.read_text()
+        assert "TE90" in text
+        assert result["row_count"] == 1
+        assert "2024_06 BioDiv" in result["source_query"]
+
+
 # ── tool registry integration ──────────────────────────────────────────────────
 
 class TestToolRegistration:
     def test_copepod_sources_meta_tag_registered(self):
         from core.tool_registry import registry
+        from core.tool_registry.tools import copepod_remote_sources  # noqa: F401
         from core.tool_registry.tools import copepod_sources_meta  # noqa: F401
-        code = registry.render({"copepod_sources_meta"})
+        code = registry.render({"copepod_sources_meta", "copepod_remote_sources"})
         assert "list_available_sources" in code
         assert "describe_source" in code
         assert "plan_remote_source_request" in code
+        assert "fetch_remote_source_dataset" in code
 
     def test_rendered_code_is_executable(self):
         from core.tool_registry import registry
+        from core.tool_registry.tools import copepod_remote_sources  # noqa: F401
         from core.tool_registry.tools import copepod_sources_meta  # noqa: F401
-        code = registry.render({"copepod_sources_meta"})
+        code = registry.render({"copepod_sources_meta", "copepod_remote_sources"})
         ns = {}
         exec(code, ns)
         assert "list_available_sources" in ns
         assert "describe_source" in ns
         assert "plan_remote_source_request" in ns
+        assert "fetch_remote_source_dataset" in ns
 
     def test_functions_have_docstrings(self):
         from core.tool_registry import registry
+        from core.tool_registry.tools import copepod_remote_sources  # noqa: F401
         from core.tool_registry.tools import copepod_sources_meta  # noqa: F401
-        code = registry.render({"copepod_sources_meta"})
+        code = registry.render({"copepod_sources_meta", "copepod_remote_sources"})
         ns = {}
         exec(code, ns)
         assert ns["list_available_sources"].__doc__ is not None
         assert ns["describe_source"].__doc__ is not None
         assert ns["plan_remote_source_request"].__doc__ is not None
+        assert ns["fetch_remote_source_dataset"].__doc__ is not None

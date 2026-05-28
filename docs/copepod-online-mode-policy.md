@@ -6,6 +6,7 @@ As of 2026-05-28, the online-source policy is implemented in three layers:
 
 - backend persistence for a session-scoped `Mode En Ligne`;
 - copepod prompt/runtime policy that only uses OGSL or Bio-ORACLE after explicit user intent;
+- OGSL/Bio-ORACLE fetches are materialised as derived CSV files in the session uploads folder;
 - UI controls in the account/settings surface with a visible `Mode En Ligne: ON/OFF` badge.
 
 The initial allowlist is:
@@ -25,6 +26,7 @@ The assistant must:
 
 - prefer local files and local RAG when they already satisfy the task;
 - avoid silent online fetches;
+- materialise allowed remote data as derived CSV files in the session uploads folder;
 - propose an allowed alternative when a requested source is unsupported or disabled;
 - keep the source decision visible in the response.
 
@@ -57,6 +59,7 @@ Before a live online-source test, validate:
 ```bash
 pytest tests/test_copepod_profile.py tests/test_copepod_online_mode_policy.py tests/test_session_routes.py -q
 npm test -- --runInBand frontend/__tests__/online_mode_ui.test.js
+python scripts/evals/run_copepod_plan_mode_eval.py --live-online-mode --push-langfuse
 ```
 
 Expected result:
@@ -64,6 +67,7 @@ Expected result:
 - backend policy tests pass;
 - copepod prompt tests mention the online-mode policy;
 - UI test confirms the toggle and badge render correctly.
+- the live online-mode eval verifies source-routing, clarification, and Langfuse trace logging.
 
 ## Next Live Test
 
@@ -74,7 +78,6 @@ The next real test should be a single explicit request, with `Mode En Ligne` ena
 
 Expected live behavior:
 
-- if the request is explicit and complete, the assistant fetches the source;
+- if the request is explicit and complete, the assistant fetches the source and persists a derived CSV in the session uploads folder;
 - if one required parameter is missing, the assistant asks one targeted clarification;
 - if the source is not enabled, the assistant proposes an allowed alternative.
-

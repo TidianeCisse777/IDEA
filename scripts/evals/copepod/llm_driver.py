@@ -88,8 +88,9 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
         "get_active_data_understanding",
         "get_active_graph_context",
         "plan_remote_source_request",
+        "fetch_remote_source_dataset",
     }:
-        return {
+        compact = {
             "version_id": result.get("version_id"),
             "artifact_type": result.get("artifact_type"),
             "status": result.get("status"),
@@ -101,6 +102,16 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
             "missing_fields": result.get("missing_fields"),
             "recommended_next_step": result.get("recommended_next_step"),
         }
+        if name == "plan_remote_source_request":
+            compact["parameters"] = result.get("parameters")
+            compact["clarification_question"] = result.get("clarification_question")
+        if name == "fetch_remote_source_dataset":
+            compact["file_path"] = result.get("file_path")
+            compact["original_filename"] = result.get("original_filename")
+            compact["row_count"] = result.get("row_count")
+            compact["source_dataset_id"] = result.get("source_dataset_id")
+            compact["source_dataset_title"] = result.get("source_dataset_title")
+        return compact
     return result
 
 
@@ -252,6 +263,17 @@ def _tool_specs() -> list[dict]:
             },
             ["request_text"],
         ),
+        function_tool(
+            "fetch_remote_source_dataset",
+            "Fetch an allowed online source and persist the result as a derived CSV in the session uploads folder.",
+            {
+                "session_key": {"type": "string"},
+                "source_id": {"type": "string"},
+                "parameters": {"type": "object", "additionalProperties": True},
+                "output_filename": {"type": "string"},
+            },
+            ["session_key", "source_id", "parameters"],
+        ),
     ]
 
 
@@ -274,6 +296,7 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
         "create_graph_context_draft",
         "activate_graph_context",
         "get_active_graph_context",
+        "fetch_remote_source_dataset",
     }
     _cache: dict[str, Any] = {}
 
@@ -335,6 +358,8 @@ def _live_tool_impls(tools: dict[str, Any], session_key: str) -> dict[str, Calla
         "create_data_understanding_draft",
         "activate_data_understanding", "get_active_data_understanding",
         "create_graph_context_draft", "activate_graph_context", "get_active_graph_context",
+        "list_available_sources", "describe_source", "plan_remote_source_request",
+        "fetch_remote_source_dataset",
     }
     impls = {name: (lambda _name=name, **kwargs: call_tool(_name, kwargs)) for name in tool_names}
     impls["summarize_understanding"] = call_summarize

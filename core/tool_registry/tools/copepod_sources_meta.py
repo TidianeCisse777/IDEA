@@ -244,6 +244,164 @@ def describe_source(source_id, session_id=None):
     result = dict(SOURCES[source_id])
     result["found"] = True
     return result
+
+
+def plan_remote_source_request(request_text, source_hint=None, session_id=None):
+    """Normalize an explicit remote-source request into a structured plan.
+
+    The helper identifies OGSL vs Bio-ORACLE, extracts the most obvious
+    parameters, and returns the missing fields together with the next step.
+    It never performs a remote fetch itself.
+    """
+    import re
+
+    text = (request_text or "").strip()
+    lowered = text.lower()
+    hint = (source_hint or "").strip().lower()
+
+    def _match_source() -> str:
+        if "bio_oracle" in hint or "bio-oracle" in hint or "bio oracle" in hint:
+            return "bio_oracle"
+        if "ogsl" in hint:
+            return "ogsl"
+        if "bio_oracle" in lowered or "bio-oracle" in lowered or "bio oracle" in lowered:
+            return "bio_oracle"
+        if "ogsl" in lowered or "saint-laurent" in lowered or "saint laurent" in lowered:
+            return "ogsl"
+        return "unknown"
+
+    def _extract_period() -> dict:
+        iso_dates = re.findall(r"(20\\d{2}-\\d{2}-\\d{2})", text)
+        if len(iso_dates) >= 2:
+            return {"start": iso_dates[0], "end": iso_dates[1]}
+        years = re.findall(r"(20\\d{2})", text)
+        if len(years) >= 2:
+            return {"start": int(years[0]), "end": int(years[1])}
+        return {}
+
+    def _extract_variable_names() -> list[str]:
+        candidates = []
+        patterns = [
+            r"variable\s+([a-zA-Z0-9_]+)",
+            r"sur\s+la\s+variable\s+([a-zA-Z0-9_]+)",
+            r"avec\s+([A-Za-z0-9_,\s]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                raw = match.group(1)
+                normalized = (
+                    raw.replace(" et ", ",")
+                    .replace(" ET ", ",")
+                    .replace(" Et ", ",")
+                    .replace(" eT ", ",")
+                )
+                for part in re.split(r"[,/]", normalized):
+                    token = part.strip().strip(".;:")
+                    if token and len(token) <= 24:
+                        candidates.append(token)
+                break
+        cleaned = []
+        for item in candidates:
+            if item and item.lower() not in {"le", "la", "les", "et", "sur", "pour"}:
+                cleaned.append(item)
+        return cleaned
+
+    source_id = _match_source()
+    period = _extract_period()
+    variables = _extract_variable_names()
+    parameters = {
+        "request_text": text,
+        "source_hint": source_hint,
+    }
+    missing_fields: list[str] = []
+
+    if source_id == "bio_oracle":
+        scenario = None
+        scenario_match = re.search(r"\bssp\s*([0-9]{3})\b", text, re.IGNORECASE)
+        if scenario_match:
+            scenario = f"SSP{scenario_match.group(1)}"
+        elif "scenario" in lowered or "scénario" in lowered or "scenar" in lowered:
+            scenario = re.search(r"(ssp\s*[0-9]{3})", text, re.IGNORECASE)
+            scenario = f"SSP{scenario.group(1)[-3:]}" if scenario else None
+
+        zone = None
+        zone_match = re.search(
+            r"\b(zone|site|coordonn?es?|coordinates?)\b\s*[:=]?\s*(.+)",
+            text,
+            re.IGNORECASE,
+        )
+        if zone_match:
+            zone = zone_match.group(2).strip().rstrip(".")
+        elif any(token in lowered for token in ["latitude", "longitude", "lat", "lon", "coord"]):
+            zone = "coordinates-specified"
+
+        if scenario:
+            parameters["scenario"] = scenario
+        if period:
+            parameters["period"] = period
+        if variables:
+            parameters["variable"] = variables[0]
+            parameters["variables"] = variables
+        if zone:
+            parameters["zone"] = zone
+
+        if "scenario" not in parameters:
+            missing_fields.append("scenario")
+        if "period" not in parameters:
+            missing_fields.append("period")
+        if "variable" not in parameters:
+            missing_fields.append("variable")
+        if "zone" not in parameters:
+            missing_fields.append("zone")
+
+    elif source_id == "ogsl":
+        station = None
+        if "station" in lowered:
+            station = lowered.split("station", 1)[1].strip().split()[0].strip(",.;:")
+        mission = None
+        if "mission" in lowered:
+            mission = lowered.split("mission", 1)[1].strip().split()[0].strip(",.;:")
+        if station:
+            parameters["station"] = station
+        if mission:
+            parameters["mission"] = mission
+        if period:
+            parameters["period"] = period
+        if variables:
+            parameters["variables"] = variables
+
+        if "station" not in parameters and "mission" not in parameters:
+            missing_fields.append("zone_or_station_or_mission")
+        if "period" not in parameters:
+            missing_fields.append("period")
+        if not variables:
+            missing_fields.append("variables")
+
+    else:
+        missing_fields.append("source")
+
+    recommended_next_step = "ask_clarification" if missing_fields else "proceed"
+    clarification_question = None
+    if missing_fields:
+        if source_id == "bio_oracle":
+            clarification_question = "Quelle zone ou quelles coordonnées voulez-vous utiliser pour Bio-ORACLE ?"
+        elif source_id == "ogsl":
+            clarification_question = "Quelle zone, station ou mission OGSL voulez-vous utiliser ?"
+        else:
+            clarification_question = "Quelle source voulez-vous utiliser, OGSL ou Bio-ORACLE ?"
+    elif source_id == "ogsl":
+        recommended_next_step = "ask_clarification"
+        clarification_question = "Quelle zone, station ou mission OGSL voulez-vous utiliser ?"
+
+    return {
+        "source_id": source_id,
+        "intent": "fetch" if source_id != "unknown" else "clarify",
+        "parameters": parameters,
+        "missing_fields": missing_fields,
+        "recommended_next_step": recommended_next_step,
+        "clarification_question": clarification_question,
+    }
 '''
 
 registry.register(Tool(

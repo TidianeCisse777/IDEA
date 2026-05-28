@@ -26,6 +26,7 @@ from scripts.evals.copepod.eval_du import run_live_du_only_eval  # noqa: F401
 from scripts.evals.copepod.eval_du_multi import run_live_du_multi_eval  # noqa: F401
 from scripts.evals.copepod.eval_gc import run_live_gc_only_eval  # noqa: F401
 from scripts.evals.copepod.eval_live import run_live_eval  # noqa: F401
+from scripts.evals.copepod.eval_online_mode import run_live_online_mode_eval  # noqa: F401
 from scripts.evals.copepod.eval_mock import run_mock_eval  # noqa: F401
 from scripts.evals.copepod.eval_smoke import run_langfuse_trace_smoke  # noqa: F401
 from scripts.evals.copepod.fixtures import (  # noqa: F401
@@ -102,6 +103,7 @@ def main() -> int:
     parser.add_argument("--live-du-only", action="store_true", help="Run live LLM evals through Data Understanding only.")
     parser.add_argument("--live-du-multi", action="store_true", help="Run live LLM evals for multi-file Data Understanding.")
     parser.add_argument("--live", action="store_true", help="Run live LLM-driven evals.")
+    parser.add_argument("--live-online-mode", action="store_true", help="Run live LLM evals for Mode En Ligne policy and source routing.")
     parser.add_argument("--trace-smoke", action="store_true", help="Send one prompt and verify Langfuse trace/level/score.")
     parser.add_argument(
         "--prompt",
@@ -138,6 +140,8 @@ def main() -> int:
             push_langfuse=args.push_langfuse,
             scenario_slugs=scenario_slugs or None,
         )
+    elif args.live_online_mode:
+        report = run_live_online_mode_eval(push_langfuse=args.push_langfuse)
     elif args.live:
         report = run_live_eval(push_langfuse=args.push_langfuse)
     else:

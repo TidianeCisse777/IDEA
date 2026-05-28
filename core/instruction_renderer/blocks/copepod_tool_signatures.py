@@ -26,6 +26,8 @@ You have access to host Python functions through the IDEA/OpenInterpreter enviro
 ### Source metadata
 - `list_available_sources(auth_token=None, session_id="{session_id}")` — list known copepod data sources (EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE).
 - `describe_source(source_id, session_id="{session_id}")` — return full metadata for a source: content summary, join keys, known limitations.
+- `plan_remote_source_request(request_text, source_hint=None, session_id="{session_id}")` — normalize an explicit OGSL or Bio-ORACLE request, extract parameters, and identify missing fields before a remote fetch.
+- `fetch_remote_source_dataset(session_key, source_id, parameters, output_filename=None)` — download an allowed online source into the session uploads folder as a derived CSV so it can be reused like a normal uploaded file.
 
 ### General
 - `get_datetime()` — current date/time when needed.

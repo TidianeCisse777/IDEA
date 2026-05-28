@@ -30,6 +30,7 @@ As of 2026-05-28, the recommended baseline is:
 - `--mock`: green
 - `--live-du-only --push-langfuse`: green
 - `--live-gc-only --push-langfuse`: green on the current pack
+- `--live-online-mode --push-langfuse`: green on the current online-policy pack, including a fetch-to-derived-file scenario
 - `--live`: still reserved for the final end-to-end workflow check
 - `Mode En Ligne` policy is implemented and documented in [`docs/copepod-online-mode-policy.md`](./copepod-online-mode-policy.md)
 
@@ -190,6 +191,11 @@ Current live pack note:
 - the active pack currently runs `rich`, `poor`, `offtopic`, and `analysis-jump`;
 - `join` has been removed from the pack to keep the signal stable and to avoid overfitting the GC-only tests to one ambiguous case.
 
+Current online-mode pack note:
+
+- the active pack currently runs `online-off-explicit-request`, `online-on-incomplete-request`, `online-on-complete-request`, and `online-on-complete-request-fetch`;
+- the fetch scenario checks that a complete Bio-ORACLE request can persist a derived CSV in the session uploads folder.
+
 ### Online Mode live-test checklist
 
 Before the first real live online-source test, confirm:
@@ -198,7 +204,23 @@ Before the first real live online-source test, confirm:
 2. The request names OGSL or Bio-ORACLE explicitly.
 3. The request is complete enough to avoid a clarification round.
 4. The selected source is listed in the allowlist returned by `/session/online-mode`.
-5. The live trace shows only the requested online source being used.
+5. The live trace shows the planner and, when appropriate, the fetch tool writing a derived CSV in the session uploads folder.
+
+### 3d. Online-Mode Live Eval
+
+Use this when you want to validate the explicit source-routing policy and the online/offline toggle.
+
+```bash
+python scripts/evals/run_copepod_plan_mode_eval.py --live-online-mode --push-langfuse
+```
+
+This mode:
+
+- renders the current `Mode En Ligne` state into the session metadata block;
+- checks that disabled online mode does not silently call remote source tools;
+- checks that explicit incomplete requests trigger a single targeted clarification;
+- checks that explicit complete requests route through the source-planner helper instead of inventing a fetch path;
+- records the trace and boolean scores in Langfuse for inspection by `session_key`.
 
 Recommended live command for the end-to-end workflow:
 

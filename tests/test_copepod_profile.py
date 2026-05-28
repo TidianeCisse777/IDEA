@@ -65,6 +65,7 @@ def test_copepod_profile_uses_safe_runtime_and_copepod_instruction_blocks():
         "copepod_data",
         "copepod_columns",
         "copepod_sources_meta",
+        "copepod_remote_sources",
         "copepod_rag",
         "copepod_artifacts",
         "copepod_taxonomy",
@@ -92,6 +93,7 @@ def test_copepod_custom_instructions_use_copepod_blocks_without_sea_level_leakag
 
     assert "## Copepod Plan Mode" in instructions
     assert "## Copepod Runtime Tools" in instructions
+    assert "fetch_remote_source_dataset" in instructions
     assert "get_station_info" not in instructions
     assert "get_climate_index" not in instructions
     assert "UHSLC" not in instructions
@@ -112,6 +114,39 @@ def test_copepod_custom_instructions_put_static_blocks_before_session_metadata()
 
     assert instructions.index("## Copepod Runtime Tools") < instructions.index("The user_id is user-1")
     assert instructions.index("## Copepod Plan Mode") < instructions.index("The session_id is session-1")
+
+
+def test_copepod_custom_instructions_surface_online_mode_state():
+    import_copepod_profile()
+
+    from core.session_store import InMemorySessionStore
+    from agents.copepod_profile import CopepodProfile
+
+    store = InMemorySessionStore()
+    profile = CopepodProfile(session_store=store)
+
+    session_key = "user-1:session-1:copepod"
+    store.set_online_mode(session_key, True)
+    enabled = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+    store.set_online_mode(session_key, False)
+    disabled = profile.get_custom_instructions(
+        host="http://localhost",
+        user_id="user-1",
+        session_id="session-1",
+        static_dir="static",
+        upload_dir="uploads",
+    )
+
+    assert "Mode En Ligne: ON" in enabled
+    assert "OGSL" in enabled
+    assert "Bio-ORACLE" in enabled
+    assert "Mode En Ligne: OFF" in disabled
 
 
 def test_copepod_profile_uses_copepod_instruction_blocks():

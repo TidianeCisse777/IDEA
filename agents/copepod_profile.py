@@ -38,6 +38,7 @@ class CopepodProfile(AssistantProfile):
         "copepod_data",
         "copepod_columns",
         "copepod_sources_meta",
+        "copepod_remote_sources",
         "copepod_rag",
         "copepod_artifacts",
         "copepod_taxonomy",
@@ -81,6 +82,7 @@ class CopepodProfile(AssistantProfile):
             "static_dir": static_dir,
             "upload_dir": upload_dir,
             "mcp_tools": mcp_tools or [],
+            "online_mode_enabled": self.session_store.get_online_mode(session_key),
         }
         instructions = instruction_renderer.render(blocks, context)
         if mode != "analyse":

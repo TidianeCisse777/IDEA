@@ -22,6 +22,7 @@ Mots-clés : sources en ligne, EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE,
 **Règle générale :**
 - Les sources en ligne ne sont jamais appelées silencieusement.
 - Le Mode En Ligne doit être activé pour la session dans l'UI, puis la source doit être explicitement demandée par l'utilisateur.
+- Quand l'extraction réussit, l'agent écrit un CSV dérivé dans le dossier `static/<user>/<session>/uploads/` afin que le fichier puisse être relu comme un upload normal.
 - Si une source n'est pas activée, l'agent travaille avec les fichiers chargés et le RAG local.
 - Les IDs de projets ou datasets sont découverts dynamiquement ou fournis par l'utilisateur ; ils ne sont pas des constantes système.
 
@@ -132,6 +133,7 @@ Mots-clés : OGSL, golfe du Saint-Laurent, source régionale, profils environnem
 - variables ;
 - méthode d'extraction ;
 - limites de couverture connues.
+- chemin du CSV dérivé si une extraction a été matérialisée.
 
 **Limite :** OGSL est complémentaire. Si une CTD officielle de campagne couvre le besoin, elle est prioritaire.
 
@@ -159,7 +161,8 @@ Mots-clés : Bio-ORACLE, environnement, conditions futures, scénario, modèle, 
 - période ;
 - coordonnées ou zone ;
 - méthode d'extraction/interpolation ;
-- source Bio-ORACLE.
+- source Bio-ORACLE ;
+- chemin du CSV dérivé si une extraction a été matérialisée.
 
 ---
 

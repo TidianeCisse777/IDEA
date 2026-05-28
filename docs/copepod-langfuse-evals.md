@@ -17,6 +17,7 @@ Run:
 ```bash
 python scripts/evals/run_copepod_plan_mode_eval.py --mock
 python scripts/evals/run_copepod_plan_mode_eval.py --live --push-langfuse
+python scripts/evals/run_copepod_plan_mode_eval.py --live-online-mode --push-langfuse
 ```
 
 The live eval uses `LLM_MODEL` from the environment.
@@ -82,6 +83,22 @@ Good targets:
 - "Are blockers explicit and actionable?"
 
 Do not use this first for release gating. Calibrate the judge against human-labelled examples before trusting it.
+
+### 4. Online Mode Policy Checks
+
+Use this when the prompt/runtime policy around OGSL and Bio-ORACLE needs to be validated.
+
+```bash
+python scripts/evals/run_copepod_plan_mode_eval.py --live-online-mode --push-langfuse
+```
+
+What it checks:
+
+- `Mode En Ligne` is visible in the rendered session metadata.
+- Disabled online mode does not silently call remote source tools.
+- Explicit incomplete requests trigger a single targeted clarification.
+- Explicit complete requests route through the source-planner helper instead of inventing a fetch path.
+- Scores and trace are written to Langfuse for inspection by `session_key`.
 
 ## Langfuse Setup Notes
 

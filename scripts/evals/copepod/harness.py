@@ -44,10 +44,15 @@ def _load_tools() -> dict[str, Any]:
     from core.tool_registry import registry
     from core.tool_registry.tools import copepod_columns  # noqa: F401
     from core.tool_registry.tools import copepod_data  # noqa: F401
+    from core.tool_registry.tools import copepod_remote_sources  # noqa: F401
+    from core.tool_registry.tools import copepod_sources_meta  # noqa: F401
     from core.tool_registry.tools import copepod_session_artifacts  # noqa: F401
 
     ns: dict[str, Any] = {}
-    exec(registry.render({"copepod_data", "copepod_columns", "copepod_artifacts"}), ns)
+    exec(
+        registry.render({"copepod_data", "copepod_columns", "copepod_artifacts", "copepod_sources_meta", "copepod_remote_sources"}),
+        ns,
+    )
     return ns
 
 
