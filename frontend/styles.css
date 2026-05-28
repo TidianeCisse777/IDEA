@@ -94,6 +94,11 @@ body.theme-light {
 body.theme-dark {
     color-scheme: dark;
     --body-gradient: linear-gradient(160deg, #050f1c 0%, #071829 50%, #050f1c 100%);
+    /* dot grid overlay matching login.html */
+    background:
+        radial-gradient(rgba(90,172,218,0.04) 1px, transparent 1px),
+        var(--body-gradient) !important;
+    background-size: 28px 28px, auto !important;
     --surface: rgba(8, 21, 37, 0.96);
     --surface-alt: rgba(6, 17, 31, 0.88);
     --border: rgba(90, 172, 218, 0.12);
@@ -1947,6 +1952,66 @@ pre {
     flex-direction: column;
 }
 
+/* Dark theme modal overrides */
+body.theme-dark .modal-content {
+    background-color: var(--surface, #081525);
+    border: 1px solid var(--border, rgba(90,172,218,0.12));
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+}
+
+body.theme-dark .prompt-list-section {
+    background-color: rgba(5, 15, 28, 0.8);
+    border-right-color: var(--border, rgba(90,172,218,0.12));
+}
+
+body.theme-dark .prompt-editor-section {
+    background-color: var(--surface, #081525);
+}
+
+body.theme-dark .section-header {
+    background-color: rgba(5, 15, 28, 0.6);
+    border-bottom-color: var(--border, rgba(90,172,218,0.12));
+}
+
+body.theme-dark .section-header h3 {
+    color: var(--text-primary, #d8eaf4);
+}
+
+body.theme-dark .prompt-item {
+    background-color: transparent;
+    border-bottom-color: var(--border, rgba(90,172,218,0.1));
+    color: var(--text-primary, #d8eaf4);
+}
+
+body.theme-dark .prompt-item:hover {
+    background-color: rgba(90, 172, 218, 0.06);
+}
+
+body.theme-dark .prompt-item.active {
+    background-color: rgba(90, 172, 218, 0.1);
+    border-left-color: var(--primary, #5aacda);
+}
+
+body.theme-dark .prompt-item-name {
+    color: var(--text-primary, #d8eaf4);
+}
+
+body.theme-dark .prompt-item-description {
+    color: var(--text-muted, #6e9ab5);
+}
+
+body.theme-dark .prompt-item-meta {
+    color: var(--text-muted, #6e9ab5);
+}
+
+body.theme-dark .user-management-container {
+    background-color: var(--surface, #081525);
+}
+
+body.theme-dark .papers-list {
+    background: transparent;
+}
+
 .modal-header {
     display: flex;
     justify-content: space-between;
@@ -3315,15 +3380,22 @@ body.main-app {
 }
 
 .sidebar-brand-name {
-    font-size: 0.8rem;
-    font-weight: 600;
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: 1rem;
     color: var(--text-primary);
-    letter-spacing: 0.03em;
+    letter-spacing: 0.01em;
     opacity: 1;
     transition: opacity 0.2s ease;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.sidebar-brand-name em {
+    font-style: normal;
+    color: var(--primary);
 }
 
 .sidebar.collapsed .sidebar-brand-name {
@@ -3754,6 +3826,12 @@ body.main-app {
     background: rgba(34, 197, 120, 0.12);
     color: #22c578;
     border: 1px solid rgba(34, 197, 120, 0.25);
+}
+
+.session-mode-online {
+    background: rgba(90, 172, 218, 0.12);
+    color: #5aacda;
+    border: 1px solid rgba(90, 172, 218, 0.25);
 }
 
 .session-mode-icon {

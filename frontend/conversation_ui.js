@@ -372,19 +372,22 @@ function displayMessageInChat(message) {
         }
     } else if (message.message_type === 'code') {
         if (message.message_format === 'html') {
-            contentElement.innerHTML = message.content;
+            contentElement.innerHTML = DOMPurify.sanitize(message.content);
         } else {
             const language = message.message_format || '';
             contentElement.innerHTML = `<pre><code class="language-${language}">${escapeHtml(message.content)}</code></pre>`;
         }
     } else if (message.message_type === 'console') {
         contentElement.innerHTML = `<pre>${escapeHtml(message.content)}</pre>`;
-        contentElement.style.display = 'none'; // Hide console output by default
+        contentElement.style.display = 'none';
     } else if (message.message_type === 'file') {
-        contentElement.innerHTML = `<a href="${message.content}" download>Download File</a>`;
+        const link = document.createElement('a');
+        link.href = message.content;
+        link.download = '';
+        link.textContent = 'Download File';
+        contentElement.appendChild(link);
     } else {
-        // Default handling for other types
-        contentElement.innerHTML = message.content;
+        contentElement.innerHTML = DOMPurify.sanitize(message.content);
     }
     
     messageDiv.appendChild(contentElement);

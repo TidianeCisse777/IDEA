@@ -109,3 +109,76 @@ describe('Online Mode UI', () => {
         expect(document.getElementById('onlineModeLabel').textContent).toContain('ON');
     });
 });
+
+// ─── Session ID consistency ───────────────────────────────────────────────────
+// The X-Session-Id in online-mode requests must match localStorage.getItem('sessionId')
+// so the backend reads/writes online mode for the same session used by chat requests.
+
+describe('Online Mode — session ID consistency', () => {
+    const SESSION_ID = 'my-session-42';
+    const TOKEN = 'token-xyz';
+
+    beforeEach(() => {
+        jest.resetModules();
+        buildDOM();
+        // Use real jsdom localStorage — global.localStorage = {} does not replace
+        // the built-in Storage object that account-settings.js reads.
+        window.localStorage.setItem('sessionId', SESSION_ID);
+        window.localStorage.setItem('authToken', TOKEN);
+        global.config = {
+            getEndpoints: () => ({
+                userProfile: '/api/users/me',
+                onlineMode: '/api/session/online-mode',
+            }),
+        };
+        global.fetch = jest.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ enabled: false, allowed_sources: ['ogsl', 'bio_oracle'] }),
+            })
+        );
+        require('../account-settings.js');
+        document.dispatchEvent(new Event('DOMContentLoaded'));
+    });
+
+    afterEach(() => {
+        window.localStorage.clear();
+    });
+
+    test('GET online-mode uses sessionId from localStorage as X-Session-Id', async () => {
+        document.getElementById('accountSettingsButton').click();
+        await flush();
+
+        const getCall = global.fetch.mock.calls.find(([url, opts = {}]) =>
+            String(url).includes('/api/session/online-mode') && (!opts.method || opts.method === 'GET')
+        );
+        expect(getCall).toBeDefined();
+        expect(getCall[1].headers['X-Session-Id']).toBe(SESSION_ID);
+    });
+
+    test('PUT online-mode uses same sessionId as GET — no divergence mid-toggle', async () => {
+        document.getElementById('accountSettingsButton').click();
+        await flush();
+
+        // Simulate toggle ON
+        global.fetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ enabled: true, allowed_sources: ['ogsl', 'bio_oracle'] }),
+        });
+        const toggle = document.getElementById('onlineModeToggle');
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change', { bubbles: true }));
+        await flush();
+
+        const putCall = global.fetch.mock.calls.find(([url, opts = {}]) =>
+            String(url).includes('/api/session/online-mode') && opts.method === 'PUT'
+        );
+        expect(putCall).toBeDefined();
+        expect(putCall[1].headers['X-Session-Id']).toBe(SESSION_ID);
+        // GET and PUT must use the same session ID
+        const getCall = global.fetch.mock.calls.find(([url, opts = {}]) =>
+            String(url).includes('/api/session/online-mode') && (!opts.method || opts.method === 'GET')
+        );
+        expect(putCall[1].headers['X-Session-Id']).toBe(getCall[1].headers['X-Session-Id']);
+    });
+});
