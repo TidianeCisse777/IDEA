@@ -21,31 +21,31 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
         return result
     if name == "inspect_file":
         cols = result.get("columns") or []
-        compact_columns = [
-            {
-                "name": col.get("name"),
-                "dtype": col.get("dtype"),
-                "semantic_guess": col.get("semantic_guess"),
-                "unit_guess": col.get("unit_guess"),
-                "confidence": col.get("confidence"),
-                "missing_rate": col.get("missing_rate"),
-                "missing_count": col.get("missing_count"),
-            }
-            for col in cols
-            if isinstance(col, dict)
-        ]
         by_role: dict[str, list[str]] = {}
         unknown: list[str] = []
         for c in cols:
-            role = c.get("semantic_guess")
+            role = c.get("semantic_guess") if isinstance(c, dict) else None
             if role:
                 by_role.setdefault(role, []).append(c["name"])
-            else:
+            elif isinstance(c, dict):
                 unknown.append(c["name"])
         known_summary = {
             role: names if len(names) <= 5 else {"count": len(names), "examples": names[:3]}
             for role, names in by_role.items()
         }
+        # Keep all columns (needed for infer_column_roles) but strip to 3 fields.
+        # Full 7-field compact at 161 cols = ~28K chars; 3-field = ~9K chars.
+        # unit_guess/confidence/missing_rate are redundant at this stage — the LLM
+        # can call describe_column for anything it needs to clarify.
+        compact_columns = [
+            {
+                "name": col.get("name"),
+                "dtype": col.get("dtype"),
+                "semantic_guess": col.get("semantic_guess"),
+            }
+            for col in cols
+            if isinstance(col, dict)
+        ]
         return {
             "n_rows": result.get("n_rows"),
             "n_columns": result.get("n_columns"),
@@ -54,6 +54,17 @@ def _compact_tool_result(name: str | None, result: Any) -> Any:
             "known_by_role": known_summary,
             "unknown_columns": unknown,
             "warnings": result.get("warnings") or [],
+        }
+    if name == "describe_column":
+        # Truncate definition to avoid the LLM bloating summarize_understanding
+        # arguments when it passes 10-16 describe_column results as column_definitions.
+        definition = (result.get("definition") or "")[:300]
+        return {
+            "column": result.get("column"),
+            "definition": definition,
+            "unit": result.get("unit"),
+            "confidence": result.get("confidence"),
+            "critical_notes": (result.get("critical_notes") or [])[:3],
         }
     if name == "infer_column_roles":
         return {
@@ -404,6 +415,9 @@ def _run_llm_turn(
 
     phase = metadata.get("phase", "?")
     describe_column_round_seen = False
+    # Resolve tool specs once so every round sends the identical object —
+    # avoids rebuilding the list per-round, which would prevent prefix caching.
+    _resolved_tool_specs = tool_specs if tool_specs is not None else _tool_specs()
 
     def _log(line: str):
         if log_fn is not None:
@@ -416,7 +430,7 @@ def _run_llm_turn(
                 completion_kwargs = {
                     "model": model,
                     "messages": messages,
-                    "tools": tool_specs or _tool_specs(),
+                    "tools": _resolved_tool_specs,
                     "tool_choice": "auto",
                     "temperature": float(os.getenv("LLM_TEMPERATURE", settings.LLM_TEMPERATURE)),
                     "metadata": {**metadata, "round": round_index + 1},
@@ -439,6 +453,21 @@ def _run_llm_turn(
         messages.append(message)
         last_content = message.get("content") or ""
         tool_calls = message.get("tool_calls") or []
+
+        # Log token usage with cache details for every round.
+        try:
+            _u = getattr(response, "usage", None)
+            if _u is not None:
+                _d = getattr(_u, "prompt_tokens_details", None)
+                _cached = getattr(_d, "cached_tokens", "n/a") if _d else "no_details"
+                _log(
+                    f"  [USAGE] phase={phase} round={round_index+1} "
+                    f"prompt={getattr(_u, 'prompt_tokens', '?')} "
+                    f"completion={getattr(_u, 'completion_tokens', '?')} "
+                    f"cached={_cached}"
+                )
+        except Exception:
+            pass
 
         if not tool_calls:
             _log(f"  [TEXT]  phase={phase} round={round_index+1} content={last_content[:120]!r}")
@@ -542,8 +571,11 @@ def _default_live_completion(*, metadata: dict | None = None, **kwargs):
                 }
                 details = getattr(raw_usage, "prompt_tokens_details", None)
                 cached = getattr(details, "cached_tokens", None) if details else None
-                if cached:
-                    lf_usage_details = {"input_cached": cached}
+                # Log whenever details is present so Langfuse shows 0 vs. absent.
+                # `if cached:` swallows 0, making it impossible to distinguish
+                # "no cache hits" from "model doesn't return this field at all".
+                if details is not None:
+                    lf_usage_details = {"input_cached": cached or 0}
             tool_calls_out = message.get("tool_calls") or []
             tool_names_out = [c.get("function", {}).get("name") for c in tool_calls_out]
             lf_phase_span.generation(
