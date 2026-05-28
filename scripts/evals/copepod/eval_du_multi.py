@@ -70,8 +70,8 @@ _DU_MULTI_SCENARIOS: list[DuMultiScenario] = [
             "Je veux coupler les abondances de copépodes avec les profils physico-chimiques. "
             "Commence par analyser les deux fichiers."
         ),
-        expect_joins=False,
-        expect_temporal_spatial=True,
+        expect_joins=True,
+        expect_temporal_spatial=False,
     ),
     DuMultiScenario(
         slug="ecotaxa_neolabs",
@@ -290,14 +290,22 @@ def run_live_du_multi_eval(
             )
 
             # ── protocol: create_data_understanding_draft called ─────────────
-            draft_tool_calls = [
-                m for m in phase1_msgs
-                if m.get("role") == "tool" and m.get("name") == "create_data_understanding_draft"
-            ]
+            # Read status from the phase-1 tool message, before phase-2 activation changes it.
+            _draft_tool_msg = next(
+                (m for m in phase1_msgs
+                 if m.get("role") == "tool" and m.get("name") == "create_data_understanding_draft"),
+                None,
+            )
+            _draft_status_at_creation = None
+            if _draft_tool_msg:
+                try:
+                    _draft_status_at_creation = json.loads(_draft_tool_msg.get("content", "{}")).get("status")
+                except Exception:
+                    pass
             ctx.result(
                 f"du_multi_{slug}_draft_created",
-                du_draft is not None and du_draft.get("status") == "draft",
-                f"create_data_understanding_draft called (draft status={du_draft.get('status') if du_draft else None!r}).",
+                _draft_status_at_creation == "draft",
+                f"create_data_understanding_draft returned status={_draft_status_at_creation!r} at creation time (expected 'draft').",
                 {"case_type": "common", "scenario": slug},
             )
 

@@ -63,14 +63,18 @@ d. Call `summarize_understanding(inspect_report, role_report, column_definitions
 
 **After all files have been processed:**
 
-e. *(Multi-file only — skip if only one file)* Call `synthesize_file_understanding` alone with:
+e. **MANDATORY — Multi-file only (N ≥ 2 files). If you processed 2 or more files with `summarize_understanding`, you MUST call `synthesize_file_understanding` before `create_data_understanding_draft`. This step is NOT optional. Skipping it and calling `create_data_understanding_draft` directly is a protocol violation.**
+
+   Call `synthesize_file_understanding` alone with:
    - `file_summaries` = list of all step d outputs
    - `possible_joins` = list of join descriptions between files (e.g. `"EcoTaxa ↔ EcoPart via obj_orig_id → profile_id"`); use `[]` if none
    - `complementarity` = how the files complement each other scientifically
-   - `temporal_coverage` = shared temporal extent (e.g. `"avril–mai 2015, Green Edge"`); use `"non applicable"` if absent
-   - `spatial_coverage` = shared spatial extent (e.g. `"Baie de Baffin, 67°N"`); use `"non applicable"` if absent
+   - `temporal_coverage` = shared temporal extent (e.g. `"avril–mai 2015, Green Edge"`); use `"non applicable"` if absent or from different campaigns
+   - `spatial_coverage` = shared spatial extent (e.g. `"Baie de Baffin, 67°N"`); use `"non applicable"` if absent or incompatible
 
    Be explicit — do not omit `possible_joins` if a join key exists. If you cannot determine the join, write `[]` and mention the ambiguity in `complementarity`.
+
+   *(Single file only: skip step e entirely — go directly to step f.)*
 
 f. Call `create_data_understanding_draft(session_key, artifact)` alone:
    - Single file: `artifact` = complete JSON output of step d, passed as-is.
