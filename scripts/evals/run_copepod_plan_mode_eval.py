@@ -27,8 +27,37 @@ from scripts.evals.copepod.eval_gc import run_live_gc_only_eval  # noqa: F401
 from scripts.evals.copepod.eval_live import run_live_eval  # noqa: F401
 from scripts.evals.copepod.eval_mock import run_mock_eval  # noqa: F401
 from scripts.evals.copepod.eval_smoke import run_langfuse_trace_smoke  # noqa: F401
-from scripts.evals.copepod.llm_driver import _compact_tool_result  # noqa: F401
+from scripts.evals.copepod.fixtures import (  # noqa: F401
+    ECOTAXA,
+    ECOPART,
+    _data_understanding_artifact,
+    _upload_fixture,
+    _uploaded_path,
+    _uploaded_path_label,
+)
+from scripts.evals.copepod.harness import (  # noqa: F401
+    DATASET_NAME,
+    _cleanup_old_logs,
+    _close_eval_trace,
+    _configure_local_langfuse_host,
+    _json_dumps,
+    _load_tools,
+    _make_eval_trace,
+    _make_test_client as _test_client,
+    _result,
+)
+from scripts.evals.copepod.llm_driver import (  # noqa: F401
+    _compact_tool_result,
+    _completion_message,
+    _default_live_completion,
+    _live_tool_impls,
+    _message_to_dict,
+    _run_llm_turn,
+    _tool_call_to_dict,
+    _tool_specs,
+)
 from scripts.evals.copepod.system_messages import (  # noqa: F401
+    _build_eval_system_message,
     _live_eval_runtime_context,
     _live_eval_system_prompt,
 )

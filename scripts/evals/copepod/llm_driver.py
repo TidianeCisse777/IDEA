@@ -301,7 +301,13 @@ def _run_llm_turn(
     max_tool_rounds: int = 40,
     tool_specs: list[dict] | None = None,
     log_fn: Callable[[str], None] | None = None,
+    log_fh=None,  # backward-compat: other eval scripts pass a file handle
 ) -> str:
+    if log_fn is None and log_fh is not None:
+        def log_fn(line: str):
+            log_fh.write(line + "\n")
+            log_fh.flush()
+
     phase = metadata.get("phase", "?")
     describe_column_round_seen = False
 
