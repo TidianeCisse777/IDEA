@@ -7,9 +7,12 @@ from typing import Any, Callable
 
 from .fixtures import (
     AMUNDSEN_CTD,
+    BIO_ORACLE,
     ECOTAXA,
     ECOPART,
+    NEOLABS_LOKI,
     NEOLABS_TAXON,
+    OGSL,
     _stage_fixture,
     _uploaded_path_label,
 )
@@ -82,6 +85,45 @@ _DU_MULTI_SCENARIOS: list[DuMultiScenario] = [
         ),
         expect_joins=False,
         expect_temporal_spatial=False,
+    ),
+    DuMultiScenario(
+        slug="ecotaxa_bio_oracle",
+        label="EcoTaxa + Bio-Oracle",
+        fixture_paths=[ECOTAXA, BIO_ORACLE],
+        user_message=(
+            "J'ai chargé deux fichiers : un export EcoTaxa de la campagne Green Edge "
+            "et un extrait Bio-Oracle avec la concentration en silicates (SSP126, 2020). "
+            "Je veux explorer l'influence des conditions environnementales sur la distribution "
+            "des copépodes. Commence par analyser les deux fichiers."
+        ),
+        expect_joins=False,
+        expect_temporal_spatial=True,
+    ),
+    DuMultiScenario(
+        slug="ecotaxa_ogsl",
+        label="EcoTaxa + OGSL CTD",
+        fixture_paths=[ECOTAXA, OGSL],
+        user_message=(
+            "J'ai chargé deux fichiers : un export EcoTaxa de la campagne Green Edge "
+            "et des profils CTD de biodiversité OGSL 2024 (température, salinité, oxygène, fluorescence). "
+            "Je veux coupler les abondances de copépodes avec les variables physico-chimiques. "
+            "Commence par analyser les deux fichiers."
+        ),
+        expect_joins=False,
+        expect_temporal_spatial=True,
+    ),
+    DuMultiScenario(
+        slug="neolabs_loki_taxon",
+        label="NeoLabs LOKI profils + NeoLabs taxon",
+        fixture_paths=[NEOLABS_LOKI, NEOLABS_TAXON],
+        user_message=(
+            "J'ai chargé deux fichiers du laboratoire NeoLabs : les métadonnées de déploiement "
+            "LOKI (profils, stations, dates de collecte) et les comptages taxonomiques de zooplancton. "
+            "Je veux analyser les abondances par profil de déploiement. "
+            "Commence par analyser les deux fichiers."
+        ),
+        expect_joins=True,
+        expect_temporal_spatial=True,
     ),
 ]
 
