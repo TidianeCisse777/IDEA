@@ -172,6 +172,23 @@ def delete_conversation(
     return GenericMessage(message="Conversation deleted successfully")
 
 
+@router.delete("/")
+def delete_all_conversations(
+    session: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_dependency),
+) -> GenericMessage:
+    """
+    Delete all conversations belonging to the current user.
+    """
+    conversations = session.exec(
+        select(Conversation).where(Conversation.user_id == current_user.id)
+    ).all()
+    for conv in conversations:
+        session.delete(conv)
+    session.commit()
+    return GenericMessage(message=f"Deleted {len(conversations)} conversations")
+
+
 @router.post("/{conversation_id}/messages", response_model=MessagePublic)
 def add_message(
     *,

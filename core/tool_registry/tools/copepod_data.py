@@ -1,7 +1,7 @@
 from core.tool_registry.registry import Tool, registry
 
 _code = '''
-def inspect_file(file_path, sample_rows=20):
+def inspect_file(file_path, sample_rows=500):
     """Read a user file and return a structured technical report without modifying it.
 
     The LLM is free to explore the file with pandas or any other library before

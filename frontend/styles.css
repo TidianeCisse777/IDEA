@@ -886,6 +886,33 @@ pre {
     display: none !important;
 }
 
+/* Collapsible code blocks inside assistant text messages */
+.code-collapsible pre {
+    display: none;
+    margin-top: 4px;
+}
+.code-collapsible.code-collapsible-open pre {
+    display: block;
+}
+.code-collapsible-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.78rem;
+    color: var(--text-secondary, #aaa);
+    cursor: pointer;
+    margin: 4px 0;
+    font-family: monospace;
+}
+.code-collapsible-toggle:hover {
+    color: var(--text-primary, #fff);
+    border-color: var(--text-secondary, #aaa);
+}
+
 /* Execution block — collapsible code + console wrapper */
 .exec-block {
     background: transparent !important;

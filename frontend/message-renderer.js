@@ -163,6 +163,27 @@ function removeWorkingIndicator() {
     workingIndicatorId = null;
 }
 
+function _wrapPreInCollapsible(pre) {
+    if (pre.closest('.code-collapsible')) return; // already wrapped
+    const wrapper = document.createElement('div');
+    wrapper.className = 'code-collapsible';
+
+    const toggle = document.createElement('button');
+    toggle.className = 'code-collapsible-toggle';
+    toggle.type = 'button';
+    toggle.innerHTML = '<span class="code-collapsible-arrow">▸</span> Voir le code';
+    toggle.addEventListener('click', () => {
+        const isOpen = wrapper.classList.toggle('code-collapsible-open');
+        toggle.innerHTML = isOpen
+            ? '<span class="code-collapsible-arrow">▾</span> Masquer le code'
+            : '<span class="code-collapsible-arrow">▸</span> Voir le code';
+    });
+
+    pre.parentNode.insertBefore(wrapper, pre);
+    wrapper.appendChild(toggle);
+    wrapper.appendChild(pre);
+}
+
 function addCopyButtons(root) {
     const scope = root instanceof Element ? root : document;
     const codeBlocks = scope.querySelectorAll('pre code');
@@ -170,6 +191,13 @@ function addCopyButtons(root) {
     codeBlocks.forEach((codeBlock) => {
         const pre = codeBlock.parentElement;
         if (!pre) return;
+
+        // Code blocks inside assistant text messages (not exec blocks) → collapsible
+        const inAssistantText = pre.closest('.message.assistant:not(.exec-block)');
+        if (inAssistantText) {
+            _wrapPreInCollapsible(pre);
+            return;
+        }
 
         if (pre.querySelector('.copy-button')) return;
 

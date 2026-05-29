@@ -294,6 +294,24 @@ class ConversationManager {
     }
     
     /**
+     * Delete all conversations for the current user
+     */
+    async deleteAllConversations() {
+        await this._fetchWithAuth(`${this.apiBaseUrl}/conversations/`, {
+            method: 'DELETE',
+        });
+        this.conversations = [];
+        this.totalCount = 0;
+        if (this.currentConversationId) {
+            this.currentConversationId = null;
+            this.currentMessages = [];
+            this.notifyConversationListeners('conversation_changed', null);
+            this.notifyConversationListeners('messages_updated', []);
+        }
+        this.notifyConversationListeners('conversations_loaded', []);
+    }
+
+    /**
      * Update conversation (title, favorite status)
      */
     async updateConversation(conversationId, updates) {

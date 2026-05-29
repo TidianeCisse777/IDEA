@@ -361,11 +361,13 @@ function saveCompletedAssistantMessage(message) {
     if (!conversationManager || !(message.role === 'assistant' || message.role === 'computer')) {
         return;
     }
-    // Drop to=execute code="..." messages — OI internal format that slipped through
+    // Drop raw OI code-block messages (both to=execute and {"language":} formats)
     if (message.role === 'assistant' && message.type === 'message' &&
-        typeof message.content === 'string' &&
-        message.content.includes('to=execute') && message.content.includes('code=')) {
-        return;
+        typeof message.content === 'string') {
+        const c = message.content.trimStart();
+        if ((c.includes('to=execute') && c.includes('code=')) || c.startsWith('{"language":')) {
+            return;
+        }
     }
     if (message.type === 'console') {
         if (message.format === 'active_line') {
@@ -420,12 +422,18 @@ function createImageMessageFromChunk(chunk, fallbackMessage) {
 function processChunk(chunk) {
     // Drop raw LLM tool_call chunks that leaked through without execution
     if (chunk && chunk.tool_calls && !chunk.type) return Promise.resolve();
-    // Drop to=execute code="..." text chunks — code is extracted and executed by OI
+    // Drop raw OI code-block text chunks (both to=execute and {"language":} formats)
     if (chunk && chunk.role === 'assistant' && chunk.type === 'message') {
-        const c = chunk.content || '';
-        if (c.includes('to=execute') && c.includes('code=')) return Promise.resolve();
+        const c = (chunk.content || '').trimStart();
+        if ((c.includes('to=execute') && c.includes('code=')) || c.startsWith('{"language":')) {
+            return Promise.resolve();
+        }
     }
     chunk = normalizeIncomingChunk(chunk);
+    // [DBG] Temporary — identify double-text source
+    if (chunk && chunk.role === 'assistant' && chunk.type === 'message') {
+        console.log('[DBG-CHUNK]', JSON.stringify({start: chunk.start, end: chunk.end, content: (chunk.content || '').substring(0, 120)}));
+    }
     return new Promise((resolve) => {
         removeWorkingIndicator();
         if (chunk.type === 'console' && chunk.format === 'active_line') {
@@ -494,16 +502,29 @@ function processChunk(chunk) {
                 message = newMessage;
             }
 
+            message.format = chunk.format || message.format || undefined;
+            message.recipient = chunk.recipient || message.recipient || undefined;
+            // Only append for non-start chunks: start chunk content is already set in newMessage
+            if (!chunk.start) {
+                message.content += chunk.content || '';
+            }
+
             if (chunk.end) {
                 chunk.format = chunk.format || message.format || chunk.recipient || 'output';
                 message.isComplete = true;
-                saveCompletedAssistantMessage(message);
                 clearActiveMessageId(chunk);
+                // Remove empty assistant message bubbles (OI emits these before every code block)
+                if (message.type === 'message' && !(message.content || '').trim()) {
+                    const el = chatDisplay.querySelector(`.message[data-id="${message.id}"]`);
+                    if (el) el.remove();
+                    const idx = messages.findIndex(m => m.id === message.id);
+                    if (idx !== -1) messages.splice(idx, 1);
+                    resolve();
+                    return;
+                }
+                // Save AFTER content is fully assembled
+                saveCompletedAssistantMessage(message);
             }
-
-            message.format = chunk.format || message.format || undefined;
-            message.recipient = chunk.recipient || message.recipient || undefined;
-            message.content += chunk.content || '';
 
             updateMessageContent(message.id, message.content);
         }

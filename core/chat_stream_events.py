@@ -2,25 +2,114 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from collections.abc import Iterable, Iterator
 from typing import Any
+
+
+_MARKDOWN_PY_FENCE_RE = re.compile(
+    r"```(?:python|py)\b[^\n]*\n[\s\S]*?```",
+    re.DOTALL,
+)
+_MARKDOWN_PY_FENCE_OPEN_RE = re.compile(r"```(?:python|py)\b")
+
+
+def _text_after_execute_block(content: str) -> str:
+    """Return any text that follows a to=execute code='...' block."""
+    # Matches to=execute code='''...''' or to=execute code='...'
+    m = re.search(r"^to=execute\s+code=(?:'{3}.*?'{3}|\"\"\".*?\"\"\"|'[^']*'|\"[^\"]*\")",
+                  content.lstrip(), re.DOTALL)
+    if m:
+        tail = content.lstrip()[m.end():].strip()
+        return tail
+    return ""
+
+
+def _salvage_tail(content: str) -> str:
+    """Return trailing text after a suppressed code block (either format)."""
+    tail = _text_after_execute_block(content)
+    if not tail:
+        tail = _text_after_json_code_block(content)
+    return tail
+
+
+def _is_raw_code_block(content: str) -> bool:
+    """True if the assistant message is a raw OI code block that should be hidden."""
+    stripped = content.lstrip()
+    return stripped.startswith("to=execute") or stripped.startswith('{"language":')
+
+
+def _has_python_markdown_fence(content: str) -> bool:
+    """True if the content contains a ```python or ```py fenced code block."""
+    return bool(_MARKDOWN_PY_FENCE_OPEN_RE.search(content))
+
+
+def _strip_python_markdown_fences(content: str) -> str:
+    """Remove ```python / ```py fenced blocks. Surrounding prose is preserved."""
+    cleaned = _MARKDOWN_PY_FENCE_RE.sub("", content)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _clean_assistant_text(content: str) -> str:
+    """Strip raw OI code blocks and python markdown fences. Returns prose only.
+
+    Order matters: raw blocks (to=execute / JSON) are detected from the start
+    of the message; if present, only the salvaged tail is returned. Otherwise
+    we strip any ```python / ```py fences and keep the surrounding text.
+    """
+    if _is_raw_code_block(content):
+        return _salvage_tail(content)
+    if _has_python_markdown_fence(content):
+        return _strip_python_markdown_fences(content)
+    return content
+
+
+def _text_after_json_code_block(content: str) -> str:
+    """Return any text that follows a {"language":"...","code":"..."} block."""
+    stripped = content.lstrip()
+    if not stripped.startswith('{"language":'):
+        return ""
+    depth = 0
+    in_string = False
+    escape = False
+    for i, c in enumerate(stripped):
+        if escape:
+            escape = False
+            continue
+        if c == '\\' and in_string:
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if not in_string:
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    return stripped[i + 1:].strip()
+    return ""
 
 
 def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
     """Transform interpreter chunks into UI stream events.
 
-    - Drops raw LLM tool_call chunks that open-interpreter failed to execute.
-    - Suppresses assistant text messages that are OI's to=execute code="..." format.
-      These arrive as streaming chunks, so we buffer the start of each assistant
-      message until we can decide: if the accumulated content starts with "to=execute",
-      the entire message is dropped; otherwise the buffer is flushed and we yield live.
-    """
-    _PROBE_LEN = 20          # characters to accumulate before deciding
-    _PREFIX = "to=execute"
+    Assistant text messages are buffered to completion, then any embedded code
+    representation is stripped from the displayable text. Three formats are
+    handled:
+      * OI native:        to=execute code="..."          → entire block dropped, trailing prose kept
+      * JSON tool call:   {"language":"python","code":"..."} → entire block dropped, trailing prose kept
+      * Markdown fence:   ```python ... ``` / ```py ... ``` → fence dropped, prose around it kept
 
-    buf: list[Any] = []
-    buf_content = ""
-    suppressing = False
+    The type:code event emitted by OI for execution is the single authoritative
+    code surface — keeping fences in the prose duplicates it on screen as
+    "Voir le code" alongside "Code exécuté".
+
+    Non-assistant-message chunks pass through unchanged.
+    """
+    msg_buf_content = ""           # accumulated content for current assistant message
     in_assistant_msg = False
 
     for chunk in interpreter_chunks:
@@ -40,54 +129,38 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
 
         if role == "assistant" and ctype == "message":
             if is_start:
-                # New assistant text message — start buffering
-                buf = [chunk]
-                buf_content = content
-                suppressing = False
+                msg_buf_content = content
                 in_assistant_msg = True
-                if len(buf_content) >= _PROBE_LEN or is_end:
-                    # Enough content already (or single-chunk message)
-                    suppressing = buf_content.lstrip().startswith(_PREFIX)
-                    if not suppressing:
-                        yield from buf
-                        buf = []
-                    elif is_end:
-                        buf = []
-                        in_assistant_msg = False
+                # Don't yield the start marker yet — wait until end so we can
+                # decide whether the cleaned content is non-empty.
+                if is_end:
+                    cleaned = _clean_assistant_text(msg_buf_content)
+                    if cleaned:
+                        yield {"start": True, "end": True, "role": "assistant",
+                               "type": "message", "content": cleaned}
+                    msg_buf_content = ""
+                    in_assistant_msg = False
             elif in_assistant_msg:
-                if suppressing:
-                    if is_end:
-                        buf = []
-                        in_assistant_msg = False
-                        suppressing = False
-                    continue  # drop chunk
-                elif buf:
-                    # Still accumulating the probe window
-                    buf.append(chunk)
-                    buf_content += content
-                    if len(buf_content) >= _PROBE_LEN or is_end:
-                        suppressing = buf_content.lstrip().startswith(_PREFIX)
-                        if not suppressing:
-                            yield from buf
-                        buf = []
-                        if is_end:
-                            in_assistant_msg = False
-                            suppressing = False
-                else:
-                    # Buffer already flushed — yield live
-                    if is_end:
-                        in_assistant_msg = False
-                    yield chunk
+                msg_buf_content += content
+                if is_end:
+                    cleaned = _clean_assistant_text(msg_buf_content)
+                    if cleaned:
+                        yield {"start": True, "end": True, "role": "assistant",
+                               "type": "message", "content": cleaned}
+                    msg_buf_content = ""
+                    in_assistant_msg = False
             else:
+                # Stray message chunk outside a start/end pair — pass through
                 yield chunk
         else:
-            # Non-assistant-message chunk — flush any pending buffer first
-            if buf:
-                if not suppressing:
-                    yield from buf
-                buf = []
-            suppressing = False
-            in_assistant_msg = False
+            # Non-assistant-message chunk — close any open assistant buffer first
+            if in_assistant_msg and msg_buf_content:
+                cleaned = _clean_assistant_text(msg_buf_content)
+                if cleaned:
+                    yield {"start": True, "end": True, "role": "assistant",
+                           "type": "message", "content": cleaned}
+                msg_buf_content = ""
+                in_assistant_msg = False
 
             # Auto-display PNG saved via plt.savefig when model prints "Saved figure: /path"
             if role == "computer" and ctype == "console" and is_end is False and not is_start:
@@ -105,3 +178,10 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                                     pass
 
             yield chunk
+
+    # Flush trailing assistant buffer if the stream ended mid-message
+    if in_assistant_msg and msg_buf_content:
+        cleaned = _clean_assistant_text(msg_buf_content)
+        if cleaned:
+            yield {"start": True, "end": True, "role": "assistant",
+                   "type": "message", "content": cleaned}

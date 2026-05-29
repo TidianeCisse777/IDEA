@@ -51,6 +51,18 @@ function setupConversationEventListeners() {
         await conversationManager.loadMoreConversations();
         displayConversations();
     });
+
+    // Delete all conversations
+    document.getElementById('deleteAllConversations').addEventListener('click', async () => {
+        const confirmed = confirm('Supprimer toutes les conversations ? Cette action est irréversible.');
+        if (!confirmed) return;
+        try {
+            await conversationManager.deleteAllConversations();
+            showNotification('Toutes les conversations ont été supprimées', 'success');
+        } catch (e) {
+            showNotification('Échec de la suppression', 'error');
+        }
+    });
 }
 
 function setupConversationManagerListeners() {
@@ -299,11 +311,14 @@ async function deleteConversation(conversationId, title) {
             await conversationManager.deleteConversation(conversationId);
             displayConversations();
 
-            // Si la conversation supprimée était active, vider le chat
+            // Si la conversation supprimée était active, vider le chat et refresher la session
             if (localStorage.getItem('activeConversationId') === conversationId) {
                 localStorage.removeItem('activeConversationId');
                 const chatDisplay = document.getElementById('chatDisplay');
                 if (chatDisplay) chatDisplay.innerHTML = '';
+                if (typeof window.resetSessionForConversationLoad === 'function') {
+                    window.resetSessionForConversationLoad();
+                }
                 if (typeof window.showPromptIdeas === 'function') window.showPromptIdeas();
             }
 
