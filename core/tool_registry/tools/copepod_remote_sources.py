@@ -149,12 +149,15 @@ def _write_derived_csv(session_key, dataframe, base_name, metadata):
     output_root = _remote_source_upload_root(session_key)
     output_path = _unique_csv_path(output_root, base_name)
     dataframe.to_csv(output_path, index=False)
+    file_path_str = str(output_path)
+    download_url = "/" + file_path_str.lstrip("/")
     return {
         "source_id": metadata.get("source_id"),
         "source_dataset_id": metadata.get("source_dataset_id"),
         "source_dataset_title": metadata.get("source_dataset_title"),
         "source_query": metadata.get("source_query"),
-        "file_path": str(output_path),
+        "file_path": file_path_str,
+        "download_url": download_url,
         "original_filename": output_path.name,
         "size_bytes": output_path.stat().st_size,
         "row_count": int(len(dataframe.index)),

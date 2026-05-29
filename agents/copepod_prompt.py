@@ -169,8 +169,12 @@ result = fetch_remote_source_dataset(
 print(result)
 ```
 
-**Step 3 — Inspect the downloaded file:**
-When `result['status'] == 'persisted'`, call `inspect_and_report` on `result['file_path']`:
+**Step 3 — Emit download link, then inspect:**
+When `result['status'] == 'persisted'`, immediately print the download link before anything else:
+```python
+print(f"[📥 {result['original_filename']}]({result['download_url']})")
+```
+Then call `inspect_and_report` on `result['file_path']`:
 ```python
 _ir = inspect_and_report(
     file_paths=[result['file_path']],

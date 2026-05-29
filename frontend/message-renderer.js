@@ -596,6 +596,39 @@ function handleActiveLineChunk(content) {
     }
 }
 
+function _upgradeCsvLinks(container) {
+    container.querySelectorAll('a[href]').forEach((a) => {
+        const href = a.getAttribute('href') || '';
+        if (!href.match(/\.csv(\?|$)/i)) return;
+        if (a.closest('.csv-download-card')) return;
+
+        const filename = decodeURIComponent(href.split('/').pop().split('?')[0]);
+        const card = document.createElement('div');
+        card.className = 'csv-download-card';
+
+        const icon = document.createElement('span');
+        icon.className = 'material-icons csv-download-icon';
+        icon.textContent = 'table_chart';
+
+        const label = document.createElement('span');
+        label.className = 'csv-download-label';
+        label.textContent = filename;
+
+        const btn = document.createElement('a');
+        btn.className = 'csv-download-btn';
+        btn.href = href;
+        btn.download = filename;
+        btn.innerHTML = '<span class="material-icons">download</span> Télécharger';
+
+        card.appendChild(icon);
+        card.appendChild(label);
+        card.appendChild(btn);
+
+        const parent = a.parentNode;
+        parent.replaceChild(card, a);
+    });
+}
+
 function _appendImageActions(contentDiv, src, mime) {
     if (contentDiv.querySelector('.image-actions')) return;
     const actions = document.createElement('div');
@@ -710,6 +743,7 @@ function updateMessageContent(id, content) {
             }
 
             prismHighlightUnder(contentDiv);
+            _upgradeCsvLinks(contentDiv);
 
             const shouldTypeset = (message.isComplete !== false) && hasMathDelimiters(raw);
             if (shouldTypeset && !message.__mathTypeset) {
