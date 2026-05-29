@@ -49,6 +49,10 @@ from core.copepod_observability import should_enable_langfuse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Silence LiteLLM verbose INFO spam (every completion, every callback ping)
+for _noisy in ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy", "litellm"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 # ---------------------------------------------------------------------------
 # LiteLLM global settings
 # ---------------------------------------------------------------------------

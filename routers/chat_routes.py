@@ -12,10 +12,12 @@ the streaming chat endpoint.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
 import re
+import mimetypes
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +51,15 @@ from utils.transcription_prompt import transcription_prompt
 
 logger = logging.getLogger(__name__)
 
+
+def _short(session_key: str) -> str:
+    """Return a compact session key for log lines: 'session-abc/copepod'."""
+    parts = session_key.split(":")
+    if len(parts) >= 3:
+        return f"{parts[1]}/{parts[2]}"
+    return session_key
+
+
 # ---------------------------------------------------------------------------
 # Constants (shared with app.py via import)
 # ---------------------------------------------------------------------------
@@ -72,6 +83,23 @@ MCP_TOOL_PLANNER_PROMPT = (
 _limiter = None
 
 router = APIRouter(tags=["chat"])
+
+_UPLOAD_BLOCK_MARKER = "Files uploaded in this message:"
+_UPLOAD_BLOCK_FOOTER = "Use these paths when referencing the uploaded files."
+_UPLOAD_LINE_RE = re.compile(
+    r"^- (?P<name>.+?)(?: \((?P<mime>[^)]+)\))?(?: \| relative path: (?P<rel_path>.+))?$"
+)
+_IMAGE_SUFFIX_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".svg": "image/svg+xml",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +290,127 @@ def _render_repo_table(repos_payload: Any, max_rows: int = 20) -> str:
     return "\n".join(lines)
 
 
+def _data_url_for_image_path(image_path: Path, mime_type: str | None = None) -> str | None:
+    try:
+        if not image_path.exists() or not image_path.is_file():
+            return None
+        resolved_mime = mime_type or mimetypes.guess_type(image_path.name)[0]
+        if not resolved_mime:
+            resolved_mime = _IMAGE_SUFFIX_MIME.get(image_path.suffix.lower())
+        if not resolved_mime:
+            resolved_mime = "image/png"
+        data = image_path.read_bytes()
+        encoded = base64.b64encode(data).decode("ascii")
+        return f"data:{resolved_mime};base64,{encoded}"
+    except Exception as exc:
+        logger.warning("Failed to read image attachment %s: %s", image_path, exc)
+        return None
+
+
+def _coerce_multimodal_message_content(
+    message: dict[str, Any],
+    *,
+    user_id: str,
+    session_id: str,
+    static_dir: Path = STATIC_DIR,
+) -> dict[str, Any]:
+    """Turn file-upload instruction text into multimodal OpenAI content.
+
+    The frontend currently serializes uploaded image attachments as a text
+    block containing relative paths. This helper converts every image line
+    into an ``image_url`` item while keeping the user's text prompt intact.
+    Non-image attachment lines are preserved as text.
+    """
+    if not isinstance(message, dict):
+        return message
+
+    content = message.get("content")
+    if not isinstance(content, str) or _UPLOAD_BLOCK_MARKER not in content:
+        return message
+
+    lines = content.splitlines()
+    prompt_lines: list[str] = []
+    attachment_lines: list[str] = []
+    in_upload_block = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == _UPLOAD_BLOCK_MARKER:
+            in_upload_block = True
+            continue
+        if in_upload_block:
+            if stripped == _UPLOAD_BLOCK_FOOTER:
+                break
+            attachment_lines.append(line)
+        else:
+            prompt_lines.append(line)
+
+    prompt_text = "\n".join(prompt_lines).strip()
+    if not attachment_lines:
+        return message
+
+    image_items: list[dict[str, Any]] = []
+    text_attachment_lines: list[str] = []
+    upload_root = static_dir / str(user_id) / str(session_id) / UPLOAD_DIR
+    for line in attachment_lines:
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        match = _UPLOAD_LINE_RE.match(stripped)
+        if not match:
+            text_attachment_lines.append(stripped)
+            continue
+
+        rel_path = (match.group("rel_path") or match.group("name") or "").strip()
+        mime_type = (match.group("mime") or "").strip() or None
+        candidate = upload_root / rel_path
+        suffix = candidate.suffix.lower()
+        resolved_mime = (mime_type or _IMAGE_SUFFIX_MIME.get(suffix) or mimetypes.guess_type(candidate.name)[0] or "").lower()
+        if resolved_mime.startswith("image/"):
+            data_url = _data_url_for_image_path(candidate, resolved_mime)
+            if data_url:
+                image_items.append({
+                    "type": "image_url",
+                    "image_url": {"url": data_url},
+                })
+                continue
+        text_attachment_lines.append(stripped)
+
+    if not image_items:
+        return message
+
+    content_items: list[dict[str, Any]] = []
+    if prompt_text:
+        content_items.append({"type": "text", "text": prompt_text})
+    if text_attachment_lines:
+        content_items.append({"type": "text", "text": "\n".join(text_attachment_lines).strip()})
+    content_items.extend(image_items)
+
+    new_message = dict(message)
+    new_message["content"] = content_items
+    return new_message
+
+
+def _coerce_multimodal_messages(
+    messages: list[dict[str, Any]] | None,
+    *,
+    user_id: str,
+    session_id: str,
+    static_dir: Path = STATIC_DIR,
+) -> list[dict[str, Any]]:
+    if not messages:
+        return []
+    return [
+        _coerce_multimodal_message_content(
+            msg,
+            user_id=user_id,
+            session_id=session_id,
+            static_dir=static_dir,
+        )
+        for msg in messages
+        if isinstance(msg, dict)
+    ]
+
+
 async def plan_and_run_mcp_tools(
     *,
     interpreter: OpenInterpreter,
@@ -437,7 +586,14 @@ async def chat_endpoint(
         )
         session_key = make_session_key(user.id, session_id, agent_type)
 
-        logger.info(f"Received messages for session {session_key}")
+        _user_preview = ""
+        for _m in reversed(messages):
+            if isinstance(_m, dict) and _m.get("role") == "user":
+                _c = _m.get("content") or ""
+                _user_preview = (_c[:80] + "…") if len(_c) > 80 else _c
+                _user_preview = _user_preview.replace("\n", " ")
+                break
+        logger.info(f"► {_short(session_key)} | \"{_user_preview}\"")
         interpreter = get_or_create_interpreter(session_key, token, db, agent_type)
 
         ensure_user_pqa_settings(user.id)
@@ -459,7 +615,7 @@ async def chat_endpoint(
                             [f"{k} ({v.get('type', 'any')})" for k, v in params.items()]
                         )
                         mcp_tool_descriptions.append(f"- {tool_id}({param_list}): {desc}")
-                logger.info(f"Gathered {len(tool_defs)} MCP tools")
+                logger.debug(f"Gathered {len(tool_defs)} MCP tools")
         except Exception as exc:
             logger.warning("Failed to gather MCP tools: %s", exc)
 
@@ -479,12 +635,23 @@ async def chat_endpoint(
         stored_messages = session_store.read_messages(session_key)
         if stored_messages is not None:
             try:
-                interpreter.messages = stored_messages
+                interpreter.messages = _coerce_multimodal_messages(
+                    stored_messages,
+                    user_id=str(user.id),
+                    session_id=session_id,
+                    static_dir=STATIC_DIR,
+                )
                 logger.info(
-                    f"Restored {len(interpreter.messages)} messages from store for session {session_key}"
+                    f"  restored {len(interpreter.messages)} msgs — {_short(session_key)}"
                 )
             except Exception as e:
                 logger.warning(f"Failed to restore messages from store: {str(e)}")
+
+        _user_turns = sum(
+            1 for m in (session_store.read_messages(session_key) or [])
+            if isinstance(m, dict) and m.get("role") == "user"
+        )
+        logger.info(f"  round={_user_turns} | history={len(interpreter.messages)} msgs")
 
         # Persist the incoming user message immediately so F5 always sees it
         incoming_user = messages[-1] if messages else None
@@ -496,9 +663,16 @@ async def chat_endpoint(
         tool_runs = []
         try:
             last_user_message = ""
+            last_user_message_payload: dict[str, Any] | None = None
             for m in reversed(messages):
                 if isinstance(m, dict) and m.get("role") == "user" and m.get("content"):
                     last_user_message = m["content"]
+                    last_user_message_payload = _coerce_multimodal_message_content(
+                        m,
+                        user_id=str(user.id),
+                        session_id=session_id,
+                        static_dir=STATIC_DIR,
+                    )
                     break
             if last_user_message:
                 tool_runs = await plan_and_run_mcp_tools(
@@ -506,7 +680,8 @@ async def chat_endpoint(
                     user_message=last_user_message,
                     db=db,
                 )
-                logger.info("Executed %d MCP tool calls", len(tool_runs))
+                if tool_runs:
+                    logger.info("  mcp=%d tool calls", len(tool_runs))
         except Exception as exc:
             logger.warning("MCP planning/execution skipped: %s", exc)
 
@@ -590,22 +765,45 @@ async def chat_endpoint(
                         )
                     except Exception:
                         pass
+                import time as _time
                 total_chunks = 0
+                _had_code = False
+                _had_image = False
+                _had_error = False
+                _t0 = _time.monotonic()
+                chat_input = last_user_message_payload if last_user_message_payload is not None else messages[-1]
                 stream_events = chat_stream_events(
-                    interpreter.chat(messages[-1], stream=True),
+                    interpreter.chat(chat_input, stream=True),
                 )
                 for result in tracer.observe_stream(
                     stream_events
                 ):
                     total_chunks += 1
+                    if isinstance(result, dict):
+                        _t = result.get("type")
+                        if _t == "code":
+                            _had_code = True
+                        elif _t == "image":
+                            _had_image = True
+                        elif result.get("error"):
+                            _had_error = True
                     data = json.dumps(result) if isinstance(result, dict) else result
                     yield f"data: {data}\n\n"
+                _elapsed = f"{(_time.monotonic() - _t0):.1f}s"
                 if total_chunks == 0 and not fallback_sent:
                     fallback_sent = True
                     fallback = {"start": True, "end": True, "role": "assistant", "type": "message",
                                 "content": "⚠️ Le modèle n'a pas retourné de réponse. Vérifiez la compatibilité du LLM configuré."}
                     tracer.record_event(fallback)
                     yield f"data: {json.dumps(fallback)}\n\n"
+                    logger.warning(f"◄ {_short(session_key)} | [empty] {_elapsed}")
+                else:
+                    _kinds = []
+                    if _had_code: _kinds.append("code")
+                    if _had_image: _kinds.append("image")
+                    if _had_error: _kinds.append("error")
+                    if not _kinds: _kinds.append("text")
+                    logger.info(f"◄ {_short(session_key)} | [{'+'.join(_kinds)}] {_elapsed} ({total_chunks} chunks)")
             except Exception as e:
                 logger.error(f"Error in chat stream: {str(e)}")
                 err_str = str(e)
@@ -750,12 +948,12 @@ async def load_conversation_endpoint(
             try:
                 interpreter_instances[session_key].reset()
                 del interpreter_instances[session_key]
-                logger.info(f"Cleared existing interpreter for session {session_key}")
+                logger.info(f"  cleared kernel — {_short(session_key)}")
             except Exception as e:
                 logger.warning(f"Error clearing existing interpreter: {str(e)}")
 
         logger.info(
-            f"Stored {len(interpreter_messages)} messages in store for session {session_key}"
+            f"  loaded {len(interpreter_messages)} msgs → {_short(session_key)}"
         )
         return {"status": "Conversation loaded", "message_count": len(interpreter_messages)}
 
