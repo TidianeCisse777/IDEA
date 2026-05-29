@@ -609,3 +609,37 @@ class TestFormatInspectReportWithDefinitions:
         defs = tools_with_mock_describe["collect_column_definitions"](r)
         out = tools_with_mock_describe["format_inspect_report"](r, column_definitions=defs)
         assert "Toujours positif" in out
+
+
+class TestFormatInspectReportSynthese:
+    """The report ends with a deterministic ## Synthèse section so the LLM
+    has no excuse to add hallucinated prose ('partial output', 'tronqué', etc.)."""
+
+    def test_synthese_section_present(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        out = tools["format_inspect_report"](r)
+        assert "## Synthèse" in out
+
+    def test_synthese_mentions_filename_rows_cols(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        out = tools["format_inspect_report"](r)
+        # Pull "Synthèse" tail
+        idx = out.find("## Synthèse")
+        tail = out[idx:]
+        assert str(r["n_rows"]) in tail
+        assert str(r["n_columns"]) in tail
+        # Filename leaf appears
+        assert r["file_path"].rsplit("/", 1)[-1] in tail
+
+    def test_synthese_mentions_source_and_confidence(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        out = tools["format_inspect_report"](r)
+        tail = out[out.find("## Synthèse"):]
+        assert r["source_type_guess"]["value"] in tail
+        assert r["source_type_guess"]["confidence"] in tail
+
+    def test_synthese_explicitly_states_no_truncation(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        out = tools["format_inspect_report"](r)
+        tail = out[out.find("## Synthèse"):]
+        assert "intégral" in tail or "aucune troncature" in tail

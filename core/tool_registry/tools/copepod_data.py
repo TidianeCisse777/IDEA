@@ -660,6 +660,36 @@ def format_inspect_report(file_report, column_definitions=None):
     else:
         lines.append("_(none)_")
 
+    # ── Synthèse — generated from facts, prevents LLM hallucination ────────
+    lines.append("")
+    lines.append("## Synthèse")
+    lines.append("")
+    file_path = fr.get("file_path", "unknown")
+    file_name = file_path.rsplit("/", 1)[-1] if isinstance(file_path, str) and "/" in file_path else str(file_path)
+    fmt_val = fr.get("format", "unknown")
+    n_rows = fr.get("n_rows", "unknown")
+    n_cols = fr.get("n_columns", "unknown")
+    lines.append(f"- **Fichier** : `{file_name}` — format `{fmt_val}`, {n_rows} lignes × {n_cols} colonnes.")
+    src_val = src.get("value", "unknown")
+    src_conf = src.get("confidence", "low")
+    lines.append(f"- **Source détectée** : `{src_val}` (confiance : `{src_conf}`).")
+    missing_cols = [c for c in cols if isinstance(c.get("missing_rate"), (int, float)) and c.get("missing_rate", 0) > 0.3]
+    if missing_cols:
+        names = ", ".join(f"`{c['name']}`" for c in missing_cols[:5])
+        suffix = "" if len(missing_cols) <= 5 else f" (+{len(missing_cols) - 5} autres)"
+        lines.append(f"- **Colonnes >30% manquant** : {len(missing_cols)} — {names}{suffix}.")
+    else:
+        lines.append("- **Données manquantes** : aucune colonne au-dessus de 30%.")
+    rag_count = len(column_definitions or [])
+    if rag_count:
+        lines.append(f"- **Définitions RAG** : {rag_count} colonnes documentées (voir table).")
+    else:
+        lines.append("- **Définitions RAG** : aucune colonne trouvée dans le corpus.")
+    if warnings:
+        lines.append(f"- **Avertissements** : {len(warnings)}.")
+    lines.append("")
+    lines.append("_Rapport complet ci-dessus. Le contenu est intégral — aucune troncature._")
+
     return chr(10).join(lines)
 
 
