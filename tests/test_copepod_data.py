@@ -383,3 +383,95 @@ class TestInferColumnRolesNeoLabs:
         r = tools["inspect_file"](str(NEOLABS_ABUND))
         roles = tools["infer_column_roles"](r["columns"], r["metadata"])
         assert len(roles["unmatched_columns"]) == 0
+
+
+# ── format_inspect_report ─────────────────────────────────────────────────────
+
+class TestFormatInspectReport:
+    """Deterministic text rendering of an inspect_file report.
+
+    Replaces the LLM's fragile `print(file_report)` / hand-crafted loop with a
+    single helper that always prints the full report — no truncation, no
+    skipped columns, no hallucinated "console limit" excuses.
+    """
+
+    def test_returns_string(self, tools):
+        r = tools["inspect_file"](str(ECOTAXA))
+        out = tools["format_inspect_report"](r)
+        assert isinstance(out, str)
+
+    def test_contains_header_fields(self, tools):
+        r = tools["inspect_file"](str(ECOTAXA))
+        out = tools["format_inspect_report"](r)
+        assert "RAPPORT D'INSPECTION" in out
+        assert "file_path" in out
+        assert "format" in out
+        assert "n_rows" in out
+        assert "n_columns" in out
+        assert "source_type_guess" in out
+
+    def test_contains_every_column_no_truncation(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        out = tools["format_inspect_report"](r)
+        for col in r["columns"]:
+            assert col["name"] in out, f"Column {col['name']!r} missing from rendered report"
+        # No ellipsis-style truncation markers
+        assert "[truncated]" not in out
+        assert "…" not in out
+        assert "..." not in out
+
+    def test_per_column_shows_dtype_missing_and_sample(self, tools):
+        r = tools["inspect_file"](str(ECOTAXA))
+        out = tools["format_inspect_report"](r)
+        first = r["columns"][0]
+        assert first["name"] in out
+        assert str(first["dtype"]) in out
+        assert f"missing={first['missing_count']}" in out or str(first["missing_count"]) in out
+
+    def test_source_type_evidence_listed(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        out = tools["format_inspect_report"](r)
+        for ev in r["source_type_guess"]["evidence"][:3]:
+            assert ev in out
+
+    def test_handles_unknown_format_gracefully(self, tools):
+        r = tools["inspect_file"]("/nonexistent/path.csv")
+        out = tools["format_inspect_report"](r)
+        # Doesn't raise, still emits the header
+        assert "RAPPORT D'INSPECTION" in out
+        assert "format" in out
+
+    def test_handles_empty_columns_list(self, tools):
+        empty = {
+            "file_path": "/tmp/x.csv",
+            "format": "csv",
+            "n_rows": 0,
+            "n_columns": 0,
+            "columns": [],
+            "metadata": {"encoding": "utf-8", "delimiter": ",", "sheet_names": [],
+                         "netcdf_dimensions": {}, "netcdf_variables": [], "source_metadata": {}},
+            "source_type_guess": {"value": "unknown", "confidence": "low", "evidence": []},
+            "warnings": [],
+            "raw_file_modified": False,
+        }
+        out = tools["format_inspect_report"](empty)
+        assert "RAPPORT D'INSPECTION" in out
+        # Should not blow up on empty columns
+        assert isinstance(out, str)
+
+    def test_warnings_section_present_when_warnings_exist(self, tools):
+        report = {
+            "file_path": "/tmp/x.csv", "format": "csv",
+            "n_rows": 10, "n_columns": 1,
+            "columns": [{"name": "a", "dtype": "int64", "missing_count": 0,
+                         "missing_rate": 0.0, "sample_values": [1, 2],
+                         "semantic_guess": None, "unit_guess": None, "confidence": "low"}],
+            "metadata": {"encoding": "utf-8", "delimiter": ",", "sheet_names": [],
+                         "netcdf_dimensions": {}, "netcdf_variables": [], "source_metadata": {}},
+            "source_type_guess": {"value": "unknown", "confidence": "low", "evidence": []},
+            "warnings": ["File detected as ambiguous", "Encoding inferred"],
+            "raw_file_modified": False,
+        }
+        out = tools["format_inspect_report"](report)
+        assert "File detected as ambiguous" in out
+        assert "Encoding inferred" in out

@@ -19,6 +19,7 @@ Emitting `inspect_file` (or any helper below) as a top-level tool_call will sile
 
 ### File exploration
 - `inspect_file(file_path, sample_rows=20)` — read a CSV/TSV/Excel/NetCDF and return shape, dtypes, sample rows, encoding, missing-value rates, and a best-guess source type. Call on every uploaded file you have not yet seen.
+- `format_inspect_report(file_report)` — deterministic text rendering of an `inspect_file` result. ALWAYS use this instead of `print(file_report)` for the RAPPORT D'INSPECTION. It prints every column, full source evidence, warnings — never truncated.
 - `infer_column_roles(columns, metadata=None)` — heuristic helper that pattern-matches column names to known semantic roles. Output is provisional — verify with `describe_column` for anything ambiguous.
 - `describe_column(column_name, source_hint=None, session_id="{session_id}")` — look up a column definition, unit, and critical notes in the copepod RAG corpus. Use when the column meaning is not obvious.
 - `check_column_for_calc(column_roles, calculation, session_id="{session_id}")` — verify whether a set of roles supports a derived calculation (biovolume, abundance per m³, etc.).

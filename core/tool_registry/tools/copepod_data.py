@@ -493,6 +493,96 @@ def infer_column_roles(columns, metadata=None):
     }
 
 
+def format_inspect_report(file_report):
+    """Render an inspect_file result as a deterministic, human-readable report.
+
+    Use this instead of ``print(file_report)`` (Python's default dict repr is
+    unreadable for wide files). Always prints every column on its own line,
+    no truncation, no ellipsis. Pair with a 3-5 line prose paragraph if you
+    want to add interpretation.
+
+    Args:
+        file_report (dict): The dict returned by ``inspect_file``.
+
+    Returns:
+        str: Multi-line text rendering of the full report.
+    """
+    fr = file_report or {}
+    lines = []
+    lines.append("=== RAPPORT D'INSPECTION ===")
+    lines.append(f"file_path:         {fr.get('file_path', 'unknown')}")
+    lines.append(f"format:            {fr.get('format', 'unknown')}")
+    lines.append(f"n_rows:            {fr.get('n_rows', 'unknown')}")
+    lines.append(f"n_columns:         {fr.get('n_columns', 'unknown')}")
+
+    src = fr.get("source_type_guess") or {}
+    src_value = src.get("value", "unknown")
+    src_conf = src.get("confidence", "low")
+    lines.append(f"source_type_guess: {src_value} (confidence={src_conf})")
+
+    meta = fr.get("metadata") or {}
+    enc = meta.get("encoding")
+    delim = meta.get("delimiter")
+    sheet_names = meta.get("sheet_names") or []
+    if enc or delim:
+        lines.append(f"encoding:          {enc or 'n/a'}   delimiter: {delim or 'n/a'}")
+    if sheet_names:
+        lines.append(f"sheet_names:       {sheet_names}")
+
+    cols = fr.get("columns") or []
+    lines.append("")
+    lines.append(f"--- COLUMNS ({len(cols)}) ---")
+    if not cols:
+        lines.append("(no columns parsed)")
+    else:
+        # Column widths sized to longest name for readable alignment
+        max_name = max((len(str(c.get("name", ""))) for c in cols), default=0)
+        max_dtype = max((len(str(c.get("dtype", ""))) for c in cols), default=0)
+        max_name = min(max_name, 50)  # cap for absurdly long names
+        max_dtype = min(max_dtype, 12)
+        for c in cols:
+            name = str(c.get("name", ""))
+            dtype = str(c.get("dtype", ""))
+            mc = c.get("missing_count", 0)
+            mr = c.get("missing_rate", 0.0)
+            try:
+                mr_pct = f"{float(mr) * 100:.1f}%"
+            except (TypeError, ValueError):
+                mr_pct = str(mr)
+            samples = c.get("sample_values") or []
+            samples_short = samples[:3]
+            sem = c.get("semantic_guess")
+            unit = c.get("unit_guess")
+            conf = c.get("confidence", "low")
+            sem_part = f"{sem} ({conf})" if sem else f"semantic=None"
+            if unit:
+                sem_part = f"{sem_part} unit={unit}"
+            lines.append(
+                f"{name.ljust(max_name)} | {dtype.ljust(max_dtype)} | "
+                f"missing={mc} ({mr_pct}) | samples={samples_short} | {sem_part}"
+            )
+
+    warnings = fr.get("warnings") or []
+    lines.append("")
+    lines.append(f"--- WARNINGS ({len(warnings)}) ---")
+    if warnings:
+        for w in warnings:
+            lines.append(f"- {w}")
+    else:
+        lines.append("(none)")
+
+    evidence = src.get("evidence") or []
+    lines.append("")
+    lines.append(f"--- SOURCE EVIDENCE ({len(evidence)}) ---")
+    if evidence:
+        for e in evidence:
+            lines.append(f"- {e}")
+    else:
+        lines.append("(none)")
+
+    return chr(10).join(lines)
+
+
 def summarize_understanding(inspect_report, role_report, column_definitions=None):
     """Produce the structured data understanding summary for Mode Plan.
 
