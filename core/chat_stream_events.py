@@ -125,10 +125,54 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
     code surface — keeping fences in the prose duplicates it on screen as
     "Voir le code" alongside "Code exécuté".
 
+    Console output starting with "# RAPPORT D'INSPECTION" is buffered and
+    re-emitted as an ASSISTANT MESSAGE (markdown-rendered, outside the
+    exec-block) instead of as raw computer/console output. This makes the
+    inspection report appear AFTER the "Code exécuté" wrapper, properly
+    rendered as a markdown document.
+
     Non-assistant-message chunks pass through unchanged.
     """
     msg_buf_content = ""           # accumulated content for current assistant message
     in_assistant_msg = False
+    console_buf_content = ""       # accumulated content for current computer console message
+    in_console_msg = False
+    console_fmt = ""
+
+    def _flush_assistant_buf():
+        nonlocal msg_buf_content, in_assistant_msg
+        if in_assistant_msg and msg_buf_content:
+            cleaned = _clean_assistant_text(msg_buf_content)
+            if cleaned:
+                yield {"start": True, "end": True, "role": "assistant",
+                       "type": "message", "content": cleaned}
+        msg_buf_content = ""
+        in_assistant_msg = False
+
+    def _emit_console_buf():
+        """Yield the buffered console content. Reports go out as assistant
+        markdown messages; everything else stays as a normal console chunk
+        so the frontend routes it into the exec-block."""
+        nonlocal console_buf_content, in_console_msg, console_fmt
+        if console_buf_content and "# RAPPORT D'INSPECTION" in console_buf_content:
+            # Extract the rapport from any pre-report stdout noise (env warnings,
+            # other prints) so only the markdown reaches the assistant message.
+            idx = console_buf_content.find("# RAPPORT D'INSPECTION")
+            preamble = console_buf_content[:idx].strip()
+            rapport = console_buf_content[idx:]
+            if preamble:
+                yield {"start": True, "end": True, "role": "computer",
+                       "type": "console", "format": console_fmt or "output",
+                       "content": preamble}
+            yield {"start": True, "end": True, "role": "assistant",
+                   "type": "message", "content": rapport}
+        elif console_buf_content:
+            yield {"start": True, "end": True, "role": "computer",
+                   "type": "console", "format": console_fmt or "output",
+                   "content": console_buf_content}
+        console_buf_content = ""
+        in_console_msg = False
+        console_fmt = ""
 
     for chunk in interpreter_chunks:
         _get = chunk.get if isinstance(chunk, dict) else lambda k, d=None: getattr(chunk, k, d)
@@ -139,13 +183,36 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
 
         role = _get("role") or ""
         ctype = _get("type") or ""
+        fmt = _get("format") or ""
         is_start = bool(_get("start"))
         is_end = bool(_get("end"))
         content = _get("content") or ""
         if not isinstance(content, str):
             content = ""
 
+        # Buffer console outputs (computer/console with format=output) so the
+        # full content is available before deciding the routing.
+        if role == "computer" and ctype == "console" and fmt == "output":
+            if in_assistant_msg:
+                yield from _flush_assistant_buf()
+            if is_start:
+                console_buf_content = content
+                console_fmt = fmt
+                in_console_msg = True
+                if is_end:
+                    yield from _emit_console_buf()
+            elif in_console_msg:
+                console_buf_content += content
+                if is_end:
+                    yield from _emit_console_buf()
+            else:
+                # Stray content without start — pass through
+                yield chunk
+            continue
+
         if role == "assistant" and ctype == "message":
+            if in_console_msg:
+                yield from _emit_console_buf()
             if is_start:
                 msg_buf_content = content
                 in_assistant_msg = True
@@ -171,14 +238,11 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                 # Stray message chunk outside a start/end pair — pass through
                 yield chunk
         else:
-            # Non-assistant-message chunk — close any open assistant buffer first
+            # Non-assistant-message, non-console-output chunk
             if in_assistant_msg and msg_buf_content:
-                cleaned = _clean_assistant_text(msg_buf_content)
-                if cleaned:
-                    yield {"start": True, "end": True, "role": "assistant",
-                           "type": "message", "content": cleaned}
-                msg_buf_content = ""
-                in_assistant_msg = False
+                yield from _flush_assistant_buf()
+            if in_console_msg:
+                yield from _emit_console_buf()
 
             # Auto-display PNG saved via plt.savefig when model prints "Saved figure: /path"
             if role == "computer" and ctype == "console" and is_end is False and not is_start:

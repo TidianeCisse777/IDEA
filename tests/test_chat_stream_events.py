@@ -174,6 +174,82 @@ def test_markdown_json_fence_without_toolcall_is_preserved():
     assert '"name":"NeoLabs"' in text
 
 
+def _stream_console(content: str, fmt: str = "output") -> list[dict]:
+    """Build an OI-style stream for a single computer/console output."""
+    chunks: list[dict] = [
+        {"role": "computer", "type": "console", "format": fmt, "start": True},
+    ]
+    step = 16
+    for i in range(0, len(content), step):
+        chunks.append({"role": "computer", "type": "console", "format": fmt,
+                       "content": content[i:i + step]})
+    chunks.append({"role": "computer", "type": "console", "format": fmt, "end": True})
+    return chunks
+
+
+# ─── Inspection report re-routing: rapport must be assistant-message, not console ─
+
+
+def test_console_output_with_inspection_report_is_emitted_as_assistant_markdown():
+    """Console output containing # RAPPORT D'INSPECTION must be re-emitted
+    as a `type:message` assistant chunk so the frontend renders it OUTSIDE
+    the exec-block as a markdown document."""
+    report = (
+        "# RAPPORT D'INSPECTION\n"
+        "\n"
+        "- **file_path** : `/tmp/x.csv`\n"
+        "- **format** : `csv`\n"
+        "\n"
+        "## Columns (1)\n"
+        "\n"
+        "| # | Column |\n"
+        "|---|--------|\n"
+        "| 1 | `a` |\n"
+    )
+    events = list(chat_stream_events(_stream_console(report)))
+    # No console chunks emitted for the rapport
+    console_chunks = [e for e in events if e.get("role") == "computer" and e.get("type") == "console"]
+    assert console_chunks == [], f"rapport leaked into console chunks: {console_chunks}"
+    # Exactly one assistant message with the rapport content
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    assert len(msg_chunks) == 1
+    assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
+    assert "| `a` |" in msg_chunks[0]["content"]
+
+
+def test_console_output_without_rapport_passes_through_as_console():
+    """Plain stdout (no rapport marker) stays a computer/console chunk so it
+    keeps appearing inside the exec-block."""
+    events = list(chat_stream_events(_stream_console("Some plain output line\n")))
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    assert msg_chunks == []
+    console_chunks = [e for e in events if e.get("role") == "computer" and e.get("type") == "console"]
+    assert len(console_chunks) == 1
+    assert console_chunks[0]["content"] == "Some plain output line\n"
+
+
+def test_preamble_noise_before_rapport_stays_in_console():
+    """If chromadb noise or other prints arrive before the rapport, they are
+    kept as console (visible in exec-block) while the rapport itself is
+    extracted as an assistant message."""
+    mixed = (
+        "tqdm: 100%|███| 79M/79M\n"
+        "Some warning\n"
+        "# RAPPORT D'INSPECTION\n"
+        "\n"
+        "- **file_path** : `/tmp/x.csv`\n"
+    )
+    events = list(chat_stream_events(_stream_console(mixed)))
+    console_chunks = [e for e in events if e.get("role") == "computer" and e.get("type") == "console"]
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    # Preamble survives as console; rapport goes to assistant message
+    assert len(console_chunks) == 1
+    assert "tqdm: 100%" in console_chunks[0]["content"]
+    assert "RAPPORT" not in console_chunks[0]["content"]
+    assert len(msg_chunks) == 1
+    assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
+
+
 def test_code_event_passes_through_untouched():
     """type:code chunks emitted by OI for execution must not be altered."""
     chunks = [
