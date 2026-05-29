@@ -430,10 +430,6 @@ function processChunk(chunk) {
         }
     }
     chunk = normalizeIncomingChunk(chunk);
-    // [DBG] Temporary — identify double-text source
-    if (chunk && chunk.role === 'assistant' && chunk.type === 'message') {
-        console.log('[DBG-CHUNK]', JSON.stringify({start: chunk.start, end: chunk.end, content: (chunk.content || '').substring(0, 120)}));
-    }
     return new Promise((resolve) => {
         removeWorkingIndicator();
         if (chunk.type === 'console' && chunk.format === 'active_line') {

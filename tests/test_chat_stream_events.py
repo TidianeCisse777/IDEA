@@ -187,6 +187,20 @@ def _stream_console(content: str, fmt: str = "output") -> list[dict]:
     return chunks
 
 
+def _stream_oi_console_with_unformatted_flags(content: str) -> list[dict]:
+    """Build the real OI pattern: console start/end flags have no format,
+    but content chunks carry format=output."""
+    chunks: list[dict] = [
+        {"role": "computer", "type": "console", "start": True},
+    ]
+    step = 16
+    for i in range(0, len(content), step):
+        chunks.append({"role": "computer", "type": "console", "format": "output",
+                       "content": content[i:i + step]})
+    chunks.append({"role": "computer", "type": "console", "end": True})
+    return chunks
+
+
 # ─── Inspection report re-routing: rapport must be assistant-message, not console ─
 
 
@@ -215,6 +229,62 @@ def test_console_output_with_inspection_report_is_emitted_as_assistant_markdown(
     assert len(msg_chunks) == 1
     assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
     assert "| `a` |" in msg_chunks[0]["content"]
+
+
+def test_oi_console_output_with_unformatted_flags_routes_rapport_to_assistant():
+    """OpenInterpreter emits console start/end flags without format, then
+    content chunks with format=output. The report must still be routed out
+    of the exec-block."""
+    report = (
+        "# RAPPORT D'INSPECTION\n"
+        "\n"
+        "- **file_path** : `/tmp/x.csv`\n"
+        "\n"
+        "## Synthèse\n"
+    )
+    events = list(chat_stream_events(_stream_oi_console_with_unformatted_flags(report)))
+    console_chunks = [e for e in events if e.get("role") == "computer" and e.get("type") == "console"]
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    assert console_chunks == []
+    assert len(msg_chunks) == 1
+    assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
+    assert "## Synthèse" in msg_chunks[0]["content"]
+
+
+def test_upload_question_tail_is_emitted_after_routed_rapport():
+    """When the LLM emits executable code plus the fixed follow-up question in
+    one assistant text message, the UI must not show the question before the
+    inspection report."""
+    assistant = (
+        "```python\n"
+        "file_report = inspect_file('/tmp/x.csv')\n"
+        "print(format_inspect_report(file_report))\n"
+        "```\n\n"
+        "Quel graphique souhaitez-vous ?"
+    )
+    report = (
+        "# RAPPORT D'INSPECTION\n"
+        "\n"
+        "- **file_path** : `/tmp/x.csv`\n"
+        "\n"
+        "## Synthèse\n"
+    )
+    chunks = [
+        *_stream_message(assistant),
+        {"role": "assistant", "type": "code", "format": "python", "start": True},
+        {"role": "assistant", "type": "code", "format": "python", "content": "print('report')"},
+        {"role": "assistant", "type": "code", "format": "python", "end": True},
+        *_stream_oi_console_with_unformatted_flags(report),
+    ]
+    events = list(chat_stream_events(chunks))
+    assistant_messages = [
+        e["content"] for e in events
+        if e.get("role") == "assistant" and e.get("type") == "message"
+    ]
+    assert assistant_messages == [
+        report,
+        "Quel graphique souhaitez-vous ?",
+    ]
 
 
 def test_console_output_without_rapport_passes_through_as_console():

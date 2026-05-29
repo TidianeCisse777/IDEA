@@ -138,14 +138,35 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
     console_buf_content = ""       # accumulated content for current computer console message
     in_console_msg = False
     console_fmt = ""
+    pending_assistant_tail = ""
+
+    def _is_fixed_upload_question(text: str) -> bool:
+        return text.strip() == "Quel graphique souhaitez-vous ?"
+
+    def _emit_pending_assistant_tail():
+        nonlocal pending_assistant_tail
+        if pending_assistant_tail:
+            yield {"start": True, "end": True, "role": "assistant",
+                   "type": "message", "content": pending_assistant_tail}
+            pending_assistant_tail = ""
+
+    def _emit_or_defer_assistant_text(original: str):
+        nonlocal pending_assistant_tail
+        cleaned = _clean_assistant_text(original)
+        if not cleaned:
+            return
+        if _is_fixed_upload_question(cleaned) and (
+            _is_raw_code_block(original) or _has_python_markdown_fence(original)
+        ):
+            pending_assistant_tail = cleaned.strip()
+            return
+        yield {"start": True, "end": True, "role": "assistant",
+               "type": "message", "content": cleaned}
 
     def _flush_assistant_buf():
         nonlocal msg_buf_content, in_assistant_msg
         if in_assistant_msg and msg_buf_content:
-            cleaned = _clean_assistant_text(msg_buf_content)
-            if cleaned:
-                yield {"start": True, "end": True, "role": "assistant",
-                       "type": "message", "content": cleaned}
+            yield from _emit_or_defer_assistant_text(msg_buf_content)
         msg_buf_content = ""
         in_assistant_msg = False
 
@@ -166,6 +187,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                        "content": preamble}
             yield {"start": True, "end": True, "role": "assistant",
                    "type": "message", "content": rapport}
+            yield from _emit_pending_assistant_tail()
         elif console_buf_content:
             yield {"start": True, "end": True, "role": "computer",
                    "type": "console", "format": console_fmt or "output",
@@ -190,23 +212,35 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
         if not isinstance(content, str):
             content = ""
 
-        # Buffer console outputs (computer/console with format=output) so the
-        # full content is available before deciding the routing.
-        if role == "computer" and ctype == "console" and fmt == "output":
+        # Buffer console outputs so the full content is available before
+        # deciding the routing. OpenInterpreter emits console start/end flags
+        # without `format`, while the content chunks carry format=output.
+        if role == "computer" and ctype == "console" and fmt != "active_line":
             if in_assistant_msg:
                 yield from _flush_assistant_buf()
             if is_start:
                 console_buf_content = content
-                console_fmt = fmt
+                console_fmt = fmt or "output"
                 in_console_msg = True
                 if is_end:
                     yield from _emit_console_buf()
             elif in_console_msg:
                 console_buf_content += content
+                if fmt:
+                    console_fmt = fmt
+                if is_end:
+                    yield from _emit_console_buf()
+            elif fmt == "output":
+                # OI can omit the start flag from transformed/replayed streams.
+                # Treat output content as the start of a console buffer so
+                # inspection reports can still be routed out of the exec-block.
+                console_buf_content = content
+                console_fmt = fmt
+                in_console_msg = True
                 if is_end:
                     yield from _emit_console_buf()
             else:
-                # Stray content without start — pass through
+                # Non-output stray console metadata — pass through.
                 yield chunk
             continue
 
@@ -219,19 +253,13 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                 # Don't yield the start marker yet — wait until end so we can
                 # decide whether the cleaned content is non-empty.
                 if is_end:
-                    cleaned = _clean_assistant_text(msg_buf_content)
-                    if cleaned:
-                        yield {"start": True, "end": True, "role": "assistant",
-                               "type": "message", "content": cleaned}
+                    yield from _emit_or_defer_assistant_text(msg_buf_content)
                     msg_buf_content = ""
                     in_assistant_msg = False
             elif in_assistant_msg:
                 msg_buf_content += content
                 if is_end:
-                    cleaned = _clean_assistant_text(msg_buf_content)
-                    if cleaned:
-                        yield {"start": True, "end": True, "role": "assistant",
-                               "type": "message", "content": cleaned}
+                    yield from _emit_or_defer_assistant_text(msg_buf_content)
                     msg_buf_content = ""
                     in_assistant_msg = False
             else:
@@ -263,7 +291,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
 
     # Flush trailing assistant buffer if the stream ended mid-message
     if in_assistant_msg and msg_buf_content:
-        cleaned = _clean_assistant_text(msg_buf_content)
-        if cleaned:
-            yield {"start": True, "end": True, "role": "assistant",
-                   "type": "message", "content": cleaned}
+        yield from _emit_or_defer_assistant_text(msg_buf_content)
+    if in_console_msg:
+        yield from _emit_console_buf()
+    yield from _emit_pending_assistant_tail()
