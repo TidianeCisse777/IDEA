@@ -63,11 +63,7 @@ class ChatRuntimeTracer:
         session_key: str,
         user_id: str,
         agent_type: str,
-        session_mode: str,
         model: str,
-        plan_phase: str | None = None,
-        active_data_understanding_version_id: str | None = None,
-        active_graph_context_version_id: str | None = None,
         user_input: dict[str, Any] | None = None,
         round_index: int = 1,
     ) -> "ChatRuntimeTracer":
@@ -77,11 +73,7 @@ class ChatRuntimeTracer:
         metadata = {
             "session_key": session_key,
             "agent_type": agent_type,
-            "session_mode": session_mode,
             "model": model,
-            "plan_phase": plan_phase,
-            "active_data_understanding_version_id": active_data_understanding_version_id,
-            "active_graph_context_version_id": active_graph_context_version_id,
             "round": round_index,
         }
         try:

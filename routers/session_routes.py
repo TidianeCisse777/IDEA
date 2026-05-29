@@ -1,57 +1,20 @@
 """
-Session mode routes — GET/POST /session/mode.
+Session routes — online-mode toggle for the copepod profile.
 
-Used by the frontend to read and switch the session mode (plan → analyse).
+The previous plan/analyse mode switch and artifact debug routes were removed
+along with the Plan Mode workflow.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.auth import get_auth_token, get_current_user
-from core.copepod_observability import trace_copepod_event
-from core.copepod_plan_workflow import PLAN_READY
 from core.session_store import session_store
 from utils.session_utils import make_session_key, resolve_agent_type
 from agents.registry import registered_types
 
 router = APIRouter(prefix="/session", tags=["session"])
 
-VALID_MODES = {"plan", "analyse"}
 ONLINE_MODE_ALLOWED_SOURCES = ["ogsl", "bio_oracle"]
-ARTIFACT_ROUTE_TYPES = {
-    "data-understanding": "data_understanding",
-    "graph-context": "graph_context",
-}
-
-
-def _diagnose_plan_artifacts_block(session_key: str) -> str:
-    active_du = session_store.get_active_artifact(session_key, "data_understanding")
-    active_gc = session_store.get_active_artifact(session_key, "graph_context")
-    if active_du is None:
-        return (
-            "no active Data Understanding artifact — "
-            "call activate_data_understanding(session_key, version_id) first"
-        )
-    if active_gc is None:
-        return (
-            "no active Graph Context artifact — "
-            "call activate_graph_context(session_key, version_id) first"
-        )
-    gc_du_ref = (active_gc.get("payload") or {}).get("data_understanding_version_id")
-    if gc_du_ref == active_du["version_id"]:
-        current_phase = session_store.get_copepod_plan_phase(session_key)
-        return (
-            f"workflow phase must be plan_ready before Analyse Mode "
-            f"(current phase: {current_phase})"
-        )
-    return (
-        f"Graph Context references Data Understanding '{gc_du_ref}' "
-        f"but the active Data Understanding is '{active_du['version_id']}' — "
-        "create and activate a new Graph Context that references the current active Data Understanding"
-    )
-
-
-class SessionModeRequest(BaseModel):
-    mode: str
 
 
 class OnlineModeRequest(BaseModel):
@@ -76,13 +39,8 @@ def _authenticated_session_context(request: Request, token: str) -> tuple[str, s
 
 
 @router.get("/mode")
-async def get_mode(
-    request: Request,
-    token: str = Depends(get_auth_token),
-):
-    _, session_key, _ = _authenticated_session_context(request, token)
-    mode = session_store.get_session_mode(session_key)
-    return {"mode": mode, "session_key": session_key}
+async def get_mode_stub():
+    return {"mode": "analyse"}
 
 
 @router.get("/online-mode")
@@ -100,51 +58,6 @@ async def get_online_mode(
     }
 
 
-@router.post("/mode")
-async def set_mode(
-    body: SessionModeRequest,
-    request: Request,
-    token: str = Depends(get_auth_token),
-):
-    if body.mode not in VALID_MODES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid mode '{body.mode}'. Valid modes: {sorted(VALID_MODES)}",
-        )
-
-    agent_type, session_key, _ = _authenticated_session_context(request, token)
-    current_mode = session_store.get_session_mode(session_key)
-    if agent_type == "copepod" and current_mode == "analyse" and body.mode == "plan":
-        raise HTTPException(
-            status_code=409,
-            detail="Copepod analyse mode is irreversible for this session",
-        )
-    if (
-        agent_type == "copepod"
-        and body.mode == "analyse"
-        and (
-            session_store.get_copepod_plan_phase(session_key) != PLAN_READY
-            or not session_store.has_active_copepod_plan_artifacts(session_key)
-        )
-    ):
-        blocking_reason = _diagnose_plan_artifacts_block(session_key)
-        trace_copepod_event(
-            "analyse_mode_blocked",
-            session_key=session_key,
-            output={"requested_mode": body.mode, "blocking_reason": blocking_reason},
-        )
-        raise HTTPException(status_code=409, detail=blocking_reason)
-
-    session_store.set_session_mode(session_key, body.mode)
-    if agent_type == "copepod" and body.mode == "analyse":
-        trace_copepod_event(
-            "analyse_mode_entered",
-            session_key=session_key,
-            output={"mode": body.mode},
-        )
-    return {"mode": body.mode, "session_key": session_key}
-
-
 @router.put("/online-mode")
 async def set_online_mode(
     body: OnlineModeRequest,
@@ -160,24 +73,4 @@ async def set_online_mode(
         "enabled": session_store.get_online_mode(session_key),
         "session_key": session_key,
         "allowed_sources": ONLINE_MODE_ALLOWED_SOURCES,
-    }
-
-
-@router.get("/artifacts/{artifact_slug}")
-async def get_artifact_versions(
-    artifact_slug: str,
-    request: Request,
-    token: str = Depends(get_auth_token),
-):
-    artifact_type = ARTIFACT_ROUTE_TYPES.get(artifact_slug)
-    if artifact_type is None:
-        raise HTTPException(status_code=404, detail="Artifact type not found")
-
-    agent_type, session_key, _ = _authenticated_session_context(request, token)
-    if agent_type != "copepod":
-        raise HTTPException(status_code=404, detail="Artifact route not found")
-
-    return {
-        "versions": session_store.get_artifact_versions(session_key, artifact_type),
-        "active": session_store.get_active_artifact(session_key, artifact_type),
     }

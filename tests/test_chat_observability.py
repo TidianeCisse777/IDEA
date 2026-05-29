@@ -151,11 +151,7 @@ def test_from_env_creates_user_session_trace_with_round_metadata(monkeypatch):
         session_key="user-123:session-abc:copepod",
         user_id="user-123",
         agent_type="copepod",
-        session_mode="analyse",
         model="gpt-test",
-        plan_phase="plan_ready",
-        active_data_understanding_version_id="du-1",
-        active_graph_context_version_id="gc-1",
         user_input={"role": "user", "content": "trace cette conversation"},
         round_index=4,
     )
@@ -166,8 +162,7 @@ def test_from_env_creates_user_session_trace_with_round_metadata(monkeypatch):
     assert trace_payload["session_id"] == "user-123:session-abc:copepod"
     assert trace_payload["name"] == "idea-chat-runtime"
     assert trace_payload["metadata"]["round"] == 4
-    assert trace_payload["metadata"]["active_data_understanding_version_id"] == "du-1"
-    assert trace_payload["metadata"]["active_graph_context_version_id"] == "gc-1"
+    assert trace_payload["metadata"]["agent_type"] == "copepod"
 
     list(tracer.observe_stream([
         {"start": True, "end": True, "role": "assistant", "type": "code", "content": "inspect_file('x.tsv')"},

@@ -15,133 +15,34 @@ import urllib.parse
 import redis
 from abc import ABC, abstractmethod
 from time import time
-from uuid import uuid4
-
-from core.copepod_plan_workflow import DEFAULT_PHASE, VALID_PHASES
-
-
-ARTIFACT_VERSION_PREFIXES = {
-    "data_understanding": "du",
-    "graph_context": "gc",
-    "file_synthesis": "fs",
-}
-
-
-def _active_copepod_artifacts_are_consistent(
-    active_data: dict | None, active_graph: dict | None
-) -> bool:
-    if active_data is None or active_graph is None:
-        return False
-    graph_payload = active_graph.get("payload") or {}
-    return (
-        graph_payload.get("data_understanding_version_id")
-        == active_data.get("version_id")
-    )
-
-
-def _new_artifact_version(artifact_type: str, payload: dict) -> dict:
-    prefix = ARTIFACT_VERSION_PREFIXES[artifact_type]
-    return {
-        "version_id": f"{prefix}-{uuid4().hex}",
-        "artifact_type": artifact_type,
-        "status": "draft",
-        "created_at": time(),
-        "activated_at": None,
-        "payload": payload,
-    }
 
 
 class SessionStore(ABC):
     """Interface for session-scoped message and activity storage."""
 
     @abstractmethod
-    def read_messages(self, session_key: str) -> list[dict] | None:
-        """Return the stored message list for *session_key*, or None if absent."""
-        ...
+    def read_messages(self, session_key: str) -> list[dict] | None: ...
 
     @abstractmethod
-    def write_messages(self, session_key: str, messages: list[dict]) -> None:
-        """Persist *messages* for *session_key*, overwriting any previous value."""
-        ...
+    def write_messages(self, session_key: str, messages: list[dict]) -> None: ...
 
     @abstractmethod
-    def touch(self, session_key: str) -> None:
-        """Record the current wall-clock time as the last-active timestamp."""
-        ...
+    def touch(self, session_key: str) -> None: ...
 
     @abstractmethod
-    def get_last_active(self, session_key: str) -> float | None:
-        """Return the last-active UNIX timestamp, or None if never touched."""
-        ...
+    def get_last_active(self, session_key: str) -> float | None: ...
 
     @abstractmethod
-    def evict(self, session_key: str) -> None:
-        """Remove all stored data (messages + timestamp) for *session_key*."""
-        ...
+    def evict(self, session_key: str) -> None: ...
 
     @abstractmethod
-    def all_session_keys(self) -> list[str]:
-        """Return every session key that has a recorded last-active timestamp."""
-        ...
+    def all_session_keys(self) -> list[str]: ...
 
     @abstractmethod
-    def get_session_mode(self, session_key: str) -> str:
-        """Return the current session mode ('plan' or 'analyse'). Defaults to 'plan'."""
-        ...
+    def get_online_mode(self, session_key: str) -> bool: ...
 
     @abstractmethod
-    def set_session_mode(self, session_key: str, mode: str) -> None:
-        """Persist the session mode for session_key."""
-        ...
-
-    @abstractmethod
-    def create_artifact_version(
-        self, session_key: str, artifact_type: str, payload: dict
-    ) -> dict:
-        """Create and store a draft artifact version for session_key."""
-        ...
-
-    @abstractmethod
-    def get_artifact_versions(self, session_key: str, artifact_type: str) -> list[dict]:
-        """Return stored artifact versions for session_key and artifact_type."""
-        ...
-
-    @abstractmethod
-    def get_active_artifact(self, session_key: str, artifact_type: str) -> dict | None:
-        """Return the active artifact version, if any."""
-        ...
-
-    @abstractmethod
-    def activate_artifact_version(
-        self, session_key: str, artifact_type: str, version_id: str
-    ) -> dict:
-        """Activate one artifact version and supersede any prior active version."""
-        ...
-
-    @abstractmethod
-    def has_active_copepod_plan_artifacts(self, session_key: str) -> bool:
-        """Return whether required copepod plan artifacts are active."""
-        ...
-
-    @abstractmethod
-    def get_copepod_plan_phase(self, session_key: str) -> str:
-        """Return the current copepod plan workflow phase."""
-        ...
-
-    @abstractmethod
-    def set_copepod_plan_phase(self, session_key: str, phase: str) -> None:
-        """Persist the copepod plan workflow phase."""
-        ...
-
-    @abstractmethod
-    def get_online_mode(self, session_key: str) -> bool:
-        """Return whether online mode is enabled for the session."""
-        ...
-
-    @abstractmethod
-    def set_online_mode(self, session_key: str, enabled: bool) -> None:
-        """Persist the online mode flag for the session."""
-        ...
+    def set_online_mode(self, session_key: str, enabled: bool) -> None: ...
 
 
 class RedisSessionStore(SessionStore):
@@ -165,80 +66,15 @@ class RedisSessionStore(SessionStore):
         return float(raw) if raw else None
 
     def evict(self, session_key: str) -> None:
-        keys = [
+        self._r.delete(
             f"messages:{session_key}",
             f"last_active:{session_key}",
-            f"session_mode:{session_key}",
-            f"copepod_plan_phase:{session_key}",
-            *self._r.keys(f"artifacts:{session_key}:*"),
-        ]
-        self._r.delete(*keys)
+            f"online_mode:{session_key}",
+        )
 
     def all_session_keys(self) -> list[str]:
         keys = self._r.keys("last_active:*")
         return [k.decode().removeprefix("last_active:") for k in keys]
-
-    def get_session_mode(self, session_key: str) -> str:
-        raw = self._r.get(f"session_mode:{session_key}")
-        return raw.decode() if raw else "plan"
-
-    def set_session_mode(self, session_key: str, mode: str) -> None:
-        self._r.set(f"session_mode:{session_key}", mode)
-
-    def _artifact_key(self, session_key: str, artifact_type: str) -> str:
-        return f"artifacts:{session_key}:{artifact_type}"
-
-    def create_artifact_version(
-        self, session_key: str, artifact_type: str, payload: dict
-    ) -> dict:
-        artifact = _new_artifact_version(artifact_type, payload)
-        versions = self.get_artifact_versions(session_key, artifact_type)
-        versions.append(artifact)
-        self._r.set(self._artifact_key(session_key, artifact_type), json.dumps(versions))
-        return artifact
-
-    def get_artifact_versions(self, session_key: str, artifact_type: str) -> list[dict]:
-        raw = self._r.get(self._artifact_key(session_key, artifact_type))
-        return json.loads(raw) if raw else []
-
-    def get_active_artifact(self, session_key: str, artifact_type: str) -> dict | None:
-        for artifact in self.get_artifact_versions(session_key, artifact_type):
-            if artifact["status"] == "active":
-                return artifact
-        return None
-
-    def activate_artifact_version(
-        self, session_key: str, artifact_type: str, version_id: str
-    ) -> dict:
-        versions = self.get_artifact_versions(session_key, artifact_type)
-        if not any(artifact["version_id"] == version_id for artifact in versions):
-            raise KeyError(version_id)
-        selected = None
-        activated_at = time()
-        for artifact in versions:
-            if artifact["status"] == "active":
-                artifact["status"] = "superseded"
-            if artifact["version_id"] == version_id:
-                artifact["status"] = "active"
-                artifact["activated_at"] = activated_at
-                selected = artifact
-        self._r.set(self._artifact_key(session_key, artifact_type), json.dumps(versions))
-        return selected
-
-    def has_active_copepod_plan_artifacts(self, session_key: str) -> bool:
-        return _active_copepod_artifacts_are_consistent(
-            self.get_active_artifact(session_key, "data_understanding"),
-            self.get_active_artifact(session_key, "graph_context"),
-        )
-
-    def get_copepod_plan_phase(self, session_key: str) -> str:
-        raw = self._r.get(f"copepod_plan_phase:{session_key}")
-        return raw.decode() if raw else DEFAULT_PHASE
-
-    def set_copepod_plan_phase(self, session_key: str, phase: str) -> None:
-        if phase not in VALID_PHASES:
-            raise ValueError(f"Invalid copepod plan phase: {phase}")
-        self._r.set(f"copepod_plan_phase:{session_key}", phase)
 
     def get_online_mode(self, session_key: str) -> bool:
         raw = self._r.get(f"online_mode:{session_key}")
@@ -254,9 +90,6 @@ class InMemorySessionStore(SessionStore):
     def __init__(self):
         self._messages: dict[str, list[dict]] = {}
         self._timestamps: dict[str, float] = {}
-        self._modes: dict[str, str] = {}
-        self._artifacts: dict[tuple[str, str], list[dict]] = {}
-        self._copepod_plan_phases: dict[str, str] = {}
         self._online_modes: dict[str, bool] = {}
 
     def read_messages(self, session_key: str) -> list[dict] | None:
@@ -274,68 +107,10 @@ class InMemorySessionStore(SessionStore):
     def evict(self, session_key: str) -> None:
         self._messages.pop(session_key, None)
         self._timestamps.pop(session_key, None)
-        self._modes.pop(session_key, None)
-        self._copepod_plan_phases.pop(session_key, None)
         self._online_modes.pop(session_key, None)
-        for key in list(self._artifacts):
-            if key[0] == session_key:
-                self._artifacts.pop(key, None)
 
     def all_session_keys(self) -> list[str]:
         return list(self._timestamps.keys())
-
-    def get_session_mode(self, session_key: str) -> str:
-        return self._modes.get(session_key, "plan")
-
-    def set_session_mode(self, session_key: str, mode: str) -> None:
-        self._modes[session_key] = mode
-
-    def create_artifact_version(
-        self, session_key: str, artifact_type: str, payload: dict
-    ) -> dict:
-        artifact = _new_artifact_version(artifact_type, payload)
-        self._artifacts.setdefault((session_key, artifact_type), []).append(artifact)
-        return artifact
-
-    def get_artifact_versions(self, session_key: str, artifact_type: str) -> list[dict]:
-        return self._artifacts.get((session_key, artifact_type), [])
-
-    def get_active_artifact(self, session_key: str, artifact_type: str) -> dict | None:
-        for artifact in self.get_artifact_versions(session_key, artifact_type):
-            if artifact["status"] == "active":
-                return artifact
-        return None
-
-    def activate_artifact_version(
-        self, session_key: str, artifact_type: str, version_id: str
-    ) -> dict:
-        versions = self.get_artifact_versions(session_key, artifact_type)
-        if not any(artifact["version_id"] == version_id for artifact in versions):
-            raise KeyError(version_id)
-        selected = None
-        activated_at = time()
-        for artifact in versions:
-            if artifact["status"] == "active":
-                artifact["status"] = "superseded"
-            if artifact["version_id"] == version_id:
-                artifact["status"] = "active"
-                artifact["activated_at"] = activated_at
-                selected = artifact
-        return selected
-
-    def has_active_copepod_plan_artifacts(self, session_key: str) -> bool:
-        return _active_copepod_artifacts_are_consistent(
-            self.get_active_artifact(session_key, "data_understanding"),
-            self.get_active_artifact(session_key, "graph_context"),
-        )
-
-    def get_copepod_plan_phase(self, session_key: str) -> str:
-        return self._copepod_plan_phases.get(session_key, DEFAULT_PHASE)
-
-    def set_copepod_plan_phase(self, session_key: str, phase: str) -> None:
-        if phase not in VALID_PHASES:
-            raise ValueError(f"Invalid copepod plan phase: {phase}")
-        self._copepod_plan_phases[session_key] = phase
 
     def get_online_mode(self, session_key: str) -> bool:
         return self._online_modes.get(session_key, False)

@@ -93,12 +93,6 @@ for _idea_tool_name in [
     "infer_column_roles",
     "describe_column",
     "summarize_understanding",
-    "create_data_understanding_draft",
-    "activate_data_understanding",
-    "create_graph_context_draft",
-    "activate_graph_context",
-    "get_active_data_understanding",
-    "get_active_graph_context",
     "query_copepod_knowledge_base",
 ]:
     if _idea_tool_name in globals() and callable(globals()[_idea_tool_name]):

@@ -197,6 +197,53 @@ function addCopyButtons(root) {
     });
 }
 
+//// Execution block — groups intermediate messages + code + console into a collapsible bubble
+
+let _currentExecBlock = null;
+let _execHasStarted = false;      // true once we've seen code this turn
+let _pendingAssistantEls = [];    // assistant text elements queued before code
+
+function _getOrCreateExecBlock() {
+    if (_currentExecBlock) return _currentExecBlock;
+    const wrapper = document.createElement('div');
+    wrapper.classList.add('message', 'assistant', 'exec-block');
+
+    const header = document.createElement('div');
+    header.classList.add('exec-block-header');
+    header.innerHTML = '<span class="exec-block-icon">⚙</span><span class="exec-block-label">Code exécuté</span><span class="exec-block-toggle">▸</span>';
+    header.addEventListener('click', () => {
+        const isOpen = wrapper.classList.toggle('exec-block-open');
+        header.querySelector('.exec-block-toggle').textContent = isOpen ? '▾' : '▸';
+    });
+
+    const body = document.createElement('div');
+    body.classList.add('exec-block-body');
+
+    wrapper.appendChild(header);
+    wrapper.appendChild(body);
+    chatDisplay.appendChild(wrapper);
+    chatDisplay.scrollTop = chatDisplay.scrollHeight;
+    _currentExecBlock = { wrapper, body };
+    return _currentExecBlock;
+}
+
+function _closeExecBlock() {
+    _currentExecBlock = null;
+    _execHasStarted = false;
+}
+
+// Called at end of SSE stream — pending messages are already in DOM, just clear tracking
+function flushPendingAssistantMessages() {
+    _pendingAssistantEls = [];
+    _closeExecBlock();
+}
+
+// Reset turn state when user sends a new message
+function resetExecBlockState() {
+    _closeExecBlock();
+    _pendingAssistantEls = [];
+}
+
 //// Message appending
 
 function appendMessage(message, options = {}) {
@@ -269,6 +316,10 @@ function appendMessage(message, options = {}) {
         contentElement.innerHTML = '<pre><code></code></pre>';
         messageElement.classList.add('console-output-message');
         contentElement.setAttribute('aria-hidden', 'true');
+    } else if (message.role === 'assistant' && message.type === 'code') {
+        const lang = message.format || 'python';
+        contentElement.innerHTML = `<pre><code class="language-${escapeHtml(lang)}"></code></pre>`;
+        messageElement.classList.add('code-block-message');
     } else {
         contentElement.textContent = message.content;
     }
@@ -329,7 +380,35 @@ function appendMessage(message, options = {}) {
         messageElement.appendChild(actions);
     }
 
-    chatDisplay.appendChild(messageElement);
+    // Route messages to exec block or main chat
+    if (message.role === 'assistant' && message.type === 'code') {
+        // Code starts — move any preceding assistant text msgs into exec block
+        _execHasStarted = true;
+        const exec = _getOrCreateExecBlock();
+        // Move tracked pre-code assistant elements into exec body
+        _pendingAssistantEls.forEach(el => exec.body.appendChild(el));
+        _pendingAssistantEls = [];
+        exec.body.appendChild(messageElement);
+    } else if (message.role === 'computer' &&
+               (message.type === 'console' || message.type === 'image')) {
+        const exec = _getOrCreateExecBlock();
+        exec.body.appendChild(messageElement);
+    } else if (message.role === 'assistant' && message.type === 'message') {
+        if (_execHasStarted) {
+            // Final message after execution — close exec block, show normally
+            _closeExecBlock();
+            chatDisplay.appendChild(messageElement);
+        } else {
+            // Possibly intermediate — insert in DOM now (so streaming updates work),
+            // track it so we can move it into exec block if code follows
+            chatDisplay.appendChild(messageElement);
+            _pendingAssistantEls.push(messageElement);
+        }
+    } else {
+        _closeExecBlock();
+        _pendingAssistantEls = [];
+        chatDisplay.appendChild(messageElement);
+    }
     chatDisplay.scrollTop = chatDisplay.scrollHeight;
     handleStdoutTrackingOnMessageStart(message);
 

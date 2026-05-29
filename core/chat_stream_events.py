@@ -1,95 +1,107 @@
 from __future__ import annotations
 
+import base64
+import os
 from collections.abc import Iterable, Iterator
 from typing import Any
 
 
-PLAN_READY_TAG = "[PLAN_READY]"
+def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
+    """Transform interpreter chunks into UI stream events.
 
-VALIDATE_PLAN_ACTION = {
-    "start": True,
-    "end": True,
-    "role": "computer",
-    "type": "action_button",
-    "action": "validate_plan",
-    "label": "Passer en Mode Analyse",
-}
+    - Drops raw LLM tool_call chunks that open-interpreter failed to execute.
+    - Suppresses assistant text messages that are OI's to=execute code="..." format.
+      These arrive as streaming chunks, so we buffer the start of each assistant
+      message until we can decide: if the accumulated content starts with "to=execute",
+      the entire message is dropped; otherwise the buffer is flushed and we yield live.
+    """
+    _PROBE_LEN = 20          # characters to accumulate before deciding
+    _PREFIX = "to=execute"
 
-
-def chat_stream_events(
-    interpreter_chunks: Iterable[Any],
-    *,
-    user_turns: int,
-    session_mode: str | None,
-    plan_ready_allowed: bool = True,
-) -> Iterator[Any]:
-    """Transform interpreter chunks into UI stream events."""
-    plan_ready_emitted = False
-    message_buffers: dict[str, str] = {}
-    # Partial PLAN_READY_TAG prefix withheld from the previous chunk to prevent
-    # visible tag fragments when the tag is split across multiple stream tokens.
-    held: dict[str, str] = {}
+    buf: list[Any] = []
+    buf_content = ""
+    suppressing = False
+    in_assistant_msg = False
 
     for chunk in interpreter_chunks:
-        # Drop raw LLM tool_call chunks that open-interpreter failed to execute.
-        # Chunks may be dicts or Pydantic models — use getattr/get to handle both.
         _get = chunk.get if isinstance(chunk, dict) else lambda k, d=None: getattr(chunk, k, d)
+
+        # Drop bare tool_call chunks
         if _get("tool_calls") is not None and _get("type") is None:
             continue
 
-        event = chunk
+        role = _get("role") or ""
+        ctype = _get("type") or ""
+        is_start = bool(_get("start"))
+        is_end = bool(_get("end"))
+        content = _get("content") or ""
+        if not isinstance(content, str):
+            content = ""
 
-        if isinstance(chunk, dict) and chunk.get("type") == "message":
-            role = chunk.get("role", "assistant")
-            raw_content = chunk.get("content", "")
-
-            if isinstance(raw_content, str):
-                if chunk.get("start"):
-                    held.pop(role, None)
-                    content = raw_content
-                    message_buffers[role] = content
+        if role == "assistant" and ctype == "message":
+            if is_start:
+                # New assistant text message — start buffering
+                buf = [chunk]
+                buf_content = content
+                suppressing = False
+                in_assistant_msg = True
+                if len(buf_content) >= _PROBE_LEN or is_end:
+                    # Enough content already (or single-chunk message)
+                    suppressing = buf_content.lstrip().startswith(_PREFIX)
+                    if not suppressing:
+                        yield from buf
+                        buf = []
+                    elif is_end:
+                        buf = []
+                        in_assistant_msg = False
+            elif in_assistant_msg:
+                if suppressing:
+                    if is_end:
+                        buf = []
+                        in_assistant_msg = False
+                        suppressing = False
+                    continue  # drop chunk
+                elif buf:
+                    # Still accumulating the probe window
+                    buf.append(chunk)
+                    buf_content += content
+                    if len(buf_content) >= _PROBE_LEN or is_end:
+                        suppressing = buf_content.lstrip().startswith(_PREFIX)
+                        if not suppressing:
+                            yield from buf
+                        buf = []
+                        if is_end:
+                            in_assistant_msg = False
+                            suppressing = False
                 else:
-                    held_prefix = held.pop(role, "")
-                    content = held_prefix + raw_content
-                    # Buffer tracks raw_content only — held was already buffered by the
-                    # chunk that produced it.
-                    message_buffers[role] = message_buffers.get(role, "") + raw_content
-                    if held_prefix:
-                        event = dict(chunk)
-                        event["content"] = content
+                    # Buffer already flushed — yield live
+                    if is_end:
+                        in_assistant_msg = False
+                    yield chunk
+            else:
+                yield chunk
+        else:
+            # Non-assistant-message chunk — flush any pending buffer first
+            if buf:
+                if not suppressing:
+                    yield from buf
+                buf = []
+            suppressing = False
+            in_assistant_msg = False
 
-                if PLAN_READY_TAG in content and not plan_ready_emitted:
-                    if event is chunk:
-                        event = dict(chunk)
-                    event["content"] = content.replace(PLAN_READY_TAG, "").rstrip()
-                    plan_ready_emitted = True
-                elif chunk.get("end") and not plan_ready_emitted:
-                    if PLAN_READY_TAG in message_buffers.get(role, ""):
-                        plan_ready_emitted = True
-                        yield event
-                        yield {"type": "strip_tail", "text": PLAN_READY_TAG}
-                        message_buffers.pop(role, None)
-                        held.pop(role, None)
-                        continue
-                elif not plan_ready_emitted and not chunk.get("end"):
-                    for prefix_len in range(len(PLAN_READY_TAG) - 1, 0, -1):
-                        if content.endswith(PLAN_READY_TAG[:prefix_len]):
-                            held[role] = content[-prefix_len:]
-                            if event is chunk:
-                                event = dict(chunk)
-                            event["content"] = content[:-prefix_len]
-                            break
+            # Auto-display PNG saved via plt.savefig when model prints "Saved figure: /path"
+            if role == "computer" and ctype == "console" and is_end is False and not is_start:
+                if isinstance(content, str) and "Saved figure:" in content:
+                    for line in content.splitlines():
+                        line = line.strip()
+                        if line.startswith("Saved figure:"):
+                            png_path = line[len("Saved figure:"):].strip()
+                            if png_path.endswith(".png") and os.path.isfile(png_path):
+                                try:
+                                    with open(png_path, "rb") as f:
+                                        b64 = base64.b64encode(f.read()).decode()
+                                    yield {"start": True, "end": True, "role": "computer", "type": "image", "format": "base64.png", "content": b64}
+                                except Exception:
+                                    pass
 
-                if chunk.get("end"):
-                    message_buffers.pop(role, None)
-                    held.pop(role, None)
-
-        yield event
-
-    if (
-        plan_ready_emitted
-        and plan_ready_allowed
-        and user_turns >= 3
-        and session_mode != "analyse"
-    ):
-        yield dict(VALIDATE_PLAN_ACTION)
+            yield chunk

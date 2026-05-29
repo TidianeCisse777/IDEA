@@ -886,6 +886,51 @@ pre {
     display: none !important;
 }
 
+/* Execution block — collapsible code + console wrapper */
+.exec-block {
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 4px 0 !important;
+}
+
+.exec-block-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--surface-2, #f0f0f0);
+    font-size: 0.82rem;
+    color: var(--text-secondary, #666);
+    user-select: none;
+    width: fit-content;
+}
+
+.exec-block-header:hover {
+    background: var(--surface-3, #e4e4e4);
+}
+
+.exec-block-icon { font-size: 0.9rem; }
+.exec-block-toggle { margin-left: 4px; font-size: 0.75rem; }
+
+.exec-block-body {
+    display: none;
+    padding: 4px 0 0 8px;
+    border-left: 2px solid var(--surface-3, #ddd);
+    margin-top: 4px;
+}
+
+.exec-block.exec-block-open .exec-block-body {
+    display: block;
+}
+
+/* Show console inside exec block */
+.exec-block-body .console-output-message {
+    display: block !important;
+}
+
 .stdout-controls {
     display: flex;
     justify-content: flex-end;

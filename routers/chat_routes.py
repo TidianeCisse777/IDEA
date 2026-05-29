@@ -516,27 +516,11 @@ async def chat_endpoint(
                 1 for m in messages
                 if isinstance(m, dict) and m.get("role") == "user"
             )
-            current_mode = session_store.get_session_mode(session_key)
-            active_du = None
-            active_gc = None
-            plan_phase = None
-            if agent_type == "copepod":
-                plan_phase = session_store.get_copepod_plan_phase(session_key)
-                active_du = session_store.get_active_artifact(session_key, "data_understanding")
-                active_gc = session_store.get_active_artifact(session_key, "graph_context")
             tracer = ChatRuntimeTracer.from_env(
                 session_key=session_key,
                 user_id=str(user.id),
                 agent_type=agent_type,
-                session_mode=current_mode,
                 model=interpreter.llm.model,
-                plan_phase=plan_phase,
-                active_data_understanding_version_id=(
-                    active_du.get("version_id") if active_du else None
-                ),
-                active_graph_context_version_id=(
-                    active_gc.get("version_id") if active_gc else None
-                ),
                 user_input=messages[-1] if messages else {},
                 round_index=max(1, user_turns),
             )
@@ -587,13 +571,6 @@ async def chat_endpoint(
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
-                plan_ready_allowed = True
-                if agent_type == "copepod":
-                    plan_ready_allowed = (
-                        session_store.get_copepod_plan_phase(session_key)
-                        == "plan_ready"
-                        and session_store.has_active_copepod_plan_artifacts(session_key)
-                    )
                 if agent_type == "copepod":
                     try:
                         interpreter.computer.run(
@@ -609,9 +586,6 @@ async def chat_endpoint(
                 total_chunks = 0
                 stream_events = chat_stream_events(
                     interpreter.chat(messages[-1], stream=True),
-                    user_turns=user_turns,
-                    session_mode=current_mode,
-                    plan_ready_allowed=plan_ready_allowed,
                 )
                 for result in tracer.observe_stream(
                     stream_events
@@ -638,7 +612,16 @@ async def chat_endpoint(
                 yield f"data: {json.dumps({'error': user_msg})}\n\n"
             finally:
                 tracer.close()
-                session_store.write_messages(session_key, interpreter.messages)
+                clean_msgs = [
+                    m for m in interpreter.messages
+                    if not (
+                        m.get("role") == "assistant"
+                        and m.get("type") == "message"
+                        and isinstance(m.get("content"), str)
+                        and m["content"].lstrip().startswith("to=execute")
+                    )
+                ]
+                session_store.write_messages(session_key, clean_msgs)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -745,7 +728,16 @@ async def load_conversation_endpoint(
                         interpreter_msg["format"] = msg.get("message_format")
                     interpreter_messages.append(interpreter_msg)
 
-        session_store.write_messages(session_key, interpreter_messages)
+        clean_interpreter_messages = [
+            m for m in interpreter_messages
+            if not (
+                m.get("role") == "assistant"
+                and m.get("type") == "message"
+                and isinstance(m.get("content"), str)
+                and m["content"].lstrip().startswith("to=execute")
+            )
+        ]
+        session_store.write_messages(session_key, clean_interpreter_messages)
 
         if session_key in interpreter_instances:
             try:

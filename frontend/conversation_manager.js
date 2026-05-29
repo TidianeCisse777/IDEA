@@ -142,6 +142,7 @@ class ConversationManager {
             this.totalCount += 1;
             this.currentConversationId = conversation.id;
             this.currentMessages = [];
+            localStorage.setItem('activeConversationId', conversation.id);
 
             this.notifyConversationListeners('conversation_created', conversation);
             this.notifyConversationListeners('conversation_changed', conversation);

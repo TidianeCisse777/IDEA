@@ -96,6 +96,39 @@ def get_or_create_interpreter(
         profile.configure_interpreter(interpreter)
         interpreter.auto_run = True
 
+        # gpt-5.4-mini via OpenRouter returns an empty LiteLLMCompletionStreamingIterator
+        # on the Responses API path (litellm.responses). Force standard chat completions.
+        _orig_completions = interpreter.llm.completions
+
+        def _completions_via_chat(**params):
+            import litellm
+            if "input" in params or "instructions" in params:
+                system = params.pop("instructions", "") or ""
+                items = params.pop("input", []) or []
+                params.pop("max_output_tokens", None)
+                messages = []
+                if system:
+                    messages.append({"role": "system", "content": system})
+                for item in items:
+                    role = item.get("role", "user")
+                    if role not in ("user", "assistant", "system"):
+                        role = "user"
+                    content = item.get("content", "")
+                    if isinstance(content, list):
+                        content = "".join(
+                            p.get("text", "") for p in content
+                            if isinstance(p, dict)
+                        )
+                    messages.append({"role": role, "content": content or ""})
+                params["messages"] = messages
+                # gpt-5.4-mini doesn't support tool calling via OpenRouter chat completions
+                params.pop("tools", None)
+                params.pop("tool_choice", None)
+                return litellm.completion(**params)
+            return _orig_completions(**params)
+
+        interpreter.llm.completions = _completions_via_chat
+
         interpreter_instances[session_key] = interpreter
         logger.info(f"Created new interpreter for session {session_key}")
         return interpreter

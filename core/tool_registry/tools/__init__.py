@@ -10,4 +10,4 @@ from . import copepod_columns
 from . import copepod_remote_sources
 from . import copepod_sources_meta
 from . import copepod_rag
-from . import copepod_session_artifacts
+from . import copepod_taxonomy

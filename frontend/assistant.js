@@ -270,10 +270,15 @@ async function sendRequest(msgOverride=null) {
 
         let partialData = ''; // Buffer for partial data
 
+        resetExecBlockState();
+
         while (isGenerating) {
             const { value, done } = await reader.read();
 
-            if (done) break;
+            if (done) {
+                flushPendingAssistantMessages();
+                break;
+            }
 
             const text = decoder.decode(value, { stream: true });
             partialData += text;
@@ -356,6 +361,12 @@ function saveCompletedAssistantMessage(message) {
     if (!conversationManager || !(message.role === 'assistant' || message.role === 'computer')) {
         return;
     }
+    // Drop to=execute code="..." messages — OI internal format that slipped through
+    if (message.role === 'assistant' && message.type === 'message' &&
+        typeof message.content === 'string' &&
+        message.content.includes('to=execute') && message.content.includes('code=')) {
+        return;
+    }
     if (message.type === 'console') {
         if (message.format === 'active_line') {
             return;
@@ -409,6 +420,11 @@ function createImageMessageFromChunk(chunk, fallbackMessage) {
 function processChunk(chunk) {
     // Drop raw LLM tool_call chunks that leaked through without execution
     if (chunk && chunk.tool_calls && !chunk.type) return Promise.resolve();
+    // Drop to=execute code="..." text chunks — code is extracted and executed by OI
+    if (chunk && chunk.role === 'assistant' && chunk.type === 'message') {
+        const c = chunk.content || '';
+        if (c.includes('to=execute') && c.includes('code=')) return Promise.resolve();
+    }
     chunk = normalizeIncomingChunk(chunk);
     return new Promise((resolve) => {
         removeWorkingIndicator();
@@ -756,7 +772,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                 try {
                     await fetch(config.getEndpoints().loadConversation, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, ...getAuthHeaders() },
+                        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, 'X-Agent-Type': AGENT_TYPE, ...getAuthHeaders() },
                         body: JSON.stringify({ messages: msgs })
                     });
                 } catch (_) { /* non-blocking — interpreter context is best-effort */ }
@@ -852,9 +868,9 @@ function initializeMobileNavigation() {
     }
 
     function closeMobileMenu() {
-        navbarToggle.classList.remove('active');
-        navbarMobileMenu.classList.remove('active');
-        mobileOverlay.classList.remove('active');
+        if (navbarToggle) navbarToggle.classList.remove('active');
+        if (navbarMobileMenu) navbarMobileMenu.classList.remove('active');
+        if (mobileOverlay) mobileOverlay.classList.remove('active');
         document.body.style.overflow = '';
     }
 

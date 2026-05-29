@@ -5,44 +5,45 @@ def _render(ctx: dict) -> str:
     user_id = ctx["user_id"]
     session_id = ctx["session_id"]
     return f"""## Copepod Runtime Tools
-You have access to host Python functions through the IDEA/OpenInterpreter environment. Use only tools relevant to copepod graphing workflows.
 
-### Data loading and profiling (Phase 1)
-- `inspect_file(file_path, sample_rows=20)` — read a CSV/TSV, return shape, dtypes, row count, sample rows, encoding, missing-value rates. Call this on every uploaded file at the start of Phase 1.
-- `infer_column_roles(columns, metadata=None)` — optional heuristic helper that pattern-matches column names to known roles. Use as a starting point only — it will miss many domain-specific columns. Always verify its output against your own knowledge and `describe_column`.
-- `describe_column(column_name, source_hint=None, session_id="{session_id}")` — query the RAG knowledge base for the definition, unit, and critical notes of a column. Call for any column whose role is unknown or ambiguous.
-- `check_column_for_calc(column_roles, calculation, session_id="{session_id}")` — verify whether a set of column roles supports a given calculation (e.g. "biovolume", "abundance_m3"). Pass the role dict from infer_column_roles.
-- `summarize_understanding(inspect_report, role_report, column_definitions=None)` — build the structured Data Understanding dict from `inspect_file` + `infer_column_roles` outputs, then enrich it with all `describe_column` results passed in `column_definitions`.
-- `create_data_understanding_draft(session_key, artifact)` — persist the structured Data Understanding draft after file inspection. Include file identity fields (`file_path`, `original_filename`, `size_bytes`, `content_hash`, `uploaded_at`, `inspection_tool_version`), column roles, quality limits, taxonomic validation status, joins, and user overrides when present.
-- `activate_data_understanding(session_key, version_id)` — activate a Data Understanding version only after the user has confirmed or corrected it.
-- `create_graph_context_draft(session_key, artifact)` — persist the structured Graph Context draft. It must include `data_understanding_version_id`, objective, source/data selection, columns, filters, units, chart type, language, output artifacts, feasibility, and blockers.
-- `activate_graph_context(session_key, version_id)` — activate a Graph Context version only after the user has confirmed or corrected the scientific and graphing context.
-- `get_active_data_understanding(session_key)` — read the active Data Understanding artifact. Use this before Phase 2 and in Analyse Mode instead of relying on conversation memory.
-- `get_active_graph_context(session_key)` — read the active Graph Context artifact. Use this before plan-readiness signaling or executing Analyse Mode.
+**HOW TO CALL THESE.** The only callable tool you have is `execute(language="python", code=...)`. Every helper listed below is a **Python function pre-imported inside the execute sandbox** — never as a standalone tool. Always wrap a call in code, e.g.:
+
+```
+execute(language="python", code='''
+report = inspect_file("/app/static/.../file.tsv")
+print(report)
+''')
+```
+
+Emitting `inspect_file` (or any helper below) as a top-level tool_call will silently fail.
+
+### File exploration
+- `inspect_file(file_path, sample_rows=20)` — read a CSV/TSV/Excel/NetCDF and return shape, dtypes, sample rows, encoding, missing-value rates, and a best-guess source type. Call on every uploaded file you have not yet seen.
+- `infer_column_roles(columns, metadata=None)` — heuristic helper that pattern-matches column names to known semantic roles. Output is provisional — verify with `describe_column` for anything ambiguous.
+- `describe_column(column_name, source_hint=None, session_id="{session_id}")` — look up a column definition, unit, and critical notes in the copepod RAG corpus. Use when the column meaning is not obvious.
+- `check_column_for_calc(column_roles, calculation, session_id="{session_id}")` — verify whether a set of roles supports a derived calculation (biovolume, abundance per m³, etc.).
+- `summarize_understanding(inspect_report, role_report, column_definitions=None)` — assemble a structured per-file summary. Use it as a working note for yourself when several files are loaded.
 
 ### Taxonomy
-- `lookup_worms_taxonomy(query, include_children=False, marine_only=True, session_id="{session_id}")` — query the WoRMS REST API for the authoritative classification of a marine taxon. Returns AphiaID, accepted name, status (accepted/synonym), full classification hierarchy, and optionally all direct children. Use when the user asks about a species' classification, whether a name is a synonym, or all species of a genus/family. Set `marine_only=False` for brackish or freshwater copepods (Eurytemora, some Cyclopoida).
+- `lookup_worms_taxonomy(query, include_children=False, marine_only=True, session_id="{session_id}")` — query the WoRMS REST API for the authoritative classification of a marine taxon. Set `marine_only=False` for brackish or freshwater copepods.
 
 ### Source metadata
 - `list_available_sources(auth_token=None, session_id="{session_id}")` — list known copepod data sources (EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE).
-- `describe_source(source_id, session_id="{session_id}")` — return full metadata for a source: content summary, join keys, known limitations.
-- `plan_remote_source_request(request_text, source_hint=None, session_id="{session_id}")` — normalize an explicit OGSL or Bio-ORACLE request, extract parameters, and identify missing fields before a remote fetch.
-- `fetch_remote_source_dataset(session_key, source_id, parameters, output_filename=None)` — download an allowed online source into the session uploads folder as a derived CSV so it can be reused like a normal uploaded file.
+- `describe_source(source_id, session_id="{session_id}")` — full metadata for a source: content, join keys, limitations.
+- `plan_remote_source_request(request_text, source_hint=None, session_id="{session_id}")` — normalize an explicit OGSL or Bio-ORACLE request and surface missing parameters.
+- `fetch_remote_source_dataset(session_key, source_id, parameters, output_filename=None)` — download an allowed online source into the session uploads folder as a derived CSV.
 
 ### General
 - `get_datetime()` — current date/time when needed.
-- `query_knowledge_base(query, "{user_id}", "{session_id}")` — query user-uploaded knowledge documents for definitions, methods, or citations.
+- `query_knowledge_base(query, "{user_id}", "{session_id}")` — query the user's uploaded knowledge documents for definitions, methods, or citations.
 - `call_mcp_tool(tool_id, **kwargs)` — use only explicitly available MCP tools relevant to the copepod task.
 - `list_mcp_tools()` — discover available MCP tools when needed.
 
 ### Rules
-- When files are present in the session, always call `inspect_file` first, then `infer_column_roles`, then `describe_column` for unknown or ambiguous columns that are still relevant to the objective.
-- Build `session_key` as `{{user_id}}:{{session_id}}:copepod` when calling artifact tools. For this session, use `{user_id}:{session_id}:copepod`.
-- Do not infer active artifacts from conversation memory. Read them with `get_active_data_understanding` or `get_active_graph_context` when their status matters.
 - Do not use station, sea-level, tide-gauge, datum, or climate-index tools for this profile.
 - Do not reimplement provided tools when an appropriate tool exists.
 - Do not expose credentials, environment variables, tokens, or secrets in outputs.
-- Keep tool use proportional to the graphing task.
+- Keep tool use proportional to the user's request.
 """
 
 
