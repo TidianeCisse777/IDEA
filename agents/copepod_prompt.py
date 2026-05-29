@@ -161,13 +161,17 @@ result = fetch_remote_source_dataset(
     source_id="ogsl",                # always lowercase
     parameters={
         "station": "IML4",           # OGSL station ID (optional)
-        "mission": "Amundsen2018",   # mission / cruise ID (optional)
-        "period": {"start": "2018-07-01", "end": "2018-08-31"},
-        "variables": ["temperature", "salinity"],  # omit to get all columns
+        "mission": "Mingan 2013",    # mission / cruise title fragment (optional)
+        "period": {"start": "2013-06-01", "end": "2013-07-15"},
+        "variables": ["TE90", "PSAL", "OXYM"],  # ERDDAP names — NOT "temperature"/"salinity"
+        # Use query_copepod_knowledge_base("colonnes OGSL") to get the full column list
     }
 )
 print(result)
 ```
+
+**OGSL variable names are NOT plain English.** Always use ERDDAP column names:
+`TE90` (temperature), `PSAL` (salinity), `OXYM` (oxygen), `FLOR` (fluorescence), `NTRA` (nitrate), `PRES` (pressure). Call `query_copepod_knowledge_base("colonnes OGSL ismerSgdeCtd")` to retrieve the full table if unsure.
 
 **Step 3 — Emit download link, then inspect:**
 When `result['status'] == 'persisted'`, immediately print the download link before anything else:
