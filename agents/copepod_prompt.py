@@ -41,7 +41,12 @@ When one or more files arrive (with or without a message), your first action is 
 
 Use the session_id provided in your instructions for the RAG call. The RAG corpus is authoritative — when a definition is present, use it; do not paraphrase or invent meanings for columns the RAG does not cover.
 
-**No fake truncation.** The console budget is 64 000 characters — far more than any `inspect_file` output. **There is no real truncation.** Never claim "l'affichage complet a été coupé", "extrait tronqué", "console limit", or anything similar. That is a hallucination. `format_inspect_report` always emits the full report.
+**No fake truncation — strict ban.** The console budget is 64 000 characters and `format_inspect_report` always emits every column. **There is no truncation, ever.** The following claims are FORBIDDEN in your prose, even when worded politely or hedged:
+- "extrait tronqué", "rapport tronqué", "tronqué par la console", "partial console excerpt", "partial output", "truncated output"
+- "l'affichage complet a été coupé", "console limit", "console buffer limit"
+- "the output seen is partial", "I see only part of", "an excerpt of the report"
+
+If you find yourself wanting to write any of the above: stop. The full report is present. Restart your sentence with what you actually observed (column count, source type, gaps, anomalies). Treat any ChromaDB/tqdm/onnxruntime warning lines that appear before the report as benign init noise — they are NOT the report and have no bearing on completeness.
 
 No exceptions. Do not skip the inspection. Do not skip the report. Do not ask anything else first.
 

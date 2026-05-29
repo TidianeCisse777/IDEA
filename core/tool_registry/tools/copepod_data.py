@@ -531,23 +531,24 @@ def collect_column_definitions(file_report, session_id=None):
 
 
 def format_inspect_report(file_report, column_definitions=None):
-    """Render an inspect_file result as a deterministic, human-readable report.
+    """Render an inspect_file result as a Markdown report.
 
     Use this instead of ``print(file_report)`` (Python's default dict repr is
-    unreadable for wide files). Always prints every column on its own line,
-    no truncation, no ellipsis. Pair with a 3-5 line prose paragraph if you
-    want to add interpretation.
+    unreadable for wide files). Output is markdown-formatted so it renders
+    nicely when included in an assistant text reply: H1 title, header lines
+    with bold keys, a full columns table, warnings and source evidence as
+    bullet lists. Every column appears — no truncation, no ellipsis.
 
     When ``column_definitions`` is provided (list of describe_column results,
-    e.g. from ``collect_column_definitions``), each definition is rendered
-    directly under its matching column line with the source RAG document.
+    e.g. from ``collect_column_definitions``), the matching RAG definition,
+    unit and critical notes are rendered in the row's last column.
 
     Args:
         file_report (dict): The dict returned by ``inspect_file``.
         column_definitions (list[dict], optional): RAG definitions per column.
 
     Returns:
-        str: Multi-line text rendering of the full report.
+        str: Markdown text rendering of the full report.
     """
     defs_by_col = {}
     if column_definitions:
@@ -555,39 +556,49 @@ def format_inspect_report(file_report, column_definitions=None):
             if isinstance(d, dict) and d.get("column"):
                 defs_by_col[d["column"]] = d
     fr = file_report or {}
+
+    def _md_escape_cell(value):
+        s = str(value) if value is not None else ""
+        # Pipes inside cells break markdown tables; HTML entity renders as `|`
+        # in every renderer and avoids backslash-escape parsing edge cases.
+        return s.replace("|", "&#124;").replace(chr(10), " ").replace(chr(13), " ")
+
     lines = []
-    lines.append("=== RAPPORT D'INSPECTION ===")
-    lines.append(f"file_path:         {fr.get('file_path', 'unknown')}")
-    lines.append(f"format:            {fr.get('format', 'unknown')}")
-    lines.append(f"n_rows:            {fr.get('n_rows', 'unknown')}")
-    lines.append(f"n_columns:         {fr.get('n_columns', 'unknown')}")
+    lines.append("# RAPPORT D'INSPECTION")
+    lines.append("")
+    lines.append(f"- **file_path** : `{fr.get('file_path', 'unknown')}`")
+    lines.append(
+        f"- **format** : `{fr.get('format', 'unknown')}`"
+        f"  •  **n_rows** : `{fr.get('n_rows', 'unknown')}`"
+        f"  •  **n_columns** : `{fr.get('n_columns', 'unknown')}`"
+    )
 
     src = fr.get("source_type_guess") or {}
     src_value = src.get("value", "unknown")
     src_conf = src.get("confidence", "low")
-    lines.append(f"source_type_guess: {src_value} (confidence={src_conf})")
+    lines.append(f"- **source_type_guess** : `{src_value}` (confidence: `{src_conf}`)")
 
     meta = fr.get("metadata") or {}
     enc = meta.get("encoding")
     delim = meta.get("delimiter")
     sheet_names = meta.get("sheet_names") or []
     if enc or delim:
-        lines.append(f"encoding:          {enc or 'n/a'}   delimiter: {delim or 'n/a'}")
+        lines.append(
+            f"- **encoding** : `{enc or 'n/a'}`  •  **delimiter** : `{delim or 'n/a'}`"
+        )
     if sheet_names:
-        lines.append(f"sheet_names:       {sheet_names}")
+        lines.append(f"- **sheet_names** : `{sheet_names}`")
 
     cols = fr.get("columns") or []
     lines.append("")
-    lines.append(f"--- COLUMNS ({len(cols)}) ---")
+    lines.append(f"## Columns ({len(cols)})")
+    lines.append("")
     if not cols:
-        lines.append("(no columns parsed)")
+        lines.append("_(no columns parsed)_")
     else:
-        # Column widths sized to longest name for readable alignment
-        max_name = max((len(str(c.get("name", ""))) for c in cols), default=0)
-        max_dtype = max((len(str(c.get("dtype", ""))) for c in cols), default=0)
-        max_name = min(max_name, 50)  # cap for absurdly long names
-        max_dtype = min(max_dtype, 12)
-        for c in cols:
+        lines.append("| # | Column | Dtype | Missing | Samples | Semantic | RAG definition |")
+        lines.append("|---|--------|-------|---------|---------|----------|-----------------|")
+        for idx, c in enumerate(cols, start=1):
             name = str(c.get("name", ""))
             dtype = str(c.get("dtype", ""))
             mc = c.get("missing_count", 0)
@@ -601,41 +612,53 @@ def format_inspect_report(file_report, column_definitions=None):
             sem = c.get("semantic_guess")
             unit = c.get("unit_guess")
             conf = c.get("confidence", "low")
-            sem_part = f"{sem} ({conf})" if sem else f"semantic=None"
+            sem_cell = f"`{sem}` ({conf})" if sem else "—"
             if unit:
-                sem_part = f"{sem_part} unit={unit}"
-            lines.append(
-                f"{name.ljust(max_name)} | {dtype.ljust(max_dtype)} | "
-                f"missing={mc} ({mr_pct}) | samples={samples_short} | {sem_part}"
-            )
+                sem_cell = f"{sem_cell} unit=`{unit}`"
+
             rag = defs_by_col.get(name)
             if rag:
-                conf = rag.get("confidence", "unknown")
+                rag_conf = rag.get("confidence", "unknown")
                 doc = rag.get("rag_doc_ref") or rag.get("source_file") or "RAG"
                 unit_r = rag.get("unit")
-                unit_part = f" [unit: {unit_r}]" if unit_r else ""
+                unit_part = f" [unit `{unit_r}`]" if unit_r else ""
                 defi = (rag.get("definition") or "").strip()
-                lines.append(f"  RAG: {defi}{unit_part}  (confidence={conf}, source={doc})")
-                for note in (rag.get("critical_notes") or [])[:2]:
-                    lines.append(f"       WARNING {note}")
+                rag_cell = f"{defi}{unit_part} _(conf: {rag_conf}, src: `{doc}`)_"
+                notes = rag.get("critical_notes") or []
+                if notes:
+                    note_text = " ".join(f"[!] {n}" for n in notes[:2])
+                    rag_cell = f"{rag_cell} {note_text}"
+            else:
+                rag_cell = "—"
+
+            row = (
+                f"| {idx} | `{_md_escape_cell(name)}` | `{_md_escape_cell(dtype)}` | "
+                f"{mc} ({mr_pct}) | "
+                f"`{_md_escape_cell(samples_short)}` | "
+                f"{_md_escape_cell(sem_cell)} | "
+                f"{_md_escape_cell(rag_cell)} |"
+            )
+            lines.append(row)
 
     warnings = fr.get("warnings") or []
     lines.append("")
-    lines.append(f"--- WARNINGS ({len(warnings)}) ---")
+    lines.append(f"## Warnings ({len(warnings)})")
+    lines.append("")
     if warnings:
         for w in warnings:
             lines.append(f"- {w}")
     else:
-        lines.append("(none)")
+        lines.append("_(none)_")
 
     evidence = src.get("evidence") or []
     lines.append("")
-    lines.append(f"--- SOURCE EVIDENCE ({len(evidence)}) ---")
+    lines.append(f"## Source evidence ({len(evidence)})")
+    lines.append("")
     if evidence:
         for e in evidence:
             lines.append(f"- {e}")
     else:
-        lines.append("(none)")
+        lines.append("_(none)_")
 
     return chr(10).join(lines)
 

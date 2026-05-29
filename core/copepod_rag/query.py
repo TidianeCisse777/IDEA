@@ -10,12 +10,39 @@ Usage (CLI):
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import unicodedata
 from pathlib import Path
 from typing import Optional
 
 from core.copepod_observability import should_enable_langfuse
+
+
+@contextlib.contextmanager
+def _silence_native_fds():
+    """Redirect stdout/stderr at the OS file-descriptor level.
+
+    Necessary because chromadb/onnxruntime writes warnings (e.g.
+    "onnxruntime cpuid_info warning: Unknown CPU vendor") and tqdm progress
+    bars at the C level — Python's contextlib.redirect_stderr only catches
+    Python-level writes, not C writes through fd 1/2. Otherwise this noise
+    pollutes the OI console stream and confuses the LLM into hallucinating
+    truncation. Only used to wrap one-shot library init/download paths.
+    """
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    saved_stdout = os.dup(1)
+    saved_stderr = os.dup(2)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved_stdout, 1)
+        os.dup2(saved_stderr, 2)
+        os.close(devnull)
+        os.close(saved_stdout)
+        os.close(saved_stderr)
 
 CHROMA_DIR = Path(__file__).parent / "chroma_db"
 COLLECTION_NAME = "copepod_rag"
@@ -51,14 +78,19 @@ def _load():
     if _collection is not None:
         return
 
-    import chromadb
-    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+    # Disable tqdm progress bars (model download, etc.) at the env level,
+    # and silence native stdout/stderr around the chromadb/onnx init so the
+    # first call doesn't leak warnings + download progress into OI console.
+    os.environ.setdefault("TQDM_DISABLE", "1")
+    with _silence_native_fds():
+        import chromadb
+        from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
-    _client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-    _collection = _client.get_collection(
-        name=COLLECTION_NAME,
-        embedding_function=DefaultEmbeddingFunction(),
-    )
+        _client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+        _collection = _client.get_collection(
+            name=COLLECTION_NAME,
+            embedding_function=DefaultEmbeddingFunction(),
+        )
 
 
 def _close():
