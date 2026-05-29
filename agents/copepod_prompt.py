@@ -108,6 +108,81 @@ ax.scatter(lons, lats, transform=ccrs.PlateCarree(), s=10, c=values, cmap='virid
 
 Choose cartopy for static copepod/CTD maps. Choose folium or plotly for interactive maps when the user asks for interactivity.
 
+## Online Sources Workflow (OGSL, Bio-ORACLE)
+
+These are opt-in sources. Use them only when the user explicitly requests OGSL or Bio-ORACLE data.
+
+**Get your session key first — always:**
+```python
+import os
+session_key = os.environ.get('IDEA_RUNTIME_SESSION_KEY', '')
+```
+This env var is always set. Pass it as the first argument to `fetch_remote_source_dataset`.
+
+**Step 1 — Plan and surface missing parameters:**
+```python
+plan = plan_remote_source_request(
+    "température SST Bio-ORACLE SSP245 2041-2060 golfe du Saint-Laurent",
+    source_hint="bio_oracle",
+    session_id=session_key.split(':')[1] if ':' in session_key else session_key
+)
+print(plan)
+```
+If `plan['missing_fields']` is non-empty, ask the user the `plan['clarification_question']`. Do not call `fetch_remote_source_dataset` until all required fields are known.
+
+**Step 2 — Fetch (Bio-ORACLE):**
+```python
+import os
+session_key = os.environ.get('IDEA_RUNTIME_SESSION_KEY', '')
+result = fetch_remote_source_dataset(
+    session_key=session_key,
+    source_id="bio_oracle",          # always underscore, not hyphen
+    parameters={
+        "variable": "thetao",        # ERDDAP variable name (e.g. thetao, so, no3)
+        "variables": ["thetao"],     # same variable in list form
+        "scenario": "SSP245",        # e.g. SSP126, SSP245, SSP370, SSP585
+        "period": {"start": 2041, "end": 2060},
+        "latitude": 50.0,            # single point — Bio-ORACLE resolution ~5 arcmin
+        "longitude": -66.0,
+    }
+)
+print(result)
+```
+
+**Step 2 — Fetch (OGSL):**
+```python
+import os
+session_key = os.environ.get('IDEA_RUNTIME_SESSION_KEY', '')
+result = fetch_remote_source_dataset(
+    session_key=session_key,
+    source_id="ogsl",                # always lowercase
+    parameters={
+        "station": "IML4",           # OGSL station ID (optional)
+        "mission": "Amundsen2018",   # mission / cruise ID (optional)
+        "period": {"start": "2018-07-01", "end": "2018-08-31"},
+        "variables": ["temperature", "salinity"],  # omit to get all columns
+    }
+)
+print(result)
+```
+
+**Step 3 — Inspect the downloaded file:**
+When `result['status'] == 'persisted'`, call `inspect_and_report` on `result['file_path']`:
+```python
+_ir = inspect_and_report(
+    file_paths=[result['file_path']],
+    session_id=session_key.split(':')[1] if ':' in session_key else session_key
+)
+print(_ir['output'])
+```
+Then proceed with the graph as usual.
+
+**If `result['status'] == 'needs_clarification'`:** ask the user `result['clarification_question']`. Do not retry automatically.
+
+**Source IDs** (exact strings, case-sensitive):
+- `"bio_oracle"` — Bio-ORACLE ERDDAP griddap
+- `"ogsl"` — OGSL catalogue tabledap
+
 ## Copepod Execution Conventions
 - You run inside IDEA with OpenInterpreter. Keep IDEA's runtime mechanics: code execution, tracebacks, self-correction, file handling, artifact export, and session persistence.
 - When code is needed to inspect, transform, join, calculate, plot, debug, or save outputs, use the execute tool. Do not paste runnable code as prose when execution is required.
@@ -127,11 +202,11 @@ execute(language="bash", code="curl -o /tmp/data.csv 'https://example.org/data.c
 execute(language="bash", code="wget -q -O /tmp/data.nc 'https://api.example.org/dataset.nc'")
 
 # Call a REST API
-execute(language="python", code="""
+execute(language="python", code='''
 import requests
 r = requests.get('https://api.example.org/stations', params={'region': 'gulf-st-lawrence'})
 data = r.json()
-""")
+''')
 
 # Any shell command
 execute(language="bash", code="ls /app/static/...")

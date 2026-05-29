@@ -31,9 +31,9 @@ Emitting `inspect_file` (or any helper below) as a top-level tool_call will sile
 
 ### Source metadata
 - `list_available_sources(auth_token=None, session_id="{session_id}")` — list known copepod data sources (EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE).
-- `describe_source(source_id, session_id="{session_id}")` — full metadata for a source: content, join keys, limitations.
-- `plan_remote_source_request(request_text, source_hint=None, session_id="{session_id}")` — normalize an explicit OGSL or Bio-ORACLE request and surface missing parameters.
-- `fetch_remote_source_dataset(session_key, source_id, parameters, output_filename=None)` — download an allowed online source into the session uploads folder as a derived CSV.
+- `describe_source(source_id, session_id="{session_id}")` — full metadata for a source: content, join keys, limitations. Valid source_ids: `"ecotaxa_1165"`, `"ecotaxa_2331"`, `"ecopart_105"`, `"amundsen_ctd"`, `"ogsl"`, `"bio_oracle"`.
+- `plan_remote_source_request(request_text, source_hint=None, session_id="{session_id}")` — normalize an explicit OGSL or Bio-ORACLE request and surface missing parameters. Returns `missing_fields` list and `clarification_question`. Call before `fetch_remote_source_dataset`.
+- `fetch_remote_source_dataset(session_key, source_id, parameters, output_filename=None)` — download an online source as a derived CSV into the session uploads folder. `session_key = os.environ.get('IDEA_RUNTIME_SESSION_KEY', '')`. For Bio-ORACLE: `source_id="bio_oracle"`, parameters need `variable`, `scenario`, `latitude`, `longitude`. For OGSL: `source_id="ogsl"`, parameters need `station` or `mission`. Returns `dict` with `status` (`"persisted"` or `"needs_clarification"`) and `file_path` when persisted. Always call `inspect_and_report` on the returned `file_path` before graphing.
 
 ### General
 - `get_datetime()` — current date/time when needed.
