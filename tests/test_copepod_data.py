@@ -475,3 +475,137 @@ class TestFormatInspectReport:
         out = tools["format_inspect_report"](report)
         assert "File detected as ambiguous" in out
         assert "Encoding inferred" in out
+
+
+# ── collect_column_definitions + format_inspect_report with RAG ───────────────
+
+@pytest.fixture
+def tools_with_mock_describe(tools):
+    """Inject a mock describe_column into the sandbox so we can test
+    collect_column_definitions without hitting the real ChromaDB."""
+    def _mock_describe(name, source_hint=None, session_id=None):
+        known = {
+            "STATION_NAME": {
+                "column": "STATION_NAME",
+                "definition": "Nom de la station d'échantillonnage.",
+                "unit": None,
+                "confidence": "reliable",
+                "critical_notes": [],
+                "rag_doc_ref": "colonnes_sources.md",
+                "source_file": "colonnes_sources.md",
+            },
+            "MIN_SAMPLE_DEPTH": {
+                "column": "MIN_SAMPLE_DEPTH",
+                "definition": "Profondeur minimale de l'échantillon en mètres.",
+                "unit": "m",
+                "confidence": "reliable",
+                "critical_notes": ["Toujours positif."],
+                "rag_doc_ref": "colonnes_instruments.md",
+                "source_file": "colonnes_instruments.md",
+            },
+        }
+        if name in known:
+            return known[name]
+        return {
+            "column": name,
+            "definition": f"Column '{name}' not found in knowledge base.",
+            "unit": None,
+            "confidence": "unknown",
+            "critical_notes": [],
+            "rag_doc_ref": None,
+            "source_file": None,
+        }
+    tools["describe_column"] = _mock_describe
+    return tools
+
+
+class TestCollectColumnDefinitions:
+    """Batch-fetch RAG definitions for every column in a file_report.
+    Filters out columns the RAG doesn't know."""
+
+    def _make_report(self, column_names, source="likely_neolabs_taxon"):
+        return {
+            "file_path": "/tmp/x.csv",
+            "format": "csv",
+            "n_rows": 10,
+            "n_columns": len(column_names),
+            "columns": [
+                {"name": n, "dtype": "object", "missing_count": 0, "missing_rate": 0.0,
+                 "sample_values": [], "semantic_guess": None, "unit_guess": None,
+                 "confidence": "low"}
+                for n in column_names
+            ],
+            "metadata": {"encoding": "utf-8", "delimiter": ",", "sheet_names": [],
+                         "netcdf_dimensions": {}, "netcdf_variables": [], "source_metadata": {}},
+            "source_type_guess": {"value": source, "confidence": "high", "evidence": []},
+            "warnings": [],
+            "raw_file_modified": False,
+        }
+
+    def test_returns_list(self, tools_with_mock_describe):
+        report = self._make_report(["STATION_NAME", "UNKNOWN_COL"])
+        defs = tools_with_mock_describe["collect_column_definitions"](report)
+        assert isinstance(defs, list)
+
+    def test_only_known_columns_returned(self, tools_with_mock_describe):
+        report = self._make_report(["STATION_NAME", "MIN_SAMPLE_DEPTH", "UNKNOWN_COL", "RANDOM"])
+        defs = tools_with_mock_describe["collect_column_definitions"](report)
+        names = [d["column"] for d in defs]
+        assert "STATION_NAME" in names
+        assert "MIN_SAMPLE_DEPTH" in names
+        assert "UNKNOWN_COL" not in names
+        assert "RANDOM" not in names
+
+    def test_empty_report_returns_empty_list(self, tools_with_mock_describe):
+        report = self._make_report([])
+        defs = tools_with_mock_describe["collect_column_definitions"](report)
+        assert defs == []
+
+    def test_passes_source_hint_from_report(self, tools_with_mock_describe):
+        captured = {}
+        def spy(name, source_hint=None, session_id=None):
+            captured["source_hint"] = source_hint
+            captured["session_id"] = session_id
+            return {"column": name, "definition": "x", "unit": None,
+                    "confidence": "reliable", "critical_notes": [],
+                    "rag_doc_ref": "x.md", "source_file": "x.md"}
+        tools_with_mock_describe["describe_column"] = spy
+        report = self._make_report(["X"], source="likely_ecotaxa")
+        tools_with_mock_describe["collect_column_definitions"](report, session_id="s1")
+        # Strip 'likely_' prefix before passing as source_hint
+        assert captured["source_hint"] == "ecotaxa"
+        assert captured["session_id"] == "s1"
+
+    def test_resilient_to_describe_column_errors(self, tools_with_mock_describe):
+        def boom(name, source_hint=None, session_id=None):
+            raise RuntimeError("RAG down")
+        tools_with_mock_describe["describe_column"] = boom
+        report = self._make_report(["STATION_NAME"])
+        # Should not raise; just returns empty
+        defs = tools_with_mock_describe["collect_column_definitions"](report)
+        assert defs == []
+
+
+class TestFormatInspectReportWithDefinitions:
+    """format_inspect_report accepts an optional column_definitions list and
+    integrates them per-column in the rendered report."""
+
+    def test_definitions_rendered_under_their_column(self, tools_with_mock_describe):
+        r = tools_with_mock_describe["inspect_file"](str(NEOLABS_ABUND))
+        defs = tools_with_mock_describe["collect_column_definitions"](r)
+        out = tools_with_mock_describe["format_inspect_report"](r, column_definitions=defs)
+        assert "Nom de la station" in out
+        assert "Profondeur minimale" in out
+        assert "colonnes_sources.md" in out or "colonnes_instruments.md" in out
+
+    def test_no_definitions_means_no_rag_section(self, tools_with_mock_describe):
+        r = tools_with_mock_describe["inspect_file"](str(NEOLABS_ABUND))
+        out = tools_with_mock_describe["format_inspect_report"](r)  # no definitions
+        # The bare column lines are still there, but no definition lines
+        assert "Nom de la station" not in out
+
+    def test_critical_notes_rendered_when_present(self, tools_with_mock_describe):
+        r = tools_with_mock_describe["inspect_file"](str(NEOLABS_ABUND))
+        defs = tools_with_mock_describe["collect_column_definitions"](r)
+        out = tools_with_mock_describe["format_inspect_report"](r, column_definitions=defs)
+        assert "Toujours positif" in out

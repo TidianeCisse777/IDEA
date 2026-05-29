@@ -493,7 +493,44 @@ def infer_column_roles(columns, metadata=None):
     }
 
 
-def format_inspect_report(file_report):
+def collect_column_definitions(file_report, session_id=None):
+    """Batch-query the copepod RAG corpus for every column in a file_report.
+
+    Calls ``describe_column`` per column, filters out unknown columns
+    (RAG returned confidence="unknown"), and returns the list of
+    definition dicts ready to pass to ``format_inspect_report``.
+
+    Resilient: a failing RAG call on one column does not stop the batch.
+
+    Args:
+        file_report (dict): Output of ``inspect_file``.
+        session_id (str, optional): Session ID for Langfuse tracing.
+
+    Returns:
+        list[dict]: List of describe_column results for columns the RAG knows.
+    """
+    src = (file_report.get("source_type_guess") or {}).get("value")
+    if isinstance(src, str) and src.startswith("likely_"):
+        src = src[len("likely_"):]
+
+    defs = []
+    for col in file_report.get("columns") or []:
+        name = col.get("name")
+        if not name:
+            continue
+        try:
+            d = describe_column(name, source_hint=src, session_id=session_id)
+        except Exception:
+            continue
+        if not isinstance(d, dict):
+            continue
+        if d.get("confidence") == "unknown":
+            continue
+        defs.append(d)
+    return defs
+
+
+def format_inspect_report(file_report, column_definitions=None):
     """Render an inspect_file result as a deterministic, human-readable report.
 
     Use this instead of ``print(file_report)`` (Python's default dict repr is
@@ -501,12 +538,22 @@ def format_inspect_report(file_report):
     no truncation, no ellipsis. Pair with a 3-5 line prose paragraph if you
     want to add interpretation.
 
+    When ``column_definitions`` is provided (list of describe_column results,
+    e.g. from ``collect_column_definitions``), each definition is rendered
+    directly under its matching column line with the source RAG document.
+
     Args:
         file_report (dict): The dict returned by ``inspect_file``.
+        column_definitions (list[dict], optional): RAG definitions per column.
 
     Returns:
         str: Multi-line text rendering of the full report.
     """
+    defs_by_col = {}
+    if column_definitions:
+        for d in column_definitions:
+            if isinstance(d, dict) and d.get("column"):
+                defs_by_col[d["column"]] = d
     fr = file_report or {}
     lines = []
     lines.append("=== RAPPORT D'INSPECTION ===")
@@ -561,6 +608,16 @@ def format_inspect_report(file_report):
                 f"{name.ljust(max_name)} | {dtype.ljust(max_dtype)} | "
                 f"missing={mc} ({mr_pct}) | samples={samples_short} | {sem_part}"
             )
+            rag = defs_by_col.get(name)
+            if rag:
+                conf = rag.get("confidence", "unknown")
+                doc = rag.get("rag_doc_ref") or rag.get("source_file") or "RAG"
+                unit_r = rag.get("unit")
+                unit_part = f" [unit: {unit_r}]" if unit_r else ""
+                defi = (rag.get("definition") or "").strip()
+                lines.append(f"  RAG: {defi}{unit_part}  (confidence={conf}, source={doc})")
+                for note in (rag.get("critical_notes") or [])[:2]:
+                    lines.append(f"       WARNING {note}")
 
     warnings = fr.get("warnings") or []
     lines.append("")
