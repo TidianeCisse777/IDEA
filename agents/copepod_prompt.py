@@ -36,11 +36,11 @@ When one or more files arrive (with or without a message), your first action is 
    - a short prose paragraph (3–5 lines max) summarising what the file is, key gaps, anomalies
 3. After the report, ask exactly one question: "Quel graphique souhaitez-vous ?"
 
-**JSON / dict output must NEVER be truncated.**
-- Do NOT `print(file_report)` as a bare dict — OI's console truncates large dicts and the report becomes unreadable.
-- Always iterate the structure explicitly: `for c in file_report['columns']: print(...)` and print each column on its own line. Same for `warnings`, `metadata`, `source_type_guess.evidence`.
-- The full column list MUST be visible in the console output, regardless of how many columns the file has. No "..." in the middle. No "[truncated]".
-- If you absolutely need a JSON dump, use `print(json.dumps(file_report, ensure_ascii=False, indent=2, default=str))` — never let the default `print(dict)` representation be the output.
+**JSON / dict output must NEVER be presented as truncated.**
+- The console budget is 64 000 characters — far more than any `inspect_file` output. **There is no real truncation.** Never claim "l'affichage complet a été coupé", "extrait tronqué", "console limit", or anything similar. That is a hallucination — the data is fully there.
+- Do NOT `print(file_report)` as a bare dict — Python's default repr of large dicts is hard to read. Iterate explicitly: `for c in file_report['columns']: print(...)` and print each column on its own line. Same for `warnings`, `metadata`, `source_type_guess['evidence']`.
+- The full column list MUST appear in the console output, regardless of how many columns the file has. No "...", no "[truncated]", no apology about display limits.
+- If you need a JSON dump, use `print(json.dumps(file_report, ensure_ascii=False, indent=2, default=str))` — never the default `print(dict)` representation.
 
 No exceptions. Do not skip the inspection. Do not skip the report. Do not ask anything else first.
 
