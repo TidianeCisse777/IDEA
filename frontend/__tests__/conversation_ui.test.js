@@ -271,3 +271,47 @@ describe('Fix 3 — loadConversation interpreter sync isolated', () => {
         expect(getNotification('error').textContent).toContain('Impossible de charger la conversation');
     });
 });
+
+// ─── Fix: loadConversationIntoInterpreter deduplication ──────────────────────
+// Regression guard: concurrent calls (e.g. 5× after stream end) must produce
+// exactly ONE POST /load-conversation, not N, to avoid clearing the OI kernel
+// N times and triggering N re-upload retries in the frontend.
+
+describe('loadConversationIntoInterpreter deduplication', () => {
+    const messages = [{ id: 'm1', role: 'user', content: 'hi' }];
+
+    beforeEach(() => {
+        const conv = makeConv('c1', 'Test', { messages });
+        global.conversationManager = makeConversationManager([conv]);
+        loadConversationUI();
+    });
+
+    test('5 concurrent calls produce exactly 1 HTTP request', async () => {
+        const calls = await Promise.all([
+            window.loadConversation('c1'),
+            window.loadConversation('c1'),
+            window.loadConversation('c1'),
+            window.loadConversation('c1'),
+            window.loadConversation('c1'),
+        ]);
+
+        // loadConversation calls loadConversationIntoInterpreter internally.
+        // fetch is called for: loadConversation DB fetch + 1 interpreter sync (not 5).
+        const interpreterSyncCalls = global.fetch.mock.calls.filter(
+            call => call[0] === '/api/load-conversation' && call[1]?.method === 'POST'
+        );
+        expect(interpreterSyncCalls.length).toBe(1);
+    });
+
+    test('after first call completes, a subsequent call goes through', async () => {
+        await window.loadConversation('c1');
+        global.fetch.mockClear();
+
+        await window.loadConversation('c1');
+
+        const interpreterSyncCalls = global.fetch.mock.calls.filter(
+            call => call[0] === '/api/load-conversation' && call[1]?.method === 'POST'
+        );
+        expect(interpreterSyncCalls.length).toBe(1);
+    });
+});

@@ -728,3 +728,23 @@ class TestInspectAndReport:
         summary_block = result["output"][idx_s:idx_c]
         assert "### Fichiers chargés" in summary_block
         assert "- " in summary_block
+
+    def test_summary_variables_line_uses_br_separator(self, tools):
+        """'Variables :' must be separated from the filename by a <br> tag
+        so marked.js renders a line break regardless of its configuration."""
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        idx_s = result["output"].index("%%SUMMARY%%")
+        idx_c = result["output"].index("%%CLOSING%%")
+        summary_block = result["output"][idx_s:idx_c]
+        assert "<br>Variables :" in summary_block, \
+            "Variables line must be preceded by <br> for reliable line break rendering"
+
+    def test_summary_warnings_use_br_separator(self, tools):
+        """⚠ warning lines must also be preceded by <br> tags."""
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        idx_s = result["output"].index("%%SUMMARY%%")
+        idx_c = result["output"].index("%%CLOSING%%")
+        summary_block = result["output"][idx_s:idx_c]
+        if "⚠" in summary_block:
+            assert "<br>⚠" in summary_block, \
+                "⚠ warning lines must be preceded by <br>"

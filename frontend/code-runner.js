@@ -179,6 +179,15 @@ function shouldTrackCodeMessage(message) {
     );
 }
 
+function shouldTriggerInspectionIndicator(chunk, message) {
+    return Boolean(
+        chunk && chunk.end &&
+        message && message.type === 'code' &&
+        ((message.content || '').includes('inspect_and_report') ||
+         (message.content || '').includes('inspect_file'))
+    );
+}
+
 function isConsoleOutputMessage(message) {
     if (!message) return false;
     const type = message.type || message.message_type;
@@ -428,5 +437,6 @@ if (typeof module !== 'undefined' && module.exports) {
         isTelemetryConsoleMessage,
         isConsoleOutputMessage,
         shouldTrackCodeMessage,
+        shouldTriggerInspectionIndicator,
     };
 }

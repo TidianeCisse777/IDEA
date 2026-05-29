@@ -433,7 +433,6 @@ function processChunk(chunk) {
     return new Promise((resolve) => {
         removeWorkingIndicator();
         if (chunk.type === 'console' && chunk.format === 'active_line') {
-            //console.log(chunk); // Debug log for active line chunks
             handleActiveLineChunk(chunk.content);
             resolve();
             return;
@@ -471,6 +470,9 @@ function processChunk(chunk) {
             messages.push(newMessage);
             appendMessage(newMessage);
             setActiveMessageId(chunk, newMessage.id);
+            if (chunk.type === 'code') {
+                lastExecutableCodeId = newMessage.id;
+            }
             message = newMessage;
         } else if (chunk.error) {
             const errorMessage = chunk.error.message || chunk.error;
@@ -509,6 +511,10 @@ function processChunk(chunk) {
                 chunk.format = chunk.format || message.format || chunk.recipient || 'output';
                 message.isComplete = true;
                 clearActiveMessageId(chunk);
+                if (shouldTriggerInspectionIndicator(chunk, message) &&
+                    typeof showInspectionIndicator === 'function') {
+                    showInspectionIndicator('Inspection des fichiers en cours…');
+                }
                 // Remove empty assistant message bubbles (OI emits these before every code block)
                 if (message.type === 'message' && !(message.content || '').trim()) {
                     const el = chatDisplay.querySelector(`.message[data-id="${message.id}"]`);
@@ -787,11 +793,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                 // Reset the backend interpreter to this conversation's context
                 // so new messages don't run in a stale Redis session
                 try {
-                    await fetch(config.getEndpoints().loadConversation, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'X-Session-Id': sessionId, 'X-Agent-Type': AGENT_TYPE, ...getAuthHeaders() },
-                        body: JSON.stringify({ messages: msgs })
-                    });
+                    await window.loadConversationIntoInterpreter(msgs);
                 } catch (_) { /* non-blocking — interpreter context is best-effort */ }
             } else {
                 showPromptIdeas();

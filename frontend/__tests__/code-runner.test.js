@@ -13,6 +13,7 @@ const {
     isTelemetryConsoleMessage,
     isConsoleOutputMessage,
     shouldTrackCodeMessage,
+    shouldTriggerInspectionIndicator,
 } = require('../code-runner.js');
 
 describe('normalizeIncomingChunk', () => {
@@ -185,5 +186,54 @@ describe('shouldTrackCodeMessage', () => {
 
     test('false for non-code message', () => {
         expect(shouldTrackCodeMessage({ type: 'message', role: 'assistant' })).toBe(false);
+    });
+});
+
+describe('shouldTriggerInspectionIndicator', () => {
+    // Regression: the check used to be at chunk.start when content was empty → never fired.
+    // It must fire at chunk.end when the full code is assembled in message.content.
+
+    const endChunk = { end: true };
+    const startChunk = { start: true };
+    const midChunk = {};
+
+    test('true at chunk.end when message has inspect_and_report', () => {
+        const msg = { type: 'code', content: "_ir = inspect_and_report(file_paths=['/f.tsv'], session_id='s')" };
+        expect(shouldTriggerInspectionIndicator(endChunk, msg)).toBe(true);
+    });
+
+    test('true at chunk.end when message has inspect_file', () => {
+        const msg = { type: 'code', content: "r = inspect_file('/app/static/f.tsv')" };
+        expect(shouldTriggerInspectionIndicator(endChunk, msg)).toBe(true);
+    });
+
+    test('false at chunk.start — content not yet assembled (regression guard)', () => {
+        // This is the exact bug: start chunk has empty content.
+        const msg = { type: 'code', content: '' };
+        expect(shouldTriggerInspectionIndicator(startChunk, msg)).toBe(false);
+    });
+
+    test('false at mid chunk even if content partially assembled', () => {
+        const msg = { type: 'code', content: "_ir = inspect_and_report(" };
+        expect(shouldTriggerInspectionIndicator(midChunk, msg)).toBe(false);
+    });
+
+    test('false at chunk.end for code without inspect calls', () => {
+        const msg = { type: 'code', content: 'import pandas as pd\ndf = pd.read_csv("f.csv")' };
+        expect(shouldTriggerInspectionIndicator(endChunk, msg)).toBe(false);
+    });
+
+    test('false for non-code message type', () => {
+        const msg = { type: 'message', content: 'inspect_and_report is mentioned here' };
+        expect(shouldTriggerInspectionIndicator(endChunk, msg)).toBe(false);
+    });
+
+    test('false when chunk is null', () => {
+        const msg = { type: 'code', content: '_ir = inspect_and_report(...)' };
+        expect(shouldTriggerInspectionIndicator(null, msg)).toBe(false);
+    });
+
+    test('false when message is null', () => {
+        expect(shouldTriggerInspectionIndicator(endChunk, null)).toBe(false);
     });
 });

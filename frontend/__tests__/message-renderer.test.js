@@ -7,8 +7,11 @@
 // Stub globals referenced in module-level code paths
 global.marked = { parse: (s) => `<p>${s}</p>` };
 global.DOMPurify = { sanitize: (s) => s };
-global.chatDisplay = { scrollTop: 0, scrollHeight: 0 };
+global.chatDisplay = document.createElement('div');
+global.chatDisplay.scrollTop = 0;
+global.chatDisplay.scrollHeight = 0;
 global.messages = [];
+global.scrollToBottom = () => {};
 
 const {
     protectMath,
@@ -23,6 +26,8 @@ const {
     isInspectionReportMessage,
     extractReportTitle,
     wrapInspectionReportCollapsible,
+    showInspectionIndicator,
+    removeInspectionIndicator,
 } = require('../message-renderer.js');
 
 describe('generateId', () => {
@@ -254,5 +259,36 @@ describe('wrapInspectionReportCollapsible', () => {
         const toggleTitle = container.querySelector('.report-toggle-title');
         expect(toggleTitle.textContent).not.toContain('📄');
         expect(toggleTitle.textContent).toContain('bio_oracle');
+    });
+});
+
+describe('showInspectionIndicator / removeInspectionIndicator', () => {
+    beforeEach(() => {
+        global.chatDisplay.innerHTML = '';
+    });
+
+    test('showInspectionIndicator adds a bubble with the given label', () => {
+        showInspectionIndicator('Inspection des fichiers en cours…');
+        const el = global.chatDisplay.querySelector('.inspection-indicator');
+        expect(el).not.toBeNull();
+        expect(el.textContent).toContain('Inspection des fichiers en cours…');
+    });
+
+    test('calling showInspectionIndicator again updates the label in place', () => {
+        showInspectionIndicator('Inspection des fichiers en cours…');
+        showInspectionIndicator('Génération des rapports…');
+        const indicators = global.chatDisplay.querySelectorAll('.inspection-indicator');
+        expect(indicators.length).toBe(1);
+        expect(indicators[0].textContent).toContain('Génération des rapports…');
+    });
+
+    test('removeInspectionIndicator removes the bubble', () => {
+        showInspectionIndicator('En cours…');
+        removeInspectionIndicator();
+        expect(global.chatDisplay.querySelector('.inspection-indicator')).toBeNull();
+    });
+
+    test('removeInspectionIndicator is a no-op when no indicator present', () => {
+        expect(() => removeInspectionIndicator()).not.toThrow();
     });
 });

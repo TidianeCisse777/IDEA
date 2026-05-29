@@ -429,6 +429,29 @@ def test_markers_order_rapport_then_summary_then_closing():
     assert "graphique" in msg_chunks[3]["content"].lower()
 
 
+def test_raw_inspect_and_report_call_is_suppressed():
+    """Raw Python code starting with _ir = inspect_and_report( must not appear
+    as an assistant text message — it's an OI internal code emission without fences."""
+    raw_code = (
+        "_ir = inspect_and_report(\n"
+        "    file_paths=['/app/static/session-abc/file.csv'],\n"
+        "    session_id='session-abc'\n"
+        ")\n"
+        "print(_ir['output'])"
+    )
+    events = list(chat_stream_events(_stream_message(raw_code)))
+    msg_events = [e for e in events if e.get("type") == "message"]
+    assert msg_events == [], f"raw inspect_and_report code should be suppressed, got: {msg_events}"
+
+
+def test_raw_inspect_and_report_single_line_is_suppressed():
+    """Single-line _ir = inspect_and_report( variant must also be suppressed."""
+    raw_code = "_ir = inspect_and_report(file_paths=['/tmp/f.csv'], session_id='s')"
+    events = list(chat_stream_events(_stream_message(raw_code)))
+    msg_events = [e for e in events if e.get("type") == "message"]
+    assert msg_events == [], f"single-line raw code should be suppressed: {msg_events}"
+
+
 def test_code_event_passes_through_untouched():
     """type:code chunks emitted by OI for execution must not be altered."""
     chunks = [

@@ -479,7 +479,18 @@ function debounce(func, wait) {
     };
 }
 
+// Shared promise to coalesce concurrent calls — only one HTTP request goes out at a time.
+let _loadingIntoInterpreter = null;
+
 async function loadConversationIntoInterpreter(messages) {
+    if (_loadingIntoInterpreter) return _loadingIntoInterpreter;
+    _loadingIntoInterpreter = _doLoadConversationIntoInterpreter(messages).finally(() => {
+        _loadingIntoInterpreter = null;
+    });
+    return _loadingIntoInterpreter;
+}
+
+async function _doLoadConversationIntoInterpreter(messages) {
     try {
         const response = await fetch(config.getEndpoints().loadConversation, {
             method: 'POST',
@@ -492,14 +503,14 @@ async function loadConversationIntoInterpreter(messages) {
                 messages: messages
             })
         });
-        
+
         if (!response.ok) {
             throw new Error(`Failed to load conversation into interpreter: ${response.status}`);
         }
-        
+
         const result = await response.json();
         console.log(`Loaded ${result.message_count} messages into interpreter context`);
-        
+
     } catch (error) {
         console.error('Error loading conversation into interpreter:', error);
         throw error;
@@ -516,3 +527,4 @@ window.conversationUI = {
 };
 
 window.loadConversation = loadConversation;
+window.loadConversationIntoInterpreter = loadConversationIntoInterpreter;

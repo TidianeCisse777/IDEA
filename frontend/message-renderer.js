@@ -543,6 +543,34 @@ function appendExternalMessage({ role = 'assistant', content = '', type = 'messa
 
 window.appendExternalMessage = appendExternalMessage;
 
+let _inspectionIndicatorId = null;
+
+function _codeBlockHasInspectAndReport(codeId) {
+    const msg = (typeof messages !== 'undefined' ? messages : []).find(m => m.id === codeId);
+    return msg && typeof msg.content === 'string' && msg.content.includes('inspect_and_report');
+}
+
+function showInspectionIndicator(label) {
+    if (_inspectionIndicatorId) {
+        const el = chatDisplay.querySelector(`[data-id="${_inspectionIndicatorId}"] .inspection-indicator-label`);
+        if (el) { el.textContent = label; return; }
+    }
+    _inspectionIndicatorId = generateId('insp');
+    const wrap = document.createElement('div');
+    wrap.className = 'message assistant inspection-indicator';
+    wrap.setAttribute('data-id', _inspectionIndicatorId);
+    wrap.innerHTML = `<div class="content"><div class="inspection-indicator-inner"><span class="inspection-indicator-spinner"></span><span class="inspection-indicator-label">${label}</span></div></div>`;
+    chatDisplay.appendChild(wrap);
+    scrollToBottom();
+}
+
+function removeInspectionIndicator() {
+    if (!_inspectionIndicatorId) return;
+    const el = chatDisplay.querySelector(`[data-id="${_inspectionIndicatorId}"]`);
+    if (el) el.remove();
+    _inspectionIndicatorId = null;
+}
+
 function handleActiveLineChunk(content) {
     if (!activeLineCodeId) {
         activeLineCodeId = lastExecutableCodeId || pendingConsoleParentId || null;
@@ -551,9 +579,15 @@ function handleActiveLineChunk(content) {
     if (content) {
         isActiveLineRunning = true;
         renderActiveLineSpinner();
+        if (_codeBlockHasInspectAndReport(activeLineCodeId)) {
+            showInspectionIndicator('Inspection des fichiers en cours…');
+        }
     } else {
         isActiveLineRunning = false;
         removeActiveLineSpinner();
+        if (_inspectionIndicatorId) {
+            showInspectionIndicator('Génération des rapports…');
+        }
         activeLineCodeId = null;
     }
 }
@@ -629,6 +663,7 @@ function updateMessageContent(id, content) {
             contentDiv.innerHTML = DOMPurify.sanitize(htmlWithMath);
 
             if (isInspectionReport) {
+                removeInspectionIndicator();
                 const title = extractReportTitle(raw);
                 wrapInspectionReportCollapsible(contentDiv, title);
             }
@@ -787,5 +822,7 @@ if (typeof module !== 'undefined' && module.exports) {
         isInspectionReportMessage,
         extractReportTitle,
         wrapInspectionReportCollapsible,
+        showInspectionIndicator,
+        removeInspectionIndicator,
     };
 }

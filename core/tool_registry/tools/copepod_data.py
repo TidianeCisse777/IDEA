@@ -996,10 +996,10 @@ def inspect_and_report(file_paths, session_id=None):
 
         sem_str = ", ".join(sem_cols[:5]) if sem_cols else "—"
         entry_lines = [f"**{r['file']}** ({shape}) — {label}"]
-        entry_lines.append(f"  Variables : {sem_str}")
+        entry_lines.append(f"Variables : {sem_str}")
         for flag in missing_flags[:3]:
-            entry_lines.append(f"  ⚠ {flag}")
-        summary_lines.append(chr(10).join(entry_lines))
+            entry_lines.append(f"⚠ {flag}")
+        summary_lines.append("<br>".join(entry_lines))
 
     # Cross-file join hints — only real oceanographic link keys, not any common column
     _VALID_JOIN_KEYS = {"PROFILE_ID", "OBJ_ORIG_ID", "OBJECT_ID", "PROFILEID"}
