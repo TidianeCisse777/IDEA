@@ -10,21 +10,8 @@
         try { return config.getEndpoints(); } catch { return {}; }
     }
 
-    function getAuthHeaders() {
-        const token = localStorage.getItem('authToken');
-        return token ? { 'Authorization': `Bearer ${token}` } : {};
-    }
-
-    function openModal(modal) {
-        if (!modal) return;
-        modal.style.display = 'block';
-        document.body.style.overflow = 'hidden';
-    }
-
     function closeModal(modal) {
-        if (!modal) return;
-        modal.style.display = 'none';
-        document.body.style.overflow = '';
+        ModalUtils.close(modal);
         resetForm();
     }
 
@@ -48,7 +35,7 @@
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...getAuthHeaders(),
+                    ...Auth.getAuthHeaders(),
                 },
             });
             if (!res.ok) return;
@@ -73,7 +60,7 @@
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...getAuthHeaders(),
+                    ...Auth.getAuthHeaders(),
                 },
             });
 
@@ -323,7 +310,7 @@
                 method,
                 headers: {
                     'Content-Type': 'application/json',
-                    ...getAuthHeaders(),
+                    ...Auth.getAuthHeaders(),
                 },
                 body: JSON.stringify(payload),
             });
@@ -365,7 +352,7 @@
                 method: 'DELETE',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...getAuthHeaders(),
+                    ...Auth.getAuthHeaders(),
                 },
             });
 
@@ -400,14 +387,14 @@
         if (openBtn) openBtn.addEventListener('click', () => {
             if (!state.isSuperuser) return;
             resetForm();
-            openModal(modal);
+            ModalUtils.open(modal);
             loadUsers();
         });
 
         if (openBtnMobile) openBtnMobile.addEventListener('click', () => {
             if (!state.isSuperuser) return;
             resetForm();
-            openModal(modal);
+            ModalUtils.open(modal);
             loadUsers();
             const navbarMobileMenu = document.getElementById('navbarMobileMenu');
             const navbarToggle = document.getElementById('navbarToggle');
@@ -423,17 +410,7 @@
         if (createBtn) createBtn.addEventListener('click', resetForm);
         if (form) form.addEventListener('submit', handleFormSubmit);
 
-        window.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                closeModal(modal);
-            }
-        });
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && modal && modal.style.display === 'block') {
-                closeModal(modal);
-            }
-        });
+        ModalUtils.bindDismiss(modal, () => closeModal(modal));
     }
 
     document.addEventListener('DOMContentLoaded', () => {

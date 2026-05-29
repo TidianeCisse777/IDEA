@@ -6,16 +6,15 @@
 let isShowingFavorites = false;
 // conversationManager is declared in assistant.js
 
-// Initialize conversation UI when DOM is loaded
+// Bind DOM event listeners at DOMContentLoaded (no conversationManager needed yet)
 document.addEventListener('DOMContentLoaded', function() {
-    initializeConversationUI();
+    setupConversationEventListeners();
 });
 
-function initializeConversationUI() {
-    // conversationManager is initialized by assistant.js — do not reinitialize here
-    setupConversationEventListeners();
+// Wire conversationManager listeners once assistant.js has created the instance
+window.addEventListener('app:ready', function() {
     setupConversationManagerListeners();
-}
+});
 
 function setupConversationEventListeners() {
     // Open conversations modal

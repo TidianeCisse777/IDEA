@@ -424,6 +424,14 @@
 </script>
 <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 <script src="config.js"></script>
+<script src="auth.js"></script>
+<script src="modal-utils.js"></script>
+<script src="theme-manager.js"></script>
+<script src="message-renderer.js"></script>
+<script src="file-upload.js"></script>
+<script src="welcome-screen.js"></script>
+<script src="microphone.js"></script>
+<script src="code-runner.js"></script>
 <script src="conversation_manager.js"></script>
 <script src="assistant.js"></script>
 <script src="account-settings.js"></script>
@@ -434,73 +442,6 @@
 <script src="user-management.js"></script>
 <script src="conversation_ui.js"></script>
 
-<script>
-// ── Sidebar toggle ──
-const sidebar = document.getElementById('sidebar');
-const sidebarToggle = document.getElementById('sidebarToggle');
-const sidebarOpenBtn = document.getElementById('sidebarOpenBtn');
-const mobileOverlay = document.getElementById('mobileOverlay');
-
-const SIDEBAR_KEY = 'idea-sidebar-collapsed';
-if (localStorage.getItem(SIDEBAR_KEY) === 'true') sidebar.classList.add('collapsed');
-
-sidebarToggle.addEventListener('click', () => {
-    if (window.innerWidth <= 900) {
-        // Mobile: close the slide-over instead of collapsing to icon-strip
-        sidebar.classList.remove('mobile-open');
-        mobileOverlay.classList.remove('active');
-    } else {
-        sidebar.classList.toggle('collapsed');
-        localStorage.setItem(SIDEBAR_KEY, sidebar.classList.contains('collapsed'));
-    }
-});
-sidebarOpenBtn.addEventListener('click', () => {
-    sidebar.classList.add('mobile-open');
-    mobileOverlay.classList.add('active');
-});
-mobileOverlay.addEventListener('click', () => {
-    sidebar.classList.remove('mobile-open');
-    mobileOverlay.classList.remove('active');
-});
-
-// ── Mode switcher ──
-const MODE_KEY = 'idea-mode';
-const modeButtons = document.querySelectorAll('.mode-btn');
-
-const MODE_PLACEHOLDERS = {
-    analyse: "Posez votre question sur les copépodes, chargez des données ou décrivez votre analyse…",
-    contexte: "Décrivez votre question de recherche ou hypothèse, puis comment les données s'inscrivent dans votre démarche…"
-};
-
-function applyMode(mode) {
-    modeButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.mode === mode));
-    document.body.dataset.mode = mode;
-    localStorage.setItem(MODE_KEY, mode);
-
-    const input = document.getElementById('messageInput');
-    if (input) input.placeholder = MODE_PLACEHOLDERS[mode] || MODE_PLACEHOLDERS.analyse;
-
-    if (window.refreshWelcome) window.refreshWelcome();
-}
-
-applyMode(localStorage.getItem(MODE_KEY) || 'analyse');
-
-modeButtons.forEach(btn => {
-    btn.addEventListener('click', () => applyMode(btn.dataset.mode));
-});
-
-// ── Sync sidebar-bottom height with main footer ──
-function syncSidebarBottom() {
-    const chatFooter = document.querySelector('.chat-footer');
-    const sidebarBottom = document.querySelector('.sidebar-bottom');
-    if (!chatFooter || !sidebarBottom) return;
-    sidebarBottom.style.minHeight = chatFooter.getBoundingClientRect().height + 'px';
-}
-
-requestAnimationFrame(() => {
-    syncSidebarBottom();
-    window.addEventListener('resize', syncSidebarBottom);
-});
-</script>
+<script src="ui-shell.js"></script>
 </body>
 </html>

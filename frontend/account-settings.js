@@ -5,29 +5,12 @@
         try { return config.getEndpoints(); } catch { return {}; }
     }
 
-    function getAuthHeaders() {
-        const token = localStorage.getItem('authToken');
-        return token ? { 'Authorization': `Bearer ${token}` } : {};
-    }
-
     function getSessionHeaders() {
         const sessionId = localStorage.getItem('sessionId') || '';
         return {
             'X-Session-Id': sessionId,
             'X-Agent-Type': 'copepod',
         };
-    }
-
-    function openModal(modal) {
-        if (!modal) return;
-        modal.style.display = 'block';
-        document.body.style.overflow = 'hidden';
-    }
-
-    function closeModal(modal) {
-        if (!modal) return;
-        modal.style.display = 'none';
-        document.body.style.overflow = '';
     }
 
     function attachEvents() {
@@ -44,12 +27,12 @@
         const onlineModeToggle = document.getElementById('onlineModeToggle');
 
         if (openBtn) openBtn.addEventListener('click', () => {
-            openModal(modal);
+            ModalUtils.open(modal);
             loadUserProfile();
             loadOnlineMode();
         });
         if (openBtnMobile) openBtnMobile.addEventListener('click', () => {
-            openModal(modal);
+            ModalUtils.open(modal);
             loadUserProfile();
             loadOnlineMode();
             const navbarMobileMenu = document.getElementById('navbarMobileMenu');
@@ -60,26 +43,16 @@
             if (mobileOverlay) mobileOverlay.classList.remove('active');
             document.body.style.overflow = '';
         });
-        if (closeBtn) closeBtn.addEventListener('click', () => closeModal(modal));
-        if (cancelBtn) cancelBtn.addEventListener('click', () => closeModal(modal));
+        if (closeBtn) closeBtn.addEventListener('click', () => ModalUtils.close(modal));
+        if (cancelBtn) cancelBtn.addEventListener('click', () => ModalUtils.close(modal));
 
-        window.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                closeModal(modal);
-            }
-        });
+        ModalUtils.bindDismiss(modal, () => ModalUtils.close(modal));
 
         if (onlineModeToggle) {
             onlineModeToggle.addEventListener('change', async () => {
                 await persistOnlineMode(onlineModeToggle.checked);
             });
         }
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && modal && modal.style.display === 'block') {
-                closeModal(modal);
-            }
-        });
 
         if (form) {
             form.addEventListener('submit', async (e) => {
@@ -110,7 +83,7 @@
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
-                            ...getAuthHeaders()
+                            ...Auth.getAuthHeaders()
                         },
                         body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
                     });
@@ -148,7 +121,7 @@
                     method: 'GET',
                     headers: {
                         'Content-Type': 'application/json',
-                        ...getAuthHeaders()
+                        ...Auth.getAuthHeaders()
                     }
                 });
 
@@ -189,7 +162,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                         ...getSessionHeaders(),
-                        ...getAuthHeaders(),
+                        ...Auth.getAuthHeaders(),
                     },
                 });
 
@@ -213,7 +186,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                         ...getSessionHeaders(),
-                        ...getAuthHeaders(),
+                        ...Auth.getAuthHeaders(),
                     },
                     body: JSON.stringify({ enabled }),
                 });

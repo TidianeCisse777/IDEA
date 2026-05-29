@@ -19,6 +19,13 @@ global.localStorage = {
     removeItem: (k) => { delete _storage[k]; },
 };
 
+global.Auth = {
+    getAuthHeaders: () => {
+        const t = global.localStorage.getItem('authToken');
+        return t ? { Authorization: `Bearer ${t}` } : {};
+    },
+};
+
 const { ConversationManager, MESSAGE_TYPES, MESSAGE_ROLES } = require('../conversation_manager.js');
 
 // ── helpers ──────────────────────────────────────────────────────────────────

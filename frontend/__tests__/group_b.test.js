@@ -20,6 +20,13 @@ global.localStorage = (() => {
 global.window = global.window || {};
 global.API_BASE_URL = 'http://localhost:8002';
 
+global.Auth = {
+    getAuthHeaders: () => {
+        const t = global.localStorage.getItem('authToken');
+        return t ? { Authorization: `Bearer ${t}` } : {};
+    },
+};
+
 const { ConversationManager } = require('../conversation_manager.js');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

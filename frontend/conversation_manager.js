@@ -36,8 +36,7 @@ class ConversationManager {
     }
     
     getAuthHeaders() {
-        const authToken = localStorage.getItem('authToken');
-        return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+        return Auth.getAuthHeaders();
     }
 
     _handle401() {

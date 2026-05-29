@@ -50,6 +50,14 @@ describe('Online Mode UI', () => {
             setItem: jest.fn(),
             removeItem: jest.fn(),
         };
+        global.Auth = {
+            getAuthHeaders: () => ({ Authorization: 'Bearer token-abc' }),
+        };
+        global.ModalUtils = {
+            open: (el) => { if (el) el.style.display = 'block'; },
+            close: (el) => { if (el) el.style.display = 'none'; },
+            bindDismiss: () => {},
+        };
         global.fetch = jest.fn((url, opts = {}) => {
             if (String(url).includes('/api/users/me')) {
                 return Promise.resolve({
@@ -125,6 +133,17 @@ describe('Online Mode — session ID consistency', () => {
         // the built-in Storage object that account-settings.js reads.
         window.localStorage.setItem('sessionId', SESSION_ID);
         window.localStorage.setItem('authToken', TOKEN);
+        global.Auth = {
+            getAuthHeaders: () => {
+                const t = window.localStorage.getItem('authToken');
+                return t ? { Authorization: `Bearer ${t}` } : {};
+            },
+        };
+        global.ModalUtils = {
+            open: (el) => { if (el) el.style.display = 'block'; },
+            close: (el) => { if (el) el.style.display = 'none'; },
+            bindDismiss: () => {},
+        };
         global.config = {
             getEndpoints: () => ({
                 userProfile: '/api/users/me',

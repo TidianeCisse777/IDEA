@@ -17,11 +17,6 @@
         }
     }
 
-    function getAuthHeaders() {
-        const token = localStorage.getItem('authToken');
-        return token ? { Authorization: `Bearer ${token}` } : {};
-    }
-
     function cacheElements() {
         elements.modal = document.getElementById('mcpManagementModal');
         elements.openButtons = [
@@ -53,16 +48,12 @@
     }
 
     function openModal() {
-        if (!elements.modal) return;
-        elements.modal.style.display = 'block';
-        document.body.style.overflow = 'hidden';
+        ModalUtils.open(elements.modal);
         loadConnections();
     }
 
     function closeModal() {
-        if (!elements.modal) return;
-        elements.modal.style.display = 'none';
-        document.body.style.overflow = '';
+        ModalUtils.close(elements.modal);
         resetForm();
     }
 
@@ -81,17 +72,7 @@
             updateTransportVisibility(elements.transportInput.value);
         });
 
-        window.addEventListener('click', (event) => {
-            if (event.target === elements.modal) {
-                closeModal();
-            }
-        });
-
-        document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' && elements.modal && elements.modal.style.display === 'block') {
-                closeModal();
-            }
-        });
+        ModalUtils.bindDismiss(elements.modal, closeModal);
     }
 
     async function loadConnections() {
@@ -108,7 +89,7 @@
             const res = await fetch(endpoints.mcpConnections, {
                 headers: {
                     'Content-Type': 'application/json',
-                    ...getAuthHeaders(),
+                    ...Auth.getAuthHeaders(),
                 },
             });
             if (!res.ok) {
@@ -299,7 +280,7 @@
                 method,
                 headers: {
                     'Content-Type': 'application/json',
-                    ...getAuthHeaders(),
+                    ...Auth.getAuthHeaders(),
                 },
                 body: JSON.stringify(payload),
             });
@@ -336,7 +317,7 @@
             const res = await fetch(buildConnectionUrl(state.selectedId), {
                 method: 'DELETE',
                 headers: {
-                    ...getAuthHeaders(),
+                    ...Auth.getAuthHeaders(),
                 },
             });
             if (!res.ok) {
@@ -366,7 +347,7 @@
             const url = `${buildConnectionUrl(state.selectedId)}/tools`;
             const res = await fetch(url, {
                 headers: {
-                    ...getAuthHeaders(),
+                    ...Auth.getAuthHeaders(),
                 },
             });
             if (!res.ok) {
@@ -387,7 +368,7 @@
         try {
             const res = await fetch(buildConnectionUrl(id), {
                 headers: {
-                    ...getAuthHeaders(),
+                    ...Auth.getAuthHeaders(),
                 },
             });
             if (!res.ok) return;
