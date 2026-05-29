@@ -512,8 +512,15 @@ async def chat_endpoint(
 
         def event_stream():
             fallback_sent = False
+            # Count user turns from the persisted session store, not the request
+            # body. The body can carry an arbitrary message history (e.g. when
+            # the frontend hydrates a loaded conversation), but the round index
+            # should reflect this session's true progression: 1 for a brand-new
+            # conversation, N for a session that already holds N user turns
+            # (e.g. after /load-conversation).
+            persisted = session_store.read_messages(session_key) or []
             user_turns = sum(
-                1 for m in messages
+                1 for m in persisted
                 if isinstance(m, dict) and m.get("role") == "user"
             )
             tracer = ChatRuntimeTracer.from_env(
