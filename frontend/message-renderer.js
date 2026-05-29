@@ -466,10 +466,14 @@ function appendMessage(message, options = {}) {
         _pendingAssistantEls.forEach(el => exec.body.appendChild(el));
         _pendingAssistantEls = [];
         exec.body.appendChild(messageElement);
-    } else if (message.role === 'computer' &&
-               (message.type === 'console' || message.type === 'image')) {
+    } else if (message.role === 'computer' && message.type === 'console') {
         const exec = _getOrCreateExecBlock();
         exec.body.appendChild(messageElement);
+    } else if (message.role === 'computer' && message.type === 'image') {
+        // Images produced by code go into the main chat, not the exec block
+        _closeExecBlock();
+        _pendingAssistantEls = [];
+        chatDisplay.appendChild(messageElement);
     } else if (message.role === 'assistant' && message.type === 'message') {
         if (_execHasStarted) {
             // Final message after execution — close exec block, show normally
@@ -592,6 +596,43 @@ function handleActiveLineChunk(content) {
     }
 }
 
+function _appendImageActions(contentDiv, src, mime) {
+    if (contentDiv.querySelector('.image-actions')) return;
+    const actions = document.createElement('div');
+    actions.className = 'image-actions';
+
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'image-action-btn';
+    dlBtn.title = 'Télécharger';
+    dlBtn.innerHTML = '<span class="material-icons">download</span>';
+    dlBtn.addEventListener('click', () => {
+        const a = document.createElement('a');
+        a.href = src;
+        a.download = `graph-${Date.now()}.${mime.split('/')[1] || 'png'}`;
+        a.click();
+    });
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'image-action-btn';
+    copyBtn.title = 'Copier';
+    copyBtn.innerHTML = '<span class="material-icons">content_copy</span>';
+    copyBtn.addEventListener('click', async () => {
+        try {
+            const res = await fetch(src);
+            const blob = await res.blob();
+            await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+            copyBtn.innerHTML = '<span class="material-icons">check</span>';
+            setTimeout(() => { copyBtn.innerHTML = '<span class="material-icons">content_copy</span>'; }, 1500);
+        } catch (_) {
+            copyBtn.title = 'Copie non supportée dans ce navigateur';
+        }
+    });
+
+    actions.appendChild(dlBtn);
+    actions.appendChild(copyBtn);
+    contentDiv.appendChild(actions);
+}
+
 function updateMessageContent(id, content) {
     try {
         const messageElement = chatDisplay.querySelector(`.message[data-id="${id}"]`);
@@ -679,8 +720,9 @@ function updateMessageContent(id, content) {
             if (message.format && message.format.startsWith('base64.')) {
                 const mime = message.format.replace('base64.', 'image/');
                 if (message.isComplete) {
-                    contentDiv.innerHTML =
-                        `<img src="data:${mime};base64,${content}" alt="Image">`;
+                    const dataUrl = `data:${mime};base64,${content}`;
+                    contentDiv.innerHTML = `<img src="${dataUrl}" alt="Image">`;
+                    _appendImageActions(contentDiv, dataUrl, mime);
                 } else {
                     contentDiv.innerHTML = `<div class="image-placeholder"> Generating image… </div>`;
                 }
@@ -689,6 +731,7 @@ function updateMessageContent(id, content) {
                 img.src = content;
                 img.alt = 'Image';
                 contentDiv.appendChild(img);
+                _appendImageActions(contentDiv, content, 'image/png');
             }
         } else if (message.type === 'code') {
             const preservedStdoutState = captureStdoutPanelState(message.id);
