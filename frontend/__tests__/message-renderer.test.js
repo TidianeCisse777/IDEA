@@ -20,6 +20,7 @@ const {
     escapeHtml,
     formatAttachmentLabel,
     extractAttachmentInfoFromContent,
+    isInspectionReportMessage,
 } = require('../message-renderer.js');
 
 describe('generateId', () => {
@@ -154,5 +155,15 @@ describe('extractAttachmentInfoFromContent', () => {
     test('returns null for non-string input', () => {
         expect(extractAttachmentInfoFromContent(null)).toBeNull();
         expect(extractAttachmentInfoFromContent(42)).toBeNull();
+    });
+});
+
+describe('isInspectionReportMessage', () => {
+    test('detects the inspection report header', () => {
+        expect(isInspectionReportMessage("# RAPPORT D'INSPECTION\nfoo")).toBe(true);
+    });
+
+    test('returns false for ordinary markdown', () => {
+        expect(isInspectionReportMessage('Hello **world**')).toBe(false);
     });
 });

@@ -116,6 +116,10 @@ function extractAttachmentInfoFromContent(content) {
     return null;
 }
 
+function isInspectionReportMessage(content) {
+    return typeof content === 'string' && content.trimStart().startsWith("# RAPPORT D'INSPECTION");
+}
+
 //// Chat display helpers
 
 function scrollToBottom() {
@@ -564,12 +568,15 @@ function updateMessageContent(id, content) {
             return;
         } else if (message.type === 'message') {
             let raw = content;
+            const isInspectionReport = message.role === 'assistant' && isInspectionReportMessage(raw);
+            messageElement.classList.toggle('inspection-report', isInspectionReport);
+            contentDiv.classList.toggle('inspection-report', isInspectionReport);
 
             const { text: shielded, store } = protectMath(raw);
 
             if (!hasBalancedMath(raw)) {
-            contentDiv.textContent = raw;
-            return;
+                contentDiv.textContent = raw;
+                return;
             }
 
             const parsedMarkdown = marked.parse(shielded);
@@ -727,5 +734,6 @@ if (typeof module !== 'undefined' && module.exports) {
         escapeHtml,
         formatAttachmentLabel,
         extractAttachmentInfoFromContent,
+        isInspectionReportMessage,
     };
 }
