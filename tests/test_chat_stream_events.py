@@ -134,6 +134,46 @@ def test_non_python_fence_is_preserved():
     assert "ls -la" in text
 
 
+def test_markdown_json_fence_wrapping_oi_toolcall_is_stripped():
+    """LLM sometimes wraps OI's JSON tool call in a ```json fence:
+        ```json
+        {"language":"python","code":"..."}
+        ```
+    OI parses it internally for execution, but the markdown still leaks to the
+    UI. Must be stripped, surrounding prose preserved."""
+    content = (
+        "Voici le tool call :\n"
+        "```json\n"
+        '{"language":"python","code":"file_report = inspect_file(\'/tmp/x.csv\')\\nprint(file_report)"}\n'
+        "```\n"
+        "Analyse terminée."
+    )
+    events = list(chat_stream_events(_stream_message(content)))
+    text = _concat_message_content(events)
+    assert "```json" not in text
+    assert '"language"' not in text
+    assert "inspect_file" not in text
+    assert "Voici le tool call" in text
+    assert "Analyse terminée." in text
+
+
+def test_markdown_json_fence_without_toolcall_is_preserved():
+    """A ```json fence containing regular JSON (not an OI tool call) is
+    informational — keep it."""
+    content = (
+        "Voici la config :\n"
+        "```json\n"
+        '{"name":"NeoLabs","version":1}\n'
+        "```\n"
+        "Fin."
+    )
+    events = list(chat_stream_events(_stream_message(content)))
+    text = _concat_message_content(events)
+    # Regular json blocks survive
+    assert "```json" in text
+    assert '"name":"NeoLabs"' in text
+
+
 def test_code_event_passes_through_untouched():
     """type:code chunks emitted by OI for execution must not be altered."""
     chunks = [

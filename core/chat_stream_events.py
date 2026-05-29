@@ -12,6 +12,19 @@ _MARKDOWN_PY_FENCE_RE = re.compile(
     re.DOTALL,
 )
 _MARKDOWN_PY_FENCE_OPEN_RE = re.compile(r"```(?:python|py)\b")
+# Some LLMs emit OI's JSON tool call wrapped in a ```json fence:
+#   ```json
+#   {"language":"python","code":"..."}
+#   ```
+# OI parses the JSON internally for execution, but the markdown text still
+# leaks to the UI and gets rendered as a code block. Detect and strip it too.
+_MARKDOWN_JSON_TOOLCALL_FENCE_RE = re.compile(
+    r"```json\b[^\n]*\n\s*\{\s*\"language\"\s*:[\s\S]*?\}\s*\n?```",
+    re.DOTALL,
+)
+_MARKDOWN_JSON_TOOLCALL_OPEN_RE = re.compile(
+    r"```json\b[^\n]*\n\s*\{\s*\"language\"\s*:",
+)
 
 
 def _text_after_execute_block(content: str) -> str:
@@ -40,13 +53,18 @@ def _is_raw_code_block(content: str) -> bool:
 
 
 def _has_python_markdown_fence(content: str) -> bool:
-    """True if the content contains a ```python or ```py fenced code block."""
-    return bool(_MARKDOWN_PY_FENCE_OPEN_RE.search(content))
+    """True if the content contains a ```python/```py block or a ```json
+    block wrapping an OI {"language":...,"code":...} tool call."""
+    if _MARKDOWN_PY_FENCE_OPEN_RE.search(content):
+        return True
+    return bool(_MARKDOWN_JSON_TOOLCALL_OPEN_RE.search(content))
 
 
 def _strip_python_markdown_fences(content: str) -> str:
-    """Remove ```python / ```py fenced blocks. Surrounding prose is preserved."""
+    """Remove executable fenced blocks (```python/```py and ```json tool-call
+    wrappers). Surrounding prose is preserved."""
     cleaned = _MARKDOWN_PY_FENCE_RE.sub("", content)
+    cleaned = _MARKDOWN_JSON_TOOLCALL_FENCE_RE.sub("", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
 
