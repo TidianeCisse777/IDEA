@@ -790,12 +790,105 @@ body.theme-dark .toggle-slider {
     white-space: normal;
 }
 
+/* ── Inspection report collapsible toggle ───────────────────────────── */
+.report-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--surface-2, #f5f5f5);
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-primary, #222);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s;
+}
+
+body.theme-dark .report-toggle {
+    background: var(--surface-2, #2a2a2a);
+    border-color: var(--border-color, #444);
+    color: var(--text-primary, #eee);
+}
+
+.report-toggle:hover {
+    background: var(--surface-3, #eaeaea);
+}
+
+body.theme-dark .report-toggle:hover {
+    background: var(--surface-3, #333);
+}
+
+.report-toggle-arrow {
+    font-size: 0.7rem;
+    transition: transform 0.15s;
+    flex-shrink: 0;
+}
+
+.report-toggle-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.55;
+    flex-shrink: 0;
+}
+
+.report-toggle-title {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.report-body {
+    margin-top: 8px;
+    border-left: 2px solid var(--border-color, #ddd);
+    padding-left: 12px;
+}
+
+.report-expanded-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.5;
+    margin-bottom: 4px;
+    color: var(--text-primary, #222);
+}
+
+body.theme-dark .report-expanded-title {
+    color: var(--text-primary, #eee);
+}
+
+.report-expanded-subtitle {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color, #ddd);
+    color: var(--text-primary, #222);
+}
+
+body.theme-dark .report-expanded-subtitle {
+    color: var(--text-primary, #eee);
+    border-bottom-color: var(--border-color, #444);
+}
+
+/* ── Inspection report rendered content ─────────────────────────────── */
 .message.assistant .content.inspection-report {
     max-width: min(86%, 860px);
     font-size: 14px;
     line-height: 1.45;
     overflow-wrap: anywhere;
     word-break: break-word;
+}
+
+.message.assistant .content.inspection-report .report-body h1:first-child {
+    display: none;
 }
 
 .message.assistant .content.inspection-report p,

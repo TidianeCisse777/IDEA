@@ -434,6 +434,27 @@ class TestFormatInspectReport:
         for ev in r["source_type_guess"]["evidence"][:3]:
             assert ev in out
 
+    def test_starts_with_rapport_header_for_backend_detection(self, tools):
+        """Backend split relies on # RAPPORT D'INSPECTION being the very first line."""
+        r = tools["inspect_file"](str(ECOTAXA))
+        out = tools["format_inspect_report"](r)
+        assert out.lstrip().startswith("# RAPPORT D'INSPECTION")
+
+    def test_contains_machine_readable_title_comment(self, tools):
+        """Frontend JS reads <!-- report-title: ... --> to label the collapsed button."""
+        r = tools["inspect_file"](str(ECOTAXA))
+        out = tools["format_inspect_report"](r)
+        assert "<!-- report-title:" in out
+        assert "ecotaxa_sample_50" in out
+
+    def test_no_details_tag_in_python_output(self, tools):
+        """<details> wrapping is done by JS after markdown render — not by Python.
+        Putting <details> in the source breaks marked.js table rendering."""
+        r = tools["inspect_file"](str(ECOTAXA))
+        out = tools["format_inspect_report"](r)
+        assert "<details>" not in out
+        assert "</details>" not in out
+
     def test_handles_unknown_format_gracefully(self, tools):
         r = tools["inspect_file"]("/nonexistent/path.csv")
         out = tools["format_inspect_report"](r)
@@ -643,3 +664,67 @@ class TestFormatInspectReportSynthese:
         out = tools["format_inspect_report"](r)
         tail = out[out.find("## Synthèse"):]
         assert "intégral" in tail or "aucune troncature" in tail
+
+
+# ── inspect_and_report ────────────────────────────────────────────────────────
+
+class TestInspectAndReport:
+    def test_returns_reports_and_summary_keys(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        assert "reports" in result
+        assert "summary" in result
+
+    def test_reports_has_one_entry_per_file(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA), str(CTD)], session_id=None)
+        assert len(result["reports"]) == 2
+
+    def test_each_report_contains_formatted_markdown(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        assert "RAPPORT D'INSPECTION" in result["reports"][0]["formatted"]
+
+    def test_summary_mentions_each_filename(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA), str(CTD)], session_id=None)
+        summary = result["summary"]
+        assert "ecotaxa_sample_50" in summary
+        assert "amundsen_12713_ctd_2018_sample" in summary
+
+    def test_resilient_to_missing_file(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA), "/nonexistent/file.tsv"], session_id=None)
+        assert len(result["reports"]) == 2
+        assert result["reports"][1]["error"] is not None
+
+    def test_output_contains_summary_marker(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        assert "%%SUMMARY%%" in result["output"]
+
+    def test_output_contains_closing_marker(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        assert "%%CLOSING%%" in result["output"]
+
+    def test_output_markers_in_correct_order(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        idx_rapport = result["output"].index("# RAPPORT D'INSPECTION")
+        idx_summary = result["output"].index("%%SUMMARY%%")
+        idx_closing = result["output"].index("%%CLOSING%%")
+        assert idx_rapport < idx_summary < idx_closing
+
+    def test_summary_block_mentions_filename(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        idx_s = result["output"].index("%%SUMMARY%%")
+        idx_c = result["output"].index("%%CLOSING%%")
+        summary_block = result["output"][idx_s:idx_c]
+        assert "ecotaxa_sample_50" in summary_block
+
+    def test_closing_block_contains_question(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        idx_c = result["output"].index("%%CLOSING%%")
+        closing_block = result["output"][idx_c:]
+        assert "graphique" in closing_block.lower() or "livrable" in closing_block.lower()
+
+    def test_summary_block_has_markdown_header_and_bullets(self, tools):
+        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
+        idx_s = result["output"].index("%%SUMMARY%%")
+        idx_c = result["output"].index("%%CLOSING%%")
+        summary_block = result["output"][idx_s:idx_c]
+        assert "### Fichiers chargés" in summary_block
+        assert "- " in summary_block

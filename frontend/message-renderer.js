@@ -120,6 +120,51 @@ function isInspectionReportMessage(content) {
     return typeof content === 'string' && content.trimStart().startsWith("# RAPPORT D'INSPECTION");
 }
 
+function extractReportTitle(rawContent) {
+    if (typeof rawContent !== 'string') return "📄 Rapport d'inspection";
+    const m = rawContent.match(/<!--\s*report-title:\s*(.+?)\s*-->/);
+    return m ? m[1] : "📄 Rapport d'inspection";
+}
+
+function wrapInspectionReportCollapsible(contentDiv, title) {
+    const existingContent = contentDiv.innerHTML;
+
+    const toggle = document.createElement('button');
+    toggle.className = 'report-toggle';
+    toggle.setAttribute('aria-expanded', 'false');
+    const titleNoEmoji = title.replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}]\s*/u, '');
+
+    toggle.innerHTML = `<span class="report-toggle-arrow">▶</span> <span class="report-toggle-label">RAPPORT DÉTAILLÉ</span> <span class="report-toggle-title">${titleNoEmoji}</span>`;
+
+    const titleHeader = document.createElement('div');
+    titleHeader.className = 'report-expanded-title';
+    titleHeader.textContent = 'RAPPORT DÉTAILLÉ';
+
+    const titleSub = document.createElement('div');
+    titleSub.className = 'report-expanded-subtitle';
+    titleSub.textContent = titleNoEmoji;
+
+    const body = document.createElement('div');
+    body.className = 'report-body';
+    body.style.display = 'none';
+    body.appendChild(titleHeader);
+    body.appendChild(titleSub);
+    const bodyContent = document.createElement('div');
+    bodyContent.innerHTML = existingContent;
+    body.appendChild(bodyContent);
+
+    toggle.addEventListener('click', () => {
+        const isOpen = body.style.display !== 'none';
+        body.style.display = isOpen ? 'none' : 'block';
+        toggle.setAttribute('aria-expanded', String(!isOpen));
+        toggle.querySelector('.report-toggle-arrow').textContent = isOpen ? '▶' : '▼';
+    });
+
+    contentDiv.innerHTML = '';
+    contentDiv.appendChild(toggle);
+    contentDiv.appendChild(body);
+}
+
 //// Chat display helpers
 
 function scrollToBottom() {
@@ -583,6 +628,11 @@ function updateMessageContent(id, content) {
             const htmlWithMath = restoreMath(parsedMarkdown, store);
             contentDiv.innerHTML = DOMPurify.sanitize(htmlWithMath);
 
+            if (isInspectionReport) {
+                const title = extractReportTitle(raw);
+                wrapInspectionReportCollapsible(contentDiv, title);
+            }
+
             prismHighlightUnder(contentDiv);
 
             const shouldTypeset = (message.isComplete !== false) && hasMathDelimiters(raw);
@@ -735,5 +785,7 @@ if (typeof module !== 'undefined' && module.exports) {
         formatAttachmentLabel,
         extractAttachmentInfoFromContent,
         isInspectionReportMessage,
+        extractReportTitle,
+        wrapInspectionReportCollapsible,
     };
 }

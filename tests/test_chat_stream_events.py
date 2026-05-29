@@ -320,6 +320,115 @@ def test_preamble_noise_before_rapport_stays_in_console():
     assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
 
 
+def test_multiple_rapports_each_emitted_as_separate_assistant_message():
+    """Three concatenated RAPPORT D'INSPECTION blocks in one console output
+    must each become a separate assistant message so the frontend renders
+    them as individual collapsible bubbles."""
+    r1 = "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/file1.csv`\n## Columns (1)\n"
+    r2 = "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/file2.csv`\n## Columns (5)\n"
+    r3 = "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/file3.csv`\n## Columns (30)\n"
+    events = list(chat_stream_events(_stream_console(r1 + r2 + r3)))
+    console_chunks = [e for e in events if e.get("role") == "computer" and e.get("type") == "console"]
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    assert console_chunks == [], f"no console chunks expected, got: {console_chunks}"
+    assert len(msg_chunks) == 3, f"expected 3 messages, got {len(msg_chunks)}"
+    assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
+    assert "file1.csv" in msg_chunks[0]["content"]
+    assert "file2.csv" in msg_chunks[1]["content"]
+    assert "file3.csv" in msg_chunks[2]["content"]
+
+
+def test_preamble_noise_plus_multiple_rapports():
+    """Env warnings + 2 rapports → 1 console chunk (preamble) + 2 assistant messages."""
+    preamble = "onnxruntime warning\ntqdm: 100%\n"
+    r1 = "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/a.csv`\n"
+    r2 = "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/b.csv`\n"
+    events = list(chat_stream_events(_stream_console(preamble + r1 + r2)))
+    console_chunks = [e for e in events if e.get("role") == "computer" and e.get("type") == "console"]
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    assert len(console_chunks) == 1
+    assert "onnxruntime" in console_chunks[0]["content"]
+    assert "RAPPORT" not in console_chunks[0]["content"]
+    assert len(msg_chunks) == 2
+    assert "a.csv" in msg_chunks[0]["content"]
+    assert "b.csv" in msg_chunks[1]["content"]
+
+
+def test_llm_message_after_closing_is_suppressed():
+    """Any LLM assistant message that arrives after the backend emitted %%CLOSING%%
+    must be dropped — the pipeline owns the closing, the LLM should be silent."""
+    rapport = (
+        "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/a.csv`\n"
+        "%%SUMMARY%%\n**a** (50 × 41).\n"
+        "%%CLOSING%%\nQuel graphique ou livrable souhaitez-vous ?\n"
+    )
+    llm_after = "Oui : l'inspection est terminée, indiquez le graphique souhaité."
+    chunks = [
+        *_stream_console(rapport),
+        *_stream_message(llm_after),
+    ]
+    events = list(chat_stream_events(chunks))
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    # closing from backend is present, LLM tail is dropped
+    closing_msgs = [m for m in msg_chunks if "graphique" in m["content"].lower() or "livrable" in m["content"].lower()]
+    assert len(closing_msgs) == 1, f"expected exactly 1 closing message, got: {[m['content'][:50] for m in msg_chunks]}"
+    llm_msgs = [m for m in msg_chunks if "Oui" in m["content"] or "terminée" in m["content"]]
+    assert llm_msgs == [], f"LLM message after closing should be suppressed, got: {llm_msgs}"
+
+
+def test_summary_marker_emitted_as_separate_assistant_message():
+    """%%SUMMARY%% content is extracted from the console buffer and emitted as
+    a standalone assistant message, separate from the RAPPORT blocks."""
+    content = (
+        "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/a.csv`\n"
+        "%%SUMMARY%%\n"
+        "**export EcoTaxa — a** (50 × 41). Variables : taxon.\n"
+        "%%CLOSING%%\n"
+        "Quel graphique ou livrable souhaitez-vous ?\n"
+    )
+    events = list(chat_stream_events(_stream_console(content)))
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    summary_msgs = [m for m in msg_chunks if "export EcoTaxa" in m["content"]]
+    assert len(summary_msgs) == 1, f"expected 1 summary message, got {len(summary_msgs)}: {msg_chunks}"
+    assert "%%SUMMARY%%" not in summary_msgs[0]["content"]
+    assert "%%CLOSING%%" not in summary_msgs[0]["content"]
+
+
+def test_closing_marker_emitted_as_separate_assistant_message():
+    """%%CLOSING%% content is emitted as its own assistant message after the summary."""
+    content = (
+        "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/a.csv`\n"
+        "%%SUMMARY%%\n"
+        "**export EcoTaxa — a** (50 × 41).\n"
+        "%%CLOSING%%\n"
+        "Quel graphique ou livrable souhaitez-vous ?\n"
+    )
+    events = list(chat_stream_events(_stream_console(content)))
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    closing_msgs = [m for m in msg_chunks if "graphique" in m["content"].lower() or "livrable" in m["content"].lower()]
+    assert len(closing_msgs) == 1, f"expected 1 closing message, got: {msg_chunks}"
+    assert "%%CLOSING%%" not in closing_msgs[0]["content"]
+
+
+def test_markers_order_rapport_then_summary_then_closing():
+    """The order of emitted messages must be: rapport(s), then summary, then closing."""
+    r1 = "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/file1.csv`\n"
+    r2 = "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/file2.csv`\n"
+    summary = "**a** (50 × 41). **b** (30 × 10).\n"
+    closing = "Quel graphique ou livrable souhaitez-vous ?\n"
+    content = r1 + r2 + "%%SUMMARY%%\n" + summary + "%%CLOSING%%\n" + closing
+    events = list(chat_stream_events(_stream_console(content)))
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+    # Expect: rapport1, rapport2, summary, closing — 4 messages total
+    assert len(msg_chunks) == 4, f"expected 4 messages, got {len(msg_chunks)}: {[m['content'][:40] for m in msg_chunks]}"
+    assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
+    assert "file1.csv" in msg_chunks[0]["content"]
+    assert msg_chunks[1]["content"].startswith("# RAPPORT D'INSPECTION")
+    assert "file2.csv" in msg_chunks[1]["content"]
+    assert "50 × 41" in msg_chunks[2]["content"]
+    assert "graphique" in msg_chunks[3]["content"].lower()
+
+
 def test_code_event_passes_through_untouched():
     """type:code chunks emitted by OI for execution must not be altered."""
     chunks = [

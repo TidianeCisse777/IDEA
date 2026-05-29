@@ -101,7 +101,7 @@ def inspect_file(file_path, sample_rows=500):
 
             result["n_columns"] = len(df_sample.columns)
             result["columns"] = _describe_columns(df_sample)
-            result["source_type_guess"] = _guess_source_type(df_sample.columns.tolist(), {})
+            result["source_type_guess"] = _guess_source_type(df_sample.columns.tolist(), {"filename": path.stem})
 
         except Exception as e:
             warnings.append(f"Could not parse as tabular: {e}")
@@ -241,6 +241,11 @@ def _semantic_guess(col_name, series):
 
 def _guess_source_type(column_names, metadata):
     """Guess source type from column name patterns. Never certain."""
+    filename = (metadata or {}).get("filename", "").lower()
+    if "bio_oracle" in filename or "bio-oracle" in filename:
+        return {"value": "likely_environmental_model", "confidence": "high",
+                "evidence": [f"filename contains 'bio_oracle': {filename}"]}
+
     names_lower = [c.lower() for c in column_names]
     evidence = []
     scores = {"likely_ecotaxa": 0, "likely_ecopart": 0,
@@ -563,8 +568,26 @@ def format_inspect_report(file_report, column_definitions=None):
         # in every renderer and avoids backslash-escape parsing edge cases.
         return s.replace("|", "&#124;").replace(chr(10), " ").replace(chr(13), " ")
 
+    _SOURCE_LABELS = {
+        "likely_ecotaxa": "export EcoTaxa",
+        "likely_ecopart": "export EcoPart",
+        "likely_neolabs_taxon": "données NeoLab",
+        "likely_amundsen_ctd": "CTD Amundsen",
+        "likely_environmental_model": "modèle environnemental",
+        "likely_lab_data": "données labo",
+    }
+    raw_path = fr.get("file_path", "unknown")
+    _fname = raw_path.rsplit("/", 1)[-1] if isinstance(raw_path, str) and "/" in raw_path else str(raw_path)
+    _stem = _fname.rsplit(".", 1)[0] if "." in _fname else _fname
+    _stem_display = _stem.replace("_", " ")
+    _n_rows = fr.get("n_rows", "?")
+    _n_cols = fr.get("n_columns", "?")
+    _src_label = _SOURCE_LABELS.get((fr.get("source_type_guess") or {}).get("value", ""), "inconnu")
+    _title = f"📄 {_src_label} — {_stem_display} ({_n_rows} × {_n_cols})"
+
     lines = []
     lines.append("# RAPPORT D'INSPECTION")
+    lines.append(f"<!-- report-title: {_title} -->")
     lines.append("")
     lines.append(f"- **file_path** : `{fr.get('file_path', 'unknown')}`")
     lines.append(
@@ -851,6 +874,175 @@ def summarize_understanding(inspect_report, role_report, column_definitions=None
             "gaps": coverage_gaps,
         },
     }
+
+
+def inspect_and_report(file_paths, session_id=None):
+    """Inspect multiple files and return formatted reports + a cross-file summary.
+
+    Encapsulates inspect_file + collect_column_definitions + format_inspect_report
+    for every file in one atomic call. Use this instead of calling each step
+    manually to avoid partial execution or hallucinated output.
+
+    Args:
+        file_paths (list[str]): Paths to files to inspect.
+        session_id (str, optional): Session ID for RAG calls.
+
+    Returns:
+        dict: {
+            "reports": list of {
+                "file": str,          # short filename
+                "formatted": str,     # full markdown report (or None on error)
+                "source_type": str,   # source_type_guess value
+                "n_rows": int,
+                "n_columns": int,
+                "error": str | None,  # None on success
+            },
+            "summary": str,           # short cross-file synthesis
+        }
+    """
+    import pathlib
+
+    reports = []
+    for fp in file_paths:
+        short = pathlib.Path(fp).stem
+        # Step 1 — inspect (errors here are fatal for this file)
+        try:
+            file_report = inspect_file(fp)
+            warnings_list = file_report.get("warnings") or []
+            if any("not found" in w.lower() for w in warnings_list):
+                raise FileNotFoundError(f"File not found: {fp}")
+        except Exception as exc:
+            reports.append({
+                "file": short,
+                "formatted": None,
+                "source_type": "unknown",
+                "n_rows": 0,
+                "n_columns": 0,
+                "error": str(exc),
+            })
+            continue
+
+        # Step 2 — RAG enrichment (optional — failure yields empty defs)
+        try:
+            defs = collect_column_definitions(file_report, session_id=session_id)
+        except Exception:
+            defs = []
+
+        # Step 3 — format report
+        try:
+            formatted = format_inspect_report(file_report, column_definitions=defs)
+        except Exception as exc:
+            reports.append({
+                "file": short,
+                "formatted": None,
+                "source_type": "unknown",
+                "n_rows": 0,
+                "n_columns": 0,
+                "error": str(exc),
+            })
+            continue
+
+        source_type = (file_report.get("source_type_guess") or {}).get("value", "unknown")
+        reports.append({
+            "file": short,
+            "formatted": formatted,
+            "source_type": source_type,
+            "n_rows": file_report.get("n_rows", 0),
+            "n_columns": file_report.get("n_columns", 0),
+            "error": None,
+        })
+
+    # Cross-file summary — scientific synthesis per file
+    _source_labels = {
+        "likely_ecotaxa": "export EcoTaxa (images + taxonomie annotée)",
+        "likely_ecopart": "export EcoPart (profils CTD + particules agrégées)",
+        "likely_neolabs_taxon": "données labo NeoLab (abondances zooplancton)",
+        "likely_amundsen_ctd": "données CTD Amundsen / variables environnementales",
+        "likely_environmental_model": "données modèle environnemental (Bio-Oracle / scénarios SSP)",
+    }
+
+    summary_lines = []
+    for r in reports:
+        if r["error"]:
+            summary_lines.append(f"**{r['file']}** — erreur : {r['error']}")
+            continue
+
+        label = _source_labels.get(r["source_type"], r["source_type"])
+        shape = f"{r['n_rows']} lignes × {r['n_columns']} colonnes"
+
+        # Semantic columns present
+        file_report = None
+        for fp in file_paths:
+            import pathlib
+            if pathlib.Path(fp).stem == r["file"]:
+                try:
+                    file_report = inspect_file(fp)
+                except Exception:
+                    pass
+                break
+
+        sem_cols = []
+        missing_flags = []
+        warnings_list = []
+        if file_report:
+            for col in (file_report.get("columns") or []):
+                sem = col.get("semantic_guess") or ""
+                if sem and sem not in sem_cols:
+                    sem_cols.append(sem)
+                rate = col.get("missing_rate", 0)
+                if isinstance(rate, float) and rate > 0.3:
+                    missing_flags.append(f"`{col['name']}` ({round(rate*100)}% manquant)")
+            warnings_list = file_report.get("warnings") or []
+
+        sem_str = ", ".join(sem_cols[:5]) if sem_cols else "—"
+        entry_lines = [f"**{r['file']}** ({shape}) — {label}"]
+        entry_lines.append(f"  Variables : {sem_str}")
+        for flag in missing_flags[:3]:
+            entry_lines.append(f"  ⚠ {flag}")
+        summary_lines.append(chr(10).join(entry_lines))
+
+    # Cross-file join hints — only real oceanographic link keys, not any common column
+    _VALID_JOIN_KEYS = {"PROFILE_ID", "OBJ_ORIG_ID", "OBJECT_ID", "PROFILEID"}
+    all_cols = set()
+    join_hints = []
+    for r in reports:
+        if not r["error"] and r.get("formatted"):
+            for fp in file_paths:
+                import pathlib
+                if pathlib.Path(fp).stem == r["file"]:
+                    try:
+                        fr = inspect_file(fp)
+                        cols = {c["name"].upper() for c in (fr.get("columns") or [])}
+                        if all_cols:
+                            common = (all_cols & cols) & _VALID_JOIN_KEYS
+                            if common:
+                                join_hints.append(", ".join(sorted(common)))
+                        all_cols |= cols
+                    except Exception:
+                        pass
+                    break
+
+    if join_hints:
+        summary_lines.append(f"Clés de jointure potentielles : {' | '.join(join_hints[:2])}")
+
+    summary = chr(10).join(summary_lines)
+
+    full_output = []
+    for r in reports:
+        if r["formatted"]:
+            full_output.append(r["formatted"])
+        else:
+            full_output.append(f"## {r['file']} — ERREUR: {r['error']}")
+
+    bullet_lines = ["- " + line for line in summary_lines]
+    summary_md = "### Fichiers chargés" + chr(10) + chr(10) + (chr(10) + chr(10)).join(bullet_lines)
+
+    full_output.append("%%SUMMARY%%")
+    full_output.append(summary_md)
+    full_output.append("%%CLOSING%%")
+    full_output.append("Quel graphique ou livrable souhaitez-vous ?")
+
+    return {"reports": reports, "summary": summary, "output": chr(10).join(full_output)}
 '''
 
 registry.register(Tool(

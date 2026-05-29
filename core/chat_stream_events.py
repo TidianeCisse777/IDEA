@@ -139,6 +139,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
     in_console_msg = False
     console_fmt = ""
     pending_assistant_tail = ""
+    backend_closing_emitted = False  # True after %%CLOSING%% — suppress subsequent LLM messages
 
     def _is_fixed_upload_question(text: str) -> bool:
         return text.strip() == "Quel graphique souhaitez-vous ?"
@@ -152,6 +153,8 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
 
     def _emit_or_defer_assistant_text(original: str):
         nonlocal pending_assistant_tail
+        if backend_closing_emitted:
+            return
         cleaned = _clean_assistant_text(original)
         if not cleaned:
             return
@@ -165,7 +168,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
 
     def _flush_assistant_buf():
         nonlocal msg_buf_content, in_assistant_msg
-        if in_assistant_msg and msg_buf_content:
+        if in_assistant_msg and msg_buf_content and not backend_closing_emitted:
             yield from _emit_or_defer_assistant_text(msg_buf_content)
         msg_buf_content = ""
         in_assistant_msg = False
@@ -173,21 +176,52 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
     def _emit_console_buf():
         """Yield the buffered console content. Reports go out as assistant
         markdown messages; everything else stays as a normal console chunk
-        so the frontend routes it into the exec-block."""
-        nonlocal console_buf_content, in_console_msg, console_fmt
+        so the frontend routes it into the exec-block.
+
+        Multiple RAPPORT D'INSPECTION blocks in a single console output are
+        split and each emitted as a separate assistant message so the frontend
+        renders them as individual collapsible bubbles.
+        """
+        nonlocal console_buf_content, in_console_msg, console_fmt, backend_closing_emitted
         if console_buf_content and "# RAPPORT D'INSPECTION" in console_buf_content:
-            # Extract the rapport from any pre-report stdout noise (env warnings,
-            # other prints) so only the markdown reaches the assistant message.
-            idx = console_buf_content.find("# RAPPORT D'INSPECTION")
-            preamble = console_buf_content[:idx].strip()
-            rapport = console_buf_content[idx:]
+            # Split on every RAPPORT header so each file gets its own bubble.
+            parts = console_buf_content.split("# RAPPORT D'INSPECTION")
+            preamble = parts[0].strip()
             if preamble:
                 yield {"start": True, "end": True, "role": "computer",
                        "type": "console", "format": console_fmt or "output",
                        "content": preamble}
-            yield {"start": True, "end": True, "role": "assistant",
-                   "type": "message", "content": rapport}
-            yield from _emit_pending_assistant_tail()
+            backend_owns_closing = False
+            for i, part in enumerate(parts[1:]):
+                is_last = (i == len(parts) - 2)
+                if is_last and "%%SUMMARY%%" in part:
+                    rapport_part, rest = part.split("%%SUMMARY%%", 1)
+                    yield {"start": True, "end": True, "role": "assistant",
+                           "type": "message",
+                           "content": "# RAPPORT D'INSPECTION" + rapport_part}
+                    if "%%CLOSING%%" in rest:
+                        summary_part, closing_part = rest.split("%%CLOSING%%", 1)
+                        summary_text = summary_part.strip()
+                        closing_text = closing_part.strip()
+                    else:
+                        summary_text = rest.strip()
+                        closing_text = ""
+                    if summary_text:
+                        yield {"start": True, "end": True, "role": "assistant",
+                               "type": "message", "content": summary_text}
+                    if closing_text:
+                        yield {"start": True, "end": True, "role": "assistant",
+                               "type": "message", "content": closing_text}
+                        backend_owns_closing = True
+                        backend_closing_emitted = True
+                else:
+                    yield {"start": True, "end": True, "role": "assistant",
+                           "type": "message",
+                           "content": "# RAPPORT D'INSPECTION" + part}
+            if backend_owns_closing:
+                pending_assistant_tail = ""
+            else:
+                yield from _emit_pending_assistant_tail()
         elif console_buf_content:
             yield {"start": True, "end": True, "role": "computer",
                    "type": "console", "format": console_fmt or "output",

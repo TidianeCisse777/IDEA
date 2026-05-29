@@ -21,6 +21,8 @@ const {
     formatAttachmentLabel,
     extractAttachmentInfoFromContent,
     isInspectionReportMessage,
+    extractReportTitle,
+    wrapInspectionReportCollapsible,
 } = require('../message-renderer.js');
 
 describe('generateId', () => {
@@ -165,5 +167,92 @@ describe('isInspectionReportMessage', () => {
 
     test('returns false for ordinary markdown', () => {
         expect(isInspectionReportMessage('Hello **world**')).toBe(false);
+    });
+});
+
+describe('extractReportTitle', () => {
+    test('extracts title from <!-- report-title: ... --> comment', () => {
+        const raw = "# RAPPORT D'INSPECTION\n<!-- report-title: 📄 bio_oracle (9 × 4) — modèle environnemental -->\n\n- **file_path**...";
+        expect(extractReportTitle(raw)).toBe('📄 bio_oracle (9 × 4) — modèle environnemental');
+    });
+
+    test('returns fallback when comment absent', () => {
+        const raw = "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/x.csv`";
+        expect(extractReportTitle(raw)).toBe('📄 Rapport d\'inspection');
+    });
+});
+
+describe('wrapInspectionReportCollapsible', () => {
+    test('wraps contentDiv in a collapsed container', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<h1>RAPPORT</h1><p>content</p>';
+        wrapInspectionReportCollapsible(container, '📄 bio_oracle (9 × 4) — modèle environnemental');
+        expect(container.querySelector('.report-toggle')).not.toBeNull();
+        expect(container.querySelector('.report-body')).not.toBeNull();
+    });
+
+    test('report body is hidden by default', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<p>content</p>';
+        wrapInspectionReportCollapsible(container, '📄 test');
+        const body = container.querySelector('.report-body');
+        expect(body.style.display).toBe('none');
+    });
+
+    test('clicking toggle shows and hides body', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<p>content</p>';
+        wrapInspectionReportCollapsible(container, '📄 test');
+        const toggle = container.querySelector('.report-toggle');
+        const body = container.querySelector('.report-body');
+        toggle.click();
+        expect(body.style.display).toBe('block');
+        toggle.click();
+        expect(body.style.display).toBe('none');
+    });
+
+    test('toggle button shows the report title', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<p>content</p>';
+        wrapInspectionReportCollapsible(container, '📄 bio_oracle (9 × 4) — modèle environnemental');
+        const toggle = container.querySelector('.report-toggle');
+        expect(toggle.textContent).toContain('bio_oracle');
+    });
+
+    test('toggle button contains RAPPORT DÉTAILLÉ label', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<p>content</p>';
+        wrapInspectionReportCollapsible(container, '📄 test');
+        const label = container.querySelector('.report-toggle-label');
+        expect(label).not.toBeNull();
+        expect(label.textContent).toContain('RAPPORT');
+    });
+
+    test('expanded title shows RAPPORT DÉTAILLÉ', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<p>content</p>';
+        wrapInspectionReportCollapsible(container, '📄 bio_oracle (9 × 4)');
+        const expandedTitle = container.querySelector('.report-expanded-title');
+        expect(expandedTitle).not.toBeNull();
+        expect(expandedTitle.textContent).toBe('RAPPORT DÉTAILLÉ');
+    });
+
+    test('expanded subtitle shows file title without emoji', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<p>content</p>';
+        wrapInspectionReportCollapsible(container, '📄 bio_oracle (9 × 4)');
+        const sub = container.querySelector('.report-expanded-subtitle');
+        expect(sub).not.toBeNull();
+        expect(sub.textContent).toBe('bio_oracle (9 × 4)');
+        expect(sub.textContent).not.toContain('📄');
+    });
+
+    test('toggle title has no emoji', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<p>content</p>';
+        wrapInspectionReportCollapsible(container, '📄 bio_oracle (9 × 4)');
+        const toggleTitle = container.querySelector('.report-toggle-title');
+        expect(toggleTitle.textContent).not.toContain('📄');
+        expect(toggleTitle.textContent).toContain('bio_oracle');
     });
 });
