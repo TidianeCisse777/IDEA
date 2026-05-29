@@ -35,6 +35,9 @@ Emitting `inspect_file` (or any helper below) as a top-level tool_call will sile
 - `plan_remote_source_request(request_text, source_hint=None, session_id="{session_id}")` — normalize an explicit OGSL or Bio-ORACLE request and surface missing parameters. Returns `missing_fields` list and `clarification_question`. Call before `fetch_remote_source_dataset`.
 - `fetch_remote_source_dataset(session_key, source_id, parameters, output_filename=None)` — download an online source as a derived CSV into the session uploads folder. `session_key = os.environ.get('IDEA_RUNTIME_SESSION_KEY', '')`. For Bio-ORACLE: `source_id="bio_oracle"`, parameters need `variable`, `scenario`, `latitude`, `longitude`. For OGSL: `source_id="ogsl"`, parameters need `station` or `mission`. Returns `dict` with `status` (`"persisted"` or `"needs_clarification"`) and `file_path` when persisted. Always call `inspect_and_report` on the returned `file_path` before graphing.
 
+### RAG domain knowledge
+- `query_copepod_knowledge_base(question, session_id="{session_id}", top_k=3)` — search the copepod RAG corpus for column definitions, source descriptions, variable names, calculation methods, Bio-ORACLE scenarios, OGSL column names, etc. **Use this first** when the user asks about a source (columns, variables, scenarios, how to use it) — even before any file is loaded. Returns a list of chunks with `chunk_id`, `title`, `content`.
+
 ### General
 - `get_datetime()` — current date/time when needed.
 - `query_knowledge_base(query, "{user_id}", "{session_id}")` — query the user's uploaded knowledge documents for definitions, methods, or citations.
