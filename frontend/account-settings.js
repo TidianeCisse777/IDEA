@@ -141,10 +141,15 @@
         function setOnlineModeUi(enabled, allowedSources) {
             const badge = document.getElementById('onlineModeBadge');
             const label = document.getElementById('onlineModeLabel');
+            const icon = badge ? badge.querySelector('.session-mode-icon') : null;
             const allowed = document.getElementById('onlineModeAllowedSources');
             const toggle = document.getElementById('onlineModeToggle');
             if (toggle) toggle.checked = Boolean(enabled);
-            if (badge) badge.style.display = 'flex';
+            if (badge) {
+                badge.classList.toggle('session-mode-online--off', !enabled);
+                badge.classList.toggle('session-mode-online--on', Boolean(enabled));
+            }
+            if (icon) icon.textContent = enabled ? 'cloud' : 'cloud_off';
             if (label) label.textContent = `Mode En Ligne: ${enabled ? 'ON' : 'OFF'}`;
             if (allowed) {
                 allowed.textContent = Array.isArray(allowedSources) && allowedSources.length

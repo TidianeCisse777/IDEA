@@ -357,11 +357,13 @@ def plan_remote_source_request(request_text, source_hint=None, session_id=None):
 
     elif source_id == "ogsl":
         station = None
-        if "station" in lowered:
-            station = lowered.split("station", 1)[1].strip().split()[0].strip(",.;:")
+        station_m = re.search(r'station\s+(\S+)', text, re.IGNORECASE)
+        if station_m:
+            station = station_m.group(1).strip(",.;:")
         mission = None
-        if "mission" in lowered:
-            mission = lowered.split("mission", 1)[1].strip().split()[0].strip(",.;:")
+        mission_m = re.search(r'mission\s+(\S+)', text, re.IGNORECASE)
+        if mission_m:
+            mission = mission_m.group(1).strip(",.;:")
         if station:
             parameters["station"] = station
         if mission:

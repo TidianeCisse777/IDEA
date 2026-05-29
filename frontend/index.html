@@ -84,8 +84,8 @@
                     <span class="material-icons session-mode-icon">edit_note</span>
                     <span id="sessionModeLabel">Mode Plan</span>
                 </div>
-                <div id="onlineModeBadge" class="session-mode-badge session-mode-online" style="display:none">
-                    <span class="material-icons session-mode-icon">cloud</span>
+                <div id="onlineModeBadge" class="session-mode-badge session-mode-online session-mode-online--off">
+                    <span class="material-icons session-mode-icon">cloud_off</span>
                     <span id="onlineModeLabel">Mode En Ligne: OFF</span>
                 </div>
 
@@ -150,6 +150,23 @@
                 <div class="prompt-actions">
                     <button id="sendButton">Envoyer</button>
                     <button id="stopButton" disabled>Arrêter</button>
+                </div>
+            </div>
+            <div class="generation-metrics" id="generationMetrics" aria-live="polite">
+                <div class="generation-metric">
+                    <span class="generation-metric-label">Temps</span>
+                    <span class="generation-metric-value" id="generationDurationValue">—</span>
+                    <span class="generation-metric-note" id="generationStatusValue">En attente d’une génération</span>
+                </div>
+                <div class="generation-metric">
+                    <span class="generation-metric-label">Tokens</span>
+                    <span class="generation-metric-value" id="generationTokensValue">—</span>
+                    <span class="generation-metric-note">Entrée · sortie · total</span>
+                </div>
+                <div class="generation-metric">
+                    <span class="generation-metric-label">Coût</span>
+                    <span class="generation-metric-value" id="generationCostValue">—</span>
+                    <span class="generation-metric-note" id="generationRateValue">Tarif du modèle: —</span>
                 </div>
             </div>
         </footer>
