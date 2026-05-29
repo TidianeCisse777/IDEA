@@ -318,7 +318,7 @@ def plan_remote_source_request(request_text, source_hint=None, session_id=None):
 
     if source_id == "bio_oracle":
         scenario = None
-        scenario_match = re.search(r"\bssp\s*([0-9]{3})\b", text, re.IGNORECASE)
+        scenario_match = re.search(r"\\bssp\\s*([0-9]{3})\\b", text, re.IGNORECASE)
         if scenario_match:
             scenario = f"SSP{scenario_match.group(1)}"
         elif "scenario" in lowered or "scénario" in lowered or "scenar" in lowered:
@@ -327,7 +327,7 @@ def plan_remote_source_request(request_text, source_hint=None, session_id=None):
 
         zone = None
         zone_match = re.search(
-            r"\b(zone|site|coordonn?es?|coordinates?)\b\s*[:=]?\s*(.+)",
+            r"\\b(zone|site|coordonn?es?|coordinates?)\\b\\s*[:=]?\\s*(.+)",
             text,
             re.IGNORECASE,
         )

@@ -310,7 +310,7 @@ def _ogsl_fetch(session_key, parameters):
     period = parameters.get("period") or {}
     variables = list(parameters.get("variables") or [])
     search_terms = " ".join(
-        part for part in [mission or "", station or "", "ctd", *variables] if part
+        part for part in [mission or "", station or "", "ctd"] if part
     ).strip() or "ctd"
     package_resp = requests.get(
         "https://catalogue.ogsl.ca/api/3/action/package_search",
