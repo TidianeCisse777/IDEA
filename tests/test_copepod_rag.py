@@ -6,6 +6,8 @@ have been built (build_index.py must run first). Skip gracefully if ChromaDB
 or sentence-transformers are not available in the environment.
 """
 import json
+import sys
+import types
 import pytest
 from pathlib import Path
 
@@ -245,6 +247,39 @@ class TestToolRegistration:
         ns = {}
         exec(code, ns)
         assert "query_copepod_knowledge_base" in ns
+
+    def test_rendered_code_works_without_file_namespace(self, monkeypatch):
+        from core.tool_registry import registry
+        from core.tool_registry.tools import copepod_rag  # noqa: F401
+
+        fake_module = types.ModuleType("core.copepod_rag.query")
+        calls = {}
+
+        def fake_query_copepod_rag(question, top_k=3, session_id=None):
+            calls["question"] = question
+            calls["top_k"] = top_k
+            calls["session_id"] = session_id
+            return [{"chunk_id": "chunk-1"}]
+
+        fake_module.query_copepod_rag = fake_query_copepod_rag
+        monkeypatch.setitem(sys.modules, "core.copepod_rag.query", fake_module)
+
+        code = registry.render({"copepod_rag"})
+        ns = {}
+        exec(code, ns)
+
+        result = ns["query_copepod_knowledge_base"](
+            "Bio-ORACLE scenarios disponibles",
+            session_id="session-9v5uwbvdw",
+            top_k=5,
+        )
+
+        assert result == [{"chunk_id": "chunk-1"}]
+        assert calls == {
+            "question": "Bio-ORACLE scenarios disponibles",
+            "top_k": 5,
+            "session_id": "session-9v5uwbvdw",
+        }
 
     def test_function_has_docstring(self):
         from core.tool_registry import registry

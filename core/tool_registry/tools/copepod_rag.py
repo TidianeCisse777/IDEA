@@ -22,19 +22,9 @@ def query_copepod_knowledge_base(question, session_id=None, top_k=3):
         list[dict]: Top-k chunks with keys:
             chunk_id, doc, title, content, score (cosine distance, lower=better)
     """
-    import sys
-    import importlib.util
-    from pathlib import Path
+    from core.copepod_rag.query import query_copepod_rag
 
-    rag_path = Path(__file__).parent.parent.parent / "core" / "copepod_rag" / "query.py"
-    if not rag_path.exists():
-        return [{"error": f"RAG module not found at {rag_path}"}]
-
-    spec = importlib.util.spec_from_file_location("copepod_rag_query", rag_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    return mod.query_copepod_rag(question, top_k=top_k, session_id=session_id)
+    return query_copepod_rag(question, top_k=top_k, session_id=session_id)
 '''
 
 registry.register(Tool(
