@@ -189,10 +189,16 @@ def _extract_copepod_error_text(result: Any) -> str | None:
 
     content = result.get("content")
     if isinstance(content, str):
+        role = result.get("role", "")
+        # Only extract errors from computer/console output, not from assistant text responses.
+        # Assistant text may contain words like "errors" or "exception" in normal prose.
+        if role != "computer":
+            return None
         lowered = content.lower()
-        if any(token in lowered for token in ("traceback", "error", "exception", "failed", "keyerror", "valueerror", "typeerror")):
-            text = content.strip()
-            return text or None
+        # Require a Python traceback marker OR a capitalized ErrorType: pattern.
+        import re as _re
+        if "traceback (most recent call last)" in lowered or _re.search(r"\b[A-Z][a-zA-Z]*Error\b", content):
+            return content.strip() or None
 
     return None
 
