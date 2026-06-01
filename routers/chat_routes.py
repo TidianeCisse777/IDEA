@@ -172,30 +172,9 @@ def _extract_copepod_key_hints(error_text: str) -> list[str]:
 
 
 def _should_retry_copepod_error(last_error_text: str, user_message: str) -> bool:
-    """Return True only for retryable key/join failures on copepod data work."""
-    if not _is_copepod_data_analysis_request(user_message):
-        return False
-
+    """Return True for copepod runtime errors that should trigger an automatic retry."""
     text = (last_error_text or "").strip()
-    if not text:
-        return False
-
-    lowered = text.lower()
-    retryable_markers = (
-        "keyerror",
-        "cannot merge",
-        "merge keys",
-        "merge on",
-        "mismatched key",
-        "missing key",
-        "not in the columns",
-        "not in the index",
-        "not in index",
-        "columns overlap but no suffix specified",
-        "length mismatch",
-        "unhashable type: 'list'",
-    )
-    return any(marker in lowered for marker in retryable_markers)
+    return bool(text)
 
 
 def _extract_copepod_error_text(result: Any) -> str | None:
@@ -247,6 +226,13 @@ def _build_copepod_error_recovery_note(
     if key_hints:
         lines.append(f"Traceback key hint(s): {', '.join(key_hints[:3])}.")
         lines.append("Use the exact column spelling from the inspection reports and normalize only the working keys.")
+
+    lowered_error = (last_error_text or "").lower()
+    if "unicodedecodeerror" in lowered_error or "utf-8 codec can't decode byte" in lowered_error:
+        lines.append(
+            "The failure looks like a CSV encoding issue; retry the read with encoding='latin1' "
+            "and, if needed, encoding='cp1252' before re-running the join."
+        )
 
     if user_message.strip():
         lines.append(f"User request to keep in view: {user_message.strip()}")

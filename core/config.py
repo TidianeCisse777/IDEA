@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     LLM_SUPPORTS_VISION: bool = True
     LLM_SUPPORTS_FUNCTIONS: bool = True
     LLM_TEMPERATURE: float = 0.0
+    LLM_REPETITION_PENALTY: float | None = 1.1
     LLM_CONTEXT_WINDOW: int = 400000
     LLM_MAX_COMPLETION_TOKENS: int = 64000
     LLM_MAX_OUTPUT: int = 64000

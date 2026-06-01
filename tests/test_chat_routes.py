@@ -495,17 +495,20 @@ class TestCopepodDataPlannerNote:
         )
         assert hints == ["station", "depth"]
 
-    def test_retry_gate_rejects_unrelated_runtime_errors(self):
-        assert not _should_retry_copepod_error(
+    def test_retry_gate_accepts_runtime_errors(self):
+        assert _should_retry_copepod_error(
             "RuntimeError: upload failed",
             "fais une jointure entre les fichiers",
         )
 
-    def test_retry_gate_accepts_retryable_key_errors(self):
-        assert _should_retry_copepod_error(
-            "KeyError: 'station'",
-            "fais une jointure entre les fichiers",
+    def test_recovery_note_mentions_encoding_retry_for_utf8_failures(self):
+        note = _build_copepod_error_recovery_note(
+            last_error_text="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 4207",
+            user_message="tester cette jointure",
         )
+        assert note is not None
+        assert "encoding='latin1'" in note
+        assert "encoding='cp1252'" in note
 
     def test_system_note_is_merged_into_leading_system_prompt(self):
         messages = [

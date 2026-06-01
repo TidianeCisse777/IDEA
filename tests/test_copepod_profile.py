@@ -18,6 +18,12 @@ def test_system_message_is_copepod_prompt():
     assert _profile().get_system_message("anything") == COPEPOD_SYSTEM_PROMPT
 
 
+def test_system_prompt_mentions_non_repetitive_output():
+    prompt = _profile().get_system_message("anything")
+    assert "Do not reuse the same sentence opener" in prompt
+    assert "Never answer with a bare ellipsis" in prompt
+
+
 def test_instruction_blocks_do_not_include_plan_or_analyse():
     blocks = _profile().instruction_blocks
     assert "copepod_mode_plan" not in blocks

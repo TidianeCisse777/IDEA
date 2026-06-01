@@ -11,9 +11,30 @@ from __future__ import annotations
 
 import sys
 import types
+import importlib.metadata as importlib_metadata
 from unittest.mock import MagicMock, patch
 
 from core.session_store import InMemorySessionStore
+
+# Pydantic's EmailStr import path needs email-validator in this environment.
+email_validator_stub = types.ModuleType("email_validator")
+email_validator_stub.validate_email = lambda *args, **kwargs: None
+sys.modules.setdefault("email_validator", email_validator_stub)
+
+litellm_stub = types.ModuleType("litellm")
+litellm_stub.completion = lambda **kwargs: {"choices": [{"message": {"content": "ok"}}]}
+sys.modules.setdefault("litellm", litellm_stub)
+
+_real_metadata_version = importlib_metadata.version
+
+
+def _metadata_version(name: str) -> str:
+    if name == "email-validator":
+        return "2.0.0"
+    return _real_metadata_version(name)
+
+
+importlib_metadata.version = _metadata_version
 
 # ---------------------------------------------------------------------------
 # Stub the ``interpreter`` package so the module can be imported without it.
@@ -142,6 +163,7 @@ def test_llm_wrapper_preserves_multimodal_message_content():
     assert isinstance(messages[1]["content"], list)
     assert messages[1]["content"][1]["type"] == "image_url"
     assert captured["params"]["stream_options"]["include_usage"] is True
+    assert captured["params"]["repetition_penalty"] == 1.1
 
 
 def test_llm_wrapper_normalizes_input_text_items_to_chat_content():
@@ -184,6 +206,7 @@ def test_llm_wrapper_normalizes_input_text_items_to_chat_content():
 
     messages = captured["params"]["messages"]
     assert messages[1]["content"] == "hey"
+    assert captured["params"]["repetition_penalty"] == 1.1
 
 
 def test_llm_wrapper_normalizes_direct_messages_payloads():
@@ -244,6 +267,32 @@ def test_llm_wrapper_normalizes_direct_messages_payloads():
 
     messages = captured["params"]["messages"]
     assert messages[0]["content"] == "hey"
+    assert captured["params"]["repetition_penalty"] == 1.1
+
+
+def test_copepod_interpreter_uses_temperature_from_env():
+    from core import interpreter_session as iss
+
+    fake_profile = MagicMock()
+    fake_profile.get_system_message.return_value = ""
+    fake_profile.get_tool_code.return_value = ""
+    fake_profile.configure_interpreter.return_value = None
+
+    with (
+        patch.object(iss.settings, "LLM_TEMPERATURE", 0.3),
+        patch.object(iss.settings, "LLM_REPETITION_PENALTY", 1.1),
+        patch.object(iss, "get_profile", return_value=fake_profile),
+        patch.object(iss, "interpreter_instances", {}),
+    ):
+        interpreter = iss.get_or_create_interpreter(
+            session_key="u:s:copepod",
+            token=None,
+            db=None,
+            agent_type="copepod",
+        )
+
+    assert interpreter.llm.temperature == 0.3
+    assert interpreter.llm.repetition_penalty == 1.1
 
 
 def test_llm_wrapper_enables_usage_for_direct_streaming_messages():

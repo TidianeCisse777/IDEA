@@ -139,6 +139,8 @@ def get_or_create_interpreter(
         interpreter.llm.supports_vision = settings.LLM_SUPPORTS_VISION
         interpreter.llm.supports_functions = settings.LLM_SUPPORTS_FUNCTIONS
         interpreter.llm.temperature = settings.LLM_TEMPERATURE
+        if settings.LLM_REPETITION_PENALTY is not None:
+            interpreter.llm.repetition_penalty = settings.LLM_REPETITION_PENALTY
         interpreter.llm.context_window = settings.LLM_CONTEXT_WINDOW
         interpreter.llm.max_completion_tokens = settings.LLM_MAX_COMPLETION_TOKENS
         if settings.LLM_API_KEY:
@@ -159,6 +161,8 @@ def get_or_create_interpreter(
 
         def _completions_via_chat(**params):
             import litellm
+            if settings.LLM_REPETITION_PENALTY is not None and "repetition_penalty" not in params:
+                params["repetition_penalty"] = settings.LLM_REPETITION_PENALTY
             if "input" in params or "instructions" in params:
                 system = params.pop("instructions", "") or ""
                 items = params.pop("input", []) or []
