@@ -76,6 +76,108 @@ def _safe_message_get(message: Any, key: str, default: Any = None) -> Any:
         return default
 
 
+def _build_copepod_data_planner_note(
+    *,
+    messages: list[dict[str, Any]],
+    user_message: str,
+) -> str | None:
+    """Return a short system note that forces a planner pass before code."""
+    if not user_message.strip():
+        return None
+    if not re.search(
+        r"\b(join|jointure|merge|coupl|compare|comparison|relat|analysis|analyse|graph|graphe|plot|chart)\b",
+        user_message,
+        re.IGNORECASE,
+    ):
+        return None
+
+    inspection_blocks: list[str] = []
+    join_hints: list[str] = []
+    for msg in reversed(messages):
+        content = _safe_message_get(msg, "content", "")
+        if not isinstance(content, str):
+            continue
+        if "# RAPPORT D'INSPECTION" not in content and "### Fichiers chargés" not in content:
+            continue
+        inspection_blocks.append(content)
+        match = re.search(r"Clés de jointure potentielles\s*:\s*(.+)", content)
+        if match:
+            hint = match.group(1).strip()
+            if hint and hint not in join_hints:
+                join_hints.append(hint)
+        if len(inspection_blocks) >= 3 and len(join_hints) >= 2:
+            break
+
+    if not inspection_blocks:
+        return None
+
+    lines = [
+        "You are the Copepod data planner.",
+        "Before writing any analysis code, read the inspection artifacts already present in the conversation.",
+        "Identify the exact column names and candidate join keys from those reports.",
+        "Use only documented columns and do not guess names.",
+    ]
+    if join_hints:
+        lines.append(f"Join hints already surfaced by inspection: {' | '.join(join_hints[:2])}.")
+    lines.extend([
+        "If the key is ambiguous or missing, ask one targeted clarification question instead of coding.",
+        "If the key is clear, state it explicitly, then move to the executor step.",
+        "Do not emit pandas merge/filter code until the join strategy is explicit.",
+    ])
+    return "\n".join(lines)
+
+
+def _extract_copepod_error_text(result: Any) -> str | None:
+    """Extract a compact error string from a streamed interpreter event."""
+    if not isinstance(result, dict):
+        return None
+
+    candidate = result.get("error")
+    if isinstance(candidate, str):
+        text = candidate.strip()
+        if text:
+            return text
+
+    content = result.get("content")
+    if isinstance(content, str):
+        lowered = content.lower()
+        if any(token in lowered for token in ("traceback", "error", "exception", "failed", "keyerror", "valueerror", "typeerror")):
+            text = content.strip()
+            return text or None
+
+    return None
+
+
+def _build_copepod_error_recovery_note(
+    *,
+    last_error_text: str,
+    user_message: str,
+) -> str | None:
+    """Return a system note that asks for a corrected second pass after a crash."""
+    error_text = (last_error_text or "").strip()
+    if not error_text:
+        return None
+
+    condensed_error = re.sub(r"\s+", " ", error_text).strip()
+    if len(condensed_error) > 1200:
+        condensed_error = condensed_error[:1197] + "..."
+
+    lines = [
+        "You are in recovery mode for the current code phase.",
+        "The previous attempt failed, so read the error before writing any new code.",
+        f"Last error: {condensed_error}",
+        "Inspect the failing line, correct the minimum necessary part, and retry the executor step.",
+        "If the error is a missing or mismatched key, re-read the inspection reports, normalize the candidate keys, and only then retry the join.",
+        "Do not repeat the same code unchanged.",
+        "If the correct key remains ambiguous, ask one short targeted question instead of forcing a bad merge.",
+    ]
+
+    if user_message.strip():
+        lines.append(f"User request to keep in view: {user_message.strip()}")
+
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Constants (shared with app.py via import)
 # ---------------------------------------------------------------------------
@@ -1029,6 +1131,12 @@ async def chat_endpoint(
                         )
                     except Exception:
                         pass
+                copepod_data_planner_note = None
+                if agent_type == "copepod":
+                    copepod_data_planner_note = _build_copepod_data_planner_note(
+                        messages=list(interpreter.messages),
+                        user_message=last_user_message or "",
+                    )
                 import time as _time
                 total_chunks = 0
                 _had_code = False
@@ -1036,30 +1144,70 @@ async def chat_endpoint(
                 _had_error = False
                 _last_usage = None
                 _t0 = _time.monotonic()
+                chat_prefix = list(interpreter.messages)
+                if copepod_data_planner_note:
+                    chat_prefix.append(
+                        {
+                            "role": "system",
+                            "type": "message",
+                            "content": copepod_data_planner_note,
+                        }
+                    )
                 chat_input = (
-                    list(interpreter.messages) + last_user_message_messages
+                    chat_prefix + last_user_message_messages
                     if last_user_message_messages
-                    else (last_user_message_payload if last_user_message_payload is not None else messages[-1])
+                    else (
+                        chat_prefix
+                        + ([last_user_message_payload] if last_user_message_payload is not None else [messages[-1]])
+                    )
                 )
-                stream_events = chat_stream_events(
-                    interpreter.chat(chat_input, stream=True),
-                )
-                for result in tracer.observe_stream(
-                    stream_events
-                ):
-                    total_chunks += 1
-                    if isinstance(result, dict):
-                        if isinstance(result.get("usage"), dict):
-                            _last_usage = result["usage"]
-                        _t = result.get("type")
-                        if _t == "code":
-                            _had_code = True
-                        elif _t == "image":
-                            _had_image = True
-                        elif result.get("error"):
-                            _had_error = True
-                    data = json.dumps(result) if isinstance(result, dict) else result
-                    yield f"data: {data}\n\n"
+                last_error_text = ""
+
+                def _yield_chat_stream(payload: list[dict[str, Any]]):
+                    nonlocal total_chunks, _had_code, _had_image, _had_error, _last_usage, last_error_text
+                    stream_events = chat_stream_events(
+                        interpreter.chat(payload, stream=True),
+                    )
+                    for result in stream_events:
+                        tracer.record_event(result)
+                        total_chunks += 1
+                        if isinstance(result, dict):
+                            if isinstance(result.get("usage"), dict):
+                                _last_usage = result["usage"]
+                            _t = result.get("type")
+                            if _t == "code":
+                                _had_code = True
+                            elif _t == "image":
+                                _had_image = True
+                            elif result.get("error"):
+                                _had_error = True
+                            error_text = _extract_copepod_error_text(result)
+                            if error_text:
+                                last_error_text = error_text
+                        data = json.dumps(result) if isinstance(result, dict) else result
+                        yield f"data: {data}\n\n"
+
+                for chunk in _yield_chat_stream(chat_input):
+                    yield chunk
+
+                if agent_type == "copepod" and _had_error and last_error_text.strip():
+                    retry_note = _build_copepod_error_recovery_note(
+                        last_error_text=last_error_text,
+                        user_message=last_user_message or "",
+                    )
+                    if retry_note:
+                        logger.info(f"  retrying copepod executor after error — {_short(session_key)}")
+                        retry_chat_input = list(interpreter.messages)
+                        retry_chat_input.append(
+                            {
+                                "role": "system",
+                                "type": "message",
+                                "content": retry_note,
+                            }
+                        )
+                        for chunk in _yield_chat_stream(retry_chat_input):
+                            yield chunk
+
                 _elapsed = f"{(_time.monotonic() - _t0):.1f}s"
                 if total_chunks == 0 and not fallback_sent:
                     fallback_sent = True

@@ -85,6 +85,8 @@ from routers.chat_routes import (
     _pretty_json,
     _render_repo_table,
     _summarize_mcp_result,
+    _build_copepod_data_planner_note,
+    _build_copepod_error_recovery_note,
     _coerce_multimodal_message_content,
     _expand_multimodal_message_for_interpreter,
     router,
@@ -314,6 +316,50 @@ class TestRenderRepoTable:
         repos = [{"name": "r1"}, {"name": "r2"}]
         out = _render_repo_table(repos)
         assert "r1" in out and "r2" in out
+
+
+# ---------------------------------------------------------------------------
+# Helper: _build_copepod_data_planner_note
+# ---------------------------------------------------------------------------
+
+class TestCopepodDataPlannerNote:
+    def test_returns_none_without_inspection_artifacts(self):
+        note = _build_copepod_data_planner_note(
+            messages=[{"role": "user", "content": "fais une jointure"}],
+            user_message="fais une jointure",
+        )
+        assert note is None
+
+    def test_returns_planner_note_with_join_hints(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": (
+                    "# RAPPORT D'INSPECTION\n"
+                    "### Fichiers chargés\n"
+                    "- **a.csv**\n"
+                    "Clés de jointure potentielles : station | time | depth\n"
+                ),
+            }
+        ]
+        note = _build_copepod_data_planner_note(
+            messages=messages,
+            user_message="fais une jointure entre les fichiers",
+        )
+        assert note is not None
+        assert "Copepod data planner" in note
+        assert "station | time | depth" in note
+        assert "Do not emit pandas merge/filter code" in note
+
+    def test_returns_recovery_note_for_traceback(self):
+        note = _build_copepod_error_recovery_note(
+            last_error_text="KeyError: 'station'",
+            user_message="fais une jointure",
+        )
+        assert note is not None
+        assert "recovery mode" in note.lower()
+        assert "KeyError" in note
+        assert "normalize the candidate keys" in note
 
 
 # ---------------------------------------------------------------------------
@@ -822,6 +868,144 @@ class TestChatGuardPaths:
         assert "Files uploaded in this message:" in captured["message"][-1]["content"]
         assert "sample.csv" in captured["message"][-1]["content"]
         assert store.read_messages("u1:s1:generic")[-1]["content"].startswith("Analyse ce fichier.")
+
+    def test_chat_injects_data_planner_note_before_join_code(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        store.write_messages(
+            "u1:s1:copepod",
+            [
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n"
+                        "### Fichiers chargés\n"
+                        "- **a.csv**\n"
+                        "Clés de jointure potentielles : station | time | depth\n"
+                    ),
+                }
+            ],
+        )
+
+        captured = {}
+
+        def fake_chat(message, stream=True):
+            captured["message"] = message
+            fake_interpreter.messages = list(message)
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.observe_stream.side_effect = lambda events: events
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "fais une jointure"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+
+        assert resp.status_code == 200
+        assert isinstance(captured["message"], list)
+        system_messages = [
+            msg for msg in captured["message"]
+            if msg.get("role") == "system" and isinstance(msg.get("content"), str)
+        ]
+        assert any("Copepod data planner" in msg["content"] for msg in system_messages)
+        assert any("station | time | depth" in msg["content"] for msg in system_messages)
+        assert any("Do not emit pandas merge/filter code" in msg["content"] for msg in system_messages)
+
+    def test_chat_retries_after_join_key_error(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        store.write_messages(
+            "u1:s1:copepod",
+            [
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n"
+                        "### Fichiers chargés\n"
+                        "- **a.csv**\n"
+                        "Clés de jointure potentielles : station | time | depth\n"
+                    ),
+                }
+            ],
+        )
+
+        captured_calls = []
+
+        def fake_chat(message, stream=True):
+            captured_calls.append(message)
+            fake_interpreter.messages = list(message)
+            if len(captured_calls) == 1:
+                return iter([
+                    {"start": True, "end": True, "role": "assistant", "type": "message", "content": "attempting join"},
+                    {"error": "KeyError: 'station'"},
+                ])
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "retry ok"},
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "fais une jointure"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+
+        assert resp.status_code == 200
+        assert len(captured_calls) == 2
+        retry_system_messages = [
+            msg for msg in captured_calls[1]
+            if msg.get("role") == "system" and isinstance(msg.get("content"), str)
+        ]
+        assert any("recovery mode" in msg["content"].lower() for msg in retry_system_messages)
+        assert any("KeyError" in msg["content"] for msg in retry_system_messages)
+        assert "retry ok" in resp.text
 
     def test_chat_emits_generation_summary_with_usage_metadata(self):
         store = InMemorySessionStore()
