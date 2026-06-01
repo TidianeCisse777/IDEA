@@ -1071,6 +1071,18 @@ body.theme-dark .report-expanded-subtitle {
     word-break: break-word;
 }
 
+.message.assistant .content.inspection-report h3 {
+    margin: 18px 0 10px;
+    font-size: 1rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    color: var(--text-primary, #222);
+}
+
+body.theme-dark .message.assistant .content.inspection-report h3 {
+    color: var(--text-primary, #eee);
+}
+
 .message.assistant .content.inspection-report code {
     white-space: normal;
     overflow-wrap: anywhere;
@@ -1115,6 +1127,67 @@ body.theme-dark .report-expanded-subtitle {
     white-space: normal;
     overflow-wrap: anywhere;
     word-break: break-word;
+}
+
+.message.assistant .content.inspection-report .definition-group {
+    display: grid;
+    gap: 10px;
+    margin: 8px 0 4px;
+}
+
+.message.assistant .content.inspection-report .definition-card {
+    background: linear-gradient(180deg, var(--surface-2, #f5f5f5), var(--surface-1, #ffffff));
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 14px;
+    padding: 12px 14px;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
+}
+
+body.theme-dark .message.assistant .content.inspection-report .definition-card {
+    background: linear-gradient(180deg, #23313a, #1b262d);
+    border-color: var(--border-color, #444);
+}
+
+.message.assistant .content.inspection-report .definition-card-name {
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    margin-bottom: 4px;
+}
+
+.message.assistant .content.inspection-report .definition-card-text {
+    margin-bottom: 8px;
+    line-height: 1.5;
+}
+
+.message.assistant .content.inspection-report .definition-card-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.message.assistant .content.inspection-report .definition-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color, #ddd);
+    background: rgba(255, 255, 255, 0.5);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+}
+
+body.theme-dark .message.assistant .content.inspection-report .definition-badge {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--border-color, #444);
+}
+
+.message.assistant .content.inspection-report .definition-notes {
+    margin-top: 8px;
+    font-size: 0.84rem;
+    opacity: 0.75;
+    line-height: 1.35;
 }
 
 .message.assistant .content > * {

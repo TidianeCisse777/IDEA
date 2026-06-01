@@ -556,6 +556,9 @@ def format_inspect_report(file_report, column_definitions=None):
     Returns:
         str: Markdown text rendering of the full report.
     """
+    import html as _html
+    import re as _re
+
     defs_by_col = {}
     if column_definitions:
         for d in column_definitions:
@@ -569,19 +572,54 @@ def format_inspect_report(file_report, column_definitions=None):
         # in every renderer and avoids backslash-escape parsing edge cases.
         return s.replace("|", "&#124;").replace(chr(10), " ").replace(chr(13), " ")
 
-    def _render_definition_line(column_name, definition):
-        rag_conf = definition.get("confidence", "unknown")
-        doc = definition.get("rag_doc_ref") or definition.get("source_file") or "RAG"
+    def _group_definitions(column_name, column_meta=None):
+        """Return a deterministic display group for a column definition."""
+        column_meta = column_meta or {}
+        semantic = str(column_meta.get("semantic_guess") or "").lower()
+        normalized = _re.sub(r"[^a-z0-9]+", "_", str(column_name).lower()).strip("_")
+
+        if semantic in {"taxon", "time", "station", "image_id", "depth", "latitude", "longitude"}:
+            if semantic == "time":
+                return "Dates / temps"
+            if semantic == "taxon":
+                return "Taxonomie"
+            if semantic == "station" or semantic == "image_id":
+                return "Identifiants"
+            return "Mesures"
+
+        if any(token in normalized for token in ("taxon", "class", "order", "family", "phylum", "kingdom", "species", "valid")):
+            return "Taxonomie"
+        if any(token in normalized for token in ("date", "time", "timestamp", "year", "month", "day", "hour", "minute", "second")):
+            return "Dates / temps"
+        if any(token in normalized for token in ("id", "name", "contract", "cast", "sample", "analysis", "station", "deployment", "file", "project")):
+            return "Identifiants"
+        if any(token in normalized for token in ("depth", "vol", "mass", "size", "count", "abundance", "length", "width", "temperature", "salinity", "flow", "mesh", "fraction")):
+            return "Mesures"
+        return "Contexte / autres"
+
+    def _render_definition_card(column_name, definition):
+        rag_conf = _html.escape(str(definition.get("confidence", "unknown")))
+        doc = _html.escape(str(definition.get("rag_doc_ref") or definition.get("source_file") or "RAG"))
         unit = definition.get("unit")
-        unit_part = f" [unit `{unit}`]" if unit else ""
+        unit_badge = f'<span class="definition-badge">unit: {_html.escape(str(unit))}</span>' if unit else ""
+        text = _html.escape(str(definition.get("definition") or "").strip())
+        name = _html.escape(str(column_name))
         notes = definition.get("critical_notes") or []
-        note_part = ""
+        notes_text = ""
         if notes:
-            note_part = " " + " ".join(f"[!] {note}" for note in notes[:2])
-        text = (definition.get("definition") or "").strip()
+            note_values = " ".join(f"[!] {_html.escape(str(note))}" for note in notes[:2])
+            notes_text = f'<div class="definition-notes">{note_values}</div>'
         return (
-            f"- **{column_name}** — {text}{unit_part}"
-            f" _(conf: {rag_conf}, src: `{doc}`)_{note_part}"
+            '<div class="definition-card">'
+            f'<div class="definition-card-name">{name}</div>'
+            f'<div class="definition-card-text">{text}</div>'
+            f'<div class="definition-card-meta">'
+            f'<span class="definition-badge">conf: {rag_conf}</span>'
+            f'<span class="definition-badge">src: {doc}</span>'
+            f"{unit_badge}"
+            '</div>'
+            f"{notes_text}"
+            '</div>'
         )
 
     _SOURCE_LABELS = {
@@ -628,15 +666,35 @@ def format_inspect_report(file_report, column_definitions=None):
     if sheet_names:
         lines.append(f"- **sheet_names** : `{sheet_names}`")
 
-    rag_defs = []
+    grouped_defs = {
+        "Identifiants": [],
+        "Dates / temps": [],
+        "Mesures": [],
+        "Taxonomie": [],
+        "Contexte / autres": [],
+    }
+    cols_by_name = {str(c.get("name", "")): c for c in fr.get("columns") or []}
     for col_name in sorted(defs_by_col):
-        rag_defs.append((col_name, defs_by_col[col_name]))
+        group = _group_definitions(col_name, cols_by_name.get(col_name))
+        grouped_defs.setdefault(group, []).append((col_name, defs_by_col[col_name]))
+
     lines.append("")
-    lines.append(f"## Définitions détectées ({len(rag_defs)})")
+    lines.append(f"## Définitions détectées ({len(defs_by_col)})")
     lines.append("")
-    if rag_defs:
-        for col_name, definition in rag_defs:
-            lines.append(_render_definition_line(col_name, definition))
+    if defs_by_col:
+        for group_name in ["Identifiants", "Dates / temps", "Mesures", "Taxonomie", "Contexte / autres"]:
+            group_items = grouped_defs.get(group_name) or []
+            lines.append(f"### {group_name} ({len(group_items)})")
+            lines.append("")
+            if group_items:
+                lines.append('<div class="definition-group">')
+                for col_name, definition in group_items:
+                    lines.append(_render_definition_card(col_name, definition))
+                lines.append('</div>')
+                lines.append("")
+            else:
+                lines.append("_(aucune colonne classée dans ce groupe)_")
+                lines.append("")
     else:
         lines.append("_(aucune définition RAG trouvée)_")
 
@@ -708,7 +766,6 @@ def format_inspect_report(file_report, column_definitions=None):
     src_val = src.get("value", "unknown")
     src_conf = src.get("confidence", "low")
     lines.append(f"- **Source détectée** : `{src_val}` (confiance : `{src_conf}`).")
-    missing_cols = [c for c in cols if isinstance(c.get("missing_rate"), (int, float)) and c.get("missing_rate", 0) > 0.3]
     missing_any = [c for c in cols if isinstance(c.get("missing_rate"), (int, float)) and c.get("missing_count", 0) > 0]
     if missing_any:
         worst = max(
@@ -724,12 +781,6 @@ def format_inspect_report(file_report, column_definitions=None):
             f"- **Données manquantes** : {len(missing_any)} colonnes ont des valeurs manquantes; "
             f"pire cas `{worst.get('name', 'unknown')}` à {worst_pct}."
         )
-        if missing_cols:
-            names = ", ".join(f"`{c['name']}`" for c in missing_cols[:5])
-            suffix = "" if len(missing_cols) <= 5 else f" (+{len(missing_cols) - 5} autres)"
-            lines.append(f"- **Colonnes >30% manquant** : {len(missing_cols)} — {names}{suffix}.")
-        else:
-            lines.append("- **Colonnes >30% manquant** : aucune.")
     else:
         lines.append("- **Données manquantes** : aucune colonne avec des valeurs manquantes.")
     rag_count = len(column_definitions or [])

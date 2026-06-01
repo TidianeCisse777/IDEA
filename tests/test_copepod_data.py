@@ -634,6 +634,17 @@ class TestFormatInspectReportWithDefinitions:
         out = tools_with_mock_describe["format_inspect_report"](r, column_definitions=defs)
         assert "Toujours positif" in out
 
+    def test_definitions_are_grouped_by_category(self, tools_with_mock_describe):
+        r = tools_with_mock_describe["inspect_file"](str(NEOLABS_ABUND))
+        defs = tools_with_mock_describe["collect_column_definitions"](r)
+        out = tools_with_mock_describe["format_inspect_report"](r, column_definitions=defs)
+        assert "## Définitions détectées" in out
+        assert "### Identifiants" in out
+        assert "### Dates / temps" in out
+        assert "### Mesures" in out
+        assert "### Taxonomie" in out
+        assert "### Contexte / autres" in out
+
 
 class TestFormatInspectReportSynthese:
     """The report ends with a deterministic ## Synthèse section so the LLM
@@ -674,6 +685,12 @@ class TestFormatInspectReportSynthese:
         tail = out[out.find("## Synthèse"):]
         assert "colonnes ont des valeurs manquantes" in tail
         assert "pire cas" in tail
+
+    def test_synthese_omits_over_30_missing_line(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        out = tools["format_inspect_report"](r)
+        tail = out[out.find("## Synthèse"):]
+        assert "Colonnes >30% manquant" not in tail
 
 
 # ── inspect_and_report ────────────────────────────────────────────────────────
