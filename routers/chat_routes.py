@@ -254,6 +254,52 @@ def _build_copepod_error_recovery_note(
     return "\n".join(lines)
 
 
+def _inject_copepod_system_note(
+    messages: list[dict[str, Any]],
+    note: str | None,
+) -> list[dict[str, Any]]:
+    """Merge all system prompts into a single leading system message.
+
+    OpenInterpreter rejects any system message that appears after the first
+    message, so planner/recovery notes must be folded into the initial system
+    prompt rather than appended as a standalone system item.
+    """
+    copied: list[dict[str, Any]] = []
+    system_parts: list[str] = []
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            copied.append(msg)
+            continue
+        role = msg.get("role")
+        if role == "system":
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                cleaned = content.strip()
+                if cleaned:
+                    system_parts.append(cleaned)
+            elif content is not None:
+                cleaned = str(content).strip()
+                if cleaned:
+                    system_parts.append(cleaned)
+            continue
+        copied.append(msg)
+
+    extra_note = (note or "").strip()
+    if extra_note:
+        system_parts.append(extra_note)
+
+    if not system_parts:
+        return copied
+
+    merged_system = {
+        "role": "system",
+        "type": "message",
+        "content": "\n\n".join(system_parts),
+    }
+    return [merged_system, *copied]
+
+
 # ---------------------------------------------------------------------------
 # Constants (shared with app.py via import)
 # ---------------------------------------------------------------------------
@@ -1221,14 +1267,7 @@ async def chat_endpoint(
                 _last_usage = None
                 _t0 = _time.monotonic()
                 chat_prefix = list(interpreter.messages)
-                if copepod_data_planner_note:
-                    chat_prefix.append(
-                        {
-                            "role": "system",
-                            "type": "message",
-                            "content": copepod_data_planner_note,
-                        }
-                    )
+                chat_prefix = _inject_copepod_system_note(chat_prefix, copepod_data_planner_note)
                 chat_input = (
                     chat_prefix + last_user_message_messages
                     if last_user_message_messages
@@ -1278,13 +1317,7 @@ async def chat_endpoint(
                     if retry_note:
                         logger.info(f"  retrying copepod executor after error — {_short(session_key)}")
                         retry_chat_input = list(interpreter.messages)
-                        retry_chat_input.append(
-                            {
-                                "role": "system",
-                                "type": "message",
-                                "content": retry_note,
-                            }
-                        )
+                        retry_chat_input = _inject_copepod_system_note(retry_chat_input, retry_note)
                         for chunk in _yield_chat_stream(retry_chat_input):
                             yield chunk
 

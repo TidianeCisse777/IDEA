@@ -210,6 +210,7 @@ from routers.chat_routes import (
     _summarize_mcp_result,
     _build_copepod_data_planner_note,
     _build_copepod_error_recovery_note,
+    _inject_copepod_system_note,
     _extract_copepod_key_hints,
     _should_retry_copepod_error,
     _coerce_multimodal_message_content,
@@ -504,6 +505,20 @@ class TestCopepodDataPlannerNote:
             "KeyError: 'station'",
             "fais une jointure entre les fichiers",
         )
+
+    def test_system_note_is_merged_into_leading_system_prompt(self):
+        messages = [
+            {"role": "system", "type": "message", "content": "base prompt"},
+            {"role": "user", "type": "message", "content": "hello"},
+            {"role": "system", "type": "message", "content": "late note"},
+            {"role": "assistant", "type": "message", "content": "reply"},
+        ]
+        merged = _inject_copepod_system_note(messages, "planner note")
+        system_positions = [i for i, msg in enumerate(merged) if msg.get("role") == "system"]
+        assert system_positions == [0]
+        assert "base prompt" in merged[0]["content"]
+        assert "late note" in merged[0]["content"]
+        assert "planner note" in merged[0]["content"]
 
 
 # ---------------------------------------------------------------------------
