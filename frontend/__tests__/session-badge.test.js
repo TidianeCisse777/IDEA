@@ -16,6 +16,12 @@ function buildDOM() {
 describe('session-badge', () => {
     beforeEach(() => {
         buildDOM();
+        Object.assign(navigator, {
+            clipboard: {
+                writeText: jest.fn(() => Promise.resolve()),
+            },
+        });
+        document.execCommand = jest.fn(() => true);
     });
 
     test('renders the full session id in the header badge', () => {
@@ -32,5 +38,16 @@ describe('session-badge', () => {
 
         expect(document.getElementById('sessionIdLabel').textContent).toBe('—');
         expect(document.getElementById('sessionIdBadge').title).toContain('—');
+    });
+
+    test('clicking the badge copies the full session id', async () => {
+        const sessionId = 'session-abc123xyz-very-long-session-id';
+        updateSessionIdentityBadge(sessionId);
+
+        document.getElementById('sessionIdBadge').click();
+        await Promise.resolve();
+
+        expect(navigator.clipboard.writeText).toHaveBeenCalledWith(sessionId);
+        expect(document.getElementById('sessionIdBadge').title).toContain('Copié');
     });
 });

@@ -55,7 +55,7 @@ let threadId = localStorage.getItem('threadId') || (() => {
     return newThreadId;
 })();
 
-function updateSessionIdentityBadge() {
+function syncSessionIdentityBadge() {
     if (typeof window.updateSessionIdentityBadge === 'function') {
         window.updateSessionIdentityBadge(sessionId);
     }
@@ -98,7 +98,7 @@ let generationSummaryFinalized = false;
 let activeGenerationModel = null;
 
 showPromptIdeas();
-updateSessionIdentityBadge();
+syncSessionIdentityBadge();
 
 function resetTextareaHeight() {
     const messageInput = document.getElementById('messageInput');
@@ -938,7 +938,7 @@ async function clearChatHistory() {
         sessionId = generateId('session');
         localStorage.setItem('sessionId', sessionId);
         localStorage.removeItem('activeConversationId');
-        updateSessionIdentityBadge();
+        syncSessionIdentityBadge();
 
         // Reset session mode to plan
         sessionMode = 'plan';
@@ -972,7 +972,7 @@ function resetSessionForConversationLoad() {
     localStorage.setItem('sessionId', sessionId);
     sessionMode = 'plan';
     updateSessionModeBadge('plan');
-    updateSessionIdentityBadge();
+    syncSessionIdentityBadge();
 }
 window.resetSessionForConversationLoad = resetSessionForConversationLoad;
 
