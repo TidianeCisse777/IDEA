@@ -300,6 +300,21 @@ def _inject_copepod_system_note(
     return [merged_system, *copied]
 
 
+def _strip_system_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a copy of *messages* without any system-role entries.
+
+    OpenInterpreter keeps the active system prompt separately. If we replay a
+    restored transcript that already contains a system message, the LLM layer
+    sees two system prompts and raises:
+    ``No message after the first can have the role 'system'``.
+    """
+    return [
+        msg
+        for msg in messages
+        if not (isinstance(msg, dict) and msg.get("role") == "system")
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Constants (shared with app.py via import)
 # ---------------------------------------------------------------------------
@@ -1266,16 +1281,7 @@ async def chat_endpoint(
                 _had_error = False
                 _last_usage = None
                 _t0 = _time.monotonic()
-                chat_prefix = list(interpreter.messages)
-                chat_prefix = _inject_copepod_system_note(chat_prefix, copepod_data_planner_note)
-                chat_input = (
-                    chat_prefix + last_user_message_messages
-                    if last_user_message_messages
-                    else (
-                        chat_prefix
-                        + ([last_user_message_payload] if last_user_message_payload is not None else [messages[-1]])
-                    )
-                )
+                base_system_message = getattr(interpreter, "system_message", "") or ""
                 last_error_text = ""
 
                 def _yield_chat_stream(payload: list[dict[str, Any]]):
@@ -1302,8 +1308,28 @@ async def chat_endpoint(
                         data = json.dumps(result) if isinstance(result, dict) else result
                         yield f"data: {data}\n\n"
 
-                for chunk in _yield_chat_stream(chat_input):
-                    yield chunk
+                try:
+                    if agent_type == "copepod" and copepod_data_planner_note:
+                        planner_system_message = base_system_message.strip()
+                        if planner_system_message:
+                            planner_system_message += "\n\n"
+                        planner_system_message += copepod_data_planner_note.strip()
+                        interpreter.system_message = planner_system_message
+
+                    chat_prefix = _strip_system_messages(list(interpreter.messages))
+                    chat_input = (
+                        chat_prefix + last_user_message_messages
+                        if last_user_message_messages
+                        else (
+                            chat_prefix
+                            + ([last_user_message_payload] if last_user_message_payload is not None else [messages[-1]])
+                        )
+                    )
+
+                    for chunk in _yield_chat_stream(chat_input):
+                        yield chunk
+                finally:
+                    interpreter.system_message = base_system_message
 
                 if (
                     agent_type == "copepod"
@@ -1316,10 +1342,18 @@ async def chat_endpoint(
                     )
                     if retry_note:
                         logger.info(f"  retrying copepod executor after error — {_short(session_key)}")
-                        retry_chat_input = list(interpreter.messages)
-                        retry_chat_input = _inject_copepod_system_note(retry_chat_input, retry_note)
-                        for chunk in _yield_chat_stream(retry_chat_input):
-                            yield chunk
+                        try:
+                            retry_system_message = base_system_message.strip()
+                            if retry_system_message:
+                                retry_system_message += "\n\n"
+                            retry_system_message += retry_note.strip()
+                            interpreter.system_message = retry_system_message
+
+                            retry_chat_input = _strip_system_messages(list(interpreter.messages))
+                            for chunk in _yield_chat_stream(retry_chat_input):
+                                yield chunk
+                        finally:
+                            interpreter.system_message = base_system_message
 
                 _elapsed = f"{(_time.monotonic() - _t0):.1f}s"
                 if total_chunks == 0 and not fallback_sent:

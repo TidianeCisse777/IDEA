@@ -211,6 +211,7 @@ from routers.chat_routes import (
     _build_copepod_data_planner_note,
     _build_copepod_error_recovery_note,
     _inject_copepod_system_note,
+    _strip_system_messages,
     _extract_copepod_key_hints,
     _should_retry_copepod_error,
     _coerce_multimodal_message_content,
@@ -519,6 +520,16 @@ class TestCopepodDataPlannerNote:
         assert "base prompt" in merged[0]["content"]
         assert "late note" in merged[0]["content"]
         assert "planner note" in merged[0]["content"]
+
+    def test_restored_messages_drop_system_entries_before_llm_call(self):
+        messages = [
+            {"role": "system", "type": "message", "content": "base prompt"},
+            {"role": "user", "type": "message", "content": "hello"},
+            {"role": "assistant", "type": "message", "content": "reply"},
+        ]
+        stripped = _strip_system_messages(messages)
+        assert [msg["role"] for msg in stripped] == ["user", "assistant"]
+        assert all(msg["role"] != "system" for msg in stripped)
 
 
 # ---------------------------------------------------------------------------
@@ -1047,11 +1058,13 @@ class TestChatGuardPaths:
                 }
             ],
         )
+        fake_interpreter.system_message = "base prompt"
 
         captured = {}
 
         def fake_chat(message, stream=True):
             captured["message"] = message
+            captured["system_message"] = fake_interpreter.system_message
             fake_interpreter.messages = list(message)
             return iter([
                 {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
@@ -1087,13 +1100,10 @@ class TestChatGuardPaths:
 
         assert resp.status_code == 200
         assert isinstance(captured["message"], list)
-        system_messages = [
-            msg for msg in captured["message"]
-            if msg.get("role") == "system" and isinstance(msg.get("content"), str)
-        ]
-        assert any("Copepod data planner" in msg["content"] for msg in system_messages)
-        assert any("station | time | depth" in msg["content"] for msg in system_messages)
-        assert any("Do not emit pandas merge/filter code" in msg["content"] for msg in system_messages)
+        assert all(msg.get("role") != "system" for msg in captured["message"])
+        assert "Copepod data planner" in captured["system_message"]
+        assert "station | time | depth" in captured["system_message"]
+        assert "Do not emit pandas merge/filter code" in captured["system_message"]
 
     def test_chat_retries_after_join_key_error(self):
         store = InMemorySessionStore()
@@ -1114,11 +1124,14 @@ class TestChatGuardPaths:
                 }
             ],
         )
+        fake_interpreter.system_message = "base prompt"
 
         captured_calls = []
+        captured_system_messages = []
 
         def fake_chat(message, stream=True):
             captured_calls.append(message)
+            captured_system_messages.append(fake_interpreter.system_message)
             fake_interpreter.messages = list(message)
             if len(captured_calls) == 1:
                 return iter([
@@ -1158,13 +1171,67 @@ class TestChatGuardPaths:
 
         assert resp.status_code == 200
         assert len(captured_calls) == 2
-        retry_system_messages = [
-            msg for msg in captured_calls[1]
-            if msg.get("role") == "system" and isinstance(msg.get("content"), str)
-        ]
-        assert any("recovery mode" in msg["content"].lower() for msg in retry_system_messages)
-        assert any("KeyError" in msg["content"] for msg in retry_system_messages)
+        assert all(msg.get("role") != "system" for msg in captured_calls[0])
+        assert all(msg.get("role") != "system" for msg in captured_calls[1])
+        assert "planner" in captured_system_messages[0].lower()
+        assert "recovery mode" in captured_system_messages[1].lower()
+        assert "KeyError" in captured_system_messages[1]
         assert "retry ok" in resp.text
+
+    def test_chat_strips_restored_system_messages_for_generic_agent(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        store.write_messages(
+            "u1:s1:generic",
+            [
+                {"role": "system", "type": "message", "content": "legacy system note"},
+                {"role": "user", "type": "message", "content": "hello"},
+            ],
+        )
+        fake_interpreter.system_message = "base prompt"
+
+        captured = {}
+
+        def fake_chat(message, stream=True):
+            captured["message"] = message
+            captured["system_message"] = fake_interpreter.system_message
+            fake_interpreter.messages = list(message)
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "hello"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "generic"},
+            )
+
+        assert resp.status_code == 200
+        assert isinstance(captured["message"], list)
+        assert all(msg.get("role") != "system" for msg in captured["message"])
+        assert captured["system_message"] == "base prompt"
 
     def test_chat_emits_generation_summary_with_usage_metadata(self):
         store = InMemorySessionStore()
