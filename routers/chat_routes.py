@@ -1338,6 +1338,10 @@ async def chat_endpoint(
                         for chunk in _yield_chat_stream(chat_input):
                             yield chunk
 
+                        logger.info(
+                            f"  retry-check: had_error={current_attempt_had_error} "
+                            f"error_text={repr((current_attempt_last_error_text or '')[:120])}"
+                        )
                         if not (
                             agent_type == "copepod"
                             and current_attempt_had_error
