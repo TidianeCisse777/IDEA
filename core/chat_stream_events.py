@@ -242,12 +242,19 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
             else:
                 yield from _emit_pending_assistant_tail()
         elif buf:
-            yield {"start": True, "end": True, "role": "computer",
-                   "type": "console", "format": console_fmt or "output",
-                   "content": buf}
+            # Strip DELIVERABLE: and Saved CSV: lines before emitting to console
+            # — they are rendered as structured cards, not raw text.
+            console_lines = [
+                l for l in buf.splitlines()
+                if not l.strip().startswith("DELIVERABLE:")
+                and not l.strip().startswith("Saved CSV:")
+            ]
+            console_buf = "\n".join(console_lines).strip()
+            if console_buf:
+                yield {"start": True, "end": True, "role": "computer",
+                       "type": "console", "format": console_fmt or "output",
+                       "content": console_buf}
         # Detect DELIVERABLE: JSON lines and emit structured result cards.
-        # Saved CSV: is kept for logging but no longer emits a UI event —
-        # the DELIVERABLE card already includes the download button.
         for line in buf.splitlines():
             line = line.strip()
             if line.startswith("DELIVERABLE:"):
