@@ -934,6 +934,108 @@ body.theme-dark .csv-download-label {
     color: var(--text-primary, #eee);
 }
 
+/* ── Deliverable result card ─────────────────────────────────────────── */
+.deliverable-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 16px;
+    margin: 6px 0;
+    border: 1px solid var(--border-color, #ddd);
+    border-left: 3px solid #4caf50;
+    border-radius: 8px;
+    background: var(--bg-secondary, #f8f8f8);
+    max-width: 480px;
+}
+
+.deliverable-icon {
+    font-size: 22px;
+    color: #4caf50;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.deliverable-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.deliverable-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary, #222);
+    margin-bottom: 6px;
+}
+
+.deliverable-fields {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.deliverable-fields li {
+    display: flex;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.deliverable-field-label {
+    color: var(--text-secondary, #666);
+    flex-shrink: 0;
+}
+
+.deliverable-field-value {
+    color: var(--text-primary, #333);
+    font-family: monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.deliverable-download-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    border-radius: 6px;
+    background: var(--accent-color, #1976d2);
+    color: #fff;
+    text-decoration: none;
+    flex-shrink: 0;
+    transition: opacity 0.15s;
+}
+
+.deliverable-download-btn:hover {
+    opacity: 0.85;
+    color: #fff;
+}
+
+.deliverable-download-btn .material-icons {
+    font-size: 16px;
+}
+
+body.theme-dark .deliverable-card {
+    background: var(--bg-secondary, #2a2a2a);
+    border-color: var(--border-color, #444);
+    border-left-color: #4caf50;
+}
+
+body.theme-dark .deliverable-title {
+    color: var(--text-primary, #eee);
+}
+
+body.theme-dark .deliverable-field-label {
+    color: var(--text-secondary, #aaa);
+}
+
+body.theme-dark .deliverable-field-value {
+    color: var(--text-primary, #ddd);
+}
+
 /* ── Inspection progress indicator ──────────────────────────────────── */
 .message.inspection-indicator .content {
     padding: 8px 14px;

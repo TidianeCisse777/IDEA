@@ -378,6 +378,8 @@ function appendMessage(message, options = {}) {
         const imageSrc = escapeHtml(message.content || '');
         const imageAlt = escapeHtml(message.filename || 'Uploaded image');
         contentElement.innerHTML = `<img src="${imageSrc}" alt="${imageAlt}" class="uploaded-image-preview">`;
+    } else if (message.type === 'deliverable') {
+        contentElement.appendChild(_renderDeliverableCard(message.content || '{}'));
     } else if (message.type === 'file') {
         if (message.format === 'csv-download') {
             const filename = escapeHtml(message.filename || 'fichier.csv');
@@ -611,6 +613,67 @@ function handleActiveLineChunk(content) {
     }
 }
 
+const _DELIVERABLE_ICONS = {
+    join:     'merge_type',
+    export:   'download',
+    graph:    'bar_chart',
+    stats:    'analytics',
+    analysis: 'science',
+};
+
+function _renderDeliverableCard(jsonStr) {
+    let data = {};
+    try { data = JSON.parse(jsonStr); } catch (_) {}
+
+    const card = document.createElement('div');
+    card.className = 'deliverable-card';
+
+    const icon = document.createElement('span');
+    icon.className = 'material-icons deliverable-icon';
+    icon.textContent = _DELIVERABLE_ICONS[data.type] || 'task_alt';
+    card.appendChild(icon);
+
+    const body = document.createElement('div');
+    body.className = 'deliverable-body';
+
+    const title = document.createElement('div');
+    title.className = 'deliverable-title';
+    title.textContent = data.title || 'Livrable';
+    body.appendChild(title);
+
+    if (Array.isArray(data.fields) && data.fields.length > 0) {
+        const fields = document.createElement('ul');
+        fields.className = 'deliverable-fields';
+        data.fields.forEach(f => {
+            const li = document.createElement('li');
+            const lbl = document.createElement('span');
+            lbl.className = 'deliverable-field-label';
+            lbl.textContent = f.label + ' :';
+            const val = document.createElement('span');
+            val.className = 'deliverable-field-value';
+            val.textContent = f.value;
+            li.appendChild(lbl);
+            li.appendChild(val);
+            fields.appendChild(li);
+        });
+        body.appendChild(fields);
+    }
+
+    card.appendChild(body);
+
+    if (data.file_url) {
+        const btn = document.createElement('a');
+        btn.className = 'deliverable-download-btn';
+        btn.href = data.file_url;
+        btn.download = data.filename || '';
+        btn.innerHTML = '<span class="material-icons">download</span>';
+        btn.title = 'Télécharger ' + (data.filename || '');
+        card.appendChild(btn);
+    }
+
+    return card;
+}
+
 function _upgradeCsvLinks(container) {
     container.querySelectorAll('a[href]').forEach((a) => {
         const href = a.getAttribute('href') || '';
@@ -816,6 +879,9 @@ function updateMessageContent(id, content) {
                     renderActiveLineSpinner();
                 }
             }
+        } else if (message.type === 'deliverable') {
+            contentDiv.innerHTML = '';
+            contentDiv.appendChild(_renderDeliverableCard(content || '{}'));
         } else if (message.type === 'file') {
             if (message.format === 'csv-download') {
                 const filename = escapeHtml(message.filename || 'fichier.csv');

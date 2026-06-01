@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 from collections.abc import Iterable, Iterator
@@ -245,6 +246,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                    "type": "console", "format": console_fmt or "output",
                    "content": buf}
         # Detect CSV saves and emit a download link for each one
+        # Detect DELIVERABLE: JSON lines and emit structured result cards
         for line in buf.splitlines():
             line = line.strip()
             if line.startswith("Saved CSV:"):
@@ -255,6 +257,20 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                     yield {"start": True, "end": True, "role": "computer",
                            "type": "file", "format": "csv-download",
                            "content": csv_url, "filename": filename}
+            elif line.startswith("DELIVERABLE:"):
+                raw = line[len("DELIVERABLE:"):].strip()
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(data, dict):
+                    if "file" in data:
+                        url = _path_to_static_url(data["file"])
+                        if url:
+                            data["file_url"] = url
+                            data["filename"] = os.path.basename(data["file"])
+                    yield {"start": True, "end": True, "role": "computer",
+                           "type": "deliverable", "content": json.dumps(data)}
         console_buf_content = ""
         in_console_msg = False
         console_fmt = ""
