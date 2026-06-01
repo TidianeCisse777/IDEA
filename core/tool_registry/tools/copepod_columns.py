@@ -29,6 +29,7 @@ def describe_column(column_name, source_hint=None, session_id=None):
             source_file     — same as rag_doc_ref
     """
     import re
+    from pathlib import Path
 
     if not column_name or not column_name.strip():
         return {
@@ -43,23 +44,13 @@ def describe_column(column_name, source_hint=None, session_id=None):
 
     _NOT_FOUND = {
         "column": column_name,
-        "definition": f"Column \'{column_name}\' not found in knowledge base.",
+        "definition": f"Colonne `{column_name}` non documentée dans le corpus RAG.",
         "unit": None,
         "confidence": "unknown",
         "critical_notes": [],
         "rag_doc_ref": None,
         "source_file": None,
     }
-
-    query = f"{column_name} signification unité définition"
-    if source_hint:
-        query += f" {source_hint}"
-
-    try:
-        from core.copepod_rag.query import query_copepod_rag
-        results = query_copepod_rag(query, top_k=8, session_id=session_id)
-    except Exception:
-        return _NOT_FOUND
 
     def _clean_cell(value):
         return re.sub("[*`]+", "", value).strip()
@@ -93,6 +84,43 @@ def describe_column(column_name, source_hint=None, session_id=None):
                 return after[0], _normalise_unit(after[1])
         return None
 
+    def _load_local_chunks():
+        if not hasattr(_load_local_chunks, "_cache"):
+            chunks_path = Path("core/copepod_rag/chunks.json")
+            if chunks_path.exists():
+                import json
+                _load_local_chunks._cache = json.loads(chunks_path.read_text(encoding="utf-8"))
+            else:
+                _load_local_chunks._cache = []
+        return _load_local_chunks._cache
+
+    for r in _load_local_chunks():
+        content = r.get("content", "")
+        parsed = _row_definition(content)
+        if parsed:
+            raw_def, unit = parsed
+            definition = re.sub("[*]+", "", raw_def).strip()
+            critical_notes = _extract_critical_notes(column_name, definition, content)
+            return {
+                "column": column_name,
+                "definition": definition,
+                "unit": unit,
+                "confidence": "reliable",
+                "critical_notes": critical_notes,
+                "rag_doc_ref": r.get("doc"),
+                "source_file": r.get("doc"),
+            }
+
+    query = f"{column_name} signification unité définition"
+    if source_hint:
+        query += f" {source_hint}"
+
+    try:
+        from core.copepod_rag.query import query_copepod_rag
+        results = query_copepod_rag(query, top_k=25, session_id=session_id)
+    except Exception:
+        return _NOT_FOUND
+
     exact_rows = []
     for index, r in enumerate(results):
         content = r.get("content", "")
@@ -121,7 +149,7 @@ def describe_column(column_name, source_hint=None, session_id=None):
         if column_name.lower() in r.get("content", "").lower():
             return {
                 "column": column_name,
-                "definition": f"Mentioned in {r.get('title', r.get('doc', 'RAG'))}.",
+                "definition": f"Présent dans {r.get('doc', 'RAG')} sans définition structurée.",
                 "unit": None,
                 "confidence": "exploratory",
                 "critical_notes": [],

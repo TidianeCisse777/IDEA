@@ -49,7 +49,12 @@ def _salvage_tail(content: str) -> str:
 def _is_raw_code_block(content: str) -> bool:
     """True if the assistant message is a raw OI code block that should be hidden."""
     stripped = content.lstrip()
-    if stripped.startswith("to=execute") or stripped.startswith('{"language":'):
+    if (
+        stripped.startswith("to=execute")
+        or stripped.startswith("execute(")
+        or stripped.startswith("execute(language=")
+        or stripped.startswith('{"language":')
+    ):
         return True
     # LLM sometimes emits raw Python (no fences) for the inspect_and_report call
     if stripped.startswith("_ir = inspect_and_report("):

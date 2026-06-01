@@ -217,13 +217,41 @@ Source labo NeoLab : campagnes filets 2010–2025 (contrats "Legacy Labo Fortier
 
 | Colonne | Description |
 |---------|-------------|
-| `ZOOPLANKTON_CATEGORY` | Catégorie large : `copepod`, `non-copepod`, `fish`, `egg-like` |
-| `TAXON_ID` | Identifiant taxonomique (ex. `Calanus glacialis`, `Calanus spp.`) |
-| `KINGDOM`, `PHYLUM`, `CLASS`, `ORDER`, `FAMILY` | Classification Linné jusqu'à la famille |
+| `ZOOPLANKTON_CATEGORY` | Catégorie d'annotation large : `copepod`, `non-copepod`, `fish`, `egg-like` |
+| `TAXON_ID` | Identifiant taxonomique principal ou nom scientifique annoté (ex. `Calanus glacialis`, `Calanus spp.`) |
+| `KINGDOM` | Règne taxonomique |
+| `PHYLUM` | Embranchement taxonomique |
+| `CLASS` | Classe taxonomique |
+| `ORDER` | Ordre taxonomique |
+| `FAMILY` | Famille taxonomique |
+| `GENUS` | Genre taxonomique |
+| `SPECIES` | Espèce taxonomique ou binôme accepté |
 | `TAXON_LIFE_DEVELOPMENT_STAGE` | Stade de développement : `Copepodid`, `Nauplius`, etc. |
 | `TAXON_SIZE_CATEGORY` | Catégorie de taille optionnelle (peut être NULL) |
 
 **Règle :** `DEPTH_CALC_NET_FILTERED_VOL` est NULL pour les O-Tow ou si MIN/MAX profondeurs sont absentes. `FLOWMETER_CALC_VOL` est NULL si le débitmètre n'était pas opérationnel. Vérifier la disponibilité des deux volumes avant toute normalisation.
+
+---
+
+# Glossaire taxonomique NeoLab — définitions de référence
+
+Mots-clés : `ZOOPLANKTON_CATEGORY`, `TAXON_ID`, `KINGDOM`, `PHYLUM`, `CLASS`, `ORDER`, `FAMILY`, `GENUS`, `SPECIES`, `TAXON_LIFE_DEVELOPMENT_STAGE`, `TAXON_SIZE_CATEGORY`, taxon, taxonomie, stade de vie, catégorie de taille
+
+Ces définitions servent de référence pour les exports NeoLab. Quand la colonne existe dans un fichier, son sens reste le même même si la structure de l'export varie.
+
+| Colonne | Définition |
+|---------|-------------|
+| `ZOOPLANKTON_CATEGORY` | Classement large de l'observation pour l'annotation globale |
+| `TAXON_ID` | Identifiant du taxon annoté ou nom scientifique retenu |
+| `KINGDOM` | Règne taxonomique |
+| `PHYLUM` | Embranchement taxonomique |
+| `CLASS` | Classe taxonomique |
+| `ORDER` | Ordre taxonomique |
+| `FAMILY` | Famille taxonomique |
+| `GENUS` | Genre taxonomique |
+| `SPECIES` | Espèce taxonomique ou binôme accepté |
+| `TAXON_LIFE_DEVELOPMENT_STAGE` | Stade de vie ou de développement taxonomique |
+| `TAXON_SIZE_CATEGORY` | Catégorie de taille taxonomique |
 
 ---
 
@@ -252,12 +280,14 @@ Le fichier combiné (copepod abund & biomass) expose 93 colonnes. Toutes les col
 | 13 | `MAX_SAMPLE_DEPTH` | Profondeur maximale | m |
 | 14 | `DEPTH_CALC_NET_FILTERED_VOL` | Volume depth — V-Tow uniquement | m³ |
 | 15 | `FLOWMETER_CALC_VOL` | Volume flowmeter — V-Tow et O-Tow | m³ |
-| 16 | `TAXON_ID` | Espèce / taxon (ex. Calanus glacialis) | — |
-| 17 | `KINGDOM` | Règne | — |
-| 18 | `PHYLUM` | Embranchement | — |
-| 19 | `CLASS` | Classe | — |
-| 20 | `ORDER` | Ordre | — |
-| 21 | `FAMILY` | Famille | — |
+| 16 | `TAXON_ID` | Identifiant taxonomique principal ou nom scientifique annoté | — |
+| 17 | `KINGDOM` | Règne taxonomique | — |
+| 18 | `PHYLUM` | Embranchement taxonomique | — |
+| 19 | `CLASS` | Classe taxonomique | — |
+| 20 | `ORDER` | Ordre taxonomique | — |
+| 21 | `FAMILY` | Famille taxonomique | — |
+| 22 | `GENUS` | Genre taxonomique | — |
+| 23 | `SPECIES` | Espèce taxonomique ou binôme accepté | — |
 
 **Copépodite C1 (colonnes 22–26) :**
 
@@ -427,9 +457,9 @@ Le fichier combiné (copepod abund & biomass) expose 93 colonnes. Toutes les col
 
 | Colonne | Description | Unité |
 |---------|-------------|-------|
-| `ZOOPLANKTON_CATEGORY` | `copepod`, `non-copepod`, `fish`, `egg-like` | — |
-| `TAXON_LIFE_DEVELOPMENT_STAGE` | Stade de vie (Copepodid, Nauplius, etc.) | — |
-| `TAXON_SIZE_CATEGORY` | Catégorie de taille (peut être NULL) | — |
+| `ZOOPLANKTON_CATEGORY` | Classement large de l'observation pour l'annotation globale | — |
+| `TAXON_LIFE_DEVELOPMENT_STAGE` | Stade de vie ou de développement taxonomique | — |
+| `TAXON_SIZE_CATEGORY` | Catégorie de taille taxonomique | — |
 | `Large Fract (ind./m3 depth vol)` | Fraction Grande (>1 mm), volume depth | ind m⁻³ |
 | `Small Fract (ind./m3 depth vol)` | Fraction Petite (<1 mm), volume depth | ind m⁻³ |
 | `Total abundance (ind./m3 depth vol)` | Large + Small, volume depth | ind m⁻³ |

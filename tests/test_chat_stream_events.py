@@ -53,6 +53,15 @@ def test_raw_to_execute_block_is_suppressed_no_tail():
     assert msg_events == []
 
 
+def test_raw_execute_wrapper_is_suppressed_no_tail():
+    chunks = _stream_message(
+        'execute(code="""\n_ir = inspect_and_report(file_paths=[\'/tmp/a.csv\', \'/tmp/b.csv\'], session_id=\'s\')\nprint(_ir[\'output\'])\n""")'
+    )
+    events = list(chat_stream_events(chunks))
+    msg_events = [e for e in events if e.get("type") == "message"]
+    assert msg_events == []
+
+
 def test_raw_json_block_with_trailing_text_keeps_only_tail():
     chunks = _stream_message('{"language":"python","code":"print(1)"} Now look at the result.')
     events = list(chat_stream_events(chunks))

@@ -120,6 +120,25 @@ class TestChunkDocs:
         assert "ctd embarquée" in texts or "ctd embarquee" in texts
         assert "ctd externe" in texts
 
+    def test_taxonomy_glossary_terms_are_in_chunks(self):
+        chunks = json.loads(CHUNKS_FILE.read_text())
+        texts = " ".join(c["content"] for c in chunks)
+        expected_terms = [
+            "ZOOPLANKTON_CATEGORY",
+            "TAXON_ID",
+            "KINGDOM",
+            "PHYLUM",
+            "CLASS",
+            "ORDER",
+            "FAMILY",
+            "GENUS",
+            "SPECIES",
+            "TAXON_LIFE_DEVELOPMENT_STAGE",
+            "TAXON_SIZE_CATEGORY",
+        ]
+        missing = [term for term in expected_terms if term not in texts]
+        assert not missing, f"Taxonomy glossary terms missing from chunks.json: {missing}"
+
 
 # ── query (requires built index) ──────────────────────────────────────────────
 

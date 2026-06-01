@@ -151,7 +151,7 @@ def _render(ctx: dict) -> str:
 
             CRITICAL:
             -- Always attempt to execute code, unless the user explicitly requested otherwise (e.g., "show me example code").
-            -- When executing, format the tool call exactly as execute({{"language": "python", "code": "<code>"}}). Do not send bare dictionaries like {{"language": "...", "code": "..."}}.
+            -- When executing, call `execute` with a Python code block and keep the call isolated. Do not send bare dictionaries like {{"language": "...", "code": "..."}}.
             -- Keep execution calls standalone: explanations go in a prior assistant message, and the execute(...) call is sent alone without mixing prose and code."""
 
 

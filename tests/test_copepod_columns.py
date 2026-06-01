@@ -112,6 +112,51 @@ class TestDescribeColumn:
         assert "column" in r
         assert r["confidence"] == "unknown"
 
+    def test_zooplankton_category_is_explicitly_defined(self, tools):
+        r = tools["describe_column"]("ZOOPLANKTON_CATEGORY")
+        assert r["confidence"] == "reliable"
+        assert "Classement large" in r["definition"]
+        assert "colonnes_labo" in r["rag_doc_ref"]
+
+    def test_taxonomy_columns_get_reliable_definitions_from_labo_doc(self, tools):
+        cases = {
+            "CLASS": "Classe taxonomique",
+            "FAMILY": "Famille taxonomique",
+            "PHYLUM": "Embranchement taxonomique",
+            "ORDER": "Ordre taxonomique",
+            "KINGDOM": "Règne taxonomique",
+            "GENUS": "Genre taxonomique",
+            "SPECIES": "Espèce taxonomique",
+        }
+        for column, expected in cases.items():
+            r = tools["describe_column"](column)
+            assert r["confidence"] == "reliable"
+            assert expected in r["definition"]
+            assert "colonnes_labo" in r["rag_doc_ref"]
+
+    def test_taxon_id_gets_definition_from_labo_doc(self, tools):
+        r = tools["describe_column"]("TAXON_ID")
+        assert r["confidence"] == "reliable"
+        assert "Identifiant taxonomique" in r["definition"]
+        assert "colonnes_labo" in r["rag_doc_ref"]
+
+    def test_exploratory_fallback_does_not_use_mentioned_in(self, tools, monkeypatch):
+        import core.copepod_rag.query as query_mod
+
+        def _fake_query(*args, **kwargs):
+            return [{
+                "doc": "colonnes_labo.md",
+                "title": "Test chunk",
+                "content": "The column FOO_BAR is discussed here but not defined as a table row.",
+                "score": 0.12,
+            }]
+
+        monkeypatch.setattr(query_mod, "query_copepod_rag", _fake_query)
+        r = tools["describe_column"]("FOO_BAR")
+        assert r["confidence"] == "exploratory"
+        assert "Présent dans" in r["definition"]
+        assert "sans définition structurée" in r["definition"]
+
 
 # ── check_column_for_calc ──────────────────────────────────────────────────────
 

@@ -49,3 +49,10 @@ def test_get_tool_code_renders_copepod_tools():
     assert "describe_column" in code
     assert "create_data_understanding_draft" not in code
     assert "activate_graph_context" not in code
+
+
+def test_copepod_prompt_has_failure_recovery_guidance():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "Failure recovery" in prompt
+    assert "Retry once" in prompt
+    assert "do not freeze" in prompt.lower()

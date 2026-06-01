@@ -6,16 +6,9 @@ def _render(ctx: dict) -> str:
     session_id = ctx["session_id"]
     return f"""## Copepod Runtime Tools
 
-**HOW TO CALL THESE.** The only callable tool you have is `execute(language="python", code=...)`. Every helper listed below is a **Python function pre-imported inside the execute sandbox** — never as a standalone tool. Always wrap a call in code, e.g.:
+**HOW TO CALL THESE.** The only callable tool you have is `execute(language="python", code=...)`. Every helper listed below is a **Python function pre-imported inside the execute sandbox** — never as a standalone tool. Always wrap a call in code.
 
-```
-execute(language="python", code='''
-report = inspect_file("/app/static/.../file.tsv")
-print(report)
-''')
-```
-
-Emitting `inspect_file` (or any helper below) as a top-level tool_call will silently fail.
+Emitting `inspect_file` (or any helper below) as a top-level tool_call will silently fail. The inspect/report call should be the only code shown for the step.
 
 ### File exploration
 - `inspect_file(file_path, sample_rows=20)` — read a CSV/TSV/Excel/NetCDF and return shape, dtypes, sample rows, encoding, missing-value rates, and a best-guess source type. Call on every uploaded file you have not yet seen.
