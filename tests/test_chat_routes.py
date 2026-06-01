@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import importlib
+import os
 import sys
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -36,6 +37,128 @@ for _name, _mod in [
     ("interpreter", _interp_stub),
     ("interpreter.core", _core_stub),
     ("interpreter.core.core", _cc_stub),
+]:
+    sys.modules.setdefault(_name, _mod)
+
+# Force SQLAlchemy to use SQLite for the test import path so core.db does not
+# require a Postgres driver in this isolated environment.
+os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+
+_core_auth_stub = ModuleType("core.auth")
+def _stub_get_auth_token():
+    return "test-token"
+
+def _stub_get_current_user(token):
+    return None
+
+def _stub_get_db():
+    yield None
+
+_core_auth_stub.get_auth_token = _stub_get_auth_token  # type: ignore[attr-defined]
+_core_auth_stub.get_current_user = _stub_get_current_user  # type: ignore[attr-defined]
+_core_auth_stub.get_db = _stub_get_db  # type: ignore[attr-defined]
+_core_crud_stub = ModuleType("core.crud")
+_core_crud_stub.list_active_mcp_connections = MagicMock(return_value=[])  # type: ignore[attr-defined]
+_core_crud_stub.__getattr__ = lambda name: MagicMock()  # type: ignore[attr-defined]
+_core_mcp_stub = ModuleType("core.mcp")
+_core_mcp_stub.mcp_manager = MagicMock()  # type: ignore[attr-defined]
+_core_mcp_stub.__getattr__ = lambda name: MagicMock()  # type: ignore[attr-defined]
+_models_stub = ModuleType("models")
+_models_stub.MCPConnection = MagicMock()  # type: ignore[attr-defined]
+_models_stub.User = MagicMock()  # type: ignore[attr-defined]
+_models_stub.__getattr__ = lambda name: MagicMock()  # type: ignore[attr-defined]
+for _name, _mod in [
+    ("core.auth", _core_auth_stub),
+    ("core.crud", _core_crud_stub),
+    ("core.mcp", _core_mcp_stub),
+    ("models", _models_stub),
+]:
+    sys.modules.setdefault(_name, _mod)
+
+_litellm_stub = ModuleType("litellm")
+_litellm_stub.completion = MagicMock()  # type: ignore[attr-defined]
+_litellm_stub.transcription = MagicMock()  # type: ignore[attr-defined]
+sys.modules.setdefault("litellm", _litellm_stub)
+
+_multipart_stub = ModuleType("multipart")
+_multipart_stub.__version__ = "0.0.0"  # type: ignore[attr-defined]
+_multipart_sub_stub = ModuleType("multipart.multipart")
+_multipart_sub_stub.parse_options_header = MagicMock()  # type: ignore[attr-defined]
+_multipart_stub.multipart = _multipart_sub_stub  # type: ignore[attr-defined]
+for _name, _mod in [
+    ("multipart", _multipart_stub),
+    ("multipart.multipart", _multipart_sub_stub),
+]:
+    sys.modules.setdefault(_name, _mod)
+
+# Stub psycopg2 so core.db can build the SQLAlchemy engine without requiring
+# a real Postgres driver in the isolated test environment.
+_psycopg2_stub = ModuleType("psycopg2")
+_psycopg2_stub.__version__ = "2.9.10"  # type: ignore[attr-defined]
+_psycopg2_stub.apilevel = "2.0"  # type: ignore[attr-defined]
+_psycopg2_stub.threadsafety = 2  # type: ignore[attr-defined]
+_psycopg2_stub.paramstyle = "pyformat"  # type: ignore[attr-defined]
+_psycopg2_stub.connect = MagicMock()  # type: ignore[attr-defined]
+_psycopg2_extensions_stub = ModuleType("psycopg2.extensions")
+_psycopg2_extensions_stub.STATUS_READY = 1  # type: ignore[attr-defined]
+_psycopg2_extensions_stub.register_adapter = MagicMock()  # type: ignore[attr-defined]
+_psycopg2_extensions_stub.register_type = MagicMock()  # type: ignore[attr-defined]
+_psycopg2_extensions_stub.adapt = MagicMock()  # type: ignore[attr-defined]
+_psycopg2_extras_stub = ModuleType("psycopg2.extras")
+_psycopg2_extras_stub.execute_batch = MagicMock()  # type: ignore[attr-defined]
+_psycopg2_extras_stub.execute_values = MagicMock()  # type: ignore[attr-defined]
+_psycopg2_stub.extensions = _psycopg2_extensions_stub  # type: ignore[attr-defined]
+_psycopg2_stub.extras = _psycopg2_extras_stub  # type: ignore[attr-defined]
+for _name, _mod in [
+    ("psycopg2", _psycopg2_stub),
+    ("psycopg2.extensions", _psycopg2_extensions_stub),
+    ("psycopg2.extras", _psycopg2_extras_stub),
+]:
+    sys.modules.setdefault(_name, _mod)
+
+_passlib_stub = ModuleType("passlib")
+_passlib_context_stub = ModuleType("passlib.context")
+
+class _FakeCryptContext:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def verify(self, *args, **kwargs):
+        return True
+
+    def hash(self, value):
+        return f"hashed:{value}"
+
+_passlib_context_stub.CryptContext = _FakeCryptContext  # type: ignore[attr-defined]
+_passlib_stub.context = _passlib_context_stub  # type: ignore[attr-defined]
+for _name, _mod in [
+    ("passlib", _passlib_stub),
+    ("passlib.context", _passlib_context_stub),
+]:
+    sys.modules.setdefault(_name, _mod)
+
+_cryptography_stub = ModuleType("cryptography")
+_cryptography_fernet_stub = ModuleType("cryptography.fernet")
+
+class _FakeInvalidToken(Exception):
+    pass
+
+class _FakeFernet:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def encrypt(self, value):
+        return value if isinstance(value, bytes) else str(value).encode("utf-8")
+
+    def decrypt(self, value):
+        return value
+
+_cryptography_fernet_stub.Fernet = _FakeFernet  # type: ignore[attr-defined]
+_cryptography_fernet_stub.InvalidToken = _FakeInvalidToken  # type: ignore[attr-defined]
+_cryptography_stub.fernet = _cryptography_fernet_stub  # type: ignore[attr-defined]
+for _name, _mod in [
+    ("cryptography", _cryptography_stub),
+    ("cryptography.fernet", _cryptography_fernet_stub),
 ]:
     sys.modules.setdefault(_name, _mod)
 
@@ -87,6 +210,8 @@ from routers.chat_routes import (
     _summarize_mcp_result,
     _build_copepod_data_planner_note,
     _build_copepod_error_recovery_note,
+    _extract_copepod_key_hints,
+    _should_retry_copepod_error,
     _coerce_multimodal_message_content,
     _expand_multimodal_message_for_interpreter,
     router,
@@ -360,6 +485,25 @@ class TestCopepodDataPlannerNote:
         assert "recovery mode" in note.lower()
         assert "KeyError" in note
         assert "normalize the candidate keys" in note
+        assert "Traceback key hint(s): station" in note
+
+    def test_extracts_key_hints_from_common_join_tracebacks(self):
+        hints = _extract_copepod_key_hints(
+            "KeyError: 'station'\nNone of ['depth'] are in the columns"
+        )
+        assert hints == ["station", "depth"]
+
+    def test_retry_gate_rejects_unrelated_runtime_errors(self):
+        assert not _should_retry_copepod_error(
+            "RuntimeError: upload failed",
+            "fais une jointure entre les fichiers",
+        )
+
+    def test_retry_gate_accepts_retryable_key_errors(self):
+        assert _should_retry_copepod_error(
+            "KeyError: 'station'",
+            "fais une jointure entre les fichiers",
+        )
 
 
 # ---------------------------------------------------------------------------

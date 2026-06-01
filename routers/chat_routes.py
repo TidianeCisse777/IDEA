@@ -84,11 +84,7 @@ def _build_copepod_data_planner_note(
     """Return a short system note that forces a planner pass before code."""
     if not user_message.strip():
         return None
-    if not re.search(
-        r"\b(join|jointure|merge|coupl|compare|comparison|relat|analysis|analyse|graph|graphe|plot|chart)\b",
-        user_message,
-        re.IGNORECASE,
-    ):
+    if not _is_copepod_data_analysis_request(user_message):
         return None
 
     inspection_blocks: list[str] = []
@@ -125,6 +121,81 @@ def _build_copepod_data_planner_note(
         "Do not emit pandas merge/filter code until the join strategy is explicit.",
     ])
     return "\n".join(lines)
+
+
+def _is_copepod_data_analysis_request(text: str) -> bool:
+    """Return True when the request is about a join/comparison/data analysis step."""
+    return bool(
+        re.search(
+            r"\b(join|jointure|merge|coupl|compare|comparison|relat|analysis|analyse|graph|graphe|plot|chart)\b",
+            text or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _extract_copepod_key_hints(error_text: str) -> list[str]:
+    """Extract normalized key names from a traceback-like error message."""
+    text = (error_text or "").strip()
+    if not text:
+        return []
+
+    hints: list[str] = []
+
+    def _add_hint(candidate: str) -> None:
+        cleaned = candidate.strip().strip("'\"`")
+        if cleaned and cleaned not in hints:
+            hints.append(cleaned)
+
+    for match in re.finditer(
+        r"KeyError:\s*(?:\[(?P<bracketed>[^\]]+)\]|['\"](?P<quoted>[^'\"]+)['\"]|(?P<bare>[^\n:]+))",
+        text,
+        re.IGNORECASE,
+    ):
+        candidate = match.group("bracketed") or match.group("quoted") or match.group("bare") or ""
+        for part in candidate.split(","):
+            _add_hint(part)
+
+    for pattern in (
+        r"None of \[(?P<bracketed>[^\]]+)\] are in the columns",
+        r"None of \[(?P<bracketed>[^\]]+)\] are in the index",
+        r"['\"](?P<quoted>[^'\"]+)['\"] not in index",
+        r"['\"](?P<quoted>[^'\"]+)['\"] not in columns",
+        r"column(?:s)? (?P<bare>[^.\n]+?) not found",
+    ):
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            candidate = match.groupdict().get("bracketed") or match.groupdict().get("quoted") or match.groupdict().get("bare") or ""
+            for part in candidate.split(","):
+                _add_hint(part)
+
+    return hints
+
+
+def _should_retry_copepod_error(last_error_text: str, user_message: str) -> bool:
+    """Return True only for retryable key/join failures on copepod data work."""
+    if not _is_copepod_data_analysis_request(user_message):
+        return False
+
+    text = (last_error_text or "").strip()
+    if not text:
+        return False
+
+    lowered = text.lower()
+    retryable_markers = (
+        "keyerror",
+        "cannot merge",
+        "merge keys",
+        "merge on",
+        "mismatched key",
+        "missing key",
+        "not in the columns",
+        "not in the index",
+        "not in index",
+        "columns overlap but no suffix specified",
+        "length mismatch",
+        "unhashable type: 'list'",
+    )
+    return any(marker in lowered for marker in retryable_markers)
 
 
 def _extract_copepod_error_text(result: Any) -> str | None:
@@ -171,6 +242,11 @@ def _build_copepod_error_recovery_note(
         "Do not repeat the same code unchanged.",
         "If the correct key remains ambiguous, ask one short targeted question instead of forcing a bad merge.",
     ]
+
+    key_hints = _extract_copepod_key_hints(error_text)
+    if key_hints:
+        lines.append(f"Traceback key hint(s): {', '.join(key_hints[:3])}.")
+        lines.append("Use the exact column spelling from the inspection reports and normalize only the working keys.")
 
     if user_message.strip():
         lines.append(f"User request to keep in view: {user_message.strip()}")
@@ -1190,7 +1266,11 @@ async def chat_endpoint(
                 for chunk in _yield_chat_stream(chat_input):
                     yield chunk
 
-                if agent_type == "copepod" and _had_error and last_error_text.strip():
+                if (
+                    agent_type == "copepod"
+                    and _had_error
+                    and _should_retry_copepod_error(last_error_text, last_user_message or "")
+                ):
                     retry_note = _build_copepod_error_recovery_note(
                         last_error_text=last_error_text,
                         user_message=last_user_message or "",
