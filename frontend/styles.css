@@ -224,6 +224,7 @@ body.main-app {
     margin: 0 auto;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     justify-content: space-between;
     gap: clamp(14px, 3.2vw, 24px);
 }
@@ -253,6 +254,7 @@ body.main-app {
     display: flex;
     align-items: center;
     gap: clamp(12px, 2.4vw, 20px);
+    flex-shrink: 0;
 }
 
 .header-actions .navbar-menu {
@@ -1701,12 +1703,12 @@ pre {
     .header-content {
         flex-direction: row;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
     }
 
     .header-actions {
         justify-content: flex-end;
-        width: 100%;
+        width: auto;
         gap: 12px;
     }
 
@@ -1742,10 +1744,15 @@ pre {
         gap: 0;
     }
 
+    .header-status-group {
+        gap: 6px;
+    }
+
     .header-actions {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 12px;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        width: auto;
     }
 
     .header-actions .navbar-menu {
@@ -1772,6 +1779,14 @@ pre {
 
     .chat-display {
         padding: 18px 12px 6px;
+    }
+
+    .session-mode-badge-title {
+        display: none;
+    }
+
+    .session-mode-badge-state {
+        font-size: 0.78rem;
     }
 
     .chat-footer {
@@ -4008,10 +4023,20 @@ body.main-app {
 .main-area .header-content {
     display: flex;
     align-items: center;
+    flex-wrap: nowrap;
     width: 100%;
     max-width: none;
     margin: 0;
     position: relative;
+}
+
+.header-status-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .mode-switcher-wrapper {
@@ -4026,6 +4051,8 @@ body.main-app {
     gap: 8px;
     flex-shrink: 0;
     margin-left: auto;
+    width: auto;
+    flex-wrap: nowrap;
 }
 
 /* Mode switcher — segmented control */
@@ -4218,6 +4245,19 @@ body.main-app {
     .header-btn {
         padding: 6px 8px;
     }
+
+    .header-status-group {
+        gap: 4px;
+        min-width: 0;
+    }
+
+    .session-mode-badge {
+        padding: 0.22rem 0.5rem;
+    }
+
+    .session-mode-icon {
+        font-size: 0.82rem !important;
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────── */
@@ -4290,6 +4330,45 @@ body.main-app {
     letter-spacing: 0.02em;
     user-select: none;
     transition: background 0.2s, color 0.2s;
+}
+
+.session-mode-button {
+    cursor: pointer;
+    font: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+    text-align: left;
+}
+
+.session-mode-button:hover {
+    filter: brightness(1.04);
+    transform: translateY(-1px);
+}
+
+.session-mode-button:focus-visible {
+    outline: 2px solid var(--input-focus);
+    outline-offset: 2px;
+}
+
+.session-mode-badge-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.05;
+}
+
+.session-mode-badge-title {
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    opacity: 0.82;
+    white-space: nowrap;
+}
+
+.session-mode-badge-state {
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
 }
 
 .session-mode-plan {

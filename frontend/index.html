@@ -79,14 +79,24 @@
                     <span class="material-icons">menu</span>
                 </button>
 
-                <!-- Session mode badge (copepod plan → analyse workflow) -->
-                <div id="sessionModeBadge" class="session-mode-badge session-mode-plan" style="display:none">
-                    <span class="material-icons session-mode-icon">edit_note</span>
-                    <span id="sessionModeLabel">Mode Plan</span>
-                </div>
-                <div id="onlineModeBadge" class="session-mode-badge session-mode-online session-mode-online--off">
-                    <span class="material-icons session-mode-icon">cloud_off</span>
-                    <span id="onlineModeLabel">Mode En Ligne: OFF</span>
+                <!-- Session mode badges (copepod plan → analyse workflow) -->
+                <div class="header-status-group">
+                    <div id="sessionModeBadge" class="session-mode-badge session-mode-plan" style="display:none">
+                        <span class="material-icons session-mode-icon">edit_note</span>
+                        <span id="sessionModeLabel">Mode Plan</span>
+                    </div>
+                    <button id="onlineModeBadge"
+                            type="button"
+                            class="session-mode-badge session-mode-online session-mode-online--off session-mode-button"
+                            aria-pressed="false"
+                            aria-label="Basculer le mode en ligne"
+                            title="Basculer le mode en ligne">
+                        <span class="material-icons session-mode-icon">cloud_off</span>
+                        <span class="session-mode-badge-text">
+                            <span class="session-mode-badge-title">Mode En Ligne</span>
+                            <span id="onlineModeLabel" class="session-mode-badge-state">OFF</span>
+                        </span>
+                    </button>
                 </div>
 
                 <!-- Right: actions -->

@@ -19,9 +19,18 @@ function buildDOM() {
         <div id="sessionModeBadge" class="session-mode-badge session-mode-plan" style="display:none">
             <span id="sessionModeLabel">Mode Plan</span>
         </div>
-        <div id="onlineModeBadge" class="session-mode-badge session-mode-online" style="display:none">
-            <span id="onlineModeLabel">Mode En Ligne: OFF</span>
-        </div>
+        <button
+            id="onlineModeBadge"
+            type="button"
+            class="session-mode-badge session-mode-online"
+            aria-pressed="false"
+        >
+            <span class="session-mode-icon">cloud_off</span>
+            <span class="session-mode-badge-text">
+                <span class="session-mode-badge-title">Mode En Ligne</span>
+                <span id="onlineModeLabel" class="session-mode-badge-state">OFF</span>
+            </span>
+        </button>
 
         <div id="onlineModeSection">
             <input type="checkbox" id="onlineModeToggle" />
@@ -114,7 +123,26 @@ describe('Online Mode UI', () => {
                 method: 'PUT',
             })
         );
-        expect(document.getElementById('onlineModeLabel').textContent).toContain('ON');
+        expect(document.getElementById('onlineModeLabel').textContent).toBe('ON');
+        expect(document.getElementById('onlineModeBadge').getAttribute('aria-pressed')).toBe('true');
+    });
+
+    test('clicking the header badge toggles online mode through the same backend', async () => {
+        document.getElementById('accountSettingsButton').click();
+        await flush();
+
+        const badge = document.getElementById('onlineModeBadge');
+        badge.click();
+        await flush();
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/api/session/online-mode',
+            expect.objectContaining({
+                method: 'PUT',
+            })
+        );
+        expect(document.getElementById('onlineModeLabel').textContent).toBe('ON');
+        expect(document.getElementById('onlineModeBadge').getAttribute('aria-pressed')).toBe('true');
     });
 });
 

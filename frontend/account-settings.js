@@ -25,6 +25,7 @@
         const confirmEl = document.getElementById('confirmPasswordInput');
         const messageEl = document.getElementById('accountSettingsMessage');
         const onlineModeToggle = document.getElementById('onlineModeToggle');
+        const onlineModeBadge = document.getElementById('onlineModeBadge');
 
         if (openBtn) openBtn.addEventListener('click', () => {
             ModalUtils.open(modal);
@@ -51,6 +52,13 @@
         if (onlineModeToggle) {
             onlineModeToggle.addEventListener('change', async () => {
                 await persistOnlineMode(onlineModeToggle.checked);
+            });
+        }
+
+        if (onlineModeBadge && onlineModeToggle) {
+            onlineModeBadge.addEventListener('click', () => {
+                onlineModeToggle.checked = !onlineModeToggle.checked;
+                onlineModeToggle.dispatchEvent(new Event('change', { bubbles: true }));
             });
         }
 
@@ -148,9 +156,12 @@
             if (badge) {
                 badge.classList.toggle('session-mode-online--off', !enabled);
                 badge.classList.toggle('session-mode-online--on', Boolean(enabled));
+                badge.setAttribute('aria-pressed', String(Boolean(enabled)));
+                badge.setAttribute('aria-label', `Basculer le mode en ligne, actuellement ${enabled ? 'activé' : 'désactivé'}`);
+                badge.title = `Basculer le mode en ligne, actuellement ${enabled ? 'activé' : 'désactivé'}`;
             }
             if (icon) icon.textContent = enabled ? 'cloud' : 'cloud_off';
-            if (label) label.textContent = `Mode En Ligne: ${enabled ? 'ON' : 'OFF'}`;
+            if (label) label.textContent = enabled ? 'ON' : 'OFF';
             if (allowed) {
                 allowed.textContent = Array.isArray(allowedSources) && allowedSources.length
                     ? allowedSources.join(', ')
