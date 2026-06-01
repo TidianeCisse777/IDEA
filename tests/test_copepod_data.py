@@ -615,14 +615,17 @@ class TestFormatInspectReportWithDefinitions:
         r = tools_with_mock_describe["inspect_file"](str(NEOLABS_ABUND))
         defs = tools_with_mock_describe["collect_column_definitions"](r)
         out = tools_with_mock_describe["format_inspect_report"](r, column_definitions=defs)
+        assert "## Définitions détectées" in out
         assert "Nom de la station" in out
         assert "Profondeur minimale" in out
         assert "colonnes_sources.md" in out or "colonnes_instruments.md" in out
+        assert "RAG definition" not in out
 
-    def test_no_definitions_means_no_rag_section(self, tools_with_mock_describe):
+    def test_no_definitions_means_empty_definitions_section(self, tools_with_mock_describe):
         r = tools_with_mock_describe["inspect_file"](str(NEOLABS_ABUND))
         out = tools_with_mock_describe["format_inspect_report"](r)  # no definitions
-        # The bare column lines are still there, but no definition lines
+        assert "## Définitions détectées" in out
+        assert "aucune définition RAG" in out
         assert "Nom de la station" not in out
 
     def test_critical_notes_rendered_when_present(self, tools_with_mock_describe):
@@ -664,6 +667,13 @@ class TestFormatInspectReportSynthese:
         out = tools["format_inspect_report"](r)
         tail = out[out.find("## Synthèse"):]
         assert "intégral" in tail or "aucune troncature" in tail
+
+    def test_synthese_mentions_any_missing_values_when_present(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ABUND))
+        out = tools["format_inspect_report"](r)
+        tail = out[out.find("## Synthèse"):]
+        assert "colonnes ont des valeurs manquantes" in tail
+        assert "pire cas" in tail
 
 
 # ── inspect_and_report ────────────────────────────────────────────────────────

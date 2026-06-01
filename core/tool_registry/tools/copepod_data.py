@@ -540,13 +540,14 @@ def format_inspect_report(file_report, column_definitions=None):
 
     Use this instead of ``print(file_report)`` (Python's default dict repr is
     unreadable for wide files). Output is markdown-formatted so it renders
-    nicely when included in an assistant text reply: H1 title, header lines
-    with bold keys, a full columns table, warnings and source evidence as
-    bullet lists. Every column appears — no truncation, no ellipsis.
+    nicely when included in an assistant text reply: H1 title, compact header
+    lines, a dedicated RAG definition section, a compact columns table,
+    warnings and source evidence as bullet lists. Every column appears — no
+    truncation, no ellipsis.
 
     When ``column_definitions`` is provided (list of describe_column results,
-    e.g. from ``collect_column_definitions``), the matching RAG definition,
-    unit and critical notes are rendered in the row's last column.
+    e.g. from ``collect_column_definitions``), the matching RAG definitions are
+    rendered in a separate section above the table so they are easier to scan.
 
     Args:
         file_report (dict): The dict returned by ``inspect_file``.
@@ -567,6 +568,21 @@ def format_inspect_report(file_report, column_definitions=None):
         # Pipes inside cells break markdown tables; HTML entity renders as `|`
         # in every renderer and avoids backslash-escape parsing edge cases.
         return s.replace("|", "&#124;").replace(chr(10), " ").replace(chr(13), " ")
+
+    def _render_definition_line(column_name, definition):
+        rag_conf = definition.get("confidence", "unknown")
+        doc = definition.get("rag_doc_ref") or definition.get("source_file") or "RAG"
+        unit = definition.get("unit")
+        unit_part = f" [unit `{unit}`]" if unit else ""
+        notes = definition.get("critical_notes") or []
+        note_part = ""
+        if notes:
+            note_part = " " + " ".join(f"[!] {note}" for note in notes[:2])
+        text = (definition.get("definition") or "").strip()
+        return (
+            f"- **{column_name}** — {text}{unit_part}"
+            f" _(conf: {rag_conf}, src: `{doc}`)_{note_part}"
+        )
 
     _SOURCE_LABELS = {
         "likely_ecotaxa": "export EcoTaxa",
@@ -612,6 +628,18 @@ def format_inspect_report(file_report, column_definitions=None):
     if sheet_names:
         lines.append(f"- **sheet_names** : `{sheet_names}`")
 
+    rag_defs = []
+    for col_name in sorted(defs_by_col):
+        rag_defs.append((col_name, defs_by_col[col_name]))
+    lines.append("")
+    lines.append(f"## Définitions détectées ({len(rag_defs)})")
+    lines.append("")
+    if rag_defs:
+        for col_name, definition in rag_defs:
+            lines.append(_render_definition_line(col_name, definition))
+    else:
+        lines.append("_(aucune définition RAG trouvée)_")
+
     cols = fr.get("columns") or []
     lines.append("")
     lines.append(f"## Columns ({len(cols)})")
@@ -619,8 +647,8 @@ def format_inspect_report(file_report, column_definitions=None):
     if not cols:
         lines.append("_(no columns parsed)_")
     else:
-        lines.append("| # | Column | Dtype | Missing | Samples | Semantic | RAG definition |")
-        lines.append("|---|--------|-------|---------|---------|----------|-----------------|")
+        lines.append("| # | Column | Dtype | Missing | Samples | Semantic |")
+        lines.append("|---|--------|-------|---------|---------|----------|")
         for idx, c in enumerate(cols, start=1):
             name = str(c.get("name", ""))
             dtype = str(c.get("dtype", ""))
@@ -639,27 +667,11 @@ def format_inspect_report(file_report, column_definitions=None):
             if unit:
                 sem_cell = f"{sem_cell} unit=`{unit}`"
 
-            rag = defs_by_col.get(name)
-            if rag:
-                rag_conf = rag.get("confidence", "unknown")
-                doc = rag.get("rag_doc_ref") or rag.get("source_file") or "RAG"
-                unit_r = rag.get("unit")
-                unit_part = f" [unit `{unit_r}`]" if unit_r else ""
-                defi = (rag.get("definition") or "").strip()
-                rag_cell = f"{defi}{unit_part} _(conf: {rag_conf}, src: `{doc}`)_"
-                notes = rag.get("critical_notes") or []
-                if notes:
-                    note_text = " ".join(f"[!] {n}" for n in notes[:2])
-                    rag_cell = f"{rag_cell} {note_text}"
-            else:
-                rag_cell = "—"
-
             row = (
                 f"| {idx} | `{_md_escape_cell(name)}` | `{_md_escape_cell(dtype)}` | "
                 f"{mc} ({mr_pct}) | "
                 f"`{_md_escape_cell(samples_short)}` | "
-                f"{_md_escape_cell(sem_cell)} | "
-                f"{_md_escape_cell(rag_cell)} |"
+                f"{_md_escape_cell(sem_cell)} |"
             )
             lines.append(row)
 
@@ -697,15 +709,32 @@ def format_inspect_report(file_report, column_definitions=None):
     src_conf = src.get("confidence", "low")
     lines.append(f"- **Source détectée** : `{src_val}` (confiance : `{src_conf}`).")
     missing_cols = [c for c in cols if isinstance(c.get("missing_rate"), (int, float)) and c.get("missing_rate", 0) > 0.3]
-    if missing_cols:
-        names = ", ".join(f"`{c['name']}`" for c in missing_cols[:5])
-        suffix = "" if len(missing_cols) <= 5 else f" (+{len(missing_cols) - 5} autres)"
-        lines.append(f"- **Colonnes >30% manquant** : {len(missing_cols)} — {names}{suffix}.")
+    missing_any = [c for c in cols if isinstance(c.get("missing_rate"), (int, float)) and c.get("missing_count", 0) > 0]
+    if missing_any:
+        worst = max(
+            missing_any,
+            key=lambda c: c.get("missing_rate", 0) if isinstance(c.get("missing_rate"), (int, float)) else 0,
+        )
+        worst_rate = worst.get("missing_rate", 0)
+        try:
+            worst_pct = f"{float(worst_rate) * 100:.1f}%"
+        except (TypeError, ValueError):
+            worst_pct = str(worst_rate)
+        lines.append(
+            f"- **Données manquantes** : {len(missing_any)} colonnes ont des valeurs manquantes; "
+            f"pire cas `{worst.get('name', 'unknown')}` à {worst_pct}."
+        )
+        if missing_cols:
+            names = ", ".join(f"`{c['name']}`" for c in missing_cols[:5])
+            suffix = "" if len(missing_cols) <= 5 else f" (+{len(missing_cols) - 5} autres)"
+            lines.append(f"- **Colonnes >30% manquant** : {len(missing_cols)} — {names}{suffix}.")
+        else:
+            lines.append("- **Colonnes >30% manquant** : aucune.")
     else:
-        lines.append("- **Données manquantes** : aucune colonne au-dessus de 30%.")
+        lines.append("- **Données manquantes** : aucune colonne avec des valeurs manquantes.")
     rag_count = len(column_definitions or [])
     if rag_count:
-        lines.append(f"- **Définitions RAG** : {rag_count} colonnes documentées (voir table).")
+        lines.append(f"- **Définitions RAG** : {rag_count} colonnes documentées (voir section dédiée).")
     else:
         lines.append("- **Définitions RAG** : aucune colonne trouvée dans le corpus.")
     if warnings:
