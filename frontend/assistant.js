@@ -55,6 +55,12 @@ let threadId = localStorage.getItem('threadId') || (() => {
     return newThreadId;
 })();
 
+function updateSessionIdentityBadge() {
+    if (typeof window.updateSessionIdentityBadge === 'function') {
+        window.updateSessionIdentityBadge(sessionId);
+    }
+}
+
 // DOM Elements
 const chatDisplay = document.getElementById('chatDisplay');
 const sendButton = document.getElementById('sendButton');
@@ -92,6 +98,7 @@ let generationSummaryFinalized = false;
 let activeGenerationModel = null;
 
 showPromptIdeas();
+updateSessionIdentityBadge();
 
 function resetTextareaHeight() {
     const messageInput = document.getElementById('messageInput');
@@ -931,6 +938,7 @@ async function clearChatHistory() {
         sessionId = generateId('session');
         localStorage.setItem('sessionId', sessionId);
         localStorage.removeItem('activeConversationId');
+        updateSessionIdentityBadge();
 
         // Reset session mode to plan
         sessionMode = 'plan';
@@ -964,6 +972,7 @@ function resetSessionForConversationLoad() {
     localStorage.setItem('sessionId', sessionId);
     sessionMode = 'plan';
     updateSessionModeBadge('plan');
+    updateSessionIdentityBadge();
 }
 window.resetSessionForConversationLoad = resetSessionForConversationLoad;
 

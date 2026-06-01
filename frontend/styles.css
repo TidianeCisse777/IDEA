@@ -1789,6 +1789,15 @@ pre {
         font-size: 0.78rem;
     }
 
+    .session-id-badge {
+        padding: 0.26rem 0.6rem;
+        font-size: 0.7rem;
+    }
+
+    .session-id-badge-value {
+        font-size: 0.68rem;
+    }
+
     .chat-footer {
         flex-direction: column;
         align-items: stretch;
@@ -4013,9 +4022,10 @@ body.main-app {
     border-top-left-radius: 0;
     border-top-right-radius: 0;
     flex-shrink: 0;
-    height: 56px;
+    min-height: 56px;
+    height: auto;
     box-sizing: border-box;
-    padding: 0 clamp(14px, 2.4vw, 22px);
+    padding: 10px clamp(14px, 2.4vw, 22px);
     display: flex;
     align-items: center;
 }
@@ -4032,11 +4042,20 @@ body.main-app {
 
 .header-status-group {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
+}
+
+.header-badges-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
 }
 
 .mode-switcher-wrapper {
@@ -4258,6 +4277,10 @@ body.main-app {
     .session-mode-icon {
         font-size: 0.82rem !important;
     }
+
+    .session-id-badge {
+        width: 100%;
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────── */
@@ -4369,6 +4392,40 @@ body.main-app {
     font-size: 0.82rem;
     font-weight: 700;
     white-space: nowrap;
+}
+
+.session-id-badge {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.45rem;
+    max-width: 100%;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid rgba(90, 172, 218, 0.2);
+    background: rgba(90, 172, 218, 0.08);
+    color: #7fc0e4;
+    box-shadow: 0 8px 20px -16px rgba(7, 24, 41, 0.65);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    overflow: hidden;
+}
+
+.session-id-badge-label {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.82;
+    flex: 0 0 auto;
+}
+
+.session-id-badge-value {
+    min-width: 0;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    font-family: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+    font-size: 0.7rem;
+    line-height: 1.2;
 }
 
 .session-mode-plan {
