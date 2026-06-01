@@ -1181,6 +1181,87 @@ class TestChatGuardPaths:
         assert "KeyError" in captured_system_messages[1]
         assert "retry ok" in resp.text
 
+    def test_chat_retries_again_after_a_second_error(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        store.write_messages(
+            "u1:s1:copepod",
+            [
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n"
+                        "### Fichiers chargés\n"
+                        "- **a.csv**\n"
+                        "Clés de jointure potentielles : station | time | depth\n"
+                    ),
+                }
+            ],
+        )
+        fake_interpreter.system_message = "base prompt"
+
+        captured_calls = []
+        captured_system_messages = []
+
+        def fake_chat(message, stream=True):
+            captured_calls.append(message)
+            captured_system_messages.append(fake_interpreter.system_message)
+            fake_interpreter.messages = list(message)
+            if len(captured_calls) == 1:
+                return iter([
+                    {"start": True, "end": True, "role": "assistant", "type": "message", "content": "attempting join"},
+                    {"error": "KeyError: 'station'"},
+                ])
+            if len(captured_calls) == 2:
+                return iter([
+                    {"start": True, "end": True, "role": "assistant", "type": "message", "content": "retrying join"},
+                    {"error": "ValueError: normalization failed"},
+                ])
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "third try ok"},
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "fais une jointure"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+
+        assert resp.status_code == 200
+        assert len(captured_calls) == 3
+        assert all(msg.get("role") != "system" for msg in captured_calls[0])
+        assert all(msg.get("role") != "system" for msg in captured_calls[1])
+        assert all(msg.get("role") != "system" for msg in captured_calls[2])
+        assert "planner" in captured_system_messages[0].lower()
+        assert "recovery mode" in captured_system_messages[1].lower()
+        assert "KeyError" in captured_system_messages[1]
+        assert "recovery mode" in captured_system_messages[2].lower()
+        assert "ValueError" in captured_system_messages[2]
+        assert "third try ok" in resp.text
+
     def test_chat_strips_restored_system_messages_for_generic_agent(self):
         store = InMemorySessionStore()
         app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)

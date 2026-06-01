@@ -1269,9 +1269,23 @@ async def chat_endpoint(
                 _t0 = _time.monotonic()
                 base_system_message = getattr(interpreter, "system_message", "") or ""
                 last_error_text = ""
+                current_attempt_had_error = False
+                current_attempt_last_error_text = ""
+
+                def _compose_copepod_system_message(*notes: str | None) -> str:
+                    parts: list[str] = []
+                    base = base_system_message.strip()
+                    if base:
+                        parts.append(base)
+                    for note in notes:
+                        normalized = (note or "").strip()
+                        if normalized:
+                            parts.append(normalized)
+                    return "\n\n".join(parts)
 
                 def _yield_chat_stream(payload: list[dict[str, Any]]):
                     nonlocal total_chunks, _had_code, _had_image, _had_error, _last_usage, last_error_text
+                    nonlocal current_attempt_had_error, current_attempt_last_error_text
                     stream_events = chat_stream_events(
                         interpreter.chat(payload, stream=True),
                     )
@@ -1290,56 +1304,63 @@ async def chat_endpoint(
                                 _had_error = True
                             error_text = _extract_copepod_error_text(result)
                             if error_text:
+                                _had_error = True
+                                current_attempt_had_error = True
                                 last_error_text = error_text
+                                current_attempt_last_error_text = error_text
                         data = json.dumps(result) if isinstance(result, dict) else result
                         yield f"data: {data}\n\n"
 
                 try:
-                    if agent_type == "copepod" and copepod_data_planner_note:
-                        planner_system_message = base_system_message.strip()
-                        if planner_system_message:
-                            planner_system_message += "\n\n"
-                        planner_system_message += copepod_data_planner_note.strip()
-                        interpreter.system_message = planner_system_message
+                    retry_note: str | None = None
+                    retry_attempts = 0
+                    max_retry_attempts = 2
 
-                    chat_prefix = _strip_system_messages(list(interpreter.messages))
-                    chat_input = (
-                        chat_prefix + last_user_message_messages
-                        if last_user_message_messages
-                        else (
-                            chat_prefix
-                            + ([last_user_message_payload] if last_user_message_payload is not None else [messages[-1]])
+                    while True:
+                        current_attempt_had_error = False
+                        current_attempt_last_error_text = ""
+
+                        if agent_type == "copepod":
+                            interpreter.system_message = _compose_copepod_system_message(
+                                copepod_data_planner_note if copepod_data_planner_note else None,
+                                retry_note,
+                            )
+
+                        chat_prefix = _strip_system_messages(list(interpreter.messages))
+                        chat_input = (
+                            chat_prefix + last_user_message_messages
+                            if last_user_message_messages
+                            else (
+                                chat_prefix
+                                + ([last_user_message_payload] if last_user_message_payload is not None else [messages[-1]])
+                            )
                         )
-                    )
 
-                    for chunk in _yield_chat_stream(chat_input):
-                        yield chunk
+                        for chunk in _yield_chat_stream(chat_input):
+                            yield chunk
+
+                        if not (
+                            agent_type == "copepod"
+                            and current_attempt_had_error
+                            and _should_retry_copepod_error(current_attempt_last_error_text, last_user_message or "")
+                        ):
+                            break
+
+                        if retry_attempts >= max_retry_attempts:
+                            break
+
+                        next_retry_note = _build_copepod_error_recovery_note(
+                            last_error_text=current_attempt_last_error_text,
+                            user_message=last_user_message or "",
+                        )
+                        if not next_retry_note:
+                            break
+
+                        retry_attempts += 1
+                        retry_note = next_retry_note
+                        logger.info(f"  retrying copepod executor after error — {_short(session_key)}")
                 finally:
                     interpreter.system_message = base_system_message
-
-                if (
-                    agent_type == "copepod"
-                    and _had_error
-                    and _should_retry_copepod_error(last_error_text, last_user_message or "")
-                ):
-                    retry_note = _build_copepod_error_recovery_note(
-                        last_error_text=last_error_text,
-                        user_message=last_user_message or "",
-                    )
-                    if retry_note:
-                        logger.info(f"  retrying copepod executor after error — {_short(session_key)}")
-                        try:
-                            retry_system_message = base_system_message.strip()
-                            if retry_system_message:
-                                retry_system_message += "\n\n"
-                            retry_system_message += retry_note.strip()
-                            interpreter.system_message = retry_system_message
-
-                            retry_chat_input = _strip_system_messages(list(interpreter.messages))
-                            for chunk in _yield_chat_stream(retry_chat_input):
-                                yield chunk
-                        finally:
-                            interpreter.system_message = base_system_message
 
                 _elapsed = f"{(_time.monotonic() - _t0):.1f}s"
                 if total_chunks == 0 and not fallback_sent:
