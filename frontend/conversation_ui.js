@@ -403,6 +403,8 @@ function displayMessageInChat(message) {
     } else if (message.message_type === 'console') {
         contentElement.innerHTML = `<pre>${escapeHtml(message.content)}</pre>`;
         contentElement.style.display = 'none';
+    } else if (message.message_type === 'deliverable') {
+        contentElement.appendChild(_renderDeliverableCard(message.content || '{}'));
     } else if (message.message_type === 'file') {
         const link = document.createElement('a');
         link.href = message.content;
