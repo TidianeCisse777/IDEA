@@ -63,6 +63,33 @@ const newMessagesButton = document.getElementById('newMessagesButton');
 const messageInput = document.getElementById('messageInput');
 const progressBar = document.getElementById('uploadProgress');
 const progressElement = progressBar ? progressBar.querySelector('.progress') : null;
+const generationDurationValue = document.getElementById('generationDurationValue');
+const generationStatusValue = document.getElementById('generationStatusValue');
+const generationTokensValue = document.getElementById('generationTokensValue');
+const generationCostValue = document.getElementById('generationCostValue');
+const generationRateValue = document.getElementById('generationRateValue');
+
+const MODEL_PRICING = {
+    'openrouter/openai/gpt-5.4-mini': {
+        inputPerMillion: 0.75,
+        outputPerMillion: 4.50,
+        label: 'GPT-5.4 mini',
+    },
+    'openai/gpt-5.4-mini': {
+        inputPerMillion: 0.75,
+        outputPerMillion: 4.50,
+        label: 'GPT-5.4 mini',
+    },
+    'gpt-5.4-mini': {
+        inputPerMillion: 0.75,
+        outputPerMillion: 4.50,
+        label: 'GPT-5.4 mini',
+    },
+};
+
+let generationTimerStart = null;
+let generationSummaryFinalized = false;
+let activeGenerationModel = null;
 
 showPromptIdeas();
 
@@ -153,6 +180,186 @@ function safeGetElement(id) {
     return element;
 }
 
+function getModelPricing(model) {
+    if (!model) return null;
+    return MODEL_PRICING[model] || MODEL_PRICING[model.split('/').pop()] || null;
+}
+
+function formatTokenCount(value) {
+    if (!Number.isFinite(value)) {
+        return null;
+    }
+    return new Intl.NumberFormat('fr-FR').format(Math.max(0, Math.round(value)));
+}
+
+function formatCurrency(amount) {
+    if (!Number.isFinite(amount)) {
+        return null;
+    }
+    if (amount === 0) {
+        return '0,00 $';
+    }
+    const digits = amount >= 1 ? 2 : 4;
+    return `${amount.toLocaleString('fr-FR', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+    })} $`;
+}
+
+function formatDurationMs(ms) {
+    if (!Number.isFinite(ms) || ms < 0) {
+        return null;
+    }
+    if (ms < 1000) {
+        return `${Math.max(0.1, ms / 1000).toFixed(1)} s`;
+    }
+    const seconds = ms / 1000;
+    if (seconds < 60) {
+        return `${seconds.toFixed(1)} s`;
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remaining = Math.round(seconds % 60);
+    return `${minutes} min ${String(remaining).padStart(2, '0')} s`;
+}
+
+function extractUsageCount(usage, keys) {
+    if (!usage || typeof usage !== 'object') return null;
+    for (const key of keys) {
+        const value = usage[key];
+        if (Number.isFinite(value)) {
+            return value;
+        }
+    }
+    return null;
+}
+
+function estimateGenerationCost(usage, model) {
+    const pricing = getModelPricing(model);
+    if (!pricing || !usage || typeof usage !== 'object') {
+        return null;
+    }
+    if (Number.isFinite(usage.cost)) {
+        return usage.cost;
+    }
+    if (Number.isFinite(usage.cost_usd)) {
+        return usage.cost_usd;
+    }
+    const promptTokens = extractUsageCount(usage, ['prompt_tokens', 'input_tokens']);
+    const completionTokens = extractUsageCount(usage, ['completion_tokens', 'output_tokens']);
+    if (!Number.isFinite(promptTokens) && !Number.isFinite(completionTokens)) {
+        return null;
+    }
+    const inputCost = Number.isFinite(promptTokens) ? (promptTokens / 1_000_000) * pricing.inputPerMillion : 0;
+    const outputCost = Number.isFinite(completionTokens) ? (completionTokens / 1_000_000) * pricing.outputPerMillion : 0;
+    return inputCost + outputCost;
+}
+
+function updateGenerationMetrics({
+    elapsedMs = null,
+    usage = null,
+    model = null,
+    finalized = false,
+} = {}) {
+    const resolvedModel = model || activeGenerationModel;
+    if (resolvedModel) {
+        activeGenerationModel = resolvedModel;
+    }
+
+    const durationText = formatDurationMs(elapsedMs);
+    if (generationDurationValue && durationText) {
+        generationDurationValue.textContent = durationText;
+    }
+    if (generationStatusValue) {
+        generationStatusValue.textContent = finalized ? 'Dernière génération' : 'Génération en cours…';
+    }
+
+    const promptTokens = extractUsageCount(usage, ['prompt_tokens', 'input_tokens']);
+    const completionTokens = extractUsageCount(usage, ['completion_tokens', 'output_tokens']);
+    const totalTokens = extractUsageCount(usage, ['total_tokens']);
+    if (generationTokensValue) {
+        if (Number.isFinite(promptTokens) || Number.isFinite(completionTokens) || Number.isFinite(totalTokens)) {
+            const promptLabel = formatTokenCount(promptTokens);
+            const completionLabel = formatTokenCount(completionTokens);
+            const totalLabel = formatTokenCount(totalTokens);
+            const segments = [];
+            if (promptLabel !== null) segments.push(`${promptLabel} in`);
+            if (completionLabel !== null) segments.push(`${completionLabel} out`);
+            if (totalLabel !== null) segments.push(`${totalLabel} total`);
+            generationTokensValue.textContent = segments.join(' · ');
+        } else if (finalized) {
+            generationTokensValue.textContent = '—';
+        }
+    }
+
+    const cost = estimateGenerationCost(usage, resolvedModel);
+    if (generationCostValue) {
+        if (Number.isFinite(cost)) {
+            generationCostValue.textContent = formatCurrency(cost) || '—';
+        } else if (finalized) {
+            generationCostValue.textContent = '—';
+        } else {
+            generationCostValue.textContent = 'Calcul en cours…';
+        }
+    }
+
+    if (generationRateValue) {
+        const pricing = getModelPricing(resolvedModel);
+        if (pricing) {
+            generationRateValue.textContent = `Tarif ${pricing.label}: ${pricing.inputPerMillion.toFixed(2)} $/M entrée · ${pricing.outputPerMillion.toFixed(2)} $/M sortie`;
+        } else if (resolvedModel) {
+            generationRateValue.textContent = `Tarif du modèle: ${resolvedModel}`;
+        } else {
+            generationRateValue.textContent = 'Tarif du modèle: —';
+        }
+    }
+
+    if (finalized) {
+        generationSummaryFinalized = true;
+        generationTimerStart = null;
+    }
+}
+
+function startGenerationMetrics(model = null) {
+    activeGenerationModel = model || activeGenerationModel;
+    generationTimerStart = performance.now();
+    generationSummaryFinalized = false;
+    if (generationDurationValue) generationDurationValue.textContent = '—';
+    if (generationStatusValue) generationStatusValue.textContent = 'Génération en cours…';
+    if (generationTokensValue) generationTokensValue.textContent = '—';
+    if (generationCostValue) generationCostValue.textContent = 'Calcul en cours…';
+    if (generationRateValue) {
+        const pricing = getModelPricing(activeGenerationModel);
+        generationRateValue.textContent = pricing
+            ? `Tarif ${pricing.label}: ${pricing.inputPerMillion.toFixed(2)} $/M entrée · ${pricing.outputPerMillion.toFixed(2)} $/M sortie`
+            : 'Tarif du modèle: —';
+    }
+}
+
+function finalizeGenerationMetrics(payload = {}) {
+    const elapsedMs = Number.isFinite(payload.elapsedMs)
+        ? payload.elapsedMs
+        : Number.isFinite(generationTimerStart)
+            ? performance.now() - generationTimerStart
+            : null;
+    updateGenerationMetrics({
+        elapsedMs,
+        usage: payload.usage || null,
+        model: payload.model || null,
+        finalized: true,
+    });
+}
+
+function resetGenerationMetricsView() {
+    generationTimerStart = null;
+    generationSummaryFinalized = false;
+    activeGenerationModel = null;
+    if (generationDurationValue) generationDurationValue.textContent = '—';
+    if (generationStatusValue) generationStatusValue.textContent = 'En attente d’une génération';
+    if (generationTokensValue) generationTokensValue.textContent = '—';
+    if (generationCostValue) generationCostValue.textContent = '—';
+    if (generationRateValue) generationRateValue.textContent = 'Tarif du modèle: —';
+}
+
 function getMessageById(messageId) {
     return messages.find(msg => msg.id === messageId) || null;
 }
@@ -227,6 +434,7 @@ async function sendRequest(msgOverride=null) {
         renderPendingUploads();
 
         showWorkingIndicator();
+        startGenerationMetrics(activeGenerationModel);
 
         // Define parameters for the POST request
         const params = {
@@ -338,6 +546,9 @@ function resetButtons() {
     isActiveLineRunning = false;
     removeActiveLineSpinner();
     activeLineCodeId = null;
+    if (!generationSummaryFinalized && generationTimerStart !== null) {
+        finalizeGenerationMetrics();
+    }
 }
 
 function shouldStartNewBase64Image(message, chunk) {
@@ -422,6 +633,19 @@ function createImageMessageFromChunk(chunk, fallbackMessage) {
 function processChunk(chunk) {
     // Drop raw LLM tool_call chunks that leaked through without execution
     if (chunk && chunk.tool_calls && !chunk.type) return Promise.resolve();
+    if (
+        chunk &&
+        typeof chunk === 'object' &&
+        (chunk.type === 'generation_summary' ||
+            (chunk.usage && !chunk.content && !chunk.start && !chunk.end))
+    ) {
+        finalizeGenerationMetrics({
+            elapsedMs: Number.isFinite(chunk.elapsed_ms) ? chunk.elapsed_ms : chunk.elapsedMs,
+            usage: chunk.usage || null,
+            model: chunk.model || null,
+        });
+        return Promise.resolve();
+    }
     // Drop raw OI code-block text chunks (both to=execute and {"language":} formats)
     if (chunk && chunk.role === 'assistant' && chunk.type === 'message') {
         const c = (chunk.content || '').trimStart();
@@ -724,6 +948,7 @@ async function clearChatHistory() {
         // Clear uploaded files list in UI
         pendingUploads = [];
         renderPendingUploads();
+        resetGenerationMetricsView();
 
         showPromptIdeas();
         resetTextareaHeight();

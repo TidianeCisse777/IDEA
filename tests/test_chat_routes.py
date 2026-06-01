@@ -11,6 +11,7 @@ Auth and session_store are mocked — no Redis or DB required.
 """
 from __future__ import annotations
 
+import base64
 import importlib
 import sys
 from types import ModuleType
@@ -19,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import requests
 
 # ── Stub the `interpreter` package before it is imported by chat_routes ───────
 # The installed interpreter package pulls in html2text + many heavy deps that
@@ -57,6 +59,20 @@ for _name, _mod in [
     sys.modules.setdefault(_name, _mod)
 for _heavy in ["html2text"]:
     sys.modules.setdefault(_heavy, ModuleType(_heavy))
+
+
+class _FakeResponse:
+    status_code = 200
+
+    def json(self):
+        return {}
+
+
+def _fake_requests_get(*args, **kwargs):
+    return _FakeResponse()
+
+
+requests.get = _fake_requests_get
 # ─────────────────────────────────────────────────────────────────────────────
 
 import agents.copepod_profile  # noqa: F401 — ensures copepod is registered
@@ -69,6 +85,8 @@ from routers.chat_routes import (
     _pretty_json,
     _render_repo_table,
     _summarize_mcp_result,
+    _coerce_multimodal_message_content,
+    _expand_multimodal_message_for_interpreter,
     router,
 )
 
@@ -495,6 +513,72 @@ class TestLoadConversationEndpoint:
         assert resp.json()["message_count"] == 0
 
 
+class TestMultimodalAttachmentHydration:
+    def test_image_attachment_block_becomes_multimodal_content(self, tmp_path):
+        static_dir = tmp_path / "static"
+        image_path = static_dir / "u1" / "s1" / "uploads" / "figure.png"
+        image_path.parent.mkdir(parents=True)
+        image_bytes = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6X3XcAAAAASUVORK5CYII="
+        )
+        image_path.write_bytes(image_bytes)
+
+        message = {
+            "role": "user",
+            "content": (
+                "Analyse ceci.\n\n"
+                "Files uploaded in this message:\n"
+                "Session ID: s1\n"
+                "Base path: ./static/{user_id}/s1/uploads\n"
+                "- figure.png (image/png) | relative path: figure.png\n"
+                "Use these paths when referencing the uploaded files."
+            ),
+        }
+
+        hydrated = _coerce_multimodal_message_content(
+            message,
+            user_id="u1",
+            session_id="s1",
+            static_dir=static_dir,
+        )
+
+        assert isinstance(hydrated["content"], list)
+        assert hydrated["content"][0] == {"type": "text", "text": "Analyse ceci."}
+        assert hydrated["content"][1]["type"] == "image_url"
+        assert hydrated["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+    def test_legacy_multimodal_content_is_expanded_into_native_messages(self, tmp_path):
+        static_dir = tmp_path / "static"
+        image_path = static_dir / "u1" / "s1" / "uploads" / "figure.png"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(
+            base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6X3XcAAAAASUVORK5CYII="
+            )
+        )
+
+        message = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Analyse ceci."},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+        }
+
+        expanded = _expand_multimodal_message_for_interpreter(
+            message,
+            user_id="u1",
+            session_id="s1",
+            static_dir=static_dir,
+        )
+
+        assert len(expanded) == 2
+        assert expanded[0] == {"role": "user", "type": "message", "content": "Analyse ceci."}
+        assert expanded[1]["type"] == "image"
+        assert expanded[1]["format"].startswith("base64.")
+        assert not any(isinstance(msg.get("content"), list) for msg in expanded)
+
+
 # ---------------------------------------------------------------------------
 # /chat endpoint — guard paths only (no LLM streaming)
 # ---------------------------------------------------------------------------
@@ -597,3 +681,197 @@ class TestChatGuardPaths:
                 headers={"x-session-id": "s1"},
             )
         assert resp.status_code == 401
+
+    def test_chat_hydrates_image_attachments_before_llm_call(self, tmp_path):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        static_dir = tmp_path / "static"
+        image_path = static_dir / "u1" / "s1" / "uploads" / "figure.png"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(
+            base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6X3XcAAAAASUVORK5CYII="
+            )
+        )
+
+        captured = {}
+
+        def fake_chat(message, stream=True):
+            captured["message"] = message
+            fake_interpreter.messages = list(message)
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.observe_stream.side_effect = lambda events: events
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        message = {
+            "role": "user",
+            "content": (
+                "Analyse cette image.\n\n"
+                "Files uploaded in this message:\n"
+                "Session ID: s1\n"
+                "Base path: ./static/{user_id}/s1/uploads\n"
+                "- figure.png (image/png) | relative path: figure.png\n"
+                "Use these paths when referencing the uploaded files."
+            ),
+        }
+
+        with (
+            patch("routers.chat_routes.STATIC_DIR", static_dir),
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [message]},
+                headers={"x-session-id": "s1"},
+            )
+
+        assert resp.status_code == 200
+        assert isinstance(captured["message"], list)
+        assert captured["message"][0] == {
+            "role": "user",
+            "type": "message",
+            "content": "Analyse cette image.",
+        }
+        assert captured["message"][1]["type"] == "image"
+        assert captured["message"][1]["format"] == "path"
+        assert captured["message"][1]["content"].endswith("figure.png")
+        assert not any(isinstance(msg.get("content"), list) for msg in captured["message"])
+
+    def test_chat_preserves_non_image_upload_block_for_llm_call(self, tmp_path):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        static_dir = tmp_path / "static"
+        csv_path = static_dir / "u1" / "s1" / "uploads" / "sample.csv"
+        csv_path.parent.mkdir(parents=True)
+        csv_path.write_text("a,b\n1,2\n")
+
+        captured = {}
+
+        def fake_chat(message, stream=True):
+            captured["message"] = message
+            fake_interpreter.messages = list(message)
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.observe_stream.side_effect = lambda events: events
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        message = {
+            "role": "user",
+            "content": (
+                "Analyse ce fichier.\n\n"
+                "Files uploaded in this message:\n"
+                "Session ID: s1\n"
+                "Base path: ./static/{user_id}/s1/uploads\n"
+                "- sample.csv (text/csv) | relative path: sample.csv\n"
+                "Use these paths when referencing the uploaded files."
+            ),
+        }
+
+        with (
+            patch("routers.chat_routes.STATIC_DIR", static_dir),
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [message]},
+                headers={"x-session-id": "s1"},
+            )
+
+        assert resp.status_code == 200
+        assert isinstance(captured["message"], list)
+        assert isinstance(captured["message"][-1]["content"], str)
+        assert "Files uploaded in this message:" in captured["message"][-1]["content"]
+        assert "sample.csv" in captured["message"][-1]["content"]
+        assert store.read_messages("u1:s1:generic")[-1]["content"].startswith("Analyse ce fichier.")
+
+    def test_chat_emits_generation_summary_with_usage_metadata(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        captured = {}
+
+        def fake_chat(message, stream=True):
+            captured["message"] = message
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"},
+                {
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 20,
+                        "total_tokens": 30,
+                        "cost": 0.000123,
+                    }
+                },
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.observe_stream.side_effect = lambda events: events
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "hello"}]},
+                headers={"x-session-id": "s1"},
+            )
+
+        assert resp.status_code == 200
+        assert '"type": "generation_summary"' in resp.text
+        assert '"prompt_tokens": 10' in resp.text
+        assert '"completion_tokens": 20' in resp.text

@@ -93,3 +93,206 @@ def test_cleanup_idle_removes_stale_session():
         asyncio.run(iss.cleanup_idle_sessions())
 
     assert "u:s:generic" not in instances
+
+
+def test_llm_wrapper_preserves_multimodal_message_content():
+    from core import interpreter_session as iss
+
+    captured = {}
+
+    def fake_completion(**params):
+        captured["params"] = params
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    fake_profile = MagicMock()
+    fake_profile.get_system_message.return_value = ""
+    fake_profile.get_tool_code.return_value = ""
+    fake_profile.configure_interpreter.return_value = None
+
+    with (
+        patch.object(iss, "get_profile", return_value=fake_profile),
+        patch("litellm.completion", side_effect=fake_completion),
+        patch.object(iss, "interpreter_instances", {}),
+    ):
+        interpreter = iss.get_or_create_interpreter(
+            session_key="u:s:copepod",
+            token=None,
+            db=None,
+            agent_type="copepod",
+        )
+
+        interpreter.llm.completions(
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Analyse cette image."},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,AAA"},
+                        },
+                    ],
+                }
+            ],
+            instructions="system",
+            stream=True,
+        )
+
+    messages = captured["params"]["messages"]
+    assert isinstance(messages[1]["content"], list)
+    assert messages[1]["content"][1]["type"] == "image_url"
+    assert captured["params"]["stream_options"]["include_usage"] is True
+
+
+def test_llm_wrapper_normalizes_input_text_items_to_chat_content():
+    from core import interpreter_session as iss
+
+    captured = {}
+
+    def fake_completion(**params):
+        captured["params"] = params
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    fake_profile = MagicMock()
+    fake_profile.get_system_message.return_value = ""
+    fake_profile.get_tool_code.return_value = ""
+    fake_profile.configure_interpreter.return_value = None
+
+    with (
+        patch.object(iss, "get_profile", return_value=fake_profile),
+        patch("litellm.completion", side_effect=fake_completion),
+        patch.object(iss, "interpreter_instances", {}),
+    ):
+        interpreter = iss.get_or_create_interpreter(
+            session_key="u:s:copepod",
+            token=None,
+            db=None,
+            agent_type="copepod",
+        )
+
+        interpreter.llm.completions(
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hey"},
+                    ],
+                }
+            ],
+            instructions="system",
+        )
+
+    messages = captured["params"]["messages"]
+    assert messages[1]["content"] == "hey"
+
+
+def test_llm_wrapper_normalizes_direct_messages_payloads():
+    from core import interpreter_session as iss
+
+    captured = {}
+
+    class FakeLLM:
+        def __init__(self):
+            self.model = ""
+            self.completions = self._completions
+
+        def _completions(self, **params):
+            captured["params"] = params
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class FakeInterpreter:
+        def __init__(self):
+            self.llm = FakeLLM()
+            self.computer = MagicMock()
+            self.messages = []
+            self.system_message = ""
+            self.custom_instructions = ""
+            self.auto_run = False
+            self.max_output = 2048
+
+        def reset(self):
+            self.messages = []
+
+    fake_profile = MagicMock()
+    fake_profile.get_system_message.return_value = ""
+    fake_profile.get_tool_code.return_value = ""
+    fake_profile.configure_interpreter.return_value = None
+
+    with (
+        patch.object(iss, "get_profile", return_value=fake_profile),
+        patch.object(iss, "OpenInterpreter", FakeInterpreter),
+        patch.object(iss, "interpreter_instances", {}),
+    ):
+        interpreter = iss.get_or_create_interpreter(
+            session_key="u:s:copepod",
+            token=None,
+            db=None,
+            agent_type="copepod",
+        )
+
+        interpreter.llm.completions(
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hey"},
+                    ],
+                }
+            ],
+            stream=False,
+        )
+
+    messages = captured["params"]["messages"]
+    assert messages[0]["content"] == "hey"
+
+
+def test_llm_wrapper_enables_usage_for_direct_streaming_messages():
+    from core import interpreter_session as iss
+
+    captured = {}
+
+    class FakeLLM:
+        def __init__(self):
+            self.model = ""
+            self.completions = self._completions
+
+        def _completions(self, **params):
+            captured["params"] = params
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class FakeInterpreter:
+        def __init__(self):
+            self.llm = FakeLLM()
+            self.computer = MagicMock()
+            self.messages = []
+            self.system_message = ""
+            self.custom_instructions = ""
+            self.auto_run = False
+            self.max_output = 2048
+
+        def reset(self):
+            self.messages = []
+
+    fake_profile = MagicMock()
+    fake_profile.get_system_message.return_value = ""
+    fake_profile.get_tool_code.return_value = ""
+    fake_profile.configure_interpreter.return_value = None
+
+    with (
+        patch.object(iss, "get_profile", return_value=fake_profile),
+        patch.object(iss, "OpenInterpreter", FakeInterpreter),
+        patch.object(iss, "interpreter_instances", {}),
+    ):
+        interpreter = iss.get_or_create_interpreter(
+            session_key="u:s:copepod",
+            token=None,
+            db=None,
+            agent_type="copepod",
+        )
+
+        interpreter.llm.completions(
+            messages=[{"role": "user", "content": "hey"}],
+            stream=True,
+        )
+
+    assert captured["params"]["stream_options"]["include_usage"] is True

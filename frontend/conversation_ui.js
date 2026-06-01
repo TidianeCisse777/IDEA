@@ -116,7 +116,7 @@ function displayConversations() {
                 <p class="empty-state-subtitle">Start a new conversation to see it here</p>
             </div>
         `;
-        updateLoadMoreState();
+        updateLoadMoreState(0);
         return;
     }
 
@@ -146,7 +146,7 @@ function displayConversations() {
         conversationsList.appendChild(el);
     });
 
-    updateLoadMoreState();
+    updateLoadMoreState(filteredConversations.length);
 }
 
 function _updateConversationItem(el, conversation, currentConvId) {
@@ -193,7 +193,7 @@ function _bindConversationItemListeners(el, conversation) {
     });
 }
 
-function updateLoadMoreState() {
+function updateLoadMoreState(visibleCount = null) {
     const loadMoreButton = document.getElementById('loadMoreConversations');
     const countLabel = document.getElementById('conversationCount');
     if (!loadMoreButton || !countLabel) {
@@ -204,11 +204,12 @@ function updateLoadMoreState() {
     const totalCount = conversationManager.getTotalConversations();
     const hasMore = conversationManager.hasMoreConversations();
     const isLoading = conversationManager.isLoadingConversations();
+    const displayedCount = visibleCount === null ? loadedCount : visibleCount;
 
     if (totalCount > 0) {
-        countLabel.textContent = `Showing ${loadedCount} of ${totalCount}`;
+        countLabel.textContent = `Showing ${displayedCount} of ${totalCount}`;
     } else if (loadedCount > 0) {
-        countLabel.textContent = `Showing ${loadedCount}`;
+        countLabel.textContent = `Showing ${displayedCount}`;
     } else {
         countLabel.textContent = '';
     }
@@ -338,10 +339,18 @@ async function shareConversation(conversationId) {
         const fullShareUrl = `${window.location.origin}${shareData.share_url}`;
         
         // Try to copy to clipboard
+        let copiedToClipboard = false;
         if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(fullShareUrl);
-            showNotification('Share link copied to clipboard!', 'success');
-        } else {
+            try {
+                await navigator.clipboard.writeText(fullShareUrl);
+                copiedToClipboard = true;
+                showNotification('Share link copied to clipboard!', 'success');
+            } catch (clipboardError) {
+                console.warn('Clipboard copy failed, falling back to prompt:', clipboardError);
+            }
+        }
+
+        if (!copiedToClipboard) {
             // Fallback: show the URL in a prompt
             prompt('Copy this link to share the conversation:', fullShareUrl);
         }

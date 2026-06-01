@@ -220,6 +220,19 @@ describe('Fix 5 — displayConversations reconciliation', () => {
         expect(document.querySelector('.favorite-btn').classList.contains('active')).toBe(true);
         expect(document.querySelector('.favorite-indicator')).not.toBeNull();
     });
+
+    test('shows filtered result count when search yields no match', () => {
+        const convs = [makeConv('a', 'Alpha')];
+        global.conversationManager = makeConversationManager(convs);
+        loadConversationUI();
+
+        window.conversationUI.displayConversations();
+        document.getElementById('conversationSearch').value = 'zzz';
+        window.conversationUI.displayConversations();
+
+        expect(document.getElementById('conversationCount').textContent).toBe('Showing 0 of 1');
+        expect(document.querySelector('.empty-state')).not.toBeNull();
+    });
 });
 
 // ─── Fix 3: loadConversation atomic sequence ─────────────────────────────────
@@ -269,6 +282,38 @@ describe('Fix 3 — loadConversation interpreter sync isolated', () => {
         expect(global.window.hydrateChatWithMessages).not.toHaveBeenCalled();
         expect(getNotification('error')).not.toBeNull();
         expect(getNotification('error').textContent).toContain('Impossible de charger la conversation');
+    });
+});
+
+describe('Share conversation fallback', () => {
+    test('falls back to prompt when clipboard write fails', async () => {
+        const conv = makeConv('a', 'Alpha');
+        const manager = makeConversationManager([conv]);
+        manager.createShareLink = jest.fn(async () => ({
+            share_url: '/share/share-token-1',
+            share_token: 'share-token-1',
+        }));
+        global.conversationManager = manager;
+        global.prompt = jest.fn();
+        Object.defineProperty(global.navigator, 'clipboard', {
+            configurable: true,
+            value: {
+                writeText: jest.fn(() => Promise.reject(new Error('clipboard denied'))),
+            },
+        });
+
+        loadConversationUI();
+        window.conversationUI.displayConversations();
+
+        document.querySelector('.share-btn').click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(manager.createShareLink).toHaveBeenCalledWith('a');
+        expect(global.prompt).toHaveBeenCalledTimes(1);
+        expect(global.prompt.mock.calls[0][0]).toBe('Copy this link to share the conversation:');
+        expect(global.prompt.mock.calls[0][1]).toContain('/share/share-token-1');
+        expect(getNotification('error')).toBeNull();
     });
 });
 

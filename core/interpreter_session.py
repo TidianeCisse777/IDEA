@@ -29,6 +29,63 @@ _IDLE_TIMEOUT = settings.SESSION_IDLE_TIMEOUT
 _CLEANUP_INTERVAL = settings.SESSION_CLEANUP_INTERVAL
 
 
+def _normalize_chat_content(content: Any) -> Any:
+    """Convert Responses-style content items into OpenAI chat-completion content.
+
+    OpenInterpreter can hand us messages that use Responses API item types such
+    as ``input_text``. LiteLLM / chat-completions expects either plain strings or
+    chat content parts like ``{"type": "text"}`` and ``{"type": "image_url"}``.
+    """
+    if isinstance(content, str) or content is None:
+        return content or ""
+
+    if not isinstance(content, list):
+        return content
+
+    normalized: list[dict[str, Any]] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type in {"text", "input_text"}:
+            text = item.get("text")
+            if not isinstance(text, str):
+                text = item.get("input_text")
+            if isinstance(text, str) and text.strip():
+                normalized.append({"type": "text", "text": text})
+            continue
+        if item_type in {"image_url", "input_image"}:
+            image_url = item.get("image_url")
+            if isinstance(image_url, dict):
+                url = image_url.get("url")
+            else:
+                url = image_url
+            if isinstance(url, str) and url:
+                normalized.append({"type": "image_url", "image_url": {"url": url}})
+            continue
+
+    if not normalized:
+        return ""
+    if len(normalized) == 1 and normalized[0].get("type") == "text":
+        return normalized[0]["text"]
+    return normalized
+
+
+def _normalize_chat_messages(messages: Any) -> Any:
+    """Normalize a chat-completions messages list in place-safe form."""
+    if not isinstance(messages, list):
+        return messages
+
+    normalized_messages: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        normalized_message = dict(message)
+        normalized_message["content"] = _normalize_chat_content(normalized_message.get("content", ""))
+        normalized_messages.append(normalized_message)
+    return normalized_messages
+
+
 # ---------------------------------------------------------------------------
 # Interpreter lifecycle
 # ---------------------------------------------------------------------------
@@ -106,6 +163,12 @@ def get_or_create_interpreter(
                 system = params.pop("instructions", "") or ""
                 items = params.pop("input", []) or []
                 params.pop("max_output_tokens", None)
+                if params.get("stream"):
+                    stream_options = params.get("stream_options")
+                    if not isinstance(stream_options, dict):
+                        stream_options = {}
+                    stream_options.setdefault("include_usage", True)
+                    params["stream_options"] = stream_options
                 messages = []
                 if system:
                     messages.append({"role": "system", "content": system})
@@ -113,18 +176,21 @@ def get_or_create_interpreter(
                     role = item.get("role", "user")
                     if role not in ("user", "assistant", "system"):
                         role = "user"
-                    content = item.get("content", "")
-                    if isinstance(content, list):
-                        content = "".join(
-                            p.get("text", "") for p in content
-                            if isinstance(p, dict)
-                        )
-                    messages.append({"role": role, "content": content or ""})
+                    content = _normalize_chat_content(item.get("content", ""))
+                    messages.append({"role": role, "content": content})
                 params["messages"] = messages
                 # gpt-5.4-mini doesn't support tool calling via OpenRouter chat completions
                 params.pop("tools", None)
                 params.pop("tool_choice", None)
                 return litellm.completion(**params)
+            if "messages" in params:
+                if params.get("stream"):
+                    stream_options = params.get("stream_options")
+                    if not isinstance(stream_options, dict):
+                        stream_options = {}
+                    stream_options.setdefault("include_usage", True)
+                    params["stream_options"] = stream_options
+                params["messages"] = _normalize_chat_messages(params.get("messages"))
             return _orig_completions(**params)
 
         interpreter.llm.completions = _completions_via_chat

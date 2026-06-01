@@ -60,6 +60,22 @@ def _short(session_key: str) -> str:
     return session_key
 
 
+def _safe_message_get(message: Any, key: str, default: Any = None) -> Any:
+    """Return message[key] without letting nonstandard message objects crash the stream."""
+    try:
+        if isinstance(message, dict):
+            return message.get(key, default)
+        getter = getattr(message, "get", None)
+        if callable(getter):
+            try:
+                return getter(key, default)
+            except TypeError:
+                return getter(key)
+        return getattr(message, key, default)
+    except Exception:
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Constants (shared with app.py via import)
 # ---------------------------------------------------------------------------
@@ -376,7 +392,9 @@ def _coerce_multimodal_message_content(
         text_attachment_lines.append(stripped)
 
     if not image_items:
-        return message
+        fallback = dict(message)
+        fallback.setdefault("type", "message")
+        return fallback
 
     content_items: list[dict[str, Any]] = []
     if prompt_text:
@@ -409,6 +427,233 @@ def _coerce_multimodal_messages(
         for msg in messages
         if isinstance(msg, dict)
     ]
+
+
+def _split_upload_block_content(content: str) -> tuple[str, list[str]]:
+    """Split the auto-generated upload block into prompt text + attachment lines."""
+    lines = content.splitlines()
+    prompt_lines: list[str] = []
+    attachment_lines: list[str] = []
+    in_upload_block = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == _UPLOAD_BLOCK_MARKER:
+            in_upload_block = True
+            continue
+        if in_upload_block:
+            if stripped == _UPLOAD_BLOCK_FOOTER:
+                break
+            attachment_lines.append(line)
+        else:
+            prompt_lines.append(line)
+    return "\n".join(prompt_lines).strip(), attachment_lines
+
+
+def _extract_user_prompt_text(
+    message: dict[str, Any],
+    *,
+    user_id: str,
+    session_id: str,
+    static_dir: Path = STATIC_DIR,
+) -> str:
+    """Extract the plain-text user prompt from a message, if any."""
+    if not isinstance(message, dict):
+        return ""
+
+    content = message.get("content")
+    if isinstance(content, str):
+        if _UPLOAD_BLOCK_MARKER in content:
+            prompt_text, _ = _split_upload_block_content(content)
+            return prompt_text
+        return content.strip()
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "text":
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+        return "\n".join(parts).strip()
+
+    # Fall back to the existing compatibility helper for any unusual payload.
+    hydrated = _coerce_multimodal_message_content(
+        message,
+        user_id=user_id,
+        session_id=session_id,
+        static_dir=static_dir,
+    )
+    content = hydrated.get("content")
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        return "\n".join(parts).strip()
+    if isinstance(content, str):
+        return content.strip()
+    return ""
+
+
+def _expand_multimodal_message_for_interpreter(
+    message: dict[str, Any],
+    *,
+    user_id: str,
+    session_id: str,
+    static_dir: Path = STATIC_DIR,
+) -> list[dict[str, Any]]:
+    """Expand upload-block or legacy multimodal messages into native LMC messages.
+
+    OpenInterpreter handles ``type="image"`` natively; we keep images as
+    separate messages so the runtime never has to carry OpenAI-style content
+    lists through its internal history machinery.
+    """
+    if not isinstance(message, dict):
+        return []
+
+    role = message.get("role") or "user"
+    content = message.get("content")
+
+    expanded: list[dict[str, Any]] = []
+
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type == "text":
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    expanded.append({
+                        "role": role,
+                        "type": "message",
+                        "content": text.strip(),
+                    })
+                continue
+            if item_type != "image_url":
+                continue
+
+            image_url = item.get("image_url") or {}
+            url = image_url.get("url") if isinstance(image_url, dict) else None
+            if not isinstance(url, str) or not url:
+                continue
+            if url.startswith("data:"):
+                match = re.match(
+                    r"^data:image/(?P<ext>[^;]+);base64,(?P<data>[A-Za-z0-9+/=]+)$",
+                    url,
+                )
+                if not match:
+                    continue
+                expanded.append({
+                    "role": role,
+                    "type": "image",
+                    "format": f"base64.{match.group('ext').lower()}",
+                    "content": match.group("data"),
+                })
+            else:
+                expanded.append({
+                    "role": role,
+                    "type": "image",
+                    "format": "path",
+                    "content": url,
+                })
+        if expanded:
+            return expanded
+        fallback = dict(message)
+        fallback.setdefault("type", "message")
+        return [fallback]
+
+    if not isinstance(content, str):
+        fallback = dict(message)
+        fallback.setdefault("type", "message")
+        return [fallback]
+
+    if _UPLOAD_BLOCK_MARKER not in content:
+        fallback = dict(message)
+        fallback.setdefault("type", "message")
+        return [fallback]
+
+    prompt_text, attachment_lines = _split_upload_block_content(content)
+    upload_root = static_dir / str(user_id) / str(session_id) / UPLOAD_DIR
+    image_found = False
+    text_attachment_lines: list[str] = []
+
+    if prompt_text:
+        expanded.append({
+            "role": role,
+            "type": "message",
+            "content": prompt_text,
+        })
+
+    for line in attachment_lines:
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        match = _UPLOAD_LINE_RE.match(stripped)
+        if not match:
+            text_attachment_lines.append(stripped)
+            continue
+
+        rel_path = (match.group("rel_path") or match.group("name") or "").strip()
+        mime_type = (match.group("mime") or "").strip() or None
+        candidate = upload_root / rel_path
+        suffix = candidate.suffix.lower()
+        resolved_mime = (
+            mime_type
+            or _IMAGE_SUFFIX_MIME.get(suffix)
+            or mimetypes.guess_type(candidate.name)[0]
+            or ""
+        ).lower()
+        if not resolved_mime.startswith("image/"):
+            text_attachment_lines.append(stripped)
+            continue
+        image_found = True
+        expanded.append({
+            "role": role,
+            "type": "image",
+            "format": "path",
+            "content": str(candidate),
+        })
+
+    if image_found:
+        if text_attachment_lines:
+            attachment_text = "\n".join(text_attachment_lines).strip()
+            if attachment_text:
+                expanded.append({
+                    "role": role,
+                    "type": "message",
+                    "content": attachment_text,
+                })
+        return expanded
+    fallback = dict(message)
+    fallback.setdefault("type", "message")
+    return [fallback]
+
+
+def _expand_multimodal_messages(
+    messages: list[dict[str, Any]] | None,
+    *,
+    user_id: str,
+    session_id: str,
+    static_dir: Path = STATIC_DIR,
+) -> list[dict[str, Any]]:
+    if not messages:
+        return []
+    expanded: list[dict[str, Any]] = []
+    for msg in messages:
+        if isinstance(msg, dict):
+            expanded.extend(
+                _expand_multimodal_message_for_interpreter(
+                    msg,
+                    user_id=user_id,
+                    session_id=session_id,
+                    static_dir=static_dir,
+                )
+            )
+    return expanded
 
 
 async def plan_and_run_mcp_tools(
@@ -589,8 +834,14 @@ async def chat_endpoint(
         _user_preview = ""
         for _m in reversed(messages):
             if isinstance(_m, dict) and _m.get("role") == "user":
-                _c = _m.get("content") or ""
-                _user_preview = (_c[:80] + "…") if len(_c) > 80 else _c
+                _user_preview = _extract_user_prompt_text(
+                    _m,
+                    user_id=str(user.id),
+                    session_id=session_id,
+                    static_dir=STATIC_DIR,
+                )
+                if len(_user_preview) > 80:
+                    _user_preview = _user_preview[:80] + "…"
                 _user_preview = _user_preview.replace("\n", " ")
                 break
         logger.info(f"► {_short(session_key)} | \"{_user_preview}\"")
@@ -635,7 +886,7 @@ async def chat_endpoint(
         stored_messages = session_store.read_messages(session_key)
         if stored_messages is not None:
             try:
-                interpreter.messages = _coerce_multimodal_messages(
+                interpreter.messages = _expand_multimodal_messages(
                     stored_messages,
                     user_id=str(user.id),
                     session_id=session_id,
@@ -649,7 +900,7 @@ async def chat_endpoint(
 
         _user_turns = sum(
             1 for m in (session_store.read_messages(session_key) or [])
-            if isinstance(m, dict) and m.get("role") == "user"
+            if _safe_message_get(m, "role") == "user"
         )
         logger.info(f"  round={_user_turns} | history={len(interpreter.messages)} msgs")
 
@@ -657,17 +908,30 @@ async def chat_endpoint(
         incoming_user = messages[-1] if messages else None
         if incoming_user and isinstance(incoming_user, dict) and incoming_user.get("role") == "user":
             current = session_store.read_messages(session_key) or []
-            if not current or current[-1].get("content") != incoming_user.get("content"):
-                session_store.write_messages(session_key, current + [incoming_user])
+            incoming_user_messages = _expand_multimodal_message_for_interpreter(
+                incoming_user,
+                user_id=str(user.id),
+                session_id=session_id,
+                static_dir=STATIC_DIR,
+            )
+            if not current or current[-len(incoming_user_messages):] != incoming_user_messages:
+                session_store.write_messages(session_key, current + incoming_user_messages)
 
         tool_runs = []
         try:
             last_user_message = ""
             last_user_message_payload: dict[str, Any] | None = None
+            last_user_message_messages: list[dict[str, Any]] = []
             for m in reversed(messages):
                 if isinstance(m, dict) and m.get("role") == "user" and m.get("content"):
-                    last_user_message = m["content"]
-                    last_user_message_payload = _coerce_multimodal_message_content(
+                    last_user_message = _extract_user_prompt_text(
+                        m,
+                        user_id=str(user.id),
+                        session_id=session_id,
+                        static_dir=STATIC_DIR,
+                    )
+                    last_user_message_payload = m
+                    last_user_message_messages = _expand_multimodal_message_for_interpreter(
                         m,
                         user_id=str(user.id),
                         session_id=session_id,
@@ -770,8 +1034,13 @@ async def chat_endpoint(
                 _had_code = False
                 _had_image = False
                 _had_error = False
+                _last_usage = None
                 _t0 = _time.monotonic()
-                chat_input = last_user_message_payload if last_user_message_payload is not None else messages[-1]
+                chat_input = (
+                    list(interpreter.messages) + last_user_message_messages
+                    if last_user_message_messages
+                    else (last_user_message_payload if last_user_message_payload is not None else messages[-1])
+                )
                 stream_events = chat_stream_events(
                     interpreter.chat(chat_input, stream=True),
                 )
@@ -780,6 +1049,8 @@ async def chat_endpoint(
                 ):
                     total_chunks += 1
                     if isinstance(result, dict):
+                        if isinstance(result.get("usage"), dict):
+                            _last_usage = result["usage"]
                         _t = result.get("type")
                         if _t == "code":
                             _had_code = True
@@ -804,8 +1075,17 @@ async def chat_endpoint(
                     if _had_error: _kinds.append("error")
                     if not _kinds: _kinds.append("text")
                     logger.info(f"◄ {_short(session_key)} | [{'+'.join(_kinds)}] {_elapsed} ({total_chunks} chunks)")
+                summary = {
+                    "type": "generation_summary",
+                    "role": "assistant",
+                    "model": interpreter.llm.model,
+                    "elapsed_ms": round((_time.monotonic() - _t0) * 1000, 1),
+                }
+                if isinstance(_last_usage, dict):
+                    summary["usage"] = _last_usage
+                yield f"data: {json.dumps(summary)}\n\n"
             except Exception as e:
-                logger.error(f"Error in chat stream: {str(e)}")
+                logger.exception("Error in chat stream")
                 err_str = str(e)
                 if "RateLimitError" in err_str or "rate_limit" in err_str.lower() or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str:
                     user_msg = "⏳ Quota API atteint. Attendez quelques secondes et réessayez, ou vérifiez les limites de votre plan LLM."
@@ -820,10 +1100,10 @@ async def chat_endpoint(
                 clean_msgs = [
                     m for m in interpreter.messages
                     if not (
-                        m.get("role") == "assistant"
-                        and m.get("type") == "message"
-                        and isinstance(m.get("content"), str)
-                        and m["content"].lstrip().startswith("to=execute")
+                        _safe_message_get(m, "role") == "assistant"
+                        and _safe_message_get(m, "type") == "message"
+                        and isinstance(_safe_message_get(m, "content"), str)
+                        and str(_safe_message_get(m, "content", "")).lstrip().startswith("to=execute")
                     )
                 ]
                 session_store.write_messages(session_key, clean_msgs)
@@ -913,12 +1193,18 @@ async def load_conversation_endpoint(
                 continue
 
             if msg.get("role") in ["user", "assistant"]:
-                interpreter_msg = {
-                    "role": msg.get("role"),
-                    "type": "message",
-                    "content": msg.get("content", ""),
-                }
-                interpreter_messages.append(interpreter_msg)
+                interpreter_messages.extend(
+                    _expand_multimodal_message_for_interpreter(
+                        {
+                            "role": msg.get("role"),
+                            "type": msg.get("type", "message"),
+                            "content": msg.get("content", ""),
+                        },
+                        user_id=str(user.id),
+                        session_id=session_id,
+                        static_dir=STATIC_DIR,
+                    )
+                )
             elif msg.get("role") == "computer":
                 msg_type = msg.get("message_type", "message")
                 if msg_type == "console":
@@ -931,7 +1217,14 @@ async def load_conversation_endpoint(
                     }
                     if msg.get("message_format"):
                         interpreter_msg["format"] = msg.get("message_format")
-                    interpreter_messages.append(interpreter_msg)
+                    interpreter_messages.extend(
+                        _expand_multimodal_message_for_interpreter(
+                            interpreter_msg,
+                            user_id=str(user.id),
+                            session_id=session_id,
+                            static_dir=STATIC_DIR,
+                        )
+                    )
 
         clean_interpreter_messages = [
             m for m in interpreter_messages
