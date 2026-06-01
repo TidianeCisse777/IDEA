@@ -245,19 +245,12 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
             yield {"start": True, "end": True, "role": "computer",
                    "type": "console", "format": console_fmt or "output",
                    "content": buf}
-        # Detect CSV saves and emit a download link for each one
-        # Detect DELIVERABLE: JSON lines and emit structured result cards
+        # Detect DELIVERABLE: JSON lines and emit structured result cards.
+        # Saved CSV: is kept for logging but no longer emits a UI event —
+        # the DELIVERABLE card already includes the download button.
         for line in buf.splitlines():
             line = line.strip()
-            if line.startswith("Saved CSV:"):
-                csv_path = line[len("Saved CSV:"):].strip()
-                csv_url = _path_to_static_url(csv_path)
-                if csv_url:
-                    filename = os.path.basename(csv_path)
-                    yield {"start": True, "end": True, "role": "computer",
-                           "type": "file", "format": "csv-download",
-                           "content": csv_url, "filename": filename}
-            elif line.startswith("DELIVERABLE:"):
+            if line.startswith("DELIVERABLE:"):
                 raw = line[len("DELIVERABLE:"):].strip()
                 try:
                     data = json.loads(raw)
