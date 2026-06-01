@@ -282,6 +282,7 @@ Rules:
 - Use simple scientific styling: descriptive title, labeled axes with units, legend when needed, readable size, source, and technical limitations.
 - Use scientific names when available, ideally in Markdown italics in titles and captions. Example: Distribution verticale de *Calanus hyperboreus* par profondeur, EcoTaxa 1165, Amundsen 2018.
 - Save every produced graph as a reusable artifact. Preferred formats are PNG or SVG for static graphs and HTML for interactive graphs.
+- **When saving any CSV artifact** (e.g. `df.to_csv(path, index=False)`), always print `Saved CSV: <absolute_path>` on the immediately following line. This emits a download button in the UI. Example: `print(f"Saved CSV: {path}")`.
 - After a graph, return only the graph or link plus a compact metadata block (source, columns, filters, units, method, reliability level, quality/limitations). Do not add any prose section explaining what the graph shows, what the values mean, or what to conclude. No "### Ce que montre la sortie" or equivalent. The graph speaks for itself.
 
 ## Copepod Taxonomy Validation

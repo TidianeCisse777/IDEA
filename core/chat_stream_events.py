@@ -27,6 +27,18 @@ _MARKDOWN_JSON_TOOLCALL_OPEN_RE = re.compile(
 )
 
 
+def _path_to_static_url(path: str) -> str:
+    """Convert /app/static/... or ./static/... to /static/... for browser download."""
+    path = path.strip()
+    if path.startswith("/app/static/"):
+        return path[len("/app"):]
+    if path.startswith("./static/"):
+        return path[1:]
+    if path.startswith("static/"):
+        return "/" + path
+    return ""
+
+
 def _text_after_execute_block(content: str) -> str:
     """Return any text that follows a to=execute code='...' block."""
     # Matches to=execute code='''...''' or to=execute code='...'
@@ -188,7 +200,8 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
         renders them as individual collapsible bubbles.
         """
         nonlocal console_buf_content, in_console_msg, console_fmt, backend_closing_emitted
-        if console_buf_content and "# RAPPORT D'INSPECTION" in console_buf_content:
+        buf = console_buf_content
+        if buf and "# RAPPORT D'INSPECTION" in buf:
             # Split on every RAPPORT header so each file gets its own bubble.
             parts = console_buf_content.split("# RAPPORT D'INSPECTION")
             preamble = parts[0].strip()
@@ -227,10 +240,21 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                 pending_assistant_tail = ""
             else:
                 yield from _emit_pending_assistant_tail()
-        elif console_buf_content:
+        elif buf:
             yield {"start": True, "end": True, "role": "computer",
                    "type": "console", "format": console_fmt or "output",
-                   "content": console_buf_content}
+                   "content": buf}
+        # Detect CSV saves and emit a download link for each one
+        for line in buf.splitlines():
+            line = line.strip()
+            if line.startswith("Saved CSV:"):
+                csv_path = line[len("Saved CSV:"):].strip()
+                csv_url = _path_to_static_url(csv_path)
+                if csv_url:
+                    filename = os.path.basename(csv_path)
+                    yield {"start": True, "end": True, "role": "computer",
+                           "type": "file", "format": "csv-download",
+                           "content": csv_url, "filename": filename}
         console_buf_content = ""
         in_console_msg = False
         console_fmt = ""

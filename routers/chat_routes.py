@@ -84,8 +84,6 @@ def _build_copepod_data_planner_note(
     """Return a short system note that forces a planner pass before code."""
     if not user_message.strip():
         return None
-    if not _is_copepod_data_analysis_request(user_message):
-        return None
 
     inspection_blocks: list[str] = []
     join_hints: list[str] = []
@@ -117,7 +115,7 @@ def _build_copepod_data_planner_note(
         lines.append(f"Join hints already surfaced by inspection: {' | '.join(join_hints[:2])}.")
     lines.extend([
         "If the key is ambiguous or missing, ask one targeted clarification question instead of coding.",
-        "If the key is clear, proceed directly to execute() — do not output a text preamble first.",
+        "If the key is clear, write the code block immediately — do not output a text preamble first.",
     ])
     return "\n".join(lines)
 
@@ -1168,7 +1166,7 @@ async def chat_endpoint(
                         static_dir=STATIC_DIR,
                     )
                     break
-            if last_user_message:
+            if last_user_message and agent_type != "copepod":
                 tool_runs = await plan_and_run_mcp_tools(
                     interpreter=interpreter,
                     user_message=last_user_message,

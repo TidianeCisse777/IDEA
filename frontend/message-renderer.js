@@ -379,16 +379,28 @@ function appendMessage(message, options = {}) {
         const imageAlt = escapeHtml(message.filename || 'Uploaded image');
         contentElement.innerHTML = `<img src="${imageSrc}" alt="${imageAlt}" class="uploaded-image-preview">`;
     } else if (message.type === 'file') {
-        const displayName = escapeHtml(message.filename || message.name || message.content || 'Attachment');
-        const filePath = escapeHtml(message.content || '');
-        contentElement.classList.add('file-attachment');
-        contentElement.innerHTML = `
-            <span class="material-icons attachment-icon">attach_file</span>
-            <div class="attachment-details">
-                <span class="attachment-name">${displayName}</span>
-                <span class="attachment-path">${filePath}</span>
-            </div>
-        `;
+        if (message.format === 'csv-download') {
+            const filename = escapeHtml(message.filename || 'fichier.csv');
+            const url = escapeHtml(message.content || '');
+            contentElement.classList.add('csv-download-message');
+            contentElement.innerHTML = `
+                <a href="${url}" download="${filename}" class="csv-download-btn">
+                    <span class="material-icons">download</span>
+                    Télécharger ${filename}
+                </a>
+            `;
+        } else {
+            const displayName = escapeHtml(message.filename || message.name || message.content || 'Attachment');
+            const filePath = escapeHtml(message.content || '');
+            contentElement.classList.add('file-attachment');
+            contentElement.innerHTML = `
+                <span class="material-icons attachment-icon">attach_file</span>
+                <div class="attachment-details">
+                    <span class="attachment-name">${displayName}</span>
+                    <span class="attachment-path">${filePath}</span>
+                </div>
+            `;
+        }
     } else if (message.type === 'console') {
         contentElement.innerHTML = '<pre><code></code></pre>';
         messageElement.classList.add('console-output-message');
@@ -459,11 +471,9 @@ function appendMessage(message, options = {}) {
 
     // Route messages to exec block or main chat
     if (message.role === 'assistant' && message.type === 'code') {
-        // Code starts — move any preceding assistant text msgs into exec block
+        // Code starts — preceding assistant text (plan) stays in main chat
         _execHasStarted = true;
         const exec = _getOrCreateExecBlock();
-        // Move tracked pre-code assistant elements into exec body
-        _pendingAssistantEls.forEach(el => exec.body.appendChild(el));
         _pendingAssistantEls = [];
         exec.body.appendChild(messageElement);
     } else if (message.role === 'computer' && message.type === 'console') {
@@ -471,6 +481,11 @@ function appendMessage(message, options = {}) {
         exec.body.appendChild(messageElement);
     } else if (message.role === 'computer' && message.type === 'image') {
         // Images produced by code go into the main chat, not the exec block
+        _closeExecBlock();
+        _pendingAssistantEls = [];
+        chatDisplay.appendChild(messageElement);
+    } else if (message.role === 'computer' && message.type === 'file') {
+        // CSV downloads and other file artifacts go to main chat
         _closeExecBlock();
         _pendingAssistantEls = [];
         chatDisplay.appendChild(messageElement);
@@ -642,7 +657,9 @@ function _appendImageActions(contentDiv, src, mime) {
         const a = document.createElement('a');
         a.href = src;
         a.download = `graph-${Date.now()}.${mime.split('/')[1] || 'png'}`;
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
     });
 
     const copyBtn = document.createElement('button');
@@ -651,13 +668,20 @@ function _appendImageActions(contentDiv, src, mime) {
     copyBtn.innerHTML = '<span class="material-icons">content_copy</span>';
     copyBtn.addEventListener('click', async () => {
         try {
-            const res = await fetch(src);
-            const blob = await res.blob();
-            await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+            let blob;
+            if (src.startsWith('data:')) {
+                const res = await fetch(src);
+                blob = await res.blob();
+            } else {
+                const res = await fetch(src);
+                blob = await res.blob();
+            }
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
             copyBtn.innerHTML = '<span class="material-icons">check</span>';
             setTimeout(() => { copyBtn.innerHTML = '<span class="material-icons">content_copy</span>'; }, 1500);
         } catch (_) {
-            copyBtn.title = 'Copie non supportée dans ce navigateur';
+            // Fallback : ouvrir dans un nouvel onglet pour copier manuellement
+            window.open(src, '_blank');
         }
     });
 
@@ -793,11 +817,22 @@ function updateMessageContent(id, content) {
                 }
             }
         } else if (message.type === 'file') {
-            const a = document.createElement('a');
-            a.href = content;
-            a.download = '';
-            a.textContent = 'Download File';
-            contentDiv.appendChild(a);
+            if (message.format === 'csv-download') {
+                const filename = escapeHtml(message.filename || 'fichier.csv');
+                contentDiv.classList.add('csv-download-message');
+                contentDiv.innerHTML = `
+                    <a href="${escapeHtml(content)}" download="${filename}" class="csv-download-btn">
+                        <span class="material-icons">download</span>
+                        Télécharger ${filename}
+                    </a>
+                `;
+            } else {
+                const a = document.createElement('a');
+                a.href = content;
+                a.download = '';
+                a.textContent = 'Download File';
+                contentDiv.appendChild(a);
+            }
         }
     } catch (error) {
         handleError(error, 'Failed to update message content');
