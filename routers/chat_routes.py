@@ -117,8 +117,7 @@ def _build_copepod_data_planner_note(
         lines.append(f"Join hints already surfaced by inspection: {' | '.join(join_hints[:2])}.")
     lines.extend([
         "If the key is ambiguous or missing, ask one targeted clarification question instead of coding.",
-        "If the key is clear, state it explicitly, then move to the executor step.",
-        "Do not emit pandas merge/filter code until the join strategy is explicit.",
+        "If the key is clear, proceed directly to execute() — do not output a text preamble first.",
     ])
     return "\n".join(lines)
 
