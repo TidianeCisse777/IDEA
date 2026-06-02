@@ -242,7 +242,7 @@ def _build_copepod_session_resources_note(
     *,
     user_id: str | None = None,
     session_id: str | None = None,
-) -> str | None:
+) -> tuple[str | None, list[str]]:
     """Build a compact runtime-only resource index for Copepod turns."""
     loaded_files: list[str] = []
     current_message_files: list[str] = []  # files from the last user upload block
@@ -348,7 +348,7 @@ def _build_copepod_session_resources_note(
     artifact_entries = artifact_entries[-_RESOURCE_ARTIFACT_LIMIT:]
 
     if not loaded_files and not current_message_files and not reports and not artifact_entries:
-        return None
+        return None, []
 
     sections: dict[str, list[str]] = {
         "Deliverables": [],
@@ -387,7 +387,7 @@ def _build_copepod_session_resources_note(
     note = "\n".join(lines)
     if len(note) > 6000:
         note = note[:5900].rstrip() + "\n\nAdditional resource details were omitted to keep this prompt compact."
-    return note
+    return note, current_message_files
 
 
 def _session_resource_message_from_stream_event(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -1718,7 +1718,7 @@ async def chat_endpoint(
                         )
 
                         if agent_type == "copepod":
-                            copepod_session_resources_note = _build_copepod_session_resources_note(
+                            copepod_session_resources_note, _new_files = _build_copepod_session_resources_note(
                                 messages,
                                 user_id=str(user.id),
                                 session_id=session_id,
@@ -1728,6 +1728,30 @@ async def chat_endpoint(
                                 copepod_data_planner_note if copepod_data_planner_note else None,
                                 retry_note,
                             )
+                            # Inject an explicit inspection instruction when new files are present.
+                            # This replaces the last user text message so the LLM sees exactly
+                            # what to do — instead of interpreting the user's text first.
+                            if _new_files and retry_attempts == 0:
+                                file_paths = "\n".join(
+                                    f"- {f.split('| path: ')[-1].strip() if '| path: ' in f else f}"
+                                    for f in _new_files
+                                )
+                                user_text = last_user_message.strip() if last_user_message else ""
+                                inject_content = (
+                                    f"Nouveaux fichiers uploadés — exécute inspect_and_report sur chacun avant tout :\n"
+                                    f"{file_paths}"
+                                )
+                                if user_text:
+                                    inject_content += f"\n\nDemande de l'utilisateur (à traiter après l'inspection) : {user_text}"
+                                # Replace or append the injected message in chat_input
+                                inject_msg = {"role": "user", "type": "message", "content": inject_content}
+                                # Remove any existing user text messages at the tail to avoid duplication
+                                trimmed = [
+                                    m for m in chat_input
+                                    if not (m.get("role") == "user" and m.get("type") == "message"
+                                            and m.get("content", "").strip() == user_text and user_text)
+                                ]
+                                chat_input = trimmed + [inject_msg]
 
                         for chunk in _yield_chat_stream(chat_input):
                             yield chunk
