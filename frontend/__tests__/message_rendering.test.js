@@ -46,6 +46,9 @@ function buildDOM() {
 
 function loadModule() {
     jest.resetModules();
+    const renderer = require('../message-renderer.js');
+    global.isDeliverableJsonContent = renderer.isDeliverableJsonContent;
+    global._renderDeliverableCard = renderer._renderDeliverableCard;
     global.conversationManager = {
         getAllConversations: () => [],
         getCurrentConversationId: () => null,
@@ -97,6 +100,25 @@ describe('Text messages', () => {
     test('message type with role "assistant" gets assistant CSS class', () => {
         window.conversationUI.displayMessageInChat(msg('message', null, 'I am LLM', 'assistant'));
         expect(document.querySelector('.message.assistant')).not.toBeNull();
+    });
+
+    test('legacy message containing deliverable JSON renders as deliverable card', () => {
+        const content = JSON.stringify({
+            type: 'graph',
+            title: 'Abondance par station',
+            fields: [{ label: 'Source', value: 'old conversation' }],
+            file_url: '/static/old.png',
+            filename: 'old.png',
+        });
+
+        window.conversationUI.displayMessageInChat(
+            msg('message', null, content, 'computer')
+        );
+
+        const card = document.querySelector('.deliverable-card');
+        expect(card).not.toBeNull();
+        expect(card.textContent).toContain('Abondance par station');
+        expect(document.querySelector('.content').textContent).not.toContain('"fields"');
     });
 });
 

@@ -229,6 +229,26 @@ def test_text_deliverable_is_not_duplicated_when_console_prints_card():
     assert "DELIVERABLE:" not in assistant_text
 
 
+def test_console_deliverable_suppresses_followup_assistant_prose():
+    payload = {"type": "graph", "title": "Carte produite"}
+    line = "DELIVERABLE: " + json.dumps(payload)
+    chunks = [
+        *_stream_console(line + "\n"),
+        *_stream_message("Oui, le livrable est termine."),
+    ]
+
+    events = list(chat_stream_events(chunks))
+
+    cards = [
+        json.loads(e["content"]) for e in events
+        if e.get("role") == "computer" and e.get("type") == "deliverable"
+    ]
+    assistant_text = _concat_message_content(events)
+
+    assert cards == [payload]
+    assert assistant_text == ""
+
+
 # ─── Inspection report re-routing: rapport must be assistant-message, not console ─
 
 

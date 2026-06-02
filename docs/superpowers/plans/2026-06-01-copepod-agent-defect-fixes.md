@@ -43,7 +43,33 @@ Execution should follow P0/P1/P2 priority. P0 protects trust, data correctness, 
 
 ## Priority Order
 
-### P0: Trust, Continuity, And Data Correctness
+## P0 Vertical Slices
+
+1. **Livrables restent uniques et hydratables après F5**  
+   **Type:** AFK  
+   **Blocked by:** None - can start immediately  
+   **User stories covered:** F5/CSS/livrables, JSON brut  
+   **Acceptance:** one structured card per Python `DELIVERABLE:`, no assistant prose after the card, old raw deliverable JSON hydrates as a card.
+
+2. **Contexte session déterministe pour fichiers et artifacts**  
+   **Type:** AFK  
+   **Blocked by:** None - can start immediately  
+   **User stories covered:** faux upload, contexte fichiers/artifacts  
+   **Acceptance:** every Copepod turn gets a compact loaded-file/artifact note when durable signals exist, and no note when the session has no file signal.
+
+3. **Discipline agent et retry sur erreurs d'exécution**  
+   **Type:** AFK  
+   **Blocked by:** Slice 2 for context-sensitive retries  
+   **User stories covered:** discipline agent, retry erreurs  
+   **Acceptance:** prompt contract forbids plan-only execution, invented numbers, repeated clarification, and vague questions after tracebacks.
+
+4. **Jointures safe avant livrables de couplage**  
+   **Type:** AFK  
+   **Blocked by:** Slice 3 for prompt contract placement  
+   **User stories covered:** jointures safe  
+   **Acceptance:** runtime exposes `profile_join_keys`, tests cover cardinality/row expansion, and prompt requires profiling before a join deliverable.
+
+### P0: F5/CSS/livrables, JSON brut, faux upload, contexte fichiers/artifacts, discipline agent, jointures safe, retry erreurs
 
 1. **Task 1: Deliverable Stream Is Terminal And Unique**  
    Stops duplicate deliverables and assistant prose after cards.
@@ -62,12 +88,12 @@ Execution should follow P0/P1/P2 priority. P0 protects trust, data correctness, 
 8. **Task 7: Error Recovery Does Not Ask Vague Questions After Tracebacks**  
    Forces retry/repair from the traceback before asking the user.
 
-### P1: Workflow Completion
+### P1: image/zoom sans boucle de clarification
 
 9. **Task 8: Image And Zoom Requests Execute Instead Of Looping**  
    Uses pasted images and zoom intent directly instead of asking avoidable follow-up questions.
 
-### P2: Output Polish
+### P2: formatage, bruit, rapports trop longs, checklist finale
 
 10. **Task 9: Formatting And Report Noise**  
     Reduces repeated plans, mixed language, broken inline formatting, and oversized reports.

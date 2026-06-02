@@ -179,6 +179,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
     console_fmt = ""
     pending_assistant_tail = ""
     backend_closing_emitted = False  # True after %%CLOSING%% — suppress subsequent LLM messages
+    deliverable_emitted = False  # True after a structured card — suppress redundant prose
 
     def _is_fixed_upload_question(text: str) -> bool:
         return text.strip() == "Quel graphique souhaitez-vous ?"
@@ -192,7 +193,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
 
     def _emit_or_defer_assistant_text(original: str):
         nonlocal pending_assistant_tail
-        if backend_closing_emitted:
+        if backend_closing_emitted or deliverable_emitted:
             return
         cleaned = _clean_assistant_text(original)
         if not cleaned:
@@ -228,6 +229,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
         renders them as individual collapsible bubbles.
         """
         nonlocal console_buf_content, in_console_msg, console_fmt, backend_closing_emitted
+        nonlocal deliverable_emitted
         buf = console_buf_content
         if buf and "# RAPPORT D'INSPECTION" in buf:
             # Split on every RAPPORT header so each file gets its own bubble.
@@ -296,6 +298,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                         if url:
                             data["file_url"] = url
                             data["filename"] = os.path.basename(data["file"])
+                    deliverable_emitted = True
                     yield {"start": True, "end": True, "role": "computer",
                            "type": "deliverable", "content": json.dumps(data)}
         console_buf_content = ""

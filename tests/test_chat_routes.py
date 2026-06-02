@@ -209,6 +209,8 @@ from routers.chat_routes import (
     _render_repo_table,
     _summarize_mcp_result,
     _build_copepod_data_planner_note,
+    _build_copepod_session_resources_note,
+    _session_resource_message_from_stream_event,
     _build_copepod_error_recovery_note,
     _inject_copepod_system_note,
     _strip_system_messages,
@@ -476,7 +478,7 @@ class TestCopepodDataPlannerNote:
         assert note is not None
         assert "Copepod data planner" in note
         assert "station | time | depth" in note
-        assert "Do not emit pandas merge/filter code" in note
+        assert "If the key is clear, write the code block immediately" in note
 
     def test_returns_recovery_note_for_traceback(self):
         note = _build_copepod_error_recovery_note(
@@ -533,6 +535,124 @@ class TestCopepodDataPlannerNote:
         stripped = _strip_system_messages(messages)
         assert [msg["role"] for msg in stripped] == ["user", "assistant"]
         assert all(msg["role"] != "system" for msg in stripped)
+
+
+# ---------------------------------------------------------------------------
+# Helper: _build_copepod_session_resources_note
+# ---------------------------------------------------------------------------
+
+class TestCopepodSessionResourcesNote:
+    def test_returns_none_without_resource_signals(self):
+        note = _build_copepod_session_resources_note([
+            {"role": "user", "type": "message", "content": "fais un graphe"},
+            {"role": "assistant", "type": "message", "content": "Uploadez un fichier pour commencer."},
+        ])
+        assert note is None
+
+    def test_compacts_upload_report_deliverable_image_and_file_artifacts(self):
+        note = _build_copepod_session_resources_note(
+            [
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": (
+                        "Analyse.\n\n"
+                        "Files uploaded in this message:\n"
+                        "- sample.csv (text/csv) | relative path: sample.csv\n"
+                        "Use these paths when referencing the uploaded files."
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n\n"
+                        "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                        "- **format** : `csv`  •  **n_rows** : `120`  •  **n_columns** : `12`\n"
+                        "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+                        "## Columns (12)\n\n"
+                        "| # | Column | Dtype |\n"
+                        "|---|--------|-------|\n"
+                        "| 1 | `sample_id` | object |\n"
+                        "| 2 | `station` | object |\n"
+                        "| 3 | `depth` | float64 |\n"
+                        "Clés de jointure potentielles : sample_id | station\n"
+                    ),
+                },
+                {
+                    "role": "computer",
+                    "type": "deliverable",
+                    "content": '{"type":"graph","title":"Abondance par profondeur","file":"/app/static/u1/s1/abundance_depth.png"}',
+                },
+                {
+                    "role": "computer",
+                    "type": "image",
+                    "format": "path",
+                    "content": "/app/static/u1/s1/abundance_depth.png",
+                },
+                {
+                    "role": "computer",
+                    "type": "file",
+                    "format": "csv-download",
+                    "content": "/static/u1/s1/joined.csv",
+                },
+            ],
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert note is not None
+        assert "## Current Session Resources" in note
+        assert "You may use these session resources freely" in note
+        assert "Do not ask the user to re-upload" in note
+        assert "Loaded files:" in note
+        assert "sample.csv" in note
+        assert "path: /app/static/u1/s1/uploads/sample.csv" in note
+        assert "Inspection reports:" in note
+        assert "likely_neolabs_taxon" in note
+        assert "sample_id" in note
+        assert "Deliverables:" in note
+        assert "Abondance par profondeur" in note
+        assert "Graph/image artifacts:" in note
+        assert "File artifacts:" in note
+        assert "RAPPORT D'INSPECTION" not in note.split("Inspection reports:", 1)[1]
+
+    def test_limits_artifacts_and_mentions_older_history(self):
+        messages = []
+        for i in range(20):
+            messages.append({
+                "role": "computer",
+                "type": "deliverable",
+                "content": f'{{"type":"graph","title":"Graph {i}","file":"/app/static/g{i}.png"}}',
+            })
+
+        note = _build_copepod_session_resources_note(messages)
+
+        assert note is not None
+        assert "Graph 19" in note
+        assert "Graph 0" not in note
+        assert "Additional older artifacts exist in conversation history." in note
+
+    def test_stream_deliverable_event_is_persistable_resource(self):
+        event = {
+            "role": "computer",
+            "type": "deliverable",
+            "content": '{"type":"graph","title":"Boite moustache","file":"/app/static/u1/s1/boxplot.png"}',
+        }
+
+        resource = _session_resource_message_from_stream_event(event)
+
+        assert resource == event
+
+    def test_base64_image_event_is_not_persisted_as_resource(self):
+        event = {
+            "role": "computer",
+            "type": "image",
+            "format": "base64.png",
+            "content": "large-base64",
+        }
+
+        assert _session_resource_message_from_stream_event(event) is None
 
 
 # ---------------------------------------------------------------------------
@@ -1106,7 +1226,218 @@ class TestChatGuardPaths:
         assert all(msg.get("role") != "system" for msg in captured["message"])
         assert "Copepod data planner" in captured["system_message"]
         assert "station | time | depth" in captured["system_message"]
-        assert "Do not emit pandas merge/filter code" in captured["system_message"]
+        assert "If the key is clear, write the code block immediately" in captured["system_message"]
+
+    def test_chat_injects_current_session_resources_before_copepod_call(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        store.write_messages(
+            "u1:s1:copepod",
+            [
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": (
+                        "Analyse.\n\n"
+                        "Files uploaded in this message:\n"
+                        "- sample.csv (text/csv) | relative path: sample.csv\n"
+                        "Use these paths when referencing the uploaded files."
+                    ),
+                },
+                {
+                    "role": "computer",
+                    "type": "deliverable",
+                    "content": '{"type":"graph","title":"Carte produite","file":"/app/static/u1/s1/map.png"}',
+                },
+            ],
+        )
+        fake_interpreter.system_message = "base prompt"
+
+        captured = {}
+
+        def fake_chat(message, stream=True):
+            captured["message"] = message
+            captured["system_message"] = fake_interpreter.system_message
+            fake_interpreter.messages = list(message)
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.observe_stream.side_effect = lambda events: events
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "fais un graphe"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+
+        assert resp.status_code == 200
+        assert all(msg.get("role") != "system" for msg in captured["message"])
+        assert "base prompt" in captured["system_message"]
+        assert "## Current Session Resources" in captured["system_message"]
+        assert "Loaded files:" in captured["system_message"]
+        assert "sample.csv" in captured["system_message"]
+        assert "Deliverables:" in captured["system_message"]
+        assert "Carte produite" in captured["system_message"]
+        assert "Do not ask the user to re-upload" in captured["system_message"]
+
+    def test_chat_injects_resources_from_current_turn_payload(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+        fake_interpreter.system_message = "base prompt"
+
+        captured = {}
+
+        def fake_chat(message, stream=True):
+            captured["message"] = message
+            captured["system_message"] = fake_interpreter.system_message
+            fake_interpreter.messages = list(message)
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.observe_stream.side_effect = lambda events: events
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        current_message = {
+            "role": "user",
+            "content": (
+                "Analyse ce fichier.\n\n"
+                "Files uploaded in this message:\n"
+                "- current.csv (text/csv) | relative path: current.csv\n"
+                "Use these paths when referencing the uploaded files."
+            ),
+        }
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [current_message]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+
+        assert resp.status_code == 200
+        assert "## Current Session Resources" in captured["system_message"]
+        assert "current.csv" in captured["system_message"]
+        assert "path: /app/static/u1/s1/uploads/current.csv" in captured["system_message"]
+        assert "Loaded files:" in captured["system_message"]
+
+    def test_chat_persists_stream_deliverable_for_next_turn_resources(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+        fake_interpreter.system_message = "base prompt"
+
+        captured_system_messages = []
+        call_count = 0
+
+        def fake_chat(message, stream=True):
+            nonlocal call_count
+            call_count += 1
+            captured_system_messages.append(fake_interpreter.system_message)
+            fake_interpreter.messages = list(message)
+            if call_count == 1:
+                return iter([
+                    {
+                        "role": "computer",
+                        "type": "deliverable",
+                        "start": True,
+                        "end": True,
+                        "content": (
+                            '{"type":"graph","title":"Boîte à moustaches — profondeur par stade",'
+                            '"file":"/app/static/u1/s1/uploads/boxplot.png",'
+                            '"file_url":"/static/u1/s1/uploads/boxplot.png",'
+                            '"filename":"boxplot.png"}'
+                        ),
+                    }
+                ])
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.observe_stream.side_effect = lambda events: events
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            first = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "fais une boite moustache"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+            second = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "reprends le dernier graphe"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        persisted = store.read_messages("u1:s1:copepod") or []
+        assert any(
+            msg.get("type") == "deliverable"
+            and "Boîte à moustaches" in msg.get("content", "")
+            for msg in persisted
+        )
+        assert "Deliverables:" in captured_system_messages[-1]
+        assert "Boîte à moustaches" in captured_system_messages[-1]
+        assert "Graph/image artifacts:" in captured_system_messages[-1]
+        assert "boxplot.png" in captured_system_messages[-1]
 
     def test_chat_retries_after_join_key_error(self):
         store = InMemorySessionStore()

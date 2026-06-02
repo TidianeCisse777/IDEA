@@ -372,14 +372,20 @@ function displayMessageInChat(message) {
     
     const contentElement = document.createElement('div');
     contentElement.classList.add('content');
-    contentElement.setAttribute('data-type', message.message_type);
+    const effectiveType =
+        message.message_type === 'message'
+        && typeof isDeliverableJsonContent === 'function'
+        && isDeliverableJsonContent(message.content)
+            ? 'deliverable'
+            : message.message_type;
+    contentElement.setAttribute('data-type', effectiveType);
     
     // Handle different message types and formats similar to updateMessageContent in assistant.js
-    if (message.message_type === 'message') {
+    if (effectiveType === 'message') {
         contentElement.innerHTML = marked
             ? DOMPurify.sanitize(marked.parse(message.content))
             : escapeHtml(message.content);
-    } else if (message.message_type === 'image') {
+    } else if (effectiveType === 'image') {
         if (message.message_format === 'base64.png') {
             contentElement.innerHTML = `<img src="data:image/png;base64,${message.content}" alt="Image">`;
         } else if (message.message_format === 'path') {
@@ -393,19 +399,19 @@ function displayMessageInChat(message) {
             img.alt = 'Image';
             contentElement.appendChild(img);
         }
-    } else if (message.message_type === 'code') {
+    } else if (effectiveType === 'code') {
         if (message.message_format === 'html') {
             contentElement.innerHTML = DOMPurify.sanitize(message.content);
         } else {
             const language = message.message_format || '';
             contentElement.innerHTML = `<pre><code class="language-${language}">${escapeHtml(message.content)}</code></pre>`;
         }
-    } else if (message.message_type === 'console') {
+    } else if (effectiveType === 'console') {
         contentElement.innerHTML = `<pre>${escapeHtml(message.content)}</pre>`;
         contentElement.style.display = 'none';
-    } else if (message.message_type === 'deliverable') {
+    } else if (effectiveType === 'deliverable') {
         contentElement.appendChild(_renderDeliverableCard(message.content || '{}'));
-    } else if (message.message_type === 'file') {
+    } else if (effectiveType === 'file') {
         const link = document.createElement('a');
         link.href = message.content;
         link.download = '';

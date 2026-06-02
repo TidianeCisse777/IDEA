@@ -120,6 +120,305 @@ def _build_copepod_data_planner_note(
     return "\n".join(lines)
 
 
+_DELIVERABLE_TYPES = {"join", "export", "graph", "stats", "analysis"}
+_RESOURCE_ARTIFACT_LIMIT = 12
+
+
+def _dedupe_keep_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        cleaned = str(value or "").strip()
+        if "\t" in cleaned:
+            section, rest = cleaned.split("\t", 1)
+            clean_section = re.sub(r"\s+", " ", section).strip()
+            clean_rest = re.sub(r"\s+", " ", rest).strip()
+            cleaned = f"{clean_section}\t{clean_rest}"
+        else:
+            cleaned = re.sub(r"\s+", " ", cleaned)
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+    return out
+
+
+def _basename(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return Path(text.split("?", 1)[0]).name or text
+
+
+def _extract_report_summary(content: str) -> str | None:
+    if "# RAPPORT D'INSPECTION" not in content:
+        return None
+
+    file_path = ""
+    source = ""
+    shape = ""
+    columns: list[str] = []
+    join_hints = ""
+
+    match = re.search(r"\*\*file_path\*\*\s*:\s*`([^`]+)`", content)
+    if match:
+        file_path = match.group(1).strip()
+
+    shape_match = re.search(
+        r"\*\*n_rows\*\*\s*:\s*`([^`]+)`\s*.*?\*\*n_columns\*\*\s*:\s*`([^`]+)`",
+        content,
+        re.DOTALL,
+    )
+    if shape_match:
+        shape = f"{shape_match.group(1)} rows x {shape_match.group(2)} columns"
+
+    source_match = re.search(
+        r"\*\*source_type_guess\*\*\s*:\s*`([^`]+)`(?:\s*\(confidence:\s*`([^`]+)`\))?",
+        content,
+    )
+    if source_match:
+        source = source_match.group(1)
+        if source_match.group(2):
+            source = f"{source} ({source_match.group(2)})"
+
+    for col_match in re.finditer(r"\|\s*\d+\s*\|\s*`([^`]+)`\s*\|", content):
+        columns.append(col_match.group(1).strip())
+        if len(columns) >= 20:
+            break
+
+    join_match = re.search(r"Clés de jointure potentielles\s*:\s*(.+)", content)
+    if join_match:
+        join_hints = join_match.group(1).strip()
+
+    parts: list[str] = []
+    label = _basename(file_path) or "inspection report"
+    parts.append(label)
+    if file_path:
+        parts.append(f"path: {file_path}")
+    if source:
+        parts.append(f"source: {source}")
+    if shape:
+        parts.append(f"shape: {shape}")
+    if columns:
+        parts.append(f"columns: {', '.join(columns)}")
+    if join_hints:
+        parts.append(f"join hints: {join_hints}")
+
+    return " | ".join(parts) if len(parts) > 1 else None
+
+
+def _extract_deliverable_summary(content: str) -> tuple[str | None, str | None]:
+    if not isinstance(content, str):
+        return None, None
+    try:
+        data = json.loads(content)
+    except Exception:
+        return None, None
+    if not isinstance(data, dict) or data.get("type") not in _DELIVERABLE_TYPES:
+        return None, None
+
+    kind = str(data.get("type") or "").strip()
+    title = str(data.get("title") or kind).strip()
+    file_value = (
+        data.get("file")
+        or data.get("file_path")
+        or data.get("file_url")
+        or data.get("filename")
+        or ""
+    )
+    parts = [kind, title]
+    if file_value:
+        parts.append(f"file: {file_value}")
+    return " | ".join(parts), str(file_value or "").strip() or None
+
+
+def _build_copepod_session_resources_note(
+    messages: list[dict[str, Any]],
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> str | None:
+    """Build a compact runtime-only resource index for Copepod turns."""
+    loaded_files: list[str] = []
+    reports: list[str] = []
+    deliverables: list[str] = []
+    image_artifacts: list[str] = []
+    file_artifacts: list[str] = []
+    artifact_count = 0
+    resolved_session_id = session_id or ""
+    resolved_user_id = user_id or ""
+
+    for msg in messages:
+        content = _safe_message_get(msg, "content", "")
+        msg_type = _safe_message_get(msg, "type") or _safe_message_get(msg, "message_type")
+        fmt = _safe_message_get(msg, "format") or _safe_message_get(msg, "message_format")
+
+        if isinstance(content, str):
+            if not resolved_session_id:
+                session_match = re.search(r"\bsession-[A-Za-z0-9_-]+\b", content)
+                if session_match:
+                    resolved_session_id = session_match.group(0)
+            if not resolved_user_id:
+                path_match = re.search(r"/app/static/([^/\s`]+)/session-[^/\s`]+/uploads/", content)
+                if path_match:
+                    resolved_user_id = path_match.group(1)
+
+        if isinstance(content, str) and _UPLOAD_BLOCK_MARKER in content:
+            _, attachment_lines = _split_upload_block_content(content)
+            for line in attachment_lines:
+                match = _UPLOAD_LINE_RE.match(line.strip())
+                if not match:
+                    continue
+                name = (match.group("name") or "").strip()
+                mime = (match.group("mime") or "").strip()
+                rel_path = (match.group("rel_path") or name).strip()
+                entry = name or rel_path
+                if mime:
+                    entry += f" | mime: {mime}"
+                if rel_path:
+                    entry += f" | relative path: {rel_path}"
+                    if resolved_user_id and resolved_session_id:
+                        entry += f" | path: /app/static/{resolved_user_id}/{resolved_session_id}/uploads/{rel_path}"
+                loaded_files.append(entry)
+
+        if isinstance(content, str) and "# RAPPORT D'INSPECTION" in content:
+            for part in content.split("# RAPPORT D'INSPECTION"):
+                if not part.strip():
+                    continue
+                summary = _extract_report_summary("# RAPPORT D'INSPECTION" + part)
+                if summary:
+                    reports.append(summary)
+
+        if isinstance(content, str):
+            deliverable_summary, deliverable_file = _extract_deliverable_summary(content)
+            if deliverable_summary:
+                deliverables.append(deliverable_summary)
+                artifact_count += 1
+                if deliverable_file:
+                    suffix = Path(deliverable_file.split("?", 1)[0]).suffix.lower()
+                    if suffix in _IMAGE_SUFFIX_MIME:
+                        image_artifacts.append(deliverable_file)
+                    elif suffix:
+                        file_artifacts.append(f"{suffix.lstrip('.').upper()}: {deliverable_file}")
+
+        if msg_type == "image" and fmt == "path" and isinstance(content, str) and content.strip():
+            image_artifacts.append(content.strip())
+            artifact_count += 1
+
+        if msg_type == "file" and isinstance(content, str) and content.strip():
+            suffix = Path(content.split("?", 1)[0]).suffix.lower()
+            label = suffix.lstrip(".").upper() if suffix else "File"
+            file_artifacts.append(f"{label}: {content.strip()}")
+            artifact_count += 1
+
+    loaded_files = _dedupe_keep_order(loaded_files)
+    reports = _dedupe_keep_order(reports)
+
+    artifact_entries: list[tuple[str, str]] = []
+    for value in image_artifacts:
+        artifact_entries.append(("Graph/image artifacts", value))
+    for value in file_artifacts:
+        artifact_entries.append(("File artifacts", value))
+    for value in deliverables:
+        artifact_entries.append(("Deliverables", value))
+
+    artifact_entries = [
+        item for item in _dedupe_keep_order([f"{section}\t{value}" for section, value in artifact_entries])
+    ]
+    truncated = len(artifact_entries) > _RESOURCE_ARTIFACT_LIMIT
+    artifact_entries = artifact_entries[-_RESOURCE_ARTIFACT_LIMIT:]
+
+    if not loaded_files and not reports and not artifact_entries:
+        return None
+
+    sections: dict[str, list[str]] = {
+        "Deliverables": [],
+        "Graph/image artifacts": [],
+        "File artifacts": [],
+    }
+    for item in artifact_entries:
+        section, value = item.split("\t", 1)
+        sections.setdefault(section, []).append(value)
+
+    lines = [
+        "## Current Session Resources",
+        "",
+        "You may use these session resources freely whenever they help answer the user.",
+        "Do not ask the user to re-upload or re-provide a resource listed here.",
+        "Use paths/URLs from this context directly when reading files, rebuilding graphs, zooming images, making tables, or continuing prior work.",
+    ]
+    if loaded_files:
+        lines.extend(["", "Loaded files:"])
+        lines.extend(f"- {item}" for item in loaded_files)
+    if reports:
+        lines.extend(["", "Inspection reports:"])
+        lines.extend(f"- {item}" for item in reports)
+    for section in ("Deliverables", "Graph/image artifacts", "File artifacts"):
+        values = sections.get(section) or []
+        if values:
+            lines.extend(["", f"{section}:"])
+            lines.extend(f"- {item}" for item in values)
+    if truncated or artifact_count > _RESOURCE_ARTIFACT_LIMIT:
+        lines.extend(["", "Additional older artifacts exist in conversation history."])
+
+    note = "\n".join(lines)
+    if len(note) > 6000:
+        note = note[:5900].rstrip() + "\n\nAdditional resource details were omitted to keep this prompt compact."
+    return note
+
+
+def _session_resource_message_from_stream_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a compact persisted message for stream artifacts worth reusing."""
+    if not isinstance(event, dict):
+        return None
+    role = event.get("role")
+    event_type = event.get("type")
+    content = event.get("content")
+    fmt = event.get("format")
+
+    if role != "computer" or event_type not in {"deliverable", "image", "file"}:
+        return None
+
+    if event_type == "image" and fmt and str(fmt).startswith("base64."):
+        # Base64 images can be huge and are not directly reusable as file paths.
+        return None
+
+    if not isinstance(content, str) or not content.strip():
+        return None
+
+    persisted: dict[str, Any] = {
+        "role": "computer",
+        "type": event_type,
+        "content": content,
+    }
+    if fmt:
+        persisted["format"] = fmt
+    return persisted
+
+
+def _append_unique_session_resource_message(
+    messages: list[dict[str, Any]],
+    resource: dict[str, Any] | None,
+) -> None:
+    if not resource:
+        return
+    key = (
+        resource.get("role"),
+        resource.get("type"),
+        resource.get("format"),
+        resource.get("content"),
+    )
+    for msg in messages:
+        if (
+            _safe_message_get(msg, "role") == key[0]
+            and _safe_message_get(msg, "type") == key[1]
+            and _safe_message_get(msg, "format") == key[2]
+            and _safe_message_get(msg, "content") == key[3]
+        ):
+            return
+    messages.append(resource)
+
+
 def _is_copepod_data_analysis_request(text: str) -> bool:
     """Return True when the request is about a join/comparison/data analysis step."""
     return bool(
@@ -1305,6 +1604,10 @@ async def chat_endpoint(
                                 _had_image = True
                             elif result.get("error"):
                                 _had_error = True
+                            _append_unique_session_resource_message(
+                                interpreter.messages,
+                                _session_resource_message_from_stream_event(result),
+                            )
                             error_text = _extract_copepod_error_text(result)
                             if error_text:
                                 _had_error = True
@@ -1323,12 +1626,6 @@ async def chat_endpoint(
                         current_attempt_had_error = False
                         current_attempt_last_error_text = ""
 
-                        if agent_type == "copepod":
-                            interpreter.system_message = _compose_copepod_system_message(
-                                copepod_data_planner_note if copepod_data_planner_note else None,
-                                retry_note,
-                            )
-
                         chat_prefix = _strip_system_messages(list(interpreter.messages))
                         chat_input = (
                             chat_prefix + last_user_message_messages
@@ -1338,6 +1635,18 @@ async def chat_endpoint(
                                 + ([last_user_message_payload] if last_user_message_payload is not None else [messages[-1]])
                             )
                         )
+
+                        if agent_type == "copepod":
+                            copepod_session_resources_note = _build_copepod_session_resources_note(
+                                chat_input,
+                                user_id=str(user.id),
+                                session_id=session_id,
+                            )
+                            interpreter.system_message = _compose_copepod_system_message(
+                                copepod_session_resources_note,
+                                copepod_data_planner_note if copepod_data_planner_note else None,
+                                retry_note,
+                            )
 
                         for chunk in _yield_chat_stream(chat_input):
                             yield chunk

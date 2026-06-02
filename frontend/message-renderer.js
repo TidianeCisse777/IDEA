@@ -120,6 +120,19 @@ function isInspectionReportMessage(content) {
     return typeof content === 'string' && content.trimStart().startsWith("# RAPPORT D'INSPECTION");
 }
 
+function isDeliverableJsonContent(content) {
+    if (typeof content !== 'string') return false;
+    try {
+        const data = JSON.parse(content);
+        return data && typeof data === 'object'
+            && typeof data.type === 'string'
+            && typeof data.title === 'string'
+            && ['join', 'export', 'graph', 'stats', 'analysis'].includes(data.type);
+    } catch (_) {
+        return false;
+    }
+}
+
 function extractReportTitle(rawContent) {
     if (typeof rawContent !== 'string') return "📄 Rapport d'inspection";
     const m = rawContent.match(/<!--\s*report-title:\s*(.+?)\s*-->/);
@@ -998,8 +1011,10 @@ if (typeof module !== 'undefined' && module.exports) {
         formatAttachmentLabel,
         extractAttachmentInfoFromContent,
         isInspectionReportMessage,
+        isDeliverableJsonContent,
         extractReportTitle,
         wrapInspectionReportCollapsible,
+        _renderDeliverableCard,
         showInspectionIndicator,
         removeInspectionIndicator,
     };
