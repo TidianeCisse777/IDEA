@@ -351,6 +351,7 @@ def _build_copepod_session_resources_note(
         "You may use these session resources freely whenever they help answer the user.",
         "Do not ask the user to re-upload or re-provide a resource listed here.",
         "Use paths/URLs from this context directly when reading files, rebuilding graphs, zooming images, making tables, or continuing prior work.",
+        "When correcting a graph from an existing image or artifact, preserve the source artifact and emit the revised artifact separately.",
     ]
     if loaded_files:
         lines.extend(["", "Loaded files:"])

@@ -396,14 +396,22 @@ function appendMessage(message, options = {}) {
     } else if (message.type === 'file') {
         if (message.format === 'csv-download') {
             const filename = escapeHtml(message.filename || 'fichier.csv');
-            const url = escapeHtml(message.content || '');
             contentElement.classList.add('csv-download-message');
-            contentElement.innerHTML = `
-                <a href="${url}" download="${filename}" class="csv-download-btn">
-                    <span class="material-icons">download</span>
-                    Télécharger ${filename}
-                </a>
-            `;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'csv-download-btn';
+            btn.innerHTML = `<span class="material-icons">download</span> Télécharger ${filename}`;
+            btn.addEventListener('click', async () => {
+                btn.disabled = true;
+                try {
+                    await _downloadUrlAsFile(message.content || '', message.filename || filename);
+                } catch (err) {
+                    console.error('CSV download failed:', err);
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+            contentElement.appendChild(btn);
         } else {
             const displayName = escapeHtml(message.filename || message.name || message.content || 'Attachment');
             const filePath = escapeHtml(message.content || '');
@@ -675,16 +683,72 @@ function _renderDeliverableCard(jsonStr) {
     card.appendChild(body);
 
     if (data.file_url) {
-        const btn = document.createElement('a');
+        const btn = document.createElement('button');
+        btn.type = 'button';
         btn.className = 'deliverable-download-btn';
-        btn.href = data.file_url;
-        btn.download = data.filename || '';
         btn.innerHTML = '<span class="material-icons">download</span>';
         btn.title = 'Télécharger ' + (data.filename || '');
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try {
+                await _downloadUrlAsFile(data.file_url, data.filename || '');
+            } catch (err) {
+                console.error('Deliverable download failed:', err);
+            } finally {
+                btn.disabled = false;
+            }
+        });
         card.appendChild(btn);
     }
 
     return card;
+}
+
+async function _downloadUrlAsFile(url, filename) {
+    const resolvedUrl = _resolveDownloadUrl(url);
+    const response = await fetch(resolvedUrl, { credentials: 'same-origin' });
+    if (!response.ok) {
+        throw new Error(`Download failed with status ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const fallbackName = (url || '').split('/').pop().split('?')[0] || 'download';
+    link.href = objectUrl;
+    link.download = filename || fallbackName;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
+function _resolveDownloadUrl(url) {
+    const input = String(url || '').trim();
+    if (!input) {
+        return input;
+    }
+    const staticHost = `${window.location.protocol}//${window.location.hostname}`;
+    if (input.startsWith('/static/')) {
+        return `${staticHost}${input}`;
+    }
+
+    try {
+        const parsed = new URL(input, window.location.href);
+        const currentHost = window.location.hostname;
+        const localHosts = new Set(['localhost', '127.0.0.1']);
+        const isCurrentHost = parsed.hostname === currentHost;
+        const isLocalStaticHost = localHosts.has(parsed.hostname) && localHosts.has(currentHost);
+
+        if (parsed.pathname.startsWith('/static/') && (isCurrentHost || isLocalStaticHost)) {
+            return `${staticHost}${parsed.pathname}${parsed.search}${parsed.hash}`;
+        }
+    } catch (_) {
+        return input;
+    }
+
+    return input;
 }
 
 function _upgradeCsvLinks(container) {
@@ -705,11 +769,20 @@ function _upgradeCsvLinks(container) {
         label.className = 'csv-download-label';
         label.textContent = filename;
 
-        const btn = document.createElement('a');
+        const btn = document.createElement('button');
+        btn.type = 'button';
         btn.className = 'csv-download-btn';
-        btn.href = href;
-        btn.download = filename;
         btn.innerHTML = '<span class="material-icons">download</span> Télécharger';
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try {
+                await _downloadUrlAsFile(href, filename);
+            } catch (err) {
+                console.error('CSV download failed:', err);
+            } finally {
+                btn.disabled = false;
+            }
+        });
 
         card.appendChild(icon);
         card.appendChild(label);
@@ -899,12 +972,21 @@ function updateMessageContent(id, content) {
             if (message.format === 'csv-download') {
                 const filename = escapeHtml(message.filename || 'fichier.csv');
                 contentDiv.classList.add('csv-download-message');
-                contentDiv.innerHTML = `
-                    <a href="${escapeHtml(content)}" download="${filename}" class="csv-download-btn">
-                        <span class="material-icons">download</span>
-                        Télécharger ${filename}
-                    </a>
-                `;
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'csv-download-btn';
+                btn.innerHTML = `<span class="material-icons">download</span> Télécharger ${filename}`;
+                btn.addEventListener('click', async () => {
+                    btn.disabled = true;
+                    try {
+                        await _downloadUrlAsFile(content || '', message.filename || filename);
+                    } catch (err) {
+                        console.error('CSV download failed:', err);
+                    } finally {
+                        btn.disabled = false;
+                    }
+                });
+                contentDiv.appendChild(btn);
             } else {
                 const a = document.createElement('a');
                 a.href = content;

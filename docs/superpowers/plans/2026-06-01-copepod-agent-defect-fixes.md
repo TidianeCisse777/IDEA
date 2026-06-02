@@ -20,8 +20,9 @@ This plan covers five independently testable areas:
 4. **Artifact/context reuse:** make prior files, reports, CSVs, images, and deliverables visible as current working context.
 5. **Loaded-file state:** stop false "upload a file" fallbacks when a file was already loaded earlier in a long session.
 6. **Visual/image workflow:** handle pasted images and zoom requests without passive loops.
+7. **Artifact download behavior:** make join/export CSV and deliverable download buttons hit the real static artifact host and actually save a file.
 
-Execution should follow P0/P1/P2 priority. P0 protects trust, data correctness, and session continuity; P1 removes workflow blockers; P2 reduces noise once core behavior is stable.
+Execution should follow P0/P1/P2 priority. P0 protects trust, data correctness, artifact access, and session continuity; P1 removes workflow blockers; P2 reduces noise once core behavior is stable.
 
 ## File Map
 
@@ -87,6 +88,8 @@ Execution should follow P0/P1/P2 priority. P0 protects trust, data correctness, 
    Prevents unsafe many-to-many joins and destructive duplicate removal from becoming "successful" deliverables.
 8. **Task 7: Error Recovery Does Not Ask Vague Questions After Tracebacks**  
    Forces retry/repair from the traceback before asking the user.
+9. **Task 11: Artifact Downloads Resolve The Real Host**  
+   Makes join/export CSV and deliverable download buttons fetch from the actual nginx-served `/static/...` host and trigger a real file save.
 
 ### P1: image/zoom sans boucle de clarification
 

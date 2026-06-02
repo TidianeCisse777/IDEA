@@ -639,7 +639,32 @@ class TestCopepodSessionResourcesNote:
         assert "Abondance par profondeur" in note
         assert "Graph/image artifacts:" in note
         assert "File artifacts:" in note
+        assert "preserve the source artifact" in note
         assert "RAPPORT D'INSPECTION" not in note.split("Inspection reports:", 1)[1]
+
+    def test_includes_existing_graph_image_as_source_for_correction(self):
+        note = _build_copepod_session_resources_note(
+            [
+                {
+                    "role": "computer",
+                    "type": "image",
+                    "format": "path",
+                    "content": "/app/static/u1/s1/graph-source.png",
+                },
+                {
+                    "role": "computer",
+                    "type": "deliverable",
+                    "content": '{"type":"graph","title":"Graph source","file":"/app/static/u1/s1/graph-source.png"}',
+                },
+            ],
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert note is not None
+        assert "Graph/image artifacts:" in note
+        assert "/app/static/u1/s1/graph-source.png" in note
+        assert "preserve the source artifact" in note
 
     def test_limits_artifacts_and_mentions_older_history(self):
         messages = []

@@ -120,6 +120,85 @@ describe('Text messages', () => {
         expect(card.textContent).toContain('Abondance par station');
         expect(document.querySelector('.content').textContent).not.toContain('"fields"');
     });
+
+    test('deliverable download button fetches the file and triggers a blob download', async () => {
+        const originalFetch = global.fetch;
+        const originalCreateObjectURL = global.URL.createObjectURL;
+        const originalRevokeObjectURL = global.URL.revokeObjectURL;
+        const clickSpy = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+        global.fetch = jest.fn(() => Promise.resolve({
+            ok: true,
+            blob: () => Promise.resolve(new Blob(['sample,csv\n1,2'], { type: 'text/csv' })),
+        }));
+        global.URL.createObjectURL = jest.fn(() => 'blob:download');
+        global.URL.revokeObjectURL = jest.fn();
+
+        try {
+            window.conversationUI.displayMessageInChat(
+                msg('message', null, JSON.stringify({
+                    type: 'join',
+                    title: 'Jointure agrégée',
+                    file_url: '/static/test/session/uploads/jointure.csv',
+                    filename: 'jointure.csv',
+                    fields: [{ label: 'Lignes jointes', value: 6105 }],
+                }), 'computer')
+            );
+
+            document.querySelector('.deliverable-download-btn').click();
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            expect(global.fetch).toHaveBeenCalledWith(
+                'http://localhost/static/test/session/uploads/jointure.csv',
+                expect.objectContaining({ credentials: 'same-origin' })
+            );
+            expect(global.URL.createObjectURL).toHaveBeenCalled();
+            expect(clickSpy).toHaveBeenCalled();
+        } finally {
+            clickSpy.mockRestore();
+            global.fetch = originalFetch;
+            global.URL.createObjectURL = originalCreateObjectURL;
+            global.URL.revokeObjectURL = originalRevokeObjectURL;
+        }
+    });
+
+    test('deliverable download rewrites frontend static URLs to nginx static host', async () => {
+        const originalFetch = global.fetch;
+        const originalCreateObjectURL = global.URL.createObjectURL;
+        const originalRevokeObjectURL = global.URL.revokeObjectURL;
+        const clickSpy = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+        global.fetch = jest.fn(() => Promise.resolve({
+            ok: true,
+            blob: () => Promise.resolve(new Blob(['sample,csv\n1,2'], { type: 'text/csv' })),
+        }));
+        global.URL.createObjectURL = jest.fn(() => 'blob:download');
+        global.URL.revokeObjectURL = jest.fn();
+
+        try {
+            window.conversationUI.displayMessageInChat(
+                msg('message', null, JSON.stringify({
+                    type: 'join',
+                    title: 'Jointure agrégée',
+                    file_url: 'http://localhost:8000/static/test/session/uploads/jointure.csv',
+                    filename: 'jointure.csv',
+                    fields: [{ label: 'Lignes jointes', value: 6105 }],
+                }), 'computer')
+            );
+
+            document.querySelector('.deliverable-download-btn').click();
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            expect(global.fetch).toHaveBeenCalledWith(
+                'http://localhost/static/test/session/uploads/jointure.csv',
+                expect.objectContaining({ credentials: 'same-origin' })
+            );
+            expect(clickSpy).toHaveBeenCalled();
+        } finally {
+            clickSpy.mockRestore();
+            global.fetch = originalFetch;
+            global.URL.createObjectURL = originalCreateObjectURL;
+            global.URL.revokeObjectURL = originalRevokeObjectURL;
+        }
+    });
 });
 
 // ── Behavior 2: code messages render with syntax class ────────────────────────

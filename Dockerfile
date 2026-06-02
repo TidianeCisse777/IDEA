@@ -25,24 +25,18 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Copy only requirements first
-COPY requirements.txt .
+# Copy only dependency metadata first
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies in a virtual environment
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+RUN python -m pip install --no-cache-dir uv
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+ENV UV_LINK_MODE=copy
 
-# RUN pip install --no-cache-dir --upgrade pip && \
-#     pip install --no-cache-dir --retries 10 --timeout 100 -r requirements.txt
-# Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
-# Leverage a bind mount to requirements.txt to avoid having to copy them into
-# into this layer.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=requirements.txt,target=requirements.txt \
-    pip install --no-cache-dir wheel setuptools cython numpy && \
-    pip install --no-cache-dir rasterio==1.4.3 && \
-    python -m pip install -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 
 # Final stage
 FROM python:3.11-slim

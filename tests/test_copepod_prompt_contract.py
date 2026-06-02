@@ -55,3 +55,19 @@ def test_column_selection_must_use_exact_inspection_spellings():
     assert "Do not translate, abbreviate, singularize, pluralize, or infer column names" in prompt
     assert "ask targeted grill questions only while they can change the executable plan" in prompt
     assert "stop asking and execute with explicit assumptions" in prompt
+
+
+def test_visual_requests_remain_in_planner_executor_and_preserve_source():
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "planner/executor" in prompt
+    assert "explicit visual request" in prompt
+    assert "preserve the source artifact" in prompt
+    assert "produce a corrected artifact" in prompt
+
+
+def test_visual_request_intents_are_named_explicitly():
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "inspection" in prompt
+    assert "zoom" in prompt
+    assert "correction" in prompt
+    assert "reconstruction" in prompt
