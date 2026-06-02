@@ -1123,6 +1123,197 @@ def inspect_and_report(file_paths, session_id=None):
     full_output.append("Quel graphique ou livrable souhaitez-vous ?")
 
     return {"reports": reports, "summary": summary, "output": chr(10).join(full_output)}
+
+
+def _normalized_join_key_series(df, key):
+    if key not in df.columns:
+        raise KeyError(f"Missing join key: {key}")
+    return df[key].dropna().astype(str).str.strip()
+
+
+def profile_join_keys(left, right, left_key, right_key):
+    """Profile join cardinality and row expansion before building deliverables."""
+    left_keys = _normalized_join_key_series(left, left_key)
+    right_keys = _normalized_join_key_series(right, right_key)
+
+    left_counts = left_keys.value_counts()
+    right_counts = right_keys.value_counts()
+    left_duplicate_keys = int((left_counts > 1).sum())
+    right_duplicate_keys = int((right_counts > 1).sum())
+
+    if left_duplicate_keys and right_duplicate_keys:
+        cardinality = "many_to_many"
+    elif left_duplicate_keys:
+        cardinality = "many_to_one"
+    elif right_duplicate_keys:
+        cardinality = "one_to_many"
+    else:
+        cardinality = "one_to_one"
+
+    left_unique = set(left_counts.index)
+    right_unique = set(right_counts.index)
+    matched_unique = left_unique & right_unique
+    left_match_rate = round(len(matched_unique) / len(left_unique) * 100, 2) if left_unique else 0.0
+    right_match_rate = round(len(matched_unique) / len(right_unique) * 100, 2) if right_unique else 0.0
+
+    estimated_rows = 0
+    for key in matched_unique:
+        estimated_rows += int(left_counts[key]) * int(right_counts[key])
+    row_expansion_factor = round(estimated_rows / len(left), 4) if len(left) else 0.0
+
+    requires_aggregation = cardinality in {"one_to_many", "many_to_many"}
+    safe_for_join_deliverable = (
+        cardinality in {"one_to_one", "many_to_one"}
+        and row_expansion_factor <= 1.05
+    )
+
+    profile = {
+        "left_key": left_key,
+        "right_key": right_key,
+        "left_rows": int(len(left)),
+        "right_rows": int(len(right)),
+        "left_unique_keys": int(len(left_unique)),
+        "right_unique_keys": int(len(right_unique)),
+        "matched_unique_keys": int(len(matched_unique)),
+        "left_duplicate_keys": left_duplicate_keys,
+        "right_duplicate_keys": right_duplicate_keys,
+        "cardinality": cardinality,
+        "left_match_rate": left_match_rate,
+        "right_match_rate": right_match_rate,
+        "estimated_join_rows": int(estimated_rows),
+        "row_expansion_factor": row_expansion_factor,
+        "requires_aggregation": requires_aggregation,
+        "safe_for_join_deliverable": safe_for_join_deliverable,
+    }
+    _copepod_register_join_profile(left, right, left_key, right_key, profile)
+    return profile
+
+
+_COPEPOD_JOIN_PROFILE_REGISTRY = {}
+_COPEPOD_JOIN_GUARD_INSTALLED = False
+_COPEPOD_ORIGINAL_DF_MERGE = None
+_COPEPOD_ORIGINAL_PD_MERGE = None
+
+
+def _copepod_join_signature(df, key):
+    import hashlib
+    import json
+
+    series = _normalized_join_key_series(df, key)
+    counts = series.value_counts(dropna=False)
+    payload = sorted((str(idx), int(count)) for idx, count in counts.items())
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _copepod_register_join_profile(left, right, left_key, right_key, profile):
+    registry_key = (
+        _copepod_join_signature(left, left_key),
+        _copepod_join_signature(right, right_key),
+        str(left_key),
+        str(right_key),
+    )
+    _COPEPOD_JOIN_PROFILE_REGISTRY[registry_key] = profile
+
+
+def _copepod_lookup_join_profile(left, right, left_key, right_key):
+    registry_key = (
+        _copepod_join_signature(left, left_key),
+        _copepod_join_signature(right, right_key),
+        str(left_key),
+        str(right_key),
+    )
+    return _COPEPOD_JOIN_PROFILE_REGISTRY.get(registry_key)
+
+
+def _copepod_normalize_join_key_arg(value):
+    if isinstance(value, (list, tuple)):
+        if len(value) != 1:
+            raise RuntimeError(
+                "Join guard only supports a single explicit join key. "
+                "Call profile_join_keys(left_df, right_df, left_key, right_key) "
+                "with one key and merge on that same key."
+            )
+        return str(value[0])
+    if value is None:
+        return None
+    return str(value)
+
+
+def _copepod_guarded_df_merge(self, right, *args, **kwargs):
+    left_on = _copepod_normalize_join_key_arg(kwargs.get("left_on"))
+    right_on = _copepod_normalize_join_key_arg(kwargs.get("right_on"))
+    on = _copepod_normalize_join_key_arg(kwargs.get("on"))
+    if on is not None:
+        left_on = left_on or on
+        right_on = right_on or on
+    if not left_on or not right_on:
+        raise RuntimeError(
+            "Call profile_join_keys(left_df, right_df, left_key, right_key) "
+            "before merge. Explicit left_on/right_on keys are required."
+        )
+
+    profile = _copepod_lookup_join_profile(self, right, left_on, right_on)
+    if not profile:
+        raise RuntimeError(
+            "Join blocked: call profile_join_keys(left_df, right_df, left_key, right_key) "
+            "on the exact dataframes and keys you plan to merge, then read its output."
+        )
+    if not profile.get("safe_for_join_deliverable"):
+        raise RuntimeError(
+            "Join blocked: the profiled keys are not safe_for_join_deliverable "
+            f"(cardinality={profile.get('cardinality')}, "
+            f"row_expansion_factor={profile.get('row_expansion_factor')})."
+        )
+    return _COPEPOD_ORIGINAL_DF_MERGE(self, right, *args, **kwargs)
+
+
+def _copepod_guarded_pd_merge(left, right, *args, **kwargs):
+    left_on = _copepod_normalize_join_key_arg(kwargs.get("left_on"))
+    right_on = _copepod_normalize_join_key_arg(kwargs.get("right_on"))
+    on = _copepod_normalize_join_key_arg(kwargs.get("on"))
+    if on is not None:
+        left_on = left_on or on
+        right_on = right_on or on
+    if not left_on or not right_on:
+        raise RuntimeError(
+            "Call profile_join_keys(left_df, right_df, left_key, right_key) "
+            "before pd.merge. Explicit left_on/right_on keys are required."
+        )
+
+    profile = _copepod_lookup_join_profile(left, right, left_on, right_on)
+    if not profile:
+        raise RuntimeError(
+            "Join blocked: call profile_join_keys(left_df, right_df, left_key, right_key) "
+            "on the exact dataframes and keys you plan to merge, then read its output."
+        )
+    if not profile.get("safe_for_join_deliverable"):
+        raise RuntimeError(
+            "Join blocked: the profiled keys are not safe_for_join_deliverable "
+            f"(cardinality={profile.get('cardinality')}, "
+            f"row_expansion_factor={profile.get('row_expansion_factor')})."
+        )
+    return _COPEPOD_ORIGINAL_PD_MERGE(left, right, *args, **kwargs)
+
+
+def install_copepod_join_guard():
+    global _COPEPOD_JOIN_GUARD_INSTALLED, _COPEPOD_ORIGINAL_DF_MERGE, _COPEPOD_ORIGINAL_PD_MERGE
+    import pandas as pd
+
+    if not hasattr(pd, "_copepod_original_dataframe_merge"):
+        pd._copepod_original_dataframe_merge = pd.DataFrame.merge
+    if not hasattr(pd, "_copepod_original_pd_merge"):
+        pd._copepod_original_pd_merge = pd.merge
+
+    _COPEPOD_ORIGINAL_DF_MERGE = pd._copepod_original_dataframe_merge
+    _COPEPOD_ORIGINAL_PD_MERGE = pd._copepod_original_pd_merge
+    pd.DataFrame.merge = _copepod_guarded_df_merge
+    pd.merge = _copepod_guarded_pd_merge
+    _COPEPOD_JOIN_GUARD_INSTALLED = True
+    pd._copepod_join_guard_installed = True
+
+
+install_copepod_join_guard()
 '''
 
 registry.register(Tool(

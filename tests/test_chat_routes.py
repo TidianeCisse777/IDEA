@@ -478,7 +478,31 @@ class TestCopepodDataPlannerNote:
         assert note is not None
         assert "Copepod data planner" in note
         assert "station | time | depth" in note
+        assert "PLAN required before executor code" in note
+        assert "exact column names selected from inspection reports" in note
         assert "If the key is clear, write the code block immediately" in note
+
+    def test_planner_note_controls_grill_questions_and_user_stop(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": (
+                    "# RAPPORT D'INSPECTION\n"
+                    "### Fichiers chargés\n"
+                    "- **a.csv**\n"
+                    "Colonnes: sample_id, depth_m, taxon\n"
+                ),
+            }
+        ]
+        note = _build_copepod_data_planner_note(
+            messages=messages,
+            user_message="fais un graphe",
+        )
+        assert note is not None
+        assert "ask targeted grill questions before coding" in note
+        assert "Ask only questions that can change the executable plan" in note
+        assert "If the user says stop, go, fais au mieux, assez de questions" in note
+        assert "stop asking and execute with explicit assumptions" in note
 
     def test_returns_recovery_note_for_traceback(self):
         note = _build_copepod_error_recovery_note(

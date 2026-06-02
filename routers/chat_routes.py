@@ -108,13 +108,18 @@ def _build_copepod_data_planner_note(
     lines = [
         "You are the Copepod data planner.",
         "Before writing any analysis code, read the inspection artifacts already present in the conversation.",
-        "Identify the exact column names and candidate join keys from those reports.",
-        "Use only documented columns and do not guess names.",
+        "PLAN required before executor code for graph, analysis, join, export, or table requests.",
+        "The plan must name the files, exact column names selected from inspection reports, rejected ambiguous column candidates when relevant, planned transformation, and expected output.",
+        "Identify exact column names and candidate join keys from the reports before coding.",
+        "Use only documented columns and do not guess, translate, abbreviate, or approximate names.",
     ]
     if join_hints:
         lines.append(f"Join hints already surfaced by inspection: {' | '.join(join_hints[:2])}.")
     lines.extend([
-        "If the key is ambiguous or missing, ask one targeted clarification question instead of coding.",
+        "If a required column, key, species, filter, unit, or output choice is ambiguous, ask targeted grill questions before coding.",
+        "Ask only questions that can change the executable plan; do not ask decorative or repeated questions.",
+        "If the user says stop, go, fais au mieux, assez de questions, or equivalent, stop asking and execute with explicit assumptions.",
+        "If the key is ambiguous or missing after the useful grill questions, ask one targeted clarification question instead of coding.",
         "If the key is clear, write the code block immediately — do not output a text preamble first.",
     ])
     return "\n".join(lines)
