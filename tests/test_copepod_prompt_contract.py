@@ -24,6 +24,14 @@ def test_clear_request_executes_without_plan_only_response():
     assert "write the plan and executor code in the same response" in prompt
 
 
+def test_output_formatting_contract_is_concise_and_single_language():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "Use one primary language per response when possible" in prompt
+    assert "Keep visible prose clean" in prompt
+    assert "avoid doubled blank lines" in prompt
+    assert "repeated adjacent lines" in prompt
+
+
 def test_clarification_policy_is_one_short_question():
     prompt = COPEPOD_SYSTEM_PROMPT
     assert "ask one short targeted question" in prompt

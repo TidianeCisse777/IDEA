@@ -7,6 +7,8 @@ import re
 from collections.abc import Iterable, Iterator
 from typing import Any
 
+from core.response_formatting import format_assistant_text
+
 
 _MARKDOWN_PY_FENCE_RE = re.compile(
     r"```(?:python|py)\b[^\n]*\n[\s\S]*?```",
@@ -202,6 +204,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
         # Strip any assistant-text DELIVERABLE lines to avoid duplicate cards
         # and raw JSON bubbles.
         cleaned = _strip_deliverables_from_text(cleaned)
+        cleaned = format_assistant_text(cleaned)
         if not cleaned:
             return
         if _is_fixed_upload_question(cleaned) and (

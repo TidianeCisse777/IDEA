@@ -136,6 +136,13 @@ def test_non_python_fence_is_preserved():
     assert "ls -la" in text
 
 
+def test_assistant_text_is_conservatively_formatted_before_emit():
+    content = "Bonjour,monde.\n\n\nBonjour,monde.\n\nFin."
+    events = list(chat_stream_events(_stream_message(content)))
+    text = _concat_message_content(events)
+    assert text == "Bonjour, monde.\n\nFin."
+
+
 def test_markdown_json_fence_wrapping_oi_toolcall_is_stripped():
     """LLM sometimes wraps OI's JSON tool call in a ```json fence:
         ```json
