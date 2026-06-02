@@ -79,6 +79,51 @@ function setupConversationEventListeners() {
         csvToggle.setAttribute('aria-expanded', String(!collapsed));
         localStorage.setItem(CONVERSATION_CSV_SIDEBAR_KEY, String(collapsed));
     });
+
+    _initCsvResizeHandle();
+}
+
+const CONVERSATION_CSV_WIDTH_KEY = 'idea-conversation-csv-width';
+
+function _initCsvResizeHandle() {
+    const handle = document.getElementById('csvResizeHandle');
+    const sidebar = document.getElementById('conversationCsvSidebar');
+    if (!handle || !sidebar) return;
+
+    // Restore saved width
+    const savedWidth = parseInt(localStorage.getItem(CONVERSATION_CSV_WIDTH_KEY), 10);
+    if (savedWidth && savedWidth >= 220) {
+        sidebar.style.flexBasis = savedWidth + 'px';
+        sidebar.style.width = savedWidth + 'px';
+    }
+
+    let startX = 0;
+    let startWidth = 0;
+
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startWidth = sidebar.getBoundingClientRect().width;
+        sidebar.classList.add('resizing');
+
+        function onMouseMove(e) {
+            const delta = startX - e.clientX;
+            const newWidth = Math.min(Math.max(startWidth + delta, 220), window.innerWidth * 0.7);
+            sidebar.style.flexBasis = newWidth + 'px';
+            sidebar.style.width = newWidth + 'px';
+        }
+
+        function onMouseUp() {
+            sidebar.classList.remove('resizing');
+            const finalWidth = parseInt(sidebar.style.width, 10);
+            if (finalWidth) localStorage.setItem(CONVERSATION_CSV_WIDTH_KEY, String(finalWidth));
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    });
 }
 
 function setupConversationManagerListeners() {

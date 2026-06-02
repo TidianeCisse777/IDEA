@@ -1719,7 +1719,7 @@ async def chat_endpoint(
 
                         if agent_type == "copepod":
                             copepod_session_resources_note = _build_copepod_session_resources_note(
-                                chat_input,
+                                messages,
                                 user_id=str(user.id),
                                 session_id=session_id,
                             )

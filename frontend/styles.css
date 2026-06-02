@@ -4155,6 +4155,270 @@ body.main-app {
     background: var(--surface);
 }
 
+.conversation-csv-sidebar {
+    flex: 0 0 320px;
+    width: 320px;
+    min-width: 220px;
+    max-width: 70vw;
+    height: 100%;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: flex-basis 0.25s ease, width 0.25s ease;
+    z-index: 90;
+    position: relative;
+}
+
+.conversation-csv-sidebar.resizing {
+    transition: none;
+    user-select: none;
+}
+
+.csv-resize-handle {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 5px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+    background: transparent;
+}
+
+.csv-resize-handle:hover,
+.conversation-csv-sidebar.resizing .csv-resize-handle {
+    background: var(--primary);
+    opacity: 0.4;
+}
+
+.conversation-csv-sidebar.collapsed {
+    flex-basis: 56px;
+    width: 56px;
+}
+
+.conversation-csv-sidebar-inner {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.conversation-csv-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    height: 56px;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.conversation-csv-sidebar-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.conversation-csv-sidebar-title .material-icons {
+    color: var(--primary);
+    flex-shrink: 0;
+}
+
+.conversation-csv-sidebar-title-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.conversation-csv-toggle {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s ease, background 0.2s ease, transform 0.25s ease;
+}
+
+.conversation-csv-toggle:hover {
+    color: var(--text-primary);
+    background: var(--assistant-bg);
+}
+
+.conversation-csv-sidebar.collapsed .conversation-csv-toggle {
+    transform: rotate(180deg);
+}
+
+.conversation-csv-sidebar-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    overflow: hidden;
+    min-height: 0;
+    flex: 1;
+}
+
+.conversation-csv-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    min-height: 0;
+    scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+    scrollbar-width: thin;
+}
+
+.conversation-csv-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 10px;
+    background: var(--surface-alt);
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.conversation-csv-item:hover {
+    background: var(--assistant-bg);
+    border-color: var(--assistant-border);
+    transform: translateY(-1px);
+}
+
+.conversation-csv-item.active {
+    border-color: var(--primary);
+    box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.conversation-csv-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
+.conversation-csv-badge-loaded {
+    color: var(--system-text);
+    background: var(--system-bg);
+    border: 1px solid var(--system-border);
+}
+
+.conversation-csv-badge-created {
+    color: var(--assistant-text);
+    background: var(--assistant-bg);
+    border: 1px solid var(--assistant-border);
+}
+
+.conversation-csv-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.conversation-csv-viewer {
+    flex: 1;
+    min-height: 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-alt);
+    overflow: auto;
+    padding: 10px;
+}
+
+.conversation-csv-viewer-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.conversation-csv-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.conversation-csv-preview-table th,
+.conversation-csv-preview-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+    white-space: nowrap;
+}
+
+.conversation-csv-preview-table th:last-child,
+.conversation-csv-preview-table td:last-child {
+    border-right: none;
+}
+
+.conversation-csv-preview-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.conversation-csv-preview-table th {
+    position: sticky;
+    top: 0;
+    background: var(--assistant-bg);
+    color: var(--text-primary);
+    z-index: 1;
+}
+
+.conversation-csv-viewer-empty,
+.conversation-csv-empty {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.conversation-csv-sidebar.collapsed .conversation-csv-sidebar-body,
+.conversation-csv-sidebar.collapsed .conversation-csv-sidebar-title-label {
+    display: none;
+}
+
+.conversation-csv-sidebar.collapsed .conversation-csv-sidebar-header {
+    justify-content: center;
+    padding: 0;
+}
+
+@media (max-width: 900px) {
+    .conversation-csv-sidebar {
+        display: none;
+    }
+}
+
 /* Override chat-header corners inside main-area */
 .main-area .chat-header {
     border-top-left-radius: 0;

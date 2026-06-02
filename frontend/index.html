@@ -189,6 +189,28 @@
 
     </div><!-- /main-area -->
 
+    <!-- ── CSV Sidebar ── -->
+    <aside class="conversation-csv-sidebar open" id="conversationCsvSidebar" aria-hidden="false">
+        <div class="csv-resize-handle" id="csvResizeHandle" title="Redimensionner"></div>
+        <div class="conversation-csv-sidebar-inner">
+            <div class="conversation-csv-sidebar-header">
+                <div class="conversation-csv-sidebar-title">
+                    <span class="material-icons">table_view</span>
+                    <span class="conversation-csv-sidebar-title-label">View CSV</span>
+                </div>
+                <button class="conversation-csv-toggle" id="conversationCsvToggle" title="Réduire">
+                    <span class="material-icons">chevron_right</span>
+                </button>
+            </div>
+            <div class="conversation-csv-sidebar-body">
+                <div id="conversationCsvList" class="conversation-csv-list"></div>
+                <div id="conversationCsvViewer" class="conversation-csv-viewer">
+                    <div class="conversation-csv-viewer-empty">Sélectionnez un CSV</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
 </div><!-- /app-shell -->
 
 <!-- Mobile overlay -->
