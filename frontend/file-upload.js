@@ -104,13 +104,14 @@ async function removePendingAttachment(attachmentId) {
 
 function buildAttachmentInstruction(attachments = []) {
     if (!attachments.length) return '';
-    const basePath = `./static/{user_id}/${sessionId}/uploads`;
+    const activeSessionId = globalThis.sessionId || (typeof sessionId !== 'undefined' ? sessionId : '');
+    const basePath = `./static/{user_id}/${activeSessionId}/uploads`;
     const lines = attachments.map(att => {
         const relPath = att.path || att.storedName || att.name;
         const mimeType = att.mimeType ? ` (${att.mimeType})` : '';
         return `- ${att.name}${mimeType}${relPath ? ` | relative path: ${relPath}` : ''}`;
     }).join('\n');
-    return `Files uploaded in this message:\nSession ID: ${sessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.`;
+    return `Files uploaded in this message:\nSession ID: ${activeSessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.\nSession rule: compare each filename against filenames already present in this session. If a filename already exists, skip its inspection, explicitly say it is already present, and inspect only the new filenames.`;
 }
 
 async function uploadFile(file, progressElement) {
@@ -193,4 +194,10 @@ function initializeFileUpload() {
 
     updateFilesList();
     window.conversationUI?.refreshConversationCsvSidebar?.();
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        buildAttachmentInstruction,
+    };
 }

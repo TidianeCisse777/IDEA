@@ -720,58 +720,12 @@ class TestInspectAndReport:
         assert len(result["reports"]) == 2
         assert result["reports"][1]["error"] is not None
 
-    def test_output_contains_summary_marker(self, tools):
+    def test_output_does_not_contain_summary_or_closing_markers(self, tools):
         result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
-        assert "%%SUMMARY%%" in result["output"]
+        assert "%%SUMMARY%%" not in result["output"]
+        assert "%%CLOSING%%" not in result["output"]
 
-    def test_output_contains_closing_marker(self, tools):
+    def test_output_keeps_report_markdown(self, tools):
         result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
-        assert "%%CLOSING%%" in result["output"]
-
-    def test_output_markers_in_correct_order(self, tools):
-        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
-        idx_rapport = result["output"].index("# RAPPORT D'INSPECTION")
-        idx_summary = result["output"].index("%%SUMMARY%%")
-        idx_closing = result["output"].index("%%CLOSING%%")
-        assert idx_rapport < idx_summary < idx_closing
-
-    def test_summary_block_mentions_filename(self, tools):
-        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
-        idx_s = result["output"].index("%%SUMMARY%%")
-        idx_c = result["output"].index("%%CLOSING%%")
-        summary_block = result["output"][idx_s:idx_c]
-        assert "ecotaxa_sample_50" in summary_block
-
-    def test_closing_block_contains_question(self, tools):
-        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
-        idx_c = result["output"].index("%%CLOSING%%")
-        closing_block = result["output"][idx_c:]
-        assert "graphique" in closing_block.lower() or "livrable" in closing_block.lower()
-
-    def test_summary_block_has_markdown_header_and_bullets(self, tools):
-        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
-        idx_s = result["output"].index("%%SUMMARY%%")
-        idx_c = result["output"].index("%%CLOSING%%")
-        summary_block = result["output"][idx_s:idx_c]
-        assert "### Fichiers chargés" in summary_block
-        assert "- " in summary_block
-
-    def test_summary_variables_line_uses_br_separator(self, tools):
-        """'Variables :' must be separated from the filename by a <br> tag
-        so marked.js renders a line break regardless of its configuration."""
-        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
-        idx_s = result["output"].index("%%SUMMARY%%")
-        idx_c = result["output"].index("%%CLOSING%%")
-        summary_block = result["output"][idx_s:idx_c]
-        assert "<br>Variables :" in summary_block, \
-            "Variables line must be preceded by <br> for reliable line break rendering"
-
-    def test_summary_warnings_use_br_separator(self, tools):
-        """⚠ warning lines must also be preceded by <br> tags."""
-        result = tools["inspect_and_report"]([str(ECOTAXA)], session_id=None)
-        idx_s = result["output"].index("%%SUMMARY%%")
-        idx_c = result["output"].index("%%CLOSING%%")
-        summary_block = result["output"][idx_s:idx_c]
-        if "⚠" in summary_block:
-            assert "<br>⚠" in summary_block, \
-                "⚠ warning lines must be preceded by <br>"
+        assert "RAPPORT D'INSPECTION" in result["output"]
+        assert "ecotaxa_sample_50" in result["output"]

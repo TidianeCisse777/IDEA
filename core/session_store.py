@@ -44,6 +44,12 @@ class SessionStore(ABC):
     @abstractmethod
     def set_online_mode(self, session_key: str, enabled: bool) -> None: ...
 
+    @abstractmethod
+    def read_working_set(self, session_key: str) -> dict | None: ...
+
+    @abstractmethod
+    def write_working_set(self, session_key: str, working_set: dict) -> None: ...
+
 
 class RedisSessionStore(SessionStore):
     """Production implementation backed by a Redis server."""
@@ -70,6 +76,7 @@ class RedisSessionStore(SessionStore):
             f"messages:{session_key}",
             f"last_active:{session_key}",
             f"online_mode:{session_key}",
+            f"working_set:{session_key}",
         )
 
     def all_session_keys(self) -> list[str]:
@@ -83,6 +90,13 @@ class RedisSessionStore(SessionStore):
     def set_online_mode(self, session_key: str, enabled: bool) -> None:
         self._r.set(f"online_mode:{session_key}", "1" if enabled else "0")
 
+    def read_working_set(self, session_key: str) -> dict | None:
+        raw = self._r.get(f"working_set:{session_key}")
+        return json.loads(raw) if raw else None
+
+    def write_working_set(self, session_key: str, working_set: dict) -> None:
+        self._r.set(f"working_set:{session_key}", json.dumps(working_set))
+
 
 class InMemorySessionStore(SessionStore):
     """In-memory implementation for tests and local development (no Redis needed)."""
@@ -91,6 +105,7 @@ class InMemorySessionStore(SessionStore):
         self._messages: dict[str, list[dict]] = {}
         self._timestamps: dict[str, float] = {}
         self._online_modes: dict[str, bool] = {}
+        self._working_sets: dict[str, dict] = {}
 
     def read_messages(self, session_key: str) -> list[dict] | None:
         return self._messages.get(session_key)
@@ -108,6 +123,7 @@ class InMemorySessionStore(SessionStore):
         self._messages.pop(session_key, None)
         self._timestamps.pop(session_key, None)
         self._online_modes.pop(session_key, None)
+        self._working_sets.pop(session_key, None)
 
     def all_session_keys(self) -> list[str]:
         return list(self._timestamps.keys())
@@ -117,6 +133,12 @@ class InMemorySessionStore(SessionStore):
 
     def set_online_mode(self, session_key: str, enabled: bool) -> None:
         self._online_modes[session_key] = bool(enabled)
+
+    def read_working_set(self, session_key: str) -> dict | None:
+        return self._working_sets.get(session_key)
+
+    def write_working_set(self, session_key: str, working_set: dict) -> None:
+        self._working_sets[session_key] = working_set
 
 
 # Singleton — selection strategy:

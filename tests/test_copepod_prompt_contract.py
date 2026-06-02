@@ -21,7 +21,24 @@ def test_clear_request_executes_without_plan_only_response():
     assert "If the request is clear, execute" in prompt
     assert "For clear action commands such as" in prompt
     assert "the plan is a commitment to execute, not a waiting state" in prompt
-    assert "write the plan and executor code in the same response" in prompt
+    assert "write the plan and code in the same response" in prompt
+
+
+def test_execute_wrapper_is_not_part_of_the_prompt_surface():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "execute(language=\"python\"" not in prompt
+    assert "execute(language='python'" not in prompt
+
+
+def test_session_working_set_is_the_file_state_source_of_truth():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    lower_prompt = prompt.lower()
+    assert "session working set" in lower_prompt
+    assert "source of truth for file state" in lower_prompt
+    assert "seen_files" in prompt
+    assert "active_files" in prompt
+    assert "latest_inspection_by_file" in prompt
+    assert "current_user_goal" in prompt
 
 
 def test_output_formatting_contract_is_concise_and_single_language():
@@ -65,9 +82,9 @@ def test_column_selection_must_use_exact_inspection_spellings():
     assert "stop asking and execute with explicit assumptions" in prompt
 
 
-def test_visual_requests_remain_in_planner_executor_and_preserve_source():
+def test_visual_requests_remain_in_inspect_then_code_and_preserve_source():
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "planner/executor" in prompt
+    assert "inspect-then-code" in prompt
     assert "explicit visual request" in prompt
     assert "preserve the source artifact" in prompt
     assert "produce a corrected artifact" in prompt

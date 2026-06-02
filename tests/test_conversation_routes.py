@@ -110,11 +110,25 @@ def _create_conv(client: TestClient, title: str | None = None) -> dict:
     return resp.json()
 
 
-def _add_msg(client: TestClient, conv_id: str, content: str = "hello") -> dict:
-    resp = client.post(
-        f"/{conv_id}/messages",
-        json={"role": "user", "content": content, "conversation_id": conv_id},
-    )
+def _add_msg(
+    client: TestClient,
+    conv_id: str,
+    content: str = "hello",
+    *,
+    attachments: list[dict] | None = None,
+    message_type: str = "message",
+    message_format: str | None = None,
+) -> dict:
+    payload = {
+        "role": "user",
+        "content": content,
+        "conversation_id": conv_id,
+        "message_type": message_type,
+        "message_format": message_format,
+    }
+    if attachments is not None:
+        payload["attachments"] = attachments
+    resp = client.post(f"/{conv_id}/messages", json=payload)
     assert resp.status_code == 200
     return resp.json()
 
@@ -209,6 +223,26 @@ class TestReadConversation:
         assert body["id"] == conv["id"]
         assert len(body["messages"]) == 1
         assert body["messages"][0]["content"] == "hello"
+
+    def test_round_trips_message_attachments(self, setup):
+        client, _, _ = setup
+        conv = _create_conv(client, "with attachments")
+        attachments = [
+            {
+                "name": "import.csv",
+                "path": "import.csv",
+                "session_id": "session-1",
+                "mimeType": "text/csv",
+            }
+        ]
+
+        saved = _add_msg(client, conv["id"], "Files uploaded in this message", attachments=attachments)
+        assert saved["attachments"] == attachments
+
+        resp = client.get(f"/{conv['id']}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["messages"][0]["attachments"] == attachments
 
     def test_404_unknown_id(self, setup):
         client, _, _ = setup

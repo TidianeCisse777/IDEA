@@ -541,7 +541,8 @@ function appendMessage(message, options = {}) {
             message.content,
             messageType,
             message.format,
-            message.recipient
+            message.recipient,
+            Array.isArray(message.attachments) ? message.attachments : null
         ).then(saved => {
             if (frontendId && saved && saved.id && frontendId !== saved.id) {
                 const el = document.querySelector(`[data-id="${frontendId}"]`);
@@ -552,7 +553,7 @@ function appendMessage(message, options = {}) {
     }
 }
 
-function appendExternalMessage({ role = 'assistant', content = '', type = 'message', format = null, recipient = null }) {
+function appendExternalMessage({ role = 'assistant', content = '', type = 'message', format = null, recipient = null, attachments = null }) {
     if (!content || !chatDisplay) return;
     const id = generateId('msg');
     const message = {
@@ -562,6 +563,7 @@ function appendExternalMessage({ role = 'assistant', content = '', type = 'messa
         type,
         format,
         recipient,
+        attachments,
         isComplete: true,
     };
     messages.push(message);
@@ -576,7 +578,7 @@ function appendExternalMessage({ role = 'assistant', content = '', type = 'messa
         const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation', 'deliverable'];
         const messageType = validTypes.includes(type) ? type : 'message';
         conversationManager
-            .addMessage(role, content, messageType, format, recipient)
+            .addMessage(role, content, messageType, format, recipient, Array.isArray(attachments) ? attachments : null)
             .catch((error) => {
                 console.error('Failed to persist external message:', error);
             });

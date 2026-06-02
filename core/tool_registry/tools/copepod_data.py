@@ -1032,79 +1032,14 @@ def inspect_and_report(file_paths, session_id=None):
             "error": None,
         })
 
-    # Cross-file summary — scientific synthesis per file
-    _source_labels = {
-        "likely_ecotaxa": "export EcoTaxa (images + taxonomie annotée)",
-        "likely_ecopart": "export EcoPart (profils CTD + particules agrégées)",
-        "likely_neolabs_taxon": "données labo NeoLab (abondances zooplancton)",
-        "likely_amundsen_ctd": "données CTD Amundsen / variables environnementales",
-        "likely_environmental_model": "données modèle environnemental (Bio-Oracle / scénarios SSP)",
-    }
-
     summary_lines = []
     for r in reports:
         if r["error"]:
             summary_lines.append(f"**{r['file']}** — erreur : {r['error']}")
-            continue
-
-        label = _source_labels.get(r["source_type"], r["source_type"])
-        shape = f"{r['n_rows']} lignes × {r['n_columns']} colonnes"
-
-        # Semantic columns present
-        file_report = None
-        for fp in file_paths:
-            import pathlib
-            if pathlib.Path(fp).stem == r["file"]:
-                try:
-                    file_report = inspect_file(fp)
-                except Exception:
-                    pass
-                break
-
-        sem_cols = []
-        missing_flags = []
-        warnings_list = []
-        if file_report:
-            for col in (file_report.get("columns") or []):
-                sem = col.get("semantic_guess") or ""
-                if sem and sem not in sem_cols:
-                    sem_cols.append(sem)
-                rate = col.get("missing_rate", 0)
-                if isinstance(rate, float) and rate > 0.3:
-                    missing_flags.append(f"`{col['name']}` ({round(rate*100)}% manquant)")
-            warnings_list = file_report.get("warnings") or []
-
-        sem_str = ", ".join(sem_cols[:5]) if sem_cols else "—"
-        entry_lines = [f"**{r['file']}** ({shape}) — {label}"]
-        entry_lines.append(f"Variables : {sem_str}")
-        for flag in missing_flags[:3]:
-            entry_lines.append(f"⚠ {flag}")
-        summary_lines.append("<br>".join(entry_lines))
-
-    # Cross-file join hints — only real oceanographic link keys, not any common column
-    _VALID_JOIN_KEYS = {"PROFILE_ID", "OBJ_ORIG_ID", "OBJECT_ID", "PROFILEID"}
-    all_cols = set()
-    join_hints = []
-    for r in reports:
-        if not r["error"] and r.get("formatted"):
-            for fp in file_paths:
-                import pathlib
-                if pathlib.Path(fp).stem == r["file"]:
-                    try:
-                        fr = inspect_file(fp)
-                        cols = {c["name"].upper() for c in (fr.get("columns") or [])}
-                        if all_cols:
-                            common = (all_cols & cols) & _VALID_JOIN_KEYS
-                            if common:
-                                join_hints.append(", ".join(sorted(common)))
-                        all_cols |= cols
-                    except Exception:
-                        pass
-                    break
-
-    if join_hints:
-        summary_lines.append(f"Clés de jointure potentielles : {' | '.join(join_hints[:2])}")
-
+        else:
+            summary_lines.append(
+                f"**{r['file']}** ({r['n_rows']} lignes × {r['n_columns']} colonnes) — {r['source_type']}"
+            )
     summary = chr(10).join(summary_lines)
 
     full_output = []
@@ -1113,15 +1048,6 @@ def inspect_and_report(file_paths, session_id=None):
             full_output.append(r["formatted"])
         else:
             full_output.append(f"## {r['file']} — ERREUR: {r['error']}")
-
-    bullet_lines = ["- " + line for line in summary_lines]
-    summary_md = "### Fichiers chargés" + chr(10) + chr(10) + (chr(10) + chr(10)).join(bullet_lines)
-
-    full_output.append("%%SUMMARY%%")
-    full_output.append(summary_md)
-    full_output.append("%%CLOSING%%")
-    full_output.append("Quel graphique ou livrable souhaitez-vous ?")
-
     return {"reports": reports, "summary": summary, "output": chr(10).join(full_output)}
 
 

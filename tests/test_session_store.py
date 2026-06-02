@@ -36,6 +36,24 @@ def test_evict_clears_messages_timestamps_and_online_mode():
     assert store.get_online_mode("k") is False
 
 
+def test_working_set_round_trip_and_evict():
+    store = InMemorySessionStore()
+    assert store.read_working_set("k") is None
+
+    working_set = {
+        "seen_files": ["a.csv"],
+        "active_files": ["b.csv"],
+        "latest_inspection_by_file": {"a.csv": "inspected"},
+        "current_user_goal": "inspect b.csv",
+    }
+
+    store.write_working_set("k", working_set)
+    assert store.read_working_set("k") == working_set
+
+    store.evict("k")
+    assert store.read_working_set("k") is None
+
+
 def test_online_mode_defaults_to_false():
     store = InMemorySessionStore()
     assert store.get_online_mode("k") is False

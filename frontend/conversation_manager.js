@@ -175,7 +175,7 @@ class ConversationManager {
     /**
      * Add a message to the current conversation
      */
-    async addMessage(role, content, messageType = MESSAGE_TYPES.MESSAGE, messageFormat = null, recipient = null) {
+    async addMessage(role, content, messageType = MESSAGE_TYPES.MESSAGE, messageFormat = null, recipient = null, attachments = null) {
         if (!this.currentConversationId) {
             // Serialize concurrent calls so only one conversation is created
             if (!this._creatingConversation) {
@@ -195,6 +195,9 @@ class ConversationManager {
                 recipient,
                 conversation_id: this.currentConversationId,
             };
+            if (Array.isArray(attachments)) {
+                messageData.attachments = attachments;
+            }
 
             const response = await this._fetchWithAuth(
                 `${this.apiBaseUrl}/conversations/${this.currentConversationId}/messages`,
@@ -225,6 +228,7 @@ class ConversationManager {
                     message_type: messageType,
                     message_format: messageFormat,
                     recipient,
+                    attachments,
                     conversation_id: this.currentConversationId,
                 },
             });

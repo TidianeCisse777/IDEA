@@ -55,6 +55,7 @@ class ChatRuntimeTracer:
         self.metadata.setdefault("round", round_index)
         self._buffers: dict[tuple[str, str, str], list[str]] = defaultdict(list)
         self._closed = False
+        self._system_message: str = ""
 
     @classmethod
     def from_env(
@@ -81,11 +82,18 @@ class ChatRuntimeTracer:
 
             _configure_local_langfuse_host()
             lf = Langfuse()
+            trace_input = user_input or {}
+            trace_input = {
+                "agent_type": agent_type,
+                "model": model,
+                "round": round_index,
+                **trace_input,
+            }
             trace = lf.trace(
-                name="idea-chat-runtime",
+                name=f"{agent_type}/round-{round_index}",
                 user_id=str(user_id),
                 session_id=session_key,
-                input=user_input or {},
+                input=trace_input,
                 metadata=metadata,
                 tags=["runtime", "chat", agent_type],
             )
@@ -104,6 +112,42 @@ class ChatRuntimeTracer:
                 yield event
         finally:
             self.close()
+
+    def record_system_prompt(
+        self,
+        system_message: str,
+        *,
+        components: dict[str, Any] | None = None,
+    ) -> None:
+        """Capture the composed system prompt sent to the LLM this turn."""
+        self._system_message = system_message or ""
+        if not self.enabled:
+            return
+        try:
+            sys_text = system_message or ""
+            self._span(
+                f"round-{self.round_index}/system_prompt",
+                input={"system_message": sys_text[:8000]},
+                output={"total_chars": len(sys_text), **(components or {})},
+                metadata={"observation_type": "system_prompt"},
+            )
+        except Exception:
+            return
+
+    def record_custom_instructions(self, custom_instructions: str) -> None:
+        """Capture the dynamic custom_instructions block injected into the interpreter."""
+        if not self.enabled:
+            return
+        try:
+            text = custom_instructions or ""
+            self._span(
+                f"round-{self.round_index}/custom_instructions",
+                input={"custom_instructions": text[:8000]},
+                output={"total_chars": len(text)},
+                metadata={"observation_type": "custom_instructions"},
+            )
+        except Exception:
+            return
 
     def record_mcp_tool_run(self, run: dict[str, Any]) -> None:
         if not self.enabled:
@@ -242,9 +286,12 @@ class ChatRuntimeTracer:
         }
         if observation_type == "assistant_message" and hasattr(self.trace, "generation"):
             try:
+                gen_input: dict[str, Any] = {}
+                if self._system_message:
+                    gen_input["system"] = self._system_message[:3000]
                 self.trace.generation(
                     name=f"round-{self.round_index}",
-                    input={},
+                    input=gen_input,
                     output=content,
                     metadata={**self.metadata, "observation_type": observation_type},
                 )

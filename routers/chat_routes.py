@@ -76,12 +76,12 @@ def _safe_message_get(message: Any, key: str, default: Any = None) -> Any:
         return default
 
 
-def _build_copepod_data_planner_note(
+def _build_copepod_inspect_then_code_note(
     *,
     messages: list[dict[str, Any]],
     user_message: str,
 ) -> str | None:
-    """Return a short system note that forces a planner pass before code."""
+    """Return a short system note that enforces inspect-then-code before analysis."""
     if not user_message.strip():
         return None
 
@@ -106,9 +106,9 @@ def _build_copepod_data_planner_note(
         return None
 
     lines = [
-        "You are the Copepod data planner.",
+        "You are the Copepod inspect-then-code guide.",
         "Before writing any analysis code, read the inspection artifacts already present in the conversation.",
-        "PLAN required before executor code for graph, analysis, join, export, or table requests.",
+        "INSPECT required before code for graph, analysis, join, export, or table requests.",
         "The plan must name the files, exact column names selected from inspection reports, rejected ambiguous column candidates when relevant, planned transformation, and expected output.",
         "Identify exact column names and candidate join keys from the reports before coding.",
         "Use only documented columns and do not guess, translate, abbreviate, or approximate names.",
@@ -153,6 +153,11 @@ def _basename(value: str) -> str:
     if not text:
         return ""
     return Path(text.split("?", 1)[0]).name or text
+
+
+def _normalize_uploaded_filename(value: str) -> str:
+    text = _basename(value)
+    return text.strip().casefold() if text else ""
 
 
 def _extract_report_summary(content: str) -> str | None:
@@ -237,19 +242,124 @@ def _extract_deliverable_summary(content: str) -> tuple[str | None, str | None]:
     return " | ".join(parts), str(file_value or "").strip() or None
 
 
+def _empty_copepod_working_set() -> dict[str, Any]:
+    return {
+        "seen_files": [],
+        "active_files": [],
+        "latest_inspection_by_file": {},
+        "current_user_goal": "",
+    }
+
+
+def _copy_copepod_working_set(working_set: dict[str, Any] | None) -> dict[str, Any]:
+    base = _empty_copepod_working_set()
+    if not isinstance(working_set, dict):
+        return base
+
+    seen_files = working_set.get("seen_files") or []
+    active_files = working_set.get("active_files") or []
+    latest_inspection_by_file = working_set.get("latest_inspection_by_file") or {}
+
+    base["seen_files"] = _dedupe_keep_order([str(item) for item in seen_files if str(item).strip()])
+    base["active_files"] = _dedupe_keep_order([str(item) for item in active_files if str(item).strip()])
+    if isinstance(latest_inspection_by_file, dict):
+        base["latest_inspection_by_file"] = {
+            str(key): str(value)
+            for key, value in latest_inspection_by_file.items()
+            if str(key).strip()
+        }
+    base["current_user_goal"] = str(working_set.get("current_user_goal") or "").strip()
+    return base
+
+
+def _update_copepod_working_set(
+    *,
+    session_key: str,
+    messages: list[dict[str, Any]],
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    existing = _copy_copepod_working_set(session_store.read_working_set(session_key))
+    working_set = _copy_copepod_working_set(existing)
+    seen_keys = {
+        _normalize_uploaded_filename(item)
+        for item in working_set.get("seen_files", [])
+        if _normalize_uploaded_filename(item)
+    }
+
+    latest_user_goal = working_set.get("current_user_goal", "")
+    active_files: list[str] = []
+    already_present_files: list[str] = []
+
+    for msg in messages or []:
+        role = _safe_message_get(msg, "role")
+        content = _safe_message_get(msg, "content", "")
+
+        if role == "user" and isinstance(content, str):
+            prompt_text, attachment_lines = _split_upload_block_content(content) if _UPLOAD_BLOCK_MARKER in content else (content.strip(), [])
+            if prompt_text.strip():
+                latest_user_goal = prompt_text.strip()
+            if attachment_lines:
+                active_files = []
+                already_present_files = []
+                for line in attachment_lines:
+                    match = _UPLOAD_LINE_RE.match(line.strip())
+                    if not match:
+                        continue
+                    name = (match.group("name") or "").strip()
+                    rel_path = (match.group("rel_path") or name).strip()
+                    entry = name or rel_path
+                    filename_key = _normalize_uploaded_filename(name or rel_path)
+                    if filename_key and filename_key in seen_keys:
+                        already_present_files.append(entry)
+                        continue
+                    if filename_key:
+                        seen_keys.add(filename_key)
+                    active_files.append(entry)
+
+        if role == "assistant" and isinstance(content, str) and "# RAPPORT D'INSPECTION" in content:
+            report_summary = _extract_report_summary(content)
+            if report_summary:
+                label = report_summary.split(" | ", 1)[0]
+                file_match = re.search(r"\*\*file_path\*\*\s*:\s*`([^`]+)`", content)
+                if file_match:
+                    filename_key = _normalize_uploaded_filename(file_match.group(1))
+                    if filename_key:
+                        seen_keys.add(filename_key)
+                        working_set.setdefault("latest_inspection_by_file", {})[label] = report_summary
+
+    working_set["seen_files"] = _dedupe_keep_order(
+        list(working_set.get("seen_files", []))
+        + active_files
+        + already_present_files
+    )
+    working_set["active_files"] = _dedupe_keep_order(active_files)
+    working_set["current_user_goal"] = latest_user_goal
+
+    working_set = _copy_copepod_working_set(working_set)
+
+    session_store.write_working_set(session_key, working_set)
+    return working_set
+
+
 def _build_copepod_session_resources_note(
     messages: list[dict[str, Any]],
     *,
+    session_key: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
 ) -> tuple[str | None, list[str]]:
-    """Build a compact runtime-only resource index for Copepod turns."""
-    loaded_files: list[str] = []
+    """Build the compact runtime working set for Copepod turns."""
     current_message_files: list[str] = []  # files from the last user upload block
-    reports: list[str] = []
+    already_present_files: list[str] = []
     deliverables: list[str] = []
     image_artifacts: list[str] = []
     file_artifacts: list[str] = []
+    seen_filename_keys: set[str] = set()
+    current_file_candidates: list[tuple[str, str]] = []
+    local_seen_files: list[str] = []
+    inspection_map: dict[str, str] = {}
+    latest_user_goal = ""
     artifact_count = 0
     resolved_session_id = session_id or ""
     resolved_user_id = user_id or ""
@@ -279,6 +389,9 @@ def _build_copepod_session_resources_note(
 
         if isinstance(content, str) and _UPLOAD_BLOCK_MARKER in content:
             _, attachment_lines = _split_upload_block_content(content)
+            prompt_text, _ = _split_upload_block_content(content)
+            if prompt_text.strip():
+                latest_user_goal = prompt_text.strip()
             is_current = (msg_idx == last_upload_msg_idx)
             for line in attachment_lines:
                 match = _UPLOAD_LINE_RE.match(line.strip())
@@ -294,18 +407,26 @@ def _build_copepod_session_resources_note(
                     entry += f" | relative path: {rel_path}"
                     if resolved_user_id and resolved_session_id:
                         entry += f" | path: /app/static/{resolved_user_id}/{resolved_session_id}/uploads/{rel_path}"
+                filename_key = _normalize_uploaded_filename(name or rel_path)
                 if is_current:
-                    current_message_files.append(entry)
+                    current_file_candidates.append((entry, filename_key))
                 else:
-                    loaded_files.append(entry)
+                    if filename_key:
+                        seen_filename_keys.add(filename_key)
 
         if isinstance(content, str) and "# RAPPORT D'INSPECTION" in content:
             for part in content.split("# RAPPORT D'INSPECTION"):
                 if not part.strip():
                     continue
-                summary = _extract_report_summary("# RAPPORT D'INSPECTION" + part)
-                if summary:
-                    reports.append(summary)
+                file_match = re.search(r"\*\*file_path\*\*\s*:\s*`([^`]+)`", "# RAPPORT D'INSPECTION" + part)
+                if file_match:
+                    filename_key = _normalize_uploaded_filename(file_match.group(1))
+                    if filename_key:
+                        seen_filename_keys.add(filename_key)
+                report_summary = _extract_report_summary("# RAPPORT D'INSPECTION" + part)
+                if report_summary:
+                    label = report_summary.split(" | ", 1)[0]
+                    inspection_map[label] = report_summary
 
         if isinstance(content, str):
             deliverable_summary, deliverable_file = _extract_deliverable_summary(content)
@@ -329,9 +450,15 @@ def _build_copepod_session_resources_note(
             file_artifacts.append(f"{label}: {content.strip()}")
             artifact_count += 1
 
-    loaded_files = _dedupe_keep_order(loaded_files)
+    for entry, filename_key in current_file_candidates:
+        if filename_key and filename_key in seen_filename_keys:
+            already_present_files.append(entry)
+        else:
+            current_message_files.append(entry)
+            local_seen_files.append(entry.split(" | ", 1)[0].strip())
+
     current_message_files = _dedupe_keep_order(current_message_files)
-    reports = _dedupe_keep_order(reports)
+    already_present_files = _dedupe_keep_order(already_present_files)
 
     artifact_entries: list[tuple[str, str]] = []
     for value in image_artifacts:
@@ -344,10 +471,41 @@ def _build_copepod_session_resources_note(
     artifact_entries = [
         item for item in _dedupe_keep_order([f"{section}\t{value}" for section, value in artifact_entries])
     ]
-    truncated = len(artifact_entries) > _RESOURCE_ARTIFACT_LIMIT
     artifact_entries = artifact_entries[-_RESOURCE_ARTIFACT_LIMIT:]
 
-    if not loaded_files and not current_message_files and not reports and not artifact_entries:
+    if session_key:
+        working_set = _update_copepod_working_set(
+            session_key=session_key,
+            messages=messages,
+            user_id=user_id,
+            session_id=session_id,
+        )
+    else:
+        working_set = _empty_copepod_working_set()
+        working_set["current_user_goal"] = latest_user_goal
+        working_set["seen_files"] = _dedupe_keep_order(
+            [entry.split(" | ", 1)[0].strip() for entry, _ in current_file_candidates]
+            + [item.split(" | ", 1)[0].strip() for item in already_present_files]
+        )
+        working_set["active_files"] = _dedupe_keep_order(
+            [entry.split(" | ", 1)[0].strip() for entry, _ in current_file_candidates]
+        )
+        working_set["latest_inspection_by_file"] = inspection_map
+
+    def _render_session_file_entry(item: str) -> str:
+        entry = str(item).strip()
+        if not entry:
+            return ""
+        if "relative path:" in entry or "path:" in entry:
+            return entry
+        if user_id and session_id:
+            return (
+                f"{entry} | relative path: {entry} "
+                f"| path: /app/static/{user_id}/{session_id}/uploads/{entry}"
+            )
+        return entry
+
+    if not current_message_files and not already_present_files and not artifact_entries:
         return None, []
 
     sections: dict[str, list[str]] = {
@@ -360,29 +518,46 @@ def _build_copepod_session_resources_note(
         sections.setdefault(section, []).append(value)
 
     lines = [
-        "## Current Session Resources",
+        "## Copepod Working Set",
         "",
-        "You may use these session resources freely whenever they help answer the user.",
+        "This is the canonical session state. Treat it as the source of truth for file state and the current task.",
+        "You may use this working set freely whenever it helps answer the user.",
         "Do not ask the user to re-upload or re-provide a resource listed here.",
         "Use paths/URLs from this context directly when reading files, rebuilding graphs, zooming images, making tables, or continuing prior work.",
         "When correcting a graph from an existing image or artifact, preserve the source artifact and emit the revised artifact separately.",
     ]
+    current_goal = str(working_set.get("current_user_goal") or "").strip()
+    seen_files = _dedupe_keep_order([str(item) for item in working_set.get("seen_files", []) if str(item).strip()])
+    active_state_files = _dedupe_keep_order([str(item) for item in working_set.get("active_files", []) if str(item).strip()])
+    inspection_map = working_set.get("latest_inspection_by_file") or {}
+
+    if current_goal:
+        lines.extend(["", "current_user_goal:"])
+        lines.append(f"- {current_goal}")
+    if seen_files:
+        lines.extend(["", "seen_files:"])
+        lines.extend(f"- {item}" for item in seen_files)
+    if active_state_files:
+        lines.extend(["", "active_files:"])
+        lines.extend(f"- {item}" for item in active_state_files)
+    if isinstance(inspection_map, dict) and inspection_map:
+        lines.extend(["", "latest_inspection_by_file:"])
+        for key, value in inspection_map.items():
+            summary = str(value).strip()
+            if summary:
+                lines.append(f"- {key}: {summary}")
+
     if current_message_files:
-        lines.extend(["", "Files uploaded in this message (analyze these — run data.inspect on each before anything else):"])
-        lines.extend(f"- {item}" for item in current_message_files)
-    if loaded_files:
-        lines.extend(["", "Previously loaded files:"])
-        lines.extend(f"- {item}" for item in loaded_files)
-    if reports:
-        lines.extend(["", "Inspection reports:"])
-        lines.extend(f"- {item}" for item in reports)
+        lines.extend(["", "Files uploaded in this message (inspect these new filenames only):"])
+        lines.extend(f"- {_render_session_file_entry(item)}" for item in current_message_files)
+    if already_present_files:
+        lines.extend(["", "Files already present in this session (skip inspection):"])
+        lines.extend(f"- {_render_session_file_entry(item)}" for item in already_present_files)
     for section in ("Deliverables", "Graph/image artifacts", "File artifacts"):
         values = sections.get(section) or []
         if values:
             lines.extend(["", f"{section}:"])
             lines.extend(f"- {item}" for item in values)
-    if truncated or artifact_count > _RESOURCE_ARTIFACT_LIMIT:
-        lines.extend(["", "Additional older artifacts exist in conversation history."])
 
     note = "\n".join(lines)
     if len(note) > 6000:
@@ -572,7 +747,7 @@ def _inject_copepod_system_note(
     """Merge all system prompts into a single leading system message.
 
     OpenInterpreter rejects any system message that appears after the first
-    message, so planner/recovery notes must be folded into the initial system
+    message, so inspect-then-code/recovery notes must be folded into the initial system
     prompt rather than appended as a standalone system item.
     """
     copied: list[dict[str, Any]] = []
@@ -637,8 +812,8 @@ LAST_ACTIVE_PREFIX = "last_active:"
 CLEANUP_INTERVAL = settings.SESSION_CLEANUP_INTERVAL
 CHAT_RATE_LIMIT = "10/minute"
 
-# LLM tool planner prompt
-MCP_TOOL_PLANNER_PROMPT = (
+# LLM tool routing prompt
+MCP_TOOL_ROUTING_PROMPT = (
     "You are a routing assistant for the IDEA application. "
     "Analyze the latest user message and decide whether calling one of the available MCP tools would help. "
     "Only call a tool if it is likely to provide data needed to answer the user. "
@@ -1282,7 +1457,7 @@ async def plan_and_run_mcp_tools(
     seen_calls: set[str] = set()
 
     for _ in range(3):
-        planning_messages = [{"role": "system", "content": MCP_TOOL_PLANNER_PROMPT}]
+        planning_messages = [{"role": "system", "content": MCP_TOOL_ROUTING_PROMPT}]
         if executed_tools:
             summaries = []
             for run in executed_tools:
@@ -1303,7 +1478,7 @@ async def plan_and_run_mcp_tools(
         planning_messages.append({"role": "user", "content": user_message})
 
         try:
-            planner_response = await asyncio.to_thread(
+            routing_response = await asyncio.to_thread(
                 completion,
                 model=interpreter.llm.model,
                 messages=planning_messages,
@@ -1311,10 +1486,10 @@ async def plan_and_run_mcp_tools(
                 tool_choice="auto",
             )
         except Exception as exc:
-            logger.warning("MCP tool planner failed: %s", exc)
+            logger.warning("MCP tool routing failed: %s", exc)
             break
 
-        message = planner_response["choices"][0]["message"]
+        message = routing_response["choices"][0]["message"]
         tool_calls = message.get("tool_calls") or []
 
         calls_to_execute: list[tuple[Any, dict[str, Any], dict[str, Any]]] = []
@@ -1524,6 +1699,12 @@ async def chat_endpoint(
             )
             if not current or current[-len(incoming_user_messages):] != incoming_user_messages:
                 session_store.write_messages(session_key, current + incoming_user_messages)
+            _update_copepod_working_set(
+                session_key=session_key,
+                messages=[incoming_user],
+                user_id=str(user.id),
+                session_id=session_id,
+            )
 
         tool_runs = []
         try:
@@ -1637,10 +1818,10 @@ async def chat_endpoint(
                         )
                     except Exception:
                         pass
-                copepod_data_planner_note = None
+                copepod_inspect_then_code_note = None
                 if agent_type == "copepod":
-                    copepod_data_planner_note = _build_copepod_data_planner_note(
-                        messages=list(interpreter.messages),
+                    copepod_inspect_then_code_note = _build_copepod_inspect_then_code_note(
+                        messages=list(interpreter.messages) + list(messages),
                         user_message=last_user_message or "",
                     )
                 import time as _time
@@ -1719,13 +1900,14 @@ async def chat_endpoint(
 
                         if agent_type == "copepod":
                             copepod_session_resources_note, _new_files = _build_copepod_session_resources_note(
-                                messages,
+                                list(interpreter.messages) + list(messages),
+                                session_key=session_key,
                                 user_id=str(user.id),
                                 session_id=session_id,
                             )
                             interpreter.system_message = _compose_copepod_system_message(
                                 copepod_session_resources_note,
-                                copepod_data_planner_note if copepod_data_planner_note else None,
+                                copepod_inspect_then_code_note if copepod_inspect_then_code_note else None,
                                 retry_note,
                             )
                             # Inject an explicit inspection instruction when new files are present.
@@ -1782,6 +1964,16 @@ async def chat_endpoint(
                         logger.info(f"  retrying copepod executor after error — {_short(session_key)}")
                 finally:
                     interpreter.system_message = base_system_message
+                    if agent_type == "copepod":
+                        try:
+                            _update_copepod_working_set(
+                                session_key=session_key,
+                                messages=list(interpreter.messages),
+                                user_id=str(user.id),
+                                session_id=session_id,
+                            )
+                        except Exception:
+                            pass
 
                 _elapsed = f"{(_time.monotonic() - _t0):.1f}s"
                 if total_chunks == 0 and not fallback_sent:

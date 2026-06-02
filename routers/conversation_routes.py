@@ -222,6 +222,7 @@ def add_message(
         message_type=message_in.message_type,
         message_format=message_in.message_format,
         recipient=message_in.recipient,
+        attachments=message_in.attachments or [],
         conversation_id=conversation_id,
     )
     session.add(message)

@@ -20,6 +20,11 @@ function buildDOM() {
         <button id="loadMoreConversations"></button>
         <span id="conversationCount"></span>
         <div id="conversationsList"></div>
+        <aside id="conversationCsvSidebar" class="conversation-csv-sidebar" aria-hidden="true">
+            <button id="conversationCsvToggle"></button>
+            <div id="conversationCsvList"></div>
+            <div id="conversationCsvViewer"></div>
+        </aside>
         <div id="chatDisplay"></div>
     `;
 }
@@ -282,6 +287,186 @@ describe('Fix 3 — loadConversation interpreter sync isolated', () => {
         expect(global.window.hydrateChatWithMessages).not.toHaveBeenCalled();
         expect(getNotification('error')).not.toBeNull();
         expect(getNotification('error').textContent).toContain('Impossible de charger la conversation');
+    });
+});
+
+// ─── CSV sidebar index ───────────────────────────────────────────────────────
+
+describe('Conversation CSV sidebar index', () => {
+    test('renders loaded and created CSV entries from the current conversation', () => {
+        const conv = makeConv('c1', 'CSV test', {
+            messages: [
+                {
+                    id: 'm1',
+                    role: 'user',
+                    message_type: 'file',
+                    message_format: 'path',
+                    content: '/static/u1/c1/uploads/import.csv',
+                    filename: 'import.csv',
+                },
+                {
+                    id: 'm2',
+                    role: 'assistant',
+                    message_type: 'deliverable',
+                    content: JSON.stringify({
+                        type: 'export',
+                        title: 'Export final',
+                        file_url: '/static/u1/c1/uploads/result.csv',
+                        filename: 'result.csv',
+                    }),
+                },
+            ],
+        });
+        global.conversationManager = makeConversationManager([conv], 'c1', conv.messages);
+        loadConversationUI();
+
+        window.conversationUI.refreshConversationCsvSidebar();
+
+        const sidebar = document.getElementById('conversationCsvSidebar');
+        const items = sidebar.querySelectorAll('.conversation-csv-item');
+        expect(sidebar.classList.contains('open')).toBe(true);
+        expect(items).toHaveLength(2);
+        expect(sidebar.textContent).toContain('import.csv');
+        expect(sidebar.textContent).toContain('result.csv');
+        expect(sidebar.textContent).toContain('chargé');
+        expect(sidebar.textContent).toContain('créé');
+    });
+
+    test('shows only one empty-state when the conversation has no CSV', () => {
+        const conv = makeConv('c1', 'Empty CSV', { messages: [] });
+        global.conversationManager = makeConversationManager([conv], 'c1', []);
+        window.getPendingUploads = jest.fn(() => []);
+        loadConversationUI();
+
+        window.conversationUI.refreshConversationCsvSidebar();
+
+        const sidebar = document.getElementById('conversationCsvSidebar');
+        expect(sidebar.querySelectorAll('.conversation-csv-empty')).toHaveLength(1);
+        expect(sidebar.textContent).toContain('Aucun CSV dans cette conversation');
+        expect(sidebar.textContent).not.toContain('Sélectionnez un CSV');
+        expect(document.getElementById('conversationCsvViewer').textContent).toBe('');
+    });
+
+    test('shows a pending uploaded CSV before it is sent as a message', () => {
+        const conv = makeConv('c1', 'Pending upload', { messages: [] });
+        global.conversationManager = makeConversationManager([conv], 'c1', []);
+        window.getPendingUploads = jest.fn(() => ([
+            {
+                id: 'upload-1',
+                name: 'pending.csv',
+                path: '/static/u1/c1/uploads/pending.csv',
+            },
+        ]));
+        loadConversationUI();
+
+        window.conversationUI.refreshConversationCsvSidebar();
+
+        const sidebar = document.getElementById('conversationCsvSidebar');
+        expect(sidebar.querySelectorAll('.conversation-csv-item')).toHaveLength(1);
+        expect(sidebar.textContent).toContain('pending.csv');
+        expect(sidebar.textContent).toContain('chargé');
+        expect(sidebar.textContent).not.toContain('Aucun CSV dans cette conversation');
+    });
+
+    test('keeps a CSV visible after the user message is sent and pending uploads are cleared', () => {
+        const conv = makeConv('c1', 'Sent upload', { messages: [] });
+        global.conversationManager = makeConversationManager([conv], 'c1', []);
+        window.getPendingUploads = jest.fn(() => []);
+        window.getFrontendMessages = jest.fn(() => ([
+            {
+                id: 'msg-1',
+                role: 'user',
+                attachments: [
+                    {
+                        id: 'upload-1',
+                        name: 'sent.csv',
+                        path: '/static/u1/c1/uploads/sent.csv',
+                    },
+                ],
+            },
+        ]));
+        loadConversationUI();
+
+        window.conversationUI.refreshConversationCsvSidebar();
+
+        const sidebar = document.getElementById('conversationCsvSidebar');
+        expect(sidebar.querySelectorAll('.conversation-csv-item')).toHaveLength(1);
+        expect(sidebar.textContent).toContain('sent.csv');
+        expect(sidebar.textContent).toContain('chargé');
+        expect(sidebar.textContent).not.toContain('Aucun CSV dans cette conversation');
+    });
+});
+
+describe('Conversation CSV preview viewer', () => {
+    test('clicking a CSV entry renders a table preview in the sidebar viewer', async () => {
+        const conv = makeConv('c1', 'CSV preview', {
+            messages: [
+                {
+                    id: 'm1',
+                    role: 'user',
+                    message_type: 'file',
+                    message_format: 'path',
+                    content: '/static/u1/c1/uploads/import.csv',
+                    filename: 'import.csv',
+                },
+            ],
+        });
+        global.conversationManager = makeConversationManager([conv], 'c1', conv.messages);
+        global.fetch = jest.fn(() => Promise.resolve({
+            ok: true,
+            text: () => Promise.resolve('station,depth\nA,10\nB,20'),
+        }));
+        loadConversationUI();
+
+        window.conversationUI.refreshConversationCsvSidebar();
+        document.querySelector('.conversation-csv-item').click();
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const viewer = document.getElementById('conversationCsvViewer');
+        expect(global.fetch).toHaveBeenCalled();
+        expect(viewer.querySelector('table')).not.toBeNull();
+        expect(viewer.textContent).toContain('station');
+        expect(viewer.textContent).toContain('A');
+        expect(viewer.textContent).toContain('10');
+    });
+});
+
+describe('Conversation CSV selection restoration', () => {
+    test('reopens the last viewed CSV after the sidebar is refreshed again', async () => {
+        const conv = makeConv('c1', 'CSV restore', {
+            messages: [
+                {
+                    id: 'm1',
+                    role: 'user',
+                    message_type: 'file',
+                    message_format: 'path',
+                    content: '/static/u1/c1/uploads/import.csv',
+                    filename: 'import.csv',
+                },
+            ],
+        });
+        global.conversationManager = makeConversationManager([conv], 'c1', conv.messages);
+        global.fetch = jest.fn(() => Promise.resolve({
+            ok: true,
+            text: () => Promise.resolve('station,depth\nA,10\nB,20'),
+        }));
+        loadConversationUI();
+
+        window.conversationUI.refreshConversationCsvSidebar();
+        document.querySelector('.conversation-csv-item').click();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(document.getElementById('conversationCsvViewer').textContent).toContain('station');
+
+        // Simulate returning to the same conversation after the UI module reloads.
+        loadConversationUI();
+        window.conversationUI.refreshConversationCsvSidebar();
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const viewer = document.getElementById('conversationCsvViewer');
+        expect(viewer.querySelector('table')).not.toBeNull();
+        expect(viewer.textContent).toContain('A');
+        expect(localStorage.getItem('idea-conversation-csv-last-viewed:c1')).toContain('import.csv');
     });
 });
 

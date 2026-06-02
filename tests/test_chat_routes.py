@@ -208,7 +208,7 @@ from routers.chat_routes import (
     _pretty_json,
     _render_repo_table,
     _summarize_mcp_result,
-    _build_copepod_data_planner_note,
+    _build_copepod_inspect_then_code_note,
     _build_copepod_session_resources_note,
     _session_resource_message_from_stream_event,
     _build_copepod_error_recovery_note,
@@ -216,6 +216,7 @@ from routers.chat_routes import (
     _strip_system_messages,
     _extract_copepod_key_hints,
     _should_retry_copepod_error,
+    _update_copepod_working_set,
     _coerce_multimodal_message_content,
     _expand_multimodal_message_for_interpreter,
     router,
@@ -448,18 +449,18 @@ class TestRenderRepoTable:
 
 
 # ---------------------------------------------------------------------------
-# Helper: _build_copepod_data_planner_note
+# Helper: _build_copepod_inspect_then_code_note
 # ---------------------------------------------------------------------------
 
-class TestCopepodDataPlannerNote:
+class TestCopepodInspectThenCodeNote:
     def test_returns_none_without_inspection_artifacts(self):
-        note = _build_copepod_data_planner_note(
+        note = _build_copepod_inspect_then_code_note(
             messages=[{"role": "user", "content": "fais une jointure"}],
             user_message="fais une jointure",
         )
         assert note is None
 
-    def test_returns_planner_note_with_join_hints(self):
+    def test_returns_inspect_then_code_note_with_join_hints(self):
         messages = [
             {
                 "role": "assistant",
@@ -471,18 +472,18 @@ class TestCopepodDataPlannerNote:
                 ),
             }
         ]
-        note = _build_copepod_data_planner_note(
+        note = _build_copepod_inspect_then_code_note(
             messages=messages,
             user_message="fais une jointure entre les fichiers",
         )
         assert note is not None
-        assert "Copepod data planner" in note
+        assert "Copepod inspect-then-code guide" in note
         assert "station | time | depth" in note
-        assert "PLAN required before executor code" in note
+        assert "INSPECT required before code" in note
         assert "exact column names selected from inspection reports" in note
         assert "If the key is clear, write the code block immediately" in note
 
-    def test_planner_note_controls_grill_questions_and_user_stop(self):
+    def test_inspect_then_code_note_controls_grill_questions_and_user_stop(self):
         messages = [
             {
                 "role": "assistant",
@@ -494,7 +495,7 @@ class TestCopepodDataPlannerNote:
                 ),
             }
         ]
-        note = _build_copepod_data_planner_note(
+        note = _build_copepod_inspect_then_code_note(
             messages=messages,
             user_message="fais un graphe",
         )
@@ -543,12 +544,12 @@ class TestCopepodDataPlannerNote:
             {"role": "system", "type": "message", "content": "late note"},
             {"role": "assistant", "type": "message", "content": "reply"},
         ]
-        merged = _inject_copepod_system_note(messages, "planner note")
+        merged = _inject_copepod_system_note(messages, "inspect-then-code note")
         system_positions = [i for i, msg in enumerate(merged) if msg.get("role") == "system"]
         assert system_positions == [0]
         assert "base prompt" in merged[0]["content"]
         assert "late note" in merged[0]["content"]
-        assert "planner note" in merged[0]["content"]
+        assert "inspect-then-code note" in merged[0]["content"]
 
     def test_restored_messages_drop_system_entries_before_llm_call(self):
         messages = [
@@ -626,13 +627,15 @@ class TestCopepodSessionResourcesNote:
         )
 
         assert note is not None
-        assert "## Current Session Resources" in note
-        assert "You may use these session resources freely" in note
+        assert "## Copepod Working Set" in note
+        assert "This is the canonical session state" in note
+        assert "current_user_goal:" in note
+        assert "seen_files:" in note
+        assert "active_files:" in note
+        assert "latest_inspection_by_file:" in note
         assert "Do not ask the user to re-upload" in note
-        assert "Loaded files:" in note
         assert "sample.csv" in note
         assert "path: /app/static/u1/s1/uploads/sample.csv" in note
-        assert "Inspection reports:" in note
         assert "likely_neolabs_taxon" in note
         assert "sample_id" in note
         assert "Deliverables:" in note
@@ -640,7 +643,63 @@ class TestCopepodSessionResourcesNote:
         assert "Graph/image artifacts:" in note
         assert "File artifacts:" in note
         assert "preserve the source artifact" in note
-        assert "RAPPORT D'INSPECTION" not in note.split("Inspection reports:", 1)[1]
+        assert "Inspection reports:" not in note
+        assert "RAPPORT D'INSPECTION" not in note
+
+    def test_separates_new_uploads_from_already_present_files(self):
+        note = _build_copepod_session_resources_note(
+            [
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": (
+                        "Files uploaded in this message:\n"
+                        "Session ID: s1\n"
+                        "Base path: ./static/{user_id}/s1/uploads\n"
+                        "- sample.csv (text/csv) | relative path: sample.csv\n"
+                        "Use these paths when referencing the uploaded files."
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n\n"
+                        "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                        "- **format** : `csv`  •  **n_rows** : `12`  •  **n_columns** : `3`\n"
+                        "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": (
+                        "Files uploaded in this message:\n"
+                        "Session ID: s1\n"
+                        "Base path: ./static/{user_id}/s1/uploads\n"
+                        "- SAMPLE.csv (text/csv) | relative path: SAMPLE.csv\n"
+                        "- fresh.csv (text/csv) | relative path: fresh.csv\n"
+                        "Use these paths when referencing the uploaded files."
+                    ),
+                },
+            ],
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert note is not None
+        assert "Files uploaded in this message (inspect these new filenames only):" in note
+        assert "Files already present in this session (skip inspection):" in note
+
+        new_section = note.split(
+            "Files uploaded in this message (inspect these new filenames only):",
+            1,
+        )[1].split("Files already present in this session (skip inspection):", 1)[0]
+        skip_section = note.split("Files already present in this session (skip inspection):", 1)[1]
+
+        assert "fresh.csv" in new_section
+        assert "SAMPLE.csv" not in new_section
+        assert "SAMPLE.csv" in skip_section
 
     def test_includes_existing_graph_image_as_source_for_correction(self):
         note = _build_copepod_session_resources_note(
@@ -666,7 +725,7 @@ class TestCopepodSessionResourcesNote:
         assert "/app/static/u1/s1/graph-source.png" in note
         assert "preserve the source artifact" in note
 
-    def test_limits_artifacts_and_mentions_older_history(self):
+    def test_limits_artifacts_without_mentioning_conversation_history(self):
         messages = []
         for i in range(20):
             messages.append({
@@ -680,7 +739,7 @@ class TestCopepodSessionResourcesNote:
         assert note is not None
         assert "Graph 19" in note
         assert "Graph 0" not in note
-        assert "Additional older artifacts exist in conversation history." in note
+        assert "conversation history" not in note
 
     def test_stream_deliverable_event_is_persistable_resource(self):
         event = {
@@ -702,6 +761,59 @@ class TestCopepodSessionResourcesNote:
         }
 
         assert _session_resource_message_from_stream_event(event) is None
+
+
+class TestCopepodWorkingSetReducer:
+    def test_tracks_seen_files_and_current_goal(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["donne_sample.csv"],
+                "active_files": ["donne_sample.csv"],
+                "latest_inspection_by_file": {
+                    "donne_sample.csv": "donne_sample.csv | path: /app/static/u1/s1/uploads/donne_sample.csv"
+                },
+                "current_user_goal": "inspect new file",
+            },
+        )
+
+        messages = [
+            {
+                "role": "user",
+                "type": "message",
+                "content": (
+                    "Please inspect the new upload.\n\n"
+                    "Files uploaded in this message:\n"
+                    "- donne_sample.csv (text/csv) | relative path: donne_sample.csv\n"
+                    "- sample_ca-cioos_ccin-12713_Jeu_de_donn_es_ERDDAP.csv (text/csv) | relative path: sample_ca-cioos_ccin-12713_Jeu_de_donn_es_ERDDAP.csv\n"
+                ),
+            }
+        ]
+
+        updated = _update_copepod_working_set(
+            session_key=session_key,
+            messages=messages,
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert updated["current_user_goal"] == "Please inspect the new upload."
+        assert updated["seen_files"] == [
+            "donne_sample.csv",
+            "sample_ca-cioos_ccin-12713_Jeu_de_donn_es_ERDDAP.csv",
+        ]
+        assert updated["active_files"] == [
+            "sample_ca-cioos_ccin-12713_Jeu_de_donn_es_ERDDAP.csv",
+        ]
+        assert set(updated) == {
+            "seen_files",
+            "active_files",
+            "latest_inspection_by_file",
+            "current_user_goal",
+        }
+        assert store.read_working_set(session_key) == updated
 
 
 # ---------------------------------------------------------------------------
@@ -888,7 +1000,9 @@ class TestLoadConversationEndpoint:
             headers={"x-session-id": "s-shape"},
         )
         stored = store.read_messages("u1:s-shape:generic")
-        assert stored[0] == {"role": "user", "type": "message", "content": "question"}
+        assert stored[0]["role"] == "user"
+        assert stored[0]["type"] == "message"
+        assert stored[0]["content"] == "question"
 
     def test_empty_messages_list_returns_zero_count(self, client):
         tc, _ = client
@@ -1073,6 +1187,7 @@ class TestChatGuardPaths:
     def test_chat_hydrates_image_attachments_before_llm_call(self, tmp_path):
         store = InMemorySessionStore()
         app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+        fake_interpreter.system_message = "base prompt"
 
         static_dir = tmp_path / "static"
         image_path = static_dir / "u1" / "s1" / "uploads" / "figure.png"
@@ -1087,6 +1202,7 @@ class TestChatGuardPaths:
 
         def fake_chat(message, stream=True):
             captured["message"] = message
+            captured["system_message"] = fake_interpreter.system_message
             fake_interpreter.messages = list(message)
             return iter([
                 {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
@@ -1148,6 +1264,7 @@ class TestChatGuardPaths:
     def test_chat_preserves_non_image_upload_block_for_llm_call(self, tmp_path):
         store = InMemorySessionStore()
         app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+        fake_interpreter.system_message = "base prompt"
 
         static_dir = tmp_path / "static"
         csv_path = static_dir / "u1" / "s1" / "uploads" / "sample.csv"
@@ -1158,6 +1275,7 @@ class TestChatGuardPaths:
 
         def fake_chat(message, stream=True):
             captured["message"] = message
+            captured["system_message"] = fake_interpreter.system_message
             fake_interpreter.messages = list(message)
             return iter([
                 {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
@@ -1207,11 +1325,10 @@ class TestChatGuardPaths:
         assert resp.status_code == 200
         assert isinstance(captured["message"], list)
         assert isinstance(captured["message"][-1]["content"], str)
-        assert "Files uploaded in this message:" in captured["message"][-1]["content"]
-        assert "sample.csv" in captured["message"][-1]["content"]
+        assert captured["message"][-1]["content"] == "Analyse ce fichier."
         assert store.read_messages("u1:s1:generic")[-1]["content"].startswith("Analyse ce fichier.")
 
-    def test_chat_injects_data_planner_note_before_join_code(self):
+    def test_chat_injects_inspect_then_code_note_before_join_code(self):
         store = InMemorySessionStore()
         app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
 
@@ -1273,7 +1390,7 @@ class TestChatGuardPaths:
         assert resp.status_code == 200
         assert isinstance(captured["message"], list)
         assert all(msg.get("role") != "system" for msg in captured["message"])
-        assert "Copepod data planner" in captured["system_message"]
+        assert "Copepod inspect-then-code guide" in captured["system_message"]
         assert "station | time | depth" in captured["system_message"]
         assert "If the key is clear, write the code block immediately" in captured["system_message"]
 
@@ -1339,14 +1456,13 @@ class TestChatGuardPaths:
                 "/chat",
                 json={"messages": [{"role": "user", "content": "fais un graphe"}]},
                 headers={"x-session-id": "s1", "x-agent-type": "copepod"},
-            )
+        )
 
         assert resp.status_code == 200
         assert all(msg.get("role") != "system" for msg in captured["message"])
         assert "base prompt" in captured["system_message"]
-        assert "## Current Session Resources" in captured["system_message"]
-        assert "Loaded files:" in captured["system_message"]
-        assert "sample.csv" in captured["system_message"]
+        assert "## Copepod Working Set" in captured["system_message"]
+        assert "current_user_goal:" in captured["system_message"]
         assert "Deliverables:" in captured["system_message"]
         assert "Carte produite" in captured["system_message"]
         assert "Do not ask the user to re-upload" in captured["system_message"]
@@ -1402,13 +1518,13 @@ class TestChatGuardPaths:
                 "/chat",
                 json={"messages": [current_message]},
                 headers={"x-session-id": "s1", "x-agent-type": "copepod"},
-            )
+        )
 
         assert resp.status_code == 200
-        assert "## Current Session Resources" in captured["system_message"]
+        assert "## Copepod Working Set" in captured["system_message"]
+        assert "current_user_goal:" in captured["system_message"]
         assert "current.csv" in captured["system_message"]
         assert "path: /app/static/u1/s1/uploads/current.csv" in captured["system_message"]
-        assert "Loaded files:" in captured["system_message"]
 
     def test_chat_persists_stream_deliverable_for_next_turn_resources(self):
         store = InMemorySessionStore()
@@ -1556,7 +1672,7 @@ class TestChatGuardPaths:
         assert len(captured_calls) == 2
         assert all(msg.get("role") != "system" for msg in captured_calls[0])
         assert all(msg.get("role") != "system" for msg in captured_calls[1])
-        assert "planner" in captured_system_messages[0].lower()
+        assert "inspect-then-code" in captured_system_messages[0].lower()
         assert "recovery mode" in captured_system_messages[1].lower()
         assert "KeyError" in captured_system_messages[1]
         assert "retry ok" in resp.text
@@ -1635,7 +1751,7 @@ class TestChatGuardPaths:
         assert all(msg.get("role") != "system" for msg in captured_calls[0])
         assert all(msg.get("role") != "system" for msg in captured_calls[1])
         assert all(msg.get("role") != "system" for msg in captured_calls[2])
-        assert "planner" in captured_system_messages[0].lower()
+        assert "inspect-then-code" in captured_system_messages[0].lower()
         assert "recovery mode" in captured_system_messages[1].lower()
         assert "KeyError" in captured_system_messages[1]
         assert "recovery mode" in captured_system_messages[2].lower()
