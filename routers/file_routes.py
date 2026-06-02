@@ -146,6 +146,7 @@ async def upload_file(
                 "path": str(
                     final_path.relative_to(STATIC_DIR / str(user.id) / session_id / UPLOAD_DIR)
                 ),
+                "url": f"/static/{user.id}/{session_id}/uploads/{file.filename}",
                 "scan_result": scan_result,
             }
 

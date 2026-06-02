@@ -282,6 +282,10 @@ class MessageBase(SQLModel):
     message_type: MessageType = Field(default=MessageType.MESSAGE)
     message_format: MessageFormat | None = Field(default=None)
     recipient: MessageRecipient | None = Field(default=None)
+    attachments: list[dict[str, Any]] = Field(
+        default_factory=list,
+        sa_column=sa.Column(sa.JSON, nullable=True),
+    )
 
 
 class MessageCreate(MessageBase):
@@ -293,6 +297,7 @@ class MessageUpdate(SQLModel):
     message_type: MessageType | None = None
     message_format: MessageFormat | None = None
     recipient: MessageRecipient | None = None
+    attachments: list[dict[str, Any]] | None = None
 
 
 class Message(MessageBase, table=True):

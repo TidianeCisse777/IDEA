@@ -30,6 +30,8 @@ function queuePendingUpload(file, uploadResponse = {}) {
         name: file.name,
         storedName,
         path: storagePath,
+        url: uploadResponse.url || null,
+        sessionId,
         size: file.size,
         mimeType: file.type,
         messageType: isImage ? 'image' : 'file',
@@ -38,6 +40,7 @@ function queuePendingUpload(file, uploadResponse = {}) {
 
     pendingUploads.push(attachment);
     renderPendingUploads();
+    window.conversationUI?.refreshConversationCsvSidebar?.();
 }
 
 function renderPendingUploads() {
@@ -93,6 +96,7 @@ async function removePendingAttachment(attachmentId) {
 
         pendingUploads = pendingUploads.filter(att => att.id !== attachmentId);
         renderPendingUploads();
+        window.conversationUI?.refreshConversationCsvSidebar?.();
     } catch (error) {
         appendSystemMessage(`Error deleting file: ${error.message}`);
     }
@@ -188,4 +192,5 @@ function initializeFileUpload() {
     });
 
     updateFilesList();
+    window.conversationUI?.refreshConversationCsvSidebar?.();
 }

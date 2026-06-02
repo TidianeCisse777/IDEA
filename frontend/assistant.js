@@ -27,6 +27,14 @@ let userProfilePromise = null;
 let welcomeRenderPromise = null;
 let welcomeRendered = false;
 
+window.getPendingUploads = function getPendingUploads() {
+    return pendingUploads.slice();
+};
+
+window.getFrontendMessages = function getFrontendMessages() {
+    return messages.slice();
+};
+
 // Session mode for copepod agent (plan | analyse)
 let sessionMode = 'plan';
 const AGENT_TYPE = 'copepod';
@@ -392,6 +400,8 @@ async function sendRequest(msgOverride=null) {
     const attachmentSummaries = attachmentsToSend.map(att => ({
         name: att.name,
         path: att.path,
+        url: att.url || null,
+        session_id: att.sessionId || sessionId,
         size: att.size,
         mimeType: att.mimeType
     }));
@@ -437,8 +447,10 @@ async function sendRequest(msgOverride=null) {
         appendMessage(userMessage);
         scrollToBottom();
         messageInput.value = '';
+        window.conversationUI?.refreshConversationCsvSidebar?.();
         pendingUploads = [];
         renderPendingUploads();
+        window.conversationUI?.refreshConversationCsvSidebar?.();
 
         showWorkingIndicator();
         startGenerationMetrics(activeGenerationModel);
@@ -1029,6 +1041,9 @@ window.addEventListener('DOMContentLoaded', async () => {
                 try {
                     await window.loadConversationIntoInterpreter(msgs);
                 } catch (_) { /* non-blocking — interpreter context is best-effort */ }
+                if (window.conversationUI?.refreshConversationCsvSidebar) {
+                    window.conversationUI.refreshConversationCsvSidebar();
+                }
             } else {
                 showPromptIdeas();
             }

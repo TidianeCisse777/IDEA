@@ -245,6 +245,7 @@ def _build_copepod_session_resources_note(
 ) -> str | None:
     """Build a compact runtime-only resource index for Copepod turns."""
     loaded_files: list[str] = []
+    current_message_files: list[str] = []  # files from the last user upload block
     reports: list[str] = []
     deliverables: list[str] = []
     image_artifacts: list[str] = []
@@ -253,7 +254,15 @@ def _build_copepod_session_resources_note(
     resolved_session_id = session_id or ""
     resolved_user_id = user_id or ""
 
-    for msg in messages:
+    # Find index of last message that contains an upload block so we can mark
+    # those files as "current message" vs historical.
+    last_upload_msg_idx = -1
+    for i, msg in enumerate(messages):
+        c = _safe_message_get(msg, "content", "")
+        if isinstance(c, str) and _UPLOAD_BLOCK_MARKER in c:
+            last_upload_msg_idx = i
+
+    for msg_idx, msg in enumerate(messages):
         content = _safe_message_get(msg, "content", "")
         msg_type = _safe_message_get(msg, "type") or _safe_message_get(msg, "message_type")
         fmt = _safe_message_get(msg, "format") or _safe_message_get(msg, "message_format")
@@ -270,6 +279,7 @@ def _build_copepod_session_resources_note(
 
         if isinstance(content, str) and _UPLOAD_BLOCK_MARKER in content:
             _, attachment_lines = _split_upload_block_content(content)
+            is_current = (msg_idx == last_upload_msg_idx)
             for line in attachment_lines:
                 match = _UPLOAD_LINE_RE.match(line.strip())
                 if not match:
@@ -284,7 +294,10 @@ def _build_copepod_session_resources_note(
                     entry += f" | relative path: {rel_path}"
                     if resolved_user_id and resolved_session_id:
                         entry += f" | path: /app/static/{resolved_user_id}/{resolved_session_id}/uploads/{rel_path}"
-                loaded_files.append(entry)
+                if is_current:
+                    current_message_files.append(entry)
+                else:
+                    loaded_files.append(entry)
 
         if isinstance(content, str) and "# RAPPORT D'INSPECTION" in content:
             for part in content.split("# RAPPORT D'INSPECTION"):
@@ -317,6 +330,7 @@ def _build_copepod_session_resources_note(
             artifact_count += 1
 
     loaded_files = _dedupe_keep_order(loaded_files)
+    current_message_files = _dedupe_keep_order(current_message_files)
     reports = _dedupe_keep_order(reports)
 
     artifact_entries: list[tuple[str, str]] = []
@@ -333,7 +347,7 @@ def _build_copepod_session_resources_note(
     truncated = len(artifact_entries) > _RESOURCE_ARTIFACT_LIMIT
     artifact_entries = artifact_entries[-_RESOURCE_ARTIFACT_LIMIT:]
 
-    if not loaded_files and not reports and not artifact_entries:
+    if not loaded_files and not current_message_files and not reports and not artifact_entries:
         return None
 
     sections: dict[str, list[str]] = {
@@ -353,8 +367,11 @@ def _build_copepod_session_resources_note(
         "Use paths/URLs from this context directly when reading files, rebuilding graphs, zooming images, making tables, or continuing prior work.",
         "When correcting a graph from an existing image or artifact, preserve the source artifact and emit the revised artifact separately.",
     ]
+    if current_message_files:
+        lines.extend(["", "Files uploaded in this message (analyze these — run data.inspect on each before anything else):"])
+        lines.extend(f"- {item}" for item in current_message_files)
     if loaded_files:
-        lines.extend(["", "Loaded files:"])
+        lines.extend(["", "Previously loaded files:"])
         lines.extend(f"- {item}" for item in loaded_files)
     if reports:
         lines.extend(["", "Inspection reports:"])
@@ -1049,8 +1066,56 @@ def _expand_multimodal_message_for_interpreter(
 
     role = message.get("role") or "user"
     content = message.get("content")
+    attachments = message.get("attachments")
 
     expanded: list[dict[str, Any]] = []
+
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            raw_path = str(
+                attachment.get("path")
+                or attachment.get("file_url")
+                or attachment.get("file")
+                or attachment.get("content")
+                or ""
+            ).strip()
+            if not raw_path:
+                continue
+            attachment_name = str(
+                attachment.get("name")
+                or attachment.get("filename")
+                or Path(raw_path).name
+                or "file"
+            ).strip()
+            attachment_session_id = str(
+                attachment.get("session_id")
+                or attachment.get("sessionId")
+                or session_id
+                or ""
+            ).strip()
+            attachment_mime = str(
+                attachment.get("mime_type")
+                or attachment.get("mimeType")
+                or attachment.get("mime")
+                or ""
+            ).strip().lower()
+            suffix = Path(raw_path.split("?", 1)[0]).suffix.lower()
+            resolved_path = raw_path
+            if raw_path and not raw_path.startswith(("/", "http://", "https://")):
+                if attachment_session_id:
+                    resolved_path = str(
+                        static_dir / str(user_id) / attachment_session_id / UPLOAD_DIR / raw_path
+                    )
+            is_image = attachment_mime.startswith("image/") or suffix in _IMAGE_SUFFIX_MIME
+            expanded.append({
+                "role": role,
+                "type": "image" if is_image else "file",
+                "format": "path",
+                "content": resolved_path,
+                "filename": attachment_name,
+            })
 
     if isinstance(content, list):
         for item in content:
@@ -1107,6 +1172,14 @@ def _expand_multimodal_message_for_interpreter(
     if _UPLOAD_BLOCK_MARKER not in content:
         fallback = dict(message)
         fallback.setdefault("type", "message")
+        if expanded:
+            if isinstance(content, str) and content.strip():
+                expanded.insert(0, {
+                    "role": role,
+                    "type": "message",
+                    "content": content.strip(),
+                })
+            return expanded
         return [fallback]
 
     prompt_text, attachment_lines = _split_upload_block_content(content)
@@ -1163,6 +1236,8 @@ def _expand_multimodal_message_for_interpreter(
         return expanded
     fallback = dict(message)
     fallback.setdefault("type", "message")
+    if expanded:
+        return expanded
     return [fallback]
 
 
@@ -1823,6 +1898,7 @@ async def load_conversation_endpoint(
                             "role": msg.get("role"),
                             "type": msg.get("type", "message"),
                             "content": msg.get("content", ""),
+                            "attachments": msg.get("attachments", []),
                         },
                         user_id=str(user.id),
                         session_id=session_id,
