@@ -27,6 +27,14 @@ _MARKDOWN_JSON_TOOLCALL_OPEN_RE = re.compile(
     r"```json\b[^\n]*\n\s*\{\s*\"language\"\s*:",
 )
 
+# Detect DELIVERABLE lines the LLM wrote in assistant text instead of via
+# print(). These text lines are stripped; only console prints emit cards.
+# Two forms:
+#   1. DELIVERABLE: {...json...}   ← correct format but in text not console
+#   2. **DELIVERABLE:**...         ← broken markdown form, strip it
+_DELIVERABLE_TEXT_JSON_RE = re.compile(r"^DELIVERABLE:\s*(\{.*\})\s*$", re.MULTILINE)
+_DELIVERABLE_TEXT_MD_RE = re.compile(r"^\*\*DELIVERABLE:\*\*.*$", re.MULTILINE)
+
 
 def _path_to_static_url(path: str) -> str:
     """Convert /app/static/... or ./static/... to /static/... for browser download."""
@@ -129,6 +137,19 @@ def _text_after_json_code_block(content: str) -> str:
     return ""
 
 
+def _strip_deliverables_from_text(text: str) -> str:
+    """Remove DELIVERABLE lines from assistant text.
+
+    Structured deliverable cards are emitted only from Python console prints.
+    If the LLM also writes DELIVERABLE in assistant text, strip it so it cannot
+    duplicate the console card or render as raw JSON.
+    """
+    cleaned = _DELIVERABLE_TEXT_JSON_RE.sub("", text)
+    cleaned = _DELIVERABLE_TEXT_MD_RE.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
+
 def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
     """Transform interpreter chunks into UI stream events.
 
@@ -174,6 +195,12 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
         if backend_closing_emitted:
             return
         cleaned = _clean_assistant_text(original)
+        if not cleaned:
+            return
+        # DELIVERABLE cards are authoritative only when printed from Python.
+        # Strip any assistant-text DELIVERABLE lines to avoid duplicate cards
+        # and raw JSON bubbles.
+        cleaned = _strip_deliverables_from_text(cleaned)
         if not cleaned:
             return
         if _is_fixed_upload_question(cleaned) and (
@@ -245,12 +272,12 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
             # Strip DELIVERABLE: and Saved CSV: lines before emitting to console
             # — they are rendered as structured cards, not raw text.
             console_lines = [
-                l for l in buf.splitlines()
+                l for l in buf.splitlines(keepends=True)
                 if not l.strip().startswith("DELIVERABLE:")
                 and not l.strip().startswith("Saved CSV:")
             ]
-            console_buf = "\n".join(console_lines).strip()
-            if console_buf:
+            console_buf = "".join(console_lines)
+            if console_buf.strip():
                 yield {"start": True, "end": True, "role": "computer",
                        "type": "console", "format": console_fmt or "output",
                        "content": console_buf}

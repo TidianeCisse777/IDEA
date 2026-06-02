@@ -601,7 +601,7 @@ function saveCompletedAssistantMessage(message) {
     if (message.format === 'tool_status') {
         return;
     }
-    const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+    const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation', 'deliverable'];
     const messageType = validTypes.includes(message.type) ? message.type : 'message';
 
     const frontendId = message.id;

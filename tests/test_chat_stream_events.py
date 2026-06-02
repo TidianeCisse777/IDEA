@@ -13,6 +13,8 @@ the type:code event remains authoritative.
 
 from __future__ import annotations
 
+import json
+
 from core.chat_stream_events import chat_stream_events
 
 
@@ -199,6 +201,32 @@ def _stream_oi_console_with_unformatted_flags(content: str) -> list[dict]:
                        "content": content[i:i + step]})
     chunks.append({"role": "computer", "type": "console", "end": True})
     return chunks
+
+
+def test_text_deliverable_is_not_duplicated_when_console_prints_card():
+    """If the LLM also writes DELIVERABLE in assistant text, the printed
+    console DELIVERABLE remains the single authoritative card."""
+    payload = {
+        "type": "export",
+        "title": "Export CSV",
+        "fields": [{"label": "Lignes", "value": "42"}],
+    }
+    line = "DELIVERABLE: " + json.dumps(payload)
+    chunks = [
+        *_stream_message(line),
+        *_stream_console(line + "\n"),
+    ]
+
+    events = list(chat_stream_events(chunks))
+
+    cards = [
+        json.loads(e["content"]) for e in events
+        if e.get("role") == "computer" and e.get("type") == "deliverable"
+    ]
+    assistant_text = _concat_message_content(events)
+
+    assert cards == [payload]
+    assert "DELIVERABLE:" not in assistant_text
 
 
 # ─── Inspection report re-routing: rapport must be assistant-message, not console ─

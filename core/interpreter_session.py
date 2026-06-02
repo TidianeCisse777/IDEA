@@ -82,6 +82,12 @@ def _normalize_chat_messages(messages: Any) -> Any:
             continue
         normalized_message = dict(message)
         normalized_message["content"] = _normalize_chat_content(normalized_message.get("content", ""))
+        # Drop empty assistant messages — they pollute the context and cause the LLM
+        # to mimic the empty pattern, eventually outputting "..."
+        if normalized_message.get("role") == "assistant":
+            content = normalized_message.get("content", "")
+            if isinstance(content, str) and not content.strip():
+                continue
         normalized_messages.append(normalized_message)
     return normalized_messages
 
@@ -178,9 +184,17 @@ def get_or_create_interpreter(
                     messages.append({"role": "system", "content": system})
                 for item in items:
                     role = item.get("role", "user")
+                    # Drop OI's "execute() tool" reminder — we use code blocks, not
+                    # function tools, so this reminder confuses the LLM (0 tools in scope).
+                    raw_content = item.get("content", "")
+                    if "execute() tool" in str(raw_content) and "Reminder" in str(raw_content):
+                        continue
                     if role not in ("user", "assistant", "system"):
                         role = "user"
-                    content = _normalize_chat_content(item.get("content", ""))
+                    content = _normalize_chat_content(raw_content)
+                    # Skip empty assistant messages — they accumulate and cause "..." drift
+                    if role == "assistant" and not (str(content).strip() if isinstance(content, str) else content):
+                        continue
                     messages.append({"role": role, "content": content})
                 params["messages"] = messages
                 # gpt-5.4-mini doesn't support tool calling via OpenRouter chat completions

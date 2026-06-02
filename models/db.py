@@ -184,6 +184,7 @@ class MessageType(str, Enum):
     CONSOLE = "console"
     FILE = "file"
     CONFIRMATION = "confirmation"
+    DELIVERABLE = "deliverable"
 
 
 class MessageFormat(str, Enum):

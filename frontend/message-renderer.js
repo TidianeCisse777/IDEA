@@ -511,7 +511,7 @@ function appendMessage(message, options = {}) {
     handleStdoutTrackingOnMessageStart(message);
 
     if (persist && conversationManager && message.role === 'user' && message.content) {
-        const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+        const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation', 'deliverable'];
         const messageType = validTypes.includes(message.type) ? message.type : 'message';
         const frontendId = message.id;
 
@@ -552,7 +552,7 @@ function appendExternalMessage({ role = 'assistant', content = '', type = 'messa
     }
 
     if (conversationManager) {
-        const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation'];
+        const validTypes = ['message', 'code', 'image', 'console', 'file', 'confirmation', 'deliverable'];
         const messageType = validTypes.includes(type) ? type : 'message';
         conversationManager
             .addMessage(role, content, messageType, format, recipient)
