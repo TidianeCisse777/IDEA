@@ -293,6 +293,94 @@ Ce ne sont pas des "tools" au sens LLM function-calling — le LLM les invoque e
 
 ---
 
+## Diagrammes
+
+### Flux d'un tour de chat (SSE)
+
+```mermaid
+sequenceDiagram
+  participant U as User (browser)
+  participant N as nginx
+  participant API as FastAPI / routers/chat_routes
+  participant PROF as agents/<profile>
+  participant TR as core/tool_registry
+  participant IR as core/instruction_renderer
+  participant OI as OpenInterpreter (sandbox)
+  participant SS as core/session_store (Redis/InMem)
+  participant LF as Langfuse
+
+  U->>N: POST /chat (X-Agent-Type, X-Session-Id, JWT)
+  N->>API: proxy
+  API->>API: get_current_user(token)
+  API->>PROF: get_profile(agent_type)
+  PROF->>TR: render(tool_tags) → tool_code
+  PROF->>IR: render(instruction_blocks, ctx) → system instructions
+  API->>OI: get_or_create_interpreter(session_key)
+  API->>OI: computer.run("python", tool_code) [si pas déjà fait]
+  API->>SS: load conversation history
+  API->>LF: ChatRuntimeTracer.from_env() [si activé]
+  API-->>U: SSE start
+  loop pour chaque chunk LLM/code/console
+    OI->>API: stream event
+    API->>LF: span (generation / code / console)
+    API-->>U: SSE event JSON
+  end
+  API->>SS: persist tour
+  API->>LF: close trace + scores
+  API-->>U: SSE end
+```
+
+### Lifecycle d'une connexion MCP
+
+```mermaid
+stateDiagram-v2
+  [*] --> Created: POST /mcp/connections
+  Created --> Active: PUT /mcp/connections/{id}/activate
+  Active --> Connected: mcp_manager.ensure_session(conn)
+  Connected --> ToolsListed: list_available_tools()
+  ToolsListed --> Connected
+  Connected --> Invoking: call_mcp_tool(name, args)
+  Invoking --> Connected
+  Active --> Inactive: PUT .../deactivate
+  Inactive --> Active
+  Active --> Deleted: DELETE
+  Deleted --> [*]
+
+  note right of Connected
+    Token déchiffré à la volée
+    (core/crypto.py · Fernet).
+    Sessions stdio/http maintenues
+    par core/mcp/manager.py.
+  end note
+```
+
+### Workflow Plan Mode copépode (artifacts)
+
+```mermaid
+flowchart TD
+  Up[Upload TSV EcoTaxa/EcoPart] -->|tool: inspect_and_report| DU0[Data Understanding draft]
+  DU0 -->|user confirme| DUA[Data Understanding active]
+  DUA -->|tool: décrit colonnes manquantes| GC0[Graph Context draft]
+  GC0 -->|user confirme| GCA[Graph Context active]
+  GCA -->|LLM émet [PLAN_READY]| PR{Bouton PLAN_READY}
+  PR -->|user clique| AN[Mode Analyse]
+  AN -->|nouvelle upload| DU1[Nouveau DU draft<br/>artifacts existants inchangés]
+
+  DUA -. lien version_id .-> GC0
+  GCA -. lien version_id .-> AN
+
+  classDef draft fill:#fef9c3,stroke:#a16207
+  classDef active fill:#bbf7d0,stroke:#15803d
+  classDef event fill:#dbeafe,stroke:#1d4ed8
+  class DU0,GC0,DU1 draft
+  class DUA,GCA,AN active
+  class PR event
+```
+
+Voir [`ADR 004`](docs/adr/004-plan-ready-tag-for-mode-switch.md) pour le tag `[PLAN_READY]`.
+
+---
+
 ## Clés de session
 
 Format : `"{user_id}:{session_id}:{agent_type}"` (3 segments).
