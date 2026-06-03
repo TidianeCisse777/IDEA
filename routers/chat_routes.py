@@ -222,17 +222,19 @@ def _extract_report_summary(content: str) -> str | None:
     if join_match:
         join_hints = join_match.group(1).strip()
 
-    parts: list[str] = []
     label = _basename(file_path) or "inspection report"
-    parts.append(label)
-    if file_path:
-        parts.append(f"path: {file_path}")
+    # Compact shape: "6105 × 33" instead of "6105 rows x 33 columns"
+    compact_shape = ""
+    if shape_match:
+        compact_shape = f"{shape_match.group(1)} × {shape_match.group(2)}"
+
+    parts: list[str] = [label]
     if source:
         parts.append(f"source: {source}")
-    if shape:
-        parts.append(f"shape: {shape}")
-    if columns:
-        parts.append(f"columns: {', '.join(columns)}")
+    if compact_shape:
+        parts.append(compact_shape)
+    if file_path:
+        parts.append(f"path: {file_path}")
     if join_hints:
         parts.append(f"join hints: {join_hints}")
 
