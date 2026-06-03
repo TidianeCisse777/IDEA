@@ -212,10 +212,12 @@ from routers.chat_routes import (
     _build_copepod_session_resources_note,
     _session_resource_message_from_stream_event,
     _build_copepod_error_recovery_note,
+    _build_copepod_report_read_retry_note,
     _inject_copepod_system_note,
     _strip_system_messages,
     _extract_copepod_key_hints,
     _should_retry_copepod_error,
+    _should_retry_copepod_report_read_without_code,
     _update_copepod_working_set,
     _coerce_multimodal_message_content,
     _expand_multimodal_message_for_interpreter,
@@ -544,6 +546,37 @@ class TestCopepodInspectThenCodeNote:
         assert note is not None
         assert "encoding='latin1'" in note
         assert "encoding='cp1252'" in note
+
+    def test_recovery_note_for_encoding_requires_corrected_python(self):
+        note = _build_copepod_error_recovery_note(
+            last_error_text="UnicodeDecodeError: 'utf-8' codec can't decode byte 0xb5 in position 383",
+            user_message="relance la jointure",
+        )
+        assert note is not None
+        assert "Do not answer with a status-only message" in note
+        assert "run corrected Python code" in note
+
+    def test_report_read_retry_gate_catches_prose_only_deferral(self):
+        assert _should_retry_copepod_report_read_without_code(
+            user_message="FAIS MOI UN RESUME DU RAPPORT",
+            assistant_text="Je dois relire le rapport out-of-context avant de répondre.",
+            current_attempt_had_code=False,
+            current_attempt_had_error=False,
+        )
+
+    def test_report_read_retry_gate_ignores_executed_attempts(self):
+        assert not _should_retry_copepod_report_read_without_code(
+            user_message="FAIS MOI UN RESUME DU RAPPORT",
+            assistant_text="Je dois relire le rapport out-of-context avant de répondre.",
+            current_attempt_had_code=True,
+            current_attempt_had_error=False,
+        )
+
+    def test_report_read_retry_note_requires_get_inspection_report(self):
+        note = _build_copepod_report_read_retry_note("la liste des colonnes clés.")
+        assert "get_inspection_report" in note
+        assert "Do not answer with another status-only message" in note
+        assert "la liste des colonnes clés" in note
 
     def test_system_note_is_merged_into_leading_system_prompt(self):
         messages = [
@@ -2043,6 +2076,79 @@ class TestChatGuardPaths:
         assert "recovery mode" in captured_system_messages[2].lower()
         assert "ValueError" in captured_system_messages[2]
         assert "third try ok" in resp.text
+
+    def test_chat_retries_when_encoding_recovery_returns_status_without_code(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        fake_interpreter.system_message = "base prompt"
+
+        captured_calls = []
+        captured_system_messages = []
+
+        def fake_chat(message, stream=True):
+            captured_calls.append(message)
+            captured_system_messages.append(fake_interpreter.system_message)
+            fake_interpreter.messages = list(message)
+            if len(captured_calls) == 1:
+                return iter([
+                    {"start": True, "end": True, "role": "assistant", "type": "message", "content": "attempting join"},
+                    {
+                        "start": True,
+                        "end": True,
+                        "role": "computer",
+                        "type": "console",
+                        "content": "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xb5 in position 383",
+                    },
+                ])
+            if len(captured_calls) == 2:
+                return iter([
+                    {
+                        "start": True,
+                        "end": True,
+                        "role": "assistant",
+                        "type": "message",
+                        "content": "Encodage CSV incompatible avec utf-8 ; la jointure n’est pas encore faite.",
+                    },
+                ])
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "code", "format": "python", "content": "pd.read_csv(path, encoding='cp1252')"},
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "retry code ok"},
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "fais la jointure"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+
+        assert resp.status_code == 200
+        assert len(captured_calls) == 3
+        assert "recovery mode" in captured_system_messages[1].lower()
+        assert "recovery mode" in captured_system_messages[2].lower()
+        assert "must run corrected Python code" in captured_system_messages[2]
+        assert "retry code ok" in resp.text
 
     def test_chat_strips_restored_system_messages_for_generic_agent(self):
         store = InMemorySessionStore()

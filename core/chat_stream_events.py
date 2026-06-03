@@ -36,6 +36,72 @@ _MARKDOWN_JSON_TOOLCALL_OPEN_RE = re.compile(
 #   2. **DELIVERABLE:**...         ← broken markdown form, strip it
 _DELIVERABLE_TEXT_JSON_RE = re.compile(r"^DELIVERABLE:\s*(\{.*\})\s*$", re.MULTILINE)
 _DELIVERABLE_TEXT_MD_RE = re.compile(r"^\*\*DELIVERABLE:\*\*.*$", re.MULTILINE)
+_INSPECTION_JSON_SYNTHESIS_RE = re.compile(
+    r"## Synthèse\s*```json\s*(\{[\s\S]*?\})\s*```",
+    re.MULTILINE,
+)
+
+
+def _format_percent(value: Any) -> str:
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if 0 <= rate <= 1:
+        rate *= 100
+    return f"{rate:.1f}%"
+
+
+def _compact_inspection_summary_from_report(report: str) -> str:
+    match = _INSPECTION_JSON_SYNTHESIS_RE.search(report)
+    if not match:
+        return ""
+    try:
+        data = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+
+    filename = data.get("file") or "unknown"
+    fmt = str(data.get("format") or "unknown").upper()
+    rows = data.get("n_rows", "?")
+    cols = data.get("n_columns", "?")
+    source = data.get("source_type") or "unknown"
+    confidence = data.get("source_confidence") or "unknown"
+
+    grounding = data.get("column_grounding") or {}
+    rag_defined = grounding.get("rag_defined", 0)
+    auto_resolved = grounding.get("auto_resolved", 0)
+    needs_clarification = grounding.get("needs_clarification", 0)
+
+    missing = data.get("missing") or {}
+    missing_count = missing.get("n_columns_with_missing", 0)
+    worst = missing.get("worst") or {}
+    worst_column = worst.get("column")
+    worst_rate = worst.get("rate")
+    if worst_column and worst_rate is not None:
+        missing_line = (
+            f"- Valeurs manquantes : {missing_count} colonnes; maximum "
+            f"`{worst_column}` à {_format_percent(worst_rate)}"
+        )
+    else:
+        missing_line = f"- Valeurs manquantes : {missing_count} colonnes"
+
+    return "\n".join(
+        [
+            "**Synthèse d'inspection**",
+            f"- Fichier : `{filename}`",
+            f"- Format : {fmt}, {rows} × {cols}",
+            f"- Source détectée : `{source}` (confiance : `{confidence}`)",
+            (
+                f"- Colonnes définies : {rag_defined} RAG, {auto_resolved} "
+                f"auto-résolues, {needs_clarification} à clarifier"
+            ),
+            missing_line,
+            f"- Warnings : {data.get('warnings', 0)}",
+        ]
+    )
 
 
 def _path_to_static_url(path: str) -> str:
@@ -182,6 +248,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
     pending_assistant_tail = ""
     backend_closing_emitted = False  # True after %%CLOSING%% — suppress subsequent LLM messages
     deliverable_emitted = False  # True after a structured card — suppress redundant prose
+    inspection_report_emitted = False  # True after a routed inspection report — report owns the turn
 
     def _is_fixed_upload_question(text: str) -> bool:
         return text.strip() == "Quel graphique souhaitez-vous ?"
@@ -195,7 +262,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
 
     def _emit_or_defer_assistant_text(original: str):
         nonlocal pending_assistant_tail
-        if backend_closing_emitted or deliverable_emitted:
+        if backend_closing_emitted or deliverable_emitted or inspection_report_emitted:
             return
         cleaned = _clean_assistant_text(original)
         if not cleaned:
@@ -233,6 +300,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
         """
         nonlocal console_buf_content, in_console_msg, console_fmt, backend_closing_emitted
         nonlocal deliverable_emitted
+        nonlocal inspection_report_emitted
         buf = console_buf_content
         if buf and "# RAPPORT D'INSPECTION" in buf:
             # Split on every RAPPORT header so each file gets its own bubble.
@@ -250,6 +318,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                     yield {"start": True, "end": True, "role": "assistant",
                            "type": "message",
                            "content": "# RAPPORT D'INSPECTION" + rapport_part}
+                    inspection_report_emitted = True
                     if "%%CLOSING%%" in rest:
                         summary_part, closing_part = rest.split("%%CLOSING%%", 1)
                         summary_text = summary_part.strip()
@@ -266,9 +335,15 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                         backend_owns_closing = True
                         backend_closing_emitted = True
                 else:
+                    report_text = "# RAPPORT D'INSPECTION" + part
                     yield {"start": True, "end": True, "role": "assistant",
                            "type": "message",
-                           "content": "# RAPPORT D'INSPECTION" + part}
+                           "content": report_text}
+                    inspection_report_emitted = True
+                    compact_summary = _compact_inspection_summary_from_report(report_text)
+                    if compact_summary:
+                        yield {"start": True, "end": True, "role": "assistant",
+                               "type": "message", "content": compact_summary}
             if backend_owns_closing:
                 pending_assistant_tail = ""
             else:

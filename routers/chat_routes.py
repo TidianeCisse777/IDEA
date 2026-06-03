@@ -883,6 +883,98 @@ def _should_retry_copepod_error(last_error_text: str, user_message: str) -> bool
     return bool(text)
 
 
+def _copepod_error_requires_corrected_code_retry(last_error_text: str) -> bool:
+    """Return True when recovery must execute corrected code, not prose only."""
+    lowered = (last_error_text or "").lower()
+    return (
+        "unicodedecodeerror" in lowered
+        or "utf-8 codec can't decode byte" in lowered
+    )
+
+
+def _should_retry_copepod_recovery_without_code(
+    *,
+    retry_note: str | None,
+    last_error_text: str,
+    current_attempt_had_code: bool,
+    current_attempt_had_error: bool,
+) -> bool:
+    """Retry recoverable code failures when the recovery attempt only produced prose."""
+    return (
+        bool(retry_note)
+        and _copepod_error_requires_corrected_code_retry(last_error_text)
+        and not current_attempt_had_code
+        and not current_attempt_had_error
+    )
+
+
+def _should_retry_copepod_report_read_without_code(
+    *,
+    user_message: str,
+    assistant_text: str,
+    current_attempt_had_code: bool,
+    current_attempt_had_error: bool,
+) -> bool:
+    """Retry when the model defers reading an inspection report but runs no tool."""
+    if current_attempt_had_code or current_attempt_had_error:
+        return False
+
+    user_lower = (user_message or "").lower()
+    wants_report_detail = any(
+        marker in user_lower
+        for marker in (
+            "rapport",
+            "résumé",
+            "resume",
+            "colonnes clés",
+            "colonnes cles",
+            "relis",
+            "relire",
+        )
+    )
+    if not wants_report_detail:
+        return False
+
+    assistant_lower = (assistant_text or "").lower()
+    return any(
+        marker in assistant_lower
+        for marker in (
+            "rapport out-of-context",
+            "rapport d’inspection",
+            "rapport d'inspection",
+            "relire le rapport",
+            "relires le rapport",
+            "get_inspection_report",
+            "sans lecture du rapport",
+        )
+    ) and any(
+        marker in assistant_lower
+        for marker in (
+            "je dois",
+            "je vais",
+            "besoin",
+            "sans lecture",
+            "précisez",
+            "precisez",
+            "déjà inspecté",
+            "deja inspecte",
+        )
+    )
+
+
+def _build_copepod_report_read_retry_note(user_message: str) -> str:
+    request = (user_message or "").strip()
+    lines = [
+        "You said you need to read an out-of-context inspection report, but the previous attempt did not run any code.",
+        "Do not answer with another status-only message.",
+        "Call `get_inspection_report(...)` for the relevant inspected filename, then answer the user's requested report summary or key-column list from the returned report.",
+        "If several inspected filenames are available, choose the one referenced by the user or the active file from the session resources.",
+    ]
+    if request:
+        lines.append(f"User request to answer now: {request}")
+    return "\n".join(lines)
+
+
 def _extract_copepod_error_text(result: Any) -> str | None:
     """Extract a compact error string from a streamed interpreter event."""
     if not isinstance(result, dict):
@@ -944,6 +1036,10 @@ def _build_copepod_error_recovery_note(
         lines.append(
             "The failure looks like a CSV encoding issue; retry the read with encoding='latin1' "
             "and, if needed, encoding='cp1252' before re-running the join."
+        )
+        lines.append(
+            "Do not answer with a status-only message. You must run corrected Python code "
+            "that reads the CSV with a compatible encoding and continues the requested step."
         )
 
     if user_message.strip():
@@ -2082,6 +2178,8 @@ async def chat_endpoint(
                 last_error_text = ""
                 current_attempt_had_error = False
                 current_attempt_last_error_text = ""
+                current_attempt_had_code = False
+                current_attempt_assistant_texts: list[str] = []
 
                 def _compose_copepod_system_message(*notes: str | None) -> str:
                     parts: list[str] = []
@@ -2096,7 +2194,8 @@ async def chat_endpoint(
 
                 def _yield_chat_stream(payload: list[dict[str, Any]]):
                     nonlocal total_chunks, _had_code, _had_image, _had_error, _last_usage, last_error_text
-                    nonlocal current_attempt_had_error, current_attempt_last_error_text
+                    nonlocal current_attempt_had_error, current_attempt_last_error_text, current_attempt_had_code
+                    nonlocal current_attempt_assistant_texts
                     stream_events = chat_stream_events(
                         interpreter.chat(payload, stream=True),
                     )
@@ -2109,10 +2208,17 @@ async def chat_endpoint(
                             _t = result.get("type")
                             if _t == "code":
                                 _had_code = True
+                                current_attempt_had_code = True
                             elif _t == "image":
                                 _had_image = True
                             elif result.get("error"):
                                 _had_error = True
+                            if (
+                                result.get("role") == "assistant"
+                                and result.get("type") == "message"
+                                and isinstance(result.get("content"), str)
+                            ):
+                                current_attempt_assistant_texts.append(result["content"])
                             _append_unique_session_resource_message(
                                 interpreter.messages,
                                 _session_resource_message_from_stream_event(result),
@@ -2128,12 +2234,15 @@ async def chat_endpoint(
 
                 try:
                     retry_note: str | None = None
+                    retry_error_text = ""
                     retry_attempts = 0
                     max_retry_attempts = 2
 
                     while True:
                         current_attempt_had_error = False
                         current_attempt_last_error_text = ""
+                        current_attempt_had_code = False
+                        current_attempt_assistant_texts = []
 
                         if agent_type == "copepod":
                             copepod_session_resources_note, _new_files = _build_copepod_session_resources_note(
@@ -2172,30 +2281,53 @@ async def chat_endpoint(
 
                         logger.info(
                             f"  retry-check: had_error={current_attempt_had_error} "
+                            f"had_code={current_attempt_had_code} "
                             f"error_text={repr((current_attempt_last_error_text or '')[:120])}"
+                        )
+                        recovery_without_code = _should_retry_copepod_recovery_without_code(
+                            retry_note=retry_note,
+                            last_error_text=retry_error_text,
+                            current_attempt_had_code=current_attempt_had_code,
+                            current_attempt_had_error=current_attempt_had_error,
+                        )
+                        report_read_without_code = _should_retry_copepod_report_read_without_code(
+                            user_message=last_user_message or "",
+                            assistant_text="\n".join(current_attempt_assistant_texts),
+                            current_attempt_had_code=current_attempt_had_code,
+                            current_attempt_had_error=current_attempt_had_error,
                         )
                         if not (
                             agent_type == "copepod"
-                            and current_attempt_had_error
-                            and _should_retry_copepod_error(current_attempt_last_error_text, last_user_message or "")
+                            and (
+                                (
+                                    current_attempt_had_error
+                                    and _should_retry_copepod_error(current_attempt_last_error_text, last_user_message or "")
+                                )
+                                or recovery_without_code
+                                or report_read_without_code
+                            )
                         ):
                             break
 
                         if retry_attempts >= max_retry_attempts:
                             break
 
-                        next_retry_note = _build_copepod_error_recovery_note(
-                            last_error_text=current_attempt_last_error_text,
-                            user_message=last_user_message or "",
-                        )
+                        if report_read_without_code and not current_attempt_had_error:
+                            next_retry_note = _build_copepod_report_read_retry_note(last_user_message or "")
+                        else:
+                            next_retry_note = _build_copepod_error_recovery_note(
+                                last_error_text=current_attempt_last_error_text or retry_error_text,
+                                user_message=last_user_message or "",
+                            )
                         if not next_retry_note:
                             break
 
                         retry_attempts += 1
                         retry_note = next_retry_note
+                        retry_error_text = current_attempt_last_error_text or retry_error_text
                         tracer.record_copepod_retry(
                             attempt=retry_attempts,
-                            error_snippet=current_attempt_last_error_text,
+                            error_snippet=current_attempt_last_error_text or retry_error_text,
                             retry_note=next_retry_note,
                         )
                         logger.info(f"  retrying copepod executor after error — {_short(session_key)}")

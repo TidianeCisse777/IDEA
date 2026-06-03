@@ -52,10 +52,40 @@ def test_custom_instructions_render_without_session_mode():
 def test_get_tool_code_renders_copepod_tools():
     code = _profile().get_tool_code()
     assert "inspect_and_report" in code
+    assert "get_inspection_report" in code
     assert "inspect_file" in code
     assert "describe_column" in code
+    assert "profile_join_keys" in code
     assert "create_data_understanding_draft" not in code
     assert "activate_graph_context" not in code
+
+
+def test_custom_instructions_advertise_join_validation_helper():
+    text = _profile().get_custom_instructions(
+        host="http://localhost",
+        user_id="u",
+        session_id="s",
+        static_dir="/static",
+        upload_dir="/static/u/s/uploads",
+        mcp_tools=[],
+    )
+    assert "profile_join_keys(left_df, right_df, left_key, right_key)" in text
+    assert "safe_for_join_deliverable" in text
+    assert "many_to_many" in text
+
+
+def test_custom_instructions_advertise_inspection_report_reader():
+    text = _profile().get_custom_instructions(
+        host="http://localhost",
+        user_id="u",
+        session_id="s",
+        static_dir="/static",
+        upload_dir="/static/u/s/uploads",
+        mcp_tools=[],
+    )
+    assert "get_inspection_report(filename)" in text
+    assert "fetch the full `# RAPPORT D'INSPECTION`" in text
+    assert "Do not paraphrase the stub" in text
 
 
 def test_custom_instructions_advertise_undefined_columns_section():

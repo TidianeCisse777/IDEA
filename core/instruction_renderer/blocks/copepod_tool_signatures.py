@@ -26,6 +26,11 @@ Calling `inspect_file` (or any helper below) outside Python code will fail.
 - `check_column_for_calc(column_roles, calculation, session_id="{session_id}")` — verify whether a set of roles supports a derived calculation (biovolume, abundance per m³, etc.).
 - `summarize_understanding(inspect_report, role_report, column_definitions=None)` — assemble a structured per-file summary. Use it as a working note for yourself when several files are loaded.
 
+### Join validation
+- `profile_join_keys(left_df, right_df, left_key, right_key)` — profile key cardinality before any pandas merge. Use this for every join, coupling, comparison table, or user question about whether files can be joined. Read `cardinality`, `left_match_rate`, `right_match_rate`, `requires_aggregation`, and `safe_for_join_deliverable` before deciding what to do.
+- If `safe_for_join_deliverable` is `False`, do not emit a join deliverable and do not force the merge. For `one_to_many` or `many_to_many`, emit a diagnostic table or ask one targeted question for the aggregation rule.
+- Pandas `DataFrame.merge(...)` and `pd.merge(...)` are guarded in the copepod runtime: a merge on explicit keys is blocked until `profile_join_keys(...)` has been called on the same dataframes and keys.
+
 ### Taxonomy
 - `lookup_worms_taxonomy(query, include_children=False, marine_only=True, session_id="{session_id}")` — query the WoRMS REST API for the authoritative classification of a marine taxon. Set `marine_only=False` for brackish or freshwater copepods.
 

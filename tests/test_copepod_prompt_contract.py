@@ -15,12 +15,17 @@ def test_tables_and_numbers_must_be_grounded_in_execution():
     assert "read the saved artifact or recompute it in code before answering" in prompt
 
 
-def test_plan_output_shape_is_either_plan_plus_code_or_plan_plus_questions():
+def test_plan_output_shape_uses_clean_markdown_plan_contract():
     prompt = COPEPOD_SYSTEM_PROMPT
-    # Two-form HARD RULE: either plan+code (form a) or plan+numbered questions (form b).
+    # Two-form HARD RULE: either plan+code (form a) or plan+numbered questions (form b),
+    # but the visible heading should be clean Markdown, not a literal debug label.
     assert "HARD RULE on output shape" in prompt
-    assert "PLAN + CODE BLOCK" in prompt
-    assert "PLAN + NUMBERED QUESTIONS" in prompt
+    assert 'Start the visible plan with exactly `**Plan**`' in prompt
+    assert "Do not print legacy all-caps plan labels" in prompt
+    assert "numbered questions" in prompt
+    assert "technical identifiers in backticks" in prompt
+    assert "PLAN + CODE BLOCK" not in prompt
+    assert "PLAN + NUMBERED QUESTIONS" not in prompt
     assert "capped at 4 per response" in prompt
     # Generic prose without numbering does NOT qualify as form (b).
     assert "neither** a code block **nor** a numbered question list is a failure" in prompt
@@ -87,6 +92,10 @@ def test_inspection_reports_are_not_in_history_and_tool_is_documented():
     assert "get_inspection_report" in prompt
     # Make sure the prompt explicitly forbids paraphrasing the stub.
     assert "Do not paraphrase the stub" in prompt
+    assert "inspecte le rapport" in prompt
+    assert "call `get_inspection_report('filename.csv')` immediately" in prompt
+    assert "do not answer that you need to relire/read the report first" in prompt.lower()
+    assert "read the `# RAPPORT D'INSPECTION` block for that file from the conversation history" not in prompt
 
 
 def test_output_formatting_contract_is_concise_and_single_language():

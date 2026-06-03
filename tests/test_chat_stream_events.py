@@ -306,6 +306,49 @@ def test_oi_console_output_with_unformatted_flags_routes_rapport_to_assistant():
     assert "## Synthèse" in msg_chunks[0]["content"]
 
 
+def test_plain_inspection_report_with_json_synthesis_emits_compact_summary():
+    report = (
+        "# RAPPORT D'INSPECTION\n"
+        "\n"
+        "- **file_path** : `/tmp/IDEA Taxonomy Samples and Analyses Data Metadata May 26 2026.csv`\n"
+        "- **format** : `csv`  •  **n_rows** : `5047`  •  **n_columns** : `93`\n"
+        "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+        "- **encoding** : `iso8859-3`  •  **delimiter** : `,`\n"
+        "\n"
+        "## Synthèse\n"
+        "```json\n"
+        "{\n"
+        '  "file": "IDEA Taxonomy Samples and Analyses Data Metadata May 26 2026.csv",\n'
+        '  "format": "csv",\n'
+        '  "n_rows": 5047,\n'
+        '  "n_columns": 93,\n'
+        '  "source_type": "likely_neolabs_taxon",\n'
+        '  "source_confidence": "high",\n'
+        '  "missing": {\n'
+        '    "n_columns_with_missing": 38,\n'
+        '    "worst": {"column": "COPEPODID_BIOMASS (µg C m-3 flowmeter vol.)", "rate": 0.198}\n'
+        "  },\n"
+        '  "column_grounding": {"rag_defined": 93, "auto_resolved": 0, "needs_clarification": 0, "unresolved": []},\n'
+        '  "warnings": 0\n'
+        "}\n"
+        "```\n"
+    )
+    events = list(chat_stream_events(_stream_console(report)))
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+
+    assert len(msg_chunks) == 2
+    assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
+    assert msg_chunks[1]["content"] == (
+        "**Synthèse d'inspection**\n"
+        "- Fichier : `IDEA Taxonomy Samples and Analyses Data Metadata May 26 2026.csv`\n"
+        "- Format : CSV, 5047 × 93\n"
+        "- Source détectée : `likely_neolabs_taxon` (confiance : `high`)\n"
+        "- Colonnes définies : 93 RAG, 0 auto-résolues, 0 à clarifier\n"
+        "- Valeurs manquantes : 38 colonnes; maximum `COPEPODID_BIOMASS (µg C m-3 flowmeter vol.)` à 19.8%\n"
+        "- Warnings : 0"
+    )
+
+
 def test_upload_question_tail_is_emitted_after_routed_rapport():
     """When the LLM emits executable code plus the fixed follow-up question in
     one assistant text message, the UI must not show the question before the
@@ -429,6 +472,31 @@ def test_llm_message_after_closing_is_suppressed():
     assert len(closing_msgs) == 1, f"expected exactly 1 closing message, got: {[m['content'][:50] for m in msg_chunks]}"
     llm_msgs = [m for m in msg_chunks if "Oui" in m["content"] or "terminée" in m["content"]]
     assert llm_msgs == [], f"LLM message after closing should be suppressed, got: {llm_msgs}"
+
+
+def test_llm_message_after_plain_inspection_report_is_suppressed():
+    """After a routed inspection report, the report is authoritative.
+
+    The model sometimes emits a redundant prose tail such as an onnxruntime warning
+    explanation plus a terse "inspection terminée" sentence. That prose should not
+    replace or visually compete with the full markdown report.
+    """
+    rapport = "# RAPPORT D'INSPECTION\n\n- **file_path** : `/tmp/a.csv`\n## Synthèse\n"
+    llm_after = (
+        "Le messageonnxruntime cpuid_info warning est un avertissement technique non bloquant ; "
+        "il n’indique pas une erreur de lecture du fichier.\n"
+        "Oui, l’inspection du fichier est terminée : 5047 × 93."
+    )
+    chunks = [
+        *_stream_console(rapport),
+        *_stream_message(llm_after),
+    ]
+    events = list(chat_stream_events(chunks))
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+
+    assert len(msg_chunks) == 1
+    assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
+    assert "onnxruntime" not in _concat_message_content(events)
 
 
 def test_summary_marker_emitted_as_separate_assistant_message():
