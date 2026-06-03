@@ -228,13 +228,15 @@ def _extract_report_summary(content: str) -> str | None:
     if shape_match:
         compact_shape = f"{shape_match.group(1)} × {shape_match.group(2)}"
 
+    # Path is intentionally excluded here — it is already present in the
+    # "Files uploaded / already inspected" sections of the working set note,
+    # which the LLM uses when writing code. Including it here caused the LLM
+    # to regurgitate /app/static/ paths in user-visible prose responses.
     parts: list[str] = [label]
     if source:
         parts.append(f"source: {source}")
     if compact_shape:
         parts.append(compact_shape)
-    if file_path:
-        parts.append(f"path: {file_path}")
     if join_hints:
         parts.append(f"join hints: {join_hints}")
 
