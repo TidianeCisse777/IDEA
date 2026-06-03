@@ -705,8 +705,9 @@ class TestFormatInspectReportUndefinedColumns:
                  "confidence": "reliable", "critical_notes": [],
                  "rag_doc_ref": "x.md", "source_file": "x.md"}]
         out = tools["format_inspect_report"](report, column_definitions=defs)
-        assert "## Colonnes sans définition RAG (0)" in out
-        assert "toutes les colonnes ont une définition RAG" in out
+        assert "## Colonnes auto-résolues (0)" in out
+        assert "## Colonnes à clarifier (0)" in out
+        assert "_(aucune colonne ambiguë restante)_" in out
 
     def test_section_lists_columns_missing_from_definitions(self, tools):
         cols = self._make_columns([
@@ -722,13 +723,13 @@ class TestFormatInspectReportUndefinedColumns:
                  "rag_doc_ref": "x.md", "source_file": "x.md"}]
         out = tools["format_inspect_report"](report, column_definitions=defs)
         # Section header reports the right count.
-        assert "## Colonnes sans définition RAG (3)" in out
+        assert "## Colonnes à clarifier (3)" in out
         # Each undefined column name appears with its dtype + samples.
         assert "acq_imgtype" in out
         assert "process_pixel" in out
         assert "object_annotation_hierarchy" in out
         # The defined column is NOT in the undefined section.
-        undefined_section_start = out.find("## Colonnes sans définition RAG")
+        undefined_section_start = out.find("## Colonnes à clarifier")
         undefined_section_end = out.find("## Columns", undefined_section_start)
         undefined_section = out[undefined_section_start:undefined_section_end]
         assert "STATION_NAME" not in undefined_section
@@ -737,11 +738,11 @@ class TestFormatInspectReportUndefinedColumns:
         cols = self._make_columns([("foo", "object", ["x"])])
         report = self._make_report(cols)
         out = tools["format_inspect_report"](report, column_definitions=[])
-        undefined_section_start = out.find("## Colonnes sans définition RAG")
+        undefined_section_start = out.find("## Colonnes à clarifier")
         undefined_section = out[undefined_section_start:]
         # The LLM must know what to do with these columns — instruction aligns
         # with the HARD RULE on plan output shape (form a or form b).
-        assert "interpréter" in undefined_section
+        assert "Pas de définition RAG" in undefined_section
         assert "question numérotée" in undefined_section or "forme b" in undefined_section
 
     def test_section_appears_before_columns_table(self, tools):
@@ -750,7 +751,7 @@ class TestFormatInspectReportUndefinedColumns:
         cols = self._make_columns([("foo", "object", ["x"])])
         report = self._make_report(cols)
         out = tools["format_inspect_report"](report, column_definitions=[])
-        idx_undefined = out.find("## Colonnes sans définition RAG")
+        idx_undefined = out.find("## Colonnes à clarifier")
         idx_columns = out.find("## Columns")
         assert idx_undefined > 0 and idx_columns > 0
         assert idx_undefined < idx_columns
@@ -759,7 +760,7 @@ class TestFormatInspectReportUndefinedColumns:
         report = self._make_report([])
         out = tools["format_inspect_report"](report)
         # No columns → 0 undefined → message clarifies state.
-        assert "## Colonnes sans définition RAG (0)" in out
+        assert "## Colonnes à clarifier (0)" in out
 
     def test_synthese_mentions_undefined_count_when_nonzero(self, tools):
         cols = self._make_columns([
@@ -772,7 +773,8 @@ class TestFormatInspectReportUndefinedColumns:
                  "rag_doc_ref": "x.md", "source_file": "x.md"}]
         out = tools["format_inspect_report"](report, column_definitions=defs)
         synthese = out[out.find("## Synthèse"):]
-        assert "1 sans définition" in synthese
+        assert '"needs_clarification": 1' in synthese
+        assert '"unknown_col"' in synthese
 
 
 class TestFormatInspectReportSynthese:
@@ -868,6 +870,112 @@ class TestInspectAndReport:
         summary = result["summary"]
         assert "ecotaxa_sample_50" in summary
         assert "amundsen_12713_ctd_2018_sample" in summary
+
+
+# ── graph_readiness ──────────────────────────────────────────────────────────
+
+class TestGraphReadiness:
+    def _report(self, columns, source="likely_ecotaxa"):
+        return {
+            "file_path": "/tmp/graph.csv",
+            "format": "csv",
+            "n_rows": 10,
+            "n_columns": len(columns),
+            "columns": columns,
+            "metadata": {"encoding": "utf-8", "delimiter": ","},
+            "source_type_guess": {"value": source, "confidence": "high", "evidence": []},
+            "warnings": [],
+            "raw_file_modified": False,
+        }
+
+    def _col(self, name, semantic=None, confidence="low", unit=None):
+        return {
+            "name": name,
+            "dtype": "object",
+            "missing_count": 0,
+            "missing_rate": 0.0,
+            "sample_values": ["x"],
+            "semantic_guess": semantic,
+            "unit_guess": unit,
+            "confidence": confidence,
+        }
+
+    def test_ready_when_required_columns_exist_and_are_grounded(self, tools):
+        report = self._report([
+            self._col("station_name", "station", "high"),
+            self._col("abundance", "abundance", "medium", "ind/m3"),
+        ])
+        defs = [
+            {"column": "station_name", "definition": "Station name", "unit": None},
+            {"column": "abundance", "definition": "Abundance", "unit": "ind/m3"},
+        ]
+
+        out = tools["graph_readiness"](
+            report,
+            required_columns=["station_name", "abundance"],
+            column_definitions=defs,
+            user_request="faire un graphe d'abondance par station",
+        )
+
+        assert out["ready"] is True
+        assert out["status"] == "ready"
+        assert out["clarification_questions"] == []
+
+    def test_missing_required_columns_block_graph(self, tools):
+        report = self._report([self._col("station_name", "station", "high")])
+
+        out = tools["graph_readiness"](
+            report,
+            required_columns=["station_name", "abundance"],
+            user_request="graphe abondance par station",
+        )
+
+        assert out["ready"] is False
+        assert out["status"] == "needs_clarification"
+        assert out["missing_required_columns"] == ["abundance"]
+        assert "abundance" in out["clarification_questions"][0]
+
+    def test_unresolved_required_column_blocks_graph(self, tools):
+        report = self._report([self._col("sample_nets")])
+
+        out = tools["graph_readiness"](
+            report,
+            required_columns=["sample_nets"],
+            user_request="graphe par filet",
+        )
+
+        assert out["ready"] is False
+        assert out["unresolved_required_columns"] == ["sample_nets"]
+        assert "sample_nets" in out["clarification_questions"][0]
+
+    def test_auto_resolved_required_column_is_allowed_with_assumption(self, tools):
+        report = self._report([self._col("latitude", "latitude", "high")])
+
+        out = tools["graph_readiness"](
+            report,
+            required_columns=["latitude"],
+            user_request="carte des points",
+        )
+
+        assert out["ready"] is True
+        assert out["auto_resolved_required_columns"] == ["latitude"]
+        assert any("latitude" in item for item in out["assumptions"])
+
+    def test_taxonomic_unknown_validation_status_blocks_graph(self, tools):
+        report = self._report([
+            self._col("taxon_name", "taxon", "high"),
+            self._col("abundance", "abundance", "medium"),
+        ])
+
+        out = tools["graph_readiness"](
+            report,
+            required_columns=["taxon_name", "abundance"],
+            user_request="graphe taxonomique des abondances",
+            validation_status="unknown",
+        )
+
+        assert out["ready"] is False
+        assert "validation" in " ".join(out["clarification_questions"]).lower()
 
     def test_resilient_to_missing_file(self, tools):
         result = tools["inspect_and_report"]([str(ECOTAXA), "/nonexistent/file.tsv"], session_id=None)

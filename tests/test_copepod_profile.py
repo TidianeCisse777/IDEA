@@ -56,6 +56,7 @@ def test_get_tool_code_renders_copepod_tools():
     assert "inspect_file" in code
     assert "describe_column" in code
     assert "profile_join_keys" in code
+    assert "graph_readiness" in code
     assert "create_data_understanding_draft" not in code
     assert "activate_graph_context" not in code
 
@@ -72,6 +73,20 @@ def test_custom_instructions_advertise_join_validation_helper():
     assert "profile_join_keys(left_df, right_df, left_key, right_key)" in text
     assert "safe_for_join_deliverable" in text
     assert "many_to_many" in text
+
+
+def test_custom_instructions_advertise_graph_readiness_helper():
+    text = _profile().get_custom_instructions(
+        host="http://localhost",
+        user_id="u",
+        session_id="s",
+        static_dir="/static",
+        upload_dir="/static/u/s/uploads",
+        mcp_tools=[],
+    )
+    assert "graph_readiness(file_report, required_columns=None" in text
+    assert "needs_clarification" in text
+    assert "clarification_questions" in text
 
 
 def test_custom_instructions_advertise_inspection_report_reader():

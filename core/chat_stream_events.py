@@ -104,6 +104,20 @@ def _compact_inspection_summary_from_report(report: str) -> str:
     )
 
 
+def _looks_like_internal_working_set_leak(text: str) -> bool:
+    lowered = (text or "").lower()
+    return (
+        "active_files" in lowered
+        or "dansactive_files" in lowered
+        or "working set" in lowered
+    ) and (
+        "pending inspection" in lowered
+        or "en attente d’inspection" in lowered
+        or "en attente d'inspection" in lowered
+        or "inspect_and_report" in lowered
+    )
+
+
 def _path_to_static_url(path: str) -> str:
     """Convert /app/static/... or ./static/... to /static/... for browser download."""
     path = path.strip()
@@ -273,6 +287,8 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
         cleaned = _strip_deliverables_from_text(cleaned)
         cleaned = format_assistant_text(cleaned)
         if not cleaned:
+            return
+        if _looks_like_internal_working_set_leak(cleaned):
             return
         if _is_fixed_upload_question(cleaned) and (
             _is_raw_code_block(original) or _has_python_markdown_fence(original)

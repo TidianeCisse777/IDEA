@@ -143,6 +143,17 @@ def test_assistant_text_is_conservatively_formatted_before_emit():
     assert text == "Bonjour, monde.\n\nFin."
 
 
+def test_internal_active_files_leak_is_suppressed():
+    content = (
+        "Plan\n"
+        "-donne_sample.csv/app/static/u/session-jsrfnllki/uploads/donne_sample.csv) "
+        "est en attente d’inspection dansactive_files.\n"
+        "• Je lanceinspect_and_report sur ce fichier."
+    )
+    events = list(chat_stream_events(_stream_message(content)))
+    assert _concat_message_content(events) == ""
+
+
 def test_markdown_json_fence_wrapping_oi_toolcall_is_stripped():
     """LLM sometimes wraps OI's JSON tool call in a ```json fence:
         ```json

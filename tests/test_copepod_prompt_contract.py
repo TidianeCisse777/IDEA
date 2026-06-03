@@ -55,9 +55,9 @@ def test_session_working_set_is_the_file_state_source_of_truth():
     lower_prompt = prompt.lower()
     assert "session working set" in lower_prompt
     assert "source of truth for file state" in lower_prompt
-    assert "seen_files" in prompt
-    assert "active_files" in prompt
-    assert "current_user_goal" in prompt
+    assert "Pending files requiring immediate inspect_and_report" in prompt
+    assert "active_files" not in prompt
+    assert "Treat these as internal execution guidance" in prompt
     # `latest_inspection_by_file` is intentionally NOT exposed to the LLM —
     # the rendered "Files already inspected in this session" section replaces it
     # to prevent the model from paraphrasing the compact summary as user-visible prose.
@@ -77,7 +77,7 @@ def test_session_dedup_is_about_already_inspected_files_not_seen_files():
     prompt = COPEPOD_SYSTEM_PROMPT
     lower_prompt = prompt.lower()
     assert "Files already inspected in this session" in prompt
-    assert "pending inspection" in lower_prompt
+    assert "pending files requiring immediate inspect_and_report" in lower_prompt
     assert "already inspected" in lower_prompt
     assert "if a filename already exists" not in lower_prompt
 
@@ -137,6 +137,13 @@ def test_column_selection_must_use_exact_inspection_spellings():
     assert "Do not translate, abbreviate, singularize, pluralize, or infer column names" in prompt
     # New plan rule: column names must be copied verbatim from the reports.
     assert "copy-paste verbatim from the inspection report" in prompt
+
+
+def test_graph_readiness_required_before_graphing():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "Before producing any graph or graph-derived table, call `graph_readiness" in prompt
+    assert "If `status` is `needs_clarification`" in prompt
+    assert "exact column names copied from the inspection report" in prompt
 
 
 def test_plan_must_be_grounded_in_inspection_reports():

@@ -133,6 +133,28 @@ class TestDescribeColumn:
         assert "column" in r
         assert r["confidence"] == "unknown"
 
+    def test_textual_rag_mention_is_not_reported_as_definition(self, tools, monkeypatch):
+        from core.copepod_rag import query as query_module
+
+        def fake_query(query, top_k=30, session_id=None):
+            return [
+                {
+                    "doc": "methodes_calcul.md",
+                    "title": "Méthodes de calcul",
+                    "content": (
+                        "La colonne SAMPLE_ID peut être utilisée dans certains exemples, "
+                        "mais ce paragraphe n'est pas une ligne de définition structurée."
+                    ),
+                }
+            ]
+
+        monkeypatch.setattr(query_module, "query_copepod_rag", fake_query)
+
+        r = tools["describe_column"]("SAMPLE_ID")
+
+        assert r["confidence"] == "unknown"
+        assert "Mentioned in" not in r["definition"]
+        assert r["rag_doc_ref"] is None
 
 # ── check_column_for_calc ──────────────────────────────────────────────────────
 

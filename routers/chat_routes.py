@@ -603,7 +603,7 @@ def _build_copepod_session_resources_note(
         lines.extend(["", "seen_files:"])
         lines.extend(f"- {item}" for item in seen_files)
     if active_state_files:
-        lines.extend(["", "active_files (pending inspection until a report exists):"])
+        lines.extend(["", "Pending files requiring immediate `inspect_and_report`:"])
         lines.extend(f"- {item}" for item in active_state_files)
     # Note: latest_inspection_by_file is kept in the persisted working_set state
     # (used by skip-inspection dedup at the data layer) but intentionally NOT
@@ -690,9 +690,53 @@ def _is_copepod_data_analysis_request(text: str) -> bool:
     """Return True when the request is about a join/comparison/data analysis step."""
     return bool(
         re.search(
-            r"\b(join|jointure|merge|coupl|compare|comparison|relat|analysis|analyse|graph|graphe|plot|chart)\b",
+            r"\b(join|jointure|merge|coupl|compare|comparison|relat|analysis|analyse|graph|graphe|plot|chart|table|tableau|export|stat|stats|carte|map)\b",
             text or "",
             re.IGNORECASE,
+        )
+    )
+
+
+def _is_copepod_graph_request(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(graph|graphe|graphique|plot|chart|figure|carte|map)\b",
+            text or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_copepod_status_or_inventory_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "quels fichiers",
+            "liste les fichiers",
+            "qu'est-ce qui est inspecté",
+            "qu’est-ce qui est inspecté",
+            "as-tu tout inspecté",
+            "quel est le statut",
+            "c'est fait",
+            "c’est fait",
+            "est ce que c'est fait",
+            "est-ce que c'est fait",
+        )
+    )
+
+
+def _is_copepod_vague_action_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "qu'est-ce qu'on peut faire",
+            "qu’est-ce qu’on peut faire",
+            "quelle analyse",
+            "on va faire des analyses",
+            "que peut-on faire",
+            "quoi faire",
         )
     )
 
@@ -969,6 +1013,138 @@ def _build_copepod_report_read_retry_note(user_message: str) -> str:
         "Do not answer with another status-only message.",
         "Call `get_inspection_report(...)` for the relevant inspected filename, then answer the user's requested report summary or key-column list from the returned report.",
         "If several inspected filenames are available, choose the one referenced by the user or the active file from the session resources.",
+    ]
+    if request:
+        lines.append(f"User request to answer now: {request}")
+    return "\n".join(lines)
+
+
+def _should_retry_copepod_upload_inspection_without_code(
+    *,
+    pending_files: list[str],
+    current_attempt_had_code: bool,
+    current_attempt_had_error: bool,
+) -> bool:
+    """Retry when an uploaded/pending file was announced but not inspected."""
+    return bool(pending_files) and not current_attempt_had_code and not current_attempt_had_error
+
+
+def _build_copepod_upload_inspection_retry_note(pending_files: list[str]) -> str:
+    files = [str(item).strip() for item in pending_files if str(item).strip()]
+    lines = [
+        "A file is pending inspection, but the previous attempt did not run code.",
+        "Do not answer with another plan-only or status-only message.",
+        "Call `inspect_and_report(...)` immediately for the pending uploaded file path, print `_ir['output']`, and stop after the report.",
+        "Do not mention `active_files`, the working set, or pending-state internals to the user.",
+    ]
+    if files:
+        lines.append("Pending file entries:")
+        lines.extend(f"- {item}" for item in files[:5])
+    return "\n".join(lines)
+
+
+def _assistant_text_has_numbered_questions(text: str) -> bool:
+    return bool(re.search(r"(?m)^\s*\d+[\.)]\s+\S", text or ""))
+
+
+def _should_retry_copepod_action_contract_without_code_or_questions(
+    *,
+    user_message: str,
+    assistant_text: str,
+    current_attempt_had_code: bool,
+    current_attempt_had_error: bool,
+) -> bool:
+    """Retry clear action requests that produced prose instead of code/questions."""
+    if current_attempt_had_code or current_attempt_had_error:
+        return False
+    if _is_copepod_status_or_inventory_request(user_message):
+        return False
+    if _is_copepod_vague_action_request(user_message):
+        return False
+    if not _is_copepod_data_analysis_request(user_message):
+        return False
+    text = (assistant_text or "").strip()
+    if not text:
+        return False
+    if _assistant_text_has_numbered_questions(text):
+        return False
+    return True
+
+
+def _build_copepod_action_contract_retry_note(user_message: str) -> str:
+    request = (user_message or "").strip()
+    lines = [
+        "The previous response violated the Copepod plan + code contract for a clear action request.",
+        "Do not answer with prose only.",
+        "If the action is ready: respond with `**Plan**`, 3-6 concise bullets, then a Python code block immediately after the bullets.",
+        "If a critical parameter is missing: respond with `**Plan**`, 3-6 concise bullets, then numbered questions only.",
+        "A Python code block or numbered questions are required on this retry.",
+    ]
+    if request:
+        lines.append(f"User request to answer now: {request}")
+    return "\n".join(lines)
+
+
+def _code_contains_matplotlib_graph(code_text: str) -> bool:
+    return bool(
+        re.search(
+            r"\bplt\.|\bmatplotlib\b|\.savefig\s*\(",
+            code_text or "",
+            re.IGNORECASE,
+        )
+    )
+
+
+def _code_contains_plt_show(code_text: str) -> bool:
+    return bool(re.search(r"\bplt\.show\s*\(", code_text or ""))
+
+
+def _code_contains_graph_deliverable(code_text: str) -> bool:
+    text = code_text or ""
+    return "DELIVERABLE:" in text and bool(
+        re.search(r"""['"]type['"]\s*:\s*['"]graph['"]""", text)
+        or re.search(r"""\{\s*\\?["']type\\?["']\s*:\s*\\?["']graph\\?["']""", text)
+    )
+
+
+def _should_retry_copepod_graph_output_without_display_or_deliverable(
+    *,
+    user_message: str,
+    assistant_text: str,
+    code_texts: list[str],
+    current_attempt_had_code: bool,
+    current_attempt_had_error: bool,
+    current_attempt_had_image: bool,
+    current_attempt_had_graph_deliverable: bool,
+) -> bool:
+    """Retry graph code that omits display or the structured graph card."""
+    if current_attempt_had_error or not current_attempt_had_code:
+        return False
+    if not _is_copepod_graph_request(user_message):
+        return False
+    if _assistant_text_has_numbered_questions(assistant_text):
+        return False
+
+    combined_code = "\n".join(code_texts or [])
+    has_graph_deliverable = current_attempt_had_graph_deliverable or _code_contains_graph_deliverable(combined_code)
+    if not has_graph_deliverable:
+        return True
+
+    if _code_contains_matplotlib_graph(combined_code):
+        return not (_code_contains_plt_show(combined_code) or current_attempt_had_image)
+
+    return False
+
+
+def _build_copepod_graph_output_retry_note(user_message: str) -> str:
+    request = (user_message or "").strip()
+    lines = [
+        "The previous graph attempt ran code but did not satisfy the graph output contract.",
+        "Do not answer with prose only.",
+        "Run corrected Python code now.",
+        "For Matplotlib graphs: save the figure, call `plt.show()` immediately after `plt.savefig(...)`, then close the figure only after display.",
+        "Print exactly one `DELIVERABLE:` JSON line from Python with `type` set to `graph`, a concise `title`, optional metadata `fields`, and the saved graph `file` path.",
+        "If the graph is blocked by missing data or ambiguous columns, ask numbered clarification questions instead of producing an approximate graph.",
     ]
     if request:
         lines.append(f"User request to answer now: {request}")
@@ -2180,6 +2356,9 @@ async def chat_endpoint(
                 current_attempt_last_error_text = ""
                 current_attempt_had_code = False
                 current_attempt_assistant_texts: list[str] = []
+                current_attempt_code_texts: list[str] = []
+                current_attempt_had_image = False
+                current_attempt_had_graph_deliverable = False
 
                 def _compose_copepod_system_message(*notes: str | None) -> str:
                     parts: list[str] = []
@@ -2195,7 +2374,8 @@ async def chat_endpoint(
                 def _yield_chat_stream(payload: list[dict[str, Any]]):
                     nonlocal total_chunks, _had_code, _had_image, _had_error, _last_usage, last_error_text
                     nonlocal current_attempt_had_error, current_attempt_last_error_text, current_attempt_had_code
-                    nonlocal current_attempt_assistant_texts
+                    nonlocal current_attempt_assistant_texts, current_attempt_code_texts
+                    nonlocal current_attempt_had_image, current_attempt_had_graph_deliverable
                     stream_events = chat_stream_events(
                         interpreter.chat(payload, stream=True),
                     )
@@ -2209,8 +2389,18 @@ async def chat_endpoint(
                             if _t == "code":
                                 _had_code = True
                                 current_attempt_had_code = True
+                                if isinstance(result.get("content"), str):
+                                    current_attempt_code_texts.append(result["content"])
                             elif _t == "image":
                                 _had_image = True
+                                current_attempt_had_image = True
+                            elif _t == "deliverable":
+                                try:
+                                    deliverable = json.loads(str(result.get("content") or ""))
+                                except Exception:
+                                    deliverable = {}
+                                if isinstance(deliverable, dict) and deliverable.get("type") == "graph":
+                                    current_attempt_had_graph_deliverable = True
                             elif result.get("error"):
                                 _had_error = True
                             if (
@@ -2243,6 +2433,9 @@ async def chat_endpoint(
                         current_attempt_last_error_text = ""
                         current_attempt_had_code = False
                         current_attempt_assistant_texts = []
+                        current_attempt_code_texts = []
+                        current_attempt_had_image = False
+                        current_attempt_had_graph_deliverable = False
 
                         if agent_type == "copepod":
                             copepod_session_resources_note, _new_files = _build_copepod_session_resources_note(
@@ -2290,11 +2483,36 @@ async def chat_endpoint(
                             current_attempt_had_code=current_attempt_had_code,
                             current_attempt_had_error=current_attempt_had_error,
                         )
+                        upload_inspection_without_code = _should_retry_copepod_upload_inspection_without_code(
+                            pending_files=_new_files if agent_type == "copepod" else [],
+                            current_attempt_had_code=current_attempt_had_code,
+                            current_attempt_had_error=current_attempt_had_error,
+                        )
                         report_read_without_code = _should_retry_copepod_report_read_without_code(
                             user_message=last_user_message or "",
                             assistant_text="\n".join(current_attempt_assistant_texts),
                             current_attempt_had_code=current_attempt_had_code,
                             current_attempt_had_error=current_attempt_had_error,
+                        )
+                        action_contract_without_code_or_questions = (
+                            not retry_note
+                            and _should_retry_copepod_action_contract_without_code_or_questions(
+                                user_message=last_user_message or "",
+                                assistant_text="\n".join(current_attempt_assistant_texts),
+                                current_attempt_had_code=current_attempt_had_code,
+                                current_attempt_had_error=current_attempt_had_error,
+                            )
+                        )
+                        graph_output_without_display_or_deliverable = (
+                            _should_retry_copepod_graph_output_without_display_or_deliverable(
+                                user_message=last_user_message or "",
+                                assistant_text="\n".join(current_attempt_assistant_texts),
+                                code_texts=current_attempt_code_texts,
+                                current_attempt_had_code=current_attempt_had_code,
+                                current_attempt_had_error=current_attempt_had_error,
+                                current_attempt_had_image=current_attempt_had_image,
+                                current_attempt_had_graph_deliverable=current_attempt_had_graph_deliverable,
+                            )
                         )
                         if not (
                             agent_type == "copepod"
@@ -2304,7 +2522,10 @@ async def chat_endpoint(
                                     and _should_retry_copepod_error(current_attempt_last_error_text, last_user_message or "")
                                 )
                                 or recovery_without_code
+                                or upload_inspection_without_code
                                 or report_read_without_code
+                                or action_contract_without_code_or_questions
+                                or graph_output_without_display_or_deliverable
                             )
                         ):
                             break
@@ -2312,8 +2533,14 @@ async def chat_endpoint(
                         if retry_attempts >= max_retry_attempts:
                             break
 
-                        if report_read_without_code and not current_attempt_had_error:
+                        if upload_inspection_without_code and not current_attempt_had_error:
+                            next_retry_note = _build_copepod_upload_inspection_retry_note(_new_files)
+                        elif report_read_without_code and not current_attempt_had_error:
                             next_retry_note = _build_copepod_report_read_retry_note(last_user_message or "")
+                        elif action_contract_without_code_or_questions and not current_attempt_had_error:
+                            next_retry_note = _build_copepod_action_contract_retry_note(last_user_message or "")
+                        elif graph_output_without_display_or_deliverable and not current_attempt_had_error:
+                            next_retry_note = _build_copepod_graph_output_retry_note(last_user_message or "")
                         else:
                             next_retry_note = _build_copepod_error_recovery_note(
                                 last_error_text=current_attempt_last_error_text or retry_error_text,

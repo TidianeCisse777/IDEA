@@ -25,6 +25,7 @@ Calling `inspect_file` (or any helper below) outside Python code will fail.
 - `describe_column(column_name, source_hint=None, session_id="{session_id}")` — look up a column definition, unit, and critical notes in the copepod RAG corpus. Use when the column meaning is not obvious.
 - `check_column_for_calc(column_roles, calculation, session_id="{session_id}")` — verify whether a set of roles supports a derived calculation (biovolume, abundance per m³, etc.).
 - `summarize_understanding(inspect_report, role_report, column_definitions=None)` — assemble a structured per-file summary. Use it as a working note for yourself when several files are loaded.
+- `graph_readiness(file_report, required_columns=None, column_definitions=None, user_request="", graph_type=None, validation_status=None)` — validate graph inputs before plotting or building a graph-derived table. Pass exact column names copied from the inspection report. If it returns `status="needs_clarification"`, ask the returned `clarification_questions` before graphing. If it returns `status="ready"`, proceed and document returned `assumptions` / `quality_limits` in the metadata.
 
 ### Join validation
 - `profile_join_keys(left_df, right_df, left_key, right_key)` — profile key cardinality before any pandas merge. Use this for every join, coupling, comparison table, or user question about whether files can be joined. Read `cardinality`, `left_match_rate`, `right_match_rate`, `requires_aggregation`, and `safe_for_join_deliverable` before deciding what to do.

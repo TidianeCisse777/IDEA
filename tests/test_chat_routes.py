@@ -213,11 +213,17 @@ from routers.chat_routes import (
     _session_resource_message_from_stream_event,
     _build_copepod_error_recovery_note,
     _build_copepod_report_read_retry_note,
+    _build_copepod_upload_inspection_retry_note,
+    _build_copepod_action_contract_retry_note,
+    _build_copepod_graph_output_retry_note,
     _inject_copepod_system_note,
     _strip_system_messages,
     _extract_copepod_key_hints,
     _should_retry_copepod_error,
     _should_retry_copepod_report_read_without_code,
+    _should_retry_copepod_upload_inspection_without_code,
+    _should_retry_copepod_action_contract_without_code_or_questions,
+    _should_retry_copepod_graph_output_without_display_or_deliverable,
     _update_copepod_working_set,
     _coerce_multimodal_message_content,
     _expand_multimodal_message_for_interpreter,
@@ -578,6 +584,112 @@ class TestCopepodInspectThenCodeNote:
         assert "Do not answer with another status-only message" in note
         assert "la liste des colonnes clés" in note
 
+    def test_upload_inspection_retry_gate_catches_plan_without_code(self):
+        assert _should_retry_copepod_upload_inspection_without_code(
+            pending_files=["donne_sample.csv | path: /app/static/u/s/uploads/donne_sample.csv"],
+            current_attempt_had_code=False,
+            current_attempt_had_error=False,
+        )
+
+    def test_upload_inspection_retry_gate_ignores_executed_attempts(self):
+        assert not _should_retry_copepod_upload_inspection_without_code(
+            pending_files=["donne_sample.csv"],
+            current_attempt_had_code=True,
+            current_attempt_had_error=False,
+        )
+
+    def test_upload_inspection_retry_note_requires_inspect_and_report(self):
+        note = _build_copepod_upload_inspection_retry_note(["donne_sample.csv"])
+        assert "inspect_and_report" in note
+        assert "Do not answer with another plan-only or status-only message" in note
+        assert "donne_sample.csv" in note
+
+    def test_action_contract_retry_gate_catches_action_prose_without_code_or_questions(self):
+        assert _should_retry_copepod_action_contract_without_code_or_questions(
+            user_message="fais un graphe de l'abondance par station",
+            assistant_text="Je peux faire un graphe avec les colonnes disponibles.",
+            current_attempt_had_code=False,
+            current_attempt_had_error=False,
+        )
+
+    def test_action_contract_retry_gate_allows_numbered_questions(self):
+        assert not _should_retry_copepod_action_contract_without_code_or_questions(
+            user_message="fais un graphe",
+            assistant_text="**Plan**\n- Je dois fixer les axes.\n\n1. Quelle variable utiliser en Y ?",
+            current_attempt_had_code=False,
+            current_attempt_had_error=False,
+        )
+
+    def test_action_contract_retry_gate_ignores_status_questions(self):
+        assert not _should_retry_copepod_action_contract_without_code_or_questions(
+            user_message="quels fichiers as-tu ?",
+            assistant_text="Un fichier est chargé.",
+            current_attempt_had_code=False,
+            current_attempt_had_error=False,
+        )
+
+    def test_action_contract_retry_note_requires_plan_code_or_numbered_questions(self):
+        note = _build_copepod_action_contract_retry_note("fais un graphe")
+        assert "**Plan**" in note
+        assert "Python code block" in note
+        assert "numbered questions" in note
+        assert "fais un graphe" in note
+
+    def test_graph_output_retry_gate_catches_matplotlib_without_show(self):
+        assert _should_retry_copepod_graph_output_without_display_or_deliverable(
+            user_message="fais un graphe de l'abondance",
+            assistant_text="",
+            code_texts=[
+                "import matplotlib.pyplot as plt\n"
+                "plt.plot([1, 2])\n"
+                "plt.savefig('/tmp/g.png')\n"
+                "print('DELIVERABLE: ' + json.dumps({'type': 'graph', 'title': 'G', 'file': '/tmp/g.png'}))"
+            ],
+            current_attempt_had_code=True,
+            current_attempt_had_error=False,
+            current_attempt_had_image=False,
+            current_attempt_had_graph_deliverable=True,
+        )
+
+    def test_graph_output_retry_gate_catches_graph_without_deliverable(self):
+        assert _should_retry_copepod_graph_output_without_display_or_deliverable(
+            user_message="fais un graphe de l'abondance",
+            assistant_text="",
+            code_texts=[
+                "import matplotlib.pyplot as plt\n"
+                "plt.plot([1, 2])\n"
+                "plt.savefig('/tmp/g.png')\n"
+                "plt.show()\n"
+            ],
+            current_attempt_had_code=True,
+            current_attempt_had_error=False,
+            current_attempt_had_image=True,
+            current_attempt_had_graph_deliverable=False,
+        )
+
+    def test_graph_output_retry_gate_allows_matplotlib_show_and_graph_card(self):
+        assert not _should_retry_copepod_graph_output_without_display_or_deliverable(
+            user_message="fais un graphe de l'abondance",
+            assistant_text="",
+            code_texts=[
+                "import matplotlib.pyplot as plt\n"
+                "plt.plot([1, 2])\n"
+                "plt.savefig('/tmp/g.png')\n"
+                "plt.show()\n"
+                "print('DELIVERABLE: ' + json.dumps({'type': 'graph', 'title': 'G', 'file': '/tmp/g.png'}))"
+            ],
+            current_attempt_had_code=True,
+            current_attempt_had_error=False,
+            current_attempt_had_image=False,
+            current_attempt_had_graph_deliverable=True,
+        )
+
+    def test_graph_output_retry_note_requires_display_and_graph_deliverable(self):
+        note = _build_copepod_graph_output_retry_note("fais un graphe")
+        assert "plt.show()" in note
+        assert "DELIVERABLE:" in note
+        assert "`graph`" in note
+
     def test_system_note_is_merged_into_leading_system_prompt(self):
         messages = [
             {"role": "system", "type": "message", "content": "base prompt"},
@@ -672,7 +784,8 @@ class TestCopepodSessionResourcesNote:
         assert "This is the canonical session state" in note
         assert "current_user_goal:" in note
         assert "seen_files:" in note
-        assert "active_files (pending inspection until a report exists):" in note
+        assert "Pending files requiring immediate `inspect_and_report`:" in note
+        assert "active_files" not in note
         # latest_inspection_by_file: section is intentionally NOT rendered into
         # the prompt — the LLM was paraphrasing the compact summary into
         # user-visible prose. State is still persisted internally.
@@ -772,7 +885,8 @@ class TestCopepodSessionResourcesNote:
         )
 
         assert note is not None
-        assert "active_files (pending inspection until a report exists):" in note
+        assert "Pending files requiring immediate `inspect_and_report`:" in note
+        assert "active_files" not in note
         assert pending == []
 
     def test_includes_existing_graph_image_as_source_for_correction(self):
@@ -1616,7 +1730,7 @@ class TestChatGuardPaths:
                 "Base path: ./static/{user_id}/s1/uploads\n"
                 "- sample.csv (text/csv) | relative path: sample.csv\n"
                 "Use these paths when referencing the uploaded files.\n"
-                "Session rule: for every filename without a report in latest_inspection_by_file, call inspect_and_report immediately. If a filename already has a report in latest_inspection_by_file, skip its inspection and explicitly say it is already inspected. If a filename is pending in active_files without a report, inspect it now in the same turn; do not wait for the user to repeat \"inspect\"."
+                "Session rule: for every filename without an inspection report, call inspect_and_report immediately. If a filename already has a report, skip its inspection silently. If a filename is pending inspection, inspect it now in the same turn; do not wait for the user to repeat \"inspect\"."
             ),
         }
 
@@ -2149,6 +2263,180 @@ class TestChatGuardPaths:
         assert "recovery mode" in captured_system_messages[2].lower()
         assert "must run corrected Python code" in captured_system_messages[2]
         assert "retry code ok" in resp.text
+
+    def test_chat_retries_clear_action_response_without_code_or_numbered_questions(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        fake_interpreter.system_message = "base prompt"
+
+        captured_calls = []
+        captured_system_messages = []
+
+        def fake_chat(message, stream=True):
+            captured_calls.append(message)
+            captured_system_messages.append(fake_interpreter.system_message)
+            fake_interpreter.messages = list(message)
+            if len(captured_calls) == 1:
+                return iter([
+                    {
+                        "start": True,
+                        "end": True,
+                        "role": "assistant",
+                        "type": "message",
+                        "content": "Je peux faire ce graphe avec les colonnes disponibles.",
+                    },
+                ])
+            return iter([
+                {
+                    "start": True,
+                    "end": True,
+                    "role": "assistant",
+                    "type": "code",
+                    "format": "python",
+                    "content": (
+                        "import json\n"
+                        "import matplotlib.pyplot as plt\n"
+                        "plt.plot([1, 2])\n"
+                        "plt.savefig('/tmp/graph.png')\n"
+                        "plt.show()\n"
+                        "print('DELIVERABLE: ' + json.dumps({'type': 'graph', 'title': 'Graph', 'file': '/tmp/graph.png'}))"
+                    ),
+                },
+                {
+                    "start": True,
+                    "end": True,
+                    "role": "assistant",
+                    "type": "message",
+                    "content": "retry graph ok",
+                },
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "fais un graphe de l'abondance"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+
+        assert resp.status_code == 200
+        assert len(captured_calls) == 2
+        assert "plan + code contract" in captured_system_messages[1].lower()
+        assert "numbered questions" in captured_system_messages[1]
+        assert "retry graph ok" in resp.text
+
+    def test_chat_retries_graph_code_without_show_or_deliverable(self):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+
+        fake_interpreter.system_message = "base prompt"
+
+        captured_calls = []
+        captured_system_messages = []
+
+        def fake_chat(message, stream=True):
+            captured_calls.append(message)
+            captured_system_messages.append(fake_interpreter.system_message)
+            fake_interpreter.messages = list(message)
+            if len(captured_calls) == 1:
+                return iter([
+                    {
+                        "start": True,
+                        "end": True,
+                        "role": "assistant",
+                        "type": "code",
+                        "format": "python",
+                        "content": (
+                            "import matplotlib.pyplot as plt\n"
+                            "plt.plot([1, 2])\n"
+                            "plt.savefig('/tmp/graph.png')\n"
+                        ),
+                    },
+                    {
+                        "start": True,
+                        "end": True,
+                        "role": "assistant",
+                        "type": "message",
+                        "content": "graph saved",
+                    },
+                ])
+            return iter([
+                {
+                    "start": True,
+                    "end": True,
+                    "role": "assistant",
+                    "type": "code",
+                    "format": "python",
+                    "content": (
+                        "import json\n"
+                        "import matplotlib.pyplot as plt\n"
+                        "plt.plot([1, 2])\n"
+                        "plt.savefig('/tmp/graph.png')\n"
+                        "plt.show()\n"
+                        "print('DELIVERABLE: ' + json.dumps({'type': 'graph', 'title': 'Graph', 'file': '/tmp/graph.png'}))"
+                    ),
+                },
+                {
+                    "start": True,
+                    "end": True,
+                    "role": "assistant",
+                    "type": "message",
+                    "content": "retry graph displayed",
+                },
+            ])
+
+        fake_interpreter.chat = fake_chat
+        fake_tracer = MagicMock()
+        fake_tracer.record_mcp_tool_run.return_value = None
+        fake_tracer.record_event.return_value = None
+        fake_tracer.record_route_error.return_value = None
+        fake_tracer.close.return_value = None
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.ChatRuntimeTracer.from_env", return_value=fake_tracer),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "fais un graphe de l'abondance"}]},
+                headers={"x-session-id": "s1", "x-agent-type": "copepod"},
+            )
+
+        assert resp.status_code == 200
+        assert len(captured_calls) == 2
+        assert "graph output contract" in captured_system_messages[1].lower()
+        assert "plt.show()" in captured_system_messages[1]
+        assert "retry graph displayed" in resp.text
 
     def test_chat_strips_restored_system_messages_for_generic_agent(self):
         store = InMemorySessionStore()

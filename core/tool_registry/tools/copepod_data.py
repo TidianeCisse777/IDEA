@@ -1309,6 +1309,155 @@ def get_inspection_report(filename):
     return report
 
 
+def _graph_readiness_column_names(file_report):
+    return [
+        str(c.get("name", ""))
+        for c in (file_report or {}).get("columns", []) or []
+        if isinstance(c, dict) and c.get("name") is not None
+    ]
+
+
+def _graph_readiness_defs_by_col(column_definitions):
+    defs_by_col = {}
+    for definition in column_definitions or []:
+        if not isinstance(definition, dict):
+            continue
+        column = definition.get("column")
+        if column is None:
+            continue
+        if definition.get("definition") or definition.get("unit") or definition.get("confidence"):
+            defs_by_col[str(column)] = definition
+    return defs_by_col
+
+
+def _graph_readiness_meta_by_col(file_report):
+    return {
+        str(c.get("name", "")): c
+        for c in (file_report or {}).get("columns", []) or []
+        if isinstance(c, dict) and c.get("name") is not None
+    }
+
+
+def _graph_readiness_is_auto_resolved(column_meta):
+    semantic = (column_meta or {}).get("semantic_guess")
+    confidence = str((column_meta or {}).get("confidence", "low")).lower()
+    return bool(semantic and confidence in {"high", "medium"})
+
+
+def _graph_readiness_is_taxonomic_intent(user_request="", graph_type="", required_columns=None, file_report=None):
+    text = " ".join([
+        str(user_request or ""),
+        str(graph_type or ""),
+        " ".join(str(c) for c in (required_columns or [])),
+        " ".join(
+            str((c or {}).get("semantic_guess") or "")
+            for c in ((file_report or {}).get("columns") or [])
+            if isinstance(c, dict)
+        ),
+    ]).lower()
+    tax_tokens = (
+        "taxon", "taxonomie", "taxonomic", "taxonomique", "species",
+        "espece", "espèce", "annotation", "classification",
+    )
+    return any(token in text for token in tax_tokens)
+
+
+def graph_readiness(
+    file_report,
+    required_columns=None,
+    column_definitions=None,
+    user_request="",
+    graph_type=None,
+    validation_status=None,
+):
+    """Validate graph inputs before producing a graph or graph-derived table.
+
+    The helper does not choose the graph and does not interpret biology. It
+    checks that the exact columns selected for the graph exist and are grounded
+    either by RAG definitions or by high/medium inspection heuristics. Required
+    unresolved columns and unknown taxonomic validation policy produce targeted
+    clarification questions instead of letting the model draw an approximate
+    graph.
+    """
+    required = [str(c) for c in (required_columns or []) if str(c).strip()]
+    available_columns = _graph_readiness_column_names(file_report)
+    available_set = set(available_columns)
+    meta_by_col = _graph_readiness_meta_by_col(file_report)
+    defs_by_col = _graph_readiness_defs_by_col(column_definitions)
+
+    missing_required = [col for col in required if col not in available_set]
+    rag_defined_required = [col for col in required if col in defs_by_col]
+    auto_resolved_required = [
+        col for col in required
+        if col not in defs_by_col and col in available_set and _graph_readiness_is_auto_resolved(meta_by_col.get(col))
+    ]
+    unresolved_required = [
+        col for col in required
+        if col not in defs_by_col and col in available_set and col not in auto_resolved_required
+    ]
+
+    assumptions = []
+    for col in auto_resolved_required:
+        meta = meta_by_col.get(col) or {}
+        assumptions.append(
+            f"`{col}` treated as `{meta.get('semantic_guess')}` from inspection heuristic "
+            f"(confidence: {meta.get('confidence', 'unknown')})."
+        )
+
+    quality_limits = []
+    for col in required:
+        meta = meta_by_col.get(col) or {}
+        missing_rate = meta.get("missing_rate")
+        if isinstance(missing_rate, (int, float)) and missing_rate > 0:
+            quality_limits.append(
+                f"`{col}` has {round(float(missing_rate) * 100, 1)}% missing values."
+            )
+
+    clarification_questions = []
+    if not required:
+        clarification_questions.append(
+            "1. Quelles colonnes exactes du rapport d'inspection doivent servir au graphe ?"
+        )
+    if missing_required:
+        clarification_questions.append(
+            "1. Les colonnes requises sont absentes du fichier inspecte: "
+            + ", ".join(f"`{col}`" for col in missing_required)
+            + ". Quelle colonne disponible faut-il utiliser a la place ?"
+        )
+    if unresolved_required:
+        clarification_questions.append(
+            "1. Confirmez la signification de ces colonnes avant le graphe: "
+            + ", ".join(f"`{col}`" for col in unresolved_required)
+            + "."
+        )
+
+    validation_value = str(validation_status or "").strip().lower()
+    validation_unknown = validation_value in {"", "unknown", "ambiguous", "unconfirmed", "inconnu", "ambigu"}
+    if _graph_readiness_is_taxonomic_intent(user_request, graph_type or "", required, file_report) and validation_unknown:
+        clarification_questions.append(
+            "1. Pour ce graphe taxonomique, quel statut de validation utiliser: inclure ou exclure les annotations non confirmees ?"
+        )
+
+    ready = not clarification_questions
+    return {
+        "ready": ready,
+        "status": "ready" if ready else "needs_clarification",
+        "required_columns": required,
+        "available_columns": available_columns,
+        "rag_defined_required_columns": rag_defined_required,
+        "auto_resolved_required_columns": auto_resolved_required,
+        "unresolved_required_columns": unresolved_required,
+        "missing_required_columns": missing_required,
+        "validation_status": validation_status if validation_status is not None else "unknown",
+        "assumptions": assumptions,
+        "quality_limits": quality_limits,
+        "clarification_questions": clarification_questions,
+        "recommended_next_step": (
+            "proceed_with_graph" if ready else "ask_clarification_before_graph"
+        ),
+    }
+
+
 def _normalized_join_key_series(df, key):
     if key not in df.columns:
         raise KeyError(f"Missing join key: {key}")

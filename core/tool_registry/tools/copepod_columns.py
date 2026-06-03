@@ -142,17 +142,24 @@ def describe_column(column_name, source_hint=None, session_id=None):
             "source_file": r.get("doc"),
         })
 
-    # Column name appears in a chunk but not as a table row
+    # A bare textual occurrence is not an authoritative column definition.
+    # Returning it as "Mentioned in <doc>" made inspection reports look like
+    # they had a usable RAG definition when they only had a loose citation.
+    # Keep these as unknown so collect_column_definitions filters them out and
+    # the inspection report can classify the column via heuristics or ask.
     for r in results:
         if column_name.lower() in r.get("content", "").lower():
             return _trace({
                 "column": column_name,
-                "definition": f"Mentioned in {r.get('title', r.get('doc', 'RAG'))}.",
+                "definition": (
+                    f"Column '{column_name}' appears in the knowledge base, "
+                    "but no structured column definition row was found."
+                ),
                 "unit": None,
-                "confidence": "exploratory",
+                "confidence": "unknown",
                 "critical_notes": [],
-                "rag_doc_ref": r.get("doc"),
-                "source_file": r.get("doc"),
+                "rag_doc_ref": None,
+                "source_file": None,
             })
 
     return _trace(_NOT_FOUND)
