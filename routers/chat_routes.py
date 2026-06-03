@@ -18,6 +18,8 @@ import logging
 import os
 import re
 import mimetypes
+import threading
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +54,21 @@ from utils.transcription_prompt import transcription_prompt
 logger = logging.getLogger(__name__)
 
 
+# Per-session locks protect the shared OpenInterpreter from concurrent turns.
+# Two requests on the same session_key (double-click, frontend retry, parallel
+# test) would otherwise race on interpreter.system_message and interpreter.messages
+# because both turns share the same singleton cached in `interpreter_instances`.
+# event_stream() is a sync generator run in the Starlette threadpool, so a
+# threading.Lock is the right primitive here.
+_SESSION_LOCKS: dict[str, threading.Lock] = defaultdict(threading.Lock)
+_SESSION_LOCKS_GUARD = threading.Lock()
+
+
+def _session_lock(session_key: str) -> threading.Lock:
+    with _SESSION_LOCKS_GUARD:
+        return _SESSION_LOCKS[session_key]
+
+
 def _short(session_key: str) -> str:
     """Return a compact session key for log lines: 'session-abc/copepod'."""
     parts = session_key.split(":")
@@ -81,7 +98,15 @@ def _build_copepod_inspect_then_code_note(
     messages: list[dict[str, Any]],
     user_message: str,
 ) -> str | None:
-    """Return a short system note that enforces inspect-then-code before analysis."""
+    """Return contextual hints extracted from inspection artifacts.
+
+    This note is appended to the system prompt to surface CONCRETE hints
+    (detected join keys, files already inspected, etc.) — NOT to restate
+    rules. Permanent rules live in COPEPOD_SYSTEM_PROMPT
+    (`agents/copepod_prompt.py`). Restating them here caused drift between
+    two sources of truth (see audit, 2026-06-03). Keep this note free of
+    "you must", "do not", "always" — that's the static prompt's job.
+    """
     if not user_message.strip():
         return None
 
@@ -105,24 +130,14 @@ def _build_copepod_inspect_then_code_note(
     if not inspection_blocks:
         return None
 
-    lines = [
-        "You are the Copepod inspect-then-code guide.",
-        "Before writing any analysis code, read the inspection artifacts already present in the conversation.",
-        "INSPECT required before code for graph, analysis, join, export, or table requests.",
-        "The plan must name the files, exact column names selected from inspection reports, rejected ambiguous column candidates when relevant, planned transformation, and expected output.",
-        "Identify exact column names and candidate join keys from the reports before coding.",
-        "Use only documented columns and do not guess, translate, abbreviate, or approximate names.",
-    ]
+    hints: list[str] = []
     if join_hints:
-        lines.append(f"Join hints already surfaced by inspection: {' | '.join(join_hints[:2])}.")
-    lines.extend([
-        "If a required column, key, species, filter, unit, or output choice is ambiguous, ask targeted grill questions before coding.",
-        "Ask only questions that can change the executable plan; do not ask decorative or repeated questions.",
-        "If the user says stop, go, fais au mieux, assez de questions, or equivalent, stop asking and execute with explicit assumptions.",
-        "If the key is ambiguous or missing after the useful grill questions, ask one targeted clarification question instead of coding.",
-        "If the key is clear, write the code block immediately — do not output a text preamble first.",
-    ])
-    return "\n".join(lines)
+        hints.append(f"- Join keys already surfaced by inspection: {' | '.join(join_hints[:2])}.")
+
+    if not hints:
+        return None
+
+    return "## Inspection context for this turn\n" + "\n".join(hints)
 
 
 _DELIVERABLE_TYPES = {"join", "export", "graph", "stats", "analysis"}
@@ -1776,6 +1791,15 @@ async def chat_endpoint(
                         static_dir=STATIC_DIR,
                     )
                     break
+            # Skip the LLM-router MCP pre-planner for the copepod profile.
+            # Rationale (see docs/adr/005-mcp-planner-skipped-for-copepod.md):
+            # - copepod ships dedicated domain tools (fetch_remote_source_dataset,
+            #   list_available_sources, query_copepod_knowledge_base, …) that the
+            #   main LLM already invokes from generated Python via call_mcp_tool /
+            #   the tool_registry helpers, so a separate router call is redundant.
+            # - the copepod system prompt is strict ("inspect before code", plan +
+            #   code in one response); a "🔧 Using MCP …" pre-step would mid-stream
+            #   the turn and break that discipline.
             if last_user_message and agent_type != "copepod":
                 tool_runs = await plan_and_run_mcp_tools(
                     interpreter=interpreter,
@@ -1788,6 +1812,14 @@ async def chat_endpoint(
             logger.warning("MCP planning/execution skipped: %s", exc)
 
         def event_stream():
+            # Serialize turns on the same session_key. The interpreter is a
+            # singleton (interpreter_instances[session_key]) whose
+            # .system_message and .messages are mutated below; without this
+            # lock, two concurrent turns would clobber each other's state.
+            with _session_lock(session_key):
+                yield from _event_stream_locked()
+
+        def _event_stream_locked():
             fallback_sent = False
             # Count user turns from the persisted session store, not the request
             # body. The body can carry an arbitrary message history (e.g. when

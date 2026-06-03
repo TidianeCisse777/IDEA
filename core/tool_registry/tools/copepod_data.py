@@ -541,13 +541,17 @@ def format_inspect_report(file_report, column_definitions=None):
     Use this instead of ``print(file_report)`` (Python's default dict repr is
     unreadable for wide files). Output is markdown-formatted so it renders
     nicely when included in an assistant text reply: H1 title, compact header
-    lines, a dedicated RAG definition section, a compact columns table,
-    warnings and source evidence as bullet lists. Every column appears — no
-    truncation, no ellipsis.
+    lines, a dedicated RAG definition section, an explicit section for
+    columns the RAG does NOT cover, a compact columns table, warnings and
+    source evidence as bullet lists. Every column appears — no truncation,
+    no ellipsis.
 
     When ``column_definitions`` is provided (list of describe_column results,
     e.g. from ``collect_column_definitions``), the matching RAG definitions are
     rendered in a separate section above the table so they are easier to scan.
+    Columns not present in ``column_definitions`` are surfaced in a dedicated
+    "Colonnes sans définition RAG" section so the LLM can either interpret
+    them or ask the user — they no longer disappear silently.
 
     Args:
         file_report (dict): The dict returned by ``inspect_file``.
@@ -699,6 +703,51 @@ def format_inspect_report(file_report, column_definitions=None):
         lines.append("_(aucune définition RAG trouvée)_")
 
     cols = fr.get("columns") or []
+
+    # ── Section explicite : colonnes que le RAG n'a pas définies ─────────
+    # Sans cette section, ces colonnes disparaissent silencieusement de la
+    # vue du LLM (collect_column_definitions drop confidence=="unknown").
+    # Le LLM doit pouvoir voir ce qui manque pour décider entre interpréter
+    # (assumptions documentées dans le plan) et poser une question
+    # numérotée à l'utilisateur (forme b du plan).
+    undefined_cols = [c for c in cols if str(c.get("name", "")) not in defs_by_col]
+    lines.append("")
+    lines.append(f"## Colonnes sans définition RAG ({len(undefined_cols)})")
+    lines.append("")
+    if not undefined_cols:
+        lines.append("_(toutes les colonnes ont une définition RAG)_")
+    else:
+        lines.append(
+            "Le RAG copépode n'a pas de définition pour ces colonnes. "
+            "Pour chacune utilisée dans la suite : soit l'interpréter d'après "
+            "le nom + dtype + samples + semantic_guess (avec assumption "
+            "documentée dans le plan), soit poser une question numérotée à "
+            "l'utilisateur (forme b du plan)."
+        )
+        lines.append("")
+        lines.append("| # | Column | Dtype | Semantic | Samples |")
+        lines.append("|---|--------|-------|----------|---------|")
+        for idx, c in enumerate(undefined_cols, start=1):
+            name = str(c.get("name", ""))
+            dtype = str(c.get("dtype", ""))
+            sem = c.get("semantic_guess")
+            unit = c.get("unit_guess")
+            conf = c.get("confidence", "low")
+            if sem:
+                sem_cell = f"`{sem}` ({conf})"
+                if unit:
+                    sem_cell = f"{sem_cell} unit=`{unit}`"
+            else:
+                sem_cell = "—"
+            samples = c.get("sample_values") or []
+            samples_short = samples[:3]
+            row = (
+                f"| {idx} | `{_md_escape_cell(name)}` | `{_md_escape_cell(dtype)}` | "
+                f"{_md_escape_cell(sem_cell)} | "
+                f"`{_md_escape_cell(samples_short)}` |"
+            )
+            lines.append(row)
+
     lines.append("")
     lines.append(f"## Columns ({len(cols)})")
     lines.append("")
@@ -784,8 +833,19 @@ def format_inspect_report(file_report, column_definitions=None):
     else:
         lines.append("- **Données manquantes** : aucune colonne avec des valeurs manquantes.")
     rag_count = len(column_definitions or [])
-    if rag_count:
+    undefined_count = len(undefined_cols)
+    if rag_count and undefined_count:
+        lines.append(
+            f"- **Définitions RAG** : {rag_count} colonnes documentées, "
+            f"{undefined_count} sans définition (voir sections dédiées)."
+        )
+    elif rag_count:
         lines.append(f"- **Définitions RAG** : {rag_count} colonnes documentées (voir section dédiée).")
+    elif undefined_count:
+        lines.append(
+            f"- **Définitions RAG** : aucune colonne trouvée dans le corpus "
+            f"({undefined_count} sans définition à interpréter ou questionner)."
+        )
     else:
         lines.append("- **Définitions RAG** : aucune colonne trouvée dans le corpus.")
     if warnings:

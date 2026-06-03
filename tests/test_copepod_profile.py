@@ -56,3 +56,26 @@ def test_get_tool_code_renders_copepod_tools():
     assert "describe_column" in code
     assert "create_data_understanding_draft" not in code
     assert "activate_graph_context" not in code
+
+
+def test_custom_instructions_advertise_undefined_columns_section():
+    """The `copepod_tool_signatures` block must instruct the LLM about both
+    column sections produced by format_inspect_report: "Définitions
+    détectées" (RAG-known columns) AND "Colonnes sans définition RAG"
+    (columns the RAG does not cover). Without this guidance, the LLM
+    ignores the second section and skips columns it should interpret or
+    ask about."""
+    text = _profile().get_custom_instructions(
+        host="http://localhost",
+        user_id="u",
+        session_id="s",
+        static_dir="/static",
+        upload_dir="/static/u/s/uploads",
+        mcp_tools=[],
+    )
+    assert "Définitions détectées" in text
+    assert "Colonnes sans définition RAG" in text
+    # The instruction must reference the two-form plan rule so the LLM
+    # knows what to DO with the undefined columns (interpret or ask).
+    assert "interpret" in text.lower() or "interpr" in text
+    assert "numbered question" in text.lower() or "form (b)" in text.lower()

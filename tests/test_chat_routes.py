@@ -219,6 +219,7 @@ from routers.chat_routes import (
     _update_copepod_working_set,
     _coerce_multimodal_message_content,
     _expand_multimodal_message_for_interpreter,
+    _session_lock,
     router,
 )
 
@@ -460,7 +461,7 @@ class TestCopepodInspectThenCodeNote:
         )
         assert note is None
 
-    def test_returns_inspect_then_code_note_with_join_hints(self):
+    def test_surfaces_join_keys_when_inspection_carries_them(self):
         messages = [
             {
                 "role": "assistant",
@@ -477,13 +478,22 @@ class TestCopepodInspectThenCodeNote:
             user_message="fais une jointure entre les fichiers",
         )
         assert note is not None
-        assert "Copepod inspect-then-code guide" in note
+        assert "Inspection context for this turn" in note
         assert "station | time | depth" in note
-        assert "INSPECT required before code" in note
-        assert "exact column names selected from inspection reports" in note
-        assert "If the key is clear, write the code block immediately" in note
+        # Permanent rules ("INSPECT required", "ask grill questions", …) MUST
+        # NOT be restated here — they live in COPEPOD_SYSTEM_PROMPT.
+        for forbidden in (
+            "INSPECT required before code",
+            "ask targeted grill questions",
+            "Ask only questions that can change",
+            "If the user says stop, go",
+            "write the code block immediately",
+        ):
+            assert forbidden not in note
 
-    def test_inspect_then_code_note_controls_grill_questions_and_user_stop(self):
+    def test_returns_none_when_inspection_has_no_extractable_hints(self):
+        # An inspection report present but with no join keys → no useful
+        # context to surface, return None rather than emit an empty header.
         messages = [
             {
                 "role": "assistant",
@@ -499,11 +509,7 @@ class TestCopepodInspectThenCodeNote:
             messages=messages,
             user_message="fais un graphe",
         )
-        assert note is not None
-        assert "ask targeted grill questions before coding" in note
-        assert "Ask only questions that can change the executable plan" in note
-        assert "If the user says stop, go, fais au mieux, assez de questions" in note
-        assert "stop asking and execute with explicit assumptions" in note
+        assert note is None
 
     def test_returns_recovery_note_for_traceback(self):
         note = _build_copepod_error_recovery_note(
@@ -1485,9 +1491,11 @@ class TestChatGuardPaths:
         assert resp.status_code == 200
         assert isinstance(captured["message"], list)
         assert all(msg.get("role") != "system" for msg in captured["message"])
-        assert "Copepod inspect-then-code guide" in captured["system_message"]
+        # Post-consolidation: the dynamic note contains ONLY concrete hints
+        # (join keys, file context), not restated rules. The "inspect-then-code"
+        # discipline lives in COPEPOD_SYSTEM_PROMPT.
+        assert "Inspection context for this turn" in captured["system_message"]
         assert "station | time | depth" in captured["system_message"]
-        assert "If the key is clear, write the code block immediately" in captured["system_message"]
 
     def test_chat_injects_current_session_resources_before_copepod_call(self):
         store = InMemorySessionStore()
@@ -1767,7 +1775,8 @@ class TestChatGuardPaths:
         assert len(captured_calls) == 2
         assert all(msg.get("role") != "system" for msg in captured_calls[0])
         assert all(msg.get("role") != "system" for msg in captured_calls[1])
-        assert "inspect-then-code" in captured_system_messages[0].lower()
+        # First attempt: dynamic note surfaces concrete inspection context.
+        assert "inspection context for this turn" in captured_system_messages[0].lower()
         assert "recovery mode" in captured_system_messages[1].lower()
         assert "KeyError" in captured_system_messages[1]
         assert "retry ok" in resp.text
@@ -1846,7 +1855,7 @@ class TestChatGuardPaths:
         assert all(msg.get("role") != "system" for msg in captured_calls[0])
         assert all(msg.get("role") != "system" for msg in captured_calls[1])
         assert all(msg.get("role") != "system" for msg in captured_calls[2])
-        assert "inspect-then-code" in captured_system_messages[0].lower()
+        assert "inspection context for this turn" in captured_system_messages[0].lower()
         assert "recovery mode" in captured_system_messages[1].lower()
         assert "KeyError" in captured_system_messages[1]
         assert "recovery mode" in captured_system_messages[2].lower()
@@ -1960,3 +1969,96 @@ class TestChatGuardPaths:
         assert '"type": "generation_summary"' in resp.text
         assert '"prompt_tokens": 10' in resp.text
         assert '"completion_tokens": 20' in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Per-session lock for concurrent /chat turns (P3 — race condition fix)
+# ---------------------------------------------------------------------------
+
+class TestSessionLock:
+    """The per-session_key threading.Lock protects the shared OpenInterpreter
+    from concurrent mutations of `.system_message` and `.messages` when two
+    requests on the same session land at the same time. Regression-critical:
+    if a fresh Lock is returned on every call, the protection is meaningless.
+    """
+
+    def test_same_session_key_returns_same_lock_instance(self):
+        lock_a = _session_lock("user-1:session-abc:copepod")
+        lock_b = _session_lock("user-1:session-abc:copepod")
+        assert lock_a is lock_b
+
+    def test_different_session_keys_return_different_locks(self):
+        lock_a = _session_lock("user-1:session-abc:copepod")
+        lock_b = _session_lock("user-1:session-xyz:copepod")
+        assert lock_a is not lock_b
+
+    def test_lock_serialises_two_threads_on_same_session(self):
+        """Two threads that try to enter the lock for the same session_key
+        must NOT overlap their critical section. We record entry/exit times
+        and assert no interleaving."""
+        import threading
+        import time
+
+        key = "user-1:session-concurrent:copepod"
+        intervals: list[tuple[float, float]] = []
+        intervals_lock = threading.Lock()
+        ready = threading.Barrier(2)
+
+        def worker():
+            ready.wait()
+            with _session_lock(key):
+                start = time.monotonic()
+                # Simulate a critical section (mutating shared state).
+                time.sleep(0.05)
+                end = time.monotonic()
+                with intervals_lock:
+                    intervals.append((start, end))
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert len(intervals) == 2
+        (s1, e1), (s2, e2) = sorted(intervals)
+        # The second critical section must start AFTER the first one ended.
+        # If the lock didn't work, e1 > s2 would be possible (overlap).
+        assert s2 >= e1, (
+            f"Critical sections overlapped: first=({s1}, {e1}), second=({s2}, {e2})"
+        )
+
+    def test_different_sessions_do_not_block_each_other(self):
+        """Threads on different session_keys must run in parallel, otherwise
+        a slow user would block every other user globally."""
+        import threading
+        import time
+
+        intervals: list[tuple[float, float]] = []
+        intervals_lock = threading.Lock()
+        ready = threading.Barrier(2)
+
+        def worker(key: str):
+            ready.wait()
+            with _session_lock(key):
+                start = time.monotonic()
+                time.sleep(0.05)
+                end = time.monotonic()
+                with intervals_lock:
+                    intervals.append((start, end))
+
+        t1 = threading.Thread(target=worker, args=("user-1:s1:copepod",))
+        t2 = threading.Thread(target=worker, args=("user-2:s2:copepod",))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert len(intervals) == 2
+        (s1, e1), (s2, e2) = sorted(intervals)
+        # Independent sessions: their critical sections SHOULD overlap.
+        assert s2 < e1, (
+            f"Different sessions were serialised — lock leaks across keys: "
+            f"first=({s1}, {e1}), second=({s2}, {e2})"
+        )

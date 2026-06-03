@@ -23,16 +23,31 @@ _real_requests_get = _requests.get
 
 # Pré-import des modules réels — neutralise les `sys.modules.setdefault(...)`
 # de test_chat_routes.
-import passlib.context  # noqa: F401,E402
-import cryptography.fernet  # noqa: F401,E402
-import litellm  # noqa: F401,E402
+#
+# Tolérant aux environnements où certaines deps ne sont pas installées
+# (ex: pytest local sans pandas/passlib). Dans ce cas, l'import qui
+# manque est de toute façon le SEUL signal utile : le test concerné
+# échouera proprement avec ModuleNotFoundError au lieu de récupérer un
+# MagicMock posé par test_chat_routes.
+def _safe_import(module_name: str) -> None:
+    try:
+        __import__(module_name)
+    except ImportError:
+        pass
 
-import models  # noqa: F401,E402
-import core.auth  # noqa: F401,E402
-import core.crud  # noqa: F401,E402
-import core.crypto  # noqa: F401,E402
-import core.security  # noqa: F401,E402
-import core.mcp  # noqa: F401,E402
+
+for _mod in (
+    "passlib.context",
+    "cryptography.fernet",
+    "litellm",
+    "models",
+    "core.auth",
+    "core.crud",
+    "core.crypto",
+    "core.security",
+    "core.mcp",
+):
+    _safe_import(_mod)
 
 
 def pytest_runtest_setup(item):  # noqa: ARG001 — pytest hook signature

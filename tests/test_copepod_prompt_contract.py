@@ -15,13 +15,28 @@ def test_tables_and_numbers_must_be_grounded_in_execution():
     assert "read the saved artifact or recompute it in code before answering" in prompt
 
 
-def test_clear_request_executes_without_plan_only_response():
+def test_plan_output_shape_is_either_plan_plus_code_or_plan_plus_questions():
     prompt = COPEPOD_SYSTEM_PROMPT
-    assert "Never output only a plan with no code block when execution is required" in prompt
+    # Two-form HARD RULE: either plan+code (form a) or plan+numbered questions (form b).
+    assert "HARD RULE on output shape" in prompt
+    assert "PLAN + CODE BLOCK" in prompt
+    assert "PLAN + NUMBERED QUESTIONS" in prompt
+    assert "capped at 4 per response" in prompt
+    # Generic prose without numbering does NOT qualify as form (b).
+    assert "neither** a code block **nor** a numbered question list is a failure" in prompt
+    # Clear commands still go straight to execution (form a).
     assert "If the request is clear, execute" in prompt
     assert "For clear action commands such as" in prompt
-    assert "the plan is a commitment to execute, not a waiting state" in prompt
-    assert "write the plan and code in the same response" in prompt
+
+
+def test_user_stop_signals_collapse_to_execution_form():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    # When the user explicitly says "go" / "fais au mieux" / "assez de questions",
+    # the LLM must switch to form (a) and document its assumptions.
+    assert "fais au mieux" in prompt
+    assert "assez de questions" in prompt
+    assert "collapse to form (a) immediately" in prompt
+    assert "document the assumptions" in prompt
 
 
 def test_execute_wrapper_is_not_part_of_the_prompt_surface():
@@ -95,8 +110,19 @@ def test_column_selection_must_use_exact_inspection_spellings():
     prompt = COPEPOD_SYSTEM_PROMPT
     assert "verify the exact spellings in the inspection reports" in prompt
     assert "Do not translate, abbreviate, singularize, pluralize, or infer column names" in prompt
-    assert "ask targeted grill questions only while they can change the executable plan" in prompt
-    assert "stop asking and execute with explicit assumptions" in prompt
+    # New plan rule: column names must be copied verbatim from the reports.
+    assert "copy-paste verbatim from the inspection report" in prompt
+
+
+def test_plan_must_be_grounded_in_inspection_reports():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    # The plan is built FROM the inspection reports, not from LLM memory.
+    assert "Plan grounded in inspection" in prompt
+    assert "scan the conversation history for `# RAPPORT D'INSPECTION` blocks" in prompt
+    assert "transcription of decisions grounded in those reports" in prompt
+    assert "never a generic outline written from memory" in prompt
+    # Missing facts → no inclusion; inspect first.
+    assert "do NOT include it in the plan — run `inspect_and_report` on it first" in prompt
 
 
 def test_visual_requests_remain_in_inspect_then_code_and_preserve_source():

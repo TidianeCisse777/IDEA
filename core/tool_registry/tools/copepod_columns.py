@@ -57,7 +57,14 @@ def describe_column(column_name, source_hint=None, session_id=None):
 
     try:
         from core.copepod_rag.query import query_copepod_rag
-        results = query_copepod_rag(query, top_k=8, session_id=session_id)
+        # top_k=30: methodes_calcul.md chunks (formulae mentioning a column
+        # name inline) tend to crowd the top of the result list. The actual
+        # definition row in colonnes_labo.md / colonnes_instruments.md can
+        # sit as deep as position 8–12 depending on the column. The
+        # downstream code sorts results by doc priority (colonnes_labo.md
+        # first) and stops at the first chunk that yields an actual table
+        # row, so the extra results are cheap.
+        results = query_copepod_rag(query, top_k=30, session_id=session_id)
     except Exception:
         return _NOT_FOUND
 

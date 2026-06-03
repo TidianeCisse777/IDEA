@@ -668,6 +668,113 @@ class TestFormatInspectReportWithDefinitions:
         assert "### Contexte / autres" in out
 
 
+class TestFormatInspectReportUndefinedColumns:
+    """Columns the RAG does NOT know must surface in a dedicated section so
+    the LLM can either interpret them (form a) or ask numbered questions
+    (form b). Before this section existed, they were dropped silently by
+    `collect_column_definitions` and the LLM had no way to know."""
+
+    def _make_columns(self, names_dtypes_samples):
+        """names_dtypes_samples: list of (name, dtype, samples) tuples."""
+        return [
+            {
+                "name": name, "dtype": dtype, "missing_count": 0, "missing_rate": 0.0,
+                "sample_values": samples, "semantic_guess": None, "unit_guess": None,
+                "confidence": "low",
+            }
+            for name, dtype, samples in names_dtypes_samples
+        ]
+
+    def _make_report(self, cols, source="likely_ecotaxa"):
+        return {
+            "file_path": "/tmp/x.csv", "format": "csv",
+            "n_rows": 10, "n_columns": len(cols),
+            "columns": cols,
+            "metadata": {"encoding": "utf-8", "delimiter": ",", "sheet_names": [],
+                         "netcdf_dimensions": {}, "netcdf_variables": [], "source_metadata": {}},
+            "source_type_guess": {"value": source, "confidence": "high", "evidence": []},
+            "warnings": [], "raw_file_modified": False,
+        }
+
+    def test_section_present_when_all_columns_have_definitions(self, tools):
+        cols = self._make_columns([
+            ("STATION_NAME", "object", ["A", "B"]),
+        ])
+        report = self._make_report(cols)
+        defs = [{"column": "STATION_NAME", "definition": "Nom", "unit": None,
+                 "confidence": "reliable", "critical_notes": [],
+                 "rag_doc_ref": "x.md", "source_file": "x.md"}]
+        out = tools["format_inspect_report"](report, column_definitions=defs)
+        assert "## Colonnes sans définition RAG (0)" in out
+        assert "toutes les colonnes ont une définition RAG" in out
+
+    def test_section_lists_columns_missing_from_definitions(self, tools):
+        cols = self._make_columns([
+            ("STATION_NAME", "object", ["A", "B"]),
+            ("acq_imgtype", "object", ["zooscan", "uvp"]),
+            ("process_pixel", "float64", [10.6, 10.7]),
+            ("object_annotation_hierarchy", "object", ["Biota>Animalia"]),
+        ])
+        report = self._make_report(cols)
+        # Only STATION_NAME has a RAG def
+        defs = [{"column": "STATION_NAME", "definition": "Nom", "unit": None,
+                 "confidence": "reliable", "critical_notes": [],
+                 "rag_doc_ref": "x.md", "source_file": "x.md"}]
+        out = tools["format_inspect_report"](report, column_definitions=defs)
+        # Section header reports the right count.
+        assert "## Colonnes sans définition RAG (3)" in out
+        # Each undefined column name appears with its dtype + samples.
+        assert "acq_imgtype" in out
+        assert "process_pixel" in out
+        assert "object_annotation_hierarchy" in out
+        # The defined column is NOT in the undefined section.
+        undefined_section_start = out.find("## Colonnes sans définition RAG")
+        undefined_section_end = out.find("## Columns", undefined_section_start)
+        undefined_section = out[undefined_section_start:undefined_section_end]
+        assert "STATION_NAME" not in undefined_section
+
+    def test_section_includes_instruction_for_llm(self, tools):
+        cols = self._make_columns([("foo", "object", ["x"])])
+        report = self._make_report(cols)
+        out = tools["format_inspect_report"](report, column_definitions=[])
+        undefined_section_start = out.find("## Colonnes sans définition RAG")
+        undefined_section = out[undefined_section_start:]
+        # The LLM must know what to do with these columns — instruction aligns
+        # with the HARD RULE on plan output shape (form a or form b).
+        assert "interpréter" in undefined_section
+        assert "question numérotée" in undefined_section or "forme b" in undefined_section
+
+    def test_section_appears_before_columns_table(self, tools):
+        """Order matters: undefined columns surface FIRST, then the full table,
+        so the LLM sees the gap before scanning every column row."""
+        cols = self._make_columns([("foo", "object", ["x"])])
+        report = self._make_report(cols)
+        out = tools["format_inspect_report"](report, column_definitions=[])
+        idx_undefined = out.find("## Colonnes sans définition RAG")
+        idx_columns = out.find("## Columns")
+        assert idx_undefined > 0 and idx_columns > 0
+        assert idx_undefined < idx_columns
+
+    def test_section_handles_empty_column_list(self, tools):
+        report = self._make_report([])
+        out = tools["format_inspect_report"](report)
+        # No columns → 0 undefined → message clarifies state.
+        assert "## Colonnes sans définition RAG (0)" in out
+
+    def test_synthese_mentions_undefined_count_when_nonzero(self, tools):
+        cols = self._make_columns([
+            ("STATION_NAME", "object", ["A"]),
+            ("unknown_col", "object", ["x"]),
+        ])
+        report = self._make_report(cols)
+        defs = [{"column": "STATION_NAME", "definition": "Nom", "unit": None,
+                 "confidence": "reliable", "critical_notes": [],
+                 "rag_doc_ref": "x.md", "source_file": "x.md"}]
+        out = tools["format_inspect_report"](report, column_definitions=defs)
+        synthese = out[out.find("## Synthèse"):]
+        assert "1 sans définition" in synthese
+
+
 class TestFormatInspectReportSynthese:
     """The report ends with a deterministic ## Synthèse section so the LLM
     has no excuse to add hallucinated prose ('partial output', 'tronqué', etc.)."""
