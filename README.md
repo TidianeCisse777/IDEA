@@ -1,179 +1,342 @@
-# Intelligent Data Exploring Assistant (IDEA)
+# IDEA — Intelligent Data Exploring Assistant
 
-IDEA is a tool-using AI assistant for scientific data exploration. It is designed to help researchers go from question to analysis and figures quickly while keeping results transparent and reproducible. IDEA is a framework for building domain-focused assistants that run code, generate plots, save outputs, work directly with uploaded datasets, and pull data from the web via its internet-connected environment.
+> Plateforme FastAPI + OpenInterpreter pour explorer des données scientifiques en langage naturel.
+> L'utilisateur pose une question → IDEA génère et exécute du code Python → répond avec analyses, tableaux et graphiques.
 
-## IDEA vs. SEA
+Fork **NeoLab · Université Laval** — étend [UHSLC IDEA](https://github.com/uhsealevelcenter/IDEA) avec un système multi-agent, un assistant copépodes, et l'observabilité Langfuse.
 
-- **IDEA** is the general-purpose framework for creating and working with custom data analysis assistants.
-- **SEA (Station Explorer Assistant)** is a special-purpose IDEA configured for sea level data analysis.
+---
 
-**Web access:**
-- **SEA (no login required):** https://uhslc.soest.hawaii.edu/research/SEA
-- **IDEA (login required):** https://uhslc.soest.hawaii.edu/research/IDEA
-- **Account requests:** idea-dev-grp@hawaii.edu
+## Sommaire
 
-https://github.com/user-attachments/assets/7bea7a70-b72b-484a-a75f-f466cd547e7c
+- [En un coup d'œil](#en-un-coup-dœil)
+- [Capacités](#capacités)
+- [Architecture](#architecture)
+- [Fichiers importants](#fichiers-importants)
+- [Démarrage rapide](#démarrage-rapide)
+- [Configuration](#configuration)
+- [Tests](#tests)
+- [Multi-agent](#multi-agent)
+- [MCP (Model Context Protocol)](#mcp-model-context-protocol)
+- [Observabilité — Langfuse](#observabilité--langfuse)
+- [Pour aller plus loin](#pour-aller-plus-loin)
+- [Contribuer](#contribuer)
+- [Citation & Licence](#citation--licence)
 
-## Why IDEA (vs. a chat-only assistant)
+---
 
-IDEA is action-oriented. It can execute code, inspect data, and produce artifacts you can download. Results are backed by runnable code and intermediate outputs, which supports scientific transparency and reproducibility.
+## En un coup d'œil
 
-## Core Capabilities
+| | |
+|---|---|
+| **Backend** | FastAPI (Python 3.11), SQLModel + Postgres (pgvector), Redis pour les sessions |
+| **Exécution code** | [OpenInterpreter](https://github.com/openinterpreter/open-interpreter) sandboxé dans le container |
+| **Modèles** | Toute API compatible LiteLLM (OpenAI, Anthropic, OpenRouter, Jetstream2…) |
+| **Frontend** | HTML/CSS/JS statique servi par nginx |
+| **Auth** | JWT bcrypt, superuser bootstrap depuis `.env` |
+| **Observabilité** | Langfuse self-hosted optionnel |
+| **RAG** | PaperQA2 multi-tenant pour la knowledge base PDF |
+| **Tests** | ~494 tests pytest, aucune dépendance externe (Redis/DB/Interpreter mockés) |
 
-- **Data ingestion:** Load CSV, NetCDF, text, and other common formats; summarize variables, dimensions, ranges, and missingness.
-- **Exploratory analysis:** Time series resampling, anomalies, seasonal cycles, trend estimates, and comparisons across stations or regions.
-- **Visualization:** Publication-ready plots, quick-look figures, and exportable figure packs.
-- **Mapping:** Interactive maps (folium) and static maps (matplotlib/cartopy).
-- **Domain workflows:** Sea level and tide-gauge analysis, station lookup, extremes, trends, and climate index context (e.g., El Niño-Southern Oscillation).
-- **Reproducible outputs:** Saved plots, tables, and derived datasets with traceable steps.
-- **Literature RAG:** Optional literature review using [PaperQA2](https://github.com/Future-House/paper-qa), with locally indexed PDFs for retrieval-augmented answers (via user uploads to their Knowledge base in IDEA or a limited archive of journal articles in SEA).
+---
 
-<p align="center">
-  <img src="https://uhslc.soest.hawaii.edu/research/SEAinfo/EngineeringSchematic_details.png" alt="IDEAschematic_details" width="600" />
-</p>
-Engineering plan of IDEA. Figure 1 from: Widlansky, M. J., & Komar, N. (2025). Building an intelligent data exploring assistant for geoscientists. *JGR: Machine Learning and Computation*, 2, e2025JH000649. https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2025JH000649
+## Capacités
 
-## Example Workflow
-1) Suggest a topic and ask IDEA to show you how it can help.
-2) Propose a research direction, or let IDEA guide you.
-3) Check methods and results carefully, and ask for clarification or revision when necessary.
-[Sample conversation with IDEA correcting its mistake](https://uhslc.soest.hawaii.edu/idea-api/share/fAIaXflp1JrC_7lttLhdactuoxvxEUBWQHZYlCmAowY)
+- **Ingestion de données** — CSV, TSV, NetCDF, texte, EcoTaxa, EcoPart. Inspection automatique (colonnes, dimensions, manquants).
+- **Analyse exploratoire** — séries temporelles, anomalies, cycles saisonniers, tendances, comparaisons inter-stations.
+- **Visualisation** — figures publication-ready (matplotlib/cartopy), cartes interactives (folium), packs exportables.
+- **Workflows scientifiques** — niveau marin, marégraphie, extrêmes, indices climatiques (ENSO…), workflow **Plan Mode** pour les copépodes (Data Understanding → Graph Context → Analyse).
+- **RAG littérature** — index PaperQA2 par utilisateur, upload PDF → réponses augmentées par documents locaux.
+- **Multi-agent** — `generic` (géoscience) et `copepod` (taxonomie/écologie zooplancton) sélectionnables par header HTTP.
+- **MCP** — connexions outils externes via Model Context Protocol (tokens chiffrés au repos).
+- **Sorties reproductibles** — chaque résultat est adossé au code Python qui l'a généré.
 
-### Prompting ideas
-- “I uploaded a NetCDF—what’s inside?”
-- “Plot monthly mean sea level for Honolulu and compare to an El Niño index.”
-- “Analyze trends and extremes in the time series.”
-- “Generate a self-contained web page showing the methods and results of this analysis.”
+---
 
-## Build Your Own IDEA
+## Architecture
 
-IDEA is built to be customized. You can tailor behavior by adding domain instructions, preferred methods, and datasets. The **Instructions** panel enables:
+```
+app.py              ← wiring FastAPI uniquement (pas de logique métier)
+routers/            ← adaptateurs HTTP fins → appellent core/
+core/               ← logique métier + état (interpreter, sessions, MCP, RAG, observabilité)
+agents/             ← profils d'assistant (AssistantProfile ABC + registry)
+models/             ← SQLModel (DB) + Pydantic (I/O)
+utils/              ← helpers + shims de compat
+frontend/           ← static HTML/CSS/JS
+scripts/evals/      ← suite d'évaluation Langfuse (copépode Plan Mode)
+docs/adr/           ← Architecture Decision Records
+tests/              ← ~494 tests pytest
+```
 
-- Custom roles (e.g., “Station Explorer Assistant (SEA)” for analyzing tide gauge data)
-- Standardized lab workflows and QA/QC rules
-- Consistent output styles across a team
-- Reuse of local knowledge and reference datasets via online sources or upload
+> **Détail complet :** voir [`CLAUDE.md`](CLAUDE.md) — il décrit où aller pour modifier chaque comportement (router, lifecycle interpreter, schéma DB, nouvel agent, nouvel outil, nouveau bloc d'instructions).
 
-## How It Works (Conceptual)
+### Flux de requête
 
-IDEA combines:
+```
+HTTP /chat (header X-Agent-Type: copepod)
+  → get_profile("copepod")                        agents/registry.py
+  → profile.get_tool_code()                       core/tool_registry/
+  → interpreter.computer.run("python", code_str)  injection dans sandbox
+  → LLM génère du code qui appelle les fonctions injectées
+  → stream SSE des sorties vers le client
+```
 
-- A conversational interface with a multimodal large language model (e.g., gpt-5.2 from OpenAI; AI model updates to the latest state-of-the-art)
-- Information and data context (provide custom "Instruction" manuals, "Knowledge" documents, and Data files)
-- Tool use for real actions (file I/O, code execution, plotting, and reporting)
-- Human-driven and reproducible science workflows (code reviews and "Conversation" sharing)
+Voir [`docs/adr/003-tool-injection-via-computer-run.md`](docs/adr/003-tool-injection-via-computer-run.md).
 
-Internally, IDEA uses Open Interpreter to execute Python and system commands in a controlled environment (https://github.com/openinterpreter/open-interpreter). This means results are inspectable and reproducible rather than “black box” outputs.
+---
 
-## Limitations and Scientific Caution
+## Fichiers importants
 
-IDEA is powerful but not infallible. It can:
+**Tu débarques sur le repo ?** Lis ces fichiers dans cet ordre.
 
-- Misinterpret ambiguous requests
-- Choose suboptimal methods if assumptions are unclear [Example](https://uhslc.soest.hawaii.edu/idea-api/share/fAIaXflp1JrC_7lttLhdactuoxvxEUBWQHZYlCmAowY)
-- Produce results that require domain judgment to validate
+### À lire en premier
 
-Always verify critical results, especially for publication or operational decisions. For example, when conducting a sea level analysis, be mindful of datum shifts, QC flags, record length, and local effects (subsidence/uplift). When necessary, prompt IDEA to check its work.
+| # | Fichier | Pourquoi |
+|---|---|---|
+| 1 | [`README.md`](README.md) | Ce document — vue d'ensemble, démarrage |
+| 2 | [`CLAUDE.md`](CLAUDE.md) | Carte complète du code : où aller pour modifier quoi |
+| 3 | [`share.env.example`](share.env.example) | Toutes les variables d'env, avec valeurs par défaut |
+| 4 | [`docker-compose.yml`](docker-compose.yml) | Services : web, db, redis, langfuse, langfuse-db |
+| 5 | [`app.py`](app.py) | Wiring FastAPI (202L) — comprendre comment tout est branché |
 
-## Getting Started Locally (requires Docker)
+### Points d'entrée par sujet
 
-### 1. Clone the Repository
+#### Backend HTTP
+
+| Sujet | Fichier |
+|---|---|
+| Chat (endpoint principal) | [`routers/chat_routes.py`](routers/chat_routes.py) |
+| Auth (JWT, login, share link) | [`routers/auth_routes.py`](routers/auth_routes.py) + [`core/auth.py`](core/auth.py) |
+| Conversations (CRUD Postgres) | [`routers/conversation_routes.py`](routers/conversation_routes.py) |
+| Upload fichiers | [`routers/file_routes.py`](routers/file_routes.py) |
+| Knowledge base PDF (RAG) | [`routers/knowledge_base_routes.py`](routers/knowledge_base_routes.py) + [`core/rag_store.py`](core/rag_store.py) |
+| MCP (outils externes) | [`routers/mcp_routes.py`](routers/mcp_routes.py) + [`core/mcp/`](core/mcp/) |
+| System prompts | [`routers/prompt_routes.py`](routers/prompt_routes.py) + [`core/prompt_store.py`](core/prompt_store.py) |
+| Workflow Plan Mode (copépode) | [`routers/session_routes.py`](routers/session_routes.py) |
+
+#### Cœur métier
+
+| Sujet | Fichier |
+|---|---|
+| Lifecycle interpreter (create/clear/idle) | [`core/interpreter_session.py`](core/interpreter_session.py) |
+| Persistance sessions (Redis / in-memory) | [`core/session_store.py`](core/session_store.py) |
+| Streaming SSE du chat | [`core/chat_stream_events.py`](core/chat_stream_events.py) |
+| Config (variables d'env) | [`core/config.py`](core/config.py) |
+| Schéma DB | [`models/db.py`](models/db.py) |
+| Pydantic I/O | [`models/schemas.py`](models/schemas.py) |
+
+#### Multi-agent
+
+| Sujet | Fichier |
+|---|---|
+| ABC `AssistantProfile` | [`agents/base.py`](agents/base.py) |
+| Registry des agents | [`agents/registry.py`](agents/registry.py) |
+| Agent géoscience (défaut) | [`agents/generic_profile.py`](agents/generic_profile.py) |
+| Agent copépode | [`agents/copepod_profile.py`](agents/copepod_profile.py) + [`agents/copepod_prompt.py`](agents/copepod_prompt.py) |
+
+#### Composables (tools & instructions)
+
+| Sujet | Fichier |
+|---|---|
+| Registry des tools (par tags) | [`core/tool_registry/registry.py`](core/tool_registry/registry.py) |
+| Tools concrets (core, climate, copepod, web…) | [`core/tool_registry/tools/`](core/tool_registry/tools/) |
+| Renderer d'instructions (par blocs) | [`core/instruction_renderer/renderer.py`](core/instruction_renderer/renderer.py) |
+| Blocs (session, output, signatures, MCP…) | [`core/instruction_renderer/blocks/`](core/instruction_renderer/blocks/) |
+
+#### Observabilité
+
+| Sujet | Fichier |
+|---|---|
+| Hooks Langfuse génériques | [`core/chat_observability.py`](core/chat_observability.py) |
+| Hooks Langfuse copépode | [`core/copepod_observability.py`](core/copepod_observability.py) |
+| Anti-PII Langfuse | [`core/langfuse_guard.py`](core/langfuse_guard.py) |
+| Live tail des traces | [`scripts/langfuse_live_log.py`](scripts/langfuse_live_log.py) |
+
+#### Frontend
+
+| Sujet | Fichier |
+|---|---|
+| Shell HTML principal | [`frontend/index.html`](frontend/index.html) |
+| Assistant (logique chat côté client) | [`frontend/assistant.js`](frontend/assistant.js) |
+| Conversation UI | [`frontend/conversation_ui.js`](frontend/conversation_ui.js) |
+| Upload de fichiers | [`frontend/file-upload.js`](frontend/file-upload.js) |
+| Reverse-proxy local | [`nginx.conf`](nginx.conf) |
+
+#### Tests & évals
+
+| Sujet | Fichier |
+|---|---|
+| Tests pytest (~494) | [`tests/`](tests/) |
+| Suite éval Plan Mode | [`scripts/evals/README.md`](scripts/evals/README.md) |
+| Runner principal | [`scripts/evals/run_copepod_plan_mode_eval.py`](scripts/evals/run_copepod_plan_mode_eval.py) |
+
+---
+
+## Démarrage rapide
+
+**Prérequis :** Docker + Docker Compose.
 
 ```bash
-git clone https://github.com/uhsealevelcenter/IDEA.git
-cd IDEA
+# 1. Cloner
+git clone <ce-repo> && cd IDEA
+
+# 2. Configurer
+cp share.env.example .env             # remplir LLM_API_KEY, FIRST_SUPERUSER_PASSWORD, SECRET_KEY
+cp frontend/config.example.js frontend/config.js
+
+# 3. Démarrer (mode partageable — lit uniquement .env, ignore l'env shell)
+./share_start.sh
 ```
 
-### 2. Configure Environment Variables
+Accès : http://localhost (login via les credentials de ton `.env`).
 
-Create a `.env` file in the project root (copy `example.env` and edit values). At minimum you should set:
+### Autres scripts de lancement
 
-```ini
-OPENAI_API_KEY=YOUR_API_KEY_HERE
-POSTGRES_DB=idea_db
-POSTGRES_USER=idea_user
-POSTGRES_PASSWORD=change_this
-SECRET_KEY=change_this
-FIRST_SUPERUSER=admin@idea.com
-FIRST_SUPERUSER_PASSWORD=change_this
-```
+| Script | Usage |
+|---|---|
+| `./share_start.sh` | Mode partageable, lit uniquement `.env` (recommandé pour onboarding) |
+| `./local_start.sh` | Dev local avec `docker-compose.override.yml` (live reload) |
+| `./production_start.sh` | Production sans override (build seul, pas de bind-mount) |
 
-IDEA has been tested with several LLM inference providers, including OpenAI (https://platform.openai.com/), Anthropic (https://claude.com/platform/api), and Jetstream2 (https://docs.jetstream-cloud.org/inference-service/overview/).
+---
 
-### 3. Configure the Frontend
+## Configuration
 
-If `frontend/config.js` does not exist, copy `frontend/config.example.js` to `frontend/config.js` and edit as needed. This file contains environment parameters and no secrets.
+Variables minimum dans `.env` (voir [`share.env.example`](share.env.example) pour la liste exhaustive) :
 
-### 4. Start Local Services
+| Variable | Exemple | Note |
+|---|---|---|
+| `LLM_MODEL` | `openrouter/openai/gpt-5.4-mini` | Tout modèle LiteLLM-compatible |
+| `LLM_API_KEY` | `sk-...` | Clé du provider LLM |
+| `LLM_API_BASE` | `https://openrouter.ai/api/v1` | Base URL provider |
+| `SECRET_KEY` | (random 32+) | Pour JWT |
+| `FIRST_SUPERUSER` | `admin@idea.com` | Créé au bootstrap si absent |
+| `FIRST_SUPERUSER_PASSWORD` | (mot de passe fort) | idem |
+| `POSTGRES_*` | — | DB principale (pgvector pour RAG) |
+| `LANGFUSE_*` | — | Optionnel — désactive si non rempli |
 
-Run:
+### Ports par défaut
+
+| Service | Port hôte | Override `.env` |
+|---|---|---|
+| nginx (frontend) | 80 | `IDEA_NGINX_HOST_PORT` |
+| FastAPI (web) | 8002 | `IDEA_WEB_HOST_PORT` |
+| Postgres | 5433 | `IDEA_DB_HOST_PORT` |
+| Redis | 6380 | `IDEA_REDIS_HOST_PORT` |
+| Langfuse | 3001 | `LANGFUSE_HOST_PORT` |
+
+---
+
+## Tests
 
 ```bash
-./local_start.sh
+python -m pytest tests/ -q
 ```
 
-This uses `docker compose` with `docker-compose.yml` plus `docker-compose.override.yml` to enable live reload and local mounts.
+~494 tests, exécution locale sans Redis, DB ni LLM (mocks via `InMemorySessionStore`, fixtures FastAPI `TestClient`).
 
-### 5. Access the App
+Pour les **évals copépode Plan Mode** (LLM réel + Langfuse), voir [`scripts/evals/README.md`](scripts/evals/README.md).
 
-- Main app: http://localhost
-- Login: http://localhost/login.html
+---
 
-Login with the credentials from your `.env` file.
+## Multi-agent
 
-## Deploying to Production (requires Docker)
+L'agent actif est sélectionné par le frontend via le header HTTP `X-Agent-Type`. Inconnu → fallback `"generic"`.
 
-Use:
+| `agent_type` | Domaine | Tools / Instructions |
+|---|---|---|
+| `generic` | Géoscience, niveau marin, climat | Tools de base, system prompt UHSLC |
+| `copepod` | Taxonomie & écologie copépodes (EcoTaxa/EcoPart) | Workflow Plan Mode, validation joins, RAG dédié |
 
-```bash
-./production_start.sh
-```
+### Ajouter un agent
 
-This runs `docker compose -f docker-compose.yml` to build and start the production services.
+1. Créer `agents/mon_agent.py` (sous-classe `AssistantProfile`, déclarer `tool_tags` + `instruction_blocks`).
+2. `register(MonAgent())` à l'import.
+3. Importer le module dans `app.py` (~ligne 23).
 
-### Security and Deployment Notes
+Patron complet : voir [`CLAUDE.md`](CLAUDE.md#ajouter-un-nouveau-type-dagent) et [`docs/adr/001-assistant-profile-pattern.md`](docs/adr/001-assistant-profile-pattern.md).
 
-- **Code execution:** IDEA allows an AI model to generate computer code that executes in the environment where IDEA is installed.
-- **Local development (`./local_start.sh`):** Intended for **single-user development**. The local Docker configuration bind-mounts the project directory for live reload, which means the model can read/write parts of the host filesystem.
-- **Production (`./production_start.sh`):** Intended for **multi-user deployment** using the production Docker stack.
-- **Isolation tip (production):** Keep the IDEA compute container isolated from the front-end web interface. A common pattern is to run the web UI on a separate host or network segment and only expose the backend API through a controlled reverse proxy.
+---
 
-Docker provides isolation, but it is not a complete security solution for sensitive environments. Treat the IDEA compute container as an execution environment and design your deployment accordingly.
+## MCP (Model Context Protocol)
 
-## Project Structure
+Les connexions MCP permettent au LLM d'utiliser des outils externes (filesystem, recherche web, APIs métier…).
 
-```
-.
-├── app.py                         # FastAPI backend and Open Interpreter integration
-├── auth.py                        # Authentication utilities
-├── Dockerfile                     # Container build configuration
-├── docker-compose.yml             # Production Docker Compose configuration
-├── docker-compose.override.yml    # Local development overrides
-├── local_start.sh                 # Local development startup
-├── production_start.sh            # Production startup
-├── requirements.txt               # Python dependencies
-├── data/                          # Datasets, benchmarks, metadata, papers
-├── frontend/                      # Static frontend assets (HTML/CSS/JS)
-├── nginx.conf                     # Local dev reverse-proxy/static server config
-├── static/                        # User artifacts and generated outputs
-└── utils/                          
-    └── system_prompt.py           # System prompt for the assistant
-```
+- Lifecycle : `core/mcp/manager.py`
+- Invocation : `core/mcp/tools.py`
+- Routes CRUD : `routers/mcp_routes.py`
+- Tokens chiffrés au repos via `core/crypto.py`
 
-## Citation
+---
 
-Widlansky, M. J., & Komar, N. (2025). Building an intelligent data exploring assistant for geoscientists. *JGR: Machine Learning and Computation*, 2, e2025JH000649. https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2025JH000649
+## Observabilité — Langfuse
 
-## Contributing
+Langfuse self-hosted est fourni dans `docker-compose.yml`. Désactivé tant que `LANGFUSE_PUBLIC_KEY` n'est pas configuré.
 
-Contributions, issue reports, and feature requests are welcome! Please open an issue or a pull request with your changes. General feedback or questions can be emailed to idea-dev-grp@hawaii.edu
+- **UI :** http://localhost:3001
+- **Guide complet :** [`docs/langfuse-guide.md`](docs/langfuse-guide.md)
+- **API REST + curl :** [`docs/langfuse-rest-api-trace-inspection.md`](docs/langfuse-rest-api-trace-inspection.md)
+- **Live tail :** [`docs/langfuse-live-log.md`](docs/langfuse-live-log.md)
 
-## Release
+---
 
-![image](https://github.com/user-attachments/assets/4fe5d3e7-5c1a-4fcd-9274-998e841fb860)
+## Pour aller plus loin
 
-Prototype (v0.1.0) https://doi.org/10.5281/zenodo.15605301
+### Documentation produit / workflow
 
-## License
+| Sujet | Fichier |
+|---|---|
+| Architecture complète + "où aller pour modifier X" | [`CLAUDE.md`](CLAUDE.md) |
+| Suite d'évaluation copépode | [`scripts/evals/README.md`](scripts/evals/README.md) |
+| Routine de test copépode | [`docs/copepod-test-operations.md`](docs/copepod-test-operations.md) |
+| Couverture Plan Mode + lacunes | [`docs/copepod-plan-mode-eval-coverage.md`](docs/copepod-plan-mode-eval-coverage.md) |
+| Scénarios GC-only | [`docs/copepod-gc-only-live-eval.md`](docs/copepod-gc-only-live-eval.md) |
+| Compensations dans le harness | [`docs/copepod-eval-compensations.md`](docs/copepod-eval-compensations.md) |
+| Politique mode online | [`docs/copepod-online-mode-policy.md`](docs/copepod-online-mode-policy.md) |
+| Stratégie Langfuse | [`docs/copepod-langfuse-evals.md`](docs/copepod-langfuse-evals.md) |
 
-This project is licensed under the MIT License. See `LICENSE`.
+### Décisions d'architecture (ADRs)
+
+| # | Sujet |
+|---|---|
+| [001](docs/adr/001-assistant-profile-pattern.md) | `AssistantProfile` ABC + registry pattern |
+| [002](docs/adr/002-session-key-3-segments.md) | Clés de session 3-segments (`user:session:agent`) |
+| [003](docs/adr/003-tool-injection-via-computer-run.md) | Injection des tools via `computer.run()` |
+| [004](docs/adr/004-plan-ready-tag-for-mode-switch.md) | Tag `[PLAN_READY]` pour le switch Plan → Analyse |
+
+### Archive
+
+`docs/archive/` contient les status reports datés, plans et specs déjà livrés. Pas de mise à jour — uniquement traçabilité historique.
+
+---
+
+## Sécurité & déploiement
+
+- **Exécution de code :** OpenInterpreter exécute du code généré par un LLM dans le container. Traite le container comme un **environnement d'exécution non-confidentiel**.
+- **Dev local (`local_start.sh`) :** mono-utilisateur. Bind-mount du repo → l'interpreter peut lire/écrire dans le filesystem hôte mappé.
+- **Mode partageable (`share_start.sh`) :** lit uniquement `.env` projet (`env -i`), n'hérite pas du shell.
+- **Production (`production_start.sh`) :** isoler le compute de l'UI. Exposer l'API derrière un reverse-proxy contrôlé. Pas de bind-mount du repo.
+
+Docker isole, mais ne suffit pas pour un déploiement multi-tenant sensible.
+
+---
+
+## Contribuer
+
+- Modifier le comportement d'un endpoint → router concerné dans `routers/`.
+- Modifier la logique métier → `core/` (jamais `app.py`).
+- Ajouter un agent / outil / bloc d'instructions → voir [`CLAUDE.md`](CLAUDE.md).
+- Changement d'architecture significatif → ouvrir un ADR dans `docs/adr/`.
+- Tests obligatoires : `python -m pytest tests/ -q` doit passer avant tout PR.
+
+---
+
+## Citation & Licence
+
+Travail original (upstream UHSLC) :
+
+> Widlansky, M. J., & Komar, N. (2025). Building an intelligent data exploring assistant for geoscientists. *JGR: Machine Learning and Computation*, 2, e2025JH000649. https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2025JH000649
+
+Prototype upstream : https://doi.org/10.5281/zenodo.15605301
+
+Licence : MIT (voir [`LICENSE`](LICENSE) — à ajouter si absent).

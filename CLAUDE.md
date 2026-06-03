@@ -10,18 +10,18 @@ L'utilisateur pose une question → IDEA génère et exécute du code Python →
 ```
 PROJET_INFO/
   IDEA/                          ← ce repo — runtime web (FastAPI)
-  assistant-copepodes-specs/     ← specs TDD + package polar_data_tools
+  assistant-copepodes-specs/     ← repo compagnon optionnel pour les tools/tests copépodes
 ```
 
-Les tools copépodes sont développés et testés dans `assistant-copepodes-specs/`, puis exposés dans IDEA via un `AssistantProfile`.
+Les tools copépodes sont développés et testés dans `assistant-copepodes-specs/` quand ce repo compagnon est présent, puis exposés dans IDEA via un `AssistantProfile`.
 
 ---
 
-## Architecture post-refactor (mai 2026)
+## Architecture (à jour 2026-06-03)
 
-### `app.py` — 189L, wiring uniquement
+### `app.py` — 202L, wiring uniquement
 
-Point d'entrée FastAPI. N'a pas de logique métier : monte les routers, configure le middleware, démarre les tâches de fond. Si tu dois modifier le comportement d'un endpoint, ne touche pas `app.py`.
+Point d'entrée FastAPI. N'a pas de logique métier : monte les routers, configure le middleware (CORS, rate limiter SlowAPI), enregistre les profils d'agents (import side-effect), démarre les tâches de fond. **Si tu dois modifier le comportement d'un endpoint, ne touche pas `app.py`.**
 
 ### `routers/` — adaptateurs HTTP fins
 
@@ -34,30 +34,62 @@ Point d'entrée FastAPI. N'a pas de logique métier : monte les routers, configu
 | `knowledge_base_routes.py` | upload PDF, query RAG (PaperQA) |
 | `mcp_routes.py` | CRUD connexions MCP |
 | `prompt_routes.py` | CRUD system prompts + set_active |
+| `session_routes.py` | `/session/mode`, artifacts (DU/GC) — workflow Plan Mode copépode |
 | `user_routes.py` | CRUD utilisateurs (superuser) |
 
-Les routers n'ont pas de logique — ils appellent `core/`.
+Les routers n'ont pas de logique métier — ils appellent `core/`.
 
 ### `core/` — logique métier et état
+
+#### Infrastructure & auth
 
 | Module | Responsabilité |
 |---|---|
 | `auth.py` | JWT : `get_current_user`, `get_auth_token`, `get_db` |
-| `config.py` | `settings` — toutes les variables d'env (LLM, DB, sessions) |
+| `config.py` | `settings` — toutes les variables d'env (LLM, DB, sessions, Langfuse) |
 | `crud.py` | Helpers ORM : User, SystemPrompt, MCPConnection |
 | `crypto.py` | Chiffrement des tokens MCP au repos |
 | `db.py` | Engine SQLAlchemy + init superuser |
 | `security.py` | bcrypt hash/verify |
-| `interpreter_session.py` | **Lifecycle OpenInterpreter** : create, configure, idle-timeout, clear |
+
+#### Sessions & interpreter
+
+| Module | Responsabilité |
+|---|---|
+| `interpreter_session.py` | **Lifecycle OpenInterpreter** : `get_or_create_interpreter`, `clear_session`, `cleanup_idle_sessions` |
 | `interpreter_store.py` | Dict global `interpreter_instances` |
-| `session_store.py` | **SessionStore ABC** + RedisSessionStore + InMemorySessionStore |
+| `session_store.py` | **SessionStore ABC** + `RedisSessionStore` + `InMemorySessionStore` |
 | `prompt_store.py` | Cache DB-backed des system prompts actifs |
-| `rag_store.py` | Index PaperQA par utilisateur |
+| `rag_store.py` | Index PaperQA par utilisateur (multi-tenant) |
+
+#### Chat streaming & observabilité
+
+| Module | Responsabilité |
+|---|---|
+| `chat_stream_events.py` | Formatage des événements SSE pour `/chat` |
+| `chat_observability.py` | Hooks Langfuse génériques sur le tour de chat |
+| `copepod_observability.py` | Scoring + tags Langfuse spécifiques copépode |
+| `langfuse_guard.py` | Détecte/masque les PII avant push Langfuse |
+| `response_formatting.py` | Normalise les réponses LLM (DELIVERABLE card, etc.) |
+
+#### Copépode
+
+| Module | Responsabilité |
+|---|---|
+| `copepod_join_validation.py` | Validation des joins EcoTaxa ↔ EcoPart |
+| `copepod_rag/` | Index Chroma + `build_index.py`, `chunk_docs.py`, `query.py` |
+
+#### Composables
+
+| Module | Responsabilité |
+|---|---|
 | `mcp/manager.py` | Lifecycle connexions MCP (transports, sessions) |
 | `mcp/tools.py` | Invocation d'outils MCP |
-| `mcp/__init__.py` | Exporte : `mcp_manager`, `call_mcp_tool`, `list_available_tools` |
-| `tool_registry/` | **ToolRegistry** — tools composables par tags |
-| `instruction_renderer/` | **InstructionRenderer** — blocs d'instructions LLM composables |
+| `mcp/__init__.py` | Exporte `mcp_manager`, `call_mcp_tool`, `list_available_tools` |
+| `tool_registry/registry.py` | **ToolRegistry** — `Tool(name, tags, code)` composables |
+| `tool_registry/tools/` | Tools concrets : `core_tools`, `climate_tools`, `station_tools`, `rag_tools`, `web_tools`, `mcp_tools`, `copepod_*` (5 fichiers) |
+| `instruction_renderer/renderer.py` | **InstructionRenderer** — blocs composables |
+| `instruction_renderer/blocks/` | Blocs : `session_metadata`, `output_format`, `cli_reference`, `tool_signatures`, `copepod_tool_signatures`, `mcp_tools_block` |
 
 ### `agents/` — pattern multi-agent
 
@@ -66,6 +98,8 @@ Les routers n'ont pas de logique — ils appellent `core/`.
 | `base.py` | `AssistantProfile` ABC : `get_system_message`, `get_tool_code`, `get_custom_instructions`, `configure_interpreter` |
 | `registry.py` | `register`, `get_profile`, `get_default_profile`, `registered_types` |
 | `generic_profile.py` | Profil géoscience — s'auto-enregistre à l'import |
+| `copepod_profile.py` | Profil copépode (Plan Mode, RAG dédié) — s'auto-enregistre à l'import |
+| `copepod_prompt.py` | System prompt et constantes du profil copépode |
 
 L'agent est sélectionné via le header HTTP `X-Agent-Type`. Inconnu → fallback `"generic"`.
 
@@ -75,7 +109,7 @@ L'agent est sélectionné via le header HTTP `X-Agent-Type`. Inconnu → fallbac
 |---|---|
 | `db.py` | Tables SQLModel : User, Conversation, Message, SystemPrompt, MCPConnection + enums |
 | `schemas.py` | Pydantic I/O : LoginRequest/Response, PromptCreate/Update/Response, MCPToolCallRequest… |
-| `__init__.py` | Réexporte tout — `import models` et `from models import X` continuent de fonctionner |
+| `__init__.py` | Réexporte tout — `import models` et `from models import X` fonctionnent |
 
 ### `utils/`
 
@@ -87,23 +121,56 @@ L'agent est sélectionné via le header HTTP `X-Agent-Type`. Inconnu → fallbac
 | `session_utils.py` | Fonctions pures : `make_session_key`, `parse_session_key`, `session_dir_path`, `resolve_agent_type` |
 | `prompt_manager.py` | Shim compat → `core/prompt_store` |
 | `pqa_multi_tenant.py` | Shim compat → `core/rag_store` |
+| `transcription_prompt.py` | Prompt pour l'endpoint `/transcribe` (Whisper) |
 | `station_list_appendix.py` | Données de référence tide gauge (lecture seule) |
+| `my_pqa_settings.py` | Settings PaperQA |
+| `generate_pdf_stream.js` | Export PDF côté frontend (utilisé via static) |
+
+### `scripts/`
+
+| Fichier | Rôle |
+|---|---|
+| `evals/run_copepod_lean_eval.py` | Runner d'éval léger |
+| `evals/run_copepod_plan_mode_eval.py` | Runner principal Plan Mode (mock, du-only, gc-only, live, trace-smoke) |
+| `evals/copepod/` | Package interne de la suite (harness, fixtures, llm_driver, scénarios) |
+| `langfuse_live_log.py` | Poll Langfuse toutes les 5s, écrit dans `logs/langfuse_live.log` |
 
 ### `docs/adr/` — décisions d'architecture
 
 - `001-assistant-profile-pattern.md` — Pourquoi ABC + registry plutôt que subclasses
 - `002-session-key-3-segments.md` — Pourquoi `user_id:session_id:agent_type`
 - `003-tool-injection-via-computer-run.md` — Pourquoi string injectée + limites connues
+- `004-plan-ready-tag-for-mode-switch.md` — Pourquoi le tag `[PLAN_READY]` pour le switch Plan → Analyse
 
-### `tests/` — 48 tests
+### `docs/archive/` — historique
+
+- `status-reports/` — snapshots datés (ne pas mettre à jour)
+- `plans/` — plans déjà livrés
+- `specs/` — specs ayant abouti à du code mergé
+
+### `tests/` — 33 fichiers, ~494 tests
+
+Tests sans dépendance externe (Redis, DB, OpenInterpreter mockés). Points d'entrée principaux :
 
 | Fichier | Ce qu'il teste |
 |---|---|
 | `test_agents.py` | Registration, get_profile, get_default_profile |
-| `test_phase3_wiring.py` | make_session_key, parse_session_key, session_dir_path |
-| `test_phase4_db.py` | Initialisation superuser |
 | `test_session_store.py` | InMemorySessionStore (sans Redis) |
-| `test_interpreter_session.py` | clear_session, cleanup_idle_sessions (avec mocks) |
+| `test_interpreter_session.py` | clear_session, cleanup_idle_sessions |
+| `test_chat_routes.py` / `test_chat_stream_events.py` | Endpoint `/chat` + SSE |
+| `test_chat_observability.py` / `test_copepod_observability.py` | Hooks Langfuse |
+| `test_copepod_profile.py` / `test_copepod_prompt_contract.py` | Profil copépode + contrat de prompt |
+| `test_copepod_data*.py` / `test_copepod_columns.py` / `test_copepod_join_validation.py` | Tools données copépode |
+| `test_copepod_rag*.py` / `test_copepod_remote_sources.py` / `test_copepod_sources_meta.py` | RAG + sources copépode |
+| `test_copepod_online_mode_*.py` | Politique mode online |
+| `test_session_routes.py` | Artifacts DU/GC + `/session/mode` |
+| `test_tool_registry_litellm_params.py` | Sérialisation tool registry |
+| `test_langfuse_guard.py` | Anti-PII Langfuse |
+| `test_response_formatting.py` | DELIVERABLE card |
+| `test_docker_portability.py` / `test_share_start_script.py` | Démarrage Docker + script `share_start.sh` |
+| `test_mcp_planning.py` | Workflow MCP |
+| `test_phase3_wiring.py` / `test_phase4_db.py` | Wiring historique (à conserver) |
+| `test_crud.py` / `test_prompt_store.py` / `test_conversation_routes.py` | DB & CRUD |
 
 ---
 
@@ -243,19 +310,22 @@ Voir `docs/adr/002-session-key-3-segments.md`.
 ## Démarrage local
 
 ```bash
-cp example.env .env          # remplir LLM_API_KEY, FIRST_SUPERUSER, etc.
+cp share.env.example .env    # remplir LLM_API_KEY, FIRST_SUPERUSER, etc.
 cp frontend/config.example.js frontend/config.js
-./local_start.sh             # Docker requis → http://localhost
+./share_start.sh             # Docker requis → partageable, lit seulement .env
 ```
 
 Variables minimum dans `.env` :
 - `LLM_MODEL` (ex: `gpt-4o`, `claude-sonnet-4-6`, `openai/Llama-3.3-70B-Instruct`)
 - `LLM_API_KEY`
 - `FIRST_SUPERUSER` + `FIRST_SUPERUSER_PASSWORD`
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_SALT` si Langfuse est activé
 
 ## Tests
 
 ```bash
 python -m pytest tests/ -q
-# 48 tests, aucune dépendance externe (Redis, DB, OpenInterpreter mockés)
+# ~494 tests sur 33 fichiers, aucune dépendance externe (Redis, DB, OpenInterpreter mockés)
 ```
+
+Pour les **évals copépode Plan Mode** (LLM réel + Langfuse), voir `scripts/evals/README.md`.
