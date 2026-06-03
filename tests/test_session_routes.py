@@ -7,6 +7,9 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+# Ensure copepod agent is registered so the online-mode route accepts copepod sessions.
+import agents.copepod_profile  # noqa: F401
+
 from core.auth import get_auth_token
 from core.session_store import InMemorySessionStore
 from routers.session_routes import router as session_router
@@ -65,10 +68,13 @@ def test_session_id_required():
 
 
 def test_no_plan_or_analyse_route_remains():
+    """POST to /session/mode must not be accepted: only the GET stub remains."""
     store = InMemorySessionStore()
     fake_user = SimpleNamespace(id="u1")
     with patch("routers.session_routes.get_current_user", return_value=fake_user), \
          patch("routers.session_routes.session_store", store):
         client = _client(store)
         response = client.post("/session/mode", json={"mode": "analyse"}, headers=_headers())
-    assert response.status_code == 404
+    # GET /session/mode exists as a stub → POST returns 405 (method not allowed),
+    # which still proves the plan/analyse mutation endpoint is gone.
+    assert response.status_code == 405

@@ -160,7 +160,7 @@ def test_from_env_creates_user_session_trace_with_round_metadata(monkeypatch):
     trace_payload = FakeLangfuse.instances[0].traces[0].payload
     assert trace_payload["user_id"] == "user-123"
     assert trace_payload["session_id"] == "user-123:session-abc:copepod"
-    assert trace_payload["name"] == "idea-chat-runtime"
+    assert trace_payload["name"] == "copepod/round-4"
     assert trace_payload["metadata"]["round"] == 4
     assert trace_payload["metadata"]["agent_type"] == "copepod"
 
