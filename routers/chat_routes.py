@@ -234,7 +234,7 @@ def _extract_report_summary(content: str) -> str | None:
     # to regurgitate /app/static/ paths in user-visible prose responses.
     parts: list[str] = [label]
     if source:
-        parts.append(f"source: {source}")
+        parts.append(source)  # no "source:" prefix — prevents LLM from translating it as "source détectée" + value
     if compact_shape:
         parts.append(compact_shape)
     if join_hints:
