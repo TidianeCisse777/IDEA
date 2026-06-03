@@ -50,6 +50,15 @@ class SessionStore(ABC):
     @abstractmethod
     def write_working_set(self, session_key: str, working_set: dict) -> None: ...
 
+    @abstractmethod
+    def store_inspection_report(self, session_key: str, filename: str, report: str) -> None: ...
+
+    @abstractmethod
+    def read_inspection_report(self, session_key: str, filename: str) -> str | None: ...
+
+    @abstractmethod
+    def list_inspection_reports(self, session_key: str) -> list[str]: ...
+
 
 class RedisSessionStore(SessionStore):
     """Production implementation backed by a Redis server."""
@@ -77,6 +86,7 @@ class RedisSessionStore(SessionStore):
             f"last_active:{session_key}",
             f"online_mode:{session_key}",
             f"working_set:{session_key}",
+            f"inspection_reports:{session_key}",
         )
 
     def all_session_keys(self) -> list[str]:
@@ -97,6 +107,17 @@ class RedisSessionStore(SessionStore):
     def write_working_set(self, session_key: str, working_set: dict) -> None:
         self._r.set(f"working_set:{session_key}", json.dumps(working_set))
 
+    def store_inspection_report(self, session_key: str, filename: str, report: str) -> None:
+        self._r.hset(f"inspection_reports:{session_key}", filename, report)
+
+    def read_inspection_report(self, session_key: str, filename: str) -> str | None:
+        raw = self._r.hget(f"inspection_reports:{session_key}", filename)
+        return raw.decode() if raw else None
+
+    def list_inspection_reports(self, session_key: str) -> list[str]:
+        keys = self._r.hkeys(f"inspection_reports:{session_key}")
+        return [k.decode() for k in keys]
+
 
 class InMemorySessionStore(SessionStore):
     """In-memory implementation for tests and local development (no Redis needed)."""
@@ -106,6 +127,7 @@ class InMemorySessionStore(SessionStore):
         self._timestamps: dict[str, float] = {}
         self._online_modes: dict[str, bool] = {}
         self._working_sets: dict[str, dict] = {}
+        self._inspection_reports: dict[str, dict[str, str]] = {}
 
     def read_messages(self, session_key: str) -> list[dict] | None:
         return self._messages.get(session_key)
@@ -124,6 +146,7 @@ class InMemorySessionStore(SessionStore):
         self._timestamps.pop(session_key, None)
         self._online_modes.pop(session_key, None)
         self._working_sets.pop(session_key, None)
+        self._inspection_reports.pop(session_key, None)
 
     def all_session_keys(self) -> list[str]:
         return list(self._timestamps.keys())
@@ -139,6 +162,15 @@ class InMemorySessionStore(SessionStore):
 
     def write_working_set(self, session_key: str, working_set: dict) -> None:
         self._working_sets[session_key] = working_set
+
+    def store_inspection_report(self, session_key: str, filename: str, report: str) -> None:
+        self._inspection_reports.setdefault(session_key, {})[filename] = report
+
+    def read_inspection_report(self, session_key: str, filename: str) -> str | None:
+        return self._inspection_reports.get(session_key, {}).get(filename)
+
+    def list_inspection_reports(self, session_key: str) -> list[str]:
+        return list(self._inspection_reports.get(session_key, {}).keys())
 
 
 # Singleton — selection strategy:

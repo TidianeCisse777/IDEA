@@ -215,26 +215,100 @@ def _describe_columns(df):
 
 
 def _semantic_guess(col_name, series):
-    """Heuristic semantic guess from column name only. Low confidence by design."""
+    """Heuristic semantic guess from column name. Token-based to avoid false
+    positives (e.g. previously ``sampling_platform`` matched ``"lat"`` via
+    substring and was tagged as latitude).
+
+    Confidence levels:
+    - ``high``   : the token pattern is strongly diagnostic (``_id`` suffix,
+                   ``year`` token, etc.)
+    - ``medium`` : plausible from the name but the LLM should still check the
+                   samples
+    - ``low``    : weak signal — only useful as a hint
+    """
+    import re as _re
     name = col_name.lower()
+    tokens = [t for t in _re.split(r'[ \t_/-]+', name) if t]
 
-    rules = [
-        (["depth", "profondeur", "depth_min", "depth_max"], "depth", "m", "medium"),
-        (["lat", "latitude"],                                "latitude", "degrees", "high"),
-        (["lon", "longitude"],                               "longitude", "degrees", "high"),
-        (["time", "date", "datetime", "timestamp"],          "time", None, "medium"),
-        (["classif", "taxon", "taxonom", "species"],         "taxon", None, "medium"),
-        (["classif_qual", "valid"],                          "taxonomic_validation_status", None, "medium"),
-        (["vol", "volume"],                                  "sample_volume", "L or m3", "low"),
-        (["img", "image", "object_id", "obj_id"],            "image_id", None, "low"),
-        (["station", "sta_"],                                "station", None, "medium"),
-        (["profile", "profile_id"],                          "profile_id", None, "medium"),
-        (["pixel", "area", "esd", "major", "minor"],         "size_or_morphometry", "pixels or mm", "low"),
-    ]
+    def _has_token(*candidates):
+        return any(t in tokens for t in candidates)
 
-    for keywords, role, unit, conf in rules:
-        if any(k in name for k in keywords):
-            return role, unit, conf
+    def _ends_with(*suffixes):
+        return any(name.endswith(s) for s in suffixes)
+
+    def _starts_with(*prefixes):
+        return any(name.startswith(p) for p in prefixes)
+
+    # ── Identifiers ────────────────────────────────────────────────────────
+    if _ends_with("_id", "_ids", "_identifier") or name in ("id", "ids"):
+        return "identifier", None, "high"
+
+    # ── Time / dates ───────────────────────────────────────────────────────
+    if _has_token("datetime", "timestamp"):
+        return "datetime", None, "high"
+    if _has_token("date"):
+        return "date", None, "high"
+    if _has_token("year", "yr"):
+        return "year", None, "high"
+    if _has_token("month"):
+        return "month", None, "high"
+    if _has_token("day", "doy"):
+        return "day", None, "high"
+    if _has_token("time"):
+        return "time", None, "medium"
+
+    # ── Freetext / counts ──────────────────────────────────────────────────
+    if _has_token("comment", "comments", "note", "notes", "remark", "remarks",
+                  "description", "label"):
+        return "freetext", None, "high"
+    if _starts_with("number_of_", "nb_", "n_of_") or _has_token("count"):
+        return "count", None, "high"
+
+    # ── Geo ────────────────────────────────────────────────────────────────
+    if _has_token("lat", "latitude"):
+        return "latitude", "degrees", "high"
+    if _has_token("lon", "long", "longitude"):
+        return "longitude", "degrees", "high"
+    if _has_token("depth", "profondeur"):
+        return "depth", "m", "medium"
+
+    # ── Sampling / instruments ─────────────────────────────────────────────
+    if _has_token("subsampling", "subsample", "fraction"):
+        return "subsampling", None, "medium"
+    if _has_token("mesh", "aperture"):
+        return "mesh_specification", "µm or m", "medium"
+    if _has_token("gear", "tow"):
+        return "sampling_gear", None, "medium"
+    if _has_token("platform", "vessel", "ship"):
+        return "platform_label", None, "medium"
+    if _has_token("protocol", "method"):
+        return "protocol_label", None, "medium"
+    if _has_token("contract"):
+        return "contract_label", None, "medium"
+    if _has_token("type", "category"):
+        return "category_label", None, "medium"
+
+    # ── Taxonomy ───────────────────────────────────────────────────────────
+    if _has_token("taxon", "taxonom", "species", "classif"):
+        return "taxon", None, "medium"
+    if _has_token("valid"):
+        return "taxonomic_validation_status", None, "medium"
+
+    # ── Volumes / size / images ────────────────────────────────────────────
+    if _has_token("vol", "volume"):
+        return "sample_volume", "L or m3", "low"
+    if _has_token("img", "image", "obj"):
+        return "image_id", None, "low"
+    if _has_token("station", "sta"):
+        return "station", None, "medium"
+    if _has_token("profile"):
+        return "profile_id", None, "medium"
+    if _has_token("pixel", "area", "esd", "major", "minor"):
+        return "size_or_morphometry", "pixels or mm", "low"
+
+    # ── Boolean-looking flags ──────────────────────────────────────────────
+    if _ends_with("_flag", "_status") or _has_token("flag", "status"):
+        return "flag", None, "medium"
 
     return None, None, "low"
 
@@ -704,49 +778,82 @@ def format_inspect_report(file_report, column_definitions=None):
 
     cols = fr.get("columns") or []
 
-    # ── Section explicite : colonnes que le RAG n'a pas définies ─────────
-    # Sans cette section, ces colonnes disparaissent silencieusement de la
-    # vue du LLM (collect_column_definitions drop confidence=="unknown").
-    # Le LLM doit pouvoir voir ce qui manque pour décider entre interpréter
-    # (assumptions documentées dans le plan) et poser une question
-    # numérotée à l'utilisateur (forme b du plan).
+    # ── Layered confidence view — RAG > Auto-resolved > Needs clarification ─
+    # The previous single "Colonnes sans définition RAG" section framed
+    # everything outside the RAG as a problem the LLM had to solve. In
+    # practice most of those columns are auto-evident from name + dtype +
+    # samples (e.g. `*_id`, `*_year`, `*_comments`). Splitting them in two
+    # tells the LLM "you already have grounding for N/M of these, focus
+    # questions only on the truly ambiguous ones".
+    #
+    # Confidence tiers come from _semantic_guess:
+    #   - high   → auto-resolved (use directly, document the assumption)
+    #   - medium → auto-resolved (use, document the assumption, lighter prior)
+    #   - low / None → needs clarification (ask the user if used downstream)
     undefined_cols = [c for c in cols if str(c.get("name", "")) not in defs_by_col]
+    auto_resolved_cols: list = []
+    need_clarif_cols: list = []
+    for c in undefined_cols:
+        sem = c.get("semantic_guess")
+        conf = str(c.get("confidence", "low")).lower()
+        if sem and conf in ("high", "medium"):
+            auto_resolved_cols.append(c)
+        else:
+            need_clarif_cols.append(c)
+
+    def _render_undefined_row(idx: int, c: dict) -> str:
+        name = str(c.get("name", ""))
+        dtype = str(c.get("dtype", ""))
+        sem = c.get("semantic_guess")
+        unit = c.get("unit_guess")
+        conf = c.get("confidence", "low")
+        if sem:
+            sem_cell = f"`{sem}` ({conf})"
+            if unit:
+                sem_cell = f"{sem_cell} unit=`{unit}`"
+        else:
+            sem_cell = "—"
+        samples = c.get("sample_values") or []
+        samples_short = samples[:3]
+        return (
+            f"| {idx} | `{_md_escape_cell(name)}` | `{_md_escape_cell(dtype)}` | "
+            f"{_md_escape_cell(sem_cell)} | "
+            f"`{_md_escape_cell(samples_short)}` |"
+        )
+
     lines.append("")
-    lines.append(f"## Colonnes sans définition RAG ({len(undefined_cols)})")
+    lines.append(f"## Colonnes auto-résolues ({len(auto_resolved_cols)})")
     lines.append("")
-    if not undefined_cols:
-        lines.append("_(toutes les colonnes ont une définition RAG)_")
+    if not auto_resolved_cols:
+        lines.append("_(aucune colonne auto-résolue par heuristique)_")
     else:
         lines.append(
-            "Le RAG copépode n'a pas de définition pour ces colonnes. "
-            "Pour chacune utilisée dans la suite : soit l'interpréter d'après "
-            "le nom + dtype + samples + semantic_guess (avec assumption "
-            "documentée dans le plan), soit poser une question numérotée à "
-            "l'utilisateur (forme b du plan)."
+            "Inférées du nom + dtype + samples. Confiance high/medium — "
+            "utilisables directement; documenter l'assumption d'utilisation "
+            "dans le plan. Pas besoin de question utilisateur pour ces colonnes."
         )
         lines.append("")
-        lines.append("| # | Column | Dtype | Semantic | Samples |")
-        lines.append("|---|--------|-------|----------|---------|")
-        for idx, c in enumerate(undefined_cols, start=1):
-            name = str(c.get("name", ""))
-            dtype = str(c.get("dtype", ""))
-            sem = c.get("semantic_guess")
-            unit = c.get("unit_guess")
-            conf = c.get("confidence", "low")
-            if sem:
-                sem_cell = f"`{sem}` ({conf})"
-                if unit:
-                    sem_cell = f"{sem_cell} unit=`{unit}`"
-            else:
-                sem_cell = "—"
-            samples = c.get("sample_values") or []
-            samples_short = samples[:3]
-            row = (
-                f"| {idx} | `{_md_escape_cell(name)}` | `{_md_escape_cell(dtype)}` | "
-                f"{_md_escape_cell(sem_cell)} | "
-                f"`{_md_escape_cell(samples_short)}` |"
-            )
-            lines.append(row)
+        lines.append("| # | Column | Dtype | Inferred semantic | Samples |")
+        lines.append("|---|--------|-------|-------------------|---------|")
+        for idx, c in enumerate(auto_resolved_cols, start=1):
+            lines.append(_render_undefined_row(idx, c))
+
+    lines.append("")
+    lines.append(f"## Colonnes à clarifier ({len(need_clarif_cols)})")
+    lines.append("")
+    if not need_clarif_cols:
+        lines.append("_(aucune colonne ambiguë restante)_")
+    else:
+        lines.append(
+            "Pas de définition RAG et heuristique faible/absente. Si l'une "
+            "de ces colonnes est nécessaire au calcul ou au graphe, poser "
+            "une question numérotée à l'utilisateur (forme b du plan)."
+        )
+        lines.append("")
+        lines.append("| # | Column | Dtype | Semantic hint | Samples |")
+        lines.append("|---|--------|-------|---------------|---------|")
+        for idx, c in enumerate(need_clarif_cols, start=1):
+            lines.append(_render_undefined_row(idx, c))
 
     lines.append("")
     lines.append(f"## Columns ({len(cols)})")
@@ -802,56 +909,52 @@ def format_inspect_report(file_report, column_definitions=None):
     else:
         lines.append("_(none)_")
 
-    # ── Synthèse — generated from facts, prevents LLM hallucination ────────
-    lines.append("")
-    lines.append("## Synthèse")
-    lines.append("")
+    # ── Synthèse — structured JSON, NOT French prose ──────────────────────
+    # The previous prose synthesis ("Source détectée : likely_X (confiance :
+    # high)", "Définitions RAG : 15 colonnes documentées, 18 sans définition")
+    # was getting paraphrased verbatim by the LLM into user-visible responses.
+    # JSON code-fence keeps the same facts available to the LLM as machine-
+    # parsable data, but it does not read as a French summary the model can
+    # recycle into prose. See docs/adr/006.
+    import json as _json
     file_path = fr.get("file_path", "unknown")
     file_name = file_path.rsplit("/", 1)[-1] if isinstance(file_path, str) and "/" in file_path else str(file_path)
-    fmt_val = fr.get("format", "unknown")
-    n_rows = fr.get("n_rows", "unknown")
-    n_cols = fr.get("n_columns", "unknown")
-    lines.append(f"- **Fichier** : `{file_name}` — format `{fmt_val}`, {n_rows} lignes × {n_cols} colonnes.")
-    src_val = src.get("value", "unknown")
-    src_conf = src.get("confidence", "low")
-    lines.append(f"- **Source détectée** : `{src_val}` (confiance : `{src_conf}`).")
     missing_any = [c for c in cols if isinstance(c.get("missing_rate"), (int, float)) and c.get("missing_count", 0) > 0]
+    worst_payload = None
     if missing_any:
         worst = max(
             missing_any,
             key=lambda c: c.get("missing_rate", 0) if isinstance(c.get("missing_rate"), (int, float)) else 0,
         )
-        worst_rate = worst.get("missing_rate", 0)
-        try:
-            worst_pct = f"{float(worst_rate) * 100:.1f}%"
-        except (TypeError, ValueError):
-            worst_pct = str(worst_rate)
-        lines.append(
-            f"- **Données manquantes** : {len(missing_any)} colonnes ont des valeurs manquantes; "
-            f"pire cas `{worst.get('name', 'unknown')}` à {worst_pct}."
-        )
-    else:
-        lines.append("- **Données manquantes** : aucune colonne avec des valeurs manquantes.")
-    rag_count = len(column_definitions or [])
-    undefined_count = len(undefined_cols)
-    if rag_count and undefined_count:
-        lines.append(
-            f"- **Définitions RAG** : {rag_count} colonnes documentées, "
-            f"{undefined_count} sans définition (voir sections dédiées)."
-        )
-    elif rag_count:
-        lines.append(f"- **Définitions RAG** : {rag_count} colonnes documentées (voir section dédiée).")
-    elif undefined_count:
-        lines.append(
-            f"- **Définitions RAG** : aucune colonne trouvée dans le corpus "
-            f"({undefined_count} sans définition à interpréter ou questionner)."
-        )
-    else:
-        lines.append("- **Définitions RAG** : aucune colonne trouvée dans le corpus.")
-    if warnings:
-        lines.append(f"- **Avertissements** : {len(warnings)}.")
+        worst_payload = {
+            "column": worst.get("name", "unknown"),
+            "rate": worst.get("missing_rate", 0),
+        }
+    synthese_payload = {
+        "file": file_name,
+        "format": fr.get("format", "unknown"),
+        "n_rows": fr.get("n_rows", "unknown"),
+        "n_columns": fr.get("n_columns", "unknown"),
+        "source_type": src.get("value", "unknown"),
+        "source_confidence": src.get("confidence", "low"),
+        "missing": {
+            "n_columns_with_missing": len(missing_any),
+            "worst": worst_payload,
+        },
+        "column_grounding": {
+            "rag_defined": len(column_definitions or []),
+            "auto_resolved": len(auto_resolved_cols),
+            "needs_clarification": len(need_clarif_cols),
+            "unresolved": [str(c.get("name", "")) for c in need_clarif_cols],
+        },
+        "warnings": len(warnings),
+    }
     lines.append("")
-    lines.append("_Rapport complet ci-dessus. Le contenu est intégral — aucune troncature._")
+    lines.append("## Synthèse")
+    lines.append("")
+    lines.append("```json")
+    lines.append(_json.dumps(synthese_payload, ensure_ascii=False, indent=2))
+    lines.append("```")
 
     return chr(10).join(lines)
 
@@ -1083,12 +1186,29 @@ def inspect_and_report(file_paths, session_id=None):
             continue
 
         source_type = (file_report.get("source_type_guess") or {}).get("value", "unknown")
+
+        # Compute the list of truly unresolved columns (no RAG def + no
+        # high/medium heuristic guess). Mirrors the categorisation in
+        # format_inspect_report so the telemetry stays consistent.
+        defs_by_col = {str(d.get("column", "")) for d in (defs or []) if d.get("definition")}
+        _cols = file_report.get("columns") or []
+        unresolved_columns: list[str] = []
+        for _c in _cols:
+            _name = str(_c.get("name", ""))
+            if not _name or _name in defs_by_col:
+                continue
+            _sem = _c.get("semantic_guess")
+            _conf = str(_c.get("confidence", "low")).lower()
+            if not (_sem and _conf in ("high", "medium")):
+                unresolved_columns.append(_name)
+
         reports.append({
             "file": short,
             "formatted": formatted,
             "source_type": source_type,
             "n_rows": file_report.get("n_rows", 0),
             "n_columns": file_report.get("n_columns", 0),
+            "unresolved_columns": unresolved_columns,
             "error": None,
         })
 
@@ -1113,6 +1233,13 @@ def inspect_and_report(file_paths, session_id=None):
         import os as _os
         _sk = _os.environ.get("IDEA_RUNTIME_SESSION_KEY")
         from core.copepod_observability import trace_copepod_tool_call
+        # Telemetry on truly unresolved columns — used to Pareto-harvest the
+        # top-K most-frequent unknowns into the RAG. See docs/adr/006.
+        unresolved_by_file = {
+            r["file"]: r.get("unresolved_columns", []) or []
+            for r in reports
+            if r.get("unresolved_columns")
+        }
         trace_copepod_tool_call(
             "inspect_and_report",
             session_key=_sk,
@@ -1120,6 +1247,8 @@ def inspect_and_report(file_paths, session_id=None):
             output={
                 "n_files": len(reports),
                 "n_errors": sum(1 for r in reports if r.get("error")),
+                "unresolved_columns_by_file": unresolved_by_file,
+                "n_unresolved_total": sum(len(v) for v in unresolved_by_file.values()),
                 "files": [
                     {
                         "file": r["file"],
@@ -1135,6 +1264,49 @@ def inspect_and_report(file_paths, session_id=None):
     except Exception:
         pass
     return result
+
+
+def get_inspection_report(filename):
+    """Fetch the full RAPPORT D'INSPECTION for a file from out-of-context storage.
+
+    Inspection reports are NOT kept in the conversation history (this would
+    cause the LLM to paraphrase them into user-visible prose). After
+    `inspect_and_report` runs, the report is streamed to the user once and
+    persisted out-of-band. To read the full report (shape, columns, RAG
+    definitions, missingness, join hints) on a later turn, call this tool
+    with the filename — the bare filename, not a path.
+
+    Args:
+        filename (str): The basename of the inspected file (e.g. "sample.csv").
+
+    Returns:
+        str: The full report markdown, or a short "not found" message.
+    """
+    import os as _os
+    import pathlib as _pathlib
+
+    _key = _os.environ.get("IDEA_RUNTIME_SESSION_KEY", "")
+    if not _key:
+        return "[get_inspection_report] No active session key — cannot resolve inspection store."
+
+    _name = _pathlib.Path(str(filename or "").strip()).name
+    if not _name:
+        return "[get_inspection_report] Filename required."
+
+    try:
+        from core.session_store import session_store as _store
+        report = _store.read_inspection_report(_key, _name)
+    except Exception as exc:
+        return f"[get_inspection_report] Failed to read store: {exc}"
+
+    if not report:
+        try:
+            available = _store.list_inspection_reports(_key)
+        except Exception:
+            available = []
+        hint = f" Available: {available}" if available else ""
+        return f"[get_inspection_report] No report stored for {_name!r}.{hint}"
+    return report
 
 
 def _normalized_join_key_series(df, key):

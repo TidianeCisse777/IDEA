@@ -74,8 +74,11 @@ def test_custom_instructions_advertise_undefined_columns_section():
         mcp_tools=[],
     )
     assert "Définitions détectées" in text
-    assert "Colonnes sans définition RAG" in text
-    # The instruction must reference the two-form plan rule so the LLM
-    # knows what to DO with the undefined columns (interpret or ask).
-    assert "interpret" in text.lower() or "interpr" in text
+    # Restructured layered view (see docs/adr/006): 3 sections by confidence.
+    assert "Colonnes auto-résolues" in text
+    assert "Colonnes à clarifier" in text
+    # The instruction must reference what to DO with each tier:
+    # - auto-résolues → use directly with documented assumption
+    # - à clarifier → numbered question in form (b)
+    assert "document the assumption" in text.lower() or "assumption" in text.lower()
     assert "numbered question" in text.lower() or "form (b)" in text.lower()

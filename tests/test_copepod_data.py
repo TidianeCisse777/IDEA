@@ -776,50 +776,75 @@ class TestFormatInspectReportUndefinedColumns:
 
 
 class TestFormatInspectReportSynthese:
-    """The report ends with a deterministic ## Synthèse section so the LLM
-    has no excuse to add hallucinated prose ('partial output', 'tronqué', etc.)."""
+    """The report ends with a deterministic ## Synthèse JSON block (not French
+    prose) so the LLM has no narrative material to paraphrase into user-visible
+    responses. See docs/adr/006."""
 
-    def test_synthese_section_present(self, tools):
+    def _synthese_payload(self, tools, fixture):
+        import json as _json
+        r = tools["inspect_file"](str(fixture))
+        out = tools["format_inspect_report"](r)
+        tail = out[out.find("## Synthèse"):]
+        # Extract the JSON inside the ```json …``` fence.
+        json_start = tail.find("```json") + len("```json")
+        json_end = tail.rfind("```")
+        payload = _json.loads(tail[json_start:json_end].strip())
+        return r, out, tail, payload
+
+    def test_synthese_section_present_as_json_fence(self, tools):
         r = tools["inspect_file"](str(NEOLABS_ABUND))
         out = tools["format_inspect_report"](r)
         assert "## Synthèse" in out
+        assert "```json" in out[out.find("## Synthèse"):]
 
-    def test_synthese_mentions_filename_rows_cols(self, tools):
-        r = tools["inspect_file"](str(NEOLABS_ABUND))
-        out = tools["format_inspect_report"](r)
-        # Pull "Synthèse" tail
-        idx = out.find("## Synthèse")
-        tail = out[idx:]
-        assert str(r["n_rows"]) in tail
-        assert str(r["n_columns"]) in tail
-        # Filename leaf appears
-        assert r["file_path"].rsplit("/", 1)[-1] in tail
+    def test_synthese_payload_has_filename_rows_cols(self, tools):
+        r, _, _, payload = self._synthese_payload(tools, NEOLABS_ABUND)
+        assert payload["file"] == r["file_path"].rsplit("/", 1)[-1]
+        assert payload["n_rows"] == r["n_rows"]
+        assert payload["n_columns"] == r["n_columns"]
 
-    def test_synthese_mentions_source_and_confidence(self, tools):
-        r = tools["inspect_file"](str(NEOLABS_ABUND))
-        out = tools["format_inspect_report"](r)
-        tail = out[out.find("## Synthèse"):]
-        assert r["source_type_guess"]["value"] in tail
-        assert r["source_type_guess"]["confidence"] in tail
+    def test_synthese_payload_has_source_and_confidence(self, tools):
+        r, _, _, payload = self._synthese_payload(tools, NEOLABS_ABUND)
+        assert payload["source_type"] == r["source_type_guess"]["value"]
+        assert payload["source_confidence"] == r["source_type_guess"]["confidence"]
 
-    def test_synthese_explicitly_states_no_truncation(self, tools):
-        r = tools["inspect_file"](str(NEOLABS_ABUND))
-        out = tools["format_inspect_report"](r)
-        tail = out[out.find("## Synthèse"):]
-        assert "intégral" in tail or "aucune troncature" in tail
+    def test_synthese_no_paraphrasable_french_prose(self, tools):
+        """The synthesis must NOT contain the French sentences the LLM used to
+        recycle into user-visible responses (see docs/adr/006)."""
+        _, _, tail, _ = self._synthese_payload(tools, NEOLABS_ABUND)
+        for forbidden in (
+            "Source détectée",
+            "Données manquantes",
+            "colonnes ont des valeurs manquantes",
+            "pire cas",
+            "intégral",
+            "aucune troncature",
+            "Définitions RAG",
+        ):
+            assert forbidden not in tail, f"prose leak surface re-appeared: {forbidden!r}"
 
-    def test_synthese_mentions_any_missing_values_when_present(self, tools):
-        r = tools["inspect_file"](str(NEOLABS_ABUND))
-        out = tools["format_inspect_report"](r)
-        tail = out[out.find("## Synthèse"):]
-        assert "colonnes ont des valeurs manquantes" in tail
-        assert "pire cas" in tail
+    def test_synthese_payload_reports_missing_when_present(self, tools):
+        _, _, _, payload = self._synthese_payload(tools, NEOLABS_ABUND)
+        missing = payload.get("missing")
+        assert isinstance(missing, dict)
+        assert missing["n_columns_with_missing"] >= 0
+        if missing["n_columns_with_missing"] > 0:
+            assert missing["worst"]["column"]
+            assert isinstance(missing["worst"]["rate"], (int, float))
 
-    def test_synthese_omits_over_30_missing_line(self, tools):
-        r = tools["inspect_file"](str(NEOLABS_ABUND))
-        out = tools["format_inspect_report"](r)
-        tail = out[out.find("## Synthèse"):]
-        assert "Colonnes >30% manquant" not in tail
+    def test_synthese_payload_reports_column_grounding_counts(self, tools):
+        """Layered confidence view: RAG > heuristic > clarification.
+        See docs/adr/006 and the report restructuring rationale."""
+        _, _, _, payload = self._synthese_payload(tools, NEOLABS_ABUND)
+        cg = payload.get("column_grounding")
+        assert isinstance(cg, dict)
+        for key in ("rag_defined", "auto_resolved", "needs_clarification", "unresolved"):
+            assert key in cg
+        assert isinstance(cg["unresolved"], list)
+        # Sanity: counts should sum to total non-RAG columns.
+        total_non_rag = cg["auto_resolved"] + cg["needs_clarification"]
+        assert cg["needs_clarification"] == len(cg["unresolved"])
+        assert total_non_rag >= 0
 
 
 # ── inspect_and_report ────────────────────────────────────────────────────────

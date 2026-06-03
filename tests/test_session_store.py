@@ -61,3 +61,36 @@ def test_online_mode_defaults_to_false():
     assert store.get_online_mode("k") is True
     store.set_online_mode("k", False)
     assert store.get_online_mode("k") is False
+
+
+def test_inspection_report_round_trip_and_isolation():
+    store = InMemorySessionStore()
+    assert store.read_inspection_report("k", "a.csv") is None
+    assert store.list_inspection_reports("k") == []
+
+    store.store_inspection_report("k", "a.csv", "# RAPPORT D'INSPECTION\nshape: 10 × 3\n")
+    store.store_inspection_report("k", "b.csv", "# RAPPORT D'INSPECTION\nshape: 99 × 7\n")
+    store.store_inspection_report("other", "a.csv", "# RAPPORT D'INSPECTION\nshape: 1 × 1\n")
+
+    assert "10 × 3" in store.read_inspection_report("k", "a.csv")
+    assert "99 × 7" in store.read_inspection_report("k", "b.csv")
+    assert set(store.list_inspection_reports("k")) == {"a.csv", "b.csv"}
+    # Cross-session isolation
+    assert "1 × 1" in store.read_inspection_report("other", "a.csv")
+    assert store.list_inspection_reports("other") == ["a.csv"]
+
+
+def test_inspection_report_overwrites_on_store():
+    store = InMemorySessionStore()
+    store.store_inspection_report("k", "a.csv", "v1")
+    store.store_inspection_report("k", "a.csv", "v2")
+    assert store.read_inspection_report("k", "a.csv") == "v2"
+
+
+def test_evict_clears_inspection_reports():
+    store = InMemorySessionStore()
+    store.store_inspection_report("k", "a.csv", "report-body")
+    store.touch("k")
+    store.evict("k")
+    assert store.read_inspection_report("k", "a.csv") is None
+    assert store.list_inspection_reports("k") == []

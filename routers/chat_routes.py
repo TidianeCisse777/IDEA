@@ -605,12 +605,14 @@ def _build_copepod_session_resources_note(
     if active_state_files:
         lines.extend(["", "active_files (pending inspection until a report exists):"])
         lines.extend(f"- {item}" for item in active_state_files)
-    if isinstance(inspection_map, dict) and inspection_map:
-        lines.extend(["", "latest_inspection_by_file:"])
-        for key, value in inspection_map.items():
-            summary = str(value).strip()
-            if summary:
-                lines.append(f"- {key}: {summary}")
+    # Note: latest_inspection_by_file is kept in the persisted working_set state
+    # (used by skip-inspection dedup at the data layer) but intentionally NOT
+    # rendered into the prompt. The LLM was paraphrasing the compact summary
+    # ("filename | source | shape") into French prose ("X est déjà inspecté,
+    # source détectée Y, N × M") and leaking it into user-visible responses.
+    # The rendered "Files already inspected in this session" section below is
+    # sufficient for the LLM to know what to skip.
+    _ = inspection_map  # state-only, intentionally not rendered
 
     if current_message_files:
         lines.extend(["", "Files uploaded in this message (inspect these new filenames only):"])
@@ -693,6 +695,149 @@ def _is_copepod_data_analysis_request(text: str) -> bool:
             re.IGNORECASE,
         )
     )
+
+
+_INSPECTION_REPORT_FINGERPRINTS = (
+    "# RAPPORT D'INSPECTION",  # canonical header
+    "Output truncated. Showing the last",  # OpenInterpreter buffer truncation
+    "## Synthèse",  # synthesis section header
+    "## Colonnes sans définition RAG",  # undefined-columns section header
+    "## Définitions détectées",  # defined-columns section header
+)
+
+
+def _content_looks_like_inspection_report(content: str) -> bool:
+    """Return True if ``content`` looks like an inspection report or a truncated remnant.
+
+    A canonical report starts with ``# RAPPORT D'INSPECTION``. OpenInterpreter
+    truncates console output at ``LLM_MAX_OUTPUT`` chars and prepends a notice,
+    which strips that header. We also catch the truncated form by looking at
+    structural fingerprints further down the report.
+    """
+    if not isinstance(content, str) or not content:
+        return False
+    return any(fp in content for fp in _INSPECTION_REPORT_FINGERPRINTS)
+
+
+def _scrub_inspection_report_in_content(
+    content: str,
+    *,
+    fallback_filename: str | None = None,
+) -> tuple[str, list[tuple[str, str]]]:
+    """Replace each inspection report fragment with a short stub.
+
+    Two cases:
+    - Full report (``# RAPPORT D'INSPECTION`` present): split on the header and
+      stub each block, extracting the filename from the ``**file_path**`` line.
+    - Truncated remnant (header cut by OpenInterpreter buffer): the whole
+      content is treated as one report. Filename is taken from
+      ``fallback_filename`` if provided, else best-effort from the content,
+      else ``"unknown"``. Extracted block goes to the inspection store keyed
+      by that filename; if filename is ``"unknown"`` it is dropped (we can't
+      key it usefully) but the content is still scrubbed so the LLM no longer
+      sees it.
+
+    Returns the scrubbed content and a list of ``(filename, full_block)``
+    pairs. The LLM only ever sees the stub; the full report is persisted
+    out-of-band in the session store and accessible via
+    ``get_inspection_report``.
+    """
+    if not _content_looks_like_inspection_report(content):
+        return content, []
+
+    if "# RAPPORT D'INSPECTION" in content:
+        parts = content.split("# RAPPORT D'INSPECTION")
+        scrubbed_parts: list[str] = [parts[0]]
+        extracted: list[tuple[str, str]] = []
+        for part in parts[1:]:
+            full_block = "# RAPPORT D'INSPECTION" + part
+            file_match = re.search(r"\*\*file_path\*\*\s*:\s*`([^`]+)`", full_block)
+            filename = _basename(file_match.group(1)) if file_match else (fallback_filename or "unknown")
+            stub = (
+                f"[Inspection report for {filename} — stored out-of-context. "
+                f"Call `get_inspection_report('{filename}')` to view shape, columns, "
+                "RAG definitions if needed.]"
+            )
+            scrubbed_parts.append(stub)
+            extracted.append((filename, full_block))
+        return "".join(scrubbed_parts), extracted
+
+    # Truncated remnant — header was clipped by the OI console buffer.
+    filename = fallback_filename or "unknown"
+    file_match = re.search(r"\*\*file_path\*\*\s*:\s*`([^`]+)`", content)
+    if file_match:
+        filename = _basename(file_match.group(1))
+    stub = (
+        f"[Inspection report fragment for {filename} (console-buffer truncated) — "
+        f"stored out-of-context. Call `get_inspection_report('{filename}')` for "
+        "the full report.]"
+    )
+    extracted = [(filename, content)] if filename != "unknown" else []
+    return stub, extracted
+
+
+_INSPECT_CALL_FILE_RE = re.compile(
+    r"inspect_and_report\s*\(\s*file_paths\s*=\s*\[\s*['\"]([^'\"]+)['\"]"
+)
+
+
+def _scrub_inspection_reports_for_llm(
+    messages: list[dict[str, Any]],
+    *,
+    session_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return a copy of ``messages`` with inspection report bodies stubbed out.
+
+    Side effect (when ``session_key`` is provided): extracted report bodies are
+    persisted to the session store via ``store_inspection_report`` so the
+    ``get_inspection_report`` tool can serve them on demand. This call is
+    idempotent — repeated stores of the same filename overwrite with the same
+    content, which is the desired behaviour during incremental loads.
+
+    Filename inference for truncated reports: the OpenInterpreter console
+    buffer can clip the ``# RAPPORT D'INSPECTION`` header off long reports,
+    in which case we cannot extract ``file_path`` from the content. We track a
+    ``last_seen_filename`` while walking messages — taken from upload blocks
+    in user messages and from ``inspect_and_report(file_paths=[…])`` calls in
+    assistant code blocks — and pass it as a fallback so the stub and the
+    store key remain correct.
+    """
+    scrubbed: list[dict[str, Any]] = []
+    last_seen_filename: str | None = None
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            scrubbed.append(msg)
+            continue
+        content = msg.get("content", "")
+
+        if isinstance(content, str):
+            for line in content.splitlines():
+                upload_match = _UPLOAD_LINE_RE.match(line.strip())
+                if upload_match:
+                    name = (upload_match.group("name") or "").strip()
+                    if name:
+                        last_seen_filename = _basename(name)
+            inspect_match = _INSPECT_CALL_FILE_RE.search(content)
+            if inspect_match:
+                last_seen_filename = _basename(inspect_match.group(1))
+
+        if isinstance(content, str) and _content_looks_like_inspection_report(content):
+            new_content, extracted = _scrub_inspection_report_in_content(
+                content,
+                fallback_filename=last_seen_filename,
+            )
+            if session_key:
+                for filename, full_block in extracted:
+                    try:
+                        session_store.store_inspection_report(session_key, filename, full_block)
+                    except Exception:
+                        logger.warning("Failed to persist inspection report for %s", filename)
+            new_msg = dict(msg)
+            new_msg["content"] = new_content
+            scrubbed.append(new_msg)
+        else:
+            scrubbed.append(msg)
+    return scrubbed
 
 
 def _extract_copepod_key_hints(error_text: str) -> list[str]:
@@ -1735,10 +1880,24 @@ async def chat_endpoint(
         session_store.touch(session_key)
 
         stored_messages = session_store.read_messages(session_key)
+        # Server-side helpers (note builders, working-set updaters) need the
+        # un-scrubbed history to read RAPPORT D'INSPECTION join hints, file
+        # paths, etc. Keep a separate reference; only the LLM-visible payload
+        # gets scrubbed.
+        unscrubbed_history: list[dict[str, Any]] = list(stored_messages or [])
         if stored_messages is not None:
             try:
-                interpreter.messages = _expand_multimodal_messages(
+                # Strip inspection report bodies from the LLM-visible history.
+                # The frontend keeps the full report (via /history → stored_messages
+                # unchanged); only the in-flight payload to interpreter.chat is
+                # scrubbed. Reports are persisted out-of-context and reachable via
+                # the get_inspection_report() tool. See docs/adr/006.
+                llm_messages = _scrub_inspection_reports_for_llm(
                     stored_messages,
+                    session_key=session_key,
+                )
+                interpreter.messages = _expand_multimodal_messages(
+                    llm_messages,
                     user_id=str(user.id),
                     session_id=session_id,
                     static_dir=STATIC_DIR,
@@ -1905,8 +2064,11 @@ async def chat_endpoint(
                         pass
                 copepod_inspect_then_code_note = None
                 if agent_type == "copepod":
+                    # Use the un-scrubbed history here so the join-hint extraction
+                    # can still find RAPPORT D'INSPECTION blocks (scrubbed copies
+                    # only flow through interpreter.messages → the LLM).
                     copepod_inspect_then_code_note = _build_copepod_inspect_then_code_note(
-                        messages=list(interpreter.messages) + list(messages),
+                        messages=list(unscrubbed_history) + list(messages),
                         user_message=last_user_message or "",
                     )
                 import time as _time

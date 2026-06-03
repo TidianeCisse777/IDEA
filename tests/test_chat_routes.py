@@ -219,6 +219,8 @@ from routers.chat_routes import (
     _update_copepod_working_set,
     _coerce_multimodal_message_content,
     _expand_multimodal_message_for_interpreter,
+    _scrub_inspection_report_in_content,
+    _scrub_inspection_reports_for_llm,
     _session_lock,
     router,
 )
@@ -638,12 +640,14 @@ class TestCopepodSessionResourcesNote:
         assert "current_user_goal:" in note
         assert "seen_files:" in note
         assert "active_files (pending inspection until a report exists):" in note
-        assert "latest_inspection_by_file:" in note
+        # latest_inspection_by_file: section is intentionally NOT rendered into
+        # the prompt — the LLM was paraphrasing the compact summary into
+        # user-visible prose. State is still persisted internally.
+        assert "latest_inspection_by_file:" not in note
+        assert "likely_neolabs_taxon" not in note  # source value no longer leaks via prompt
         assert "Do not ask the user to re-upload" in note
         assert "sample.csv" in note
         assert "path: /app/static/u1/s1/uploads/sample.csv" in note
-        assert "likely_neolabs_taxon" in note
-        assert "sample_id" in note
         assert "Deliverables:" in note
         assert "Abondance par profondeur" in note
         assert "Graph/image artifacts:" in note
@@ -798,6 +802,184 @@ class TestCopepodSessionResourcesNote:
         }
 
         assert _session_resource_message_from_stream_event(event) is None
+
+
+# ---------------------------------------------------------------------------
+# Helper: _scrub_inspection_report_in_content / _scrub_inspection_reports_for_llm
+# ---------------------------------------------------------------------------
+
+class TestScrubInspectionReportInContent:
+    def test_passthrough_when_no_report_marker(self):
+        content = "Just some prose without any report."
+        scrubbed, extracted = _scrub_inspection_report_in_content(content)
+        assert scrubbed == content
+        assert extracted == []
+
+    def test_replaces_single_report_with_stub_and_extracts_filename(self):
+        content = (
+            "# RAPPORT D'INSPECTION\n\n"
+            "- **file_path** : `/app/static/u1/s1/uploads/donne_sample.csv`\n"
+            "- **n_rows** : `6105` • **n_columns** : `33`\n"
+            "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+            "## Synthèse ...\n"
+        )
+        scrubbed, extracted = _scrub_inspection_report_in_content(content)
+
+        assert "# RAPPORT D'INSPECTION" not in scrubbed
+        assert "6105" not in scrubbed
+        assert "likely_neolabs_taxon" not in scrubbed
+        assert "[Inspection report for donne_sample.csv" in scrubbed
+        assert "get_inspection_report('donne_sample.csv')" in scrubbed
+
+        assert len(extracted) == 1
+        filename, full_block = extracted[0]
+        assert filename == "donne_sample.csv"
+        assert "likely_neolabs_taxon" in full_block
+
+    def test_handles_multiple_reports_in_one_content(self):
+        content = (
+            "# RAPPORT D'INSPECTION\n\n"
+            "- **file_path** : `/uploads/a.csv`\n"
+            "- **n_rows** : `10`\n\n"
+            "# RAPPORT D'INSPECTION\n\n"
+            "- **file_path** : `/uploads/b.csv`\n"
+            "- **n_rows** : `20`\n"
+        )
+        scrubbed, extracted = _scrub_inspection_report_in_content(content)
+        assert scrubbed.count("[Inspection report for") == 2
+        assert "[Inspection report for a.csv" in scrubbed
+        assert "[Inspection report for b.csv" in scrubbed
+        assert [name for name, _ in extracted] == ["a.csv", "b.csv"]
+
+
+class TestScrubInspectionReportsForLLM:
+    def test_scrubs_assistant_message_and_persists_to_store(self):
+        from core.session_store import InMemorySessionStore
+        from routers import chat_routes as cr
+
+        store = InMemorySessionStore()
+        with patch.object(cr, "session_store", store):
+            messages = [
+                {"role": "user", "content": "analyse"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n\n"
+                        "- **file_path** : `/uploads/sample.csv`\n"
+                        "- **n_rows** : `100` • **n_columns** : `5`\n"
+                        "- **source_type_guess** : `likely_ecotaxa` (confidence: `high`)\n"
+                    ),
+                },
+            ]
+
+            scrubbed = _scrub_inspection_reports_for_llm(messages, session_key="u1:s1:copepod")
+
+        assert scrubbed[0] == {"role": "user", "content": "analyse"}
+        assert "# RAPPORT D'INSPECTION" not in scrubbed[1]["content"]
+        assert "likely_ecotaxa" not in scrubbed[1]["content"]
+        assert "[Inspection report for sample.csv" in scrubbed[1]["content"]
+
+        # Side effect: full report persisted in the store
+        stored = store.read_inspection_report("u1:s1:copepod", "sample.csv")
+        assert stored is not None
+        assert "likely_ecotaxa" in stored
+        assert "n_rows" in stored
+
+    def test_no_persistence_when_session_key_is_none(self):
+        from core.session_store import InMemorySessionStore
+        from routers import chat_routes as cr
+
+        store = InMemorySessionStore()
+        with patch.object(cr, "session_store", store):
+            messages = [{
+                "role": "assistant",
+                "content": (
+                    "# RAPPORT D'INSPECTION\n"
+                    "- **file_path** : `/uploads/x.csv`\n"
+                ),
+            }]
+            scrubbed = _scrub_inspection_reports_for_llm(messages, session_key=None)
+
+        assert "[Inspection report for x.csv" in scrubbed[0]["content"]
+        assert store.list_inspection_reports("u1:s1:copepod") == []
+
+    def test_messages_without_reports_pass_through_unchanged(self):
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "plain reply"},
+            {"role": "computer", "type": "image", "format": "path", "content": "/img.png"},
+        ]
+        scrubbed = _scrub_inspection_reports_for_llm(messages)
+        assert scrubbed == messages
+
+    def test_non_dict_entries_are_preserved(self):
+        sentinel = "not-a-dict"
+        scrubbed = _scrub_inspection_reports_for_llm([sentinel])  # type: ignore[list-item]
+        assert scrubbed == [sentinel]
+
+    def test_truncated_console_output_is_still_scrubbed_via_fallback_filename(self):
+        """When OpenInterpreter clips the header off a long report, we must
+        still scrub the synthesis fragment that survives in the tail."""
+        from core.session_store import InMemorySessionStore
+        from routers import chat_routes as cr
+
+        truncated = (
+            "Output truncated. Showing the last 4096 characters. You should try "
+            "again and use computer.ai.summarize(output) over the output.\n\n"
+            "| 32 | `analysis_id` | object | ...\n\n"
+            "## Synthèse\n\n"
+            "```json\n"
+            '{"file": "donne_sample.csv", "source_type": "likely_neolabs_taxon"}\n'
+            "```\n"
+        )
+
+        store = InMemorySessionStore()
+        with patch.object(cr, "session_store", store):
+            messages = [
+                {"role": "user", "content": (
+                    "Files uploaded in this message:\n"
+                    "- donne_sample.csv (text/csv) | relative path: donne_sample.csv\n"
+                )},
+                {"role": "assistant", "type": "code", "format": "python", "content": (
+                    'inspect_and_report(file_paths=["/app/static/u1/s1/uploads/donne_sample.csv"])'
+                )},
+                {"role": "computer", "type": "console", "format": "output", "content": truncated},
+            ]
+
+            scrubbed = _scrub_inspection_reports_for_llm(messages, session_key="u1:s1:copepod")
+
+        # The truncated console output must be replaced with a fragment stub.
+        assert "## Synthèse" not in scrubbed[2]["content"]
+        assert "likely_neolabs_taxon" not in scrubbed[2]["content"]
+        assert "[Inspection report fragment for donne_sample.csv" in scrubbed[2]["content"]
+        # Filename inferred from the upload block (and confirmed by the
+        # inspect_and_report call argument).
+        assert "get_inspection_report('donne_sample.csv')" in scrubbed[2]["content"]
+        # Full truncated body is persisted out-of-context.
+        stored = store.read_inspection_report("u1:s1:copepod", "donne_sample.csv")
+        assert stored is not None and "likely_neolabs_taxon" in stored
+
+    def test_truncated_report_without_known_filename_is_still_scrubbed_but_not_stored(self):
+        from core.session_store import InMemorySessionStore
+        from routers import chat_routes as cr
+
+        truncated = (
+            "Output truncated. Showing the last 4096 characters.\n"
+            "## Synthèse\n```json\n{\"x\": 1}\n```\n"
+        )
+
+        store = InMemorySessionStore()
+        with patch.object(cr, "session_store", store):
+            scrubbed = _scrub_inspection_reports_for_llm(
+                [{"role": "computer", "content": truncated}],
+                session_key="u1:s1:copepod",
+            )
+
+        # Content is still scrubbed (LLM cannot see the synthesis)
+        assert "## Synthèse" not in scrubbed[0]["content"]
+        assert "[Inspection report fragment for unknown" in scrubbed[0]["content"]
+        # But nothing is stored because we have no usable key.
+        assert store.list_inspection_reports("u1:s1:copepod") == []
 
 
 class TestCopepodWorkingSetReducer:

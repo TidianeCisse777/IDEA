@@ -52,8 +52,12 @@ def test_session_working_set_is_the_file_state_source_of_truth():
     assert "source of truth for file state" in lower_prompt
     assert "seen_files" in prompt
     assert "active_files" in prompt
-    assert "latest_inspection_by_file" in prompt
     assert "current_user_goal" in prompt
+    # `latest_inspection_by_file` is intentionally NOT exposed to the LLM —
+    # the rendered "Files already inspected in this session" section replaces it
+    # to prevent the model from paraphrasing the compact summary as user-visible prose.
+    assert "latest_inspection_by_file" not in prompt
+    assert "Files already inspected in this session" in prompt
 
 
 def test_new_uploads_must_trigger_inspect_and_report():
@@ -67,10 +71,22 @@ def test_new_uploads_must_trigger_inspect_and_report():
 def test_session_dedup_is_about_already_inspected_files_not_seen_files():
     prompt = COPEPOD_SYSTEM_PROMPT
     lower_prompt = prompt.lower()
-    assert "latest_inspection_by_file" in prompt
+    assert "Files already inspected in this session" in prompt
     assert "pending inspection" in lower_prompt
     assert "already inspected" in lower_prompt
     assert "if a filename already exists" not in lower_prompt
+
+
+def test_inspection_reports_are_not_in_history_and_tool_is_documented():
+    """The LLM must learn that reports live out-of-context and require a tool call.
+
+    See `_scrub_inspection_reports_for_llm` in routers/chat_routes.py.
+    """
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "Inspection reports are not in your conversation history" in prompt
+    assert "get_inspection_report" in prompt
+    # Make sure the prompt explicitly forbids paraphrasing the stub.
+    assert "Do not paraphrase the stub" in prompt
 
 
 def test_output_formatting_contract_is_concise_and_single_language():
