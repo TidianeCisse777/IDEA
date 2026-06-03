@@ -127,6 +127,82 @@ def test_tracer_records_mcp_tool_run_and_route_error():
     )
 
 
+def test_record_copepod_retry_emits_span_with_attempt_metadata():
+    trace = FakeTrace()
+    tracer = ChatRuntimeTracer(trace, round_index=3)
+
+    tracer.record_copepod_retry(
+        attempt=1,
+        error_snippet="KeyError: 'object_depth_min'",
+        retry_note="Re-read the inspection reports and normalize the candidate keys.",
+    )
+
+    spans = _payloads(trace, "span")
+    assert any(
+        span["name"] == "round-3/copepod/retry/1"
+        and span["metadata"]["observation_type"] == "copepod_retry"
+        and span["metadata"]["attempt"] == 1
+        and "KeyError" in span["input"]["error_snippet"]
+        for span in spans
+    )
+
+
+def test_record_round_summary_emits_span_with_kinds_and_retry_count():
+    trace = FakeTrace()
+    tracer = ChatRuntimeTracer(trace, round_index=2)
+
+    tracer.record_round_summary(
+        had_code=True,
+        had_error=True,
+        had_image=False,
+        retry_attempts=1,
+        elapsed_ms=3420.5,
+    )
+
+    spans = _payloads(trace, "span")
+    assert any(
+        span["name"] == "round-2/summary"
+        and span["metadata"]["observation_type"] == "round_summary"
+        and span["metadata"]["retry_attempts"] == 1
+        and span["output"]["had_code"] is True
+        and span["output"]["had_error"] is True
+        and span["output"]["retry_attempts"] == 1
+        and "code" in span["output"]["kinds"]
+        and "error" in span["output"]["kinds"]
+        for span in spans
+    )
+
+
+def test_record_round_summary_kinds_text_only_when_no_code_image_error():
+    trace = FakeTrace()
+    tracer = ChatRuntimeTracer(trace)
+
+    tracer.record_round_summary(
+        had_code=False, had_error=False, had_image=False, retry_attempts=0, elapsed_ms=800.0
+    )
+
+    spans = _payloads(trace, "span")
+    assert any(span["output"]["kinds"] == ["text"] for span in spans)
+
+
+def test_record_system_prompt_emits_span_with_component_flags():
+    trace = FakeTrace()
+    tracer = ChatRuntimeTracer(trace, round_index=1)
+
+    tracer.record_system_prompt(
+        "## System\nYou are Copepod.\n\n## Session resources\nfile.tsv",
+        components={"has_session_resources": True, "has_inspect_hints": False, "has_retry_note": False},
+    )
+
+    spans = _payloads(trace, "span")
+    assert any(
+        span["name"] == "round-1/system_prompt"
+        and span["output"]["has_session_resources"] is True
+        and span["output"]["has_inspect_hints"] is False
+        for span in spans
+    )
+
+
 def test_from_env_creates_user_session_trace_with_round_metadata(monkeypatch):
     class FakeLangfuse:
         instances = []

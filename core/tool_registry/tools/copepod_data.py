@@ -1108,7 +1108,33 @@ def inspect_and_report(file_paths, session_id=None):
             full_output.append(r["formatted"])
         else:
             full_output.append(f"## {r['file']} — ERREUR: {r['error']}")
-    return {"reports": reports, "summary": summary, "output": chr(10).join(full_output)}
+    result = {"reports": reports, "summary": summary, "output": chr(10).join(full_output)}
+    try:
+        import os as _os
+        _sk = _os.environ.get("IDEA_RUNTIME_SESSION_KEY")
+        from core.copepod_observability import trace_copepod_tool_call
+        trace_copepod_tool_call(
+            "inspect_and_report",
+            session_key=_sk,
+            input={"file_paths": file_paths},
+            output={
+                "n_files": len(reports),
+                "n_errors": sum(1 for r in reports if r.get("error")),
+                "files": [
+                    {
+                        "file": r["file"],
+                        "source_type": r.get("source_type"),
+                        "n_rows": r.get("n_rows"),
+                        "n_columns": r.get("n_columns"),
+                        "error": r.get("error"),
+                    }
+                    for r in reports
+                ],
+            },
+        )
+    except Exception:
+        pass
+    return result
 
 
 def _normalized_join_key_series(df, key):

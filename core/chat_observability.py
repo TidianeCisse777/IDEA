@@ -252,6 +252,67 @@ class ChatRuntimeTracer:
         except Exception:
             return
 
+    def record_copepod_retry(
+        self,
+        *,
+        attempt: int,
+        error_snippet: str,
+        retry_note: str,
+    ) -> None:
+        """Record an automatic copepod retry attempt with its trigger error and recovery note."""
+        if not self.enabled:
+            return
+        try:
+            self._span(
+                f"round-{self.round_index}/copepod/retry/{attempt}",
+                input={"error_snippet": error_snippet[:500]},
+                output={"retry_note_preview": retry_note[:300]},
+                metadata={"observation_type": "copepod_retry", "attempt": attempt},
+            )
+        except Exception:
+            return
+
+    def record_round_summary(
+        self,
+        *,
+        had_code: bool,
+        had_error: bool,
+        had_image: bool,
+        retry_attempts: int,
+        elapsed_ms: float,
+    ) -> None:
+        """Record a summary span at the end of the round (kinds, retries, timing)."""
+        if not self.enabled:
+            return
+        try:
+            kinds = []
+            if had_code:
+                kinds.append("code")
+            if had_image:
+                kinds.append("image")
+            if had_error:
+                kinds.append("error")
+            if not kinds:
+                kinds.append("text")
+            self._span(
+                f"round-{self.round_index}/summary",
+                input={},
+                output={
+                    "kinds": kinds,
+                    "had_code": had_code,
+                    "had_error": had_error,
+                    "had_image": had_image,
+                    "retry_attempts": retry_attempts,
+                    "elapsed_ms": elapsed_ms,
+                },
+                metadata={
+                    "observation_type": "round_summary",
+                    "retry_attempts": retry_attempts,
+                },
+            )
+        except Exception:
+            return
+
     def close(self) -> None:
         if self._closed:
             return

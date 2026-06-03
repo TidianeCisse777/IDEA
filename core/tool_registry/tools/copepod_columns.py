@@ -30,6 +30,25 @@ def describe_column(column_name, source_hint=None, session_id=None):
     """
     import re
 
+    def _trace(res):
+        try:
+            import os as _os
+            _sk = _os.environ.get("IDEA_RUNTIME_SESSION_KEY")
+            from core.copepod_observability import trace_copepod_tool_call
+            trace_copepod_tool_call(
+                "describe_column",
+                session_key=_sk,
+                input={"column_name": column_name, "source_hint": source_hint},
+                output={
+                    "confidence": res.get("confidence"),
+                    "unit": res.get("unit"),
+                    "rag_doc_ref": res.get("rag_doc_ref"),
+                },
+            )
+        except Exception:
+            pass
+        return res
+
     if not column_name or not column_name.strip():
         return {
             "column": column_name,
@@ -66,7 +85,7 @@ def describe_column(column_name, source_hint=None, session_id=None):
         # row, so the extra results are cheap.
         results = query_copepod_rag(query, top_k=30, session_id=session_id)
     except Exception:
-        return _NOT_FOUND
+        return _trace(_NOT_FOUND)
 
     def _clean_cell(value):
         return re.sub("[*`]+", "", value).strip()
@@ -113,7 +132,7 @@ def describe_column(column_name, source_hint=None, session_id=None):
 
         critical_notes = _extract_critical_notes(column_name, definition, content)
 
-        return {
+        return _trace({
             "column": column_name,
             "definition": definition,
             "unit": unit,
@@ -121,12 +140,12 @@ def describe_column(column_name, source_hint=None, session_id=None):
             "critical_notes": critical_notes,
             "rag_doc_ref": r.get("doc"),
             "source_file": r.get("doc"),
-        }
+        })
 
     # Column name appears in a chunk but not as a table row
     for r in results:
         if column_name.lower() in r.get("content", "").lower():
-            return {
+            return _trace({
                 "column": column_name,
                 "definition": f"Mentioned in {r.get('title', r.get('doc', 'RAG'))}.",
                 "unit": None,
@@ -134,9 +153,9 @@ def describe_column(column_name, source_hint=None, session_id=None):
                 "critical_notes": [],
                 "rag_doc_ref": r.get("doc"),
                 "source_file": r.get("doc"),
-            }
+            })
 
-    return _NOT_FOUND
+    return _trace(_NOT_FOUND)
 
 
 def _extract_critical_notes(column_name, definition, chunk_content):

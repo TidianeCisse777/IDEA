@@ -1982,6 +1982,14 @@ async def chat_endpoint(
                                 copepod_inspect_then_code_note if copepod_inspect_then_code_note else None,
                                 retry_note,
                             )
+                            tracer.record_system_prompt(
+                                interpreter.system_message,
+                                components={
+                                    "has_session_resources": bool(copepod_session_resources_note),
+                                    "has_inspect_hints": bool(copepod_inspect_then_code_note),
+                                    "has_retry_note": bool(retry_note),
+                                },
+                            )
 
                         chat_prefix = _strip_system_messages(list(interpreter.messages))
                         chat_input = (
@@ -2019,6 +2027,11 @@ async def chat_endpoint(
 
                         retry_attempts += 1
                         retry_note = next_retry_note
+                        tracer.record_copepod_retry(
+                            attempt=retry_attempts,
+                            error_snippet=current_attempt_last_error_text,
+                            retry_note=next_retry_note,
+                        )
                         logger.info(f"  retrying copepod executor after error — {_short(session_key)}")
                 finally:
                     interpreter.system_message = base_system_message
@@ -2057,6 +2070,13 @@ async def chat_endpoint(
                 if isinstance(_last_usage, dict):
                     summary["usage"] = _last_usage
                 yield f"data: {json.dumps(summary)}\n\n"
+                tracer.record_round_summary(
+                    had_code=_had_code,
+                    had_error=_had_error,
+                    had_image=_had_image,
+                    retry_attempts=retry_attempts if agent_type == "copepod" else 0,
+                    elapsed_ms=summary["elapsed_ms"],
+                )
             except Exception as e:
                 logger.exception("Error in chat stream")
                 err_str = str(e)
