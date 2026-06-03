@@ -82,6 +82,139 @@ const generationStatusValue = document.getElementById('generationStatusValue');
 const generationTokensValue = document.getElementById('generationTokensValue');
 const generationCostValue = document.getElementById('generationCostValue');
 const generationRateValue = document.getElementById('generationRateValue');
+const generationMetrics = document.getElementById('generationMetrics');
+const generationMetricsClose = document.getElementById('generationMetricsClose');
+const generationMetricsOpen = document.getElementById('generationMetricsOpen');
+const GENERATION_METRICS_HIDDEN_KEY = 'idea-generation-metrics-hidden';
+const actionConfirmModal = document.getElementById('actionConfirmModal');
+const actionConfirmTitle = document.getElementById('actionConfirmTitle');
+const actionConfirmEyebrow = document.getElementById('actionConfirmEyebrow');
+const actionConfirmMessage = document.getElementById('actionConfirmMessage');
+const actionConfirmDetails = document.getElementById('actionConfirmDetails');
+const actionConfirmBody = document.querySelector('#actionConfirmModal .action-confirm-body');
+const actionConfirmIcon = document.getElementById('actionConfirmIcon');
+const actionConfirmAccept = document.getElementById('actionConfirmAccept');
+const actionConfirmCancel = document.getElementById('actionConfirmCancel');
+const actionConfirmClose = document.getElementById('actionConfirmClose');
+let pendingActionConfirmation = null;
+
+function closeActionConfirmation(confirmed = false) {
+    if (!actionConfirmModal || !pendingActionConfirmation) return;
+    ModalUtils.close(actionConfirmModal);
+    const resolve = pendingActionConfirmation;
+    pendingActionConfirmation = null;
+    resolve(confirmed);
+}
+
+function requestActionConfirmation({
+    eyebrow = 'Confirmation',
+    title = 'Confirmer l’action',
+    message = '',
+    details = [],
+    icon = 'help_outline',
+    confirmLabel = 'Confirmer',
+    cancelLabel = 'Annuler',
+} = {}) {
+    if (!actionConfirmModal) return Promise.resolve(window.confirm(message || title));
+    if (pendingActionConfirmation) closeActionConfirmation(false);
+
+    if (actionConfirmEyebrow) {
+        actionConfirmEyebrow.textContent = eyebrow;
+        actionConfirmEyebrow.hidden = !eyebrow;
+    }
+    if (actionConfirmTitle) actionConfirmTitle.textContent = title;
+    if (actionConfirmMessage) {
+        actionConfirmMessage.textContent = message;
+        actionConfirmMessage.hidden = !message;
+    }
+    if (actionConfirmIcon) actionConfirmIcon.textContent = icon;
+    if (actionConfirmAccept) actionConfirmAccept.textContent = confirmLabel;
+    if (actionConfirmCancel) actionConfirmCancel.textContent = cancelLabel;
+
+    if (actionConfirmDetails) {
+        actionConfirmDetails.innerHTML = '';
+        actionConfirmDetails.hidden = details.length === 0;
+        details.slice(0, 6).forEach((detail) => {
+            const item = document.createElement('li');
+            item.textContent = detail;
+            actionConfirmDetails.appendChild(item);
+        });
+        if (details.length > 6) {
+            const item = document.createElement('li');
+            item.textContent = `+ ${details.length - 6} autre(s) fichier(s)`;
+            actionConfirmDetails.appendChild(item);
+        }
+    }
+    if (actionConfirmBody) {
+        actionConfirmBody.hidden = !message && details.length === 0;
+    }
+
+    ModalUtils.open(actionConfirmModal);
+    actionConfirmAccept?.focus();
+
+    return new Promise((resolve) => {
+        pendingActionConfirmation = resolve;
+    });
+}
+
+function hasActiveConversationContent() {
+    return messages.length > 0 || pendingUploads.length > 0 || Boolean(messageInput?.value.trim());
+}
+
+async function startNewConversationWithConfirmation({ afterStart } = {}) {
+    const confirmed = await requestActionConfirmation({
+        eyebrow: '',
+        title: 'Créer une nouvelle conversation ?',
+        message: '',
+        icon: 'add_comment',
+        confirmLabel: 'Créer',
+    });
+    if (!confirmed) return false;
+
+    clearChatHistory();
+    resetTextareaHeight();
+    if (conversationManager) {
+        conversationManager.startNewConversation();
+    }
+    if (typeof afterStart === 'function') afterStart();
+    return true;
+}
+
+window.requestActionConfirmation = requestActionConfirmation;
+
+function setGenerationMetricsHidden(hidden) {
+    if (!generationMetrics) return;
+    generationMetrics.classList.toggle('is-hidden', hidden);
+    generationMetrics.setAttribute('aria-hidden', String(hidden));
+    if (generationMetricsOpen) {
+        generationMetricsOpen.hidden = !hidden;
+        generationMetricsOpen.setAttribute('aria-expanded', String(!hidden));
+    }
+    try {
+        localStorage.setItem(GENERATION_METRICS_HIDDEN_KEY, String(hidden));
+    } catch (_) {
+        // Non-critical UI preference.
+    }
+}
+
+if (generationMetrics) {
+    let hidden = false;
+    try {
+        hidden = localStorage.getItem(GENERATION_METRICS_HIDDEN_KEY) === 'true';
+    } catch (_) {
+        hidden = false;
+    }
+    setGenerationMetricsHidden(hidden);
+    generationMetricsClose?.addEventListener('click', () => setGenerationMetricsHidden(true));
+    generationMetricsOpen?.addEventListener('click', () => setGenerationMetricsHidden(false));
+}
+
+actionConfirmAccept?.addEventListener('click', () => closeActionConfirmation(true));
+actionConfirmCancel?.addEventListener('click', () => closeActionConfirmation(false));
+actionConfirmClose?.addEventListener('click', () => closeActionConfirmation(false));
+if (actionConfirmModal) {
+    ModalUtils.bindDismiss(actionConfirmModal, () => closeActionConfirmation(false));
+}
 
 const MODEL_PRICING = {
     'openrouter/openai/gpt-5.4-mini': {
@@ -142,13 +275,7 @@ stopButton.addEventListener('click', () => {
 });
 
 newMessagesButton.addEventListener('click', () => {
-    clearChatHistory();
-    resetTextareaHeight();
-    
-    // Start a new conversation
-    if (conversationManager) {
-        conversationManager.startNewConversation();
-    }
+    startNewConversationWithConfirmation();
 });
 
 // Logout button event listeners (both desktop and mobile)
@@ -1154,22 +1281,14 @@ function initializeMobileNavigation() {
 
     // Handle mobile button clicks
     if (downloadButtonMobile) {
-        downloadButtonMobile.addEventListener('click', () => {
-            downloadConversation();
-            closeMobileMenu();
+        downloadButtonMobile.addEventListener('click', async () => {
+            await downloadConversationWithConfirmation({ afterDownload: closeMobileMenu });
         });
     }
 
     if (newMessagesButtonMobile) {
         newMessagesButtonMobile.addEventListener('click', () => {
-            clearChatHistory();
-            resetTextareaHeight();
-            closeMobileMenu();
-            
-            // Start a new conversation
-            if (conversationManager) {
-                conversationManager.startNewConversation();
-            }
+            startNewConversationWithConfirmation({ afterStart: closeMobileMenu });
         });
     }
 
@@ -1209,6 +1328,21 @@ async function downloadConversation() {
         console.error("Download failed:", err);
         appendSystemMessage("Failed to download conversation. Please try again.");
     }
+}
+
+async function downloadConversationWithConfirmation({ afterDownload } = {}) {
+    const confirmed = await requestActionConfirmation({
+        eyebrow: '',
+        title: 'Télécharger la conversation ?',
+        message: '',
+        icon: 'download',
+        confirmLabel: 'Télécharger',
+    });
+    if (!confirmed) return false;
+
+    await downloadConversation();
+    if (typeof afterDownload === 'function') afterDownload();
+    return true;
 }
 
 function shouldIncludeMessageInExport(message) {
@@ -1832,7 +1966,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add download button event listener
     const downloadButton = document.getElementById('downloadButton');
     if (downloadButton) {
-        downloadButton.addEventListener('click', downloadConversation);
+        downloadButton.addEventListener('click', () => downloadConversationWithConfirmation());
     }
 });
 

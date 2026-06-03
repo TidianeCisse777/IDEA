@@ -4,17 +4,39 @@ Tests for copepod_data tools: inspect_file, infer_column_roles, summarize_unders
 These tools are structured helpers — the LLM is free to explore data with raw pandas
 before or after calling them. Tests verify correct structured output on real fixtures.
 """
-import pytest
+import os
 from pathlib import Path
+
+import pytest
 
 pytestmark = pytest.mark.tool_contract
 
-FIXTURES = Path("/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv")
+def _resolve_copepod_specs_root() -> Path | None:
+    candidates = []
+    env_root = os.getenv("COPEPOD_SPECS_DIR")
+    if env_root:
+        candidates.append(Path(env_root))
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates.append(repo_root.parent / "assistant-copepodes-specs")
+    for root in candidates:
+        if root.exists():
+            return root
+    return None
+
+
+_SPECS_ROOT = _resolve_copepod_specs_root()
+if _SPECS_ROOT is None:
+    pytest.skip(
+        "Copepod fixture repo not found. Clone assistant-copepodes-specs beside IDEA or set COPEPOD_SPECS_DIR.",
+        allow_module_level=True,
+    )
+
+FIXTURES = _SPECS_ROOT / "data_exploration/examples_tsv"
 ECOTAXA  = FIXTURES / "ecotaxa_sample_50.tsv"
 ECOPART  = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"
 CTD      = FIXTURES / "amundsen_12713_ctd_2018_sample.tsv"
 
-NEOLABS_DIR      = Path("/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/Donnée Neolabs Taxon")
+NEOLABS_DIR      = _SPECS_ROOT / "data_exploration/Donnée Neolabs Taxon"
 NEOLABS_COMBINED = NEOLABS_DIR / "IDEA Taxonomy Samples and Analyses Data Metadata May 26 2026.csv"
 NEOLABS_ABUND    = NEOLABS_DIR / "IDEA Taxonomy Zooplankton Abundances Data May 26 2026.csv"
 

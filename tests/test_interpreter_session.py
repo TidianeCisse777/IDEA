@@ -164,6 +164,7 @@ def test_llm_wrapper_preserves_multimodal_message_content():
     assert messages[1]["content"][1]["type"] == "image_url"
     assert captured["params"]["stream_options"]["include_usage"] is True
     assert captured["params"]["repetition_penalty"] == 1.1
+    assert captured["params"]["max_tokens"] == iss.settings.LLM_MAX_COMPLETION_TOKENS
 
 
 def test_llm_wrapper_normalizes_input_text_items_to_chat_content():
@@ -207,6 +208,7 @@ def test_llm_wrapper_normalizes_input_text_items_to_chat_content():
     messages = captured["params"]["messages"]
     assert messages[1]["content"] == "hey"
     assert captured["params"]["repetition_penalty"] == 1.1
+    assert captured["params"]["max_tokens"] == iss.settings.LLM_MAX_COMPLETION_TOKENS
 
 
 def test_llm_wrapper_normalizes_direct_messages_payloads():
@@ -268,6 +270,7 @@ def test_llm_wrapper_normalizes_direct_messages_payloads():
     messages = captured["params"]["messages"]
     assert messages[0]["content"] == "hey"
     assert captured["params"]["repetition_penalty"] == 1.1
+    assert captured["params"]["max_tokens"] == iss.settings.LLM_MAX_COMPLETION_TOKENS
 
 
 def test_copepod_interpreter_uses_temperature_from_env():
@@ -345,3 +348,4 @@ def test_llm_wrapper_enables_usage_for_direct_streaming_messages():
         )
 
     assert captured["params"]["stream_options"]["include_usage"] is True
+    assert captured["params"]["max_tokens"] == iss.settings.LLM_MAX_COMPLETION_TOKENS

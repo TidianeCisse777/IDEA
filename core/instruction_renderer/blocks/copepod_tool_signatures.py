@@ -16,6 +16,7 @@ print(report)
 Calling `inspect_file` (or any helper below) outside Python code will fail.
 
 ### File exploration
+- `inspect_and_report(file_paths, session_id=None)` — atomic inspection workflow for uploaded files. Use this as the default first-pass inspection for any new upload or batch of uploads. It runs `inspect_file`, `collect_column_definitions`, and `format_inspect_report` in one step and returns the formatted reports plus a short cross-file summary. Prefer this over manually chaining the lower-level helpers unless you are debugging the inspection pipeline itself.
 - `inspect_file(file_path, sample_rows=20)` — read a CSV/TSV/Excel/NetCDF and return shape, dtypes, sample rows, encoding, missing-value rates, and a best-guess source type. Call on every uploaded file you have not yet seen.
 - `collect_column_definitions(file_report, session_id="{session_id}")` — batch-fetch authoritative RAG definitions for every column. Call right after `inspect_file`; pass the returned list to `format_inspect_report`.
 - `format_inspect_report(file_report, column_definitions=None)` — deterministic text rendering of an `inspect_file` result. ALWAYS use this instead of `print(file_report)` for the RAPPORT D'INSPECTION. When `column_definitions` is provided, each column line is followed by its RAG definition, unit and critical notes.

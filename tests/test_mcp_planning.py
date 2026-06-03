@@ -133,6 +133,34 @@ def test_invalid_planner_arguments_become_empty_dict(monkeypatch):
     assert executed[0]["arguments"] == {}
 
 
+def test_planner_uses_explicit_token_cap(monkeypatch):
+    connection = FakeConnection()
+    tool = {"name": "list_repos"}
+    tool_id = "mcp_fake_list_repos"
+    observed = {}
+
+    async def fake_gather_available_mcp_tools(db):
+        return [{"type": "function", "function": {"name": tool_id}}], {tool_id: (connection, tool)}
+
+    def fake_completion(*args, **kwargs):
+        observed.update(kwargs)
+        return _empty_planner_response()
+
+    monkeypatch.setattr(chat_routes, "gather_available_mcp_tools", fake_gather_available_mcp_tools)
+    monkeypatch.setattr(chat_routes, "completion", fake_completion)
+
+    executed = asyncio.run(
+        chat_routes.plan_and_run_mcp_tools(
+            interpreter=FakeInterpreter(),
+            user_message="list my repos",
+            db=object(),
+        )
+    )
+
+    assert executed == []
+    assert observed["max_tokens"] == chat_routes.settings.LLM_MAX_COMPLETION_TOKENS
+
+
 def test_duplicate_planner_calls_execute_mcp_once(monkeypatch):
     connection = FakeConnection()
     tool = {"name": "list_repos"}

@@ -41,6 +41,23 @@ def test_session_working_set_is_the_file_state_source_of_truth():
     assert "current_user_goal" in prompt
 
 
+def test_new_uploads_must_trigger_inspect_and_report():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    lower_prompt = prompt.lower()
+    assert "new uploaded file" in lower_prompt
+    assert "next work item" in lower_prompt
+    assert "call `inspect_and_report`" in prompt
+
+
+def test_session_dedup_is_about_already_inspected_files_not_seen_files():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    lower_prompt = prompt.lower()
+    assert "latest_inspection_by_file" in prompt
+    assert "pending inspection" in lower_prompt
+    assert "already inspected" in lower_prompt
+    assert "if a filename already exists" not in lower_prompt
+
+
 def test_output_formatting_contract_is_concise_and_single_language():
     prompt = COPEPOD_SYSTEM_PROMPT
     assert "Use one primary language per response when possible" in prompt

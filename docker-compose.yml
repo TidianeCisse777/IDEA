@@ -1,14 +1,11 @@
-version: '3.8'
-
 services:
   web:
     build:
       context: .
       dockerfile: ./Dockerfile
     image: idea
-    container_name: idea_container
     ports:
-      - "8002:8001" # so that we can have SEA and IDEA on the same machine
+      - "${IDEA_WEB_HOST_PORT:-8002}:8001" # so that we can have SEA and IDEA on the same machine
     env_file:
       - .env
     volumes:
@@ -47,14 +44,13 @@ services:
   redis:
     image: redis:alpine
     ports:
-      - "6380:6379" # so that we can have SEA and IDEA on the same machine
+      - "${IDEA_REDIS_HOST_PORT:-6380}:6379" # so that we can have SEA and IDEA on the same machine
     volumes:
       - idea_redis_data:/data
     command: redis-server --appendonly yes
 
   langfuse-db:
     image: postgres:16-alpine
-    container_name: idea_langfuse_db
     environment:
       - POSTGRES_PASSWORD=langfuse
       - POSTGRES_DB=langfuse
@@ -71,9 +67,8 @@ services:
   langfuse:
     image: langfuse/langfuse:2
     platform: linux/amd64
-    container_name: idea_langfuse
     ports:
-      - "3001:3000"
+      - "${LANGFUSE_HOST_PORT:-3001}:3000"
     environment:
       - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
       - NEXTAUTH_SECRET=${LANGFUSE_SALT}

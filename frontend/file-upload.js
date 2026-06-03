@@ -1,13 +1,36 @@
 // file-upload.js — gestion des uploads de fichiers (queue, render, remove, send)
 
+async function confirmFileUpload(files) {
+    const fileList = Array.from(files || []);
+    if (fileList.length === 0) return false;
+
+    if (typeof window.requestActionConfirmation !== 'function') {
+        return true;
+    }
+
+    return window.requestActionConfirmation({
+        eyebrow: 'Ajout de fichier',
+        title: fileList.length === 1 ? 'Joindre ce fichier ?' : `Joindre ${fileList.length} fichiers ?`,
+        message: fileList.length === 1
+            ? 'Ce fichier va être ajouté à la conversation.'
+            : `${fileList.length} fichiers vont être ajoutés à la conversation.`,
+        icon: 'attach_file',
+        confirmLabel: fileList.length === 1 ? 'Joindre' : 'Joindre les fichiers',
+    });
+}
+
 async function handleFiles(files) {
-    if (!files || files.length === 0) return;
+    const fileList = Array.from(files || []);
+    if (fileList.length === 0) return;
+
+    const confirmed = await confirmFileUpload(fileList);
+    if (!confirmed) return;
 
     hidePromptIdeas();
     if (progressBar) {
         progressBar.style.display = 'block';
     }
-    for (const file of files) {
+    for (const file of fileList) {
         try {
             const response = await uploadFile(file, progressElement);
             queuePendingUpload(file, response);
@@ -111,7 +134,7 @@ function buildAttachmentInstruction(attachments = []) {
         const mimeType = att.mimeType ? ` (${att.mimeType})` : '';
         return `- ${att.name}${mimeType}${relPath ? ` | relative path: ${relPath}` : ''}`;
     }).join('\n');
-    return `Files uploaded in this message:\nSession ID: ${activeSessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.\nSession rule: compare each filename against filenames already present in this session. If a filename already exists, skip its inspection, explicitly say it is already present, and inspect only the new filenames.`;
+    return `Files uploaded in this message:\nSession ID: ${activeSessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.\nSession rule: for every filename without a report in latest_inspection_by_file, call inspect_and_report immediately. If a filename already has a report in latest_inspection_by_file, skip its inspection and explicitly say it is already inspected. If a filename is pending in active_files without a report, inspect it now in the same turn; do not wait for the user to repeat "inspect".`;
 }
 
 async function uploadFile(file, progressElement) {
@@ -174,19 +197,7 @@ function initializeFileUpload() {
                     const uniqueName = `pasted-${Date.now()}-${Math.floor(Math.random() * 1000)}.${extension}`;
                     const renamedFile = new File([originalFile], uniqueName, { type: originalFile.type });
 
-                    if (progressBar) {
-                        progressBar.style.display = 'block';
-                    }
-                    try {
-                        const response = await uploadFile(renamedFile, progressElement);
-                        queuePendingUpload(renamedFile, response);
-                    } catch (error) {
-                        appendSystemMessage(`Error uploading pasted image: ${error.message}`);
-                    } finally {
-                        if (progressBar) {
-                            progressBar.style.display = 'none';
-                        }
-                    }
+                    await handleFiles([renamedFile]);
                 }
             }
         }

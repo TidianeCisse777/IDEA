@@ -66,18 +66,42 @@ function setupConversationEventListeners() {
 
     const csvSidebar = document.getElementById('conversationCsvSidebar');
     const csvToggle = document.getElementById('conversationCsvToggle');
-    if (csvSidebar && localStorage.getItem(CONVERSATION_CSV_SIDEBAR_KEY) === 'true') {
-        csvSidebar.classList.add('collapsed');
-        csvSidebar.classList.remove('open');
-        csvSidebar.setAttribute('aria-hidden', 'true');
-    }
-    csvToggle?.addEventListener('click', () => {
+    const csvTitleButton = document.getElementById('conversationCsvTitleButton');
+    const csvFloatingButton = document.getElementById('conversationCsvFloatingButton');
+
+    function setCsvSidebarCollapsed(collapsed) {
         if (!csvSidebar) return;
-        const collapsed = csvSidebar.classList.toggle('collapsed');
+        csvSidebar.classList.toggle('collapsed', collapsed);
         csvSidebar.classList.toggle('open', !collapsed);
         csvSidebar.setAttribute('aria-hidden', String(collapsed));
-        csvToggle.setAttribute('aria-expanded', String(!collapsed));
+        csvToggle?.setAttribute('aria-expanded', String(!collapsed));
+        csvTitleButton?.setAttribute('aria-expanded', String(!collapsed));
+        if (csvFloatingButton) {
+            csvFloatingButton.hidden = !collapsed;
+            csvFloatingButton.setAttribute('aria-expanded', String(!collapsed));
+        }
         localStorage.setItem(CONVERSATION_CSV_SIDEBAR_KEY, String(collapsed));
+    }
+
+    if (csvSidebar) {
+        setCsvSidebarCollapsed(true);
+    }
+
+    csvToggle?.addEventListener('click', () => {
+        if (!csvSidebar) return;
+        setCsvSidebarCollapsed(true);
+    });
+
+    csvTitleButton?.addEventListener('click', () => {
+        if (!csvSidebar || !csvSidebar.classList.contains('collapsed')) return;
+        setCsvSidebarCollapsed(false);
+        refreshConversationCsvSidebar();
+    });
+
+    csvFloatingButton?.addEventListener('click', () => {
+        if (!csvSidebar) return;
+        setCsvSidebarCollapsed(false);
+        refreshConversationCsvSidebar();
     });
 
     _initCsvResizeHandle();
@@ -92,9 +116,10 @@ function _initCsvResizeHandle() {
 
     // Restore saved width
     const savedWidth = parseInt(localStorage.getItem(CONVERSATION_CSV_WIDTH_KEY), 10);
-    if (savedWidth && savedWidth >= 220) {
-        sidebar.style.flexBasis = savedWidth + 'px';
-        sidebar.style.width = savedWidth + 'px';
+    if (savedWidth && savedWidth >= 300) {
+        const restoredWidth = Math.min(Math.max(savedWidth, 300), 360);
+        sidebar.style.flexBasis = restoredWidth + 'px';
+        sidebar.style.width = restoredWidth + 'px';
     }
 
     let startX = 0;
@@ -108,7 +133,10 @@ function _initCsvResizeHandle() {
 
         function onMouseMove(e) {
             const delta = startX - e.clientX;
-            const newWidth = Math.min(Math.max(startWidth + delta, 220), window.innerWidth * 0.7);
+            const newWidth = Math.min(
+                Math.max(startWidth + delta, 300),
+                Math.min(380, window.innerWidth - 88),
+            );
             sidebar.style.flexBasis = newWidth + 'px';
             sidebar.style.width = newWidth + 'px';
         }
@@ -436,7 +464,7 @@ function _markConversationCsvActive(path) {
 }
 
 async function selectConversationCsvArtifact(path, name = '') {
-    const { viewer, sidebar, toggle } = _csvSidebarElements();
+    const { viewer } = _csvSidebarElements();
     if (!viewer) return;
 
     _currentConversationCsvPath = path;
@@ -447,16 +475,6 @@ async function selectConversationCsvArtifact(path, name = '') {
         localStorage.setItem(_conversationCsvSelectionKey(currentConversationId), path);
     }
     _currentConversationCsvConversationId = currentConversationId;
-
-    if (sidebar && sidebar.classList.contains('collapsed')) {
-        sidebar.classList.remove('collapsed');
-        sidebar.classList.add('open');
-        sidebar.setAttribute('aria-hidden', 'false');
-        if (toggle) {
-            toggle.setAttribute('aria-expanded', 'true');
-        }
-        localStorage.setItem(CONVERSATION_CSV_SIDEBAR_KEY, 'false');
-    }
 
     viewer.innerHTML = '';
     const loading = document.createElement('div');
@@ -539,8 +557,14 @@ function refreshConversationCsvSidebar() {
     if (toggle) {
         toggle.setAttribute('aria-expanded', String(!isCollapsed));
     }
+    document.getElementById('conversationCsvTitleButton')?.setAttribute('aria-expanded', String(!isCollapsed));
+    const floatingButton = document.getElementById('conversationCsvFloatingButton');
+    if (floatingButton) {
+        floatingButton.hidden = !isCollapsed;
+        floatingButton.setAttribute('aria-expanded', String(!isCollapsed));
+    }
 
-    if (selectedPath && viewer.dataset.csvPath !== selectedPath) {
+    if (!isCollapsed && selectedPath && viewer.dataset.csvPath !== selectedPath) {
         const selectedArtifact = artifacts.find((artifact) => artifact.path === selectedPath);
         if (selectedArtifact) {
             selectConversationCsvArtifact(selectedArtifact.path, selectedArtifact.name).catch((error) => {
@@ -548,7 +572,7 @@ function refreshConversationCsvSidebar() {
             });
         }
         _currentConversationCsvConversationId = currentConversationId;
-    } else if (!viewer.querySelector('table')) {
+    } else if (!isCollapsed && !viewer.querySelector('table')) {
         viewer.innerHTML = '';
         if (artifacts.length > 0) {
             const placeholder = document.createElement('div');
@@ -562,13 +586,13 @@ function refreshConversationCsvSidebar() {
 }
 
 function openConversationsModal() {
-    document.getElementById('conversationsModal').style.display = 'block';
+    ModalUtils.open(document.getElementById('conversationsModal'));
     // Load conversations when modal opens
     displayConversations();
 }
 
 function closeConversationsModal() {
-    document.getElementById('conversationsModal').style.display = 'none';
+    ModalUtils.close(document.getElementById('conversationsModal'));
 }
 
 function updateFilterButtons() {
@@ -605,8 +629,9 @@ function displayConversations() {
         return;
     }
 
-    // Remove stale empty-state if the list now has items
+    // Remove stale placeholders if the list now has items
     conversationsList.querySelector('.empty-state')?.remove();
+    conversationsList.querySelector('.loading')?.remove();
 
     const currentConvId = conversationManager.getCurrentConversationId();
     const filteredIds = new Set(filteredConversations.map(c => c.id));

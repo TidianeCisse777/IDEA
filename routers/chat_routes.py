@@ -160,6 +160,13 @@ def _normalize_uploaded_filename(value: str) -> str:
     return text.strip().casefold() if text else ""
 
 
+def _copepod_working_set_file_key(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return _normalize_uploaded_filename(text.split(" | ", 1)[0].strip())
+
+
 def _extract_report_summary(content: str) -> str | None:
     if "# RAPPORT D'INSPECTION" not in content:
         return None
@@ -282,14 +289,37 @@ def _update_copepod_working_set(
     existing = _copy_copepod_working_set(session_store.read_working_set(session_key))
     working_set = _copy_copepod_working_set(existing)
     seen_keys = {
-        _normalize_uploaded_filename(item)
+        _copepod_working_set_file_key(item)
         for item in working_set.get("seen_files", [])
-        if _normalize_uploaded_filename(item)
+        if _copepod_working_set_file_key(item)
     }
+    inspected_existing_keys = {
+        _copepod_working_set_file_key(key)
+        for key in (working_set.get("latest_inspection_by_file") or {}).keys()
+        if _copepod_working_set_file_key(key)
+    }
+    inspection_keys: set[str] = set()
+    active_order_keys: list[str] = []
+    active_entry_by_key: dict[str, str] = {}
+    seen_upload_entries: list[str] = []
+
+    def _track_active_file(entry: str, filename_key: str) -> None:
+        if not filename_key:
+            return
+        active_entry_by_key[filename_key] = entry
+        if filename_key not in active_order_keys:
+            active_order_keys.append(filename_key)
+
+    for item in working_set.get("active_files", []):
+        entry = str(item).strip()
+        if not entry:
+            continue
+        filename_key = _copepod_working_set_file_key(entry)
+        if not filename_key or filename_key in inspected_existing_keys:
+            continue
+        _track_active_file(entry, filename_key)
 
     latest_user_goal = working_set.get("current_user_goal", "")
-    active_files: list[str] = []
-    already_present_files: list[str] = []
 
     for msg in messages or []:
         role = _safe_message_get(msg, "role")
@@ -300,8 +330,6 @@ def _update_copepod_working_set(
             if prompt_text.strip():
                 latest_user_goal = prompt_text.strip()
             if attachment_lines:
-                active_files = []
-                already_present_files = []
                 for line in attachment_lines:
                     match = _UPLOAD_LINE_RE.match(line.strip())
                     if not match:
@@ -309,13 +337,12 @@ def _update_copepod_working_set(
                     name = (match.group("name") or "").strip()
                     rel_path = (match.group("rel_path") or name).strip()
                     entry = name or rel_path
-                    filename_key = _normalize_uploaded_filename(name or rel_path)
-                    if filename_key and filename_key in seen_keys:
-                        already_present_files.append(entry)
+                    filename_key = _copepod_working_set_file_key(name or rel_path)
+                    if not filename_key:
                         continue
-                    if filename_key:
-                        seen_keys.add(filename_key)
-                    active_files.append(entry)
+                    seen_keys.add(filename_key)
+                    seen_upload_entries.append(entry)
+                    _track_active_file(entry, filename_key)
 
         if role == "assistant" and isinstance(content, str) and "# RAPPORT D'INSPECTION" in content:
             report_summary = _extract_report_summary(content)
@@ -323,17 +350,21 @@ def _update_copepod_working_set(
                 label = report_summary.split(" | ", 1)[0]
                 file_match = re.search(r"\*\*file_path\*\*\s*:\s*`([^`]+)`", content)
                 if file_match:
-                    filename_key = _normalize_uploaded_filename(file_match.group(1))
+                    filename_key = _copepod_working_set_file_key(file_match.group(1))
                     if filename_key:
                         seen_keys.add(filename_key)
+                        inspection_keys.add(filename_key)
                         working_set.setdefault("latest_inspection_by_file", {})[label] = report_summary
 
+    active_files = [
+        active_entry_by_key[key]
+        for key in active_order_keys
+        if key not in inspection_keys and key not in inspected_existing_keys and key in active_entry_by_key
+    ]
     working_set["seen_files"] = _dedupe_keep_order(
-        list(working_set.get("seen_files", []))
-        + active_files
-        + already_present_files
+        list(working_set.get("seen_files", [])) + seen_upload_entries
     )
-    working_set["active_files"] = _dedupe_keep_order(active_files)
+    working_set["active_files"] = active_files
     working_set["current_user_goal"] = latest_user_goal
 
     working_set = _copy_copepod_working_set(working_set)
@@ -348,7 +379,8 @@ def _build_copepod_session_resources_note(
     session_key: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
-) -> tuple[str | None, list[str]]:
+    return_new_files: bool = False,
+) -> str | tuple[str | None, list[str]] | None:
     """Build the compact runtime working set for Copepod turns."""
     current_message_files: list[str] = []  # files from the last user upload block
     already_present_files: list[str] = []
@@ -450,8 +482,22 @@ def _build_copepod_session_resources_note(
             file_artifacts.append(f"{label}: {content.strip()}")
             artifact_count += 1
 
+    existing_working_set = (
+        _copy_copepod_working_set(session_store.read_working_set(session_key))
+        if session_key
+        else _empty_copepod_working_set()
+    )
+    existing_active_state_files = _dedupe_keep_order(
+        [str(item) for item in existing_working_set.get("active_files", []) if str(item).strip()]
+    )
+    active_file_keys = {
+        _copepod_working_set_file_key(item)
+        for item in existing_working_set.get("active_files", [])
+        if str(item).strip()
+    }
+
     for entry, filename_key in current_file_candidates:
-        if filename_key and filename_key in seen_filename_keys:
+        if filename_key and filename_key in seen_filename_keys and filename_key not in active_file_keys:
             already_present_files.append(entry)
         else:
             current_message_files.append(entry)
@@ -505,8 +551,8 @@ def _build_copepod_session_resources_note(
             )
         return entry
 
-    if not current_message_files and not already_present_files and not artifact_entries:
-        return None, []
+    if not current_message_files and not already_present_files and not artifact_entries and not existing_active_state_files:
+        return (None, []) if return_new_files else None
 
     sections: dict[str, list[str]] = {
         "Deliverables": [],
@@ -538,7 +584,7 @@ def _build_copepod_session_resources_note(
         lines.extend(["", "seen_files:"])
         lines.extend(f"- {item}" for item in seen_files)
     if active_state_files:
-        lines.extend(["", "active_files:"])
+        lines.extend(["", "active_files (pending inspection until a report exists):"])
         lines.extend(f"- {item}" for item in active_state_files)
     if isinstance(inspection_map, dict) and inspection_map:
         lines.extend(["", "latest_inspection_by_file:"])
@@ -551,7 +597,7 @@ def _build_copepod_session_resources_note(
         lines.extend(["", "Files uploaded in this message (inspect these new filenames only):"])
         lines.extend(f"- {_render_session_file_entry(item)}" for item in current_message_files)
     if already_present_files:
-        lines.extend(["", "Files already present in this session (skip inspection):"])
+        lines.extend(["", "Files already inspected in this session (skip inspection):"])
         lines.extend(f"- {_render_session_file_entry(item)}" for item in already_present_files)
     for section in ("Deliverables", "Graph/image artifacts", "File artifacts"):
         values = sections.get(section) or []
@@ -562,7 +608,9 @@ def _build_copepod_session_resources_note(
     note = "\n".join(lines)
     if len(note) > 6000:
         note = note[:5900].rstrip() + "\n\nAdditional resource details were omitted to keep this prompt compact."
-    return note, current_message_files
+    if return_new_files:
+        return note, current_message_files
+    return note
 
 
 def _session_resource_message_from_stream_event(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -1484,6 +1532,7 @@ async def plan_and_run_mcp_tools(
                 messages=planning_messages,
                 tools=tool_defs,
                 tool_choice="auto",
+                max_tokens=settings.LLM_MAX_COMPLETION_TOKENS,
             )
         except Exception as exc:
             logger.warning("MCP tool routing failed: %s", exc)
@@ -1888,6 +1937,20 @@ async def chat_endpoint(
                         current_attempt_had_error = False
                         current_attempt_last_error_text = ""
 
+                        if agent_type == "copepod":
+                            copepod_session_resources_note, _new_files = _build_copepod_session_resources_note(
+                                list(interpreter.messages) + list(messages),
+                                session_key=session_key,
+                                user_id=str(user.id),
+                                session_id=session_id,
+                                return_new_files=True,
+                            )
+                            interpreter.system_message = _compose_copepod_system_message(
+                                copepod_session_resources_note,
+                                copepod_inspect_then_code_note if copepod_inspect_then_code_note else None,
+                                retry_note,
+                            )
+
                         chat_prefix = _strip_system_messages(list(interpreter.messages))
                         chat_input = (
                             chat_prefix + last_user_message_messages
@@ -1897,43 +1960,6 @@ async def chat_endpoint(
                                 + ([last_user_message_payload] if last_user_message_payload is not None else [messages[-1]])
                             )
                         )
-
-                        if agent_type == "copepod":
-                            copepod_session_resources_note, _new_files = _build_copepod_session_resources_note(
-                                list(interpreter.messages) + list(messages),
-                                session_key=session_key,
-                                user_id=str(user.id),
-                                session_id=session_id,
-                            )
-                            interpreter.system_message = _compose_copepod_system_message(
-                                copepod_session_resources_note,
-                                copepod_inspect_then_code_note if copepod_inspect_then_code_note else None,
-                                retry_note,
-                            )
-                            # Inject an explicit inspection instruction when new files are present.
-                            # This replaces the last user text message so the LLM sees exactly
-                            # what to do — instead of interpreting the user's text first.
-                            if _new_files and retry_attempts == 0:
-                                file_paths = "\n".join(
-                                    f"- {f.split('| path: ')[-1].strip() if '| path: ' in f else f}"
-                                    for f in _new_files
-                                )
-                                user_text = last_user_message.strip() if last_user_message else ""
-                                inject_content = (
-                                    f"Nouveaux fichiers uploadés — exécute inspect_and_report sur chacun avant tout :\n"
-                                    f"{file_paths}"
-                                )
-                                if user_text:
-                                    inject_content += f"\n\nDemande de l'utilisateur (à traiter après l'inspection) : {user_text}"
-                                # Replace or append the injected message in chat_input
-                                inject_msg = {"role": "user", "type": "message", "content": inject_content}
-                                # Remove any existing user text messages at the tail to avoid duplication
-                                trimmed = [
-                                    m for m in chat_input
-                                    if not (m.get("role") == "user" and m.get("type") == "message"
-                                            and m.get("content", "").strip() == user_text and user_text)
-                                ]
-                                chat_input = trimmed + [inject_msg]
 
                         for chunk in _yield_chat_stream(chat_input):
                             yield chunk

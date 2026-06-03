@@ -51,6 +51,7 @@ def test_custom_instructions_render_without_session_mode():
 
 def test_get_tool_code_renders_copepod_tools():
     code = _profile().get_tool_code()
+    assert "inspect_and_report" in code
     assert "inspect_file" in code
     assert "describe_column" in code
     assert "create_data_understanding_draft" not in code

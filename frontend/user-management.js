@@ -126,7 +126,7 @@
             const metaEl = document.createElement('div');
             metaEl.className = 'prompt-item-meta user-item-meta';
             const pieces = [];
-            pieces.push(user.full_name ? user.full_name : 'No name');
+            pieces.push(user.full_name ? user.full_name : 'Sans nom');
             if (user.created_at) {
                 pieces.push(formatDate(user.created_at));
             }
@@ -137,7 +137,7 @@
             if (user.is_superuser) {
                 tagsEl.appendChild(createBadge('Superuser', 'badge-superuser'));
             }
-            tagsEl.appendChild(createBadge(user.is_active ? 'Active' : 'Inactive', user.is_active ? 'badge-active' : 'badge-inactive'));
+            tagsEl.appendChild(createBadge(user.is_active ? 'Actif' : 'Inactif', user.is_active ? 'badge-active' : 'badge-inactive'));
 
             content.appendChild(emailEl);
             content.appendChild(metaEl);
@@ -149,13 +149,13 @@
             const editBtn = document.createElement('button');
             editBtn.type = 'button';
             editBtn.className = 'btn btn-secondary user-action';
-            editBtn.textContent = 'Edit';
+            editBtn.textContent = 'Modifier';
             editBtn.addEventListener('click', () => selectUser(user.id));
 
             const deleteBtn = document.createElement('button');
             deleteBtn.type = 'button';
             deleteBtn.className = 'btn btn-danger user-action';
-            deleteBtn.textContent = 'Delete';
+            deleteBtn.textContent = 'Supprimer';
             if (user.id === state.currentUserId) {
                 deleteBtn.disabled = true;
                 deleteBtn.title = 'You cannot delete your own account.';
@@ -184,7 +184,7 @@
         try {
             const d = new Date(isoDate);
             if (Number.isNaN(d.getTime())) return '';
-            return `Created ${d.toLocaleString()}`;
+            return `Créé ${d.toLocaleString()}`;
         } catch {
             return '';
         }
@@ -203,15 +203,15 @@
         const superuserInput = document.getElementById('userIsSuperuser');
         const activeInput = document.getElementById('userIsActive');
 
-        if (formTitle) formTitle.textContent = 'Edit User';
+        if (formTitle) formTitle.textContent = 'Modifier l’utilisateur';
         if (fullNameInput) fullNameInput.value = user.full_name || '';
         if (emailInput) emailInput.value = user.email || '';
         if (passwordInput) {
             passwordInput.value = '';
             passwordInput.required = false;
-            passwordInput.placeholder = 'Leave blank to keep current password';
+            passwordInput.placeholder = 'Laisser vide pour conserver le mot de passe';
         }
-        if (passwordHelper) passwordHelper.textContent = 'Leave blank to keep the current password.';
+        if (passwordHelper) passwordHelper.textContent = 'Laissez vide pour conserver le mot de passe actuel.';
         if (superuserInput) superuserInput.checked = Boolean(user.is_superuser);
         if (activeInput) activeInput.checked = Boolean(user.is_active);
 
@@ -225,7 +225,7 @@
         if (form) form.reset();
 
         const formTitle = document.getElementById('userFormTitle');
-        if (formTitle) formTitle.textContent = 'Create User';
+        if (formTitle) formTitle.textContent = 'Créer un utilisateur';
 
         const passwordInput = document.getElementById('userPassword');
         if (passwordInput) {
@@ -233,7 +233,7 @@
             passwordInput.placeholder = '';
         }
         const passwordHelper = document.getElementById('userPasswordHelper');
-        if (passwordHelper) passwordHelper.textContent = 'Password must be 8-40 characters.';
+        if (passwordHelper) passwordHelper.textContent = '8 à 40 caractères.';
 
         const activeInput = document.getElementById('userIsActive');
         if (activeInput) activeInput.checked = true;

@@ -34,18 +34,6 @@
                     <span class="material-icons">chat_bubble_outline</span>
                     <span class="sidebar-btn-label">Conversations</span>
                 </button>
-                <button id="knowledgeBaseButton" class="sidebar-btn">
-                    <span class="material-icons">library_books</span>
-                    <span class="sidebar-btn-label">Base de connaissances</span>
-                </button>
-                <button id="systemPromptButton" class="sidebar-btn">
-                    <span class="material-icons">tune</span>
-                    <span class="sidebar-btn-label">Instructions</span>
-                </button>
-                <button id="downloadButton" class="sidebar-btn">
-                    <span class="material-icons">download</span>
-                    <span class="sidebar-btn-label">Télécharger</span>
-                </button>
                 <div class="sidebar-divider"></div>
                 <button id="userManagementButton" class="sidebar-btn admin-only" data-admin-display="flex">
                     <span class="material-icons">group</span>
@@ -82,10 +70,6 @@
                 <!-- Session mode badges (copepod plan → analyse workflow) -->
                 <div class="header-status-group">
                     <div class="header-badges-row">
-                        <div id="sessionModeBadge" class="session-mode-badge session-mode-plan" style="display:none">
-                            <span class="material-icons session-mode-icon">edit_note</span>
-                            <span id="sessionModeLabel">Mode Plan</span>
-                        </div>
                         <button id="onlineModeBadge"
                                 type="button"
                                 class="session-mode-badge session-mode-online session-mode-online--off session-mode-button"
@@ -110,6 +94,10 @@
                     <button id="newMessagesButton" class="header-btn" title="Nouvelle conversation">
                         <span class="material-icons">add_comment</span>
                         <span class="header-btn-label">Nouveau</span>
+                    </button>
+                    <button id="downloadButton" class="header-btn" title="Télécharger la conversation">
+                        <span class="material-icons">download</span>
+                        <span class="header-btn-label">Télécharger</span>
                     </button>
                     <button id="themeToggleButton" class="header-btn header-btn-icon" title="Basculer thème">
                         <span class="material-icons theme-icon-dark">dark_mode</span>
@@ -169,6 +157,15 @@
                 </div>
             </div>
             <div class="generation-metrics" id="generationMetrics" aria-live="polite">
+                <button
+                    id="generationMetricsClose"
+                    class="generation-metrics-close"
+                    type="button"
+                    aria-label="Masquer les métriques"
+                    title="Masquer les métriques"
+                >
+                    <span class="material-icons">close</span>
+                </button>
                 <div class="generation-metric">
                     <span class="generation-metric-label">Temps</span>
                     <span class="generation-metric-value" id="generationDurationValue">—</span>
@@ -185,21 +182,39 @@
                     <span class="generation-metric-note" id="generationRateValue">Tarif du modèle: —</span>
                 </div>
             </div>
+            <button
+                id="generationMetricsOpen"
+                class="generation-metrics-open"
+                type="button"
+                aria-controls="generationMetrics"
+                aria-expanded="false"
+                hidden
+            >
+                <span class="material-icons">monitoring</span>
+                Métriques
+            </button>
         </footer>
 
     </div><!-- /main-area -->
 
     <!-- ── CSV Sidebar ── -->
-    <aside class="conversation-csv-sidebar open" id="conversationCsvSidebar" aria-hidden="false">
+    <aside class="conversation-csv-sidebar collapsed" id="conversationCsvSidebar" aria-hidden="true">
         <div class="csv-resize-handle" id="csvResizeHandle" title="Redimensionner"></div>
         <div class="conversation-csv-sidebar-inner">
             <div class="conversation-csv-sidebar-header">
-                <div class="conversation-csv-sidebar-title">
+                <button
+                    class="conversation-csv-sidebar-title"
+                    id="conversationCsvTitleButton"
+                    type="button"
+                    title="Ouvrir le panneau CSV"
+                    aria-label="Ouvrir le panneau CSV"
+                    aria-controls="conversationCsvSidebar"
+                >
                     <span class="material-icons">table_view</span>
-                    <span class="conversation-csv-sidebar-title-label">View CSV</span>
-                </div>
+                    <span class="conversation-csv-sidebar-title-label">CSV</span>
+                </button>
                 <button class="conversation-csv-toggle" id="conversationCsvToggle" title="Réduire">
-                    <span class="material-icons">chevron_right</span>
+                    <span class="material-icons">close</span>
                 </button>
             </div>
             <div class="conversation-csv-sidebar-body">
@@ -210,6 +225,19 @@
             </div>
         </div>
     </aside>
+
+    <button
+        id="conversationCsvFloatingButton"
+        class="conversation-csv-floating-button"
+        type="button"
+        title="Ouvrir le panneau CSV"
+        aria-label="Ouvrir le panneau CSV"
+        aria-controls="conversationCsvSidebar"
+        aria-expanded="false"
+    >
+        <span class="material-icons">table_view</span>
+        <span>CSV</span>
+    </button>
 
 </div><!-- /app-shell -->
 
@@ -316,13 +344,13 @@
 </div>
 
 <!-- Account Settings -->
-<div id="accountSettingsModal" class="modal">
-    <div class="modal-content">
+<div id="accountSettingsModal" class="modal account-settings-modal">
+    <div class="modal-content account-settings-content">
         <div class="modal-header">
             <h2>Paramètres du compte</h2>
             <span class="close" id="closeAccountSettingsModal">&times;</span>
         </div>
-        <div class="modal-body">
+        <div class="modal-body account-settings-body">
             <div class="account-info-section">
                 <h3>Informations</h3>
                 <div class="form-group">
@@ -330,7 +358,6 @@
                     <input type="email" id="userEmailDisplay" readonly disabled>
                 </div>
             </div>
-            <hr>
             <div class="account-info-section">
                 <h3>Mode En Ligne</h3>
                 <div class="form-group checkbox-group">
@@ -344,8 +371,7 @@
                     <div id="onlineModeAllowedSources" class="form-helper"></div>
                 </div>
             </div>
-            <hr>
-            <form id="accountSettingsForm">
+            <form id="accountSettingsForm" class="account-password-section">
                 <h3>Changer le mot de passe</h3>
                 <div class="form-group">
                     <label for="currentPasswordInput">Mot de passe actuel</label>
@@ -432,6 +458,34 @@
     </div>
 </div>
 
+<!-- Action confirmation -->
+<div id="actionConfirmModal" class="modal action-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="actionConfirmTitle">
+    <div class="modal-content action-confirm-content">
+        <div class="modal-header action-confirm-header">
+            <div>
+                <p class="action-confirm-eyebrow" id="actionConfirmEyebrow">Confirmation</p>
+                <h2 id="actionConfirmTitle">Confirmer l’action</h2>
+            </div>
+            <button type="button" class="action-confirm-close" id="actionConfirmClose" aria-label="Fermer">
+                <span class="material-icons">close</span>
+            </button>
+        </div>
+        <div class="modal-body action-confirm-body">
+            <div class="action-confirm-icon" aria-hidden="true">
+                <span class="material-icons" id="actionConfirmIcon">help_outline</span>
+            </div>
+            <div class="action-confirm-copy">
+                <p id="actionConfirmMessage" class="action-confirm-message"></p>
+                <ul id="actionConfirmDetails" class="action-confirm-details"></ul>
+            </div>
+        </div>
+        <div class="action-confirm-actions">
+            <button type="button" id="actionConfirmCancel" class="btn btn-secondary">Annuler</button>
+            <button type="button" id="actionConfirmAccept" class="btn btn-primary">Confirmer</button>
+        </div>
+    </div>
+</div>
+
 <!-- Conversations -->
 <div id="conversationsModal" class="modal">
     <div class="modal-content wide-modal">
@@ -450,9 +504,11 @@
                         </button>
                     </div>
                     <div class="filter-section">
-                        <button id="showAllConversations" class="btn btn-primary active">Toutes</button>
-                        <button id="showFavoriteConversations" class="btn btn-favorite">Favoris</button>
-                        <button id="deleteAllConversations" class="btn btn-danger">
+                        <div class="filter-buttons">
+                            <button id="showAllConversations" class="btn btn-primary active">Toutes</button>
+                            <button id="showFavoriteConversations" class="btn btn-favorite">Favoris</button>
+                        </div>
+                        <button id="deleteAllConversations" class="btn btn-danger delete-all-conversations">
                             <span class="material-icons" style="font-size:16px;vertical-align:middle;">delete_sweep</span>
                             Tout supprimer
                         </button>

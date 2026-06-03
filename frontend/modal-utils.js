@@ -1,15 +1,27 @@
 // modal-utils.js — utilitaires partagés pour l'ouverture/fermeture des modales
 
 const ModalUtils = (function () {
+    const CLOSE_ANIMATION_MS = 170;
+
     function open(el) {
         if (!el) return;
+        el.classList.remove('is-closing');
         el.style.display = 'block';
         document.body.style.overflow = 'hidden';
+        requestAnimationFrame(() => {
+            el.classList.add('is-open');
+        });
     }
 
     function close(el) {
         if (!el) return;
-        el.style.display = 'none';
+        el.classList.remove('is-open');
+        el.classList.add('is-closing');
+        window.setTimeout(() => {
+            if (!el.classList.contains('is-closing')) return;
+            el.classList.remove('is-closing');
+            el.style.display = 'none';
+        }, CLOSE_ANIMATION_MS);
         document.body.style.overflow = '';
     }
 
@@ -19,7 +31,13 @@ const ModalUtils = (function () {
             if (e.target === el) closeFn();
         });
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && el && el.style.display === 'block') closeFn();
+            if (
+                e.key === 'Escape'
+                && el
+                && (el.classList.contains('is-open') || el.style.display === 'block')
+            ) {
+                closeFn();
+            }
         });
     }
 

@@ -3,12 +3,33 @@ Tests for copepod_columns tools: describe_column, check_column_for_calc.
 
 TDD — these tests were written before the implementation.
 """
+import os
 import pytest
 from pathlib import Path
 
 pytestmark = pytest.mark.tool_contract
 
-FIXTURES = Path("/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv")
+def _resolve_copepod_specs_root() -> Path | None:
+    candidates = []
+    env_root = os.getenv("COPEPOD_SPECS_DIR")
+    if env_root:
+        candidates.append(Path(env_root))
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates.append(repo_root.parent / "assistant-copepodes-specs")
+    for root in candidates:
+        if root.exists():
+            return root
+    return None
+
+
+_SPECS_ROOT = _resolve_copepod_specs_root()
+if _SPECS_ROOT is None:
+    pytest.skip(
+        "Copepod fixture repo not found. Clone assistant-copepodes-specs beside IDEA or set COPEPOD_SPECS_DIR.",
+        allow_module_level=True,
+    )
+
+FIXTURES = _SPECS_ROOT / "data_exploration/examples_tsv"
 ECOTAXA_FILE = FIXTURES / "ecotaxa_sample_50.tsv"
 ECOPART_FILE = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"
 

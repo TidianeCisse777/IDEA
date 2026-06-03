@@ -173,6 +173,7 @@ def get_or_create_interpreter(
                 system = params.pop("instructions", "") or ""
                 items = params.pop("input", []) or []
                 params.pop("max_output_tokens", None)
+                params.setdefault("max_tokens", settings.LLM_MAX_COMPLETION_TOKENS)
                 if params.get("stream"):
                     stream_options = params.get("stream_options")
                     if not isinstance(stream_options, dict):
@@ -209,6 +210,7 @@ def get_or_create_interpreter(
                     stream_options.setdefault("include_usage", True)
                     params["stream_options"] = stream_options
                 params["messages"] = _normalize_chat_messages(params.get("messages"))
+                params.setdefault("max_tokens", settings.LLM_MAX_COMPLETION_TOKENS)
             return _orig_completions(**params)
 
         interpreter.llm.completions = _completions_via_chat

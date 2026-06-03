@@ -1,6 +1,7 @@
 """Shared file-path constants and upload helpers for copepod evals."""
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -9,9 +10,25 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-FIXTURES = Path(
-    "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv"
-)
+def _resolve_copepod_specs_root() -> Path | None:
+    candidates = []
+    env_root = os.getenv("COPEPOD_SPECS_DIR")
+    if env_root:
+        candidates.append(Path(env_root))
+    candidates.append(ROOT.parent / "assistant-copepodes-specs")
+    for root in candidates:
+        if root.exists():
+            return root
+    return None
+
+
+_SPECS_ROOT = _resolve_copepod_specs_root()
+if _SPECS_ROOT is None:
+    raise FileNotFoundError(
+        "Copepod fixture repo not found. Clone assistant-copepodes-specs beside IDEA or set COPEPOD_SPECS_DIR."
+    )
+
+FIXTURES = _SPECS_ROOT / "data_exploration/examples_tsv"
 
 # Primary sources (raw, single-origin)
 ECOTAXA = FIXTURES / "ecotaxa_green_edge_sample_200.tsv"

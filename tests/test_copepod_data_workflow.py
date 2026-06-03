@@ -6,20 +6,38 @@ inspect_file -> infer_column_roles -> optional describe_column/check_column_for_
 -> summarize_understanding. The tools must document the data state without
 modifying raw files.
 """
+import os
 from pathlib import Path
 import hashlib
 
 import pytest
 
 
-FIXTURES = Path("/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv")
+def _resolve_copepod_specs_root() -> Path | None:
+    candidates = []
+    env_root = os.getenv("COPEPOD_SPECS_DIR")
+    if env_root:
+        candidates.append(Path(env_root))
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates.append(repo_root.parent / "assistant-copepodes-specs")
+    for root in candidates:
+        if root.exists():
+            return root
+    return None
+
+
+_SPECS_ROOT = _resolve_copepod_specs_root()
+if _SPECS_ROOT is None:
+    pytest.skip(
+        "Copepod fixture repo not found. Clone assistant-copepodes-specs beside IDEA or set COPEPOD_SPECS_DIR.",
+        allow_module_level=True,
+    )
+
+FIXTURES = _SPECS_ROOT / "data_exploration/examples_tsv"
 ECOTAXA = FIXTURES / "ecotaxa_sample_50.tsv"
 ECOPART = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"
 CTD = FIXTURES / "amundsen_12713_ctd_2018_sample.tsv"
-LOKI_COLUMNS_METADATA = Path(
-    "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/"
-    "data_exploration/ecotaxa_14622_probe/outputs/sample/columns_metadata.tsv"
-)
+LOKI_COLUMNS_METADATA = _SPECS_ROOT / "data_exploration/ecotaxa_14622_probe/outputs/sample/columns_metadata.tsv"
 
 pytestmark = pytest.mark.tool_contract
 

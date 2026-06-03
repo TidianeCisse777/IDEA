@@ -631,7 +631,7 @@ class TestCopepodSessionResourcesNote:
         assert "This is the canonical session state" in note
         assert "current_user_goal:" in note
         assert "seen_files:" in note
-        assert "active_files:" in note
+        assert "active_files (pending inspection until a report exists):" in note
         assert "latest_inspection_by_file:" in note
         assert "Do not ask the user to re-upload" in note
         assert "sample.csv" in note
@@ -689,17 +689,48 @@ class TestCopepodSessionResourcesNote:
 
         assert note is not None
         assert "Files uploaded in this message (inspect these new filenames only):" in note
-        assert "Files already present in this session (skip inspection):" in note
+        assert "Files already inspected in this session (skip inspection):" in note
 
         new_section = note.split(
             "Files uploaded in this message (inspect these new filenames only):",
             1,
-        )[1].split("Files already present in this session (skip inspection):", 1)[0]
-        skip_section = note.split("Files already present in this session (skip inspection):", 1)[1]
+        )[1].split("Files already inspected in this session (skip inspection):", 1)[0]
+        skip_section = note.split("Files already inspected in this session (skip inspection):", 1)[1]
 
         assert "fresh.csv" in new_section
         assert "SAMPLE.csv" not in new_section
         assert "SAMPLE.csv" in skip_section
+
+    def test_returns_no_new_files_on_followup_without_new_uploads(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["sample.csv"],
+                "active_files": ["sample.csv"],
+                "latest_inspection_by_file": {},
+                "current_user_goal": "inspect sample.csv",
+            },
+        )
+
+        note, pending = _build_copepod_session_resources_note(
+            [
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": "Please inspect the file already uploaded.",
+                }
+            ],
+            session_key=session_key,
+            user_id="u1",
+            session_id="s1",
+            return_new_files=True,
+        )
+
+        assert note is not None
+        assert "active_files (pending inspection until a report exists):" in note
+        assert pending == []
 
     def test_includes_existing_graph_image_as_source_for_correction(self):
         note = _build_copepod_session_resources_note(
@@ -814,6 +845,69 @@ class TestCopepodWorkingSetReducer:
             "current_user_goal",
         }
         assert store.read_working_set(session_key) == updated
+
+    def test_preserves_pending_active_files_until_inspection_report_exists(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["sample.csv"],
+                "active_files": ["sample.csv"],
+                "latest_inspection_by_file": {},
+                "current_user_goal": "inspect sample.csv",
+            },
+        )
+
+        updated = _update_copepod_working_set(
+            session_key=session_key,
+            messages=[
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": "Please inspect it.",
+                }
+            ],
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert updated["active_files"] == ["sample.csv"]
+        assert updated["seen_files"] == ["sample.csv"]
+
+    def test_clears_pending_active_file_once_report_is_present(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["sample.csv"],
+                "active_files": ["sample.csv"],
+                "latest_inspection_by_file": {},
+                "current_user_goal": "inspect sample.csv",
+            },
+        )
+
+        updated = _update_copepod_working_set(
+            session_key=session_key,
+            messages=[
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n\n"
+                        "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                        "- **format** : `csv`  •  **n_rows** : `12`  •  **n_columns** : `3`\n"
+                        "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+                    ),
+                }
+            ],
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert updated["active_files"] == []
+        assert "sample.csv" in updated["latest_inspection_by_file"]
 
 
 # ---------------------------------------------------------------------------
@@ -1300,7 +1394,8 @@ class TestChatGuardPaths:
                 "Session ID: s1\n"
                 "Base path: ./static/{user_id}/s1/uploads\n"
                 "- sample.csv (text/csv) | relative path: sample.csv\n"
-                "Use these paths when referencing the uploaded files."
+                "Use these paths when referencing the uploaded files.\n"
+                "Session rule: for every filename without a report in latest_inspection_by_file, call inspect_and_report immediately. If a filename already has a report in latest_inspection_by_file, skip its inspection and explicitly say it is already inspected. If a filename is pending in active_files without a report, inspect it now in the same turn; do not wait for the user to repeat \"inspect\"."
             ),
         }
 
