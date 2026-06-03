@@ -4924,6 +4924,14 @@ body.main-app {
     text-transform: uppercase;
 }
 
+.sidebar-brand-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    gap: 1px;
+    transition: opacity 0.2s ease;
+}
+
 .sidebar-brand-name {
     font-family: 'Cormorant Garamond', Georgia, serif;
     font-style: italic;
@@ -4938,12 +4946,22 @@ body.main-app {
     white-space: nowrap;
 }
 
+.sidebar-brand-owner {
+    color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    line-height: 1;
+    text-transform: uppercase;
+}
+
 .sidebar-brand-name em {
     font-style: normal;
     color: var(--primary);
 }
 
-.sidebar.collapsed .sidebar-brand-name {
+.sidebar.collapsed .sidebar-brand-copy {
     opacity: 0;
     width: 0;
     overflow: hidden;
