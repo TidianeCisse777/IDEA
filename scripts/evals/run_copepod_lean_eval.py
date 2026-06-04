@@ -362,6 +362,9 @@ class LeanScenario:
     expect_reply_mentions: list[str] = field(default_factory=list)
 
 
+from scripts.evals.copepod_lean_scenarios_uvp import build_uvp_understanding_scenarios
+
+
 SCENARIOS: list[LeanScenario] = [
     LeanScenario(
         slug="single_ecotaxa",
@@ -490,41 +493,23 @@ SCENARIOS: list[LeanScenario] = [
         forbidden_terms_in_reply=["voici le graphique", "graphique généré", "tracé le graphique"],
     ),
     LeanScenario(
-        slug="uvp5_morphometric_column",
+        slug="uvp5_ui_output_format",
         fixtures=[ECOTAXA_UVP5],
         user_message_template=(
             "Voici un fichier EcoTaxa UVP5.\n"
             "Fichier : {paths}\n"
-            "Que signifient les colonnes `fre_major` et `fre_esd` dans ce fichier ?"
+            "Fais un graphique de fre_esd en fonction de obj_depth_min."
         ),
         expect_inspect_per_file=True,
-        expect_tools_called=["inspect_and_report"],
-        expect_reply_mentions=["major", "axe", "ellipse", "morphométr", "taille", "µm", "ESD", "diamètre", "équivalent", "sphère"],
+        # Test intégration UI : le modèle doit produire **Plan** + bloc ```python
+        expect_tools_called=["inspect_and_report", "graph_readiness"],
+        expect_reply_mentions=["**Plan**", "```python", "fre_esd", "obj_depth_min"],
+        forbidden_terms_in_reply=["je ne peux pas", "uploadez un fichier"],
     ),
-    LeanScenario(
-        slug="ecopart_lpm_depth_profile",
-        fixtures=[ECOPART],
-        user_message_template=(
-            "Voici un fichier EcoPart.\n"
-            "Fichier : {paths}\n"
-            "Que représentent les colonnes LPM et comment est structuré un profil de profondeur dans ce fichier ?"
-        ),
-        expect_inspect_per_file=True,
-        expect_tools_called=["inspect_and_report"],
-        expect_reply_mentions=["profondeur", "taille", "particule", "concentration", "µm", "mm", "profil", "volume", "LPM", "classe"],
-        forbidden_terms_in_reply=["copépode", "taxonomie", "annotation"],
-    ),
-    LeanScenario(
-        slug="uvp5_ecopart_join_key",
-        fixtures=[ECOTAXA_UVP5, ECOPART],
-        user_message_template=(
-            "Voici deux fichiers : un export EcoTaxa UVP5 et un export EcoPart.\n"
-            "Fichiers : {paths}\n"
-            "Comment relier ces deux fichiers ? Quelle colonne sert de clé de jointure ?"
-        ),
-        expect_inspect_per_file=True,
-        expect_tools_called=["inspect_and_report"],
-        expect_reply_mentions=["obj_orig_id", "Profile", "profil", "jointure", "ips_007", "clé", "lier", "relier"],
+    *build_uvp_understanding_scenarios(
+        LeanScenario=LeanScenario,
+        ECOTAXA_UVP5=ECOTAXA_UVP5,
+        ECOPART=ECOPART,
     ),
     LeanScenario(
         slug="summarize_understanding_requested",
