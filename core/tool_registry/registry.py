@@ -94,6 +94,8 @@ for _idea_tool_name in [
     "describe_column",
     "summarize_understanding",
     "query_copepod_knowledge_base",
+    "resolve_uvp_m5_m6_inputs",
+    "calculate_uvp_m5_m6",
 ]:
     if _idea_tool_name in globals() and callable(globals()[_idea_tool_name]):
         globals()[_idea_tool_name] = _idea_wrap_tool(globals()[_idea_tool_name], _idea_tool_name)

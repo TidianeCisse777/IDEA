@@ -1212,6 +1212,17 @@ def inspect_and_report(file_paths, session_id=None):
             "error": None,
         })
 
+        # Store structured file_report so graph_readiness / resolve can auto-fetch
+        # without requiring the caller to pass the full dict.
+        try:
+            import os as _os2
+            from core.session_store import session_store as _store2
+            _sk2 = _os2.environ.get("IDEA_RUNTIME_SESSION_KEY") or session_id
+            if _sk2:
+                _store2.store_inspection_data(_sk2, short, file_report)
+        except Exception:
+            pass
+
     summary_lines = []
     for r in reports:
         if r["error"]:
@@ -1363,12 +1374,14 @@ def _graph_readiness_is_taxonomic_intent(user_request="", graph_type="", require
 
 
 def graph_readiness(
-    file_report,
+    file_report=None,
     required_columns=None,
     column_definitions=None,
     user_request="",
     graph_type=None,
     validation_status=None,
+    filename=None,
+    session_id=None,
 ):
     """Validate graph inputs before producing a graph or graph-derived table.
 
@@ -1379,6 +1392,16 @@ def graph_readiness(
     clarification questions instead of letting the model draw an approximate
     graph.
     """
+    if not file_report and filename:
+        try:
+            import os as _osgr
+            from core.session_store import session_store as _store_gr
+            _sk_gr = _osgr.environ.get("IDEA_RUNTIME_SESSION_KEY") or session_id
+            if _sk_gr:
+                file_report = _store_gr.read_inspection_data(_sk_gr, filename) or file_report
+        except Exception:
+            pass
+
     required = [str(c) for c in (required_columns or []) if str(c).strip()]
     available_columns = _graph_readiness_column_names(file_report)
     available_set = set(available_columns)
@@ -1419,10 +1442,16 @@ def graph_readiness(
             "1. Quelles colonnes exactes du rapport d'inspection doivent servir au graphe ?"
         )
     if missing_required:
+        avail_str = (
+            ", ".join(f"`{col}`" for col in available_columns[:15])
+            + ("…" if len(available_columns) > 15 else "")
+            if available_columns else "aucune colonne détectée"
+        )
         clarification_questions.append(
-            "1. Les colonnes requises sont absentes du fichier inspecte: "
+            "1. Les colonnes requises sont absentes du fichier inspecté: "
             + ", ".join(f"`{col}`" for col in missing_required)
-            + ". Quelle colonne disponible faut-il utiliser a la place ?"
+            + f". Colonnes disponibles dans le fichier : {avail_str}"
+            + ". Quelle colonne faut-il utiliser à la place ?"
         )
     if unresolved_required:
         clarification_questions.append(

@@ -123,6 +123,23 @@ def test_custom_instructions_advertise_undefined_columns_section():
     assert "Colonnes auto-résolues" in text
     assert "Colonnes à clarifier" in text
     # The instruction must reference what to DO with each tier:
+
+
+def test_custom_instructions_advertise_uvp_m5_m6_tools():
+    text = _profile().get_custom_instructions(
+        host="http://localhost",
+        user_id="u",
+        session_id="s",
+        static_dir="/static",
+        upload_dir="/static/u/s/uploads",
+        mcp_tools=[],
+    )
+    assert "resolve_uvp_m5_m6_inputs" in text
+    assert "calculate_uvp_m5_m6" in text
+    assert "blocked" in text
+    assert "partial" in text
+    assert "ok" in text
+    assert "Do not reimplement m5/m6 formulas" in text
     # - auto-résolues → use directly with documented assumption
     # - à clarifier → numbered question in form (b)
     assert "document the assumption" in text.lower() or "assumption" in text.lower()

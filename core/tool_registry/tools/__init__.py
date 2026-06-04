@@ -11,3 +11,4 @@ from . import copepod_remote_sources
 from . import copepod_sources_meta
 from . import copepod_rag
 from . import copepod_taxonomy
+from . import copepod_uvp_metrics

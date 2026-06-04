@@ -42,6 +42,7 @@ from scripts.evals.copepod.fixtures import (
     ECOPART,
     ECOTAXA_SMALL as ECOTAXA,
     ECOTAXA_UVP5,
+    ECOTAXA_UVP5_ENRICHED,
     NEOLABS_LOKI,
     NEOLABS_TAXON,
     OGSL,
@@ -159,21 +160,77 @@ def _tool_specs() -> list[dict]:
             {"filename": {"type": "string"}},
             ["filename"],
         ),
+        fn(
+            "graph_readiness",
+            "Validate columns and data before producing a graph or graph-derived table. file_report is fetched automatically from session — do NOT pass it.",
+            {
+                "required_columns": {"type": "array", "items": {"type": "string"}},
+                "column_definitions": {"type": "array", "items": object_schema},
+                "user_request": {"type": "string"},
+                "graph_type": {"type": "string"},
+                "validation_status": {"type": "string"},
+            },
+            ["required_columns"],
+        ),
+        fn(
+            "resolve_uvp_m5_m6_inputs",
+            "Resolve semantic input roles required for UVP MCA m5/m6 calculations.",
+            {"columns": {"type": "array", "items": object_schema}, "metadata": object_schema, "session_id": {"type": "string"}},
+            ["columns"],
+        ),
+        fn(
+            "calculate_uvp_m5_m6",
+            "Calculate UVP MCA m5 (copepod density) and m6 (large copepod density) metrics.",
+            {"data": object_schema, "resolved_inputs": object_schema, "session_id": {"type": "string"}},
+            ["data"],
+        ),
+        fn(
+            "check_column_for_calc",
+            "Check whether semantic roles required for a calculation are present.",
+            {"column_roles": object_schema, "calculation": {"type": "string"}, "session_id": {"type": "string"}},
+            ["column_roles", "calculation"],
+        ),
     ]
 
 
+_SESSION_ID_TOOLS = {
+    "describe_column", "inspect_and_report", "collect_column_definitions",
+    "resolve_uvp_m5_m6_inputs", "graph_readiness", "calculate_uvp_m5_m6",
+}
+
+# Tools that benefit from knowing the last inspected filename
+_FILENAME_TOOLS = {"resolve_uvp_m5_m6_inputs", "calculate_uvp_m5_m6", "graph_readiness"}
+
+
 def _make_call_tool(tools: dict[str, Any], session_id: str) -> Callable[[str, dict], Any]:
-    cache: dict[str, Any] = {"inspected_paths": set()}
+    cache: dict[str, Any] = {"inspected_paths": set(), "last_filename": None}
+    os.environ["IDEA_RUNTIME_SESSION_KEY"] = session_id
 
     def call(name: str, arguments: dict) -> Any:
-        if name == "describe_column" and not arguments.get("session_id"):
+        if name in _SESSION_ID_TOOLS and not arguments.get("session_id"):
             arguments = {**arguments, "session_id": session_id}
         if name == "inspect_file":
             path = arguments.get("file_path")
             if path:
                 cache["inspected_paths"].add(path)
+                cache["last_filename"] = Path(path).name
+        if name == "inspect_and_report":
+            paths = arguments.get("file_paths") or []
+            if paths:
+                cache["last_filename"] = Path(paths[0]).name
+                # Pre-store raw file_reports so graph_readiness can auto-fetch available_columns
+                from core.session_store import session_store as _ss_pre
+                for _p in paths:
+                    try:
+                        _raw = tools["inspect_file"](file_path=_p)
+                        _ss_pre.store_inspection_data(session_id, Path(_p).name, _raw)
+                    except Exception:
+                        pass
+        if name in _FILENAME_TOOLS and not arguments.get("filename") and cache["last_filename"]:
+            arguments = {**arguments, "filename": cache["last_filename"]}
         try:
-            return tools[name](**arguments)
+            result = tools[name](**arguments)
+            return result
         except Exception as exc:
             return {"error": str(exc)}
 
@@ -225,6 +282,14 @@ def _default_completion(**kwargs):
     return OpenAI(**client_kwargs).chat.completions.create(**kwargs, max_completion_tokens=4000)
 
 
+_VERBOSE = False
+
+
+def _vprint(*args: Any, **kwargs: Any) -> None:
+    if _VERBOSE:
+        print(*args, **kwargs, flush=True)
+
+
 def _run_turn(
     messages: list[dict],
     call_tool: Callable[[str, dict], Any],
@@ -238,6 +303,7 @@ def _run_turn(
     last_content = ""
 
     for round_index in range(max_rounds):
+        _vprint(f"  [round {round_index + 1}] calling LLM…")
         response = completion_fn(
             model=model,
             messages=messages,
@@ -251,6 +317,7 @@ def _run_turn(
         tool_calls = msg.get("tool_calls") or []
 
         if not tool_calls:
+            _vprint(f"  [round {round_index + 1}] text reply ({len(last_content)} chars)")
             return last_content, tool_names_called
 
         for raw in tool_calls:
@@ -258,11 +325,13 @@ def _run_turn(
             fn = call.get("function") or {}
             name = fn.get("name")
             tool_names_called.append(name or "")
+            _vprint(f"  [round {round_index + 1}] → tool: {name}")
             try:
                 args = json.loads(fn.get("arguments") or "{}")
                 result = call_tool(name, args)
             except Exception as exc:
                 result = {"error": str(exc)}
+                _vprint(f"             ERROR: {exc}")
             messages.append({
                 "role": "tool",
                 "tool_call_id": call.get("id"),
@@ -287,6 +356,10 @@ class LeanScenario:
     forbidden_terms_in_reply: list[str] = field(default_factory=list)
     # generic tool-call checks: at least one of these must appear in tool_names_called
     expect_tools_called: list[str] = field(default_factory=list)
+    # ordered tool-call checks: these tools must be called in this relative order
+    expect_tool_order: list[str] = field(default_factory=list)
+    # reply content checks: at least 2 of these words must appear (case-insensitive)
+    expect_reply_mentions: list[str] = field(default_factory=list)
 
 
 SCENARIOS: list[LeanScenario] = [
@@ -356,6 +429,103 @@ SCENARIOS: list[LeanScenario] = [
         # inspect_and_report calls collect_column_definitions internally
         expect_tools_called=["collect_column_definitions", "inspect_and_report"],
     ),
+    # ── graph + metrics ────────────────────────────────────────────────────────
+    LeanScenario(
+        slug="graph_depth_vs_major",
+        fixtures=[ECOTAXA_UVP5],
+        user_message_template=(
+            "Voici un fichier EcoTaxa UVP5.\n"
+            "Fichier : {paths}\n"
+            "Fais un graphique de la profondeur vs object_major. "
+            "Explique ce que ce graphique montre."
+        ),
+        expect_inspect_per_file=True,
+        expect_self_summary=False,
+        expect_tools_called=["graph_readiness"],
+        expect_reply_mentions=["graphique", "profondeur", "object_major", "colonnes", "axes", "taille"],
+    ),
+    LeanScenario(
+        slug="uvp_m5_m6_pipeline",
+        fixtures=[ECOTAXA_UVP5_ENRICHED],
+        user_message_template=(
+            "Fichier EcoTaxa UVP5 joint à EcoPart.\n"
+            "Fichier : {paths}\n"
+            "Calcule les métriques UVP m5 et m6 pour tous les profils et affiche les résultats. "
+            "Explique ce que tu calcules."
+        ),
+        expect_inspect_per_file=True,
+        expect_self_summary=False,
+        expect_tools_called=["resolve_uvp_m5_m6_inputs", "calculate_uvp_m5_m6"],
+        expect_tool_order=["resolve_uvp_m5_m6_inputs", "calculate_uvp_m5_m6"],
+        expect_reply_mentions=["m5", "m6", "densité", "copépode", "profil", "formule", "grand"],
+    ),
+    LeanScenario(
+        slug="graph_readiness_blocks_unknown_column",
+        fixtures=[ECOTAXA],
+        user_message_template=(
+            "Voici un fichier EcoTaxa.\n"
+            "Fichier : {paths}\n"
+            "Fais un graphique de xyz_fake_column vs profondeur."
+        ),
+        expect_inspect_per_file=True,
+        expect_self_summary=False,
+        # graph_readiness doit être appelé même pour une colonne inconnue — pas de bypass via inspect seul
+        expect_tools_called=["graph_readiness"],
+        expect_reply_mentions=["colonne", "manquant", "clarifier", "inexistant", "introuvable", "reconnue", "bloqué", "non reconnue", "paramétré", "exact", "préciser", "disponible", "identifier"],
+        forbidden_terms_in_reply=["voici le graphique", "graphique généré", "tracé le graphique"],
+    ),
+    LeanScenario(
+        slug="graph_readiness_suggests_alternatives",
+        fixtures=[ECOTAXA],
+        user_message_template=(
+            "Voici un fichier EcoTaxa.\n"
+            "Fichier : {paths}\n"
+            "Fais un graphique de xyz_fake_column vs profondeur."
+        ),
+        expect_inspect_per_file=True,
+        expect_self_summary=False,
+        # Le modèle doit bloquer ET citer des colonnes réelles du fichier comme alternatives
+        expect_tools_called=["graph_readiness"],
+        expect_reply_mentions=["object_depth_min", "object_depth_max", "object_lat", "object_lon", "object_date"],
+        forbidden_terms_in_reply=["voici le graphique", "graphique généré", "tracé le graphique"],
+    ),
+    LeanScenario(
+        slug="uvp5_morphometric_column",
+        fixtures=[ECOTAXA_UVP5],
+        user_message_template=(
+            "Voici un fichier EcoTaxa UVP5.\n"
+            "Fichier : {paths}\n"
+            "Que signifient les colonnes `fre_major` et `fre_esd` dans ce fichier ?"
+        ),
+        expect_inspect_per_file=True,
+        expect_tools_called=["inspect_and_report"],
+        expect_reply_mentions=["major", "axe", "ellipse", "morphométr", "taille", "µm", "ESD", "diamètre", "équivalent", "sphère"],
+    ),
+    LeanScenario(
+        slug="ecopart_lpm_depth_profile",
+        fixtures=[ECOPART],
+        user_message_template=(
+            "Voici un fichier EcoPart.\n"
+            "Fichier : {paths}\n"
+            "Que représentent les colonnes LPM et comment est structuré un profil de profondeur dans ce fichier ?"
+        ),
+        expect_inspect_per_file=True,
+        expect_tools_called=["inspect_and_report"],
+        expect_reply_mentions=["profondeur", "taille", "particule", "concentration", "µm", "mm", "profil", "volume", "LPM", "classe"],
+        forbidden_terms_in_reply=["copépode", "taxonomie", "annotation"],
+    ),
+    LeanScenario(
+        slug="uvp5_ecopart_join_key",
+        fixtures=[ECOTAXA_UVP5, ECOPART],
+        user_message_template=(
+            "Voici deux fichiers : un export EcoTaxa UVP5 et un export EcoPart.\n"
+            "Fichiers : {paths}\n"
+            "Comment relier ces deux fichiers ? Quelle colonne sert de clé de jointure ?"
+        ),
+        expect_inspect_per_file=True,
+        expect_tools_called=["inspect_and_report"],
+        expect_reply_mentions=["obj_orig_id", "Profile", "profil", "jointure", "ips_007", "clé", "lier", "relier"],
+    ),
     LeanScenario(
         slug="summarize_understanding_requested",
         fixtures=[ECOTAXA],
@@ -411,12 +581,19 @@ def _run_scenario(
         paths=", ".join(f"`{p}`" for p in staged_paths)
     )
 
+    _vprint(f"\n{'=' * 60}")
+    _vprint(f"SCENARIO: {scenario.slug}")
+    _vprint(f"fixtures: {[f.name for f in scenario.fixtures]}")
+    _vprint(f"{'=' * 60}")
+
     messages = [
         {"role": "system", "content": _build_system_message(session_id)},
         {"role": "user", "content": user_message},
     ]
     call_tool = _make_call_tool(tools, session_id)
     reply, tool_names_called = _run_turn(messages, call_tool, model, completion_fn)
+    _vprint(f"  tools called: {tool_names_called}")
+    _vprint(f"  reply snippet: {reply[:800]!r}")
 
     results: list[dict] = []
     # inspect_and_report is the atomic pipeline — count it as equivalent to inspect_file
@@ -468,6 +645,17 @@ def _run_scenario(
             {},
         ))
 
+    if scenario.expect_reply_mentions:
+        reply_lower = reply.lower()
+        found = [w for w in scenario.expect_reply_mentions if w.lower() in reply_lower]
+        passed = len(found) >= min(2, len(scenario.expect_reply_mentions))
+        results.append(_result(
+            f"{scenario.slug}_reply_mentions_expected",
+            passed,
+            f"required_any_2_of={scenario.expect_reply_mentions} found={found}",
+            {"reply_snippet": reply[:300]},
+        ))
+
     if scenario.expect_tools_called:
         called_set = set(tool_names_called)
         hit = [t for t in scenario.expect_tools_called if t in called_set]
@@ -478,6 +666,32 @@ def _run_scenario(
             f"expected_any={scenario.expect_tools_called} called={tool_names_called} hit={hit}",
             {"tool_calls": tool_names_called},
         ))
+
+    if scenario.expect_tool_order:
+        in_order = True
+        search_from = 0
+        for expected in scenario.expect_tool_order:
+            found = False
+            for i in range(search_from, len(tool_names_called)):
+                if tool_names_called[i] == expected:
+                    search_from = i + 1
+                    found = True
+                    break
+            if not found:
+                in_order = False
+                break
+        results.append(_result(
+            f"{scenario.slug}_tools_called_in_order",
+            in_order,
+            f"expected_order={scenario.expect_tool_order} actual={tool_names_called} ok={in_order}",
+            {"tool_calls": tool_names_called},
+        ))
+
+    if _VERBOSE:
+        for r in results:
+            status = "PASS" if r["passed"] else "FAIL"
+            print(f"  {status}  {r['name']}", flush=True)
+            print(f"       {r['detail']}", flush=True)
 
     return results
 
@@ -522,7 +736,11 @@ def main() -> int:
         help="Comma-separated slugs (single_ecotaxa, multi_ecotaxa_ecopart, lab_unknown_structure, refuse_interpretation).",
     )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Stream tool calls and checks in real time.")
     args = parser.parse_args()
+
+    if args.verbose:
+        globals()["_VERBOSE"] = True
 
     slugs = [s.strip() for s in args.scenarios.split(",") if s.strip()] or None
     report = run_lean_eval(scenario_slugs=slugs)

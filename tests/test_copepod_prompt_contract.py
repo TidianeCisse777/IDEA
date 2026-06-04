@@ -131,6 +131,18 @@ def test_rag_rules_force_neolabs_ctd_and_uvp_metric_lookup():
     assert "EcoPart/EcoTaxa source split" in prompt
 
 
+def test_uvp_m5_m6_behavior_requires_resolver_and_calculator_before_graphing():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "For UVP `m5`/`m6` graph or table requests" in prompt
+    assert "call `resolve_uvp_m5_m6_inputs` before writing metric code" in prompt
+    assert "call `calculate_uvp_m5_m6`" in prompt
+    assert "`status=\"blocked\"`" in prompt
+    assert "`status=\"partial\"`" in prompt
+    assert "`status=\"ok\"`" in prompt
+    assert "do not hand-code an alternate m5/m6 formula" in prompt
+    assert "do not use taxonomic size labels such as `>2mm`" in prompt
+
+
 def test_join_protocol_requires_cardinality_profile_before_join_deliverable():
     prompt = COPEPOD_SYSTEM_PROMPT
     lower_prompt = prompt.lower()
