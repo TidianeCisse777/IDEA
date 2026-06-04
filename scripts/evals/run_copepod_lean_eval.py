@@ -40,7 +40,8 @@ from scripts.evals.copepod.fixtures import (
     AMUNDSEN_CTD,
     BIO_ORACLE,
     ECOPART,
-    ECOTAXA,
+    ECOTAXA_SMALL as ECOTAXA,
+    ECOTAXA_UVP5,
     NEOLABS_LOKI,
     NEOLABS_TAXON,
     OGSL,
@@ -59,6 +60,7 @@ def _load_tools() -> dict[str, Any]:
         copepod_remote_sources,
         copepod_sources_meta,
         copepod_taxonomy,
+        copepod_uvp_metrics,
     )
 
     ns: dict[str, Any] = {}
@@ -70,6 +72,7 @@ def _load_tools() -> dict[str, Any]:
             "copepod_remote_sources",
             "copepod_sources_meta",
             "copepod_taxonomy",
+            "copepod_uvp_metrics",
         }),
         ns,
     )
@@ -135,6 +138,27 @@ def _tool_specs() -> list[dict]:
             {"source_id": {"type": "string"}, "session_id": {"type": "string"}},
             ["source_id"],
         ),
+        fn(
+            "inspect_and_report",
+            "Atomic pipeline: inspect multiple files and return formatted reports + cross-file summary.",
+            {
+                "file_paths": {"type": "array", "items": {"type": "string"}},
+                "session_id": {"type": "string"},
+            },
+            ["file_paths"],
+        ),
+        fn(
+            "collect_column_definitions",
+            "Batch-query the RAG corpus for all columns in an inspect_file report.",
+            {"file_report": object_schema, "session_id": {"type": "string"}},
+            ["file_report"],
+        ),
+        fn(
+            "get_inspection_report",
+            "Retrieve the full inspection report for a previously inspected file.",
+            {"filename": {"type": "string"}},
+            ["filename"],
+        ),
     ]
 
 
@@ -183,10 +207,22 @@ def _completion_message(response: Any) -> Any:
 def _default_completion(**kwargs):
     from openai import OpenAI
 
+    model: str = kwargs.get("model", "")
+    api_base = os.getenv("LLM_API_BASE") or os.getenv("OPENAI_API_BASE") or ""
+    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
     timeout = float(os.getenv("COPEPOD_LIVE_OPENAI_TIMEOUT_SECONDS", "120"))
-    return OpenAI(timeout=timeout, max_retries=0).chat.completions.create(
-        **kwargs, max_completion_tokens=4000
-    )
+
+    if model.startswith("openrouter/"):
+        model = model[len("openrouter/"):]
+        kwargs = {**kwargs, "model": model}
+
+    client_kwargs: dict = {"timeout": timeout, "max_retries": 0}
+    if api_base:
+        client_kwargs["base_url"] = api_base
+    if api_key:
+        client_kwargs["api_key"] = api_key
+
+    return OpenAI(**client_kwargs).chat.completions.create(**kwargs, max_completion_tokens=4000)
 
 
 def _run_turn(
@@ -249,6 +285,8 @@ class LeanScenario:
     expect_self_summary: bool = True
     expect_no_interpretation: bool = False
     forbidden_terms_in_reply: list[str] = field(default_factory=list)
+    # generic tool-call checks: at least one of these must appear in tool_names_called
+    expect_tools_called: list[str] = field(default_factory=list)
 
 
 SCENARIOS: list[LeanScenario] = [
@@ -292,6 +330,45 @@ SCENARIOS: list[LeanScenario] = [
         ),
         expect_self_summary=False,
         expect_no_interpretation=True,
+    ),
+    # ── file loading ───────────────────────────────────────────────────────────
+    LeanScenario(
+        slug="atomic_report_pipeline",
+        fixtures=[ECOTAXA],
+        user_message_template=(
+            "Génère un rapport d'inspection complet pour ce fichier.\n"
+            "Fichier : {paths}"
+        ),
+        expect_inspect_per_file=True,
+        expect_self_summary=True,
+        expect_tools_called=["inspect_and_report", "inspect_file"],
+    ),
+    LeanScenario(
+        slug="collect_column_defs_after_inspect",
+        fixtures=[ECOPART],
+        user_message_template=(
+            "J'ai un fichier EcoPart.\n"
+            "Fichier : {paths}\n"
+            "Inspecte-le et cherche la définition RAG de toutes ses colonnes."
+        ),
+        expect_inspect_per_file=True,
+        expect_self_summary=False,
+        # inspect_and_report calls collect_column_definitions internally
+        expect_tools_called=["collect_column_definitions", "inspect_and_report"],
+    ),
+    LeanScenario(
+        slug="summarize_understanding_requested",
+        fixtures=[ECOTAXA],
+        user_message_template=(
+            "Voici un fichier EcoTaxa.\n"
+            "Fichier : {paths}\n"
+            "Inspecte-le et produis un résumé structuré de compréhension des données "
+            "pour Mode Plan."
+        ),
+        expect_inspect_per_file=True,
+        expect_self_summary=True,
+        # inspect_and_report handles the full pipeline including summarize_understanding
+        expect_tools_called=["summarize_understanding", "inspect_and_report"],
     ),
 ]
 
@@ -342,13 +419,14 @@ def _run_scenario(
     reply, tool_names_called = _run_turn(messages, call_tool, model, completion_fn)
 
     results: list[dict] = []
-    inspect_calls = [n for n in tool_names_called if n == "inspect_file"]
+    # inspect_and_report is the atomic pipeline — count it as equivalent to inspect_file
+    inspect_calls = [n for n in tool_names_called if n in ("inspect_file", "inspect_and_report")]
     if scenario.expect_inspect_per_file:
         passed = len(inspect_calls) >= len(scenario.fixtures)
         results.append(_result(
             f"{scenario.slug}_inspect_called_for_each_file",
             passed,
-            f"inspect_file called {len(inspect_calls)}× for {len(scenario.fixtures)} fixture(s).",
+            f"inspect_file/inspect_and_report called {len(inspect_calls)}× for {len(scenario.fixtures)} fixture(s).",
             {"tool_calls": tool_names_called},
         ))
 
@@ -388,6 +466,17 @@ def _run_scenario(
             term.lower() not in reply.lower(),
             f"term '{term}' {'absent' if term.lower() not in reply.lower() else 'present'}",
             {},
+        ))
+
+    if scenario.expect_tools_called:
+        called_set = set(tool_names_called)
+        hit = [t for t in scenario.expect_tools_called if t in called_set]
+        passed = len(hit) > 0
+        results.append(_result(
+            f"{scenario.slug}_expected_tool_called",
+            passed,
+            f"expected_any={scenario.expect_tools_called} called={tool_names_called} hit={hit}",
+            {"tool_calls": tool_names_called},
         ))
 
     return results
