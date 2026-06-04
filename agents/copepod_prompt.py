@@ -290,6 +290,8 @@ Rules:
 - Cite RAG sources when they justify a column definition, calculation method, technical limitation, or bibliographic reference. Do not cite RAG decoratively.
 - The expected RAG documents are: colonnes_sources.md, colonnes_instruments.md, copepodes_domaine.md, methodes_calcul.md, sources_en_ligne.md.
 - Never invent citations, DOIs, authors, years, methods, or column definitions. If the RAG or data do not provide a value or citation, say it is unavailable.
+- For NeoLabs taxonomy abundance + CTD coupling, call `query_copepod_knowledge_base` before planning. Retrieve the `SAMPLE_ID + ANALYSIS_ID` -> `donne_sample.csv` context rule, the Amundsen CTD proximity join method, `ctd_match_status`, and required match deltas.
+- For UVP MCA metrics or `m1`..`m6` requests, call `query_copepod_knowledge_base` before calculating. Retrieve the per-cast/profile metric definitions, vertical resolution, and EcoPart/EcoTaxa source split.
 
 ## Copepod Graphing Rules
 - Graphs are the primary output. Static graphs are the default. Interactive graphs are allowed only when requested or required by the deliverable.

@@ -160,6 +160,31 @@ Pour une question de taille réelle, convertir avec `acq_pixel`.
 
 ---
 
+# Quelle différence entre CTD embarquée LOKI et CTD externe indépendante ?
+
+Mots-clés : LOKI, CTD embarquée, CTD externe, acq_temperature_ctd, acq_salinity_ctd, acq_oxygen_concent, acq_fluo1, acq_raw_depth, Amundsen CTD, ne pas confondre
+
+Dans certains exports EcoTaxa LOKI, les colonnes `acq_*` décrivent des capteurs ou acquisitions associés à l'instrument. Elles donnent un contexte environnemental embarqué avec l'image ou le prélèvement, mais ce n'est pas automatiquement une CTD externe indépendante.
+
+Colonnes de CTD embarquée ou capteurs LOKI :
+| Colonne | Rôle |
+|---------|------|
+| `acq_temperature_ctd` | Température mesurée par le système associé à l'acquisition |
+| `acq_salinity_ctd` | Salinité mesurée par le système associé à l'acquisition |
+| `acq_oxygen_concent` | Oxygène associé à l'acquisition |
+| `acq_fluo1` | Fluorescence associée à l'acquisition |
+| `acq_raw_depth` | Profondeur brute associée à l'acquisition |
+
+Règle :
+```text
+CTD embarquée LOKI = colonnes d'acquisition `acq_*`
+CTD externe indépendante = source séparée, par exemple Amundsen CTD, jointe par proximité date/heure + latitude/longitude + profondeur
+```
+
+Ne pas remplacer une CTD externe indépendante par `acq_temperature_ctd` ou `acq_salinity_ctd` sans documenter la provenance. Pour une analyse environnementale, citer explicitement la source utilisée : CTD embarquée LOKI, EcoPart, ou Amundsen CTD.
+
+---
+
 # Comment décider quelles colonnes EcoTaxa supprimer dans une table clean ?
 
 Mots-clés : nettoyage, colonnes nulles, colonnes constantes, sparse, valeurs manquantes, métadonnées, object_random_value, données personnelles
@@ -336,6 +361,65 @@ Colonnes de sortie utiles :
 | `ctd_distance_km` | Distance horizontale |
 | `ctd_depth_delta_m` | Écart vertical |
 | `ctd_match_quality` | Classe de qualité du match |
+
+---
+
+# Comment relier les abondances NeoLabs au contexte de prélèvement ?
+
+Mots-clés : NeoLabs, Taxonomie NeoLab, abondance, SAMPLE_ID, ANALYSIS_ID, donne_sample.csv, contexte de prélèvement, deployment_datetime_start, latitude, longitude, MIN_SAMPLE_DEPTH, MAX_SAMPLE_DEPTH, CTD Amundsen
+
+Dans les fichiers de taxonomie NeoLabs, une ligne d'abondance correspond généralement à un **taxon, stade ou groupe de taille** dans une analyse, pas à un prélèvement unique. Le couple `SAMPLE_ID` + `ANALYSIS_ID` n'identifie donc pas une seule row biologique : plusieurs lignes d'abondance peuvent partager le même couple parce qu'elles décrivent plusieurs taxons ou stades du même prélèvement/analyse.
+
+Le couple `SAMPLE_ID` + `ANALYSIS_ID` sert à retrouver le **contexte de prélèvement/analyse** dans `donne_sample.csv`.
+
+Jointure interne NeoLabs :
+```text
+Abondances NeoLabs :
+- SAMPLE_ID
+- ANALYSIS_ID
+- TAXON_ID
+- TAXON_LIFE_DEVELOPMENT_STAGE
+- TAXON_SIZE_CATEGORY
+- Total abundance (ind./m3 depth vol)
+- Total abundance (ind./m3 flowmeter vol)
+
+donne_sample.csv :
+- sample_id
+- analysis_id
+- deployment_id
+- deployment_datetime_start
+- deployment_datetime_end
+- latitude
+- longitude
+- bottom_depth
+```
+
+Clé de jointure recommandée :
+```text
+SAMPLE_ID + ANALYSIS_ID
+    -> sample_id + analysis_id dans donne_sample.csv
+```
+
+Contexte récupéré :
+```text
+date/heure du prélèvement
+latitude
+longitude
+plateforme
+deployment_id
+profondeur fond
+commentaires de déploiement et de sample
+```
+
+Ce contexte est ensuite utilisé pour joindre une CTD Amundsen par proximité date/heure + latitude/longitude + profondeur. Ne pas utiliser `SAMPLE_ID` seul si `ANALYSIS_ID` est disponible, car un même échantillon peut être associé à plusieurs analyses.
+
+Colonnes de statut recommandées dans une table enrichie :
+| Colonne | Définition |
+|---------|------------|
+| `ctd_match_status` | `matched`, `outside_amundsen_ctd_range`, `no_match`, `missing_sample_metadata` |
+| `ctd_time_delta_min` | Écart temporel entre prélèvement et cast CTD |
+| `ctd_distance_km` | Distance horizontale entre prélèvement et cast CTD |
+| `ctd_depth_coverage_m` | Couverture de l'intervalle de profondeur du filet par le cast CTD |
 
 ---
 

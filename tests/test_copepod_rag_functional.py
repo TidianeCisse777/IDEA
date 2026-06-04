@@ -68,6 +68,36 @@ FUNCTIONAL_SCENARIOS = (
         expected_docs=("colonnes_instruments.md", "colonnes_sources.md"),
         expected_terms=("obj.orig_id", "obj_orig_id", "txo.display_name", "txo_display_name"),
     ),
+    FunctionalRagScenario(
+        question=(
+            "NeoLabs abondances comment retrouver le contexte de prélèvement avec "
+            "SAMPLE_ID ANALYSIS_ID puis joindre Amundsen CTD"
+        ),
+        expected_docs=("colonnes_sources.md", "methodes_calcul.md"),
+        expected_terms=(
+            "SAMPLE_ID",
+            "ANALYSIS_ID",
+            "donne_sample.csv",
+            "contexte de prélèvement",
+            "date/heure + latitude/longitude + profondeur",
+            "ctd_match_status",
+        ),
+    ),
+    FunctionalRagScenario(
+        question="rapport UVP MCA métriques m1 m2 m3 m4 m5 m6 calculées par cast profil",
+        expected_docs=("methodes_calcul.md",),
+        expected_terms=(
+            "m1",
+            "m2",
+            "m3",
+            "m4",
+            "m5",
+            "m6",
+            "par cast",
+            "EcoPart",
+            "EcoTaxa",
+        ),
+    ),
 )
 
 

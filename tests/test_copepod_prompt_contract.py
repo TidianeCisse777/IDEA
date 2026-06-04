@@ -119,6 +119,18 @@ def test_execution_error_policy_requires_retry_from_traceback():
     assert "Do not turn a syntax error into a clarification question" in prompt
 
 
+def test_rag_rules_force_neolabs_ctd_and_uvp_metric_lookup():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "For NeoLabs taxonomy abundance + CTD coupling" in prompt
+    assert "call `query_copepod_knowledge_base` before planning" in prompt
+    assert "SAMPLE_ID + ANALYSIS_ID" in prompt
+    assert "donne_sample.csv" in prompt
+    assert "ctd_match_status" in prompt
+    assert "For UVP MCA metrics or `m1`..`m6` requests" in prompt
+    assert "per-cast/profile metric definitions" in prompt
+    assert "EcoPart/EcoTaxa source split" in prompt
+
+
 def test_join_protocol_requires_cardinality_profile_before_join_deliverable():
     prompt = COPEPOD_SYSTEM_PROMPT
     lower_prompt = prompt.lower()

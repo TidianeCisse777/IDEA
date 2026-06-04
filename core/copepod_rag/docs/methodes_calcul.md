@@ -371,6 +371,125 @@ Feedback si le calcul n'est pas possible :
 - Si la source CTD n'est pas citee, demander de choisir entre EcoPart et Amundsen officiel.
 
 ---
+# Comment joindre les abondances NeoLabs avec une CTD Amundsen ?
+
+Mots-clés : NeoLabs, Taxonomie NeoLab, SAMPLE_ID, ANALYSIS_ID, donne_sample.csv, contexte de prélèvement, Amundsen CTD, ERDDAP, ctd_match_status, date/heure + latitude/longitude + profondeur, intervalle de profondeur, nearest mid-depth
+
+Objectif : enrichir des lignes d'abondance taxonomique NeoLabs avec un contexte physico-chimique Amundsen CTD officiel.
+
+Niveaux de données :
+```text
+1. Ligne d'abondance biologique
+   = taxon/stade/groupe taille + abondance
+
+2. Contexte de prélèvement/analyse
+   = SAMPLE_ID + ANALYSIS_ID
+
+3. Déploiement/cast ou prélèvement
+   = date/heure + latitude/longitude + MIN_SAMPLE_DEPTH/MAX_SAMPLE_DEPTH
+
+4. CTD Amundsen
+   = cast CTD le plus proche par proximité spatio-temporelle et profondeur
+```
+
+Méthode :
+1. Joindre les abondances NeoLabs à `donne_sample.csv` avec `SAMPLE_ID + ANALYSIS_ID` -> `sample_id + analysis_id`.
+2. Récupérer le contexte de prélèvement : `deployment_datetime_start`, `latitude`, `longitude`, `MIN_SAMPLE_DEPTH`, `MAX_SAMPLE_DEPTH`.
+3. Interroger Amundsen CTD autour de la date/heure et de la position.
+4. Sélectionner le meilleur cast CTD par score combinant écart temporel, distance horizontale et couverture de l'intervalle de profondeur.
+5. Calculer la profondeur centrale du filet :
+```text
+sample_mid_depth_m = (MIN_SAMPLE_DEPTH + MAX_SAMPLE_DEPTH) / 2
+```
+6. Attacher les variables CTD à deux niveaux :
+```text
+valeur nearest mid-depth = ligne CTD la plus proche de sample_mid_depth_m
+mean/min/max sample interval = agrégats CTD entre MIN_SAMPLE_DEPTH et MAX_SAMPLE_DEPTH
+```
+
+Variables CTD Amundsen typiques :
+```text
+TE90 -> amundsen_temperature_degC
+PSAL -> amundsen_salinity_psu
+OXYM -> amundsen_oxygen_uM
+FLOR -> amundsen_fluorescence_ug_l
+NTRA -> amundsen_nitrate_mmol_m3
+PRES/depth -> amundsen_pres_db / amundsen_depth_m
+```
+
+Colonnes de qualité à conserver :
+```text
+ctd_match_status
+ctd_time_delta_min
+ctd_distance_km
+ctd_depth_coverage_m
+ctd_rows_selected_cast
+ctd_rows_in_sample_depth_interval
+amundsen_nearest_depth_delta_m
+```
+
+Statuts recommandés :
+```text
+matched
+outside_amundsen_ctd_range
+no_match
+missing_sample_metadata
+matched_cast_no_depth_interval_rows
+```
+
+Limites :
+- `SAMPLE_ID + ANALYSIS_ID` ne prouve pas un match CTD ; il sert seulement à récupérer le contexte de prélèvement.
+- La CTD Amundsen se joint par proximité date/heure + latitude/longitude + profondeur, pas par clé directe.
+- Les lignes hors plage temporelle officielle Amundsen CTD doivent rester dans la table avec `ctd_match_status=outside_amundsen_ctd_range`.
+- Les deltas de match doivent être cités dans tout résultat ou graphique croisant abondance et CTD.
+
+Feedback si le calcul n'est pas possible :
+- Si `donne_sample.csv` ou les colonnes `sample_id`, `analysis_id`, `latitude`, `longitude` manquent, signaler `missing_sample_metadata`.
+- Si la date est hors plage Amundsen CTD, ne pas inventer de CTD : garder l'abondance et marquer `outside_amundsen_ctd_range`.
+- Si aucun cast CTD proche n'est trouvé, retourner les lignes biologiques avec `ctd_match_status=no_match` et expliquer les tolérances testées.
+
+---
+# Quelles métriques UVP du rapport MCA sont calculées par cast ou profil ?
+
+Mots-clés : rapport UVP MCA, UVP metrics, m1, m2, m3, m4, m5, m6, par cast, profil UVP, EcoPart, EcoTaxa, particules, copépodes, morpho-Shannon, score pelagique
+
+Le rapport "Using Underwater Vision Profiler (UVP) data for Marine Conservation Areas monitoring" recommande de calculer les métriques UVP **par cast**, aussi appelé sample ou profil UVP. Ces métriques ne sont pas des valeurs par objet individuel.
+
+Résolution horizontale :
+```text
+toutes les métriques et scores sont calculés par cast / profil UVP / déploiement
+```
+
+Résolution verticale :
+```text
+m1, m2, m3, m4 : particules dans les premiers 200 m
+m5, m6 : copépodes proches de la surface et du fond, moyenne des 50 premiers m et 50 derniers m
+```
+
+Métriques :
+| Métrique | Définition | Source | Unité |
+|----------|------------|--------|-------|
+| `m1` | Densité moyenne de particules par cast, 128-4100 µm | EcoPart | # L-1 |
+| `m2` | Biovolume moyen de particules par cast, 128-4100 µm | EcoPart | mm3 L-1 |
+| `m3` | Pente log abondance particules vs taille, 128-4100 µm | EcoPart | sans unité |
+| `m4` | Indice Shannon de diversité morphologique des images >620 µm | EcoTaxa | sans unité |
+| `m5` | Densité de copépodes prédits près de la surface et du fond | EcoTaxa | ind L-1 |
+| `m6` | Densité de grands copépodes >2 mm près de la surface et du fond | EcoTaxa | ind L-1 |
+
+Scores :
+```text
+Pelagic Score 1 = moyenne de m2, m3 et m5 après mise à l'échelle 0-3
+Pelagic Score 2 = m4, proxy de diversité morphologique
+```
+
+Règles pour l'agent :
+- Si l'utilisateur demande une métrique UVP MCA, travailler au niveau cast/profil, pas au niveau row EcoTaxa.
+- Pour m1, m2 et m3, chercher les colonnes EcoPart `LPM (...) [# l-1]` et `LPM biovolume (...) [mm3 l-1]`.
+- Pour m4, m5 et m6, chercher les images EcoTaxa >620 µm et la prédiction/classification pertinente.
+- Pour comparer des sites, citer la mission, la période, les casts inclus et la résolution verticale utilisée.
+- Signaler que m5 et m6 dépendent d'un jeu d'apprentissage constant dans EcoTaxa pour rester comparables.
+
+---
 # Comment est calculée l'abondance normalisée par volume depth (DEPTH_CALC_NET_FILTERED_VOL) dans la Taxonomie NeoLab ?
 
 Mots-clés : DEPTH_CALC_NET_FILTERED_VOL, abondance depth vol, V-Tow, volume filtré profondeur, ind./m3 depth vol, MIN_SAMPLE_DEPTH, MAX_SAMPLE_DEPTH, surface ouverture filet
