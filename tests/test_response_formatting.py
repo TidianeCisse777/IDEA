@@ -76,6 +76,50 @@ def test_format_assistant_text_formats_inspection_summary_with_variant_wording()
     )
 
 
+def test_format_assistant_text_formats_compact_inspection_summary_tsv():
+    raw = (
+        "Inspection terminée:ecotaxa_sample_50.tsv est un TSV de50 × 19, source "
+        "détectéelikely_ecotaxa avec confiancemedium, encodageutf-8. "
+        "Colonnes clés déjà reconnues:object_id,object_lat,classif_id. "
+        "Aucune erreur bloquante."
+    )
+
+    assert format_assistant_text(raw) == (
+        "**Inspection**\n"
+        "- Fichier : `ecotaxa_sample_50.tsv`\n"
+        "- Format : TSV, 50 × 19\n"
+        "- Source détectée : `likely_ecotaxa` (confiance : `medium`)\n"
+        "- Encodage : `utf-8`\n"
+        "- Colonnes clés : `object_id`, `object_lat`, `classif_id`\n"
+        "- Statut : aucune erreur bloquante."
+    )
+
+
+def test_format_assistant_text_formats_inspection_summary_tsv_variant_wording():
+    raw = (
+        "Inspection terminée pour ecotaxa_sample_50.tsv : 50 lignes × 19 colonnes, "
+        "source détectée likely_ecotaxa (confiance medium), encodage utf-8. "
+        "Colonnes utiles : object_id, object_lat, classif_id. "
+        "Aucune erreur bloquante."
+    )
+
+    assert format_assistant_text(raw) == (
+        "**Inspection**\n"
+        "- Fichier : `ecotaxa_sample_50.tsv`\n"
+        "- Dimensions : 50 × 19\n"
+        "- Source détectée : `likely_ecotaxa` (confiance : `medium`)\n"
+        "- Encodage : `utf-8`\n"
+        "- Colonnes clés : `object_id`, `object_lat`, `classif_id`\n"
+        "- Statut : aucune erreur bloquante."
+    )
+
+
+def test_format_assistant_text_returns_none_when_no_filename_match():
+    raw = "Inspection terminée : 50 lignes × 19 colonnes, source détectée likely_ecotaxa."
+    result = format_assistant_text(raw)
+    assert "**Inspection**" not in result
+
+
 def test_format_assistant_text_formats_reference_columns_and_remaining_blocker():
     raw = (
         "Inspection terminée :donne_sample.csv est un CSV de6105 × 33, source "

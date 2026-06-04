@@ -109,14 +109,17 @@ def describe_column(column_name, source_hint=None, session_id=None):
                 continue
 
             # Supported layouts:
-            # | Colonne | Description | Unité |
-            # | Colonne | Type | Unité | Description |
-            # | # | Colonne | Description | Unité |
+            # | Catégorie | Colonne | Description |          ← after has 1 cell
+            # | Colonne | Description | Unité |              ← after has 2 cells
+            # | Colonne | Type | Unité | Description |       ← after has 3+ cells
+            # | # | Colonne | Description | Unité |          ← after has 2 cells
             after = cells[col_idx + 1 :]
             if len(after) >= 3:
                 return after[2], _normalise_unit(after[1])
             if len(after) >= 2:
                 return after[0], _normalise_unit(after[1])
+            if len(after) == 1:
+                return after[0], None
         return None
 
     exact_rows = []

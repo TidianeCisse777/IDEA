@@ -16,7 +16,7 @@ _ENCODING_JOIN_RE = re.compile(r"\ben(Windows-\d+|utf-8|UTF-8|cp\d+|latin1|iso88
 _COLON_TECH_LIST_RE = re.compile(
     r"(: )(`?[A-Za-z][A-Za-z0-9_]*(?:`?\s*,\s*`?[A-Za-z][A-Za-z0-9_]*)+`?)(?=\.|;|$)"
 )
-_FILENAME_RE = re.compile(r"\b(?P<filename>[\w()'’+-][\w .()'’+-]*\.csv)\b", re.IGNORECASE)
+_FILENAME_RE = re.compile(r"\b(?P<filename>[\w()’’+-][\w .()’’+-]*\.(?:csv|tsv|txt))\b", re.IGNORECASE)
 _DIMENSIONS_RE = re.compile(
     r"(?P<rows>[\d\s\u202f]+)\s*(?:lignes?|rows?)?\s*×\s*(?P<cols>\d+)\s*(?:colonnes?|cols?)?",
     re.IGNORECASE,
@@ -114,7 +114,12 @@ def _format_compact_inspection_summary(text: str) -> str | None:
         "**Inspection**",
         f"- Fichier : {_wrap_technical_token(filename)}",
     ]
-    format_label = "Format : CSV" if re.search(r"\best un CSV\b|format\s*:\s*csv", normalized, re.IGNORECASE) else "Dimensions"
+    if re.search(r"\best un CSV\b|format\s*:\s*csv", normalized, re.IGNORECASE):
+        format_label = "Format : CSV"
+    elif re.search(r"\best un TSV\b|format\s*:\s*tsv", normalized, re.IGNORECASE):
+        format_label = "Format : TSV"
+    else:
+        format_label = "Dimensions"
     if format_label.startswith("Format"):
         lines.append(f"- {format_label}, {rows} × {dimensions_match.group('cols')}")
     else:

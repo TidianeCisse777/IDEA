@@ -125,7 +125,7 @@ def query_copepod_rag(
     _load()
     try:
         expanded_question = _expand_query(question)
-        candidate_count = max(top_k, min(25, top_k * 5))
+        candidate_count = max(top_k, min(100, top_k * 5))
 
         results = _collection.query(
             query_texts=[expanded_question],
