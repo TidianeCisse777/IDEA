@@ -90,18 +90,20 @@ def inspect_file(file_path, sample_rows=500):
                                         on_bad_lines="skip", engine="python")
 
             result["format"] = "tsv" if suffix == ".tsv" else "csv"
+            df_profile = df_sample
 
             try:
                 df_full = pd.read_csv(path, sep=delimiter, encoding=encoding,
                                       skiprows=skip_rows, on_bad_lines="skip",
                                       engine="python", usecols=lambda c: True)
                 result["n_rows"] = len(df_full)
+                df_profile = _distributed_profile_sample(df_full, sample_rows)
             except Exception:
                 result["n_rows"] = f">{sample_rows} (sample only)"
 
-            result["n_columns"] = len(df_sample.columns)
-            result["columns"] = _describe_columns(df_sample)
-            result["source_type_guess"] = _guess_source_type(df_sample.columns.tolist(), {"filename": path.stem})
+            result["n_columns"] = len(df_profile.columns)
+            result["columns"] = _describe_columns(df_profile)
+            result["source_type_guess"] = _guess_source_type(df_profile.columns.tolist(), {"filename": path.stem})
 
         except Exception as e:
             warnings.append(f"Could not parse as tabular: {e}")
@@ -214,6 +216,26 @@ def _describe_columns(df):
     return cols
 
 
+def _distributed_profile_sample(df, max_rows):
+    """Sample rows across the full dataframe instead of only the file head."""
+    if not max_rows or len(df) <= max_rows:
+        return df
+
+    if max_rows == 1:
+        return df.iloc[[0]]
+
+    last_index = len(df) - 1
+    step = last_index / (max_rows - 1)
+    indices = []
+    seen = set()
+    for i in range(max_rows):
+        idx = round(i * step)
+        if idx not in seen:
+            indices.append(idx)
+            seen.add(idx)
+    return df.iloc[indices]
+
+
 def _semantic_guess(col_name, series):
     """Heuristic semantic guess from column name. Token-based to avoid false
     positives (e.g. previously ``sampling_platform`` matched ``"lat"`` via
@@ -269,6 +291,18 @@ def _semantic_guess(col_name, series):
         return "latitude", "degrees", "high"
     if _has_token("lon", "long", "longitude"):
         return "longitude", "degrees", "high"
+    if _has_token("abundance", "abund"):
+        return "abundance", "ind/m3", "medium"
+    if _has_token("temperature", "degc", "te90"):
+        return "temperature", "degC", "medium"
+    if _has_token("salinity", "psal", "psu"):
+        return "salinity", "PSU", "medium"
+    if _has_token("oxygen", "oxym", "um"):
+        return "oxygen", "uM", "medium"
+    if _has_token("fluorescence", "fluor", "flor", "ug", "chl"):
+        return "fluorescence", "ug/L", "medium"
+    if _has_token("nitrate", "ntra", "mmol", "no3"):
+        return "nitrate", "mmol/m3", "medium"
     if _has_token("depth", "profondeur"):
         return "depth", "m", "medium"
 
@@ -1373,6 +1407,29 @@ def _graph_readiness_is_taxonomic_intent(user_request="", graph_type="", require
     return any(token in text for token in tax_tokens)
 
 
+def _graph_readiness_taxonomic_validation_request():
+    question = (
+        "Pour ce graphe, faut-il conserver uniquement les annotations au statut "
+        "`confirmed`, ou inclure aussi les annotations non confirmees ?"
+    )
+    return {
+        "type": "taxonomic_validation_policy",
+        "question": question,
+        "expected_answers": ["confirmed_only", "include_unconfirmed"],
+        "required_for_next_step": True,
+    }
+
+
+def _graph_readiness_request(request_type, question, **extra):
+    payload = {
+        "type": request_type,
+        "question": question,
+        "required_for_next_step": True,
+    }
+    payload.update(extra)
+    return payload
+
+
 def graph_readiness(
     file_report=None,
     required_columns=None,
@@ -1437,35 +1494,48 @@ def graph_readiness(
             )
 
     clarification_questions = []
+    clarification_requests = []
     if not required:
-        clarification_questions.append(
-            "1. Quelles colonnes exactes du rapport d'inspection doivent servir au graphe ?"
+        request = _graph_readiness_request(
+            "missing_required_selection",
+            "Quelles colonnes exactes du rapport d'inspection doivent servir au graphe ?",
         )
+        clarification_requests.append(request)
+        clarification_questions.append(f"1. {request['question']}")
     if missing_required:
         avail_str = (
             ", ".join(f"`{col}`" for col in available_columns[:15])
             + ("…" if len(available_columns) > 15 else "")
             if available_columns else "aucune colonne détectée"
         )
-        clarification_questions.append(
-            "1. Les colonnes requises sont absentes du fichier inspecté: "
+        request = _graph_readiness_request(
+            "missing_required_columns",
+            "Les colonnes requises sont absentes du fichier inspecté: "
             + ", ".join(f"`{col}`" for col in missing_required)
             + f". Colonnes disponibles dans le fichier : {avail_str}"
-            + ". Quelle colonne faut-il utiliser à la place ?"
+            + ". Quelle colonne faut-il utiliser à la place ?",
+            missing_columns=missing_required,
+            available_columns_preview=available_columns[:15],
         )
+        clarification_requests.append(request)
+        clarification_questions.append(f"1. {request['question']}")
     if unresolved_required:
-        clarification_questions.append(
-            "1. Confirmez la signification de ces colonnes avant le graphe: "
+        request = _graph_readiness_request(
+            "unresolved_required_columns",
+            "Confirmez la signification de ces colonnes avant le graphe: "
             + ", ".join(f"`{col}`" for col in unresolved_required)
-            + "."
+            + ".",
+            unresolved_columns=unresolved_required,
         )
+        clarification_requests.append(request)
+        clarification_questions.append(f"1. {request['question']}")
 
     validation_value = str(validation_status or "").strip().lower()
     validation_unknown = validation_value in {"", "unknown", "ambiguous", "unconfirmed", "inconnu", "ambigu"}
     if _graph_readiness_is_taxonomic_intent(user_request, graph_type or "", required, file_report) and validation_unknown:
-        clarification_questions.append(
-            "1. Pour ce graphe taxonomique, quel statut de validation utiliser: inclure ou exclure les annotations non confirmees ?"
-        )
+        request = _graph_readiness_taxonomic_validation_request()
+        clarification_requests.append(request)
+        clarification_questions.append(f"1. {request['question']}")
 
     ready = not clarification_questions
     return {
@@ -1481,6 +1551,7 @@ def graph_readiness(
         "assumptions": assumptions,
         "quality_limits": quality_limits,
         "clarification_questions": clarification_questions,
+        "clarification_requests": clarification_requests,
         "recommended_next_step": (
             "proceed_with_graph" if ready else "ask_clarification_before_graph"
         ),
@@ -1549,6 +1620,37 @@ def profile_join_keys(left, right, left_key, right_key):
     }
     _copepod_register_join_profile(left, right, left_key, right_key, profile)
     return profile
+
+
+def emit_deliverable(type, title, summary=None, fields=None, file=None):
+    """Emit one normalized DELIVERABLE payload for the UI card pipeline."""
+    import json as _json
+
+    payload = {
+        "type": str(type),
+        "title": str(title),
+    }
+    if summary is not None:
+        payload["summary"] = str(summary)
+
+    normalized_fields = []
+    for item in fields or []:
+        if not isinstance(item, dict):
+            continue
+        if "label" not in item or "value" not in item:
+            continue
+        normalized_fields.append({
+            "label": str(item["label"]),
+            "value": str(item["value"]),
+        })
+    if normalized_fields:
+        payload["fields"] = normalized_fields
+
+    if file is not None:
+        payload["file"] = str(file)
+
+    print("DELIVERABLE: " + _json.dumps(payload, ensure_ascii=False))
+    return payload
 
 
 _COPEPOD_JOIN_PROFILE_REGISTRY = {}

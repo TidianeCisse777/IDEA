@@ -1,5 +1,6 @@
 import pandas as pd
 import pytest
+import json
 
 from core.copepod_join_validation import profile_join_keys
 
@@ -85,3 +86,63 @@ def test_runtime_merge_is_allowed_after_safe_profile():
     right_work = right.copy()
     merged = left_work.merge(right_work, left_on="sample_id", right_on="sample_id")
     assert merged.shape == (3, 1)
+
+
+def test_emit_deliverable_is_available_in_copepod_data_runtime_tool(capsys):
+    from core.tool_registry import registry
+    from core.tool_registry.tools import copepod_data  # noqa: F401 - triggers registration
+
+    ns = {}
+    exec(registry.render({"copepod_data"}), ns)
+
+    assert "emit_deliverable" in ns
+    payload = ns["emit_deliverable"](
+        type="graph",
+        title="Abondance vs température",
+        summary="Nuage de points sur lignes complètes.",
+        fields=[
+            {"label": "X", "value": "amundsen_temperature_degC_nearest"},
+            {"label": "Y", "value": "Total abundance (ind./m3 depth vol)"},
+        ],
+        file="/tmp/graph.png",
+    )
+
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("DELIVERABLE: ")
+    parsed = json.loads(out[len("DELIVERABLE: "):])
+    assert parsed == payload
+    assert parsed["summary"] == "Nuage de points sur lignes complètes."
+    assert parsed["fields"] == [
+        {"label": "X", "value": "amundsen_temperature_degC_nearest"},
+        {"label": "Y", "value": "Total abundance (ind./m3 depth vol)"},
+    ]
+    assert parsed["file"] == "/tmp/graph.png"
+
+
+def test_emit_deliverable_normalizes_payload_to_strings(capsys):
+    from core.tool_registry import registry
+    from core.tool_registry.tools import copepod_data  # noqa: F401 - triggers registration
+
+    ns = {}
+    exec(registry.render({"copepod_data"}), ns)
+
+    payload = ns["emit_deliverable"](
+        type="stats",
+        title="Résumé",
+        summary=123,
+        fields=[
+            {"label": "Lignes", "value": 42},
+            {"label": 7, "value": True},
+        ],
+        file=None,
+    )
+
+    out = capsys.readouterr().out.strip()
+    parsed = json.loads(out[len("DELIVERABLE: "):])
+    assert parsed == payload
+    assert parsed["summary"] == "123"
+    assert parsed["fields"] == [
+        {"label": "Lignes", "value": "42"},
+        {"label": "7", "value": "True"},
+    ]
+    assert "file" not in parsed

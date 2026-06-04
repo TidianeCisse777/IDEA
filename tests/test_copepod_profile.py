@@ -57,6 +57,7 @@ def test_get_tool_code_renders_copepod_tools():
     assert "describe_column" in code
     assert "profile_join_keys" in code
     assert "graph_readiness" in code
+    assert "emit_deliverable" in code
     assert "create_data_understanding_draft" not in code
     assert "activate_graph_context" not in code
 
@@ -87,6 +88,19 @@ def test_custom_instructions_advertise_graph_readiness_helper():
     assert "graph_readiness(file_report, required_columns=None" in text
     assert "needs_clarification" in text
     assert "clarification_questions" in text
+
+
+def test_custom_instructions_advertise_emit_deliverable_helper():
+    text = _profile().get_custom_instructions(
+        host="http://localhost",
+        user_id="u",
+        session_id="s",
+        static_dir="/static",
+        upload_dir="/static/u/s/uploads",
+        mcp_tools=[],
+    )
+    assert "emit_deliverable(type, title" in text
+    assert "prints the `DELIVERABLE:` JSON line" in text
 
 
 def test_custom_instructions_advertise_inspection_report_reader():

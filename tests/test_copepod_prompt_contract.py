@@ -3,6 +3,7 @@ from agents.copepod_prompt import COPEPOD_SYSTEM_PROMPT
 
 def test_deliverable_protocol_is_terminal_and_python_only():
     prompt = COPEPOD_SYSTEM_PROMPT
+    assert "Use `emit_deliverable(...)` when it is available in the runtime" in prompt
     assert "DELIVERABLE must ONLY be emitted from Python code" in prompt
     assert "After emitting DELIVERABLE:, do not add any prose summary" in prompt
     assert "One card per deliverable, never two" in prompt
@@ -134,7 +135,7 @@ def test_rag_rules_force_neolabs_ctd_and_uvp_metric_lookup():
 def test_uvp_m5_m6_behavior_requires_resolver_and_calculator_before_graphing():
     prompt = COPEPOD_SYSTEM_PROMPT
     assert "For UVP `m5`/`m6` graph or table requests" in prompt
-    assert "call `resolve_uvp_m5_m6_inputs` before writing metric code" in prompt
+    assert "call `resolve_uvp_m5_m6_inputs` first" in prompt
     assert "call `calculate_uvp_m5_m6`" in prompt
     assert "`status=\"blocked\"`" in prompt
     assert "`status=\"partial\"`" in prompt
@@ -165,9 +166,9 @@ def test_column_selection_must_use_exact_inspection_spellings():
 
 def test_graph_readiness_required_before_graphing():
     prompt = COPEPOD_SYSTEM_PROMPT
-    assert "Before producing any graph or graph-derived table, call `graph_readiness" in prompt
+    assert "Then call `graph_readiness(required_columns=[...], user_request=..., graph_type=..., validation_status=...)` as the mandatory gate" in prompt
     assert "If `status` is `needs_clarification`" in prompt
-    assert "exact column names copied from the inspection report" in prompt
+    assert "Pass exact column names copied from the inspection report" in prompt or "Exact column names — copy-paste verbatim from the inspection report" in prompt
 
 
 def test_plan_must_be_grounded_in_inspection_reports():

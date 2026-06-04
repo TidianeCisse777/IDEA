@@ -35,6 +35,7 @@ FIXTURES = _SPECS_ROOT / "data_exploration/examples_tsv"
 ECOTAXA  = FIXTURES / "ecotaxa_sample_50.tsv"
 ECOPART  = FIXTURES / "uvp_amundsen_105_ecopart_particles_reduced.tsv"
 CTD      = FIXTURES / "amundsen_12713_ctd_2018_sample.tsv"
+NEOLABS_ENRICHED_CTD = FIXTURES / "neolabs_taxonomy_abundance_amundsen_ctd.tsv"
 
 NEOLABS_DIR      = _SPECS_ROOT / "data_exploration/Donnée Neolabs Taxon"
 NEOLABS_COMBINED = NEOLABS_DIR / "IDEA Taxonomy Samples and Analyses Data Metadata May 26 2026.csv"
@@ -350,6 +351,14 @@ class TestInspectFileNeoLabs:
         assert "Small Fract (ind./m3 depth vol)" in col_names
         assert "Total abundance (ind./m3 depth vol)" in col_names
 
+    def test_enriched_ctd_sample_does_not_claim_temperature_is_fully_missing(self, tools):
+        r = tools["inspect_file"](str(NEOLABS_ENRICHED_CTD))
+        meta_by_col = {c["name"]: c for c in r["columns"]}
+        col = meta_by_col["amundsen_temperature_degC_nearest"]
+
+        assert col["missing_rate"] < 1.0
+        assert col["sample_values"] != []
+
 
 # ── infer_column_roles — NeoLab Taxonomy ──────────────────────────────────────
 
@@ -405,6 +414,40 @@ class TestInferColumnRolesNeoLabs:
         r = tools["inspect_file"](str(NEOLABS_ABUND))
         roles = tools["infer_column_roles"](r["columns"], r["metadata"])
         assert len(roles["unmatched_columns"]) == 0
+
+
+# ── graph_readiness — enriched NeoLabs regression ────────────────────────────
+
+class TestGraphReadinessEnrichedNeoLabs:
+    def test_neolabs_enriched_ctd_returns_direct_readiness_payload(self, tools):
+        inspected = tools["inspect_file"](str(NEOLABS_ENRICHED_CTD))
+
+        readiness = tools["graph_readiness"](
+            file_report=inspected,
+            required_columns=[
+                "Total abundance (ind./m3 depth vol)",
+                "amundsen_temperature_degC_nearest",
+            ],
+            user_request=(
+                "Fais un graphique de Total abundance (ind./m3 depth vol) "
+                "en fonction de amundsen_temperature_degC_nearest"
+            ),
+            graph_type="scatter",
+            validation_status="confirmed",
+        )
+
+        assert readiness["status"] == "ready"
+        assert readiness["missing_required_columns"] == []
+        assert readiness["unresolved_required_columns"] == []
+        assert "`amundsen_temperature_degC_nearest` has 41.6% missing values." in readiness["quality_limits"]
+        assert readiness["clarification_questions"] == []
+
+    def test_neolabs_enriched_ctd_inspection_sample_drives_missing_rate(self, tools):
+        inspected = tools["inspect_file"](str(NEOLABS_ENRICHED_CTD))
+        meta_by_col = {column["name"]: column for column in inspected["columns"]}
+
+        assert meta_by_col["amundsen_temperature_degC_nearest"]["missing_rate"] < 1.0
+        assert meta_by_col["amundsen_temperature_degC_nearest"]["sample_values"] != []
 
 
 # ── format_inspect_report ─────────────────────────────────────────────────────
@@ -934,6 +977,17 @@ class TestGraphReadiness:
         assert out["status"] == "needs_clarification"
         assert out["missing_required_columns"] == ["abundance"]
         assert "abundance" in out["clarification_questions"][0]
+        assert out["clarification_requests"] == [{
+            "type": "missing_required_columns",
+            "question": (
+                "Les colonnes requises sont absentes du fichier inspecté: `abundance`. "
+                "Colonnes disponibles dans le fichier : `station_name`. "
+                "Quelle colonne faut-il utiliser à la place ?"
+            ),
+            "missing_columns": ["abundance"],
+            "available_columns_preview": ["station_name"],
+            "required_for_next_step": True,
+        }]
 
     def test_unresolved_required_column_blocks_graph(self, tools):
         report = self._report([self._col("sample_nets")])
@@ -947,6 +1001,12 @@ class TestGraphReadiness:
         assert out["ready"] is False
         assert out["unresolved_required_columns"] == ["sample_nets"]
         assert "sample_nets" in out["clarification_questions"][0]
+        assert out["clarification_requests"] == [{
+            "type": "unresolved_required_columns",
+            "question": "Confirmez la signification de ces colonnes avant le graphe: `sample_nets`.",
+            "unresolved_columns": ["sample_nets"],
+            "required_for_next_step": True,
+        }]
 
     def test_auto_resolved_required_column_is_allowed_with_assumption(self, tools):
         report = self._report([self._col("latitude", "latitude", "high")])
@@ -975,7 +1035,167 @@ class TestGraphReadiness:
         )
 
         assert out["ready"] is False
-        assert "validation" in " ".join(out["clarification_questions"]).lower()
+        assert "confirmed" in " ".join(out["clarification_questions"]).lower()
+        assert out["clarification_requests"][0]["type"] == "taxonomic_validation_policy"
+
+    def test_missing_required_selection_is_structured(self, tools):
+        report = self._report([self._col("station_name", "station", "high")])
+
+        out = tools["graph_readiness"](
+            report,
+            required_columns=[],
+            user_request="fais un graphe",
+        )
+
+        assert out["ready"] is False
+        assert out["clarification_questions"] == [
+            "1. Quelles colonnes exactes du rapport d'inspection doivent servir au graphe ?"
+        ]
+        assert out["clarification_requests"] == [{
+            "type": "missing_required_selection",
+            "question": "Quelles colonnes exactes du rapport d'inspection doivent servir au graphe ?",
+            "required_for_next_step": True,
+        }]
+
+    def test_ctd_standard_numeric_columns_are_ready_without_rag(self, tools):
+        inspected = tools["inspect_file"](str(CTD))
+
+        out = tools["graph_readiness"](
+            inspected,
+            required_columns=["depth (m)", "TE90 (degC)"],
+            user_request="Fais un graphique de TE90 (degC) en fonction de depth (m)",
+            graph_type="scatter",
+            validation_status="confirmed",
+        )
+
+        assert out["ready"] is True
+        assert out["status"] == "ready"
+        assert out["unresolved_required_columns"] == []
+        assert out["clarification_questions"] == []
+
+    def test_neolabs_enriched_ctd_numeric_columns_are_ready_when_validation_is_confirmed(self, tools):
+        inspected = tools["inspect_file"](str(NEOLABS_ENRICHED_CTD))
+
+        out = tools["graph_readiness"](
+            inspected,
+            required_columns=[
+                "Total abundance (ind./m3 depth vol)",
+                "amundsen_temperature_degC_nearest",
+            ],
+            user_request=(
+                "Fais un graphique de Total abundance (ind./m3 depth vol) "
+                "en fonction de amundsen_temperature_degC_nearest"
+            ),
+            graph_type="scatter",
+            validation_status="confirmed",
+        )
+
+        assert out["ready"] is True
+        assert out["status"] == "ready"
+        assert out["unresolved_required_columns"] == []
+        assert out["clarification_questions"] == []
+        assert "`amundsen_temperature_degC_nearest` has 41.6% missing values." in out["quality_limits"]
+
+    def test_neolabs_enriched_ctd_unknown_validation_blocks_only_on_validation_policy(self, tools):
+        inspected = tools["inspect_file"](str(NEOLABS_ENRICHED_CTD))
+
+        out = tools["graph_readiness"](
+            inspected,
+            required_columns=[
+                "Total abundance (ind./m3 depth vol)",
+                "amundsen_temperature_degC_nearest",
+            ],
+            user_request=(
+                "Fais un graphique taxonomique de Total abundance (ind./m3 depth vol) "
+                "en fonction de amundsen_temperature_degC_nearest"
+            ),
+            graph_type="scatter",
+            validation_status="unknown",
+        )
+
+        assert out["ready"] is False
+        assert out["unresolved_required_columns"] == []
+        assert out["clarification_questions"] == [
+            "1. Pour ce graphe, faut-il conserver uniquement les annotations au statut `confirmed`, ou inclure aussi les annotations non confirmees ?"
+        ]
+        assert out["clarification_requests"] == [{
+            "type": "taxonomic_validation_policy",
+            "question": "Pour ce graphe, faut-il conserver uniquement les annotations au statut `confirmed`, ou inclure aussi les annotations non confirmees ?",
+            "expected_answers": ["confirmed_only", "include_unconfirmed"],
+            "required_for_next_step": True,
+        }]
+
+    def test_numeric_columns_with_explicit_units_are_grounded_without_rag(self, tools):
+        report = self._report([
+            {
+                "name": "depth (m)",
+                "dtype": "float64",
+                "missing_count": 0,
+                "missing_rate": 0.0,
+                "sample_values": [1.0, 2.0, 3.0],
+                "semantic_guess": "depth",
+                "unit_guess": "m",
+                "confidence": "medium",
+            },
+            {
+                "name": "temperature (degC)",
+                "dtype": "float64",
+                "missing_count": 0,
+                "missing_rate": 0.0,
+                "sample_values": [-1.2, -0.8, 0.4],
+                "semantic_guess": "temperature",
+                "unit_guess": "degC",
+                "confidence": "medium",
+            },
+        ], source="likely_amundsen_ctd")
+
+        out = tools["graph_readiness"](
+            report,
+            required_columns=["depth (m)", "temperature (degC)"],
+            user_request="Fais un graphique de temperature (degC) en fonction de depth (m)",
+            graph_type="scatter",
+            validation_status="confirmed",
+        )
+
+        assert out["ready"] is True
+        assert out["clarification_questions"] == []
+        assert out["unresolved_required_columns"] == []
+
+    def test_partial_missing_numeric_column_adds_quality_limit_but_does_not_block(self, tools):
+        report = self._report([
+            {
+                "name": "abundance (ind/m3)",
+                "dtype": "float64",
+                "missing_count": 2,
+                "missing_rate": 0.4,
+                "sample_values": [0.1, 0.5, 0.9],
+                "semantic_guess": "abundance",
+                "unit_guess": "ind/m3",
+                "confidence": "medium",
+            },
+            {
+                "name": "temperature (degC)",
+                "dtype": "float64",
+                "missing_count": 0,
+                "missing_rate": 0.0,
+                "sample_values": [1.1, 1.3, 1.6],
+                "semantic_guess": "temperature",
+                "unit_guess": "degC",
+                "confidence": "medium",
+            },
+        ], source="likely_neolabs_taxon")
+
+        out = tools["graph_readiness"](
+            report,
+            required_columns=["abundance (ind/m3)", "temperature (degC)"],
+            user_request="Fais un graphique de abundance (ind/m3) en fonction de temperature (degC)",
+            graph_type="scatter",
+            validation_status="confirmed",
+        )
+
+        assert out["ready"] is True
+        assert out["clarification_questions"] == []
+        assert "`abundance (ind/m3)` has 40.0% missing values." in out["quality_limits"]
 
     def test_resilient_to_missing_file(self, tools):
         result = tools["inspect_and_report"]([str(ECOTAXA), "/nonexistent/file.tsv"], session_id=None)

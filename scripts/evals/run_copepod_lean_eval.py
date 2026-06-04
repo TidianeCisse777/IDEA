@@ -360,6 +360,8 @@ class LeanScenario:
     expect_tool_order: list[str] = field(default_factory=list)
     # reply content checks: at least 2 of these words must appear (case-insensitive)
     expect_reply_mentions: list[str] = field(default_factory=list)
+    # reply content checks: all of these substrings must appear (case-insensitive)
+    expect_reply_all_of: list[str] = field(default_factory=list)
 
 
 from scripts.evals.copepod_lean_scenarios_uvp import build_uvp_understanding_scenarios
@@ -639,6 +641,16 @@ def _run_scenario(
             passed,
             f"required_any_2_of={scenario.expect_reply_mentions} found={found}",
             {"reply_snippet": reply[:300]},
+        ))
+
+    if scenario.expect_reply_all_of:
+        reply_lower = reply.lower()
+        missing = [w for w in scenario.expect_reply_all_of if w.lower() not in reply_lower]
+        results.append(_result(
+            f"{scenario.slug}_reply_contains_all_expected_terms",
+            not missing,
+            f"required_all_of={scenario.expect_reply_all_of} missing={missing}",
+            {"reply_snippet": reply[:500]},
         ))
 
     if scenario.expect_tools_called:

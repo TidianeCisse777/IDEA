@@ -46,6 +46,7 @@ OGSL = FIXTURES / "ogsl_ctd_biodiv_sample.csv"
 ECOPART_CTD_COMPARE = FIXTURES / "uvp_amundsen_105_ecopart_vs_amundsen_ctd_compare.tsv"
 ECOTAXA_UVP5_ENRICHED = FIXTURES / "uvp_amundsen_1165_105_enriched_nearest_depth.tsv"
 ECOTAXA_JOIN_PREVIEW = FIXTURES / "uvp_amundsen_1165_105_join_preview.tsv"
+NEOLABS_TAXON_AMUNDSEN_CTD = FIXTURES / "neolabs_taxonomy_abundance_amundsen_ctd.tsv"
 
 
 def stage_fixture(session_id: str, path: Path, user_id: str = "eval-user") -> dict:
