@@ -174,11 +174,11 @@ def _extract_critical_notes(column_name, definition, chunk_content):
     col_lower = column_name.lower()
     def_lower = definition.lower()
 
-    # acq_pixel: required for pixel→mm conversion
+    # acq_pixel: required for pixel→physical-size conversion
     if "acq_pixel" in col_lower:
         notes.append(
-            "acq_pixel requis pour convertir les mesures objet de pixels en mm — "
-            "toujours vérifier que la valeur est non nulle avant calcul de taille."
+            "acq_pixel est la calibration pixel; dans le script UVP MCA elle est en microns/pixel. "
+            "Pour m6: copepod_size_um = object_major * acq_pixel, puis seuil > 2000 µm."
         )
 
     # process_pixel: also a pixel dimension
@@ -194,7 +194,7 @@ def _extract_critical_notes(column_name, definition, chunk_content):
     if any(k in col_lower for k in ["object_area", "object_feret", "object_major",
                                      "object_minor", "object_esd", "object_width"]):
         notes.append(
-            "Mesure en pixels — diviser par acq_pixel pour obtenir des mm."
+            "Mesure en pixels — convertir avec la calibration pixel; si acq_pixel est en µm/pixel, diviser par 1000 pour obtenir des mm."
         )
 
     return notes
@@ -251,8 +251,8 @@ def check_column_for_calc(column_roles, calculation, session_id=None):
                     "Surface ou dimension de l'objet — ex. 'object_area', 'object_esd'."
                 ),
                 "pixel_calibration": (
-                    "Dimension d'un pixel en mm — acq_pixel (ou process_pixel). "
-                    "Requis pour convertir les mesures pixels en mm."
+                    "Dimension d'un pixel — acq_pixel (ou process_pixel). "
+                    "Dans le script UVP MCA, acq_pixel est en µm/pixel; diviser par 1000 pour obtenir des mm."
                 ),
             },
         },
@@ -263,7 +263,7 @@ def check_column_for_calc(column_roles, calculation, session_id=None):
                 "depth":               "Profondeur.",
                 "profile_id":          "Identifiant profil.",
                 "size_or_morphometry": "Surface objet pour calcul de biovolume.",
-                "pixel_calibration":   "acq_pixel pour conversion pixels → mm.",
+                "pixel_calibration":   "acq_pixel pour conversion pixels → taille physique; µm/pixel dans le script UVP MCA.",
             },
         },
         "lipid_index": {
@@ -279,7 +279,7 @@ def check_column_for_calc(column_roles, calculation, session_id=None):
             "roles": ["size_or_morphometry", "pixel_calibration"],
             "hints": {
                 "size_or_morphometry": "Diamètre ou surface objet — ex. 'object_esd', 'object_area'.",
-                "pixel_calibration":   "acq_pixel pour la conversion pixels → mm.",
+                "pixel_calibration":   "acq_pixel pour la conversion pixels → taille physique; µm/pixel dans le script UVP MCA.",
             },
         },
     }

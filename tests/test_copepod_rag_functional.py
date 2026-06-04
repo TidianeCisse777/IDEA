@@ -98,6 +98,24 @@ FUNCTIONAL_SCENARIOS = (
             "EcoTaxa",
         ),
     ),
+    FunctionalRagScenario(
+        question=(
+            "comment calculer m5 m6 UVP MCA depuis EcoTaxa objet volume joint "
+            "acq_pixel object_major surface bottom"
+        ),
+        expected_docs=("methodes_calcul.md", "colonnes_instruments.md"),
+        expected_terms=(
+            "object_major",
+            "acq_pixel",
+            "microns",
+            "copepod_size_um",
+            "> 2000",
+            "depth_bin <= 50",
+            "max_depth - 50",
+            "sampled_volume",
+        ),
+        forbidden_top_terms=("object_feret * acq_pixel", "mm pixel-1"),
+    ),
 )
 
 

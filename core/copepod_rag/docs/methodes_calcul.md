@@ -247,7 +247,8 @@ Feedback si le calcul n'est pas possible :
 
 Formule :
 ```text
-longueur_mm = fre_feret * acq_pixel
+longueur_um = fre_feret * acq_pixel
+longueur_mm = (fre_feret * acq_pixel) / 1000
 ```
 
 Colonnes requises :
@@ -262,7 +263,7 @@ Métadonnées acquisition :
 Unités :
 ```text
 fre_feret : pixel
-acq_pixel : mm pixel-1
+acq_pixel : µm pixel-1 dans le script UVP MCA
 longueur_mm : mm
 ```
 
@@ -284,7 +285,8 @@ Feedback si le calcul n'est pas possible :
 
 Formule :
 ```text
-longueur_mm = fre_feret * acq_pixel
+longueur_um = fre_feret * acq_pixel
+longueur_mm = (fre_feret * acq_pixel) / 1000
 ```
 
 Colonnes requises :
@@ -297,7 +299,7 @@ Colonnes requises :
 Unités :
 ```text
 fre_feret : pixel
-acq_pixel : mm pixel-1
+acq_pixel : µm pixel-1 dans le script UVP MCA
 longueur_mm : mm
 ```
 
@@ -488,6 +490,82 @@ Règles pour l'agent :
 - Pour m4, m5 et m6, chercher les images EcoTaxa >620 µm et la prédiction/classification pertinente.
 - Pour comparer des sites, citer la mission, la période, les casts inclus et la résolution verticale utilisée.
 - Signaler que m5 et m6 dépendent d'un jeu d'apprentissage constant dans EcoTaxa pour rester comparables.
+
+---
+# Comment calculer m5 et m6 UVP MCA depuis EcoTaxa déjà joint au volume ?
+
+Mots-clés : m5, m6, UVP MCA, EcoTaxa, EcoPart, sampled_volume, sampled_volume_l, Sampled volume, object_major, fre_major, acq_pixel, microns, copepod_size_um, depth_bin <= 50, max_depth - 50
+
+Source : script `Code - UVP_metrics_from_raw_data.R`, sections "Metric 5" et "Metric 6".
+
+Hypothèse d'entrée :
+```text
+une ligne = un objet ou image EcoTaxa
+le volume EcoPart est déjà joint par sample_id/profil + depth_bin
+```
+
+Filtre copépodes utilisé dans le script :
+```text
+category in [
+  "Copepoda<Multicrustacea",
+  "Calanoida",
+  "Heterorhabdidae",
+  "Calanus",
+  "Paraeuchaeta",
+  "Metridia",
+  "female+eggs<Paraeuchaeta",
+  "copepoda eggs"
+]
+```
+
+Calcul par bin de profondeur pour `m5` :
+```text
+tot_cop = nombre d'objets copépodes
+cop_dens = tot_cop / sampled_volume
+```
+
+Résumé vertical par cast/profil :
+```text
+surface = moyenne(cop_dens où depth_bin <= 50)
+bottom = moyenne(cop_dens où depth_bin >= (max_depth - 50))
+m5_cop_dens = (surface + bottom) / 2
+```
+
+Calcul de taille pour `m6` :
+```text
+image_pixelsize = acq_pixel
+copepod_size_um = object_major * image_pixelsize
+large_copepod = copepod_size_um > 2000
+```
+
+Règles sémantiques pour `m6` :
+- Utiliser `object_major` comme colonne préférée de taille en pixels, ou `fre_major` comme alias si le fichier utilise le préfixe `fre_*`.
+- Interpréter `acq_pixel` comme microns par pixel dans ce script MCA ; ne pas le traiter comme mm/pixel pour `m6`.
+- Ne jamais utiliser un label taxonomique `>2mm` pour classer les grands copépodes.
+- Si `object_major`/`fre_major` ou `acq_pixel` manque, `m6` est bloqué ; `m5` peut rester calculable si le volume et le taxon sont disponibles.
+
+Calcul par bin pour `m6` :
+```text
+large_cop_nb = nombre de copépodes avec copepod_size_um > 2000
+large_cop_dens = large_cop_nb / sampled_volume
+```
+
+Résumé vertical par cast/profil :
+```text
+surface = moyenne(large_cop_dens où depth_bin <= 50)
+bottom = moyenne(large_cop_dens où depth_bin >= (max_depth - 50))
+m6_largecop_dens = (surface + bottom) / 2
+```
+
+Unités :
+```text
+sampled_volume : L
+object_major / fre_major : pixel
+acq_pixel : microns par pixel
+copepod_size_um : µm
+m5_cop_dens : ind L-1
+m6_largecop_dens : ind L-1
+```
 
 ---
 # Comment est calculée l'abondance normalisée par volume depth (DEPTH_CALC_NET_FILTERED_VOL) dans la Taxonomie NeoLab ?

@@ -147,7 +147,7 @@ def describe_source(source_id, session_id=None):
             "known_limitations": [
                 "Pas de volume échantillonné — utiliser EcoPart pour la concentration.",
                 "Les annotations non validées (classif_qual != 'V') doivent être filtrées.",
-                "acq_pixel requis pour convertir les mesures de pixels en mm.",
+                "acq_pixel requis pour convertir les mesures de pixels en taille physique; le script UVP MCA le traite en µm/pixel.",
             ],
             "requires_credentials": True,
         },

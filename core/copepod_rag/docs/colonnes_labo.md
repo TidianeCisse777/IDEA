@@ -129,8 +129,8 @@ Le LOKI image des copépodes avec leur sac lipidique visible. Des features sont 
 | `lipid_sac_area_px` | Détection zone claire interne (sac lipidique) | pixel² |
 | `prosome_area_px` | Surface du prosome = `fre_area_exc` | pixel² |
 | `lipid_fullness` | `lipid_sac_area_px / prosome_area_px` | 0–1, proxy condition lipidique |
-| `prosome_length_mm` | `fre_feret * acq_pixel` | mm |
-| `esd_mm` | `fre_esd * acq_pixel` | mm |
+| `prosome_length_mm` | `(fre_feret * acq_pixel) / 1000` si `acq_pixel` est en µm/pixel | mm |
+| `esd_mm` | `(fre_esd * acq_pixel) / 1000` si `acq_pixel` est en µm/pixel | mm |
 
 **Interprétation lipid fullness :**
 - > 0.5 → individu en bonne condition, probablement en diapause ou pré-diapause

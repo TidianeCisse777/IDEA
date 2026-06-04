@@ -64,7 +64,7 @@ Source : Picheral & Mériguet 2025 — feuille UVP5
 | `acq_sn` | sn + numéro de série UVP5 | texte |
 | `acq_instrument` | `uvp5` | texte |
 | `acq_volimage` | Volume imagé par image | L |
-| `acq_pixel` | **Dimension d'un pixel dans le plan imagé — clé pour conversion mm** | mm |
+| `acq_pixel` | **Dimension d'un pixel dans le plan imagé — clé pour conversion taille** | µm/pixel |
 | `acq_aa` | Facteur de calibration Aa | — |
 | `acq_exp` | Facteur de calibration Exp | — |
 | `acq_threshold` | Seuil de segmentation niveaux de gris (0–255) | — |
@@ -182,10 +182,12 @@ Clés pour le labo Maps marquées **★**.
 | `object_thickr` | Ratio épaisseur max / épaisseur moy | — | — |
 | `object_fcons` | Mesure de contraste (texture) | — | — |
 
-**Conversion pixels → mm (obligatoire avant toute analyse) :**
+**Conversion pixels → taille physique (obligatoire avant toute analyse) :**
 ```python
-longueur_mm = object_feret * acq_pixel
-Note : `acq_pixel` correspond à la dimension d'un pixel en mm dans les colonnes `acq_*`.
+longueur_pixels = object_feret
+longueur_um = longueur_pixels * acq_pixel
+longueur_mm = longueur_um / 1000
+Note : dans le script UVP MCA, `acq_pixel` est en microns par pixel.
 ```
 
 ---
@@ -235,10 +237,10 @@ Colonnes `acq_*` souvent utiles :
 | `acq_volimage` | Volume imagé par image | L |
 | `acq_aa` | Facteur de calibration Aa | — |
 | `acq_exp` | Facteur de calibration Exp | — |
-| `acq_pixel` | Dimension d'un pixel dans le plan imagé | mm |
+| `acq_pixel` | Dimension d'un pixel dans le plan imagé | µm/pixel |
 
 Colonnes utiles pour analyses UVP5 :
-- `acq_pixel` : obligatoire pour convertir les tailles en mm
+- `acq_pixel` : obligatoire pour convertir les tailles ; dans le script UVP MCA, `acq_pixel` est en microns par pixel
 - `acq_volimage` : utile pour interpréter le volume par image, mais pas suffisant seul pour une concentration robuste
 - `sample_profileid` : regroupe les objets par profil UVP5
 - `sample_ctdrosettefilename` : point d'entrée possible vers les données CTD
@@ -336,8 +338,10 @@ Colonnes prioritaires pour une analyse copépodes :
 
 Conversion recommandée :
 ```python
-length_mm = object_feret * acq_pixel
-area_mm2 = object_area_exc * (acq_pixel ** 2)
+length_pixels = object_feret
+length_um = length_pixels * acq_pixel
+length_mm = length_um / 1000
+area_mm2 = object_area_exc * ((acq_pixel / 1000) ** 2)
 ```
 
 ---
@@ -477,7 +481,7 @@ Le ZooScan traite des **échantillons de filet** — les colonnes sample_* conti
 | `acq_max_mesh` | Maille maximale fraction tamisée | µm |
 | `acq_sub_part` | Facteur de sous-échantillonnage |
 | `acq_scan_resolution` | Résolution du scan | dpi |
-| `acq_pixel` | **Dimension pixel — obligatoire pour conversion mm** | mm |
+| `acq_pixel` | **Dimension pixel — obligatoire pour conversion taille** | µm/pixel ou unité documentée par l'export |
 
 ---
 
@@ -488,7 +492,7 @@ Mots-clés : pièges EcoTaxa, profondeur midpoint, acq_pixel, object_area_exc, a
 | Piège | Règle |
 |-------|-------|
 | Utiliser `object_depth_min` seul | Toujours `(object_depth_min + object_depth_max) / 2` |
-| Convertir pixels sans `acq_pixel` | Jamais. `acq_pixel` est obligatoire |
+| Convertir pixels sans `acq_pixel` ou calibration équivalente | Jamais. La calibration pixel est obligatoire |
 | Confondre `object_area` et `object_area_exc` | Pour taille réelle : `object_area_exc` (exclut trous) |
 | Utiliser annotations `P` ou `D` | Seul `object_annotation_status = V` (validé) est fiable |
 | Supposer un seul nom de colonne pour le taxon | Utiliser `object_annotation_category` dans les schémas `object_*`, ou `txo_display_name` / `txo_name` dans les schémas `obj_*` / `txo_*` |

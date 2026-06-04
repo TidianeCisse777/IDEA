@@ -123,8 +123,9 @@ Les mesures morphométriques sont des mesures d'image. Elles sont généralement
 
 **Conversion pixels → unités physiques :**
 ```python
-longueur_mm = longueur_pixels * acq_pixel
-surface_mm2 = surface_pixels * (acq_pixel ** 2)
+longueur_um = longueur_pixels * acq_pixel
+longueur_mm = (longueur_pixels * acq_pixel) / 1000
+surface_mm2 = surface_pixels * ((acq_pixel / 1000) ** 2)
 ```
 
 Pour certains exports LOKI, la calibration est fournie en micromètres par pixel :
@@ -132,6 +133,8 @@ Pour certains exports LOKI, la calibration est fournie en micromètres par pixel
 longueur_mm = longueur_pixels * (acq_pixel_um_size / 1000)
 surface_mm2 = surface_pixels * ((acq_pixel_um_size / 1000) ** 2)
 ```
+
+Pour les métriques UVP MCA `m5` et `m6`, suivre le script `Code - UVP_metrics_from_raw_data.R` : `acq_pixel` est lu comme une taille de pixel en microns, et `m6` utilise le grand axe (`object_major` ou alias `fre_major`), pas un label taxonomique `>2mm`.
 
 ⚠️ La morphométrie image n'est pas un poids, une biomasse ou une mesure lipidique directe.
 
@@ -156,7 +159,7 @@ Mots-clés : table clean, colonnes prioritaires, spatio-temporel, profondeur, ta
 
 Pour une question taxonomique, identifier d'abord la colonne de taxon validé présente dans le fichier.
 Pour une question de profondeur, calculer un midpoint.
-Pour une question de taille réelle, convertir avec `acq_pixel`.
+Pour une question de taille réelle, convertir avec la calibration pixel (`acq_pixel` ou `acq_pixel_um_size`) et vérifier son unité avant calcul.
 
 ---
 
@@ -441,3 +444,78 @@ Mots-clés : pièges, concentration, volume échantillonné, midpoint profondeur
 
 *Référence générique basée sur exports EcoTaxa/EcoPart/CTD réels ; recalculer le profil des colonnes pour chaque nouveau projet.*
 *Dernière mise à jour : mai 2026*
+
+---
+
+# Colonnes de sortie de la jointure NeoLabs ↔ Amundsen CTD
+
+Mots-clés : amundsen_temperature_degC, amundsen_salinity_psu, amundsen_oxygen_uM, amundsen_fluorescence_ug_l, amundsen_nitrate_mmol_m3, ctd_match_status, ctd_distance_km, amundsen_nearest_depth_m, amundsen_nearest_lat, amundsen_nearest_lon, neolabs_taxonomy_abundance_amundsen_ctd.tsv
+
+Ces colonnes apparaissent dans les tables enrichies NeoLabs après jointure par proximité date/heure + latitude/longitude + profondeur avec la CTD Amundsen officielle (ERDDAP `ca-cioos_ccin-12713`). Elles sont toutes NULL quand `ctd_match_status` est `outside_amundsen_ctd_range` ou `no_match`.
+
+## Statut et qualité de la jointure
+
+| Colonne | Définition | Unité |
+|---------|------------|-------|
+| `ctd_match_status` | Résultat de la tentative de jointure CTD : `matched`, `outside_amundsen_ctd_range`, `no_match`, `missing_sample_metadata` | — |
+| `ctd_query_attempt` | Nombre de tentatives de requête ERDDAP pour ce prélèvement | — |
+| `ctd_time_delta_min` | Écart temporel entre le prélèvement et le cast CTD retenu | min |
+| `ctd_distance_km` | Distance horizontale entre le prélèvement et le cast CTD retenu | km |
+| `ctd_depth_coverage_m` | Couverture verticale du cast CTD sur l'intervalle de profondeur du filet | m |
+| `ctd_rows_selected_cast` | Nombre de lignes CTD dans le cast sélectionné | — |
+| `ctd_rows_in_sample_depth_interval` | Nombre de lignes CTD dans l'intervalle de profondeur du prélèvement | — |
+
+## Cast CTD retenu
+
+| Colonne | Définition | Unité |
+|---------|------------|-------|
+| `amundsen_filename` | Nom de fichier du cast CTD Amundsen sélectionné | — |
+| `amundsen_platform_name` | Nom du navire pour le cast retenu (ex. Amundsen) | — |
+| `amundsen_cruise_name` | Nom de la croisière pour le cast retenu | — |
+| `amundsen_cruise_number` | Numéro de croisière pour le cast retenu | — |
+| `amundsen_cast_number` | Numéro de cast CTD retenu | — |
+| `amundsen_station` | Station du cast CTD retenu | — |
+
+## Profondeur et position de la mesure la plus proche
+
+| Colonne | Définition | Unité |
+|---------|------------|-------|
+| `sample_mid_depth_m` | Midpoint de l'intervalle de profondeur du prélèvement — clé de jointure verticale | m |
+| `amundsen_nearest_depth_m` | Profondeur CTD la plus proche du midpoint filet | m |
+| `amundsen_nearest_depth_delta_m` | Écart entre midpoint filet et profondeur CTD retenue | m |
+| `amundsen_nearest_pres_db` | Pression CTD correspondant à la profondeur retenue | dbar |
+| `amundsen_nearest_time` | Horodatage de la mesure CTD retenue | — |
+| `amundsen_nearest_lat` | Latitude du cast CTD retenu | degrés décimaux |
+| `amundsen_nearest_lon` | Longitude du cast CTD retenu | degrés décimaux |
+
+## Variables environnementales — mesure la plus proche (nearest)
+
+| Colonne | Définition | Unité |
+|---------|------------|-------|
+| `amundsen_temperature_degC_nearest` | Température à la profondeur CTD la plus proche du midpoint filet | °C |
+| `amundsen_salinity_psu_nearest` | Salinité à la profondeur CTD la plus proche | PSU |
+| `amundsen_oxygen_uM_nearest` | Oxygène dissous à la profondeur CTD la plus proche | µmol L⁻¹ |
+| `amundsen_fluorescence_ug_l_nearest` | Fluorescence à la profondeur CTD la plus proche | µg L⁻¹ |
+| `amundsen_nitrate_mmol_m3_nearest` | Nitrate à la profondeur CTD la plus proche | mmol m⁻³ |
+
+## Variables environnementales — statistiques sur l'intervalle de profondeur du prélèvement
+
+| Colonne | Définition | Unité |
+|---------|------------|-------|
+| `amundsen_temperature_degC_mean_sample_interval` | Température moyenne sur l'intervalle de profondeur MIN_SAMPLE_DEPTH → MAX_SAMPLE_DEPTH | °C |
+| `amundsen_temperature_degC_min_sample_interval` | Température minimale sur l'intervalle de profondeur | °C |
+| `amundsen_temperature_degC_max_sample_interval` | Température maximale sur l'intervalle de profondeur | °C |
+| `amundsen_salinity_psu_mean_sample_interval` | Salinité moyenne sur l'intervalle de profondeur | PSU |
+| `amundsen_salinity_psu_min_sample_interval` | Salinité minimale sur l'intervalle de profondeur | PSU |
+| `amundsen_salinity_psu_max_sample_interval` | Salinité maximale sur l'intervalle de profondeur | PSU |
+| `amundsen_oxygen_uM_mean_sample_interval` | Oxygène dissous moyen sur l'intervalle de profondeur | µmol L⁻¹ |
+| `amundsen_oxygen_uM_min_sample_interval` | Oxygène dissous minimal sur l'intervalle de profondeur | µmol L⁻¹ |
+| `amundsen_oxygen_uM_max_sample_interval` | Oxygène dissous maximal sur l'intervalle de profondeur | µmol L⁻¹ |
+| `amundsen_fluorescence_ug_l_mean_sample_interval` | Fluorescence moyenne sur l'intervalle de profondeur | µg L⁻¹ |
+| `amundsen_fluorescence_ug_l_min_sample_interval` | Fluorescence minimale sur l'intervalle de profondeur | µg L⁻¹ |
+| `amundsen_fluorescence_ug_l_max_sample_interval` | Fluorescence maximale sur l'intervalle de profondeur | µg L⁻¹ |
+| `amundsen_nitrate_mmol_m3_mean_sample_interval` | Nitrate moyen sur l'intervalle de profondeur | mmol m⁻³ |
+| `amundsen_nitrate_mmol_m3_min_sample_interval` | Nitrate minimal sur l'intervalle de profondeur | mmol m⁻³ |
+| `amundsen_nitrate_mmol_m3_max_sample_interval` | Nitrate maximal sur l'intervalle de profondeur | mmol m⁻³ |
+
+Note : les colonnes `*_mean/min/max_sample_interval` sont calculées sur les lignes CTD dont la profondeur est comprise entre `MIN_SAMPLE_DEPTH` et `MAX_SAMPLE_DEPTH` du filet. Elles sont plus représentatives pour un filet oblique (O-Tow) ou couvrant un large intervalle de profondeur. Pour un filet vertical court, préférer `*_nearest`.

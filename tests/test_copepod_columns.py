@@ -75,16 +75,19 @@ def ecotaxa_roles(tools):
 # ── describe_column ────────────────────────────────────────────────────────────
 
 class TestDescribeColumn:
-    def test_acq_pixel_unit_contains_mm(self, tools):
+    def test_acq_pixel_unit_is_microns_per_pixel_for_uvp_mca(self, tools):
         r = tools["describe_column"]("acq_pixel")
         assert r["unit"] is not None
-        assert "mm" in r["unit"].lower()
+        unit = r["unit"].lower()
+        assert "µm" in unit or "um" in unit or "micron" in unit
+        assert "pixel" in unit
 
     def test_acq_pixel_has_critical_note(self, tools):
         r = tools["describe_column"]("acq_pixel")
         assert len(r["critical_notes"]) > 0
         combined = " ".join(r["critical_notes"]).lower()
-        assert "convers" in combined or "pixel" in combined or "mm" in combined
+        assert "convers" in combined or "pixel" in combined
+        assert "2000" in combined or "micron" in combined or "µm" in combined or "um" in combined
 
     def test_acq_pixel_cites_instruments_doc(self, tools):
         r = tools["describe_column"]("acq_pixel")
