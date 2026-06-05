@@ -3427,6 +3427,36 @@ class TestTruncateAfterEmitDeliverable:
         assert 'print("after")' not in result
 
 
+class TestGraphDeliverableStopGate:
+    def test_graph_deliverable_event_stops_stream_for_graph_request(self):
+        from routers.chat_routes import _should_stop_copepod_stream_after_event
+
+        event = {
+            "role": "computer",
+            "type": "deliverable",
+            "content": '{"type": "graph", "title": "Abondance", "file": "/tmp/plot.png"}',
+        }
+
+        assert _should_stop_copepod_stream_after_event(
+            user_message="fais le graphe température",
+            event=event,
+        ) is True
+
+    def test_non_graph_deliverable_does_not_stop_stream(self):
+        from routers.chat_routes import _should_stop_copepod_stream_after_event
+
+        event = {
+            "role": "computer",
+            "type": "deliverable",
+            "content": '{"type": "stats", "title": "Résumé"}',
+        }
+
+        assert _should_stop_copepod_stream_after_event(
+            user_message="fais le graphe température",
+            event=event,
+        ) is False
+
+
 class TestScrubConsoleNoise:
     def _call(self, content: str) -> str:
         from routers.chat_routes import _scrub_console_noise
@@ -3525,14 +3555,26 @@ class TestActionContractRetryGate:
         # Short response like "ok vasy" or "oui" with no code and no ? → retry
         assert self._should_retry("fais le graphe", "Oui, on peut faire ça.") is True
 
+    def test_short_execution_signal_retries_even_without_graph_keyword(self):
+        assert self._should_retry("ok vasy", "Oui, je lance ça.") is True
+
     def test_prose_with_question_mark_in_body_does_not_retry(self):
         # ? anywhere in the text (not just numbered items) stops retry
         assistant = "J'ai une question : quelle fraction d'abondance tu veux ?"
         assert self._should_retry("fais un graphe", assistant) is False
 
-    def test_non_action_request_does_not_retry(self):
-        # Vague or status requests don't trigger this retry
+    def test_vague_request_prose_does_not_retry(self):
+        # Brainstorming/status-like requests are not execution commands.
         assert self._should_retry("qu'est-ce qu'on peut faire", "On peut faire plein de choses.") is False
+
+    def test_vague_request_with_question_does_not_retry(self):
+        assert self._should_retry("qu'est-ce qu'on peut faire", "Quel type d'analyse vous intéresse ?") is False
+
+    def test_diagnostic_graph_loop_question_does_not_retry(self):
+        assert self._should_retry(
+            "Pourquoi le graphe tourne en boucle ?",
+            "Le runtime continue après le livrable.",
+        ) is False
 
     def test_had_code_does_not_retry(self):
         from routers.chat_routes import _should_retry_copepod_action_contract_without_code_or_questions
@@ -3541,4 +3583,28 @@ class TestActionContractRetryGate:
             assistant_text="voici le résultat",
             current_attempt_had_code=True,
             current_attempt_had_error=False,
+        ) is False
+
+
+class TestAnnouncedActionRetryGate:
+    def _should_retry(self, user_message: str, assistant_text: str) -> bool:
+        from routers.chat_routes import _should_retry_copepod_announced_action_without_code
+
+        return _should_retry_copepod_announced_action_without_code(
+            user_message=user_message,
+            assistant_text=assistant_text,
+            current_attempt_had_code=False,
+            current_attempt_had_error=False,
+        )
+
+    def test_execution_request_still_retries_when_model_announces_without_code(self):
+        assert self._should_retry(
+            "fais le graphe température",
+            "Je vais générer le graphe maintenant.",
+        ) is True
+
+    def test_diagnostic_question_does_not_force_code_retry(self):
+        assert self._should_retry(
+            "Pourquoi tu tournes en boucle la, tu regeneres en boucle",
+            "Si le graphe n'est pas visible, je peux le régénérer proprement.",
         ) is False

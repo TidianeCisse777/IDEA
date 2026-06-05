@@ -985,6 +985,15 @@ def _is_copepod_graph_request(text: str) -> bool:
     )
 
 
+def _is_copepod_multi_graph_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    return bool(
+        re.search(r"\b(2|deux|plusieurs|multiple|multiples)\s+(graph|graphe|graphiques|figures)\b", lowered)
+        or "en même temps" in lowered
+        or "en meme temps" in lowered
+    )
+
+
 def _is_copepod_status_or_inventory_request(text: str) -> bool:
     lowered = (text or "").lower()
     return any(
@@ -1000,6 +1009,43 @@ def _is_copepod_status_or_inventory_request(text: str) -> bool:
             "c’est fait",
             "est ce que c'est fait",
             "est-ce que c'est fait",
+        )
+    )
+
+
+def _is_copepod_diagnostic_or_meta_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "pourquoi tu tournes",
+            "pourquoi ça tourne",
+            "pourquoi ca tourne",
+            "tu tournes en boucle",
+            "ça tourne en boucle",
+            "ca tourne en boucle",
+            "regénères en boucle",
+            "regeneres en boucle",
+            "régénères en boucle",
+            "boucle",
+            "bloqué",
+            "bloque",
+            "coincé",
+            "coince",
+            "stdout",
+            "stderr",
+            "no output",
+            "execution interrupted",
+        )
+    )
+
+
+def _is_copepod_execution_signal(text: str) -> bool:
+    lowered = (text or "").lower()
+    return bool(
+        re.search(
+            r"\b(fais le|fais ça|fais ca|vas-y|vasy|go|lance|trace|génère|genere|générer|generer)\b",
+            lowered,
         )
     )
 
@@ -1371,17 +1417,19 @@ def _should_retry_copepod_action_contract_without_code_or_questions(
     current_attempt_had_code: bool,
     current_attempt_had_error: bool,
 ) -> bool:
-    """Retry clear action requests that produced prose instead of code/questions.
-
-    Language-independent: any '?' in the response means the model asked a question.
-    """
+    """Retry clear action requests that produced prose instead of code/questions."""
     if current_attempt_had_code or current_attempt_had_error:
+        return False
+    if _is_copepod_diagnostic_or_meta_request(user_message):
         return False
     if _is_copepod_status_or_inventory_request(user_message):
         return False
     if _is_copepod_vague_action_request(user_message):
         return False
-    if not _is_copepod_data_analysis_request(user_message):
+    if not (
+        _is_copepod_data_analysis_request(user_message)
+        or _is_copepod_execution_signal(user_message)
+    ):
         return False
     text = (assistant_text or "").strip()
     if not text:
@@ -1403,6 +1451,71 @@ def _build_copepod_action_contract_retry_note(user_message: str) -> str:
     if request:
         lines.append(f"User request to answer now: {request}")
     return "\n".join(lines)
+
+
+def _model_announced_action_without_code(assistant_text: str) -> bool:
+    lowered = (assistant_text or "").lower()
+    phrases = (
+        "je génère", "je lance", "je pars sur", "je trace",
+        "je fais le graphe", "je fais la figure", "je refais",
+        "j'affiche", "je prépare une version", "je vais générer",
+        "je vais tracer", "je vais faire le graphe",
+        "i'll generate", "i'll plot", "i'll create the", "generating now",
+    )
+    return any(phrase in lowered for phrase in phrases)
+
+
+def _should_retry_copepod_announced_action_without_code(
+    *,
+    user_message: str,
+    assistant_text: str,
+    current_attempt_had_code: bool,
+    current_attempt_had_error: bool,
+) -> bool:
+    if current_attempt_had_code or current_attempt_had_error:
+        return False
+    if _is_copepod_diagnostic_or_meta_request(user_message):
+        return False
+    if _is_copepod_status_or_inventory_request(user_message):
+        return False
+    if _is_copepod_vague_action_request(user_message):
+        return False
+    if not (
+        _is_copepod_data_analysis_request(user_message)
+        or _is_copepod_execution_signal(user_message)
+    ):
+        return False
+    return _model_announced_action_without_code(assistant_text)
+
+
+def _build_copepod_announced_without_code_retry_note(user_message: str) -> str:
+    request = (user_message or "").strip()
+    lines = [
+        "CRITICAL: Your previous response announced an action ('je génère', 'je pars sur', etc.) but contained no Python code block.",
+        "This is a contract violation. You MUST emit a Python code block in this response.",
+        "Do NOT restate what you are about to do. Open a ```python block immediately and write the code.",
+        "No preamble. No plan header. Just the code, followed by emit_deliverable(...) if it is a graph.",
+    ]
+    if request:
+        lines.append(f"Original user request: {request}")
+    return "\n".join(lines)
+
+
+def _should_stop_copepod_stream_after_event(*, user_message: str, event: Any) -> bool:
+    """Stop a single graph turn once its graph deliverable has been emitted."""
+    if not _is_copepod_graph_request(user_message):
+        return False
+    if _is_copepod_multi_graph_request(user_message):
+        return False
+    if not isinstance(event, dict):
+        return False
+    if event.get("role") != "computer" or event.get("type") != "deliverable":
+        return False
+    try:
+        deliverable = json.loads(str(event.get("content") or ""))
+    except Exception:
+        return False
+    return isinstance(deliverable, dict) and deliverable.get("type") == "graph"
 
 
 def _code_contains_matplotlib_graph(code_text: str) -> bool:
@@ -2755,6 +2868,15 @@ async def chat_endpoint(
                                 current_attempt_last_error_text = error_text
                         data = json.dumps(result) if isinstance(result, dict) else result
                         yield f"data: {data}\n\n"
+                        if (
+                            agent_type == "copepod"
+                            and _should_stop_copepod_stream_after_event(
+                                user_message=last_user_message or "",
+                                event=result,
+                            )
+                        ):
+                            logger.info("  stopping copepod graph stream after deliverable — %s", _short(session_key))
+                            break
 
                 try:
                     retry_note: str | None = None
@@ -2845,6 +2967,15 @@ async def chat_endpoint(
                                 current_attempt_had_error=current_attempt_had_error,
                             )
                         )
+                        action_announced_without_code = (
+                            not retry_note
+                            and _should_retry_copepod_announced_action_without_code(
+                                user_message=last_user_message or "",
+                                assistant_text="\n".join(current_attempt_assistant_texts),
+                                current_attempt_had_code=current_attempt_had_code,
+                                current_attempt_had_error=current_attempt_had_error,
+                            )
+                        )
                         graph_output_without_display_or_deliverable = (
                             _should_retry_copepod_graph_output_without_display_or_deliverable(
                                 user_message=last_user_message or "",
@@ -2867,6 +2998,7 @@ async def chat_endpoint(
                                 or upload_inspection_without_code
                                 or report_read_without_code
                                 or action_contract_without_code_or_questions
+                                or action_announced_without_code
                                 or graph_output_without_display_or_deliverable
                             )
                         ):
@@ -2881,6 +3013,8 @@ async def chat_endpoint(
                             next_retry_note = _build_copepod_report_read_retry_note(last_user_message or "")
                         elif action_contract_without_code_or_questions and not current_attempt_had_error:
                             next_retry_note = _build_copepod_action_contract_retry_note(last_user_message or "")
+                        elif action_announced_without_code and not current_attempt_had_error:
+                            next_retry_note = _build_copepod_announced_without_code_retry_note(last_user_message or "")
                         elif graph_output_without_display_or_deliverable and not current_attempt_had_error:
                             next_retry_note = _build_copepod_graph_output_retry_note(last_user_message or "")
                         else:
