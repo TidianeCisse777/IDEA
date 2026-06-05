@@ -56,7 +56,7 @@ class SessionRuntimeLogger:
     session_id: str = ""
     session_key: str = ""
     agent_type: str = "generic"
-    max_preview_chars: int = 2000
+    max_preview_chars: int = 8000
     _turn_index: int = 0
     _started_at: str = field(default_factory=_utc_now)
     _last_turn_at: str = ""

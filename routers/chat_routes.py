@@ -333,6 +333,32 @@ def _compact_inspection_summary_entry(filename: str, file_report: dict[str, Any]
     return " · ".join(parts)
 
 
+def _read_inspection_data_with_fallbacks(session_key: str, filename: str) -> dict[str, Any] | None:
+    """Resolve inspection data using the common filename variants we emit."""
+    if not session_key or not filename:
+        return None
+
+    candidates: list[str] = []
+    raw = str(filename).strip()
+    if not raw:
+        return None
+
+    base = _basename(raw)
+    stem = Path(base).stem if base else ""
+    for candidate in (raw, base, stem, raw.casefold(), base.casefold(), stem.casefold()):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    try:
+        for candidate in candidates:
+            data = session_store.read_inspection_data(session_key, candidate)
+            if data:
+                return data
+    except Exception:
+        return None
+    return None
+
+
 def _extract_deliverable_summary(content: str) -> tuple[str | None, str | None]:
     if not isinstance(content, str):
         return None, None
@@ -713,7 +739,7 @@ def _build_copepod_session_resources_note(
         for label in list(inspection_map.keys())[:5]:
             fname = label.split(" | ")[0].strip()
             try:
-                data = session_store.read_inspection_data(session_key, fname)
+                data = _read_inspection_data_with_fallbacks(session_key, fname)
                 if data and isinstance(data, dict):
                     compact_summary = _compact_inspection_summary_entry(fname, data)
                     if compact_summary:
@@ -1178,12 +1204,18 @@ def _build_copepod_report_read_retry_note(user_message: str) -> str:
 
 def _should_retry_copepod_upload_inspection_without_code(
     *,
+    user_message: str,
     pending_files: list[str],
     current_attempt_had_code: bool,
     current_attempt_had_error: bool,
 ) -> bool:
     """Retry when an uploaded/pending file was announced but not inspected."""
-    return bool(pending_files) and not current_attempt_had_code and not current_attempt_had_error
+    return (
+        bool(pending_files)
+        and _UPLOAD_BLOCK_MARKER in (user_message or "")
+        and not current_attempt_had_code
+        and not current_attempt_had_error
+    )
 
 
 def _build_copepod_upload_inspection_retry_note(pending_files: list[str]) -> str:
@@ -1425,6 +1457,19 @@ def _inject_copepod_system_note(
         "content": "\n\n".join(system_parts),
     }
     return [merged_system, *copied]
+
+
+def _compose_copepod_system_message(base_system_message: str, *notes: str | None) -> str:
+    """Build the final copepod system prompt with runtime notes first."""
+    parts: list[str] = []
+    for note in notes:
+        normalized = (note or "").strip()
+        if normalized:
+            parts.append(normalized)
+    base = (base_system_message or "").strip()
+    if base:
+        parts.append(base)
+    return "\n\n".join(parts)
 
 
 def _strip_system_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2528,17 +2573,6 @@ async def chat_endpoint(
                 current_attempt_had_image = False
                 current_attempt_had_graph_deliverable = False
 
-                def _compose_copepod_system_message(*notes: str | None) -> str:
-                    parts: list[str] = []
-                    base = base_system_message.strip()
-                    if base:
-                        parts.append(base)
-                    for note in notes:
-                        normalized = (note or "").strip()
-                        if normalized:
-                            parts.append(normalized)
-                    return "\n\n".join(parts)
-
                 def _yield_chat_stream(payload: list[dict[str, Any]]):
                     nonlocal total_chunks, _had_code, _had_image, _had_error, _last_usage, last_error_text
                     nonlocal current_attempt_had_error, current_attempt_last_error_text, current_attempt_had_code
@@ -2652,6 +2686,7 @@ async def chat_endpoint(
                             current_attempt_had_error=current_attempt_had_error,
                         )
                         upload_inspection_without_code = _should_retry_copepod_upload_inspection_without_code(
+                            user_message=last_user_message or "",
                             pending_files=_new_files if agent_type == "copepod" else [],
                             current_attempt_had_code=current_attempt_had_code,
                             current_attempt_had_error=current_attempt_had_error,

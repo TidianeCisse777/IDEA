@@ -618,6 +618,7 @@ class TestCopepodInspectThenCodeNote:
 
     def test_upload_inspection_retry_gate_catches_plan_without_code(self):
         assert _should_retry_copepod_upload_inspection_without_code(
+            user_message="Files uploaded in this message:\n- donne_sample.csv (text/csv) | relative path: donne_sample.csv",
             pending_files=["donne_sample.csv | path: /app/static/u/s/uploads/donne_sample.csv"],
             current_attempt_had_code=False,
             current_attempt_had_error=False,
@@ -625,8 +626,17 @@ class TestCopepodInspectThenCodeNote:
 
     def test_upload_inspection_retry_gate_ignores_executed_attempts(self):
         assert not _should_retry_copepod_upload_inspection_without_code(
+            user_message="Files uploaded in this message:\n- donne_sample.csv (text/csv) | relative path: donne_sample.csv",
             pending_files=["donne_sample.csv"],
             current_attempt_had_code=True,
+            current_attempt_had_error=False,
+        )
+
+    def test_upload_inspection_retry_gate_ignores_readback_text(self):
+        assert not _should_retry_copepod_upload_inspection_without_code(
+            user_message="Donne moi les colonnes environnementales",
+            pending_files=["donne_sample.csv"],
+            current_attempt_had_code=False,
             current_attempt_had_error=False,
         )
 
@@ -1606,6 +1616,83 @@ class TestCopepodWorkingSetReducer:
         assert "grounding: 2 RAG / 1 auto / 0 clarify" in summary
         assert "warnings: 1" in summary
 
+    def test_rich_readback_summary_looks_up_stored_inspection_by_stem(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["sample.csv"],
+                "active_files": ["sample.csv"],
+                "latest_inspection_by_file": {"sample.csv": "sample.csv | likely_neolabs_taxon | 120 × 12"},
+                "current_user_goal": "inspect sample.csv",
+            },
+        )
+        store.store_inspection_data(
+            session_key,
+            "sample",
+            {
+                "file_path": "/app/static/u1/s1/uploads/sample.csv",
+                "format": "csv",
+                "n_rows": 120,
+                "n_columns": 12,
+                "columns": [
+                    {"name": "sample_id", "semantic_guess": "sample_id", "confidence": "high", "missing_count": 0, "missing_rate": 0.0},
+                    {"name": "station", "semantic_guess": "station", "confidence": "medium", "missing_count": 0, "missing_rate": 0.0},
+                    {"name": "depth", "semantic_guess": "", "confidence": "low", "missing_count": 2, "missing_rate": 0.167},
+                ],
+                "warnings": ["Encoding inferred"],
+                "source_type_guess": {"value": "likely_neolabs_taxon", "confidence": "high", "evidence": []},
+            },
+        )
+
+        note = _build_copepod_session_resources_note(
+            [
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": (
+                        "Files uploaded in this message:\n"
+                        "- sample.csv (text/csv) | relative path: sample.csv\n"
+                        "Use these paths when referencing the uploaded files."
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n"
+                        "<!-- report-title: 📄 CTD Amundsen — sample (120 × 12) -->\n\n"
+                        "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                        "- **format** : `csv`  •  **n_rows** : `120`  •  **n_columns** : `12`\n"
+                        "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+                        "## Columns (12)\n\n"
+                        "| # | Column | Dtype |\n"
+                        "|---|--------|-------|\n"
+                        "| 1 | `sample_id` | object |\n"
+                        "| 2 | `station` | object |\n"
+                        "| 3 | `depth` | float64 |\n"
+                        "## Synthèse\n\n"
+                        "```json\n"
+                        "{\n"
+                        '  "column_grounding": {"rag_defined": 2, "auto_resolved": 1, "needs_clarification": 0, "unresolved": []},\n'
+                        '  "warnings": 1\n'
+                        "}\n"
+                        "```\n"
+                    ),
+                },
+            ],
+            session_key=session_key,
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert note is not None
+        assert "Inspected file summary (readback-ready):" in note
+        assert "sample_id" in note
+        assert "grounding=`2 auto / 1 clarify`" in note
+        assert "warnings=`1`" in note
+
     def test_clears_pending_active_file_when_history_has_inspection_stub(self, client):
         tc, store = client
         session_key = "u1:s1:copepod"
@@ -1638,6 +1725,20 @@ class TestCopepodWorkingSetReducer:
 
         assert updated["active_files"] == []
         assert updated["seen_files"] == ["sample.csv"]
+
+
+class TestCopepodSystemMessageComposition:
+    def test_runtime_notes_are_prepended_before_base_prompt(self):
+        from routers.chat_routes import _compose_copepod_system_message
+
+        composed = _compose_copepod_system_message(
+            "BASE PROMPT",
+            "SESSION NOTE 1",
+            None,
+            "SESSION NOTE 2",
+        )
+
+        assert composed.startswith("SESSION NOTE 1\n\nSESSION NOTE 2\n\nBASE PROMPT")
 
 
 # ---------------------------------------------------------------------------
