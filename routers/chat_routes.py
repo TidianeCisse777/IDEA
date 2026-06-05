@@ -1364,11 +1364,6 @@ def _build_copepod_upload_inspection_retry_note(pending_files: list[str]) -> str
     return "\n".join(lines)
 
 
-def _assistant_text_has_numbered_questions(text: str) -> bool:
-    numbered = re.findall(r"(?m)^\s*\d+[\.)]\s+.+$", text or "")
-    return bool(numbered) and any("?" in line for line in numbered)
-
-
 def _should_retry_copepod_action_contract_without_code_or_questions(
     *,
     user_message: str,
@@ -1376,7 +1371,10 @@ def _should_retry_copepod_action_contract_without_code_or_questions(
     current_attempt_had_code: bool,
     current_attempt_had_error: bool,
 ) -> bool:
-    """Retry clear action requests that produced prose instead of code/questions."""
+    """Retry clear action requests that produced prose instead of code/questions.
+
+    Language-independent: any '?' in the response means the model asked a question.
+    """
     if current_attempt_had_code or current_attempt_had_error:
         return False
     if _is_copepod_status_or_inventory_request(user_message):
@@ -1388,7 +1386,7 @@ def _should_retry_copepod_action_contract_without_code_or_questions(
     text = (assistant_text or "").strip()
     if not text:
         return False
-    if _assistant_text_has_numbered_questions(text):
+    if "?" in text:
         return False
     return True
 
@@ -1404,38 +1402,6 @@ def _build_copepod_action_contract_retry_note(user_message: str) -> str:
     ]
     if request:
         lines.append(f"User request to answer now: {request}")
-    return "\n".join(lines)
-
-
-def _model_announced_action_without_code(assistant_text: str) -> bool:
-    """Return True when the model wrote an action announcement but emitted no code block.
-
-    Detects the preamble-loop failure: the model says it will generate code
-    ("je génère maintenant", "je pars sur cette version", …) but stops without
-    opening a code block. This check is intentionally independent of the user
-    message so it fires even on short execution signals like "FAIS LE" or "vasy".
-    """
-    lowered = (assistant_text or "").lower()
-    phrases = [
-        "je génère", "je lance", "je pars sur", "je trace",
-        "je fais le graphe", "je fais la figure", "je refais",
-        "j'affiche", "je prépare une version", "je vais générer",
-        "i'll generate", "i'll plot", "i'll create the", "generating now",
-        "je génère et j'affiche", "je vais tracer", "je vais faire le graphe",
-    ]
-    return any(p in lowered for p in phrases)
-
-
-def _build_copepod_announced_without_code_retry_note(user_message: str) -> str:
-    request = (user_message or "").strip()
-    lines = [
-        "CRITICAL: Your previous response announced an action ('je génère', 'je pars sur', etc.) but contained no Python code block.",
-        "This is a contract violation. You MUST emit a Python code block in this response.",
-        "Do NOT restate what you are about to do. Open a ```python block immediately and write the code.",
-        "No preamble. No plan header. Just the code, followed by emit_deliverable(...) if it is a graph.",
-    ]
-    if request:
-        lines.append(f"Original user request: {request}")
     return "\n".join(lines)
 
 
@@ -1476,7 +1442,7 @@ def _should_retry_copepod_graph_output_without_display_or_deliverable(
         return False
     if not _is_copepod_graph_request(user_message):
         return False
-    if _assistant_text_has_numbered_questions(assistant_text):
+    if "?" in (assistant_text or ""):
         return False
 
     combined_code = "\n".join(code_texts or [])
@@ -2879,13 +2845,6 @@ async def chat_endpoint(
                                 current_attempt_had_error=current_attempt_had_error,
                             )
                         )
-                        action_announced_without_code = (
-                            not current_attempt_had_code
-                            and not current_attempt_had_error
-                            and _model_announced_action_without_code(
-                                "\n".join(current_attempt_assistant_texts)
-                            )
-                        )
                         graph_output_without_display_or_deliverable = (
                             _should_retry_copepod_graph_output_without_display_or_deliverable(
                                 user_message=last_user_message or "",
@@ -2908,7 +2867,6 @@ async def chat_endpoint(
                                 or upload_inspection_without_code
                                 or report_read_without_code
                                 or action_contract_without_code_or_questions
-                                or action_announced_without_code
                                 or graph_output_without_display_or_deliverable
                             )
                         ):
@@ -2923,8 +2881,6 @@ async def chat_endpoint(
                             next_retry_note = _build_copepod_report_read_retry_note(last_user_message or "")
                         elif action_contract_without_code_or_questions and not current_attempt_had_error:
                             next_retry_note = _build_copepod_action_contract_retry_note(last_user_message or "")
-                        elif action_announced_without_code and not current_attempt_had_error:
-                            next_retry_note = _build_copepod_announced_without_code_retry_note(last_user_message or "")
                         elif graph_output_without_display_or_deliverable and not current_attempt_had_error:
                             next_retry_note = _build_copepod_graph_output_retry_note(last_user_message or "")
                         else:

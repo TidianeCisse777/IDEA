@@ -3487,50 +3487,58 @@ class TestScrubConsoleNoise:
         assert "real output" in result
 
 
-class TestAssistantTextHasNumberedQuestions:
-    def _call(self, text: str) -> bool:
-        from routers.chat_routes import _assistant_text_has_numbered_questions
-        return _assistant_text_has_numbered_questions(text)
+class TestActionContractRetryGate:
+    """The retry gate is language-independent: ? = question, no ? = prose violation."""
 
-    def test_numbered_steps_without_question_marks_return_false(self):
-        text = (
+    def _should_retry(self, user_message: str, assistant_text: str) -> bool:
+        from routers.chat_routes import _should_retry_copepod_action_contract_without_code_or_questions
+        return _should_retry_copepod_action_contract_without_code_or_questions(
+            user_message=user_message,
+            assistant_text=assistant_text,
+            current_attempt_had_code=False,
+            current_attempt_had_error=False,
+        )
+
+    def test_action_request_prose_without_question_mark_retries(self):
+        # session-yslaa2w2x pattern: model generates plan steps, no ?
+        assistant = (
             "On peut commencer par :\n"
             "1. isoler les copepodes\n"
             "2. récupérer l'abondance totale\n"
             "3. relier ça à la température\n"
             "4. faire un graphe clair\n"
+            "Si tu veux, je peux enchaîner maintenant."
         )
-        assert self._call(text) is False
+        assert self._should_retry("fais un graphe abondance vs température", assistant) is True
 
-    def test_numbered_questions_with_question_mark_return_true(self):
-        text = (
-            "J'ai besoin de précisions :\n"
-            "1. Quel est le format attendu ?\n"
-            "2. Quelle colonne de température utiliser ?\n"
-        )
-        assert self._call(text) is True
+    def test_action_request_with_question_mark_does_not_retry(self):
+        # Model asks a legitimate question — any ? stops retry regardless of language
+        assistant = "Quelle colonne de température veux-tu utiliser ?"
+        assert self._should_retry("fais un graphe", assistant) is False
 
-    def test_mixed_steps_and_one_question_returns_true(self):
-        text = (
-            "1. isoler les copepodes\n"
-            "2. Quelle fraction d'abondance veux-tu utiliser ?\n"
-        )
-        assert self._call(text) is True
+    def test_english_question_without_question_mark_still_retries(self):
+        # Language-independent: no ? = prose violation even in English
+        assistant = "I can generate a graph of abundance vs temperature for you."
+        assert self._should_retry("plot abundance vs temperature", assistant) is True
 
-    def test_empty_string_returns_false(self):
-        assert self._call("") is False
+    def test_short_prose_ok_response_retries(self):
+        # Short response like "ok vasy" or "oui" with no code and no ? → retry
+        assert self._should_retry("fais le graphe", "Oui, on peut faire ça.") is True
 
-    def test_no_numbered_items_returns_false(self):
-        assert self._call("- bullet a\n- bullet b\nsome prose") is False
+    def test_prose_with_question_mark_in_body_does_not_retry(self):
+        # ? anywhere in the text (not just numbered items) stops retry
+        assistant = "J'ai une question : quelle fraction d'abondance tu veux ?"
+        assert self._should_retry("fais un graphe", assistant) is False
 
-    def test_real_session_plan_returns_false(self):
-        # Exact pattern from session-yslaa2w2x T7 that was wrongly blocking retries
-        text = (
-            "On peut commencer par :\n\n"
-            "1. isoler les copepodes\n"
-            "2. récupérer l'abondance totale\n"
-            "3. relier ça à la température\n"
-            "4. faire un graphe clair\n\n"
-            "Si tu veux, je peux faire directement un **premier graphe simple**."
-        )
-        assert self._call(text) is False
+    def test_non_action_request_does_not_retry(self):
+        # Vague or status requests don't trigger this retry
+        assert self._should_retry("qu'est-ce qu'on peut faire", "On peut faire plein de choses.") is False
+
+    def test_had_code_does_not_retry(self):
+        from routers.chat_routes import _should_retry_copepod_action_contract_without_code_or_questions
+        assert _should_retry_copepod_action_contract_without_code_or_questions(
+            user_message="fais un graphe",
+            assistant_text="voici le résultat",
+            current_attempt_had_code=True,
+            current_attempt_had_error=False,
+        ) is False
