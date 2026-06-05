@@ -1,198 +1,75 @@
 from agents.copepod_prompt import COPEPOD_SYSTEM_PROMPT
 
 
-def test_deliverable_protocol_is_terminal_and_python_only():
+def test_prompt_keeps_core_role_and_style_contract():
     prompt = COPEPOD_SYSTEM_PROMPT
-    assert "Use `emit_deliverable(...)` when it is available in the runtime" in prompt
-    assert "DELIVERABLE must ONLY be emitted from Python code" in prompt
-    assert "After emitting DELIVERABLE:, do not add any prose summary" in prompt
-    assert "One card per deliverable, never two" in prompt
-
-
-def test_tables_and_numbers_must_be_grounded_in_execution():
-    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "Copepod Graphing Assistant" in prompt
+    assert "Do not reuse the same sentence opener" in prompt
+    assert "Never answer with a bare ellipsis" in prompt
+    assert "Wrap every technical identifier in backticks" in prompt
     assert "Never invent numeric values" in prompt
-    assert "If the user asks for a table in text" in prompt
-    assert "read the saved artifact or recompute it in code before answering" in prompt
 
 
-def test_plan_output_shape_uses_clean_markdown_plan_contract():
+def test_prompt_moves_runtime_orchestration_out_of_model_responsibility():
     prompt = COPEPOD_SYSTEM_PROMPT
-    # Two-form HARD RULE: either plan+code (form a) or plan+numbered questions (form b),
-    # but the visible heading should be clean Markdown, not a literal debug label.
-    assert "HARD RULE on output shape" in prompt
-    assert 'Start the visible plan with exactly `**Plan**`' in prompt
-    assert "Do not print legacy all-caps plan labels" in prompt
-    assert "numbered questions" in prompt
-    assert "technical identifiers in backticks" in prompt
-    assert "PLAN + CODE BLOCK" not in prompt
-    assert "PLAN + NUMBERED QUESTIONS" not in prompt
-    assert "capped at 4 per response" in prompt
-    # Generic prose without numbering does NOT qualify as form (b).
-    assert "neither** a code block **nor** a numbered question list is a failure" in prompt
-    # Clear commands still go straight to execution (form a).
-    assert "If the request is clear, execute" in prompt
-    assert "For clear action commands such as" in prompt
+    assert "The runtime owns session orchestration" in prompt
+    assert "file-state bookkeeping" in prompt
+    assert "inspection-report storage" in prompt
+    assert "Do not expose runtime internals" in prompt
+    assert "scan the conversation messages for these two concrete signals" not in prompt
+    assert "There is no truncation, ever" not in prompt
 
 
-def test_user_stop_signals_collapse_to_execution_form():
+def test_prompt_keeps_new_upload_and_report_read_contract():
     prompt = COPEPOD_SYSTEM_PROMPT
-    # When the user explicitly says "go" / "fais au mieux" / "assez de questions",
-    # the LLM must switch to form (a) and document its assumptions.
-    assert "fais au mieux" in prompt
-    assert "assez de questions" in prompt
-    assert "collapse to form (a) immediately" in prompt
-    assert "document the assumptions" in prompt
+    assert "call `inspect_and_report` first" in prompt
+    assert 'print(inspection["output"])' in prompt
+    assert "Inspection reports are stored out-of-context after the turn" in prompt
+    assert "Never `print(get_inspection_report(...))`" in prompt
+    assert "Do not paraphrase an inspection-report stub" in prompt
+    assert "compact readback-ready inspection summary" in prompt
+    assert "the priority order is: `working set` and injected file summary first" in prompt
+    assert "For any readback request" in prompt
+    assert "synthesize a short answer and never replay the report verbatim" in prompt
 
 
-def test_execute_wrapper_is_not_part_of_the_prompt_surface():
+def test_prompt_prefers_exact_known_columns_over_memory():
     prompt = COPEPOD_SYSTEM_PROMPT
-    assert "execute(language=\"python\"" not in prompt
-    assert "execute(language='python'" not in prompt
+    assert "If exact column names are already available" in prompt
+    assert "Do not translate, abbreviate, singularize, pluralize, or infer column names from memory" in prompt
+    assert "Never answer with hedges such as" in prompt
+    assert "Do not force the user to restate or re-upload" not in prompt
 
 
-def test_session_working_set_is_the_file_state_source_of_truth():
+def test_prompt_separates_readback_from_action():
     prompt = COPEPOD_SYSTEM_PROMPT
-    lower_prompt = prompt.lower()
-    assert "session working set" in lower_prompt
-    assert "source of truth for file state" in lower_prompt
-    assert "Pending files requiring immediate inspect_and_report" in prompt
-    assert "active_files" not in prompt
-    assert "Treat these as internal execution guidance" in prompt
-    # `latest_inspection_by_file` is intentionally NOT exposed to the LLM —
-    # the rendered "Files already inspected in this session" section replaces it
-    # to prevent the model from paraphrasing the compact summary as user-visible prose.
-    assert "latest_inspection_by_file" not in prompt
-    assert "Files already inspected in this session" in prompt
+    assert "Distinguish two modes" in prompt
+    assert "Readback: list columns, summarize a report" in prompt
+    assert "For readback requests, answer directly from exact known session facts when available" in prompt
+    assert "If you must read the report, answer from its facts afterward" in prompt
+    assert "For action requests, inspect first if needed, then execute" in prompt
 
 
-def test_new_uploads_must_trigger_inspect_and_report():
+def test_prompt_keeps_graph_readiness_as_graph_gate():
     prompt = COPEPOD_SYSTEM_PROMPT
-    lower_prompt = prompt.lower()
-    assert "new uploaded file" in lower_prompt
-    assert "next work item" in lower_prompt
-    assert "call `inspect_and_report`" in prompt
+    assert "Call `graph_readiness(required_columns=[...], user_request=..., graph_type=..., validation_status=...)` before graphing" in prompt
+    assert "If `graph_readiness` returns `needs_clarification`" in prompt
 
 
-def test_session_dedup_is_about_already_inspected_files_not_seen_files():
+def test_prompt_keeps_tool_and_deliverable_execution_rules():
     prompt = COPEPOD_SYSTEM_PROMPT
-    lower_prompt = prompt.lower()
-    assert "Files already inspected in this session" in prompt
-    assert "pending files requiring immediate inspect_and_report" in lower_prompt
-    assert "already inspected" in lower_prompt
-    assert "if a filename already exists" not in lower_prompt
+    assert "The copepod helpers are Python functions available in the sandbox" in prompt
+    assert "Use `emit_deliverable(...)` when it is available in the runtime" in prompt
+    assert "`DELIVERABLE` output must be emitted only from Python code" in prompt
+    assert "Do not turn a syntax error, import error, or missing parenthesis into a clarification question" in prompt
 
 
-def test_inspection_reports_are_not_in_history_and_tool_is_documented():
-    """The LLM must learn that reports live out-of-context and require a tool call.
-
-    See `_scrub_inspection_reports_for_llm` in routers/chat_routes.py.
-    """
+def test_prompt_keeps_join_and_domain_guardrails():
     prompt = COPEPOD_SYSTEM_PROMPT
-    assert "Inspection reports are not in your conversation history" in prompt
-    assert "get_inspection_report" in prompt
-    # Make sure the prompt explicitly forbids paraphrasing the stub.
-    assert "Do not paraphrase the stub" in prompt
-    assert "inspecte le rapport" in prompt
-    assert "call `get_inspection_report('filename.csv')` immediately" in prompt
-    assert "do not answer that you need to relire/read the report first" in prompt.lower()
-    assert "read the `# RAPPORT D'INSPECTION` block for that file from the conversation history" not in prompt
-
-
-def test_output_formatting_contract_is_concise_and_single_language():
-    prompt = COPEPOD_SYSTEM_PROMPT
-    assert "Use one primary language per response when possible" in prompt
-    assert "Keep visible prose clean" in prompt
-    assert "avoid doubled blank lines" in prompt
-    assert "repeated adjacent lines" in prompt
-
-
-def test_clarification_policy_is_one_short_question():
-    prompt = COPEPOD_SYSTEM_PROMPT
-    assert "ask one short targeted question" in prompt
-    assert "Do not repeat the same clarification question" in prompt
-
-
-def test_execution_error_policy_requires_retry_from_traceback():
-    prompt = COPEPOD_SYSTEM_PROMPT
-    assert "If code execution fails" in prompt
-    assert "use the crash output to refine the next attempt" in prompt
-    assert "Do not turn a syntax error into a clarification question" in prompt
-
-
-def test_rag_rules_force_neolabs_ctd_and_uvp_metric_lookup():
-    prompt = COPEPOD_SYSTEM_PROMPT
-    assert "For NeoLabs taxonomy abundance + CTD coupling" in prompt
-    assert "call `query_copepod_knowledge_base` before planning" in prompt
+    assert "call `profile_join_keys(left_df, right_df, left_key, right_key)`" in prompt
+    assert "If `safe_for_join_deliverable` is false" in prompt
+    assert "query_copepod_knowledge_base" in prompt
     assert "SAMPLE_ID + ANALYSIS_ID" in prompt
-    assert "donne_sample.csv" in prompt
-    assert "ctd_match_status" in prompt
-    assert "For UVP MCA metrics or `m1`..`m6` requests" in prompt
-    assert "per-cast/profile metric definitions" in prompt
-    assert "EcoPart/EcoTaxa source split" in prompt
-
-
-def test_uvp_m5_m6_behavior_requires_resolver_and_calculator_before_graphing():
-    prompt = COPEPOD_SYSTEM_PROMPT
-    assert "For UVP `m5`/`m6` graph or table requests" in prompt
-    assert "call `resolve_uvp_m5_m6_inputs` first" in prompt
-    assert "call `calculate_uvp_m5_m6`" in prompt
-    assert "`status=\"blocked\"`" in prompt
-    assert "`status=\"partial\"`" in prompt
-    assert "`status=\"ok\"`" in prompt
-    assert "do not hand-code an alternate m5/m6 formula" in prompt
-    assert "do not use taxonomic size labels such as `>2mm`" in prompt
-
-
-def test_join_protocol_requires_cardinality_profile_before_join_deliverable():
-    prompt = COPEPOD_SYSTEM_PROMPT
-    lower_prompt = prompt.lower()
-    assert "profile_join_keys" in prompt
-    assert "many_to_many" in prompt
-    assert "must not emit a join deliverable" in prompt
-    assert "Do not drop duplicate rows just to make a key unique" in prompt
-    assert "the join workflow is mandatory and ordered" in lower_prompt
-    assert "do not write a join merge before computing and reading `profile_join_keys`" in lower_prompt
-    assert "never print a `deliverable` card for a join unless the code has already computed `profile_join_keys`" in lower_prompt
-
-
-def test_column_selection_must_use_exact_inspection_spellings():
-    prompt = COPEPOD_SYSTEM_PROMPT
-    assert "verify the exact spellings in the inspection reports" in prompt
-    assert "Do not translate, abbreviate, singularize, pluralize, or infer column names" in prompt
-    # New plan rule: column names must be copied verbatim from the reports.
-    assert "copy-paste verbatim from the inspection report" in prompt
-
-
-def test_graph_readiness_required_before_graphing():
-    prompt = COPEPOD_SYSTEM_PROMPT
-    assert "Then call `graph_readiness(required_columns=[...], user_request=..., graph_type=..., validation_status=...)` as the mandatory gate" in prompt
-    assert "If `status` is `needs_clarification`" in prompt
-    assert "Pass exact column names copied from the inspection report" in prompt or "Exact column names — copy-paste verbatim from the inspection report" in prompt
-
-
-def test_plan_must_be_grounded_in_inspection_reports():
-    prompt = COPEPOD_SYSTEM_PROMPT
-    # The plan is built FROM the inspection reports, not from LLM memory.
-    assert "Plan grounded in inspection" in prompt
-    assert "scan the conversation history for `# RAPPORT D'INSPECTION` blocks" in prompt
-    assert "transcription of decisions grounded in those reports" in prompt
-    assert "never a generic outline written from memory" in prompt
-    # Missing facts → no inclusion; inspect first.
-    assert "do NOT include it in the plan — run `inspect_and_report` on it first" in prompt
-
-
-def test_visual_requests_remain_in_inspect_then_code_and_preserve_source():
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "inspect-then-code" in prompt
-    assert "explicit visual request" in prompt
-    assert "preserve the source artifact" in prompt
-    assert "produce a corrected artifact" in prompt
-
-
-def test_visual_request_intents_are_named_explicitly():
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "inspection" in prompt
-    assert "zoom" in prompt
-    assert "correction" in prompt
-    assert "reconstruction" in prompt
+    assert "resolve_uvp_m5_m6_inputs" in prompt
+    assert "calculate_uvp_m5_m6" in prompt
+    assert "Do not use OBIS" in prompt

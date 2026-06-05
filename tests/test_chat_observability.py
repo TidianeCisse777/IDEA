@@ -257,3 +257,21 @@ def test_from_env_creates_user_session_trace_with_round_metadata(monkeypatch):
     assert any(span["name"] == "round-4/runtime/generated_code" for span in spans)
     assert any(span["name"] == "round-4/runtime/code_output" for span in spans)
     assert any(span["name"] == "round-4/mcp/fetch_dataset" for span in spans)
+
+
+def test_runtime_logger_receives_forwarded_runtime_events():
+    trace = FakeTrace()
+    recorded = []
+
+    class RuntimeLogger:
+        def record_runtime_event(self, event):
+            recorded.append(event)
+
+    tracer = ChatRuntimeTracer(trace, round_index=2, runtime_logger=RuntimeLogger())
+    events = [
+        {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"},
+    ]
+
+    assert list(tracer.observe_stream(events)) == events
+    assert recorded
+    assert recorded[0]["type"] == "message"

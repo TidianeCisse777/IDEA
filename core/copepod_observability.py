@@ -75,6 +75,70 @@ def trace_copepod_event(
         return
 
 
+def _parse_session_key(session_key: str | None) -> tuple[str, str]:
+    parts = str(session_key or "").split(":")
+    if len(parts) >= 3:
+        return parts[1], parts[2]
+    if len(parts) == 2:
+        return parts[1], "copepod"
+    if len(parts) == 1 and parts[0]:
+        return parts[0], "copepod"
+    return "", "copepod"
+
+
+def _runtime_logger_for_session(session_key: str | None):
+    from core.session_runtime_logger import SessionRuntimeLogger
+
+    session_id, agent_type = _parse_session_key(session_key)
+    if not session_id:
+        return None
+    return SessionRuntimeLogger(
+        logs_root="logs",
+        session_id=session_id,
+        session_key=session_key or "",
+        agent_type=agent_type or "copepod",
+    )
+
+
+def record_copepod_tool_call_start(
+    tool_name: str,
+    *,
+    session_key: str | None,
+    input: dict[str, Any] | None = None,
+) -> None:
+    try:
+        runtime_logger = _runtime_logger_for_session(session_key)
+        if runtime_logger is None:
+            return
+        runtime_logger.record_tool_call_started(tool_name=tool_name, arguments=input or {})
+    except Exception:
+        return
+
+
+def record_copepod_tool_call_finish(
+    tool_name: str,
+    *,
+    session_key: str | None,
+    input: dict[str, Any] | None = None,
+    output: Any | None = None,
+    error: Any | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    try:
+        runtime_logger = _runtime_logger_for_session(session_key)
+        if runtime_logger is None:
+            return
+        result = {"error": str(error)} if error is not None else output
+        runtime_logger.record_tool_call_finished(
+            tool_name=tool_name,
+            result=result,
+            status="error" if error is not None else "ok",
+            duration_ms=(metadata or {}).get("elapsed_ms"),
+        )
+    except Exception:
+        return
+
+
 def trace_copepod_tool_call(
     tool_name: str,
     *,

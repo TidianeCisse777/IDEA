@@ -201,7 +201,7 @@ def _build_column_context_note(session_id: str, filenames: list[str]) -> str:
     if not col_lines:
         return ""
     return (
-        "\n\nInspected file columns (use in graph_readiness — do not narrate to user):\n"
+        "\n\nInspected file columns (exact facts available for readback and graph_readiness):\n"
         + "\n".join(col_lines)
     )
 

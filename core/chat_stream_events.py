@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import ast
 import json
 import os
 import re
@@ -102,6 +103,42 @@ def _compact_inspection_summary_from_report(report: str) -> str:
             f"- Warnings : {data.get('warnings', 0)}",
         ]
     )
+
+
+def _extract_report_from_stringified_inspection_payload(text: str) -> tuple[str, str]:
+    """Extract inspection markdown from a stringified Python dict payload.
+
+    Returns ``(preamble, report_text)`` where preamble keeps any warning/noise
+    before the dict and ``report_text`` is either the ``output`` field or the
+    concatenated ``formatted`` reports. Empty strings mean "not detected".
+    """
+    raw = text or ""
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return "", ""
+    candidate = raw[start:end + 1]
+    try:
+        data = ast.literal_eval(candidate)
+    except Exception:
+        return "", ""
+    if not isinstance(data, dict):
+        return "", ""
+    report_text = data.get("output")
+    if not isinstance(report_text, str) or "# RAPPORT D'INSPECTION" not in report_text:
+        reports = data.get("reports")
+        if isinstance(reports, list):
+            formatted_parts = []
+            for item in reports:
+                if isinstance(item, dict):
+                    formatted = item.get("formatted")
+                    if isinstance(formatted, str) and "# RAPPORT D'INSPECTION" in formatted:
+                        formatted_parts.append(formatted)
+            report_text = "\n".join(formatted_parts)
+    if not isinstance(report_text, str) or "# RAPPORT D'INSPECTION" not in report_text:
+        return "", ""
+    preamble = raw[:start].strip()
+    return preamble, report_text
 
 
 def _looks_like_internal_working_set_leak(text: str) -> bool:
@@ -319,13 +356,20 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
         nonlocal deliverable_emitted
         nonlocal inspection_report_emitted, last_code_content
         buf = console_buf_content
-        # Only suppress subsequent LLM text when the report was produced by
-        # inspect_and_report (initial inspection, report IS the answer).
-        # get_inspection_report is a silent read — the LLM must still respond.
-        _report_owns_turn = "inspect_and_report" in last_code_content
+        # Once a report is routed to assistant markdown, it is authoritative for
+        # this stream segment and should not visually compete with a follow-up
+        # LLM prose tail. This also covers stringified helper returns that the
+        # backend salvages into a proper inspection report.
+        _report_owns_turn = "# RAPPORT D'INSPECTION" in buf or "inspect_and_report" in last_code_content
+        preamble_from_payload = ""
+        payload_report = ""
+        if buf and "# RAPPORT D'INSPECTION" not in buf:
+            preamble_from_payload, payload_report = _extract_report_from_stringified_inspection_payload(buf)
+            if payload_report:
+                buf = ((preamble_from_payload + "\n") if preamble_from_payload else "") + payload_report
         if buf and "# RAPPORT D'INSPECTION" in buf:
             # Split on every RAPPORT header so each file gets its own bubble.
-            parts = console_buf_content.split("# RAPPORT D'INSPECTION")
+            parts = buf.split("# RAPPORT D'INSPECTION")
             preamble = parts[0].strip()
             if preamble:
                 yield {"start": True, "end": True, "role": "computer",

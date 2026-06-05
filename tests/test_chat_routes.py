@@ -570,12 +570,44 @@ class TestCopepodInspectThenCodeNote:
             current_attempt_had_error=False,
         )
 
+    def test_report_read_retry_gate_catches_hallucinated_key_columns_without_code(self):
+        assert _should_retry_copepod_report_read_without_code(
+            user_message="Quelles sont les colonnes clés ?",
+            assistant_text="sample_id, station_name, cast_no, profile_no, lon, lat",
+            current_attempt_had_code=False,
+            current_attempt_had_error=False,
+            known_columns=[
+                "platform_name",
+                "station",
+                "amundsen_time",
+                "amundsen_lat",
+                "amundsen_lon",
+                "amundsen_depth",
+                "amundsen_temperature_degC",
+            ],
+        )
+
     def test_report_read_retry_gate_ignores_executed_attempts(self):
         assert not _should_retry_copepod_report_read_without_code(
             user_message="FAIS MOI UN RESUME DU RAPPORT",
             assistant_text="Je dois relire le rapport out-of-context avant de répondre.",
             current_attempt_had_code=True,
             current_attempt_had_error=False,
+        )
+
+    def test_report_read_retry_gate_accepts_answer_grounded_in_known_columns(self):
+        assert not _should_retry_copepod_report_read_without_code(
+            user_message="Quelles sont les colonnes clés ?",
+            assistant_text="Colonnes clés : `station`, `amundsen_time`, `amundsen_depth`, `amundsen_temperature_degC`.",
+            current_attempt_had_code=False,
+            current_attempt_had_error=False,
+            known_columns=[
+                "platform_name",
+                "station",
+                "amundsen_time",
+                "amundsen_depth",
+                "amundsen_temperature_degC",
+            ],
         )
 
     def test_report_read_retry_note_requires_get_inspection_report(self):
@@ -802,6 +834,54 @@ class TestCopepodSessionResourcesNote:
         assert "Inspection reports:" not in note
         assert "RAPPORT D'INSPECTION" not in note
 
+    def test_renders_inspected_columns_as_exact_facts(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["sample.csv"],
+                "active_files": ["sample.csv"],
+                "latest_inspection_by_file": {"sample.csv": "sample.csv | likely_neolabs_taxon | 120 × 12"},
+                "current_user_goal": "inspect sample.csv",
+            },
+        )
+        store.store_inspection_data(
+            session_key,
+            "sample.csv",
+            {
+                "columns": [
+                    {"name": "sample_id"},
+                    {"name": "station"},
+                    {"name": "depth"},
+                ]
+            },
+        )
+
+        note = _build_copepod_session_resources_note(
+            [
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": (
+                        "Files uploaded in this message:\n"
+                        "Session ID: s1\n"
+                        "Base path: ./static/{user_id}/s1/uploads\n"
+                        "- sample.csv (text/csv) | relative path: sample.csv\n"
+                        "Use these paths when referencing the uploaded files."
+                    ),
+                }
+            ],
+            session_key=session_key,
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert note is not None
+        assert "Inspected file columns (exact facts available for readback and graph_readiness):" in note
+        assert "sample.csv : sample_id, station, depth" in note
+        assert "do not narrate to user" not in note
+
     def test_separates_new_uploads_from_already_present_files(self):
         note = _build_copepod_session_resources_note(
             [
@@ -845,17 +925,18 @@ class TestCopepodSessionResourcesNote:
 
         assert note is not None
         assert "Files uploaded in this message (inspect these new filenames only):" in note
-        assert "Files already inspected in this session (skip inspection):" in note
+        assert "Files with existing reports in this session (skip inspection silently):" in note
 
         new_section = note.split(
             "Files uploaded in this message (inspect these new filenames only):",
             1,
-        )[1].split("Files already inspected in this session (skip inspection):", 1)[0]
-        skip_section = note.split("Files already inspected in this session (skip inspection):", 1)[1]
+        )[1].split("Files with existing reports in this session (skip inspection silently):", 1)[0]
+        skip_section = note.split("Files with existing reports in this session (skip inspection silently):", 1)[1]
 
         assert "fresh.csv" in new_section
         assert "SAMPLE.csv" not in new_section
         assert "SAMPLE.csv" in skip_section
+        assert "already inspected" not in note.lower()
 
     def test_returns_no_new_files_on_followup_without_new_uploads(self, client):
         tc, store = client
@@ -1024,13 +1105,22 @@ class TestCopepodSessionResourcesNote:
         assert "object_depth" in note
         assert "fre_area" in note
 
-    def test_column_injection_does_not_leak_source_type(self, client):
-        """Source type must never appear in the note — regression guard."""
+    def test_column_injection_remains_compact_and_readback_ready(self, client):
+        """Compact inspection facts may include source type, but not raw internals."""
         tc, store = client
         session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["sample.csv"],
+                "active_files": ["sample.csv"],
+                "latest_inspection_by_file": {"sample.csv": "sample.csv | likely_neolabs_taxon | 120 × 12"},
+                "current_user_goal": "inspect sample.csv",
+            },
+        )
         store.store_inspection_data(session_key, "sample.csv", {
             "columns": [{"name": "col_a"}, {"name": "col_b"}],
-            "source_type_guess": "likely_neolabs_taxon",
+            "source_type_guess": {"value": "likely_neolabs_taxon", "confidence": "high", "evidence": []},
             "n_rows": 500,
         })
 
@@ -1064,8 +1154,78 @@ class TestCopepodSessionResourcesNote:
         assert note is not None
         assert "col_a" in note
         assert "col_b" in note
-        assert "likely_neolabs_taxon" not in note
+        assert "Inspected file summary (readback-ready):" in note
+        assert "source=`likely_neolabs_taxon`" in note
         assert "500" not in note
+        assert "latest_inspection_by_file:" not in note
+
+    def test_compact_inspection_summary_is_readback_ready(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["sample.csv"],
+                "active_files": ["sample.csv"],
+                "latest_inspection_by_file": {"sample.csv": "sample.csv | likely_neolabs_taxon | 120 × 12"},
+                "current_user_goal": "inspect sample.csv",
+            },
+        )
+        store.store_inspection_data(
+            session_key,
+            "sample.csv",
+            {
+                "file_path": "/app/static/u1/s1/uploads/sample.csv",
+                "format": "csv",
+                "n_rows": 120,
+                "n_columns": 12,
+                "columns": [
+                    {"name": "sample_id", "semantic_guess": "sample_id", "confidence": "high", "missing_count": 0, "missing_rate": 0.0},
+                    {"name": "station", "semantic_guess": "station", "confidence": "medium", "missing_count": 0, "missing_rate": 0.0},
+                    {"name": "depth", "semantic_guess": "", "confidence": "low", "missing_count": 2, "missing_rate": 0.167},
+                ],
+                "warnings": ["Encoding inferred"],
+                "source_type_guess": {"value": "likely_neolabs_taxon", "confidence": "high", "evidence": []},
+            },
+        )
+
+        note = _build_copepod_session_resources_note(
+            [
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": (
+                        "Files uploaded in this message:\n"
+                        "- sample.csv (text/csv) | relative path: sample.csv\n"
+                        "Use these paths when referencing the uploaded files."
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n\n"
+                        "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                        "- **format** : `csv`  •  **n_rows** : `120`  •  **n_columns** : `12`\n"
+                        "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+                    ),
+                },
+            ],
+            session_key=session_key,
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert note is not None
+        assert "Inspected file summary (readback-ready):" in note
+        assert "shape=`120 × 12`" in note
+        assert "warnings=`1`" in note
+        assert "grounding=`2 auto / 1 clarify`" in note
+        assert "missing=`depth 16.7%`" in note
+        assert "sample_id" in note
+        assert "station" in note
+        assert "depth" in note
+        assert "latest_inspection_by_file:" not in note
 
     def test_column_injection_absent_without_session_key(self):
         """Without session_key the store is not queried — no columns injected."""
@@ -1391,6 +1551,93 @@ class TestCopepodWorkingSetReducer:
 
         assert updated["active_files"] == []
         assert "sample.csv" in updated["latest_inspection_by_file"]
+
+    def test_stores_rich_readback_summary_from_inspection_report(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["sample.csv"],
+                "active_files": ["sample.csv"],
+                "latest_inspection_by_file": {},
+                "current_user_goal": "inspect sample.csv",
+            },
+        )
+
+        updated = _update_copepod_working_set(
+            session_key=session_key,
+            messages=[
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n"
+                        "<!-- report-title: 📄 CTD Amundsen — sample (120 × 12) -->\n\n"
+                        "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                        "- **format** : `csv`  •  **n_rows** : `120`  •  **n_columns** : `12`\n"
+                        "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+                        "## Columns (12)\n\n"
+                        "| # | Column | Dtype |\n"
+                        "|---|--------|-------|\n"
+                        "| 1 | `sample_id` | object |\n"
+                        "| 2 | `station` | object |\n"
+                        "| 3 | `depth` | float64 |\n"
+                        "Clés de jointure potentielles : sample_id | station\n\n"
+                        "## Synthèse\n\n"
+                        "```json\n"
+                        "{\n"
+                        '  "column_grounding": {"rag_defined": 2, "auto_resolved": 1, "needs_clarification": 0, "unresolved": []},\n'
+                        '  "warnings": 1\n'
+                        "}\n"
+                        "```\n"
+                    ),
+                }
+            ],
+            user_id="u1",
+            session_id="s1",
+        )
+
+        summary = updated["latest_inspection_by_file"].get("sample.csv", "")
+        assert "sample.csv" in summary
+        assert "likely_neolabs_taxon" in summary
+        assert "120 × 12" in summary
+        assert "columns: sample_id, station, depth" in summary
+        assert "grounding: 2 RAG / 1 auto / 0 clarify" in summary
+        assert "warnings: 1" in summary
+
+    def test_clears_pending_active_file_when_history_has_inspection_stub(self, client):
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.write_working_set(
+            session_key,
+            {
+                "seen_files": ["sample.csv"],
+                "active_files": ["sample.csv"],
+                "latest_inspection_by_file": {},
+                "current_user_goal": "quelles sont les colonnes clés ?",
+            },
+        )
+
+        updated = _update_copepod_working_set(
+            session_key=session_key,
+            messages=[
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "[Inspection report for sample.csv — stored out-of-context. "
+                        "Call `get_inspection_report('sample.csv')` to view shape, columns, "
+                        "RAG definitions if needed.]"
+                    ),
+                }
+            ],
+            user_id="u1",
+            session_id="s1",
+        )
+
+        assert updated["active_files"] == []
+        assert updated["seen_files"] == ["sample.csv"]
 
 
 # ---------------------------------------------------------------------------
@@ -1905,6 +2152,46 @@ class TestChatGuardPaths:
         assert isinstance(captured["message"][-1]["content"], str)
         assert captured["message"][-1]["content"] == "Analyse ce fichier."
         assert store.read_messages("u1:s1:generic")[-1]["content"].startswith("Analyse ce fichier.")
+
+    def test_chat_writes_runtime_session_logs(self, tmp_path):
+        store = InMemorySessionStore()
+        app, fake_user, fake_interpreter, fake_profile = _make_chat_client(store)
+        fake_interpreter.system_message = "base prompt"
+
+        def fake_chat(message, stream=True):
+            fake_interpreter.messages = list(message)
+            return iter([
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"},
+            ])
+
+        fake_interpreter.chat = fake_chat
+
+        async def fake_gather(db):
+            return [], {}
+
+        with (
+            patch("routers.chat_routes.get_current_user", return_value=fake_user),
+            patch("routers.chat_routes.session_store", store),
+            patch("routers.chat_routes.get_or_create_interpreter", return_value=fake_interpreter),
+            patch("routers.chat_routes.gather_available_mcp_tools", new=fake_gather),
+            patch("routers.chat_routes.ensure_user_pqa_settings"),
+            patch("routers.chat_routes.get_profile", return_value=fake_profile),
+            patch("routers.chat_routes.RUNTIME_LOGS_ROOT", tmp_path),
+            patch("routers.chat_routes.chat_stream_events", side_effect=lambda events: events),
+        ):
+            tc = TestClient(app)
+            resp = tc.post(
+                "/chat",
+                json={"messages": [{"role": "user", "content": "hello runtime logs"}]},
+                headers={"x-session-id": "s1"},
+            )
+
+        assert resp.status_code == 200
+        session_dir = tmp_path / "sessions" / "s1"
+        assert (session_dir / "events.jsonl").exists()
+        assert (session_dir / "turns.log").exists()
+        assert (session_dir / "session_summary.json").exists()
+        assert "hello runtime logs" in (session_dir / "turns.log").read_text(encoding="utf-8")
 
     def test_chat_injects_inspect_then_code_note_before_join_code(self):
         store = InMemorySessionStore()

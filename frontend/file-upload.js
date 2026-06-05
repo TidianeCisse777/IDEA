@@ -134,7 +134,7 @@ function buildAttachmentInstruction(attachments = []) {
         const mimeType = att.mimeType ? ` (${att.mimeType})` : '';
         return `- ${att.name}${mimeType}${relPath ? ` | relative path: ${relPath}` : ''}`;
     }).join('\n');
-    return `Files uploaded in this message:\nSession ID: ${activeSessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.\nSession rule: for every filename without a report in latest_inspection_by_file, call inspect_and_report immediately. If a filename already has a report in latest_inspection_by_file, skip its inspection and explicitly say it is already inspected. If a filename is pending in active_files without a report, inspect it now in the same turn; do not wait for the user to repeat "inspect".`;
+    return `Files uploaded in this message:\nSession ID: ${activeSessionId}\nBase path: ${basePath}\n${lines}\nUse these paths when referencing the uploaded files.\nSession rule: for every filename without a report in latest_inspection_by_file, call inspect_and_report immediately. If a filename already has a report in latest_inspection_by_file, skip its inspection silently. If a filename is pending in active_files without a report, inspect it now in the same turn; do not wait for the user to repeat "inspect".`;
 }
 
 async function uploadFile(file, progressElement) {

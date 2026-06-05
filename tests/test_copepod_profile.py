@@ -114,7 +114,10 @@ def test_custom_instructions_advertise_inspection_report_reader():
     )
     assert "get_inspection_report(filename)" in text
     assert "fetch the full `# RAPPORT D'INSPECTION`" in text
+    assert "prefer the injected working-set summary and exact known facts first" in text
+    assert "compact and readback-ready" in text
     assert "Do not paraphrase the stub" in text
+    assert "For an already-inspected file" in text
 
 
 def test_custom_instructions_advertise_undefined_columns_section():

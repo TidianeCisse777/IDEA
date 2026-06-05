@@ -48,10 +48,12 @@ class ChatRuntimeTracer:
         *,
         metadata: dict[str, Any] | None = None,
         round_index: int = 1,
+        runtime_logger: Any = None,
     ):
         self.trace = trace
         self.metadata = metadata or {}
         self.round_index = round_index
+        self.runtime_logger = runtime_logger
         self.metadata.setdefault("round", round_index)
         self._buffers: dict[tuple[str, str, str], list[str]] = defaultdict(list)
         self._closed = False
@@ -121,6 +123,11 @@ class ChatRuntimeTracer:
     ) -> None:
         """Capture the composed system prompt sent to the LLM this turn."""
         self._system_message = system_message or ""
+        if self.runtime_logger is not None:
+            try:
+                self.runtime_logger.record_system_prompt(system_message or "", components=components or {})
+            except Exception:
+                pass
         if not self.enabled:
             return
         try:
@@ -136,6 +143,11 @@ class ChatRuntimeTracer:
 
     def record_custom_instructions(self, custom_instructions: str) -> None:
         """Capture the dynamic custom_instructions block injected into the interpreter."""
+        if self.runtime_logger is not None:
+            try:
+                self.runtime_logger.record_custom_instructions(custom_instructions or "")
+            except Exception:
+                pass
         if not self.enabled:
             return
         try:
@@ -150,6 +162,11 @@ class ChatRuntimeTracer:
             return
 
     def record_mcp_tool_run(self, run: dict[str, Any]) -> None:
+        if self.runtime_logger is not None:
+            try:
+                self.runtime_logger.record_mcp_tool_run(run)
+            except Exception:
+                pass
         if not self.enabled:
             return
         try:
@@ -172,6 +189,11 @@ class ChatRuntimeTracer:
             return
 
     def record_route_error(self, error: str) -> None:
+        if self.runtime_logger is not None:
+            try:
+                self.runtime_logger.record_error(error=error, source="route_error")
+            except Exception:
+                pass
         if not self.enabled:
             return
         try:
@@ -185,6 +207,11 @@ class ChatRuntimeTracer:
             return
 
     def record_event(self, event: Any) -> None:
+        if self.runtime_logger is not None:
+            try:
+                self.runtime_logger.record_runtime_event(event)
+            except Exception:
+                pass
         if not self.enabled:
             return
         try:
@@ -260,6 +287,15 @@ class ChatRuntimeTracer:
         retry_note: str,
     ) -> None:
         """Record an automatic copepod retry attempt with its trigger error and recovery note."""
+        if self.runtime_logger is not None:
+            try:
+                self.runtime_logger.record_retry(
+                    attempt=attempt,
+                    error_snippet=error_snippet,
+                    retry_note=retry_note,
+                )
+            except Exception:
+                pass
         if not self.enabled:
             return
         try:

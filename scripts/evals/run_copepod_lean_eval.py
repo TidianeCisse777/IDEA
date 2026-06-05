@@ -420,6 +420,7 @@ SCENARIOS: list[LeanScenario] = [
         expect_inspect_per_file=True,
         expect_self_summary=True,
         expect_tools_called=["inspect_and_report", "inspect_file"],
+        forbidden_terms_in_reply=["already inspected", "déjà inspecté"],
     ),
     LeanScenario(
         slug="collect_column_defs_after_inspect",
@@ -526,6 +527,7 @@ SCENARIOS: list[LeanScenario] = [
         expect_self_summary=True,
         # inspect_and_report handles the full pipeline including summarize_understanding
         expect_tools_called=["summarize_understanding", "inspect_and_report"],
+        forbidden_terms_in_reply=["already inspected", "déjà inspecté"],
     ),
 ]
 

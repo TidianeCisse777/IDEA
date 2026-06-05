@@ -510,6 +510,25 @@ def test_llm_message_after_plain_inspection_report_is_suppressed():
     assert "onnxruntime" not in _concat_message_content(events)
 
 
+def test_stringified_inspect_and_report_dict_routes_output_report():
+    content = (
+        "onnxruntime cpuid_info warning: Unknown CPU vendor. cpuinfo_vendor value: 0\n"
+        "{'reports': [{'file': 'sample', 'formatted': \"# RAPPORT D\\'INSPECTION\\n\\n- **file_path** : `/tmp/a.csv`\\n\"}], "
+        "'summary': '**sample** (10 lignes × 2 colonnes) — likely_amundsen_ctd', "
+        "'output': \"# RAPPORT D\\'INSPECTION\\n\\n- **file_path** : `/tmp/a.csv`\\n## Synthèse\\n\"}\n"
+    )
+    events = list(chat_stream_events(_stream_console(content)))
+    console_chunks = [e for e in events if e.get("role") == "computer" and e.get("type") == "console"]
+    msg_chunks = [e for e in events if e.get("role") == "assistant" and e.get("type") == "message"]
+
+    assert len(console_chunks) == 1
+    assert "onnxruntime" in console_chunks[0]["content"]
+    assert "# RAPPORT D'INSPECTION" not in console_chunks[0]["content"]
+    assert len(msg_chunks) == 1
+    assert msg_chunks[0]["content"].startswith("# RAPPORT D'INSPECTION")
+    assert "## Synthèse" in msg_chunks[0]["content"]
+
+
 def test_summary_marker_emitted_as_separate_assistant_message():
     """%%SUMMARY%% content is extracted from the console buffer and emitted as
     a standalone assistant message, separate from the RAPPORT blocks."""

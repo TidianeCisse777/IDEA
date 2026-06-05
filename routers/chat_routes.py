@@ -47,11 +47,13 @@ from core.interpreter_store import interpreter_instances
 from core.mcp import mcp_manager
 from core.prompt_store import get_prompt_manager
 from core.rag_store import ensure_user_pqa_settings
+from core.session_runtime_logger import SessionRuntimeLogger
 from core.session_store import session_store
 from utils.session_utils import make_session_key, resolve_agent_type
 from utils.transcription_prompt import transcription_prompt
 
 logger = logging.getLogger(__name__)
+RUNTIME_LOGS_ROOT = Path("logs")
 
 
 # Per-session locks protect the shared OpenInterpreter from concurrent turns.
@@ -191,6 +193,8 @@ def _extract_report_summary(content: str) -> str | None:
     shape = ""
     columns: list[str] = []
     join_hints = ""
+    grounding_hint = ""
+    warnings_hint = ""
 
     match = re.search(r"\*\*file_path\*\*\s*:\s*`([^`]+)`", content)
     if match:
@@ -218,6 +222,26 @@ def _extract_report_summary(content: str) -> str | None:
         if len(columns) >= 20:
             break
 
+    synthese_match = re.search(r"## Synthèse\s+```json\s*(\{.*?\})\s*```", content, re.DOTALL)
+    if synthese_match:
+        try:
+            synthese_data = json.loads(synthese_match.group(1))
+            grounding = synthese_data.get("column_grounding") or {}
+            if isinstance(grounding, dict):
+                rag_defined = grounding.get("rag_defined")
+                auto_resolved = grounding.get("auto_resolved")
+                needs_clarification = grounding.get("needs_clarification")
+                if any(v is not None for v in (rag_defined, auto_resolved, needs_clarification)):
+                    grounding_hint = (
+                        f"grounding: {rag_defined or 0} RAG / {auto_resolved or 0} auto / "
+                        f"{needs_clarification or 0} clarify"
+                    )
+            warnings_value = synthese_data.get("warnings")
+            if warnings_value is not None:
+                warnings_hint = f"warnings: {warnings_value}"
+        except Exception:
+            pass
+
     join_match = re.search(r"Clés de jointure potentielles\s*:\s*(.+)", content)
     if join_match:
         join_hints = join_match.group(1).strip()
@@ -237,10 +261,76 @@ def _extract_report_summary(content: str) -> str | None:
         parts.append(source)  # no "source:" prefix — prevents LLM from translating it as "source détectée" + value
     if compact_shape:
         parts.append(compact_shape)
+    if columns:
+        preview = ", ".join(columns[:8])
+        if len(columns) > 8:
+            preview += f" (+{len(columns) - 8} more)"
+        parts.append(f"columns: {preview}")
     if join_hints:
         parts.append(f"join hints: {join_hints}")
+    if grounding_hint:
+        parts.append(grounding_hint)
+    if warnings_hint:
+        parts.append(warnings_hint)
 
     return " | ".join(parts) if len(parts) > 1 else None
+
+
+def _compact_inspection_summary_entry(filename: str, file_report: dict[str, Any] | None) -> str | None:
+    """Render a compact, readback-ready fact line for one inspected file."""
+    if not filename or not isinstance(file_report, dict):
+        return None
+
+    columns = file_report.get("columns") or []
+    warnings = file_report.get("warnings") or []
+    source_guess = file_report.get("source_type_guess") or {}
+    source_value = str(source_guess.get("value") or "").strip()
+    source_confidence = str(source_guess.get("confidence") or "").strip()
+    n_rows = file_report.get("n_rows")
+    n_columns = file_report.get("n_columns")
+
+    auto_resolved = 0
+    clarif_required = 0
+    unresolved_columns: list[str] = []
+    missing_any: list[tuple[str, float]] = []
+    for col in columns:
+        if not isinstance(col, dict):
+            continue
+        name = str(col.get("name") or "").strip()
+        semantic_guess = str(col.get("semantic_guess") or "").strip()
+        confidence = str(col.get("confidence") or "").strip().lower()
+        if semantic_guess and confidence in {"high", "medium"}:
+            auto_resolved += 1
+        else:
+            clarif_required += 1
+            if name:
+                unresolved_columns.append(name)
+        missing_count = col.get("missing_count", 0)
+        missing_rate = col.get("missing_rate", 0)
+        if isinstance(missing_count, (int, float)) and missing_count > 0 and isinstance(missing_rate, (int, float)):
+            missing_any.append((name or "unknown", float(missing_rate)))
+
+    parts: list[str] = [f"- {filename}:"]
+    if source_value and source_value != "unknown":
+        source_piece = f"source=`{source_value}`"
+        if source_confidence:
+            source_piece += f" ({source_confidence})"
+        parts.append(source_piece)
+    if n_rows is not None and n_columns is not None:
+        parts.append(f"shape=`{n_rows} × {n_columns}`")
+    if warnings:
+        parts.append(f"warnings=`{len(warnings)}`")
+    if columns:
+        parts.append(f"grounding=`{auto_resolved} auto / {clarif_required} clarify`")
+    if missing_any:
+        worst_name, worst_rate = max(missing_any, key=lambda item: item[1])
+        parts.append(f"missing=`{worst_name} {worst_rate:.1%}`")
+    if unresolved_columns:
+        parts.append(f"unresolved=`{', '.join(unresolved_columns[:6])}`")
+
+    # Keep this stable and compact so the model can trust it as readback
+    # context instead of replaying the full report.
+    return " · ".join(parts)
 
 
 def _extract_deliverable_summary(content: str) -> tuple[str | None, str | None]:
@@ -374,6 +464,15 @@ def _update_copepod_working_set(
                         seen_keys.add(filename_key)
                         inspection_keys.add(filename_key)
                         working_set.setdefault("latest_inspection_by_file", {})[label] = report_summary
+
+        if isinstance(content, str):
+            for filename_key in _extract_stubbed_inspection_filenames(content):
+                seen_keys.add(filename_key)
+                inspection_keys.add(filename_key)
+                working_set.setdefault("latest_inspection_by_file", {}).setdefault(
+                    filename_key,
+                    filename_key,
+                )
 
     active_files = [
         active_entry_by_key[key]
@@ -605,18 +704,20 @@ def _build_copepod_session_resources_note(
     if active_state_files:
         lines.extend(["", "Pending files requiring immediate `inspect_and_report`:"])
         lines.extend(f"- {item}" for item in active_state_files)
-    # Render column lists for inspected files so the model can call graph_readiness
-    # without needing to re-read the inspection report.  We intentionally skip
-    # source type and shape (previously caused the LLM to paraphrase working-set
-    # internals into user-visible prose).  Column names are tool-call inputs, not
-    # narrative content.
+    # Render a compact, readback-ready summary for inspected files so the model
+    # can answer from session facts before considering the full report. Exact
+    # columns are still rendered separately for graph_readiness.
     if inspection_map and session_key:
+        summary_lines: list[str] = []
         col_lines: list[str] = []
         for label in list(inspection_map.keys())[:5]:
             fname = label.split(" | ")[0].strip()
             try:
                 data = session_store.read_inspection_data(session_key, fname)
                 if data and isinstance(data, dict):
+                    compact_summary = _compact_inspection_summary_entry(fname, data)
+                    if compact_summary:
+                        summary_lines.append(compact_summary)
                     col_names = [
                         str(c.get("name", ""))
                         for c in (data.get("columns") or [])
@@ -626,15 +727,18 @@ def _build_copepod_session_resources_note(
                         col_lines.append(f"- {fname} : {', '.join(col_names)}")
             except Exception:
                 pass
+        if summary_lines:
+            lines.extend(["", "Inspected file summary (readback-ready):"])
+            lines.extend(summary_lines)
         if col_lines:
-            lines.extend(["", "Inspected file columns (use in graph_readiness — do not narrate to user):"])
+            lines.extend(["", "Inspected file columns (exact facts available for readback and graph_readiness):"])
             lines.extend(col_lines)
 
     if current_message_files:
         lines.extend(["", "Files uploaded in this message (inspect these new filenames only):"])
         lines.extend(f"- {_render_session_file_entry(item)}" for item in current_message_files)
     if already_present_files:
-        lines.extend(["", "Files already inspected in this session (skip inspection):"])
+        lines.extend(["", "Files with existing reports in this session (skip inspection silently):"])
         lines.extend(f"- {_render_session_file_entry(item)}" for item in already_present_files)
     for section in ("Deliverables", "Graph/image artifacts", "File artifacts"):
         values = sections.get(section) or []
@@ -839,6 +943,20 @@ def _scrub_inspection_report_in_content(
 _INSPECT_CALL_FILE_RE = re.compile(
     r"inspect_and_report\s*\(\s*file_paths\s*=\s*\[\s*['\"]([^'\"]+)['\"]"
 )
+_INSPECTION_REPORT_STUB_RE = re.compile(
+    r"\[Inspection report(?: fragment)? for ([^\]\n]+?)(?:\s+\(console-buffer truncated\))?\s+—"
+)
+
+
+def _extract_stubbed_inspection_filenames(content: str) -> list[str]:
+    if not isinstance(content, str) or "[Inspection report" not in content:
+        return []
+    filenames: list[str] = []
+    for match in _INSPECTION_REPORT_STUB_RE.finditer(content):
+        filename_key = _copepod_working_set_file_key(match.group(1))
+        if filename_key:
+            filenames.append(filename_key)
+    return _dedupe_keep_order(filenames)
 
 
 def _scrub_inspection_reports_for_llm(
@@ -974,6 +1092,7 @@ def _should_retry_copepod_report_read_without_code(
     assistant_text: str,
     current_attempt_had_code: bool,
     current_attempt_had_error: bool,
+    known_columns: list[str] | None = None,
 ) -> bool:
     """Retry when the model defers reading an inspection report but runs no tool."""
     if current_attempt_had_code or current_attempt_had_error:
@@ -994,6 +1113,28 @@ def _should_retry_copepod_report_read_without_code(
     )
     if not wants_report_detail:
         return False
+
+    wants_column_list = any(
+        marker in user_lower
+        for marker in (
+            "colonne",
+            "columns",
+            "colonnes clés",
+            "colonnes cles",
+            "key columns",
+        )
+    )
+    if wants_column_list and known_columns:
+        assistant_lower = (assistant_text or "").lower()
+        grounded_columns = [
+            column
+            for column in _dedupe_keep_order(
+                [str(column).strip() for column in known_columns if str(column).strip()]
+            )
+            if column.lower() in assistant_lower
+        ]
+        if len(grounded_columns) < min(2, len(known_columns)):
+            return True
 
     assistant_lower = (assistant_text or "").lower()
     return any(
@@ -2291,6 +2432,17 @@ async def chat_endpoint(
                 user_input=messages[-1] if messages else {},
                 round_index=max(1, user_turns),
             )
+            runtime_logger = SessionRuntimeLogger(
+                logs_root=RUNTIME_LOGS_ROOT,
+                session_id=session_id,
+                session_key=session_key,
+                agent_type=agent_type,
+            )
+            runtime_logger.start_turn(
+                turn_index=max(1, user_turns),
+                user_message=last_user_message or "",
+            )
+            tracer.runtime_logger = runtime_logger
             try:
                 if tool_runs:
                     streamed_keys: set[str] = set()
@@ -2618,6 +2770,10 @@ async def chat_endpoint(
                     retry_attempts=retry_attempts if agent_type == "copepod" else 0,
                     elapsed_ms=summary["elapsed_ms"],
                 )
+                runtime_logger.finish_turn(
+                    status="ok" if not _had_error else "completed_with_error",
+                    duration_ms=summary["elapsed_ms"],
+                )
             except Exception as e:
                 logger.exception("Error in chat stream")
                 err_str = str(e)
@@ -2628,6 +2784,10 @@ async def chat_endpoint(
                 else:
                     user_msg = err_str
                 tracer.record_route_error(user_msg)
+                runtime_logger.finish_turn(
+                    status="error",
+                    duration_ms=0.0,
+                )
                 yield f"data: {json.dumps({'error': user_msg})}\n\n"
             finally:
                 tracer.close()

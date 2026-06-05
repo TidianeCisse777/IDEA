@@ -47,15 +47,30 @@ def _idea_observe_session_key(args, kwargs):
 
 def _idea_trace_tool_call(tool_name, args, kwargs, output=None, error=None, elapsed_ms=None):
     try:
-        from core.copepod_observability import trace_copepod_tool_call
+        from core.copepod_observability import (
+            record_copepod_tool_call_finish,
+            trace_copepod_tool_call,
+        )
         payload = {
             "args": [_idea_compact_value(arg) for arg in args],
             "kwargs": _idea_redact_mapping(kwargs),
         }
         result = {"error": str(error)} if error is not None else _idea_compact_value(output)
+        session_key = _idea_observe_session_key(args, kwargs)
+        record_copepod_tool_call_finish(
+            tool_name,
+            session_key=session_key,
+            input=payload,
+            output=None if error is not None else result,
+            error=error,
+            metadata={
+                "elapsed_ms": elapsed_ms,
+                "round": _idea_os.getenv("IDEA_RUNTIME_ROUND"),
+            },
+        )
         trace_copepod_tool_call(
             tool_name,
-            session_key=_idea_observe_session_key(args, kwargs),
+            session_key=session_key,
             input=payload,
             output=result,
             metadata={
@@ -75,6 +90,18 @@ def _idea_wrap_tool(fn, tool_name):
     def _wrapped(*args, **kwargs):
         start = _idea_time.perf_counter()
         try:
+            from core.copepod_observability import record_copepod_tool_call_start
+            record_copepod_tool_call_start(
+                tool_name,
+                session_key=_idea_observe_session_key(args, kwargs),
+                input={
+                    "args": [_idea_compact_value(arg) for arg in args],
+                    "kwargs": _idea_redact_mapping(kwargs),
+                },
+            )
+        except Exception:
+            pass
+        try:
             output = fn(*args, **kwargs)
             elapsed_ms = round((_idea_time.perf_counter() - start) * 1000, 2)
             _idea_trace_tool_call(tool_name, args, kwargs, output=output, elapsed_ms=elapsed_ms)
@@ -90,10 +117,15 @@ def _idea_wrap_tool(fn, tool_name):
 
 for _idea_tool_name in [
     "inspect_file",
+    "inspect_and_report",
     "infer_column_roles",
     "describe_column",
     "summarize_understanding",
+    "get_inspection_report",
+    "graph_readiness",
     "query_copepod_knowledge_base",
+    "list_available_sources",
+    "fetch_remote_source_dataset",
     "resolve_uvp_m5_m6_inputs",
     "calculate_uvp_m5_m6",
 ]:
