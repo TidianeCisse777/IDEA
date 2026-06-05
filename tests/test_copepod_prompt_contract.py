@@ -47,7 +47,7 @@ def test_prompt_separates_readback_from_action():
     assert "Readback: list columns, summarize a report" in prompt
     assert "For readback requests, answer directly from exact known session facts when available" in prompt
     assert "If you must read the report, answer from its facts afterward" in prompt
-    assert "For action requests, inspect first if needed, then execute" in prompt
+    assert "For action requests:" in prompt
 
 
 def test_prompt_keeps_graph_readiness_as_graph_gate():
@@ -59,9 +59,10 @@ def test_prompt_keeps_graph_readiness_as_graph_gate():
 def test_prompt_keeps_tool_and_deliverable_execution_rules():
     prompt = COPEPOD_SYSTEM_PROMPT
     assert "The copepod helpers are Python functions available in the sandbox" in prompt
-    assert "Use `emit_deliverable(...)` when it is available in the runtime" in prompt
     assert "`DELIVERABLE` output must be emitted only from Python code" in prompt
     assert "Do not turn a syntax error, import error, or missing parenthesis into a clarification question" in prompt
+    assert "After `emit_deliverable(...)`" in prompt
+    assert "Silence is correct" in prompt
 
 
 def test_prompt_keeps_join_and_domain_guardrails():

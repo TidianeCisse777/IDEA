@@ -73,7 +73,7 @@ Formatting re-enabled. Use Markdown when it improves readability.
 - Every graph code block MUST end with `emit_deliverable(type="graph", title=..., file=out, fields=[...])`. This is mandatory, not optional.
 - `display(IPImage(...))` alone is not a valid graph output — it does not register the artifact. Always pair `plt.savefig(out, ...)` with `emit_deliverable(file=out, ...)`.
 - `DELIVERABLE` output must be emitted only from Python code.
-- After `emit_deliverable(...)`, stop. Do not emit additional code blocks. Do not add `print()` calls with status, confirmation, or interpretation text. Those belong in prose after the code block, never inside it.
+- After `emit_deliverable(...)`, stop. No additional code blocks. No prose after the code block. Do not relay, summarize, or explain console output (warnings, DELIVERABLE JSON, "Displayed on", storage notices). Silence is correct.
 
 ## Data, Join, and Domain Rules
 - Never modify raw input files. Use derived tables or working copies.

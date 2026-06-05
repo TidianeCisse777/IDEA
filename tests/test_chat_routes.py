@@ -3174,3 +3174,311 @@ class TestSessionLock:
             f"Different sessions were serialised — lock leaks across keys: "
             f"first=({s1}, {e1}), second=({s2}, {e2})"
         )
+
+
+# ---------------------------------------------------------------------------
+# _measure_context_chars
+# ---------------------------------------------------------------------------
+
+class TestMeasureContextChars:
+    from routers.chat_routes import _measure_context_chars
+
+    def _call(self, chat_input=None, base_sys="", runtime_sys="", custom=""):
+        from routers.chat_routes import _measure_context_chars
+        return _measure_context_chars(
+            chat_input=chat_input or [],
+            base_system_message=base_sys,
+            runtime_system_message=runtime_sys,
+            custom_instructions=custom,
+        )
+
+    def test_empty_inputs_return_zero(self):
+        assert self._call() == 0
+
+    def test_counts_base_system_message(self):
+        result = self._call(base_sys="a" * 100)
+        assert result == 100
+
+    def test_counts_custom_instructions(self):
+        result = self._call(custom="b" * 200)
+        assert result == 200
+
+    def test_counts_runtime_system_message(self):
+        result = self._call(runtime_sys="c" * 50)
+        assert result == 50
+
+    def test_counts_chat_input_content(self):
+        chat_input = [
+            {"role": "user", "content": "hello"},       # 5 chars
+            {"role": "assistant", "content": "world"},  # 5 chars
+        ]
+        assert self._call(chat_input=chat_input) == 10
+
+    def test_all_components_summed(self):
+        chat_input = [{"role": "user", "content": "x" * 100}]
+        result = self._call(
+            chat_input=chat_input,
+            base_sys="a" * 1000,
+            runtime_sys="b" * 500,
+            custom="c" * 2000,
+        )
+        assert result == 100 + 1000 + 500 + 2000
+
+    def test_none_values_treated_as_empty(self):
+        assert self._call(base_sys=None, runtime_sys=None, custom=None) == 0
+
+    def test_non_dict_messages_skipped(self):
+        chat_input = [
+            {"role": "user", "content": "hello"},
+            "not a dict",
+            None,
+        ]
+        assert self._call(chat_input=chat_input) == 5
+
+    def test_missing_content_key_skipped(self):
+        chat_input = [{"role": "system"}, {"role": "user", "content": "hi"}]
+        assert self._call(chat_input=chat_input) == 2
+
+    def test_none_content_skipped(self):
+        chat_input = [{"role": "user", "content": None}]
+        assert self._call(chat_input=chat_input) == 0
+
+    def test_realistic_copepod_turn_order_of_magnitude(self):
+        """At turn 1, full copepod context should be in the 20k–60k char range."""
+        base_sys = "x" * 4000       # copepod prompt ~3-4k chars
+        custom = "x" * 12000        # tool signatures ~10-15k chars
+        runtime_sys = "x" * 2000   # working set note
+        history = [{"role": "user", "content": "x" * 500}]
+        result = self._call(
+            chat_input=history,
+            base_sys=base_sys,
+            runtime_sys=runtime_sys,
+            custom=custom,
+        )
+        assert 15_000 < result < 100_000
+
+
+# ---------------------------------------------------------------------------
+# _strip_old_base64_image_messages
+# ---------------------------------------------------------------------------
+
+class TestStripOldBase64ImageMessages:
+
+    def _call(self, messages, keep_last=1):
+        from routers.chat_routes import _strip_old_base64_image_messages
+        return _strip_old_base64_image_messages(messages, keep_last=keep_last)
+
+    def _b64_msg(self, content="iVBORw0Kfake"):
+        return {"role": "computer", "type": "image", "format": "base64.png", "content": content}
+
+    def _path_msg(self, path="/app/static/graph.png"):
+        return {"role": "computer", "type": "image", "format": "path", "content": path}
+
+    def _text_msg(self, content="hello"):
+        return {"role": "assistant", "type": "message", "content": content}
+
+    # --- comportement 1 : liste vide
+    def test_empty_list_returns_empty(self):
+        assert self._call([]) == []
+
+    # --- comportement 2 : une seule image base64 → gardée (keep_last=1)
+    def test_single_base64_image_kept_with_keep_last_1(self):
+        msg = self._b64_msg()
+        result = self._call([msg])
+        assert result == [msg]
+
+    # --- comportement 3 : deux images base64 → première supprimée, dernière gardée
+    def test_two_base64_images_keeps_only_last(self):
+        old = self._b64_msg("iVBORold")
+        new = self._b64_msg("iVBORnew")
+        result = self._call([old, new])
+        assert old not in result
+        assert new in result
+
+    # --- comportement 4 : les messages path ne sont jamais supprimés
+    def test_path_images_never_stripped(self):
+        path_msg = self._path_msg()
+        b64_old = self._b64_msg("iVBORold")
+        b64_new = self._b64_msg("iVBORnew")
+        result = self._call([path_msg, b64_old, b64_new])
+        assert path_msg in result
+
+    # --- comportement 5 : les messages non-image sont préservés
+    def test_non_image_messages_preserved(self):
+        text = self._text_msg()
+        b64_old = self._b64_msg("iVBORold")
+        b64_new = self._b64_msg("iVBORnew")
+        result = self._call([text, b64_old, b64_new])
+        assert text in result
+
+    # --- comportement 6 : keep_last=0 supprime toutes les base64
+    def test_keep_last_0_strips_all_base64(self):
+        b64 = self._b64_msg()
+        result = self._call([b64], keep_last=0)
+        assert b64 not in result
+
+    # --- comportement 7 : keep_last=2 garde les deux dernières
+    def test_keep_last_2_keeps_two_most_recent(self):
+        msgs = [self._b64_msg(f"iVBOR{i}") for i in range(4)]
+        result = self._call(msgs, keep_last=2)
+        assert msgs[0] not in result
+        assert msgs[1] not in result
+        assert msgs[2] in result
+        assert msgs[3] in result
+
+    # --- comportement 8 : content "data:image/..." est aussi reconnu comme base64
+    def test_data_url_content_treated_as_base64(self):
+        data_url_msg = {"role": "computer", "type": "image", "format": "base64.png",
+                        "content": "data:image/png;base64,abc123"}
+        result = self._call([data_url_msg], keep_last=0)
+        assert data_url_msg not in result
+
+    # --- comportement 9 : ordre préservé
+    def test_order_preserved(self):
+        text1 = self._text_msg("first")
+        b64 = self._b64_msg()
+        text2 = self._text_msg("last")
+        result = self._call([text1, b64, text2])
+        assert result.index(text1) < result.index(text2)
+
+    # --- comportement 10 : ne mute pas la liste originale
+    def test_does_not_mutate_original(self):
+        msgs = [self._b64_msg("old"), self._b64_msg("new")]
+        original_len = len(msgs)
+        self._call(msgs)
+        assert len(msgs) == original_len
+
+
+# ---------------------------------------------------------------------------
+# _truncate_after_emit_deliverable
+# ---------------------------------------------------------------------------
+
+class TestTruncateAfterEmitDeliverable:
+
+    def _call(self, code):
+        from routers.chat_routes import _truncate_after_emit_deliverable
+        return _truncate_after_emit_deliverable(code)
+
+    # Cycle 1 — tracer bullet : print après supprimé
+    def test_strips_print_after_single_line_emit(self):
+        code = 'emit_deliverable(type="graph", title="T")\nprint("done")'
+        result = self._call(code)
+        assert 'emit_deliverable' in result
+        assert 'print("done")' not in result
+
+    # Cycle 2 — pas de emit_deliverable → inchangé
+    def test_no_emit_deliverable_unchanged(self):
+        code = 'plt.savefig(out)\nprint("done")'
+        assert self._call(code) == code
+
+    # Cycle 3 — emit_deliverable multiligne
+    def test_multiline_emit_deliverable_strips_after(self):
+        code = (
+            'emit_deliverable(\n'
+            '    type="graph",\n'
+            '    title="T",\n'
+            '    file=out\n'
+            ')\n'
+            'print("trailing")\n'
+            'print("more")'
+        )
+        result = self._call(code)
+        assert 'print("trailing")' not in result
+        assert 'print("more")' not in result
+        assert 'emit_deliverable' in result
+
+    # Cycle 4 — rien après → no-op
+    def test_nothing_after_emit_is_noop(self):
+        code = 'emit_deliverable(type="graph", title="T", file=out)'
+        result = self._call(code)
+        assert 'emit_deliverable' in result
+        assert result.strip().endswith(')')
+
+    # Cycle 5 — code avant préservé
+    def test_code_before_emit_preserved(self):
+        code = 'plt.savefig(out)\nemit_deliverable(type="graph")\nprint("x")'
+        result = self._call(code)
+        assert 'plt.savefig(out)' in result
+        assert 'print("x")' not in result
+
+    # Cycle 6 — parenthèses dans string pas confondues
+    def test_parens_inside_string_not_confused(self):
+        code = 'emit_deliverable(type="graph", title="T(S)")\nprint("x")'
+        result = self._call(code)
+        assert 'print("x")' not in result
+        assert 'emit_deliverable' in result
+
+    # Cycle 7 — chaîne vide
+    def test_empty_string(self):
+        assert self._call('') == ''
+
+    # Cycle 8 — commentaires avec parens pas confondus
+    def test_comment_parens_not_confused(self):
+        code = (
+            'emit_deliverable(\n'
+            '    type="graph"  # champ (requis)\n'
+            ')\n'
+            'print("after")'
+        )
+        result = self._call(code)
+        assert 'print("after")' not in result
+
+
+class TestScrubConsoleNoise:
+    def _call(self, content: str) -> str:
+        from routers.chat_routes import _scrub_console_noise
+        return _scrub_console_noise(content)
+
+    def test_onnxruntime_line_removed(self):
+        content = "onnxruntime cpu id_info warning: Unknown CPU vendor\nsome real output"
+        result = self._call(content)
+        assert "onnxruntime" not in result
+        assert "some real output" in result
+
+    def test_deliverable_line_removed(self):
+        content = 'DELIVERABLE: {"type": "graph"}\nsome real output'
+        result = self._call(content)
+        assert "DELIVERABLE:" not in result
+        assert "some real output" in result
+
+    def test_displayed_on_user_line_removed(self):
+        content = "Displayed on the user's machine\ndata: 123"
+        result = self._call(content)
+        assert "Displayed on the user" not in result
+        assert "data: 123" in result
+
+    def test_chromadb_line_removed(self):
+        result = self._call("chromadb: Using embedded DuckDB\nreal output")
+        assert "chromadb" not in result
+        assert "real output" in result
+
+    def test_userwarning_line_removed(self):
+        result = self._call("UserWarning: something deprecated\nreal output")
+        assert "UserWarning" not in result
+
+    def test_deprecationwarning_line_removed(self):
+        result = self._call("DeprecationWarning: use X instead\nreal output")
+        assert "DeprecationWarning" not in result
+
+    def test_tqdm_line_removed(self):
+        result = self._call("tqdm: 100%|████| 10/10\nreal output")
+        assert "tqdm" not in result
+
+    def test_no_noise_content_unchanged(self):
+        content = "shape: (1004, 16)\ncolumns: [a, b, c]"
+        result = self._call(content)
+        assert result == content
+
+    def test_empty_string_unchanged(self):
+        assert self._call("") == ""
+
+    def test_all_noise_returns_empty(self):
+        content = "onnxruntime warning\nDELIVERABLE: {}\ntqdm: 0%"
+        result = self._call(content)
+        assert result.strip() == ""
+
+    def test_indented_noise_line_removed(self):
+        content = "  onnxruntime cpu warning\nreal output"
+        result = self._call(content)
+        assert "onnxruntime" not in result
+        assert "real output" in result

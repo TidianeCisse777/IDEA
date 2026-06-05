@@ -95,6 +95,138 @@ def _safe_message_get(message: Any, key: str, default: Any = None) -> Any:
         return default
 
 
+def _truncate_after_emit_deliverable(code: str) -> str:
+    """Strip everything after the closing ) of emit_deliverable(...).
+
+    Walks the code char-by-char to count parentheses correctly, skipping
+    content inside strings and comments so inner parens don't confuse the
+    depth counter. Returns code unchanged when emit_deliverable is absent.
+    """
+    marker = "emit_deliverable("
+    start = code.find(marker)
+    if start == -1:
+        return code
+
+    # Position of the opening '(' of the call
+    paren_start = start + len(marker) - 1
+    depth = 0
+    i = paren_start
+    in_single = False   # inside '...'
+    in_double = False   # inside "..."
+    in_triple_s = False # inside '''...'''
+    in_triple_d = False # inside """..."""
+
+    while i < len(code):
+        ch = code[i]
+
+        # --- string tracking (triple before single to avoid mis-detection) ---
+        if not in_double and not in_triple_d:
+            if code[i:i+3] == "'''" and not in_single:
+                in_triple_s = not in_triple_s
+                i += 3
+                continue
+            if ch == "'" and not in_triple_s:
+                in_single = not in_single
+                i += 1
+                continue
+
+        if not in_single and not in_triple_s:
+            if code[i:i+3] == '"""' and not in_double:
+                in_triple_d = not in_triple_d
+                i += 3
+                continue
+            if ch == '"' and not in_triple_d:
+                in_double = not in_double
+                i += 1
+                continue
+
+        in_string = in_single or in_double or in_triple_s or in_triple_d
+
+        # --- comment: skip to end of line (only outside strings) ---
+        if ch == "#" and not in_string:
+            while i < len(code) and code[i] != "\n":
+                i += 1
+            continue
+
+        # --- paren counting (only outside strings/comments) ---
+        if not in_string:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return code[:i + 1]
+        i += 1
+
+    return code  # malformed / unmatched — return as-is
+
+
+def _is_base64_image_message(msg: dict[str, Any]) -> bool:
+    """Return True for computer/image messages carrying base64 payload."""
+    if not isinstance(msg, dict):
+        return False
+    if _safe_message_get(msg, "role") != "computer":
+        return False
+    if _safe_message_get(msg, "type") != "image":
+        return False
+    fmt = str(_safe_message_get(msg, "format") or "")
+    if fmt.startswith("base64."):
+        return True
+    content = str(_safe_message_get(msg, "content") or "")
+    return content.startswith("data:image/") or content.startswith("iVBORw")
+
+
+def _strip_old_base64_image_messages(
+    messages: list[dict[str, Any]],
+    keep_last: int = 1,
+) -> list[dict[str, Any]]:
+    """Return messages with old base64 images removed, keeping the last keep_last ones.
+
+    Path-based images and all non-image messages are always preserved.
+    This prevents base64 graph blobs from accumulating across turns while
+    still letting the model reference the most recent graph for iteration.
+    """
+    if keep_last < 0:
+        keep_last = 0
+    b64_indices = [i for i, m in enumerate(messages) if _is_base64_image_message(m)]
+    strip_indices = set(b64_indices[: max(0, len(b64_indices) - keep_last)])
+    return [m for i, m in enumerate(messages) if i not in strip_indices]
+
+
+_CONSOLE_NOISE_PREFIXES = (
+    "onnxruntime",
+    "UserWarning",
+    "DeprecationWarning",
+    "tqdm",
+    "chromadb",
+    "Displayed on the user",
+    "DELIVERABLE:",
+)
+
+
+def _scrub_console_noise(content: str) -> str:
+    """Remove internal noise lines from console output before persisting to session store."""
+    lines = content.splitlines(keepends=True)
+    cleaned = [l for l in lines if not any(l.lstrip().startswith(p) for p in _CONSOLE_NOISE_PREFIXES)]
+    return "".join(cleaned)
+
+
+def _measure_context_chars(
+    *,
+    chat_input: list[dict[str, Any]],
+    base_system_message: str,
+    runtime_system_message: str,
+    custom_instructions: str,
+) -> int:
+    """Return total char count of everything sent to the LLM for one turn."""
+    return (
+        sum(len(str(m.get("content") or "")) for m in chat_input if isinstance(m, dict))
+        + len(base_system_message or "")
+        + len(custom_instructions or "")
+        + len(runtime_system_message or "")
+    )
+
+
 def _build_copepod_inspect_then_code_note(
     *,
     messages: list[dict[str, Any]],
@@ -2704,11 +2836,12 @@ async def chat_endpoint(
                             )
                         )
 
-                        _context_chars = sum(
-                            len(str(m.get("content") or ""))
-                            for m in chat_input
-                            if isinstance(m, dict)
-                        ) + len(base_system_message or "")
+                        _context_chars = _measure_context_chars(
+                            chat_input=chat_input,
+                            base_system_message=base_system_message,
+                            runtime_system_message=interpreter.system_message or "",
+                            custom_instructions=getattr(interpreter, "custom_instructions", "") or "",
+                        )
 
                         for chunk in _yield_chat_stream(chat_input):
                             yield chunk
@@ -2887,6 +3020,30 @@ async def chat_endpoint(
                         and isinstance(_safe_message_get(m, "content"), str)
                         and str(_safe_message_get(m, "content", "")).lstrip().startswith("to=execute")
                     )
+                ]
+                clean_msgs = [
+                    {**m, "content": _truncate_after_emit_deliverable(str(m["content"]))}
+                    if (
+                        isinstance(m, dict)
+                        and _safe_message_get(m, "role") == "assistant"
+                        and _safe_message_get(m, "type") == "code"
+                        and isinstance(m.get("content"), str)
+                    )
+                    else m
+                    for m in clean_msgs
+                ]
+                clean_msgs = _strip_old_base64_image_messages(clean_msgs, keep_last=1)
+                clean_msgs = [
+                    {**m, "content": _scrub_console_noise(str(m["content"]))}
+                    if (
+                        isinstance(m, dict)
+                        and _safe_message_get(m, "role") == "computer"
+                        and _safe_message_get(m, "type") == "console"
+                        and _safe_message_get(m, "format") == "output"
+                        and isinstance(m.get("content"), str)
+                    )
+                    else m
+                    for m in clean_msgs
                 ]
                 session_store.write_messages(session_key, clean_msgs)
 
