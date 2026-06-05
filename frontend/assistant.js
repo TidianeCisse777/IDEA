@@ -1519,6 +1519,7 @@ function getMessageDataForExport(messageId) {
 
 function prepareChatCloneForExport() {
     const chatClone = chatDisplay.cloneNode(true);
+    chatClone.querySelectorAll('.message-actions').forEach(element => element.remove());
     const messageElements = Array.from(chatClone.querySelectorAll('.message'));
     const stdoutAssociations = buildStdoutAssociationsForExport(messageElements);
     
@@ -1526,6 +1527,7 @@ function prepareChatCloneForExport() {
         const messageId = element.getAttribute('data-id');
         const messageData = getMessageDataForExport(messageId);
         if (!messageData) {
+            element.remove();
             return;
         }
         

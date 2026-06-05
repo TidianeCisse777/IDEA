@@ -16,4 +16,18 @@ describe('assistant message persistence', () => {
             /const validTypes = \[[^\]]*['"]deliverable['"][^\]]*\]/
         );
     });
+
+    test('export clone strips message action toolbars and transient DOM-only messages', () => {
+        const source = fs.readFileSync(
+            path.join(__dirname, '../assistant.js'),
+            'utf8'
+        );
+
+        expect(source).toMatch(
+            /chatClone\.querySelectorAll\('\.message-actions'\)\.forEach\(element => element\.remove\(\)\)/
+        );
+        expect(source).toMatch(
+            /if \(!messageData\) \{\s*element\.remove\(\);\s*return;\s*\}/
+        );
+    });
 });

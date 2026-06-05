@@ -6,19 +6,9 @@ import re
 _PUNCTUATION_SPACE_RE = re.compile(r"([,;:!?])(?=[A-Za-zÀ-ÿ])")
 _MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
 _THREE_PLUS_BLANK_LINES_RE = re.compile(r"\n{3,}")
-_SOURCE_TYPE_JOIN_RE = re.compile(r"\bsource_type([A-Za-z][A-Za-z0-9_]*)(?=;|,|\.|\s|$)")
-_COMMON_TECH_TOKEN_RE = re.compile(
-    r"\b(entre|et|avec|sur|pour|via)"
-    r"(profile_join_keys|safe_for_join_deliverable|[A-Z][A-Z0-9_]{2,}|[a-z][a-z0-9_]*_[a-z0-9_]+)"
-    r"\b"
-)
-_ENCODING_JOIN_RE = re.compile(r"\ben(Windows-\d+|utf-8|UTF-8|cp\d+|latin1|iso8859-\d+)\b")
-_COLON_TECH_LIST_RE = re.compile(
-    r"(: )(`?[A-Za-z][A-Za-z0-9_]*(?:`?\s*,\s*`?[A-Za-z][A-Za-z0-9_]*)+`?)(?=\.|;|$)"
-)
-_FILENAME_RE = re.compile(r"\b(?P<filename>[\w()’’+-][\w .()’’+-]*\.(?:csv|tsv|txt))\b", re.IGNORECASE)
+_FILENAME_RE = re.compile(r"\b(?P<filename>[\w()''+-][\w .()''+-]*\.(?:csv|tsv|txt))\b", re.IGNORECASE)
 _DIMENSIONS_RE = re.compile(
-    r"(?P<rows>[\d\s\u202f]+)\s*(?:lignes?|rows?)?\s*×\s*(?P<cols>\d+)\s*(?:colonnes?|cols?)?",
+    r"(?P<rows>[\d\s ]+)\s*(?:lignes?|rows?)?\s*×\s*(?P<cols>\d+)\s*(?:colonnes?|cols?)?",
     re.IGNORECASE,
 )
 _SOURCE_RE = re.compile(
@@ -41,35 +31,57 @@ _UNCLEAR_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Universal glue-repair patterns.
+#
+# Pattern A — backtick span fused directly to a preceding word char.
+#   Detected during _save() so the space is injected before protection removes visibility.
+#
+# Pattern B — known domain identifier (snake_case) fused to a preceding word without backticks.
+#   Uses a domain prefix whitelist to anchor at a real token boundary rather than greedily
+#   matching from the leftmost letter (which would split inside French words).
+#
+# Pattern C — encoding token (utf-8, Windows-1252, …) fused to a preceding letter.
+_BT_SPAN_RE = re.compile(r"`[^`\n]+`")
+_GLUED_IDENTIFIER_RE = re.compile(
+    r"(?<=[a-zA-ZÀ-ÿ])"
+    r"((?:obj|ctd|uvp|acq|lat|lon|sal|vel|id"
+    r"|temp|dens|pres|depth|sigma|match|total|valid|count|cast|flow|date|time|file"
+    r"|sample|source|profile|station|analysis|project|nearest|interval)"
+    r"(?:_[a-zA-Z0-9_.]+)+)",
+)
+_GLUED_ENCODING_RE = re.compile(
+    r"(?<=[a-zA-ZÀ-ÿ])(Windows-\d+|utf-8|UTF-8|cp\d+|latin1|iso8859-\d+)",
+)
+
+
+def _fix_glued_identifiers(line: str) -> str:
+    """Insert a space before any backtick span or known identifier fused directly to a preceding word."""
+    store: list[str] = []
+
+    def _save(m: re.Match[str]) -> str:
+        idx = len(store)
+        store.append(m.group(0))
+        start = m.start()
+        # Pattern A: span directly preceded by a word char → inject space before the placeholder.
+        space = " " if start > 0 and line[start - 1].isalnum() else ""
+        return f"{space}\x00BT{idx}\x00"
+
+    protected = _BT_SPAN_RE.sub(_save, line)
+    # Pattern B: known domain identifier glued to preceding word
+    protected = _GLUED_IDENTIFIER_RE.sub(lambda m: f" `{m.group(1)}`", protected)
+    # Pattern C: encoding token glued to preceding word
+    protected = _GLUED_ENCODING_RE.sub(lambda m: f" `{m.group(1)}`", protected)
+
+    def _restore(m: re.Match[str]) -> str:
+        return store[int(m.group(1))]
+
+    return re.sub(r"\x00BT(\d+)\x00", _restore, protected)
+
 
 def _wrap_technical_token(value: str) -> str:
     if value.startswith("`") and value.endswith("`"):
         return value
     return f"`{value.strip('`')}`"
-
-
-def _wrap_technical_list(match: re.Match[str]) -> str:
-    prefix, raw_items = match.groups()
-    items = [item.strip().strip("`") for item in raw_items.split(",")]
-    return prefix + ", ".join(_wrap_technical_token(item) for item in items if item)
-
-
-def _repair_copepod_plan_spacing(line: str) -> str:
-    """Repair common LLM spacing misses around copepod technical identifiers."""
-    line = _SOURCE_TYPE_JOIN_RE.sub(
-        lambda m: f"source_type {_wrap_technical_token(m.group(1))}",
-        line,
-    )
-    line = _COMMON_TECH_TOKEN_RE.sub(
-        lambda m: f"{m.group(1)} {_wrap_technical_token(m.group(2))}",
-        line,
-    )
-    line = _ENCODING_JOIN_RE.sub(
-        lambda m: f"en {_wrap_technical_token(m.group(1))}",
-        line,
-    )
-    line = _COLON_TECH_LIST_RE.sub(_wrap_technical_list, line)
-    return line
 
 
 def _format_compact_inspection_summary(text: str) -> str | None:
@@ -93,7 +105,7 @@ def _format_compact_inspection_summary(text: str) -> str | None:
     encoding_match = _ENCODING_RE.search(normalized)
     columns_match = _INSPECTION_COLUMNS_RE.search(normalized)
     unclear_match = _UNCLEAR_RE.search(normalized)
-    no_blocker = bool(re.search(r"aucune\s+erreur\s+bloquante|pas\s+d[’']erreur\s+bloquante", normalized, re.IGNORECASE))
+    no_blocker = bool(re.search(r"aucune\s+erreur\s+bloquante|pas\s+d['’]erreur\s+bloquante", normalized, re.IGNORECASE))
 
     rows = re.sub(r"\s+", "", dimensions_match.group("rows"))
     filename = re.sub(
@@ -149,8 +161,8 @@ def format_assistant_text(text: str) -> str:
 
     The formatter is intentionally conservative: it trims trailing whitespace,
     collapses repeated blank lines, removes exact consecutive duplicate prose
-    lines, and restores obvious punctuation-spacing misses such as
-    ``bonjour,monde`` → ``bonjour, monde``.
+    lines, restores obvious punctuation-spacing misses, and repairs identifiers
+    fused directly to preceding words.
     """
     if not isinstance(text, str):
         return ""
@@ -182,7 +194,7 @@ def format_assistant_text(text: str) -> str:
             continue
 
         normalized = _PUNCTUATION_SPACE_RE.sub(r"\1 ", line)
-        normalized = _repair_copepod_plan_spacing(normalized)
+        normalized = _fix_glued_identifiers(normalized)
         normalized = _MULTI_SPACE_RE.sub(" ", normalized).strip()
 
         if normalized == previous_text_line:

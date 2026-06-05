@@ -263,6 +263,7 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
     backend_closing_emitted = False  # True after %%CLOSING%% — suppress subsequent LLM messages
     deliverable_emitted = False  # True after a structured card — suppress redundant prose
     inspection_report_emitted = False  # True after a routed inspection report — report owns the turn
+    last_code_content = ""        # accumulated content of the last assistant code block
 
     def _is_fixed_upload_question(text: str) -> bool:
         return text.strip() == "Quel graphique souhaitez-vous ?"
@@ -316,8 +317,12 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
         """
         nonlocal console_buf_content, in_console_msg, console_fmt, backend_closing_emitted
         nonlocal deliverable_emitted
-        nonlocal inspection_report_emitted
+        nonlocal inspection_report_emitted, last_code_content
         buf = console_buf_content
+        # Only suppress subsequent LLM text when the report was produced by
+        # inspect_and_report (initial inspection, report IS the answer).
+        # get_inspection_report is a silent read — the LLM must still respond.
+        _report_owns_turn = "inspect_and_report" in last_code_content
         if buf and "# RAPPORT D'INSPECTION" in buf:
             # Split on every RAPPORT header so each file gets its own bubble.
             parts = console_buf_content.split("# RAPPORT D'INSPECTION")
@@ -334,7 +339,8 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                     yield {"start": True, "end": True, "role": "assistant",
                            "type": "message",
                            "content": "# RAPPORT D'INSPECTION" + rapport_part}
-                    inspection_report_emitted = True
+                    if _report_owns_turn:
+                        inspection_report_emitted = True
                     if "%%CLOSING%%" in rest:
                         summary_part, closing_part = rest.split("%%CLOSING%%", 1)
                         summary_text = summary_part.strip()
@@ -355,7 +361,8 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                     yield {"start": True, "end": True, "role": "assistant",
                            "type": "message",
                            "content": report_text}
-                    inspection_report_emitted = True
+                    if _report_owns_turn:
+                        inspection_report_emitted = True
                     compact_summary = _compact_inspection_summary_from_report(report_text)
                     if compact_summary:
                         yield {"start": True, "end": True, "role": "assistant",
@@ -474,6 +481,14 @@ def chat_stream_events(interpreter_chunks: Iterable[Any]) -> Iterator[Any]:
                 yield from _flush_assistant_buf()
             if in_console_msg:
                 yield from _emit_console_buf()
+
+            # Track code content so _emit_console_buf can tell inspect_and_report
+            # (report owns the turn) from get_inspection_report (silent read, LLM must respond).
+            if role == "assistant" and ctype == "code":
+                if is_start:
+                    last_code_content = content
+                elif not is_start:
+                    last_code_content += content
 
             # Auto-display PNG saved via plt.savefig when model prints "Saved figure: /path"
             if role == "computer" and ctype == "console" and is_end is False and not is_start:

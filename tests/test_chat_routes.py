@@ -950,6 +950,154 @@ class TestCopepodSessionResourcesNote:
 
         assert _session_resource_message_from_stream_event(event) is None
 
+    def test_column_injection_appears_when_session_key_and_inspection_data_present(self, client):
+        """Column names from inspection data are injected into the note for graph_readiness."""
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.store_inspection_data(session_key, "sample.csv", {
+            "columns": [
+                {"name": "sample_id"},
+                {"name": "object_depth"},
+                {"name": "fre_area"},
+            ]
+        })
+
+        note = _build_copepod_session_resources_note(
+            [
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": (
+                        "Files uploaded in this message:\n"
+                        "- sample.csv (text/csv) | relative path: sample.csv\n"
+                        "Use these paths when referencing the uploaded files."
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n\n"
+                        "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                        "- **format** : `csv`  •  **n_rows** : `100`  •  **n_columns** : `3`\n"
+                        "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+                    ),
+                },
+            ],
+            session_key=session_key,
+            user_id="u1",
+            session_id="s1",
+        )
+
+        with patch("routers.chat_routes.session_store", store):
+            note = _build_copepod_session_resources_note(
+                [
+                    {
+                        "role": "user",
+                        "type": "message",
+                        "content": (
+                            "Files uploaded in this message:\n"
+                            "- sample.csv (text/csv) | relative path: sample.csv\n"
+                            "Use these paths when referencing the uploaded files."
+                        ),
+                    },
+                    {
+                        "role": "assistant",
+                        "type": "message",
+                        "content": (
+                            "# RAPPORT D'INSPECTION\n\n"
+                            "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                            "- **format** : `csv`  •  **n_rows** : `100`  •  **n_columns** : `3`\n"
+                            "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+                        ),
+                    },
+                ],
+                session_key=session_key,
+                user_id="u1",
+                session_id="s1",
+            )
+
+        assert note is not None
+        assert "Inspected file columns" in note
+        assert "sample.csv" in note
+        assert "sample_id" in note
+        assert "object_depth" in note
+        assert "fre_area" in note
+
+    def test_column_injection_does_not_leak_source_type(self, client):
+        """Source type must never appear in the note — regression guard."""
+        tc, store = client
+        session_key = "u1:s1:copepod"
+        store.store_inspection_data(session_key, "sample.csv", {
+            "columns": [{"name": "col_a"}, {"name": "col_b"}],
+            "source_type_guess": "likely_neolabs_taxon",
+            "n_rows": 500,
+        })
+
+        with patch("routers.chat_routes.session_store", store):
+            note = _build_copepod_session_resources_note(
+                [
+                    {
+                        "role": "user",
+                        "type": "message",
+                        "content": (
+                            "Files uploaded in this message:\n"
+                            "- sample.csv (text/csv) | relative path: sample.csv\n"
+                            "Use these paths when referencing the uploaded files."
+                        ),
+                    },
+                    {
+                        "role": "assistant",
+                        "type": "message",
+                        "content": (
+                            "# RAPPORT D'INSPECTION\n\n"
+                            "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                            "- **source_type_guess** : `likely_neolabs_taxon` (confidence: `high`)\n"
+                        ),
+                    },
+                ],
+                session_key=session_key,
+                user_id="u1",
+                session_id="s1",
+            )
+
+        assert note is not None
+        assert "col_a" in note
+        assert "col_b" in note
+        assert "likely_neolabs_taxon" not in note
+        assert "500" not in note
+
+    def test_column_injection_absent_without_session_key(self):
+        """Without session_key the store is not queried — no columns injected."""
+        note = _build_copepod_session_resources_note(
+            [
+                {
+                    "role": "user",
+                    "type": "message",
+                    "content": (
+                        "Files uploaded in this message:\n"
+                        "- sample.csv (text/csv) | relative path: sample.csv\n"
+                        "Use these paths when referencing the uploaded files."
+                    ),
+                },
+                {
+                    "role": "assistant",
+                    "type": "message",
+                    "content": (
+                        "# RAPPORT D'INSPECTION\n\n"
+                        "- **file_path** : `/app/static/u1/s1/uploads/sample.csv`\n"
+                        "- **source_type_guess** : `likely_neolabs_taxon`\n"
+                    ),
+                },
+            ],
+            user_id="u1",
+            session_id="s1",
+            # no session_key
+        )
+
+        assert note is not None
+        assert "Inspected file columns" not in note
+
 
 # ---------------------------------------------------------------------------
 # Helper: _scrub_inspection_report_in_content / _scrub_inspection_reports_for_llm

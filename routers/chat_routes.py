@@ -605,14 +605,30 @@ def _build_copepod_session_resources_note(
     if active_state_files:
         lines.extend(["", "Pending files requiring immediate `inspect_and_report`:"])
         lines.extend(f"- {item}" for item in active_state_files)
-    # Note: latest_inspection_by_file is kept in the persisted working_set state
-    # (used by skip-inspection dedup at the data layer) but intentionally NOT
-    # rendered into the prompt. The LLM was paraphrasing the compact summary
-    # ("filename | source | shape") into French prose ("X est déjà inspecté,
-    # source détectée Y, N × M") and leaking it into user-visible responses.
-    # The rendered "Files already inspected in this session" section below is
-    # sufficient for the LLM to know what to skip.
-    _ = inspection_map  # state-only, intentionally not rendered
+    # Render column lists for inspected files so the model can call graph_readiness
+    # without needing to re-read the inspection report.  We intentionally skip
+    # source type and shape (previously caused the LLM to paraphrase working-set
+    # internals into user-visible prose).  Column names are tool-call inputs, not
+    # narrative content.
+    if inspection_map and session_key:
+        col_lines: list[str] = []
+        for label in list(inspection_map.keys())[:5]:
+            fname = label.split(" | ")[0].strip()
+            try:
+                data = session_store.read_inspection_data(session_key, fname)
+                if data and isinstance(data, dict):
+                    col_names = [
+                        str(c.get("name", ""))
+                        for c in (data.get("columns") or [])
+                        if isinstance(c, dict) and c.get("name")
+                    ][:50]
+                    if col_names:
+                        col_lines.append(f"- {fname} : {', '.join(col_names)}")
+            except Exception:
+                pass
+        if col_lines:
+            lines.extend(["", "Inspected file columns (use in graph_readiness — do not narrate to user):"])
+            lines.extend(col_lines)
 
     if current_message_files:
         lines.extend(["", "Files uploaded in this message (inspect these new filenames only):"])

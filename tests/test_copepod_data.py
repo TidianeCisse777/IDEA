@@ -449,6 +449,39 @@ class TestGraphReadinessEnrichedNeoLabs:
         assert meta_by_col["amundsen_temperature_degC_nearest"]["missing_rate"] < 1.0
         assert meta_by_col["amundsen_temperature_degC_nearest"]["sample_values"] != []
 
+    def test_neolabs_enriched_ctd_recovers_structured_report_when_markdown_string_is_passed(self, tools):
+        inspected = tools["inspect_file"](str(NEOLABS_ENRICHED_CTD))
+
+        from core.session_store import session_store
+
+        session_key = "test-graph-readiness-neolabs-string-fallback"
+        filename = NEOLABS_ENRICHED_CTD.name
+        session_store.store_inspection_data(session_key, filename, inspected)
+
+        os.environ["IDEA_RUNTIME_SESSION_KEY"] = session_key
+        try:
+            readiness = tools["graph_readiness"](
+                file_report="# RAPPORT D'INSPECTION\nstored elsewhere",
+                filename=filename,
+                required_columns=[
+                    "Total abundance (ind./m3 depth vol)",
+                    "amundsen_temperature_degC_nearest",
+                ],
+                user_request=(
+                    "Fais un graphique de Total abundance (ind./m3 depth vol) "
+                    "en fonction de amundsen_temperature_degC_nearest"
+                ),
+                graph_type="scatter",
+                validation_status="confirmed",
+            )
+        finally:
+            os.environ.pop("IDEA_RUNTIME_SESSION_KEY", None)
+            session_store.evict(session_key)
+
+        assert readiness["status"] == "ready"
+        assert readiness["missing_required_columns"] == []
+        assert "amundsen_temperature_degC_nearest" in readiness["available_columns"]
+
 
 # ── format_inspect_report ─────────────────────────────────────────────────────
 

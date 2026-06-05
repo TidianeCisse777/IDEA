@@ -902,11 +902,6 @@ function updateMessageContent(id, content) {
 
             const { text: shielded, store } = protectMath(raw);
 
-            if (!hasBalancedMath(raw)) {
-                contentDiv.textContent = raw;
-                return;
-            }
-
             const parsedMarkdown = marked.parse(shielded);
             const htmlWithMath = restoreMath(parsedMarkdown, store);
             contentDiv.innerHTML = DOMPurify.sanitize(htmlWithMath);
@@ -920,7 +915,11 @@ function updateMessageContent(id, content) {
             prismHighlightUnder(contentDiv);
             _upgradeCsvLinks(contentDiv);
 
-            const shouldTypeset = (message.isComplete !== false) && hasMathDelimiters(raw);
+            // Only run MathJax when math delimiters are balanced — avoids
+            // garbled rendering from a stray $$ or \( in non-math content.
+            const shouldTypeset = (message.isComplete !== false)
+                && hasMathDelimiters(raw)
+                && hasBalancedMath(raw);
             if (shouldTypeset && !message.__mathTypeset) {
                 message.__mathTypeset = true;
                 typeset(contentDiv);

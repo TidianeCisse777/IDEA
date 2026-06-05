@@ -703,10 +703,19 @@ def format_inspect_report(file_report, column_definitions=None):
             return "Taxonomie"
         if any(token in normalized for token in ("date", "time", "timestamp", "year", "month", "day", "hour", "minute", "second")):
             return "Dates / temps"
-        if any(token in normalized for token in ("id", "name", "contract", "cast", "sample", "analysis", "station", "deployment", "file", "project")):
-            return "Identifiants"
-        if any(token in normalized for token in ("depth", "vol", "mass", "size", "count", "abundance", "length", "width", "temperature", "salinity", "flow", "mesh", "fraction")):
+        # Mesures BEFORE Identifiants: prevents "sample" inside a measurement name
+        # (e.g. amundsen_fluorescence_ug_l_max_sample_interval) from landing in Identifiants.
+        # Short ERDDAP codes (ntra, flor, oxym) excluded — covered by full words and ambiguous as substrings.
+        if any(token in normalized for token in (
+            "depth", "vol", "mass", "size", "count", "abundance", "length", "width",
+            "temperature", "salinity", "flow", "mesh", "fraction",
+            "fluorescence", "oxygen", "nitrate", "sigma", "density", "pressure",
+            "nearest", "interval",
+        )):
             return "Mesures"
+        # "sample" removed — covered by "id" for SAMPLE_ID / SAMPLING_NET_ID.
+        if any(token in normalized for token in ("id", "name", "contract", "cast", "analysis", "station", "deployment", "file", "project")):
+            return "Identifiants"
         return "Contexte / autres"
 
     def _render_definition_card(column_name, definition):
@@ -1449,6 +1458,11 @@ def graph_readiness(
     clarification questions instead of letting the model draw an approximate
     graph.
     """
+    # If the caller passed the markdown string from get_inspection_report() instead of
+    # the structured dict, discard it — the structured report is fetched from session below.
+    if isinstance(file_report, str):
+        file_report = None
+
     if not file_report and filename:
         try:
             import os as _osgr
