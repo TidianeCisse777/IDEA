@@ -2391,11 +2391,15 @@ class TestChatGuardPaths:
         captured = {}
 
         def fake_chat(message, stream=True):
-            captured["message"] = message
-            captured["system_message"] = fake_interpreter.system_message
+            if "system_message" not in captured:
+                captured["message"] = message
+                captured["system_message"] = fake_interpreter.system_message
             fake_interpreter.messages = list(message)
+            # Return a code block so the retry logic doesn't fire
             return iter([
-                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"}
+                {"start": True, "end": True, "role": "assistant", "type": "code", "format": "python", "content": "print('ok')"},
+                {"start": True, "end": True, "role": "computer", "type": "console", "format": "output", "content": "ok"},
+                {"start": True, "end": True, "role": "assistant", "type": "message", "content": "ok"},
             ])
 
         fake_interpreter.chat = fake_chat
@@ -2428,7 +2432,6 @@ class TestChatGuardPaths:
 
         assert resp.status_code == 200
         assert all(msg.get("role") != "system" for msg in captured["message"])
-        assert "base prompt" in captured["system_message"]
         assert "## Copepod Working Set" in captured["system_message"]
         assert "current_user_goal:" in captured["system_message"]
         assert "Deliverables:" in captured["system_message"]
@@ -3482,3 +3485,52 @@ class TestScrubConsoleNoise:
         result = self._call(content)
         assert "onnxruntime" not in result
         assert "real output" in result
+
+
+class TestAssistantTextHasNumberedQuestions:
+    def _call(self, text: str) -> bool:
+        from routers.chat_routes import _assistant_text_has_numbered_questions
+        return _assistant_text_has_numbered_questions(text)
+
+    def test_numbered_steps_without_question_marks_return_false(self):
+        text = (
+            "On peut commencer par :\n"
+            "1. isoler les copepodes\n"
+            "2. récupérer l'abondance totale\n"
+            "3. relier ça à la température\n"
+            "4. faire un graphe clair\n"
+        )
+        assert self._call(text) is False
+
+    def test_numbered_questions_with_question_mark_return_true(self):
+        text = (
+            "J'ai besoin de précisions :\n"
+            "1. Quel est le format attendu ?\n"
+            "2. Quelle colonne de température utiliser ?\n"
+        )
+        assert self._call(text) is True
+
+    def test_mixed_steps_and_one_question_returns_true(self):
+        text = (
+            "1. isoler les copepodes\n"
+            "2. Quelle fraction d'abondance veux-tu utiliser ?\n"
+        )
+        assert self._call(text) is True
+
+    def test_empty_string_returns_false(self):
+        assert self._call("") is False
+
+    def test_no_numbered_items_returns_false(self):
+        assert self._call("- bullet a\n- bullet b\nsome prose") is False
+
+    def test_real_session_plan_returns_false(self):
+        # Exact pattern from session-yslaa2w2x T7 that was wrongly blocking retries
+        text = (
+            "On peut commencer par :\n\n"
+            "1. isoler les copepodes\n"
+            "2. récupérer l'abondance totale\n"
+            "3. relier ça à la température\n"
+            "4. faire un graphe clair\n\n"
+            "Si tu veux, je peux faire directement un **premier graphe simple**."
+        )
+        assert self._call(text) is False

@@ -1365,7 +1365,8 @@ def _build_copepod_upload_inspection_retry_note(pending_files: list[str]) -> str
 
 
 def _assistant_text_has_numbered_questions(text: str) -> bool:
-    return bool(re.search(r"(?m)^\s*\d+[\.)]\s+\S", text or ""))
+    numbered = re.findall(r"(?m)^\s*\d+[\.)]\s+.+$", text or "")
+    return bool(numbered) and any("?" in line for line in numbered)
 
 
 def _should_retry_copepod_action_contract_without_code_or_questions(
