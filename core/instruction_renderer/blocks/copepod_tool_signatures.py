@@ -6,14 +6,14 @@ def _render(ctx: dict) -> str:
     session_id = ctx["session_id"]
     return f"""## Copepod Runtime Tools
 
-**HOW TO CALL THESE.** Every helper listed below is a Python function available in the sandbox. Call it directly from Python code — never as a standalone tool. For example:
+**HOW TO CALL THESE.** Every helper listed below is a Python function already injected into the sandbox namespace. Call it directly — no import needed, no module to reference.
 
 ```
 report = inspect_file("/app/static/.../file.tsv")
 print(report)
 ```
 
-Calling `inspect_file` (or any helper below) outside Python code will fail.
+**NEVER write `import`, `from ... import`, or any module reference to access these functions.** There is no `copepod_runtime` module, no `copepod_helpers` module, no `copepod_tools` module, no package to import. Any `import` statement targeting these helpers will raise `ModuleNotFoundError`. The functions exist in the namespace already — just call them directly.
 
 ### File exploration
 - `inspect_and_report(file_paths, session_id=None)` — atomic inspection workflow for uploaded files. Use this as the default first-pass inspection for any new upload or batch of uploads. It runs `inspect_file`, `collect_column_definitions`, and `format_inspect_report` in one step and returns the formatted reports plus a short cross-file summary. Prefer this over manually chaining the lower-level helpers unless you are debugging the inspection pipeline itself. For a fresh inspection, render it explicitly with:
@@ -59,6 +59,7 @@ Calling `inspect_file` (or any helper below) outside Python code will fail.
 - `list_mcp_tools()` — discover available MCP tools when needed.
 
 ### Rules
+- Do not import these helpers. They are already in the namespace. `from copepod_runtime import ...`, `from copepod_helpers import ...`, or any equivalent will always fail.
 - Do not use station, sea-level, tide-gauge, datum, or climate-index tools for this profile.
 - Do not reimplement provided tools when an appropriate tool exists.
 - Do not expose credentials, environment variables, tokens, or secrets in outputs.

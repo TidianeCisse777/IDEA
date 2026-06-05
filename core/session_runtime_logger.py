@@ -408,14 +408,27 @@ class SessionRuntimeLogger:
         self._append_event("error", error=error, source=source)
         self._write_summary()
 
-    def finish_turn(self, *, status: str, duration_ms: float) -> None:
+    def finish_turn(
+        self,
+        *,
+        status: str,
+        duration_ms: float,
+        usage: dict[str, Any] | None = None,
+        context_chars: int | None = None,
+    ) -> None:
         self._last_status = status
         self._last_turn_at = _utc_now()
         if self._current_code_buffer.strip():
             self._current_codes.append(self._current_code_buffer)
             self._current_code_buffer = ""
         self._hydrate_turn_state_from_events()
-        self._append_event("turn_finished", status=status, duration_ms=duration_ms)
+        self._append_event(
+            "turn_finished",
+            status=status,
+            duration_ms=duration_ms,
+            usage=usage or {},
+            context_chars=context_chars,
+        )
         try:
             self._ensure_dir()
             tool_lines = self._format_tool_lines()
@@ -423,6 +436,19 @@ class SessionRuntimeLogger:
             code_lines = "\n".join(f"  [CODE]  {sanitize_preview(code.strip(), 4000)}" for code in self._current_codes if code.strip()) or "  []"
             artifact_lines = "\n".join(f"  [ARTIFACT] {path}" for path in self._current_artifacts) or "  []"
             error_lines = "\n".join(f"  [ERROR] {line}" for line in self._current_errors) or "  []"
+            ctx_tokens = round(context_chars / 4) if context_chars is not None else None
+            prompt_tokens = (usage or {}).get("prompt_tokens") or (usage or {}).get("input_tokens")
+            completion_tokens = (usage or {}).get("completion_tokens") or (usage or {}).get("output_tokens")
+            ctx_line = ""
+            if ctx_tokens is not None or prompt_tokens is not None:
+                parts = []
+                if ctx_tokens is not None:
+                    parts.append(f"ctx_payload≈{ctx_tokens}tok ({context_chars}ch)")
+                if prompt_tokens is not None:
+                    parts.append(f"prompt={prompt_tokens}tok")
+                if completion_tokens is not None:
+                    parts.append(f"completion={completion_tokens}tok")
+                ctx_line = " " + " | ".join(parts)
             with self.turns_path.open("a", encoding="utf-8") as fh:
                 fh.write(
                     f"=== TURN {self._turn_index} session={self.session_id} agent={self.agent_type} ===\n"
@@ -433,7 +459,7 @@ class SessionRuntimeLogger:
                     f"--- ARTIFACTS ---\n{artifact_lines}\n\n"
                     f"--- ERRORS ---\n{error_lines}\n\n"
                     f"--- ASSISTANT ---\n{self._last_assistant_message}\n\n"
-                    f"--- TURN END ---\nstatus={status} duration_ms={duration_ms} retries={self._retry_count_total}\n\n"
+                    f"--- TURN END ---\nstatus={status} duration_ms={duration_ms} retries={self._retry_count_total}{ctx_line}\n\n"
                 )
         except Exception:
             logger.warning("Turn log write failed", exc_info=True)

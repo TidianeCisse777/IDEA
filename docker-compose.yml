@@ -11,6 +11,7 @@ services:
     volumes:
       - idea_persistent_data:/app/data
       - ./.codex:/app/.codex # CODEX_HOME: for Codex CLI authentication, config, and agent working agreements
+      - ./logs:/app/logs
     environment:
       - PYTHONUNBUFFERED=1
       - LOCAL_DEV=0
