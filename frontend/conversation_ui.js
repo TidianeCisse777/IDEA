@@ -117,7 +117,7 @@ function _initCsvResizeHandle() {
     // Restore saved width
     const savedWidth = parseInt(localStorage.getItem(CONVERSATION_CSV_WIDTH_KEY), 10);
     if (savedWidth && savedWidth >= 300) {
-        const restoredWidth = Math.min(Math.max(savedWidth, 300), 360);
+        const restoredWidth = Math.min(Math.max(savedWidth, 300), 600);
         sidebar.style.flexBasis = restoredWidth + 'px';
         sidebar.style.width = restoredWidth + 'px';
     }
@@ -135,7 +135,7 @@ function _initCsvResizeHandle() {
             const delta = startX - e.clientX;
             const newWidth = Math.min(
                 Math.max(startWidth + delta, 300),
-                Math.min(380, window.innerWidth - 88),
+                Math.min(600, window.innerWidth - 88),
             );
             sidebar.style.flexBasis = newWidth + 'px';
             sidebar.style.width = newWidth + 'px';
@@ -272,7 +272,7 @@ function _collectPendingConversationCsvArtifacts() {
 
     const artifacts = [];
     pending.forEach((attachment) => {
-        const path = String(attachment?.path || attachment?.storedName || '').trim();
+        const path = String(attachment?.url || attachment?.path || attachment?.storedName || '').trim();
         if (!path || !_isTabularPath(path)) {
             return;
         }

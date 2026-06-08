@@ -5085,7 +5085,7 @@ body.main-app {
     flex: 0 0 min(360px, calc(100vw - 96px));
     width: min(360px, calc(100vw - 96px));
     min-width: min(300px, calc(100vw - 96px));
-    max-width: min(380px, calc(100vw - 96px));
+    max-width: min(600px, calc(100vw - 96px));
     height: 100%;
     background:
         linear-gradient(180deg, rgba(11, 31, 50, 0.98), rgba(5, 15, 28, 0.98)),
