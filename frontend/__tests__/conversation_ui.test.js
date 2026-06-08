@@ -88,6 +88,9 @@ beforeEach(() => {
     global.window.hydrateChatWithMessages = jest.fn();
     global.window.resetStdoutState = jest.fn();
     global.window.showPromptIdeas = jest.fn();
+    global.ModalUtils = { open: jest.fn(), close: jest.fn() };
+    delete global.window.getPendingUploads;
+    delete global.window.getFrontendMessages;
 });
 
 // Helper: find a notification div by type that was added to the body
@@ -467,6 +470,126 @@ describe('Conversation CSV selection restoration', () => {
         expect(viewer.querySelector('table')).not.toBeNull();
         expect(viewer.textContent).toContain('A');
         expect(localStorage.getItem('idea-conversation-csv-last-viewed:c1')).toContain('import.csv');
+    });
+});
+
+// ─── TSV support regression (Bug: .tsv excluded from CSV sidebar) ─────────────
+
+describe('TSV support — _isTabularPath', () => {
+    let ui;
+    beforeEach(() => { jest.resetModules(); ui = require('../conversation_ui.js'); });
+
+    test('accepts .csv', () => expect(ui._isTabularPath('data.csv')).toBe(true));
+    test('accepts .tsv', () => expect(ui._isTabularPath('data.tsv')).toBe(true));
+    test('accepts .txt', () => expect(ui._isTabularPath('data.txt')).toBe(true));
+    test('accepts uppercase .TSV', () => expect(ui._isTabularPath('DATA.TSV')).toBe(true));
+    test('rejects .png', () => expect(ui._isTabularPath('photo.png')).toBe(false));
+    test('rejects .pdf', () => expect(ui._isTabularPath('report.pdf')).toBe(false));
+    test('rejects empty string', () => expect(ui._isTabularPath('')).toBe(false));
+});
+
+describe('TSV support — _detectDelimiter', () => {
+    let ui;
+    beforeEach(() => { jest.resetModules(); ui = require('../conversation_ui.js'); });
+
+    test('detects tab delimiter for TSV content', () => {
+        expect(ui._detectDelimiter('SAMPLE_ID\tANALYSIS_ID\tSTATION\n1\t2\tA')).toBe('\t');
+    });
+    test('detects comma delimiter for CSV content', () => {
+        expect(ui._detectDelimiter('station,depth,temp\nA,10,2.5')).toBe(',');
+    });
+});
+
+describe('TSV support — _parseCsvPreviewRows', () => {
+    let ui;
+    beforeEach(() => { jest.resetModules(); ui = require('../conversation_ui.js'); });
+
+    test('parses TSV rows into separate cells', () => {
+        const rows = ui._parseCsvPreviewRows('SAMPLE_ID\tDEPTH\n1\t150\n2\t200');
+        expect(rows).toHaveLength(3);
+        expect(rows[0]).toEqual(['SAMPLE_ID', 'DEPTH']);
+        expect(rows[1]).toEqual(['1', '150']);
+    });
+
+    test('parses CSV rows into separate cells', () => {
+        const rows = ui._parseCsvPreviewRows('station,depth\nA,10\nB,20');
+        expect(rows[0]).toEqual(['station', 'depth']);
+        expect(rows[1]).toEqual(['A', '10']);
+    });
+});
+
+describe('TSV support — file message and pending upload appear in sidebar', () => {
+    test('TSV file message appears in sidebar index', () => {
+        const conv = makeConv('c1', 'TSV test', {
+            messages: [
+                {
+                    id: 'm1',
+                    role: 'user',
+                    message_type: 'file',
+                    message_format: 'path',
+                    content: '/static/u1/c1/uploads/data.tsv',
+                    filename: 'data.tsv',
+                },
+            ],
+        });
+        global.conversationManager = makeConversationManager([conv], 'c1', conv.messages);
+        loadConversationUI();
+
+        window.conversationUI.refreshConversationCsvSidebar();
+
+        const sidebar = document.getElementById('conversationCsvSidebar');
+        expect(sidebar.querySelectorAll('.conversation-csv-item')).toHaveLength(1);
+        expect(sidebar.textContent).toContain('data.tsv');
+        expect(sidebar.textContent).not.toContain('Aucun CSV dans cette conversation');
+    });
+
+    test('pending TSV upload appears in sidebar index', () => {
+        const conv = makeConv('c1', 'Pending TSV', { messages: [] });
+        global.conversationManager = makeConversationManager([conv], 'c1', []);
+        window.getPendingUploads = jest.fn(() => ([
+            { id: 'upload-tsv', name: 'abundance.tsv', path: '/static/u1/c1/uploads/abundance.tsv' },
+        ]));
+        loadConversationUI();
+
+        window.conversationUI.refreshConversationCsvSidebar();
+
+        const sidebar = document.getElementById('conversationCsvSidebar');
+        expect(sidebar.querySelectorAll('.conversation-csv-item')).toHaveLength(1);
+        expect(sidebar.textContent).toContain('abundance.tsv');
+    });
+
+    test('TSV preview renders tab-separated columns as separate table cells', async () => {
+        const conv = makeConv('c1', 'TSV preview', {
+            messages: [
+                {
+                    id: 'm1',
+                    role: 'user',
+                    message_type: 'file',
+                    message_format: 'path',
+                    content: '/static/u1/c1/uploads/data.tsv',
+                    filename: 'data.tsv',
+                },
+            ],
+        });
+        global.conversationManager = makeConversationManager([conv], 'c1', conv.messages);
+        global.fetch = jest.fn(() => Promise.resolve({
+            ok: true,
+            text: () => Promise.resolve('SAMPLE_ID\tDEPTH\n1\t150\n2\t200'),
+        }));
+        loadConversationUI();
+
+        window.conversationUI.refreshConversationCsvSidebar();
+        document.querySelector('.conversation-csv-item').click();
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const viewer = document.getElementById('conversationCsvViewer');
+        const headers = viewer.querySelectorAll('th');
+        expect(headers).toHaveLength(2);
+        expect(headers[0].textContent).toBe('SAMPLE_ID');
+        expect(headers[1].textContent).toBe('DEPTH');
+        const cells = viewer.querySelectorAll('td');
+        expect(cells[0].textContent).toBe('1');
+        expect(cells[1].textContent).toBe('150');
     });
 });
 

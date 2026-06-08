@@ -36,8 +36,9 @@ print(report)
 - `calculate_uvp_m5_m6(data, resolved_inputs=None, session_id="{session_id}")` — calculate UVP MCA `m5_cop_dens` and/or `m6_largecop_dens` from rows or a pandas DataFrame. Pass `resolved_inputs` from `resolve_uvp_m5_m6_inputs` when available. Respect returned `status`: `blocked` means do not graph metric values, `partial` means graph only computed metrics and explain missing ones, `ok` means the requested metrics are available. Do not reimplement m5/m6 formulas when this helper is available.
 
 ### Join validation
-- `profile_join_keys(left_df, right_df, left_key, right_key)` — profile key cardinality before any pandas merge. Use this for every join, coupling, comparison table, or user question about whether files can be joined. Read `cardinality`, `left_match_rate`, `right_match_rate`, `requires_aggregation`, and `safe_for_join_deliverable` before deciding what to do.
-- If `safe_for_join_deliverable` is `False`, do not emit a join deliverable and do not force the merge. For `one_to_many` or `many_to_many`, emit a diagnostic table or ask one targeted question for the aggregation rule.
+- `profile_join_keys(left_df, right_df, left_key, right_key)` — profile key cardinality before any exact-key pandas merge. Use this for every exact join, coupling, comparison table, or user question about whether files can be joined. Do not call it for CTD proximity joins (`pd.merge_asof`) — it only applies to exact key matching.
+- Read fields in this order: `cardinality` → `requires_aggregation` → `left_match_rate` / `right_match_rate` → `row_expansion_factor` → `safe_for_join_deliverable`.
+- If `safe_for_join_deliverable` is `False`: do not merge, do not drop duplicates to force key uniqueness. Emit a diagnostic table with columns `cardinality`, `left_match_rate`, `right_match_rate`, `row_expansion_factor`, then ask one targeted question to determine the aggregation rule (e.g. sum, mean, first).
 - Pandas `DataFrame.merge(...)` and `pd.merge(...)` are guarded in the copepod runtime: a merge on explicit keys is blocked until `profile_join_keys(...)` has been called on the same dataframes and keys.
 
 ### Taxonomy

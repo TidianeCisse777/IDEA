@@ -206,13 +206,13 @@ function _extractCsvArtifactFromMessage(message) {
 
     if (messageType === 'file') {
         const rawPath = String(message.content || message.file_url || '').trim();
-        if (!rawPath || !rawPath.toLowerCase().includes('.csv')) {
+        if (!rawPath || !_isTabularPath(rawPath)) {
             return null;
         }
 
         return {
             id: message.id || rawPath,
-            name: message.filename || message.name || _basename(rawPath) || 'fichier.csv',
+            name: message.filename || message.name || _basename(rawPath) || 'fichier',
             path: rawPath,
             source: messageFormat === 'csv-download' ? 'created' : 'loaded',
         };
@@ -229,13 +229,13 @@ function _extractCsvArtifactFromMessage(message) {
         const rawPath = String(
             payload?.file_url || payload?.file || message.file_url || message.file || ''
         ).trim();
-        if (!rawPath || !rawPath.toLowerCase().includes('.csv')) {
+        if (!rawPath || !_isTabularPath(rawPath)) {
             return null;
         }
 
         return {
             id: message.id || rawPath,
-            name: payload?.filename || message.filename || _basename(rawPath) || 'fichier.csv',
+            name: payload?.filename || message.filename || _basename(rawPath) || 'fichier',
             path: rawPath,
             source: 'created',
             title: payload?.title || message.title || null,
@@ -273,12 +273,12 @@ function _collectPendingConversationCsvArtifacts() {
     const artifacts = [];
     pending.forEach((attachment) => {
         const path = String(attachment?.path || attachment?.storedName || '').trim();
-        if (!path || !path.toLowerCase().includes('.csv')) {
+        if (!path || !_isTabularPath(path)) {
             return;
         }
         artifacts.push({
             id: attachment.id || path,
-            name: attachment.name || _basename(path) || 'fichier.csv',
+            name: attachment.name || _basename(path) || 'fichier',
             path,
             source: 'loaded',
         });
@@ -301,12 +301,12 @@ function _collectFrontendConversationCsvArtifacts() {
         attachments.forEach((attachment) => {
             const path = String(attachment?.url || attachment?.path || attachment?.file_url || attachment?.storedName || '').trim();
             const name = String(attachment?.name || attachment?.filename || _basename(path) || '').trim();
-            if (!path || !path.toLowerCase().includes('.csv')) {
+            if (!path || !_isTabularPath(path)) {
                 return;
             }
             artifacts.push({
                 id: attachment.id || `${message.id || 'message'}:${path}`,
-                name: name || _basename(path) || 'fichier.csv',
+                name: name || _basename(path) || 'fichier',
                 path,
                 source: 'loaded',
             });
@@ -377,7 +377,22 @@ function _resolveConversationCsvUrl(url) {
     return input;
 }
 
-function _splitCsvLine(line) {
+function _isTabularPath(path) {
+    const lower = String(path || '').toLowerCase();
+    return lower.includes('.csv') || lower.includes('.tsv') || lower.includes('.txt');
+}
+
+function _detectDelimiter(text) {
+    const firstLine = String(text || '').split('\n')[0] || '';
+    const tabCount = (firstLine.match(/\t/g) || []).length;
+    const commaCount = (firstLine.match(/,/g) || []).length;
+    return tabCount > commaCount ? '\t' : ',';
+}
+
+function _splitCsvLine(line, delimiter = ',') {
+    if (delimiter === '\t') {
+        return line.replace(/\r$/, '').split('\t');
+    }
     const cells = [];
     let cell = '';
     let inQuotes = false;
@@ -412,10 +427,11 @@ function _parseCsvPreviewRows(text, maxRows = 25) {
     if (!normalized) {
         return [];
     }
+    const delimiter = _detectDelimiter(normalized);
     return normalized
         .split('\n')
         .slice(0, maxRows)
-        .map((line) => _splitCsvLine(line));
+        .map((line) => _splitCsvLine(line, delimiter));
 }
 
 function _renderCsvPreviewTable(text) {
@@ -1057,3 +1073,15 @@ window.conversationUI = {
 
 window.loadConversation = loadConversation;
 window.loadConversationIntoInterpreter = loadConversationIntoInterpreter;
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        _isTabularPath,
+        _detectDelimiter,
+        _splitCsvLine,
+        _parseCsvPreviewRows,
+        _extractCsvArtifactFromMessage,
+        _collectPendingConversationCsvArtifacts,
+        _collectFrontendConversationCsvArtifacts,
+    };
+}

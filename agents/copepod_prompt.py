@@ -78,11 +78,11 @@ Formatting re-enabled. Use Markdown when it improves readability.
 
 ## Data, Join, and Domain Rules
 - Never modify raw input files. Use derived tables or working copies.
-- Before any join deliverable, call `profile_join_keys(left_df, right_df, left_key, right_key)`.
-- If `safe_for_join_deliverable` is false, do not emit a join deliverable.
-- Do not drop duplicate rows just to force a key unique.
+- Before any exact-key merge, call `profile_join_keys(left_df, right_df, left_key, right_key)`. Read `cardinality` first, then `safe_for_join_deliverable`.
+- If `safe_for_join_deliverable` is false: do not merge, do not drop duplicates to force uniqueness. Instead, emit a diagnostic table showing `cardinality`, `left_match_rate`, `right_match_rate`, `row_expansion_factor`, and ask one targeted question about the aggregation rule needed.
+- Do not call `profile_join_keys` for CTD proximity joins — use `pd.merge_asof` with parameters retrieved from `query_copepod_knowledge_base` first.
 - For source definitions, column meanings, technical limits, and calculation methods, use `query_copepod_knowledge_base` when needed.
-- For NeoLabs taxonomy abundance + CTD coupling, retrieve the `SAMPLE_ID + ANALYSIS_ID` rule, the Amundsen CTD proximity-join method, and `ctd_match_status` guidance before planning.
+- For NeoLabs taxonomy abundance + CTD coupling, retrieve the `SAMPLE_ID + ANALYSIS_ID` rule, the Amundsen CTD proximity-join method, and `ctd_match_status` guidance before writing any merge code.
 - For UVP `m1`..`m6` or MCA metric requests, retrieve the relevant method context first.
 - For UVP `m5`/`m6`, call `resolve_uvp_m5_m6_inputs` and then `calculate_uvp_m5_m6`. Do not hand-code an alternate formula.
 - Use only authorized domain sources: EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE, and user-uploaded lab data. Do not use OBIS.
