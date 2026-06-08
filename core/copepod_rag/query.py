@@ -16,7 +16,6 @@ import unicodedata
 from pathlib import Path
 from typing import Optional
 
-from core.copepod_observability import should_enable_langfuse
 
 
 @contextlib.contextmanager
@@ -147,8 +146,6 @@ def query_copepod_rag(
             })
         chunks.sort(key=lambda c: (c["_rank_score"], c["score"]))
         chunks = [{k: v for k, v in c.items() if k != "_rank_score"} for c in chunks[:top_k]]
-        if session_id and should_enable_langfuse():
-            _trace_langfuse(question, chunks, session_id)
         return chunks
     finally:
         if os.getenv("PYTEST_CURRENT_TEST"):

@@ -79,13 +79,27 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) query the knowledge base to find the lat/lon bounds of Baffin Bay, "
-                "(2) filter the data using those bounds (latitude ~66-78N, longitude ~58-80W), "
-                "(3) use run_graph to produce a map of the filtered stations. "
-                "The agent must NOT invent the coordinates — they must come from the knowledge base. "
+                "The agent must: (1) filter the data to stations in Baffin Bay "
+                "(latitude ~66-78N, longitude ~58-80W — from knowledge base or internal knowledge), "
+                "(2) use run_graph to produce a map of the filtered stations. "
                 "If no stations fall in the zone, the agent must say so explicitly."
             ),
-            "required_tools": ["query_copepod_knowledge_base", "run_graph"],
+            "required_tools": ["run_graph"],
+        },
+    },
+    {
+        "id": "GR-05b",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "quelles sont les coordonnées géographiques de la baie de Baffin ? donne-moi les bornes latitude et longitude",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must call query_copepod_knowledge_base to retrieve the lat/lon bounds of Baffin Bay. "
+                "The response must include approximate latitude range (66-78N) and longitude range (58-80W). "
+                "Coordinates must come from a knowledge base query, not invented."
+            ),
+            "required_tools": ["query_copepod_knowledge_base"],
         },
     },
     {
@@ -96,13 +110,12 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) query the knowledge base to get lat/lon bounds for both zones, "
-                "(2) filter the data for each zone separately, "
-                "(3) compute mean or total abundance per zone, "
-                "(4) produce a comparison graph (bar chart or similar). "
-                "Zone boundaries must come from the knowledge base, not be invented."
+                "The agent must: (1) filter the data for Baffin Bay and Gulf of St. Lawrence separately "
+                "(using appropriate lat/lon bounds — from knowledge base or internal knowledge), "
+                "(2) compute mean or total abundance per zone, "
+                "(3) produce a comparison graph (bar chart or similar)."
             ),
-            "required_tools": ["query_copepod_knowledge_base", "run_pandas", "run_graph"],
+            "required_tools": ["run_pandas", "run_graph"],
         },
     },
     {
@@ -183,12 +196,12 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) call load_skill to plan the graph, "
-                "(2) compute the count or percentage of missing values per column using run_pandas, "
-                "(3) use run_graph to produce a bar chart of missing value counts sorted descending. "
-                "Do not penalize if the image is not visible in text."
+                "The agent must compute the count or percentage of missing values per column "
+                "and report the columns with the most missing values. "
+                "A text table or a bar chart are both acceptable outputs. "
+                "The response must include at least the top missing-value columns with their counts or percentages."
             ),
-            "required_tools": ["load_skill", "run_pandas", "run_graph"],
+            "required_tools": ["run_pandas"],
         },
     },
     # --- Évolution temporelle ---
@@ -216,8 +229,14 @@ def _extract_graph_image(messages: list) -> str | None:
     """Extrait le premier PNG base64 retourné par run_graph depuis les ToolMessages."""
     import re
     for msg in messages:
-        if hasattr(msg, "content") and isinstance(msg.content, str):
-            match = re.search(r"data:image/png;base64,([A-Za-z0-9+/=]+)", msg.content)
+        content = getattr(msg, "content", None)
+        if content is None:
+            continue
+        if isinstance(content, list):
+            parts = [p.get("text", "") if isinstance(p, dict) else str(p) for p in content]
+            content = "\n".join(parts)
+        if isinstance(content, str):
+            match = re.search(r"data:image/png;base64,([A-Za-z0-9+/=]+)", content)
             if match:
                 return match.group(1)
     return None

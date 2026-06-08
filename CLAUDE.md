@@ -1,419 +1,118 @@
 # CLAUDE.md — IDEA · NeoLab, Université Laval
+# Branche : langchain-openwebui
 
-Plateforme FastAPI + OpenInterpreter pour l'exploration de données scientifiques en langage naturel.
-L'utilisateur pose une question → IDEA génère et exécute du code Python → répond avec analyses et graphiques.
-
----
-
-## Repos
-
-```
-PROJET_INFO/
-  IDEA/                          ← ce repo — runtime web (FastAPI)
-  assistant-copepodes-specs/     ← repo compagnon optionnel pour les tools/tests copépodes
-```
-
-Les tools copépodes sont développés et testés dans `assistant-copepodes-specs/` quand ce repo compagnon est présent, puis exposés dans IDEA via un `AssistantProfile`.
+Assistant scientifique copépodes : LangChain (agent + tools + RAG) + Open WebUI (frontend).
+Utilisateurs : professeurs et étudiants. Réponses en français par défaut.
 
 ---
 
-## Architecture (à jour 2026-06-03)
+## Architecture cible
 
-### `app.py` — 202L, wiring uniquement
+```
+Open WebUI  ──────────────────────────────────────────────────────────
+  │  appel OpenAI-compatible  (http://localhost:8000/openai)
+  ▼
+serve.py  (LangServe → endpoint /openai, /invoke, /stream)
+  │
+agent.py  (LangGraph ReAct agent)
+  │  system prompt : agents/copepod_prompt.py
+  │
+  ├── tools/rag_tool.py          → query_copepod_rag (@tool LangChain)
+  ├── tools/data_tools.py        → inspect_file, describe_column (@tool)
+  └── core/copepod_rag/query.py  → ChromaDB (déjà construit)
+```
 
-Point d'entrée FastAPI. N'a pas de logique métier : monte les routers, configure le middleware (CORS, rate limiter SlowAPI), enregistre les profils d'agents (import side-effect), démarre les tâches de fond. **Si tu dois modifier le comportement d'un endpoint, ne touche pas `app.py`.**
+**Étape 1** — Agent CLI (tester sans Open WebUI) : `python agent.py`
+**Étape 2** — Brancher Open WebUI : `python serve.py` + pointer Open WebUI sur `http://localhost:8000/openai`
 
-### `routers/` — adaptateurs HTTP fins
+---
 
-| Fichier | Endpoints |
-|---|---|
-| `chat_routes.py` | `/chat`, `/history`, `/clear`, `/transcribe`, `/load-conversation` |
-| `auth_routes.py` | `/login`, `/logout`, `/verify`, `/share`, `/change-password` |
-| `conversation_routes.py` | CRUD conversations + messages (Postgres) |
-| `file_routes.py` | upload, delete, list fichiers |
-| `knowledge_base_routes.py` | upload PDF, query RAG (PaperQA) |
-| `mcp_routes.py` | CRUD connexions MCP |
-| `prompt_routes.py` | CRUD system prompts + set_active |
-| `session_routes.py` | `/session/mode`, artifacts (DU/GC) — workflow Plan Mode copépode |
-| `user_routes.py` | CRUD utilisateurs (superuser) |
-
-Les routers n'ont pas de logique métier — ils appellent `core/`.
-
-### `core/` — logique métier et état
-
-#### Infrastructure & auth
-
-| Module | Responsabilité |
-|---|---|
-| `auth.py` | JWT : `get_current_user`, `get_auth_token`, `get_db` |
-| `config.py` | `settings` — toutes les variables d'env (LLM, DB, sessions, Langfuse) |
-| `crud.py` | Helpers ORM : User, SystemPrompt, MCPConnection |
-| `crypto.py` | Chiffrement des tokens MCP au repos |
-| `db.py` | Engine SQLAlchemy + init superuser |
-| `security.py` | bcrypt hash/verify |
-
-#### Sessions & interpreter
-
-| Module | Responsabilité |
-|---|---|
-| `interpreter_session.py` | **Lifecycle OpenInterpreter** : `get_or_create_interpreter`, `clear_session`, `cleanup_idle_sessions` |
-| `interpreter_store.py` | Dict global `interpreter_instances` |
-| `session_store.py` | **SessionStore ABC** + `RedisSessionStore` + `InMemorySessionStore` |
-| `prompt_store.py` | Cache DB-backed des system prompts actifs |
-| `rag_store.py` | Index PaperQA par utilisateur (multi-tenant) |
-
-#### Chat streaming & observabilité
-
-| Module | Responsabilité |
-|---|---|
-| `chat_stream_events.py` | Formatage des événements SSE pour `/chat` |
-| `chat_observability.py` | Hooks Langfuse génériques sur le tour de chat |
-| `copepod_observability.py` | Scoring + tags Langfuse spécifiques copépode |
-| `langfuse_guard.py` | Détecte/masque les PII avant push Langfuse |
-| `response_formatting.py` | Normalise les réponses LLM (DELIVERABLE card, etc.) |
-
-#### Copépode
-
-| Module | Responsabilité |
-|---|---|
-| `copepod_join_validation.py` | Validation des joins EcoTaxa ↔ EcoPart |
-| `copepod_rag/` | Index Chroma + `build_index.py`, `chunk_docs.py`, `query.py` |
-
-#### Composables
-
-| Module | Responsabilité |
-|---|---|
-| `mcp/manager.py` | Lifecycle connexions MCP (transports, sessions) |
-| `mcp/tools.py` | Invocation d'outils MCP |
-| `mcp/__init__.py` | Exporte `mcp_manager`, `call_mcp_tool`, `list_available_tools` |
-| `tool_registry/registry.py` | **ToolRegistry** — `Tool(name, tags, code)` composables |
-| `tool_registry/tools/` | Tools concrets : `core_tools`, `climate_tools`, `station_tools`, `rag_tools`, `web_tools`, `mcp_tools`, `copepod_*` (5 fichiers) |
-| `instruction_renderer/renderer.py` | **InstructionRenderer** — blocs composables |
-| `instruction_renderer/blocks/` | Blocs : `session_metadata`, `output_format`, `cli_reference`, `tool_signatures`, `copepod_tool_signatures`, `mcp_tools_block` |
-
-### `agents/` — pattern multi-agent
+## Fichiers présents (à conserver)
 
 | Fichier | Rôle |
 |---|---|
-| `base.py` | `AssistantProfile` ABC : `get_system_message`, `get_tool_code`, `get_custom_instructions`, `configure_interpreter` |
-| `registry.py` | `register`, `get_profile`, `get_default_profile`, `registered_types` |
-| `generic_profile.py` | Profil géoscience — s'auto-enregistre à l'import |
-| `copepod_profile.py` | Profil copépode (Plan Mode, RAG dédié) — s'auto-enregistre à l'import |
-| `copepod_prompt.py` | System prompt et constantes du profil copépode |
-
-L'agent est sélectionné via le header HTTP `X-Agent-Type`. Inconnu → fallback `"generic"`.
-
-### `models/`
-
-| Fichier | Contenu |
-|---|---|
-| `db.py` | Tables SQLModel : User, Conversation, Message, SystemPrompt, MCPConnection + enums |
-| `schemas.py` | Pydantic I/O : LoginRequest/Response, PromptCreate/Update/Response, MCPToolCallRequest… |
-| `__init__.py` | Réexporte tout — `import models` et `from models import X` fonctionnent |
-
-### `utils/`
-
-| Fichier | Contenu |
-|---|---|
-| `custom_functions.py` | Shim compat → `core/tool_registry` (ne pas modifier directement) |
-| `custom_instructions.py` | Shim compat → `core/instruction_renderer` (ne pas modifier directement) |
-| `system_prompt.py` | Prompt de base du profil générique |
-| `session_utils.py` | Fonctions pures : `make_session_key`, `parse_session_key`, `session_dir_path`, `resolve_agent_type` |
-| `prompt_manager.py` | Shim compat → `core/prompt_store` |
-| `pqa_multi_tenant.py` | Shim compat → `core/rag_store` |
-| `transcription_prompt.py` | Prompt pour l'endpoint `/transcribe` (Whisper) |
-| `station_list_appendix.py` | Données de référence tide gauge (lecture seule) |
-| `my_pqa_settings.py` | Settings PaperQA |
-| `generate_pdf_stream.js` | Export PDF côté frontend (utilisé via static) |
-
-### `scripts/`
-
-| Fichier | Rôle |
-|---|---|
-| `evals/run_copepod_lean_eval.py` | Runner d'éval léger |
-| `evals/run_copepod_plan_mode_eval.py` | Runner principal Plan Mode (mock, du-only, gc-only, live, trace-smoke) |
-| `evals/copepod/` | Package interne de la suite (harness, fixtures, llm_driver, scénarios) |
-| `langfuse_live_log.py` | Poll Langfuse toutes les 5s, écrit dans `logs/langfuse_live.log` |
-
-### `docs/adr/` — décisions d'architecture
-
-- `001-assistant-profile-pattern.md` — Pourquoi ABC + registry plutôt que subclasses
-- `002-session-key-3-segments.md` — Pourquoi `user_id:session_id:agent_type`
-- `003-tool-injection-via-computer-run.md` — Pourquoi string injectée + limites connues
-- `004-plan-ready-tag-for-mode-switch.md` — Pourquoi le tag `[PLAN_READY]` pour le switch Plan → Analyse
-
-### `docs/archive/` — historique
-
-- `status-reports/` — snapshots datés (ne pas mettre à jour)
-- `plans/` — plans déjà livrés
-- `specs/` — specs ayant abouti à du code mergé
-
-### `tests/` — 33 fichiers, ~494 tests
-
-Tests sans dépendance externe (Redis, DB, OpenInterpreter mockés). Points d'entrée principaux :
-
-| Fichier | Ce qu'il teste |
-|---|---|
-| `test_agents.py` | Registration, get_profile, get_default_profile |
-| `test_session_store.py` | InMemorySessionStore (sans Redis) |
-| `test_interpreter_session.py` | clear_session, cleanup_idle_sessions |
-| `test_chat_routes.py` / `test_chat_stream_events.py` | Endpoint `/chat` + SSE |
-| `test_chat_observability.py` / `test_copepod_observability.py` | Hooks Langfuse |
-| `test_copepod_profile.py` / `test_copepod_prompt_contract.py` | Profil copépode + contrat de prompt |
-| `test_copepod_data*.py` / `test_copepod_columns.py` / `test_copepod_join_validation.py` | Tools données copépode |
-| `test_copepod_rag*.py` / `test_copepod_remote_sources.py` / `test_copepod_sources_meta.py` | RAG + sources copépode |
-| `test_copepod_online_mode_*.py` | Politique mode online |
-| `test_session_routes.py` | Artifacts DU/GC + `/session/mode` |
-| `test_tool_registry_litellm_params.py` | Sérialisation tool registry |
-| `test_langfuse_guard.py` | Anti-PII Langfuse |
-| `test_response_formatting.py` | DELIVERABLE card |
-| `test_docker_portability.py` / `test_share_start_script.py` | Démarrage Docker + script `share_start.sh` |
-| `test_mcp_planning.py` | Workflow MCP |
-| `test_phase3_wiring.py` / `test_phase4_db.py` | Wiring historique (à conserver) |
-| `test_crud.py` / `test_prompt_store.py` / `test_conversation_routes.py` | DB & CRUD |
+| `agents/copepod_prompt.py` | `COPEPOD_SYSTEM_PROMPT` — system prompt de l'agent |
+| `agents/copepod_profile.py` | Métadonnées du profil (nom, description) |
+| `core/copepod_rag/query.py` | `query_copepod_rag(question, top_k)` — ChromaDB |
+| `core/copepod_rag/build_index.py` | Construit l'index Chroma depuis les docs |
+| `core/copepod_rag/chunk_docs.py` | Découpe les docs en chunks |
+| `core/copepod_rag/chroma_db/` | Index vectoriel persistant |
+| `core/copepod_rag/docs/*.md` | 7 docs RAG (colonnes, domaine, méthodes…) |
+| `core/tool_registry/tools/copepod_*.py` | Tools copépodes — à convertir en `@tool` LangChain |
 
 ---
 
-## Où aller selon ce que tu veux faire
+## Fichiers à créer
 
-### Ajouter un nouveau type d'agent
+```
+requirements.txt          ← langchain, langgraph, langchain-openai, langserve, chromadb, …
+agent.py                  ← LangGraph ReAct agent (test CLI)
+serve.py                  ← LangServe → endpoint OpenAI-compatible pour Open WebUI
+tools/
+  __init__.py
+  rag_tool.py             ← query_copepod_rag comme @tool LangChain
+  data_tools.py           ← inspect_file, describe_column comme @tool
+```
 
-1. Crée `agents/mon_agent.py` :
+---
+
+## Comment les tools fonctionnent (LangChain)
+
+Les tools sont des **vraies fonctions Python décorées `@tool`**, pas des strings injectées dans un sandbox.
 
 ```python
-from agents.base import AssistantProfile
-from agents.registry import register
-from core.tool_registry import registry as tool_registry
-from core.instruction_renderer import renderer as instruction_renderer
+from langchain_core.tools import tool
 
-class MonAgent(AssistantProfile):
-    agent_type = "mon_agent"
-    tool_tags = {"core", "mon_domaine"}
-    instruction_blocks = ["session_metadata", "output_format", "mon_bloc"]
-
-    def get_system_message(self, active_user_prompt):
-        return MON_SYSTEM_PROMPT + active_user_prompt
-
-    def get_tool_code(self):
-        return tool_registry.render(self.tool_tags)
-
-    def get_custom_instructions(self, host, user_id, session_id, static_dir, upload_dir, mcp_tools=None):
-        ctx = {"host": host, "user_id": user_id, "session_id": session_id,
-               "static_dir": static_dir, "upload_dir": upload_dir, "mcp_tools": mcp_tools or []}
-        return instruction_renderer.render(self.instruction_blocks, ctx)
-
-register(MonAgent())
+@tool
+def query_copepod_knowledge_base(question: str) -> str:
+    """Interroge la base de connaissances copépodes (colonnes, méthodes, taxonomie)."""
+    from core.copepod_rag.query import query_copepod_rag
+    chunks = query_copepod_rag(question, top_k=3)
+    return "\n\n".join(c["content"] for c in chunks)
 ```
 
-2. Ajoute `import agents.mon_agent` dans le bloc bootstrap de `app.py` (ligne ~23).
-3. Le frontend passe `X-Agent-Type: mon_agent`. C'est tout — aucun autre fichier ne change.
-
-### Ajouter un nouvel outil LLM
-
-1. Crée `core/tool_registry/tools/mon_tool.py` :
-
+L'agent LangGraph reçoit la liste de tools au moment de sa construction :
 ```python
-from core.tool_registry.registry import Tool, registry
-
-_code = '''
-def mon_tool(param):
-    """Description pour le LLM."""
-    ...
-'''
-
-registry.register(Tool(name="mon_tool", tags=frozenset({"mon_domaine"}), code=_code))
+agent = create_react_agent(llm, tools=[query_copepod_knowledge_base, inspect_file, ...])
 ```
-
-2. Ajoute `from core.tool_registry.tools import mon_tool` dans `core/tool_registry/tools/__init__.py`.
-3. Déclare `"mon_domaine"` dans `tool_tags` du profil qui doit avoir cet outil.
-
-### Ajouter un bloc d'instructions LLM
-
-1. Crée `core/instruction_renderer/blocks/mon_bloc.py` :
-
-```python
-from core.instruction_renderer.renderer import InstructionBlock, renderer
-
-def _render(ctx: dict) -> str:
-    return f"## Mon bloc\n\nContenu avec {ctx.get('user_id', '')}..."
-
-renderer.register(InstructionBlock(name="mon_bloc", tags=frozenset({"mon_domaine"}), render=_render))
-```
-
-2. Ajoute l'import dans `core/instruction_renderer/blocks/__init__.py`.
-3. Ajoute `"mon_bloc"` dans `instruction_blocks` du profil concerné.
-
-### Modifier la persistance des sessions
-
-→ `core/session_store.py` — interface `SessionStore` + `RedisSessionStore`.
-Pour tester sans Redis, utilise `InMemorySessionStore` dans tes tests.
-
-### Modifier le lifecycle de l'interpreter
-
-→ `core/interpreter_session.py` — `get_or_create_interpreter`, `clear_session`, `cleanup_idle_sessions`.
-
-### Modifier le schéma DB
-
-→ `models/db.py` + créer une migration Alembic :
-```bash
-alembic revision --autogenerate -m "description"
-alembic upgrade head
-```
-
-### Modifier un format de réponse API
-
-→ `models/schemas.py` uniquement — ne pas toucher `models/db.py`.
-
-### Modifier la gestion des connexions MCP
-
-→ `core/mcp/manager.py` (lifecycle) ou `core/mcp/tools.py` (invocation).
-
-### Modifier la gestion des system prompts
-
-→ `core/prompt_store.py`.
-
-### Modifier le RAG PaperQA
-
-→ `core/rag_store.py`.
 
 ---
 
-## Comment les tools arrivent dans l'interpreter
+## Connexion Open WebUI
 
-```
-HTTP /chat  (header: X-Agent-Type: mon_agent)
-  → get_profile("mon_agent")                       # agents/registry.py
-  → profile.get_tool_code()                        # tool_registry.render(tool_tags)
-  → interpreter.computer.run("python", code_str)   # injection dans le sandbox Python
-  → LLM génère du code qui appelle les fonctions définies dans code_str
-```
+Open WebUI supporte nativement les endpoints **OpenAI-compatibles**.
 
-Les fonctions dans `code_str` sont du Python ordinaire exécuté dans le sandbox OpenInterpreter.
-Ce ne sont pas des "tools" au sens LLM function-calling — le LLM les invoque en écrivant du code.
+LangServe expose automatiquement `/openai` (format `ChatCompletion`) quand on ajoute une `ChatPromptTemplate` + le runnable.
+
+Dans Open WebUI : Settings → Connections → ajouter `http://localhost:8000/openai` comme endpoint OpenAI custom.
 
 ---
 
-## Diagrammes
-
-### Flux d'un tour de chat (SSE)
-
-```mermaid
-sequenceDiagram
-  participant U as User (browser)
-  participant N as nginx
-  participant API as FastAPI / routers/chat_routes
-  participant PROF as agents/<profile>
-  participant TR as core/tool_registry
-  participant IR as core/instruction_renderer
-  participant OI as OpenInterpreter (sandbox)
-  participant SS as core/session_store (Redis/InMem)
-  participant LF as Langfuse
-
-  U->>N: POST /chat (X-Agent-Type, X-Session-Id, JWT)
-  N->>API: proxy
-  API->>API: get_current_user(token)
-  API->>PROF: get_profile(agent_type)
-  PROF->>TR: render(tool_tags) → tool_code
-  PROF->>IR: render(instruction_blocks, ctx) → system instructions
-  API->>OI: get_or_create_interpreter(session_key)
-  API->>OI: computer.run("python", tool_code) [si pas déjà fait]
-  API->>SS: load conversation history
-  API->>LF: ChatRuntimeTracer.from_env() [si activé]
-  API-->>U: SSE start
-  loop pour chaque chunk LLM/code/console
-    OI->>API: stream event
-    API->>LF: span (generation / code / console)
-    API-->>U: SSE event JSON
-  end
-  API->>SS: persist tour
-  API->>LF: close trace + scores
-  API-->>U: SSE end
-```
-
-### Lifecycle d'une connexion MCP
-
-```mermaid
-stateDiagram-v2
-  [*] --> Created: POST /mcp/connections
-  Created --> Active: PUT /mcp/connections/{id}/activate
-  Active --> Connected: mcp_manager.ensure_session(conn)
-  Connected --> ToolsListed: list_available_tools()
-  ToolsListed --> Connected
-  Connected --> Invoking: call_mcp_tool(name, args)
-  Invoking --> Connected
-  Active --> Inactive: PUT .../deactivate
-  Inactive --> Active
-  Active --> Deleted: DELETE
-  Deleted --> [*]
-
-  note right of Connected
-    Token déchiffré à la volée
-    (core/crypto.py · Fernet).
-    Sessions stdio/http maintenues
-    par core/mcp/manager.py.
-  end note
-```
-
-### Workflow Plan Mode copépode (artifacts)
-
-```mermaid
-flowchart TD
-  Up[Upload TSV EcoTaxa/EcoPart] -->|tool: inspect_and_report| DU0[Data Understanding draft]
-  DU0 -->|user confirme| DUA[Data Understanding active]
-  DUA -->|tool: décrit colonnes manquantes| GC0[Graph Context draft]
-  GC0 -->|user confirme| GCA[Graph Context active]
-  GCA -->|LLM émet [PLAN_READY]| PR{Bouton PLAN_READY}
-  PR -->|user clique| AN[Mode Analyse]
-  AN -->|nouvelle upload| DU1[Nouveau DU draft<br/>artifacts existants inchangés]
-
-  DUA -. lien version_id .-> GC0
-  GCA -. lien version_id .-> AN
-
-  classDef draft fill:#fef9c3,stroke:#a16207
-  classDef active fill:#bbf7d0,stroke:#15803d
-  classDef event fill:#dbeafe,stroke:#1d4ed8
-  class DU0,GC0,DU1 draft
-  class DUA,GCA,AN active
-  class PR event
-```
-
-Voir [`ADR 004`](docs/adr/004-plan-ready-tag-for-mode-switch.md) pour le tag `[PLAN_READY]`.
-
----
-
-## Clés de session
-
-Format : `"{user_id}:{session_id}:{agent_type}"` (3 segments).
-
-```python
-from utils.session_utils import make_session_key
-key = make_session_key("uid", "sid", "generic")  # → "uid:sid:generic"
-```
-
-Deux onglets du même utilisateur avec des agents différents = deux interpreters distincts, zéro fuite d'état.
-Voir `docs/adr/002-session-key-3-segments.md`.
-
----
-
-## Démarrage local
+## Démarrage
 
 ```bash
-cp share.env.example .env    # remplir LLM_API_KEY, FIRST_SUPERUSER, etc.
-cp frontend/config.example.js frontend/config.js
-./share_start.sh             # Docker requis → partageable, lit seulement .env
+# Installer les dépendances
+pip install -r requirements.txt
+
+# Reconstruire l'index RAG si nécessaire
+python core/copepod_rag/build_index.py
+
+# Tester l'agent en CLI
+python agent.py
+
+# Lancer le serveur pour Open WebUI
+python serve.py
 ```
 
-Variables minimum dans `.env` :
-- `LLM_MODEL` (ex: `gpt-4o`, `claude-sonnet-4-6`, `openai/Llama-3.3-70B-Instruct`)
-- `LLM_API_KEY`
-- `FIRST_SUPERUSER` + `FIRST_SUPERUSER_PASSWORD`
-- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_SALT` si Langfuse est activé
+Variables `.env` minimum :
+- `OPENAI_API_KEY` (ou `ANTHROPIC_API_KEY` selon le modèle choisi)
+- `LLM_MODEL` (ex: `gpt-4o`, `claude-sonnet-4-6`)
 
-## Tests
+---
 
-```bash
-python -m pytest tests/ -q
-# ~494 tests sur 33 fichiers, aucune dépendance externe (Redis, DB, OpenInterpreter mockés)
-```
+## Règles de dev
 
-Pour les **évals copépode Plan Mode** (LLM réel + Langfuse), voir `scripts/evals/README.md`.
+- Chaque tool : docstring claire (le LLM la lit pour décider quand appeler le tool)
+- Pas de logique métier dans `agent.py` ou `serve.py` — seulement le wiring
+- Les docs RAG (`core/copepod_rag/docs/*.md`) ne se modifient pas sans rebuilt de l'index
+- TDD : écrire le test avant l'implémentation pour chaque tool
