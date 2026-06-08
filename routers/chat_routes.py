@@ -1403,11 +1403,12 @@ def _build_copepod_upload_inspection_retry_note(pending_files: list[str]) -> str
     lines = [
         "A file is pending inspection, but the previous attempt did not run code.",
         "Do not answer with another plan-only or status-only message.",
-        "Call `inspect_and_report(...)` immediately for the pending uploaded file path, print `_ir['output']`, and stop after the report.",
+        "Your entire response must be a Python code block — no prose before or after it.",
+        "The code block must call inspect_and_report and print its output.",
         "Do not mention `active_files`, the working set, or pending-state internals to the user.",
     ]
     if files:
-        lines.append("Pending file entries:")
+        lines.append("Files to inspect:")
         lines.extend(f"- {item}" for item in files[:5])
     return "\n".join(lines)
 
