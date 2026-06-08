@@ -13,6 +13,7 @@ from langgraph.prebuilt import create_react_agent
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 from tools.data_tools import make_tools
 from tools.rag_tool import make_rag_tool
+from tools.skill_tool import make_skill_tool
 
 load_dotenv()
 
@@ -38,7 +39,7 @@ def make_agent(thread_id: str):
         model=os.getenv("LLM_MODEL", "openai/gpt-5.4-mini"),
         max_retries=2,
     )
-    tools = make_tools(thread_id) + [make_rag_tool()]
+    tools = make_tools(thread_id) + [make_rag_tool(), make_skill_tool()]
     system_prompt = _load_system_prompt()
 
     return create_react_agent(
