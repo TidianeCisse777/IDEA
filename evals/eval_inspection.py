@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from dotenv import load_dotenv
-from agent import make_agent
+from agent import make_agent, invoke_verbose
 from tools.session_store import default_store
 from evals.judge import make_judge_evaluator
 from evals.runner import run_eval_suite, print_scores
@@ -116,15 +116,10 @@ def _run_inspection(inputs: dict) -> dict:
     agent = make_agent(thread_id)
     config = {"configurable": {"thread_id": thread_id}}
 
-    agent.invoke(
-        {"messages": [{"role": "user", "content": f"Charge ce fichier : {inputs['file_path']}"}]},
-        config=config,
-    )
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": inputs["question"]}]},
-        config=config,
-    )
-    return {"response": result["messages"][-1].content}
+    invoke_verbose(agent, {"messages": [{"role": "user", "content": f"Charge ce fichier : {inputs['file_path']}"}]}, config)
+    result = invoke_verbose(agent, {"messages": [{"role": "user", "content": inputs["question"]}]}, config)
+    msgs = result.get("messages", [])
+    return {"response": msgs[-1].content if msgs else ""}
 
 
 def run_inspection_evals(experiment_prefix: str = "inspection") -> None:

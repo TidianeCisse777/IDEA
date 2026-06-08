@@ -1,0 +1,300 @@
+"""Evals catégorie Graphs — cartes, stades, biomasse, profondeur, lacunes, temporel."""
+import uuid
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from dotenv import load_dotenv
+from agent import make_agent, invoke_verbose
+from tools.session_store import default_store
+from evals.judge import make_judge_evaluator, judge_with_image
+from evals.runner import run_eval_suite, print_scores
+
+load_dotenv()
+
+DATASET_NAME = "copepod-graphs-evals"
+
+TSV_ABUNDANCE = "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv/neolabs_taxonomy_abundance_amundsen_ctd.tsv"
+TSV_STAGES = "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv/neolabs_taxonomy_stages_amundsen_ctd.tsv"
+
+GRAPHS_CASES = [
+    {
+        "id": "GR-01",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "montre-moi les stations d'échantillonnage sur une carte",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) call load_skill to load the graph planner, "
+                "(2) detect the geographic dimension (latitude/longitude columns), "
+                "(3) use run_graph to produce a scatter map with latitude on Y and longitude on X, "
+                "(4) confirm the map was produced. "
+                "The plan must explicitly mention 'map' or 'geo' as the graph type. "
+                "Do not penalize if the image is not visible in text — only verify the tool sequence and acknowledgment."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+        },
+    },
+    {
+        "id": "GR-02",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "fais une carte des stations avec l'abondance totale encodée en couleur",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) call load_skill to load the graph planner, "
+                "(2) identify latitude, longitude, and a total abundance column, "
+                "(3) use run_graph to produce a scatter map where color encodes abundance, "
+                "(4) confirm the map was produced with a colorbar. "
+                "Do not penalize if the image is not visible in text."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+        },
+    },
+    {
+        "id": "GR-03",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "fais un graphique de l'abondance totale moyenne par station",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) call load_skill to load the graph planner, "
+                "(2) identify the station column and total abundance column, "
+                "(3) use run_graph to produce a bar chart grouped by station, "
+                "(4) confirm the graph was produced with title and labeled axes. "
+                "Do not penalize if the image is not visible in text."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+        },
+    },
+    {
+        "id": "GR-05",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "montre-moi uniquement les stations dans la baie de Baffin",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) query the knowledge base to find the lat/lon bounds of Baffin Bay, "
+                "(2) filter the data using those bounds (latitude ~66-78N, longitude ~58-80W), "
+                "(3) use run_graph to produce a map of the filtered stations. "
+                "The agent must NOT invent the coordinates — they must come from the knowledge base. "
+                "If no stations fall in the zone, the agent must say so explicitly."
+            ),
+            "required_tools": ["query_copepod_knowledge_base", "run_graph"],
+        },
+    },
+    {
+        "id": "GR-06",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "compare l'abondance totale entre les stations de la baie de Baffin et celles du golfe du Saint-Laurent",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) query the knowledge base to get lat/lon bounds for both zones, "
+                "(2) filter the data for each zone separately, "
+                "(3) compute mean or total abundance per zone, "
+                "(4) produce a comparison graph (bar chart or similar). "
+                "Zone boundaries must come from the knowledge base, not be invented."
+            ),
+            "required_tools": ["query_copepod_knowledge_base", "run_pandas", "run_graph"],
+        },
+    },
+    {
+        "id": "GR-04",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "quelles stations ont les abondances les plus élevées ? montre-moi ça sur une carte",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) compute mean or total abundance per station using run_pandas, "
+                "(2) call load_skill to plan the map, "
+                "(3) use run_graph to produce a map where station size or color reflects abundance. "
+                "The agent must use both geographic position (lat/lon) and abundance data. "
+                "Do not penalize if the image is not visible in text."
+            ),
+            "required_tools": ["load_skill", "run_pandas", "run_graph"],
+        },
+    },
+    # --- Stades copépodites ---
+    {
+        "id": "GR-07",
+        "inputs": {
+            "file_path": TSV_STAGES,
+            "question": "fais un graphique de la distribution des stades copépodites (C1 à C5, M, F) pour Calanus hyperboreus",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) call load_skill to plan the graph, "
+                "(2) filter data for Calanus hyperboreus, "
+                "(3) identify C1-C5, M (male), F (female) abundance columns, "
+                "(4) use run_graph to produce a bar chart with stages on X axis and abundance on Y. "
+                "Do not penalize if the image is not visible in text."
+            ),
+            "required_tools": ["load_skill", "run_pandas", "run_graph"],
+        },
+    },
+    {
+        "id": "GR-08",
+        "inputs": {
+            "file_path": TSV_STAGES,
+            "question": "compare la biomasse carbonée des stades C4 et C5 entre toutes les espèces",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) call load_skill to plan the graph, "
+                "(2) identify C4 and C5 biomass columns, "
+                "(3) aggregate by taxon/species, "
+                "(4) use run_graph to produce a grouped or stacked bar chart comparing C4 vs C5 biomass. "
+                "Do not penalize if the image is not visible in text."
+            ),
+            "required_tools": ["load_skill", "run_pandas", "run_graph"],
+        },
+    },
+    # --- Distribution verticale ---
+    {
+        "id": "GR-09",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "montre-moi la distribution verticale de l'abondance totale en fonction de la profondeur minimale",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) call load_skill to plan the graph, "
+                "(2) identify MIN_SAMPLE_DEPTH (or equivalent depth column) and total abundance column, "
+                "(3) use run_graph to produce a scatter or line plot with depth on Y axis (inverted, deeper = lower) and abundance on X. "
+                "Do not penalize if the image is not visible in text."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+        },
+    },
+    # --- Lacunes de données ---
+    {
+        "id": "GR-10",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "montre-moi les lacunes de données dans ce fichier — quelles colonnes ont le plus de valeurs manquantes ?",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) call load_skill to plan the graph, "
+                "(2) compute the count or percentage of missing values per column using run_pandas, "
+                "(3) use run_graph to produce a bar chart of missing value counts sorted descending. "
+                "Do not penalize if the image is not visible in text."
+            ),
+            "required_tools": ["load_skill", "run_pandas", "run_graph"],
+        },
+    },
+    # --- Évolution temporelle ---
+    {
+        "id": "GR-11",
+        "inputs": {
+            "file_path": TSV_ABUNDANCE,
+            "question": "montre-moi l'évolution de l'abondance totale au fil des dates de déploiement",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) call load_skill to plan the graph, "
+                "(2) identify the deployment date column and total abundance column, "
+                "(3) aggregate or plot abundance over time, "
+                "(4) use run_graph to produce a line or scatter plot with date on X axis. "
+                "Do not penalize if the image is not visible in text."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+        },
+    },
+]
+
+
+def _extract_graph_image(messages: list) -> str | None:
+    """Extrait le premier PNG base64 retourné par run_graph depuis les ToolMessages."""
+    import re
+    for msg in messages:
+        if hasattr(msg, "content") and isinstance(msg.content, str):
+            match = re.search(r"data:image/png;base64,([A-Za-z0-9+/=]+)", msg.content)
+            if match:
+                return match.group(1)
+    return None
+
+
+def _extract_tools_called(messages: list) -> list[str]:
+    tools_called = []
+    for msg in messages:
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                name = tc["name"] if isinstance(tc, dict) else tc.name
+                tools_called.append(name)
+    return tools_called
+
+
+def make_vision_judge_evaluator(criteria_key: str = "criteria"):
+    """Évaluateur qui juge le graphique via GPT-4o vision si une image est disponible,
+    sinon tombe sur le judge texte."""
+    def evaluator(outputs: dict, reference_outputs: dict) -> dict:
+        response = outputs.get("response", "")
+        image_b64 = outputs.get("image_b64", "")
+        criteria = reference_outputs.get(criteria_key, "")
+        if image_b64:
+            result = judge_with_image(response, image_b64, criteria)
+        else:
+            from evals.judge import judge
+            result = judge(response, criteria)
+        return {
+            "key": "vision_judge",
+            "score": result["score"],
+            "comment": result["reasoning"],
+        }
+    return evaluator
+
+
+def make_tools_called_evaluator(tools_key: str = "required_tools"):
+    def evaluator(outputs: dict, reference_outputs: dict) -> dict:
+        tools_called = outputs.get("tools_called", [])
+        required = reference_outputs.get(tools_key, [])
+        missing = [t for t in required if t not in tools_called]
+        score = 1.0 if not missing else 0.0
+        comment = "All required tools called" if not missing else f"Missing: {missing}"
+        return {"key": "tools_called", "score": score, "comment": comment}
+    return evaluator
+
+
+def _run_graph(inputs: dict) -> dict:
+    thread_id = str(uuid.uuid4())
+    default_store.clear(thread_id)
+    agent = make_agent(thread_id)
+    config = {"configurable": {"thread_id": thread_id}}
+
+    invoke_verbose(agent, {"messages": [{"role": "user", "content": f"Charge ce fichier : {inputs['file_path']}"}]}, config)
+    result = invoke_verbose(agent, {"messages": [{"role": "user", "content": inputs["question"]}]}, config)
+
+    msgs = result.get("messages", [])
+    tools_called = _extract_tools_called(msgs)
+    image_b64 = _extract_graph_image(msgs)
+    return {
+        "response": msgs[-1].content if msgs else "",
+        "tools_called": tools_called,
+        "image_b64": image_b64 or "",
+    }
+
+
+def run_graphs_evals(experiment_prefix: str = "graphs") -> None:
+    print(f"\n=== Graphs Evals ===")
+    rows = run_eval_suite(
+        cases=GRAPHS_CASES,
+        run_fn=_run_graph,
+        evaluators=[make_vision_judge_evaluator("criteria"), make_tools_called_evaluator("required_tools")],
+        dataset_name=DATASET_NAME,
+        experiment_prefix=experiment_prefix,
+        metadata={"category": "graphs", "agent_version": "slice-5"},
+    )
+    print_scores(rows, score_keys=["vision_judge", "tools_called"])
+
+
+if __name__ == "__main__":
+    run_graphs_evals()

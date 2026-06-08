@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from dotenv import load_dotenv
-from agent import make_agent
+from agent import make_agent, invoke_verbose
 from tools.session_store import default_store
 from evals.judge import make_judge_evaluator
 from evals.runner import run_eval_suite, print_scores
@@ -56,6 +56,20 @@ ANALYSIS_CASES = [
         },
     },
     {
+        "id": "AN-G1",
+        "inputs": {"file_path": TSV_ABUNDANCE, "question": "fais-moi un graphique des 10 taxons les plus abondants"},
+        "outputs": {
+            "criteria": (
+                "The agent must: (1) call load_skill to load the graph planner before writing code, "
+                "(2) use run_graph (not run_pandas) to execute the visualization, "
+                "(3) confirm in the response that the graph was produced. "
+                "Do not penalize if the image itself is not visible in the text response — "
+                "only verify that the agent followed the correct tool sequence and acknowledged the graph."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+        },
+    },
+    {
         "id": "AN-04",
         "inputs": {
             "file_path": TSV_STAGES,
@@ -100,16 +114,11 @@ def _run_analysis(inputs: dict) -> dict:
     agent = make_agent(thread_id)
     config = {"configurable": {"thread_id": thread_id}}
 
-    agent.invoke(
-        {"messages": [{"role": "user", "content": f"Charge ce fichier : {inputs['file_path']}"}]},
-        config=config,
-    )
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": inputs["question"]}]},
-        config=config,
-    )
-    tools_called = _extract_tools_called(result["messages"])
-    return {"response": result["messages"][-1].content, "tools_called": tools_called}
+    invoke_verbose(agent, {"messages": [{"role": "user", "content": f"Charge ce fichier : {inputs['file_path']}"}]}, config)
+    result = invoke_verbose(agent, {"messages": [{"role": "user", "content": inputs["question"]}]}, config)
+    tools_called = _extract_tools_called(result.get("messages", []))
+    msgs = result.get("messages", [])
+    return {"response": msgs[-1].content if msgs else "", "tools_called": tools_called}
 
 
 def run_analysis_evals(experiment_prefix: str = "analysis") -> None:

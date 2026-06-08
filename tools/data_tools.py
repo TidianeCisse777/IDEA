@@ -81,4 +81,45 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             cols_info = df.dtypes.to_string()
             return f"Erreur : {type(e).__name__}: {e}\n\nColonnes disponibles :\n{cols_info}"
 
-    return [load_file, run_pandas]
+    @tool
+    def run_graph(code: str) -> str:
+        """Execute matplotlib code on the loaded file and return the graph image.
+
+        Use this tool ONLY for visualization — when you need to produce a chart or map.
+        For data analysis (numbers, tables), use run_pandas instead.
+
+        The DataFrame is available as `df`. Write complete matplotlib code using the
+        graph_writer skill template. Do NOT call plt.show() or plt.savefig().
+
+        The return value is the graph image — include it verbatim in your response.
+        """
+        session = _store.get(thread_id)
+        if not session or session.get("df") is None:
+            return "No file loaded. Use load_file first."
+
+        df = session["df"]
+
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            plt.close("all")
+
+            local_vars: dict[str, Any] = {"df": df, "pd": pd, "plt": plt}
+            exec(code, local_vars)  # noqa: S102
+
+            if plt.get_fignums():
+                buf = io.BytesIO()
+                plt.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                b64 = base64.b64encode(buf.read()).decode()
+                plt.close("all")
+                return f"![graph](data:image/png;base64,{b64})"
+
+            return "Code executed but no figure was produced. Make sure your matplotlib code creates a figure."
+
+        except Exception as e:
+            cols_info = df.dtypes.to_string()
+            return f"Error: {type(e).__name__}: {e}\n\nAvailable columns:\n{cols_info}"
+
+    return [load_file, run_pandas, run_graph]

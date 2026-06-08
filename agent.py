@@ -17,6 +17,9 @@ from tools.skill_tool import make_skill_tool
 
 load_dotenv()
 
+import langchain
+langchain.verbose = os.getenv("LANGCHAIN_VERBOSE", "false").lower() == "true"
+
 _checkpointer = MemorySaver()
 
 
@@ -48,6 +51,22 @@ def make_agent(thread_id: str):
         prompt=system_prompt,
         checkpointer=_checkpointer,
     )
+
+
+def invoke_verbose(agent, messages: dict, config: dict) -> dict:
+    """Invoke agent with streaming, printing tool calls to stdout in real time."""
+    final_state = None
+    for chunk in agent.stream(messages, config=config, stream_mode="values"):
+        final_state = chunk
+        msgs = chunk.get("messages", [])
+        if msgs:
+            last = msgs[-1]
+            if hasattr(last, "tool_calls") and last.tool_calls:
+                for tc in last.tool_calls:
+                    name = tc["name"] if isinstance(tc, dict) else tc.name
+                    args = tc.get("args", {}) if isinstance(tc, dict) else tc.args
+                    print(f"  → tool: {name}  args: {str(args)[:120]}")
+    return final_state or {}
 
 
 def run_query(file_path: str, question: str, thread_id: str | None = None) -> str:
