@@ -1388,9 +1388,11 @@ def _should_retry_copepod_upload_inspection_without_code(
     current_attempt_had_error: bool,
 ) -> bool:
     """Retry when an uploaded/pending file was announced but not inspected."""
+    msg = (user_message or "").strip()
+    upload_turn = _UPLOAD_BLOCK_MARKER in msg or not msg
     return (
         bool(pending_files)
-        and _UPLOAD_BLOCK_MARKER in (user_message or "")
+        and upload_turn
         and not current_attempt_had_code
         and not current_attempt_had_error
     )
