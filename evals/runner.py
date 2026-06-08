@@ -56,13 +56,17 @@ def run_eval_suite(
             e.key: (e.score or 0.0)
             for e in r["evaluation_results"]["results"]
         }
-        rows.append((sc_id, scores))
+        comments = {
+            e.key: (e.comment or "")
+            for e in r["evaluation_results"]["results"]
+        }
+        rows.append((sc_id, scores, comments))
 
     rows.sort(key=lambda x: x[0])
     return rows
 
 
-def print_scores(rows: list[tuple[str, dict]], score_keys: list[str], threshold: float = 0.8) -> bool:
+def print_scores(rows: list[tuple], score_keys: list[str], threshold: float = 0.8) -> bool:
     """Print a score table and return True if all averages are above threshold."""
     if not rows:
         return False
@@ -72,14 +76,21 @@ def print_scores(rows: list[tuple[str, dict]], score_keys: list[str], threshold:
     print("  " + "-" * (8 + 16 * len(score_keys)))
 
     all_scores = {k: [] for k in score_keys}
-    for sc_id, scores in rows:
+    for row in rows:
+        sc_id, scores = row[0], row[1]
+        comments = row[2] if len(row) > 2 else {}
         line = f"  {sc_id:<8}"
+        failures = []
         for k in score_keys:
             s = scores.get(k, 0.0)
             all_scores[k].append(s)
             mark = "✓" if s >= threshold else "✗"
             line += f"  {mark} {s:.2f}        "
+            if s < threshold and comments.get(k):
+                failures.append(f"    [{k}] {comments[k]}")
         print(line)
+        for f in failures:
+            print(f)
 
     print()
     avgs = {k: sum(v) / len(v) for k, v in all_scores.items()}
