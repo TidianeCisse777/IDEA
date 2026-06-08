@@ -1399,14 +1399,18 @@ def _graph_readiness_is_auto_resolved(column_meta):
 
 
 def _graph_readiness_is_taxonomic_intent(user_request="", graph_type="", required_columns=None, file_report=None):
+    required = {str(c) for c in (required_columns or []) if str(c).strip()}
+    required_meta = [
+        c for c in ((file_report or {}).get("columns") or [])
+        if isinstance(c, dict) and str(c.get("name") or "") in required
+    ]
     text = " ".join([
         str(user_request or ""),
         str(graph_type or ""),
         " ".join(str(c) for c in (required_columns or [])),
         " ".join(
             str((c or {}).get("semantic_guess") or "")
-            for c in ((file_report or {}).get("columns") or [])
-            if isinstance(c, dict)
+            for c in required_meta
         ),
     ]).lower()
     tax_tokens = (
@@ -1510,12 +1514,12 @@ def graph_readiness(
     clarification_questions = []
     clarification_requests = []
     if not required:
-        request = _graph_readiness_request(
-            "missing_required_selection",
-            "Quelles colonnes exactes du rapport d'inspection doivent servir au graphe ?",
+        # Column selection is the agent's responsibility — do not ask the user.
+        # Proceed and flag the omission as a quality limit.
+        quality_limits.append(
+            "No required_columns passed to graph_readiness — column grounding skipped. "
+            "Select exact column names from the inspection report before graphing."
         )
-        clarification_requests.append(request)
-        clarification_questions.append(f"1. {request['question']}")
     if missing_required:
         avail_str = (
             ", ".join(f"`{col}`" for col in available_columns[:15])
