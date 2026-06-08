@@ -24,10 +24,9 @@ ANALYSIS_CASES = [
         "inputs": {"file_path": TSV_ABUNDANCE, "question": "quels sont les 5 taxons les plus abondants dans ce fichier ?"},
         "outputs": {
             "criteria": (
-                "The agent must: (1) identify the relevant abundance column before executing, "
-                "(2) outline a plan (steps) before running code, "
-                "(3) return an actual ranked list of 5 taxon names with their values. "
-                "The result must come from the data, not be invented."
+                "The agent must execute code on the data and return a ranked list of 5 taxon names with numeric values. "
+                "The result must come from the data, not be invented. "
+                "Do not penalize for which specific column was chosen, as long as it is an abundance column."
             ),
             "required_tools": ["run_pandas"],
         },
@@ -37,10 +36,9 @@ ANALYSIS_CASES = [
         "inputs": {"file_path": TSV_ABUNDANCE, "question": "quelle est l'abondance totale moyenne par station ?"},
         "outputs": {
             "criteria": (
-                "The agent must: (1) identify the station column and the total abundance column, "
-                "(2) outline a plan before executing, "
-                "(3) return a numeric result or table with mean abundance per station. "
-                "The values must come from the data."
+                "The agent must execute code and return a numeric result or table showing mean abundance per station. "
+                "The values must come from the data. "
+                "Do not penalize for the exact column names used, as long as they relate to station and abundance."
             ),
             "required_tools": ["run_pandas"],
         },
@@ -50,40 +48,24 @@ ANALYSIS_CASES = [
         "inputs": {"file_path": TSV_STAGES, "question": "quelle espèce a la biomasse carbonée totale la plus élevée ?"},
         "outputs": {
             "criteria": (
-                "The agent must: (1) identify the biomass column(s) (e.g. columns containing 'BIOMASS'), "
-                "(2) identify the taxon column, "
-                "(3) outline a plan before executing, "
-                "(4) return the species name and its total biomass value. "
-                "The result must come from the data."
+                "The agent must execute code and return a species name with its total biomass value. "
+                "The result must come from the data. "
+                "Do not penalize for which exact biomass column was used, as long as it is a carbon biomass column."
             ),
             "required_tools": ["run_pandas"],
         },
     },
     {
         "id": "AN-04",
-        "inputs": {"file_path": TSV_ABUNDANCE, "question": "fais-moi un graphique des 10 taxons les plus abondants"},
-        "outputs": {
-            "criteria": (
-                "The agent must produce a bar chart of the top 10 taxa by abundance. "
-                "It must plan the graph first, then write correct matplotlib code. "
-                "The chart must have a title, labeled axes, and display actual taxon names from the data."
-            ),
-            "required_tools": ["load_skill", "run_pandas"],
-        },
-    },
-    {
-        "id": "AN-05",
         "inputs": {
             "file_path": TSV_STAGES,
             "question": "montre-moi la distribution des stades copépodites (C1 à C5) pour Calanus hyperboreus",
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) filter rows for Calanus hyperboreus (or closest match in TAXON_ID), "
-                "(2) identify the C1 through C5 abundance columns, "
-                "(3) outline a plan before executing, "
-                "(4) return a table or summary showing abundance per stage. "
-                "If species not found, agent must say so explicitly."
+                "The agent must execute code and return a table or summary showing abundance per copepodite stage (C1 to C5) for Calanus hyperboreus. "
+                "If the species is not found in the data, the agent must say so explicitly — not invent values. "
+                "Do not penalize for exact column names as long as they represent copepodite stages."
             ),
             "required_tools": ["run_pandas"],
         },

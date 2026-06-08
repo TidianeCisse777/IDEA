@@ -1,8 +1,8 @@
-# Skill : graph_writer
+# Skill: graph_writer
 
-Tu dois écrire du code matplotlib correct et complet.
+You must write correct and complete matplotlib code.
 
-## Template de base
+## Base template
 
 ```python
 import matplotlib
@@ -11,25 +11,59 @@ import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots(figsize=(10, 6))
 
-# --- ton code ici ---
+# --- your code here ---
 
-ax.set_title("<titre descriptif>")
-ax.set_xlabel("<label axe X>")
-ax.set_ylabel("<label axe Y>")
+ax.set_title("<descriptive title>")
+ax.set_xlabel("<X axis label>")
+ax.set_ylabel("<Y axis label>")
 plt.tight_layout()
 ```
 
-## Règles obligatoires
+## Mandatory rules
 
-- Toujours utiliser `matplotlib.use("Agg")` — pas d'affichage interactif
-- Toujours utiliser `fig, ax = plt.subplots()` — ne jamais appeler `plt.show()`
-- Toujours définir `title`, `xlabel`, `ylabel`
-- Pour les labels longs (noms de taxons) : `ax.tick_params(axis='x', rotation=45)`
-- Pour les bar charts horizontaux si les labels sont nombreux (> 10) : utiliser `ax.barh()`
-- Ne jamais appeler `plt.savefig()` — le système capture automatiquement la figure
+- Always use `matplotlib.use("Agg")` — no interactive display
+- Always use `fig, ax = plt.subplots()` — never call `plt.show()`
+- Always define `title`, `xlabel`, `ylabel`
+- For long labels (taxon names): `ax.tick_params(axis='x', rotation=45)`
+- For horizontal bar charts when there are many categories (> 10): use `ax.barh()`
+- Never call `plt.savefig()` — the system captures the figure automatically
 
-## Gestion des données
+## Geographic maps
 
-- Trier les valeurs avant de tracer (ex. `.sort_values(ascending=False)`)
-- Limiter à 20 éléments max si la colonne catégorielle a beaucoup de valeurs
-- Supprimer les NaN avant de tracer : `.dropna()`
+If the plan recommends a `map` or `geo scatter` graph type, use this template:
+
+```python
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(12, 8))
+
+scatter = ax.scatter(
+    df['longitude'].dropna(),
+    df['latitude'].dropna(),
+    c=df['<color_variable>'],  # e.g. abundance, biomass — optional
+    cmap='viridis',
+    alpha=0.7,
+    s=50,
+)
+
+ax.set_xlabel("Longitude (°W)")
+ax.set_ylabel("Latitude (°N)")
+ax.set_title("<title: e.g. Station distribution — Baffin Bay>")
+
+plt.colorbar(scatter, ax=ax, label='<unit>')
+plt.tight_layout()
+```
+
+- Use `longitude` for X and `latitude` for Y
+- If a continuous variable is available (abundance, biomass, temperature): encode it as color with `c=` and `cmap='viridis'`
+- If no continuous variable: use a fixed color (`color='steelblue'`)
+- To annotate stations: `ax.annotate(row['STATION_NAME'], (row['longitude'], row['latitude']))` iterating over unique stations
+- Never use folium — matplotlib only
+
+## Data handling
+
+- Sort values before plotting (e.g. `.sort_values(ascending=False)`)
+- Drop NaN before plotting: `.dropna()`
+- If the user requests a top N, respect exactly N — do not truncate arbitrarily

@@ -698,5 +698,61 @@
     "title": "Quand utiliser le RAG et quand utiliser le tool WoRMS ?",
     "content": "# Quand utiliser le RAG et quand utiliser le tool WoRMS ?\n\n| Situation | Source recommandée |\n|-----------|-------------------|\n| Espèces documentées : *C. hyperboreus*, *C. glacialis*, *C. finmarchicus*, *Oithona similis*, *Metridia longa*, *Pseudocalanus minutus* | RAG (`query_copepod_knowledge_base`) |\n| Hiérarchie des taxons courants du labo | RAG |\n| Décoder une annotation EcoTaxa (Calanus_CV) | RAG |\n| Espèce non documentée dans le RAG | Tool WoRMS (`lookup_worms_taxonomy`) |\n| Liste live de toutes les espèces d'un genre | Tool WoRMS avec `include_children=True` |\n| Vérifier si un nom est accepté ou synonyme | Tool WoRMS |\n| AphiaID d'une espèce rare ou nouvelle | Tool WoRMS |\n\n*Dernière mise à jour : mai 2026*",
     "char_count": 726
+  },
+  {
+    "doc": "zones_geographiques.md",
+    "chunk_id": "zones_geographiques_000",
+    "title": "Zones géographiques NeoLab — Amundsen et campagnes arctiques",
+    "content": "# Zones géographiques NeoLab — Amundsen et campagnes arctiques\n\nMots-clés : zones géographiques, baie de Baffin, mer de Beaufort, golfe du Saint-Laurent, baie d'Hudson, détroit de Davis, Arctique canadien, stations, latitude, longitude, filtrage spatial\n\nCe document liste les zones géographiques couvertes par les campagnes NeoLab et les croisières Amundsen. Pour filtrer les données par zone, utiliser les bornes lat/lon ci-dessous sur les colonnes `latitude`, `longitude` (données labo) ou `obj_latitude`, `obj_longitude` (EcoTaxa).",
+    "char_count": 535
+  },
+  {
+    "doc": "zones_geographiques.md",
+    "chunk_id": "zones_geographiques_001",
+    "title": "Baie de Baffin",
+    "content": "## Baie de Baffin\n\n- **Latitude** : 66°N – 78°N\n- **Longitude** : 58°W – 80°W\n- **Stations typiques** : FoxSIPP, BB, Baffin\n- **Contexte** : Zone de forte concentration de copépodes arctiques (Calanus hyperboreus, C. glacialis). Croisières Amundsen récurrentes.\n\n**Filtre pandas** :\n```python\nmask = (df['latitude'] >= 66) & (df['latitude'] <= 78) & (df['longitude'] >= -80) & (df['longitude'] <= -58)\n```",
+    "char_count": 405
+  },
+  {
+    "doc": "zones_geographiques.md",
+    "chunk_id": "zones_geographiques_002",
+    "title": "Mer de Beaufort",
+    "content": "## Mer de Beaufort\n\n- **Latitude** : 68°N – 76°N\n- **Longitude** : 120°W – 145°W\n- **Stations typiques** : CB, Beaufort, ArcticNet\n- **Contexte** : Zone de glace saisonnière, données CTD et zooplancton Amundsen.\n\n**Filtre pandas** :\n```python\nmask = (df['latitude'] >= 68) & (df['latitude'] <= 76) & (df['longitude'] >= -145) & (df['longitude'] <= -120)\n```",
+    "char_count": 357
+  },
+  {
+    "doc": "zones_geographiques.md",
+    "chunk_id": "zones_geographiques_003",
+    "title": "Golfe du Saint-Laurent",
+    "content": "## Golfe du Saint-Laurent\n\n- **Latitude** : 45°N – 51°N\n- **Longitude** : 56°W – 67°W\n- **Stations typiques** : GSL, IML, Rimouski\n- **Contexte** : Zone côtière et estuarienne, données labo NeoLab et OGSL.\n\n**Filtre pandas** :\n```python\nmask = (df['latitude'] >= 45) & (df['latitude'] <= 51) & (df['longitude'] >= -67) & (df['longitude'] <= -56)\n```",
+    "char_count": 349
+  },
+  {
+    "doc": "zones_geographiques.md",
+    "chunk_id": "zones_geographiques_004",
+    "title": "Baie d'Hudson",
+    "content": "## Baie d'Hudson\n\n- **Latitude** : 51°N – 65°N\n- **Longitude** : 77°W – 95°W\n- **Stations typiques** : HB, Hudson\n- **Contexte** : Zone peu profonde, saisonnière. Couverture de glace importante en hiver.\n\n**Filtre pandas** :\n```python\nmask = (df['latitude'] >= 51) & (df['latitude'] <= 65) & (df['longitude'] >= -95) & (df['longitude'] <= -77)\n```",
+    "char_count": 347
+  },
+  {
+    "doc": "zones_geographiques.md",
+    "chunk_id": "zones_geographiques_005",
+    "title": "Détroit de Davis",
+    "content": "## Détroit de Davis\n\n- **Latitude** : 63°N – 70°N\n- **Longitude** : 52°W – 68°W\n- **Stations typiques** : DS, Davis\n- **Contexte** : Passage entre baie de Baffin et Atlantique Nord. Zone de mélange de masses d'eau.\n\n**Filtre pandas** :\n```python\nmask = (df['latitude'] >= 63) & (df['latitude'] <= 70) & (df['longitude'] >= -68) & (df['longitude'] <= -52)\n```",
+    "char_count": 358
+  },
+  {
+    "doc": "zones_geographiques.md",
+    "chunk_id": "zones_geographiques_006",
+    "title": "Arctique canadien (général)",
+    "content": "## Arctique canadien (général)\n\nRegroupe l'ensemble des zones au nord de 60°N dans les eaux canadiennes.\n\n**Filtre pandas** :\n```python\nmask = df['latitude'] >= 60\n```",
+    "char_count": 167
+  },
+  {
+    "doc": "zones_geographiques.md",
+    "chunk_id": "zones_geographiques_007",
+    "title": "Notes d'utilisation",
+    "content": "## Notes d'utilisation\n\n- Les noms de zones peuvent varier selon le fichier : utiliser les bornes lat/lon plutôt que les noms de stations.\n- Si le fichier contient `STATION_NAME`, chercher les préfixes associés à la zone (ex. \"FoxSIPP\" → baie de Baffin).\n- Pour une carte, tracer `longitude` en X et `latitude` en Y avec `scatter` ou `folium`.",
+    "char_count": 343
   }
 ]

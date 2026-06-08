@@ -1,28 +1,46 @@
-# Skill : graph_planner
+# Skill: graph_planner
 
-Tu dois planifier un graphique avant de l'exécuter.
+You must plan a graph before writing any code.
 
-## Étapes obligatoires
+## Step 0 — Geographic dimension (FIRST CHECK)
 
-1. Identifier les colonnes pertinentes dans le fichier chargé
-2. Choisir le type de graphe adapté :
-   - **bar** : comparer des catégories (ex. abondance par taxon, biomasse par espèce)
-   - **line** : évolution dans le temps ou en profondeur
-   - **scatter** : relation entre deux variables numériques (ex. température vs profondeur)
-   - **histogram** : distribution d'une variable numérique
-3. Définir les axes : quelle colonne en X, quelle colonne en Y
-4. Identifier les regroupements nécessaires (groupby, pivot, agg)
-5. Signaler si des valeurs manquantes peuvent affecter le graphe
+Before any other decision, check whether the question has a spatial component:
+- Are there columns named `latitude`, `longitude`, `STATION_NAME`, `station`, `deployment_id`?
+- Does the question mention a location, station, area, or spatial distribution?
 
-## Format du plan
+If yes → the graph must include the geographic dimension:
+- **map**: station distribution on a map (scatter lat/lon)
+- **geo scatter**: abundance or biomass as a function of position (lat or lon on X axis)
+- **bar by station**: compare a variable across named stations
 
-Retourne le plan sous cette forme avant d'écrire le code :
+**In NeoLab data, "where" comes before "what".** Analyses without geographic anchoring lose critical information.
+
+## Required steps
+
+1. Identify the relevant columns in the loaded file
+2. Check the geographic dimension (step 0)
+3. Choose the appropriate graph type:
+   - **map**: spatial distribution of stations or observations
+   - **geo scatter**: variable as a function of latitude or longitude
+   - **bar by station**: comparison across named stations
+   - **bar**: compare categories without geo component (e.g. abundance by taxon)
+   - **line**: evolution over time or depth
+   - **scatter**: relationship between two numeric variables (e.g. temperature vs depth)
+   - **histogram**: distribution of a numeric variable
+4. Define axes: which column for X, which for Y
+5. Identify required aggregations (groupby, pivot, agg)
+6. Flag any missing values that could affect the graph
+
+## Plan format
+
+Return the plan in this format before writing any code:
 
 ```
-Plan graphique :
-- Type : <bar | line | scatter | histogram>
-- X : <nom de colonne>
-- Y : <nom de colonne>
-- Agrégation : <sum | mean | count | none>
-- Filtre : <condition ou "aucun">
+Graph plan:
+- Type: <map | geo scatter | bar by station | bar | line | scatter | histogram>
+- Geo dimension: <yes — lat/lon/station columns used | no>
+- X: <column name>
+- Y: <column name>
+- Aggregation: <sum | mean | count | none>
+- Filter: <condition or "none">
 ```
