@@ -7,13 +7,17 @@ import pandas as pd
 from langchain_core.tools import tool
 
 from tools.file_loader import load_file as _load_file
-
-# Store mutable par session : thread_id → {df, meta}
-_sessions: dict[str, dict[str, Any]] = {}
+from tools.session_store import SessionStore, default_store
 
 
-def make_tools(thread_id: str) -> list:
-    """Crée les tools data pour un thread donné (thread_id capturé en closure)."""
+def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
+    """Crée les tools data pour un thread donné.
+
+    Args:
+        thread_id: Identifiant de session.
+        store: SessionStore à utiliser (défaut : default_store global).
+    """
+    _store = store or default_store
 
     @tool
     def load_file(path: str) -> str:
@@ -25,7 +29,7 @@ def make_tools(thread_id: str) -> list:
         except (FileNotFoundError, ValueError) as e:
             return f"Erreur : {e}"
 
-        _sessions[thread_id] = {"df": df, "meta": meta}
+        _store.set(thread_id, df, meta)
         cols = ", ".join(c["name"] for c in meta["columns"])
         return (
             f"Fichier chargé : {meta['path']}\n"
@@ -40,7 +44,7 @@ def make_tools(thread_id: str) -> list:
         Assigne le résultat à la variable `result`.
         Exemple : result = df[df['depth'] < 50]['temperature'].mean()
         """
-        session = _sessions.get(thread_id)
+        session = _store.get(thread_id)
         if not session or session.get("df") is None:
             return "Aucun fichier chargé. Utilise load_file d'abord."
 
@@ -55,7 +59,6 @@ def make_tools(thread_id: str) -> list:
             local_vars: dict[str, Any] = {"df": df, "pd": pd, "plt": plt}
             exec(code, local_vars)  # noqa: S102
 
-            # Figure matplotlib → base64 PNG
             if plt.get_fignums():
                 buf = io.BytesIO()
                 plt.savefig(buf, format="png", bbox_inches="tight")

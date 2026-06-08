@@ -6,12 +6,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from dotenv import load_dotenv
-from langsmith.evaluation import evaluate
-from langsmith import Client
-
 from agent import make_agent
-from tools.data_tools import _sessions
-from evals.judge import make_judge_evaluator, judge
+from tools.session_store import default_store
+from evals.judge import make_judge_evaluator
+from evals.runner import run_eval_suite, print_scores
 
 load_dotenv()
 
@@ -23,10 +21,7 @@ TSV_CTD = "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_explor
 INSPECTION_CASES = [
     {
         "id": "SC-13a",
-        "inputs": {
-            "file_path": TSV_UVP,
-            "question": "qu'est-ce que contient ce fichier ?",
-        },
+        "inputs": {"file_path": TSV_UVP, "question": "qu'est-ce que contient ce fichier ?"},
         "outputs": {
             "criteria": (
                 "The agent must identify this as an EcoTaxa or UVP5 export. "
@@ -45,8 +40,7 @@ INSPECTION_CASES = [
         "outputs": {
             "criteria": (
                 "The agent must identify the key columns: obj_orig_id, obj_depth_min, txo_display_name. "
-                "For each, it must provide a meaningful description of what it represents "
-                "(e.g. obj_orig_id = object identifier, txo_display_name = taxonomic name). "
+                "For each, it must provide a meaningful description of what it represents. "
                 "Descriptions must come from the knowledge base, not be invented. "
                 "Column names must be exact — not paraphrased or translated."
             ),
@@ -117,20 +111,15 @@ INSPECTION_CASES = [
 
 
 def _run_inspection(inputs: dict) -> dict:
-    """Charge le fichier puis pose la question d'inspection."""
     thread_id = str(uuid.uuid4())
-    _sessions.pop(thread_id, None)
-
+    default_store.clear(thread_id)
     agent = make_agent(thread_id)
     config = {"configurable": {"thread_id": thread_id}}
 
-    # 1. Charger le fichier
     agent.invoke(
         {"messages": [{"role": "user", "content": f"Charge ce fichier : {inputs['file_path']}"}]},
         config=config,
     )
-
-    # 2. Poser la question d'inspection
     result = agent.invoke(
         {"messages": [{"role": "user", "content": inputs["question"]}]},
         config=config,
@@ -139,55 +128,16 @@ def _run_inspection(inputs: dict) -> dict:
 
 
 def run_inspection_evals(experiment_prefix: str = "inspection") -> None:
-    """Lance les evals inspection et pousse dans LangSmith."""
-    client = Client()
-
-    # Recréer le dataset à chaque run
-    datasets = list(client.list_datasets(dataset_name=DATASET_NAME))
-    if datasets:
-        client.delete_dataset(dataset_id=datasets[0].id)
-    dataset = client.create_dataset(
-        dataset_name=DATASET_NAME,
-        description="Inspection evals — SC-13 : l'agent comprend le fichier chargé",
-    )
-    for case in INSPECTION_CASES:
-        client.create_example(
-            inputs=case["inputs"],
-            outputs=case["outputs"],
-            dataset_id=dataset.id,
-            metadata={"scenario_id": case["id"]},
-        )
-    print(f"Dataset recréé : {DATASET_NAME} ({len(INSPECTION_CASES)} exemples)")
-
-    results = evaluate(
-        _run_inspection,
-        data=DATASET_NAME,
+    print(f"\n=== Inspection Evals ===")
+    rows = run_eval_suite(
+        cases=INSPECTION_CASES,
+        run_fn=_run_inspection,
         evaluators=[make_judge_evaluator("criteria")],
+        dataset_name=DATASET_NAME,
         experiment_prefix=experiment_prefix,
         metadata={"category": "inspection", "agent_version": "slice-5"},
     )
-
-    rows = []
-    for r in results._results:
-        example = r["example"]
-        sc_id = example.metadata.get("scenario_id", "?") if example.metadata else "?"
-        score = r["evaluation_results"]["results"][0].score if r["evaluation_results"]["results"] else 0.0
-        rows.append((sc_id, score or 0.0))
-
-    rows.sort(key=lambda x: x[0])
-    scores = [s for _, s in rows]
-    avg = sum(scores) / len(scores) if scores else 0
-
-    print(f"\n=== Inspection Evals ===")
-    print(f"Score moyen : {avg:.2f}")
-    for sc_id, score in rows:
-        status = "✓" if score >= 0.7 else "✗"
-        print(f"  {status} {sc_id} : {score:.2f}")
-
-    if avg < 0.8:
-        print("\n⚠ Score < 0.8 — ne pas passer à la suite avant correction.")
-    else:
-        print("\n✓ Inspection validée — ok pour continuer.")
+    print_scores(rows, score_keys=["llm_judge"])
 
 
 if __name__ == "__main__":
