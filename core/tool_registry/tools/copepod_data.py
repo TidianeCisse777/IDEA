@@ -1514,12 +1514,12 @@ def graph_readiness(
     clarification_questions = []
     clarification_requests = []
     if not required:
-        # Column selection is the agent's responsibility — do not ask the user.
-        # Proceed and flag the omission as a quality limit.
-        quality_limits.append(
-            "No required_columns passed to graph_readiness — column grounding skipped. "
-            "Select exact column names from the inspection report before graphing."
+        request = _graph_readiness_request(
+            "missing_required_selection",
+            "Quelles colonnes exactes du rapport d'inspection doivent servir au graphe ?",
         )
+        clarification_requests.append(request)
+        clarification_questions.append(f"1. {request['question']}")
     if missing_required:
         avail_str = (
             ", ".join(f"`{col}`" for col in available_columns[:15])
