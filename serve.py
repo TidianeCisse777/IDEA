@@ -123,9 +123,36 @@ def list_models():
     }
 
 
+_INTERNAL_PREFIXES = ("### Task:", "### Guidelines:", "### Input:", "### Output:")
+
+
+def _is_internal_prompt(text: str) -> bool:
+    return any(text.strip().startswith(p) for p in _INTERNAL_PREFIXES)
+
+
+def _quick_response(text: str) -> dict:
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
+        "object": "chat.completion",
+        "model": "copepod-agent",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+
+
 @app.post("/v1/chat/completions")
 def chat_completions(req: ChatRequest):
     tid = _thread_id(req.messages)
+
+    last_user = next(
+        (m.text() for m in reversed(req.messages) if m.role == "user"), ""
+    )
+
+    logger.info("thread=%s msg=%r", tid, last_user[:200])
+
+    if _is_internal_prompt(last_user):
+        logger.info("thread=%s SKIPPED internal prompt", tid)
+        return _quick_response("")
 
     if tid not in _known_threads:
         _known_threads.add(tid)
@@ -133,10 +160,6 @@ def chat_completions(req: ChatRequest):
 
     agent = make_agent(tid)
     config = {"configurable": {"thread_id": tid}}
-
-    last_user = next(
-        (m.text() for m in reversed(req.messages) if m.role == "user"), ""
-    )
 
     result = agent.invoke(
         {"messages": [{"role": "user", "content": last_user}]},
