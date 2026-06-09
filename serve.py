@@ -1,9 +1,12 @@
 """OpenAI-compatible API — expose l'agent copépodes pour Open WebUI."""
 import base64
 import hashlib
+import json
+import logging
 import os
 import re
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
@@ -17,6 +20,34 @@ load_dotenv()
 
 from agent import make_agent
 from tools.session_store import default_store
+
+LOGS_DIR = Path(os.getenv("CONV_LOGS_DIR", "logs/conversations"))
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger("copepod.serve")
+
+
+def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict) -> None:
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "thread_id": thread_id,
+        "user": user_msg,
+        "assistant": assistant_msg,
+        "usage": usage,
+    }
+    log_path = LOGS_DIR / f"{thread_id}.jsonl"
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    logger.info("thread=%s prompt=%s completion=%s cached=%s",
+        thread_id,
+        usage.get("prompt_tokens", 0),
+        usage.get("completion_tokens", 0),
+        usage.get("prompt_tokens_details", {}).get("cached_tokens", 0),
+    )
 
 app = FastAPI(title="Copepod Agent API")
 
@@ -102,6 +133,30 @@ def chat_completions(req: ChatRequest):
 
     text = _extract_and_host_images(result["messages"][-1].content)
 
+    # Agrège les usage_metadata de tous les messages AI de ce tour
+    prompt_tokens = completion_tokens = cached_tokens = 0
+    for msg in result.get("messages", []):
+        meta = getattr(msg, "usage_metadata", None)
+        if meta:
+            prompt_tokens     += meta.get("input_tokens", 0)
+            completion_tokens += meta.get("output_tokens", 0)
+            cached_tokens     += meta.get("input_token_details", {}).get("cache_read", 0)
+
+    usage = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "prompt_tokens_details": {"cached_tokens": cached_tokens},
+    }
+
+    _log_turn(tid, last_user, text, usage)
+
+    if cached_tokens > 0:
+        logger.info("CACHE HIT thread=%s cached_tokens=%s (%.0f%% of prompt)",
+            tid, cached_tokens,
+            100 * cached_tokens / prompt_tokens if prompt_tokens else 0,
+        )
+
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
         "object": "chat.completion",
@@ -113,7 +168,7 @@ def chat_completions(req: ChatRequest):
                 "finish_reason": "stop",
             }
         ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "usage": usage,
     }
 
 
