@@ -57,37 +57,74 @@ plt.tight_layout()
 
 ## Geographic maps
 
-If the plan recommends a `map` or `geo scatter` graph type, use this template:
+**Always use cartopy** for any map/geo scatter request — never use plain `plt.scatter` on lon/lat axes.
+Cartopy produces real geographic projections with coastlines, ocean fill, and graticules.
+
+### Standard template (Amundsen / Arctic / Baffin Bay)
 
 ```python
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import numpy as np
 
-fig, ax = plt.subplots(figsize=(12, 8))
+# --- prepare data ---
+map_df = df[['longitude', 'latitude']].dropna()  # add color column if needed
 
-scatter = ax.scatter(
-    df['longitude'].dropna(),
-    df['latitude'].dropna(),
-    c=df['<color_variable>'],  # e.g. abundance, biomass — optional
+# --- projection centred on data ---
+central_lon = float(map_df['longitude'].mean())
+proj = ccrs.NorthPolarStereo(central_longitude=central_lon)
+
+fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={"projection": proj})
+
+# --- extent: auto-fit with margin ---
+margin = 3  # degrees
+ax.set_extent([
+    map_df['longitude'].min() - margin,
+    map_df['longitude'].max() + margin,
+    map_df['latitude'].min()  - margin,
+    map_df['latitude'].max()  + margin,
+], crs=ccrs.PlateCarree())
+
+# --- background ---
+ax.add_feature(cfeature.LAND,      facecolor='#d2c5a0', zorder=1)
+ax.add_feature(cfeature.OCEAN,     facecolor='#cfe2f3', zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8,       zorder=2)
+ax.add_feature(cfeature.BORDERS,   linestyle=':',       linewidth=0.5, zorder=2)
+
+# --- gridlines ---
+gl = ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', alpha=0.5, linestyle='--')
+gl.top_labels   = False
+gl.right_labels = False
+
+# --- data points ---
+sc = ax.scatter(
+    map_df['longitude'], map_df['latitude'],
+    c='<color_column>',   # or color='steelblue' if no variable
     cmap='viridis',
-    alpha=0.7,
-    s=50,
+    s=60, alpha=0.9,
+    transform=ccrs.PlateCarree(),
+    zorder=3,
 )
+plt.colorbar(sc, ax=ax, label='<unit>', shrink=0.6)  # omit if no color variable
 
-ax.set_xlabel("Longitude (°W)")
-ax.set_ylabel("Latitude (°N)")
-ax.set_title("<title: e.g. Station distribution — Baffin Bay>")
-
-plt.colorbar(scatter, ax=ax, label='<unit>')
+ax.set_title("<title>", fontsize=13)
 plt.tight_layout()
 ```
 
-- Use `longitude` for X and `latitude` for Y
-- If a continuous variable is available (abundance, biomass, temperature): encode it as color with `c=` and `cmap='viridis'`
-- If no continuous variable: use a fixed color (`color='steelblue'`)
-- To annotate stations: `ax.annotate(row['STATION_NAME'], (row['longitude'], row['latitude']))` iterating over unique stations
-- Never use folium — matplotlib only
+### Rules
+
+- **Always** `transform=ccrs.PlateCarree()` on scatter/annotate calls — required by cartopy
+- **Always** `subplot_kw={"projection": proj}` — never `plt.subplots()` without projection for maps
+- Use `NorthPolarStereo` for Arctic/Amundsen data (lat > 55°N)
+- Use `ccrs.PlateCarree()` as projection for tropical/global data
+- Extent auto-computed from data + margin — never hardcode coordinates
+- Color variable: use `c=df['<col>']` + `cmap='viridis'` for continuous (abundance, biomass, temperature, salinity)
+- No color variable: use `color='steelblue'`
+- Station labels: iterate unique stations and call `ax.annotate(name, (lon, lat), transform=ccrs.PlateCarree(), fontsize=7)`
+- Never use folium — cartopy only
 
 ## Data handling
 

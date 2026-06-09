@@ -5,15 +5,18 @@ import json
 import logging
 import os
 import re
+import subprocess
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import AsyncGenerator
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -71,7 +74,9 @@ _BASE_URL = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
 def _extract_and_host_images(text: str) -> str:
     """Remplace les data URIs base64 par des URLs hébergées sur /graphs/."""
     def replace(match):
-        b64 = match.group(1)
+        b64 = match.group(1).replace("\n", "").replace(" ", "")
+        # Rétablit le padding si manquant
+        b64 += "=" * (-len(b64) % 4)
         graph_id = uuid.uuid4().hex[:12]
         path = GRAPHS_DIR / f"{graph_id}.png"
         path.write_bytes(base64.b64decode(b64))
@@ -80,7 +85,80 @@ def _extract_and_host_images(text: str) -> str:
             f"![graphe]({url})\n\n"
             f"[⬇ Télécharger le graphe]({url})"
         )
-    return re.sub(r"!\[.*?\]\(data:image/png;base64,([A-Za-z0-9+/=]+)\)", replace, text)
+    # re.DOTALL pour capturer les base64 multi-lignes
+    return re.sub(
+        r"!\[.*?\]\(data:image/png;base64,([A-Za-z0-9+/=\n\s]+?)\)",
+        replace,
+        text,
+        flags=re.DOTALL,
+    )
+
+_WEBUI_UPLOADS_DIR = Path("/tmp/webui_uploads")
+_WEBUI_UPLOADS_DIR.mkdir(exist_ok=True)
+
+_WEBUI_CONTAINER = os.getenv("WEBUI_CONTAINER", "open-webui")
+_WEBUI_UPLOADS_PATH = os.getenv("WEBUI_UPLOADS_PATH", "/app/backend/data/uploads")
+
+
+def _resolve_attached_files(text: str) -> str:
+    """Remplace <attached_files> XML par un chemin local accessible par load_file.
+
+    Open WebUI injecte :
+      <attached_files>
+        <file type="file" url="<UUID>" content_type="..." name="<filename>"/>
+      </attached_files>
+
+    On copie le fichier depuis le container Docker vers /tmp/webui_uploads/<filename>
+    et on réécrit le message pour que l'agent puisse appeler load_file.
+    """
+    pattern = r"<attached_files>.*?</attached_files>"
+    match = re.search(pattern, text, re.DOTALL)
+    if not match:
+        return text
+
+    xml_block = match.group(0)
+    resolved_paths = []
+
+    try:
+        root = ET.fromstring(xml_block)
+        for file_el in root.findall("file"):
+            file_id = file_el.get("url", "").strip()
+            name = file_el.get("name", "").strip()
+            if not file_id or not name:
+                continue
+
+            local_path = _WEBUI_UPLOADS_DIR / name
+            # Pattern Docker : <UUID>_<filename>
+            container_path = f"{_WEBUI_UPLOADS_PATH}/{file_id}_{name}"
+
+            try:
+                with open(local_path, "wb") as out_f:
+                    subprocess.run(
+                        ["docker", "exec", _WEBUI_CONTAINER, "cat", container_path],
+                        stdout=out_f,
+                        stderr=subprocess.DEVNULL,
+                        check=True,
+                        timeout=10,
+                    )
+                resolved_paths.append(str(local_path))
+                logger.info("file_resolved name=%s → %s", name, local_path)
+            except Exception as exc:
+                logger.warning("file_resolve_failed name=%s container=%s err=%s", name, container_path, exc)
+
+    except ET.ParseError as exc:
+        logger.warning("attached_files_parse_error: %s", exc)
+
+    if not resolved_paths:
+        # On ne peut pas résoudre — on nettoie juste le XML pour ne pas polluer le LLM
+        return re.sub(pattern, "", text, flags=re.DOTALL).strip()
+
+    paths_str = "\n".join(f"- {p}" for p in resolved_paths)
+    instruction = (
+        f"Fichier(s) chargé(s) depuis Open WebUI :\n{paths_str}\n"
+        "Charge le fichier avec l'outil load_file avant de répondre."
+    )
+    return re.sub(pattern, instruction, text, flags=re.DOTALL).strip()
+
 
 _known_threads: set[str] = set()
 
@@ -140,18 +218,129 @@ def _quick_response(text: str) -> dict:
     }
 
 
+# ── SSE streaming helpers ──────────────────────────────────────────────────────
+
+def _make_sse_chunk(completion_id: str, content: str, finish_reason=None) -> str:
+    """Formate un chunk SSE OpenAI-compatible."""
+    delta = {"content": content} if content else {}
+    chunk = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "model": "copepod-agent",
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+
+async def _quick_sse_response(content: str) -> AsyncGenerator[str, None]:
+    """SSE minimal pour les réponses rapides (prompts internes, erreurs)."""
+    cid = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+    if content:
+        yield _make_sse_chunk(cid, content)
+    yield _make_sse_chunk(cid, "", finish_reason="stop")
+    yield "data: [DONE]\n\n"
+
+
+def _format_tool_line(name: str, args: dict | None = None) -> str:
+    """Formate une étape outil pour le stream SSE.
+
+    - run_graph / run_pandas : bloc <details> collapsible avec le code Python
+    - load_file : affiche le nom du fichier
+    - skill_tool : affiche le nom du skill
+    - autres : juste 🔧 nom
+    """
+    args = args or {}
+
+    if name in ("run_graph", "run_pandas") and "code" in args:
+        code = args["code"]
+        return f"\n🔧 `{name}`\n```python\n{code}\n```\n"
+
+    if name == "load_file" and "path" in args:
+        filename = Path(args["path"]).name
+        return f"\n🔧 `{name}` → `{filename}`\n"
+
+    if name == "load_skill" and "skill_name" in args:
+        skill = args["skill_name"]
+        return f"\n🔧 `{name}` → `{skill}`\n"
+
+    return f"\n🔧 `{name}`\n"
+
+
+async def _stream_agent_sse(
+    agent,
+    messages: dict,
+    config: dict,
+    thread_id: str,
+) -> AsyncGenerator[str, None]:
+    """Génère les chunks SSE depuis l'agent LangGraph (stream_mode='updates')."""
+    completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
+    last_ai_msg = None
+
+    try:
+        async for update in agent.astream(messages, config, stream_mode="updates"):
+            for node, state in update.items():
+                msgs = state.get("messages", [])
+                if not msgs:
+                    continue
+                last_msg = msgs[-1]
+
+                if node == "agent":
+                    last_ai_msg = last_msg
+                    content = getattr(last_msg, "content", "") or ""
+                    tool_calls = getattr(last_msg, "tool_calls", []) or []
+
+                    if content:
+                        content = _extract_and_host_images(content)
+                        yield _make_sse_chunk(completion_id, content)
+
+                    for tc in tool_calls:
+                        name = tc["name"] if isinstance(tc, dict) else tc.name
+                        tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                        yield _make_sse_chunk(completion_id, _format_tool_line(name, tc_args))
+
+                elif node == "tools":
+                    for tool_msg in msgs:
+                        tool_content = getattr(tool_msg, "content", "") or ""
+                        if "data:image/png;base64," in tool_content:
+                            hosted = _extract_and_host_images(tool_content)
+                            img_match = re.search(r"!\[.*?\]\(http[^\)]+\)", hosted)
+                            if img_match:
+                                yield _make_sse_chunk(completion_id, f"\n{img_match.group(0)}\n")
+
+    except Exception as exc:
+        logger.error("stream_error thread=%s err=%s", thread_id, exc)
+        yield _make_sse_chunk(completion_id, f"\n\n[Erreur : {exc}]")
+
+    if last_ai_msg is not None:
+        meta = getattr(last_ai_msg, "usage_metadata", None) or {}
+        usage = {
+            "prompt_tokens": meta.get("input_tokens", 0),
+            "completion_tokens": meta.get("output_tokens", 0),
+            "total_tokens": meta.get("input_tokens", 0) + meta.get("output_tokens", 0),
+            "prompt_tokens_details": {"cached_tokens": 0},
+        }
+        last_user = (messages.get("messages") or [{}])[-1].get("content", "")
+        final_text = getattr(last_ai_msg, "content", "") or ""
+        _log_turn(thread_id, last_user, final_text, usage)
+
+    yield _make_sse_chunk(completion_id, "", finish_reason="stop")
+    logger.info("thread=%s STREAM done", thread_id)
+    yield "data: [DONE]\n\n"
+
+
 @app.post("/v1/chat/completions")
-def chat_completions(req: ChatRequest):
+async def chat_completions(req: ChatRequest):
     tid = _thread_id(req.messages)
 
     last_user = next(
         (m.text() for m in reversed(req.messages) if m.role == "user"), ""
     )
-
-    logger.info("thread=%s msg=%r", tid, last_user[:200])
+    last_user = _resolve_attached_files(last_user)
 
     if _is_internal_prompt(last_user):
         logger.info("thread=%s SKIPPED internal prompt", tid)
+        if req.stream:
+            return StreamingResponse(_quick_sse_response(""), media_type="text/event-stream")
         return _quick_response("")
 
     if tid not in _known_threads:
@@ -160,11 +349,17 @@ def chat_completions(req: ChatRequest):
 
     agent = make_agent(tid)
     config = {"configurable": {"thread_id": tid}}
+    messages = {"messages": [{"role": "user", "content": last_user}]}
 
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": last_user}]},
-        config=config,
-    )
+    logger.info("thread=%s stream=%s", tid, req.stream)
+    if req.stream:
+        logger.info("thread=%s STREAM start", tid)
+        return StreamingResponse(
+            _stream_agent_sse(agent, messages, config, tid),
+            media_type="text/event-stream",
+        )
+
+    result = agent.invoke(messages, config=config)
 
     text = _extract_and_host_images(result["messages"][-1].content)
 

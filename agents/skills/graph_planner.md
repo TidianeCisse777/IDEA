@@ -6,14 +6,25 @@ You must plan a graph before writing any code.
 
 Before any other decision, check whether the question has a spatial component:
 - Are there columns named `latitude`, `longitude`, `STATION_NAME`, `station`, `deployment_id`?
-- Does the question mention a location, station, area, or spatial distribution?
+- Does the question mention a location, station, area, map, carte, distribution spatiale?
 
 If yes → the graph must include the geographic dimension:
-- **map**: station distribution on a map (scatter lat/lon)
+- **map**: station distribution on a real cartopy map with coastlines and projection
 - **geo scatter**: abundance or biomass as a function of position (lat or lon on X axis)
 - **bar by station**: compare a variable across named stations
 
 **In NeoLab data, "where" comes before "what".** Analyses without geographic anchoring lose critical information.
+
+### Choosing the right map type
+
+| Situation | Graph type | Projection |
+|-----------|-----------|------------|
+| Show station locations (Arctic/Amundsen, lat > 55°N) | **map** with cartopy NorthPolarStereo | `NorthPolarStereo` |
+| Color stations by a variable (abundance, temp, salinity) | **map** with cartopy + color scale | `NorthPolarStereo` |
+| Variable vs latitude/longitude profile | **geo scatter** (simple scatter, no cartopy) | none |
+| Compare named stations | **bar by station** | none |
+
+**Always use `map` (cartopy) when the user asks for a geographic map, carte, or spatial distribution.** Never produce a plain scatter on lon/lat axes for a map request — it has no geographic context (no coastlines, no projection).
 
 ## Required steps
 
