@@ -46,10 +46,12 @@ If yes → the graph must include the geographic dimension:
 
 ## Plan format
 
-Return the plan in this format before writing any code:
+Output the plan wrapped in a `<details>` block so it is hidden by default:
 
 ```
-Output plan:
+<details>
+<summary>Output plan</summary>
+
 - Output: <visual | table>
 - Type: <map | geo scatter | bar by station | bar | line | scatter | histogram | table>
 - Geo dimension: <yes — lat/lon/station columns used | no>
@@ -57,4 +59,6 @@ Output plan:
 - Y / Values: <column name>
 - Aggregation: <sum | mean | count | none>
 - Filter: <condition or "none">
+
+</details>
 ```
