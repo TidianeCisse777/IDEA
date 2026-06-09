@@ -19,7 +19,10 @@ If yes → the graph must include the geographic dimension:
 
 1. Identify the relevant columns in the loaded file
 2. Check the geographic dimension (step 0)
-3. Choose the appropriate graph type:
+3. Decide the output type based on the user's prompt:
+   - If the prompt explicitly mentions "graphique", "carte", "visualise", "plot", "chart", "map" → **visual output** (use run_graph after graph_writer)
+   - Otherwise → **table output** (use run_pandas to return a markdown table)
+4. If visual output: choose the graph type:
    - **map**: spatial distribution of stations or observations
    - **geo scatter**: variable as a function of latitude or longitude
    - **bar by station**: comparison across named stations
@@ -27,20 +30,20 @@ If yes → the graph must include the geographic dimension:
    - **line**: evolution over time or depth
    - **scatter**: relationship between two numeric variables (e.g. temperature vs depth)
    - **histogram**: distribution of a numeric variable
-4. Define axes: which column for X, which for Y
-5. Identify required aggregations (groupby, pivot, agg)
-6. Flag any missing values that could affect the graph
+5. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
+6. Flag any missing values that could affect the output
 
 ## Plan format
 
 Return the plan in this format before writing any code:
 
 ```
-Graph plan:
-- Type: <map | geo scatter | bar by station | bar | line | scatter | histogram>
+Output plan:
+- Output: <visual | table>
+- Type: <map | geo scatter | bar by station | bar | line | scatter | histogram | table>
 - Geo dimension: <yes — lat/lon/station columns used | no>
-- X: <column name>
-- Y: <column name>
+- X / Rows: <column name>
+- Y / Values: <column name>
 - Aggregation: <sum | mean | count | none>
 - Filter: <condition or "none">
 ```
