@@ -15,6 +15,28 @@ from tools.file_loader import load_file as _load_file
 from tools.session_store import SessionStore, default_store
 
 
+def _uvp_skill_hint(col_names: list[str]) -> str:
+    """Retourne un hint load_skill si le fichier est un export UVP EcoTaxa ou EcoPart."""
+    col_set = set(col_names)
+    is_ecopart  = "Sampled volume [L]" in col_set and any("LPM (" in c for c in col_set)
+    is_ecotaxa_uvp = (
+        ("fre_major" in col_set or "object_major" in col_set)
+        and "sample_id" in col_set
+        and not is_ecopart
+    )
+    if is_ecopart:
+        return (
+            "→ Fichier EcoPart UVP détecté. "
+            "Charge le skill `uvp_ecopart` pour les méthodes de calcul (m1-m3)."
+        )
+    if is_ecotaxa_uvp:
+        return (
+            "→ Fichier EcoTaxa UVP détecté. "
+            "Charge le skill `uvp_ecotaxa` pour interpréter les colonnes et calculer m5/m6."
+        )
+    return ""
+
+
 def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     """Crée les tools data pour un thread donné.
 
@@ -35,11 +57,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             return f"Erreur : {e}"
 
         _store.set(thread_id, df, meta)
-        cols = ", ".join(c["name"] for c in meta["columns"])
+        col_names = [c["name"] for c in meta["columns"]]
+        cols = ", ".join(col_names)
+
+        hint = _uvp_skill_hint(col_names)
+
         return (
             f"Fichier chargé : {meta['path']}\n"
             f"{meta['n_rows']} lignes × {meta['n_cols']} colonnes\n"
             f"Colonnes : {cols}"
+            + (f"\n\n{hint}" if hint else "")
         )
 
     @tool
