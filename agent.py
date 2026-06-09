@@ -38,6 +38,29 @@ def _load_system_prompt() -> str:
 
 _SYSTEM_PROMPT = _load_system_prompt()
 
+_MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "8000"))
+
+
+def _make_context_hook():
+    """pre_model_hook : trime les messages pour rester dans la context window."""
+    from langchain_core.messages import trim_messages
+
+    def _approx_tokens(messages) -> int:
+        return sum(len(str(m.content)) for m in messages) // 4
+
+    def trim_context(state: dict) -> dict:
+        trimmed = trim_messages(
+            state["messages"],
+            max_tokens=_MAX_CONTEXT_TOKENS,
+            strategy="last",
+            token_counter=_approx_tokens,
+            include_system=True,
+            allow_partial=False,
+        )
+        return {"messages": trimmed}
+
+    return trim_context
+
 
 def make_agent(thread_id: str):
     """Crée un agent ReAct copépodes pour un thread donné."""
@@ -46,12 +69,12 @@ def make_agent(thread_id: str):
         max_retries=2,
     )
     tools = make_tools(thread_id) + [make_rag_tool(), make_skill_tool()]
-    system_prompt = _SYSTEM_PROMPT
 
     return create_react_agent(
         llm,
         tools,
-        prompt=system_prompt,
+        prompt=_SYSTEM_PROMPT,
+        pre_model_hook=_make_context_hook(),
         checkpointer=_checkpointer,
     )
 

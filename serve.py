@@ -83,7 +83,15 @@ _known_threads: set[str] = set()
 
 class Message(BaseModel):
     role: str
-    content: str
+    content: str | list  # list = format multimodal OpenAI (Open WebUI file upload)
+
+    def text(self) -> str:
+        """Extrait le texte pur, quel que soit le format content."""
+        if isinstance(self.content, str):
+            return self.content
+        # Format liste : [{"type": "text", "text": "..."}, {"type": "image_url", ...}]
+        parts = [p.get("text", "") for p in self.content if isinstance(p, dict) and p.get("type") == "text"]
+        return " ".join(parts).strip()
 
 
 class ChatRequest(BaseModel):
@@ -94,7 +102,7 @@ class ChatRequest(BaseModel):
 
 def _thread_id(messages: list[Message]) -> str:
     """Thread stable basé sur le premier message utilisateur."""
-    first = next((m.content for m in messages if m.role == "user"), str(uuid.uuid4()))
+    first = next((m.text() for m in messages if m.role == "user"), str(uuid.uuid4()))
     return hashlib.md5(first[:200].encode()).hexdigest()[:16]
 
 
@@ -123,7 +131,7 @@ def chat_completions(req: ChatRequest):
     config = {"configurable": {"thread_id": tid}}
 
     last_user = next(
-        (m.content for m in reversed(req.messages) if m.role == "user"), ""
+        (m.text() for m in reversed(req.messages) if m.role == "user"), ""
     )
 
     result = agent.invoke(
@@ -133,14 +141,22 @@ def chat_completions(req: ChatRequest):
 
     text = _extract_and_host_images(result["messages"][-1].content)
 
-    # Agrège les usage_metadata de tous les messages AI de ce tour
+    # Usage du dernier AIMessage uniquement (pas l'historique entier)
     prompt_tokens = completion_tokens = cached_tokens = 0
-    for msg in result.get("messages", []):
+    for msg in reversed(result.get("messages", [])):
         meta = getattr(msg, "usage_metadata", None)
         if meta:
-            prompt_tokens     += meta.get("input_tokens", 0)
-            completion_tokens += meta.get("output_tokens", 0)
-            cached_tokens     += meta.get("input_token_details", {}).get("cache_read", 0)
+            prompt_tokens     = meta.get("input_tokens", 0)
+            completion_tokens = meta.get("output_tokens", 0)
+            # cached_tokens : priorité response_metadata (OpenRouter) > usage_metadata
+            rmeta = getattr(msg, "response_metadata", {})
+            cached_tokens = (
+                rmeta.get("token_usage", {})
+                     .get("prompt_tokens_details", {})
+                     .get("cached_tokens", 0)
+                or meta.get("input_token_details", {}).get("cache_read", 0)
+            )
+            break
 
     usage = {
         "prompt_tokens": prompt_tokens,

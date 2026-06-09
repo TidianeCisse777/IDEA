@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Lance serve.py + Open WebUI pour tester l'agent manuellement.
+# Lance ou redémarre serve.py + Open WebUI.
+# Usage : ./scripts/start_dev.sh [restart]
 set -e
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -7,6 +8,24 @@ VENV="$REPO_DIR/.venv/bin/activate"
 PORT="${SERVE_PORT:-8000}"
 WEBUI_URL="http://localhost:3000"
 API_URL="http://localhost:$PORT"
+CMD="${1:-start}"
+
+_kill_serve() {
+  local pids
+  pids=$(lsof -ti tcp:"$PORT" 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    echo "→ Arrêt serve.py (pid $pids) ..."
+    kill "$pids" 2>/dev/null || true
+    sleep 1
+    echo "✓ Arrêté"
+  else
+    echo "  (aucun processus sur :$PORT)"
+  fi
+}
+
+if [ "$CMD" = "restart" ]; then
+  _kill_serve
+fi
 
 # --- serve.py ---
 echo "→ Démarrage serve.py sur $API_URL ..."
@@ -40,5 +59,4 @@ echo "────────────────────────�
 echo "  Ctrl+C pour arrêter serve.py"
 echo ""
 
-# Garde serve.py au premier plan
 wait $SERVE_PID
