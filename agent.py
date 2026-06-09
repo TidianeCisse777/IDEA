@@ -53,8 +53,21 @@ def make_agent(thread_id: str):
     )
 
 
+def _make_tracer(thread_id: str) -> LangChainTracer | None:
+    """Retourne un LangChainTracer si LANGCHAIN_TRACING_V2 est activé."""
+    if os.getenv("LANGCHAIN_TRACING_V2", "false").lower() != "true":
+        return None
+    project = os.getenv("LANGCHAIN_PROJECT", "copepod-agent")
+    return LangChainTracer(project_name=project, tags=["copepod", thread_id[:8]])
+
+
 def invoke_verbose(agent, messages: dict, config: dict) -> dict:
     """Invoke agent with streaming, printing tool calls to stdout in real time."""
+    thread_id = config.get("configurable", {}).get("thread_id", "unknown")
+    tracer = _make_tracer(thread_id)
+    if tracer and "callbacks" not in config:
+        config = {**config, "callbacks": [tracer]}
+
     final_state = None
     for chunk in agent.stream(messages, config=config, stream_mode="values"):
         final_state = chunk
