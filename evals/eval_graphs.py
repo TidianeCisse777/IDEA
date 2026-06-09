@@ -27,12 +27,10 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) call load_skill to load the graph planner, "
-                "(2) detect the geographic dimension (latitude/longitude columns), "
-                "(3) use run_graph to produce a scatter map with latitude on Y and longitude on X, "
-                "(4) confirm the map was produced. "
-                "The plan must explicitly mention 'map' or 'geo' as the graph type. "
-                "Do not penalize if the image is not visible in text — only verify the tool sequence and acknowledgment."
+                "The agent must produce a station map using latitude and longitude. "
+                "The response must confirm the map was produced. "
+                "If an image is provided, verify it shows a scatter plot of station positions "
+                "with longitude on X and latitude on Y."
             ),
             "required_tools": ["load_skill", "run_graph"],
         },
@@ -45,11 +43,10 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) call load_skill to load the graph planner, "
-                "(2) identify latitude, longitude, and a total abundance column, "
-                "(3) use run_graph to produce a scatter map where color encodes abundance, "
-                "(4) confirm the map was produced with a colorbar. "
-                "Do not penalize if the image is not visible in text."
+                "The agent must produce a station map where color encodes total abundance. "
+                "The response must confirm the map was produced. "
+                "If an image is provided, verify it shows stations as colored points "
+                "with a colorbar representing abundance."
             ),
             "required_tools": ["load_skill", "run_graph"],
         },
@@ -62,11 +59,10 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) call load_skill to load the graph planner, "
-                "(2) identify the station column and total abundance column, "
-                "(3) use run_graph to produce a bar chart grouped by station, "
-                "(4) confirm the graph was produced with title and labeled axes. "
-                "Do not penalize if the image is not visible in text."
+                "The agent must produce a bar chart of mean total abundance grouped by station. "
+                "The response must confirm the chart was produced. "
+                "If an image is provided, verify it shows stations on one axis, "
+                "abundance values on the other, with a title and labeled axes."
             ),
             "required_tools": ["load_skill", "run_graph"],
         },
@@ -95,9 +91,9 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must call query_copepod_knowledge_base to retrieve the lat/lon bounds of Baffin Bay. "
-                "The response must include approximate latitude range (66-78N) and longitude range (58-80W). "
-                "Coordinates must come from a knowledge base query, not invented."
+                "The response must include the approximate geographic bounds of Baffin Bay: "
+                "latitude range ~66-78°N and longitude range ~58-80°W. "
+                "Numeric bounds must be present in the response."
             ),
             "required_tools": ["query_copepod_knowledge_base"],
         },
@@ -126,13 +122,13 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) compute mean or total abundance per station using run_pandas, "
-                "(2) call load_skill to plan the map, "
-                "(3) use run_graph to produce a map where station size or color reflects abundance. "
-                "The agent must use both geographic position (lat/lon) and abundance data. "
-                "Do not penalize if the image is not visible in text."
+                "The agent must produce a map showing station positions (lat/lon) "
+                "where color or size encodes total or mean abundance. "
+                "The response must confirm the map was produced. "
+                "If an image is provided, verify it shows a geographic scatter plot "
+                "with abundance encoded visually."
             ),
-            "required_tools": ["load_skill", "run_pandas", "run_graph"],
+            "required_tools": ["load_skill", "run_graph"],
         },
     },
     # --- Stades copépodites ---
@@ -144,13 +140,12 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) call load_skill to plan the graph, "
-                "(2) filter data for Calanus hyperboreus, "
-                "(3) identify C1-C5, M (male), F (female) abundance columns, "
-                "(4) use run_graph to produce a bar chart with stages on X axis and abundance on Y. "
-                "Do not penalize if the image is not visible in text."
+                "The agent must produce a bar chart showing the distribution of copepodite stages "
+                "(C1 to C5, M, F) for Calanus hyperboreus. "
+                "The response must confirm the chart was produced. "
+                "If an image is provided, verify it shows stages on one axis and abundance on the other."
             ),
-            "required_tools": ["load_skill", "run_pandas", "run_graph"],
+            "required_tools": ["load_skill", "run_graph"],
         },
     },
     {
@@ -161,13 +156,12 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) call load_skill to plan the graph, "
-                "(2) identify C4 and C5 biomass columns, "
-                "(3) aggregate by taxon/species, "
-                "(4) use run_graph to produce a grouped or stacked bar chart comparing C4 vs C5 biomass. "
-                "Do not penalize if the image is not visible in text."
+                "The agent must produce a grouped or stacked bar chart comparing C4 vs C5 carbon biomass "
+                "across species or taxa. "
+                "The response must confirm the chart was produced. "
+                "If an image is provided, verify it shows species on one axis and C4/C5 biomass values on the other."
             ),
-            "required_tools": ["load_skill", "run_pandas", "run_graph"],
+            "required_tools": ["load_skill", "run_graph"],
         },
     },
     # --- Distribution verticale ---
@@ -179,10 +173,10 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) call load_skill to plan the graph, "
-                "(2) identify MIN_SAMPLE_DEPTH (or equivalent depth column) and total abundance column, "
-                "(3) use run_graph to produce a scatter or line plot with depth on Y axis (inverted, deeper = lower) and abundance on X. "
-                "Do not penalize if the image is not visible in text."
+                "The agent must produce a depth profile plot with depth on the Y axis "
+                "(inverted so deeper values are lower) and total abundance on the X axis. "
+                "The response must confirm the chart was produced. "
+                "If an image is provided, verify the depth axis is inverted."
             ),
             "required_tools": ["load_skill", "run_graph"],
         },
@@ -213,11 +207,9 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) call load_skill to plan the graph, "
-                "(2) identify the deployment date column and total abundance column, "
-                "(3) aggregate or plot abundance over time, "
-                "(4) use run_graph to produce a line or scatter plot with date on X axis. "
-                "Do not penalize if the image is not visible in text."
+                "The agent must produce a time-series plot of total abundance over deployment dates. "
+                "The response must confirm the chart was produced. "
+                "If an image is provided, verify dates are on the X axis and abundance on the Y axis."
             ),
             "required_tools": ["load_skill", "run_graph"],
         },
