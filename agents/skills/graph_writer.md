@@ -1,5 +1,32 @@
 # Skill: graph_writer
 
+You must write correct and complete code to produce the planned output — either a matplotlib chart or a pandas table.
+
+## If the plan says Output: table
+
+Use this template with `run_pandas`:
+
+```python
+result = (
+    df
+    .groupby("<group_column>")["<value_column>"]
+    .agg("<sum | mean | count>")
+    .sort_values(ascending=False)
+    .reset_index()
+    .rename(columns={"<value_column>": "<label>"})
+)
+```
+
+Rules:
+- Always assign to `result`
+- Always sort for readability
+- Use `.reset_index()` so the table has clean columns
+- Never call `plt.show()` or produce a figure — `run_pandas` returns a markdown table automatically
+
+---
+
+## If the plan says Output: visual
+
 You must write correct and complete matplotlib code.
 
 ## Base template
