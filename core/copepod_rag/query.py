@@ -195,41 +195,6 @@ def query_copepod_rag(
         if os.getenv("PYTEST_CURRENT_TEST"):
             _close()
 
-
-
-
-def _trace_langfuse(question: str, chunks: list[dict], session_id: str):
-    try:
-        import os
-        from core.copepod_observability import _configure_local_langfuse_host
-        _configure_local_langfuse_host()
-        from langfuse import Langfuse
-        lf = Langfuse()
-        output = {"top_k": len(chunks), "chunks": [
-            {"chunk_id": c["chunk_id"], "title": c["title"], "score": c["score"]}
-            for c in chunks
-        ]}
-        eval_trace_id = os.getenv("COPEPOD_EVAL_LF_TRACE_ID")
-        if eval_trace_id:
-            span = lf.span(
-                trace_id=eval_trace_id,
-                name="tool/rag_query",
-                input={"question": question},
-                output=output,
-                metadata={"session_id": session_id},
-            )
-        else:
-            span = lf.span(
-                name="copepod_rag_query",
-                session_id=session_id,
-                input={"question": question},
-                output=output,
-            )
-        span.end()
-    except Exception:
-        pass  # Langfuse optional — never crash the query path
-
-
 if __name__ == "__main__":
     import sys
     q = " ".join(sys.argv[1:]) or "colonnes EcoTaxa UVP5"

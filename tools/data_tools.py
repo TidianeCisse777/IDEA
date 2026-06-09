@@ -1,6 +1,5 @@
 """Tools LangChain pour l'analyse de données — slice 2."""
 import io
-import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ import pandas as pd
 from langchain_core.tools import tool
 
 from tools.file_loader import load_file as _load_file
+from tools.public_url import graph_url
 from tools.session_store import SessionStore, default_store
 
 
@@ -146,8 +146,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 plt.close("all")
                 graph_id = uuid.uuid4().hex[:12]
                 (_GRAPHS_DIR / f"{graph_id}.png").write_bytes(buf.read())
-                base_url = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
-                return f"![graph]({base_url}/graphs/{graph_id}.png)"
+                return f"![graph]({graph_url(f'{graph_id}.png')})"
 
             return "Code executed but no figure was produced. Make sure your matplotlib code creates a figure."
 

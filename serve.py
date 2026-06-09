@@ -5,9 +5,7 @@ import json
 import logging
 import os
 import re
-import subprocess
 import uuid
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
@@ -23,7 +21,8 @@ from pydantic import BaseModel
 load_dotenv()
 
 from agent import make_agent, _CHECKPOINTS_DB
-from tools.public_url import serve_base_url
+from tools.openwebui_uploads import resolve_attached_files
+from tools.public_url import graph_url, serve_base_url
 from tools.session_store import default_store
 from core.copepod_rag.query import _get_cross_encoder
 
@@ -87,9 +86,6 @@ app.add_middleware(
 GRAPHS_DIR = Path("/tmp/copepod_graphs")
 GRAPHS_DIR.mkdir(exist_ok=True)
 
-_BASE_URL = serve_base_url()
-
-
 def _extract_and_host_images(text: str) -> str:
     """Remplace les data URIs base64 par des URLs hébergées sur /graphs/."""
     def replace(match):
@@ -99,7 +95,7 @@ def _extract_and_host_images(text: str) -> str:
         graph_id = uuid.uuid4().hex[:12]
         path = GRAPHS_DIR / f"{graph_id}.png"
         path.write_bytes(base64.b64decode(b64))
-        url = f"{_BASE_URL}/graphs/{graph_id}.png"
+        url = graph_url(f"{graph_id}.png")
         return (
             f"![graphe]({url})\n\n"
             f"[⬇ Télécharger le graphe]({url})"
@@ -111,73 +107,6 @@ def _extract_and_host_images(text: str) -> str:
         text,
         flags=re.DOTALL,
     )
-
-_WEBUI_UPLOADS_DIR = Path("/tmp/webui_uploads")
-_WEBUI_UPLOADS_DIR.mkdir(exist_ok=True)
-
-_WEBUI_CONTAINER = os.getenv("WEBUI_CONTAINER", "open-webui")
-_WEBUI_UPLOADS_PATH = os.getenv("WEBUI_UPLOADS_PATH", "/app/backend/data/uploads")
-
-
-def _resolve_attached_files(text: str) -> str:
-    """Remplace <attached_files> XML par un chemin local accessible par load_file.
-
-    Open WebUI injecte :
-      <attached_files>
-        <file type="file" url="<UUID>" content_type="..." name="<filename>"/>
-      </attached_files>
-
-    On copie le fichier depuis le container Docker vers /tmp/webui_uploads/<filename>
-    et on réécrit le message pour que l'agent puisse appeler load_file.
-    """
-    pattern = r"<attached_files>.*?</attached_files>"
-    match = re.search(pattern, text, re.DOTALL)
-    if not match:
-        return text
-
-    xml_block = match.group(0)
-    resolved_paths = []
-
-    try:
-        root = ET.fromstring(xml_block)
-        for file_el in root.findall("file"):
-            file_id = file_el.get("url", "").strip()
-            name = file_el.get("name", "").strip()
-            if not file_id or not name:
-                continue
-
-            local_path = _WEBUI_UPLOADS_DIR / name
-            # Pattern Docker : <UUID>_<filename>
-            container_path = f"{_WEBUI_UPLOADS_PATH}/{file_id}_{name}"
-
-            try:
-                with open(local_path, "wb") as out_f:
-                    subprocess.run(
-                        ["docker", "exec", _WEBUI_CONTAINER, "cat", container_path],
-                        stdout=out_f,
-                        stderr=subprocess.DEVNULL,
-                        check=True,
-                        timeout=10,
-                    )
-                resolved_paths.append(str(local_path))
-                logger.info("file_resolved name=%s → %s", name, local_path)
-            except Exception as exc:
-                logger.warning("file_resolve_failed name=%s container=%s err=%s", name, container_path, exc)
-
-    except ET.ParseError as exc:
-        logger.warning("attached_files_parse_error: %s", exc)
-
-    if not resolved_paths:
-        # On ne peut pas résoudre — on nettoie juste le XML pour ne pas polluer le LLM
-        return re.sub(pattern, "", text, flags=re.DOTALL).strip()
-
-    paths_str = "\n".join(f"- {p}" for p in resolved_paths)
-    instruction = (
-        f"Fichier(s) chargé(s) depuis Open WebUI :\n{paths_str}\n"
-        "Charge le fichier avec l'outil load_file avant de répondre."
-    )
-    return re.sub(pattern, instruction, text, flags=re.DOTALL).strip()
-
 
 _known_threads: set[str] = set()
 
@@ -408,7 +337,7 @@ async def chat_completions(req: ChatRequest):
     last_user = next(
         (m.text() for m in reversed(req.messages) if m.role == "user"), ""
     )
-    last_user = _resolve_attached_files(last_user)
+    last_user = resolve_attached_files(last_user)
 
     if _is_internal_prompt(last_user):
         logger.info("thread=%s SKIPPED internal prompt", tid)
