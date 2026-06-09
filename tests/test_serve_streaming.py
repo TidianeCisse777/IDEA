@@ -61,21 +61,21 @@ def test_format_tool_line_run_graph_shows_loading_indicator():
     from serve import _format_tool_line
     code = "plt.scatter(df['lon'], df['lat'])"
     line = _format_tool_line("run_graph", {"code": code})
-    assert "📊" in line
+    assert "Génération du graphique" in line
 
 
 def test_format_tool_line_run_pandas_no_loading_indicator():
     """run_pandas → pas d'indicateur graphique (aucune image à attendre)."""
     from serve import _format_tool_line
     line = _format_tool_line("run_pandas", {"code": "result = df.mean()"})
-    assert "📊" not in line
+    assert "Génération" not in line
 
 
 def test_format_tool_line_run_graph_without_code_no_loading_indicator():
     """run_graph sans code → pas d'indicateur (pas de génération en cours)."""
     from serve import _format_tool_line
     line = _format_tool_line("run_graph", {})
-    assert "📊" not in line
+    assert "Génération" not in line
 
 
 def test_format_tool_line_run_pandas_with_code_uses_details():

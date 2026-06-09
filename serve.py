@@ -272,7 +272,7 @@ def _format_tool_line(name: str, args: dict | None = None) -> str:
     if name in ("run_graph", "run_pandas") and "code" in args:
         code = args["code"]
         if name == "run_graph":
-            return f"\n🔧 `{name}`\n```python\n{code}\n```\n📊 *Génération du graphique...*\n"
+            return f"\n🔧 `{name}`\n```python\n{code}\n```\n*Génération du graphique...*\n"
         return f"\n🔧 `{name}`\n```python\n{code}\n```\n"
 
     if name == "load_file" and "path" in args:
