@@ -60,12 +60,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
-                buf = io.BytesIO()
-                plt.savefig(buf, format="png", bbox_inches="tight")
-                buf.seek(0)
-                b64 = base64.b64encode(buf.read()).decode()
                 plt.close("all")
-                return f"![graphe](data:image/png;base64,{b64})"
+                return (
+                    "Error: run_pandas produced a matplotlib figure. "
+                    "Use run_graph instead to execute visualization code."
+                )
 
             result = local_vars.get("result")
             if result is None:
