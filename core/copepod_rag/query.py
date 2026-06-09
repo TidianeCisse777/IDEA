@@ -12,9 +12,45 @@ from __future__ import annotations
 
 import contextlib
 import os
-import unicodedata
 from pathlib import Path
 from typing import Optional
+
+
+def _rerank(question: str, chunks: list[dict]) -> list[dict]:
+    """Re-classe les chunks par pertinence réelle via cross-encoder."""
+    if len(chunks) <= 1:
+        return chunks
+    try:
+        from sentence_transformers import CrossEncoder
+        model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        pairs = [(question, c["content"]) for c in chunks]
+        scores = model.predict(pairs)
+        ranked = sorted(zip(scores, chunks), key=lambda x: x[0], reverse=True)
+        return [c for _, c in ranked]
+    except Exception:
+        return chunks
+
+
+def _generate_alternative_queries(question: str) -> list[str]:
+    """Génère des reformulations via LLM pour couvrir le vocabulaire non-canonique."""
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.output_parsers import StrOutputParser
+        from langchain_core.prompts import ChatPromptTemplate
+
+        prompt = ChatPromptTemplate.from_template(
+            "Tu es un assistant scientifique spécialisé en océanographie et copépodes marins.\n"
+            "Génère 3 reformulations différentes de cette question pour améliorer la recherche documentaire.\n"
+            "Retourne uniquement les 3 reformulations, une par ligne, sans numérotation.\n\n"
+            "Question originale : {question}"
+        )
+        llm = ChatOpenAI(model=os.getenv("LLM_MODEL", "openai/gpt-4.1-mini"), temperature=0)
+        chain = prompt | llm | StrOutputParser()
+        output = chain.invoke({"question": question})
+        alternatives = [q.strip() for q in output.strip().splitlines() if q.strip()]
+        return alternatives[:3]
+    except Exception:
+        return []
 
 
 
@@ -48,28 +84,6 @@ COLLECTION_NAME = "copepod_rag"
 
 _client = None
 _collection = None
-
-_QUERY_ALIASES = {
-    "obj orig id": ["obj_orig_id", "obj.orig_id"],
-    "obj.orig_id": ["obj_orig_id"],
-    "txo display name": ["txo_display_name", "txo.display_name"],
-    "txo.display_name": ["txo_display_name"],
-    "obj classif qual": ["obj_classif_qual", "obj.classif_qual"],
-    "obj.classif_qual": ["obj_classif_qual"],
-    "fre equivalent diameter area": ["fre_equivalent_diameter_area", "fre.equivalent_diameter_area"],
-    "fre.equivalent_diameter_area": ["fre_equivalent_diameter_area"],
-    "acq pixel um size": ["acq_pixel_um_size", "acq.pixel_um_size", "pixel_um_size"],
-    "pixel um size": ["acq_pixel_um_size", "acq.pixel_um_size", "pixel_um_size"],
-    "acq.pixel_um_size": ["acq_pixel_um_size"],
-    "ctd embarquée": ["CTD embarquée", "acq_temperature_ctd", "acq_salinity_ctd"],
-    "ctd embarquee": ["CTD embarquée", "acq_temperature_ctd", "acq_salinity_ctd"],
-    "température salinité oxygène fluorescence": [
-        "acq_temperature_ctd",
-        "acq_salinity_ctd",
-        "acq_oxygen_concent",
-        "acq_fluo1",
-    ],
-}
 
 
 def _load():
@@ -123,102 +137,43 @@ def query_copepod_rag(
     """
     _load()
     try:
-        expanded_question = _expand_query(question)
         candidate_count = max(top_k, min(100, top_k * 5))
 
-        results = _collection.query(
-            query_texts=[expanded_question],
-            n_results=candidate_count,
-            include=["documents", "metadatas", "distances"],
-        )
+        # Multi-query : on interroge avec la question originale + les reformulations LLM
+        queries = [question] + _generate_alternative_queries(question)
 
-        chunks = []
-        for i in range(len(results["ids"][0])):
-            content = results["documents"][0][i]
-            distance = round(results["distances"][0][i], 4)
-            chunks.append({
-                "chunk_id": results["ids"][0][i],
-                "doc": results["metadatas"][0][i]["doc"],
-                "title": results["metadatas"][0][i]["title"],
-                "content": content,
-                "score": distance,
-                "_rank_score": distance - _lexical_boost(expanded_question, content),
-            })
-        chunks.sort(key=lambda c: (c["_rank_score"], c["score"]))
-        chunks = [{k: v for k, v in c.items() if k != "_rank_score"} for c in chunks[:top_k]]
-        return chunks
+        seen_ids: set[str] = set()
+        chunks: list[dict] = []
+
+        for q in queries:
+            results = _collection.query(
+                query_texts=[q],
+                n_results=candidate_count,
+                include=["documents", "metadatas", "distances"],
+            )
+            for i in range(len(results["ids"][0])):
+                cid = results["ids"][0][i]
+                if cid in seen_ids:
+                    continue
+                seen_ids.add(cid)
+                content = results["documents"][0][i]
+                distance = round(results["distances"][0][i], 4)
+                chunks.append({
+                    "chunk_id": cid,
+                    "doc": results["metadatas"][0][i]["doc"],
+                    "title": results["metadatas"][0][i]["title"],
+                    "content": content,
+                    "score": distance,
+                })
+
+        chunks.sort(key=lambda c: c["score"])
+        reranked = _rerank(question, chunks[:top_k * 3])
+        return reranked[:top_k]
     finally:
         if os.getenv("PYTEST_CURRENT_TEST"):
             _close()
 
 
-def _expand_query(question: str) -> str:
-    lower = question.lower().replace("_", " ").replace(".", " ")
-    additions = []
-    for pattern, aliases in _QUERY_ALIASES.items():
-        if pattern in lower or pattern in question.lower():
-            additions.extend(aliases)
-    if "loki" in lower and "ctd" in lower:
-        additions.extend([
-            "CTD embarquée",
-            "CTD externe indépendante",
-            "acq_temperature_ctd",
-            "acq_salinity_ctd",
-            "acq_raw_depth",
-            "capteurs/acquisitions associées",
-            "ne pas les confondre",
-        ])
-    if not additions:
-        return question
-    return f"{question} {' '.join(dict.fromkeys(additions))}"
-
-
-def _lexical_boost(expanded_question: str, content: str) -> float:
-    content_lower = content.lower()
-    terms = {
-        term.lower()
-        for term in expanded_question.replace(",", " ").split()
-        if len(term) >= 3 and ("_" in term or "." in term or term.lower() in {"loki", "ctd"})
-    }
-    boost = 0.0
-    for term in terms:
-        if term in content_lower:
-            boost += 0.08
-    boost += _business_context_boost(expanded_question, content)
-    return min(boost, 0.75)
-
-
-def _business_context_boost(expanded_question: str, content: str) -> float:
-    question = _normalize_text(expanded_question)
-    content_norm = _normalize_text(content)
-    boost = 0.0
-
-    if "loki" in question and "ctd" in question:
-        if "ctd embarquee" in content_norm and "ctd externe" in content_norm:
-            boost += 0.25
-        if "ne pas les confondre" in content_norm or "capteurs/acquisitions associees" in content_norm:
-            boost += 0.15
-
-    if "pixel_um_size" in expanded_question or "pixel um size" in question:
-        if "acq_pixel_um_size" in content and "/ 1000" in content:
-            boost += 0.2
-        if "longueur_mm" in content:
-            boost += 0.1
-
-    if "acq_pixel" in expanded_question and "acq_pixel_um_size" in expanded_question:
-        if "acq_pixel" in content and "acq_pixel_um_size" in content:
-            boost += 0.15
-
-    if ("null" in question or "constante" in question) and "tsv" in question:
-        if "contenu reel du tsv" in content_norm or "toujours recalculer" in content_norm:
-            boost += 0.2
-
-    return boost
-
-
-def _normalize_text(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text.lower())
-    return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 
 def _trace_langfuse(question: str, chunks: list[dict], session_id: str):
