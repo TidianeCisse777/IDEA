@@ -46,6 +46,7 @@ def run_eval_suite(
         evaluators=evaluators,
         experiment_prefix=experiment_prefix,
         metadata=metadata,
+        max_concurrency=5,
     )
 
     rows = []
