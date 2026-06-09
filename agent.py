@@ -36,6 +36,9 @@ def _load_system_prompt() -> str:
         return COPEPOD_SYSTEM_PROMPT
 
 
+_SYSTEM_PROMPT = _load_system_prompt()
+
+
 def make_agent(thread_id: str):
     """Crée un agent ReAct copépodes pour un thread donné."""
     llm = ChatOpenAI(
@@ -43,7 +46,7 @@ def make_agent(thread_id: str):
         max_retries=2,
     )
     tools = make_tools(thread_id) + [make_rag_tool(), make_skill_tool()]
-    system_prompt = _load_system_prompt()
+    system_prompt = _SYSTEM_PROMPT
 
     return create_react_agent(
         llm,
