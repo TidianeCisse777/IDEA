@@ -3,10 +3,12 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from typing import Sequence
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.tracers import LangChainTracer
+from langchain_core.messages import AIMessage, ToolMessage, RemoveMessage
 from langgraph.prebuilt import create_react_agent
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
@@ -14,6 +16,7 @@ from tools.data_tools import make_tools
 from tools.bio_oracle_sources import make_bio_oracle_tools
 from tools.amundsen_sources import make_amundsen_tools
 from tools.copepod_sources import make_source_tools
+from tools.sql_workspace import make_sql_tools
 from tools.rag_tool import make_rag_tool
 from tools.skill_tool import make_skill_tool
 
@@ -69,6 +72,78 @@ def _make_context_hook():
     return trim_context
 
 
+def _find_invalid_tool_history_cut_index(messages: Sequence) -> int | None:
+    """Retourne l'index à partir duquel l'historique devient invalide.
+
+    LangGraph exige qu'un `AIMessage` contenant des `tool_calls` soit suivi
+    des `ToolMessage` correspondants. Si la fin de l'historique est orpheline,
+    on coupe à partir du premier message non équilibré.
+    """
+    pending_tool_call_ids: set[str] = set()
+    first_pending_ai_index: int | None = None
+
+    for index, message in enumerate(messages):
+        if isinstance(message, AIMessage) and getattr(message, "tool_calls", None):
+            if pending_tool_call_ids:
+                return first_pending_ai_index
+            if first_pending_ai_index is None:
+                first_pending_ai_index = index
+            for tool_call in message.tool_calls:
+                tool_call_id = tool_call.get("id") if isinstance(tool_call, dict) else getattr(tool_call, "id", None)
+                if tool_call_id:
+                    pending_tool_call_ids.add(str(tool_call_id))
+            continue
+
+        if isinstance(message, ToolMessage):
+            tool_call_id = getattr(message, "tool_call_id", None)
+            if tool_call_id in pending_tool_call_ids:
+                pending_tool_call_ids.remove(tool_call_id)
+                if not pending_tool_call_ids:
+                    first_pending_ai_index = None
+                continue
+            if pending_tool_call_ids:
+                return first_pending_ai_index
+            return index
+
+        if pending_tool_call_ids:
+            return first_pending_ai_index
+
+    if pending_tool_call_ids:
+        return first_pending_ai_index
+    return None
+
+
+def repair_invalid_tool_history(agent, config: dict) -> bool:
+    """Nettoie un thread LangGraph si un tool_call est resté sans ToolMessage.
+
+    Retourne True si l'historique a été modifié.
+    """
+    try:
+        snapshot = agent.get_state(config)
+    except Exception:
+        return False
+
+    values = getattr(snapshot, "values", {}) or {}
+    messages = list(values.get("messages") or [])
+    cut_index = _find_invalid_tool_history_cut_index(messages)
+    if cut_index is None:
+        return False
+
+    removals = [
+        RemoveMessage(id=message.id)
+        for message in messages[cut_index:]
+        if getattr(message, "id", None)
+    ]
+    if not removals:
+        return False
+
+    try:
+        agent.update_state(config, {"messages": removals})
+        return True
+    except Exception:
+        return False
+
+
 def make_agent(thread_id: str):
     """Crée un agent ReAct copépodes pour un thread donné."""
     llm = ChatOpenAI(
@@ -80,6 +155,7 @@ def make_agent(thread_id: str):
         + make_source_tools(thread_id)
         + make_bio_oracle_tools(thread_id)
         + make_amundsen_tools(thread_id)
+        + (make_sql_tools(thread_id) if os.getenv("DATABASE_URL", "").strip() else [])
         + [make_rag_tool(), make_skill_tool()]
     )
 
@@ -106,6 +182,8 @@ def invoke_verbose(agent, messages: dict, config: dict) -> dict:
     tracer = _make_tracer(thread_id)
     if tracer and "callbacks" not in config:
         config = {**config, "callbacks": [tracer]}
+
+    repair_invalid_tool_history(agent, config)
 
     final_state = None
     for chunk in agent.stream(messages, config=config, stream_mode="values"):
@@ -148,9 +226,11 @@ def run_query(file_path: str, question: str, thread_id: str | None = None) -> st
 
     # Charger le fichier en premier message
     load_msg = f"Charge ce fichier : {file_path}"
+    repair_invalid_tool_history(agent, config)
     agent.invoke({"messages": [{"role": "user", "content": load_msg}]}, config=config)
 
     # Poser la question
+    repair_invalid_tool_history(agent, config)
     result = agent.invoke(
         {"messages": [{"role": "user", "content": question}]},
         config=config,
@@ -175,5 +255,6 @@ if __name__ == "__main__":
                 break
             if not q:
                 continue
+            repair_invalid_tool_history(ag, cfg)
             res = ag.invoke({"messages": [{"role": "user", "content": q}]}, config=cfg)
             print(f"\nAgent : {res['messages'][-1].content}\n")

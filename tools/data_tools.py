@@ -146,7 +146,14 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 plt.close("all")
                 graph_id = uuid.uuid4().hex[:12]
                 (_GRAPHS_DIR / f"{graph_id}.png").write_bytes(buf.read())
-                return f"![graph]({graph_url(f'{graph_id}.png')})"
+                image_markdown = f"![graph]({graph_url(f'{graph_id}.png')})"
+                graph_explanation = local_vars.get("graph_explanation")
+                if isinstance(graph_explanation, str) and graph_explanation.strip():
+                    explanation = graph_explanation.strip()
+                    if not explanation.lower().startswith("lecture rapide"):
+                        explanation = f"Lecture rapide:\n{explanation}"
+                    return f"{image_markdown}\n\n{explanation}"
+                return image_markdown
 
             return "Code executed but no figure was produced. Make sure your matplotlib code creates a figure."
 

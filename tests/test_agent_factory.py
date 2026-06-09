@@ -16,7 +16,18 @@ def test_make_agent_returns_graph():
 
 # --- Comportement 2 : les 3 tools sont présents ---
 
-def test_agent_has_required_tools():
+def test_agent_has_required_tools(tmp_path, monkeypatch):
+    import sqlite3
+
+    db_path = tmp_path / "source.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE casts (id INTEGER PRIMARY KEY, station TEXT)")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    monkeypatch.setenv("SQL_WORKSPACE_DIR", str(tmp_path / "sql_workspace"))
+
     with patch("agent.ChatOpenAI") as mock_llm:
         mock_llm.return_value = MagicMock()
         from agent import make_agent
@@ -25,6 +36,7 @@ def test_agent_has_required_tools():
     from tools.data_tools import make_tools
     from tools.bio_oracle_sources import make_bio_oracle_tools
     from tools.amundsen_sources import make_amundsen_tools
+    from tools.sql_workspace import make_sql_tools
     from tools.rag_tool import make_rag_tool
     from tools.copepod_sources import make_source_tools
     tools = (
@@ -32,6 +44,7 @@ def test_agent_has_required_tools():
         + make_source_tools("thread-test")
         + make_bio_oracle_tools("thread-test")
         + make_amundsen_tools("thread-test")
+        + make_sql_tools("thread-test")
         + [make_rag_tool()]
     )
     tool_names = {t.name for t in tools}
@@ -45,6 +58,8 @@ def test_agent_has_required_tools():
     assert "list_amundsen_datasets" in tool_names
     assert "preview_amundsen_profile" in tool_names
     assert "query_amundsen_ctd" in tool_names
+    assert "list_sql_tables" in tool_names
+    assert "copy_sql_query_to_workspace" in tool_names
 
 
 # --- Comportement 3 : prompt anti-hallucination ---
@@ -63,6 +78,25 @@ def test_system_prompt_mentions_sources():
     assert "EcoTaxa" in COPEPOD_SYSTEM_PROMPT
     assert "EcoPart" in COPEPOD_SYSTEM_PROMPT
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
+
+
+def test_system_prompt_mentions_graph_explanation():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "graph_explanation" in prompt
+    assert "lecture rapide" in prompt
+
+
+def test_system_prompt_routes_sql_workspace_queries():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "database_url" in prompt
+    assert "read-only" in prompt
+    assert "preview_sql_table" in prompt
+    assert "copy_sql_query_to_workspace" in prompt
+    assert "sql_workspace_query" in prompt
 
 
 def test_system_prompt_routes_ecotaxa_project_discovery():

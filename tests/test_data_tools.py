@@ -90,6 +90,44 @@ def test_run_pandas_no_file_loaded():
     assert "aucun fichier" in result.lower()
 
 
+# --- Comportement 5 : run_graph ajoute une lecture rapide ---
+
+def test_run_graph_includes_quick_reading(tmp_path):
+    tools = make_tools("thread-graph")
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_graph = next(t for t in tools if t.name == "run_graph")
+
+    df = pd.DataFrame({
+        "depth": [10, 20, 30],
+        "temperature": [2.1, 1.8, 1.2],
+    })
+    p = tmp_path / "graph.tsv"
+    df.to_csv(p, sep="\t", index=False)
+    load_file_tool.invoke({"path": str(p)})
+
+    code = """
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(6, 4))
+ax.plot(df["depth"], df["temperature"], marker="o")
+ax.set_title("Température par profondeur")
+ax.set_xlabel("Profondeur (m)")
+ax.set_ylabel("Température (°C)")
+graph_explanation = (
+    "Lecture rapide:\\n"
+    "- Le graphe relie profondeur et température pour visualiser la tendance verticale.\\n"
+    "- La courbe en ligne met en évidence la décroissance de température avec la profondeur.\\n"
+    "- Le code reste minimal pour conserver une lecture directe du profil."
+)
+"""
+
+    result = run_graph.invoke({"code": code})
+    assert "/graphs/" in result
+    assert "Lecture rapide" in result
+    assert "courbe en ligne" in result
+
+
 # --- Détection UVP : _uvp_skill_hint ---
 
 def test_uvp_hint_ecotaxa_fre_major():

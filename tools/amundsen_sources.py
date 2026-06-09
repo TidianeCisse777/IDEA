@@ -34,7 +34,10 @@ def make_amundsen_tools(thread_id: str) -> list:
     @tool
     def list_amundsen_datasets() -> str:
         """Liste les datasets CTD Amundsen disponibles dans ERDDAP."""
-        datasets = _list_amundsen_datasets()
+        try:
+            datasets = _list_amundsen_datasets()
+        except Exception as exc:
+            return f"Erreur lors de l'accès à Amundsen : {exc}"
         if not datasets:
             return "Aucun dataset Amundsen trouvé."
         return _format_table(datasets, ["dataset_id", "title", "griddap"])
@@ -42,23 +45,29 @@ def make_amundsen_tools(thread_id: str) -> list:
     @tool
     def preview_amundsen_profile(station: str | None = None, cast_number: int | None = None) -> str:
         """Prévisualise un profil CTD Amundsen avec des alias de jointure."""
-        preview = _preview_amundsen_profile({"station": station, "cast_number": cast_number})
-        rows = preview["rows"]
-        if not rows:
-            return "Aucun profil Amundsen trouvé."
-        return _format_table(rows[:10], ["time", "station", "cast_number", "Pres", "Temp", "Sal", "profile_id", "station_id", "cast_id"])
+        try:
+            preview = _preview_amundsen_profile({"station": station, "cast_number": cast_number})
+            rows = preview["rows"]
+            if not rows:
+                return "Aucun profil Amundsen trouvé."
+            return _format_table(rows[:10], ["time", "station", "cast_number", "Pres", "Temp", "Sal", "profile_id", "station_id", "cast_id"])
+        except Exception as exc:
+            return f"Erreur lors de l'accès à Amundsen : {exc}"
 
     @tool
     def query_amundsen_ctd(station: str | None = None, cast_number: int | None = None) -> str:
         """Extrait un profil CTD Amundsen complet et écrit un TSV téléchargeable."""
-        file_id = uuid.uuid4().hex
-        output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
-        result = _query_amundsen_ctd({"station": station, "cast_number": cast_number}, output_path=output_path)
-        dataframe = pd.read_csv(output_path, sep="\t")
-        _store.set(thread_id, dataframe, {"source": f"amundsen:{station or cast_number or 'ctd'}", "n_rows": len(dataframe)})
-        return (
-            f"Amundsen CTD chargé — {result['row_count']} lignes.\n"
-            f"Télécharger : {result['download_url']}"
-        )
+        try:
+            file_id = uuid.uuid4().hex
+            output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
+            result = _query_amundsen_ctd({"station": station, "cast_number": cast_number}, output_path=output_path)
+            dataframe = pd.read_csv(output_path, sep="\t")
+            _store.set(thread_id, dataframe, {"source": f"amundsen:{station or cast_number or 'ctd'}", "n_rows": len(dataframe)})
+            return (
+                f"Amundsen CTD chargé — {result['row_count']} lignes.\n"
+                f"Télécharger : {result['download_url']}"
+            )
+        except Exception as exc:
+            return f"Erreur lors de l'accès à Amundsen : {exc}"
 
     return [list_amundsen_datasets, preview_amundsen_profile, query_amundsen_ctd]

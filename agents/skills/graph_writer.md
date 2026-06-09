@@ -54,6 +54,7 @@ plt.tight_layout()
 - For long labels (taxon names): `ax.tick_params(axis='x', rotation=45)`
 - For horizontal bar charts when there are many categories (> 10): use `ax.barh()`
 - Never call `plt.savefig()` — the system captures the figure automatically
+- After the figure code, set a string variable named `graph_explanation` with a short "Lecture rapide" note: what the graph shows, why the chosen encoding fits the question, and the main reading cue. Keep it concise and factual.
 
 ## Geographic maps
 
@@ -125,6 +126,7 @@ plt.tight_layout()
 - No color variable: use `color='steelblue'`
 - Station labels: iterate unique stations and call `ax.annotate(name, (lon, lat), transform=ccrs.PlateCarree(), fontsize=7)`
 - Never use folium — cartopy only
+- When writing the code, make the `graph_explanation` reflect the actual plotting choices in the code, not generic commentary.
 
 ## Data handling
 
