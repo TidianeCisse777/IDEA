@@ -6,9 +6,17 @@ set -e
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV="$REPO_DIR/.venv/bin/activate"
 PORT="${SERVE_PORT:-8000}"
-WEBUI_URL="http://localhost:3000"
+ACCESS_MODE="${SERVE_ACCESS_MODE:-local}"
+START_WEBUI="${START_WEBUI:-1}"
+if [ "$ACCESS_MODE" = "lan" ] || [ "$ACCESS_MODE" = "public" ] || [ "$ACCESS_MODE" = "on" ]; then
+  HOST_IP="${HOST_IP:-$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo 127.0.0.1)}"
+else
+  HOST_IP="127.0.0.1"
+fi
+WEBUI_URL="${WEBUI_URL:-http://$HOST_IP:3000}"
 API_URL="http://localhost:$PORT"
 CMD="${1:-start}"
+export SERVE_BASE_URL="http://$HOST_IP:$PORT"
 
 _kill_serve() {
   local pids
@@ -44,14 +52,21 @@ for i in $(seq 1 20); do
 done
 
 # --- Open WebUI ---
-echo "→ Démarrage Open WebUI ..."
-docker start open-webui > /dev/null 2>&1 && echo "✓ Open WebUI démarré ($WEBUI_URL)" \
-  || echo "⚠ open-webui container introuvable — crée-le avec :"
-echo "    docker run -d --name open-webui -p 3000:8080 ghcr.io/open-webui/open-webui:main"
+if [ "$START_WEBUI" = "0" ]; then
+  echo "→ Arrêt Open WebUI ..."
+  docker stop open-webui > /dev/null 2>&1 && echo "✓ Open WebUI arrêté" \
+    || echo "⚠ open-webui container introuvable — rien à arrêter"
+else
+  echo "→ Démarrage Open WebUI ..."
+  docker start open-webui > /dev/null 2>&1 && echo "✓ Open WebUI démarré ($WEBUI_URL)" \
+    || echo "⚠ open-webui container introuvable — crée-le avec :"
+  echo "    docker run -d --name open-webui -p 3000:8080 ghcr.io/open-webui/open-webui:main"
+fi
 
 echo ""
 echo "─────────────────────────────────────────────────"
 echo "  API   : $API_URL/v1"
+echo "  Public: $SERVE_BASE_URL"
 echo "  WebUI : $WEBUI_URL"
 echo "  Clé   : copepod-key"
 echo "  Modèle: copepod-agent"

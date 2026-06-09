@@ -23,6 +23,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 from agent import make_agent, _CHECKPOINTS_DB
+from tools.public_url import serve_base_url
 from tools.session_store import default_store
 from core.copepod_rag.query import _get_cross_encoder
 
@@ -86,7 +87,7 @@ app.add_middleware(
 GRAPHS_DIR = Path("/tmp/copepod_graphs")
 GRAPHS_DIR.mkdir(exist_ok=True)
 
-_BASE_URL = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
+_BASE_URL = serve_base_url()
 
 
 def _extract_and_host_images(text: str) -> str:

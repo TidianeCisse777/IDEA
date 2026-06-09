@@ -14,6 +14,7 @@ from core.bio_oracle_client import (
     preview_bio_oracle_point as _preview_bio_oracle_point,
     query_bio_oracle as _query_bio_oracle,
 )
+from tools.public_url import download_url
 from tools.session_store import default_store as _store
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
@@ -109,7 +110,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         _store.set(thread_id, pd.DataFrame(coupled_rows), {"source": "bio_oracle_coupling", "n_rows": len(coupled_rows)})
         return (
             f"Couplage Bio-ORACLE chargé — {len(coupled_rows)} lignes.\n"
-            f"Télécharger : http://localhost:8000/downloads/{output_path.name}"
+            f"Télécharger : {download_url(output_path.name)}"
         )
 
     return [list_bio_oracle_datasets, preview_bio_oracle_point, query_bio_oracle, couple_zooplankton_bio_oracle]

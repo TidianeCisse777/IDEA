@@ -7,6 +7,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 from tools.ecotaxa_client import EcotaxaClient
+from tools.public_url import download_url
 from tools.session_store import default_store as _store
 from tools.data_tools import _uvp_skill_hint
 
@@ -119,7 +120,7 @@ def make_source_tools(thread_id: str) -> list:
         hint = _uvp_skill_hint(list(df.columns))
         summary = (
             f"Projet {project_id} chargé — {len(df)} lignes, {len(df.columns)} colonnes.\n"
-            f"Télécharger : http://localhost:8000/downloads/{file_id}.tsv"
+            f"Télécharger : {download_url(f'{file_id}.tsv')}"
         )
         if hint:
             summary += f"\n{hint}"

@@ -6,6 +6,8 @@ import io
 import pandas as pd
 import requests
 
+from tools.public_url import download_url
+
 
 def list_amundsen_datasets() -> list[dict]:
     """Return the Amundsen CTD datasets discovered from ERDDAP."""
@@ -92,6 +94,6 @@ def query_amundsen_ctd(parameters: dict, output_path=None) -> dict:
         "dataset_id": preview["dataset_id"],
         "title": preview["title"],
         "file_path": str(path),
-        "download_url": f"http://localhost:8000/downloads/{path.name}",
+        "download_url": download_url(path.name),
         "row_count": int(len(dataframe.index)),
     }

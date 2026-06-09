@@ -6,6 +6,8 @@ from pathlib import Path
 import requests
 import pandas as pd
 
+from tools.public_url import download_url
+
 
 def plan_bio_oracle_request(parameters: dict) -> dict:
     """Normalize a Bio-ORACLE request and report missing required fields."""
@@ -113,12 +115,10 @@ def query_bio_oracle(parameters: dict, output_path: Path | str | None = None) ->
     path = Path(output_path) if output_path is not None else Path("/tmp/bio_oracle.tsv")
     path.parent.mkdir(parents=True, exist_ok=True)
     dataframe.to_csv(path, sep="\t", index=False)
-    download_url = f"http://localhost:8000/downloads/{path.name}"
-
     return {
         "dataset_id": preview["dataset_id"],
         "title": preview["title"],
         "file_path": str(path),
-        "download_url": download_url,
+        "download_url": download_url(path.name),
         "row_count": int(len(dataframe.index)),
     }
