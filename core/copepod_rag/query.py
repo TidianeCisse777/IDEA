@@ -16,13 +16,22 @@ from pathlib import Path
 from typing import Optional
 
 
+_cross_encoder = None
+
+def _get_cross_encoder():
+    global _cross_encoder
+    if _cross_encoder is None:
+        from sentence_transformers import CrossEncoder
+        _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _cross_encoder
+
+
 def _rerank(question: str, chunks: list[dict]) -> list[dict]:
     """Re-classe les chunks par pertinence réelle via cross-encoder."""
     if len(chunks) <= 1:
         return chunks
     try:
-        from sentence_transformers import CrossEncoder
-        model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        model = _get_cross_encoder()
         pairs = [(question, c["content"]) for c in chunks]
         scores = model.predict(pairs)
         ranked = sorted(zip(scores, chunks), key=lambda x: x[0], reverse=True)
