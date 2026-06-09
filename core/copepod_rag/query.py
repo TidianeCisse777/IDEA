@@ -18,6 +18,16 @@ from typing import Optional
 
 _cross_encoder = None
 
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
 def _get_cross_encoder():
     global _cross_encoder
     if _cross_encoder is None:
@@ -53,7 +63,10 @@ def _generate_alternative_queries(question: str) -> list[str]:
             "Retourne uniquement les 3 reformulations, une par ligne, sans numérotation.\n\n"
             "Question originale : {question}"
         )
-        llm = ChatOpenAI(model=os.getenv("LLM_MODEL", "openai/gpt-4.1-mini"), temperature=0)
+        llm = ChatOpenAI(
+            model=os.getenv("LLM_MODEL", "openai/gpt-4.1-mini"),
+            temperature=_env_float("LLM_RAG_TEMPERATURE", 0.3),
+        )
         chain = prompt | llm | StrOutputParser()
         output = chain.invoke({"question": question})
         alternatives = [q.strip() for q in output.strip().splitlines() if q.strip()]
