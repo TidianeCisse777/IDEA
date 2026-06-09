@@ -10,7 +10,7 @@ Utilisé par le tool `query_copepod_knowledge_base` (voir `core/tool_registry/to
 
 ```
 core/copepod_rag/
-├── docs/             ← sources markdown éditables (7 thèmes, ~2700 lignes)
+├── docs/             ← sources markdown éditables (8 thèmes, ~2800 lignes)
 ├── chunks.json       ← chunks générés à partir de docs/ (séparateur '---')
 ├── chroma_db/        ← index Chroma persistant (binaire — généré)
 ├── chunk_docs.py     ← docs/*.md → chunks.json
@@ -28,6 +28,7 @@ core/copepod_rag/
 | `colonnes_instruments.md` | Colonnes liées aux instruments (UVP, Zooscan, FlowCAM) |
 | `colonnes_labo.md` | Colonnes ajoutées en laboratoire (taxonomie, mesures) |
 | `methodes_calcul.md` | Formules : biovolume, abondance, biomasse, densité, ESD |
+| `jointures_environnementales.md` | Règles de jointure pandas entre zooplancton et CTD/Bio-ORACLE/OGSL |
 | `taxonomie_worms.md` | Référence WoRMS (Aphia IDs, rangs, hiérarchie) |
 | `copepodes_domaine.md` | Vocabulaire métier copépode (groupes, niveaux trophiques) |
 | `sources_en_ligne.md` | Catalogues distants : Bio-Oracle layers, ERDDAP OGSL datasets |

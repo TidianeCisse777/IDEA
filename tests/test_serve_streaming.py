@@ -114,6 +114,46 @@ def test_format_tool_line_skill_shows_skill_name():
     assert "map_stations" in line
 
 
+def test_format_tool_line_query_ecotaxa_shows_waiting_message():
+    """query_ecotaxa → affiche le projet et un indicateur d'attente sans faux pourcentage."""
+    from serve import _format_tool_line
+
+    line = _format_tool_line("query_ecotaxa", {"project_id": 14622})
+
+    assert "query_ecotaxa" in line
+    assert "14622" in line
+    assert "Export EcoTaxa en cours" in line
+    assert "%" not in line
+
+
+def test_format_tool_line_query_bio_oracle_shows_waiting_message():
+    """query_bio_oracle → affiche un indicateur d'attente sans faux pourcentage."""
+    from serve import _format_tool_line
+
+    line = _format_tool_line(
+        "query_bio_oracle",
+        {"scenario": "SSP245", "depth_layer": "depthsurf"},
+    )
+
+    assert "query_bio_oracle" in line
+    assert "Export Bio-ORACLE en cours" in line
+    assert "%" not in line
+
+
+def test_format_tool_line_query_amundsen_shows_waiting_message():
+    """query_amundsen_ctd → affiche un indicateur d'attente sans faux pourcentage."""
+    from serve import _format_tool_line
+
+    line = _format_tool_line(
+        "query_amundsen_ctd",
+        {"station": "BRK-15", "cast_number": 7},
+    )
+
+    assert "query_amundsen_ctd" in line
+    assert "Export Amundsen CTD en cours" in line
+    assert "%" not in line
+
+
 # ── streaming async ────────────────────────────────────────────────────────────
 
 def _make_mock_agent(updates: list):

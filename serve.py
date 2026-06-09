@@ -283,6 +283,37 @@ def _format_tool_line(name: str, args: dict | None = None) -> str:
         skill = args["skill_name"]
         return f"\n🔧 `{name}` → `{skill}`\n"
 
+    if name == "query_ecotaxa" and "project_id" in args:
+        project_id = args["project_id"]
+        return (
+            f"\n🔧 `{name}` → projet `{project_id}`\n"
+            "*Export EcoTaxa en cours — cela peut prendre 1–2 minutes...*\n"
+        )
+
+    if name in ("query_bio_oracle", "couple_zooplankton_bio_oracle"):
+        scenario = args.get("scenario")
+        depth_layer = args.get("depth_layer")
+        suffix = ""
+        if scenario or depth_layer:
+            details = ", ".join(part for part in [scenario, depth_layer] if part)
+            suffix = f" → `{details}`"
+        return (
+            f"\n🔧 `{name}`{suffix}\n"
+            "*Export Bio-ORACLE en cours — cela peut prendre 1–2 minutes...*\n"
+        )
+
+    if name == "query_amundsen_ctd":
+        station = args.get("station")
+        cast_number = args.get("cast_number")
+        suffix = ""
+        if station or cast_number is not None:
+            details = ", ".join(str(part) for part in [station, cast_number] if part is not None)
+            suffix = f" → `{details}`"
+        return (
+            f"\n🔧 `{name}`{suffix}\n"
+            "*Export Amundsen CTD en cours — cela peut prendre 1–2 minutes...*\n"
+        )
+
     return f"\n🔧 `{name}`\n"
 
 
@@ -459,6 +490,19 @@ def serve_graph(filename: str):
         raise HTTPException(status_code=404)
     return FileResponse(path, media_type="image/png", headers={
         "Content-Disposition": f"inline; filename={filename}"
+    })
+
+
+@app.get("/downloads/{filename}")
+def serve_download(filename: str):
+    from pathlib import Path as _Path
+    downloads_dir = _Path("/tmp/copepod_downloads")
+    path = downloads_dir / filename
+    if not path.exists() or path.suffix not in {".tsv", ".csv"}:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404)
+    return FileResponse(path, media_type="text/tab-separated-values", headers={
+        "Content-Disposition": f"attachment; filename={filename}"
     })
 
 

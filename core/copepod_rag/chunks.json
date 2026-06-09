@@ -406,6 +406,69 @@
     "char_count": 1320
   },
   {
+    "doc": "jointures_environnementales.md",
+    "chunk_id": "jointures_environnementales_000",
+    "title": "jointures_environnementales.md",
+    "content": "# jointures_environnementales.md\n# Méthodes de jointure entre zooplancton et sources environnementales\n# Format RAG — chaque section délimitée par --- est un chunk autonome",
+    "char_count": 172
+  },
+  {
+    "doc": "jointures_environnementales.md",
+    "chunk_id": "jointures_environnementales_001",
+    "title": "Principe général",
+    "content": "# Principe général\n\nMots-clés : jointure, merge, merge_asof, station, cast, profile_id, depth, time, latitude, longitude, Bio-ORACLE, OGSL, CTD, EcoTaxa, EcoPart\n\nUne bonne jointure environnementale doit rester traçable. Il faut préserver les colonnes brutes, choisir une clé explicite, et documenter la qualité du match.\n\nRègles de base :\n- garder les colonnes sources intactes ;\n- ajouter des alias seulement en plus des colonnes d'origine ;\n- choisir la clé la plus stable disponible ;\n- enregistrer les deltas de match ;\n- demander une clarification si une clé critique manque.\n\nColonnes de qualité recommandées :\n- `match_status`\n- `time_delta_min`\n- `depth_delta_m`\n- `distance_km`\n- `source_dataset_id`",
+    "char_count": 709
+  },
+  {
+    "doc": "jointures_environnementales.md",
+    "chunk_id": "jointures_environnementales_002",
+    "title": "Quel type de jointure utiliser ?",
+    "content": "# Quel type de jointure utiliser ?\n\nMots-clés : exact match, nearest, asof, profondeur, intervalle, station, cast\n\n| Situation | Pattern pandas recommandé | Clé principale |\n|---|---|---|\n| Même station/cast/profil | `merge(..., on=[...], how=\"left\")` | identifiant exact |\n| Temps proche mais non identique | `merge_asof(..., direction=\"nearest\")` | temps |\n| Profondeur voisine | calcul de distance absolue + minimum | profondeur / pression |\n| Point géographique | filtrage par lat/lon puis sélection | coordonnées |\n| Profil vertical complet | jointure sur station/cast puis profondeur | cast + profondeur |\n\nExemple minimal :\n```python\njoined = samples.merge(ctd, on=[\"station_id\", \"cast_number\"], how=\"left\")\n```\n\nExemple temps proche :\n```python\nsamples = samples.sort_values(\"time\")\nctd = ctd.sort_values(\"time\")\njoined = pd.merge_asof(samples, ctd, on=\"time\", direction=\"nearest\")\n```",
+    "char_count": 893
+  },
+  {
+    "doc": "jointures_environnementales.md",
+    "chunk_id": "jointures_environnementales_003",
+    "title": "CTD verticale",
+    "content": "# CTD verticale\n\nMots-clés : CTD, Amundsen, profil, pression, température, salinité, oxygène, profondeur\n\nUne CTD verticale fournit un profil par profondeur. La jointure doit se faire en deux étapes :\n1. identifier le cast ou le profil ;\n2. rattacher la mesure du zooplancton à la profondeur la plus pertinente.\n\nColonnes utiles :\n- `station_id`\n- `cast_number`\n- `profile_id`\n- `time`\n- `latitude`\n- `longitude`\n- `Pres` ou `depth`\n\nRègle pratique :\n- si le fichier zooplancton contient un intervalle de profondeur, utiliser l'intersection ou la profondeur moyenne ;\n- si le fichier zooplancton contient une profondeur ponctuelle, choisir la ligne CTD la plus proche ;\n- garder `depth_delta_m` ou `pres_delta_db` dans la sortie.\n\nNe pas faire :\n- ne pas supprimer les lignes CTD redondantes avant d'avoir défini la règle de profondeur ;\n- ne pas confondre pression et profondeur sans conversion explicite ;\n- ne pas inventer une station si elle n'existe pas dans la source.",
+    "char_count": 974
+  },
+  {
+    "doc": "jointures_environnementales.md",
+    "chunk_id": "jointures_environnementales_004",
+    "title": "Bio-ORACLE",
+    "content": "# Bio-ORACLE\n\nMots-clés : Bio-ORACLE, scenario, SSP, variable, griddap, couche, surface, depth_layer\n\nBio-ORACLE fournit des variables environnementales globales à des coordonnées. La jointure se fait par point géographique puis par scénario et couche.\n\nColonnes utiles :\n- `latitude`\n- `longitude`\n- `variable`\n- `scenario`\n- `depth_layer`\n- `dataset_id`\n\nRègle pratique :\n- utiliser `latitude` / `longitude` comme base ;\n- choisir explicitement le scénario et la couche de profondeur ;\n- conserver une colonne de comparaison présent vs futur si plusieurs scénarios sont extraits ;\n- documenter la résolution spatiale si l'analyse repose sur un point unique.\n\nNe pas faire :\n- ne pas traiter Bio-ORACLE comme une CTD de station ;\n- ne pas remplacer une profondeur spécifique par une couche de surface sans le dire ;\n- ne pas comparer deux scénarios sans conserver l'identifiant du dataset.",
+    "char_count": 890
+  },
+  {
+    "doc": "jointures_environnementales.md",
+    "chunk_id": "jointures_environnementales_005",
+    "title": "OGSL",
+    "content": "# OGSL\n\nMots-clés : OGSL, stationID, cruiseID, CTD régionale, profondeur, température, salinité, oxygène\n\nOGSL sert à contextualiser avec des profils régionaux du golfe du Saint-Laurent.\n\nColonnes utiles :\n- `stationID`\n- `cruiseID`\n- `cast_number`\n- `time`\n- `latitude`\n- `longitude`\n- `PRES`\n- `TE90`\n- `PSAL`\n- `OXYM`\n\nRègle pratique :\n- joindre par station ou mission si la clé existe ;\n- sinon, utiliser temps + coordonnées + profondeur ;\n- conserver les noms ERDDAP exacts dans la table source ;\n- ajouter des alias seulement si cela aide une jointure en aval.",
+    "char_count": 566
+  },
+  {
+    "doc": "jointures_environnementales.md",
+    "chunk_id": "jointures_environnementales_006",
+    "title": "EcoTaxa et EcoPart",
+    "content": "# EcoTaxa et EcoPart\n\nMots-clés : EcoTaxa, EcoPart, profile_id, volume échantillonné, bins de profondeur, concentration\n\nEcoTaxa décrit les objets individuels. EcoPart décrit les profils agrégés et le volume échantillonné. La jointure habituelle passe par `profile_id` puis par profondeur.\n\nColonnes utiles :\n- EcoTaxa : `object_id`, `profile_id`, `obj_depth_min`, `obj_depth_max`, `object_depth_min`, `object_depth_max`\n- EcoPart : `Profile`, `Depth [m]`, `Sampled volume [L]`\n\nRègle pratique :\n- utiliser `profile_id` comme première clé ;\n- rapprocher les profondeurs ensuite ;\n- conserver le delta de profondeur dans la sortie ;\n- si `Sampled volume [L]` manque, la concentration n'est pas calculable.",
+    "char_count": 704
+  },
+  {
+    "doc": "jointures_environnementales.md",
+    "chunk_id": "jointures_environnementales_007",
+    "title": "Colonnes de qualité à exposer",
+    "content": "# Colonnes de qualité à exposer\n\nMots-clés : match_status, delta, provenance, traçabilité\n\nColonnes recommandées pour toute jointure :\n- `match_status`\n- `source_dataset_id`\n- `time_delta_min`\n- `depth_delta_m`\n- `distance_km`\n- `join_rule`\n\nCes colonnes permettent de filtrer rapidement les lignes fiables et de rejeter les matches ambiguës.",
+    "char_count": 342
+  },
+  {
+    "doc": "jointures_environnementales.md",
+    "chunk_id": "jointures_environnementales_008",
+    "title": "Règle de sortie",
+    "content": "# Règle de sortie\n\nMots-clés : sortie, table, dérivée, jointe, traçable\n\nLa sortie doit être une table dérivée lisible par pandas, avec :\n- les colonnes brutes ;\n- les alias de jointure ;\n- les indicateurs de qualité ;\n- aucune interprétation biologique.\n\nSi le match est incertain, il faut le signaler explicitement plutôt que le masquer.",
+    "char_count": 339
+  },
+  {
     "doc": "methodes_calcul.md",
     "chunk_id": "methodes_calcul_000",
     "title": "methodes_calcul.md",

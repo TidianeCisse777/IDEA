@@ -11,6 +11,9 @@ from langgraph.prebuilt import create_react_agent
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 from tools.data_tools import make_tools
+from tools.bio_oracle_sources import make_bio_oracle_tools
+from tools.amundsen_sources import make_amundsen_tools
+from tools.copepod_sources import make_source_tools
 from tools.rag_tool import make_rag_tool
 from tools.skill_tool import make_skill_tool
 
@@ -72,7 +75,13 @@ def make_agent(thread_id: str):
         model=os.getenv("LLM_MODEL", "openai/gpt-5.4-mini"),
         max_retries=2,
     )
-    tools = make_tools(thread_id) + [make_rag_tool(), make_skill_tool()]
+    tools = (
+        make_tools(thread_id)
+        + make_source_tools(thread_id)
+        + make_bio_oracle_tools(thread_id)
+        + make_amundsen_tools(thread_id)
+        + [make_rag_tool(), make_skill_tool()]
+    )
 
     return create_react_agent(
         llm,
@@ -125,9 +134,6 @@ def run_query(file_path: str, question: str, thread_id: str | None = None) -> st
     """
     thread_id = thread_id or str(uuid.uuid4())
     file_name = Path(file_path).name
-
-    from tools.data_tools import _sessions
-    n_rows = _sessions.get(thread_id, {}).get("meta", {}).get("n_rows", "?")
 
     tracer = LangChainTracer(
         project_name=os.getenv("LANGCHAIN_PROJECT", "copepod-agent"),
