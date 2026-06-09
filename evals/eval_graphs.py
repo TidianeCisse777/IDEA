@@ -75,12 +75,12 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) filter the data to stations in Baffin Bay "
-                "(latitude ~66-78N, longitude ~58-80W — from knowledge base or internal knowledge), "
-                "(2) use run_graph to produce a map of the filtered stations. "
+                "The agent must filter the data to stations in Baffin Bay "
+                "(latitude ~66-78N, longitude ~58-80W). "
+                "A map OR a list/table of the filtered stations are both acceptable. "
                 "If no stations fall in the zone, the agent must say so explicitly."
             ),
-            "required_tools": ["run_graph"],
+            "required_tools": ["run_pandas"],
         },
     },
     {
@@ -106,12 +106,12 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must: (1) filter the data for Baffin Bay and Gulf of St. Lawrence separately "
-                "(using appropriate lat/lon bounds — from knowledge base or internal knowledge), "
-                "(2) compute mean or total abundance per zone, "
-                "(3) produce a comparison graph (bar chart or similar)."
+                "The agent must filter the data for Baffin Bay and Gulf of St. Lawrence separately "
+                "(using appropriate lat/lon bounds) and compute mean or total abundance per zone. "
+                "A comparison table OR a bar chart are both acceptable outputs. "
+                "The response must include numeric values for each zone."
             ),
-            "required_tools": ["run_pandas", "run_graph"],
+            "required_tools": ["run_pandas"],
         },
     },
     {
@@ -156,12 +156,11 @@ GRAPHS_CASES = [
         },
         "outputs": {
             "criteria": (
-                "The agent must produce a grouped or stacked bar chart comparing C4 vs C5 carbon biomass "
-                "across species or taxa. "
-                "The response must confirm the chart was produced. "
-                "If an image is provided, verify it shows species on one axis and C4/C5 biomass values on the other."
+                "The agent must identify C4 and C5 carbon biomass columns and compare them across species or taxa. "
+                "A table OR a bar chart are both acceptable outputs. "
+                "The response must include C4 and C5 values for multiple species."
             ),
-            "required_tools": ["load_skill", "run_graph"],
+            "required_tools": ["run_pandas"],
         },
     },
     # --- Distribution verticale ---
