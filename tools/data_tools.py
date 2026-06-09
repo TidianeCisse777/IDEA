@@ -1,7 +1,12 @@
 """Tools LangChain pour l'analyse de données — slice 2."""
 import io
-import base64
+import os
+import uuid
+from pathlib import Path
 from typing import Any
+
+_GRAPHS_DIR = Path("/tmp/copepod_graphs")
+_GRAPHS_DIR.mkdir(exist_ok=True)
 
 import pandas as pd
 from langchain_core.tools import tool
@@ -111,9 +116,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 buf = io.BytesIO()
                 plt.savefig(buf, format="png", bbox_inches="tight")
                 buf.seek(0)
-                b64 = base64.b64encode(buf.read()).decode()
                 plt.close("all")
-                return f"![graph](data:image/png;base64,{b64})"
+                graph_id = uuid.uuid4().hex[:12]
+                (_GRAPHS_DIR / f"{graph_id}.png").write_bytes(buf.read())
+                base_url = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
+                return f"![graph]({base_url}/graphs/{graph_id}.png)"
 
             return "Code executed but no figure was produced. Make sure your matplotlib code creates a figure."
 
