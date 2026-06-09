@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Header
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -128,12 +129,56 @@ class ChatRequest(BaseModel):
     model: str = "copepod-agent"
     messages: list[Message]
     stream: bool = False
+    chat_id: str | None = None
+    session_id: str | None = None
+    metadata: dict | None = None
 
 
-def _thread_id(messages: list[Message]) -> str:
-    """Thread stable basé sur le premier message utilisateur."""
-    first = next((m.text() for m in messages if m.role == "user"), str(uuid.uuid4()))
-    return hashlib.md5(first[:200].encode()).hexdigest()[:16]
+def _conversation_key(
+    messages: list[Message] | list[str],
+    *,
+    chat_id: str | None = None,
+    session_id: str | None = None,
+    metadata: dict | None = None,
+) -> str:
+    """Retourne la clé stable de conversation, puis le fallback sur le premier message."""
+    if chat_id:
+        return str(chat_id)
+    if session_id:
+        return str(session_id)
+    if isinstance(metadata, dict):
+        for key in ("chat_id", "conversation_id", "session_id"):
+            value = metadata.get(key)
+            if value:
+                return str(value)
+
+    first_message = ""
+    for message in messages:
+        if isinstance(message, str) and message.strip():
+            first_message = message
+            break
+        if hasattr(message, "role") and getattr(message, "role", None) == "user":
+            first_message = getattr(message, "text", lambda: "")()
+            if first_message:
+                break
+    return first_message or str(uuid.uuid4())
+
+
+def _thread_id(
+    messages: list[Message],
+    *,
+    chat_id: str | None = None,
+    session_id: str | None = None,
+    metadata: dict | None = None,
+) -> str:
+    """Thread stable basé sur l'identité de conversation ou le premier message."""
+    key = _conversation_key(
+        messages,
+        chat_id=chat_id,
+        session_id=session_id,
+        metadata=metadata,
+    )
+    return hashlib.md5(key[:200].encode()).hexdigest()[:16]
 
 
 @app.get("/")
@@ -331,8 +376,23 @@ async def _stream_agent_sse(
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(req: ChatRequest):
-    tid = _thread_id(req.messages)
+async def chat_completions(
+    req: ChatRequest,
+    x_openwebui_chat_id: str | None = Header(default=None, alias="X-OpenWebUI-Chat-Id"),
+    x_openwebui_message_id: str | None = Header(default=None, alias="X-OpenWebUI-Message-Id"),
+):
+    tid = _thread_id(
+        req.messages,
+        chat_id=x_openwebui_chat_id or req.chat_id,
+        session_id=req.session_id,
+        metadata=req.metadata,
+    )
+    conversation_key = _conversation_key(
+        req.messages,
+        chat_id=x_openwebui_chat_id or req.chat_id,
+        session_id=req.session_id,
+        metadata=req.metadata,
+    )
 
     last_user = next(
         (m.text() for m in reversed(req.messages) if m.role == "user"), ""
@@ -350,7 +410,15 @@ async def chat_completions(req: ChatRequest):
         default_store.clear(tid)
 
     agent = make_agent(tid)
-    config = {"configurable": {"thread_id": tid}}
+    config = {
+        "configurable": {"thread_id": tid},
+        "metadata": {
+            "conversation_key": conversation_key,
+            "conversation_id": x_openwebui_chat_id or req.chat_id,
+            "session_id": req.session_id,
+            "message_id": x_openwebui_message_id,
+        },
+    }
     messages = {"messages": [{"role": "user", "content": last_user}]}
 
     logger.info("thread=%s stream=%s", tid, req.stream)
