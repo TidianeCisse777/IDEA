@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 import uvicorn
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +22,7 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-from agent import make_agent
+from agent import make_agent, _CHECKPOINTS_DB
 from tools.session_store import default_store
 from core.copepod_rag.query import _get_cross_encoder
 
@@ -56,7 +57,24 @@ def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict) ->
         usage.get("prompt_tokens_details", {}).get("cached_tokens", 0),
     )
 
-app = FastAPI(title="Copepod Agent API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize async SQLite checkpointer — persists agent state across restarts."""
+    import agent as _agent_module
+    try:
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+        async with AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTS_DB)) as cp:
+            _agent_module._checkpointer = cp
+            logger.info("SQLite checkpointer ready: %s", _CHECKPOINTS_DB)
+            yield
+    except Exception as e:
+        logger.warning("AsyncSqliteSaver unavailable (%s) — using MemorySaver", e)
+        yield
+
+
+app = FastAPI(title="Copepod Agent API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -311,19 +329,40 @@ async def _stream_agent_sse(
         logger.error("stream_error thread=%s err=%s", thread_id, exc)
         yield _make_sse_chunk(completion_id, f"\n\n[Erreur : {exc}]")
 
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+             "prompt_tokens_details": {"cached_tokens": 0}}
+
     if last_ai_msg is not None:
         meta = getattr(last_ai_msg, "usage_metadata", None) or {}
+        rmeta = getattr(last_ai_msg, "response_metadata", {}) or {}
+        prompt_tokens     = meta.get("input_tokens", 0)
+        completion_tokens = meta.get("output_tokens", 0)
+        cached_tokens = (
+            rmeta.get("token_usage", {}).get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            or meta.get("input_token_details", {}).get("cache_read", 0)
+        )
         usage = {
-            "prompt_tokens": meta.get("input_tokens", 0),
-            "completion_tokens": meta.get("output_tokens", 0),
-            "total_tokens": meta.get("input_tokens", 0) + meta.get("output_tokens", 0),
-            "prompt_tokens_details": {"cached_tokens": 0},
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "prompt_tokens_details": {"cached_tokens": cached_tokens},
         }
-        last_user = (messages.get("messages") or [{}])[-1].get("content", "")
+        last_user_text = (messages.get("messages") or [{}])[-1].get("content", "")
         final_text = getattr(last_ai_msg, "content", "") or ""
-        _log_turn(thread_id, last_user, final_text, usage)
+        _log_turn(thread_id, last_user_text, final_text, usage)
+        if cached_tokens > 0:
+            logger.info("CACHE HIT thread=%s cached=%s (%.0f%% of prompt)",
+                thread_id, cached_tokens, 100 * cached_tokens / prompt_tokens if prompt_tokens else 0)
 
-    yield _make_sse_chunk(completion_id, "", finish_reason="stop")
+    # Chunk final avec usage — Open WebUI l'affiche en bas du message
+    stop_chunk = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "model": "copepod-agent",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        "usage": usage,
+    }
+    yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n"
     logger.info("thread=%s STREAM done", thread_id)
     yield "data: [DONE]\n\n"
 

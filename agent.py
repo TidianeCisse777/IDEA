@@ -7,7 +7,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.tracers import LangChainTracer
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
@@ -20,6 +19,11 @@ load_dotenv()
 import langchain
 langchain.verbose = os.getenv("LANGCHAIN_VERBOSE", "false").lower() == "true"
 
+_CHECKPOINTS_DB = Path(os.getenv("CHECKPOINTS_DB", "data/checkpoints.sqlite"))
+_CHECKPOINTS_DB.parent.mkdir(parents=True, exist_ok=True)
+
+# Default MemorySaver — overridden at startup by serve.py lifespan via AsyncSqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 _checkpointer = MemorySaver()
 
 
