@@ -80,24 +80,77 @@ def fetch_openwebui_feedback_export(
     timeout: float = 10.0,
     opener=urllib_request.urlopen,
 ) -> list[dict[str, Any]]:
-    """Fetch the Open WebUI feedback export list from the admin API."""
+    """Fetch Open WebUI feedback records.
+
+    Tries the REST API first (v0.10+). Falls back to reading the SQLite DB
+    directly via `docker cp` when the API endpoint is absent (v0.9.x).
+    """
     url = openwebui_base_url.rstrip("/") + "/api/v1/evaluations/feedbacks/all"
-    headers = {}
+    headers = {"Accept": "application/json"}
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
-    req = urllib_request.Request(url, headers=headers, method="GET")
-    with opener(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8").strip()
-        if not raw:
-            return []
-        payload = json.loads(raw)
+    try:
+        req = urllib_request.Request(url, headers=headers, method="GET")
+        with opener(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8").strip()
+            if raw and not raw.startswith("<"):
+                payload = json.loads(raw)
+                if isinstance(payload, list):
+                    return payload
+                if isinstance(payload, dict):
+                    for key in ("data", "items", "feedbacks", "results"):
+                        value = payload.get(key)
+                        if isinstance(value, list):
+                            return value
+    except Exception:
+        pass
 
-    if isinstance(payload, list):
-        return payload
-    if isinstance(payload, dict):
-        for key in ("data", "items", "feedbacks", "results"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return value
-    return []
+    # Fallback: read directly from the SQLite DB via docker cp
+    return _fetch_via_sqlite()
+
+
+def _fetch_via_sqlite(
+    container: str = "open-webui",
+    db_path: str = "/app/backend/data/webui.db",
+) -> list[dict[str, Any]]:
+    """Copy the Open WebUI SQLite DB from the container and read the feedback table."""
+    import shutil
+    import sqlite3
+    import subprocess
+    import tempfile
+
+    if not shutil.which("docker"):
+        return []
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        result = subprocess.run(
+            ["docker", "cp", f"{container}:{db_path}", tmp_path],
+            capture_output=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return []
+
+        conn = sqlite3.connect(tmp_path)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, data, meta, created_at FROM feedback ORDER BY created_at DESC LIMIT 500"
+        ).fetchall()
+        conn.close()
+
+        records = []
+        for row in rows:
+            try:
+                data = json.loads(row["data"] or "{}")
+                meta = json.loads(row["meta"] or "{}")
+                records.append({"id": row["id"], "data": data, "meta": meta})
+            except (json.JSONDecodeError, KeyError):
+                continue
+        return records
+    except Exception:
+        return []
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
