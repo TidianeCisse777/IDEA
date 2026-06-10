@@ -1,41 +1,41 @@
 # Skill: bio_oracle_query
 
-Tu viens d'appeler `query_bio_oracle` ou `couple_zooplankton_bio_oracle`.
-Les données Bio-ORACLE sont maintenant extraites ou couplées dans la session.
+You just called `query_bio_oracle` or `couple_zooplankton_bio_oracle`.
+Bio-ORACLE data is now extracted or coupled in the session.
 
 ---
 
-## Règle de routage
+## Routing rule
 
-- Pour voir les datasets ou variables disponibles, appelle `list_bio_oracle_datasets`.
-- Pour un aperçu rapide d'un point, appelle `preview_bio_oracle_point`.
-- Pour charger, exporter, télécharger ou comparer des scénarios Bio-ORACLE, appelle `query_bio_oracle`.
-- Pour coupler des lignes zooplancton avec Bio-ORACLE, appelle `couple_zooplankton_bio_oracle`.
+- To see available datasets or variables, call `list_bio_oracle_datasets`.
+- For a quick point preview, call `preview_bio_oracle_point`.
+- To load, export, download or compare Bio-ORACLE scenarios, call `query_bio_oracle`.
+- To couple zooplankton rows with Bio-ORACLE, call `couple_zooplankton_bio_oracle`.
 
 ---
 
-## Paramètres clés
+## Key parameters
 
-| Paramètre | Rôle |
+| Parameter | Role |
 |---|---|
-| `latitude` | Latitude du point |
-| `longitude` | Longitude du point |
-| `variable` | Variable Bio-ORACLE demandée |
-| `scenario` | Scénario SSP ou `baseline` |
-| `depth_layer` | Couche choisie explicitement par l'utilisateur |
+| `latitude` | Point latitude |
+| `longitude` | Point longitude |
+| `variable` | Requested Bio-ORACLE variable |
+| `scenario` | SSP scenario or `baseline` |
+| `depth_layer` | Layer chosen explicitly by the user |
 
 ---
 
-## Après le chargement
+## After loading
 
-1. Inclure le lien de téléchargement fourni par le tool.
-2. Présenter les résultats comme une table de comparaison, pas comme une interprétation écologique.
-3. Si l'utilisateur n'a pas donné `scenario` ou `depth_layer`, demander une clarification.
+1. Include the download link returned by the tool in your response.
+2. Present results as a comparison table, not as an ecological interpretation.
+3. If the user did not provide `scenario` or `depth_layer`, ask for clarification.
 
 ---
 
-## Limites
+## Limits
 
-- Bio-ORACLE est une source environnementale, pas une source de taxonomie.
-- La profondeur doit être choisie explicitement par l'utilisateur.
-- L'interprétation appartient au chercheur — tu peux seulement fournir les données et les comparaisons.
+- Bio-ORACLE is an environmental source, not a taxonomic source.
+- The depth layer must be chosen explicitly by the user.
+- Interpretation belongs to the researcher — you can only provide data and comparisons.

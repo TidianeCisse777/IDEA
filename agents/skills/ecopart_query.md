@@ -1,79 +1,79 @@
 # Skill: ecopart_query
 
-Tu viens d'appeler `query_ecopart` et les données EcoPart sont maintenant chargées dans la session.
-Ce skill te donne les règles pour interpréter le résultat et guider l'utilisateur.
+You just called `query_ecopart` and EcoPart data is now loaded in the session.
+This skill provides the rules for interpreting the result and guiding the user.
 
 ---
 
-## Choisir le bon tool
+## Choosing the right tool
 
-- Pour lister les échantillons disponibles dans un projet : appelle `list_ecopart_samples`.
-- Pour afficher le contenu d'un échantillon sans tout charger : appelle `preview_ecopart_sample`.
-- Pour charger, exporter ou analyser les données complètes d'un projet : appelle `query_ecopart`.
-- Ne lance pas `query_ecopart` pour une simple demande d'aperçu.
+- To list available samples in a project: call `list_ecopart_samples`.
+- To preview a sample without loading everything: call `preview_ecopart_sample`.
+- To load, export or analyse the full project data: call `query_ecopart`.
+- Do not call `query_ecopart` for a simple preview request.
 
 ---
 
-## Paramètres clés de `query_ecopart`
+## Key parameters of `query_ecopart`
 
-| Paramètre | Valeur par défaut | Notes |
+| Parameter | Default | Notes |
 |---|---|---|
 | `project_id` | `105` | EcoPart Amundsen 2018 |
-| `ctd_vars` | `["depth", "datetime", "temperature", "practical_salinity"]` | Variables CTD à exporter |
-| `gpr_vars` | `["cl6", "cl7", "cl8", "bv6", "bv7", "bv8"]` | Classes de taille UVP (LPM) |
+| `ctd_vars` | `["depth", "datetime", "temperature", "practical_salinity"]` | CTD variables to export |
+| `gpr_vars` | `["cl6", "cl7", "cl8", "bv6", "bv7", "bv8"]` | UVP size classes (LPM) |
 
-Les valeurs par défaut couvrent l'usage standard Amundsen — ne les modifier que si l'utilisateur demande des variables spécifiques.
+The defaults cover standard Amundsen usage — only change them if the user requests specific variables.
 
 ---
 
-## Colonnes attendues dans le TSV EcoPart
+## Expected columns in the EcoPart TSV
 
-| Colonne | Contenu |
+| Column | Content |
 |---|---|
-| `Profile` | Identifiant du profil (ex. `ips_007`) — clé de jointure avec EcoTaxa |
-| `Depth [m]` | Profondeur en mètres |
-| `Sampled volume [L]` | Volume échantillonné par la caméra UVP |
-| `temperature` | Température CTD (°C) |
-| `practical_salinity` | Salinité pratique (PSU) |
-| `cl6`…`cl8` | Concentrations par classe de taille (LPM, nb/L) |
-| `bv6`…`bv8` | Biovolume par classe de taille (mm³/L) |
+| `Profile` | Profile identifier (e.g. `ips_007`) — join key with EcoTaxa |
+| `Depth [m]` | Depth in metres |
+| `Sampled volume [L]` | Volume sampled by the UVP camera |
+| `temperature` | CTD temperature (°C) |
+| `practical_salinity` | Practical salinity (PSU) |
+| `cl6`…`cl8` | Concentration by size class (LPM, #/L) |
+| `bv6`…`bv8` | Biovolume by size class (mm³/L) |
 
 ---
 
-## Après le chargement
+## After loading
 
-1. **Vérifier les colonnes** :
+1. **Check columns**:
    ```python
    result = df.columns.tolist()
    ```
 
-2. **Inspecter les profils disponibles** :
+2. **Inspect available profiles**:
    ```python
    result = df["Profile"].unique().tolist()
    ```
 
-3. **Si métriques LPM demandées** → charge le skill `uvp_ecopart` pour les méthodes de calcul m1-m3.
+3. **If LPM metrics requested** → load skill `uvp_ecopart` for m1-m3 calculation methods.
 
 ---
 
-## Lien de téléchargement
+## Download link
 
-Le résumé retourné par `query_ecopart` contient un lien `http://localhost:8000/downloads/<id>.tsv`.
-**Inclure ce lien dans ta réponse à l'utilisateur** — il peut cliquer pour télécharger le fichier complet.
+The summary returned by `query_ecopart` contains a link `http://localhost:8000/downloads/<id>.tsv`.
+**Include this link in your response** — the user can click it to download the full file.
 
 ---
 
-## Combiner EcoPart avec EcoTaxa
+## Combining EcoPart with EcoTaxa
 
-EcoPart fournit les **profils CTD + particules UVP** ; EcoTaxa fournit la **taxonomie annotée**.
-Pour coupler :
+EcoPart provides **CTD + UVP particle profiles**; EcoTaxa provides **annotated taxonomy**.
+To combine:
 
-1. Charger EcoTaxa : `query_ecotaxa(project_id=1165)`
-2. Charger EcoPart : `query_ecopart(project_id=105)`
-3. Joindre : `join_ecotaxa_ecopart`
+1. Load EcoTaxa: `query_ecotaxa(project_id=1165)`
+2. Load EcoPart: `query_ecopart(project_id=105)`
+3. Join: `join_ecotaxa_ecopart`
 
-**Clé de jointure :**
-`obj_orig_id` dans EcoTaxa (ex. `ips_007_899`) → supprime le suffixe `_NNN` → `profile_id` (`ips_007`) → correspond à la colonne `Profile` d'EcoPart.
+**Join key:**
+`obj_orig_id` in EcoTaxa (e.g. `ips_007_899`) → strip `_NNN` suffix → `profile_id` (`ips_007`) → matches the `Profile` column in EcoPart.
 
 ```python
 df_ecotaxa["profile_id"] = df_ecotaxa["obj_orig_id"].str.replace(r"_\d+$", "", regex=True)
@@ -82,8 +82,8 @@ df_joined = df_ecotaxa.merge(df_ecopart, left_on="profile_id", right_on="Profile
 
 ---
 
-## Cas limites
+## Edge cases
 
-- EcoPart n'a pas de REST API — le client utilise une session cookie. Si l'export échoue avec une erreur HTTP, vérifier que `ECOTAXA_USERNAME`/`ECOTAXA_PASSWORD` sont bien dans le `.env`.
-- Si `start_export` retourne une liste de liens vide, le projet n'est pas accessible avec le compte configuré.
-- L'export peut prendre 30-60 secondes pour un grand projet — prévenir l'utilisateur.
+- EcoPart has no REST API — the client uses a cookie session. If the export fails with an HTTP error, check that `ECOTAXA_USERNAME`/`ECOTAXA_PASSWORD` are set in `.env`.
+- If `start_export` returns an empty link list, the project is not accessible with the configured account.
+- The export can take 30-60 seconds for a large project — warn the user.

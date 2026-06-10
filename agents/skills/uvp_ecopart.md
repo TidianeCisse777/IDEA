@@ -1,44 +1,44 @@
 # Skill: uvp_ecopart
 
-Tu viens de charger un fichier **EcoPart UVP** (colonnes `LPM (...)` + `Sampled volume [L]`).
-Ce skill te donne les clés pour l'interpréter et calculer les métriques m1, m2, m3 (Vilgrain & Bourgouin 2026).
+You just loaded a **UVP EcoPart file** (columns `LPM (...)` + `Sampled volume [L]`).
+This skill provides the keys for interpreting it and computing metrics m1, m2, m3 (Vilgrain & Bourgouin 2026).
 
 ---
 
-## Structure du fichier EcoPart
+## EcoPart file structure
 
-| Colonne | Signification | Unité |
+| Column | Meaning | Unit |
 |---|---|---|
-| `Profile` | Identifiant du profil/cast (= `sample_id` dans EcoTaxa) | — |
-| `Depth [m]` | Profondeur du bin | m |
-| `Sampled volume [L]` | Volume d'eau échantillonné dans ce bin | L |
-| `LPM (64-128 µm) [# l-1]` … `LPM (4.1-8.19 mm) [# l-1]` | Densité de particules par classe de taille | #/L |
-| `LPM biovolume (64-128 µm) [mm3 l-1]` … | Biovolume de particules par classe de taille | mm³/L |
+| `Profile` | Profile/cast identifier (= `sample_id` in EcoTaxa) | — |
+| `Depth [m]` | Bin depth | m |
+| `Sampled volume [L]` | Water volume sampled in this bin | L |
+| `LPM (64-128 µm) [# l-1]` … `LPM (4.1-8.19 mm) [# l-1]` | Particle density by size class | #/L |
+| `LPM biovolume (64-128 µm) [mm3 l-1]` … | Particle biovolume by size class | mm³/L |
 
-**Toutes les métriques particules (m1-m3) sont calculées sur les 200 premiers mètres uniquement.**
+**All particle metrics (m1-m3) are computed on the first 200 metres only.**
 
 ---
 
-## Metric m1 — Densité moyenne de particules (#/L)
+## Metric m1 — Mean particle density (#/L)
 
-**Définition :** nombre moyen de particules par litre, moyenné sur 0-200m par cast.
+**Definition:** mean number of particles per litre, averaged over 0-200m per cast.
 
-Classes de taille utilisées : `64-128 µm` à `4.1-8.19 mm` (8 classes).
+Size classes used: `64-128 µm` to `4.1-8.19 mm` (8 classes).
 
 ```python
 import pandas as pd
 
-# Colonnes LPM densité (hors biovolume)
+# LPM density columns (exclude biovolume)
 lpm_dens_cols = [c for c in df.columns if c.startswith("LPM (") and "# l-1" in c
                  and "biovolume" not in c.lower()]
 
-# Filtrer 0-200m
+# Filter 0-200m
 df200 = df[df["Depth [m]"] < 200].copy()
 
-# Nombre total de particules par bin = somme des densités × volume échantillonné
+# Total particles per bin = sum of densities × sampled volume
 df200["nb_tot"] = df200[lpm_dens_cols].sum(axis=1) * df200["Sampled volume [L]"]
 
-# m1 par profil = somme nb_tot / somme volume
+# m1 per profile = sum(nb_tot) / sum(volume)
 result = df200.groupby("Profile").apply(
     lambda g: g["nb_tot"].sum() / g["Sampled volume [L]"].sum()
 ).reset_index()
@@ -47,12 +47,12 @@ result.columns = ["sample_id", "m1_part_dens_per_L"]
 
 ---
 
-## Metric m2 — Biovolume moyen de particules (mm³/L)
+## Metric m2 — Mean particle biovolume (mm³/L)
 
-**Définition :** volume total de particules en mm³ par litre, moyenné sur 0-200m par cast.
+**Definition:** total particle volume in mm³ per litre, averaged over 0-200m per cast.
 
 ```python
-# Colonnes LPM biovolume
+# LPM biovolume columns
 lpm_biovol_cols = [c for c in df.columns if "LPM biovolume" in c and "mm3 l-1" in c]
 
 df200 = df[df["Depth [m]"] < 200].copy()
@@ -66,17 +66,17 @@ result.columns = ["sample_id", "m2_part_biovol_mm3_per_L"]
 
 ---
 
-## Metric m3 — Pente du spectre de taille
+## Metric m3 — Size spectrum slope
 
-**Définition :** pente de la relation log(densité) ~ log(taille) — indicateur de fonctionnalité écosystémique. Valeur typique entre -5 et -2. Plus proche de 0 = plus de grosses particules = écosystème productif.
+**Definition:** slope of the log(density) ~ log(size) relationship — ecosystem functionality indicator. Typical range -5 to -2. Closer to 0 = more large particles = productive ecosystem.
 
-Classes utilisées : `128-256 µm` à `2.05-4.1 mm` (6 classes, sans les extrêmes).
+Classes used: `128-256 µm` to `2.05-4.1 mm` (6 classes, excluding extremes).
 
 ```python
 import numpy as np
 from scipy import stats
 
-# Valeur médiane de chaque classe de taille (µm)
+# Median value of each size class (µm)
 size_midpoints = {
     "LPM (128-256 µm) [# l-1]":       192,
     "LPM (256-512 µm) [# l-1]":       384,
@@ -101,7 +101,7 @@ for profile, grp in df200.groupby("Profile"):
             continue
         dens = grp[col].mean()
         width = size_widths[col]
-        dens_norm = dens / width  # normaliser par la largeur du bin
+        dens_norm = dens / width  # normalise by bin width
         if dens_norm > 0:
             rows.append((np.log(mid), np.log(dens_norm)))
     if len(rows) >= 3:
@@ -114,32 +114,32 @@ result = pd.DataFrame(list(slopes.items()), columns=["sample_id", "m3_slope"])
 
 ---
 
-## m4 — Indice morpho-Shannon (non calculable depuis EcoPart seul)
+## m4 — Morpho-Shannon index (not computable from EcoPart alone)
 
-m4 se calcule depuis les **images EcoTaxa** (morphologie des particules), pas depuis EcoPart.
-Voir le skill `uvp_ecotaxa` et le rapport Vilgrain & Bourgouin 2026 pour la procédure complète.
+m4 is computed from **EcoTaxa images** (particle morphology), not from EcoPart.
+See skill `uvp_ecotaxa` and the Vilgrain & Bourgouin 2026 report for the full procedure.
 
 ---
 
-## Jointure avec EcoTaxa pour m5/m6
+## Join with EcoTaxa for m5/m6
 
-EcoPart est la source de `sampled_volume` pour calculer les densités de copépodes.
-Clé de jointure : `Profile` (EcoPart) = `sample_id` (EcoTaxa) + `depth_bin` (arrondi 5m).
+EcoPart provides `sampled_volume` needed to compute copepod densities.
+Join key: `Profile` (EcoPart) = `sample_id` (EcoTaxa) + `depth_bin` (rounded to 5m).
 
 ```python
-# Préparer EcoPart pour la jointure
+# Prepare EcoPart for the join
 df["depth_bin"] = (df["Depth [m]"] // 5) * 5 + 2.5
 df_ecopart_join = df[["Profile", "depth_bin", "Sampled volume [L]"]].rename(
     columns={"Profile": "sample_id"}
 )
-# → utiliser df_ecopart_join dans le template m5/m6 du skill uvp_ecotaxa
+# → use df_ecopart_join in the m5/m6 template in skill uvp_ecotaxa
 ```
 
 ---
 
-## Règles d'interprétation
+## Interpretation rules
 
-- Toujours filtrer à `Depth [m] < 200` pour m1-m3 (biais de profondeur sinon)
-- `Sampled volume [L]` ≈ 100L par bin de 5m pour un UVP6 à descente normale
-- Si `Sampled volume [L]` est très bas (<10L) dans un bin, la densité est peu fiable
-- Les colonnes `LPM (1-2 µm)` et `LPM (2-4 µm)` sont souvent peu fiables — ne pas les utiliser pour m1-m3
+- Always filter to `Depth [m] < 200` for m1-m3 (depth bias otherwise)
+- `Sampled volume [L]` ≈ 100L per 5m bin for a UVP6 at normal descent speed
+- If `Sampled volume [L]` is very low (<10L) in a bin, the density estimate is unreliable
+- Columns `LPM (1-2 µm)` and `LPM (2-4 µm)` are often unreliable — do not use them for m1-m3

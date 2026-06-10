@@ -1,35 +1,35 @@
 # Skill: amundsen_ctd_query
 
-Tu viens d'appeler `query_amundsen_ctd`.
-Le profil Amundsen CTD vertical est maintenant chargé ou exporté dans la session.
+You just called `query_amundsen_ctd`.
+The Amundsen vertical CTD profile is now loaded or exported in the session.
 
 ---
 
-## Règle de routage
+## Routing rule
 
-- Pour voir les datasets disponibles, appelle `list_amundsen_datasets`.
-- Pour un aperçu rapide d'un profil, appelle `preview_amundsen_profile`.
-- Pour charger, exporter, télécharger ou analyser le profil vertical complet, appelle `query_amundsen_ctd`.
-
----
-
-## Ce que contient Amundsen CTD
-
-- `amundsen12713` est le dataset vertical CTD principal.
-- Les colonnes brutes doivent rester intactes.
-- Les alias de jointure ajoutés en sortie servent à préparer les jointures avec le zooplancton.
+- To see available datasets, call `list_amundsen_datasets`.
+- For a quick profile preview, call `preview_amundsen_profile`.
+- To load, export, download or analyse the full vertical profile, call `query_amundsen_ctd`.
 
 ---
 
-## Après le chargement
+## What Amundsen CTD contains
 
-1. Inclure le lien de téléchargement fourni par le tool.
-2. Utiliser les colonnes de profondeur, de station, de cast et de temps pour les jointures.
-3. Ne pas interpréter biologiquement les profils — fournir les données et les comparaisons seulement.
+- `amundsen12713` is the main vertical CTD dataset.
+- Raw columns must remain unchanged.
+- Join aliases added to the output are helpers for joining with zooplankton data — do not replace the original columns with them.
 
 ---
 
-## Limites
+## After loading
 
-- Le profil doit rester brut et traçable.
-- Les alias sont des aides, pas une substitution aux colonnes d'origine.
+1. Include the download link returned by the tool in your response.
+2. Use depth, station, cast and time columns as join keys.
+3. Do not interpret the profiles biologically — provide data and comparisons only.
+
+---
+
+## Limits
+
+- The profile must stay raw and traceable.
+- Aliases are helpers, not a substitute for the original columns.

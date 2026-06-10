@@ -1,39 +1,39 @@
 # Skill: sql_workspace_query
 
-Tu viens d'aborder ou d'utiliser le workspace SQL en lecture seule.
-L'agent peut maintenant lire un serveur SQL, copier des résultats en fichiers tabulaires locaux, et analyser ces copies comme des fichiers ordinaires.
+You are working with the read-only SQL workspace.
+The agent can now read a SQL server, copy results to local tabular files, and analyse those copies like regular files.
 
 ---
 
-## Règle de routage
+## Routing rule
 
-- Quand l'utilisateur veut lister les tables d'un serveur SQL, appelle `list_sql_tables`.
-- Quand l'utilisateur veut inspecter rapidement une table avant de l'exporter, appelle `preview_sql_table`.
-- Quand l'utilisateur veut copier une requête SQL read-only dans le workspace local, appelle `copy_sql_query_to_workspace`.
-- Ne modifie jamais la source SQL.
-- Utilise toujours les copies locales pour les analyses suivantes.
-
----
-
-## Contrat de connexion
-
-- La connexion provient de `DATABASE_URL` dans le fichier `.env`.
-- La base source reste en lecture seule.
-- Le workspace de conversation est local, horodaté, et lié à la conversation en cours.
+- When the user wants to list tables on a SQL server, call `list_sql_tables`.
+- When the user wants to inspect a table quickly before exporting, call `preview_sql_table`.
+- When the user wants to copy a read-only SQL query into the local workspace, call `copy_sql_query_to_workspace`.
+- Never modify the SQL source.
+- Always use local copies for subsequent analyses.
 
 ---
 
-## Après la copie
+## Connection contract
 
-1. Charge le fichier généré avec le pipeline tabulaire habituel.
-2. Utilise `run_pandas` pour les calculs et tables.
-3. Utilise `run_graph` pour les visualisations.
-4. Si une autre requête SQL est nécessaire, copie une nouvelle version horodatée plutôt que d'écraser la précédente.
+- The connection comes from `DATABASE_URL` in the `.env` file.
+- The source database remains read-only.
+- The conversation workspace is local, timestamped, and tied to the current conversation.
 
 ---
 
-## Limites
+## After copying
 
-- Ne fais pas de `INSERT`, `UPDATE`, `DELETE` ou `DROP`.
-- Ne copie que les tables ou sous-ensembles demandés par l'utilisateur.
-- Ne confonds pas la copie locale avec la source distante.
+1. Load the generated file with the standard tabular pipeline.
+2. Use `run_pandas` for calculations and tables.
+3. Use `run_graph` for visualisations.
+4. If another SQL query is needed, copy a new timestamped version rather than overwriting the previous one.
+
+---
+
+## Limits
+
+- Do not run `INSERT`, `UPDATE`, `DELETE` or `DROP`.
+- Only copy the tables or subsets requested by the user.
+- Do not confuse the local copy with the remote source.
