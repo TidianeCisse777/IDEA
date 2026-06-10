@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Header
 from fastapi.responses import FileResponse, StreamingResponse
+from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel
 
 load_dotenv()
@@ -28,6 +29,10 @@ from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_work
 from tools.session_store import default_store
 from tools.run_store import default_run_store
 from tools.feedback import submit_feedback
+from openwebui.feedback_pipeline import (
+    fetch_openwebui_feedback_export as _owui_fetch,
+    sync_openwebui_feedback_export as _owui_sync,
+)
 from core.copepod_rag.query import _get_cross_encoder
 
 # Pré-charge le cross-encoder au démarrage — évite 10-15s de latence au 1er appel RAG
@@ -35,12 +40,73 @@ _get_cross_encoder()
 
 LOGS_DIR = Path(os.getenv("CONV_LOGS_DIR", "logs/conversations"))
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+FEEDBACK_LOGS_DIR = Path(os.getenv("FEEDBACK_LOGS_DIR", "logs/feedback"))
+FEEDBACK_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+_OWUI_POLL_STATE = FEEDBACK_LOGS_DIR / "owui_seen_ids.json"
+_OWUI_POLL_INTERVAL = int(os.getenv("OWUI_FEEDBACK_POLL_INTERVAL", "60"))
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("copepod.serve")
+
+
+def _log_feedback_event(event: str, thread_id: str | None = None, **fields) -> None:
+    """Écrit un audit JSONL dédié pour le chemin feedback → LangSmith."""
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        "thread_id": thread_id,
+        **fields,
+    }
+    path = FEEDBACK_LOGS_DIR / "feedback_events.jsonl"
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    logger.info(
+        "[feedback] event=%s thread=%s chat_id=%s run_id=%s score=%s reason=%s",
+        event,
+        thread_id,
+        fields.get("chat_id"),
+        fields.get("run_id"),
+        fields.get("score"),
+        fields.get("reason"),
+    )
+
+
+class _RunIdCaptureCallback(BaseCallbackHandler):
+    """Capture le run racine LangSmith d'un thread pour relier le feedback."""
+
+    def __init__(self, thread_id: str, message_id: str | None = None) -> None:
+        self._thread_id = thread_id
+        self._message_id = message_id
+
+    def on_chain_start(
+        self,
+        serialized: dict,
+        inputs: dict,
+        *,
+        run_id,
+        parent_run_id=None,
+        **kwargs,
+    ) -> None:
+        if parent_run_id is None:
+            default_run_store.set(self._thread_id, str(run_id))
+            if self._message_id:
+                default_run_store.set_for_message(self._message_id, str(run_id))
+            _log_feedback_event(
+                "capture_run_id",
+                self._thread_id,
+                run_id=str(run_id),
+                message_id=self._message_id,
+                parent_run_id=str(parent_run_id) if parent_run_id is not None else None,
+            )
+
+
+def _request_callbacks(thread_id: str, message_id: str | None = None, config: dict | None = None) -> list:
+    callbacks = list((config or {}).get("callbacks") or [])
+    callbacks.append(_RunIdCaptureCallback(thread_id, message_id=message_id))
+    return callbacks
 
 
 def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict) -> None:
@@ -62,9 +128,38 @@ def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict) ->
     )
 
 
+async def _poll_openwebui_feedbacks_once(
+    *,
+    state_path: Path | None = None,
+    backend_url: str = "http://localhost:8000",
+) -> dict:
+    owui_url = os.getenv("OPENWEBUI_URL", "").rstrip("/")
+    if not owui_url:
+        return {"skipped": "OPENWEBUI_URL not set"}
+
+    auth_token = os.getenv("OPENWEBUI_ADMIN_TOKEN") or os.getenv("OPENWEBUI_TOKEN")
+    sp = state_path or _OWUI_POLL_STATE
+    try:
+        records = _owui_fetch(owui_url, auth_token=auth_token)
+        result = _owui_sync(records, backend_url, state_path=sp)
+        if result["forwarded"] > 0:
+            logger.info("owui_feedback_poll forwarded=%s skipped=%s", result["forwarded"], result["skipped"])
+        return result
+    except Exception as exc:
+        logger.warning("owui_feedback_poll error: %s", exc)
+        return {"error": str(exc)}
+
+
+async def _feedback_polling_loop() -> None:
+    await asyncio.sleep(10)  # attendre que le serveur soit prêt
+    while True:
+        await _poll_openwebui_feedbacks_once()
+        await asyncio.sleep(_OWUI_POLL_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize async SQLite checkpointer — persists agent state across restarts."""
+    """Initialize async SQLite checkpointer + feedback polling loop."""
     import agent as _agent_module
     try:
         import aiosqlite
@@ -72,10 +167,18 @@ async def lifespan(app: FastAPI):
         async with AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTS_DB)) as cp:
             _agent_module._checkpointer = cp
             logger.info("SQLite checkpointer ready: %s", _CHECKPOINTS_DB)
-            yield
+            poll_task = asyncio.create_task(_feedback_polling_loop())
+            try:
+                yield
+            finally:
+                poll_task.cancel()
     except Exception as e:
         logger.warning("AsyncSqliteSaver unavailable (%s) — using MemorySaver", e)
-        yield
+        poll_task = asyncio.create_task(_feedback_polling_loop())
+        try:
+            yield
+        finally:
+            poll_task.cancel()
 
 
 app = FastAPI(title="Copepod Agent API", lifespan=lifespan)
@@ -412,6 +515,7 @@ async def chat_completions(
     x_openwebui_chat_id: str | None = Header(default=None, alias="X-OpenWebUI-Chat-Id"),
     x_openwebui_message_id: str | None = Header(default=None, alias="X-OpenWebUI-Message-Id"),
 ):
+    openwebui_message_id = _openwebui_message_id(req, x_openwebui_message_id)
     tid = _thread_id(
         req.messages,
         chat_id=x_openwebui_chat_id or req.chat_id,
@@ -459,8 +563,9 @@ async def chat_completions(
             "conversation_key": conversation_key,
             "conversation_id": x_openwebui_chat_id or req.chat_id,
             "session_id": req.session_id,
-            "message_id": x_openwebui_message_id,
+            "message_id": openwebui_message_id,
         },
+        "callbacks": _request_callbacks(tid, openwebui_message_id),
     }
     messages = {"messages": [{"role": "user", "content": last_user_content}]}
 
@@ -477,9 +582,11 @@ async def chat_completions(
     result = agent.invoke(messages, config=config)
 
     # Capture run_id for feedback
-    run_id = result.get("__run_id") or (config.get("run_id") if isinstance(config, dict) else None)
+    run_id = result.get("__run_id") or default_run_store.get(tid)
     if run_id:
         default_run_store.set(tid, str(run_id))
+        logger.info("thread=%s captured_run_id=%s", tid, run_id)
+        _log_feedback_event("captured_run_id", tid, run_id=str(run_id))
 
     text = _extract_and_host_images(result["messages"][-1].content)
 
@@ -555,19 +662,170 @@ def serve_download(filename: str):
 
 
 class FeedbackRequest(BaseModel):
-    thread_id: str
-    score: int  # 1 = thumbs up, -1 = thumbs down
+    thread_id: str | None = None
+    chat_id: str | None = None
+    message_id: str | None = None
+    score: int | None = None  # 1 = thumbs up, -1 = thumbs down
+    rating: int | None = None
     comment: str | None = None
+    reason: str | None = None
+    type: str | None = None
+    data: dict | None = None
+    meta: dict | None = None
+
+
+def _feedback_thread_id(req: FeedbackRequest) -> str | None:
+    if req.thread_id:
+        return req.thread_id
+
+    chat_id = req.chat_id
+    if not chat_id and isinstance(req.meta, dict):
+        chat_id = req.meta.get("chat_id")
+    if not chat_id and isinstance(req.data, dict):
+        chat_id = req.data.get("chat_id")
+    if not chat_id:
+        return None
+
+    return hashlib.md5(str(chat_id)[:200].encode()).hexdigest()[:16]
+
+
+def _feedback_message_id(req: FeedbackRequest) -> str | None:
+    if req.message_id:
+        return req.message_id
+    if isinstance(req.meta, dict):
+        value = req.meta.get("message_id")
+        if value:
+            return str(value)
+    if isinstance(req.data, dict):
+        value = req.data.get("message_id")
+        if value:
+            return str(value)
+    return None
+
+
+def _feedback_chat_id(req: FeedbackRequest) -> str | None:
+    chat_id = req.chat_id
+    if not chat_id and isinstance(req.meta, dict):
+        chat_id = req.meta.get("chat_id")
+    if not chat_id and isinstance(req.data, dict):
+        chat_id = req.data.get("chat_id")
+    return str(chat_id) if chat_id else None
+
+
+def _openwebui_message_id(req: ChatRequest, header_message_id: str | None) -> str | None:
+    if header_message_id:
+        return header_message_id
+    if isinstance(req.metadata, dict):
+        value = req.metadata.get("message_id")
+        if value:
+            return str(value)
+    return None
+
+
+def _feedback_score(req: FeedbackRequest) -> int | None:
+    if req.score is not None:
+        return req.score
+    if req.rating is not None:
+        return req.rating
+
+    for payload in (req.data, req.meta):
+        if isinstance(payload, dict):
+            for key in ("score", "rating"):
+                value = payload.get(key)
+                if value is not None:
+                    return int(value)
+    return None
+
+
+def _feedback_comment(req: FeedbackRequest) -> str | None:
+    comment = req.comment
+    reason = req.reason
+
+    if isinstance(req.data, dict):
+        comment = comment or req.data.get("comment")
+        reason = reason or req.data.get("reason")
+
+    if isinstance(req.meta, dict):
+        comment = comment or req.meta.get("comment")
+        reason = reason or req.meta.get("reason")
+
+    parts = [part for part in (comment, f"Reason: {reason}" if reason else None) if part]
+    if not parts:
+        return None
+    return "\n".join(parts)
 
 
 @app.post("/feedback")
 async def feedback(req: FeedbackRequest):
-    run_id = default_run_store.get(req.thread_id)
+    message_id = _feedback_message_id(req)
+    thread_id = _feedback_thread_id(req)
+    if not thread_id and not message_id:
+        return {"status": "skipped", "reason": "no thread_id or chat_id found"}
+
+    score = _feedback_score(req)
+    run_id = default_run_store.get_for_message(message_id) if message_id else None
+    source = "message_id" if run_id else None
+    if not run_id and thread_id:
+        run_id = default_run_store.get(thread_id)
+        source = "thread_id" if run_id else None
+    _log_feedback_event(
+        "lookup",
+        thread_id,
+        chat_id=_feedback_chat_id(req),
+        message_id=message_id,
+        run_id=run_id,
+        score=score,
+        source=source,
+    )
+    logger.info(
+        "feedback_lookup thread=%s chat_id=%s message_id=%s score=%s run_id=%s source=%s",
+        thread_id,
+        _feedback_chat_id(req),
+        message_id,
+        _feedback_score(req),
+        run_id,
+        source,
+    )
     if not run_id:
+        _log_feedback_event(
+            "skipped_no_run_id",
+            thread_id,
+            chat_id=_feedback_chat_id(req),
+            message_id=message_id,
+            score=score,
+        )
         return {"status": "skipped", "reason": "no run_id found for this thread"}
-    submit_feedback(run_id=run_id, score=req.score, comment=req.comment)
-    logger.info("feedback thread=%s run_id=%s score=%s", req.thread_id, run_id, req.score)
+
+    if score is None:
+        return {"status": "skipped", "reason": "no score found in feedback payload"}
+
+    comment = _feedback_comment(req)
+    submit_feedback(run_id=run_id, score=score, comment=comment)
+    logger.info("feedback thread=%s run_id=%s score=%s comment=%s", thread_id, run_id, score, comment)
+    _log_feedback_event(
+        "submitted",
+        thread_id,
+        chat_id=_feedback_chat_id(req),
+        message_id=message_id,
+        run_id=run_id,
+        score=score,
+        reason=comment,
+        source=source,
+    )
     return {"status": "ok", "run_id": run_id}
+
+
+@app.post("/feedback/tap/ping")
+async def feedback_tap_ping(payload: dict | None = None):
+    _log_feedback_event("tap_ping", None, payload=payload)
+    logger.info("feedback_tap_ping payload=%s", payload)
+    return {"status": "ok"}
+
+
+@app.get("/debug/openwebui-feedback-tap.js")
+def debug_openwebui_feedback_tap():
+    path = Path(__file__).resolve().parent / "openwebui" / "feedback_tap.js"
+    return FileResponse(path, media_type="application/javascript")
 
 
 if __name__ == "__main__":
