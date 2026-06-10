@@ -26,6 +26,8 @@ from tools.openwebui_uploads import resolve_attached_files
 from tools.public_url import graph_url, serve_base_url
 from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_workspace_database_url
 from tools.session_store import default_store
+from tools.run_store import default_run_store
+from tools.feedback import submit_feedback
 from core.copepod_rag.query import _get_cross_encoder
 
 # Pré-charge le cross-encoder au démarrage — évite 10-15s de latence au 1er appel RAG
@@ -331,6 +333,9 @@ async def _stream_agent_sse(
 
     try:
         async for update in agent.astream(messages, config, stream_mode="updates"):
+            # Capture run_id from LangSmith metadata when available
+            if "__run_id" in update:
+                default_run_store.set(thread_id, str(update["__run_id"]))
             for node, state in update.items():
                 msgs = state.get("messages", [])
                 if not msgs:
@@ -471,6 +476,11 @@ async def chat_completions(
     repair_invalid_tool_history(agent, config)
     result = agent.invoke(messages, config=config)
 
+    # Capture run_id for feedback
+    run_id = result.get("__run_id") or (config.get("run_id") if isinstance(config, dict) else None)
+    if run_id:
+        default_run_store.set(tid, str(run_id))
+
     text = _extract_and_host_images(result["messages"][-1].content)
 
     # Usage du dernier AIMessage uniquement (pas l'historique entier)
@@ -542,6 +552,22 @@ def serve_download(filename: str):
     return FileResponse(path, media_type="text/tab-separated-values", headers={
         "Content-Disposition": f"attachment; filename={filename}"
     })
+
+
+class FeedbackRequest(BaseModel):
+    thread_id: str
+    score: int  # 1 = thumbs up, -1 = thumbs down
+    comment: str | None = None
+
+
+@app.post("/feedback")
+async def feedback(req: FeedbackRequest):
+    run_id = default_run_store.get(req.thread_id)
+    if not run_id:
+        return {"status": "skipped", "reason": "no run_id found for this thread"}
+    submit_feedback(run_id=run_id, score=req.score, comment=req.comment)
+    logger.info("feedback thread=%s run_id=%s score=%s", req.thread_id, run_id, req.score)
+    return {"status": "ok", "run_id": run_id}
 
 
 if __name__ == "__main__":
