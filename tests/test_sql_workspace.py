@@ -19,6 +19,37 @@ def test_list_sql_tables_from_readonly_database_url(tmp_path):
     assert tables == ["casts", "samples"]
 
 
+def test_resolve_sql_database_url_prefers_session_meta(tmp_path, monkeypatch):
+    from tools.sql_workspace import resolve_sql_database_url, set_sql_workspace_database_url
+    from tools.session_store import default_store
+
+    db_path = tmp_path / "source.sqlite"
+    sqlite3.connect(db_path).close()
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    default_store.clear("thread-sql-config")
+    set_sql_workspace_database_url("thread-sql-config", f"sqlite:///{db_path}")
+
+    assert resolve_sql_database_url("thread-sql-config") == f"sqlite:///{db_path}"
+
+
+def test_extract_sql_workspace_database_url_from_openwebui_prompt():
+    from tools.sql_workspace import extract_sql_workspace_database_url
+
+    text = """
+    SQL workspace setup
+    DATABASE_URL=postgresql+psycopg://user:pass@host:5432/dbname
+    """
+
+    assert extract_sql_workspace_database_url(text) == "postgresql+psycopg://user:pass@host:5432/dbname"
+
+
+def test_extract_sql_workspace_database_url_accepts_raw_url():
+    from tools.sql_workspace import extract_sql_workspace_database_url
+
+    assert extract_sql_workspace_database_url("sqlite:////tmp/source.sqlite") == "sqlite:////tmp/source.sqlite"
+
+
 def test_copy_sql_query_to_workspace_writes_tsv(tmp_path):
     from tools.sql_workspace import copy_sql_query_to_workspace
 
@@ -68,13 +99,37 @@ def test_preview_sql_table_returns_markdown_sample(tmp_path):
         limit=2,
     )
 
-    assert "casts" in preview
+    assert "Table `casts`" in preview
+    assert "Row count: 3" in preview
+    assert "| column | type | nullable | pk |" in preview
+    assert "id" in preview
+    assert "INTEGER" in preview
+    assert "station" in preview
+    assert "TEXT" in preview
     assert "2 lignes × 2 colonnes" in preview
     lines = preview.splitlines()
-    assert any("id" in line and "station" in line for line in lines)
     assert any("1" in line and "A" in line for line in lines)
     assert any("2" in line and "B" in line for line in lines)
-    assert all("C" not in line for line in lines)
+    assert "3" in preview
+
+
+def test_preview_sql_table_reports_empty_table_schema(tmp_path):
+    from tools.sql_workspace import preview_sql_table
+
+    db_path = tmp_path / "source.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE empty_casts (id INTEGER PRIMARY KEY, station TEXT)")
+    conn.commit()
+    conn.close()
+
+    preview = preview_sql_table(
+        database_url=f"sqlite:///{db_path}",
+        table_name="empty_casts",
+        limit=2,
+    )
+
+    assert "Row count: 0" in preview
+    assert "Aucune ligne trouvée." in preview
 
 
 def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):

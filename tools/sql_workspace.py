@@ -17,6 +17,8 @@ from sqlalchemy import create_engine, inspect
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 
+_SQL_DATABASE_URL_META_KEY = "sql_database_url"
+
 def _sqlite_path_from_url(database_url: str) -> Path:
     parsed = urlparse(database_url)
     if parsed.scheme != "sqlite":
@@ -90,9 +92,97 @@ def _quote_sql_identifier(identifier: str) -> str:
     return ".".join(quoted_parts)
 
 
+def _table_schema(database_url: str, table_name: str) -> list[dict[str, object]]:
+    conn = _open_readonly_connection(database_url)
+    try:
+        if isinstance(conn, sqlite3.Connection):
+            quoted = _quote_sql_identifier(table_name)
+            rows = conn.execute(f"PRAGMA table_info({quoted})").fetchall()
+            return [
+                {
+                    "column": row[1],
+                    "type": row[2] or "—",
+                    "nullable": "no" if row[3] else "yes",
+                    "pk": "yes" if row[5] else "no",
+                }
+                for row in rows
+            ]
+
+        inspector = inspect(conn)
+        columns = inspector.get_columns(table_name)
+        return [
+            {
+                "column": column["name"],
+                "type": str(column.get("type") or "—"),
+                "nullable": "yes" if column.get("nullable", True) else "no",
+                "pk": "yes" if column.get("primary_key") else "no",
+            }
+            for column in columns
+        ]
+    finally:
+        _close_connection(conn)
+
+
+def _table_row_count(database_url: str, table_name: str) -> int:
+    conn = _open_readonly_connection(database_url)
+    try:
+        if isinstance(conn, sqlite3.Connection):
+            quoted = _quote_sql_identifier(table_name)
+            row = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()
+            return int(row[0] if row else 0)
+
+        quoted = _quote_sql_identifier(table_name)
+        row = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()
+        return int(row[0] if row else 0)
+    finally:
+        _close_connection(conn)
+
+
 def list_sql_tables(database_url: str) -> list[str]:
     """Retourne les tables visibles dans la base SQL en lecture seule."""
     return _list_sql_tables(database_url)
+
+
+def extract_sql_workspace_database_url(text: str) -> str | None:
+    """Extrait un DATABASE_URL d'un message de configuration Open WebUI."""
+    text = (text or "").strip()
+    if not text:
+        return None
+
+    patterns = [
+        r"(?im)^\s*DATABASE_URL\s*[:=]\s*(\S+)\s*$",
+        r"(?im)^\s*sql_database_url\s*[:=]\s*(\S+)\s*$",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text or "")
+        if match:
+            return match.group(1).strip()
+
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9+.-]*://\S+", text):
+        return text
+    return None
+
+
+def set_sql_workspace_database_url(thread_id: str, database_url: str) -> None:
+    """Persiste DATABASE_URL dans la métadonnée de session du thread."""
+    _store.update_meta(thread_id, {_SQL_DATABASE_URL_META_KEY: database_url.strip()})
+
+
+def resolve_sql_database_url(thread_id: str) -> str:
+    """Résout DATABASE_URL depuis la session du thread, puis l'environnement."""
+    session = _store.get(thread_id) or {}
+    meta = session.get("meta") or {}
+    database_url = str(meta.get(_SQL_DATABASE_URL_META_KEY, "")).strip()
+    if database_url:
+        return database_url
+
+    env_database_url = os.getenv("DATABASE_URL", "").strip()
+    if env_database_url:
+        return env_database_url
+
+    raise ValueError(
+        "DATABASE_URL is required for SQL tools. Paste the SQLAlchemy URL in the conversation or set it in the local .env."
+    )
 
 
 def preview_sql_table(
@@ -108,6 +198,9 @@ def preview_sql_table(
     if table_name not in available_tables:
         raise ValueError(f"Unknown SQL table: {table_name}")
 
+    total_rows = _table_row_count(database_url, table_name)
+    schema = _table_schema(database_url, table_name)
+
     conn = _open_readonly_connection(database_url)
     try:
         query = f"SELECT * FROM {_quote_sql_identifier(table_name)} LIMIT {int(limit)}"
@@ -120,9 +213,25 @@ def preview_sql_table(
     else:
         preview = dataframe.to_markdown(index=False)
 
+    if schema:
+        schema_lines = ["| column | type | nullable | pk |", "|---|---|---|---|"]
+        schema_lines.extend(
+            f"| {col['column']} | {col['type']} | {col['nullable']} | {col['pk']} |"
+            for col in schema
+        )
+        schema_block = "\n".join(schema_lines)
+    else:
+        schema_block = "Aucune colonne trouvée."
+
     return (
-        f"Table `{table_name}` — {len(dataframe)} lignes × {len(dataframe.columns)} colonnes\n\n"
-        f"{preview}"
+        f"Table `{table_name}`\n"
+        f"Row count: {total_rows}\n"
+        f"Preview limit: {limit}\n\n"
+        f"## Columns\n\n"
+        f"{schema_block}\n\n"
+        f"## Preview\n\n"
+        f"{preview}\n\n"
+        f"{len(dataframe)} lignes × {len(dataframe.columns)} colonnes"
     )
 
 
@@ -162,9 +271,7 @@ def _default_workspace_stem(thread_id: str, query: str) -> str:
 
 def make_sql_tools(thread_id: str) -> list:
     """Crée les tools SQL liés à un workspace de conversation."""
-    database_url = os.getenv("DATABASE_URL", "").strip()
-    if not database_url:
-        raise ValueError("DATABASE_URL is required for SQL tools.")
+    database_url = resolve_sql_database_url(thread_id)
 
     workspace_root = Path(os.getenv("SQL_WORKSPACE_DIR", "data/sql_workspace"))
     workspace_root.mkdir(parents=True, exist_ok=True)

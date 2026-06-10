@@ -41,3 +41,32 @@ Bonjour
     assert copied["container_path"] == "/app/backend/data/uploads/12345_stations.csv"
     assert copied["local_path"].endswith("uploads/stations.csv")
     assert (uploads_dir / "stations.csv").read_text(encoding="utf-8") == "a,b\n1,2\n"
+
+
+def test_resolve_attached_files_marks_images_without_load_file_instruction(tmp_path):
+    from tools.openwebui_uploads import resolve_attached_files
+
+    uploads_dir = tmp_path / "uploads"
+
+    def fake_copy(container_path: str, local_path: Path) -> None:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_bytes(b"png-bytes")
+
+    text = """
+Bonjour
+<attached_files>
+  <file type="file" url="abcde" content_type="image/png" name="figure.png"/>
+</attached_files>
+"""
+
+    result = resolve_attached_files(
+        text,
+        copy_from_container=fake_copy,
+        uploads_dir=uploads_dir,
+        webui_uploads_path="/app/backend/data/uploads",
+        webui_container="open-webui",
+    )
+
+    assert "Image(s) chargée(s) depuis Open WebUI" in result
+    assert "load_file" not in result
+    assert (uploads_dir / "figure.png").exists()

@@ -24,6 +24,7 @@ load_dotenv()
 from agent import make_agent, _CHECKPOINTS_DB, repair_invalid_tool_history
 from tools.openwebui_uploads import resolve_attached_files
 from tools.public_url import graph_url, serve_base_url
+from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_workspace_database_url
 from tools.session_store import default_store
 from core.copepod_rag.query import _get_cross_encoder
 
@@ -125,6 +126,24 @@ class Message(BaseModel):
         return " ".join(parts).strip()
 
 
+def _prepare_user_content(message: Message | None) -> str | list:
+    """Prépare le contenu utilisateur sans perdre les images Open WebUI."""
+    if message is None:
+        return ""
+    if isinstance(message.content, str):
+        return resolve_attached_files(message.content)
+
+    prepared: list = []
+    for part in message.content:
+        if isinstance(part, dict) and part.get("type") == "text":
+            updated = dict(part)
+            updated["text"] = resolve_attached_files(str(updated.get("text", "")))
+            prepared.append(updated)
+        else:
+            prepared.append(part)
+    return prepared
+
+
 class ChatRequest(BaseModel):
     model: str = "copepod-agent"
     messages: list[Message]
@@ -199,6 +218,13 @@ _INTERNAL_PREFIXES = ("### Task:", "### Guidelines:", "### Input:", "### Output:
 
 def _is_internal_prompt(text: str) -> bool:
     return any(text.strip().startswith(p) for p in _INTERNAL_PREFIXES)
+
+
+def _is_sql_workspace_config_message(text: str, database_url: str) -> bool:
+    stripped = (text or "").strip()
+    if not stripped or not database_url:
+        return False
+    return stripped in {database_url, f"DATABASE_URL={database_url}", f"sql_database_url={database_url}"}
 
 
 def _quick_response(text: str) -> dict:
@@ -297,6 +323,7 @@ async def _stream_agent_sse(
     messages: dict,
     config: dict,
     thread_id: str,
+    last_user_text: str = "",
 ) -> AsyncGenerator[str, None]:
     """Génère les chunks SSE depuis l'agent LangGraph (stream_mode='updates')."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
@@ -355,7 +382,6 @@ async def _stream_agent_sse(
             "total_tokens": prompt_tokens + completion_tokens,
             "prompt_tokens_details": {"cached_tokens": cached_tokens},
         }
-        last_user_text = (messages.get("messages") or [{}])[-1].get("content", "")
         final_text = getattr(last_ai_msg, "content", "") or ""
         _log_turn(thread_id, last_user_text, final_text, usage)
         if cached_tokens > 0:
@@ -394,12 +420,24 @@ async def chat_completions(
         metadata=req.metadata,
     )
 
-    last_user = next(
-        (m.text() for m in reversed(req.messages) if m.role == "user"), ""
-    )
-    last_user = resolve_attached_files(last_user)
+    last_user = next((m for m in reversed(req.messages) if m.role == "user"), None)
+    last_user_text = resolve_attached_files(last_user.text() if last_user else "")
+    last_user_content = _prepare_user_content(last_user)
 
-    if _is_internal_prompt(last_user):
+    sql_database_url = extract_sql_workspace_database_url(last_user_text) or ""
+    if sql_database_url:
+        set_sql_workspace_database_url(tid, sql_database_url)
+        logger.info("thread=%s SQL workspace configured", tid)
+        if _is_sql_workspace_config_message(last_user_text, sql_database_url):
+            confirmation = (
+                "Workspace SQL configuré pour cette conversation.\n"
+                "Vous pouvez maintenant lister les tables, prévisualiser une table, ou copier une requête read-only."
+            )
+            if req.stream:
+                return StreamingResponse(_quick_sse_response(confirmation), media_type="text/event-stream")
+            return _quick_response(confirmation)
+
+    if _is_internal_prompt(last_user_text):
         logger.info("thread=%s SKIPPED internal prompt", tid)
         if req.stream:
             return StreamingResponse(_quick_sse_response(""), media_type="text/event-stream")
@@ -419,14 +457,14 @@ async def chat_completions(
             "message_id": x_openwebui_message_id,
         },
     }
-    messages = {"messages": [{"role": "user", "content": last_user}]}
+    messages = {"messages": [{"role": "user", "content": last_user_content}]}
 
     logger.info("thread=%s stream=%s", tid, req.stream)
     repair_invalid_tool_history(agent, config)
     if req.stream:
         logger.info("thread=%s STREAM start", tid)
         return StreamingResponse(
-            _stream_agent_sse(agent, messages, config, tid),
+            _stream_agent_sse(agent, messages, config, tid, last_user_text=last_user_text),
             media_type="text/event-stream",
         )
 
@@ -459,7 +497,7 @@ async def chat_completions(
         "prompt_tokens_details": {"cached_tokens": cached_tokens},
     }
 
-    _log_turn(tid, last_user, text, usage)
+    _log_turn(tid, last_user_text, text, usage)
 
     if cached_tokens > 0:
         logger.info("CACHE HIT thread=%s cached_tokens=%s (%.0f%% of prompt)",

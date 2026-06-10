@@ -154,6 +154,37 @@ def test_format_tool_line_query_amundsen_shows_waiting_message():
     assert "%" not in line
 
 
+def test_sql_workspace_config_message_matches_raw_url_and_key_value_forms():
+    from serve import _is_sql_workspace_config_message
+
+    url = "sqlite:////tmp/source.sqlite"
+
+    assert _is_sql_workspace_config_message(url, url)
+    assert _is_sql_workspace_config_message(f"DATABASE_URL={url}", url)
+    assert _is_sql_workspace_config_message(f"sql_database_url={url}", url)
+    assert not _is_sql_workspace_config_message("analyse-moi ça", url)
+
+
+def test_prepare_user_content_preserves_image_url_parts():
+    from serve import Message, _prepare_user_content
+
+    message = Message(
+        role="user",
+        content=[
+            {"type": "text", "text": "Que vois-tu ?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ],
+    )
+
+    prepared = _prepare_user_content(message)
+
+    assert isinstance(prepared, list)
+    assert prepared[0]["type"] == "text"
+    assert prepared[0]["text"] == "Que vois-tu ?"
+    assert prepared[1]["type"] == "image_url"
+    assert prepared[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
 # ── streaming async ────────────────────────────────────────────────────────────
 
 def _make_mock_agent(updates: list):

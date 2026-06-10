@@ -33,8 +33,10 @@ class SessionStore:
     def _meta_path(self, thread_id: str) -> Path:
         return self._storage_dir / f"{self._safe_thread_id(thread_id)}.json"
 
-    def _persist(self, thread_id: str, df: pd.DataFrame, meta: dict) -> None:
-        df.to_pickle(self._data_path(thread_id))
+    def _persist(self, thread_id: str, df: pd.DataFrame | None, meta: dict) -> None:
+        data_path = self._data_path(thread_id)
+        if df is not None:
+            df.to_pickle(data_path)
         self._meta_path(thread_id).write_text(
             json.dumps(meta, ensure_ascii=False),
             encoding="utf-8",
@@ -43,12 +45,12 @@ class SessionStore:
     def _load_from_disk(self, thread_id: str) -> dict[str, Any] | None:
         data_path = self._data_path(thread_id)
         meta_path = self._meta_path(thread_id)
-        if not data_path.exists() or not meta_path.exists():
+        if not meta_path.exists():
             return None
 
         try:
-            df = pd.read_pickle(data_path)
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            df = pd.read_pickle(data_path) if data_path.exists() else None
         except Exception:
             return None
 
@@ -56,10 +58,16 @@ class SessionStore:
         self._store[thread_id] = session
         return session
 
-    def set(self, thread_id: str, df: pd.DataFrame, meta: dict) -> None:
+    def set(self, thread_id: str, df: pd.DataFrame | None, meta: dict) -> None:
         session = {"df": df, "meta": meta}
         self._store[thread_id] = session
         self._persist(thread_id, df, meta)
+
+    def update_meta(self, thread_id: str, meta_updates: dict) -> None:
+        session = self.get(thread_id) or {"df": None, "meta": {}}
+        meta = dict(session.get("meta") or {})
+        meta.update(meta_updates)
+        self.set(thread_id, session.get("df"), meta)
 
     def get(self, thread_id: str) -> dict[str, Any] | None:
         session = self._store.get(thread_id)

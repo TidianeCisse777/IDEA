@@ -49,6 +49,7 @@ def resolve_attached_files(
 
     xml_block = match.group(0)
     resolved_paths: list[str] = []
+    image_paths: list[str] = []
     copier = copy_from_container or (
         lambda container_path, local_path: _copy_from_webui_container(
             container_path,
@@ -62,6 +63,7 @@ def resolve_attached_files(
         for file_el in root.findall("file"):
             file_id = file_el.get("url", "").strip()
             name = file_el.get("name", "").strip()
+            content_type = (file_el.get("content_type", "") or "").strip().lower()
             if not file_id or not name:
                 continue
 
@@ -71,6 +73,8 @@ def resolve_attached_files(
             try:
                 copier(container_path, local_path)
                 resolved_paths.append(str(local_path))
+                if content_type.startswith("image/"):
+                    image_paths.append(str(local_path))
                 logger.info("file_resolved name=%s → %s", name, local_path)
             except Exception as exc:
                 logger.warning(
@@ -88,8 +92,19 @@ def resolve_attached_files(
         return cleaned
 
     paths_str = "\n".join(f"- {p}" for p in resolved_paths)
-    instruction = (
-        f"Fichier(s) chargé(s) depuis Open WebUI :\n{paths_str}\n"
-        "Charge le fichier avec l'outil load_file avant de répondre."
-    )
+    if image_paths and len(image_paths) == len(resolved_paths):
+        instruction = (
+            f"Image(s) chargée(s) depuis Open WebUI :\n{paths_str}\n"
+            "Analyse l'image directement si le modèle le permet."
+        )
+    elif image_paths:
+        instruction = (
+            f"Pièce(s) jointe(s) depuis Open WebUI :\n{paths_str}\n"
+            "Charge les fichiers tabulaires avec `load_file`. Les images doivent être analysées directement via le contexte multimodal."
+        )
+    else:
+        instruction = (
+            f"Fichier(s) chargé(s) depuis Open WebUI :\n{paths_str}\n"
+            "Charge le fichier avec l'outil load_file avant de répondre."
+        )
     return f"{cleaned}\n\n{instruction}".strip()

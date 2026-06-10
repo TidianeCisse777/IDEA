@@ -69,6 +69,8 @@ def test_system_prompt_anti_hallucination():
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "run_pandas" in prompt
     assert "numérique" in prompt or "numeric" in prompt or "valeur" in prompt
+    assert "general reasoning" in prompt or "raisonnement général" in prompt
+    assert "project-specific facts" in prompt or "faits spécifiques" in prompt
 
 
 # --- Comportement 4 : prompt mentionne les sources autorisées ---
