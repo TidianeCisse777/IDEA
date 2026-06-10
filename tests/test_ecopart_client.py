@@ -137,3 +137,119 @@ def test_get_stats_returns_accessible_false_on_error_response():
     client._session.get = MagicMock(return_value=mock_resp)
 
     assert client.get_stats(105) == {"accessible": False}
+
+
+# ── #12 : preview + export + download ────────────────────────────────────────
+
+
+def test_preview_sample_returns_normalized_dict_from_html():
+    from unittest.mock import MagicMock
+
+    from core.ecopart_client import EcopartClient
+
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.text = """
+    <div>
+      <b>Sample ips_007</b><br>
+      Ecotaxa Project (1165)<br>
+      Depth range : 0 - 500 m<br>
+    </div>
+    """
+
+    client = EcopartClient()
+    client._session.get = MagicMock(return_value=mock_resp)
+    result = client.preview_sample(42)
+
+    url, = client._session.get.call_args[0]
+    assert "getsamplepopover/42" in url
+    assert result["sample_id"] == 42
+    assert result["accessible"] is True
+    assert "ips_007" in result["text"]
+
+
+def test_start_export_returns_candidate_download_links():
+    from unittest.mock import MagicMock
+
+    from core.ecopart_client import EcopartClient
+
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.headers = {"content-type": "text/html"}
+    mock_resp.text = """
+    <html><body>
+      Export started.
+      <a href="/Task/Download/99">Download file</a>
+      <a href="/Task/Status/99">Status</a>
+    </body></html>
+    """
+
+    client = EcopartClient()
+    client._session.get = MagicMock(return_value=mock_resp)
+    links = client.start_export(105)
+
+    url, = client._session.get.call_args[0]
+    assert "TaskPartExport" in url
+    assert ("filt_uproj", "105") in client._session.get.call_args[1]["params"]
+    assert any("Download" in lnk or "download" in lnk.lower() for lnk in links)
+
+
+def test_download_tsv_returns_dataframe_from_tsv_response():
+    import io
+    from unittest.mock import MagicMock
+
+    import pandas as pd
+
+    from core.ecopart_client import EcopartClient
+
+    tsv_content = b"Profile\tDepth [m]\tSampled volume [L]\nips_007\t10.0\t95.3\n"
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.headers = {"content-type": "text/tab-separated-values"}
+    mock_resp.content = tsv_content
+
+    client = EcopartClient()
+    client._session.get = MagicMock(return_value=mock_resp)
+    df = client.download_tsv(["https://ecopart.obs-vlfr.fr/Task/Download/99"])
+
+    assert isinstance(df, pd.DataFrame)
+    assert list(df.columns) == ["Profile", "Depth [m]", "Sampled volume [L]"]
+    assert len(df) == 1
+
+
+def test_download_tsv_extracts_tsv_from_zip():
+    import io
+    import zipfile
+    from unittest.mock import MagicMock
+
+    import pandas as pd
+
+    from core.ecopart_client import EcopartClient
+
+    tsv_content = b"Profile\tDepth [m]\nips_007\t10.0\n"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("export.tsv", tsv_content)
+    zip_bytes = buf.getvalue()
+
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.headers = {"content-type": "application/zip"}
+    mock_resp.content = zip_bytes
+
+    client = EcopartClient()
+    client._session.get = MagicMock(return_value=mock_resp)
+    df = client.download_tsv(["https://ecopart.obs-vlfr.fr/Task/Download/99"])
+
+    assert isinstance(df, pd.DataFrame)
+    assert "Profile" in df.columns
+
+
+def test_download_tsv_raises_when_no_links():
+    import pytest
+
+    from core.ecopart_client import EcopartClient
+
+    client = EcopartClient()
+    with pytest.raises(RuntimeError, match="No download links"):
+        client.download_tsv([])

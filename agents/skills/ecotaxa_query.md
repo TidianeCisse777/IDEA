@@ -60,6 +60,29 @@ Le résumé retourné par `query_ecotaxa` contient un lien `http://localhost:800
 
 ---
 
+## Combiner EcoTaxa avec EcoPart
+
+EcoPart fournit les **profils CTD + particules UVP** pour les mêmes casts Amundsen.
+Pour coupler les données :
+
+1. Charger EcoTaxa : `query_ecotaxa(project_id=1165)`
+2. Charger EcoPart : `query_ecopart(project_id=105)`
+3. Joindre : `join_ecotaxa_ecopart`
+
+**Clé de jointure :**
+`obj_orig_id` dans EcoTaxa (ex. `ips_007_899`) → supprime le suffixe `_NNN` → `profile_id` (`ips_007`) → correspond à l'identifiant sample EcoPart.
+
+```python
+# Dériver profile_id depuis obj_orig_id
+df["profile_id"] = df["obj_orig_id"].str.replace(r"_\d+$", "", regex=True)
+```
+
+Le résultat de la jointure contient à la fois la taxonomie/morphométrie EcoTaxa
+et les colonnes CTD (`Depth [m]`, `Sampled volume [L]`, colonnes `LPM`) d'EcoPart.
+Voir le skill `uvp_ecopart` pour les métriques m1-m3 calculables depuis EcoPart.
+
+---
+
 ## Cas limites
 
 - Si le projet contient >100 000 objets, l'export peut prendre 1-2 minutes — prévenir l'utilisateur.
