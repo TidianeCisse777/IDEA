@@ -4,7 +4,7 @@ load_dotenv()
 
 from langsmith import Client
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate
-from agents.copepod_prompt import COPEPOD_SYSTEM_PROMPT
+from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
 prompt = ChatPromptTemplate.from_messages([
     SystemMessagePromptTemplate.from_template(COPEPOD_SYSTEM_PROMPT),
