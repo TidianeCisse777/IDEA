@@ -65,6 +65,7 @@ def make_amundsen_tools(thread_id: str) -> list:
             _store.set(thread_id, dataframe, {"source": f"amundsen:{station or cast_number or 'ctd'}", "n_rows": len(dataframe)})
             return (
                 f"Amundsen CTD chargé — {result['row_count']} lignes.\n"
+                f"Données en session — appelle run_pandas directement pour analyser.\n"
                 f"Télécharger : {result['download_url']}"
             )
         except Exception as exc:

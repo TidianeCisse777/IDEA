@@ -120,6 +120,7 @@ def make_source_tools(thread_id: str) -> list:
         hint = _uvp_skill_hint(list(df.columns))
         summary = (
             f"Projet {project_id} chargé — {len(df)} lignes, {len(df.columns)} colonnes.\n"
+            f"Données en session — appelle run_pandas directement pour analyser.\n"
             f"Télécharger : {download_url(f'{file_id}.tsv')}"
         )
         if hint:

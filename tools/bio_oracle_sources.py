@@ -82,6 +82,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             _store.set(thread_id, dataframe, {"source": f"bio_oracle:{scenario}", "n_rows": len(dataframe)})
             return (
                 f"Bio-ORACLE chargé — {result['row_count']} lignes.\n"
+                f"Données en session — appelle run_pandas directement pour analyser.\n"
                 f"Télécharger : {result['download_url']}"
             )
         except Exception as exc:

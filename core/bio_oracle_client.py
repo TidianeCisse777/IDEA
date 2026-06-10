@@ -1,6 +1,7 @@
 """Shared Bio-ORACLE helpers."""
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import requests
@@ -81,6 +82,11 @@ def preview_bio_oracle_point(parameters: dict) -> dict:
     variable = str(parameters.get("variable") or "").strip()
     scenario = str(parameters.get("scenario") or "").strip()
     depth_layer = str(parameters.get("depth_layer") or "").strip()
+    latitude = parameters.get("latitude")
+    longitude = parameters.get("longitude")
+
+    if latitude is None or longitude is None:
+        raise ValueError("latitude and longitude are required for Bio-ORACLE point queries")
 
     datasets = list_bio_oracle_datasets()
     chosen = None
@@ -96,9 +102,20 @@ def preview_bio_oracle_point(parameters: dict) -> dict:
     if chosen is None:
         raise RuntimeError("No Bio-ORACLE dataset matched the request")
 
-    response = requests.get(f"{chosen['griddap']}.csv", timeout=30)
+    griddap_url = chosen["griddap"]
+    if not griddap_url:
+        raise RuntimeError(f"Dataset {chosen['dataset_id']} has no griddap endpoint")
+
+    # Single-point query: (last) selects the most recent time step, (value) notation
+    # selects the nearest grid cell for lat/lon
+    url = f"{griddap_url}.csv?{variable}[(last)][({latitude})][({longitude})]"
+    response = requests.get(url, timeout=30)
     response.raise_for_status()
-    dataframe = pd.read_csv(pd.io.common.StringIO(response.text))
+
+    # ERDDAP CSV: row 0 = column names, row 1 = units — skip units row when present
+    lines = response.text.splitlines()
+    data_text = "\n".join([lines[0]] + lines[2:]) if len(lines) > 2 else response.text
+    dataframe = pd.read_csv(io.StringIO(data_text))
 
     return {
         "dataset_id": chosen["dataset_id"],

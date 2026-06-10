@@ -32,6 +32,7 @@ def list_amundsen_datasets() -> list[dict]:
                 "dataset_id": str(dataset_id),
                 "title": str(record.get("Title") or record.get("title") or ""),
                 "griddap": str(record.get("griddap") or ""),
+                "tabledap": str(record.get("tabledap") or ""),
             }
         )
     return normalized
@@ -42,13 +43,30 @@ def preview_amundsen_profile(parameters: dict) -> dict:
     station = parameters.get("station")
     cast_number = parameters.get("cast_number")
     datasets = list_amundsen_datasets()
-    chosen = datasets[0] if datasets else None
+    # Prefer the 2018 Amundsen cruise dataset used in this project
+    chosen = next((d for d in datasets if d["dataset_id"] == "amundsen12713"), datasets[0] if datasets else None)
     if chosen is None:
         raise RuntimeError("No Amundsen CTD dataset matched the request")
 
-    response = requests.get(f"{chosen['griddap']}.csv", timeout=30)
+    tabledap_url = chosen["tabledap"]
+    if not tabledap_url:
+        raise RuntimeError(f"Dataset {chosen['dataset_id']} has no tabledap endpoint")
+
+    variables = "time,latitude,longitude,station,cast_number,PRES,depth,TE90,PSAL"
+    constraints = ""
+    if station is not None:
+        constraints += f'&station="{station}"'
+    if cast_number is not None:
+        constraints += f"&cast_number={cast_number}"
+
+    url = f"{tabledap_url}.csv?{variables}{constraints}"
+    response = requests.get(url, timeout=30)
     response.raise_for_status()
-    dataframe = pd.read_csv(io.StringIO(response.text))
+
+    # ERDDAP CSV: row 0 = column names, row 1 = units — skip units row when present
+    lines = response.text.splitlines()
+    data_text = "\n".join([lines[0]] + lines[2:]) if len(lines) > 2 else response.text
+    dataframe = pd.read_csv(io.StringIO(data_text))
 
     if "Pres" in dataframe.columns:
         dataframe["depth"] = dataframe["Pres"]

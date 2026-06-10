@@ -9,11 +9,12 @@ def test_list_amundsen_datasets_normalizes_erddap_response():
     response = MagicMock()
     response.json.return_value = {
         "table": {
-            "columnNames": ["Dataset ID", "Title", "griddap"],
+            "columnNames": ["Dataset ID", "Title", "griddap", "tabledap"],
             "rows": [
                 [
                     "amundsen12713",
                     "CTD data collected by the CCGS Amundsen in the Canadian Arctic",
+                    "",
                     "https://erddap.amundsenscience.com/erddap/tabledap/amundsen12713",
                 ]
             ],
@@ -28,7 +29,8 @@ def test_list_amundsen_datasets_normalizes_erddap_response():
         {
             "dataset_id": "amundsen12713",
             "title": "CTD data collected by the CCGS Amundsen in the Canadian Arctic",
-            "griddap": "https://erddap.amundsenscience.com/erddap/tabledap/amundsen12713",
+            "griddap": "",
+            "tabledap": "https://erddap.amundsenscience.com/erddap/tabledap/amundsen12713",
         }
     ]
 
@@ -41,11 +43,12 @@ def test_preview_amundsen_profile_returns_raw_rows_and_join_aliases():
     search_response = MagicMock()
     search_response.json.return_value = {
         "table": {
-            "columnNames": ["Dataset ID", "Title", "griddap"],
+            "columnNames": ["Dataset ID", "Title", "griddap", "tabledap"],
             "rows": [
                 [
                     "amundsen12713",
                     "CTD data collected by the CCGS Amundsen in the Canadian Arctic",
+                    "",
                     "https://erddap.amundsenscience.com/erddap/tabledap/amundsen12713",
                 ]
             ],
@@ -94,11 +97,12 @@ def test_query_amundsen_ctd_writes_tsv_and_returns_download_url(tmp_path):
     search_response = MagicMock()
     search_response.json.return_value = {
         "table": {
-            "columnNames": ["Dataset ID", "Title", "griddap"],
+            "columnNames": ["Dataset ID", "Title", "griddap", "tabledap"],
             "rows": [
                 [
                     "amundsen12713",
                     "CTD data collected by the CCGS Amundsen in the Canadian Arctic",
+                    "",
                     "https://erddap.amundsenscience.com/erddap/tabledap/amundsen12713",
                 ]
             ],
