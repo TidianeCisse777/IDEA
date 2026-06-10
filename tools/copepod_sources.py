@@ -112,6 +112,7 @@ def make_source_tools(thread_id: str) -> list:
             return f"Erreur lors de l'accès à EcoTaxa : {exc}"
 
         _store.set(thread_id, df, {"source": f"ecotaxa:{project_id}", "n_rows": len(df)})
+        _store.set(f"{thread_id}:ecotaxa", df, {"source": f"ecotaxa:{project_id}", "n_rows": len(df)})
 
         file_id = uuid.uuid4().hex
         tsv_path = _DOWNLOADS_DIR / f"{file_id}.tsv"

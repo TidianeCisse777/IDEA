@@ -428,3 +428,16 @@ def test_ecotaxa_skill_routes_preview_without_export():
     assert "preview_ecotaxa_project" in skill
     assert "query_ecotaxa" in skill
     assert "Ne lance pas `query_ecotaxa`" in skill
+
+
+def test_query_ecotaxa_also_stores_named_slot_for_join():
+    df = pd.DataFrame({"obj_orig_id": ["ips_007_1"], "object_major": [12.5]})
+    with patch("tools.copepod_sources.EcotaxaClient") as MockClient:
+        MockClient.return_value = _make_fake_client(df)
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-join-et")
+        query = next(t for t in tools if t.name == "query_ecotaxa")
+        query.invoke({"project_id": 1165})
+
+    assert _store.has("thread-join-et:ecotaxa")
+    assert _store.get("thread-join-et:ecotaxa")["df"].shape == (1, 2)

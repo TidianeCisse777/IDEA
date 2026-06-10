@@ -15,6 +15,7 @@ from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 from tools.data_tools import make_tools
 from tools.bio_oracle_sources import make_bio_oracle_tools
 from tools.amundsen_sources import make_amundsen_tools
+from tools.ecopart_sources import make_ecopart_tools
 from tools.copepod_sources import make_source_tools
 from tools.sql_workspace import make_sql_tools
 from tools.rag_tool import make_rag_tool
@@ -155,9 +156,13 @@ def make_agent(thread_id: str):
         + make_source_tools(thread_id)
         + make_bio_oracle_tools(thread_id)
         + make_amundsen_tools(thread_id)
-        + (make_sql_tools(thread_id) if os.getenv("DATABASE_URL", "").strip() else [])
+        + make_ecopart_tools(thread_id)
         + [make_rag_tool(), make_skill_tool()]
     )
+    try:
+        tools += make_sql_tools(thread_id)
+    except ValueError:
+        pass
 
     return create_react_agent(
         llm,
