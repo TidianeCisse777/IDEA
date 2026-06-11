@@ -1,4 +1,5 @@
 """OpenAI-compatible API — expose l'agent copépodes pour Open WebUI."""
+import asyncio
 import base64
 import hashlib
 import json
@@ -15,7 +16,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Header
+from fastapi import Header, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel
@@ -77,9 +78,10 @@ def _log_feedback_event(event: str, thread_id: str | None = None, **fields) -> N
 class _RunIdCaptureCallback(BaseCallbackHandler):
     """Capture le run racine LangSmith d'un thread pour relier le feedback."""
 
-    def __init__(self, thread_id: str, message_id: str | None = None) -> None:
+    def __init__(self, thread_id: str, message_id: str | None = None, chat_id: str | None = None) -> None:
         self._thread_id = thread_id
         self._message_id = message_id
+        self._chat_id = chat_id
 
     def on_chain_start(
         self,
@@ -91,7 +93,7 @@ class _RunIdCaptureCallback(BaseCallbackHandler):
         **kwargs,
     ) -> None:
         if parent_run_id is None:
-            default_run_store.set(self._thread_id, str(run_id))
+            default_run_store.set(self._thread_id, str(run_id), chat_id=self._chat_id)
             if self._message_id:
                 default_run_store.set_for_message(self._message_id, str(run_id))
             _log_feedback_event(
@@ -99,13 +101,14 @@ class _RunIdCaptureCallback(BaseCallbackHandler):
                 self._thread_id,
                 run_id=str(run_id),
                 message_id=self._message_id,
+                chat_id=self._chat_id,
                 parent_run_id=str(parent_run_id) if parent_run_id is not None else None,
             )
 
 
-def _request_callbacks(thread_id: str, message_id: str | None = None, config: dict | None = None) -> list:
+def _request_callbacks(thread_id: str, message_id: str | None = None, chat_id: str | None = None, config: dict | None = None) -> list:
     callbacks = list((config or {}).get("callbacks") or [])
-    callbacks.append(_RunIdCaptureCallback(thread_id, message_id=message_id))
+    callbacks.append(_RunIdCaptureCallback(thread_id, message_id=message_id, chat_id=chat_id))
     return callbacks
 
 
@@ -276,16 +279,11 @@ def _conversation_key(
             if value:
                 return str(value)
 
-    first_message = ""
-    for message in messages:
-        if isinstance(message, str) and message.strip():
-            first_message = message
-            break
-        if hasattr(message, "role") and getattr(message, "role", None) == "user":
-            first_message = getattr(message, "text", lambda: "")()
-            if first_message:
-                break
-    return first_message or str(uuid.uuid4())
+    # No stable identifier — generate a UUID rather than using message content.
+    # Using message content as a key causes thread collisions when multiple
+    # conversations start with the same text (e.g. "yo").
+    logger.warning("No chat_id/session_id in request — generating ephemeral thread UUID")
+    return str(uuid.uuid4())
 
 
 def _thread_id(
@@ -512,9 +510,16 @@ async def _stream_agent_sse(
 @app.post("/v1/chat/completions")
 async def chat_completions(
     req: ChatRequest,
+    request: Request,
     x_openwebui_chat_id: str | None = Header(default=None, alias="X-OpenWebUI-Chat-Id"),
     x_openwebui_message_id: str | None = Header(default=None, alias="X-OpenWebUI-Message-Id"),
 ):
+    # Log all headers to diagnose missing chat_id
+    owui_headers = {k: v for k, v in request.headers.items() if "openwebui" in k.lower() or "chat" in k.lower() or "session" in k.lower()}
+    logger.info(
+        "completions_request headers=%s body_chat_id=%s body_session=%s body_meta=%s",
+        owui_headers, req.chat_id, req.session_id, req.metadata,
+    )
     openwebui_message_id = _openwebui_message_id(req, x_openwebui_message_id)
     tid = _thread_id(
         req.messages,
@@ -565,7 +570,7 @@ async def chat_completions(
             "session_id": req.session_id,
             "message_id": openwebui_message_id,
         },
-        "callbacks": _request_callbacks(tid, openwebui_message_id),
+        "callbacks": _request_callbacks(tid, openwebui_message_id, chat_id=x_openwebui_chat_id or req.chat_id),
     }
     messages = {"messages": [{"role": "user", "content": last_user_content}]}
 
@@ -670,6 +675,7 @@ class FeedbackRequest(BaseModel):
     comment: str | None = None
     reason: str | None = None
     type: str | None = None
+    created_at: int | float | None = None  # Unix timestamp from Open WebUI SQLite
     data: dict | None = None
     meta: dict | None = None
 
@@ -759,19 +765,31 @@ def _feedback_comment(req: FeedbackRequest) -> str | None:
 async def feedback(req: FeedbackRequest):
     message_id = _feedback_message_id(req)
     thread_id = _feedback_thread_id(req)
-    if not thread_id and not message_id:
-        return {"status": "skipped", "reason": "no thread_id or chat_id found"}
+    raw_chat_id = _feedback_chat_id(req)
 
     score = _feedback_score(req)
+
+    # Lookup priority: message_id → raw chat_id → hashed thread_id → most recent run
     run_id = default_run_store.get_for_message(message_id) if message_id else None
     source = "message_id" if run_id else None
+    if not run_id and raw_chat_id:
+        run_id = default_run_store.get_for_chat_id(raw_chat_id)
+        source = "chat_id_direct" if run_id else None
     if not run_id and thread_id:
         run_id = default_run_store.get(thread_id)
         source = "thread_id" if run_id else None
+    if not run_id:
+        if req.created_at:
+            run_id = default_run_store.get_nearest_before(float(req.created_at), max_age_seconds=3600)
+            source = "nearest_before_ts" if run_id else None
+        if not run_id:
+            run_id = default_run_store.get_most_recent(max_age_seconds=3600)
+            source = "most_recent" if run_id else None
+
     _log_feedback_event(
         "lookup",
         thread_id,
-        chat_id=_feedback_chat_id(req),
+        chat_id=raw_chat_id,
         message_id=message_id,
         run_id=run_id,
         score=score,
@@ -780,9 +798,9 @@ async def feedback(req: FeedbackRequest):
     logger.info(
         "feedback_lookup thread=%s chat_id=%s message_id=%s score=%s run_id=%s source=%s",
         thread_id,
-        _feedback_chat_id(req),
+        raw_chat_id,
         message_id,
-        _feedback_score(req),
+        score,
         run_id,
         source,
     )
@@ -790,7 +808,7 @@ async def feedback(req: FeedbackRequest):
         _log_feedback_event(
             "skipped_no_run_id",
             thread_id,
-            chat_id=_feedback_chat_id(req),
+            chat_id=raw_chat_id,
             message_id=message_id,
             score=score,
         )
@@ -801,11 +819,11 @@ async def feedback(req: FeedbackRequest):
 
     comment = _feedback_comment(req)
     submit_feedback(run_id=run_id, score=score, comment=comment)
-    logger.info("feedback thread=%s run_id=%s score=%s comment=%s", thread_id, run_id, score, comment)
+    logger.info("feedback thread=%s run_id=%s score=%s comment=%s source=%s", thread_id, run_id, score, comment, source)
     _log_feedback_event(
         "submitted",
         thread_id,
-        chat_id=_feedback_chat_id(req),
+        chat_id=raw_chat_id,
         message_id=message_id,
         run_id=run_id,
         score=score,

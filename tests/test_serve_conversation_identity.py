@@ -17,16 +17,17 @@ def test_conversation_key_prefers_openwebui_chat_id():
     assert key == "chat-abc-123"
 
 
-def test_conversation_key_falls_back_to_first_user_message():
+def test_conversation_key_generates_uuid_when_no_stable_id():
     from serve import _conversation_key
+    import re
 
-    key = _conversation_key(
-        ["premier message", "deuxième message"],
-        chat_id=None,
-        session_id=None,
-    )
+    # No chat_id/session_id → ephemeral UUID to avoid thread collisions
+    key1 = _conversation_key(["yo"], chat_id=None, session_id=None)
+    key2 = _conversation_key(["yo"], chat_id=None, session_id=None)
 
-    assert key == "premier message"
+    assert re.match(r"[0-9a-f-]{36}", key1)
+    # Each call produces a different UUID — no collision between conversations
+    assert key1 != key2
 
 
 def test_conversation_key_uses_session_id_when_chat_id_missing():
