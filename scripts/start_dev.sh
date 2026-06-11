@@ -58,9 +58,32 @@ if [ "$START_WEBUI" = "0" ]; then
     || echo "⚠ open-webui container introuvable — rien à arrêter"
 else
   echo "→ Démarrage Open WebUI ..."
-  docker start open-webui > /dev/null 2>&1 && echo "✓ Open WebUI démarré ($WEBUI_URL)" \
-    || echo "⚠ open-webui container introuvable — crée-le avec :"
-  echo "    docker run -d --name open-webui -p 3000:8080 ghcr.io/open-webui/open-webui:main"
+  # Recrée le container si ENABLE_FORWARD_USER_INFO_HEADERS n'est pas activé
+  _NEEDS_RECREATE=""
+  if docker inspect open-webui &>/dev/null; then
+    if ! docker inspect open-webui --format '{{range .Config.Env}}{{println .}}{{end}}' \
+        | grep -q "ENABLE_FORWARD_USER_INFO_HEADERS=true"; then
+      _NEEDS_RECREATE=1
+      echo "  → env manquant, recréation du container open-webui ..."
+    fi
+  else
+    _NEEDS_RECREATE=1
+    echo "  → container open-webui introuvable, création ..."
+  fi
+
+  if [ -n "$_NEEDS_RECREATE" ]; then
+    docker rm -f open-webui > /dev/null 2>&1 || true
+    docker run -d --name open-webui \
+      -p 3000:8080 \
+      -e ENABLE_FORWARD_USER_INFO_HEADERS=true \
+      -v open-webui:/app/backend/data \
+      openwebui/open-webui:latest > /dev/null \
+      && echo "✓ Open WebUI créé avec user-info headers ($WEBUI_URL)" \
+      || { echo "✗ Échec création open-webui"; exit 1; }
+  else
+    docker start open-webui > /dev/null 2>&1 && echo "✓ Open WebUI démarré ($WEBUI_URL)" \
+      || echo "⚠ open-webui container introuvable"
+  fi
 fi
 
 echo ""
