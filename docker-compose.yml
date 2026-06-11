@@ -1,6 +1,5 @@
 services:
   copepod-agent:
-    platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile
@@ -56,7 +55,6 @@ services:
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_INCLUDE_STOPPED=false
       - DOCKER_API_VERSION=1.44
-      - DOCKER_DEFAULT_PLATFORM=linux/amd64
     command: copepod_agent
     restart: unless-stopped
 
