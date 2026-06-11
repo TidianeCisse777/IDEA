@@ -34,8 +34,12 @@ async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_ke
         stream=False,
     )
 
+    mock_request = MagicMock()
+    mock_request.headers = {}
+
     result = await serve_module.chat_completions(
         req,
+        mock_request,
         x_openwebui_chat_id="chat-123",
         x_openwebui_message_id="msg-999",
     )
@@ -51,4 +55,58 @@ async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_ke
     call_config = mock_agent.invoke.call_args.kwargs["config"]
     assert call_config["metadata"]["conversation_id"] == "chat-123"
     assert call_config["metadata"]["message_id"] == "msg-999"
+    assert call_config["metadata"]["conversation_key"] == "chat-123"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_uses_metadata_message_id_when_header_missing(monkeypatch):
+    import serve as serve_module
+
+    serve_module._known_threads.clear()
+
+    mock_msg = MagicMock()
+    mock_msg.content = "réponse"
+    mock_msg.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+    mock_msg.response_metadata = {}
+
+    mock_agent = MagicMock()
+    mock_agent.invoke.return_value = {"messages": [mock_msg]}
+
+    captured = {}
+
+    def fake_make_agent(thread_id: str):
+        captured["thread_id"] = thread_id
+        return mock_agent
+
+    monkeypatch.setattr(serve_module, "make_agent", fake_make_agent)
+    monkeypatch.setattr(serve_module.default_store, "clear", lambda thread_id: None)
+    monkeypatch.setattr(serve_module, "_log_turn", lambda *args, **kwargs: None)
+
+    req = serve_module.ChatRequest(
+        messages=[serve_module.Message(role="user", content="Bonjour")],
+        stream=False,
+        metadata={"message_id": "msg-body-123"},
+    )
+
+    mock_request = MagicMock()
+    mock_request.headers = {}
+
+    result = await serve_module.chat_completions(
+        req,
+        mock_request,
+        x_openwebui_chat_id="chat-123",
+        x_openwebui_message_id=None,
+    )
+
+    assert result["choices"][0]["message"]["content"] == "réponse"
+    assert captured["thread_id"] == serve_module._thread_id(
+        req.messages,
+        chat_id="chat-123",
+        session_id=None,
+        metadata={"message_id": "msg-body-123"},
+    )
+
+    call_config = mock_agent.invoke.call_args.kwargs["config"]
+    assert call_config["metadata"]["conversation_id"] == "chat-123"
+    assert call_config["metadata"]["message_id"] == "msg-body-123"
     assert call_config["metadata"]["conversation_key"] == "chat-123"

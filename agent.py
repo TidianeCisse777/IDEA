@@ -49,19 +49,32 @@ def _load_system_prompt() -> str:
 
 _SYSTEM_PROMPT = _load_system_prompt()
 
-_MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "8000"))
+_MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "40000"))
+# Tool results over this many chars get truncated before being sent to the LLM
+_MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 
 
 def _make_context_hook():
-    """pre_model_hook : trime les messages pour rester dans la context window."""
-    from langchain_core.messages import trim_messages
+    """pre_model_hook: truncate oversized tool results then trim message history."""
+    from langchain_core.messages import trim_messages, ToolMessage
 
     def _approx_tokens(messages) -> int:
         return sum(len(str(m.content)) for m in messages) // 4
 
+    def _truncate_tool_results(messages):
+        out = []
+        for m in messages:
+            if isinstance(m, ToolMessage) and isinstance(m.content, str) and len(m.content) > _MAX_TOOL_RESULT_CHARS:
+                truncated = m.content[:_MAX_TOOL_RESULT_CHARS] + f"\n[…tronqué — {len(m.content):,} chars total]"
+                out.append(m.model_copy(update={"content": truncated}))
+            else:
+                out.append(m)
+        return out
+
     def trim_context(state: dict) -> dict:
+        msgs = _truncate_tool_results(state["messages"])
         trimmed = trim_messages(
-            state["messages"],
+            msgs,
             max_tokens=_MAX_CONTEXT_TOKENS,
             strategy="last",
             token_counter=_approx_tokens,
