@@ -316,7 +316,19 @@ def root():
 def list_models():
     return {
         "object": "list",
-        "data": [{"id": "copepod-agent", "object": "model", "owned_by": "neolab"}],
+        "data": [
+            {
+                "id": "copepod-agent",
+                "object": "model",
+                "owned_by": "neolab",
+                "name": "Assistant Copépodes — NeoLab",
+                "description": (
+                    "Assistant scientifique spécialisé en zooplancton marin (copépodes). "
+                    "Explore et analyse les données EcoTaxa (LOKI, UVP5), EcoPart et CTD Amundsen. "
+                    "Répond en français à des questions scientifiques sans écrire de code."
+                ),
+            }
+        ],
     }
 
 
