@@ -62,7 +62,9 @@ def make_amundsen_tools(thread_id: str) -> list:
             output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
             result = _query_amundsen_ctd({"station": station, "cast_number": cast_number}, output_path=output_path)
             dataframe = pd.read_csv(output_path, sep="\t")
-            _store.set(thread_id, dataframe, {"source": f"amundsen:{station or cast_number or 'ctd'}", "n_rows": len(dataframe)})
+            meta = {"source": f"amundsen:{station or cast_number or 'ctd'}", "n_rows": len(dataframe)}
+            _store.set(thread_id, dataframe, meta)
+            _store.set(f"{thread_id}:ctd", dataframe, meta)
             return (
                 f"Amundsen CTD chargé — {result['row_count']} lignes.\n"
                 f"Données en session — appelle run_pandas directement pour analyser.\n"

@@ -71,10 +71,17 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
     @tool
     def run_pandas(code: str) -> str:
-        """Exécute du code Python/pandas sur le fichier chargé.
-        Le DataFrame est disponible comme variable `df`.
+        """Exécute du code Python/pandas sur le(s) DataFrame(s) chargés.
+
+        Variables disponibles selon ce qui a été chargé dans la session :
+        - `df`           : dernier DataFrame chargé (load_file ou dernier query_*)
+        - `df_ecotaxa`   : données EcoTaxa (après query_ecotaxa)
+        - `df_ctd`       : données CTD Amundsen (après query_amundsen_ctd)
+        - `df_ecopart`   : données EcoPart (après query_ecopart)
+        - `df_bio_oracle`: données Bio-ORACLE (après query_bio_oracle)
+
         Assigne le résultat à la variable `result`.
-        Exemple : result = df[df['depth'] < 50]['temperature'].mean()
+        Pour une jointure : result = df_ecotaxa.merge(df_ctd, on='station_id', how='left')
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
@@ -89,6 +96,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             plt.close("all")
 
             local_vars: dict[str, Any] = {"df": df, "pd": pd, "plt": plt}
+            for source, var in [("ecotaxa", "df_ecotaxa"), ("ctd", "df_ctd"), ("ecopart", "df_ecopart"), ("bio_oracle", "df_bio_oracle")]:
+                named = _store.get(f"{thread_id}:{source}")
+                if named and named.get("df") is not None:
+                    local_vars[var] = named["df"]
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
@@ -137,6 +148,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             plt.close("all")
 
             local_vars: dict[str, Any] = {"df": df, "pd": pd, "plt": plt}
+            for source, var in [("ecotaxa", "df_ecotaxa"), ("ctd", "df_ctd"), ("ecopart", "df_ecopart"), ("bio_oracle", "df_bio_oracle")]:
+                named = _store.get(f"{thread_id}:{source}")
+                if named and named.get("df") is not None:
+                    local_vars[var] = named["df"]
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():

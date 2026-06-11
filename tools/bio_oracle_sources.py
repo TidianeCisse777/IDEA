@@ -79,7 +79,9 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 output_path=output_path,
             )
             dataframe = pd.read_csv(output_path, sep="\t")
-            _store.set(thread_id, dataframe, {"source": f"bio_oracle:{scenario}", "n_rows": len(dataframe)})
+            meta = {"source": f"bio_oracle:{scenario}", "n_rows": len(dataframe)}
+            _store.set(thread_id, dataframe, meta)
+            _store.set(f"{thread_id}:bio_oracle", dataframe, meta)
             return (
                 f"Bio-ORACLE chargé — {result['row_count']} lignes.\n"
                 f"Données en session — appelle run_pandas directement pour analyser.\n"
