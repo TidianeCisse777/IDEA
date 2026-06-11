@@ -21,7 +21,9 @@ def test_export_deliverable_writes_file(tmp_path, monkeypatch):
     export_deliverable.invoke({"content": "# Mon rapport", "filename": "rapport_test"})
     files = list(tmp_path.glob("rapport_test.*"))
     assert len(files) == 1
-    assert "Mon rapport" in files[0].read_text(encoding="utf-8")
+    raw = files[0].read_bytes()
+    # PDF: starts with %PDF; HTML fallback: contains the title text
+    assert raw.startswith(b"%PDF") or b"Mon rapport" in raw
 
 
 # --- Comportement 3 : filename stem présent dans l'URL retournée ---

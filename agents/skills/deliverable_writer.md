@@ -7,6 +7,8 @@ description: Guides the agent to compile a scientific PDF report from the curren
 
 You are about to produce a structured scientific report from this session.
 
+**Tone:** Write in formal, impersonal scientific register. No conversational filler, no hedging phrases ("il semble que", "on pourrait dire"), no meta-commentary about the assistant or the tool. The document must read as if written by a researcher — sober, precise, third-person where appropriate. Every sentence must carry factual content.
+
 ---
 
 ## Usage rule
@@ -24,7 +26,7 @@ Produce a markdown document with the following sections, in order:
 ```
 # [Title — describe the scientific question in one line]
 
-*Date : [today's date] — NeoLab, Université Laval*
+*Date : [today's date]*
 
 ## 1. Contexte scientifique
 
