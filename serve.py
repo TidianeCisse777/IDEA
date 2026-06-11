@@ -437,6 +437,13 @@ def _format_tool_line(name: str, args: dict | None = None) -> str:
     return f"\n🔧 `{name}`\n"
 
 
+_SLOW_TOOLS = frozenset({
+    "query_ecotaxa", "query_ecopart", "query_amundsen_ctd",
+    "query_bio_oracle", "couple_zooplankton_bio_oracle",
+})
+_HEARTBEAT_INTERVAL = 8.0  # seconds between heartbeat dots during slow tools
+
+
 async def _stream_agent_sse(
     agent,
     messages: dict,
@@ -445,51 +452,75 @@ async def _stream_agent_sse(
     last_user_text: str = "",
     user_id: str = "anonymous",
 ) -> AsyncGenerator[str, None]:
-    """Génère les chunks SSE depuis l'agent LangGraph (stream_mode='updates')."""
+    """Génère les chunks SSE depuis l'agent LangGraph (stream_mode='updates').
+
+    Utilise une queue + timeout pour émettre des battements pendant les tools lents,
+    sans bloquer le générateur SSE.
+    """
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
-    last_ai_msg = None
+    chunk_queue: asyncio.Queue[str | None] = asyncio.Queue()
+    shared: dict = {"last_ai_msg": None, "in_slow_tool": False}
 
-    try:
-        async for update in agent.astream(messages, config, stream_mode="updates"):
-            # Capture run_id from LangSmith metadata when available
-            if "__run_id" in update:
-                default_run_store.set(thread_id, str(update["__run_id"]))
-            for node, state in update.items():
-                msgs = state.get("messages", [])
-                if not msgs:
-                    continue
-                last_msg = msgs[-1]
+    async def _run_agent() -> None:
+        try:
+            async for update in agent.astream(messages, config, stream_mode="updates"):
+                if "__run_id" in update:
+                    default_run_store.set(thread_id, str(update["__run_id"]))
+                for node, state in update.items():
+                    msgs = state.get("messages", [])
+                    if not msgs:
+                        continue
+                    last_msg = msgs[-1]
 
-                if node == "agent":
-                    last_ai_msg = last_msg
-                    content = getattr(last_msg, "content", "") or ""
-                    tool_calls = getattr(last_msg, "tool_calls", []) or []
+                    if node == "agent":
+                        shared["last_ai_msg"] = last_msg
+                        content = getattr(last_msg, "content", "") or ""
+                        tool_calls = getattr(last_msg, "tool_calls", []) or []
 
-                    if content:
-                        content = _extract_and_host_images(content)
-                        yield _make_sse_chunk(completion_id, content)
+                        if content:
+                            content = _extract_and_host_images(content)
+                            await chunk_queue.put(_make_sse_chunk(completion_id, content))
 
-                    for tc in tool_calls:
-                        name = tc["name"] if isinstance(tc, dict) else tc.name
-                        tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
-                        yield _make_sse_chunk(completion_id, _format_tool_line(name, tc_args))
+                        for tc in tool_calls:
+                            name = tc["name"] if isinstance(tc, dict) else tc.name
+                            tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                            await chunk_queue.put(_make_sse_chunk(completion_id, _format_tool_line(name, tc_args)))
+                            shared["in_slow_tool"] = name in _SLOW_TOOLS
 
-                elif node == "tools":
-                    for tool_msg in msgs:
-                        tool_content = getattr(tool_msg, "content", "") or ""
-                        if "data:image/png;base64," in tool_content:
-                            hosted = _extract_and_host_images(tool_content)
-                            img_match = re.search(r"!\[.*?\]\(http[^\)]+\)", hosted)
-                            if img_match:
-                                yield _make_sse_chunk(completion_id, f"\n{img_match.group(0)}\n")
+                    elif node == "tools":
+                        shared["in_slow_tool"] = False
+                        for tool_msg in msgs:
+                            tool_content = getattr(tool_msg, "content", "") or ""
+                            if "data:image/png;base64," in tool_content:
+                                hosted = _extract_and_host_images(tool_content)
+                                img_match = re.search(r"!\[.*?\]\(http[^\)]+\)", hosted)
+                                if img_match:
+                                    await chunk_queue.put(_make_sse_chunk(completion_id, f"\n{img_match.group(0)}\n"))
+        except Exception as exc:
+            logger.error("stream_error thread=%s err=%s", thread_id, exc)
+            await chunk_queue.put(_make_sse_chunk(completion_id, f"\n\n[Erreur : {exc}]"))
+        finally:
+            await chunk_queue.put(None)  # sentinel
 
-    except Exception as exc:
-        logger.error("stream_error thread=%s err=%s", thread_id, exc)
-        yield _make_sse_chunk(completion_id, f"\n\n[Erreur : {exc}]")
+    agent_task = asyncio.create_task(_run_agent())
+
+    while True:
+        try:
+            chunk = await asyncio.wait_for(chunk_queue.get(), timeout=_HEARTBEAT_INTERVAL)
+        except asyncio.TimeoutError:
+            if shared["in_slow_tool"]:
+                yield _make_sse_chunk(completion_id, "·")
+            continue
+        if chunk is None:
+            break
+        yield chunk
+
+    await agent_task
 
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
              "prompt_tokens_details": {"cached_tokens": 0}}
 
+    last_ai_msg = shared["last_ai_msg"]
     if last_ai_msg is not None:
         meta = getattr(last_ai_msg, "usage_metadata", None) or {}
         rmeta = getattr(last_ai_msg, "response_metadata", {}) or {}
