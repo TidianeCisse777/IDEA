@@ -214,12 +214,12 @@ def make_agent(thread_id: str):
     )
 
 
-def _make_tracer(thread_id: str) -> LangChainTracer | None:
+def _make_tracer(thread_id: str, user_id: str = "anonymous") -> LangChainTracer | None:
     """Retourne un LangChainTracer si LANGCHAIN_TRACING_V2 est activé."""
     if os.getenv("LANGCHAIN_TRACING_V2", "false").lower() != "true":
         return None
     project = os.getenv("LANGCHAIN_PROJECT", "copepod-agent")
-    return LangChainTracer(project_name=project, tags=["copepod", thread_id[:8]])
+    return LangChainTracer(project_name=project, tags=["copepod", thread_id[:8], f"user:{user_id}"])
 
 
 def invoke_verbose(agent, messages: dict, config: dict) -> dict:

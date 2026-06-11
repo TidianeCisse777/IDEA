@@ -112,10 +112,11 @@ def _request_callbacks(thread_id: str, message_id: str | None = None, chat_id: s
     return callbacks
 
 
-def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict) -> None:
+def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict, user_id: str = "anonymous") -> None:
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "thread_id": thread_id,
+        "user_id": user_id,
         "user": user_msg,
         "assistant": assistant_msg,
         "usage": usage,
@@ -267,17 +268,18 @@ def _conversation_key(
     chat_id: str | None = None,
     session_id: str | None = None,
     metadata: dict | None = None,
+    user_id: str = "anonymous",
 ) -> str:
     """Retourne la clé stable de conversation, puis le fallback sur le premier message."""
     if chat_id:
-        return str(chat_id)
+        return f"{user_id}:{chat_id}"
     if session_id:
-        return str(session_id)
+        return f"{user_id}:{session_id}"
     if isinstance(metadata, dict):
         for key in ("chat_id", "conversation_id", "session_id"):
             value = metadata.get(key)
             if value:
-                return str(value)
+                return f"{user_id}:{value}"
 
     # No stable identifier — generate a UUID rather than using message content.
     # Using message content as a key causes thread collisions when multiple
@@ -292,6 +294,7 @@ def _thread_id(
     chat_id: str | None = None,
     session_id: str | None = None,
     metadata: dict | None = None,
+    user_id: str = "anonymous",
 ) -> str:
     """Thread stable basé sur l'identité de conversation ou le premier message."""
     key = _conversation_key(
@@ -299,6 +302,7 @@ def _thread_id(
         chat_id=chat_id,
         session_id=session_id,
         metadata=metadata,
+        user_id=user_id,
     )
     return hashlib.md5(key[:200].encode()).hexdigest()[:16]
 
@@ -427,6 +431,7 @@ async def _stream_agent_sse(
     config: dict,
     thread_id: str,
     last_user_text: str = "",
+    user_id: str = "anonymous",
 ) -> AsyncGenerator[str, None]:
     """Génère les chunks SSE depuis l'agent LangGraph (stream_mode='updates')."""
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
@@ -489,7 +494,7 @@ async def _stream_agent_sse(
             "prompt_tokens_details": {"cached_tokens": cached_tokens},
         }
         final_text = getattr(last_ai_msg, "content", "") or ""
-        _log_turn(thread_id, last_user_text, final_text, usage)
+        _log_turn(thread_id, last_user_text, final_text, usage, user_id=user_id)
         if cached_tokens > 0:
             logger.info("CACHE HIT thread=%s cached=%s (%.0f%% of prompt)",
                 thread_id, cached_tokens, 100 * cached_tokens / prompt_tokens if prompt_tokens else 0)
@@ -513,7 +518,13 @@ async def chat_completions(
     request: Request,
     x_openwebui_chat_id: str | None = Header(default=None, alias="X-OpenWebUI-Chat-Id"),
     x_openwebui_message_id: str | None = Header(default=None, alias="X-OpenWebUI-Message-Id"),
+    x_openwebui_user_id: str | None = Header(default=None, alias="X-OpenWebUI-User-Id"),
+    x_openwebui_user_name: str | None = Header(default=None, alias="X-OpenWebUI-User-Name"),
+    x_openwebui_user_email: str | None = Header(default=None, alias="X-OpenWebUI-User-Email"),
+    x_openwebui_user_role: str | None = Header(default=None, alias="X-OpenWebUI-User-Role"),
 ):
+    user_id = x_openwebui_user_id if isinstance(x_openwebui_user_id, str) else "anonymous"
+
     # Log all headers to diagnose missing chat_id
     owui_headers = {k: v for k, v in request.headers.items() if "openwebui" in k.lower() or "chat" in k.lower() or "session" in k.lower()}
     logger.info(
@@ -526,12 +537,14 @@ async def chat_completions(
         chat_id=x_openwebui_chat_id or req.chat_id,
         session_id=req.session_id,
         metadata=req.metadata,
+        user_id=user_id,
     )
     conversation_key = _conversation_key(
         req.messages,
         chat_id=x_openwebui_chat_id or req.chat_id,
         session_id=req.session_id,
         metadata=req.metadata,
+        user_id=user_id,
     )
 
     last_user = next((m for m in reversed(req.messages) if m.role == "user"), None)
@@ -569,6 +582,10 @@ async def chat_completions(
             "conversation_id": x_openwebui_chat_id or req.chat_id,
             "session_id": req.session_id,
             "message_id": openwebui_message_id,
+            "user_id": user_id,
+            "user_name": x_openwebui_user_name,
+            "user_email": x_openwebui_user_email,
+            "user_role": x_openwebui_user_role,
         },
         "callbacks": _request_callbacks(tid, openwebui_message_id, chat_id=x_openwebui_chat_id or req.chat_id),
     }
@@ -579,7 +596,7 @@ async def chat_completions(
     if req.stream:
         logger.info("thread=%s STREAM start", tid)
         return StreamingResponse(
-            _stream_agent_sse(agent, messages, config, tid, last_user_text=last_user_text),
+            _stream_agent_sse(agent, messages, config, tid, last_user_text=last_user_text, user_id=user_id),
             media_type="text/event-stream",
         )
 
@@ -618,7 +635,7 @@ async def chat_completions(
         "prompt_tokens_details": {"cached_tokens": cached_tokens},
     }
 
-    _log_turn(tid, last_user_text, text, usage)
+    _log_turn(tid, last_user_text, text, usage, user_id=user_id)
 
     if cached_tokens > 0:
         logger.info("CACHE HIT thread=%s cached_tokens=%s (%.0f%% of prompt)",

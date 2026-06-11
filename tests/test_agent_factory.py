@@ -4,6 +4,26 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+# --- Comportement 0 : _make_tracer inclut user_id ---
+
+def test_make_tracer_includes_user_id_in_tags(monkeypatch):
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-key")
+    from agent import _make_tracer
+    tracer = _make_tracer("thread-abc123", user_id="user-alice")
+    assert tracer is not None
+    assert any("user-alice" in tag for tag in tracer.tags)
+
+
+def test_make_tracer_defaults_user_id_to_anonymous(monkeypatch):
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-key")
+    from agent import _make_tracer
+    tracer = _make_tracer("thread-abc123")
+    assert tracer is not None
+    assert any("anonymous" in tag for tag in tracer.tags)
+
+
 # --- Comportement 1 : make_agent retourne un graph ---
 
 def test_make_agent_returns_graph():

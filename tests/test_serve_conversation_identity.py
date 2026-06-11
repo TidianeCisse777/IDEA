@@ -14,7 +14,7 @@ def test_conversation_key_prefers_openwebui_chat_id():
         session_id=None,
     )
 
-    assert key == "chat-abc-123"
+    assert key == "anonymous:chat-abc-123"
 
 
 def test_conversation_key_generates_uuid_when_no_stable_id():
@@ -39,7 +39,46 @@ def test_conversation_key_uses_session_id_when_chat_id_missing():
         session_id="session-789",
     )
 
-    assert key == "session-789"
+    assert key == "anonymous:session-789"
+
+
+def test_conversation_key_includes_user_id():
+    from serve import _conversation_key
+
+    key_alice = _conversation_key(
+        ["message"],
+        chat_id="chat-abc",
+        session_id=None,
+        user_id="user-alice",
+    )
+    key_bob = _conversation_key(
+        ["message"],
+        chat_id="chat-abc",
+        session_id=None,
+        user_id="user-bob",
+    )
+
+    assert key_alice != key_bob
+
+
+def test_two_users_same_chat_id_get_different_thread_ids():
+    from serve import _thread_id, Message
+
+    messages = [Message(role="user", content="Bonjour")]
+    tid_alice = _thread_id(messages, chat_id="chat-shared", user_id="user-alice")
+    tid_bob = _thread_id(messages, chat_id="chat-shared", user_id="user-bob")
+
+    assert tid_alice != tid_bob
+
+
+def test_thread_id_defaults_to_anonymous_when_no_user_header():
+    from serve import _thread_id, Message
+
+    messages = [Message(role="user", content="Bonjour")]
+    tid_no_header = _thread_id(messages, chat_id="chat-xyz")
+    tid_anonymous = _thread_id(messages, chat_id="chat-xyz", user_id="anonymous")
+
+    assert tid_no_header == tid_anonymous
 
 
 def test_find_invalid_tool_history_cut_index_trims_orphan_tool_call():

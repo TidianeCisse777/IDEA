@@ -56,7 +56,7 @@ async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_ke
     call_config = mock_agent.ainvoke.call_args.kwargs["config"]
     assert call_config["metadata"]["conversation_id"] == "chat-123"
     assert call_config["metadata"]["message_id"] == "msg-999"
-    assert call_config["metadata"]["conversation_key"] == "chat-123"
+    assert call_config["metadata"]["conversation_key"] == "anonymous:chat-123"
 
 
 @pytest.mark.asyncio
@@ -111,4 +111,85 @@ async def test_chat_completions_uses_metadata_message_id_when_header_missing(mon
     call_config = mock_agent.ainvoke.call_args.kwargs["config"]
     assert call_config["metadata"]["conversation_id"] == "chat-123"
     assert call_config["metadata"]["message_id"] == "msg-body-123"
-    assert call_config["metadata"]["conversation_key"] == "chat-123"
+    assert call_config["metadata"]["conversation_key"] == "anonymous:chat-123"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_propagates_user_headers_to_metadata(monkeypatch):
+    import serve as serve_module
+
+    serve_module._known_threads.clear()
+
+    mock_msg = MagicMock()
+    mock_msg.content = "réponse"
+    mock_msg.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+    mock_msg.response_metadata = {}
+
+    mock_agent = MagicMock()
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
+    mock_agent.aget_state = AsyncMock(return_value=MagicMock(values={"messages": []}))
+
+    monkeypatch.setattr(serve_module, "make_agent", lambda tid: mock_agent)
+    monkeypatch.setattr(serve_module.default_store, "clear", lambda tid: None)
+    monkeypatch.setattr(serve_module, "_log_turn", lambda *a, **kw: None)
+
+    req = serve_module.ChatRequest(
+        messages=[serve_module.Message(role="user", content="Bonjour")],
+        stream=False,
+    )
+    mock_request = MagicMock()
+    mock_request.headers = {}
+
+    await serve_module.chat_completions(
+        req,
+        mock_request,
+        x_openwebui_chat_id="chat-456",
+        x_openwebui_message_id=None,
+        x_openwebui_user_id="user-alice",
+        x_openwebui_user_name="Alice",
+        x_openwebui_user_email="alice@ulaval.ca",
+        x_openwebui_user_role="user",
+    )
+
+    call_config = mock_agent.ainvoke.call_args.kwargs["config"]
+    assert call_config["metadata"]["user_id"] == "user-alice"
+    assert call_config["metadata"]["user_name"] == "Alice"
+    assert call_config["metadata"]["user_email"] == "alice@ulaval.ca"
+    assert call_config["metadata"]["user_role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_chat_completions_uses_anonymous_when_no_user_headers(monkeypatch):
+    import serve as serve_module
+
+    serve_module._known_threads.clear()
+
+    mock_msg = MagicMock()
+    mock_msg.content = "réponse"
+    mock_msg.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+    mock_msg.response_metadata = {}
+
+    mock_agent = MagicMock()
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
+    mock_agent.aget_state = AsyncMock(return_value=MagicMock(values={"messages": []}))
+
+    monkeypatch.setattr(serve_module, "make_agent", lambda tid: mock_agent)
+    monkeypatch.setattr(serve_module.default_store, "clear", lambda tid: None)
+    monkeypatch.setattr(serve_module, "_log_turn", lambda *a, **kw: None)
+
+    req = serve_module.ChatRequest(
+        messages=[serve_module.Message(role="user", content="Bonjour")],
+        stream=False,
+    )
+    mock_request = MagicMock()
+    mock_request.headers = {}
+
+    await serve_module.chat_completions(
+        req,
+        mock_request,
+        x_openwebui_chat_id="chat-789",
+        x_openwebui_message_id=None,
+    )
+
+    call_config = mock_agent.ainvoke.call_args.kwargs["config"]
+    assert call_config["metadata"]["user_id"] == "anonymous"
