@@ -622,7 +622,7 @@ async def chat_completions(
     )
 
     last_user = next((m for m in reversed(req.messages) if m.role == "user"), None)
-    logger.info("[DEBUG-f1a2] last_user raw content: %s", repr(str(last_user.content)[:500]) if last_user else "None")
+    logger.info("[DEBUG-f1a2] last_user content type=%s val=%s", type(last_user.content).__name__ if last_user else "None", repr(last_user.content)[:800] if last_user else "None")
     last_user_text = resolve_attached_files(last_user.text() if last_user else "")
     last_user_content = _prepare_user_content(last_user)
 
