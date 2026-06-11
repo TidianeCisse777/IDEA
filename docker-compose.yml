@@ -17,6 +17,7 @@ services:
       - copepod_logs:/app/logs
       - copepod_static:/app/static
       - copepod_models:/app/models
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/"]
