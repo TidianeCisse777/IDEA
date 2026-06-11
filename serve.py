@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-from agent import make_agent, _CHECKPOINTS_DB, repair_invalid_tool_history
+from agent import make_agent, _CHECKPOINTS_DB, repair_invalid_tool_history, arepair_invalid_tool_history
 from tools.openwebui_uploads import resolve_attached_files
 from tools.public_url import graph_url, serve_base_url
 from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_workspace_database_url
@@ -575,7 +575,7 @@ async def chat_completions(
     messages = {"messages": [{"role": "user", "content": last_user_content}]}
 
     logger.info("thread=%s stream=%s", tid, req.stream)
-    repair_invalid_tool_history(agent, config)
+    await arepair_invalid_tool_history(agent, config)
     if req.stream:
         logger.info("thread=%s STREAM start", tid)
         return StreamingResponse(
@@ -583,8 +583,7 @@ async def chat_completions(
             media_type="text/event-stream",
         )
 
-    repair_invalid_tool_history(agent, config)
-    result = agent.invoke(messages, config=config)
+    result = await agent.ainvoke(messages, config=config)
 
     # Capture run_id for feedback
     run_id = result.get("__run_id") or default_run_store.get(tid)

@@ -12,7 +12,7 @@ python serve.py &
 SERVE_PID=$!
 
 echo "[start] Launching LangGraph Studio (tunnel)..."
-langgraph dev --tunnel &
+langgraph dev --port 8100 --tunnel &
 STUDIO_PID=$!
 
 echo "[start] FastAPI PID=$SERVE_PID  Studio PID=$STUDIO_PID"

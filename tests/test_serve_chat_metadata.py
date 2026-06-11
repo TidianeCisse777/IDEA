@@ -1,6 +1,6 @@
 """TDD — propagation metadata Open WebUI vers l'agent LangChain."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 
 import pytest
 
@@ -17,7 +17,8 @@ async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_ke
     mock_msg.response_metadata = {}
 
     mock_agent = MagicMock()
-    mock_agent.invoke.return_value = {"messages": [mock_msg]}
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
+    mock_agent.aget_state = AsyncMock(return_value=MagicMock(values={"messages": []}))
 
     captured = {}
 
@@ -52,7 +53,7 @@ async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_ke
         metadata=None,
     )
 
-    call_config = mock_agent.invoke.call_args.kwargs["config"]
+    call_config = mock_agent.ainvoke.call_args.kwargs["config"]
     assert call_config["metadata"]["conversation_id"] == "chat-123"
     assert call_config["metadata"]["message_id"] == "msg-999"
     assert call_config["metadata"]["conversation_key"] == "chat-123"
@@ -70,7 +71,8 @@ async def test_chat_completions_uses_metadata_message_id_when_header_missing(mon
     mock_msg.response_metadata = {}
 
     mock_agent = MagicMock()
-    mock_agent.invoke.return_value = {"messages": [mock_msg]}
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
+    mock_agent.aget_state = AsyncMock(return_value=MagicMock(values={"messages": []}))
 
     captured = {}
 
@@ -106,7 +108,7 @@ async def test_chat_completions_uses_metadata_message_id_when_header_missing(mon
         metadata={"message_id": "msg-body-123"},
     )
 
-    call_config = mock_agent.invoke.call_args.kwargs["config"]
+    call_config = mock_agent.ainvoke.call_args.kwargs["config"]
     assert call_config["metadata"]["conversation_id"] == "chat-123"
     assert call_config["metadata"]["message_id"] == "msg-body-123"
     assert call_config["metadata"]["conversation_key"] == "chat-123"

@@ -133,6 +133,12 @@ def _fetch_via_sqlite(
         )
         if result.returncode != 0:
             return []
+        # Copy WAL + SHM so recent unflushed writes are visible
+        for ext in ("-wal", "-shm"):
+            subprocess.run(
+                ["docker", "cp", f"{container}:{db_path}{ext}", f"{tmp_path}{ext}"],
+                capture_output=True, timeout=10,
+            )
 
         conn = sqlite3.connect(tmp_path)
         conn.row_factory = sqlite3.Row
@@ -146,11 +152,17 @@ def _fetch_via_sqlite(
             try:
                 data = json.loads(row["data"] or "{}")
                 meta = json.loads(row["meta"] or "{}")
-                records.append({"id": row["id"], "data": data, "meta": meta})
+                records.append({
+                    "id": row["id"],
+                    "data": data,
+                    "meta": meta,
+                    "created_at": row["created_at"],
+                })
             except (json.JSONDecodeError, KeyError):
                 continue
         return records
     except Exception:
         return []
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        for ext in ("", "-wal", "-shm"):
+            Path(f"{tmp_path}{ext}").unlink(missing_ok=True)

@@ -36,13 +36,13 @@ def normalize_feedback_record(record: dict[str, Any]) -> dict[str, Any] | None:
     if score is None:
         score = record.get("rating")
 
-    if not chat_id or score is None:
+    if score is None:
         return None
 
-    payload: dict[str, Any] = {
-        "chat_id": str(chat_id),
-        "score": int(score),
-    }
+    payload: dict[str, Any] = {"score": int(score)}
+
+    if chat_id:
+        payload["chat_id"] = str(chat_id)
 
     comment = data.get("comment") or record.get("comment")
     reason = data.get("reason") or record.get("reason")
@@ -50,6 +50,10 @@ def normalize_feedback_record(record: dict[str, Any]) -> dict[str, Any] | None:
         payload["comment"] = str(comment)
     if reason:
         payload["reason"] = str(reason)
+
+    created_at = record.get("created_at")
+    if created_at is not None:
+        payload["created_at"] = created_at
 
     return payload
 

@@ -158,6 +158,34 @@ def repair_invalid_tool_history(agent, config: dict) -> bool:
         return False
 
 
+async def arepair_invalid_tool_history(agent, config: dict) -> bool:
+    """Async version of repair_invalid_tool_history for AsyncSqliteSaver."""
+    try:
+        snapshot = await agent.aget_state(config)
+    except Exception:
+        return False
+
+    values = getattr(snapshot, "values", {}) or {}
+    messages = list(values.get("messages") or [])
+    cut_index = _find_invalid_tool_history_cut_index(messages)
+    if cut_index is None:
+        return False
+
+    removals = [
+        RemoveMessage(id=message.id)
+        for message in messages[cut_index:]
+        if getattr(message, "id", None)
+    ]
+    if not removals:
+        return False
+
+    try:
+        await agent.aupdate_state(config, {"messages": removals})
+        return True
+    except Exception:
+        return False
+
+
 def make_agent(thread_id: str):
     """Crée un agent ReAct copépodes pour un thread donné."""
     llm = ChatOpenAI(
