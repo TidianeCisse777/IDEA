@@ -6,13 +6,23 @@ import pytest
 
 # --- Comportement 0 : _make_tracer inclut user_id ---
 
-def test_make_tracer_includes_user_id_in_tags(monkeypatch):
+def test_make_tracer_uses_email_as_tag_when_provided(monkeypatch):
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
     monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-key")
     from agent import _make_tracer
-    tracer = _make_tracer("thread-abc123", user_id="user-alice")
+    tracer = _make_tracer("thread-abc123", user_id="uid-42", user_email="alice@ulaval.ca")
     assert tracer is not None
-    assert any("user-alice" in tag for tag in tracer.tags)
+    assert any("alice@ulaval.ca" in tag for tag in tracer.tags)
+    assert not any("uid-42" in tag for tag in tracer.tags)
+
+
+def test_make_tracer_falls_back_to_user_id_when_no_email(monkeypatch):
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-key")
+    from agent import _make_tracer
+    tracer = _make_tracer("thread-abc123", user_id="uid-42")
+    assert tracer is not None
+    assert any("uid-42" in tag for tag in tracer.tags)
 
 
 def test_make_tracer_defaults_user_id_to_anonymous(monkeypatch):

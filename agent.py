@@ -214,18 +214,20 @@ def make_agent(thread_id: str):
     )
 
 
-def _make_tracer(thread_id: str, user_id: str = "anonymous") -> LangChainTracer | None:
+def _make_tracer(thread_id: str, user_id: str = "anonymous", user_email: str | None = None) -> LangChainTracer | None:
     """Retourne un LangChainTracer si LANGCHAIN_TRACING_V2 est activé."""
     if os.getenv("LANGCHAIN_TRACING_V2", "false").lower() != "true":
         return None
     project = os.getenv("LANGCHAIN_PROJECT", "copepod-agent")
-    return LangChainTracer(project_name=project, tags=["copepod", thread_id[:8], f"user:{user_id}"])
+    user_tag = f"user:{user_email or user_id}"
+    return LangChainTracer(project_name=project, tags=["copepod", thread_id[:8], user_tag])
 
 
 def invoke_verbose(agent, messages: dict, config: dict) -> dict:
     """Invoke agent with streaming, printing tool calls to stdout in real time."""
     thread_id = config.get("configurable", {}).get("thread_id", "unknown")
-    tracer = _make_tracer(thread_id)
+    meta = config.get("metadata", {}) or {}
+    tracer = _make_tracer(thread_id, user_id=meta.get("user_id", "anonymous"), user_email=meta.get("user_email"))
     if tracer and "callbacks" not in config:
         config = {**config, "callbacks": [tracer]}
 
