@@ -1,6 +1,9 @@
 services:
   copepod-agent:
-    image: ghcr.io/tidianecisse777/copepod-agent:latest  # ghcr.io exige lowercase
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/tidianecisse777/copepod-agent:latest
     container_name: copepod_agent
     ports:
       - "8000:8000"
