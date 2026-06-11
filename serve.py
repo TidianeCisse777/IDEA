@@ -312,6 +312,11 @@ def root():
     return {"status": "ok", "agent": "copepod-agent"}
 
 
+@app.get("/version")
+def version():
+    return {"agent": "copepod-agent", "sha": os.getenv("GIT_SHA", "unknown")}
+
+
 @app.get("/v1/models")
 def list_models():
     return {
