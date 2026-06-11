@@ -63,9 +63,10 @@ jobs:
           LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
         run: |
           python - <<'EOF'
-          import sys, os
+          import sys
           from pathlib import Path
           from langsmith import Client
+          from langsmith.utils import LangSmithConflictError
           from langsmith.schemas import FileEntry
           from langchain_core.prompts import ChatPromptTemplate
 
@@ -74,13 +75,19 @@ jobs:
 
           c = Client()
 
-          prompt = ChatPromptTemplate.from_messages([("system", COPEPOD_SYSTEM_PROMPT)])
-          c.push_prompt("copepod-system-prompt", object=prompt, is_public=False)
-          print("✓ copepod-system-prompt pushed")
+          try:
+              prompt = ChatPromptTemplate.from_messages([("system", COPEPOD_SYSTEM_PROMPT)])
+              c.push_prompt("copepod-system-prompt", object=prompt, is_public=False)
+              print("✓ copepod-system-prompt pushed")
+          except LangSmithConflictError:
+              print("~ copepod-system-prompt unchanged, skipped")
 
           for skill_file in sorted(Path("agents/skills").glob("*.md")):
               name = f"copepod-{skill_file.stem.replace('_', '-')}"
               content = skill_file.read_text()
-              c.push_skill(name, files={"SKILL.md": FileEntry(type="file", content=content)}, is_public=False)
-              print(f"✓ {name} pushed")
+              try:
+                  c.push_skill(name, files={"SKILL.md": FileEntry(type="file", content=content)}, is_public=False)
+                  print(f"✓ {name} pushed")
+              except LangSmithConflictError:
+                  print(f"~ {name} unchanged, skipped")
           EOF
