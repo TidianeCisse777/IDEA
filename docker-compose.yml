@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  copepod-agent:
+    image: ghcr.io/tidianecisse777/copepod-agent:latest
+    container_name: copepod_agent
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - OPENWEBUI_URL=http://open-webui:8080
+    volumes:
+      - copepod_data:/app/data
+      - copepod_logs:/app/logs
+      - copepod_static:/app/static
+      - copepod_models:/app/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/"]
+      interval: 30s
+      retries: 3
+      start_period: 60s
+
+  open-webui:
+    image: openwebui/open-webui:0.9.6
+    container_name: open_webui
+    ports:
+      - "3000:8080"
+    environment:
+      - ENABLE_FORWARD_USER_INFO_HEADERS=true
+      - OPENAI_API_BASE_URL=http://copepod-agent:8000/v1
+      - OPENAI_API_KEY=copepod-key
+    volumes:
+      - open_webui_data:/app/backend/data
+    depends_on:
+      copepod-agent:
+        condition: service_healthy
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${HOME}/.docker/config.json:/config.json:ro
+    environment:
+      - WATCHTOWER_POLL_INTERVAL=60
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_INCLUDE_STOPPED=false
+    command: copepod_agent
+    restart: unless-stopped
+
+volumes:
+  copepod_data:
+  copepod_logs:
+  copepod_static:
+  copepod_models:
+  open_webui_data:
