@@ -445,6 +445,7 @@ def _format_tool_line(name: str, args: dict | None = None) -> str:
 _SLOW_TOOLS = frozenset({
     "query_ecotaxa", "query_ecopart", "query_amundsen_ctd",
     "query_bio_oracle", "couple_zooplankton_bio_oracle",
+    "load_file", "export_deliverable",
 })
 _HEARTBEAT_INTERVAL = 8.0  # seconds between heartbeat dots during slow tools
 
