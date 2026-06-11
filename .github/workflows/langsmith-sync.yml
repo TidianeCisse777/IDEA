@@ -1,0 +1,67 @@
+name: Sync prompt and skills to LangSmith
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agents/copepod_system_prompt.py"
+      - "agents/skills/**.md"
+      - ".github/workflows/langsmith-sync.yml"
+
+concurrency:
+  group: langsmith-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  push-langsmith:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install LangSmith deps
+        run: pip install langsmith langchain-core
+
+      - name: Push prompt + skills to LangSmith Hub
+        env:
+          LANGCHAIN_API_KEY: ${{ secrets.LANGCHAIN_API_KEY }}
+        run: |
+          python - <<'EOF'
+          import sys
+          from pathlib import Path
+          from langsmith import Client
+          from langsmith.utils import LangSmithConflictError
+          from langsmith.schemas import FileEntry
+          from langchain_core.prompts import ChatPromptTemplate
+
+          sys.path.insert(0, ".")
+          from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+          c = Client()
+
+          try:
+              prompt = ChatPromptTemplate.from_messages([("system", COPEPOD_SYSTEM_PROMPT)])
+              c.push_prompt("copepod-system-prompt", object=prompt, is_public=False)
+              print("copepod-system-prompt pushed")
+          except LangSmithConflictError:
+              print("copepod-system-prompt unchanged, skipped")
+
+          for skill_file in sorted(Path("agents/skills").glob("*.md")):
+              name = f"copepod-{skill_file.stem.replace('_', '-')}"
+              content = skill_file.read_text()
+              try:
+                  c.push_skill(
+                      name,
+                      files={"SKILL.md": FileEntry(type="file", content=content)},
+                      is_public=False,
+                  )
+                  print(f"{name} pushed")
+              except LangSmithConflictError:
+                  print(f"{name} unchanged, skipped")
+          EOF
