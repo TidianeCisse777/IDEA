@@ -9,9 +9,23 @@ You are about to perform a join between zooplankton and an environmental source.
 
 ---
 
+## Tool routing — which method to use
+
+| Join | Method |
+|---|---|
+| EcoTaxa + EcoPart (by `profile_id`) | `join_ecotaxa_ecopart` tool — do **not** use this skill |
+| EcoTaxa + CTD Amundsen | `run_pandas` using patterns below |
+| EcoTaxa + Bio-ORACLE | `run_pandas` using patterns below |
+| EcoTaxa + OGSL | `run_pandas` using patterns below |
+| Any other environmental join | `run_pandas` using patterns below |
+
+> **`join_ecotaxa_ecopart` is exclusively for EcoTaxa ↔ EcoPart pairs.**
+> For every other source — including CTD Amundsen — always use `run_pandas` with the pandas patterns in this skill.
+
+---
+
 ## Usage rule
 
-- Use this skill when the user wants to join zooplankton with CTD, Bio-ORACLE, OGSL, EcoTaxa, EcoPart, or any other environmental source.
 - Always treat raw columns as the source of truth.
 - Add aliases only in addition to the original columns, never instead of them.
 
