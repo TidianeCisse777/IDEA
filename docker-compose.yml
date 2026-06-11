@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   copepod-agent:
     image: ghcr.io/tidianecisse777/copepod-agent:latest  # ghcr.io exige lowercase
