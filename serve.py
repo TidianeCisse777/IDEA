@@ -599,6 +599,21 @@ async def chat_completions(
 ):
     user_id = x_openwebui_user_id if isinstance(x_openwebui_user_id, str) else "anonymous"
 
+    # [DEBUG-f1a2] dump raw body to see exactly what OpenWebUI sends with file attachments
+    try:
+        raw_body = await request.body()
+        import json as _json
+        body_obj = _json.loads(raw_body)
+        msgs_summary = [(m.get("role"), str(m.get("content",""))[:80]) for m in body_obj.get("messages",[])]
+        logger.info("[DEBUG-f1a2] RAW BODY keys=%s | msgs=%s | files=%s | meta_files=%s",
+            list(body_obj.keys()),
+            msgs_summary,
+            body_obj.get("files"),
+            (body_obj.get("metadata") or {}).get("files"),
+        )
+    except Exception as _e:
+        logger.info("[DEBUG-f1a2] raw body parse error: %s", _e)
+
     # Log all headers to diagnose missing chat_id
     owui_headers = {k: v for k, v in request.headers.items() if "openwebui" in k.lower() or "chat" in k.lower() or "session" in k.lower()}
     logger.info(
