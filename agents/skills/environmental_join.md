@@ -26,6 +26,7 @@ You are about to perform a join between zooplankton and an environmental source.
 
 ## Usage rule
 
+- After reading this skill, immediately call `run_pandas` to execute the join — both datasets are already accessible in the session. Do not stop at the plan or provide a script for the user to run themselves.
 - Always treat raw columns as the source of truth.
 - Add aliases only in addition to the original columns, never instead of them.
 
