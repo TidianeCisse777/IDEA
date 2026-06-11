@@ -34,6 +34,10 @@ services:
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
       - OPENAI_API_BASE_URL=http://copepod-agent:8000/v1
       - OPENAI_API_KEY=copepod-key
+      - RAG_EMBEDDING_ENGINE=openai
+      - RAG_OPENAI_API_BASE_URL=http://copepod-agent:8000/v1
+      - RAG_OPENAI_API_KEY=copepod-key
+      - RAG_EMBEDDING_MODEL=copepod-embeddings
     volumes:
       - open_webui_data:/app/backend/data
     depends_on:

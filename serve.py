@@ -337,6 +337,31 @@ def list_models():
     }
 
 
+@app.post("/v1/embeddings")
+async def embeddings(request: Request):
+    """Dummy embeddings endpoint — returns zero vectors instantly.
+
+    OpenWebUI calls this when RAG_EMBEDDING_ENGINE=openai. Since we use
+    resolve_attached_files + load_file to handle uploads, we never need
+    real embeddings. Returning zeros in <1ms eliminates the multi-minute
+    sentence-transformers processing that blocks the upload UI.
+    """
+    body = await request.json()
+    inputs = body.get("input", [])
+    if isinstance(inputs, str):
+        inputs = [inputs]
+    DIM = 384  # matches all-MiniLM-L6-v2 so ChromaDB stays consistent
+    return {
+        "object": "list",
+        "model": body.get("model", "copepod-embeddings"),
+        "data": [
+            {"object": "embedding", "index": i, "embedding": [0.0] * DIM}
+            for i in range(len(inputs))
+        ],
+        "usage": {"prompt_tokens": 0, "total_tokens": 0},
+    }
+
+
 _INTERNAL_PREFIXES = ("### Task:", "### Guidelines:", "### Input:", "### Output:")
 
 
