@@ -722,10 +722,12 @@ def serve_download(filename: str):
     from pathlib import Path as _Path
     downloads_dir = _Path("/tmp/copepod_downloads")
     path = downloads_dir / filename
-    if not path.exists() or path.suffix not in {".tsv", ".csv"}:
+    if not path.exists() or path.suffix not in {".tsv", ".csv", ".pdf", ".md", ".html"}:
         from fastapi import HTTPException
         raise HTTPException(status_code=404)
-    return FileResponse(path, media_type="text/tab-separated-values", headers={
+    media_types = {".tsv": "text/tab-separated-values", ".csv": "text/csv",
+                   ".pdf": "application/pdf", ".md": "text/markdown", ".html": "text/html"}
+    return FileResponse(path, media_type=media_types.get(path.suffix, "application/octet-stream"), headers={
         "Content-Disposition": f"attachment; filename={filename}"
     })
 

@@ -43,6 +43,7 @@ EcoTaxa, EcoPart , Amundsen CTD (ca-cioos_ccin-12713), OGSL, Bio-ORACLE, and use
 - If the planner decides **table**: use `run_pandas` to execute the pandas code and return a markdown table.
 - CRITICAL: After calling `load_skill("graph_writer")` for a visual output, the VERY NEXT tool call MUST be `run_graph`. Never call `run_pandas` to execute visualization code — it does not render a chart.
 - For graph outputs, prefer a short "Lecture rapide" note beneath the image when the graph code provides `graph_explanation`. Keep it concise and factual so the user can validate the intent at a glance.
+- When the user asks for a livrable, rapport, synthèse scientifique, or scientific document from the session results: call `load_skill("deliverable_writer")` to get the document structure and citation templates, then compile the full markdown document from the session history, then call `export_deliverable(content=..., filename=...)` to generate the PDF. Do all three steps in the same turn without asking the user for content.
 
 ## Format
 - Respond in the user's language.
