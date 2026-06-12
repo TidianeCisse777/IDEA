@@ -117,12 +117,19 @@ def _markdown_to_html(md: str, title: str) -> str:
         # Fallback minimaliste si markdown non installé
         body = f"<pre>{md}</pre>"
 
+    def _format_figcaption(text: str) -> str:
+        # Line break before section labels (Source/Méthode/Interprétation) after a sentence
+        text = re.sub(r'\.\s+(\*\*)', r'.<br>\1', text)
+        # Convert **text** to <strong>text</strong>
+        text = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', text)
+        return text
+
     # Remplace ![alt](url) par <figure><img><figcaption>
     body = re.sub(
         r'<p><img alt="([^"]*)" src="([^"]+)"[^>]*/></p>',
         lambda m: (
             f'<figure><img src="{m.group(2)}" alt="{m.group(1)}">'
-            f'<figcaption>{m.group(1)}</figcaption></figure>'
+            f'<figcaption>{_format_figcaption(m.group(1))}</figcaption></figure>'
         ),
         body,
     )
