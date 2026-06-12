@@ -46,6 +46,8 @@ If yes → the graph must include the geographic dimension:
    - Otherwise → **table output** (use run_pandas to return a markdown table)
 4. If visual output: choose the graph type:
    - **map**: spatial distribution of stations or observations
+   - **sampling gap map**: stations coloured by coverage status (present / sparse / absent) per zone — use when the user asks about undersampled zones, lacunes, missing coverage, or where to sample next. Color: green = ≥ 10 obs, orange = 1–9 obs, red = 0 obs.
+   - **climate delta map**: stations coloured by delta (Bio-ORACLE projected − CTD current) — use when the user asks about warming, SSP projections, or climate change impact by zone. Use a diverging colormap (coolwarm), centre at 0.
    - **geo scatter**: variable as a function of latitude or longitude
    - **bar by station**: comparison across named stations
    - **bar**: compare categories without geo component (e.g. abundance by taxon)

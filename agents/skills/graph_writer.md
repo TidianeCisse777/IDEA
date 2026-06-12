@@ -118,6 +118,124 @@ plt.tight_layout()
 
 ---
 
+### Sampling gap map template
+
+Use when the plan says Type: sampling gap map. One point per station, coloured by coverage status.
+
+```python
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import numpy as np
+
+plt.style.use("dark_background")
+plt.rcParams.update({{"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a"}})
+
+# --- prepare data ---
+# station_coverage must have columns: latitude, longitude, n_obs
+# (compute with run_pandas before calling run_graph)
+map_df = station_coverage.dropna(subset=['latitude', 'longitude'])
+map_df = map_df.copy()
+map_df['color'] = map_df['n_obs'].apply(
+    lambda n: '#2ecc71' if n >= 10 else ('#f39c12' if n >= 1 else '#e74c3c')
+)
+
+central_lon = float(map_df['longitude'].mean())
+proj = ccrs.LambertConformal(central_longitude=central_lon, central_latitude=float(map_df['latitude'].mean()))
+fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={{"projection": proj}})
+
+margin = 3
+ax.set_extent([
+    map_df['longitude'].min() - margin, map_df['longitude'].max() + margin,
+    map_df['latitude'].min() - margin,  map_df['latitude'].max() + margin,
+], crs=ccrs.PlateCarree())
+
+ax.add_feature(cfeature.LAND,      facecolor='#2d2d2d', zorder=1)
+ax.add_feature(cfeature.OCEAN,     facecolor='#1a3a5c', zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#aaaaaa', zorder=2)
+gl = ax.gridlines(draw_labels=True, linewidth=0.4, color='gray', alpha=0.4, linestyle='--')
+gl.top_labels = False; gl.right_labels = False
+
+for _, row in map_df.iterrows():
+    ax.scatter(row['longitude'], row['latitude'],
+               color=row['color'], s=60, alpha=0.9,
+               transform=ccrs.PlateCarree(), zorder=3)
+
+# Legend
+from matplotlib.lines import Line2D
+legend_elements = [
+    Line2D([0],[0], marker='o', color='w', markerfacecolor='#2ecc71', markersize=8, label='≥ 10 obs'),
+    Line2D([0],[0], marker='o', color='w', markerfacecolor='#f39c12', markersize=8, label='1–9 obs (sparse)'),
+    Line2D([0],[0], marker='o', color='w', markerfacecolor='#e74c3c', markersize=8, label='0 obs (absent)'),
+]
+ax.legend(handles=legend_elements, loc='lower left', fontsize=8,
+          facecolor='#2d2d2d', edgecolor='#666', labelcolor='white')
+
+ax.set_title("<titre>", fontsize=13, color='white')
+plt.tight_layout()
+
+graph_explanation = "Carte des lacunes d'échantillonnage. Vert = couverture suffisante, orange = sparse, rouge = absent. Lecture rapide : les zones rouges sont prioritaires pour les prochaines campagnes."
+```
+
+---
+
+### Climate delta map template
+
+Use when the plan says Type: climate delta map. Stations coloured by warming delta (Bio-ORACLE SSP − CTD current).
+
+```python
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import numpy as np
+
+plt.style.use("dark_background")
+plt.rcParams.update({{"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a"}})
+
+# --- prepare data ---
+# delta_df must have: latitude, longitude, delta_rechauffement_degC
+map_df = delta_df.dropna(subset=['latitude', 'longitude', 'delta_rechauffement_degC'])
+
+central_lon = float(map_df['longitude'].mean())
+proj = ccrs.LambertConformal(central_longitude=central_lon, central_latitude=float(map_df['latitude'].mean()))
+fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={{"projection": proj}})
+
+margin = 3
+ax.set_extent([
+    map_df['longitude'].min() - margin, map_df['longitude'].max() + margin,
+    map_df['latitude'].min() - margin,  map_df['latitude'].max() + margin,
+], crs=ccrs.PlateCarree())
+
+ax.add_feature(cfeature.LAND,      facecolor='#2d2d2d', zorder=1)
+ax.add_feature(cfeature.OCEAN,     facecolor='#1a3a5c', zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#aaaaaa', zorder=2)
+gl = ax.gridlines(draw_labels=True, linewidth=0.4, color='gray', alpha=0.4, linestyle='--')
+gl.top_labels = False; gl.right_labels = False
+
+vmax = float(map_df['delta_rechauffement_degC'].abs().quantile(0.95)) or 5
+sc = ax.scatter(
+    map_df['longitude'], map_df['latitude'],
+    c=map_df['delta_rechauffement_degC'],
+    cmap='coolwarm', vmin=-vmax, vmax=vmax,
+    s=60, alpha=0.9,
+    transform=ccrs.PlateCarree(), zorder=3,
+)
+cbar = plt.colorbar(sc, ax=ax, label='Δ température (°C)', shrink=0.6, pad=0.02)
+cbar.ax.yaxis.label.set_color('white')
+cbar.ax.tick_params(colors='white')
+
+ax.set_title("<titre — ex: Delta réchauffement Bio-ORACLE SSP5-8.5 2100 vs CTD actuel>", fontsize=13, color='white')
+plt.tight_layout()
+
+graph_explanation = "Carte du delta de réchauffement par station (SSP5-8.5 2100 − CTD actuel). Rouge = fort réchauffement projeté, bleu = refroidissement. Lecture rapide : zones rouges = stations prioritaires pour le suivi climatique."
+```
+
+---
+
 ### Standard template (Amundsen / Arctic / Baffin Bay)
 
 ```python
