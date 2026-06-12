@@ -70,7 +70,7 @@ services:
     volumes:
       - open_webui_data:/app/backend/data
     depends_on:
-      copepod-agent:
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
