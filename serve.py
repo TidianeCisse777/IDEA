@@ -24,7 +24,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 from agent import make_agent, _CHECKPOINTS_DB, repair_invalid_tool_history, arepair_invalid_tool_history
-from tools.openwebui_uploads import resolve_attached_files, resolve_request_files
+from tools.openwebui_uploads import resolve_attached_files, resolve_request_files, resolve_chat_files
 from tools.public_url import graph_url, serve_base_url
 from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_workspace_database_url
 from tools.session_store import default_store
@@ -600,17 +600,18 @@ async def chat_completions(
 ):
     user_id = x_openwebui_user_id if isinstance(x_openwebui_user_id, str) else "anonymous"
 
-    # [DEBUG-f1a2] dump raw body to see exactly what OpenWebUI sends with file attachments
+    # [DEBUG-f1a2] dump raw body — trouve où OpenWebUI met les infos fichier
     try:
         raw_body = await request.body()
         import json as _json
         body_obj = _json.loads(raw_body)
-        msgs_summary = [(m.get("role"), str(m.get("content",""))[:80]) for m in body_obj.get("messages",[])]
-        logger.info("[DEBUG-f1a2] RAW BODY keys=%s | msgs=%s | files=%s | meta_files=%s",
+        last_msg = next((m for m in reversed(body_obj.get("messages", [])) if m.get("role") == "user"), {})
+        logger.info(
+            "[DEBUG-f1a2] RAW BODY keys=%s | last_user_content=%s | top_files=%s | meta=%s",
             list(body_obj.keys()),
-            msgs_summary,
+            repr(str(last_msg.get("content", ""))[:300]),
             body_obj.get("files"),
-            (body_obj.get("metadata") or {}).get("files"),
+            repr(str(body_obj.get("metadata", {}))[:300]),
         )
     except Exception as _e:
         logger.info("[DEBUG-f1a2] raw body parse error: %s", _e)
@@ -657,10 +658,15 @@ async def chat_completions(
 
     last_user_text = resolve_attached_files(last_user.text() if last_user else "")
 
-    # OpenWebUI sends attached files under body.metadata.files (not body.files).
-    # Fall back to req.files for direct API callers that use the top-level field.
-    owui_files = (req.metadata or {}).get("files") or req.files
-    request_files_text, request_image_parts = resolve_request_files(owui_files)
+    # OpenWebUI ne forward JAMAIS les fichiers dans le body (metadata est pop()é
+    # avant l'envoi). On requête directement le SQLite d'OpenWebUI via chat_id.
+    # Fallback : req.files pour les appelants directs de l'API (hors OpenWebUI).
+    owui_chat_id = x_openwebui_chat_id or req.chat_id
+    if owui_chat_id:
+        request_files_text, request_image_parts = resolve_chat_files(owui_chat_id, thread_id=tid)
+    else:
+        owui_files = (req.metadata or {}).get("files") or req.files
+        request_files_text, request_image_parts = resolve_request_files(owui_files)
     if request_files_text or request_image_parts:
         logger.info(
             "thread=%s request_files: text_len=%d images=%d",
