@@ -20,9 +20,20 @@ If yes → the graph must include the geographic dimension:
 | Situation | Graph type | Projection |
 |-----------|-----------|------------|
 | Show station locations (Arctic/Amundsen, lat > 55°N) | **map** with cartopy NorthPolarStereo | `NorthPolarStereo` |
-| Color stations by a variable (abundance, temp, salinity) | **map** with cartopy + color scale | `NorthPolarStereo` |
+| Show station locations (Hawke Channel, Hudson Strait, Ungava Bay, lat 52–63°N) | **map** with cartopy LambertConformal or PlateCarree | `LambertConformal` |
+| Color stations by a variable (abundance, temp, salinity) | **map** with cartopy + color scale | same as above |
 | Variable vs latitude/longitude profile | **geo scatter** (simple scatter, no cartopy) | none |
 | Compare named stations | **bar by station** | none |
+
+**Known NeoLab zones and their projection:**
+
+| Zone | Lat range | Lon range | Projection recommandée |
+|---|---|---|---|
+| Hawke Channel | 52–56°N | 53–57°W | `LambertConformal(central_longitude=-55, central_latitude=54)` |
+| Détroit d'Hudson | 60–63°N | 64–80°W | `LambertConformal(central_longitude=-72, central_latitude=61)` |
+| Baie d'Ungava | 58–62°N | 67–74°W | `LambertConformal(central_longitude=-70, central_latitude=60)` |
+| Baie d'Hudson | 51–65°N | 77–95°W | `LambertConformal(central_longitude=-86, central_latitude=58)` |
+| Arctique / Amundsen | > 65°N | — | `NorthPolarStereo` |
 
 **Always use `map` (cartopy) when the user asks for a geographic map, carte, or spatial distribution.** Never produce a plain scatter on lon/lat axes for a map request — it has no geographic context (no coastlines, no projection).
 

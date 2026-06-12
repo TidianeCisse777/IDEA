@@ -61,6 +61,63 @@ plt.tight_layout()
 **Always use cartopy** for any map/geo scatter request — never use plain `plt.scatter` on lon/lat axes.
 Cartopy produces real geographic projections with coastlines, ocean fill, and graticules.
 
+### Dark background (mandatory for all maps)
+
+Every map must start with:
+```python
+plt.style.use("dark_background")
+plt.rcParams.update({{"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a", "grid.alpha": 0.25}})
+```
+Use `facecolor='#2d2d2d'` for LAND and `facecolor='#1a3a5c'` for OCEAN on dark maps.
+
+---
+
+### Template Hawke Channel / Nord québécois (lat 52–63°N)
+
+```python
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+plt.style.use("dark_background")
+plt.rcParams.update({{"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a"}})
+
+map_df = df[['longitude', 'latitude']].dropna()
+proj = ccrs.LambertConformal(central_longitude=-55, central_latitude=54)
+
+fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={{"projection": proj}})
+
+margin = 2
+ax.set_extent([
+    map_df['longitude'].min() - margin,
+    map_df['longitude'].max() + margin,
+    map_df['latitude'].min()  - margin,
+    map_df['latitude'].max()  + margin,
+], crs=ccrs.PlateCarree())
+
+ax.add_feature(cfeature.LAND,      facecolor='#2d2d2d', zorder=1)
+ax.add_feature(cfeature.OCEAN,     facecolor='#1a3a5c', zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#aaaaaa', zorder=2)
+ax.add_feature(cfeature.BORDERS,   linestyle=':', linewidth=0.5, edgecolor='#666666', zorder=2)
+
+gl = ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', alpha=0.4, linestyle='--')
+gl.top_labels = False
+gl.right_labels = False
+
+sc = ax.scatter(
+    map_df['longitude'], map_df['latitude'],
+    color='white', s=40, alpha=0.9,
+    transform=ccrs.PlateCarree(), zorder=3,
+)
+
+ax.set_title("<titre>", fontsize=13, color='white')
+plt.tight_layout()
+```
+
+---
+
 ### Standard template (Amundsen / Arctic / Baffin Bay)
 
 ```python
