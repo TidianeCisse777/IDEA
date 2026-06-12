@@ -9,9 +9,113 @@ import pandas as pd
 
 from tools.public_url import download_url
 
+_ERDDAP_BASE = "https://erddap.bio-oracle.org/erddap"
+
+# ── Friendly-name → ERDDAP canonical mappings ────────────────────────────────
+
+_VAR_MAP: dict[str, str] = {
+    # temperature
+    "temperature": "thetao", "temp": "thetao", "température": "thetao",
+    "thetao": "thetao",
+    # salinity
+    "salinity": "so", "salinité": "so", "salinite": "so", "sel": "so",
+    "so": "so",
+    # oxygen
+    "oxygen": "o2", "oxygène": "o2", "oxygene": "o2", "o2": "o2",
+    # chlorophyll
+    "chlorophyll": "chl", "chlorophylle": "chl", "chl": "chl",
+    # nitrate
+    "nitrate": "no3", "no3": "no3",
+    # pH
+    "ph": "ph",
+    # iron
+    "iron": "dfe", "fer": "dfe", "dfe": "dfe",
+}
+
+_SCENARIO_MAP: dict[str, str] = {
+    "ssp585": "ssp585", "ssp5-8.5": "ssp585", "ssp5_8_5": "ssp585",
+    "ssp5": "ssp585", "rcp85": "ssp585",
+    "ssp126": "ssp126", "ssp1-2.6": "ssp126", "ssp1_2_6": "ssp126",
+    "ssp1": "ssp126",
+    "ssp245": "ssp245", "ssp2-4.5": "ssp245", "ssp2_4_5": "ssp245",
+    "ssp2": "ssp245",
+    "ssp370": "ssp370", "ssp3-7.0": "ssp370",
+    "baseline": "baseline", "present": "baseline", "actuel": "baseline",
+    "historique": "baseline", "current": "baseline",
+}
+
+_DEPTH_MAP: dict[str, str] = {
+    "surface": "depthsurf", "surf": "depthsurf", "depthsurf": "depthsurf",
+    "mean": "depthmean", "depthmean": "depthmean", "moyenne": "depthmean",
+    "max": "depthmax", "depthmax": "depthmax", "maximum": "depthmax",
+    "min": "depthmin", "depthmin": "depthmin", "minimum": "depthmin",
+}
+
+
+def _normalise(value: str) -> str:
+    return value.strip().lower().replace(" ", "_")
+
+
+def _resolve_var(value: str) -> str:
+    return _VAR_MAP.get(_normalise(value), _normalise(value))
+
+
+def _resolve_scenario(value: str) -> str:
+    return _SCENARIO_MAP.get(_normalise(value), _normalise(value))
+
+
+def _resolve_depth(value: str) -> str:
+    return _DEPTH_MAP.get(_normalise(value), _normalise(value))
+
+
+def _find_dataset_id(var: str, scenario: str, depth: str) -> str:
+    """Build the Bio-ORACLE dataset ID and verify it exists on ERDDAP."""
+    if scenario == "baseline":
+        candidates = [
+            f"{var}_baseline_2000_2018_{depth}",
+            f"{var}_baseline_2000_2019_{depth}",
+            f"{var}_baseline_2000_2020_{depth}",
+        ]
+    else:
+        candidates = [
+            f"{var}_{scenario}_2020_2100_{depth}",
+            f"{var}_{scenario}_2015_2100_{depth}",
+        ]
+
+    for dataset_id in candidates:
+        url = f"{_ERDDAP_BASE}/griddap/{dataset_id}.das"
+        try:
+            r = requests.head(url, timeout=10, allow_redirects=True)
+            if r.status_code < 400:
+                return dataset_id
+        except requests.RequestException:
+            continue
+
+    # Fallback: search ERDDAP for the dataset
+    try:
+        r = requests.get(
+            f"{_ERDDAP_BASE}/search/index.json",
+            params={"searchFor": f"{var} {scenario} {depth}", "itemsPerPage": 20},
+            timeout=15,
+        )
+        r.raise_for_status()
+        payload = r.json()
+        for row in payload.get("table", {}).get("rows", []):
+            did = str(row[4] if len(row) > 4 else "")
+            if var in did and depth in did:
+                return did.split("/")[-1].split("?")[0]
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        f"No Bio-ORACLE dataset found for variable='{var}', scenario='{scenario}', depth='{depth}'. "
+        f"Tried: {candidates}"
+    )
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def plan_bio_oracle_request(parameters: dict) -> dict:
-    """Normalize a Bio-ORACLE request and report missing required fields."""
     missing_fields = []
     if not parameters.get("scenario"):
         missing_fields.append("scenario")
@@ -30,7 +134,6 @@ def plan_bio_oracle_request(parameters: dict) -> dict:
 
 
 def describe_bio_oracle_source() -> dict:
-    """Return the canonical Bio-ORACLE source description used by the agent."""
     return {
         "id": "bio_oracle",
         "label": "Bio-ORACLE — variables environnementales marines",
@@ -50,77 +153,58 @@ def describe_bio_oracle_source() -> dict:
 
 
 def list_bio_oracle_datasets() -> list[dict]:
-    """Return the Bio-ORACLE datasets discovered from the ERDDAP search API."""
-    response = requests.get(
-        "https://erddap.bio-oracle.org/erddap/search/index.json",
-        params={"searchFor": "bio-oracle", "itemsPerPage": 200},
+    """Return available Bio-ORACLE datasets from ERDDAP griddap index."""
+    r = requests.get(
+        f"{_ERDDAP_BASE}/griddap/index.json",
+        params={"itemsPerPage": 500},
         timeout=30,
     )
-    response.raise_for_status()
-    payload = response.json() or {}
+    r.raise_for_status()
+    payload = r.json() or {}
     table = payload.get("table") or {}
     columns = table.get("columnNames") or []
     rows = table.get("rows") or []
     normalized = []
     for row in rows:
         record = dict(zip(columns, row))
-        dataset_id = record.get("Dataset ID") or record.get("Dataset_ID")
-        if not dataset_id:
+        dataset_id = str(record.get("Dataset ID") or record.get("datasetID") or "")
+        if not dataset_id or dataset_id.startswith("allDatasets"):
             continue
-        normalized.append(
-            {
-                "dataset_id": str(dataset_id),
-                "title": str(record.get("Title") or record.get("title") or ""),
-                "griddap": str(record.get("griddap") or ""),
-            }
-        )
+        griddap_url = f"{_ERDDAP_BASE}/griddap/{dataset_id}"
+        normalized.append({
+            "dataset_id": dataset_id,
+            "title": str(record.get("Title") or record.get("title") or ""),
+            "griddap": griddap_url,
+        })
     return normalized
 
 
 def preview_bio_oracle_point(parameters: dict) -> dict:
-    """Return a small preview sample for one Bio-ORACLE point and scenario."""
-    variable = str(parameters.get("variable") or "").strip()
-    scenario = str(parameters.get("scenario") or "").strip()
-    depth_layer = str(parameters.get("depth_layer") or "").strip()
-    latitude = parameters.get("latitude")
-    longitude = parameters.get("longitude")
+    """Return a small preview for one Bio-ORACLE point."""
+    var = _resolve_var(str(parameters.get("variable") or "thetao"))
+    scenario = _resolve_scenario(str(parameters.get("scenario") or "baseline"))
+    depth = _resolve_depth(str(parameters.get("depth_layer") or "depthsurf"))
+    latitude = float(parameters["latitude"])
+    longitude = float(parameters["longitude"])
 
-    if latitude is None or longitude is None:
-        raise ValueError("latitude and longitude are required for Bio-ORACLE point queries")
+    dataset_id = _find_dataset_id(var, scenario, depth)
+    griddap_url = f"{_ERDDAP_BASE}/griddap/{dataset_id}"
 
-    datasets = list_bio_oracle_datasets()
-    chosen = None
-    for dataset in datasets:
-        haystack = " ".join(
-            part for part in [dataset.get("dataset_id"), dataset.get("title")] if part
-        ).lower()
-        if variable.lower() in haystack and scenario.lower() in haystack and depth_layer.lower() in haystack:
-            chosen = dataset
-            break
-    if chosen is None and datasets:
-        chosen = datasets[0]
-    if chosen is None:
-        raise RuntimeError("No Bio-ORACLE dataset matched the request")
-
-    griddap_url = chosen["griddap"]
-    if not griddap_url:
-        raise RuntimeError(f"Dataset {chosen['dataset_id']} has no griddap endpoint")
-
-    # Single-point query: (last) selects the most recent time step, (value) notation
-    # selects the nearest grid cell for lat/lon
-    url = f"{griddap_url}.csv?{variable}[(last)][({latitude})][({longitude})]"
+    # Bio-ORACLE variable names inside the dataset use a {var}_mean suffix
+    query_var = f"{var}_mean"
+    url = f"{griddap_url}.csv?{query_var}[(last)][({latitude:.4f})][({longitude:.4f})]"
     response = requests.get(url, timeout=30)
     response.raise_for_status()
 
-    # ERDDAP CSV: row 0 = column names, row 1 = units — skip units row when present
     lines = response.text.splitlines()
     data_text = "\n".join([lines[0]] + lines[2:]) if len(lines) > 2 else response.text
     dataframe = pd.read_csv(io.StringIO(data_text))
 
     return {
-        "dataset_id": chosen["dataset_id"],
-        "title": chosen["title"],
+        "dataset_id": dataset_id,
+        "title": dataset_id,
         "rows": dataframe.to_dict(orient="records"),
+        "variable": query_var,
     }
 
 
