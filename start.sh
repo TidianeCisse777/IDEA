@@ -32,8 +32,9 @@ TUNNEL_PID=""
 if command -v cloudflared &>/dev/null; then
   echo "[start] Tunnel Cloudflare en cours..."
   cloudflared tunnel --url http://localhost:3000 --no-autoupdate 2>&1 \
-    | grep --line-buffered "trycloudflare.com" \
-    | awk '{print "[tunnel] Lien public : " $NF}' &
+    | grep -oE --line-buffered 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
+    | head -1 \
+    | xargs -I{} echo "[tunnel] Lien public : {}" &
   TUNNEL_PID=$!
 fi
 
