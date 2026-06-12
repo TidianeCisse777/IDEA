@@ -58,12 +58,20 @@ def make_ecopart_tools(thread_id: str) -> list:
             file_id = uuid.uuid4().hex
             output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
             df.to_csv(output_path, sep="\t", index=False)
-            _store.set(thread_id, df, {"source": f"ecopart:{project_id}", "n_rows": len(df)})
-            _store.set(f"{thread_id}:ecopart", df, {"source": f"ecopart:{project_id}", "n_rows": len(df)})
+            meta = {
+                "source": f"ecopart:{project_id}",
+                "project_id": project_id,
+                "n_rows": len(df),
+            }
+            _store.set(thread_id, df, meta)
+            _store.set(f"{thread_id}:ecopart", df, meta)
+            _store.set(f"{thread_id}:ecopart:{project_id}", df, meta)
             download_url = f"http://localhost:8000/downloads/{output_path.name}"
             return (
                 f"EcoPart chargé — {len(df)} lignes.\n"
-                f"Données en session — appelle run_pandas directement pour analyser.\n"
+                f"Données disponibles dans `df_ecopart_{project_id}` "
+                f"et `df_ecopart` (dernier projet chargé).\n"
+                f"Appelle run_pandas directement pour analyser.\n"
                 f"Télécharger : {download_url}"
             )
         except Exception as exc:

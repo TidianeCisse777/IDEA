@@ -137,6 +137,48 @@ def test_query_ecopart_also_stores_named_slot_for_join():
     assert _store.get("thread-join-ep:ecopart")["df"].shape == (1, 2)
 
 
+def test_query_ecopart_preserves_multiple_projects_and_latest_alias():
+    import pandas as pd
+    from unittest.mock import MagicMock, patch
+
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-multi-ecopart"
+    keys = [
+        thread_id,
+        f"{thread_id}:ecopart",
+        f"{thread_id}:ecopart:105",
+        f"{thread_id}:ecopart:42",
+    ]
+    for key in keys:
+        _store.clear(key)
+
+    df_105 = pd.DataFrame({"Profile": ["ips_105"], "project_value": [105]})
+    df_42 = pd.DataFrame({"Profile": ["ips_042"], "project_value": [42]})
+    mock_client = MagicMock()
+    mock_client.start_export.side_effect = [["task-105"], ["task-42"]]
+    mock_client.download_tsv.side_effect = [df_105, df_42]
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        query_tool = next(
+            tool for tool in make_ecopart_tools(thread_id) if tool.name == "query_ecopart"
+        )
+        result_105 = query_tool.invoke({"project_id": 105})
+        result_42 = query_tool.invoke({"project_id": 42})
+
+    assert _store.get(f"{thread_id}:ecopart:105")["df"].equals(df_105)
+    assert _store.get(f"{thread_id}:ecopart:42")["df"].equals(df_42)
+    assert _store.get(f"{thread_id}:ecopart")["df"].equals(df_42)
+    assert _store.get(thread_id)["df"].equals(df_42)
+    assert "df_ecopart_105" in result_105
+    assert "df_ecopart" in result_105
+    assert "df_ecopart_42" in result_42
+
+    for key in keys:
+        _store.clear(key)
+
+
 def test_make_ecopart_tools_includes_join_tool():
     from tools.ecopart_sources import make_ecopart_tools
 
