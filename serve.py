@@ -24,7 +24,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 from agent import make_agent, _CHECKPOINTS_DB, repair_invalid_tool_history, arepair_invalid_tool_history
-from tools.openwebui_uploads import resolve_attached_files
+from tools.openwebui_uploads import resolve_attached_files, resolve_request_files
 from tools.public_url import graph_url, serve_base_url
 from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_workspace_database_url
 from tools.session_store import default_store
@@ -260,6 +260,7 @@ class ChatRequest(BaseModel):
     chat_id: str | None = None
     session_id: str | None = None
     metadata: dict | None = None
+    files: list | None = None
 
 
 def _conversation_key(
@@ -639,7 +640,31 @@ async def chat_completions(
     last_user = next((m for m in reversed(req.messages) if m.role == "user"), None)
     logger.info("[DEBUG-f1a2] last_user content type=%s val=%s", type(last_user.content).__name__ if last_user else "None", repr(last_user.content)[:800] if last_user else "None")
     last_user_text = resolve_attached_files(last_user.text() if last_user else "")
+    request_files_text, request_image_parts = resolve_request_files(req.files)
+    if request_files_text or request_image_parts:
+        logger.info(
+            "thread=%s request_files: text_len=%d images=%d",
+            tid, len(request_files_text), len(request_image_parts),
+        )
+    if request_files_text:
+        last_user_text = f"{last_user_text}\n\n{request_files_text}".strip()
     last_user_content = _prepare_user_content(last_user)
+    if request_files_text or request_image_parts:
+        if isinstance(last_user_content, str):
+            parts: list = []
+            merged_text = last_user_content
+            if request_files_text:
+                merged_text = f"{merged_text}\n\n{request_files_text}".strip()
+            if merged_text:
+                parts.append({"type": "text", "text": merged_text})
+            parts.extend(request_image_parts)
+            last_user_content = parts if request_image_parts else merged_text
+        else:
+            extra: list = []
+            if request_files_text:
+                extra.append({"type": "text", "text": request_files_text})
+            extra.extend(request_image_parts)
+            last_user_content = list(last_user_content) + extra
 
     sql_database_url = extract_sql_workspace_database_url(last_user_text) or ""
     if sql_database_url:

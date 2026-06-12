@@ -12,7 +12,9 @@ services:
       - .env
     environment:
       - OPENWEBUI_URL=http://open-webui:8080
+    command: uvicorn serve:app --host 0.0.0.0 --port 8000 --reload
     volumes:
+      - .:/app
       - copepod_data:/app/data
       - copepod_logs:/app/logs
       - copepod_static:/app/static
@@ -32,10 +34,16 @@ services:
       - "3000:8080"
     environment:
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
-      - OPENAI_API_BASE_URL=http://copepod-agent:8000/v1
+      - OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1
       - OPENAI_API_KEY=copepod-key
+      # Désactive le pipeline RAG d'OpenWebUI : on injecte nous-mêmes les fichiers
+      # via resolve_request_files → load_file dans l'agent. Court-circuite chunking,
+      # embeddings et vector store au moment de l'upload (retrieval.py:1696).
+      - BYPASS_EMBEDDING_AND_RETRIEVAL=true
+      # Embeddings/RAG_* conservés en filet de sécurité au cas où OpenWebUI rappelle
+      # via un autre code path — le dummy endpoint /v1/embeddings retourne du zéro instant.
       - RAG_EMBEDDING_ENGINE=openai
-      - RAG_OPENAI_API_BASE_URL=http://copepod-agent:8000/v1
+      - RAG_OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1
       - RAG_OPENAI_API_KEY=copepod-key
       - RAG_EMBEDDING_MODEL=copepod-embeddings
     volumes:
