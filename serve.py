@@ -638,9 +638,29 @@ async def chat_completions(
     )
 
     last_user = next((m for m in reversed(req.messages) if m.role == "user"), None)
-    logger.info("[DEBUG-f1a2] last_user content type=%s val=%s", type(last_user.content).__name__ if last_user else "None", repr(last_user.content)[:800] if last_user else "None")
+
+    # OpenWebUI injects a RAG template ("### Task: ...") into the last user message when
+    # files are attached. Detect it and restore the original user query from metadata,
+    # which OpenWebUI saves before injecting the template.
+    raw_last_user_text = last_user.text() if last_user else ""
+    if _is_internal_prompt(raw_last_user_text):
+        original_query = (req.metadata or {}).get("user_prompt", "")
+        logger.info("thread=%s RAG template detected, restored user_prompt=%r", tid, original_query[:120])
+        if last_user and original_query:
+            last_user = Message(role="user", content=original_query)
+        elif not original_query:
+            # No recoverable query — skip silently (e.g. empty initialisation ping)
+            logger.info("thread=%s SKIPPED empty RAG template with no user_prompt", tid)
+            if req.stream:
+                return StreamingResponse(_quick_sse_response(""), media_type="text/event-stream")
+            return _quick_response("")
+
     last_user_text = resolve_attached_files(last_user.text() if last_user else "")
-    request_files_text, request_image_parts = resolve_request_files(req.files)
+
+    # OpenWebUI sends attached files under body.metadata.files (not body.files).
+    # Fall back to req.files for direct API callers that use the top-level field.
+    owui_files = (req.metadata or {}).get("files") or req.files
+    request_files_text, request_image_parts = resolve_request_files(owui_files)
     if request_files_text or request_image_parts:
         logger.info(
             "thread=%s request_files: text_len=%d images=%d",
