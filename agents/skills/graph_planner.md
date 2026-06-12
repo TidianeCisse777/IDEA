@@ -43,6 +43,11 @@ If yes → the graph must include the geographic dimension:
    - **histogram**: distribution of a numeric variable
 5. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
 6. Flag any missing values that could affect the output
+7. **Uncertainty assessment (CT-AG-27)** — for each row going into the graph, classify it as:
+   - **confirmed**: validated source (EcoTaxa statut V), required columns complete, no missing volume/calibration
+   - **exploratory**: at least one of — taxon not validated (statut != V), partial column (NaN in a non-critical field), join with tolerance, derived variable without canonical method
+   - **uncertain identification**: morphologically ambiguous taxon (e.g. *C. glacialis* vs *C. finmarchicus* in overlap zones), historical pre-molecular identification
+   Count each category and report the confidence level: `high` (≥ 95% confirmed), `medium` (≥ 70% confirmed), `low` (< 70% confirmed). Pass these counts to `graph_writer` via the plan.
 
 ## Plan format
 
@@ -59,6 +64,9 @@ Output the plan wrapped in a `<details>` block so it is hidden by default:
 - Y / Values: <column name>
 - Aggregation: <sum | mean | count | none>
 - Filter: <condition or "none">
+- Confidence: <high | medium | low>
+- Rows confirmed / exploratory / uncertain: <n_confirmed> / <n_exploratory> / <n_uncertain>
+- Uncertainty notes: <short reason — e.g. "12 rows without volume", "3 rows pre-molecular ID">
 
 </details>
 ```

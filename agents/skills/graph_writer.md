@@ -133,3 +133,64 @@ plt.tight_layout()
 - Sort values before plotting (e.g. `.sort_values(ascending=False)`)
 - Drop NaN before plotting: `.dropna()`
 - If the user requests a top N, respect exactly N — do not truncate arbitrarily
+
+---
+
+## Uncertainty rendering (CT-AG-27)
+
+Every graph must reflect the confidence level from the plan. Confirmed and exploratory data must never look identical.
+
+### Confidence palette
+
+| Status | Color | Marker / fill |
+|---|---|---|
+| confirmed | full saturation (`#1f77b4`, `#2ca02c`, `viridis` cmap) | solid fill, `alpha=0.9` |
+| exploratory | desaturated (`#7f9ec0`, `#92c190`, `cividis` cmap) | hatched fill (`hatch='//'`), `alpha=0.6` |
+| uncertain identification | gray (`#9e9e9e`) | open marker (`facecolor='none'`, `edgecolor='gray'`), `alpha=0.6` |
+
+### Mandatory annotations
+
+After defining title/xlabel/ylabel, **always** add a confidence stamp in the bottom-right corner of the axes:
+
+```python
+confidence_label = f"Confidence: {confidence} ({n_confirmed} confirmed, {n_exploratory} exploratory, {n_uncertain} uncertain)"
+ax.text(
+    0.99, 0.01, confidence_label,
+    transform=ax.transAxes,
+    ha='right', va='bottom',
+    fontsize=8, color='#444444',
+    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='#cccccc', alpha=0.8),
+)
+```
+
+When confidence is `low`, add a second annotation in the top-left:
+
+```python
+ax.text(
+    0.01, 0.99, "⚠ Low confidence — exploratory result",
+    transform=ax.transAxes,
+    ha='left', va='top',
+    fontsize=9, color='#b30000', weight='bold',
+)
+```
+
+### Visual encoding rules
+
+- For bar charts mixing confirmed and exploratory categories: split into two series (full vs hatched) on the same axes.
+- For scatter/map: pass `c=color_array` where each row's color comes from the palette above based on its status.
+- For line charts of derived variables: solid line for confirmed segments, dashed line (`linestyle='--'`) for exploratory segments.
+- For histograms: stack confirmed (solid) on top of exploratory (hatched) using `ax.hist([data_confirmed, data_exploratory], stacked=True, ...)`.
+
+### graph_explanation
+
+The `graph_explanation` string must include the confidence level and the dominant uncertainty source. Example:
+
+```python
+graph_explanation = (
+    "Distribution verticale de Calanus hyperboreus, EcoTaxa 1165. "
+    "Confidence: medium — 12 rows out of 84 lack sampled volume (exploratory). "
+    "Lecture rapide: pic à 50 m, queue jusqu'à 200 m."
+)
+```
+
+Never produce a graph where exploratory and confirmed values are visually indistinguishable.
