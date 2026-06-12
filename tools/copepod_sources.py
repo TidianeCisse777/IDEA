@@ -7,6 +7,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 from tools.ecotaxa_client import EcotaxaClient
+from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 from tools.data_tools import _uvp_skill_hint
@@ -111,8 +112,15 @@ def make_source_tools(thread_id: str) -> list:
         except Exception as exc:
             return f"Erreur lors de l'accès à EcoTaxa : {exc}"
 
-        _store.set(thread_id, df, {"source": f"ecotaxa:{project_id}", "n_rows": len(df)})
-        _store.set(f"{thread_id}:ecotaxa", df, {"source": f"ecotaxa:{project_id}", "n_rows": len(df)})
+        variable_name = dataset_variable_name("ecotaxa", project_id)
+        store_dataset(
+            _store,
+            thread_id,
+            df,
+            variable_name=variable_name,
+            meta={"source": f"ecotaxa:{project_id}", "project_id": project_id, "n_rows": len(df)},
+            latest_alias="ecotaxa",
+        )
 
         file_id = uuid.uuid4().hex
         tsv_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
@@ -121,7 +129,8 @@ def make_source_tools(thread_id: str) -> list:
         hint = _uvp_skill_hint(list(df.columns))
         summary = (
             f"Projet {project_id} chargé — {len(df)} lignes, {len(df.columns)} colonnes.\n"
-            f"Données en session — appelle run_pandas directement pour analyser.\n"
+            f"Données disponibles dans `{variable_name}` et `df_ecotaxa`.\n"
+            f"Appelle run_pandas directement pour analyser.\n"
             f"Télécharger : {download_url(f'{file_id}.tsv')}"
         )
         if hint:

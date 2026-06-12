@@ -11,6 +11,7 @@ import pandas as pd
 from langchain_core.tools import tool
 
 from tools.file_loader import load_file as _load_file
+from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.public_url import graph_url
 from tools.session_store import SessionStore, default_store
 
@@ -54,11 +55,17 @@ def _dataframe_vars(
         if named and named.get("df") is not None:
             local_vars[var] = named["df"]
 
+    for key in store.keys(f"{thread_id}:dataset:"):
+        named = store.get(key)
+        variable_name = (named or {}).get("meta", {}).get("variable_name")
+        if variable_name and named.get("df") is not None:
+            local_vars[variable_name] = named["df"]
+
     for key in store.keys(f"{thread_id}:ecopart:"):
         project_id = key.rsplit(":", 1)[-1]
         named = store.get(key)
         if project_id.isdigit() and named and named.get("df") is not None:
-            local_vars[f"df_ecopart_{project_id}"] = named["df"]
+            local_vars.setdefault(f"df_ecopart_{project_id}", named["df"])
     return local_vars
 
 
@@ -88,7 +95,14 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         except (FileNotFoundError, ValueError) as e:
             return f"Erreur : {e}"
 
-        _store.set(thread_id, df, meta)
+        variable_name = dataset_variable_name("file", Path(path).stem)
+        store_dataset(
+            _store,
+            thread_id,
+            df,
+            variable_name=variable_name,
+            meta={**meta, "source": f"file:{meta['path']}"},
+        )
         col_names = [c["name"] for c in meta["columns"]]
         cols = ", ".join(col_names)
 
@@ -98,6 +112,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         return (
             f"Fichier chargé : {meta['path']}{enc_note}\n"
             f"{meta['n_rows']} lignes × {meta['n_cols']} colonnes\n"
+            f"Variable persistante : `{variable_name}`\n"
             f"Colonnes : {cols}"
             + (f"\n\n{hint}" if hint else "")
         )

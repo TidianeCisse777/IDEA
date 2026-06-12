@@ -15,6 +15,7 @@ from langchain_core.tools import tool
 from sqlalchemy import create_engine, inspect
 
 from tools.public_url import download_url
+from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.session_store import default_store as _store
 
 _SQL_DATABASE_URL_META_KEY = "sql_database_url"
@@ -312,13 +313,17 @@ def make_sql_tools(thread_id: str) -> list:
                 output_stem=stem,
             )
             dataframe = pd.read_csv(output_path, sep="\t")
-            _store.set(
+            variable_name = dataset_variable_name("sql", output_path.stem)
+            store_dataset(
+                _store,
                 thread_id,
                 dataframe,
-                {"source": "sql_workspace", "n_rows": len(dataframe), "path": str(output_path)},
+                variable_name=variable_name,
+                meta={"source": "sql_workspace", "n_rows": len(dataframe), "path": str(output_path)},
             )
             return (
                 f"Copie SQL créée — {len(dataframe)} lignes, {len(dataframe.columns)} colonnes.\n"
+                f"Données disponibles dans `{variable_name}`.\n"
                 f"Télécharger : {download_url(output_path.name)}"
             )
         except Exception as exc:

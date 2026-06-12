@@ -1,10 +1,10 @@
-# Multi-EcoPart Session Implementation Plan
+# Persistent Multi-Dataset Session Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Preserve several EcoPart projects in one agent thread and expose them as explicit pandas variables while keeping the latest-project aliases compatible.
+**Goal:** Preserve every downloaded dataset in one agent thread and expose stable explicit pandas variables while keeping latest-source aliases compatible.
 
-**Architecture:** Extend `SessionStore` with prefix discovery across memory and disk. Store EcoPart DataFrames under stable project-specific keys, inject those entries into data-tool execution environments, and let the join tool select a project explicitly or fall back to the latest alias.
+**Architecture:** Extend `SessionStore` with prefix discovery across memory and disk. Route EcoPart, EcoTaxa, Amundsen, Bio-ORACLE, file, coupling, and SQL downloads through one dataset registry, inject all stable entries into data-tool execution environments, and let the EcoTaxa/EcoPart join select a project explicitly or fall back to the latest alias.
 
 **Tech Stack:** Python 3.13, pandas, LangChain tools, pytest.
 
@@ -205,7 +205,40 @@ PYTHONPATH=. .venv/bin/python -m pytest -q tests/test_ecopart_sources.py tests/t
 
 Expected: all tests pass.
 
-### Task 5: Full Verification
+### Task 5: Generalize Stable Downloads
+
+**Files:**
+- Create: `tools/dataset_registry.py`
+- Test: `tests/test_dataset_registry.py`
+- Modify: `tools/copepod_sources.py`
+- Modify: `tools/amundsen_sources.py`
+- Modify: `tools/bio_oracle_sources.py`
+- Modify: `tools/data_tools.py`
+- Modify: `tools/sql_workspace.py`
+- Test: corresponding source and data-tool tests
+
+- [ ] **Step 1: Test and implement normalized variable names**
+
+Cover integer IDs, punctuation, filenames, stations, casts, and negative
+coordinates. Implement `dataset_variable_name(source, *parts)`.
+
+- [ ] **Step 2: Test and implement common persistence**
+
+Implement `store_dataset` to update the current `df`, an optional latest-source
+alias, and `<thread>:dataset:<variable_name>` with `variable_name` metadata.
+
+- [ ] **Step 3: Route every download through the registry**
+
+Use stable names for EcoTaxa projects, Amundsen dataset/profile queries,
+Bio-ORACLE query identities, uploaded filenames, SQL output stems, and
+Bio-ORACLE coupling hashes.
+
+- [ ] **Step 4: Verify multiple downloads coexist**
+
+For every source, load two distinct identities and assert both stable entries
+remain while the source alias points to the latest.
+
+### Task 6: Full Verification
 
 **Files:**
 - Verify all modified files.

@@ -12,6 +12,7 @@ from core.amundsen_ctd_client import (
     preview_amundsen_profile as _preview_amundsen_profile,
     query_amundsen_ctd as _query_amundsen_ctd,
 )
+from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.session_store import default_store as _store
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
@@ -62,12 +63,30 @@ def make_amundsen_tools(thread_id: str) -> list:
             output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
             result = _query_amundsen_ctd({"station": station, "cast_number": cast_number}, output_path=output_path)
             dataframe = pd.read_csv(output_path, sep="\t")
-            meta = {"source": f"amundsen:{station or cast_number or 'ctd'}", "n_rows": len(dataframe)}
-            _store.set(thread_id, dataframe, meta)
-            _store.set(f"{thread_id}:ctd", dataframe, meta)
+            identity_parts: list[object] = [result["dataset_id"]]
+            if station is not None:
+                identity_parts.append(station)
+            if cast_number is not None:
+                identity_parts.extend(["cast", cast_number])
+            variable_name = dataset_variable_name("amundsen", *identity_parts)
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=variable_name,
+                meta={
+                    "source": f"amundsen:{result['dataset_id']}",
+                    "dataset_id": result["dataset_id"],
+                    "station": station,
+                    "cast_number": cast_number,
+                    "n_rows": len(dataframe),
+                },
+                latest_alias="ctd",
+            )
             return (
                 f"Amundsen CTD chargé — {result['row_count']} lignes.\n"
-                f"Données en session — appelle run_pandas directement pour analyser.\n"
+                f"Données disponibles dans `{variable_name}` et `df_ctd`.\n"
+                f"Appelle run_pandas directement pour analyser.\n"
                 f"Télécharger : {result['download_url']}"
             )
         except Exception as exc:

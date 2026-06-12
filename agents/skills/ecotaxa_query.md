@@ -19,6 +19,7 @@ Never present a hardcoded project list.
 - To present a project, display its metadata, counts or a few objects: call `preview_ecotaxa_project`.
 - To load, export, download or analyse the full data: call `query_ecotaxa`.
 - Do not call `query_ecotaxa` for a simple preview request — this export can be slow and modifies the analysis session.
+- Ne lance pas `query_ecotaxa` pour une simple demande d'aperçu.
 
 ---
 

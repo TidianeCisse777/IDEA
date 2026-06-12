@@ -163,7 +163,10 @@ def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
 
     listed = list_tool.invoke({})
     previewed = preview_tool.invoke({"table_name": "casts", "limit": 1})
-    copied = copy_tool.invoke({"query": "SELECT id, station FROM casts ORDER BY id"})
+    copied = copy_tool.invoke({
+        "query": "SELECT id, station FROM casts ORDER BY id",
+        "output_stem": "station_summary",
+    })
 
     assert "casts" in listed
     assert "1 lignes × 2 colonnes" in previewed
@@ -171,3 +174,6 @@ def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
     assert default_store.has("thread-sql")
     session = default_store.get("thread-sql")
     assert session["df"].shape == (2, 2)
+    stable = default_store.get("thread-sql:dataset:df_sql_station_summary")
+    assert stable["df"].shape == (2, 2)
+    assert "df_sql_station_summary" in copied

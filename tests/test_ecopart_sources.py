@@ -220,6 +220,95 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert "3 lignes" in result
 
 
+def test_join_ecotaxa_ecopart_selects_explicit_project():
+    import pandas as pd
+    from tools.dataset_registry import store_dataset
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-join-explicit"
+    df_ecotaxa = pd.DataFrame({"obj_orig_id": ["ips_007_1"]})
+    df_105 = pd.DataFrame({"Profile": ["ips_007"], "project_value": [105]})
+    df_42 = pd.DataFrame({"Profile": ["ips_007"], "project_value": [42]})
+    _store.set(f"{thread_id}:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
+    store_dataset(
+        _store,
+        thread_id,
+        df_105,
+        variable_name="df_ecopart_105",
+        meta={"source": "ecopart:105", "project_id": 105},
+        latest_alias="ecopart",
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        df_42,
+        variable_name="df_ecopart_42",
+        meta={"source": "ecopart:42", "project_id": 42},
+        latest_alias="ecopart",
+    )
+
+    join_tool = next(
+        t for t in make_ecopart_tools(thread_id) if t.name == "join_ecotaxa_ecopart"
+    )
+    result = join_tool.invoke({"project_id": 105})
+
+    joined = _store.get(thread_id)
+    assert joined["df"]["project_value"].iloc[0] == 105
+    assert joined["meta"]["source"] == "join:ecotaxa+ecopart:105"
+    assert "105" in result
+
+
+def test_join_ecotaxa_ecopart_defaults_to_latest_project():
+    import pandas as pd
+    from tools.dataset_registry import store_dataset
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-join-latest"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({"obj_orig_id": ["ips_007_1"]}),
+        {"source": "ecotaxa:1165"},
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        pd.DataFrame({"Profile": ["ips_007"], "project_value": [42]}),
+        variable_name="df_ecopart_42",
+        meta={"source": "ecopart:42", "project_id": 42},
+        latest_alias="ecopart",
+    )
+
+    join_tool = next(
+        t for t in make_ecopart_tools(thread_id) if t.name == "join_ecotaxa_ecopart"
+    )
+    result = join_tool.invoke({})
+
+    assert _store.get(thread_id)["df"]["project_value"].iloc[0] == 42
+    assert "42" in result
+
+
+def test_join_ecotaxa_ecopart_reports_missing_explicit_project():
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-join-missing-project"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({"obj_orig_id": ["ips_007_1"]}),
+        {"source": "ecotaxa:1165"},
+    )
+    join_tool = next(
+        t for t in make_ecopart_tools(thread_id) if t.name == "join_ecotaxa_ecopart"
+    )
+
+    result = join_tool.invoke({"project_id": 999})
+
+    assert "query_ecopart(project_id=999)" in result
+
+
 def test_join_ecotaxa_ecopart_missing_source_returns_error():
     from tools.ecopart_sources import make_ecopart_tools
     from tools.session_store import default_store as _store

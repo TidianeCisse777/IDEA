@@ -48,6 +48,27 @@ def test_load_file_tool_returns_summary(tsv_path):
     assert "profile_id" in result
 
 
+def test_load_file_preserves_distinct_files_with_named_variables(tmp_path):
+    first = tmp_path / "stations 2024.tsv"
+    second = tmp_path / "profiles.tsv"
+    pd.DataFrame({"station": ["A"]}).to_csv(first, sep="\t", index=False)
+    pd.DataFrame({"profile": ["P1"]}).to_csv(second, sep="\t", index=False)
+
+    thread_id = "thread-multi-files"
+    load_file_tool = next(t for t in make_tools(thread_id) if t.name == "load_file")
+    first_result = load_file_tool.invoke({"path": str(first)})
+    second_result = load_file_tool.invoke({"path": str(second)})
+
+    assert _store.get(f"{thread_id}:dataset:df_file_stations_2024")["df"].equals(
+        pd.DataFrame({"station": ["A"]})
+    )
+    assert _store.get(f"{thread_id}:dataset:df_file_profiles")["df"].equals(
+        pd.DataFrame({"profile": ["P1"]})
+    )
+    assert "df_file_stations_2024" in first_result
+    assert "df_file_profiles" in second_result
+
+
 # --- Comportement 2 : run_pandas ---
 
 def test_run_pandas_scalar(tsv_path):
@@ -96,6 +117,36 @@ def test_run_pandas_exposes_multiple_ecopart_projects():
 
     for key in keys:
         _store.clear(key)
+
+
+def test_run_pandas_exposes_registered_datasets_from_multiple_sources():
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-run-pandas-registered"
+    df_ecotaxa = pd.DataFrame({"value": [1, 2, 3]})
+    df_file = pd.DataFrame({"value": [4, 5]})
+    store_dataset(
+        _store,
+        thread_id,
+        df_ecotaxa,
+        variable_name="df_ecotaxa_1165",
+        meta={"source": "ecotaxa:1165"},
+        latest_alias="ecotaxa",
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        df_file,
+        variable_name="df_file_stations_2024",
+        meta={"source": "file:stations_2024.tsv"},
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({
+        "code": "result = (len(df_ecotaxa_1165), len(df_file_stations_2024))"
+    })
+
+    assert result == "(3, 2)"
 
 
 # --- Comportement 3 : erreur pandas ---

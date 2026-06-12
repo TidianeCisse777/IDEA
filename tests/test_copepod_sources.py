@@ -43,6 +43,27 @@ def test_query_ecotaxa_stores_df_in_session(tmp_path):
     assert _store.get("thread-1")["df"].shape == (2, 3)
 
 
+def test_query_ecotaxa_preserves_multiple_projects():
+    from tools.copepod_sources import make_source_tools
+
+    thread_id = "thread-multi-ecotaxa"
+    df_1165 = pd.DataFrame({"project": [1165]})
+    df_2331 = pd.DataFrame({"project": [2331]})
+    client = _make_fake_client(df_1165)
+    client.download_tsv.side_effect = [df_1165, df_2331]
+
+    with patch("tools.copepod_sources.EcotaxaClient", return_value=client):
+        query = next(t for t in make_source_tools(thread_id) if t.name == "query_ecotaxa")
+        result_1165 = query.invoke({"project_id": 1165})
+        result_2331 = query.invoke({"project_id": 2331})
+
+    assert _store.get(f"{thread_id}:dataset:df_ecotaxa_1165")["df"].equals(df_1165)
+    assert _store.get(f"{thread_id}:dataset:df_ecotaxa_2331")["df"].equals(df_2331)
+    assert _store.get(f"{thread_id}:ecotaxa")["df"].equals(df_2331)
+    assert "df_ecotaxa_1165" in result_1165
+    assert "df_ecotaxa_2331" in result_2331
+
+
 # ── Comportement 2 : lien de téléchargement dans le résumé ─────────────────
 
 def test_query_ecotaxa_returns_download_link():

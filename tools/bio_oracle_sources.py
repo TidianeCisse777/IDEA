@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import uuid
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from core.bio_oracle_client import (
     preview_bio_oracle_point as _preview_bio_oracle_point,
     query_bio_oracle as _query_bio_oracle,
 )
+from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 
@@ -79,12 +81,35 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 output_path=output_path,
             )
             dataframe = pd.read_csv(output_path, sep="\t")
-            meta = {"source": f"bio_oracle:{scenario}", "n_rows": len(dataframe)}
-            _store.set(thread_id, dataframe, meta)
-            _store.set(f"{thread_id}:bio_oracle", dataframe, meta)
+            variable_name = dataset_variable_name(
+                "bio_oracle",
+                variable,
+                scenario,
+                depth_layer,
+                latitude,
+                longitude,
+            )
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=variable_name,
+                meta={
+                    "source": f"bio_oracle:{result['dataset_id']}",
+                    "dataset_id": result["dataset_id"],
+                    "variable": variable,
+                    "scenario": scenario,
+                    "depth_layer": depth_layer,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "n_rows": len(dataframe),
+                },
+                latest_alias="bio_oracle",
+            )
             return (
                 f"Bio-ORACLE chargé — {result['row_count']} lignes.\n"
-                f"Données en session — appelle run_pandas directement pour analyser.\n"
+                f"Données disponibles dans `{variable_name}` et `df_bio_oracle`.\n"
+                f"Appelle run_pandas directement pour analyser.\n"
                 f"Télécharger : {result['download_url']}"
             )
         except Exception as exc:
@@ -119,10 +144,20 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 )
 
             output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
-            pd.DataFrame(coupled_rows).to_csv(output_path, sep="\t", index=False)
-            _store.set(thread_id, pd.DataFrame(coupled_rows), {"source": "bio_oracle_coupling", "n_rows": len(coupled_rows)})
+            dataframe = pd.DataFrame(coupled_rows)
+            dataframe.to_csv(output_path, sep="\t", index=False)
+            query_id = hashlib.sha256(rows_json.encode("utf-8")).hexdigest()[:12]
+            variable_name = dataset_variable_name("bio_oracle_coupling", query_id)
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=variable_name,
+                meta={"source": "bio_oracle_coupling", "query_id": query_id, "n_rows": len(coupled_rows)},
+            )
             return (
                 f"Couplage Bio-ORACLE chargé — {len(coupled_rows)} lignes.\n"
+                f"Données disponibles dans `{variable_name}`.\n"
                 f"Télécharger : {download_url(output_path.name)}"
             )
         except Exception as exc:
