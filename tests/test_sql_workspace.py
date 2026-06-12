@@ -177,3 +177,51 @@ def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
     stable = default_store.get("thread-sql:dataset:df_sql_station_summary")
     assert stable["df"].shape == (2, 2)
     assert "df_sql_station_summary" in copied
+
+
+def test_list_sql_tables_tool_returns_database_overview(tmp_path, monkeypatch):
+    from tools.sql_workspace import make_sql_tools
+    from tools.session_store import default_store
+
+    db_path = tmp_path / "source.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("CREATE TABLE stations (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    conn.execute(
+        """
+        CREATE TABLE casts (
+            id INTEGER PRIMARY KEY,
+            station_id INTEGER NOT NULL,
+            depth_m REAL,
+            FOREIGN KEY(station_id) REFERENCES stations(id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE VIEW cast_depths AS
+        SELECT casts.id, stations.name, casts.depth_m
+        FROM casts
+        JOIN stations ON stations.id = casts.station_id
+        """
+    )
+    conn.executemany("INSERT INTO stations (id, name) VALUES (?, ?)", [(1, "A"), (2, "B")])
+    conn.executemany(
+        "INSERT INTO casts (id, station_id, depth_m) VALUES (?, ?, ?)",
+        [(10, 1, 5.0), (11, 2, 15.0)],
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+    default_store._store.clear()
+
+    tools = make_sql_tools("thread-sql-overview")
+    list_tool = next(tool for tool in tools if tool.name == "list_sql_tables")
+
+    overview = list_tool.invoke({})
+
+    assert "| schema | name | type | columns | rows | primary key | foreign keys |" in overview
+    assert "| main | casts | table | 3 | 2 | id | station_id -> stations.id |" in overview
+    assert "| main | stations | table | 2 | 2 | id | - |" in overview
+    assert "| main | cast_depths | view | 3 | ? | - | - |" in overview

@@ -7,7 +7,7 @@ The agent can now read a SQL server, copy results to local tabular files, and an
 
 ## Routing rule
 
-- When the user wants to list tables on a SQL server, call `list_sql_tables`.
+- When the user wants to understand a SQL database, start with `list_sql_tables`; it returns a compact overview of visible tables, views, schemas, row counts when available, primary keys, and foreign keys.
 - When the user wants to inspect a table quickly before exporting, call `preview_sql_table`.
 - When the user wants to copy a read-only SQL query into the local workspace, call `copy_sql_query_to_workspace`.
 - Never modify the SQL source.

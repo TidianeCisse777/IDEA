@@ -12,7 +12,7 @@ from urllib.parse import urlparse, unquote
 
 import pandas as pd
 from langchain_core.tools import tool
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from tools.public_url import download_url
 from tools.dataset_registry import dataset_variable_name, store_dataset
@@ -76,6 +76,145 @@ def _list_sql_tables(database_url: str) -> list[str]:
         return sorted(inspector.get_table_names())
     finally:
         _close_connection(conn)
+
+
+def _sqlite_database_overview(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT name, type
+        FROM sqlite_master
+        WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
+        ORDER BY type, name
+        """
+    ).fetchall()
+
+    overview: list[dict[str, object]] = []
+    for name, object_type in rows:
+        quoted = _quote_sql_identifier(name)
+        columns = conn.execute(f"PRAGMA table_info({quoted})").fetchall()
+        primary_key = [row[1] for row in columns if row[5]]
+        foreign_key_rows = conn.execute(f"PRAGMA foreign_key_list({quoted})").fetchall()
+        foreign_keys = [
+            f"{row[3]} -> {row[2]}.{row[4]}"
+            for row in foreign_key_rows
+            if row[3] and row[2] and row[4]
+        ]
+
+        row_count: int | str = "?"
+        if object_type == "table":
+            with contextlib.suppress(Exception):
+                row = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()
+                row_count = int(row[0] if row else 0)
+
+        overview.append(
+            {
+                "schema": "main",
+                "name": name,
+                "type": object_type,
+                "columns": len(columns),
+                "rows": row_count,
+                "primary_key": ", ".join(primary_key) if primary_key else "-",
+                "foreign_keys": "; ".join(foreign_keys) if foreign_keys else "-",
+            }
+        )
+
+    return overview
+
+
+def _sqlalchemy_database_overview(conn) -> list[dict[str, object]]:
+    inspector = inspect(conn)
+    schemas = [
+        schema
+        for schema in inspector.get_schema_names()
+        if schema not in {"information_schema", "pg_catalog"}
+    ]
+
+    overview: list[dict[str, object]] = []
+    for schema in sorted(schemas):
+        objects = [
+            (name, "table") for name in inspector.get_table_names(schema=schema)
+        ] + [
+            (name, "view") for name in inspector.get_view_names(schema=schema)
+        ]
+        for name, object_type in sorted(objects, key=lambda item: (item[1], item[0])):
+            columns = inspector.get_columns(name, schema=schema)
+            pk_constraint = inspector.get_pk_constraint(name, schema=schema) or {}
+            primary_key = pk_constraint.get("constrained_columns") or []
+            foreign_keys: list[str] = []
+            for fk in inspector.get_foreign_keys(name, schema=schema):
+                constrained = fk.get("constrained_columns") or []
+                referred = fk.get("referred_columns") or []
+                referred_schema = fk.get("referred_schema") or schema
+                referred_table = fk.get("referred_table")
+                for local_column, remote_column in zip(constrained, referred):
+                    if referred_table and remote_column:
+                        foreign_keys.append(
+                            f"{local_column} -> {referred_schema}.{referred_table}.{remote_column}"
+                        )
+
+            row_count: int | str = "?"
+            if object_type == "table":
+                qualified = _quote_sql_identifier(f"{schema}.{name}")
+                with contextlib.suppress(Exception):
+                    row = conn.execute(text(f"SELECT COUNT(*) FROM {qualified}")).fetchone()
+                    row_count = int(row[0] if row else 0)
+
+            overview.append(
+                {
+                    "schema": schema,
+                    "name": name,
+                    "type": object_type,
+                    "columns": len(columns),
+                    "rows": row_count,
+                    "primary_key": ", ".join(primary_key) if primary_key else "-",
+                    "foreign_keys": "; ".join(foreign_keys) if foreign_keys else "-",
+                }
+            )
+
+    return overview
+
+
+def _database_overview(database_url: str) -> list[dict[str, object]]:
+    """Retourne une vue compacte des tables, vues, clés et volumes visibles."""
+    conn = _open_readonly_connection(database_url)
+    try:
+        if isinstance(conn, sqlite3.Connection):
+            return _sqlite_database_overview(conn)
+        return _sqlalchemy_database_overview(conn)
+    finally:
+        _close_connection(conn)
+
+
+def _markdown_cell(value: object) -> str:
+    return str(value).replace("|", "\\|")
+
+
+def _format_database_overview(overview: list[dict[str, object]]) -> str:
+    if not overview:
+        return "Aucune table ou vue SQL trouvée."
+
+    lines = [
+        "| schema | name | type | columns | rows | primary key | foreign keys |",
+        "|---|---|---|---:|---:|---|---|",
+    ]
+    for item in overview:
+        lines.append(
+            "| "
+            + " | ".join(
+                _markdown_cell(item[column])
+                for column in (
+                    "schema",
+                    "name",
+                    "type",
+                    "columns",
+                    "rows",
+                    "primary_key",
+                    "foreign_keys",
+                )
+            )
+            + " |"
+        )
+    return "\n".join(lines)
 
 
 def _quote_sql_identifier(identifier: str) -> str:
@@ -279,14 +418,12 @@ def make_sql_tools(thread_id: str) -> list:
 
     @tool
     def list_sql_tables() -> str:
-        """Liste les tables visibles sur le serveur SQL en lecture seule."""
+        """Cartographie les tables et vues visibles sur le serveur SQL en lecture seule."""
         try:
-            tables = _list_sql_tables(database_url)
+            overview = _database_overview(database_url)
         except Exception as exc:
             return f"Erreur : {type(exc).__name__}: {exc}"
-        if not tables:
-            return "Aucune table SQL trouvée."
-        return "\n".join(f"- {table}" for table in tables)
+        return _format_database_overview(overview)
 
     @tool("preview_sql_table")
     def _preview_sql_table(table_name: str, limit: int = 10) -> str:

@@ -156,7 +156,7 @@ Récupère un skill Markdown depuis LangSmith Hub (ou `agents/skills/*.md` en fa
 
 ### `list_sql_tables() -> str`
 
-Liste les tables accessibles par `DATABASE_URL`.
+Cartographie les tables et vues accessibles par `DATABASE_URL` : schéma, nom, type, nombre de colonnes, nombre de lignes quand disponible, clé primaire et clés étrangères.
 
 ### `preview_sql_table(table_name: str, limit: int = 10) -> str`
 
