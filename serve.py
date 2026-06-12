@@ -183,8 +183,10 @@ async def lifespan(app: FastAPI):
             async with AsyncPostgresStore.from_conn_string(pg_dsn) as pg_store:
                 await pg_store.setup()
                 _agent_module._store = pg_store
+                from langchain_openai import ChatOpenAI as _ChatOpenAI
+                _mem_llm = _ChatOpenAI(model=os.getenv("LLM_MODEL", "gpt-4o-mini"), max_retries=1)
                 _agent_module._memory_manager = create_memory_store_manager(
-                    os.getenv("LLM_MODEL", "openai/gpt-4o-mini"),
+                    _mem_llm,
                     store=pg_store,
                     namespace=("memories", "{langgraph_user_id}"),
                     enable_inserts=True,
