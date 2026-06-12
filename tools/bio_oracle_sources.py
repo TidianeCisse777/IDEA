@@ -163,4 +163,85 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         except Exception as exc:
             return f"Erreur lors du couplage Bio-ORACLE : {exc}"
 
-    return [list_bio_oracle_datasets, preview_bio_oracle_point, query_bio_oracle, couple_zooplankton_bio_oracle]
+    @tool
+    def query_bio_oracle_zones(
+        zones: list[str],
+        variable: str,
+        scenario: str,
+        depth_layer: str = "surface",
+    ) -> str:
+        """Extract Bio-ORACLE projected values for one or more named geographic zones.
+
+        Use this tool whenever the user asks for Bio-ORACLE data by zone name
+        (e.g. "température Bio-ORACLE dans Hawke Channel et mer du Labrador",
+        "projection SSP5-8.5 par zone", "compare les zones").
+
+        Each zone is sampled at its geographic centre. Results are returned as a
+        markdown table — one row per zone — ready to compare with CTD observations.
+
+        Parameters
+        ----------
+        zones : list of zone names — any name accepted by get_zone_filter:
+            "Hawke Channel", "Mer du Labrador", "Baie d'Hudson",
+            "Détroit d'Hudson", "Baie d'Ungava", "Baie de Baffin",
+            "Mer de Beaufort", "Arctique", "Nunavik", "Baie de James"
+        variable : one of: "temperature", "salinity", "oxygen",
+                   "chlorophyll", "nitrate"  — do NOT use ERDDAP internal names
+        scenario : "SSP5-8.5", "SSP1-2.6", "SSP2-4.5", or "baseline"
+        depth_layer : "surface" (default), "mean", "max", or "min"
+        """
+        from tools.geo_tools import get_zone_filter
+
+        rows_out = []
+        errors = []
+        for zone_name in zones:
+            zf = get_zone_filter.invoke({"zone_name": zone_name})
+            if "error" in zf:
+                errors.append(f"{zone_name}: {zf['error']}")
+                continue
+            lat_c = (zf["lat_min"] + zf["lat_max"]) / 2
+            lon_c = (zf["lon_min"] + zf["lon_max"]) / 2
+            try:
+                preview = _preview_bio_oracle_point({
+                    "variable": variable,
+                    "scenario": scenario,
+                    "depth_layer": depth_layer,
+                    "latitude": lat_c,
+                    "longitude": lon_c,
+                })
+                val_key = preview.get("variable", "")
+                val = preview["rows"][0].get(val_key) if preview.get("rows") else None
+                rows_out.append({
+                    "zone": zf["zone"],
+                    "lat_centre": round(lat_c, 2),
+                    "lon_centre": round(lon_c, 2),
+                    "variable": variable,
+                    "scenario": scenario,
+                    "depth_layer": depth_layer,
+                    "dataset": preview["dataset_id"],
+                    f"{variable}_projected": round(float(val), 4) if val is not None else None,
+                })
+            except Exception as exc:
+                errors.append(f"{zone_name}: {exc}")
+
+        if not rows_out:
+            return "Aucune valeur extraite. Erreurs : " + "; ".join(errors)
+
+        df_out = pd.DataFrame(rows_out)
+        variable_name = dataset_variable_name(
+            "bio_oracle_zones", variable, scenario, depth_layer
+        )
+        store_dataset(
+            _store, thread_id, df_out,
+            variable_name=variable_name,
+            meta={"source": "bio_oracle_zones", "variable": variable,
+                  "scenario": scenario, "depth_layer": depth_layer},
+            latest_alias="bio_oracle",
+        )
+        out = df_out.to_markdown(index=False)
+        if errors:
+            out += "\n\nAvertissements : " + "; ".join(errors)
+        return out
+
+    return [list_bio_oracle_datasets, preview_bio_oracle_point, query_bio_oracle,
+            couple_zooplankton_bio_oracle, query_bio_oracle_zones]
