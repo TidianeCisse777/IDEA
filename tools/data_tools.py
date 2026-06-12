@@ -49,7 +49,14 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     @tool
     def load_file(path: str) -> str:
         """Charge un fichier de données (CSV, TSV, Excel, JSON, Parquet) pour l'analyser.
+
         Utilise cet outil quand l'utilisateur mentionne un fichier ou fournit un chemin.
+        Pour CSV/TSV, l'encodage est détecté automatiquement (utf-8, latin-1, cp1252…).
+
+        Si le chargement échoue :
+        - Vérifie que le chemin est correct (utilise le chemin exact fourni dans le contexte).
+        - Essaie une variante du chemin si le fichier est dans /tmp/webui_uploads/.
+        - Ne signale l'erreur à l'utilisateur qu'après avoir épuisé ces options.
         """
         try:
             df, meta = _load_file(path)
@@ -62,8 +69,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
         hint = _uvp_skill_hint(col_names)
 
+        enc_note = f" (encodage : {meta['encoding']})" if meta.get("encoding") else ""
         return (
-            f"Fichier chargé : {meta['path']}\n"
+            f"Fichier chargé : {meta['path']}{enc_note}\n"
             f"{meta['n_rows']} lignes × {meta['n_cols']} colonnes\n"
             f"Colonnes : {cols}"
             + (f"\n\n{hint}" if hint else "")
