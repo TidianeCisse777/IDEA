@@ -85,6 +85,8 @@ python serve.py                          # serveur FastAPI seul
 | `MAX_TOOL_RESULT_CHARS` | Défaut 8000 — au-delà, troncature des résultats de tools |
 | `CHECKPOINTS_DB` | Chemin SQLite des checkpoints LangGraph (`data/checkpoints.sqlite`) |
 | `DATABASE_URL` | Workspace SQL lecture seule (SQLAlchemy) — optionnel |
+| `SESSION_STORE_DATABASE_URL` | PostgreSQL pour les métadonnées de session (ex. `postgresql://copepod:pass@postgres:5432/copepod_sessions`). Si absent → fallback fichiers locaux. |
+| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL (défaut `copepod_dev` en dev). À surcharger en prod. |
 | `OPENWEBUI_URL` | Backend Open WebUI pour le feedback polling (`http://open-webui:8080` en compose) |
 
 `.env` contient des credentials EcoTaxa/EcoPart/SQL — jamais commité, jamais affiché.

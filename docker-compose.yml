@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: copepod_postgres
+    environment:
+      POSTGRES_DB: copepod_sessions
+      POSTGRES_USER: copepod
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-copepod_dev}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copepod -d copepod_sessions"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   copepod-agent:
     platform: linux/amd64
     build:
@@ -12,6 +30,7 @@ services:
       - .env
     environment:
       - OPENWEBUI_URL=http://open-webui:8080
+      - SESSION_STORE_DATABASE_URL=postgresql://copepod:${POSTGRES_PASSWORD:-copepod_dev}@postgres:5432/copepod_sessions
     command: uvicorn serve:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
@@ -20,6 +39,9 @@ services:
       - copepod_static:/app/static
       - copepod_models:/app/models
       - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/"]
@@ -72,3 +94,4 @@ volumes:
   copepod_static:
   copepod_models:
   open_webui_data:
+  postgres_data:

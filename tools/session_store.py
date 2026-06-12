@@ -101,4 +101,12 @@ class SessionStore:
         return thread_id in self._store or self._data_path(thread_id).exists()
 
 
-default_store = SessionStore()
+def _make_default_store() -> "SessionStore":
+    dsn = os.getenv("SESSION_STORE_DATABASE_URL")
+    if dsn:
+        from tools.session_store_pg import SessionStorePG  # noqa: PLC0415
+        return SessionStorePG(dsn)  # type: ignore[return-value]
+    return SessionStore()
+
+
+default_store = _make_default_store()
