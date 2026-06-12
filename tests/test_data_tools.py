@@ -69,6 +69,35 @@ def test_run_pandas_dataframe_returns_markdown(tsv_path):
     assert "lignes" in result
 
 
+def test_run_pandas_exposes_multiple_ecopart_projects():
+    thread_id = "thread-run-pandas-multiple-ecopart"
+    keys = [
+        thread_id,
+        f"{thread_id}:ecopart",
+        f"{thread_id}:ecopart:105",
+        f"{thread_id}:ecopart:42",
+    ]
+    for key in keys:
+        _store.clear(key)
+
+    df_105 = pd.DataFrame({"value": [1, 2, 3]})
+    df_42 = pd.DataFrame({"value": [4, 5]})
+    _store.set(thread_id, df_42, {"source": "ecopart:42"})
+    _store.set(f"{thread_id}:ecopart", df_42, {"source": "ecopart:42"})
+    _store.set(f"{thread_id}:ecopart:105", df_105, {"source": "ecopart:105"})
+    _store.set(f"{thread_id}:ecopart:42", df_42, {"source": "ecopart:42"})
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({
+        "code": "result = (len(df_ecopart_105), len(df_ecopart_42), len(df_ecopart))"
+    })
+
+    assert result == "(3, 2, 2)"
+
+    for key in keys:
+        _store.clear(key)
+
+
 # --- Comportement 3 : erreur pandas ---
 
 def test_run_pandas_error_shows_columns(tsv_path):
@@ -126,6 +155,39 @@ graph_explanation = (
     assert "/graphs/" in result
     assert "Lecture rapide" in result
     assert "courbe en ligne" in result
+
+
+def test_run_graph_exposes_multiple_ecopart_projects():
+    thread_id = "thread-run-graph-multiple-ecopart"
+    keys = [
+        thread_id,
+        f"{thread_id}:ecopart",
+        f"{thread_id}:ecopart:105",
+        f"{thread_id}:ecopart:42",
+    ]
+    for key in keys:
+        _store.clear(key)
+
+    df_105 = pd.DataFrame({"value": [1, 2, 3]})
+    df_42 = pd.DataFrame({"value": [4, 5]})
+    _store.set(thread_id, df_42, {"source": "ecopart:42"})
+    _store.set(f"{thread_id}:ecopart", df_42, {"source": "ecopart:42"})
+    _store.set(f"{thread_id}:ecopart:105", df_105, {"source": "ecopart:105"})
+    _store.set(f"{thread_id}:ecopart:42", df_42, {"source": "ecopart:42"})
+
+    run_graph = next(t for t in make_tools(thread_id) if t.name == "run_graph")
+    result = run_graph.invoke({
+        "code": (
+            "fig, ax = plt.subplots()\n"
+            "ax.bar(['105', '42'], [len(df_ecopart_105), len(df_ecopart_42)])"
+        )
+    })
+
+    assert "/graphs/" in result
+    assert "NameError" not in result
+
+    for key in keys:
+        _store.clear(key)
 
 
 # --- Détection UVP : _uvp_skill_hint ---

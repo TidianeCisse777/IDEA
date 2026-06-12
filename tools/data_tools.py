@@ -37,6 +37,31 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
     return ""
 
 
+def _dataframe_vars(
+    store: SessionStore,
+    thread_id: str,
+    df: pd.DataFrame,
+) -> dict[str, Any]:
+    """Build the DataFrame namespace shared by pandas and graph tools."""
+    local_vars: dict[str, Any] = {"df": df, "pd": pd}
+    for source, var in [
+        ("ecotaxa", "df_ecotaxa"),
+        ("ctd", "df_ctd"),
+        ("ecopart", "df_ecopart"),
+        ("bio_oracle", "df_bio_oracle"),
+    ]:
+        named = store.get(f"{thread_id}:{source}")
+        if named and named.get("df") is not None:
+            local_vars[var] = named["df"]
+
+    for key in store.keys(f"{thread_id}:ecopart:"):
+        project_id = key.rsplit(":", 1)[-1]
+        named = store.get(key)
+        if project_id.isdigit() and named and named.get("df") is not None:
+            local_vars[f"df_ecopart_{project_id}"] = named["df"]
+    return local_vars
+
+
 def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     """Crée les tools data pour un thread donné.
 
@@ -86,6 +111,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - `df_ecotaxa`   : données EcoTaxa (après query_ecotaxa)
         - `df_ctd`       : données CTD Amundsen (après query_amundsen_ctd)
         - `df_ecopart`   : données EcoPart (après query_ecopart)
+        - `df_ecopart_105`: projet EcoPart 105 (même règle pour chaque ID chargé)
         - `df_bio_oracle`: données Bio-ORACLE (après query_bio_oracle)
 
         Assigne le résultat à la variable `result`.
@@ -103,11 +129,8 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             import matplotlib.pyplot as plt
             plt.close("all")
 
-            local_vars: dict[str, Any] = {"df": df, "pd": pd, "plt": plt}
-            for source, var in [("ecotaxa", "df_ecotaxa"), ("ctd", "df_ctd"), ("ecopart", "df_ecopart"), ("bio_oracle", "df_bio_oracle")]:
-                named = _store.get(f"{thread_id}:{source}")
-                if named and named.get("df") is not None:
-                    local_vars[var] = named["df"]
+            local_vars = _dataframe_vars(_store, thread_id, df)
+            local_vars["plt"] = plt
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
@@ -138,8 +161,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         Use this tool ONLY for visualization — when you need to produce a chart or map.
         For data analysis (numbers, tables), use run_pandas instead.
 
-        The DataFrame is available as `df`. Write complete matplotlib code using the
-        graph_writer skill template. Do NOT call plt.show() or plt.savefig().
+        DataFrames are available as `df`, named source aliases such as
+        `df_ecopart`, and project-specific variables such as `df_ecopart_105`.
+        Write complete matplotlib code using the graph_writer skill template.
+        Do NOT call plt.show() or plt.savefig().
 
         The return value is the graph image — include it verbatim in your response.
         """
@@ -155,11 +180,8 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             import matplotlib.pyplot as plt
             plt.close("all")
 
-            local_vars: dict[str, Any] = {"df": df, "pd": pd, "plt": plt}
-            for source, var in [("ecotaxa", "df_ecotaxa"), ("ctd", "df_ctd"), ("ecopart", "df_ecopart"), ("bio_oracle", "df_bio_oracle")]:
-                named = _store.get(f"{thread_id}:{source}")
-                if named and named.get("df") is not None:
-                    local_vars[var] = named["df"]
+            local_vars = _dataframe_vars(_store, thread_id, df)
+            local_vars["plt"] = plt
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
