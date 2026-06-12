@@ -69,6 +69,28 @@ def test_load_file_preserves_distinct_files_with_named_variables(tmp_path):
     assert "df_file_profiles" in second_result
 
 
+def test_load_file_exposes_ogsl_alias_for_derived_ogsl_csv(tmp_path):
+    ogsl_path = tmp_path / "ogsl_iml4.csv"
+    pd.DataFrame({
+        "longitude": [-68.5],
+        "latitude": [48.7],
+        "time": ["2024-06-01T00:00:00Z"],
+        "cruiseID": ["Mingan2024"],
+        "stationID": ["IML4"],
+        "TE90": [4.2],
+    }).to_csv(ogsl_path, index=False)
+
+    thread_id = "thread-ogsl-file"
+    load_file_tool = next(t for t in make_tools(thread_id) if t.name == "load_file")
+    load_file_tool.invoke({"path": str(ogsl_path)})
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "result = list(df_ogsl.columns)"})
+
+    assert "stationID" in result
+    assert "TE90" in result
+
+
 # --- Comportement 2 : run_pandas ---
 
 def test_run_pandas_scalar(tsv_path):

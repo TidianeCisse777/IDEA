@@ -363,6 +363,13 @@ def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
     stable = default_store.get("thread-sql:dataset:df_sql_station_summary")
     assert stable["df"].shape == (2, 2)
     assert "df_sql_station_summary" in copied
+    assert "df_sql" in copied
+    assert default_store.get("thread-sql:sql")["df"].shape == (2, 2)
+
+    from tools.data_tools import make_tools as make_data_tools
+
+    run_pandas = next(t for t in make_data_tools("thread-sql") if t.name == "run_pandas")
+    assert run_pandas.invoke({"code": "result = len(df_sql)"}) == "2"
 
 
 def test_list_sql_tables_tool_returns_database_overview(tmp_path, monkeypatch):

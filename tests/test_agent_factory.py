@@ -120,6 +120,17 @@ def test_system_prompt_mentions_graph_explanation():
     assert "lecture rapide" in prompt
 
 
+def test_system_prompt_forbids_bare_df_for_multi_source_graphs():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "multi-source" in prompt
+    assert "never use bare `df`" in prompt
+    assert "df_ecotaxa_ecopart" in prompt
+    assert "df_bio_oracle" in prompt
+    assert "plot_df" in prompt
+
+
 def test_system_prompt_routes_sql_workspace_queries():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

@@ -55,6 +55,7 @@ plt.tight_layout()
 - For horizontal bar charts when there are many categories (> 10): use `ax.barh()`
 - Never call `plt.savefig()` — the system captures the figure automatically
 - After the figure code, set a string variable named `graph_explanation` with a short "Lecture rapide" note: what the graph shows, why the chosen encoding fits the question, and the main reading cue. Keep it concise and factual.
+- For multi-source graphs, never plot directly from bare `df`. `df` is only the latest active table. First build `plot_df` explicitly from named source DataFrames such as `df_ecotaxa_ecopart`, `df_ecotaxa_ecopart_105`, `df_ctd`, `df_bio_oracle`, `df_ogsl`, or `df_sql`.
 
 ## Geographic maps
 

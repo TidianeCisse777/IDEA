@@ -146,14 +146,22 @@ def make_ecopart_tools(thread_id: str) -> list:
         source = "join:ecotaxa+ecopart"
         if selected_project_id is not None:
             source = f"{source}:{selected_project_id}"
-        _store.set(
+        joined_variable_name = (
+            dataset_variable_name("ecotaxa_ecopart", selected_project_id)
+            if selected_project_id is not None
+            else dataset_variable_name("ecotaxa_ecopart")
+        )
+        store_dataset(
+            _store,
             thread_id,
             merged,
-            {
+            variable_name=joined_variable_name,
+            meta={
                 "source": source,
                 "ecopart_project_id": selected_project_id,
                 "n_rows": len(merged),
             },
+            latest_alias="ecotaxa_ecopart",
         )
         project_note = (
             f" avec EcoPart {selected_project_id}" if selected_project_id is not None else ""
@@ -161,7 +169,8 @@ def make_ecopart_tools(thread_id: str) -> list:
         return (
             f"Jointure terminée{project_note} — {len(merged)} lignes, "
             f"{len(merged.columns)} colonnes.\n"
-            f"Données en session — appelle run_pandas directement pour analyser."
+            f"Données disponibles dans `{joined_variable_name}` et "
+            f"`df_ecotaxa_ecopart` — appelle run_pandas directement pour analyser."
         )
 
     return [list_ecopart_samples, preview_ecopart_sample, query_ecopart, join_ecotaxa_ecopart]

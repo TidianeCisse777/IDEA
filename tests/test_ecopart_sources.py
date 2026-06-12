@@ -215,9 +215,77 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert _store.has("thread-join")
     merged = _store.get("thread-join")["df"]
     assert "obj_orig_id" in merged.columns
-    assert "temperature" in merged.columns
+    assert "ecopart_temperature" in merged.columns
     assert len(merged) == 3
     assert "3 lignes" in result
+
+
+def test_join_ecotaxa_ecopart_preserves_named_join_after_later_dataset_load():
+    import pandas as pd
+    from tools.dataset_registry import store_dataset
+    from tools.data_tools import make_tools
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-join-then-bio-oracle"
+    for key in [
+        thread_id,
+        f"{thread_id}:ecotaxa",
+        f"{thread_id}:ecopart",
+        f"{thread_id}:ecotaxa_ecopart",
+        f"{thread_id}:dataset:df_ecotaxa_ecopart_105",
+        f"{thread_id}:dataset:df_bio_oracle_zones_temperature_ssp5_8_5_surface",
+    ]:
+        _store.clear(key)
+
+    df_ecotaxa = pd.DataFrame({
+        "obj_orig_id": ["ips_007_1", "ips_008_1"],
+        "object_annotation_category": ["Copepoda", "Copepoda"],
+    })
+    df_ecopart = pd.DataFrame({
+        "Profile": ["ips_007", "ips_008"],
+        "Sampled volume [L]": [218.835, 160.671],
+    })
+    _store.set(f"{thread_id}:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
+    _store.set(
+        f"{thread_id}:ecopart",
+        df_ecopart,
+        {"source": "ecopart:105", "project_id": 105},
+    )
+    _store.set(
+        f"{thread_id}:ecopart:105",
+        df_ecopart,
+        {"source": "ecopart:105", "project_id": 105},
+    )
+
+    join_tool = next(
+        t for t in make_ecopart_tools(thread_id) if t.name == "join_ecotaxa_ecopart"
+    )
+    result = join_tool.invoke({"project_id": 105})
+    assert "df_ecotaxa_ecopart_105" in result
+
+    store_dataset(
+        _store,
+        thread_id,
+        pd.DataFrame({"zone": ["Arctique"], "temperature_projected": [7.9085]}),
+        variable_name="df_bio_oracle_zones_temperature_ssp5_8_5_surface",
+        meta={"source": "bio_oracle_zones"},
+        latest_alias="bio_oracle",
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    output = run_pandas.invoke({
+        "code": (
+            "result = (list(df.columns), "
+            "list(df_ecotaxa_ecopart.columns), "
+            "list(df_ecotaxa_ecopart_105.columns), "
+            "list(df_bio_oracle.columns))"
+        )
+    })
+
+    assert "temperature_projected" in output
+    assert "object_annotation_category" in output
+    assert "ecopart_Sampled volume [L]" in output
 
 
 def test_join_ecotaxa_ecopart_selects_explicit_project():
@@ -254,7 +322,7 @@ def test_join_ecotaxa_ecopart_selects_explicit_project():
     result = join_tool.invoke({"project_id": 105})
 
     joined = _store.get(thread_id)
-    assert joined["df"]["project_value"].iloc[0] == 105
+    assert joined["df"]["ecopart_project_value"].iloc[0] == 105
     assert joined["meta"]["source"] == "join:ecotaxa+ecopart:105"
     assert "105" in result
 
@@ -285,7 +353,7 @@ def test_join_ecotaxa_ecopart_defaults_to_latest_project():
     )
     result = join_tool.invoke({})
 
-    assert _store.get(thread_id)["df"]["project_value"].iloc[0] == 42
+    assert _store.get(thread_id)["df"]["ecopart_project_value"].iloc[0] == 42
     assert "42" in result
 
 

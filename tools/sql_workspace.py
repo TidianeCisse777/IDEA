@@ -595,10 +595,11 @@ def make_sql_tools(thread_id: str) -> list:
                 dataframe,
                 variable_name=variable_name,
                 meta={"source": "sql_workspace", "n_rows": len(dataframe), "path": str(output_path)},
+                latest_alias="sql",
             )
             return (
                 f"Copie SQL créée — {len(dataframe)} lignes, {len(dataframe.columns)} colonnes.\n"
-                f"Données disponibles dans `{variable_name}`.\n"
+                f"Données disponibles dans `{variable_name}` et `df_sql`.\n"
                 f"Télécharger : {download_url(output_path.name)}"
             )
         except Exception as exc:

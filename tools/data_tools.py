@@ -38,6 +38,18 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
     return ""
 
 
+def _source_alias_for_loaded_file(path: str, col_names: list[str]) -> str | None:
+    """Return a stable latest alias for known uploaded/derived source files."""
+    lower_path = str(path).lower()
+    col_set = set(col_names)
+    if "ogsl" in lower_path or (
+        {"cruiseID", "stationID"} & col_set
+        and {"TE90", "PSAL", "OXYM", "longitude", "latitude"} & col_set
+    ):
+        return "ogsl"
+    return None
+
+
 def _dataframe_vars(
     store: SessionStore,
     thread_id: str,
@@ -49,7 +61,10 @@ def _dataframe_vars(
         ("ecotaxa", "df_ecotaxa"),
         ("ctd", "df_ctd"),
         ("ecopart", "df_ecopart"),
+        ("ecotaxa_ecopart", "df_ecotaxa_ecopart"),
         ("bio_oracle", "df_bio_oracle"),
+        ("ogsl", "df_ogsl"),
+        ("sql", "df_sql"),
     ]:
         named = store.get(f"{thread_id}:{source}")
         if named and named.get("df") is not None:
@@ -96,14 +111,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             return f"Erreur : {e}"
 
         variable_name = dataset_variable_name("file", Path(path).stem)
+        col_names = [c["name"] for c in meta["columns"]]
+        source_alias = _source_alias_for_loaded_file(meta["path"], col_names)
         store_dataset(
             _store,
             thread_id,
             df,
             variable_name=variable_name,
             meta={**meta, "source": f"file:{meta['path']}"},
+            latest_alias=source_alias,
         )
-        col_names = [c["name"] for c in meta["columns"]]
         cols = ", ".join(col_names)
 
         hint = _uvp_skill_hint(col_names)
@@ -126,8 +143,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - `df_ecotaxa`   : données EcoTaxa (après query_ecotaxa)
         - `df_ctd`       : données CTD Amundsen (après query_amundsen_ctd)
         - `df_ecopart`   : données EcoPart (après query_ecopart)
+        - `df_ecotaxa_ecopart`: dernière jointure EcoTaxa + EcoPart
         - `df_ecopart_105`: projet EcoPart 105 (même règle pour chaque ID chargé)
         - `df_bio_oracle`: données Bio-ORACLE (après query_bio_oracle)
+        - `df_ogsl`      : dernier fichier OGSL chargé ou dérivé
+        - `df_sql`       : dernière copie SQL matérialisée
 
         Assigne le résultat à la variable `result`.
         Pour une jointure : result = df_ecotaxa.merge(df_ctd, on='station_id', how='left')
@@ -181,7 +201,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         For data analysis (numbers, tables), use run_pandas instead.
 
         DataFrames are available as `df`, named source aliases such as
-        `df_ecopart`, and project-specific variables such as `df_ecopart_105`.
+        `df_ecopart`, `df_ctd`, `df_bio_oracle`, `df_ogsl`, `df_sql`,
+        joined source aliases such as `df_ecotaxa_ecopart`, and
+        project-specific variables such as `df_ecopart_105`.
         Write complete matplotlib code using the graph_writer skill template.
         Do NOT call plt.show() or plt.savefig().
 
