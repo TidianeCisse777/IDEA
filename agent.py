@@ -32,7 +32,9 @@ _CHECKPOINTS_DB.parent.mkdir(parents=True, exist_ok=True)
 
 # Default MemorySaver — overridden at startup by serve.py lifespan via AsyncSqliteSaver
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.store.memory import InMemoryStore
 _checkpointer = MemorySaver()
+_store = InMemoryStore()  # overridden by serve.py lifespan via AsyncPostgresStore
 
 
 def _load_system_prompt() -> str:
@@ -55,9 +57,9 @@ _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "40000"))
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 
 
-def _make_context_hook():
-    """pre_model_hook: truncate oversized tool results then trim message history."""
-    from langchain_core.messages import trim_messages, ToolMessage
+def _make_context_hook(user_id: str = "anonymous"):
+    """pre_model_hook: inject long-term memories + truncate tool results + trim history."""
+    from langchain_core.messages import trim_messages, ToolMessage, SystemMessage
 
     def _approx_tokens(messages) -> int:
         return sum(len(str(m.content)) for m in messages) // 4
@@ -72,8 +74,35 @@ def _make_context_hook():
                 out.append(m)
         return out
 
+    def _inject_memories(messages):
+        """Prepend stored long-term memories to the system message."""
+        try:
+            memories = _store.search((user_id, "memories"))
+            if not memories:
+                return messages
+            mem_text = "\n".join(
+                f"- {item.value.get('content', '')}"
+                for item in memories
+                if item.value.get("content")
+            )
+            if not mem_text:
+                return messages
+            memory_block = f"\n\n## Remembered preferences and corrections\n{mem_text}"
+            updated = []
+            injected = False
+            for m in messages:
+                if isinstance(m, SystemMessage) and not injected:
+                    updated.append(m.model_copy(update={"content": m.content + memory_block}))
+                    injected = True
+                else:
+                    updated.append(m)
+            return updated
+        except Exception:
+            return messages
+
     def trim_context(state: dict) -> dict:
         msgs = _truncate_tool_results(state["messages"])
+        msgs = _inject_memories(msgs)
         trimmed = trim_messages(
             msgs,
             max_tokens=_MAX_CONTEXT_TOKENS,
@@ -187,7 +216,7 @@ async def arepair_invalid_tool_history(agent, config: dict) -> bool:
         return False
 
 
-def make_agent(thread_id: str):
+def make_agent(thread_id: str, user_id: str = "anonymous"):
     """Crée un agent ReAct copépodes pour un thread donné."""
     llm = ChatOpenAI(
         model=os.getenv("LLM_MODEL", "openai/gpt-5.4-mini"),
@@ -210,8 +239,9 @@ def make_agent(thread_id: str):
         llm,
         tools,
         prompt=_SYSTEM_PROMPT,
-        pre_model_hook=_make_context_hook(),
+        pre_model_hook=_make_context_hook(user_id=user_id),
         checkpointer=_checkpointer,
+        store=_store,
     )
 
 

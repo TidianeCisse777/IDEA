@@ -163,26 +163,77 @@ async def _feedback_polling_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize async SQLite checkpointer + feedback polling loop."""
+    """Initialize checkpointer + long-term memory store + feedback polling."""
     import agent as _agent_module
-    try:
-        import aiosqlite
-        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-        async with AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTS_DB)) as cp:
-            _agent_module._checkpointer = cp
-            logger.info("SQLite checkpointer ready: %s", _CHECKPOINTS_DB)
+
+    async def _start_polling():
+        task = asyncio.create_task(_feedback_polling_loop())
+        try:
+            yield
+        finally:
+            task.cancel()
+
+    # ── PostgreSQL long-term memory store ──────────────────────────────────────
+    pg_dsn_raw = os.getenv("SESSION_STORE_DATABASE_URL", "")
+    pg_dsn = pg_dsn_raw.replace("postgresql+psycopg2://", "postgresql://")
+    if pg_dsn:
+        try:
+            from langgraph.store.postgres import AsyncPostgresStore
+            from langmem import create_memory_store_manager
+            async with AsyncPostgresStore.from_conn_string(pg_dsn) as pg_store:
+                await pg_store.setup()
+                _agent_module._store = pg_store
+                _agent_module._memory_manager = create_memory_store_manager(
+                    os.getenv("LLM_MODEL", "openai/gpt-4o-mini"),
+                    store=pg_store,
+                    namespace=("memories", "{langgraph_user_id}"),
+                    enable_inserts=True,
+                    enable_deletes=False,
+                )
+                logger.info("AsyncPostgresStore ready (long-term memory)")
+                # ── SQLite short-term checkpointer ──────────────────────────────
+                try:
+                    import aiosqlite
+                    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+                    async with AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTS_DB)) as cp:
+                        _agent_module._checkpointer = cp
+                        logger.info("SQLite checkpointer ready: %s", _CHECKPOINTS_DB)
+                        poll_task = asyncio.create_task(_feedback_polling_loop())
+                        try:
+                            yield
+                        finally:
+                            poll_task.cancel()
+                except Exception as e:
+                    logger.warning("AsyncSqliteSaver unavailable (%s) — using MemorySaver", e)
+                    poll_task = asyncio.create_task(_feedback_polling_loop())
+                    try:
+                        yield
+                    finally:
+                        poll_task.cancel()
+        except Exception as e:
+            logger.warning("AsyncPostgresStore unavailable (%s) — memory disabled", e)
+            # Fall through to SQLite-only path
+            pg_dsn = ""
+
+    if not pg_dsn:
+        try:
+            import aiosqlite
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+            async with AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTS_DB)) as cp:
+                _agent_module._checkpointer = cp
+                logger.info("SQLite checkpointer ready: %s", _CHECKPOINTS_DB)
+                poll_task = asyncio.create_task(_feedback_polling_loop())
+                try:
+                    yield
+                finally:
+                    poll_task.cancel()
+        except Exception as e:
+            logger.warning("AsyncSqliteSaver unavailable (%s) — using MemorySaver", e)
             poll_task = asyncio.create_task(_feedback_polling_loop())
             try:
                 yield
             finally:
                 poll_task.cancel()
-    except Exception as e:
-        logger.warning("AsyncSqliteSaver unavailable (%s) — using MemorySaver", e)
-        poll_task = asyncio.create_task(_feedback_polling_loop())
-        try:
-            yield
-        finally:
-            poll_task.cancel()
 
 
 app = FastAPI(title="Copepod Agent API", lifespan=lifespan)
@@ -574,6 +625,15 @@ async def _stream_agent_sse(
             logger.info("CACHE HIT thread=%s cached=%s (%.0f%% of prompt)",
                 thread_id, cached_tokens, 100 * cached_tokens / prompt_tokens if prompt_tokens else 0)
 
+        # ── long-term memory extraction (background, non-blocking) ────────────
+        import agent as _agent_module
+        mgr = getattr(_agent_module, "_memory_manager", None)
+        if mgr and last_user_text and final_text:
+            from langchain_core.messages import HumanMessage, AIMessage as _AI
+            mem_messages = [HumanMessage(content=last_user_text), _AI(content=final_text)]
+            mem_config = {"configurable": {"langgraph_user_id": user_id}}
+            asyncio.create_task(mgr.ainvoke({"messages": mem_messages}, config=mem_config))
+
     # Chunk final avec usage — Open WebUI l'affiche en bas du message
     stop_chunk = {
         "id": completion_id,
@@ -715,9 +775,9 @@ async def chat_completions(
         _known_threads.add(tid)
         default_store.clear(tid)
 
-    agent = make_agent(tid)
+    agent = make_agent(tid, user_id=user_id)
     config = {
-        "configurable": {"thread_id": tid},
+        "configurable": {"thread_id": tid, "langgraph_user_id": user_id},
         "metadata": {
             "conversation_key": conversation_key,
             "conversation_id": x_openwebui_chat_id or req.chat_id,
