@@ -36,3 +36,11 @@ def test_langsmith_sync_is_not_in_docker_build_workflow() -> None:
     workflow = load_workflow()
 
     assert set(workflow["jobs"]) == {"build"}
+
+
+def test_dockerfile_installs_weasyprint_native_dependencies() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+
+    assert "libpango-1.0-0" in dockerfile
+    assert "libpangoft2-1.0-0" in dockerfile
+    assert "libharfbuzz-subset0" in dockerfile

@@ -1,4 +1,7 @@
 """Tests TDD — export_deliverable tool + deliverable_writer skill."""
+import builtins
+import os
+
 import pytest
 from pathlib import Path
 from unittest.mock import patch
@@ -33,6 +36,46 @@ def test_export_deliverable_adds_extension(tmp_path, monkeypatch):
     from tools.deliverable_tool import export_deliverable
     result = export_deliverable.invoke({"content": "# Test", "filename": "mon_rapport"})
     assert "mon_rapport" in result
+
+
+def test_export_deliverable_configures_homebrew_library_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("DOWNLOADS_DIR", str(tmp_path))
+    monkeypatch.delenv("DYLD_FALLBACK_LIBRARY_PATH", raising=False)
+    monkeypatch.setattr("tools.deliverable_tool.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "tools.deliverable_tool._homebrew_library_dirs",
+        lambda: [Path("/opt/homebrew/lib")],
+    )
+
+    from tools.deliverable_tool import export_deliverable
+
+    export_deliverable.invoke({"content": "# Rapport", "filename": "homebrew_path"})
+
+    assert os.environ["DYLD_FALLBACK_LIBRARY_PATH"].split(os.pathsep)[0] == "/opt/homebrew/lib"
+
+
+def test_export_deliverable_falls_back_to_html_when_native_library_is_missing(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("DOWNLOADS_DIR", str(tmp_path))
+    from tools.deliverable_tool import export_deliverable
+
+    real_import = builtins.__import__
+
+    def fail_weasyprint_import(name, *args, **kwargs):
+        if name == "weasyprint":
+            raise OSError("cannot load library 'libgobject-2.0-0'")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=fail_weasyprint_import):
+        result = export_deliverable.invoke({
+            "content": "# Rapport de secours",
+            "filename": "rapport_fallback",
+        })
+
+    assert "HTML disponible" in result
+    assert (tmp_path / "rapport_fallback.html").exists()
 
 
 # --- Comportement 4 : skill deliverable_writer existe et est chargeable ---

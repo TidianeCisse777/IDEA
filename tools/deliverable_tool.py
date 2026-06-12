@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import uuid
 from pathlib import Path
 
@@ -62,6 +63,35 @@ ul, ol { margin: 0.5em 0; padding-left: 1.5em; }
 li { margin-bottom: 0.3em; }
 .metadata { color: #555; font-size: 10pt; margin-bottom: 2em; }
 """
+
+
+def _homebrew_library_dirs() -> list[Path]:
+    """Return common Homebrew library directories containing WeasyPrint deps."""
+    return [Path("/opt/homebrew/lib"), Path("/usr/local/lib")]
+
+
+def _configure_weasyprint_library_path() -> None:
+    """Make Homebrew native libraries visible before importing WeasyPrint."""
+    if sys.platform != "darwin":
+        return
+    available = [str(path) for path in _homebrew_library_dirs() if path.is_dir()]
+    if not available:
+        return
+    existing = [
+        path
+        for path in os.getenv("DYLD_FALLBACK_LIBRARY_PATH", "").split(os.pathsep)
+        if path
+    ]
+    os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = os.pathsep.join(
+        dict.fromkeys([*available, *existing])
+    )
+
+
+def _write_html_fallback(downloads: Path, safe: str, html: str) -> str:
+    html_path = downloads / f"{safe}.html"
+    html_path.write_text(html, encoding="utf-8")
+    base = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
+    return f"WeasyPrint non disponible — HTML disponible : {base}/downloads/{safe}.html"
 
 
 def _replace_graph_urls(markdown: str) -> str:
@@ -142,14 +172,11 @@ def export_deliverable(content: str, filename: str = "rapport") -> str:
     html = _markdown_to_html(content_local, title)
 
     try:
+        _configure_weasyprint_library_path()
         from weasyprint import HTML
         HTML(string=html, base_url=str(downloads)).write_pdf(str(pdf_path))
-    except ImportError:
-        # Fallback : exporte en HTML si WeasyPrint absent
-        html_path = downloads / f"{safe}.html"
-        html_path.write_text(html, encoding="utf-8")
-        base = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
-        return f"WeasyPrint non disponible — HTML disponible : {base}/downloads/{safe}.html"
+    except (ImportError, OSError):
+        return _write_html_fallback(downloads, safe, html)
 
     base = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
     return f"PDF généré : {base}/downloads/{safe}.pdf"
