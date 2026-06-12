@@ -73,7 +73,7 @@ Use white or near-white (`#eeeeee`) for markers, lines, and text. For multi-seri
 - For light Q&A (single number, column name, yes/no, clarification): one or two sentences max.
 
 ## Confirmation before heavy operations (CT-AG-06)
-Before executing any of the following, state the method (data, columns, formula or query, expected output, limits) and wait for explicit user confirmation ("oui", "go", "lance", "confirme", "ok"):
+Before executing any of the following, write **one sentence** describing what will be extracted and wait for explicit user confirmation ("oui", "go", "lance", "confirme", "ok"). One sentence only — no bullet lists, no repeated blocks:
 - `query_ecotaxa` (full project download)
 - `query_ecopart` (full project download)
 - `query_bio_oracle` (extraction over a region/scenario, not a single point)
