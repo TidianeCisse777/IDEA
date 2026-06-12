@@ -131,6 +131,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
         Assigne le résultat à la variable `result`.
         Pour une jointure : result = df_ecotaxa.merge(df_ctd, on='station_id', how='left')
+
+        IMPORTANT: each call to run_pandas is isolated — variables computed in a
+        previous call (e.g. `station_stats`, `delta_df`) are NOT available in the
+        next call. Always recompute or include all required logic in a single call.
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
