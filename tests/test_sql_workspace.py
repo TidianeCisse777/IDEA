@@ -66,7 +66,7 @@ def test_copy_sql_query_to_workspace_writes_tsv(tmp_path):
     workspace_dir = tmp_path / "workspace"
     output_path = copy_sql_query_to_workspace(
         database_url=f"sqlite:///{db_path}",
-        query="SELECT id, station FROM casts ORDER BY id",
+        query="SELECT id, station FROM casts ORDER BY id LIMIT 10",
         workspace_dir=workspace_dir,
         output_stem="casts_20260609_1015",
     )
@@ -78,6 +78,56 @@ def test_copy_sql_query_to_workspace_writes_tsv(tmp_path):
         "1\tA",
         "2\tB",
     ]
+
+
+def test_copy_sql_query_to_workspace_requires_explicit_limit(tmp_path):
+    import pytest
+
+    from tools.sql_workspace import copy_sql_query_to_workspace
+
+    db_path = tmp_path / "source.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE casts (id INTEGER PRIMARY KEY, station TEXT)")
+    conn.executemany(
+        "INSERT INTO casts (id, station) VALUES (?, ?)",
+        [(1, "A"), (2, "B")],
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(ValueError, match="LIMIT"):
+        copy_sql_query_to_workspace(
+            database_url=f"sqlite:///{db_path}",
+            query="SELECT id, station FROM casts ORDER BY id",
+            workspace_dir=tmp_path / "workspace",
+            output_stem="casts_no_limit",
+        )
+
+
+def test_copy_sql_query_to_workspace_rejects_result_over_row_cap(tmp_path, monkeypatch):
+    import pytest
+
+    from tools.sql_workspace import copy_sql_query_to_workspace
+
+    db_path = tmp_path / "source.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE casts (id INTEGER PRIMARY KEY, station TEXT)")
+    conn.executemany(
+        "INSERT INTO casts (id, station) VALUES (?, ?)",
+        [(1, "A"), (2, "B"), (3, "C")],
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("SQL_WORKSPACE_MAX_COPY_ROWS", "2")
+
+    with pytest.raises(ValueError, match="exceeds row cap"):
+        copy_sql_query_to_workspace(
+            database_url=f"sqlite:///{db_path}",
+            query="SELECT id, station FROM casts ORDER BY id LIMIT 3",
+            workspace_dir=tmp_path / "workspace",
+            output_stem="casts_over_cap",
+        )
 
 
 def test_preview_sql_table_returns_markdown_sample(tmp_path):
@@ -132,6 +182,73 @@ def test_preview_sql_table_reports_empty_table_schema(tmp_path):
     assert "Aucune ligne trouvée." in preview
 
 
+def test_preview_sql_table_accepts_sqlite_views(tmp_path):
+    from tools.sql_workspace import preview_sql_table
+
+    db_path = tmp_path / "source.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE casts (id INTEGER PRIMARY KEY, station TEXT, depth_m REAL)")
+    conn.executemany(
+        "INSERT INTO casts (id, station, depth_m) VALUES (?, ?, ?)",
+        [(1, "A", 10.0), (2, "B", 25.0)],
+    )
+    conn.execute(
+        """
+        CREATE VIEW deep_casts AS
+        SELECT id, station, depth_m
+        FROM casts
+        WHERE depth_m >= 20
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    preview = preview_sql_table(
+        database_url=f"sqlite:///{db_path}",
+        table_name="deep_casts",
+        limit=5,
+    )
+
+    assert "View `deep_casts`" in preview
+    assert "Row count: ?" in preview
+    assert "| column | type | nullable | pk |" in preview
+    assert "depth_m" in preview
+    preview_lines = preview.split("## Preview", 1)[1].splitlines()
+    assert any("B" in line and "25" in line for line in preview_lines)
+    assert not any(" A " in line and "10" in line for line in preview_lines)
+
+
+def test_preview_sql_table_supports_where_and_order_by(tmp_path):
+    from tools.sql_workspace import preview_sql_table
+
+    db_path = tmp_path / "source.sqlite"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE observations (id INTEGER PRIMARY KEY, depth_m REAL, copepod_count INTEGER)")
+    conn.executemany(
+        "INSERT INTO observations (id, depth_m, copepod_count) VALUES (?, ?, ?)",
+        [(1, 5.0, 42), (2, 50.0, 35), (3, 150.0, 12), (4, 10.0, 58)],
+    )
+    conn.commit()
+    conn.close()
+
+    preview = preview_sql_table(
+        database_url=f"sqlite:///{db_path}",
+        table_name="observations",
+        limit=2,
+        where="depth_m >= 10",
+        order_by="copepod_count DESC",
+    )
+
+    assert "Filter: depth_m >= 10" in preview
+    assert "Order by: copepod_count DESC" in preview
+    assert "4" in preview
+    assert "58" in preview
+    assert "2" in preview
+    assert "35" in preview
+    preview_lines = preview.split("## Preview", 1)[1].splitlines()
+    assert not any("150" in line and "12" in line for line in preview_lines)
+
+
 def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
     from tools.sql_workspace import make_sql_tools
     from tools.session_store import default_store
@@ -164,7 +281,7 @@ def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
     listed = list_tool.invoke({})
     previewed = preview_tool.invoke({"table_name": "casts", "limit": 1})
     copied = copy_tool.invoke({
-        "query": "SELECT id, station FROM casts ORDER BY id",
+        "query": "SELECT id, station FROM casts ORDER BY id LIMIT 10",
         "output_stem": "station_summary",
     })
 

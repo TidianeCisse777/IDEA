@@ -131,6 +131,38 @@ def test_system_prompt_routes_sql_workspace_queries():
     assert "sql_workspace_query" in prompt
 
 
+def test_system_prompt_routes_sql_workspace_joins_from_foreign_keys():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "join" in prompt
+    assert "foreign key" in prompt or "foreign keys" in prompt
+    assert "list_sql_tables" in prompt
+    assert "select" in prompt
+    assert "limit" in prompt
+    assert "copy_sql_query_to_workspace" in prompt
+
+
+def test_system_prompt_sql_join_planning_uses_columns_cardinality_and_retry():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "column" in prompt
+    assert "cardinality" in prompt or "row count" in prompt
+    assert "preview_sql_table" in prompt
+    assert "retry" in prompt
+    assert "schema" in prompt
+
+
+def test_system_prompt_sql_copy_requires_limit_and_mentions_row_cap():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "copy_sql_query_to_workspace" in prompt
+    assert "explicit `limit`" in prompt
+    assert "row cap" in prompt
+
+
 def test_system_prompt_routes_ecotaxa_project_discovery():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

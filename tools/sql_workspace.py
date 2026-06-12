@@ -19,6 +19,11 @@ from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.session_store import default_store as _store
 
 _SQL_DATABASE_URL_META_KEY = "sql_database_url"
+_FORBIDDEN_PREVIEW_CLAUSE_RE = re.compile(
+    r";|--|/\*|\*/|\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|MERGE|GRANT|REVOKE|COPY|VACUUM|ATTACH|DETACH|PRAGMA)\b",
+    re.IGNORECASE,
+)
+_DEFAULT_MAX_COPY_ROWS = 100_000
 
 def _sqlite_path_from_url(database_url: str) -> Path:
     parsed = urlparse(database_url)
@@ -232,7 +237,77 @@ def _quote_sql_identifier(identifier: str) -> str:
     return ".".join(quoted_parts)
 
 
-def _table_schema(database_url: str, table_name: str) -> list[dict[str, object]]:
+def _sql_object_info(database_url: str, object_name: str) -> dict[str, str]:
+    conn = _open_readonly_connection(database_url)
+    try:
+        if isinstance(conn, sqlite3.Connection):
+            row = conn.execute(
+                """
+                SELECT name, type
+                FROM sqlite_master
+                WHERE type IN ('table', 'view') AND name = ?
+                """,
+                (object_name,),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Unknown SQL table or view: {object_name}")
+            return {"schema": "main", "name": row[0], "type": row[1]}
+
+        parts = [part.strip() for part in object_name.split(".") if part.strip()]
+        if len(parts) > 2:
+            raise ValueError("table_name must be a simple SQL identifier or schema-qualified name.")
+
+        inspector = inspect(conn)
+        candidate_schemas = [parts[0]] if len(parts) == 2 else inspector.get_schema_names()
+        candidate_name = parts[-1]
+        for schema in sorted(candidate_schemas):
+            if schema in {"information_schema", "pg_catalog"}:
+                continue
+            if candidate_name in inspector.get_table_names(schema=schema):
+                return {"schema": schema, "name": candidate_name, "type": "table"}
+            if candidate_name in inspector.get_view_names(schema=schema):
+                return {"schema": schema, "name": candidate_name, "type": "view"}
+
+        raise ValueError(f"Unknown SQL table or view: {object_name}")
+    finally:
+        _close_connection(conn)
+
+
+def _safe_preview_clause(clause_name: str, clause: str | None) -> str:
+    clause = (clause or "").strip()
+    if not clause:
+        return ""
+    if _FORBIDDEN_PREVIEW_CLAUSE_RE.search(clause):
+        raise ValueError(f"{clause_name} contains unsupported SQL syntax.")
+    if clause_name == "where":
+        clause = re.sub(r"(?i)^\s*WHERE\s+", "", clause).strip()
+    if clause_name == "order_by":
+        clause = re.sub(r"(?i)^\s*ORDER\s+BY\s+", "", clause).strip()
+    if not clause:
+        raise ValueError(f"{clause_name} must not be empty.")
+    return clause
+
+
+def _query_has_explicit_limit(query: str) -> bool:
+    return bool(re.search(r"\bLIMIT\s+\d+\b", query or "", re.IGNORECASE))
+
+
+def _max_copy_rows() -> int:
+    raw_value = os.getenv("SQL_WORKSPACE_MAX_COPY_ROWS", str(_DEFAULT_MAX_COPY_ROWS)).strip()
+    try:
+        max_rows = int(raw_value)
+    except ValueError as exc:
+        raise ValueError("SQL_WORKSPACE_MAX_COPY_ROWS must be an integer.") from exc
+    if max_rows < 1:
+        raise ValueError("SQL_WORKSPACE_MAX_COPY_ROWS must be >= 1.")
+    return max_rows
+
+
+def _table_schema(
+    database_url: str,
+    table_name: str,
+    schema: str | None = None,
+) -> list[dict[str, object]]:
     conn = _open_readonly_connection(database_url)
     try:
         if isinstance(conn, sqlite3.Connection):
@@ -249,7 +324,7 @@ def _table_schema(database_url: str, table_name: str) -> list[dict[str, object]]
             ]
 
         inspector = inspect(conn)
-        columns = inspector.get_columns(table_name)
+        columns = inspector.get_columns(table_name, schema=schema)
         return [
             {
                 "column": column["name"],
@@ -263,7 +338,7 @@ def _table_schema(database_url: str, table_name: str) -> list[dict[str, object]]
         _close_connection(conn)
 
 
-def _table_row_count(database_url: str, table_name: str) -> int:
+def _table_row_count(database_url: str, table_name: str, schema: str | None = None) -> int:
     conn = _open_readonly_connection(database_url)
     try:
         if isinstance(conn, sqlite3.Connection):
@@ -271,8 +346,9 @@ def _table_row_count(database_url: str, table_name: str) -> int:
             row = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()
             return int(row[0] if row else 0)
 
-        quoted = _quote_sql_identifier(table_name)
-        row = conn.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()
+        identifier = f"{schema}.{table_name}" if schema else table_name
+        quoted = _quote_sql_identifier(identifier)
+        row = conn.execute(text(f"SELECT COUNT(*) FROM {quoted}")).fetchone()
         return int(row[0] if row else 0)
     finally:
         _close_connection(conn)
@@ -329,21 +405,38 @@ def preview_sql_table(
     database_url: str,
     table_name: str,
     limit: int = 10,
+    where: str | None = None,
+    order_by: str | None = None,
 ) -> str:
-    """Retourne un aperçu read-only d'une table SQL pour inspection rapide."""
+    """Retourne un aperçu read-only d'une table ou vue SQL pour inspection rapide."""
     if limit < 1:
         raise ValueError("limit must be >= 1.")
 
-    available_tables = set(_list_sql_tables(database_url))
-    if table_name not in available_tables:
-        raise ValueError(f"Unknown SQL table: {table_name}")
+    sql_object = _sql_object_info(database_url, table_name)
+    object_name = sql_object["name"]
+    object_schema = sql_object["schema"]
+    object_type = sql_object["type"]
+    where_clause = _safe_preview_clause("where", where)
+    order_by_clause = _safe_preview_clause("order_by", order_by)
 
-    total_rows = _table_row_count(database_url, table_name)
-    schema = _table_schema(database_url, table_name)
+    total_rows: int | str = "?"
+    if object_type == "table":
+        total_rows = _table_row_count(database_url, object_name, object_schema)
+    schema = _table_schema(database_url, object_name, object_schema)
 
     conn = _open_readonly_connection(database_url)
     try:
-        query = f"SELECT * FROM {_quote_sql_identifier(table_name)} LIMIT {int(limit)}"
+        identifier = (
+            object_name
+            if isinstance(conn, sqlite3.Connection)
+            else f"{object_schema}.{object_name}"
+        )
+        query = f"SELECT * FROM {_quote_sql_identifier(identifier)}"
+        if where_clause:
+            query = f"{query} WHERE {where_clause}"
+        if order_by_clause:
+            query = f"{query} ORDER BY {order_by_clause}"
+        query = f"{query} LIMIT {int(limit)}"
         dataframe = pd.read_sql_query(query, conn)
     finally:
         _close_connection(conn)
@@ -363,10 +456,19 @@ def preview_sql_table(
     else:
         schema_block = "Aucune colonne trouvée."
 
+    title = "View" if object_type == "view" else "Table"
+    preview_meta = ""
+    if where_clause:
+        preview_meta += f"Filter: {where_clause}\n"
+    if order_by_clause:
+        preview_meta += f"Order by: {order_by_clause}\n"
+    if preview_meta:
+        preview_meta += "\n"
     return (
-        f"Table `{table_name}`\n"
+        f"{title} `{table_name}`\n"
         f"Row count: {total_rows}\n"
         f"Preview limit: {limit}\n\n"
+        f"{preview_meta}"
         f"## Columns\n\n"
         f"{schema_block}\n\n"
         f"## Preview\n\n"
@@ -382,6 +484,9 @@ def copy_sql_query_to_workspace(
     output_stem: str,
 ) -> Path:
     """Exécute une requête SQL read-only et matérialise le résultat en TSV local."""
+    if not _query_has_explicit_limit(query):
+        raise ValueError("SQL copy queries must include an explicit LIMIT.")
+    max_rows = _max_copy_rows()
     workspace_path = Path(workspace_dir)
     workspace_path.mkdir(parents=True, exist_ok=True)
 
@@ -390,6 +495,12 @@ def copy_sql_query_to_workspace(
         df = pd.read_sql_query(query, conn)
     finally:
         _close_connection(conn)
+
+    if len(df) > max_rows:
+        raise ValueError(
+            f"SQL copy result has {len(df)} rows and exceeds row cap {max_rows}. "
+            "Add a smaller LIMIT or filter the query."
+        )
 
     output_path = workspace_path / f"{output_stem}.tsv"
     df.to_csv(output_path, sep="\t", index=False)
@@ -426,13 +537,20 @@ def make_sql_tools(thread_id: str) -> list:
         return _format_database_overview(overview)
 
     @tool("preview_sql_table")
-    def _preview_sql_table(table_name: str, limit: int = 10) -> str:
-        """Aperçu rapide et read-only d'une table SQL avec les premières lignes."""
+    def _preview_sql_table(
+        table_name: str,
+        limit: int = 10,
+        where: str | None = None,
+        order_by: str | None = None,
+    ) -> str:
+        """Aperçu read-only d'une table ou vue SQL avec filtre WHERE et tri ORDER BY optionnels."""
         try:
             preview = preview_sql_table(
                 database_url=database_url,
                 table_name=table_name,
                 limit=limit,
+                where=where,
+                order_by=order_by,
             )
         except Exception as exc:
             return f"Erreur : {type(exc).__name__}: {exc}"

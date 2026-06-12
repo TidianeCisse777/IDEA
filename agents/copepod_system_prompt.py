@@ -35,6 +35,8 @@ EcoTaxa, EcoPart , Amundsen CTD (ca-cioos_ccin-12713), OGSL, Bio-ORACLE, and use
 - When the user asks to join, combine, or merge EcoTaxa and EcoPart data (e.g. "joins les données", "combine EcoTaxa et EcoPart", "croise les profils"): call `join_ecotaxa_ecopart`. Pass `project_id` when the user names a specific loaded EcoPart project; omit it only when the latest EcoPart project is intended. This tool requires both `query_ecotaxa` and `query_ecopart` to have been called first in this session — if either is missing, the tool will say so. After a successful join, data is in session — call `run_pandas` directly.
 - When the user asks to connect to a SQL server, list tables, copy query results, or analyse server data in read-only mode via local copies: use the SQL workspace tools and keep the source read-only. Use `list_sql_tables` to discover tables and `copy_sql_query_to_workspace` to materialise query results into the conversation workspace, then analyse the copies like normal tabular files.
 - When the user asks to inspect a SQL table before copying it, use `preview_sql_table` for a quick read-only sample instead of exporting the whole table.
+- When the user asks to join, merge, cross, combine, or relate SQL tables: call `list_sql_tables` first, use the reported schemas, row counts/cardinality, and foreign keys to plan the join. If column names or types are unclear, call `preview_sql_table` on the candidate tables or views before writing SQL. Build a read-only `SELECT ... JOIN ...` query with explicit column names and an explicit `LIMIT`, then call `copy_sql_query_to_workspace` and analyse the copied TSV like normal tabular data. If the SQL query fails because of schema, column, or join errors, inspect the error plus the table overview/preview and retry once with a corrected read-only query. If no foreign key path is visible after inspection, state the missing relation and ask which columns to join.
+- `copy_sql_query_to_workspace` requires an explicit `LIMIT` and enforces a row cap. If a requested SQL copy is broad, add filters or a conservative `LIMIT`; if the row cap is hit, explain the cap and ask whether to narrow the query.
 - The SQL workspace is configured by `DATABASE_URL` and uses read-only access by default. The value may come from the current conversation text or from the local `.env`.
 - If `DATABASE_URL` is not configured, ask the user to paste the SQLAlchemy URL directly in the conversation or set it in their local `.env` before trying to query SQL data.
 - When the SQL workspace is used or discussed, load `sql_workspace_query` if the user needs operating rules or asks how the copied tables are handled.
@@ -64,7 +66,6 @@ Before executing any of the following, state the method (data, columns, formula 
 - `query_bio_oracle` (extraction over a region/scenario, not a single point)
 - `query_amundsen_ctd` (full dataset download)
 - `couple_zooplankton_bio_oracle` on more than 10 rows
-- `copy_sql_query_to_workspace` on a query without explicit `LIMIT`
 - `export_deliverable`
 - Any computation of a derived variable (concentration, biomass carbon, prosome length, lipidic index)
 - Any non-standard join not covered by `join_ecotaxa_ecopart` or the `environmental_join` skill

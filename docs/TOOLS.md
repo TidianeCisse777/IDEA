@@ -158,13 +158,13 @@ Récupère un skill Markdown depuis LangSmith Hub (ou `agents/skills/*.md` en fa
 
 Cartographie les tables et vues accessibles par `DATABASE_URL` : schéma, nom, type, nombre de colonnes, nombre de lignes quand disponible, clé primaire et clés étrangères.
 
-### `preview_sql_table(table_name: str, limit: int = 10) -> str`
+### `preview_sql_table(table_name: str, limit: int = 10, where: str | None = None, order_by: str | None = None) -> str`
 
-Quelques lignes d'une table sans matérialiser.
+Quelques lignes d'une table ou vue sans matérialiser. `where` accepte une clause de filtre sans `WHERE`; `order_by` accepte une clause de tri sans `ORDER BY`.
 
 ### `copy_sql_query_to_workspace(query: str, output_stem: str | None = None) -> str`
 
-Exécute la requête, écrit le résultat en Parquet dans `data/sessions/{thread_id}/`, retourne le chemin. Le résultat est traité ensuite comme un fichier tabulaire ordinaire (`run_pandas` y accède).
+Exécute une requête avec `LIMIT` explicite, écrit le résultat en TSV dans `data/sql_workspace/{thread_id}/`, puis charge la copie comme fichier tabulaire ordinaire (`run_pandas` y accède). Refuse les copies sans `LIMIT` et les résultats dépassant `SQL_WORKSPACE_MAX_COPY_ROWS` (défaut : 100000).
 
 Si `DATABASE_URL` n'est pas configurée : l'agent demande à l'utilisateur de coller l'URL SQLAlchemy (détecté par `_is_sql_workspace_config_message` côté `serve.py`).
 
