@@ -38,7 +38,7 @@ class SessionStore:
         if df is not None:
             df.to_pickle(data_path)
         self._meta_path(thread_id).write_text(
-            json.dumps(meta, ensure_ascii=False),
+            json.dumps({"session_key": thread_id, "meta": meta}, ensure_ascii=False),
             encoding="utf-8",
         )
 
@@ -49,7 +49,8 @@ class SessionStore:
             return None
 
         try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta = payload["meta"] if "session_key" in payload else payload
             df = pd.read_pickle(data_path) if data_path.exists() else None
         except Exception:
             return None
@@ -74,6 +75,20 @@ class SessionStore:
         if session is not None:
             return session
         return self._load_from_disk(thread_id)
+
+    def keys(self, prefix: str | None = None) -> list[str]:
+        """List known session keys, including entries persisted on disk."""
+        keys = set(self._store)
+        for meta_path in self._storage_dir.glob("*.json"):
+            try:
+                payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            key = payload.get("session_key") if isinstance(payload, dict) else None
+            keys.add(str(key or meta_path.stem))
+        if prefix is not None:
+            keys = {key for key in keys if key.startswith(prefix)}
+        return sorted(keys)
 
     def clear(self, thread_id: str) -> None:
         self._store.pop(thread_id, None)

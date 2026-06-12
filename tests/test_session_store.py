@@ -35,3 +35,35 @@ def test_session_store_clear_removes_persisted_state(tmp_path):
 
     assert store.get("thread-xyz") is None
     assert not any(store_dir.glob("thread-xyz*"))
+
+
+def test_session_store_lists_keys_by_prefix(tmp_path):
+    from tools.session_store import SessionStore
+
+    store = SessionStore(storage_dir=tmp_path / "sessions")
+    df = pd.DataFrame({"value": [1]})
+    store.set("thread:ecopart:105", df, {"source": "ecopart:105"})
+    store.set("thread:ecopart:42", df, {"source": "ecopart:42"})
+    store.set("thread:ecotaxa:1165", df, {"source": "ecotaxa:1165"})
+
+    assert store.keys("thread:ecopart:") == [
+        "thread:ecopart:105",
+        "thread:ecopart:42",
+    ]
+
+
+def test_session_store_lists_persisted_keys_after_restart(tmp_path):
+    from tools.session_store import SessionStore
+
+    store_dir = tmp_path / "sessions"
+    store = SessionStore(storage_dir=store_dir)
+    df = pd.DataFrame({"value": [1]})
+    store.set("thread:ecopart:105", df, {"source": "ecopart:105"})
+    store.set("thread:ecopart:42", df, {"source": "ecopart:42"})
+
+    reloaded = SessionStore(storage_dir=store_dir)
+
+    assert reloaded.keys("thread:ecopart:") == [
+        "thread:ecopart:105",
+        "thread:ecopart:42",
+    ]
