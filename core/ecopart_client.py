@@ -4,7 +4,9 @@ from __future__ import annotations
 import io
 import os
 import re
+import time
 import zipfile
+from urllib.parse import urljoin
 
 import pandas as pd
 import requests
@@ -15,6 +17,8 @@ load_dotenv()
 
 _BASE_URL = "https://ecopart.obs-vlfr.fr"
 _TIMEOUT = 60
+_EXPORT_POLL_ATTEMPTS = 60
+_EXPORT_POLL_INTERVAL = 2
 
 
 class EcopartClient:
@@ -85,34 +89,93 @@ class EcopartClient:
         )
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
-        hrefs = [a.get("href", "") for a in soup.find_all("a")]
-        regex_hrefs = re.findall(r"""(?:href|url|window\.location)\s*[:=]\s*['"]([^'"]+)""", resp.text)
-        all_links = list(dict.fromkeys(hrefs + regex_hrefs))
-        keywords = {"download", "file", "task", "zip", "csv", "tsv", "export"}
-        return [lnk for lnk in all_links if lnk and any(k in lnk.lower() for k in keywords)]
+        backurl_input = soup.find("input", {"name": "backurl"})
+        backurl = backurl_input.get("value", f"/?filt_uproj={project_id}") if backurl_input else f"/?filt_uproj={project_id}"
+
+        task_resp = self._session.post(
+            f"{_BASE_URL}/Task/Create/TaskPartExport",
+            params=params,
+            data={
+                "backurl": backurl,
+                "what": "RED",
+                "fileformat": "TSV",
+                "starttask": "Y",
+            },
+            timeout=_TIMEOUT,
+        )
+        task_resp.raise_for_status()
+        task_links = re.findall(r"""href=['"](/Task/Show/(\d+))['"]""", task_resp.text)
+        if not task_links:
+            task_list_resp = self._session.get(f"{_BASE_URL}/Task/listall", timeout=_TIMEOUT)
+            task_list_resp.raise_for_status()
+            task_links = re.findall(r"""href=['"](/Task/Show/(\d+))['"]""", task_list_resp.text)
+        if not task_links:
+            raise RuntimeError("EcoPart export task was not created")
+        newest_task = max(task_links, key=lambda item: int(item[1]))
+        return [newest_task[0]]
 
     def download_tsv(self, links: list[str]) -> pd.DataFrame:
         if not links:
             raise RuntimeError("No download links provided")
         for link in links:
-            url = link if link.startswith("http") else f"{_BASE_URL}{link}"
+            if "/Task/Show/" in link:
+                link = self._wait_for_export(link)
+            url = urljoin(f"{_BASE_URL}/", link)
             resp = self._session.get(url, timeout=_TIMEOUT)
             if not resp.ok:
                 continue
             ctype = resp.headers.get("content-type", "").lower()
+            if "html" in ctype or resp.content.lstrip().lower().startswith(b"<!doctype html"):
+                raise RuntimeError(f"EcoPart returned HTML instead of an export file: {url}")
             if resp.content[:4] == b"PK\x03\x04" or "zip" in ctype:
                 with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-                    name = next(
-                        (n for n in zf.namelist() if n.endswith((".tsv", ".csv"))),
-                        zf.namelist()[0],
-                    )
-                    with zf.open(name) as f:
-                        sep = "\t" if name.endswith(".tsv") else ","
-                        return pd.read_csv(f, sep=sep, low_memory=False)
+                    names = [
+                        name
+                        for name in zf.namelist()
+                        if name.lower().endswith((".tsv", ".csv")) and "summary" not in name.lower()
+                    ]
+                    if not names:
+                        raise RuntimeError("EcoPart ZIP contains no tabular export file")
+                    frames = [self._read_delimited(zf.read(name)) for name in names]
+                    return pd.concat(frames, ignore_index=True, sort=False)
             if "tab" in ctype or "tsv" in ctype or "csv" in ctype or "text" in ctype:
-                sep = "\t" if "tab" in ctype or "tsv" in ctype else ","
-                return pd.read_csv(io.BytesIO(resp.content), sep=sep, low_memory=False)
+                return self._read_delimited(resp.content)
         raise RuntimeError("No downloadable file found in provided links")
+
+    def _wait_for_export(self, task_link: str) -> str:
+        task_url = urljoin(f"{_BASE_URL}/", task_link)
+        for attempt in range(_EXPORT_POLL_ATTEMPTS):
+            resp = self._session.get(task_url, timeout=_TIMEOUT)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            file_link = next(
+                (
+                    anchor.get("href")
+                    for anchor in soup.find_all("a")
+                    if anchor.get("href") and "/Task/GetFile/" in anchor.get("href")
+                ),
+                None,
+            )
+            if file_link:
+                return file_link
+            page_text = soup.get_text(" ", strip=True)
+            if re.search(r"\bState\s+Error\b", page_text, re.IGNORECASE):
+                raise RuntimeError(f"EcoPart export task failed: {page_text}")
+            if attempt < _EXPORT_POLL_ATTEMPTS - 1:
+                time.sleep(_EXPORT_POLL_INTERVAL)
+        raise RuntimeError("EcoPart export task timed out before producing a file")
+
+    @staticmethod
+    def _read_delimited(content: bytes) -> pd.DataFrame:
+        first_line = next((line for line in content.splitlines() if line.strip()), b"")
+        separator = b"\t" if first_line.count(b"\t") > first_line.count(b",") else b","
+        if separator not in first_line:
+            raise RuntimeError("EcoPart export is not a recognized TSV or CSV file")
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = content.decode("cp1252")
+        return pd.read_csv(io.StringIO(text), sep=separator.decode(), low_memory=False)
 
     def get_stats(self, project_id: int) -> dict:
         resp = self._session.get(

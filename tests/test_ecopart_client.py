@@ -173,25 +173,149 @@ def test_start_export_returns_candidate_download_links():
 
     from core.ecopart_client import EcopartClient
 
-    mock_resp = MagicMock()
-    mock_resp.ok = True
-    mock_resp.headers = {"content-type": "text/html"}
-    mock_resp.text = """
+    form_resp = MagicMock()
+    form_resp.ok = True
+    form_resp.text = """
+    <form method="post">
+      <input name="backurl" value="/?filt_uproj=105">
+      <input name="starttask" value="Y">
+    </form>
+    """
+    task_resp = MagicMock()
+    task_resp.ok = True
+    task_resp.text = """
     <html><body>
-      Export started.
-      <a href="/Task/Download/99">Download file</a>
-      <a href="/Task/Status/99">Status</a>
+      <a href="/Task/Show/99">99 View</a>
     </body></html>
     """
 
     client = EcopartClient()
-    client._session.get = MagicMock(return_value=mock_resp)
+    client._session.get = MagicMock(return_value=form_resp)
+    client._session.post = MagicMock(return_value=task_resp)
     links = client.start_export(105)
 
     url, = client._session.get.call_args[0]
     assert "TaskPartExport" in url
     assert ("filt_uproj", "105") in client._session.get.call_args[1]["params"]
-    assert any("Download" in lnk or "download" in lnk.lower() for lnk in links)
+    client._session.post.assert_called_once()
+    assert client._session.post.call_args[1]["data"]["starttask"] == "Y"
+    assert client._session.post.call_args[1]["data"]["what"] == "RED"
+    assert client._session.post.call_args[1]["data"]["fileformat"] == "TSV"
+    assert links == ["/Task/Show/99"]
+
+
+def test_start_export_finds_task_from_list_after_confirmation_page():
+    from unittest.mock import MagicMock
+
+    from core.ecopart_client import EcopartClient
+
+    form_resp = MagicMock(ok=True, text='<input name="backurl" value="/?filt_uproj=105">')
+    confirmation_resp = MagicMock(ok=True, text="<p>Leave this page to continue working in EcoPart</p>")
+    task_list_resp = MagicMock(
+        ok=True,
+        text='<a href="/Task/Show/98">old</a><a href="/Task/Show/101">new</a>',
+    )
+
+    client = EcopartClient()
+    client._session.get = MagicMock(side_effect=[form_resp, task_list_resp])
+    client._session.post = MagicMock(return_value=confirmation_resp)
+
+    links = client.start_export(105)
+
+    assert links == ["/Task/Show/101"]
+    assert client._session.get.call_args_list[1].args[0].endswith("/Task/listall")
+
+
+def test_download_tsv_resolves_completed_task_to_zip(monkeypatch):
+    import io
+    import zipfile
+    from unittest.mock import MagicMock
+
+    from core.ecopart_client import EcopartClient
+
+    task_resp = MagicMock()
+    task_resp.ok = True
+    task_resp.headers = {"content-type": "text/html"}
+    task_resp.content = b"""
+    <html><body>
+      <p>State Done</p>
+      <a href="/Task/GetFile/99/export.zip">Get file export.zip</a>
+    </body></html>
+    """
+    task_resp.text = task_resp.content.decode()
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("export.tsv", b"Profile\tDepth [m]\nips_007\t10.0\n")
+    zip_resp = MagicMock()
+    zip_resp.ok = True
+    zip_resp.headers = {"content-type": "application/zip"}
+    zip_resp.content = buf.getvalue()
+
+    client = EcopartClient()
+    client._session.get = MagicMock(side_effect=[task_resp, zip_resp])
+    monkeypatch.setattr("core.ecopart_client.time.sleep", lambda _: None)
+
+    df = client.download_tsv(["/Task/Show/99"])
+
+    assert list(df.columns) == ["Profile", "Depth [m]"]
+    assert len(df) == 1
+    assert "GetFile/99/export.zip" in client._session.get.call_args_list[1].args[0]
+
+
+def test_download_tsv_rejects_html_instead_of_parsing_it_as_csv():
+    from unittest.mock import MagicMock
+
+    from core.ecopart_client import EcopartClient
+
+    html_resp = MagicMock()
+    html_resp.ok = True
+    html_resp.headers = {"content-type": "text/html; charset=utf-8"}
+    html_resp.content = b"<html><body>Task page, not tabular data</body></html>"
+    html_resp.text = html_resp.content.decode()
+
+    client = EcopartClient()
+    client._session.get = MagicMock(return_value=html_resp)
+
+    with pytest.raises(RuntimeError, match="HTML"):
+        client.download_tsv(["https://ecopart.obs-vlfr.fr/not-a-download"])
+
+
+def test_download_tsv_detects_tabs_even_when_content_type_says_csv():
+    from unittest.mock import MagicMock
+
+    from core.ecopart_client import EcopartClient
+
+    content = b"Profile\tDepth [m]\nips_007\t18,5\n"
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.headers = {"content-type": "text/csv"}
+    mock_resp.content = content
+
+    client = EcopartClient()
+    client._session.get = MagicMock(return_value=mock_resp)
+    df = client.download_tsv(["https://ecopart.obs-vlfr.fr/export.csv"])
+
+    assert list(df.columns) == ["Profile", "Depth [m]"]
+    assert df.iloc[0]["Depth [m]"] == "18,5"
+
+
+def test_download_tsv_reads_ecopart_cp1252_characters():
+    from unittest.mock import MagicMock
+
+    from core.ecopart_client import EcopartClient
+
+    content = "Profile\tPixel size [µm]\nips_007\t92\n".encode("cp1252")
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.headers = {"content-type": "text/tab-separated-values"}
+    mock_resp.content = content
+
+    client = EcopartClient()
+    client._session.get = MagicMock(return_value=mock_resp)
+    df = client.download_tsv(["https://ecopart.obs-vlfr.fr/export.tsv"])
+
+    assert list(df.columns) == ["Profile", "Pixel size [µm]"]
 
 
 def test_download_tsv_returns_dataframe_from_tsv_response():
