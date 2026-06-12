@@ -24,6 +24,8 @@ _FORBIDDEN_PREVIEW_CLAUSE_RE = re.compile(
     re.IGNORECASE,
 )
 _DEFAULT_MAX_COPY_ROWS = 100_000
+_POSTGRES_DIALECTS = {"postgresql"}
+_MYSQL_DIALECTS = {"mysql", "mariadb"}
 
 def _sqlite_path_from_url(database_url: str) -> Path:
     parsed = urlparse(database_url)
@@ -44,11 +46,29 @@ def _open_readonly_connection(database_url: str):
         uri = f"file:{path.as_posix()}?mode=ro"
         return sqlite3.connect(uri, uri=True)
 
-    engine = create_engine(
-        database_url,
-        connect_args={"options": "-c default_transaction_read_only=on"},
-    )
+    driver = (parsed.scheme or "").split("+", 1)[0]
+    connect_kwargs = {}
+    if driver in _POSTGRES_DIALECTS:
+        connect_kwargs["connect_args"] = {"options": "-c default_transaction_read_only=on"}
+
+    engine = create_engine(database_url, **connect_kwargs)
+    dialect_name = str(getattr(engine.dialect, "name", driver)).lower()
+    if dialect_name not in _POSTGRES_DIALECTS | _MYSQL_DIALECTS:
+        with contextlib.suppress(Exception):
+            engine.dispose()
+        raise ValueError(
+            f"Unsupported SQL dialect for SQL workspace: {dialect_name}. "
+            "Supported dialects: sqlite, postgresql, mysql, mariadb."
+        )
+
     conn = engine.connect()
+    if dialect_name in _MYSQL_DIALECTS:
+        try:
+            conn.execute(text("SET SESSION TRANSACTION READ ONLY"))
+        except Exception:
+            _close_connection(conn)
+            raise
+
     conn._sql_workspace_engine = engine  # type: ignore[attr-defined]
     return conn
 

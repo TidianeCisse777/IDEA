@@ -163,6 +163,16 @@ def test_system_prompt_sql_copy_requires_limit_and_mentions_row_cap():
     assert "row cap" in prompt
 
 
+def test_system_prompt_mentions_supported_sql_backends():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "sqlite" in prompt
+    assert "postgresql" in prompt
+    assert "mysql" in prompt
+    assert "mariadb" in prompt
+
+
 def test_system_prompt_routes_ecotaxa_project_discovery():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

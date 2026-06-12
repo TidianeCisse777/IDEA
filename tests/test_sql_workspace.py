@@ -1,6 +1,7 @@
 """TDD — workspace SQL en lecture seule."""
 
 import sqlite3
+from unittest.mock import MagicMock, patch
 
 
 def test_list_sql_tables_from_readonly_database_url(tmp_path):
@@ -48,6 +49,74 @@ def test_extract_sql_workspace_database_url_accepts_raw_url():
     from tools.sql_workspace import extract_sql_workspace_database_url
 
     assert extract_sql_workspace_database_url("sqlite:////tmp/source.sqlite") == "sqlite:////tmp/source.sqlite"
+
+
+def test_open_readonly_connection_configures_postgres_readonly():
+    from tools.sql_workspace import _open_readonly_connection
+
+    mock_engine = MagicMock()
+    mock_engine.dialect.name = "postgresql"
+    mock_conn = MagicMock()
+    mock_engine.connect.return_value = mock_conn
+
+    with patch("tools.sql_workspace.create_engine", return_value=mock_engine) as create_engine:
+        conn = _open_readonly_connection("postgresql+psycopg://user:pass@host:5432/dbname")
+
+    create_engine.assert_called_once_with(
+        "postgresql+psycopg://user:pass@host:5432/dbname",
+        connect_args={"options": "-c default_transaction_read_only=on"},
+    )
+    assert conn is mock_conn
+    assert conn._sql_workspace_engine is mock_engine
+    mock_conn.execute.assert_not_called()
+
+
+def test_open_readonly_connection_configures_mysql_session_readonly():
+    from tools.sql_workspace import _open_readonly_connection
+
+    mock_engine = MagicMock()
+    mock_engine.dialect.name = "mysql"
+    mock_conn = MagicMock()
+    mock_engine.connect.return_value = mock_conn
+
+    with patch("tools.sql_workspace.create_engine", return_value=mock_engine) as create_engine:
+        conn = _open_readonly_connection("mysql+pymysql://user:pass@host:3306/dbname")
+
+    create_engine.assert_called_once_with("mysql+pymysql://user:pass@host:3306/dbname")
+    assert conn is mock_conn
+    assert conn._sql_workspace_engine is mock_engine
+    assert str(mock_conn.execute.call_args.args[0]) == "SET SESSION TRANSACTION READ ONLY"
+
+
+def test_open_readonly_connection_configures_mariadb_session_readonly():
+    from tools.sql_workspace import _open_readonly_connection
+
+    mock_engine = MagicMock()
+    mock_engine.dialect.name = "mariadb"
+    mock_conn = MagicMock()
+    mock_engine.connect.return_value = mock_conn
+
+    with patch("tools.sql_workspace.create_engine", return_value=mock_engine):
+        conn = _open_readonly_connection("mariadb+mariadbconnector://user:pass@host:3306/dbname")
+
+    assert conn is mock_conn
+    assert str(mock_conn.execute.call_args.args[0]) == "SET SESSION TRANSACTION READ ONLY"
+
+
+def test_open_readonly_connection_rejects_unsupported_sqlalchemy_dialect():
+    import pytest
+
+    from tools.sql_workspace import _open_readonly_connection
+
+    mock_engine = MagicMock()
+    mock_engine.dialect.name = "oracle"
+
+    with patch("tools.sql_workspace.create_engine", return_value=mock_engine):
+        with pytest.raises(ValueError, match="Unsupported SQL dialect"):
+            _open_readonly_connection("oracle+oracledb://user:pass@host:1521/dbname")
+
+    mock_engine.connect.assert_not_called()
+    mock_engine.dispose.assert_called_once()
 
 
 def test_copy_sql_query_to_workspace_writes_tsv(tmp_path):

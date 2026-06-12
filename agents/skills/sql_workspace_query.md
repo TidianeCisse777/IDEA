@@ -22,6 +22,8 @@ The agent can now read a SQL server, copy results to local tabular files, and an
 - The connection comes from `DATABASE_URL` in the `.env` file.
 - The source database remains read-only.
 - The conversation workspace is local, timestamped, and tied to the current conversation.
+- Supported URLs are SQLite (`sqlite:////absolute/path/source.sqlite`), PostgreSQL (`postgresql+psycopg://user:password@host:5432/dbname`), MySQL (`mysql+pymysql://user:password@host:3306/dbname`), and MariaDB through the MySQL protocol (`mysql+pymysql://user:password@host:3306/dbname`).
+- Unsupported SQLAlchemy dialects are rejected instead of being queried without a read-only strategy.
 
 ---
 

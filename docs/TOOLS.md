@@ -154,6 +154,15 @@ Récupère un skill Markdown depuis LangSmith Hub (ou `agents/skills/*.md` en fa
 
 **Module : `tools/sql_workspace.py` — factory : `make_sql_tools(thread_id)`**
 
+Backends supportés :
+
+- SQLite local : `sqlite:////absolute/path/source.sqlite`
+- PostgreSQL : `postgresql+psycopg://user:password@host:5432/dbname`
+- MySQL : `mysql+pymysql://user:password@host:3306/dbname`
+- MariaDB via protocole MySQL : `mysql+pymysql://user:password@host:3306/dbname`
+
+Le workspace force la lecture seule par backend : ouverture SQLite `mode=ro`, option de transaction read-only PostgreSQL, session read-only MySQL/MariaDB. Les dialectes SQLAlchemy non listés sont refusés avec une erreur explicite.
+
 ### `list_sql_tables() -> str`
 
 Cartographie les tables et vues accessibles par `DATABASE_URL` : schéma, nom, type, nombre de colonnes, nombre de lignes quand disponible, clé primaire et clés étrangères.
