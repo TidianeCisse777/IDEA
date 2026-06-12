@@ -114,9 +114,34 @@ def make_ecopart_tools(thread_id: str) -> list:
         df_ep = session_ep["df"].copy()
         selected_project_id = project_id or session_ep.get("meta", {}).get("project_id")
 
-        df_et["profile_id"] = df_et["obj_orig_id"].str.replace(r"_\d+$", "", regex=True)
-        merged = df_et.merge(df_ep, left_on="profile_id", right_on="Profile", how="left")
-        merged = merged.drop(columns=["profile_id"], errors="ignore")
+        # Resolve profile key — EcoTaxa exports vary by version:
+        # - sample_id       : "ips_007" — direct match with EcoPart Profile (preferred)
+        # - obj_orig_id     : "ips_007_899" → strip trailing _N → "ips_007"
+        # - sample_profileid: may be timestamp-based (hdr20180716…) — not usable
+        if "sample_id" in df_et.columns and df_et["sample_id"].iloc[0] in df_ep["Profile"].values:
+            df_et["profile_id"] = df_et["sample_id"]
+        elif "obj_orig_id" in df_et.columns:
+            df_et["profile_id"] = df_et["obj_orig_id"].str.replace(r"_\d+$", "", regex=True)
+        elif "sample_id" in df_et.columns:
+            df_et["profile_id"] = df_et["sample_id"]
+        else:
+            available = ", ".join(df_et.columns[:20].tolist())
+            return f"Colonne de jointure introuvable dans EcoTaxa. Colonnes disponibles : {available}"
+        # Aggregate EcoPart to profile level to avoid cartesian product.
+        # EcoPart has one row per depth bin — we keep profile-level summary columns only.
+        ep_numeric = df_ep.select_dtypes(include="number")
+        ep_agg = (
+            df_ep.groupby("Profile")[ep_numeric.columns.tolist()]
+            .mean()
+            .reset_index()
+            .rename(columns={"Profile": "_ep_profile"})
+        )
+        # Prefix EcoPart columns to avoid collisions
+        ep_agg = ep_agg.rename(
+            columns={c: f"ecopart_{c}" for c in ep_agg.columns if c != "_ep_profile"}
+        )
+        merged = df_et.merge(ep_agg, left_on="profile_id", right_on="_ep_profile", how="left")
+        merged = merged.drop(columns=["profile_id", "_ep_profile"], errors="ignore")
 
         source = "join:ecotaxa+ecopart"
         if selected_project_id is not None:
