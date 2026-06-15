@@ -1,0 +1,1 @@
+"""EcoTaxa project navigation services."""
