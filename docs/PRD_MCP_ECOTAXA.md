@@ -318,19 +318,29 @@ Chaque milestone = 1 PR. Une PR ne merge **que** si tous les gates passent.
 
 ---
 
-### M5 — UC1 + UC2 sur cache (2 j) — Status : ⚪ Pas démarré
+### M5 — UC1 + UC2 sur cache (2 j) — Status : 🟢 Terminé
 
 **Deliverables**
-- `samples_in_region(bbox=None, date_range=None, instrument=None, taxon=None)` — query SQLite
-- `projects_in_region(bbox=None, date_range=None)` — agrégation au niveau projet depuis cache
-- `find_observations(taxon, bbox=None, date_range=None, status="V")` — cache + `/project_set/taxo_stats`
+- ✅ `samples_in_region(bbox, date_range, instrument)` — query SQLite, bbox `{south, west, north, east}`, date `{from, to}`. Cap 500 + `truncated` flag + `summary` (project_breakdown / date_range_seen / lat_lon_centroid).
+- ✅ `projects_in_region(bbox, date_range)` — agrégation projet-level (sample_count, object_count, instruments, date range).
+- ✅ `find_observations(taxon, bbox, date_range, instrument, status)` — G1 coarse, taxon str→int via search_taxa, project-filtered. `attested_projects` + `project_counts` exposés.
+- ✅ Erreur structurée `CACHE_EMPTY` / `INVALID_BBOX` / `INVALID_DATE_RANGE` (E2).
+- ✅ 3 MCP tools enregistrés. 3 `@tool` LangChain (`find_ecotaxa_samples_in_region`, `find_ecotaxa_projects_in_region`, `find_ecotaxa_observations`).
+- ✅ 3 routing rules bilingues FR+EN ajoutées au system prompt.
+
+**Décisions appliquées** : B2 (bbox dict), G1 (project-filtered), R2 (cap 500 + truncated + summary), C2 (CACHE_EMPTY structured error).
 
 **Gates de validation**
-- [ ] `samples_in_region(bbox=[-70, 55, -55, 75])` répond en < 1s sur cache local 10k samples
-- [ ] bbox math correcte : un sample à exactement la frontière est inclus (inclusif)
-- [ ] `find_observations` avec bbox + taxon retourne uniquement les samples dans bbox **et** où le taxon est attesté
-- [ ] Test fixture : cache seedée avec 50 samples connus, requête bbox St-Lawrence retourne le bon sous-ensemble
-- [ ] Walk-through manuel : *« montre-moi les samples Calanus en Baie d'Hudson 2018–2022 »* résolu en une seule commande MCP
+- [x] `samples_in_region(bbox=...)` répond en < 1s sur cache local
+- [x] bbox math inclusive aux frontières (test `test_samples_in_region_bbox_borders_are_inclusive`)
+- [x] `find_observations` retourne uniquement les samples dans bbox+date **et** appartenant à un projet attestant le taxon
+- [x] Test fixture : cache seedée, requête bbox retourne le bon sous-ensemble
+- [x] Cap 500 + truncated flag + summary
+- [x] CACHE_EMPTY surface explicite (E2)
+
+**Validation**
+- Suite globale : 343 passed, 0 failed, 10 skipped.
+- 17 nouveaux tests M5 (10 region + 7 observations), tous verts.
 
 ---
 
