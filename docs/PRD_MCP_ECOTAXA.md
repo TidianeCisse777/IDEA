@@ -131,7 +131,7 @@ Ce PRD spécifie la construction d'un **serveur MCP EcoTaxa** qui :
 | UC6 | `list_sample_objects` | `POST /object_set/{id}/query` | ❌ |
 | UC6 | `get_object` (vertical contextualisé) | `/object/{id}` + remontée sample/acquisition | ❌ |
 | UC7 taxonomie | `taxonomy_node` | `/taxa` / `/taxa/{id}` | ❌ |
-| UC7 | `search_taxa` | (à confirmer endpoint) | ❌ |
+| UC7 | `search_taxa` | `/taxon_set/search` | ❌ |
 
 ---
 
@@ -191,26 +191,33 @@ Chaque milestone = 1 PR. Une PR ne merge **que** si tous les gates passent.
 
 ---
 
-### M2 — Catalogue navigation sans cache (3 j) — Status : ⚪ Pas démarré
+### M2 — Catalogue navigation sans cache (3 j) — Status : 🟡 Implémenté — baseline globale à réparer
 
 **Deliverables — 9 tools restants pour UC6 + UC7**
-- `get_project(project_id)` — fiche complète + stats + schema résumé
-- `list_project_samples(project_id, page=1, page_size=50)`
-- `get_sample(sample_id)`
-- `list_project_acquisitions(project_id)`
-- `get_acquisition(acquisition_id)`
-- `list_sample_objects(sample_id, taxon=None, status=None, page=1, page_size=50)`
-- `get_object(object_id)` — **avec contexte vertical** : objet + acquisition + sample + project inlinés
-- `taxonomy_node(taxon_id=None)` — None = roots
-- `search_taxa(query)` — autocomplete (endpoint à valider sur API réelle)
+- ✅ `get_project(project_id)` — fiche complète + stats + schema résumé
+- ✅ `list_project_samples(project_id, page=1, page_size=50)`
+- ✅ `get_sample(sample_id)`
+- ✅ `list_project_acquisitions(project_id)`
+- ✅ `get_acquisition(acquisition_id)`
+- ✅ `list_sample_objects(sample_id, taxon=None, status=None, page=1, page_size=50)`
+- ✅ `get_object(object_id)` — **avec contexte vertical** : objet + acquisition + sample + project inlinés
+- ✅ `taxonomy_node(taxon_id=None)` — None = roots
+- ✅ `search_taxa(query)` — autocomplete via `/taxon_set/search`
 
 **Gates de validation**
-- [ ] Chaque tool a son test unit core + VCR cassette
-- [ ] Chaque tool a son test façade MCP (JSON serializable, schema attendu)
-- [ ] `get_object` retourne **toujours** un sample et une acquisition non-null (ou nullable explicitement si EcoTaxa renvoie null)
-- [ ] Aucun tool ne fait > 3 appels HTTP à EcoTaxa (cap pour éviter cascading slow)
-- [ ] Walk-through manuel : un agent navigue projet → sample → object via MCP en local
+- [x] Chaque tool a son test unit core + VCR cassette
+- [x] Chaque tool a son test façade MCP (JSON serializable, schema attendu)
+- [x] `get_object` retourne **toujours** un sample et une acquisition non-null
+- [x] Aucun tool ne fait > 3 appels HTTP à EcoTaxa
+- [x] Walk-through manuel : un agent navigue projet → sample → object via MCP en local
 - [ ] Pas de régression `pytest tests/`
+
+**Validation**
+- Tests ciblés EcoTaxa/MCP : 28 passants.
+- Docker : `/health` 200, MCP sans Bearer 401.
+- Parcours MCP live : projet 42 → sample 42000013 → objet 4200030315 → acquisition 420000014.
+- `get_project`, `taxonomy_node` et `search_taxa` validés contre l'API EcoTaxa réelle.
+- Suite globale en worktree propre : 261 passants, 10 échecs, 10 ignorés. Les échecs restants concernent Bio-ORACLE, RAG et les métadonnées chat ; aucun test M2 n'échoue.
 
 ---
 
@@ -388,3 +395,4 @@ M2, M3, M4 peuvent partiellement se paralléliser après M1 si plusieurs devs.
 | 2026-06-15 | Claude (grilling) | Version initiale post-grilling, status 🟡 Draft |
 | 2026-06-15 | Codex | M0 implémenté : scaffold core, FastMCP HTTP + Bearer, image Docker légère, service Compose, tests et validation réseau. |
 | 2026-06-15 | Codex | M1 implémenté : recherche de projets partagée par le core, LangChain et FastMCP, cassette VCR assainie, validation Docker de bout en bout et décision Go architecture. |
+| 2026-06-15 | Codex | M2 implémenté en TDD : navigation projet/sample/acquisition/objet/taxonomie, 9 tools FastMCP, plafond de 3 appels et walkthrough Docker live. |

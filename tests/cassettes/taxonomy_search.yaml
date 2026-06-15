@@ -1,0 +1,14 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept: [application/json]
+    method: GET
+    uri: https://ecotaxa.obs-vlfr.fr/api/taxon_set/search?query=Calanus
+  response:
+    body:
+      string: '[{"id":25828,"status":"A","text":"Calanus","pr":0,"aphia_id":104152,"renm_id":null}]'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+version: 1

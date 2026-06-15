@@ -1,0 +1,26 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept: [application/json]
+    method: GET
+    uri: https://ecotaxa.obs-vlfr.fr/api/taxa
+  response:
+    body:
+      string: '[{"id":1,"name":"Biota","type":"P","status":"A","display_name":"Biota","lineage":["Biota"],"id_lineage":[1],"lineage_status":"A","nb_objects":192260,"nb_children_objects":104234310,"aphia_id":1,"rank":"Superdomain","children":[2,3]}]'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+- request:
+    body: null
+    headers:
+      Accept: [application/json]
+    method: GET
+    uri: https://ecotaxa.obs-vlfr.fr/api/taxon/1
+  response:
+    body:
+      string: '{"id":1,"name":"Biota","type":"P","status":"A","display_name":"Biota","lineage":["Biota"],"id_lineage":[1],"lineage_status":"A","nb_objects":192260,"nb_children_objects":104234310,"aphia_id":1,"rank":"Superdomain","children":[2,3]}'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+version: 1

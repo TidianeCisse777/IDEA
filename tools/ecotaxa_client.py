@@ -69,6 +69,70 @@ class EcotaxaClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_project(self, project_id: int) -> dict:
+        return self._get_json(f"/projects/{project_id}")
+
+    def get_project_stats(self, project_id: int) -> list[str]:
+        return self._get_json(f"/projects/{project_id}/stats", timeout=10)
+
+    def list_samples(self, project_id: int) -> list[dict]:
+        return self._get_json(
+            "/samples/search",
+            params={"project_ids": str(project_id), "id_pattern": "*"},
+        )
+
+    def get_sample(self, sample_id: int) -> dict:
+        return self._get_json(f"/sample/{sample_id}")
+
+    def list_acquisitions(self, project_id: int) -> list[dict]:
+        return self._get_json(
+            "/acquisitions/search",
+            params={"project_id": project_id},
+        )
+
+    def get_acquisition(self, acquisition_id: int) -> dict:
+        return self._get_json(f"/acquisition/{acquisition_id}")
+
+    def get_object(self, object_id: int) -> dict:
+        return self._get_json(f"/object/{object_id}")
+
+    def list_root_taxa(self) -> list[dict]:
+        return self._get_json("/taxa")
+
+    def get_taxon(self, taxon_id: int) -> dict:
+        return self._get_json(f"/taxon/{taxon_id}")
+
+    def search_taxa(self, query: str) -> list[dict]:
+        return self._get_json("/taxon_set/search", params={"query": query})
+
+    def query_objects(
+        self,
+        project_id: int,
+        filters: dict,
+        fields: str,
+        window_start: int,
+        window_size: int,
+    ) -> dict:
+        resp = self._session.post(
+            f"{_BASE_URL}/object_set/{project_id}/query",
+            params={
+                "fields": fields,
+                "order_field": "obj.objid",
+                "window_start": window_start,
+                "window_size": window_size,
+            },
+            json=filters,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def _get_json(self, path: str, **kwargs):
+        timeout = kwargs.pop("timeout", _TIMEOUT)
+        resp = self._session.get(f"{_BASE_URL}{path}", timeout=timeout, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
+
     def preview_project(self, project_id: int, limit: int = 10) -> dict:
         metadata_response = self._session.get(
             f"{_BASE_URL}/projects/{project_id}",
