@@ -245,7 +245,7 @@ async def test_stream_chat_completions_captures_run_id_for_feedback(monkeypatch)
 
     mock_agent = MagicMock()
     mock_agent.astream = fake_astream
-    monkeypatch.setattr(serve_module, "make_agent", lambda thread_id: mock_agent)
+    monkeypatch.setattr(serve_module, "make_agent", lambda thread_id, user_id="anonymous": mock_agent)
 
     req = serve_module.ChatRequest(
         messages=[serve_module.Message(role="user", content="Bonjour")],

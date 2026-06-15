@@ -22,8 +22,9 @@ async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_ke
 
     captured = {}
 
-    def fake_make_agent(thread_id: str):
+    def fake_make_agent(thread_id: str, user_id: str = "anonymous"):
         captured["thread_id"] = thread_id
+        captured["user_id"] = user_id
         return mock_agent
 
     monkeypatch.setattr(serve_module, "make_agent", fake_make_agent)
@@ -76,8 +77,9 @@ async def test_chat_completions_uses_metadata_message_id_when_header_missing(mon
 
     captured = {}
 
-    def fake_make_agent(thread_id: str):
+    def fake_make_agent(thread_id: str, user_id: str = "anonymous"):
         captured["thread_id"] = thread_id
+        captured["user_id"] = user_id
         return mock_agent
 
     monkeypatch.setattr(serve_module, "make_agent", fake_make_agent)
@@ -129,7 +131,7 @@ async def test_chat_completions_propagates_user_headers_to_metadata(monkeypatch)
     mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
     mock_agent.aget_state = AsyncMock(return_value=MagicMock(values={"messages": []}))
 
-    monkeypatch.setattr(serve_module, "make_agent", lambda tid: mock_agent)
+    monkeypatch.setattr(serve_module, "make_agent", lambda tid, user_id="anonymous": mock_agent)
     monkeypatch.setattr(serve_module.default_store, "clear", lambda tid: None)
     monkeypatch.setattr(serve_module, "_log_turn", lambda *a, **kw: None)
 
@@ -173,7 +175,7 @@ async def test_chat_completions_uses_anonymous_when_no_user_headers(monkeypatch)
     mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
     mock_agent.aget_state = AsyncMock(return_value=MagicMock(values={"messages": []}))
 
-    monkeypatch.setattr(serve_module, "make_agent", lambda tid: mock_agent)
+    monkeypatch.setattr(serve_module, "make_agent", lambda tid, user_id="anonymous": mock_agent)
     monkeypatch.setattr(serve_module.default_store, "clear", lambda tid: None)
     monkeypatch.setattr(serve_module, "_log_turn", lambda *a, **kw: None)
 

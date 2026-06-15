@@ -94,27 +94,14 @@ def test_preview_bio_oracle_point_returns_normalized_sample():
     from core.bio_oracle_client import preview_bio_oracle_point
     from unittest.mock import MagicMock, patch
 
-    search_response = MagicMock()
-    search_response.json.return_value = {
-        "table": {
-            "columnNames": ["Dataset ID", "Title", "griddap"],
-            "rows": [
-                [
-                    "thetao_ssp245_2020_2100_depthsurf",
-                    "Bio-Oracle Temperature [depthSurf] SSP245 2020-2100",
-                    "https://erddap.bio-oracle.org/erddap/griddap/thetao_ssp245_2020_2100_depthsurf",
-                ]
-            ],
-        }
-    }
-
     query_response = MagicMock()
     query_response.text = (
         "time,latitude,longitude,thetao\n"
         "2041-01-01T00:00:00Z,50.2,-65.8,12.3\n"
     )
 
-    with patch("core.bio_oracle_client.requests.get", side_effect=[search_response, query_response]) as mock_get:
+    with patch("core.bio_oracle_client._find_dataset_id", return_value="thetao_ssp245_2020_2100_depthsurf"), \
+         patch("core.bio_oracle_client.requests.get", return_value=query_response) as mock_get:
         result = preview_bio_oracle_point(
             {
                 "latitude": 50.2,
@@ -125,7 +112,7 @@ def test_preview_bio_oracle_point_returns_normalized_sample():
             }
         )
 
-    assert mock_get.call_count == 2
+    assert mock_get.call_count == 1
     assert result["dataset_id"] == "thetao_ssp245_2020_2100_depthsurf"
     assert result["rows"] == [
         {
@@ -141,20 +128,6 @@ def test_query_bio_oracle_writes_tsv_and_returns_download_url(tmp_path):
     from core.bio_oracle_client import query_bio_oracle
     from unittest.mock import MagicMock, patch
 
-    search_response = MagicMock()
-    search_response.json.return_value = {
-        "table": {
-            "columnNames": ["Dataset ID", "Title", "griddap"],
-            "rows": [
-                [
-                    "thetao_ssp245_2020_2100_depthsurf",
-                    "Bio-Oracle Temperature [depthSurf] SSP245 2020-2100",
-                    "https://erddap.bio-oracle.org/erddap/griddap/thetao_ssp245_2020_2100_depthsurf",
-                ]
-            ],
-        }
-    }
-
     query_response = MagicMock()
     query_response.text = (
         "time,latitude,longitude,thetao\n"
@@ -162,7 +135,8 @@ def test_query_bio_oracle_writes_tsv_and_returns_download_url(tmp_path):
     )
 
     output_path = tmp_path / "bio_oracle.tsv"
-    with patch("core.bio_oracle_client.requests.get", side_effect=[search_response, query_response]):
+    with patch("core.bio_oracle_client._find_dataset_id", return_value="thetao_ssp245_2020_2100_depthsurf"), \
+         patch("core.bio_oracle_client.requests.get", return_value=query_response):
         result = query_bio_oracle(
             {
                 "latitude": 50.2,

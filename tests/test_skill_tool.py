@@ -16,6 +16,7 @@ def test_hub_skill_name_maps_correctly():
 def test_load_skill_pulls_from_hub_when_api_key_set(monkeypatch):
     monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-key")
     monkeypatch.setenv("SKILL_ENV", "production")
+    monkeypatch.delenv("SKILL_PREFER_LOCAL", raising=False)
 
     mock_skill = MagicMock()
     mock_skill.files = {"SKILL.md": MagicMock(content="# Hub skill content")}
