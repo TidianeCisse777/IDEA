@@ -15,6 +15,10 @@ Bio-ORACLE data is now loaded or being requested. Follow the workflow below.
 
 **Always use `query_bio_oracle_zones` for zone-level requests — never batch `preview_bio_oracle_point` in a loop.**
 
+For per-row coupling, pass the latitude and longitude column names from the
+loaded table. The coupling tool reads the session directly and preserves all
+source columns. Never construct or transcribe station rows in tool arguments.
+
 ---
 
 ## Variable names (always use these — never ERDDAP internal names)

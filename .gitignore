@@ -162,6 +162,7 @@ cython_debug/
 !package.json
 !package-lock.json
 *.csv
+!tests/fixtures/source_enrichment_stations.csv
 *.png
 
 /static/
