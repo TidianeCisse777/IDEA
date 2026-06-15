@@ -48,6 +48,34 @@ Téléchargement structuré. Statut V (validé humain) par défaut. Écrit le r�
 
 **Conditions** : ne se déclenche que sur demande explicite (« charge », « exporte », « récupère »). Sinon l'agent reste sur `preview` ou `list`.
 
+### `find_ecotaxa_projects(title?, instrument?, page=1, page_size=50) -> str`
+
+Recherche les projets accessibles par titre et/ou instrument, avec pagination. Outil de découverte — aucun objet téléchargé. Aliasé sur le tool MCP `search_projects` côté serveur EcoTaxa MCP.
+
+### `inspect_ecotaxa_project_schema(project_id, verbose=False, include_process=False) -> str`
+
+Liste les colonnes typées d'un projet (sample / acquisition / object) avant export. Free fields résolus en labels, types (`number`, `text`, `datetime`, `unknown`) inférés depuis les codes EcoTaxa. Utile pour vérifier la présence de colonnes (profondeur, station, taxon, morpho) avant `query_ecotaxa`. Aliasé sur `get_project_schema` côté MCP.
+
+### `inspect_ecotaxa_column(project_id, column_name, level=None) -> str`
+
+Distribution d'une seule colonne d'un projet :
+- numérique : `min/max/mean/median/p25/p75/n`
+- texte : top valeurs + `total_distinct` + `sample_size`
+Chemin primaire via `/project_set/column_stats` (validés uniquement), fallback first-window échantillonné si l'endpoint ne supporte pas la colonne. Le champ `source` expose le chemin emprunté. Erreur structurée `AMBIGUOUS_COLUMN` si le nom existe à plusieurs niveaux ; rappeler avec `level=` explicite. Aliasé sur `get_column_distribution` côté MCP.
+
+### `count_ecotaxa_taxa(project_ids, taxa) -> str`
+
+Compte V/P/D (validés / prédits / douteux) par projet et par taxon. `taxa` accepte des entiers (taxon IDs) ou des noms scientifiques (résolution via autocomplete EcoTaxa, exact-match prioritaire). Projets inaccessibles (401/403) ignorés silencieusement et listés dans `inaccessible_project_ids`. Aliasé sur `taxa_stats` côté MCP.
+
+### `compare_ecotaxa_projects(project_ids) -> str`
+
+Compare les schémas de N projets avant un export combiné. Match par label normalisé (case + séparateurs). Retourne :
+- `common_columns` — colonnes partagées avec leurs niveaux + types par projet
+- `type_conflicts` — colonnes de type divergent avec `severity` (`blocker` pour `number↔text`, `warning` pour `text↔datetime`)
+- `level_conflicts` — la même colonne placée à des niveaux différents *selon les projets*
+- `unique_to_project` — colonnes propres à chaque projet
+Aliasé sur `compare_project_schemas` côté MCP.
+
 ---
 
 ## 3. Sources EcoPart
