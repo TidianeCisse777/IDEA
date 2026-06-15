@@ -9,6 +9,8 @@ from langchain_core.tools import tool
 from core.ecotaxa_browser.column_distribution import get_column_distribution
 from core.ecotaxa_browser.compare_schemas import compare_project_schemas
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+from core.ecotaxa_browser.observations import find_observations
+from core.ecotaxa_browser.region import projects_in_region, samples_in_region
 from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
@@ -345,8 +347,147 @@ def make_source_tools(thread_id: str) -> list:
             lines.append(f"- projet {pid} : {cols if cols else '(aucune)'}")
         return "\n".join(lines)
 
+    @tool
+    def find_ecotaxa_samples_in_region(
+        bbox: dict | None = None,
+        date_range: dict | None = None,
+        instrument: str | None = None,
+    ) -> str:
+        """Cherche les samples EcoTaxa dans une bbox géo et/ou une période.
+
+        `bbox` : `{"south": float, "west": float, "north": float, "east": float}`.
+        `date_range` : `{"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}`.
+        Réponse plafonnée à 500 samples avec un summary par projet.
+        Lecture du cache local — pas de download.
+        """
+        try:
+            result = samples_in_region(
+                bbox=bbox, date_range=date_range, instrument=instrument,
+            )
+        except EcoTaxaBrowserError as exc:
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}"
+        except Exception as exc:
+            return f"Erreur lors de la recherche EcoTaxa : {exc}"
+
+        if not result["samples"]:
+            return "Aucun sample dans cette zone / période."
+
+        lines = [
+            f"# {result['total_matching']} samples (cap {len(result['samples'])})"
+            + (" — tronqué" if result["truncated"] else ""),
+            "",
+            "| sample_id | projet | lat | lon | date_min | date_max | instrument |",
+            "|---:|---:|---:|---:|---|---|---|",
+        ]
+        for s in result["samples"][:50]:
+            lines.append(
+                f"| {s['sample_id']} | {s['project_id']} | {s['lat']:.3f} | "
+                f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} | "
+                f"{s.get('instrument') or '—'} |"
+            )
+        if len(result["samples"]) > 50:
+            lines.append("")
+            lines.append(f"(50 premiers / {len(result['samples'])} affichés)")
+        return "\n".join(lines)
+
+    @tool
+    def find_ecotaxa_projects_in_region(
+        bbox: dict | None = None,
+        date_range: dict | None = None,
+    ) -> str:
+        """Liste les projets EcoTaxa avec au moins un sample dans une zone / période.
+
+        Même format `bbox` et `date_range` que `find_ecotaxa_samples_in_region`.
+        Réponse agrégée au niveau projet : nombre de samples, total objets,
+        instruments, plage de dates.
+        """
+        try:
+            result = projects_in_region(bbox=bbox, date_range=date_range)
+        except EcoTaxaBrowserError as exc:
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}"
+        except Exception as exc:
+            return f"Erreur lors de la recherche EcoTaxa : {exc}"
+
+        if not result["projects"]:
+            return "Aucun projet dans cette zone / période."
+
+        lines = [
+            f"# {result['total_projects']} projets, {result['total_samples']} samples",
+            "",
+            "| project_id | samples | objets | instruments | date_min | date_max |",
+            "|---:|---:|---:|---|---|---|",
+        ]
+        for p in result["projects"]:
+            lines.append(
+                f"| {p['project_id']} | {p['sample_count']} | "
+                f"{p['object_count']} | {', '.join(p['instruments']) or '—'} | "
+                f"{p['date_min'] or '—'} | {p['date_max'] or '—'} |"
+            )
+        return "\n".join(lines)
+
+    @tool
+    def find_ecotaxa_observations(
+        taxon: str,
+        bbox: dict | None = None,
+        date_range: dict | None = None,
+        instrument: str | None = None,
+        status: str = "V",
+    ) -> str:
+        """Trouve les samples EcoTaxa dont le projet a le taxon attesté.
+
+        Granularité projet-filtrée : retourne les samples (bbox/date/instrument)
+        appartenant à un projet où le taxon a au moins un objet du statut
+        demandé (`V` validé, `P` prédit, `D` douteux, `all`). Pour des counts
+        précis par projet, enchaîner sur `count_ecotaxa_taxa`.
+        """
+        try:
+            result = find_observations(
+                taxon=taxon, bbox=bbox, date_range=date_range,
+                instrument=instrument, status=status,
+            )
+        except EcoTaxaBrowserError as exc:
+            details = ""
+            if exc.candidates:
+                details = " — candidats : " + ", ".join(
+                    f"{c.get('taxon_id')}={c.get('display_name')}"
+                    for c in exc.candidates[:5]
+                )
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}{details}"
+        except Exception as exc:
+            return f"Erreur lors de la recherche EcoTaxa : {exc}"
+
+        if not result["samples"]:
+            attested = result["attested_projects"]
+            return (
+                f"Aucun sample (cache local) dans un projet attestant "
+                f"{result['taxon']['matched_name']} au statut {status} — "
+                f"projets attestés : {attested or 'aucun'}."
+            )
+
+        lines = [
+            f"# {result['total_matching']} samples × {result['taxon']['matched_name']}"
+            + (" — tronqué" if result["truncated"] else ""),
+            f"Statut filtré : {result['status_filter']} · "
+            f"Projets attestés : {result['attested_projects']}",
+            "",
+            "| sample_id | projet | lat | lon | date_min | date_max |",
+            "|---:|---:|---:|---:|---|---|",
+        ]
+        for s in result["samples"][:50]:
+            lines.append(
+                f"| {s['sample_id']} | {s['project_id']} | {s['lat']:.3f} | "
+                f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} |"
+            )
+        if len(result["samples"]) > 50:
+            lines.append("")
+            lines.append(f"(50 premiers / {len(result['samples'])} affichés)")
+        return "\n".join(lines)
+
     return [
         find_ecotaxa_projects,
+        find_ecotaxa_samples_in_region,
+        find_ecotaxa_projects_in_region,
+        find_ecotaxa_observations,
         inspect_ecotaxa_project_schema,
         inspect_ecotaxa_column,
         count_ecotaxa_taxa,

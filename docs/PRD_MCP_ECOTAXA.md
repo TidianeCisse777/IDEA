@@ -2,8 +2,8 @@
 
 | Métadonnée | Valeur |
 |---|---|
-| Status | 🟢 V1 partiel — M0/M1/M2/M3/M4 livrés, M5–M6 à venir |
-| Version | 0.4 |
+| Status | 🟢 V1 — M0/M1/M2/M3/M4/M5 livrés, M6 hardening à venir |
+| Version | 0.5 |
 | Branche | `feat/mcp-ecotaxa` (rebased sur `main` 2026-06-15) |
 | Dernière mise à jour | 2026-06-15 |
 | Owner | Tidiane Cisse (NeoLab, Université Laval) |
@@ -429,3 +429,4 @@ M2, M3, M4 peuvent partiellement se paralléliser après M1 si plusieurs devs.
 | 2026-06-15 | Claude | M3 implémenté en TDD : 4 tools métier (`taxa_stats`, `get_project_schema`, `get_column_distribution`, `compare_project_schemas`), erreurs structurées E2/E1, façades LangChain + FastMCP. 28 nouveaux tests verts, suite globale 297 passed / 3 RAG infra / 10 skipped. |
 | 2026-06-15 | Claude | Live-test contre EcoTaxa réel a révélé 3 bugs : prefix `fre.<label>` au lieu de `obj.<code>`, payload `{"taxo": str}` au lieu de list, champ `text` au lieu de `display_name`. Fixés et regression-tested. |
 | 2026-06-15 | Claude | M4 implémenté en TDD : schéma SQLite (3 tables + 3 indexes), sync engine F1/P2/E3, endpoints `/admin/resync` (A2) et `/admin/sync_runs/{id}`, `/health` enrichi. 26 nouveaux tests M4, suite globale 326 passed / 0 failed / 10 skipped. |
+| 2026-06-15 | Claude | M5 implémenté en TDD : `samples_in_region`, `projects_in_region`, `find_observations`. Décisions B2/G1/R2/C2. 17 nouveaux tests M5, suite globale 343 passed / 0 failed / 10 skipped. La promesse "montre-moi les samples Calanus en Baie d'Hudson 2018-2022" résolue en une commande MCP. |

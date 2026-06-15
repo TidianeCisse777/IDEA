@@ -32,6 +32,8 @@ from core.ecotaxa_browser.samples import get_sample, list_project_samples
 from core.ecotaxa_browser.column_distribution import get_column_distribution
 from core.ecotaxa_browser.compare_schemas import compare_project_schemas
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+from core.ecotaxa_browser.observations import find_observations
+from core.ecotaxa_browser.region import projects_in_region, samples_in_region
 from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
@@ -338,6 +340,71 @@ def create_mcp() -> FastMCP:
         ``unique_to_project`` lists.
         """
         return await _run_sync(compare_project_schemas, project_ids=project_ids)
+
+    @mcp.tool(name="samples_in_region")
+    async def samples_in_region_tool(
+        bbox: dict | None = None,
+        date_range: dict | None = None,
+        instrument: str | None = None,
+    ) -> dict:
+        """Return cached samples matching a bbox / date range / instrument.
+
+        ``bbox`` is a dict ``{"south", "west", "north", "east"}`` in decimal
+        degrees. ``date_range`` is ``{"from", "to"}`` in ISO format. All
+        filters are optional. Capped at 500 samples with a ``truncated`` flag
+        and a ``summary`` aggregating project_breakdown + date range seen.
+        Reads the local cache only — call ``/admin/resync`` first if empty.
+        """
+        try:
+            return await _run_sync(
+                samples_in_region,
+                bbox=bbox, date_range=date_range, instrument=instrument,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="projects_in_region")
+    async def projects_in_region_tool(
+        bbox: dict | None = None,
+        date_range: dict | None = None,
+    ) -> dict:
+        """Aggregate cached samples per project for a region / time window.
+
+        Same bbox / date_range format as ``samples_in_region``. Returns one
+        row per project with ``sample_count``, ``object_count``,
+        ``instruments``, ``date_min``, ``date_max``.
+        """
+        try:
+            return await _run_sync(
+                projects_in_region, bbox=bbox, date_range=date_range,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="find_observations")
+    async def find_observations_tool(
+        taxon: int | str,
+        bbox: dict | None = None,
+        date_range: dict | None = None,
+        instrument: str | None = None,
+        status: str = "V",
+    ) -> dict:
+        """Find cached samples whose project has the taxon attested.
+
+        Project-level filter (G1 granularity): samples in bbox/date that
+        belong to a project where ``taxon`` has at least one object of the
+        requested status (``V``, ``P``, ``D``, ``all``). Per-sample taxon
+        counts are out of scope for V1 — use ``count_ecotaxa_taxa`` (taxa
+        stats) on the returned ``attested_projects`` for finer numbers.
+        """
+        try:
+            return await _run_sync(
+                find_observations,
+                taxon=taxon, bbox=bbox, date_range=date_range,
+                instrument=instrument, status=status,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
 
     return mcp
 
