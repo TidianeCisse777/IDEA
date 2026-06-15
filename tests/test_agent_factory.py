@@ -238,3 +238,26 @@ def test_system_prompt_loads_environmental_join_skill_for_ctd_and_bio_oracle_joi
     assert 'load_skill("environmental_join")' in prompt
     assert "amundsen ct" in prompt
     assert "bio-oracle" in prompt
+
+
+def test_system_prompt_routes_neolabs_abundance_analysis_to_dedicated_skill():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert 'load_skill("neolabs_abundance_analysis")' in prompt
+    assert "neolabs" in prompt
+    assert "sample_id + analysis_id" in prompt
+    assert "ordination" in prompt
+    assert "nmds" in prompt
+    assert "rda" in prompt
+
+
+def test_graph_planner_requires_sample_df_for_neolabs_taxon_level_data():
+    from pathlib import Path
+
+    planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8").lower()
+    assert "sample_df" in planner
+    assert "sample_id + analysis_id" in planner
+    assert "taxon-level" in planner or "niveau taxon" in planner
+    assert "total abundance (ind./m3 depth vol)" in planner
+    assert "ctd_match_status" in planner

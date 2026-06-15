@@ -171,6 +171,28 @@ def test_run_pandas_exposes_registered_datasets_from_multiple_sources():
     assert result == "(3, 2)"
 
 
+def test_run_pandas_can_execute_sklearn_pca_for_ordination(tsv_path):
+    tools = make_tools("thread-pca")
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    result = run_pandas.invoke({
+        "code": """
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+X = df[["depth", "temperature"]].astype(float)
+scores = PCA(n_components=2).fit_transform(StandardScaler().fit_transform(X))
+result = pd.DataFrame(scores, columns=["PC1", "PC2"]).round(6)
+"""
+    })
+
+    assert "PC1" in result
+    assert "PC2" in result
+    assert "Erreur" not in result
+
+
 # --- Comportement 3 : erreur pandas ---
 
 def test_run_pandas_error_shows_columns(tsv_path):

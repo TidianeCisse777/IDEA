@@ -711,3 +711,83 @@ Feedback si le calcul n'est pas possible :
 - Si la jointure entre sources n'est pas validee, produire d'abord un rapport de jointure avec deltas temps/position/profondeur.
 - Si le calcul demande une relation biologique non fournie, signaler que la relation doit venir de la litterature, du labo ou d'une specification.
 - Si l'utilisateur demande une conclusion taxonomique ou physiologique non supportée, reformuler en analyse exploratoire ou en vérification de données.
+
+---
+# Analyses standard NeoLabs abondance + CTD
+
+Mots-clés : NeoLabs, abondance zooplancton, abondance copépodes, ind./m3, ind m-3, SAMPLE_ID, ANALYSIS_ID, sample_df, ctd_match_status, saisonnalité, anomalie, richesse taxonomique, Shannon, Simpson, Pielou, PCA, PCoA, NMDS, RDA, ordination, Bray-Curtis, Amundsen CTD
+
+Les fichiers NeoLabs de taxonomie-abondance enrichis avec Amundsen CTD doivent être analysés en respectant le niveau de ligne. Une ligne correspond généralement à un taxon, stade ou groupe de taille dans une analyse, pas à un prélèvement unique. Pour les analyses temporelles, spatiales, environnementales ou par station, reconstruire d'abord une table `sample_df` avec une ligne par `SAMPLE_ID + ANALYSIS_ID`.
+
+Clé de travail recommandée :
+```text
+SAMPLE_ID + ANALYSIS_ID
+```
+
+Métrique d'abondance par défaut :
+```text
+Total abundance (ind./m3 depth vol)
+```
+
+Unité :
+```text
+ind./m3 ou ind m-3
+```
+
+Règles d'unités :
+- Utiliser `Total abundance (ind./m3 depth vol)` comme métrique principale si elle est présente.
+- Utiliser `Total abundance (ind./m3 flowmeter vol)` seulement si le volume depth est absent, si le trait est un O-Tow, ou si l'utilisateur demande explicitement la normalisation par débitmètre.
+- Ne pas mélanger `depth vol` et `flowmeter vol` dans une même comparaison sans documenter le choix.
+- Les valeurs négatives doivent être signalées en QA/QC ; elles peuvent être mises à zéro seulement pour un graphique exploratoire et cela doit être dit.
+
+Analyses standard à proposer :
+| Analyse | Table de travail | Sortie |
+|---|---|---|
+| Audit de couverture | `sample_df` | nombre de samples, stations, taxons, années, mois |
+| Lacunes temporelles | `sample_df` | histogramme par année, heatmap année x mois |
+| Lacunes spatiales | `sample_df` | carte stations, taille/couleur par nombre d'échantillons |
+| Qualité CTD | `sample_df` | `ctd_match_status`, `ctd_distance_km`, `ctd_time_delta_min`, `ctd_depth_coverage_m` |
+| Abondance totale | `sample_df` | somme ou médiane par station/année/mois |
+| Abondance copépodes | taxon-level puis `sample_df` | filtre `ZOOPLANKTON_CATEGORY == copepod` |
+| Top taxons | taxon-level | somme par `TAXON_ID` |
+| Diversité | matrice sample x taxon | richesse, Shannon, Simpson, Pielou |
+| Anomalies | `sample_df` | anomalie mensuelle ou z-score mensuel |
+| Environnement CTD | `sample_df` matched | abondance vs température, salinité, oxygène, fluorescence, nitrate |
+| Ordination | matrice sample x taxon + environnement | PCA, PCoA, NMDS, RDA exploratoire |
+
+Diversité :
+```text
+richesse = nombre de taxons avec abondance > 0
+Shannon = -somme(p_i * ln(p_i))
+Simpson = 1 - somme(p_i^2)
+Pielou = Shannon / ln(richesse)
+```
+
+Ordination communauté-environnement :
+- Construire une matrice `sample x taxon` à partir des abondances en `ind./m3`.
+- Filtrer les échantillons dont l'abondance totale est nulle.
+- Retirer les taxons très rares pour une ordination lisible, par exemple présents dans moins de 3 échantillons.
+- Transformer les abondances avec `log1p` ou Hellinger avant distance/ordination.
+- Pour PCoA ou NMDS taxonomique, utiliser une distance Bray-Curtis.
+- Pour PCA environnementale, standardiser température, salinité, oxygène, fluorescence et nitrate.
+- Pour RDA, utiliser les échantillons avec `ctd_match_status == matched` et présenter le résultat comme exploratoire sauf si un test formel est implémenté.
+- CCA ne doit être annoncée que si une méthode ou bibliothèque validée est disponible ; sinon proposer PCA/PCoA/NMDS/RDA.
+
+Variables CTD recommandées :
+```text
+amundsen_temperature_degC_mean_sample_interval
+amundsen_salinity_psu_mean_sample_interval
+amundsen_oxygen_uM_mean_sample_interval
+amundsen_fluorescence_ug_l_mean_sample_interval
+amundsen_nitrate_mmol_m3_mean_sample_interval
+```
+
+Limites :
+- Les relations abondance-environnement sont exploratoires sans modèle statistique et test d'hypothèse.
+- Les jointures CTD doivent toujours afficher leur qualité avec `ctd_match_status`, distance, délai et couverture verticale.
+- Les taxons génériques (`Animalia`, `Copepoda`, `Calanus spp.`) peuvent dominer certaines sorties ; les signaler séparément des taxons identifiés finement.
+
+Feedback si le calcul n'est pas possible :
+- Si `SAMPLE_ID` ou `ANALYSIS_ID` manque, chercher une clé équivalente avant d'agréger.
+- Si `TAXON_ID` manque, proposer une analyse par groupe disponible (`FAMILY`, `ORDER`, `ZOOPLANKTON_CATEGORY`).
+- Si les colonnes CTD sont vides ou `ctd_match_status` n'est pas `matched`, limiter l'analyse à la biologie et produire un diagnostic de jointure.

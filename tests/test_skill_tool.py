@@ -10,6 +10,7 @@ def test_hub_skill_name_maps_correctly():
     assert _hub_skill_name("ecotaxa_query") == "copepod-ecotaxa-query"
     assert _hub_skill_name("graph_planner") == "copepod-graph-planner"
     assert _hub_skill_name("uvp_ecopart") == "copepod-uvp-ecopart"
+    assert _hub_skill_name("neolabs_abundance_analysis") == "copepod-neolabs-abundance-analysis"
 
 
 def test_load_skill_pulls_from_hub_when_api_key_set(monkeypatch):
@@ -69,3 +70,22 @@ def test_load_skill_skips_hub_when_no_api_key(monkeypatch, tmp_path):
 
     mock_class.assert_not_called()
     assert result == "# Local graph planner"
+
+
+def test_neolabs_abundance_skill_documents_standard_analysis_workflow():
+    skill = Path("agents/skills/neolabs_abundance_analysis.md").read_text(encoding="utf-8")
+    text = skill.lower()
+
+    assert "sample_id + analysis_id" in text
+    assert "sample_df" in text
+    assert "ind./m3" in text or "ind m" in text
+    assert "ctd_match_status" in text
+    assert "shannon" in text
+    assert "simpson" in text
+    assert "pielou" in text
+    assert "anomal" in text
+    assert "ordination" in text
+    assert "pca" in text
+    assert "nmds" in text
+    assert "pcoa" in text
+    assert "rda" in text

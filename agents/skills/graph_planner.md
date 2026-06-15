@@ -37,14 +37,40 @@ If yes → the graph must include the geographic dimension:
 
 **Always use `map` (cartopy) when the user asks for a geographic map, carte, or spatial distribution.** Never produce a plain scatter on lon/lat axes for a map request — it has no geographic context (no coastlines, no projection).
 
+## Step 0b — NeoLabs taxonomy-abundance level check
+
+If the loaded table has NeoLabs abundance columns such as `SAMPLE_ID`, `ANALYSIS_ID`, `TAXON_ID`, `ZOOPLANKTON_CATEGORY`, and `Total abundance (ind./m3 depth vol)`, treat it as a taxon-level table.
+
+Mandatory rule:
+- For temporal, spatial, station-level, CTD, diversity, anomaly, and ordination plots, first rebuild `sample_df` with one row per `SAMPLE_ID + ANALYSIS_ID`.
+- Do not plot raw taxon-level rows as independent samples for station/date/environment summaries.
+- Use `Total abundance (ind./m3 depth vol)` as the default abundance column and label the unit as `ind./m3`.
+- Use `ctd_match_status == "matched"` before plotting abundance against Amundsen CTD variables.
+- For top-taxon plots, raw taxon-level rows are valid, but aggregate by `TAXON_ID` first.
+
+Recommended `sample_df` contents:
+- sample key: `SAMPLE_ID + ANALYSIS_ID`
+- metadata: station, year, month, latitude, longitude, depth interval
+- biology: total abundance, copepod abundance, taxon richness
+- CTD QA: `ctd_match_status`, `ctd_distance_km`, `ctd_time_delta_min`, `ctd_depth_coverage_m`
+- environment: temperature, salinity, oxygen, fluorescence, nitrate from Amundsen interval means
+
+For ordination requests (`PCA`, `PCoA`, `NMDS`, `RDA`, `CCA`, `ordination`):
+- plan a taxon matrix (`sample x taxon`) plus an environmental `sample_df`
+- filter to positive-abundance samples
+- use Bray-Curtis for PCoA/NMDS taxonomic composition
+- standardize CTD variables for PCA/RDA
+- present the result as exploratory unless a formal model/test is included
+
 ## Required steps
 
 1. Identify the relevant columns in the loaded file
 2. Check the geographic dimension (step 0)
-3. Decide the output type based on the user's prompt:
+3. Check whether NeoLabs taxon-level data requires a rebuilt `sample_df` (step 0b)
+4. Decide the output type based on the user's prompt:
    - If the prompt explicitly mentions "graphique", "carte", "visualise", "plot", "chart", "map" → **visual output** (use run_graph after graph_writer)
    - Otherwise → **table output** (use run_pandas to return a markdown table)
-4. If visual output: choose the graph type:
+5. If visual output: choose the graph type:
    - **map**: spatial distribution of stations or observations
    - **sampling gap map**: stations coloured by coverage status (present / sparse / absent) per zone — use when the user asks about undersampled zones, lacunes, missing coverage, or where to sample next. Color: green = ≥ 10 obs, orange = 1–9 obs, red = 0 obs.
    - **climate delta map**: stations coloured by delta (Bio-ORACLE projected − CTD current) — use when the user asks about warming, SSP projections, or climate change impact by zone. Use a diverging colormap (coolwarm), centre at 0.
@@ -54,9 +80,9 @@ If yes → the graph must include the geographic dimension:
    - **line**: evolution over time or depth
    - **scatter**: relationship between two numeric variables (e.g. temperature vs depth)
    - **histogram**: distribution of a numeric variable
-5. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
-6. Flag any missing values that could affect the output
-7. **Uncertainty assessment (CT-AG-27)** — for each row going into the graph, classify it as:
+6. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
+7. Flag any missing values that could affect the output
+8. **Uncertainty assessment (CT-AG-27)** — for each row going into the graph, classify it as:
    - **confirmed**: validated source (EcoTaxa statut V), required columns complete, no missing volume/calibration
    - **exploratory**: at least one of — taxon not validated (statut != V), partial column (NaN in a non-critical field), join with tolerance, derived variable without canonical method
    - **uncertain identification**: morphologically ambiguous taxon (e.g. *C. glacialis* vs *C. finmarchicus* in overlap zones), historical pre-molecular identification

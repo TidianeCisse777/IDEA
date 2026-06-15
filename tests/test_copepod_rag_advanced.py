@@ -90,3 +90,22 @@ def test_full_pipeline_multi_query_and_rerank():
 
     assert len(results) <= 3
     assert all("chunk_id" in r and "title" in r and "content" in r for r in results)
+
+
+def test_rag_contains_neolabs_standard_abundance_and_ordination_methods():
+    """Le RAG documente les analyses réalistes NeoLabs abondance + CTD."""
+    from pathlib import Path
+
+    chunks = Path("core/copepod_rag/chunks.json").read_text(encoding="utf-8").lower()
+
+    assert "analyses standard neolabs abondance + ctd" in chunks
+    assert "ind./m3" in chunks or "ind m" in chunks
+    assert "ctd_match_status" in chunks
+    assert "shannon" in chunks
+    assert "simpson" in chunks
+    assert "pielou" in chunks
+    assert "anomalie" in chunks
+    assert "ordination" in chunks
+    assert "pcoa" in chunks
+    assert "nmds" in chunks
+    assert "rda" in chunks
