@@ -130,7 +130,27 @@ Téléchargement structuré via ERDDAP (`core/amundsen_ctd_client.py`).
 
 ---
 
-## 5. Source Bio-ORACLE
+## 5. OGSL source
+
+**Module: `tools/ogsl_sources.py` - factory: `make_ogsl_tools(thread_id)`**
+
+### `query_ogsl(station_column, time_column, depth_column=None, variables=None, time_tolerance_hours=24, depth_tolerance_m=10, confirmed=False) -> str`
+
+Loads CTD profiles from the public OGSL `ismerSgdeCtd` ERDDAP dataset. The
+tool derives one padded time window per unique station, so remote request count
+scales with stations rather than source rows. It persists raw measurements as
+`df_ogsl` and creates a same-cardinality enriched table with nearest-time and
+nearest-pressure matches.
+
+Default tolerances are 24 hours and 10 m/dbar. When no depth column is provided,
+the shallowest `PRES` value from the nearest cast is selected. Match quality is
+reported through `ogsl_match_status`, `ogsl_time_delta_min`, and
+`ogsl_depth_delta_m`. More than ten unique stations requires a second call with
+`confirmed=true`.
+
+---
+
+## 6. Source Bio-ORACLE
 
 **Module : `tools/bio_oracle_sources.py` — factory : `make_bio_oracle_tools(thread_id)`**
 
@@ -146,13 +166,15 @@ Valeur ponctuelle d'une variable à un point.
 
 Extraction en série ou batch, écriture en session.
 
-### `couple_zooplankton_bio_oracle(rows_json: str) -> str`
+### `couple_zooplankton_bio_oracle(latitude_column, longitude_column, variable, scenario, depth_layer) -> str`
 
-Couple un set de lignes de zooplancton (avec lat/lon/date/profondeur) aux variables Bio-ORACLE correspondantes. Documente la méthode dans les métadonnées (CT-AG-07).
+Enriches the active zooplankton table with Bio-ORACLE variables using the
+latitude and longitude column names. The tool reads the session directly and
+preserves every source column; the agent never transcribes individual rows.
 
 ---
 
-## 6. RAG : base de connaissances
+## 7. RAG : base de connaissances
 
 **Module : `tools/rag_tool.py` — factory : `make_rag_tool()`**
 
@@ -166,7 +188,7 @@ Recherche vectorielle (top-k=3 par défaut) dans ChromaDB sur les 9 docs RAG. Re
 
 ---
 
-## 7. Skills : chargement à la demande
+## 8. Skills : chargement à la demande
 
 **Module : `tools/skill_tool.py` — factory : `make_skill_tool()`**
 
@@ -182,7 +204,7 @@ Récupère un skill Markdown depuis LangSmith Hub (ou `agents/skills/*.md` en fa
 | `ecopart_query` | Idem pour EcoPart. |
 | `amundsen_ctd_query` | Idem pour Amundsen. |
 | `bio_oracle_query` | Idem pour Bio-ORACLE. |
-| `environmental_join` | Avant de joindre biologique ↔ environnemental (CTD, Bio-ORACLE, OGSL). Le system prompt impose **toujours** un `run_pandas` ensuite. |
+| `environmental_join` | Use before non-standard biological/environmental joins. Standard OGSL enrichment is handled entirely by `query_ogsl`. |
 | `sql_workspace_query` | Quand l'utilisateur travaille un serveur SQL. |
 | `uvp_ecotaxa` | Auto-chargé via hint `load_file` quand un export UVP EcoTaxa est détecté. |
 | `uvp_ecopart` | Idem pour EcoPart. |
@@ -190,7 +212,7 @@ Récupère un skill Markdown depuis LangSmith Hub (ou `agents/skills/*.md` en fa
 
 ---
 
-## 8. Workspace SQL (lecture seule)
+## 9. Workspace SQL (lecture seule)
 
 **Module : `tools/sql_workspace.py` — factory : `make_sql_tools(thread_id)`**
 
@@ -219,7 +241,7 @@ Si `DATABASE_URL` n'est pas configurée : l'agent demande à l'utilisateur de co
 
 ---
 
-## 9. Livrables
+## 10. Livrables
 
 **Module : `tools/deliverable_tool.py`**
 
@@ -249,5 +271,3 @@ Ces fichiers de `tools/` ne sont pas des `@tool` mais des supports utilisés par
 ---
 
 ## À venir
-
-- **OGSL** — annoncé dans le system prompt mais aucun tool dédié. À ajouter quand l'API/source sera arrêtée. Tant que le tool n'existe pas, l'agent reste sur les sources couvertes ou bascule sur fichier local.

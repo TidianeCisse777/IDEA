@@ -1,7 +1,6 @@
 """LangChain tools for Bio-ORACLE."""
 from __future__ import annotations
 
-import json
 import hashlib
 import uuid
 from pathlib import Path
@@ -116,42 +115,65 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             return f"Erreur lors de l'accès à Bio-ORACLE : {exc}"
 
     @tool
-    def couple_zooplankton_bio_oracle(rows_json: str) -> str:
+    def couple_zooplankton_bio_oracle(
+        latitude_column: str,
+        longitude_column: str,
+        variable: str,
+        scenario: str,
+        depth_layer: str,
+    ) -> str:
         """Enrichit chaque ligne d'observations zooplancton avec UNE valeur Bio-ORACLE
         propre à son point géographique (lat/lon).
 
         Utilise CE tool — et pas `query_bio_oracle_zones` — dès que l'utilisateur
         veut une valeur Bio-ORACLE **par station** d'un fichier zooplancton chargé
         (fichier avec `latitude` / `longitude` par ligne). Le tool fait UN appel
-        Bio-ORACLE par ligne ; deux stations à des coordonnées différentes
-        recevront donc deux valeurs différentes.
+        Bio-ORACLE par point unique et conserve toutes les colonnes du fichier.
 
-        `rows_json` : JSON array, une entrée par station, par exemple :
-          [{"latitude": 71.24, "longitude": -157.17, "station": "1040",
-            "variable": "temperature", "scenario": "baseline",
-            "depth_layer": "surface"}, ...]
+        Passe uniquement les noms des colonnes latitude/longitude du fichier
+        chargé ainsi que la variable, le scénario et la couche demandés. Le tool
+        lit lui-même les lignes réelles de la session ; ne retranscris jamais les
+        observations dans les arguments.
         """
         try:
-            rows = json.loads(rows_json)
-            if not isinstance(rows, list) or not rows:
-                return "Aucune ligne à coupler."
+            session = _store.get(thread_id)
+            source = session.get("df") if session else None
+            if not isinstance(source, pd.DataFrame) or source.empty:
+                return "Aucune table chargée à coupler."
+            missing_columns = [
+                column
+                for column in (latitude_column, longitude_column)
+                if column not in source.columns
+            ]
+            if missing_columns:
+                return (
+                    "Colonnes absentes de la table chargée : "
+                    + ", ".join(missing_columns)
+                )
+
+            dataframe = source.copy(deep=True)
 
             # Dédup : un appel ERDDAP par (lat, lon, variable, scenario, depth_layer).
             # Deux lignes au même point recevront la même valeur via lookup.
             cache: dict[tuple, dict] = {}
-            for row in rows:
+            for latitude, longitude in dataframe[
+                [latitude_column, longitude_column]
+            ].itertuples(index=False, name=None):
                 key = (
-                    row["latitude"], row["longitude"],
-                    row["variable"], row["scenario"], row["depth_layer"],
+                    latitude,
+                    longitude,
+                    variable,
+                    scenario,
+                    depth_layer,
                 )
                 if key not in cache:
                     preview = _preview_bio_oracle_point(
                         {
-                            "latitude": row["latitude"],
-                            "longitude": row["longitude"],
-                            "variable": row["variable"],
-                            "scenario": row["scenario"],
-                            "depth_layer": row["depth_layer"],
+                            "latitude": latitude,
+                            "longitude": longitude,
+                            "variable": variable,
+                            "scenario": scenario,
+                            "depth_layer": depth_layer,
                         }
                     )
                     val_key = preview.get("variable", "")
@@ -163,38 +185,52 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                         value = None
                     cache[key] = {"value": value, "dataset_id": preview.get("dataset_id")}
 
-            coupled_rows = []
-            for row in rows:
+            values = []
+            dataset_ids = []
+            for latitude, longitude in dataframe[
+                [latitude_column, longitude_column]
+            ].itertuples(index=False, name=None):
                 key = (
-                    row["latitude"], row["longitude"],
-                    row["variable"], row["scenario"], row["depth_layer"],
+                    latitude,
+                    longitude,
+                    variable,
+                    scenario,
+                    depth_layer,
                 )
                 cached = cache[key]
-                scenario_clean = str(row["scenario"]).lower().replace(".", "_").replace("-", "_")
-                value_col = f"{row['variable']}_{scenario_clean}"
-                coupled_rows.append(
-                    {
-                        **row,
-                        value_col: cached["value"],
-                        "dataset_id": cached["dataset_id"],
-                    }
-                )
+                values.append(cached["value"])
+                dataset_ids.append(cached["dataset_id"])
+
+            scenario_clean = str(scenario).lower().replace(".", "_").replace("-", "_")
+            value_col = f"{variable}_{scenario_clean}"
+            dataframe[value_col] = values
+            dataframe["dataset_id"] = dataset_ids
 
             output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
-            dataframe = pd.DataFrame(coupled_rows)
             dataframe.to_csv(output_path, sep="\t", index=False)
-            query_id = hashlib.sha256(rows_json.encode("utf-8")).hexdigest()[:12]
+            query_fingerprint = dataframe[
+                [latitude_column, longitude_column]
+            ].to_json(orient="records")
+            query_id = hashlib.sha256(
+                (
+                    f"{query_fingerprint}|{variable}|{scenario}|{depth_layer}"
+                ).encode("utf-8")
+            ).hexdigest()[:12]
             variable_name = dataset_variable_name("bio_oracle_coupling", query_id)
             store_dataset(
                 _store,
                 thread_id,
                 dataframe,
                 variable_name=variable_name,
-                meta={"source": "bio_oracle_coupling", "query_id": query_id, "n_rows": len(coupled_rows)},
+                meta={
+                    "source": "bio_oracle_coupling",
+                    "query_id": query_id,
+                    "n_rows": len(dataframe),
+                },
             )
             preview_md = dataframe.head(20).to_markdown(index=False)
             return (
-                f"Couplage Bio-ORACLE chargé — {len(coupled_rows)} lignes.\n"
+                f"Couplage Bio-ORACLE chargé — {len(dataframe)} lignes.\n"
                 f"Données disponibles dans `{variable_name}`.\n"
                 f"Télécharger : {download_url(output_path.name)}\n\n"
                 f"Aperçu (20 premières lignes) :\n\n{preview_md}"
@@ -252,7 +288,8 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                         "est active en session. `query_bio_oracle_zones` renvoie UNE valeur "
                         "agrégée par zone — ne pas réutiliser cette valeur unique pour chaque "
                         "station. Pour des valeurs par station, appelle "
-                        "`couple_zooplankton_bio_oracle` avec une entrée par ligne.\n\n"
+                        "`couple_zooplankton_bio_oracle` avec les noms des colonnes "
+                        "latitude/longitude de la table chargée.\n\n"
                     )
         except Exception:
             pass

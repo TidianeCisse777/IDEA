@@ -242,7 +242,9 @@ Quand le serveur redémarre, les datasets en RAM disparaissent mais les checkpoi
 
 - ❌ Mode Contexte / Mode Analyse / Mode En Ligne par source — concept des anciennes specs, jamais implémenté. Tout passe par le system prompt.
 - ❌ OBIS — retiré du périmètre.
-- ⏳ OGSL — annoncé dans le system prompt, tool dédié non encore créé.
+- ✅ OGSL — `query_ogsl` groups large files by station, derives station-specific
+  time windows, persists raw `df_ogsl`, and creates a same-cardinality enriched
+  table with time/depth match quality.
 - ⏳ Génération de graphiques en R — le prompt dit Python ou R, le runtime ne supporte que Python (matplotlib).
 - 🗑️ `core/tool_registry/` — vestiges de l'architecture pré-LangChain ; en cours de retrait, les tools modernes sont dans `tools/` à la racine.
 - 🗑️ `agents/copepod_prompt.py` — version archivée, le prompt actif est `agents/copepod_system_prompt.py`.

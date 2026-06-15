@@ -109,9 +109,39 @@ def test_couple_zooplankton_bio_oracle_tool_persists_coupled_rows():
     from tools.session_store import default_store as _store
     from unittest.mock import patch
 
-    _store._store.clear()
+    thread_id = "thread-3"
+    source = pd.DataFrame(
+        [
+            {
+                "station": "IML4",
+                "latitude": 48.7,
+                "longitude": -68.5,
+                "sample_date": "2024-06-01",
+                "abundance": 120,
+            },
+            {
+                "station": "RIMOUSKI",
+                "latitude": 48.5,
+                "longitude": -68.3,
+                "sample_date": "2024-06-02",
+                "abundance": 95,
+            },
+            {
+                "station": "IML4-repeat",
+                "latitude": 48.7,
+                "longitude": -68.5,
+                "sample_date": "2024-06-03",
+                "abundance": 80,
+            },
+        ]
+    )
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+    _store.set(thread_id, source, {"source": "uploaded_file"})
+    preview_calls = []
 
     def fake_preview(parameters):
+        preview_calls.append(parameters)
         return {
             "dataset_id": "thetao_ssp245_2020_2100_depthsurf",
             "title": "Bio-Oracle Temperature [depthSurf] SSP245 2020-2100",
@@ -121,27 +151,37 @@ def test_couple_zooplankton_bio_oracle_tool_persists_coupled_rows():
                     "time": "2041-01-01T00:00:00Z",
                     "latitude": parameters["latitude"],
                     "longitude": parameters["longitude"],
-                    "thetao": 12.3,
+                    "thetao": parameters["latitude"],
                 }
             ],
         }
 
-    rows_json = (
-        '[{"latitude":50.2,"longitude":-65.8,"variable":"thetao",'
-        '"scenario":"SSP245","depth_layer":"depthsurf"}]'
-    )
-
     with patch("tools.bio_oracle_sources._preview_bio_oracle_point", side_effect=fake_preview):
-        tools = make_bio_oracle_tools("thread-3")
+        tools = make_bio_oracle_tools(thread_id)
         couple = next(tool for tool in tools if tool.name == "couple_zooplankton_bio_oracle")
-        result = couple.invoke({"rows_json": rows_json})
+        result = couple.invoke(
+            {
+                "latitude_column": "latitude",
+                "longitude_column": "longitude",
+                "variable": "thetao",
+                "scenario": "SSP245",
+                "depth_layer": "depthsurf",
+            }
+        )
 
-    assert _store.has("thread-3")
     assert "Couplage Bio-ORACLE chargé" in result
-    keys = _store.keys("thread-3:dataset:df_bio_oracle_coupling_")
+    assert {
+        (call["latitude"], call["longitude"]) for call in preview_calls
+    } == {(48.7, -68.5), (48.5, -68.3)}
+    assert len(preview_calls) == 2
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_coupling_")
     assert len(keys) == 1
     df_coupled = _store.get(keys[0])["df"]
-    assert df_coupled.shape == (1, 7)
-    # La valeur est désormais présente dans la table (colonne dérivée de variable+scenario)
+    assert len(df_coupled) == len(source)
+    assert set(source.columns) <= set(df_coupled.columns)
+    pd.testing.assert_frame_equal(
+        df_coupled.loc[:, source.columns].reset_index(drop=True),
+        source.reset_index(drop=True),
+    )
     assert "thetao_ssp245" in df_coupled.columns
-    assert df_coupled["thetao_ssp245"].iloc[0] == 12.3
+    assert df_coupled["thetao_ssp245"].tolist() == [48.7, 48.5, 48.7]
