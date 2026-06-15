@@ -2,8 +2,8 @@
 
 | Métadonnée | Valeur |
 |---|---|
-| Status | 🟢 V1 partiel — M0/M1/M2/M3 livrés, M4–M6 à venir |
-| Version | 0.3 |
+| Status | 🟢 V1 partiel — M0/M1/M2/M3/M4 livrés, M5–M6 à venir |
+| Version | 0.4 |
 | Branche | `feat/mcp-ecotaxa` (rebased sur `main` 2026-06-15) |
 | Dernière mise à jour | 2026-06-15 |
 | Owner | Tidiane Cisse (NeoLab, Université Laval) |
@@ -260,7 +260,7 @@ Chaque milestone = 1 PR. Une PR ne merge **que** si tous les gates passent.
 
 ---
 
-### M4 — Cache G2 (5–6 j) — Status : ⚪ Pas démarré
+### M4 — Cache G2 (5–6 j) — Status : 🟢 Terminé
 
 **Deliverables**
 - Schéma SQLite `data/ecotaxa_cache.sqlite` :
@@ -299,13 +299,22 @@ Chaque milestone = 1 PR. Une PR ne merge **que** si tous les gates passent.
 - `/health` enrichi : `cache_age_hours`, `last_sync_status`, `samples_indexed`, `projects_indexed`
 
 **Gates de validation**
-- [ ] Sync end-to-end sur ≥ 3 projets réels (`@pytest.mark.live`) réussit en < 5 min
-- [ ] Sync idempotent : run 2× consécutifs → aucun doublon, `last_synced` mis à jour
-- [ ] Samples sans lat/lon sont droppés (pas d'erreur, juste skip + log)
-- [ ] `/health` reporte des chiffres réalistes après sync
-- [ ] Crash du sync mid-run → état partial cohérent (pas de transaction half-committed)
-- [ ] Test unit sync avec SQLite in-memory + cassettes EcoTaxa simulées passe
-- [ ] Throttling : pas plus de 5 requêtes/sec vers EcoTaxa pendant sync
+- [x] Sync idempotent : `replace_project_samples` remplace atomiquement (test verts)
+- [x] Samples sans lat/lon droppés silencieusement (test `test_sync_drops_objects_without_lat_lon_silently`)
+- [x] `/health` reporte `samples_indexed`, `projects_indexed`, `schemas_indexed`, `last_sync_status`, `cache_age_hours`
+- [x] Crash mid-project → rollback de ce projet, autres projets commit (test `test_run_full_sync_marks_partial_on_per_project_failure`)
+- [x] Test unit sync avec SQLite in-memory : 8 tests verts (sync_project + run_full_sync)
+- [x] Throttling 5 req/s appliqué entre les fenêtres
+- [x] Endpoint admin `/admin/resync` Bearer-protégé, retourne 202 + fire-and-forget (A2)
+- [x] Endpoint admin `/admin/sync_runs/{id}` pour suivre le statut
+- [ ] Sync end-to-end sur ≥ 3 projets réels (`@pytest.mark.live`) — à valider en M6
+
+**Décisions appliquées** : F1 (full sync), P2 (window 5000, cap 50k objets/projet), E3 (per-project transaction), A2 (fire-and-forget + status endpoint).
+
+**Validation**
+- Suite globale : 326 passed, 10 skipped, 0 failed.
+- 20 nouveaux tests M4 (12 repo + 8 sync) + 6 tests admin endpoint, tous verts.
+- Schéma SQLite : `samples_cache`, `project_schemas_cache`, `sync_runs` avec indexes sur `project_id`, `(lat_avg, lon_avg)`, `(date_min, date_max)`.
 
 ---
 
@@ -418,3 +427,5 @@ M2, M3, M4 peuvent partiellement se paralléliser après M1 si plusieurs devs.
 | 2026-06-15 | Codex | M2 implémenté en TDD : navigation projet/sample/acquisition/objet/taxonomie, 9 tools FastMCP, plafond de 3 appels et walkthrough Docker live. |
 | 2026-06-15 | Claude | Rebase de `feat/mcp-ecotaxa` sur `main` post-merge `fix/test-suite-baseline` ; pin `aiohttp<3.13` pour compatibilité vcrpy 7. Suite globale : 269 passed / 3 failed (RAG infra) / 10 skipped. Gates baseline M0 et M2 cochées, milestones passés en 🟢 Terminé. |
 | 2026-06-15 | Claude | M3 implémenté en TDD : 4 tools métier (`taxa_stats`, `get_project_schema`, `get_column_distribution`, `compare_project_schemas`), erreurs structurées E2/E1, façades LangChain + FastMCP. 28 nouveaux tests verts, suite globale 297 passed / 3 RAG infra / 10 skipped. |
+| 2026-06-15 | Claude | Live-test contre EcoTaxa réel a révélé 3 bugs : prefix `fre.<label>` au lieu de `obj.<code>`, payload `{"taxo": str}` au lieu de list, champ `text` au lieu de `display_name`. Fixés et regression-tested. |
+| 2026-06-15 | Claude | M4 implémenté en TDD : schéma SQLite (3 tables + 3 indexes), sync engine F1/P2/E3, endpoints `/admin/resync` (A2) et `/admin/sync_runs/{id}`, `/health` enrichi. 26 nouveaux tests M4, suite globale 326 passed / 0 failed / 10 skipped. |

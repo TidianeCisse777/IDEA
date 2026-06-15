@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
+import sqlite3
+from datetime import datetime, timezone
 from functools import partial
 from typing import Any
 
@@ -16,6 +19,13 @@ from core.ecotaxa_browser.acquisitions import (
     get_acquisition,
     list_project_acquisitions,
 )
+from core.ecotaxa_browser.cache.repo import (
+    cache_counts,
+    init_schema,
+    latest_sync_status,
+    open_connection,
+)
+from core.ecotaxa_browser.cache.sync import run_full_sync
 from core.ecotaxa_browser.objects import get_object, list_sample_objects
 from core.ecotaxa_browser.projects import get_project
 from core.ecotaxa_browser.samples import get_sample, list_project_samples
@@ -26,32 +36,36 @@ from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
 from core.ecotaxa_browser.taxonomy import search_taxa, taxonomy_node
+from tools.ecotaxa_client import EcotaxaClient
 
 _MCP_PATHS = {"/mcp", "/mcp/"}
+_ADMIN_PREFIX = "/admin/"
+_DEFAULT_CACHE_DB = "data/ecotaxa_cache.sqlite"
 
 
 class BearerAuthMiddleware:
-    """Protect the MCP transport with a shared static Bearer token."""
+    """Protect the MCP transport and /admin endpoints with a Bearer token."""
 
     def __init__(self, app: ASGIApp, token: str) -> None:
         self.app = app
         self.token = token
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope.get("path") in _MCP_PATHS:
-            authorization = _header_value(scope, b"authorization")
-            expected = f"Bearer {self.token}"
-            if authorization is None or not secrets.compare_digest(
-                authorization,
-                expected,
-            ):
-                response = JSONResponse(
-                    {"error": "unauthorized"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-                await response(scope, receive, send)
-                return
+        if scope["type"] == "http":
+            path = scope.get("path") or ""
+            if path in _MCP_PATHS or path.startswith(_ADMIN_PREFIX):
+                authorization = _header_value(scope, b"authorization")
+                expected = f"Bearer {self.token}"
+                if authorization is None or not secrets.compare_digest(
+                    authorization, expected,
+                ):
+                    response = JSONResponse(
+                        {"error": "unauthorized"},
+                        status_code=401,
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                    await response(scope, receive, send)
+                    return
 
         await self.app(scope, receive, send)
 
@@ -61,6 +75,41 @@ def _header_value(scope: Scope, name: bytes) -> str | None:
         if header_name.lower() == name:
             return value.decode("latin-1")
     return None
+
+
+def _cache_db_path() -> str:
+    return os.getenv("ECOTAXA_CACHE_DB", _DEFAULT_CACHE_DB)
+
+
+def _open_cache() -> sqlite3.Connection:
+    conn = open_connection(_cache_db_path())
+    init_schema(conn)
+    return conn
+
+
+def _run_full_sync_with_real_client(cache_db: str) -> None:
+    """Default sync runner — overridable in tests via monkeypatch."""
+    client = EcotaxaClient()
+    conn = open_connection(cache_db)
+    try:
+        init_schema(conn)
+        now = datetime.now(timezone.utc).isoformat()
+        run_full_sync(conn, client, now_iso=now)
+    finally:
+        conn.close()
+
+
+def _compute_cache_age_hours(last_sync: dict | None) -> float | None:
+    if not last_sync or not last_sync.get("ended_at"):
+        return None
+    try:
+        ended = datetime.fromisoformat(last_sync["ended_at"])
+    except (TypeError, ValueError):
+        return None
+    if ended.tzinfo is None:
+        ended = ended.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - ended
+    return delta.total_seconds() / 3600.0
 
 
 def create_app() -> ASGIApp:
@@ -73,7 +122,66 @@ def create_app() -> ASGIApp:
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health_check(request: Any) -> JSONResponse:
-        return JSONResponse({"status": "ok", "cache": None})
+        cache_payload: dict | None = None
+        try:
+            conn = _open_cache()
+            try:
+                counts = cache_counts(conn)
+                last_sync = latest_sync_status(conn)
+                cache_payload = {
+                    "samples_indexed": counts["samples_indexed"],
+                    "projects_indexed": counts["projects_indexed"],
+                    "schemas_indexed": counts["schemas_indexed"],
+                    "last_sync_status": (last_sync or {}).get("status"),
+                    "cache_age_hours": _compute_cache_age_hours(last_sync),
+                }
+            finally:
+                conn.close()
+        except Exception:
+            cache_payload = None
+        return JSONResponse({"status": "ok", "cache": cache_payload})
+
+    @mcp.custom_route("/admin/resync", methods=["POST"])
+    async def admin_resync(request: Any) -> JSONResponse:
+        cache_db = _cache_db_path()
+        # Resolve runner lazily so tests can monkeypatch the module-level fn.
+        import core.mcp.ecotaxa_server as _server_module
+        runner = _server_module._run_full_sync_with_real_client
+
+        loop = asyncio.get_running_loop()
+
+        def _runner() -> None:
+            try:
+                runner(cache_db)
+            except Exception:  # noqa: BLE001 — background task
+                pass
+
+        loop.run_in_executor(None, _runner)
+        return JSONResponse(
+            {"run_id": "pending", "status": "started"},
+            status_code=202,
+        )
+
+    @mcp.custom_route("/admin/sync_runs/{run_id}", methods=["GET"])
+    async def admin_sync_run_status(request: Any) -> JSONResponse:
+        try:
+            run_id = int(request.path_params["run_id"])
+        except (KeyError, TypeError, ValueError):
+            return JSONResponse({"error": "invalid run_id"}, status_code=400)
+        try:
+            conn = _open_cache()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM sync_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            return JSONResponse({"error": "cache unavailable"}, status_code=503)
+        if row is None:
+            return JSONResponse({"error": "run not found"}, status_code=404)
+        return JSONResponse(dict(row))
 
     return BearerAuthMiddleware(mcp.http_app(path="/mcp"), token)
 

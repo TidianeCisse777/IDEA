@@ -10,8 +10,9 @@ def anyio_backend():
 
 
 @pytest.mark.anyio
-async def test_health_is_public_and_reports_empty_cache(monkeypatch):
+async def test_health_is_public_and_reports_empty_cache(monkeypatch, tmp_path):
     monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(tmp_path / "cache.sqlite"))
     app = create_app()
 
     async with AsyncClient(
@@ -20,8 +21,12 @@ async def test_health_is_public_and_reports_empty_cache(monkeypatch):
     ) as client:
         response = await client.get("/health")
 
+    body = response.json()
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "cache": None}
+    assert body["status"] == "ok"
+    assert body["cache"]["samples_indexed"] == 0
+    assert body["cache"]["last_sync_status"] is None
+    assert body["cache"]["cache_age_hours"] is None
 
 
 @pytest.mark.anyio

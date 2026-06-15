@@ -1,0 +1,201 @@
+"""Tests for cache-aware /health and /admin/resync (A2 async) endpoints."""
+
+import asyncio
+import json
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from core.ecotaxa_browser.cache.repo import (
+    cache_counts,
+    finish_sync_run,
+    init_schema,
+    start_sync_run,
+    upsert_sample,
+)
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
+def cache_db(tmp_path):
+    path = tmp_path / "ecotaxa_cache.sqlite"
+    conn = sqlite3.connect(path)
+    init_schema(conn)
+    conn.close()
+    yield str(path)
+
+
+@pytest.mark.anyio
+async def test_health_reports_empty_cache_when_no_sync_yet(monkeypatch, cache_db):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", cache_db)
+    from core.mcp.ecotaxa_server import create_app
+
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/health")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] == "ok"
+    assert body["cache"]["samples_indexed"] == 0
+    assert body["cache"]["projects_indexed"] == 0
+    assert body["cache"]["last_sync_status"] is None
+    assert body["cache"]["cache_age_hours"] is None
+
+
+@pytest.mark.anyio
+async def test_health_reports_cache_age_and_status_after_sync(
+    monkeypatch, cache_db
+):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", cache_db)
+    from core.mcp.ecotaxa_server import create_app
+
+    conn = sqlite3.connect(cache_db)
+    conn.row_factory = sqlite3.Row
+    upsert_sample(
+        conn, sample_id=1, project_id=42, lat_avg=70.0, lon_avg=-64.0,
+        date_min="d", date_max="d", object_count=10,
+        instrument="UVP5", last_synced="ts",
+    )
+    six_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+    five_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()
+    run_id = start_sync_run(conn, started_at=six_hours_ago)
+    finish_sync_run(
+        conn, run_id=run_id, ended_at=five_hours_ago, status="ok",
+        projects_synced=1, samples_synced=1, error_message=None,
+    )
+    conn.close()
+
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/health")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["cache"]["samples_indexed"] == 1
+    assert body["cache"]["projects_indexed"] == 1
+    assert body["cache"]["last_sync_status"] == "ok"
+    assert 4.5 < body["cache"]["cache_age_hours"] < 5.5
+
+
+@pytest.mark.anyio
+async def test_admin_resync_requires_bearer(monkeypatch, cache_db):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", cache_db)
+    from core.mcp.ecotaxa_server import create_app
+
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post("/admin/resync")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_admin_resync_returns_202_with_run_id(monkeypatch, cache_db):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", cache_db)
+
+    # Patch the sync runner to be instant and deterministic.
+    import core.mcp.ecotaxa_server as server
+
+    def fake_run_sync(cache_path):
+        conn = sqlite3.connect(cache_path)
+        run_id = start_sync_run(conn, started_at="ts_started")
+        finish_sync_run(
+            conn, run_id=run_id, ended_at="ts_ended", status="ok",
+            projects_synced=0, samples_synced=0, error_message=None,
+        )
+        conn.close()
+
+    monkeypatch.setattr(server, "_run_full_sync_with_real_client", fake_run_sync)
+
+    app = server.create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/admin/resync",
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert response.status_code == 202
+    body = response.json()
+    assert "run_id" in body
+    assert body["status"] == "started"
+
+    # Background task should complete shortly.
+    await asyncio.sleep(0.1)
+    conn = sqlite3.connect(cache_db)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT status FROM sync_runs ORDER BY run_id DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    assert row["status"] == "ok"
+
+
+@pytest.mark.anyio
+async def test_admin_sync_runs_status_endpoint(monkeypatch, cache_db):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", cache_db)
+
+    conn = sqlite3.connect(cache_db)
+    run_id = start_sync_run(conn, started_at="ts_started")
+    finish_sync_run(
+        conn, run_id=run_id, ended_at="ts_ended", status="partial",
+        projects_synced=1, samples_synced=5, error_message="42: oops",
+    )
+    conn.close()
+
+    from core.mcp.ecotaxa_server import create_app
+
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            f"/admin/sync_runs/{run_id}",
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run_id"] == run_id
+    assert body["status"] == "partial"
+    assert body["samples_synced"] == 5
+    assert body["error_message"] == "42: oops"
+
+
+@pytest.mark.anyio
+async def test_admin_sync_runs_status_returns_404_when_missing(monkeypatch, cache_db):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", cache_db)
+
+    from core.mcp.ecotaxa_server import create_app
+
+    app = create_app()
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            "/admin/sync_runs/99999",
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert response.status_code == 404
