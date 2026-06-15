@@ -19,7 +19,12 @@ from core.ecotaxa_browser.acquisitions import (
 from core.ecotaxa_browser.objects import get_object, list_sample_objects
 from core.ecotaxa_browser.projects import get_project
 from core.ecotaxa_browser.samples import get_sample, list_project_samples
+from core.ecotaxa_browser.column_distribution import get_column_distribution
+from core.ecotaxa_browser.compare_schemas import compare_project_schemas
+from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
+from core.ecotaxa_browser.taxa_stats import taxa_stats
 from core.ecotaxa_browser.taxonomy import search_taxa, taxonomy_node
 
 _MCP_PATHS = {"/mcp", "/mcp/"}
@@ -99,6 +104,24 @@ def create_mcp() -> FastMCP:
         """Return project metadata, stats, and a compact schema summary."""
         return await _run_sync(get_project, project_id=project_id)
 
+    @mcp.tool(name="get_project_schema")
+    async def get_project_schema_tool(
+        project_id: int,
+        verbose: bool = False,
+        include_process: bool = False,
+    ) -> dict:
+        """Inspect the typed columns of a project before exporting.
+
+        Returns sample/acquisition/object levels with fixed and free fields
+        plus a flat ``labels_index`` for resolving ambiguous column names.
+        """
+        return await _run_sync(
+            get_project_schema,
+            project_id=project_id,
+            verbose=verbose,
+            include_process=include_process,
+        )
+
     @mcp.tool(name="list_project_samples")
     async def list_project_samples_tool(
         project_id: int,
@@ -160,6 +183,53 @@ def create_mcp() -> FastMCP:
     async def search_taxa_tool(query: str) -> list[dict]:
         """Autocomplete EcoTaxa taxonomy names."""
         return await _run_sync(search_taxa, query=query)
+
+    @mcp.tool(name="taxa_stats")
+    async def taxa_stats_tool(
+        project_ids: list[int],
+        taxa: list[int | str],
+    ) -> dict:
+        """Return V/P/D classification counts per (project_id, taxon).
+
+        ``taxa`` accepts integer taxon IDs or scientific names — names are
+        resolved via the taxonomy autocomplete. Inaccessible projects are
+        skipped silently and listed in ``inaccessible_project_ids``.
+        """
+        return await _run_sync(taxa_stats, project_ids=project_ids, taxa=taxa)
+
+    @mcp.tool(name="get_column_distribution")
+    async def get_column_distribution_tool(
+        project_id: int,
+        column_name: str,
+        level: str | None = None,
+    ) -> dict:
+        """Inspect the value distribution of a column before exporting.
+
+        Numeric columns return min/max/mean/median/p25/p75/n; text columns
+        return top values + total_distinct + sample_size. The ``source``
+        field tells whether the response came from the EcoTaxa pre-aggregated
+        column_stats endpoint or from a first-window sample fallback.
+        """
+        try:
+            return await _run_sync(
+                get_column_distribution,
+                project_id=project_id,
+                column_name=column_name,
+                level=level,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="compare_project_schemas")
+    async def compare_project_schemas_tool(project_ids: list[int]) -> dict:
+        """Identify shared columns, type and level conflicts across projects.
+
+        Use before a multi-project export to spot blockers (type mismatches)
+        and warnings (datetime vs text). Returns ``common_columns``,
+        ``type_conflicts`` (severity), ``level_conflicts`` and
+        ``unique_to_project`` lists.
+        """
+        return await _run_sync(compare_project_schemas, project_ids=project_ids)
 
     return mcp
 

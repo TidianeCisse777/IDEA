@@ -6,7 +6,12 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from core.ecotaxa_browser.column_distribution import get_column_distribution
+from core.ecotaxa_browser.compare_schemas import compare_project_schemas
+from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
+from core.ecotaxa_browser.taxa_stats import taxa_stats
 from tools.ecotaxa_client import EcotaxaClient
 from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.public_url import download_url
@@ -176,8 +181,176 @@ def make_source_tools(thread_id: str) -> list:
             summary += f"\n{hint}"
         return summary
 
+    @tool
+    def inspect_ecotaxa_project_schema(
+        project_id: int,
+        verbose: bool = False,
+        include_process: bool = False,
+    ) -> str:
+        """Liste les colonnes typées d'un projet EcoTaxa avant un export.
+
+        Utiliser cet outil pour vérifier si un projet a les colonnes nécessaires
+        (profondeur, station, taxon, mesures morphologiques…) sans rien
+        télécharger. Renvoie 3 niveaux par défaut : sample, acquisition, object.
+        """
+        try:
+            schema = get_project_schema(
+                project_id,
+                verbose=verbose,
+                include_process=include_process,
+            )
+        except Exception as exc:
+            return f"Erreur lors de l'accès au schéma EcoTaxa : {exc}"
+
+        lines = [
+            f"# Projet {schema['project_id']} — {schema['title']}",
+            f"Instrument : {schema.get('instrument') or '—'}",
+            "",
+        ]
+        for level_name, content in schema["levels"].items():
+            lines.append(f"## {level_name}")
+            lines.append("")
+            lines.append("| colonne | type | catégorie |")
+            lines.append("|---|---|---|")
+            for fixed in content["fixed"]:
+                lines.append(f"| {fixed['name']} | {fixed['type']} | fixe |")
+            for free in content["free"]:
+                tag = f" `{free['code']}`" if verbose and "code" in free else ""
+                lines.append(f"| {free['label']}{tag} | {free['type']} | libre |")
+            lines.append("")
+        return "\n".join(lines)
+
+    @tool
+    def count_ecotaxa_taxa(
+        project_ids: list[int],
+        taxa: list[int | str],
+    ) -> str:
+        """Compte les objets validés / prédits / douteux par projet et par taxon.
+
+        `taxa` accepte des IDs entiers ou des noms scientifiques. Utile pour
+        évaluer la confiance des annotations avant d'exporter.
+        """
+        try:
+            result = taxa_stats(project_ids=project_ids, taxa=taxa)
+        except EcoTaxaBrowserError as exc:
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}"
+        except Exception as exc:
+            return f"Erreur lors du comptage EcoTaxa : {exc}"
+
+        if not result["rows"]:
+            return "Aucun comptage retourné — vérifie les IDs de projet et taxon."
+
+        lines = [
+            "| project_id | taxon | validés | prédits | douteux | total |",
+            "|---:|---|---:|---:|---:|---:|",
+        ]
+        lines.extend(
+            f"| {row['project_id']} | {row['taxon_name']} | "
+            f"{row['count_V']} | {row['count_P']} | {row['count_D']} | "
+            f"{row['count_total']} |"
+            for row in result["rows"]
+        )
+        if result["inaccessible_project_ids"]:
+            lines.append("")
+            lines.append(
+                f"Projets non accessibles : {result['inaccessible_project_ids']}"
+            )
+        return "\n".join(lines)
+
+    @tool
+    def inspect_ecotaxa_column(
+        project_id: int,
+        column_name: str,
+        level: str | None = None,
+    ) -> str:
+        """Inspecte la distribution d'une colonne d'un projet EcoTaxa.
+
+        Pour les colonnes numériques : min/max/mean/median/p25/p75. Pour les
+        colonnes texte : top valeurs + nombre de distinctes. Précise `level`
+        si l'agent renvoie une erreur d'ambiguïté.
+        """
+        try:
+            result = get_column_distribution(
+                project_id, column_name, level=level
+            )
+        except EcoTaxaBrowserError as exc:
+            details = ""
+            if exc.candidates:
+                details = " — candidats : " + ", ".join(
+                    f"{c['level']}.{c['kind']}({c['type']})" for c in exc.candidates
+                )
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}{details}"
+        except Exception as exc:
+            return f"Erreur lors de l'analyse de la colonne EcoTaxa : {exc}"
+
+        header = (
+            f"# Colonne `{result['column']}` — projet {project_id}\n"
+            f"Niveau : {result['level']} · Type : {result['type']} · "
+            f"Source : {result['source']}"
+        )
+        stats = result["stats"]
+        if result["type"] == "number":
+            body = (
+                f"\n\n| min | max | moy | médiane | p25 | p75 | n |\n"
+                f"|---:|---:|---:|---:|---:|---:|---:|\n"
+                f"| {stats.get('min')} | {stats.get('max')} | {stats.get('mean')} | "
+                f"{stats.get('median')} | {stats.get('p25')} | {stats.get('p75')} | "
+                f"{stats.get('n')} |"
+            )
+        else:
+            top = stats.get("top_values", [])
+            body = (
+                f"\n\nÉchantillon : {stats.get('sample_size', 0)} valeurs · "
+                f"Distinctes : {stats.get('total_distinct', 0)}\n\n"
+                "| valeur | count |\n|---|---:|\n"
+                + "\n".join(f"| {item['value']} | {item['count']} |" for item in top)
+            )
+        return header + body
+
+    @tool
+    def compare_ecotaxa_projects(project_ids: list[int]) -> str:
+        """Compare les schémas de plusieurs projets EcoTaxa avant un export combiné.
+
+        Retourne les colonnes communes, les conflits de type, les conflits de
+        niveau, et les colonnes uniques par projet.
+        """
+        if len(project_ids) < 2:
+            return "Indique au moins 2 project_ids."
+        try:
+            result = compare_project_schemas(project_ids=project_ids)
+        except Exception as exc:
+            return f"Erreur lors de la comparaison EcoTaxa : {exc}"
+
+        lines = [f"# Comparaison projets {project_ids}"]
+        lines.append("")
+        lines.append(f"## Colonnes communes ({len(result['common_columns'])})")
+        for col in result["common_columns"]:
+            lines.append(f"- `{col['label_normalized']}` ({len(col['matched_in'])} matches)")
+        lines.append("")
+        lines.append(f"## Conflits de type ({len(result['type_conflicts'])})")
+        for conflict in result["type_conflicts"]:
+            lines.append(
+                f"- `{conflict['label_normalized']}` [{conflict['severity']}] : "
+                f"{conflict['types_seen']}"
+            )
+        lines.append("")
+        lines.append(f"## Conflits de niveau ({len(result['level_conflicts'])})")
+        for conflict in result["level_conflicts"]:
+            lines.append(
+                f"- `{conflict['label_normalized']}` : {conflict['levels_seen']}"
+            )
+        lines.append("")
+        lines.append("## Colonnes uniques par projet")
+        for pid, cols in result["unique_to_project"].items():
+            lines.append(f"- projet {pid} : {cols if cols else '(aucune)'}")
+        return "\n".join(lines)
+
     return [
         find_ecotaxa_projects,
+        inspect_ecotaxa_project_schema,
+        inspect_ecotaxa_column,
+        count_ecotaxa_taxa,
+        compare_ecotaxa_projects,
         list_ecotaxa_projects,
         preview_ecotaxa_project,
         query_ecotaxa,

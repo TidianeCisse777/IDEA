@@ -127,6 +127,37 @@ class EcotaxaClient:
         resp.raise_for_status()
         return resp.json()
 
+    def taxon_summary(self, project_id: int, taxon_id: int) -> dict:
+        """Return classification counts for one (project, taxon) pair.
+
+        Maps to ``POST /object_set/{project_id}/summary`` filtered by taxon.
+        The response contains ``total_objects``, ``validated_objects``,
+        ``predicted_objects`` and ``dubious_objects``.
+        """
+        resp = self._session.post(
+            f"{_BASE_URL}/object_set/{project_id}/summary",
+            params={"only_total": False},
+            json={"taxo": [str(taxon_id)]},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def column_stats(
+        self, project_ids: list[int], names: list[str], limit: int = 1000
+    ) -> dict:
+        """Aggregate stats for named columns across one or more projects.
+
+        Maps to ``GET /project_set/column_stats``. EcoTaxa serves these
+        stats only for validated objects, so values are V-only by design.
+        """
+        params = {
+            "ids": ",".join(str(p) for p in project_ids),
+            "names": ",".join(names),
+            "limit": limit,
+        }
+        return self._get_json("/project_set/column_stats", params=params)
+
     def _get_json(self, path: str, **kwargs):
         timeout = kwargs.pop("timeout", _TIMEOUT)
         resp = self._session.get(f"{_BASE_URL}{path}", timeout=timeout, **kwargs)

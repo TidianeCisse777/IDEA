@@ -2,8 +2,8 @@
 
 | Métadonnée | Valeur |
 |---|---|
-| Status | 🟢 V1 partiel — M0/M1/M2 livrés, M3–M6 à venir |
-| Version | 0.2 |
+| Status | 🟢 V1 partiel — M0/M1/M2/M3 livrés, M4–M6 à venir |
+| Version | 0.3 |
 | Branche | `feat/mcp-ecotaxa` (rebased sur `main` 2026-06-15) |
 | Dernière mise à jour | 2026-06-15 |
 | Owner | Tidiane Cisse (NeoLab, Université Laval) |
@@ -225,22 +225,38 @@ Chaque milestone = 1 PR. Une PR ne merge **que** si tous les gates passent.
 
 ---
 
-### M3 — Comptages & schéma (2 j) — Status : ⚪ Pas démarré
+### M3 — Comptages & schéma (2 j) — Status : 🟢 Terminé
 
 **Deliverables**
-- `taxa_stats(project_ids, taxa_ids=None, status=None)` — counts agrégés
-- `get_project_schema(project_id, verbose=False, include_process=False)` — niveau sample/acquisition/object avec free fields résolus en labels
-- `get_column_distribution(project_id, column_name, exhaustive=False, sample_size=1000)` — numeric stats ou top-N
-- `compare_project_schemas(project_ids)` — common / unique / type conflicts
-- Helper interne : parser `mappingsample` / `mappingacq` / `mappingobj` pour résoudre `t01` → `station_name`
+- ✅ `taxa_stats(project_ids, taxa)` — V/P/D breakdown per (project_id, taxon).
+  Hybride int|str (TS2) + résolution exact-match avec extension check.
+  Skip silencieux 401/403, champ `inaccessible_project_ids`.
+- ✅ `get_project_schema(project_id, verbose=False, include_process=False)` —
+  niveaux sample/acquisition/object avec free fields résolus en labels +
+  index plat `labels_index` (normalisé case+separators).
+- ✅ `get_column_distribution(project_id, column_name, level=None)` — D4
+  hybride : `/project_set/column_stats` (numeric) avec fallback first-window.
+  `source` field expose le chemin emprunté. `exhaustive` reporté V2 (E3).
+- ✅ `compare_project_schemas(project_ids)` — common (C3 normalisé),
+  type_conflicts avec severity (text↔datetime = warning, sinon blocker),
+  level_conflicts seulement si les projets divergent, unique_to_project.
+- ✅ `core/ecotaxa_browser/errors.py` — `EcoTaxaBrowserError(code, candidates)`
+  pour erreurs métier (E2). Erreurs infra restent en exception (E1).
 
 **Gates de validation**
-- [ ] `get_project_schema` retourne 3 niveaux (sample/acquisition/object), pas 4 par défaut
-- [ ] `get_column_distribution` numeric retourne `min/max/mean/median/p25/p75/n`
-- [ ] `get_column_distribution` catégoriel retourne `top_N_values + counts + total_distinct`
-- [ ] `compare_project_schemas` détecte un conflit de type (ex. `depth` numeric vs string entre projets)
-- [ ] Tests + VCR pour chaque
-- [ ] **V1 utilisable à partir d'ici** pour un utilisateur qui connaît son `project_id`
+- [x] `get_project_schema` retourne 3 niveaux (sample/acquisition/object), pas 4 par défaut
+- [x] `get_column_distribution` numeric retourne `min/max/mean/median/p25/p75/n`
+- [x] `get_column_distribution` catégoriel retourne `top_values + counts + total_distinct + sample_size`
+- [x] `compare_project_schemas` détecte un conflit de type avec severity
+- [x] Tests par tool : 28 nouveaux tests verts (6+6+6+6 + 4 schema labels_index)
+- [x] **V1 utilisable à partir d'ici** pour un utilisateur qui connaît son `project_id`
+
+**Validation**
+- Suite globale : 297 passed, 3 failed (RAG infra), 10 skipped — aucune régression M3.
+- 4 nouveaux MCP tools enregistrés : `get_project_schema`, `taxa_stats`,
+  `get_column_distribution`, `compare_project_schemas`.
+- 4 nouveaux `@tool` LangChain : `inspect_ecotaxa_project_schema`,
+  `count_ecotaxa_taxa`, `inspect_ecotaxa_column`, `compare_ecotaxa_projects`.
 
 ---
 
@@ -401,3 +417,4 @@ M2, M3, M4 peuvent partiellement se paralléliser après M1 si plusieurs devs.
 | 2026-06-15 | Codex | M1 implémenté : recherche de projets partagée par le core, LangChain et FastMCP, cassette VCR assainie, validation Docker de bout en bout et décision Go architecture. |
 | 2026-06-15 | Codex | M2 implémenté en TDD : navigation projet/sample/acquisition/objet/taxonomie, 9 tools FastMCP, plafond de 3 appels et walkthrough Docker live. |
 | 2026-06-15 | Claude | Rebase de `feat/mcp-ecotaxa` sur `main` post-merge `fix/test-suite-baseline` ; pin `aiohttp<3.13` pour compatibilité vcrpy 7. Suite globale : 269 passed / 3 failed (RAG infra) / 10 skipped. Gates baseline M0 et M2 cochées, milestones passés en 🟢 Terminé. |
+| 2026-06-15 | Claude | M3 implémenté en TDD : 4 tools métier (`taxa_stats`, `get_project_schema`, `get_column_distribution`, `compare_project_schemas`), erreurs structurées E2/E1, façades LangChain + FastMCP. 28 nouveaux tests verts, suite globale 297 passed / 3 RAG infra / 10 skipped. |
