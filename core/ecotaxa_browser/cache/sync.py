@@ -25,7 +25,7 @@ from core.ecotaxa_browser.schema import get_project_schema
 
 _LOGGER = logging.getLogger(__name__)
 
-_QUERY_FIELDS = "obj.latitude,obj.longitude,obj.objdate,obj.sample_id"
+_QUERY_FIELDS = "obj.latitude,obj.longitude,obj.objdate"
 _DEFAULT_WINDOW_SIZE = 5000
 _DEFAULT_OBJECT_CAP = 50_000
 _DEFAULT_RATE_LIMIT_RPS = 5.0
@@ -68,13 +68,14 @@ def sync_project(
             window_size=size,
         )
         rows = payload.get("details") or []
+        parallel_sample_ids = payload.get("sample_ids") or []
         if not rows:
             break
 
-        for row in rows:
-            if len(row) < 4:
+        for row, sample_id in zip(rows, parallel_sample_ids):
+            if not row or len(row) < 3:
                 continue
-            lat, lon, objdate, sample_id = row[0], row[1], row[2], row[3]
+            lat, lon, objdate = row[0], row[1], row[2]
             if lat is None or lon is None or sample_id is None:
                 continue
             try:
@@ -184,7 +185,10 @@ def run_full_sync(
     failures: list[str] = []
 
     for project_meta in projects:
-        project_id = int(project_meta["projid"])
+        project_id = int(
+            project_meta.get("projid")
+            or project_meta.get("project_id")
+        )
         try:
             samples_synced += sync_project(
                 conn,

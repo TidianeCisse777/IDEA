@@ -38,7 +38,15 @@ def _make_client(
     def _query_objects(*, project_id, filters, fields, window_start, window_size):
         rows = objects_by_project.get(project_id, [])
         page = rows[window_start : window_start + window_size]
-        return {"details": page, "total_ids": len(rows)}
+        details = [
+            [row[0], row[1], row[2]] if row else row
+            for row in page
+        ]
+        sample_ids = [
+            (int(row[3]) if row and len(row) > 3 and row[3] is not None else None)
+            for row in page
+        ]
+        return {"details": details, "sample_ids": sample_ids, "total_ids": len(rows)}
 
     client.query_objects.side_effect = _query_objects
     return client
