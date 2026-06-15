@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 import yaml
@@ -40,4 +41,24 @@ def test_mcp_image_has_a_minimal_dependency_set():
     assert "COPY requirements.txt ." not in dockerfile
     assert "fastmcp>=3.0.0,<4.0.0" in requirements
     assert "apscheduler>=3.11.0,<4.0.0" in requirements
+    assert "requests>=2.30.0,<3.0.0" in requirements
+    assert "python-dotenv>=1.0.0,<2.0.0" in requirements
     assert "torch" not in requirements.lower()
+    assert "COPY tools/__init__.py tools/ecotaxa_client.py ./tools/" in dockerfile
+
+
+def test_ecotaxa_client_does_not_import_pandas_at_module_load():
+    source = Path("tools/ecotaxa_client.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    top_level_imports = [
+        node for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+
+    assert all(
+        not (
+            isinstance(node, ast.Import)
+            and any(alias.name == "pandas" for alias in node.names)
+        )
+        for node in top_level_imports
+    )

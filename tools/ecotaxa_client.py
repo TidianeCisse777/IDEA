@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import os
 import time
+from typing import TYPE_CHECKING
 
-import pandas as pd
 import requests
 from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 load_dotenv()
 
@@ -44,6 +47,27 @@ class EcotaxaClient:
             {"project_id": int(project["projid"]), "name": str(project["title"])}
             for project in resp.json()
         ]
+
+    def search_projects(
+        self,
+        title: str | None = None,
+        instrument: str | None = None,
+        window_start: int = 0,
+        window_size: int = 50,
+    ) -> list[dict]:
+        resp = self._session.get(
+            f"{_BASE_URL}/projects/search",
+            params={
+                "title_filter": title or "",
+                "instrument_filter": instrument or "",
+                "window_start": window_start,
+                "window_size": window_size,
+                "order_field": "projid",
+            },
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     def preview_project(self, project_id: int, limit: int = 10) -> dict:
         metadata_response = self._session.get(
@@ -133,7 +157,9 @@ class EcotaxaClient:
             time.sleep(poll_seconds)
         raise RuntimeError(f"EcoTaxa job {job_id} did not finish after {max_polls} polls")
 
-    def download_tsv(self, job_id: int) -> pd.DataFrame:
+    def download_tsv(self, job_id: int) -> "pd.DataFrame":
+        import pandas as pd
+
         resp = self._session.get(f"{_BASE_URL}/jobs/{job_id}/file", timeout=_TIMEOUT)
         resp.raise_for_status()
         import io, zipfile

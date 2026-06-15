@@ -6,6 +6,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from core.ecotaxa_browser.search import search_projects
 from tools.ecotaxa_client import EcotaxaClient
 from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.public_url import download_url
@@ -24,6 +25,44 @@ def make_source_tools(thread_id: str) -> list:
         if isinstance(value, float) and not value.is_integer():
             return f"{value:.2f}".rstrip("0").rstrip(".")
         return f"{int(value):,}".replace(",", " ")
+
+    @tool
+    def find_ecotaxa_projects(
+        title: str | None = None,
+        instrument: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> str:
+        """Recherche des projets EcoTaxa par titre ou instrument avant un export.
+
+        Utiliser cet outil pour découvrir un project_id pertinent. Il ne télécharge
+        aucune donnée d'objet.
+        """
+        try:
+            projects = search_projects(
+                title=title,
+                instrument=instrument,
+                page=page,
+                page_size=page_size,
+            )
+        except Exception as exc:
+            return f"Erreur lors de la recherche EcoTaxa : {exc}"
+
+        if not projects:
+            return "Aucun projet EcoTaxa ne correspond aux critères."
+
+        lines = [
+            "| project_id | name | instrument | status | objects | validated |",
+            "|---:|---|---|---|---:|---:|",
+        ]
+        lines.extend(
+            f"| {project['project_id']} | {project['name']} | "
+            f"{project.get('instrument') or '—'} | {project.get('status') or '—'} | "
+            f"{_format_number(project.get('object_count'))} | "
+            f"{_format_number(project.get('percent_validated'))} % |"
+            for project in projects
+        )
+        return "\n".join(lines)
 
     @tool
     def list_ecotaxa_projects() -> str:
@@ -137,4 +176,9 @@ def make_source_tools(thread_id: str) -> list:
             summary += f"\n{hint}"
         return summary
 
-    return [list_ecotaxa_projects, preview_ecotaxa_project, query_ecotaxa]
+    return [
+        find_ecotaxa_projects,
+        list_ecotaxa_projects,
+        preview_ecotaxa_project,
+        query_ecotaxa,
+    ]

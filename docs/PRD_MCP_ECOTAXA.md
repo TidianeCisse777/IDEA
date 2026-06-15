@@ -167,21 +167,27 @@ Chaque milestone = 1 PR. Une PR ne merge **que** si tous les gates passent.
 
 ---
 
-### M1 — Bullet traceur `search_projects` (2 j) — Status : ⚪ Pas démarré
+### M1 — Bullet traceur `search_projects` (2 j) — Status : 🟢 Terminé — Go architecture
 
 **Deliverables**
-- `core/ecotaxa_browser/search.py::search_projects(title=None, instrument=None, page=1, page_size=50)` → `list[dict]`
-- VCR cassette `tests/cassettes/projects_search_minimal.yaml`
-- `@tool find_ecotaxa_projects` dans `tools/copepod_sources.py` (LangChain Markdown)
-- MCP tool `search_projects` enregistré dans `core/mcp/ecotaxa_server.py` (JSON)
-- Auth Bearer K2 active sur l'endpoint
+- ✅ `core/ecotaxa_browser/search.py::search_projects(title=None, instrument=None, page=1, page_size=50)` → `list[dict]`
+- ✅ VCR cassette `tests/cassettes/projects_search_minimal.yaml`
+- ✅ `@tool find_ecotaxa_projects` dans `tools/copepod_sources.py` (LangChain Markdown)
+- ✅ MCP tool `search_projects` enregistré dans `core/mcp/ecotaxa_server.py` (JSON)
+- ✅ Auth Bearer K2 active sur l'endpoint
 
 **Gates de validation**
-- [ ] Test unit core passe sans réseau (VCR)
-- [ ] Test format LangChain @tool : output Markdown contient `project_id` + `name`
-- [ ] Test FastMCP client local : `await client.call_tool("search_projects", {"title": "Calanus"})` retourne `list[dict]` avec keys attendues
-- [ ] Test auth : appel sans Bearer → 401 ; appel avec Bearer → 200
-- [ ] **Décision Go/No-Go archi** : si M1 tient, on passe M2 ; sinon on ajuste avant d'industrialiser le reste
+- [x] Test unit core passe sans réseau (VCR)
+- [x] Test format LangChain @tool : output Markdown contient `project_id` + `name`
+- [x] Test FastMCP client local : `await client.call_tool("search_projects", {"title": "Calanus"})` retourne `list[dict]` avec keys attendues
+- [x] Test auth : appel sans Bearer → 401 ; appel avec Bearer → 200
+- [x] **Décision Go/No-Go archi** : Go — les façades LangChain et MCP délèguent au même core
+
+**Validation**
+- Tests ciblés M1 : 17 passants.
+- Appel FastMCP authentifié validé de bout en bout sur le conteneur Docker.
+- Suite globale avant M1 : 198 passants, 17 échecs, 40 erreurs, 10 ignorés.
+- Suite globale après M1 : 204 passants, 17 échecs, 40 erreurs, 10 ignorés. Aucun nouvel échec.
 
 ---
 
@@ -381,3 +387,4 @@ M2, M3, M4 peuvent partiellement se paralléliser après M1 si plusieurs devs.
 |---|---|---|
 | 2026-06-15 | Claude (grilling) | Version initiale post-grilling, status 🟡 Draft |
 | 2026-06-15 | Codex | M0 implémenté : scaffold core, FastMCP HTTP + Bearer, image Docker légère, service Compose, tests et validation réseau. |
+| 2026-06-15 | Codex | M1 implémenté : recherche de projets partagée par le core, LangChain et FastMCP, cassette VCR assainie, validation Docker de bout en bout et décision Go architecture. |

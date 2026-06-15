@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import os
 import secrets
+from functools import partial
 from typing import Any
 
+import anyio
 from fastmcp import FastMCP
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+from core.ecotaxa_browser.search import search_projects
 
 _MCP_PATHS = {"/mcp", "/mcp/"}
 
@@ -52,10 +56,34 @@ def create_app() -> ASGIApp:
     if not token:
         raise RuntimeError("MCP_AUTH_TOKEN must be configured")
 
-    mcp = FastMCP("EcoTaxa Browser")
+    mcp = create_mcp()
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health_check(request: Any) -> JSONResponse:
         return JSONResponse({"status": "ok", "cache": None})
 
     return BearerAuthMiddleware(mcp.http_app(path="/mcp"), token)
+
+
+def create_mcp() -> FastMCP:
+    """Build the EcoTaxa MCP tool registry."""
+    mcp = FastMCP("EcoTaxa Browser")
+
+    @mcp.tool(name="search_projects")
+    async def search_projects_tool(
+        title: str | None = None,
+        instrument: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> list[dict]:
+        """Search accessible EcoTaxa projects before choosing data to export."""
+        call = partial(
+            search_projects,
+            title=title,
+            instrument=instrument,
+            page=page,
+            page_size=page_size,
+        )
+        return await anyio.to_thread.run_sync(call)
+
+    return mcp
