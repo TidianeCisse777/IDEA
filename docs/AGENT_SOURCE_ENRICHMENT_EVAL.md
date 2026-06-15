@@ -42,15 +42,43 @@ Le code de sortie est `0` si tous les critères passent, `1` sinon.
 
 ## Baseline du 15 juin 2026
 
-**Bio-ORACLE : échec comportemental.**
+**Bio-ORACLE: passed after tool-contract fix.**
 
-L'agent choisit correctement `couple_zooplankton_bio_oracle`, mais ne lit pas
-les lignes du fichier. Il invente des identifiants de stations et des
-coordonnées, puis produit une table qui perd `sample_date` et `abundance`.
+The coupling tool now reads the active DataFrame directly, uses the source
+coordinates and station IDs, preserves all source columns, and creates a
+same-cardinality derived table. The bounded live agent evaluation passed.
 
-**OGSL : capacité absente.**
+**OGSL: large-file tool validated locally and against the public endpoint.**
 
-L'agent actuel ne possède aucun tool LangChain pour acquérir OGSL. Il tente une
-jointure sur `df_ogsl`, puis échoue parce que cette table n'a jamais été chargée.
-Le registre `core/tool_registry/tools/copepod_remote_sources.py` contient une
-implémentation OGSL, mais elle n'est pas exposée par `agent.make_agent()`.
+`query_ogsl` reads station IDs and sampling times from the active source table.
+It issues one request per unique station with a station-specific padded time
+window, persists raw `ismerSgdeCtd` profiles as `df_ogsl`, and creates the
+derived enrichment table itself. The standard path no longer relies on an
+LLM-generated pandas join.
+
+## LangSmith OGSL trajectory evaluation
+
+Dataset: `copepod-ogsl-enrichment-trajectory-v1`
+
+Run one bounded example:
+
+```bash
+python scripts/evals/run_ogsl_langsmith_eval.py
+```
+
+The case uses the real OGSL station `02M`. The source timestamp drives a
+24-hour padded acquisition window. Deterministic code evaluators are used, so
+no additional LLM judge is called.
+
+The initial small-file experiment `ogsl-enrichment-agent-260d508c` passed:
+
+- `ogsl_trajectory`: 1.0
+- `ogsl_query_integrity`: 1
+- `ogsl_dataset_created`: 1
+- `source_file_preserved`: 1
+
+The dataset and code evaluators now target the large-file contract
+`load_file -> query_ogsl`. The latest agent rerun was not evaluated because the
+model provider returned HTTP 402 before generation. The script caps evaluation
+output at 1000 tokens for the next run. Deterministic tests and a direct public
+OGSL query validate the new raw and enriched table behavior.

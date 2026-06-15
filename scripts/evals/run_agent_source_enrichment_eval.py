@@ -30,9 +30,9 @@ ligne. Ne réutilise pas une valeur de zone pour toutes les stations. Exécute
 l'enrichissement maintenant et indique le nom de la nouvelle table créée."""
 
 OGSL_PROMPT = """Enrichis ce fichier avec les profils OGSL disponibles pour ces
-stations. Récupère la source OGSL, conserve le fichier brut intact, puis effectue
-une jointure explicite avec une nouvelle table dérivée. Exécute le flux maintenant
-et indique les clés de jointure, les lignes non appariées et la provenance."""
+stations en utilisant sample_date comme colonne temporelle. Récupère PRES et
+TE90, conserve les tables brutes intactes et crée la table enrichie standard.
+Indique la table créée et les statuts de correspondance."""
 
 
 @dataclass
@@ -98,6 +98,11 @@ def _dataset_snapshot(thread_id: str) -> list[dict[str, Any]]:
             "source": (entry.get("meta") or {}).get("source"),
             "rows": len(dataframe) if isinstance(dataframe, pd.DataFrame) else None,
             "columns": list(dataframe.columns) if isinstance(dataframe, pd.DataFrame) else [],
+            "records": (
+                dataframe.head(100).to_dict(orient="records")
+                if isinstance(dataframe, pd.DataFrame)
+                else []
+            ),
         })
     return datasets
 
@@ -113,13 +118,6 @@ def _evaluate_bio(
         (call for call in calls if call.name == "couple_zooplankton_bio_oracle"),
         None,
     )
-    try:
-        submitted_rows = json.loads(
-            coupling_call.arguments.get("rows_json", "[]") if coupling_call else "[]"
-        )
-    except json.JSONDecodeError:
-        submitted_rows = []
-
     def coordinates(rows):
         parsed = set()
         invalid = False
@@ -131,24 +129,30 @@ def _evaluate_bio(
         return parsed, invalid
 
     source_coordinates, source_coordinates_invalid = coordinates(input_records)
-    submitted_coordinates, submitted_coordinates_invalid = coordinates(submitted_rows)
+    coupled_records = coupled[0].get("records", []) if coupled else []
+    coupled_coordinates, coupled_coordinates_invalid = coordinates(coupled_records)
     source_stations = {str(row["station"]) for row in input_records}
-    submitted_stations = {
-        str(row["station"]) for row in submitted_rows if "station" in row
+    coupled_stations = {
+        str(row["station"]) for row in coupled_records if "station" in row
     }
     source_columns = set(input_records[0]) if input_records else set()
     coupled_columns = set(coupled[0]["columns"]) if coupled else set()
     checks = {
         "loads_file": "load_file" in names,
-        "reads_actual_rows": "run_pandas" in names,
         "uses_per_station_tool": "couple_zooplankton_bio_oracle" in names,
         "avoids_zone_tool": "query_bio_oracle_zones" not in names,
+        "coupling_reads_loaded_table": bool(
+            coupling_call
+            and coupling_call.arguments.get("latitude_column") == "latitude"
+            and coupling_call.arguments.get("longitude_column") == "longitude"
+            and "rows_json" not in coupling_call.arguments
+        ),
         "uses_source_coordinates": (
             not source_coordinates_invalid
-            and not submitted_coordinates_invalid
-            and submitted_coordinates == source_coordinates
+            and not coupled_coordinates_invalid
+            and coupled_coordinates == source_coordinates
         ),
-        "uses_source_station_ids": submitted_stations == source_stations,
+        "uses_source_station_ids": coupled_stations == source_stations,
         "creates_coupled_table": len(coupled) == 1,
         "preserves_row_count": bool(
             coupled and coupled[0]["rows"] == len(input_records)
@@ -158,19 +162,45 @@ def _evaluate_bio(
     return {"passed": all(checks.values()), "checks": checks}
 
 
-def _evaluate_ogsl(calls: list[ToolCall], datasets: list[dict]) -> dict:
+def _evaluate_ogsl(
+    calls: list[ToolCall],
+    datasets: list[dict],
+    input_records: list[dict[str, Any]],
+) -> dict:
     names = [call.name for call in calls]
     ogsl_source_tools = {"query_ogsl", "fetch_remote_source_dataset"}
+    query_call = next(
+        (call for call in calls if call.name == "query_ogsl"),
+        None,
+    )
+    raw = [item for item in datasets if item["source"] == "ogsl"]
+    enriched = [
+        item for item in datasets if item["source"] == "ogsl_enrichment"
+    ]
+    source_columns = set(input_records[0]) if input_records else set()
+    enriched_columns = set(enriched[0]["columns"]) if enriched else set()
     checks = {
         "loads_file": "load_file" in names,
         "calls_ogsl_source": bool(ogsl_source_tools.intersection(names)),
-        "loads_environmental_join_skill": any(
-            call.name == "load_skill"
-            and call.arguments.get("skill_name") == "environmental_join"
-            for call in calls
+        "uses_source_columns": bool(
+            query_call
+            and query_call.arguments.get("station_column") == "station"
+            and query_call.arguments.get("time_column") == "sample_date"
+            and "stations" not in query_call.arguments
         ),
-        "executes_join": "run_pandas" in names,
-        "creates_ogsl_dataset": any(item["source"] == "ogsl" for item in datasets),
+        "avoids_redundant_manual_join": (
+            "load_skill" not in names and "run_pandas" not in names
+        ),
+        "creates_ogsl_dataset": len(raw) == 1,
+        "creates_enriched_dataset": len(enriched) == 1,
+        "preserves_row_count": bool(
+            enriched and enriched[0]["rows"] == len(input_records)
+        ),
+        "preserves_source_columns": source_columns <= enriched_columns,
+        "adds_match_quality": {
+            "ogsl_match_status",
+            "ogsl_time_delta_min",
+        } <= enriched_columns,
     }
     missing_capability = not checks["calls_ogsl_source"]
     return {
@@ -208,7 +238,7 @@ async def run_scenario(name: str, input_path: Path) -> dict:
     evaluation = (
         _evaluate_bio(calls, datasets, input_records)
         if name == "bio-oracle"
-        else _evaluate_ogsl(calls, datasets)
+        else _evaluate_ogsl(calls, datasets, input_records)
     )
     evaluation["raw_file_unchanged"] = _sha256(input_path) == before_hash
     evaluation["passed"] = evaluation["passed"] and evaluation["raw_file_unchanged"]

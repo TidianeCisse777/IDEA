@@ -15,6 +15,7 @@ from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 from tools.data_tools import make_tools
 from tools.bio_oracle_sources import make_bio_oracle_tools
 from tools.amundsen_sources import make_amundsen_tools
+from tools.ogsl_sources import make_ogsl_tools
 from tools.ecopart_sources import make_ecopart_tools
 from tools.copepod_sources import make_source_tools
 from tools.sql_workspace import make_sql_tools
@@ -229,6 +230,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         + make_source_tools(thread_id)
         + make_bio_oracle_tools(thread_id)
         + make_amundsen_tools(thread_id)
+        + make_ogsl_tools(thread_id)
         + make_ecopart_tools(thread_id)
         + [make_rag_tool(), make_skill_tool(), export_deliverable, get_zone_filter]
     )

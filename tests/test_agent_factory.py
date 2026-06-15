@@ -66,6 +66,7 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
     from tools.data_tools import make_tools
     from tools.bio_oracle_sources import make_bio_oracle_tools
     from tools.amundsen_sources import make_amundsen_tools
+    from tools.ogsl_sources import make_ogsl_tools
     from tools.sql_workspace import make_sql_tools
     from tools.rag_tool import make_rag_tool
     from tools.copepod_sources import make_source_tools
@@ -74,6 +75,7 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
         + make_source_tools("thread-test")
         + make_bio_oracle_tools("thread-test")
         + make_amundsen_tools("thread-test")
+        + make_ogsl_tools("thread-test")
         + make_sql_tools("thread-test")
         + [make_rag_tool()]
     )
@@ -88,6 +90,7 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
     assert "list_amundsen_datasets" in tool_names
     assert "preview_amundsen_profile" in tool_names
     assert "query_amundsen_ctd" in tool_names
+    assert "query_ogsl" in tool_names
     assert "list_sql_tables" in tool_names
     assert "copy_sql_query_to_workspace" in tool_names
 
@@ -229,6 +232,21 @@ def test_system_prompt_routes_amundsen_preview_and_query():
     assert "list_amundsen_datasets" in prompt
     assert "preview_amundsen_profile" in prompt
     assert "query_amundsen_ctd" in prompt
+
+
+def test_system_prompt_acquires_ogsl_before_environmental_join():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "query_ogsl" in prompt
+    assert "station column name" in prompt
+    assert "sampling-time column name" in prompt
+    assert "depth column" in prompt
+    assert "df_ogsl" in prompt
+    assert "standard ogsl enrichment" in prompt
+    assert "do not call `run_pandas`" in prompt
+    assert "confirmed=true" in prompt
+    assert "more than ten unique stations" in prompt
 
 
 def test_system_prompt_loads_environmental_join_skill_for_ctd_and_bio_oracle_joins():
