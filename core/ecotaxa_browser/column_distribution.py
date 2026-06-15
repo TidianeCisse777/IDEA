@@ -148,11 +148,13 @@ def _first_window_values(client, project_id: int, raw: dict, sample_size: int) -
 
 
 def _resolve_field_path(raw: dict) -> str:
-    # EcoTaxa expects "obj.<code>" or "obj.<fixed_name>" syntax. Sample- and
-    # acquisition-level fields use "sam." / "acq." prefixes respectively, but
-    # the V1 fallback is object-only — broaden when the use case shows up.
-    if raw["kind"] == "free" and raw.get("code"):
-        return f"obj.{raw['code']}"
+    # EcoTaxa query field naming convention:
+    # - fixed object fields  -> "obj.<name>"   e.g. obj.depth_min, obj.classif_qual
+    # - free object fields   -> "fre.<label>"  e.g. fre.area, fre.esd
+    # The internal code (n01, t01...) is not used by the query endpoint —
+    # the user-visible label is what the API expects after the "fre." prefix.
+    if raw["kind"] == "free":
+        return f"fre.{raw['label']}"
     return f"obj.{raw['label']}"
 
 

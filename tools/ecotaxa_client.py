@@ -137,7 +137,7 @@ class EcotaxaClient:
         resp = self._session.post(
             f"{_BASE_URL}/object_set/{project_id}/summary",
             params={"only_total": False},
-            json={"taxo": [str(taxon_id)]},
+            json={"taxo": str(taxon_id)},
             timeout=_TIMEOUT,
         )
         resp.raise_for_status()

@@ -72,7 +72,9 @@ def _resolve_taxon(client, item: int | str) -> dict:
         return {
             "input": item,
             "taxon_id": int(taxon["id"]),
-            "matched_name": str(taxon.get("display_name") or taxon.get("name") or ""),
+            "matched_name": str(
+                taxon.get("display_name") or taxon.get("text") or taxon.get("name") or ""
+            ),
         }
 
     name = str(item).strip()
@@ -84,10 +86,10 @@ def _resolve_taxon(client, item: int | str) -> dict:
         )
 
     lowered = name.lower()
-    exact = [c for c in candidates if str(c.get("display_name", "")).lower() == lowered]
+    exact = [c for c in candidates if str(c.get("display_name") or c.get("text") or "").lower() == lowered]
     extending = [
         c for c in candidates
-        if str(c.get("display_name", "")).lower().startswith(lowered + " ")
+        if str(c.get("display_name") or c.get("text") or "").lower().startswith(lowered + " ")
     ]
     if exact and not extending:
         # Exact match is unambiguous: no other candidate refines it.
@@ -99,12 +101,15 @@ def _resolve_taxon(client, item: int | str) -> dict:
             "AMBIGUOUS_TAXON",
             f"Multiple EcoTaxa taxa match '{name}'; provide a more specific name or the integer ID.",
             candidates=[
-                {"taxon_id": int(c["id"]), "display_name": str(c.get("display_name") or "")}
+                {
+                    "taxon_id": int(c["id"]),
+                    "display_name": str(c.get("display_name") or c.get("text") or ""),
+                }
                 for c in candidates
             ],
         )
     return {
         "input": name,
         "taxon_id": int(chosen["id"]),
-        "matched_name": str(chosen.get("display_name") or ""),
+        "matched_name": str(chosen.get("display_name") or chosen.get("text") or ""),
     }
