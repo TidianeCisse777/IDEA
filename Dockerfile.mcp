@@ -1,0 +1,22 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-mcp.txt .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install -r requirements-mcp.txt
+
+COPY core ./core
+COPY tools/__init__.py tools/ecotaxa_client.py ./tools/
+
+EXPOSE 8001
+
+CMD ["uvicorn", "core.mcp.ecotaxa_server:create_app", "--factory", "--host", "0.0.0.0", "--port", "8001"]

@@ -1,0 +1,465 @@
+"""HTTP facade for the EcoTaxa browser MCP server."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import secrets
+import sqlite3
+from datetime import datetime, timezone
+from functools import partial
+from typing import Any
+
+import anyio
+from fastmcp import FastMCP
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from core.ecotaxa_browser.acquisitions import (
+    get_acquisition,
+    list_project_acquisitions,
+)
+from core.ecotaxa_browser.cache.repo import (
+    cache_counts,
+    init_schema,
+    latest_sync_status,
+    open_connection,
+)
+from core.ecotaxa_browser.cache.sync import run_full_sync
+from core.ecotaxa_browser.objects import get_object, list_sample_objects
+from core.ecotaxa_browser.projects import get_project
+from core.ecotaxa_browser.samples import get_sample, list_project_samples
+from core.ecotaxa_browser.column_distribution import get_column_distribution
+from core.ecotaxa_browser.compare_schemas import compare_project_schemas
+from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+from core.ecotaxa_browser.observations import find_observations
+from core.ecotaxa_browser.region import projects_in_region, samples_in_region
+from core.ecotaxa_browser.schema import get_project_schema
+from core.ecotaxa_browser.search import search_projects
+from core.ecotaxa_browser.taxa_stats import taxa_stats
+from core.ecotaxa_browser.taxonomy import search_taxa, taxonomy_node
+from tools.ecotaxa_client import EcotaxaClient
+
+_MCP_PATHS = {"/mcp", "/mcp/"}
+_ADMIN_PREFIX = "/admin/"
+_DEFAULT_CACHE_DB = "data/ecotaxa_cache.sqlite"
+_DEFAULT_SYNC_HOUR = 3
+
+
+def build_nightly_scheduler(
+    *,
+    cache_db: str,
+    runner,
+    cron_hour: int = _DEFAULT_SYNC_HOUR,
+):
+    """Build an AsyncIOScheduler registering one daily sync job.
+
+    Caller is responsible for starting/stopping the scheduler. Exposed at
+    module level so tests can construct one without spinning up FastMCP.
+    """
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        runner,
+        "cron",
+        hour=cron_hour,
+        minute=0,
+        args=[cache_db],
+        id="ecotaxa-nightly-sync",
+        replace_existing=True,
+    )
+    return scheduler
+
+
+class BearerAuthMiddleware:
+    """Protect the MCP transport and /admin endpoints with a Bearer token."""
+
+    def __init__(self, app: ASGIApp, token: str) -> None:
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            path = scope.get("path") or ""
+            if path in _MCP_PATHS or path.startswith(_ADMIN_PREFIX):
+                authorization = _header_value(scope, b"authorization")
+                expected = f"Bearer {self.token}"
+                if authorization is None or not secrets.compare_digest(
+                    authorization, expected,
+                ):
+                    response = JSONResponse(
+                        {"error": "unauthorized"},
+                        status_code=401,
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                    await response(scope, receive, send)
+                    return
+
+        await self.app(scope, receive, send)
+
+
+def _header_value(scope: Scope, name: bytes) -> str | None:
+    for header_name, value in scope.get("headers", []):
+        if header_name.lower() == name:
+            return value.decode("latin-1")
+    return None
+
+
+def _cache_db_path() -> str:
+    return os.getenv("ECOTAXA_CACHE_DB", _DEFAULT_CACHE_DB)
+
+
+def _open_cache() -> sqlite3.Connection:
+    conn = open_connection(_cache_db_path())
+    init_schema(conn)
+    return conn
+
+
+def _run_full_sync_with_real_client(cache_db: str) -> None:
+    """Default sync runner — overridable in tests via monkeypatch."""
+    client = EcotaxaClient()
+    conn = open_connection(cache_db)
+    try:
+        init_schema(conn)
+        now = datetime.now(timezone.utc).isoformat()
+        run_full_sync(conn, client, now_iso=now)
+    finally:
+        conn.close()
+
+
+def _compute_cache_age_hours(last_sync: dict | None) -> float | None:
+    if not last_sync or not last_sync.get("ended_at"):
+        return None
+    try:
+        ended = datetime.fromisoformat(last_sync["ended_at"])
+    except (TypeError, ValueError):
+        return None
+    if ended.tzinfo is None:
+        ended = ended.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - ended
+    return delta.total_seconds() / 3600.0
+
+
+def create_app() -> ASGIApp:
+    """Build the authenticated EcoTaxa MCP ASGI application."""
+    token = os.getenv("MCP_AUTH_TOKEN")
+    if not token:
+        raise RuntimeError("MCP_AUTH_TOKEN must be configured")
+
+    mcp = create_mcp()
+
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health_check(request: Any) -> JSONResponse:
+        cache_payload: dict | None = None
+        try:
+            conn = _open_cache()
+            try:
+                counts = cache_counts(conn)
+                last_sync = latest_sync_status(conn)
+                cache_payload = {
+                    "samples_indexed": counts["samples_indexed"],
+                    "projects_indexed": counts["projects_indexed"],
+                    "schemas_indexed": counts["schemas_indexed"],
+                    "last_sync_status": (last_sync or {}).get("status"),
+                    "cache_age_hours": _compute_cache_age_hours(last_sync),
+                }
+            finally:
+                conn.close()
+        except Exception:
+            cache_payload = None
+        return JSONResponse({"status": "ok", "cache": cache_payload})
+
+    @mcp.custom_route("/admin/resync", methods=["POST"])
+    async def admin_resync(request: Any) -> JSONResponse:
+        cache_db = _cache_db_path()
+        # Resolve runner lazily so tests can monkeypatch the module-level fn.
+        import core.mcp.ecotaxa_server as _server_module
+        runner = _server_module._run_full_sync_with_real_client
+
+        loop = asyncio.get_running_loop()
+
+        def _runner() -> None:
+            try:
+                runner(cache_db)
+            except Exception:  # noqa: BLE001 — background task
+                pass
+
+        loop.run_in_executor(None, _runner)
+        return JSONResponse(
+            {"run_id": "pending", "status": "started"},
+            status_code=202,
+        )
+
+    @mcp.custom_route("/admin/sync_runs/{run_id}", methods=["GET"])
+    async def admin_sync_run_status(request: Any) -> JSONResponse:
+        try:
+            run_id = int(request.path_params["run_id"])
+        except (KeyError, TypeError, ValueError):
+            return JSONResponse({"error": "invalid run_id"}, status_code=400)
+        try:
+            conn = _open_cache()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM sync_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            return JSONResponse({"error": "cache unavailable"}, status_code=503)
+        if row is None:
+            return JSONResponse({"error": "run not found"}, status_code=404)
+        return JSONResponse(dict(row))
+
+    http_app = mcp.http_app(path="/mcp")
+
+    if os.getenv("ECOTAXA_NIGHTLY_SYNC", "true").lower() != "false":
+        cache_db = _cache_db_path()
+        cron_hour = int(os.getenv("ECOTAXA_SYNC_HOUR", str(_DEFAULT_SYNC_HOUR)))
+        scheduler = build_nightly_scheduler(
+            cache_db=cache_db,
+            runner=_run_full_sync_with_real_client,
+            cron_hour=cron_hour,
+        )
+        original_lifespan = http_app.router.lifespan_context
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _wrapped_lifespan(app):
+            scheduler.start()
+            try:
+                async with original_lifespan(app) as state:
+                    yield state
+            finally:
+                scheduler.shutdown(wait=False)
+
+        http_app.router.lifespan_context = _wrapped_lifespan
+
+    return BearerAuthMiddleware(http_app, token)
+
+
+def create_mcp() -> FastMCP:
+    """Build the EcoTaxa MCP tool registry."""
+    mcp = FastMCP("EcoTaxa Browser")
+
+    @mcp.tool(name="search_projects")
+    async def search_projects_tool(
+        title: str | None = None,
+        instrument: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> list[dict]:
+        """Search accessible EcoTaxa projects before choosing data to export."""
+        call = partial(
+            search_projects,
+            title=title,
+            instrument=instrument,
+            page=page,
+            page_size=page_size,
+        )
+        return await anyio.to_thread.run_sync(call)
+
+    @mcp.tool(name="get_project")
+    async def get_project_tool(project_id: int) -> dict:
+        """Return project metadata, stats, and a compact schema summary."""
+        return await _run_sync(get_project, project_id=project_id)
+
+    @mcp.tool(name="get_project_schema")
+    async def get_project_schema_tool(
+        project_id: int,
+        verbose: bool = False,
+        include_process: bool = False,
+    ) -> dict:
+        """Inspect the typed columns of a project before exporting.
+
+        Returns sample/acquisition/object levels with fixed and free fields
+        plus a flat ``labels_index`` for resolving ambiguous column names.
+        """
+        return await _run_sync(
+            get_project_schema,
+            project_id=project_id,
+            verbose=verbose,
+            include_process=include_process,
+        )
+
+    @mcp.tool(name="list_project_samples")
+    async def list_project_samples_tool(
+        project_id: int,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> list[dict]:
+        """List one page of samples from a project."""
+        return await _run_sync(
+            list_project_samples,
+            project_id=project_id,
+            page=page,
+            page_size=page_size,
+        )
+
+    @mcp.tool(name="get_sample")
+    async def get_sample_tool(sample_id: int) -> dict:
+        """Return one sample."""
+        return await _run_sync(get_sample, sample_id=sample_id)
+
+    @mcp.tool(name="list_project_acquisitions")
+    async def list_project_acquisitions_tool(project_id: int) -> list[dict]:
+        """List acquisitions from a project."""
+        return await _run_sync(list_project_acquisitions, project_id=project_id)
+
+    @mcp.tool(name="get_acquisition")
+    async def get_acquisition_tool(acquisition_id: int) -> dict:
+        """Return one acquisition."""
+        return await _run_sync(get_acquisition, acquisition_id=acquisition_id)
+
+    @mcp.tool(name="list_sample_objects")
+    async def list_sample_objects_tool(
+        sample_id: int,
+        taxon: int | None = None,
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> list[dict]:
+        """List one page of objects from a sample."""
+        return await _run_sync(
+            list_sample_objects,
+            sample_id=sample_id,
+            taxon=taxon,
+            status=status,
+            page=page,
+            page_size=page_size,
+        )
+
+    @mcp.tool(name="get_object")
+    async def get_object_tool(object_id: int) -> dict:
+        """Return an object with sample and acquisition context."""
+        return await _run_sync(get_object, object_id=object_id)
+
+    @mcp.tool(name="taxonomy_node")
+    async def taxonomy_node_tool(taxon_id: int | None = None) -> dict | list[dict]:
+        """Return taxonomy roots or one detailed node."""
+        return await _run_sync(taxonomy_node, taxon_id=taxon_id)
+
+    @mcp.tool(name="search_taxa")
+    async def search_taxa_tool(query: str) -> list[dict]:
+        """Autocomplete EcoTaxa taxonomy names."""
+        return await _run_sync(search_taxa, query=query)
+
+    @mcp.tool(name="taxa_stats")
+    async def taxa_stats_tool(
+        project_ids: list[int],
+        taxa: list[int | str],
+    ) -> dict:
+        """Return V/P/D classification counts per (project_id, taxon).
+
+        ``taxa`` accepts integer taxon IDs or scientific names — names are
+        resolved via the taxonomy autocomplete. Inaccessible projects are
+        skipped silently and listed in ``inaccessible_project_ids``.
+        """
+        return await _run_sync(taxa_stats, project_ids=project_ids, taxa=taxa)
+
+    @mcp.tool(name="get_column_distribution")
+    async def get_column_distribution_tool(
+        project_id: int,
+        column_name: str,
+        level: str | None = None,
+    ) -> dict:
+        """Inspect the value distribution of a column before exporting.
+
+        Numeric columns return min/max/mean/median/p25/p75/n; text columns
+        return top values + total_distinct + sample_size. The ``source``
+        field tells whether the response came from the EcoTaxa pre-aggregated
+        column_stats endpoint or from a first-window sample fallback.
+        """
+        try:
+            return await _run_sync(
+                get_column_distribution,
+                project_id=project_id,
+                column_name=column_name,
+                level=level,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="compare_project_schemas")
+    async def compare_project_schemas_tool(project_ids: list[int]) -> dict:
+        """Identify shared columns, type and level conflicts across projects.
+
+        Use before a multi-project export to spot blockers (type mismatches)
+        and warnings (datetime vs text). Returns ``common_columns``,
+        ``type_conflicts`` (severity), ``level_conflicts`` and
+        ``unique_to_project`` lists.
+        """
+        return await _run_sync(compare_project_schemas, project_ids=project_ids)
+
+    @mcp.tool(name="samples_in_region")
+    async def samples_in_region_tool(
+        bbox: dict | None = None,
+        date_range: dict | None = None,
+        instrument: str | None = None,
+    ) -> dict:
+        """Return cached samples matching a bbox / date range / instrument.
+
+        ``bbox`` is a dict ``{"south", "west", "north", "east"}`` in decimal
+        degrees. ``date_range`` is ``{"from", "to"}`` in ISO format. All
+        filters are optional. Capped at 500 samples with a ``truncated`` flag
+        and a ``summary`` aggregating project_breakdown + date range seen.
+        Reads the local cache only — call ``/admin/resync`` first if empty.
+        """
+        try:
+            return await _run_sync(
+                samples_in_region,
+                bbox=bbox, date_range=date_range, instrument=instrument,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="projects_in_region")
+    async def projects_in_region_tool(
+        bbox: dict | None = None,
+        date_range: dict | None = None,
+    ) -> dict:
+        """Aggregate cached samples per project for a region / time window.
+
+        Same bbox / date_range format as ``samples_in_region``. Returns one
+        row per project with ``sample_count``, ``object_count``,
+        ``instruments``, ``date_min``, ``date_max``.
+        """
+        try:
+            return await _run_sync(
+                projects_in_region, bbox=bbox, date_range=date_range,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="find_observations")
+    async def find_observations_tool(
+        taxon: int | str,
+        bbox: dict | None = None,
+        date_range: dict | None = None,
+        instrument: str | None = None,
+        status: str = "V",
+    ) -> dict:
+        """Find cached samples whose project has the taxon attested.
+
+        Project-level filter (G1 granularity): samples in bbox/date that
+        belong to a project where ``taxon`` has at least one object of the
+        requested status (``V``, ``P``, ``D``, ``all``). Per-sample taxon
+        counts are out of scope for V1 — use ``count_ecotaxa_taxa`` (taxa
+        stats) on the returned ``attested_projects`` for finer numbers.
+        """
+        try:
+            return await _run_sync(
+                find_observations,
+                taxon=taxon, bbox=bbox, date_range=date_range,
+                instrument=instrument, status=status,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    return mcp
+
+
+async def _run_sync(function, **kwargs):
+    return await anyio.to_thread.run_sync(partial(function, **kwargs))

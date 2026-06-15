@@ -1,0 +1,282 @@
+"""SQLite repository for the EcoTaxa cache.
+
+Schema: sample-level aggregate (lat/lon/date), project schema snapshot,
+sync run history. Designed for SQLite (file or in-memory) — no spatial
+extension required, bbox math is plain numeric SQL.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from typing import Iterable, Sequence
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS samples_cache (
+    sample_id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    lat_avg REAL,
+    lon_avg REAL,
+    date_min TEXT,
+    date_max TEXT,
+    object_count INTEGER,
+    instrument TEXT,
+    last_synced TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_samples_project
+    ON samples_cache(project_id);
+CREATE INDEX IF NOT EXISTS idx_samples_bbox
+    ON samples_cache(lat_avg, lon_avg);
+CREATE INDEX IF NOT EXISTS idx_samples_date
+    ON samples_cache(date_min, date_max);
+
+CREATE TABLE IF NOT EXISTS project_schemas_cache (
+    project_id INTEGER PRIMARY KEY,
+    schema_json TEXT NOT NULL,
+    last_synced TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_runs (
+    run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    status TEXT,
+    projects_synced INTEGER,
+    samples_synced INTEGER,
+    error_message TEXT
+);
+"""
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    """Create tables and indexes if they do not exist (idempotent)."""
+    conn.executescript(_SCHEMA)
+    conn.commit()
+
+
+def upsert_sample(
+    conn: sqlite3.Connection,
+    *,
+    sample_id: int,
+    project_id: int,
+    lat_avg: float | None,
+    lon_avg: float | None,
+    date_min: str | None,
+    date_max: str | None,
+    object_count: int,
+    instrument: str | None,
+    last_synced: str,
+) -> None:
+    """Insert or update a single sample row."""
+    conn.execute(
+        """
+        INSERT INTO samples_cache (
+            sample_id, project_id, lat_avg, lon_avg,
+            date_min, date_max, object_count, instrument, last_synced
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(sample_id) DO UPDATE SET
+            project_id = excluded.project_id,
+            lat_avg = excluded.lat_avg,
+            lon_avg = excluded.lon_avg,
+            date_min = excluded.date_min,
+            date_max = excluded.date_max,
+            object_count = excluded.object_count,
+            instrument = excluded.instrument,
+            last_synced = excluded.last_synced
+        """,
+        (
+            sample_id, project_id, lat_avg, lon_avg,
+            date_min, date_max, object_count, instrument, last_synced,
+        ),
+    )
+    conn.commit()
+
+
+def replace_project_samples(
+    conn: sqlite3.Connection,
+    *,
+    project_id: int,
+    samples: Sequence[dict],
+    last_synced: str,
+) -> None:
+    """Atomically replace the cached samples for one project.
+
+    Drops any sample previously cached for ``project_id`` that is not in
+    the new payload, then upserts the supplied rows. Wrapped in a single
+    transaction — a failure mid-loop leaves the cache untouched.
+    """
+    try:
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM samples_cache WHERE project_id = ?", (project_id,))
+        for sample in samples:
+            conn.execute(
+                """
+                INSERT INTO samples_cache (
+                    sample_id, project_id, lat_avg, lon_avg,
+                    date_min, date_max, object_count, instrument, last_synced
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(sample["sample_id"]),
+                    project_id,
+                    sample.get("lat_avg"),
+                    sample.get("lon_avg"),
+                    sample.get("date_min"),
+                    sample.get("date_max"),
+                    int(sample.get("object_count") or 0),
+                    sample.get("instrument"),
+                    last_synced,
+                ),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def upsert_project_schema(
+    conn: sqlite3.Connection,
+    *,
+    project_id: int,
+    schema_json: str,
+    last_synced: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO project_schemas_cache (project_id, schema_json, last_synced)
+        VALUES (?, ?, ?)
+        ON CONFLICT(project_id) DO UPDATE SET
+            schema_json = excluded.schema_json,
+            last_synced = excluded.last_synced
+        """,
+        (project_id, schema_json, last_synced),
+    )
+    conn.commit()
+
+
+def query_samples_in_bbox(
+    conn: sqlite3.Connection,
+    *,
+    lat_min: float,
+    lat_max: float,
+    lon_min: float,
+    lon_max: float,
+) -> Iterable[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT * FROM samples_cache
+        WHERE lat_avg BETWEEN ? AND ?
+          AND lon_avg BETWEEN ? AND ?
+        """,
+        (lat_min, lat_max, lon_min, lon_max),
+    )
+
+
+def query_samples_in_date_range(
+    conn: sqlite3.Connection,
+    *,
+    date_from: str,
+    date_to: str,
+) -> Iterable[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT * FROM samples_cache
+        WHERE date_max >= ? AND date_min <= ?
+        """,
+        (date_from, date_to),
+    )
+
+
+def query_samples_filtered(
+    conn: sqlite3.Connection,
+    *,
+    bbox: tuple[float, float, float, float] | None = None,
+    date_range: tuple[str, str] | None = None,
+    instrument: str | None = None,
+    project_ids: Sequence[int] | None = None,
+) -> Iterable[sqlite3.Row]:
+    clauses: list[str] = []
+    params: list = []
+    if bbox is not None:
+        lat_min, lat_max, lon_min, lon_max = bbox
+        clauses.append("lat_avg BETWEEN ? AND ?")
+        params.extend([lat_min, lat_max])
+        clauses.append("lon_avg BETWEEN ? AND ?")
+        params.extend([lon_min, lon_max])
+    if date_range is not None:
+        date_from, date_to = date_range
+        clauses.append("date_max >= ? AND date_min <= ?")
+        params.extend([date_from, date_to])
+    if instrument is not None:
+        clauses.append("instrument = ?")
+        params.append(instrument)
+    if project_ids:
+        placeholders = ",".join("?" for _ in project_ids)
+        clauses.append(f"project_id IN ({placeholders})")
+        params.extend(project_ids)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return conn.execute(f"SELECT * FROM samples_cache {where}", params)
+
+
+def start_sync_run(conn: sqlite3.Connection, *, started_at: str) -> int:
+    cursor = conn.execute(
+        "INSERT INTO sync_runs (started_at) VALUES (?)",
+        (started_at,),
+    )
+    conn.commit()
+    return int(cursor.lastrowid)
+
+
+def finish_sync_run(
+    conn: sqlite3.Connection,
+    *,
+    run_id: int,
+    ended_at: str,
+    status: str,
+    projects_synced: int,
+    samples_synced: int,
+    error_message: str | None,
+) -> None:
+    conn.execute(
+        """
+        UPDATE sync_runs SET
+            ended_at = ?,
+            status = ?,
+            projects_synced = ?,
+            samples_synced = ?,
+            error_message = ?
+        WHERE run_id = ?
+        """,
+        (ended_at, status, projects_synced, samples_synced, error_message, run_id),
+    )
+    conn.commit()
+
+
+def latest_sync_status(conn: sqlite3.Connection) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM sync_runs ORDER BY run_id DESC LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def cache_counts(conn: sqlite3.Connection) -> dict:
+    samples = conn.execute("SELECT COUNT(*) FROM samples_cache").fetchone()[0]
+    projects = conn.execute(
+        "SELECT COUNT(DISTINCT project_id) FROM samples_cache"
+    ).fetchone()[0]
+    schemas = conn.execute("SELECT COUNT(*) FROM project_schemas_cache").fetchone()[0]
+    return {
+        "samples_indexed": int(samples),
+        "projects_indexed": int(projects),
+        "schemas_indexed": int(schemas),
+    }
+
+
+def open_connection(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    return conn

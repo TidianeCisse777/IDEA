@@ -1,0 +1,26 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept: [application/json]
+    method: GET
+    uri: https://ecotaxa.obs-vlfr.fr/api/projects/42
+  response:
+    body:
+      string: '{"projid":42,"title":"UVP5 GREEN EDGE Ice Camp 2015","access":"2","status":"Annotate","objcount":84668.0,"pctvalidated":100.0,"pctclassified":100.0,"instrument":"UVP5SD","comments":"","sample_free_cols":{"profileid":"t01","stationid":"t04"},"acquisition_free_cols":{"pixel":"t05","exposure":"t17"},"obj_free_cols":{"area":"n01","mean":"n02"}}'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+- request:
+    body: null
+    headers:
+      Accept: [application/json]
+    method: GET
+    uri: https://ecotaxa.obs-vlfr.fr/api/projects/42/stats
+  response:
+    body:
+      string: '["Total: 84668 objects"]'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+version: 1

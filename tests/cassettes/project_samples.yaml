@@ -1,0 +1,14 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept: [application/json]
+    method: GET
+    uri: https://ecotaxa.obs-vlfr.fr/api/samples/search?project_ids=42&id_pattern=%2A
+  response:
+    body:
+      string: '[{"sampleid":42000013,"projid":42,"orig_id":"gn2015_l2_019","latitude":67.4795,"longitude":-63.79,"free_columns":{}},{"sampleid":42000014,"projid":42,"orig_id":"gn2015_l2_027","latitude":67.5873,"longitude":-62.9883,"free_columns":{}}]'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+version: 1

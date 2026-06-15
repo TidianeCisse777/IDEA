@@ -1,0 +1,14 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept: [application/json]
+    method: GET
+    uri: https://ecotaxa.obs-vlfr.fr/api/acquisitions/search?project_id=42
+  response:
+    body:
+      string: '[{"acquisid":420000014,"acq_sample_id":42000013,"orig_id":"uvp5_gn2015_l2_019","instrument":"uvp5","free_columns":{}}]'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+version: 1

@@ -1,0 +1,27 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept: [application/json]
+    method: GET
+    uri: https://ecotaxa.obs-vlfr.fr/api/sample/42000013
+  response:
+    body:
+      string: '{"sampleid":42000013,"projid":42,"orig_id":"gn2015_l2_019","latitude":67.4795,"longitude":-63.79,"free_columns":{}}'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+- request:
+    body: '{"samples": "42000013", "taxo": "85076", "statusfilter": "V"}'
+    headers:
+      Accept: [application/json]
+      Content-Type: [application/json]
+    method: POST
+    uri: https://ecotaxa.obs-vlfr.fr/api/object_set/42/query?fields=obj.objid%2Cobj.orig_id%2Cobj.acquisid%2Cobj.classif_id%2Cobj.classif_qual%2Cobj.objdate%2Cobj.depth_min%2Cobj.depth_max%2Ctxo.display_name&order_field=obj.objid&window_start=1&window_size=1
+  response:
+    body:
+      string: '{"object_ids":[4200030316],"acquisition_ids":[420000014],"sample_ids":[42000013],"project_ids":[42],"details":[[4200030316,"gn2015_l2_019_2",420000014,85076,"V","2015-05-22",3.3,3.3,"fiber<detritus"]],"total_ids":3420}'
+    headers:
+      Content-Type: [application/json]
+    status: {code: 200, message: OK}
+version: 1

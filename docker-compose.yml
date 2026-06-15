@@ -49,6 +49,33 @@ services:
       retries: 3
       start_period: 60s
 
+  mcp-ecotaxa:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    image: ghcr.io/tidianecisse777/mcp-ecotaxa:latest
+    container_name: mcp_ecotaxa
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+      - ECOTAXA_TOKEN=${ECOTAXA_TOKEN:-}
+      - ECOTAXA_USERNAME=${ECOTAXA_USERNAME:-}
+      - ECOTAXA_PASSWORD=${ECOTAXA_PASSWORD:-}
+    command: uvicorn core.mcp.ecotaxa_server:create_app --factory --host 0.0.0.0 --port 8001 --reload
+    volumes:
+      - .:/app
+      - copepod_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
+      interval: 30s
+      retries: 3
+      start_period: 30s
+
   open-webui:
     image: openwebui/open-webui:0.9.6
     container_name: open_webui

@@ -1,0 +1,24 @@
+interactions:
+- request:
+    body: null
+    headers:
+      Accept:
+      - application/json, text/tab-separated-values, application/zip, */*
+      Accept-Encoding:
+      - gzip, deflate, br
+      Connection:
+      - keep-alive
+      User-Agent:
+      - python-requests/2.34.2
+    method: GET
+    uri: https://ecotaxa.obs-vlfr.fr/api/projects/search?title_filter=&instrument_filter=&window_start=0&window_size=2&order_field=projid
+  response:
+    body:
+      string: '[{"projid":42,"title":"UVP5 GREEN EDGE Ice Camp 2015","status":"Annotate","objcount":84668.0,"pctvalidated":100.0,"pctclassified":100.0,"instrument":"UVP5SD"},{"projid":2331,"title":"LOKI - copepod lipids","status":"Annotate","objcount":2216.0,"pctvalidated":97.0667870036101,"pctclassified":100.0,"instrument":"Loki"}]'
+    headers:
+      Content-Type:
+      - application/json
+    status:
+      code: 200
+      message: OK
+version: 1

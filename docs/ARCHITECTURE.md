@@ -50,6 +50,36 @@ Ce document décrit le câblage réel du runtime tel qu'il tourne aujourd'hui su
                               └──────────┘                └──────────────┘
 ```
 
+### Service voisin : MCP EcoTaxa (`mcp-ecotaxa`, port 8001)
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ mcp-ecotaxa  (FastMCP, conteneur mcp_ecotaxa, port 8001)                 │
+│   • GET  /health     — public, expose cache_age_hours, samples_indexed…  │
+│   • POST /mcp        — Bearer, Streamable HTTP MCP transport             │
+│   • POST /admin/resync — Bearer, fire-and-forget sync (202 + run_id)     │
+│   • GET  /admin/sync_runs/{id} — Bearer, statut d'un run                 │
+│   • Apscheduler nightly 3 AM (UTC) → run_full_sync                       │
+│                                                                          │
+│   15 tools MCP read-only, regroupés par UC :                             │
+│   UC1 samples_in_region, projects_in_region              (cache SQLite)  │
+│   UC2 find_observations                                  (cache + live)  │
+│   UC3 taxa_stats                                                         │
+│   UC4 get_project_schema, get_column_distribution                        │
+│   UC5 compare_project_schemas                                            │
+│   UC6 search/get/list × project / sample / acquisition / object          │
+│   UC7 taxonomy_node, search_taxa                                         │
+└──────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ HTTP read-only à ecotaxa.obs-vlfr.fr
+                                    ▼
+                          ┌─────────────────────┐
+                          │ ecotaxa.obs-vlfr.fr │
+                          └─────────────────────┘
+```
+
+`core/ecotaxa_browser/` (Python pur, ni LangChain ni FastMCP) est partagé entre l'agent IDEA (via les `@tool` LangChain de `tools/copepod_sources.py`, import direct) et le serveur MCP (via les `@mcp.tool` de `core/mcp/ecotaxa_server.py`). Voir `core/mcp/README.md` pour les détails côté MCP.
+
 ---
 
 ## Cycle de vie d'une requête

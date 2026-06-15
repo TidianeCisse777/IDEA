@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import os
 import time
+from typing import TYPE_CHECKING
 
-import pandas as pd
 import requests
 from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 load_dotenv()
 
@@ -44,6 +47,122 @@ class EcotaxaClient:
             {"project_id": int(project["projid"]), "name": str(project["title"])}
             for project in resp.json()
         ]
+
+    def search_projects(
+        self,
+        title: str | None = None,
+        instrument: str | None = None,
+        window_start: int = 0,
+        window_size: int = 50,
+    ) -> list[dict]:
+        resp = self._session.get(
+            f"{_BASE_URL}/projects/search",
+            params={
+                "title_filter": title or "",
+                "instrument_filter": instrument or "",
+                "window_start": window_start,
+                "window_size": window_size,
+                "order_field": "projid",
+            },
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_project(self, project_id: int) -> dict:
+        return self._get_json(f"/projects/{project_id}")
+
+    def get_project_stats(self, project_id: int) -> list[str]:
+        return self._get_json(f"/projects/{project_id}/stats", timeout=10)
+
+    def list_samples(self, project_id: int) -> list[dict]:
+        return self._get_json(
+            "/samples/search",
+            params={"project_ids": str(project_id), "id_pattern": "*"},
+        )
+
+    def get_sample(self, sample_id: int) -> dict:
+        return self._get_json(f"/sample/{sample_id}")
+
+    def list_acquisitions(self, project_id: int) -> list[dict]:
+        return self._get_json(
+            "/acquisitions/search",
+            params={"project_id": project_id},
+        )
+
+    def get_acquisition(self, acquisition_id: int) -> dict:
+        return self._get_json(f"/acquisition/{acquisition_id}")
+
+    def get_object(self, object_id: int) -> dict:
+        return self._get_json(f"/object/{object_id}")
+
+    def list_root_taxa(self) -> list[dict]:
+        return self._get_json("/taxa")
+
+    def get_taxon(self, taxon_id: int) -> dict:
+        return self._get_json(f"/taxon/{taxon_id}")
+
+    def search_taxa(self, query: str) -> list[dict]:
+        return self._get_json("/taxon_set/search", params={"query": query})
+
+    def query_objects(
+        self,
+        project_id: int,
+        filters: dict,
+        fields: str,
+        window_start: int,
+        window_size: int,
+    ) -> dict:
+        resp = self._session.post(
+            f"{_BASE_URL}/object_set/{project_id}/query",
+            params={
+                "fields": fields,
+                "order_field": "obj.objid",
+                "window_start": window_start,
+                "window_size": window_size,
+            },
+            json=filters,
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def taxon_summary(self, project_id: int, taxon_id: int) -> dict:
+        """Return classification counts for one (project, taxon) pair.
+
+        Maps to ``POST /object_set/{project_id}/summary`` filtered by taxon.
+        The response contains ``total_objects``, ``validated_objects``,
+        ``predicted_objects`` and ``dubious_objects``.
+        """
+        resp = self._session.post(
+            f"{_BASE_URL}/object_set/{project_id}/summary",
+            params={"only_total": False},
+            json={"taxo": str(taxon_id)},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def column_stats(
+        self, project_ids: list[int], names: list[str], limit: int = 1000
+    ) -> dict:
+        """Aggregate stats for named columns across one or more projects.
+
+        Maps to ``GET /project_set/column_stats``. EcoTaxa serves these
+        stats only for validated objects, so values are V-only by design.
+        """
+        params = {
+            "ids": ",".join(str(p) for p in project_ids),
+            "names": ",".join(names),
+            "limit": limit,
+        }
+        return self._get_json("/project_set/column_stats", params=params)
+
+    def _get_json(self, path: str, **kwargs):
+        timeout = kwargs.pop("timeout", _TIMEOUT)
+        resp = self._session.get(f"{_BASE_URL}{path}", timeout=timeout, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
 
     def preview_project(self, project_id: int, limit: int = 10) -> dict:
         metadata_response = self._session.get(
@@ -133,7 +252,9 @@ class EcotaxaClient:
             time.sleep(poll_seconds)
         raise RuntimeError(f"EcoTaxa job {job_id} did not finish after {max_polls} polls")
 
-    def download_tsv(self, job_id: int) -> pd.DataFrame:
+    def download_tsv(self, job_id: int) -> "pd.DataFrame":
+        import pandas as pd
+
         resp = self._session.get(f"{_BASE_URL}/jobs/{job_id}/file", timeout=_TIMEOUT)
         resp.raise_for_status()
         import io, zipfile
