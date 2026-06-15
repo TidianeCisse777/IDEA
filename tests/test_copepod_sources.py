@@ -66,7 +66,8 @@ def test_query_ecotaxa_preserves_multiple_projects():
 
 # ── Comportement 2 : lien de téléchargement dans le résumé ─────────────────
 
-def test_query_ecotaxa_returns_download_link():
+def test_query_ecotaxa_returns_download_link(monkeypatch):
+    monkeypatch.delenv("SERVE_BASE_URL", raising=False)
     df = pd.DataFrame({"object_id": ["obj_001"], "sample_id": ["ips_007"]})
     with patch("tools.copepod_sources.EcotaxaClient") as MockClient:
         MockClient.return_value = _make_fake_client(df)
