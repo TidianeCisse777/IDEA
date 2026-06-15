@@ -76,6 +76,18 @@ Compare les schémas de N projets avant un export combiné. Match par label norm
 - `unique_to_project` — colonnes propres à chaque projet
 Aliasé sur `compare_project_schemas` côté MCP.
 
+### `find_ecotaxa_samples_in_region(bbox?, date_range?, instrument?) -> str`
+
+Recherche les samples EcoTaxa croisant une zone géographique et/ou une période, lue depuis le cache SQLite local (alimenté par le sync nightly). `bbox = {"south", "west", "north", "east"}` en degrés décimaux. `date_range = {"from", "to"}` en ISO. Réponse plafonnée à 500 samples avec un `truncated` flag et un `summary` agrégé (project_breakdown, date_range_seen, lat_lon_centroid). Erreur `CACHE_EMPTY` si le cache n'a pas encore été sync. Aliasé sur `samples_in_region` côté MCP.
+
+### `find_ecotaxa_projects_in_region(bbox?, date_range?) -> str`
+
+Agrège les samples par projet pour une zone / période. Retourne une ligne par projet avec `sample_count`, `object_count`, `instruments`, `date_min`, `date_max`. À utiliser quand l'utilisateur pense au niveau projet, pas sample. Aliasé sur `projects_in_region` côté MCP.
+
+### `find_ecotaxa_observations(taxon, bbox?, date_range?, instrument?, status="V") -> str`
+
+Trouve les samples EcoTaxa dont le projet a le taxon attesté au statut demandé. Granularité projet-filtrée (G1) : on prend les samples de la zone/période et on les garde seulement s'ils appartiennent à un projet attestant le taxon. `taxon` accepte str ou int. `status` accepte `V`, `P`, `D`, `all`. Retourne `attested_projects` + `project_counts` (V/P/D/total par projet) en plus de la liste de samples. Pour des counts précis, enchaîner sur `count_ecotaxa_taxa(project_ids=attested_projects, ...)`. Aliasé sur `find_observations` côté MCP.
+
 ---
 
 ## 3. Sources EcoPart

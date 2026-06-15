@@ -1,3 +1,6 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "live: hits the real EcoTaxa API; opt-in via ECOTAXA_LIVE=1.",
+]

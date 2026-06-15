@@ -43,6 +43,33 @@ from tools.ecotaxa_client import EcotaxaClient
 _MCP_PATHS = {"/mcp", "/mcp/"}
 _ADMIN_PREFIX = "/admin/"
 _DEFAULT_CACHE_DB = "data/ecotaxa_cache.sqlite"
+_DEFAULT_SYNC_HOUR = 3
+
+
+def build_nightly_scheduler(
+    *,
+    cache_db: str,
+    runner,
+    cron_hour: int = _DEFAULT_SYNC_HOUR,
+):
+    """Build an AsyncIOScheduler registering one daily sync job.
+
+    Caller is responsible for starting/stopping the scheduler. Exposed at
+    module level so tests can construct one without spinning up FastMCP.
+    """
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(
+        runner,
+        "cron",
+        hour=cron_hour,
+        minute=0,
+        args=[cache_db],
+        id="ecotaxa-nightly-sync",
+        replace_existing=True,
+    )
+    return scheduler
 
 
 class BearerAuthMiddleware:
@@ -185,7 +212,32 @@ def create_app() -> ASGIApp:
             return JSONResponse({"error": "run not found"}, status_code=404)
         return JSONResponse(dict(row))
 
-    return BearerAuthMiddleware(mcp.http_app(path="/mcp"), token)
+    http_app = mcp.http_app(path="/mcp")
+
+    if os.getenv("ECOTAXA_NIGHTLY_SYNC", "true").lower() != "false":
+        cache_db = _cache_db_path()
+        cron_hour = int(os.getenv("ECOTAXA_SYNC_HOUR", str(_DEFAULT_SYNC_HOUR)))
+        scheduler = build_nightly_scheduler(
+            cache_db=cache_db,
+            runner=_run_full_sync_with_real_client,
+            cron_hour=cron_hour,
+        )
+        original_lifespan = http_app.router.lifespan_context
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _wrapped_lifespan(app):
+            scheduler.start()
+            try:
+                async with original_lifespan(app) as state:
+                    yield state
+            finally:
+                scheduler.shutdown(wait=False)
+
+        http_app.router.lifespan_context = _wrapped_lifespan
+
+    return BearerAuthMiddleware(http_app, token)
 
 
 def create_mcp() -> FastMCP:
