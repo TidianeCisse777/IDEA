@@ -27,29 +27,79 @@ LAN_IP=$(ipconfig getifaddr en0 2>/dev/null \
 
 SHARE_URL="http://${LAN_IP}:3000"
 
-# Tunnel Cloudflare si disponible (lien internet sans compte)
+# Tunnels Cloudflare si disponible : un pour Open WebUI (3000), un pour serve.py (8000).
+# SERVE_BASE_URL est exporté vers serve.py pour que les liens d'images / téléchargements
+# pointent vers une URL publique (sinon http://localhost:8000 cassé depuis un browser distant).
 TUNNEL_PID=""
+TUNNEL_LOG="logs/cloudflared.log"
+TUNNEL_URL=""
+SERVE_TUNNEL_PID=""
+SERVE_TUNNEL_LOG="logs/cloudflared-serve.log"
+SERVE_TUNNEL_URL=""
 if command -v cloudflared &>/dev/null; then
-  echo "[start] Tunnel Cloudflare en cours..."
-  cloudflared tunnel --url http://localhost:3000 --no-autoupdate 2>&1 \
-    | grep -oE --line-buffered 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
-    | head -1 \
-    | xargs -I{} echo "[tunnel] Lien public : {}" &
+  mkdir -p logs
+  : > "$TUNNEL_LOG"
+  : > "$SERVE_TUNNEL_LOG"
+  echo "[start] Tunnels Cloudflare en cours (WebUI :3000 + serve :8000)..."
+  cloudflared tunnel --url http://localhost:3000 --no-autoupdate \
+    > "$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
+  cloudflared tunnel --url http://localhost:8000 --no-autoupdate \
+    > "$SERVE_TUNNEL_LOG" 2>&1 &
+  SERVE_TUNNEL_PID=$!
+  # Attente des URLs (max ~15s par tunnel).
+  for _ in $(seq 1 30); do
+    [ -z "$TUNNEL_URL" ] && \
+      TUNNEL_URL=$( { grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null || true; } | head -1)
+    [ -z "$SERVE_TUNNEL_URL" ] && \
+      SERVE_TUNNEL_URL=$( { grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$SERVE_TUNNEL_LOG" 2>/dev/null || true; } | head -1)
+    [ -n "$TUNNEL_URL" ] && [ -n "$SERVE_TUNNEL_URL" ] && break
+    sleep 0.5
+  done
+  # Exporter SERVE_BASE_URL pour serve.py (override de la valeur du .env)
+  if [ -n "$SERVE_TUNNEL_URL" ]; then
+    export SERVE_BASE_URL="$SERVE_TUNNEL_URL"
+  fi
 fi
+
+cleanup() {
+  echo ""
+  echo "[start] Arrêt..."
+  for pid in "$TUNNEL_PID" "$SERVE_TUNNEL_PID"; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      for _ in 1 2 3 4 5; do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.3
+      done
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done
+  # Filet de sécurité : tue toute instance résiduelle lancée par ce script
+  pkill -f "cloudflared tunnel --url http://localhost:3000" 2>/dev/null || true
+  pkill -f "cloudflared tunnel --url http://localhost:8000" 2>/dev/null || true
+  docker compose stop open-webui postgres
+  exit 0
+}
+trap cleanup INT TERM EXIT
 
 echo ""
 echo "┌─────────────────────────────────────────────────┐"
 echo "  Assistant copépodes — NeoLab, Université Laval"
 echo "  LAN  : ${SHARE_URL}"
-if [ -z "$TUNNEL_PID" ]; then
-echo "  Internet : installe cloudflared pour un lien public"
+if [ -n "$TUNNEL_URL" ]; then
+echo "  WebUI    : ${TUNNEL_URL}"
+elif [ -n "$TUNNEL_PID" ]; then
+echo "  WebUI    : tunnel en cours, voir ${TUNNEL_LOG}"
+else
+echo "  WebUI    : installe cloudflared pour un lien public"
 echo "             brew install cloudflare/cloudflare/cloudflared"
+fi
+if [ -n "$SERVE_TUNNEL_URL" ]; then
+echo "  Serve    : ${SERVE_TUNNEL_URL} (images/téléchargements)"
 fi
 echo "└─────────────────────────────────────────────────┘"
 echo ""
-
-trap 'echo "[start] Arrêt..."; [ -n "$TUNNEL_PID" ] && kill "$TUNNEL_PID" 2>/dev/null; docker compose stop open-webui postgres; exit 0' INT TERM
 
 # ── 4. agent ───────────────────────────────────────────────────────────────────
 python serve.py

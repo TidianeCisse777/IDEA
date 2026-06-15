@@ -117,29 +117,66 @@ def make_bio_oracle_tools(thread_id: str) -> list:
 
     @tool
     def couple_zooplankton_bio_oracle(rows_json: str) -> str:
-        """Couple des lignes zooplancton avec Bio-ORACLE à partir d'un JSON de lignes normalisées."""
+        """Enrichit chaque ligne d'observations zooplancton avec UNE valeur Bio-ORACLE
+        propre à son point géographique (lat/lon).
+
+        Utilise CE tool — et pas `query_bio_oracle_zones` — dès que l'utilisateur
+        veut une valeur Bio-ORACLE **par station** d'un fichier zooplancton chargé
+        (fichier avec `latitude` / `longitude` par ligne). Le tool fait UN appel
+        Bio-ORACLE par ligne ; deux stations à des coordonnées différentes
+        recevront donc deux valeurs différentes.
+
+        `rows_json` : JSON array, une entrée par station, par exemple :
+          [{"latitude": 71.24, "longitude": -157.17, "station": "1040",
+            "variable": "temperature", "scenario": "baseline",
+            "depth_layer": "surface"}, ...]
+        """
         try:
             rows = json.loads(rows_json)
             if not isinstance(rows, list) or not rows:
                 return "Aucune ligne à coupler."
 
+            # Dédup : un appel ERDDAP par (lat, lon, variable, scenario, depth_layer).
+            # Deux lignes au même point recevront la même valeur via lookup.
+            cache: dict[tuple, dict] = {}
+            for row in rows:
+                key = (
+                    row["latitude"], row["longitude"],
+                    row["variable"], row["scenario"], row["depth_layer"],
+                )
+                if key not in cache:
+                    preview = _preview_bio_oracle_point(
+                        {
+                            "latitude": row["latitude"],
+                            "longitude": row["longitude"],
+                            "variable": row["variable"],
+                            "scenario": row["scenario"],
+                            "depth_layer": row["depth_layer"],
+                        }
+                    )
+                    val_key = preview.get("variable", "")
+                    preview_rows = preview.get("rows") or []
+                    raw_value = preview_rows[0].get(val_key) if preview_rows else None
+                    try:
+                        value = round(float(raw_value), 4) if raw_value is not None else None
+                    except (TypeError, ValueError):
+                        value = None
+                    cache[key] = {"value": value, "dataset_id": preview.get("dataset_id")}
+
             coupled_rows = []
             for row in rows:
-                result = _query_bio_oracle(
-                    {
-                        "latitude": row["latitude"],
-                        "longitude": row["longitude"],
-                        "variable": row["variable"],
-                        "scenario": row["scenario"],
-                        "depth_layer": row["depth_layer"],
-                    },
-                    output_path=_DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv",
+                key = (
+                    row["latitude"], row["longitude"],
+                    row["variable"], row["scenario"], row["depth_layer"],
                 )
+                cached = cache[key]
+                scenario_clean = str(row["scenario"]).lower().replace(".", "_").replace("-", "_")
+                value_col = f"{row['variable']}_{scenario_clean}"
                 coupled_rows.append(
                     {
                         **row,
-                        "dataset_id": result["dataset_id"],
-                        "download_url": result["download_url"],
+                        value_col: cached["value"],
+                        "dataset_id": cached["dataset_id"],
                     }
                 )
 
@@ -155,10 +192,12 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 variable_name=variable_name,
                 meta={"source": "bio_oracle_coupling", "query_id": query_id, "n_rows": len(coupled_rows)},
             )
+            preview_md = dataframe.head(20).to_markdown(index=False)
             return (
                 f"Couplage Bio-ORACLE chargé — {len(coupled_rows)} lignes.\n"
                 f"Données disponibles dans `{variable_name}`.\n"
-                f"Télécharger : {download_url(output_path.name)}"
+                f"Télécharger : {download_url(output_path.name)}\n\n"
+                f"Aperçu (20 premières lignes) :\n\n{preview_md}"
             )
         except Exception as exc:
             return f"Erreur lors du couplage Bio-ORACLE : {exc}"
@@ -172,12 +211,16 @@ def make_bio_oracle_tools(thread_id: str) -> list:
     ) -> str:
         """Extract Bio-ORACLE projected values for one or more named geographic zones.
 
-        Use this tool whenever the user asks for Bio-ORACLE data by zone name
-        (e.g. "température Bio-ORACLE dans Hawke Channel et mer du Labrador",
-        "projection SSP5-8.5 par zone", "compare les zones").
+        Use this tool ONLY when the user asks for Bio-ORACLE data **aggregated
+        by zone name** (e.g. "température Bio-ORACLE dans Hawke Channel et mer
+        du Labrador", "compare les zones"). The tool returns ONE row per zone,
+        sampled at the zone's geographic centre.
 
-        Each zone is sampled at its geographic centre. Results are returned as a
-        markdown table — one row per zone — ready to compare with CTD observations.
+        DO NOT use this tool to enrich a loaded zooplankton / sampling file
+        with per-station environmental values — even if all stations happen to
+        fall in one zone. For that case, use `couple_zooplankton_bio_oracle`
+        instead: it calls Bio-ORACLE once per row (lat/lon) so two stations at
+        different coordinates receive different values.
 
         Parameters
         ----------
@@ -191,6 +234,28 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         depth_layer : "surface" (default), "mean", "max", or "min"
         """
         from tools.geo_tools import get_zone_filter
+
+        # Garde-fou : si une session contient déjà un DataFrame multi-lignes
+        # avec lat/lon, signaler que le couple_zooplankton_bio_oracle est plus
+        # approprié pour un enrichissement par station.
+        per_station_warning = ""
+        try:
+            session = _store.get(thread_id)
+            df_session = session.get("df") if session else None
+            if isinstance(df_session, pd.DataFrame) and len(df_session) > 1:
+                cols_lower = {str(c).lower(): c for c in df_session.columns}
+                has_lat = any(c in cols_lower for c in ("latitude", "lat"))
+                has_lon = any(c in cols_lower for c in ("longitude", "lon"))
+                if has_lat and has_lon:
+                    per_station_warning = (
+                        f"⚠ Une table de {len(df_session)} lignes avec latitude/longitude "
+                        "est active en session. `query_bio_oracle_zones` renvoie UNE valeur "
+                        "agrégée par zone — ne pas réutiliser cette valeur unique pour chaque "
+                        "station. Pour des valeurs par station, appelle "
+                        "`couple_zooplankton_bio_oracle` avec une entrée par ligne.\n\n"
+                    )
+        except Exception:
+            pass
 
         rows_out = []
         errors = []
@@ -241,7 +306,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         out = df_out.to_markdown(index=False)
         if errors:
             out += "\n\nAvertissements : " + "; ".join(errors)
-        return out
+        return per_station_warning + out
 
     return [list_bio_oracle_datasets, preview_bio_oracle_point, query_bio_oracle,
             couple_zooplankton_bio_oracle, query_bio_oracle_zones]

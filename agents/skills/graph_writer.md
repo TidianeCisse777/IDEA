@@ -54,7 +54,7 @@ plt.tight_layout()
 - For long labels (taxon names): `ax.tick_params(axis='x', rotation=45)`
 - For horizontal bar charts when there are many categories (> 10): use `ax.barh()`
 - Never call `plt.savefig()` — the system captures the figure automatically
-- After the figure code, set a string variable named `graph_explanation` with a short "Lecture rapide" note: what the graph shows, why the chosen encoding fits the question, and the main reading cue. Keep it concise and factual.
+- After the figure code, set a string variable named `graph_explanation` to a neutral description limited to: axes, source, and confidence level. No reading of the chart, no observations, no priorities, no "Lecture rapide", no interpretation cues. The assistant ignores this field when replying to the user — it is kept only as metadata for the tool layer.
 - For multi-source graphs, never plot directly from bare `df`. `df` is only the latest active table. First build `plot_df` explicitly from named source DataFrames such as `df_ecotaxa_ecopart`, `df_ecotaxa_ecopart_105`, `df_ctd`, `df_bio_oracle`, `df_ogsl`, or `df_sql`.
 
 ## Geographic maps
@@ -177,7 +177,7 @@ ax.legend(handles=legend_elements, loc='lower left', fontsize=8,
 ax.set_title("<titre>", fontsize=13, color='white')
 plt.tight_layout()
 
-graph_explanation = "Carte des lacunes d'échantillonnage. Vert = couverture suffisante, orange = sparse, rouge = absent. Lecture rapide : les zones rouges sont prioritaires pour les prochaines campagnes."
+graph_explanation = "Carte des lacunes d'échantillonnage par station. Axes : longitude × latitude. Couleur : nombre d'observations par station (vert ≥10, orange 1–9, rouge 0). Source : run_pandas sur station_coverage."
 ```
 
 ---
@@ -232,7 +232,7 @@ cbar.ax.tick_params(colors='white')
 ax.set_title("<titre — ex: Delta réchauffement Bio-ORACLE SSP5-8.5 2100 vs CTD actuel>", fontsize=13, color='white')
 plt.tight_layout()
 
-graph_explanation = "Carte du delta de réchauffement par station (SSP5-8.5 2100 − CTD actuel). Rouge = fort réchauffement projeté, bleu = refroidissement. Lecture rapide : zones rouges = stations prioritaires pour le suivi climatique."
+graph_explanation = "Carte du delta de température par station. Axes : longitude × latitude. Couleur : Δ°C (Bio-ORACLE SSP5-8.5 2100 − CTD actuel), coolwarm centrée sur 0. Source : run_pandas sur delta_df."
 ```
 
 ---
@@ -302,7 +302,7 @@ plt.tight_layout()
 - No color variable: use `color='steelblue'`
 - Station labels: iterate unique stations and call `ax.annotate(name, (lon, lat), transform=ccrs.PlateCarree(), fontsize=7)`
 - Never use folium — cartopy only
-- When writing the code, make the `graph_explanation` reflect the actual plotting choices in the code, not generic commentary.
+- When writing the code, make the `graph_explanation` reflect the actual plotting choices (axes, source, encoding) — never describe what the chart shows or suggest priorities.
 
 ## Data handling
 
@@ -359,13 +359,13 @@ ax.text(
 
 ### graph_explanation
 
-The `graph_explanation` string must include the confidence level and the dominant uncertainty source. Example:
+The `graph_explanation` string must include the axes, source, and confidence level with the dominant uncertainty source. No reading of the chart, no peak/trend description, no priorities. Example:
 
 ```python
 graph_explanation = (
     "Distribution verticale de Calanus hyperboreus, EcoTaxa 1165. "
-    "Confidence: medium — 12 rows out of 84 lack sampled volume (exploratory). "
-    "Lecture rapide: pic à 50 m, queue jusqu'à 200 m."
+    "Axes : abondance × profondeur (m). Source : run_pandas sur df_ecotaxa_1165. "
+    "Confidence: medium — 12 rows out of 84 lack sampled volume (exploratory)."
 )
 ```
 

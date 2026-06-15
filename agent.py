@@ -222,6 +222,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
     llm = ChatOpenAI(
         model=os.getenv("LLM_MODEL", "openai/gpt-5.4-mini"),
         max_retries=2,
+        max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "16000")),
     )
     tools = (
         make_tools(thread_id)

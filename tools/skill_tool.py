@@ -28,7 +28,11 @@ def _pull_from_hub(skill_name: str) -> str | None:
     """Tente de charger le skill depuis le LangSmith Context Hub.
 
     Retourne le contenu ou None si indisponible.
+    Set SKILL_PREFER_LOCAL=true to bypass the hub entirely (useful when the
+    hub holds a stale version and push is blocked, e.g. LangSmith 5xx).
     """
+    if os.getenv("SKILL_PREFER_LOCAL", "").lower() in ("1", "true", "yes"):
+        return None
     api_key = os.getenv("LANGCHAIN_API_KEY") or os.getenv("LANGSMITH_API_KEY")
     if not api_key or _LangSmithClient is None:
         return None

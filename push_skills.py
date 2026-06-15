@@ -24,6 +24,7 @@ def push_skill(stem: str, content: str, env: str) -> str:
     return identifier
 
 
+failures: list[tuple[str, str]] = []
 for md_file in sorted(SKILLS_DIR.glob("*.md")):
     content = md_file.read_text(encoding="utf-8")
     for env in ("production", "staging"):
@@ -37,5 +38,15 @@ for md_file in sorted(SKILLS_DIR.glob("*.md")):
                 continue
         except Exception:
             pass  # not found or unreadable → push
-        push_skill(md_file.stem, content, env)
-        print(f"✓  {identifier} (pushed)")
+        try:
+            push_skill(md_file.stem, content, env)
+            print(f"✓  {identifier} (pushed)")
+        except Exception as e:
+            short = str(e).splitlines()[0][:160]
+            print(f"✗  {identifier} — {short}")
+            failures.append((identifier, short))
+
+if failures:
+    print(f"\n{len(failures)} échec(s) :")
+    for ident, msg in failures:
+        print(f"  - {ident}: {msg}")

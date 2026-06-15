@@ -111,24 +111,19 @@ def test_couple_zooplankton_bio_oracle_tool_persists_coupled_rows():
 
     _store._store.clear()
 
-    def fake_query(parameters, output_path=None):
-        dataframe = pd.DataFrame(
-            [
+    def fake_preview(parameters):
+        return {
+            "dataset_id": "thetao_ssp245_2020_2100_depthsurf",
+            "title": "Bio-Oracle Temperature [depthSurf] SSP245 2020-2100",
+            "variable": "thetao",
+            "rows": [
                 {
                     "time": "2041-01-01T00:00:00Z",
                     "latitude": parameters["latitude"],
                     "longitude": parameters["longitude"],
                     "thetao": 12.3,
                 }
-            ]
-        )
-        dataframe.to_csv(output_path, sep="\t", index=False)
-        return {
-            "dataset_id": "thetao_ssp245_2020_2100_depthsurf",
-            "title": "Bio-Oracle Temperature [depthSurf] SSP245 2020-2100",
-            "file_path": str(output_path),
-            "download_url": str(output_path),
-            "row_count": 1,
+            ],
         }
 
     rows_json = (
@@ -136,7 +131,7 @@ def test_couple_zooplankton_bio_oracle_tool_persists_coupled_rows():
         '"scenario":"SSP245","depth_layer":"depthsurf"}]'
     )
 
-    with patch("tools.bio_oracle_sources._query_bio_oracle", side_effect=fake_query):
+    with patch("tools.bio_oracle_sources._preview_bio_oracle_point", side_effect=fake_preview):
         tools = make_bio_oracle_tools("thread-3")
         couple = next(tool for tool in tools if tool.name == "couple_zooplankton_bio_oracle")
         result = couple.invoke({"rows_json": rows_json})
@@ -145,4 +140,8 @@ def test_couple_zooplankton_bio_oracle_tool_persists_coupled_rows():
     assert "Couplage Bio-ORACLE chargé" in result
     keys = _store.keys("thread-3:dataset:df_bio_oracle_coupling_")
     assert len(keys) == 1
-    assert _store.get(keys[0])["df"].shape == (1, 7)
+    df_coupled = _store.get(keys[0])["df"]
+    assert df_coupled.shape == (1, 7)
+    # La valeur est désormais présente dans la table (colonne dérivée de variable+scenario)
+    assert "thetao_ssp245" in df_coupled.columns
+    assert df_coupled["thetao_ssp245"].iloc[0] == 12.3
