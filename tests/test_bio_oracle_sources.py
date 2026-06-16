@@ -58,6 +58,108 @@ def test_query_bio_oracle_tool_stores_dataframe_and_returns_download_link(tmp_pa
     assert "Télécharger :" in result
 
 
+def test_query_bio_oracle_accepts_list_of_points_for_multi_station(tmp_path):
+    import pandas as pd
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+    from unittest.mock import patch
+
+    thread_id = "thread-bio-oracle-multipoint"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    calls = []
+
+    def fake_query(parameters, output_path=None):
+        calls.append((parameters["latitude"], parameters["longitude"]))
+        dataframe = pd.DataFrame(
+            [
+                {
+                    "latitude": parameters["latitude"],
+                    "longitude": parameters["longitude"],
+                    "thetao": float(parameters["latitude"]),
+                }
+            ]
+        )
+        dataframe.to_csv(output_path, sep="\t", index=False)
+        return {
+            "dataset_id": "thetao_baseline_2000_2019_depthsurf",
+            "title": "Bio-Oracle Temperature [depthSurf] baseline",
+            "file_path": str(output_path),
+            "download_url": str(output_path),
+            "row_count": 1,
+        }
+
+    with patch("tools.bio_oracle_sources._query_bio_oracle", side_effect=fake_query):
+        query = next(
+            tool for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "query_bio_oracle"
+        )
+        result = query.invoke(
+            {
+                "latitude": [59.8, 61.7],
+                "longitude": [-64.9, -87.8],
+                "variable": "thetao",
+                "scenario": "baseline",
+                "depth_layer": "surface",
+            }
+        )
+
+    assert set(calls) == {(59.8, -64.9), (61.7, -87.8)}
+    assert "2 lignes" in result
+    merged = _store.get(f"{thread_id}:bio_oracle")["df"]
+    assert sorted(merged["latitude"].tolist()) == [59.8, 61.7]
+
+
+def test_query_bio_oracle_rejects_mismatched_or_empty_point_lists():
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from unittest.mock import patch
+
+    calls = []
+
+    def fake_query(parameters, output_path=None):  # pragma: no cover - should not run
+        calls.append(parameters)
+        raise AssertionError("ERDDAP must not be called on invalid input")
+
+    with patch("tools.bio_oracle_sources._query_bio_oracle", side_effect=fake_query):
+        query = next(
+            tool for tool in make_bio_oracle_tools("thread-bio-oracle-invalid")
+            if tool.name == "query_bio_oracle"
+        )
+        mismatched = query.invoke(
+            {
+                "latitude": [59.8, 61.7],
+                "longitude": [-64.9],
+                "variable": "thetao",
+                "scenario": "baseline",
+                "depth_layer": "surface",
+            }
+        )
+        empty = query.invoke(
+            {
+                "latitude": [],
+                "longitude": [],
+                "variable": "thetao",
+                "scenario": "baseline",
+                "depth_layer": "surface",
+            }
+        )
+        mixed = query.invoke(
+            {
+                "latitude": [59.8, 61.7],
+                "longitude": -64.9,
+                "variable": "thetao",
+                "scenario": "baseline",
+                "depth_layer": "surface",
+            }
+        )
+
+    assert calls == []
+    assert "même longueur" in mismatched
+    assert "vide" in empty
+    assert "tous deux des nombres" in mixed or "tous deux des listes" in mixed
+
+
 def test_query_bio_oracle_preserves_distinct_queries():
     import pandas as pd
     from tools.bio_oracle_sources import make_bio_oracle_tools

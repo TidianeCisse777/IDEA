@@ -109,60 +109,139 @@ def make_bio_oracle_tools(thread_id: str) -> list:
 
     @tool
     def query_bio_oracle(
-        latitude: float,
-        longitude: float,
+        latitude: float | list[float],
+        longitude: float | list[float],
         variable: str,
         scenario: str,
         depth_layer: str,
         target_year: int | None = None,
     ) -> str:
-        """Extrait Bio-ORACLE pour un point et écrit un TSV téléchargeable."""
+        """Extrait Bio-ORACLE pour un ou plusieurs points et écrit un TSV téléchargeable.
+
+        Pour UN point, passe `latitude` et `longitude` en `float`.
+        Pour PLUSIEURS stations, passe `latitude` et `longitude` en
+        `list[float]` de même longueur — le tool fait un appel ERDDAP par
+        point unique et concatène les résultats dans `df_bio_oracle`.
+
+        Pour enrichir directement un fichier zooplancton chargé avec une valeur
+        par station, préfère `couple_zooplankton_bio_oracle` qui lit les
+        coordonnées depuis la table en session.
+        """
         try:
-            file_id = uuid.uuid4().hex
-            output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
-            result = _query_bio_oracle(
-                {
-                    "latitude": latitude,
-                    "longitude": longitude,
-                    "variable": variable,
-                    "scenario": scenario,
-                    "depth_layer": depth_layer,
-                    "target_year": target_year,
-                },
-                output_path=output_path,
-            )
-            dataframe = pd.read_csv(output_path, sep="\t")
-            variable_name = dataset_variable_name(
-                "bio_oracle",
+            lat_is_list = isinstance(latitude, list)
+            lon_is_list = isinstance(longitude, list)
+            if lat_is_list != lon_is_list:
+                return (
+                    "latitude et longitude doivent être tous deux des nombres "
+                    "ou tous deux des listes."
+                )
+            if lat_is_list:
+                if len(latitude) != len(longitude):
+                    return (
+                        f"latitude ({len(latitude)}) et longitude "
+                        f"({len(longitude)}) doivent avoir la même longueur."
+                    )
+                if not latitude:
+                    return "Liste de points vide."
+                lat_list = [float(value) for value in latitude]
+                lon_list = [float(value) for value in longitude]
+            else:
+                lat_list = [float(latitude)]
+                lon_list = [float(longitude)]
+            multi = len(lat_list) > 1
+
+            per_point_frames: list[pd.DataFrame] = []
+            per_point_names: list[str] = []
+            per_point_dataset_ids: list[str] = []
+            last_result: dict | None = None
+            for lat, lon in zip(lat_list, lon_list):
+                file_id = uuid.uuid4().hex
+                output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
+                result = _query_bio_oracle(
+                    {
+                        "latitude": lat,
+                        "longitude": lon,
+                        "variable": variable,
+                        "scenario": scenario,
+                        "depth_layer": depth_layer,
+                        "target_year": target_year,
+                    },
+                    output_path=output_path,
+                )
+                last_result = result
+                dataframe = pd.read_csv(output_path, sep="\t")
+                variable_name = dataset_variable_name(
+                    "bio_oracle",
+                    variable,
+                    scenario,
+                    depth_layer,
+                    lat,
+                    lon,
+                )
+                store_dataset(
+                    _store,
+                    thread_id,
+                    dataframe,
+                    variable_name=variable_name,
+                    meta={
+                        "source": f"bio_oracle:{result['dataset_id']}",
+                        "dataset_id": result["dataset_id"],
+                        "variable": variable,
+                        "scenario": scenario,
+                        "depth_layer": depth_layer,
+                        "target_year": target_year,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "n_rows": len(dataframe),
+                    },
+                    latest_alias=None if multi else "bio_oracle",
+                )
+                per_point_frames.append(dataframe)
+                per_point_names.append(variable_name)
+                per_point_dataset_ids.append(result["dataset_id"])
+
+            if not multi:
+                return (
+                    f"Bio-ORACLE chargé — {last_result['row_count']} lignes.\n"
+                    f"Données disponibles dans `{per_point_names[0]}` et `df_bio_oracle`.\n"
+                    f"Appelle run_pandas directement pour analyser.\n"
+                    f"Télécharger : {last_result['download_url']}"
+                )
+
+            merged = pd.concat(per_point_frames, ignore_index=True)
+            merged_id = uuid.uuid4().hex
+            merged_path = _DOWNLOADS_DIR / f"{merged_id}.tsv"
+            merged.to_csv(merged_path, sep="\t", index=False)
+            merged_name = dataset_variable_name(
+                "bio_oracle_multi",
                 variable,
                 scenario,
                 depth_layer,
-                latitude,
-                longitude,
+                len(lat_list),
             )
             store_dataset(
                 _store,
                 thread_id,
-                dataframe,
-                variable_name=variable_name,
+                merged,
+                variable_name=merged_name,
                 meta={
-                    "source": f"bio_oracle:{result['dataset_id']}",
-                    "dataset_id": result["dataset_id"],
+                    "source": f"bio_oracle:multipoint:{variable}:{scenario}:{depth_layer}",
+                    "dataset_ids": per_point_dataset_ids,
                     "variable": variable,
                     "scenario": scenario,
                     "depth_layer": depth_layer,
                     "target_year": target_year,
-                    "latitude": latitude,
-                    "longitude": longitude,
-                    "n_rows": len(dataframe),
+                    "n_points": len(lat_list),
+                    "n_rows": len(merged),
                 },
                 latest_alias="bio_oracle",
             )
             return (
-                f"Bio-ORACLE chargé — {result['row_count']} lignes.\n"
-                f"Données disponibles dans `{variable_name}` et `df_bio_oracle`.\n"
+                f"Bio-ORACLE chargé — {len(merged)} lignes pour {len(lat_list)} points.\n"
+                f"Données disponibles dans `{merged_name}` et `df_bio_oracle`.\n"
+                f"Datasets par point : {', '.join(per_point_names)}.\n"
                 f"Appelle run_pandas directement pour analyser.\n"
-                f"Télécharger : {result['download_url']}"
+                f"Télécharger : {download_url(merged_path.name)}"
             )
         except Exception as exc:
             return f"Erreur lors de l'accès à Bio-ORACLE : {exc}"
