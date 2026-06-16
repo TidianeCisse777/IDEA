@@ -134,6 +134,28 @@ def test_system_prompt_forbids_bare_df_for_multi_source_graphs():
     assert "plot_df" in prompt
 
 
+def test_system_prompt_forbids_plan_only_visual_answers():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "profil vertical" in prompt
+    assert "trace" in prompt
+    assert "affiche" in prompt
+    assert "do not stop after planning" in prompt
+    assert "only contains `<details><summary>output plan</summary>" in prompt
+    assert "run_graph` image markdown" in prompt
+
+
+def test_graph_planner_treats_french_profile_requests_as_visual():
+    planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8").lower()
+
+    assert "profil vertical" in planner
+    assert "profil verticale" in planner
+    assert "trace" in planner
+    assert "affiche" in planner
+    assert "never answer the user with only this `<details>` block" in planner
+
+
 def test_system_prompt_routes_sql_workspace_queries():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

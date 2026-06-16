@@ -68,7 +68,7 @@ For ordination requests (`PCA`, `PCoA`, `NMDS`, `RDA`, `CCA`, `ordination`):
 2. Check the geographic dimension (step 0)
 3. Check whether NeoLabs taxon-level data requires a rebuilt `sample_df` (step 0b)
 4. Decide the output type based on the user's prompt:
-   - If the prompt explicitly mentions "graphique", "carte", "visualise", "plot", "chart", "map" → **visual output** (use run_graph after graph_writer)
+   - If the prompt explicitly mentions "graphique", "graphe", "carte", "visualise", "plot", "chart", "map", "trace", "tracer", "affiche", "montre", "profil vertical", "profil verticale", "vertical profile", or asks to produce a profile, map, chart, graph, plot, or figure → **visual output** (use run_graph after graph_writer)
    - Otherwise → **table output** (use run_pandas to return a markdown table)
 5. If visual output: choose the graph type:
    - **map**: spatial distribution of stations or observations
@@ -109,3 +109,5 @@ Output the plan wrapped in a `<details>` block so it is hidden by default:
 
 </details>
 ```
+
+The plan is not the final answer for visual output. For any visual output, after this plan the agent must immediately use `graph_writer` and execute the generated matplotlib code with `run_graph` in the same turn. Never answer the user with only this `<details>` block unless a real blocker makes the figure impossible.
