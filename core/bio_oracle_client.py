@@ -68,6 +68,23 @@ def _resolve_depth(value: str) -> str:
     return _DEPTH_MAP.get(_normalise(value), _normalise(value))
 
 
+def _time_selector(parameters: dict, *, scenario: str) -> str:
+    # Baseline datasets are historical climatologies. A future target year such
+    # as 2050 must never be applied to them, even when mixed with SSP scenarios.
+    if scenario == "baseline":
+        return "last"
+    target_year = parameters.get("target_year") or parameters.get("year")
+    if target_year in (None, ""):
+        return "last"
+    try:
+        year = int(target_year)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid Bio-ORACLE target_year: {target_year!r}") from exc
+    if year < 1800 or year > 2200:
+        raise ValueError(f"Invalid Bio-ORACLE target_year: {year}")
+    return f"{year:04d}-01-01T00:00:00Z"
+
+
 def _find_dataset_id(var: str, scenario: str, depth: str) -> str:
     """Build the Bio-ORACLE dataset ID and verify it exists on ERDDAP."""
     if scenario == "baseline":
@@ -186,13 +203,14 @@ def preview_bio_oracle_point(parameters: dict) -> dict:
     depth = _resolve_depth(str(parameters.get("depth_layer") or "depthsurf"))
     latitude = float(parameters["latitude"])
     longitude = float(parameters["longitude"])
+    time_selector = _time_selector(parameters, scenario=scenario)
 
     dataset_id = _find_dataset_id(var, scenario, depth)
     griddap_url = f"{_ERDDAP_BASE}/griddap/{dataset_id}"
 
     # Bio-ORACLE variable names inside the dataset use a {var}_mean suffix
     query_var = f"{var}_mean"
-    url = f"{griddap_url}.csv?{query_var}[(last)][({latitude:.4f})][({longitude:.4f})]"
+    url = f"{griddap_url}.csv?{query_var}[({time_selector})][({latitude:.4f})][({longitude:.4f})]"
     response = requests.get(url, timeout=30)
     response.raise_for_status()
 

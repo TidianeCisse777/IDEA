@@ -1,4 +1,5 @@
 """Tests TDD — agent.py slice 4"""
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -90,6 +91,7 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
     assert "list_amundsen_datasets" in tool_names
     assert "preview_amundsen_profile" in tool_names
     assert "query_amundsen_ctd" in tool_names
+    assert "enrich_loaded_table_with_amundsen_ctd" in tool_names
     assert "query_ogsl" in tool_names
     assert "list_sql_tables" in tool_names
     assert "copy_sql_query_to_workspace" in tool_names
@@ -154,6 +156,18 @@ def test_graph_planner_treats_french_profile_requests_as_visual():
     assert "trace" in planner
     assert "affiche" in planner
     assert "never answer the user with only this `<details>` block" in planner
+
+
+def test_graph_rules_preserve_identifier_types_and_validate_non_empty_plot_df():
+    planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8").lower()
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8").lower()
+
+    assert "never `int(station)`" in planner
+    assert "identifiers as labels" in writer
+    assert "never cast identifiers" in writer
+    assert "astype(str).str.strip()" in writer
+    assert "if plot_df.empty: raise valueerror" in writer
+    assert "validate again" in writer
 
 
 def test_system_prompt_routes_sql_workspace_queries():
@@ -246,6 +260,65 @@ def test_system_prompt_routes_bio_oracle_list_preview_query_and_coupling():
     assert "only if `query_bio_oracle` succeeds" in prompt
 
 
+def test_system_prompt_routes_bio_oracle_same_stations_to_coupling():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "les mêmes stations" in prompt
+    assert "top n stations" in prompt
+    assert "top_n_stations" in prompt
+    assert "scenarios" in prompt
+    assert "never create empty placeholder columns" in prompt
+    assert "do not use `query_bio_oracle_zones` for this case" in prompt
+    assert "a download link alone is not an answer" in prompt
+    assert "df_bio_oracle_coupling_*" in prompt
+
+
+def test_system_prompt_routes_bio_oracle_year_specific_requests_to_target_year():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "target_year=2050" in prompt
+    assert "en 2050" in prompt
+    assert "do not reuse a previously computed" in prompt
+    assert "time_*" in prompt
+    assert "re-query bio-oracle" in prompt
+    assert "baseline is historical" in prompt
+    assert "verify the requested year on `time_ssp*`" in prompt
+    assert "not on `time_baseline`" in prompt
+
+
+def test_bio_oracle_skill_routes_per_station_followups_to_coupling():
+    skill = Path("agents/skills/bio_oracle_query.md").read_text(encoding="utf-8").lower()
+
+    assert "never use `query_bio_oracle_zones` for a per-station request" in skill
+    assert "les mêmes stations" in skill
+    assert "top_n_stations" in skill
+    assert "scenarios=[\"baseline\", \"ssp1-2.6\", \"ssp5-8.5\"]" in skill
+    assert "do not create placeholder columns with `pd.na`" in skill
+
+
+def test_bio_oracle_skill_requires_target_year_for_year_specific_requests():
+    skill = Path("agents/skills/bio_oracle_query.md").read_text(encoding="utf-8").lower()
+
+    assert "target_year" in skill
+    assert "2050" in skill
+    assert "does not prove whether" in skill
+    assert "dataset's last time slice" in skill
+    assert "baseline is historical" in skill
+    assert "verify year-specific requests on `time_ssp*`" in skill
+
+
+def test_bio_oracle_skill_documents_coupling_tool_capabilities():
+    skill = Path("agents/skills/bio_oracle_query.md").read_text(encoding="utf-8").lower()
+
+    assert "`couple_zooplankton_bio_oracle` can:" in skill
+    assert "enrich each source row" in skill
+    assert "build a station table internally" in skill
+    assert "compare multiple bio-oracle scenarios" in skill
+    assert "return traceability columns" in skill
+
+
 def test_system_prompt_routes_amundsen_preview_and_query():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -254,6 +327,10 @@ def test_system_prompt_routes_amundsen_preview_and_query():
     assert "list_amundsen_datasets" in prompt
     assert "preview_amundsen_profile" in prompt
     assert "query_amundsen_ctd" in prompt
+    assert "enrich_loaded_table_with_amundsen_ctd" in prompt
+    assert "récupère ça avec amundsen science" in prompt
+    assert "missing_sample_metadata" in prompt
+    assert "do not use `query_amundsen_ctd` for a whole loaded file" in prompt
 
 
 def test_system_prompt_acquires_ogsl_before_environmental_join():
@@ -263,7 +340,7 @@ def test_system_prompt_acquires_ogsl_before_environmental_join():
     assert "query_ogsl" in prompt
     assert "station column name" in prompt
     assert "sampling-time column name" in prompt
-    assert "depth column" in prompt
+    assert "depth_column" in prompt
     assert "df_ogsl" in prompt
     assert "standard ogsl enrichment" in prompt
     assert "do not call `run_pandas`" in prompt

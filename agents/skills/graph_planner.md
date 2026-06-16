@@ -81,6 +81,7 @@ For ordination requests (`PCA`, `PCoA`, `NMDS`, `RDA`, `CCA`, `ordination`):
    - **scatter**: relationship between two numeric variables (e.g. temperature vs depth)
    - **histogram**: distribution of a numeric variable
 6. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
+   - For station/sample/profile/cast/taxon filters, preserve identifiers as labels and normalize comparisons as text. Example: use `df["STATION_NAME"].astype(str).str.strip() == str(station).strip()`, never `int(station)` for filtering.
 7. Flag any missing values that could affect the output
 8. **Uncertainty assessment (CT-AG-27)** — for each row going into the graph, classify it as:
    - **confirmed**: validated source (EcoTaxa statut V), required columns complete, no missing volume/calibration

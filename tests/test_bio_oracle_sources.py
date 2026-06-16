@@ -300,3 +300,220 @@ def test_couple_bio_oracle_falls_back_to_named_file_when_current_df_lacks_coordi
     assert len(keys) == 1
     coupled = _store.get(keys[0])["df"]
     assert coupled["thetao_baseline"].tolist() == [74.0, 75.0]
+
+
+def test_couple_bio_oracle_supports_top_stations_and_multiple_scenarios():
+    import pandas as pd
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+    from unittest.mock import patch
+
+    thread_id = "thread-couple-top-stations-multi-scenario"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "STATION_NAME": ["24", "24", "24", "312", "312", "18"],
+            "SAMPLE_ID": [1, 2, 3, 4, 5, 6],
+            "latitude": [61.7, 61.7, 61.7, 69.1, 69.1, 63.7],
+            "longitude": [-87.8, -87.8, -87.8, -100.7, -100.7, -88.4],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:neolabs_taxonomy_2014_2020.tsv"})
+
+    scenario_values = {
+        "baseline": 1.0,
+        "SSP1-2.6": 2.0,
+        "SSP5-8.5": 5.0,
+    }
+
+    def fake_preview(parameters):
+        return {
+            "dataset_id": f"thetao_{parameters['scenario']}_depthsurf",
+            "variable": "thetao",
+            "rows": [
+                {
+                    "latitude": parameters["latitude"],
+                    "longitude": parameters["longitude"],
+                    "thetao": scenario_values[parameters["scenario"]],
+                }
+            ],
+        }
+
+    with patch("tools.bio_oracle_sources._preview_bio_oracle_point", side_effect=fake_preview):
+        couple = next(
+            tool for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "couple_zooplankton_bio_oracle"
+        )
+        result = couple.invoke(
+            {
+                "latitude_column": "latitude",
+                "longitude_column": "longitude",
+                "variable": "thetao",
+                "scenario": "baseline",
+                "depth_layer": "surface",
+                "station_column": "STATION_NAME",
+                "sample_column": "SAMPLE_ID",
+                "top_n_stations": 2,
+                "scenarios": ["baseline", "SSP1-2.6", "SSP5-8.5"],
+            }
+        )
+
+    assert "Couplage Bio-ORACLE chargé — 2 lignes." in result
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_coupling_")
+    assert len(keys) == 1
+    coupled = _store.get(keys[0])["df"]
+    assert coupled["STATION_NAME"].tolist() == ["24", "312"]
+    assert coupled["n_samples"].tolist() == [3, 2]
+    assert coupled["thetao_baseline"].tolist() == [1.0, 1.0]
+    assert coupled["thetao_ssp1_2_6"].tolist() == [2.0, 2.0]
+    assert coupled["thetao_ssp5_8_5"].tolist() == [5.0, 5.0]
+
+
+def test_couple_bio_oracle_passes_target_year_and_persists_time_columns():
+    import pandas as pd
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+    from unittest.mock import patch
+
+    thread_id = "thread-couple-target-year"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "STATION_NAME": ["24", "312"],
+            "SAMPLE_ID": [1, 2],
+            "latitude": [61.7, 69.1],
+            "longitude": [-87.8, -100.7],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:neolabs_taxonomy_2014_2020.tsv"})
+    calls = []
+
+    def fake_preview(parameters):
+        calls.append(parameters)
+        return {
+            "dataset_id": "thetao_ssp126_2020_2100_depthsurf",
+            "variable": "thetao",
+            "rows": [
+                {
+                    "time": "2050-01-01T00:00:00Z",
+                    "latitude": parameters["latitude"],
+                    "longitude": parameters["longitude"],
+                    "thetao": 2.5,
+                }
+            ],
+        }
+
+    with patch("tools.bio_oracle_sources._preview_bio_oracle_point", side_effect=fake_preview):
+        couple = next(
+            tool for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "couple_zooplankton_bio_oracle"
+        )
+        result = couple.invoke(
+            {
+                "latitude_column": "latitude",
+                "longitude_column": "longitude",
+                "variable": "thetao",
+                "scenario": "SSP1-2.6",
+                "depth_layer": "surface",
+                "station_column": "STATION_NAME",
+                "sample_column": "SAMPLE_ID",
+                "top_n_stations": 2,
+                "target_year": 2050,
+            }
+        )
+
+    assert "time" in result
+    assert {call["target_year"] for call in calls} == {2050}
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_coupling_")
+    coupled = _store.get(keys[0])["df"]
+    assert coupled["thetao_ssp1_2_6"].tolist() == [2.5, 2.5]
+    assert coupled["time"].tolist() == [
+        "2050-01-01T00:00:00Z",
+        "2050-01-01T00:00:00Z",
+    ]
+
+
+def test_couple_bio_oracle_mixed_baseline_and_future_target_year_is_traceable():
+    import pandas as pd
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+    from unittest.mock import patch
+
+    thread_id = "thread-couple-baseline-future-target-year"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "STATION_NAME": ["24", "24", "312"],
+            "SAMPLE_ID": [1, 2, 3],
+            "latitude": [61.7, 61.7, 69.1],
+            "longitude": [-87.8, -87.8, -100.7],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:neolabs_taxonomy_2014_2020.tsv"})
+    calls = []
+
+    def fake_preview(parameters):
+        calls.append(parameters)
+        scenario = parameters["scenario"]
+        time_value = (
+            "2010-01-01T00:00:00Z"
+            if scenario == "baseline"
+            else "2050-01-01T00:00:00Z"
+        )
+        value = {"baseline": 1.0, "SSP1-2.6": 2.0, "SSP5-8.5": 5.0}[scenario]
+        return {
+            "dataset_id": f"thetao_{scenario}_depthsurf",
+            "variable": "thetao",
+            "rows": [
+                {
+                    "time": time_value,
+                    "latitude": parameters["latitude"],
+                    "longitude": parameters["longitude"],
+                    "thetao": value,
+                }
+            ],
+        }
+
+    with patch("tools.bio_oracle_sources._preview_bio_oracle_point", side_effect=fake_preview):
+        couple = next(
+            tool for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "couple_zooplankton_bio_oracle"
+        )
+        result = couple.invoke(
+            {
+                "latitude_column": "latitude",
+                "longitude_column": "longitude",
+                "variable": "thetao",
+                "scenario": "baseline",
+                "depth_layer": "surface",
+                "station_column": "STATION_NAME",
+                "sample_column": "SAMPLE_ID",
+                "top_n_stations": 2,
+                "scenarios": ["baseline", "SSP1-2.6", "SSP5-8.5"],
+                "target_year": 2050,
+            }
+        )
+
+    assert "time_baseline" in result
+    assert "time_ssp1_2_6" in result
+    assert {call["target_year"] for call in calls} == {2050}
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_coupling_")
+    coupled = _store.get(keys[0])["df"]
+    assert coupled["time_baseline"].tolist() == [
+        "2010-01-01T00:00:00Z",
+        "2010-01-01T00:00:00Z",
+    ]
+    assert coupled["time_ssp1_2_6"].tolist() == [
+        "2050-01-01T00:00:00Z",
+        "2050-01-01T00:00:00Z",
+    ]
+    assert coupled["time_ssp5_8_5"].tolist() == [
+        "2050-01-01T00:00:00Z",
+        "2050-01-01T00:00:00Z",
+    ]

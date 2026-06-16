@@ -56,6 +56,10 @@ plt.tight_layout()
 - Never call `plt.savefig()` — the system captures the figure automatically
 - After the figure code, set a string variable named `graph_explanation` to a neutral description limited to: axes, source, and confidence level. No reading of the chart, no observations, no priorities, no "Lecture rapide", no interpretation cues. The assistant ignores this field when replying to the user — it is kept only as metadata for the tool layer.
 - For multi-source graphs, never plot directly from bare `df`. `df` is only the latest active table. First build `plot_df` explicitly from named source DataFrames such as `df_ecotaxa_ecopart`, `df_ecotaxa_ecopart_105`, `df_ctd`, `df_bio_oracle`, `df_ogsl`, or `df_sql`.
+- Treat station, sample, cast, profile, analysis, taxon, and project identifiers as labels, not numbers. Never cast identifiers such as `STATION_NAME`, `SAMPLE_ID`, `ANALYSIS_ID`, `CAST_NUMBER`, or `profile_id` with `int()` / `float()` just to filter. Normalize both sides of identifier comparisons with `.astype(str).str.strip()`.
+- After every filtering step that creates `plot_df`, validate that rows remain before plotting:
+  `if plot_df.empty: raise ValueError("No rows remain after filtering; check identifier type normalization and filter criteria.")`
+- Before plotting numeric axes, coerce only the plotted measurement columns with `pd.to_numeric(..., errors="coerce")`, then drop missing values from all plotted columns. Validate again that `plot_df` is not empty after this drop.
 
 ## Geographic maps
 

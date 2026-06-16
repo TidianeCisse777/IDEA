@@ -124,6 +124,63 @@ def test_preview_bio_oracle_point_returns_normalized_sample():
     ]
 
 
+def test_preview_bio_oracle_point_uses_requested_target_year():
+    from core.bio_oracle_client import preview_bio_oracle_point
+    from unittest.mock import MagicMock, patch
+
+    query_response = MagicMock()
+    query_response.text = (
+        "time,latitude,longitude,thetao\n"
+        "2050-01-01T00:00:00Z,50.2,-65.8,13.4\n"
+    )
+
+    with patch("core.bio_oracle_client._find_dataset_id", return_value="thetao_ssp126_2020_2100_depthsurf"), \
+         patch("core.bio_oracle_client.requests.get", return_value=query_response) as mock_get:
+        result = preview_bio_oracle_point(
+            {
+                "latitude": 50.2,
+                "longitude": -65.8,
+                "variable": "temperature",
+                "scenario": "SSP1-2.6",
+                "depth_layer": "surface",
+                "target_year": 2050,
+            }
+        )
+
+    requested_url = mock_get.call_args.args[0]
+    assert "[(2050-01-01T00:00:00Z)]" in requested_url
+    assert result["rows"][0]["time"] == "2050-01-01T00:00:00Z"
+
+
+def test_preview_bio_oracle_point_ignores_target_year_for_baseline():
+    from core.bio_oracle_client import preview_bio_oracle_point
+    from unittest.mock import MagicMock, patch
+
+    query_response = MagicMock()
+    query_response.text = (
+        "time,latitude,longitude,thetao\n"
+        "2010-01-01T00:00:00Z,50.2,-65.8,3.4\n"
+    )
+
+    with patch("core.bio_oracle_client._find_dataset_id", return_value="thetao_baseline_2000_2019_depthsurf"), \
+         patch("core.bio_oracle_client.requests.get", return_value=query_response) as mock_get:
+        result = preview_bio_oracle_point(
+            {
+                "latitude": 50.2,
+                "longitude": -65.8,
+                "variable": "temperature",
+                "scenario": "baseline",
+                "depth_layer": "surface",
+                "target_year": 2050,
+            }
+        )
+
+    requested_url = mock_get.call_args.args[0]
+    assert "[(last)]" in requested_url
+    assert "2050-01-01" not in requested_url
+    assert result["rows"][0]["time"] == "2010-01-01T00:00:00Z"
+
+
 def test_query_bio_oracle_writes_tsv_and_returns_download_url(tmp_path):
     from core.bio_oracle_client import query_bio_oracle
     from unittest.mock import MagicMock, patch

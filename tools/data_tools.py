@@ -62,6 +62,7 @@ def _dataframe_vars(
         ("ctd", "df_ctd"),
         ("ecopart", "df_ecopart"),
         ("ecotaxa_ecopart", "df_ecotaxa_ecopart"),
+        ("ctd_enriched", "df_ctd_enriched"),
         ("bio_oracle", "df_bio_oracle"),
         ("ogsl", "df_ogsl"),
         ("sql", "df_sql"),

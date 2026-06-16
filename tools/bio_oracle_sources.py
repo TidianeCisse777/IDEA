@@ -83,7 +83,14 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         return _format_table(datasets, ["dataset_id", "title", "griddap"])
 
     @tool
-    def preview_bio_oracle_point(latitude: float, longitude: float, variable: str, scenario: str, depth_layer: str) -> str:
+    def preview_bio_oracle_point(
+        latitude: float,
+        longitude: float,
+        variable: str,
+        scenario: str,
+        depth_layer: str,
+        target_year: int | None = None,
+    ) -> str:
         """Prévisualise un point Bio-ORACLE pour une variable, un scénario et une couche de profondeur."""
         try:
             preview = _preview_bio_oracle_point(
@@ -93,6 +100,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     "variable": variable,
                     "scenario": scenario,
                     "depth_layer": depth_layer,
+                    "target_year": target_year,
                 }
             )
             return _format_table(preview["rows"], ["time", "latitude", "longitude", variable])
@@ -100,7 +108,14 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             return f"Erreur lors de l'accès à Bio-ORACLE : {exc}"
 
     @tool
-    def query_bio_oracle(latitude: float, longitude: float, variable: str, scenario: str, depth_layer: str) -> str:
+    def query_bio_oracle(
+        latitude: float,
+        longitude: float,
+        variable: str,
+        scenario: str,
+        depth_layer: str,
+        target_year: int | None = None,
+    ) -> str:
         """Extrait Bio-ORACLE pour un point et écrit un TSV téléchargeable."""
         try:
             file_id = uuid.uuid4().hex
@@ -112,6 +127,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     "variable": variable,
                     "scenario": scenario,
                     "depth_layer": depth_layer,
+                    "target_year": target_year,
                 },
                 output_path=output_path,
             )
@@ -135,6 +151,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     "variable": variable,
                     "scenario": scenario,
                     "depth_layer": depth_layer,
+                    "target_year": target_year,
                     "latitude": latitude,
                     "longitude": longitude,
                     "n_rows": len(dataframe),
@@ -157,6 +174,11 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         variable: str,
         scenario: str,
         depth_layer: str,
+        station_column: str | None = None,
+        sample_column: str | None = None,
+        top_n_stations: int | None = None,
+        scenarios: list[str] | None = None,
+        target_year: int | None = None,
     ) -> str:
         """Enrichit chaque ligne d'observations zooplancton avec UNE valeur Bio-ORACLE
         propre à son point géographique (lat/lon).
@@ -165,11 +187,30 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         veut une valeur Bio-ORACLE **par station** d'un fichier zooplancton chargé
         (fichier avec `latitude` / `longitude` par ligne). Le tool fait UN appel
         Bio-ORACLE par point unique et conserve toutes les colonnes du fichier.
+        Capacités :
+        - enrichir chaque ligne ou chaque station avec une valeur Bio-ORACLE
+          extraite à ses propres coordonnées latitude/longitude ;
+        - construire directement les "top N stations" avec `station_column`,
+          `sample_column` et `top_n_stations` ;
+        - comparer plusieurs scénarios en une fois via `scenarios` ;
+        - appliquer un horizon futur explicite via `target_year`, par exemple
+          2050, aux scénarios SSP. Les datasets `baseline` sont historiques :
+          le client ignore automatiquement `target_year` pour baseline afin
+          d'éviter une requête impossible comme baseline 2050.
+        Le résultat inclut les colonnes de valeur, `time` / `time_<scenario>`,
+        et `dataset_id` / `dataset_id_<scenario>` pour tracer la provenance.
 
         Passe uniquement les noms des colonnes latitude/longitude du fichier
         chargé ainsi que la variable, le scénario et la couche demandés. Le tool
         lit lui-même les lignes réelles de la session ; ne retranscris jamais les
         observations dans les arguments.
+
+        Pour une demande du type "les mêmes stations", "top 10 stations" ou
+        "par station", passe aussi `station_column`, `sample_column` et
+        `top_n_stations`. Le tool construit alors lui-même la table stationnaire
+        à partir de la source chargée avant de faire les appels Bio-ORACLE.
+        Pour comparer plusieurs scénarios, passe `scenarios`; le résultat aura
+        une colonne par scénario.
         """
         try:
             source, fallback_name = _source_dataframe_with_columns(
@@ -189,60 +230,134 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     + ", ".join(missing_columns)
                 )
 
-            dataframe = source.copy(deep=True)
+            scenario_values = list(scenarios or [scenario])
+            if not scenario_values:
+                return "Aucun scénario Bio-ORACLE fourni."
+
+            if station_column or top_n_stations is not None:
+                if not station_column:
+                    return "`station_column` est requis avec `top_n_stations`."
+                missing_station_columns = [
+                    column
+                    for column in (station_column, latitude_column, longitude_column)
+                    if column not in source.columns
+                ]
+                if sample_column and sample_column not in source.columns:
+                    missing_station_columns.append(sample_column)
+                if missing_station_columns:
+                    return (
+                        "Colonnes absentes de la table source : "
+                        + ", ".join(missing_station_columns)
+                    )
+
+                count_column = sample_column or station_column
+                station_source_columns = list(
+                    dict.fromkeys(
+                        [
+                            station_column,
+                            count_column,
+                            latitude_column,
+                            longitude_column,
+                        ]
+                    )
+                )
+                grouped = (
+                    source[station_source_columns]
+                    .dropna(subset=[station_column, latitude_column, longitude_column])
+                    .drop_duplicates()
+                    .groupby(station_column, as_index=False)
+                    .agg(
+                        n_samples=(count_column, "count"),
+                        **{
+                            latitude_column: (latitude_column, "first"),
+                            longitude_column: (longitude_column, "first"),
+                        },
+                    )
+                    .sort_values(["n_samples", station_column], ascending=[False, True])
+                    .reset_index(drop=True)
+                )
+                if top_n_stations is not None:
+                    grouped = grouped.head(int(top_n_stations)).reset_index(drop=True)
+                dataframe = grouped
+            else:
+                dataframe = source.copy(deep=True)
 
             # Dédup : un appel ERDDAP par (lat, lon, variable, scenario, depth_layer).
             # Deux lignes au même point recevront la même valeur via lookup.
             cache: dict[tuple, dict] = {}
-            for latitude, longitude in dataframe[
-                [latitude_column, longitude_column]
-            ].itertuples(index=False, name=None):
-                key = (
-                    latitude,
-                    longitude,
-                    variable,
-                    scenario,
-                    depth_layer,
-                )
-                if key not in cache:
-                    preview = _preview_bio_oracle_point(
-                        {
-                            "latitude": latitude,
-                            "longitude": longitude,
-                            "variable": variable,
-                            "scenario": scenario,
-                            "depth_layer": depth_layer,
-                        }
+            for scenario_value in scenario_values:
+                for latitude, longitude in dataframe[
+                    [latitude_column, longitude_column]
+                ].itertuples(index=False, name=None):
+                    key = (
+                        latitude,
+                        longitude,
+                        variable,
+                        scenario_value,
+                        depth_layer,
+                        target_year,
                     )
-                    val_key = preview.get("variable", "")
-                    preview_rows = preview.get("rows") or []
-                    raw_value = preview_rows[0].get(val_key) if preview_rows else None
-                    try:
-                        value = round(float(raw_value), 4) if raw_value is not None else None
-                    except (TypeError, ValueError):
-                        value = None
-                    cache[key] = {"value": value, "dataset_id": preview.get("dataset_id")}
+                    if key not in cache:
+                        preview = _preview_bio_oracle_point(
+                            {
+                                "latitude": latitude,
+                                "longitude": longitude,
+                                "variable": variable,
+                                "scenario": scenario_value,
+                                "depth_layer": depth_layer,
+                                "target_year": target_year,
+                            }
+                        )
+                        val_key = preview.get("variable", "")
+                        preview_rows = preview.get("rows") or []
+                        first_row = preview_rows[0] if preview_rows else {}
+                        raw_value = first_row.get(val_key) if preview_rows else None
+                        try:
+                            value = round(float(raw_value), 4) if raw_value is not None else None
+                        except (TypeError, ValueError):
+                            value = None
+                        cache[key] = {
+                            "value": value,
+                            "dataset_id": preview.get("dataset_id"),
+                            "time": first_row.get("time"),
+                        }
 
-            values = []
-            dataset_ids = []
-            for latitude, longitude in dataframe[
-                [latitude_column, longitude_column]
-            ].itertuples(index=False, name=None):
-                key = (
-                    latitude,
-                    longitude,
-                    variable,
-                    scenario,
-                    depth_layer,
+                values = []
+                dataset_ids = []
+                times = []
+                for latitude, longitude in dataframe[
+                    [latitude_column, longitude_column]
+                ].itertuples(index=False, name=None):
+                    key = (
+                        latitude,
+                        longitude,
+                        variable,
+                        scenario_value,
+                        depth_layer,
+                        target_year,
+                    )
+                    cached = cache[key]
+                    values.append(cached["value"])
+                    dataset_ids.append(cached["dataset_id"])
+                    times.append(cached["time"])
+
+                scenario_clean = (
+                    str(scenario_value).lower().replace(".", "_").replace("-", "_")
                 )
-                cached = cache[key]
-                values.append(cached["value"])
-                dataset_ids.append(cached["dataset_id"])
-
-            scenario_clean = str(scenario).lower().replace(".", "_").replace("-", "_")
-            value_col = f"{variable}_{scenario_clean}"
-            dataframe[value_col] = values
-            dataframe["dataset_id"] = dataset_ids
+                value_col = f"{variable}_{scenario_clean}"
+                dataframe[value_col] = values
+                time_col = (
+                    "time"
+                    if len(scenario_values) == 1
+                    else f"time_{scenario_clean}"
+                )
+                dataframe[time_col] = times
+                dataset_col = (
+                    "dataset_id"
+                    if len(scenario_values) == 1
+                    else f"dataset_id_{scenario_clean}"
+                )
+                dataframe[dataset_col] = dataset_ids
 
             output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
             dataframe.to_csv(output_path, sep="\t", index=False)
@@ -251,7 +366,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             ].to_json(orient="records")
             query_id = hashlib.sha256(
                 (
-                    f"{query_fingerprint}|{variable}|{scenario}|{depth_layer}"
+                    f"{query_fingerprint}|{variable}|{scenario_values}|{depth_layer}|{target_year}"
                 ).encode("utf-8")
             ).hexdigest()[:12]
             variable_name = dataset_variable_name("bio_oracle_coupling", query_id)
@@ -263,6 +378,8 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 meta={
                     "source": "bio_oracle_coupling",
                     "query_id": query_id,
+                    "scenarios": scenario_values,
+                    "target_year": target_year,
                     "n_rows": len(dataframe),
                 },
             )
@@ -276,8 +393,8 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 f"Couplage Bio-ORACLE chargé — {len(dataframe)} lignes.\n"
                 f"{source_note}"
                 f"Données disponibles dans `{variable_name}`.\n"
-                f"Télécharger : {download_url(output_path.name)}\n\n"
-                f"Aperçu (20 premières lignes) :\n\n{preview_md}"
+                f"Aperçu (20 premières lignes) :\n\n{preview_md}\n\n"
+                f"Télécharger : {download_url(output_path.name)}"
             )
         except Exception as exc:
             return f"Erreur lors du couplage Bio-ORACLE : {exc}"
@@ -288,6 +405,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         variable: str,
         scenario: str,
         depth_layer: str = "surface",
+        target_year: int | None = None,
     ) -> str:
         """Extract Bio-ORACLE projected values for one or more named geographic zones.
 
@@ -312,6 +430,8 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                    "chlorophyll", "nitrate"  — do NOT use ERDDAP internal names
         scenario : "SSP5-8.5", "SSP1-2.6", "SSP2-4.5", or "baseline"
         depth_layer : "surface" (default), "mean", "max", or "min"
+        target_year : optional horizon such as 2050. If omitted, ERDDAP's
+                      last available time slice is used.
         """
         from tools.geo_tools import get_zone_filter
 
@@ -354,9 +474,11 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     "depth_layer": depth_layer,
                     "latitude": lat_c,
                     "longitude": lon_c,
+                    "target_year": target_year,
                 })
                 val_key = preview.get("variable", "")
-                val = preview["rows"][0].get(val_key) if preview.get("rows") else None
+                first_row = preview["rows"][0] if preview.get("rows") else {}
+                val = first_row.get(val_key) if first_row else None
                 rows_out.append({
                     "zone": zf["zone"],
                     "lat_centre": round(lat_c, 2),
@@ -364,6 +486,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     "variable": variable,
                     "scenario": scenario,
                     "depth_layer": depth_layer,
+                    "time": first_row.get("time"),
                     "dataset": preview["dataset_id"],
                     f"{variable}_projected": round(float(val), 4) if val is not None else None,
                 })
@@ -382,6 +505,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             "variable": variable,
             "scenario": scenario,
             "depth_layer": depth_layer,
+            "target_year": target_year,
             "variable_name": variable_name,
         }
         _store.set(f"{thread_id}:dataset:{variable_name}", df_out, dataset_meta)
