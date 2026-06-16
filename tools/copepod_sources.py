@@ -11,6 +11,7 @@ from core.ecotaxa_browser.compare_schemas import compare_project_schemas
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
 from core.ecotaxa_browser.observations import find_observations
 from core.ecotaxa_browser.region import projects_in_region, samples_in_region
+from core.ecotaxa_browser.samples import get_sample as core_get_sample
 from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
@@ -357,9 +358,18 @@ def make_source_tools(thread_id: str) -> list:
 
         `bbox` : `{"south": float, "west": float, "north": float, "east": float}`.
         `date_range` : `{"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}`.
+        `instrument` : nom exact ("UVP6", "UVP5SD", "Loki", ...).
         Réponse plafonnée à 500 samples avec un summary par projet.
         Lecture du cache local — pas de download.
+
+        Au moins UN filtre (bbox, date_range, ou instrument) est requis :
+        l'appel sans aucun paramètre renvoie une erreur.
         """
+        if bbox is None and date_range is None and instrument is None:
+            return (
+                "Erreur : au moins un filtre requis (bbox, date_range, ou instrument). "
+                "Pour explorer sans filtre, précise une bbox large, une période, ou un instrument."
+            )
         try:
             result = samples_in_region(
                 bbox=bbox, date_range=date_range, instrument=instrument,
@@ -400,7 +410,15 @@ def make_source_tools(thread_id: str) -> list:
         Même format `bbox` et `date_range` que `find_ecotaxa_samples_in_region`.
         Réponse agrégée au niveau projet : nombre de samples, total objets,
         instruments, plage de dates.
+
+        Au moins UN filtre (bbox ou date_range) est requis : l'appel sans
+        paramètre renvoie une erreur.
         """
+        if bbox is None and date_range is None:
+            return (
+                "Erreur : au moins un filtre requis (bbox ou date_range). "
+                "Pour la liste de tous les projets, utilise list_ecotaxa_projects."
+            )
         try:
             result = projects_in_region(bbox=bbox, date_range=date_range)
         except EcoTaxaBrowserError as exc:
@@ -483,11 +501,59 @@ def make_source_tools(thread_id: str) -> list:
             lines.append(f"(50 premiers / {len(result['samples'])} affichés)")
         return "\n".join(lines)
 
+    @tool
+    def get_ecotaxa_sample(sample_id: int) -> str:
+        """Renvoie les métadonnées complètes d'un sample (déploiement) EcoTaxa.
+
+        `sample_id` est l'identifiant EcoTaxa du sample (entier, ex. 42000002).
+        Réponse : identifiants, lat/lon, original_id (nom de station lisible),
+        et tous les `free_fields` exposés par le projet (volume filtré, station,
+        leg, mesh, etc. — varie par projet). Pas de download d'objets.
+        """
+        try:
+            sample = core_get_sample(sample_id)
+        except EcoTaxaBrowserError as exc:
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}"
+        except Exception as exc:
+            return f"Erreur lors de l'accès au sample {sample_id} : {exc}"
+
+        lat = sample.get("latitude")
+        lon = sample.get("longitude")
+        lines = [
+            f"# Sample EcoTaxa {sample['sample_id']} (projet {sample['project_id']})",
+            "",
+            "| Champ | Valeur |",
+            "|---|---|",
+            f"| sample_id | {sample['sample_id']} |",
+            f"| project_id | {sample['project_id']} |",
+            f"| original_id | {sample.get('original_id') or '—'} |",
+            f"| latitude | {f'{lat:.3f}' if isinstance(lat, (int, float)) else '—'} |",
+            f"| longitude | {f'{lon:.3f}' if isinstance(lon, (int, float)) else '—'} |",
+        ]
+
+        free_fields = sample.get("free_fields") or {}
+        if free_fields:
+            lines.extend([
+                "",
+                "## Free fields",
+                "",
+                "| Champ | Valeur |",
+                "|---|---|",
+            ])
+            for key in sorted(free_fields):
+                lines.append(f"| {key} | {free_fields[key]} |")
+        else:
+            lines.append("")
+            lines.append("(Aucun free field exposé par le projet pour ce sample.)")
+
+        return "\n".join(lines)
+
     return [
         find_ecotaxa_projects,
         find_ecotaxa_samples_in_region,
         find_ecotaxa_projects_in_region,
         find_ecotaxa_observations,
+        get_ecotaxa_sample,
         inspect_ecotaxa_project_schema,
         inspect_ecotaxa_column,
         count_ecotaxa_taxa,

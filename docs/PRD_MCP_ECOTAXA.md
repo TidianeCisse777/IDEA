@@ -445,6 +445,7 @@ M2, M3, M4 peuvent partiellement se paralléliser après M1 si plusieurs devs.
 | 2026-06-15 | Claude | M6 implémenté : apscheduler nightly dans le lifespan FastMCP (3 AM configurable), `core/mcp/README.md` complet, `docs/ARCHITECTURE.md` + `docs/TOOLS.md` enrichis, 8 tests live opt-in (ECOTAXA_LIVE=1 → 8/8 verts), suite globale 345 passed / 0 failed / 10 skipped. **V1 livré.** |
 | 2026-06-15 | Claude | Eval LangSmith `evals/eval_ecotaxa_vision.py` : 20 scénarios piégeux EcoTaxa (8 routing direct + 5 anti-triggers + 3 workflow chains + 4 error recovery), 3 evaluators M1/M2/M3 (expected_first_tool, sequence_match, forbidden_tool_absent). Partial smoke run sur 4 scénarios : EC-01 et EC-20 parfaits, EC-09 partial (0.5 — KB détour avant schema), EC-16 raté (find_observations skippé sans bbox). M3 forbidden_tool_absent = 100% (la promesse "explorer avant d'exporter" est tenue). |
 | 2026-06-15 | Claude | Fix prompt collisions identifiées par l'eval (commit `f2efb29`) : (a) règle RAG-first récupère 4 exceptions explicites pour les M3/M5 tools sur project_id précis / bbox / dates ; (b) règle find_ecotaxa_observations explicite que bbox / date_range / instrument sont OPTIONNELS et interdit le skip en scope global. **Statut : fix committé, pas encore validé empiriquement — eval bloquée par solde OpenRouter, à rejouer après recharge** (`LLM_MAX_OUTPUT_TOKENS=8000 python evals/eval_ecotaxa_vision.py`). |
+| 2026-06-16 | Tidiane + Claude | Plan de test manuel UI créé ([`MCP_ECOTAXA_TEST_PLAN.md`](MCP_ECOTAXA_TEST_PLAN.md)) — 6 gates progressifs (date, bbox, instrument, combos, projects, find_observations) + 4 edge cases. Vérité de référence extraite du cache (77 samples / 6 projets, Arctique haut, 2015 + 2024). Item P6 ajouté au suivi post-V1. |
 
 ---
 
@@ -457,3 +458,4 @@ M2, M3, M4 peuvent partiellement se paralléliser après M1 si plusieurs devs.
 | P3 | Apscheduler — vérifier nightly 3 AM en prod | ⚪ À faire | Après merge sur `main`. Surveiller `/health` `cache_age_hours` reset à 0 vers 3 AM. |
 | P4 | Ajouter alerte `/health` `cache_age_hours > 36` | ⚪ V1.1 | Non bloquant V1 (M6 a explicitement reporté l'alerting). |
 | P5 | EcoPart V2 | ⚪ Roadmap | Même archi D3, mêmes patterns que ce V1. |
+| P6 | Plan de test manuel UI (UC1/UC2 géo+temp+taxon) | 🟢 Terminé | Voir [`MCP_ECOTAXA_TEST_PLAN.md`](MCP_ECOTAXA_TEST_PLAN.md). 11 gates + 3 edge cases tous PASS. 2 bugs structurels trouvés et fixés (RAG-first trop large, dump silencieux sans filtre). 1 nouveau tool `get_ecotaxa_sample` ajouté (TDD). 3 push prompt Hub. |

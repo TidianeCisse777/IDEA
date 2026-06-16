@@ -463,3 +463,72 @@ def test_query_ecotaxa_also_stores_named_slot_for_join():
 
     assert _store.has("thread-join-et:ecotaxa")
     assert _store.get("thread-join-et:ecotaxa")["df"].shape == (1, 2)
+
+
+def test_source_tools_include_get_ecotaxa_sample():
+    from tools.copepod_sources import make_source_tools
+
+    tool_names = {source_tool.name for source_tool in make_source_tools("thread-get-sample")}
+
+    assert "get_ecotaxa_sample" in tool_names
+
+
+def test_get_ecotaxa_sample_renders_sample_metadata():
+    fake_sample = {
+        "sample_id": 42000002,
+        "project_id": 42,
+        "original_id": "GE2015_st12_p",
+        "latitude": 67.480,
+        "longitude": -63.790,
+        "free_fields": {
+            "station": "ST12",
+            "volume_filtered_m3": 12.4,
+            "depth_total_m": 350.0,
+        },
+    }
+    with patch("tools.copepod_sources.core_get_sample", return_value=fake_sample):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-get-sample-render")
+        get_sample_tool = next(t for t in tools if t.name == "get_ecotaxa_sample")
+        result = get_sample_tool.invoke({"sample_id": 42000002})
+
+    assert "42000002" in result
+    assert "GE2015_st12_p" in result
+    assert "67.480" in result
+    assert "-63.790" in result
+    assert "station" in result
+    assert "ST12" in result
+    assert "volume_filtered_m3" in result
+
+
+def test_find_ecotaxa_samples_in_region_requires_filter():
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-no-filter-samples")
+    fn = next(t for t in tools if t.name == "find_ecotaxa_samples_in_region")
+    result = fn.invoke({})  # no bbox, no date_range, no instrument
+    assert "filtre" in result.lower() or "filter" in result.lower()
+    assert "bbox" in result.lower() or "date" in result.lower() or "instrument" in result.lower()
+
+
+def test_find_ecotaxa_projects_in_region_requires_filter():
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-no-filter-projects")
+    fn = next(t for t in tools if t.name == "find_ecotaxa_projects_in_region")
+    result = fn.invoke({})
+    assert "filtre" in result.lower() or "filter" in result.lower()
+
+
+def test_get_ecotaxa_sample_handles_browser_error():
+    from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+
+    def _raise(sample_id):
+        raise EcoTaxaBrowserError("SAMPLE_NOT_FOUND", "sample 999 not accessible")
+
+    with patch("tools.copepod_sources.core_get_sample", side_effect=_raise):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-get-sample-error")
+        get_sample_tool = next(t for t in tools if t.name == "get_ecotaxa_sample")
+        result = get_sample_tool.invoke({"sample_id": 999})
+
+    assert "SAMPLE_NOT_FOUND" in result
+    assert "999" in result
