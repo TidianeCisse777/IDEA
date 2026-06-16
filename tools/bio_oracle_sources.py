@@ -35,6 +35,42 @@ def _format_table(rows: list[dict], columns: list[str]) -> str:
 def make_bio_oracle_tools(thread_id: str) -> list:
     """Create LangChain Bio-ORACLE tools for one thread."""
 
+    def _source_dataframe_with_columns(
+        latitude_column: str,
+        longitude_column: str,
+    ) -> tuple[pd.DataFrame | None, str | None]:
+        """Find the current or named source table that has the requested coords."""
+        session = _store.get(thread_id)
+        current = session.get("df") if session else None
+        if (
+            isinstance(current, pd.DataFrame)
+            and not current.empty
+            and latitude_column in current.columns
+            and longitude_column in current.columns
+        ):
+            return current, None
+
+        candidates: list[tuple[str, pd.DataFrame]] = []
+        for key in _store.keys(f"{thread_id}:dataset:"):
+            named = _store.get(key)
+            dataframe = named.get("df") if named else None
+            if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
+                continue
+            if latitude_column in dataframe.columns and longitude_column in dataframe.columns:
+                variable_name = (named.get("meta") or {}).get("variable_name") or key.rsplit(":", 1)[-1]
+                candidates.append((variable_name, dataframe))
+
+        if not candidates:
+            return current if isinstance(current, pd.DataFrame) else None, None
+
+        file_candidates = [
+            candidate
+            for candidate in candidates
+            if str(candidate[0]).startswith("df_file_")
+        ]
+        variable_name, dataframe = (file_candidates or candidates)[0]
+        return dataframe, variable_name
+
     @tool
     def list_bio_oracle_datasets() -> str:
         """Liste les datasets Bio-ORACLE disponibles dans ERDDAP."""
@@ -136,8 +172,10 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         observations dans les arguments.
         """
         try:
-            session = _store.get(thread_id)
-            source = session.get("df") if session else None
+            source, fallback_name = _source_dataframe_with_columns(
+                latitude_column,
+                longitude_column,
+            )
             if not isinstance(source, pd.DataFrame) or source.empty:
                 return "Aucune table chargée à coupler."
             missing_columns = [
@@ -229,8 +267,14 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 },
             )
             preview_md = dataframe.head(20).to_markdown(index=False)
+            source_note = (
+                f"Source utilisée : `{fallback_name}`.\n"
+                if fallback_name
+                else ""
+            )
             return (
                 f"Couplage Bio-ORACLE chargé — {len(dataframe)} lignes.\n"
+                f"{source_note}"
                 f"Données disponibles dans `{variable_name}`.\n"
                 f"Télécharger : {download_url(output_path.name)}\n\n"
                 f"Aperçu (20 premières lignes) :\n\n{preview_md}"
@@ -333,14 +377,18 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         variable_name = dataset_variable_name(
             "bio_oracle_zones", variable, scenario, depth_layer
         )
-        store_dataset(
-            _store, thread_id, df_out,
-            variable_name=variable_name,
-            meta={"source": "bio_oracle_zones", "variable": variable,
-                  "scenario": scenario, "depth_layer": depth_layer},
-            latest_alias="bio_oracle",
+        dataset_meta = {
+            "source": "bio_oracle_zones",
+            "variable": variable,
+            "scenario": scenario,
+            "depth_layer": depth_layer,
+            "variable_name": variable_name,
+        }
+        _store.set(f"{thread_id}:dataset:{variable_name}", df_out, dataset_meta)
+        out = (
+            f"Données disponibles dans `{variable_name}`.\n\n"
+            + df_out.to_markdown(index=False)
         )
-        out = df_out.to_markdown(index=False)
         if errors:
             out += "\n\nAvertissements : " + "; ".join(errors)
         return per_station_warning + out

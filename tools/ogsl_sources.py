@@ -56,6 +56,16 @@ def make_ogsl_tools(thread_id: str) -> list:
                     + ", ".join(missing_columns)
                 )
 
+            # Garde-fou : si la colonne depth est entièrement vide, l'ignorer
+            # silencieusement plutôt que de bloquer 100 % des matches sur un
+            # `missing_depth` artificiel. Évite le piège où l'agent passe une
+            # colonne `object_depth_min` ou autre nominalement présente mais
+            # toujours NaN dans certains exports EcoTaxa.
+            depth_ignored = False
+            if depth_column and source[depth_column].notna().sum() == 0:
+                depth_column = None
+                depth_ignored = True
+
             station_windows, _ = build_station_windows(
                 source,
                 station_column=station_column,
@@ -143,13 +153,17 @@ def make_ogsl_tools(thread_id: str) -> list:
                 },
             )
             status_counts = enriched["ogsl_match_status"].value_counts().to_dict()
+            depth_note = (
+                "\nNote: depth_column was empty in the source table and was ignored."
+                if depth_ignored else ""
+            )
             return (
                 f"OGSL loaded - {result['row_count']} raw rows from "
                 f"{len(station_windows)} station requests.\n"
                 f"Raw data: `{raw_variable_name}` and `df_ogsl`.\n"
                 f"Enriched data: `{enriched_variable_name}` "
                 f"({len(enriched)} rows).\n"
-                f"Match status: {status_counts}.\n"
+                f"Match status: {status_counts}.{depth_note}\n"
                 f"Raw download: {download_url(raw_output_path.name)}\n"
                 f"Enriched download: {download_url(enriched_output_path.name)}"
             )

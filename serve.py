@@ -1069,4 +1069,18 @@ def debug_openwebui_feedback_tap():
 
 if __name__ == "__main__":
     port = int(os.getenv("SERVE_PORT", "8000"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Hot-reload : reload=True requiert un import string ("serve:app") plutôt
+    # que l'objet app. Au reboot du worker, agent.py est ré-importé et le
+    # system prompt LangSmith Hub + skills sont re-pull (sinon ils restent
+    # figés jusqu'au prochain restart manuel).
+    reload = os.getenv("SERVE_RELOAD", "1") not in ("0", "false", "False")
+    if reload:
+        uvicorn.run(
+            "serve:app",
+            host="0.0.0.0",
+            port=port,
+            reload=True,
+            reload_excludes=["*.pyc", "*.tsv", "*.csv", "*.png", "*.pkl"],
+        )
+    else:
+        uvicorn.run(app, host="0.0.0.0", port=port)
