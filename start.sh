@@ -126,9 +126,27 @@ done
 echo "[start] MCP EcoTaxa OK"
 
 if [ "$AGENT_MODE" = "local" ]; then
+  LOCAL_AGENT_PID=""
+  LOCAL_AGENT_LOG="${TMPDIR:-/tmp}/copepod-agent-local.log"
+  if curl -sf http://localhost:8000/ >/dev/null 2>&1; then
+    echo "[start] Local agent already responding on http://localhost:8000."
+  else
+    if [ -x ".venv/bin/python" ]; then
+      AGENT_PYTHON=".venv/bin/python"
+    else
+      AGENT_PYTHON="python"
+    fi
+    echo "[start] Launching local agent: ${AGENT_PYTHON} serve.py (logs: ${LOCAL_AGENT_LOG})"
+    "${AGENT_PYTHON}" serve.py > "${LOCAL_AGENT_LOG}" 2>&1 &
+    LOCAL_AGENT_PID=$!
+  fi
   echo "[start] Waiting for local agent API on http://localhost:8000..."
-  echo "[start] If needed, start it in another terminal with: python serve.py"
   until curl -sf http://localhost:8000/ >/dev/null 2>&1; do
+    if [ -n "$LOCAL_AGENT_PID" ] && ! kill -0 "$LOCAL_AGENT_PID" 2>/dev/null; then
+      echo "[start] Local agent died before responding. Last log lines:"
+      tail -20 "${LOCAL_AGENT_LOG}" || true
+      exit 1
+    fi
     sleep 1
   done
   echo "[start] Local agent API OK"
@@ -191,7 +209,7 @@ fi
 cleanup() {
   echo ""
   echo "[start] Stopping containers..."
-  for pid in "$TUNNEL_PID" "$SERVE_TUNNEL_PID"; do
+  for pid in "$TUNNEL_PID" "$SERVE_TUNNEL_PID" "${LOCAL_AGENT_PID:-}"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || true
       for _ in 1 2 3 4 5; do
