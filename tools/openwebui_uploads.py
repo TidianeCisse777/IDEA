@@ -248,10 +248,18 @@ def _get_chat_files_from_db(
         "[(print(json.dumps({'id':r[0],'filename':r[1],'path':r[2],"
         "'content_type':(json.loads(r[3] or '{}').get('content_type',''))}))) for r in rows]"
     )
-    result = subprocess.run(
-        ["docker", "exec", webui_container, "python3", "-c", script],
-        capture_output=True, text=True, timeout=5,
-    )
+    try:
+        result = subprocess.run(
+            ["docker", "exec", webui_container, "python3", "-c", script],
+            capture_output=True, text=True, timeout=5,
+        )
+    except FileNotFoundError:
+        # Agent runs in a container without the docker CLI (typical container-agent
+        # deployment). File attachments via OWUI require either a different
+        # surface (HTTP API) or mounting the OWUI data volume — out of scope
+        # for now. Conversations without attached files keep working.
+        logger.warning("chat_files_db: docker CLI unavailable; skipping OWUI attachment fetch")
+        return []
     if result.returncode != 0:
         logger.warning("chat_files_db_error: %s", result.stderr.strip()[:200])
         return []
