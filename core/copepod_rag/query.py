@@ -16,9 +16,6 @@ from pathlib import Path
 from typing import Optional
 
 
-_cross_encoder = None
-
-
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -27,28 +24,6 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
-
-def _get_cross_encoder():
-    global _cross_encoder
-    if _cross_encoder is None:
-        from sentence_transformers import CrossEncoder
-        _cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-    return _cross_encoder
-
-
-def _rerank(question: str, chunks: list[dict]) -> list[dict]:
-    """Re-classe les chunks par pertinence réelle via cross-encoder."""
-    if len(chunks) <= 1:
-        return chunks
-    try:
-        model = _get_cross_encoder()
-        pairs = [(question, c["content"]) for c in chunks]
-        scores = model.predict(pairs)
-        ranked = sorted(zip(scores, chunks), key=lambda x: x[0], reverse=True)
-        return [c for _, c in ranked]
-    except Exception:
-        return chunks
-
 
 def _generate_alternative_queries(question: str) -> list[str]:
     """Génère des reformulations via LLM pour couvrir le vocabulaire non-canonique."""
@@ -189,8 +164,7 @@ def query_copepod_rag(
                 })
 
         chunks.sort(key=lambda c: c["score"])
-        reranked = _rerank(question, chunks[:top_k * 3])
-        return reranked[:top_k]
+        return chunks[:top_k]
     finally:
         if os.getenv("PYTEST_CURRENT_TEST"):
             _close()

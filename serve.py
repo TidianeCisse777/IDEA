@@ -34,11 +34,6 @@ from openwebui.feedback_pipeline import (
     fetch_openwebui_feedback_export as _owui_fetch,
     sync_openwebui_feedback_export as _owui_sync,
 )
-from core.copepod_rag.query import _get_cross_encoder
-
-# Pré-charge le cross-encoder au démarrage — évite 10-15s de latence au 1er appel RAG
-_get_cross_encoder()
-
 LOGS_DIR = Path(os.getenv("CONV_LOGS_DIR", "logs/conversations"))
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 FEEDBACK_LOGS_DIR = Path(os.getenv("FEEDBACK_LOGS_DIR", "logs/feedback"))
