@@ -231,6 +231,28 @@ def create_app() -> ASGIApp:
             scheduler.start()
             try:
                 async with original_lifespan(app) as state:
+                    # Premier démarrage / cache vide → déclenche un sync
+                    # immédiat en arrière-plan. Non bloquant : le serveur
+                    # devient `healthy` tout de suite, le sync se termine
+                    # quand il se termine.
+                    try:
+                        conn = _open_cache()
+                        try:
+                            counts = cache_counts(conn)
+                            cache_empty = (
+                                counts.get("samples_indexed", 0) == 0
+                                and counts.get("projects_indexed", 0) == 0
+                            )
+                        finally:
+                            conn.close()
+                        if cache_empty:
+                            loop = asyncio.get_running_loop()
+                            loop.run_in_executor(
+                                None, _run_full_sync_with_real_client, cache_db,
+                            )
+                    except Exception:
+                        # On ne bloque pas le boot sur un sync auto-trigger
+                        pass
                     yield state
             finally:
                 scheduler.shutdown(wait=False)
