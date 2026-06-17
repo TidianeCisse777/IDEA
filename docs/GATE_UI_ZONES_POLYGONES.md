@@ -327,3 +327,12 @@ et reporte :
 - **Bons appels** : nom du tool + args clés
 - **Mauvais appels** : nom du tool + ce qui cloche
 - **Action** : prompt fix / tool fix / docs fix / re-test
+
+---
+
+# Reste à faire (post-v1)
+
+- **Slice 4** — étendre `zone_name` aux tools Amundsen, EcoPart, OGSL (aujourd'hui seuls EcoTaxa + Bio-ORACLE + `filter_dataframe_by_zone` le supportent).
+- **Transparence erreurs étendue** — appliquer le pattern `raise` (vs `return "Erreur ..."`) aux ~35 autres sites dans `tools/copepod_sources.py`, `tools/ecopart_sources.py`, `tools/amundsen_sources.py`, `tools/bio_oracle_sources.py`. Référence : la migration faite sur `find_ecotaxa_observations` (commit `eb936ef`).
+- **Optimisation prompt** — l'agent appelle `get_zone_info` avant `filter_dataframe_by_zone` (redondant : le filter résout déjà la zone). Inoffensif mais coût LLM évitable.
+- **Commit séparé** — `docs/MEOW Marine Ecoregions/` (556 KB de shapefiles bruts, sources IHO/MEOW pour rebuild de `data/geo/zones_registry.geojson`). Pas commité dans v1 pour éviter le bloat.
