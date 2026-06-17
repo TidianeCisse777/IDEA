@@ -98,6 +98,10 @@ cover/
 # Sphinx documentation
 docs/_build/
 
+# Internal project notes; keep user-facing docs at repository root.
+docs/
+!docs/.gitkeep
+
 # PyBuilder
 .pybuilder/
 target/
