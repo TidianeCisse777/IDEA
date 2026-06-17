@@ -30,8 +30,31 @@ Never present a hardcoded project list.
 | `project_id` | — | Required |
 | `taxon` | `None` (all taxa) | e.g. `"Copepoda"`, `"Calanus"` — filtered server-side in EcoTaxa |
 | `status` | `"V"` | `"V"` = validated only, `"P"` = predicted, `""` = all |
+| `sample_ids` | `None` (all samples) | Restrict the export to specific samples of the project, filtered server-side |
 
 **Recommendation:** always use `status="V"` for quantitative analyses — unvalidated predicted objects may contain classification errors.
+
+---
+
+## Filtering by sample(s)
+
+When the user is interested in **specific samples** rather than the full project,
+do NOT download the whole project and slice afterwards — push the filter to
+EcoTaxa via `sample_ids`. This is much faster and avoids loading useless rows
+in the session.
+
+Routing rules:
+
+- One `sample_id` and the user does **not** know the `project_id` →
+  `query_ecotaxa_sample(sample_id=...)` (resolves the project automatically).
+- One or several `sample_id`s **belonging to the same known project** →
+  `query_ecotaxa(project_id=..., sample_ids=[id1, id2, ...])` in a single call.
+- Samples spread across several projects → one `query_ecotaxa` call per project,
+  each with its own `sample_ids=[...]`.
+
+Anti-pattern to avoid: calling `query_ecotaxa(project_id=...)` (full project)
+and then filtering with `run_pandas` on `sample_id`. Always pass `sample_ids`
+to the tool when the target samples are known.
 
 ---
 

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import os
+import time
 
 import pandas as pd
 import requests
@@ -9,8 +11,35 @@ import requests
 from tools.public_url import download_url
 
 
+_DATASETS_CACHE: dict[str, object] = {"datasets": None, "expires_at": 0.0}
+
+
+def _dataset_cache_ttl() -> float:
+    try:
+        return float(os.getenv("AMUNDSEN_DATASET_CACHE_TTL", "3600"))
+    except ValueError:
+        return 3600.0
+
+
+def clear_amundsen_dataset_cache() -> None:
+    """Drop the in-process cache of the ERDDAP dataset catalogue."""
+    _DATASETS_CACHE["datasets"] = None
+    _DATASETS_CACHE["expires_at"] = 0.0
+
+
 def list_amundsen_datasets() -> list[dict]:
-    """Return the Amundsen CTD datasets discovered from ERDDAP."""
+    """Return the Amundsen CTD datasets discovered from ERDDAP.
+
+    The ERDDAP search catalogue is cached in-process for
+    ``AMUNDSEN_DATASET_CACHE_TTL`` seconds (default 3600). Within a turn the
+    agent can chain `preview_amundsen_profile` / `query_amundsen_ctd` calls
+    without re-fetching the catalogue each time.
+    """
+    cached = _DATASETS_CACHE.get("datasets")
+    expires_at = float(_DATASETS_CACHE.get("expires_at") or 0.0)
+    if cached is not None and time.monotonic() < expires_at:
+        return list(cached)  # defensive copy
+
     response = requests.get(
         "https://erddap.amundsenscience.com/erddap/search/index.json",
         params={"searchFor": "amundsen ctd", "itemsPerPage": 200},
@@ -35,6 +64,8 @@ def list_amundsen_datasets() -> list[dict]:
                 "tabledap": str(record.get("tabledap") or ""),
             }
         )
+    _DATASETS_CACHE["datasets"] = list(normalized)
+    _DATASETS_CACHE["expires_at"] = time.monotonic() + _dataset_cache_ttl()
     return normalized
 
 

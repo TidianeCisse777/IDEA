@@ -523,6 +523,42 @@ _SLOW_TOOLS = frozenset({
 })
 _HEARTBEAT_INTERVAL = 8.0  # seconds between heartbeat dots during slow tools
 
+# Tools whose textual result is shown inline in the SSE stream inside a
+# collapsible <details> block, so the user can inspect what the source actually
+# returned (tables, project lists, schema, download links). The agent already
+# paraphrases this in its final answer — the block is for transparency.
+_DATA_SOURCE_TOOL_PREFIXES = (
+    "list_ecotaxa", "preview_ecotaxa", "query_ecotaxa", "find_ecotaxa",
+    "inspect_ecotaxa", "count_ecotaxa", "compare_ecotaxa", "get_ecotaxa",
+    "list_ecopart", "preview_ecopart", "query_ecopart", "join_ecotaxa_ecopart",
+    "list_amundsen", "preview_amundsen", "query_amundsen",
+    "enrich_loaded_table_with_amundsen",
+    "list_bio_oracle", "preview_bio_oracle", "query_bio_oracle",
+    "couple_zooplankton_bio_oracle",
+    "query_ogsl",
+    "list_sql", "preview_sql", "copy_sql",
+)
+
+
+def _is_data_source_tool(name: str) -> bool:
+    return any(name == p or name.startswith(p) for p in _DATA_SOURCE_TOOL_PREFIXES)
+
+
+def _format_tool_result_details(name: str, content: str) -> str:
+    """Wrap a tool result in a collapsed <details> block for Open WebUI."""
+    # Hide raw base64 image payloads (handled separately by image extraction).
+    display = re.sub(
+        r"data:image/[a-z]+;base64,[A-Za-z0-9+/=]+",
+        "[image data]",
+        content,
+    )
+    return (
+        f"\n<details>\n"
+        f"<summary>📊 Résultat de <code>{name}</code></summary>\n\n"
+        f"{display}\n\n"
+        f"</details>\n"
+    )
+
 
 async def _stream_agent_sse(
     agent,
@@ -571,11 +607,17 @@ async def _stream_agent_sse(
                         shared["in_slow_tool"] = False
                         for tool_msg in msgs:
                             tool_content = getattr(tool_msg, "content", "") or ""
+                            tool_name = getattr(tool_msg, "name", "") or ""
                             if "data:image/png;base64," in tool_content:
                                 hosted = _extract_and_host_images(tool_content)
                                 img_match = re.search(r"!\[.*?\]\(http[^\)]+\)", hosted)
                                 if img_match:
                                     await chunk_queue.put(_make_sse_chunk(completion_id, f"\n{img_match.group(0)}\n"))
+                            if tool_name and tool_content and _is_data_source_tool(tool_name):
+                                await chunk_queue.put(_make_sse_chunk(
+                                    completion_id,
+                                    _format_tool_result_details(tool_name, tool_content),
+                                ))
         except Exception as exc:
             logger.error("stream_error thread=%s err=%s", thread_id, exc)
             await chunk_queue.put(_make_sse_chunk(completion_id, f"\n\n[Erreur : {exc}]"))

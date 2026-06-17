@@ -44,6 +44,42 @@ def test_format_tool_line_skill():
     assert "skill_tool" in line
 
 
+def test_is_data_source_tool_recognizes_known_sources():
+    from serve import _is_data_source_tool
+    assert _is_data_source_tool("query_ecotaxa")
+    assert _is_data_source_tool("query_ecotaxa_sample")
+    assert _is_data_source_tool("find_ecotaxa_observations")
+    assert _is_data_source_tool("query_ecopart")
+    assert _is_data_source_tool("query_amundsen_ctd")
+    assert _is_data_source_tool("enrich_loaded_table_with_amundsen_ctd")
+    assert _is_data_source_tool("query_bio_oracle")
+    assert _is_data_source_tool("query_ogsl")
+    assert _is_data_source_tool("preview_sql_table")
+    assert not _is_data_source_tool("run_pandas")
+    assert not _is_data_source_tool("run_graph")
+    assert not _is_data_source_tool("load_file")
+    assert not _is_data_source_tool("load_skill")
+
+
+def test_format_tool_result_details_wraps_in_collapsible_block():
+    from serve import _format_tool_result_details
+    block = _format_tool_result_details("query_ecotaxa", "| project_id | name |\n|---|---|\n| 42 | …|")
+    assert "<details>" in block
+    assert "</details>" in block
+    assert "<summary>" in block
+    assert "<code>query_ecotaxa</code>" in block
+    assert "| project_id | name |" in block
+
+
+def test_format_tool_result_details_hides_raw_base64_image():
+    from serve import _format_tool_result_details
+    payload = "before data:image/png;base64,AAAABBBBCCCCDDDD== after"
+    block = _format_tool_result_details("preview_ecotaxa_project", payload)
+    assert "AAAABBBB" not in block
+    assert "[image data]" in block
+    assert "before" in block and "after" in block
+
+
 def test_format_tool_line_run_graph_with_code_uses_details():
     """run_graph avec code → bloc <details> collapsible avec le code Python."""
     from serve import _format_tool_line

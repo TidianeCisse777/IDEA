@@ -1,5 +1,16 @@
 """TDD — core/amundsen_ctd_client.py."""
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_amundsen_dataset_cache():
+    from core.amundsen_ctd_client import clear_amundsen_dataset_cache
+
+    clear_amundsen_dataset_cache()
+    yield
+    clear_amundsen_dataset_cache()
+
 
 def test_list_amundsen_datasets_normalizes_erddap_response():
     from unittest.mock import MagicMock, patch
@@ -33,6 +44,33 @@ def test_list_amundsen_datasets_normalizes_erddap_response():
             "tabledap": "https://erddap.amundsenscience.com/erddap/tabledap/amundsen12713",
         }
     ]
+
+
+def test_list_amundsen_datasets_caches_within_ttl():
+    from unittest.mock import MagicMock, patch
+
+    from core.amundsen_ctd_client import list_amundsen_datasets
+
+    response = MagicMock()
+    response.json.return_value = {
+        "table": {
+            "columnNames": ["Dataset ID", "Title", "griddap", "tabledap"],
+            "rows": [["amundsen12713", "CTD", "", "https://example.test/tabledap/amundsen12713"]],
+        }
+    }
+
+    with patch("core.amundsen_ctd_client.requests.get", return_value=response) as mock_get:
+        first = list_amundsen_datasets()
+        second = list_amundsen_datasets()
+
+    assert mock_get.call_count == 1
+    assert first == second
+    # Defensive copy: mutating one returned list must not poison the cache.
+    first.clear()
+    with patch("core.amundsen_ctd_client.requests.get", return_value=response) as mock_get:
+        third = list_amundsen_datasets()
+    assert mock_get.call_count == 0
+    assert len(third) == 1
 
 
 def test_preview_amundsen_profile_returns_raw_rows_and_join_aliases():

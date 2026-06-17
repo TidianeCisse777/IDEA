@@ -203,6 +203,19 @@ Supported operations:
 
 Write queries are not allowed.
 
+Configuration: set `DATABASE_URL` in `.env` to a SQLAlchemy URL with an
+absolute path (inside the agent container the repo is mounted at `/app`):
+
+- `sqlite:////app/data/sql_workspace_demo/ocean_observations.sqlite` (demo DB shipped with the repo)
+- `postgresql+psycopg://user:password@host:5432/dbname`
+- `mysql+pymysql://user:password@host:3306/dbname`
+
+`docker-compose.yml` forwards `DATABASE_URL` from `.env` to the agent
+container, so the value is available to the SQL tools as soon as the container
+restarts. The connection can also be provided at runtime by pasting a
+`DATABASE_URL=...` line in the conversation; it is then scoped to the current
+thread.
+
 ## Knowledge Base
 
 The assistant has a NeoLab-specific RAG knowledge base built from Markdown docs

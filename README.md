@@ -19,6 +19,7 @@ User-facing docs:
 - `OPENAI_API_KEY`
 - EcoTaxa credentials: `ECOTAXA_USERNAME`, `ECOTAXA_PASSWORD`
 - Optional: `cloudflared` for temporary public URLs
+- Optional: `DATABASE_URL` (SQLAlchemy) to enable the read-only SQL workspace
 
 ## Quick Start
 
@@ -35,6 +36,25 @@ OPENAI_API_KEY=...
 ECOTAXA_USERNAME=...
 ECOTAXA_PASSWORD=...
 ```
+
+Optional — to enable the read-only SQL workspace, also set:
+
+```dotenv
+# SQLAlchemy URL with an absolute path. Inside the agent container the repo is mounted at /app.
+# Examples:
+#   sqlite:////app/data/sql_workspace_demo/ocean_observations.sqlite   (demo DB shipped with the repo)
+#   postgresql+psycopg://user:password@host:5432/dbname
+#   mysql+pymysql://user:password@host:3306/dbname
+DATABASE_URL=sqlite:////app/data/sql_workspace_demo/ocean_observations.sqlite
+```
+
+`docker-compose.yml` forwards `DATABASE_URL` from `.env` into the agent
+container as an explicit environment variable, so the value you set here is
+picked up the next time you run `./start.sh` (no rebuild needed).
+
+The repo ships a demo SQLite at `data/sql_workspace_demo/ocean_observations.sqlite`
+(tables: `cruises`, `stations`, `casts`, `observations`, `profile_summary`) you
+can use to validate the wiring without touching a real database.
 
 Start the stack:
 

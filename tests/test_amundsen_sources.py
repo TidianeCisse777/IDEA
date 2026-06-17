@@ -1,5 +1,16 @@
 """TDD — tools/amundsen_sources.py."""
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_amundsen_dataset_cache():
+    from core.amundsen_ctd_client import clear_amundsen_dataset_cache
+
+    clear_amundsen_dataset_cache()
+    yield
+    clear_amundsen_dataset_cache()
+
 
 def test_make_amundsen_tools_exposes_expected_tools():
     from tools.amundsen_sources import make_amundsen_tools
