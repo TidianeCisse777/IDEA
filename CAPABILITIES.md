@@ -13,6 +13,59 @@ what is not supported yet.
 - Generate PDF deliverables from the current session.
 - Answer technical questions using the NeoLab knowledge base.
 
+## Agent And Tool Architecture
+
+```mermaid
+flowchart TB
+    subgraph U[User]
+        H[Natural-language request]
+    end
+
+    subgraph F[Frontend]
+        OW[Open WebUI<br/>chat, file uploads, history<br/>port 3000]
+    end
+
+    subgraph B[Agent API]
+        S[serve.py / FastAPI<br/>OpenAI-compatible API<br/>SSE streaming, graph hosting<br/>port 8000]
+        A[agent.py / LangGraph ReAct<br/>reasoning -> tool call -> observation]
+    end
+
+    subgraph K[Agent Knowledge And Tools]
+        LLM[OpenAI API<br/>model configured by LLM_MODEL]
+        TOOLS[Python tools<br/>load_file, run_pandas, run_graph,<br/>source queries, SQL workspace,<br/>PDF deliverables]
+        SKILLS[Markdown skills<br/>graph_planner, graph_writer,<br/>source workflows, deliverable_writer]
+        RAG[NeoLab RAG<br/>columns, methods, taxonomy,<br/>joins, geography]
+    end
+
+    subgraph D[Data Sources]
+        LOCAL[(Local files<br/>CSV, TSV, Excel, JSON, Parquet)]
+        ONLINE[(EcoTaxa, EcoPart,<br/>Amundsen, OGSL, Bio-ORACLE)]
+        MCP[MCP EcoTaxa<br/>read-only cache and discovery tools]
+        SQL[(Read-only SQL<br/>SQLite, PostgreSQL,<br/>MySQL, MariaDB)]
+    end
+
+    subgraph P[Persistence]
+        PG[(PostgreSQL<br/>session metadata)]
+        CKPT[(LangGraph checkpoints)]
+        ART[(Generated graphs<br/>and downloads)]
+    end
+
+    H --> OW
+    OW <--> S
+    S <--> A
+    A <--> LLM
+    A --> TOOLS
+    A --> SKILLS
+    A --> RAG
+    TOOLS <--> LOCAL
+    TOOLS <--> ONLINE
+    TOOLS <--> MCP
+    TOOLS -.read-only.-> SQL
+    A <--> PG
+    A <--> CKPT
+    S --> ART
+```
+
 ## Local Files
 
 The assistant can load:
