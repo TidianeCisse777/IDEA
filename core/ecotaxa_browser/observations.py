@@ -18,11 +18,16 @@ from core.ecotaxa_browser.cache.repo import (
     query_samples_filtered,
 )
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+from shapely.geometry import Point
+
 from core.ecotaxa_browser.region import (
     _SAMPLE_CAP,
+    _bbox_from_polygon,
+    _resolve_zone_polygon,
     _row_to_sample,
     _validate_bbox,
     _validate_date_range,
+    _validate_polygon_wkt,
 )
 from core.ecotaxa_browser.taxa_stats import _resolve_taxon
 from tools.ecotaxa_client import EcotaxaClient
@@ -53,6 +58,8 @@ def find_observations(
     date_range: dict | None = None,
     instrument: str | None = None,
     status: StatusFilter = "V",
+    polygon_wkt: str | None = None,
+    zone_name: str | None = None,
 ) -> dict:
     """Return cached samples whose project has the taxon attested.
 
@@ -62,9 +69,20 @@ def find_observations(
         date_range: {from, to} or None.
         instrument: filter on the sample's instrument column.
         status: "V" (validated), "P" (predicted), "D" (dubious), or "all".
+        polygon_wkt: precise polygon WKT (WGS84) for in-polygon post-filter.
+        zone_name: NeoLab zone name (e.g. "Baie de Baffin"); resolved
+            internally via core.geo — preferred over polygon_wkt to keep
+            large polygons (~480 KB) off the LLM channel. Applied BEFORE
+            project attestation lookup, so projects with only out-of-polygon
+            samples are correctly excluded. ``zone_name`` wins if both are
+            provided.
     """
     bbox_tuple = _validate_bbox(bbox)
     date_tuple = _validate_date_range(date_range)
+    polygon = _resolve_zone_polygon(zone_name) or _validate_polygon_wkt(polygon_wkt)
+
+    if bbox_tuple is None and polygon is not None:
+        bbox_tuple = _bbox_from_polygon(polygon)
 
     client = EcotaxaClient()
     client.login()
@@ -81,6 +99,13 @@ def find_observations(
         ))
     finally:
         conn.close()
+
+    if polygon is not None:
+        rows = [
+            r for r in rows
+            if r["lat_avg"] is not None and r["lon_avg"] is not None
+            and polygon.contains(Point(r["lon_avg"], r["lat_avg"]))
+        ]
 
     project_ids = sorted({int(row["project_id"]) for row in rows})
     attested_projects: list[int] = []

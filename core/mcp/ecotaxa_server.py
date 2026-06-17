@@ -398,19 +398,26 @@ def create_mcp() -> FastMCP:
         bbox: dict | None = None,
         date_range: dict | None = None,
         instrument: str | None = None,
+        polygon_wkt: str | None = None,
+        zone_name: str | None = None,
     ) -> dict:
         """Return cached samples matching a bbox / date range / instrument.
 
         ``bbox`` is a dict ``{"south", "west", "north", "east"}`` in decimal
         degrees. ``date_range`` is ``{"from", "to"}`` in ISO format. All
-        filters are optional. Capped at 500 samples with a ``truncated`` flag
-        and a ``summary`` aggregating project_breakdown + date range seen.
-        Reads the local cache only — call ``/admin/resync`` first if empty.
+        filters are optional. Two ways to get in-polygon precision:
+        - ``zone_name``: a NeoLab zone (e.g. "Baie de Baffin") resolved
+          internally; preferred, keeps the large polygon off the channel.
+        - ``polygon_wkt``: an explicit WGS84 WKT polygon.
+        Capped at 500 samples with a ``truncated`` flag and a ``summary``
+        aggregating project_breakdown + date range seen. Reads the local
+        cache only — call ``/admin/resync`` first if empty.
         """
         try:
             return await _run_sync(
                 samples_in_region,
                 bbox=bbox, date_range=date_range, instrument=instrument,
+                polygon_wkt=polygon_wkt, zone_name=zone_name,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}
@@ -419,16 +426,22 @@ def create_mcp() -> FastMCP:
     async def projects_in_region_tool(
         bbox: dict | None = None,
         date_range: dict | None = None,
+        polygon_wkt: str | None = None,
+        zone_name: str | None = None,
     ) -> dict:
         """Aggregate cached samples per project for a region / time window.
 
-        Same bbox / date_range format as ``samples_in_region``. Returns one
-        row per project with ``sample_count``, ``object_count``,
-        ``instruments``, ``date_min``, ``date_max``.
+        Same filters as ``samples_in_region`` (``bbox``, ``date_range``,
+        ``zone_name``, ``polygon_wkt``). When a polygon is applied, samples
+        outside it are excluded before project aggregation. Returns one row
+        per project with ``sample_count``, ``object_count``, ``instruments``,
+        ``date_min``, ``date_max``.
         """
         try:
             return await _run_sync(
-                projects_in_region, bbox=bbox, date_range=date_range,
+                projects_in_region,
+                bbox=bbox, date_range=date_range,
+                polygon_wkt=polygon_wkt, zone_name=zone_name,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}
@@ -440,6 +453,8 @@ def create_mcp() -> FastMCP:
         date_range: dict | None = None,
         instrument: str | None = None,
         status: str = "V",
+        polygon_wkt: str | None = None,
+        zone_name: str | None = None,
     ) -> dict:
         """Find cached samples whose project has the taxon attested.
 
@@ -448,12 +463,18 @@ def create_mcp() -> FastMCP:
         requested status (``V``, ``P``, ``D``, ``all``). Per-sample taxon
         counts are out of scope for V1 — use ``count_ecotaxa_taxa`` (taxa
         stats) on the returned ``attested_projects`` for finer numbers.
+
+        ``zone_name`` (preferred): NeoLab zone resolved internally; filter
+        applied BEFORE project attestation, so projects with only
+        out-of-polygon samples are correctly excluded.
+        ``polygon_wkt`` (alternative): explicit WGS84 WKT polygon.
         """
         try:
             return await _run_sync(
                 find_observations,
                 taxon=taxon, bbox=bbox, date_range=date_range,
                 instrument=instrument, status=status,
+                polygon_wkt=polygon_wkt, zone_name=zone_name,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}

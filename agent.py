@@ -22,7 +22,7 @@ from tools.sql_workspace import make_sql_tools
 from tools.rag_tool import make_rag_tool
 from tools.skill_tool import make_skill_tool
 from tools.deliverable_tool import export_deliverable
-from tools.geo_tools import get_zone_info
+from tools.geo_tools import get_zone_info, make_geo_tools
 
 load_dotenv()
 
@@ -40,16 +40,15 @@ _store = InMemoryStore()  # overridden by serve.py lifespan via AsyncPostgresSto
 
 
 def _load_system_prompt() -> str:
-    """Charge le prompt depuis LangSmith Hub, fallback local."""
-    try:
-        from langchain import hub
-        prompt = hub.pull("copepod-system-prompt")
-        for msg in prompt.messages:
-            if hasattr(msg, "prompt"):
-                return msg.prompt.template
-        return COPEPOD_SYSTEM_PROMPT
-    except Exception:
-        return COPEPOD_SYSTEM_PROMPT
+    """Source de vérité : le fichier local `agents/copepod_system_prompt.py`.
+
+    Le hub LangSmith a été retiré du chemin : `langchain.hub` n'existe plus
+    en langchain 1.x, et `langsmith.Client.pull_prompt()` ne résout pas nos
+    prompts personnels (stockés sans `owner` côté serveur). La migration
+    via PR git est suffisamment ergonomique pour un projet mono-tenant ; on
+    réactivera la lecture hub quand LangSmith aura fixé le bug d'owner.
+    """
+    return COPEPOD_SYSTEM_PROMPT
 
 
 _SYSTEM_PROMPT = _load_system_prompt()
@@ -232,6 +231,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         + make_amundsen_tools(thread_id)
         + make_ogsl_tools(thread_id)
         + make_ecopart_tools(thread_id)
+        + make_geo_tools(thread_id)
         + [make_rag_tool(), make_skill_tool(), export_deliverable, get_zone_info]
     )
     try:

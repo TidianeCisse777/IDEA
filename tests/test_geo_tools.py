@@ -28,7 +28,10 @@ def test_get_zone_info_returns_canonical_bbox_polygon_for_ungava():
 
     assert result["canonical"] == "Baie d'Ungava"
     assert "IHO" in result["source"]
-    assert "polygon_wkt" in result
+    # polygon_wkt_preview is the truncated preview; the full WKT no longer
+    # transits through the LLM channel (downstream tools use zone_name).
+    assert "polygon_wkt_preview" in result
+    assert "zone_name" in result["usage_hint"]
     # bbox calculé depuis le polygone, pas hardcodé
     bbox = result["bbox"]
     assert {"south", "west", "north", "east"} == set(bbox)
@@ -61,20 +64,17 @@ def test_get_zone_info_returns_error_dict_on_unknown_zone():
     assert "available_zones" in result
 
 
-def test_get_zone_info_polygon_wkt_is_valid_and_matches_bbox():
-    """Le polygon_wkt doit être chargeable shapely et son enveloppe doit
-    correspondre au bbox renvoyé."""
+def test_get_zone_info_polygon_wkt_preview_is_truncated_with_note():
+    """Le polygon_wkt_preview doit être tronqué et indiquer la taille totale
+    pour éviter qu'un LLM copie 480 KB de WKT à un tool aval."""
     from tools.geo_tools import get_zone_info
 
     result = get_zone_info.invoke({"zone_name": "Baie d'Hudson"})
-    polygon = wkt.loads(result["polygon_wkt"])
-    minx, miny, maxx, maxy = polygon.bounds
-    bbox = result["bbox"]
+    preview = result["polygon_wkt_preview"]
 
-    assert bbox["west"]  == pytest.approx(minx, abs=1e-3)
-    assert bbox["south"] == pytest.approx(miny, abs=1e-3)
-    assert bbox["east"]  == pytest.approx(maxx, abs=1e-3)
-    assert bbox["north"] == pytest.approx(maxy, abs=1e-3)
+    assert len(preview) < 300, "preview must stay short to avoid LLM truncation"
+    assert "chars total" in preview or preview.startswith("POLYGON")
+    assert "zone_name" in result["usage_hint"]
 
 
 def test_get_zone_info_pandas_filter_string_uses_polygon_aware_columns():
@@ -98,3 +98,153 @@ def test_get_zone_info_supports_hawke_and_nunavik_and_arctique():
         result = get_zone_info.invoke({"zone_name": zone})
         assert "error" not in result, f"{zone!r} aurait dû résoudre"
         assert result["canonical"] == zone
+
+
+# --- Slice 3 : filter_dataframe_by_zone -------------------------------------
+
+
+@pytest.fixture
+def session_store(tmp_path):
+    from tools.session_store import SessionStore
+    return SessionStore(storage_dir=tmp_path)
+
+
+def _load_df_into_session(store, thread_id, df, *, variable_name="df_test"):
+    """Mimic what load_file does: register df as the latest session df."""
+    from tools.dataset_registry import store_dataset
+    store_dataset(
+        store, thread_id, df,
+        variable_name=variable_name,
+        meta={"source": "file:test.csv", "columns": []},
+        latest_alias=variable_name,
+    )
+
+
+def test_filter_dataframe_by_zone_keeps_only_points_inside_polygon(session_store):
+    """Tracer principal : un df mixte (Baffin + Hudson + Labrador) filtré par
+    'Baie de Baffin' ne doit garder QUE les points strictement dans le polygone IHO."""
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    # Baffin in (74°N -68°W) and (75°N -73°W) — verified inside IHO polygon.
+    # Hudson out (58°N -85°W), Labrador out (55°N -55°W).
+    df = pd.DataFrame({
+        "station_id": ["BAF1", "BAF2", "HUD1", "LAB1"],
+        "latitude":   [74.0,   75.0,   58.0,   55.0],
+        "longitude": [-68.0,  -73.0,  -85.0,  -55.0],
+    })
+    thread = "thread-filter-baffin"
+    _load_df_into_session(session_store, thread, df)
+
+    tools = make_geo_tools(thread, store=session_store)
+    fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
+    out = fn.invoke({
+        "zone_name": "Baie de Baffin",
+        "lat_col": "latitude",
+        "lon_col": "longitude",
+    })
+
+    # tool returns a dict summary
+    assert out["zone_canonical"] == "Baie de Baffin"
+    assert out["n_in"] == 2
+    assert out["n_out"] == 2
+    assert "variable_name" in out  # new df under a session alias
+
+    # the filtered df must be retrievable from the session under that name
+    sess = session_store.get(f"{thread}:dataset:{out['variable_name']}")
+    assert sess is not None
+    kept = sess["df"]
+    assert sorted(kept["station_id"].tolist()) == ["BAF1", "BAF2"]
+
+
+def test_filter_dataframe_by_zone_defaults_lat_lon_column_names(session_store):
+    """Convention NeoLab : si l'utilisateur ne précise pas, on tente
+    latitude/longitude (les noms standard EcoTaxa/Amundsen)."""
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    df = pd.DataFrame({
+        "latitude":  [74.0, 55.0],
+        "longitude": [-68.0, -55.0],
+    })
+    thread = "thread-filter-defaults"
+    _load_df_into_session(session_store, thread, df)
+
+    tools = make_geo_tools(thread, store=session_store)
+    fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
+    out = fn.invoke({"zone_name": "Baie de Baffin"})
+
+    assert out["n_in"] == 1
+    assert out["n_out"] == 1
+
+
+def test_filter_dataframe_by_zone_raises_on_unknown_zone(session_store):
+    """Erreur transparente : zone inconnue → exception remontée à LangGraph,
+    pas un faux résultat 'aucun point' (cf. feedback_tool_errors_must_raise)."""
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    df = pd.DataFrame({"latitude": [74.0], "longitude": [-68.0]})
+    thread = "thread-filter-unknown"
+    _load_df_into_session(session_store, thread, df)
+
+    tools = make_geo_tools(thread, store=session_store)
+    fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
+    with pytest.raises(Exception) as exc_info:
+        fn.invoke({"zone_name": "Mer de Nulle Part"})
+    assert "Mer de Nulle Part" in str(exc_info.value)
+
+
+def test_filter_dataframe_by_zone_errors_when_no_df_loaded(session_store):
+    """Aucun fichier chargé → message d'erreur clair (similaire à run_pandas)."""
+    from tools.geo_tools import make_geo_tools
+
+    tools = make_geo_tools("thread-no-df", store=session_store)
+    fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
+    out = fn.invoke({"zone_name": "Baie de Baffin"})
+    # Either return a string error OR raise — accept both, but message must mention load_file
+    if isinstance(out, str):
+        assert "load_file" in out.lower() or "aucun" in out.lower()
+    else:
+        # If implementer chose to raise: ensure it's not a silent empty result
+        pytest.fail("filter_dataframe_by_zone should not return success when no df is loaded")
+
+
+def test_filter_dataframe_by_zone_errors_when_lat_lon_columns_missing(session_store):
+    """Si lat/lon ne sont pas dans le df, on doit échouer explicitement
+    (le LLM doit pouvoir corriger en passant les bons noms de colonnes)."""
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    df = pd.DataFrame({"lat_avg": [74.0], "lon_avg": [-68.0]})
+    thread = "thread-filter-bad-cols"
+    _load_df_into_session(session_store, thread, df)
+
+    tools = make_geo_tools(thread, store=session_store)
+    fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
+    with pytest.raises(Exception) as exc_info:
+        # default latitude/longitude don't exist in this df
+        fn.invoke({"zone_name": "Baie de Baffin"})
+    msg = str(exc_info.value).lower()
+    assert "latitude" in msg or "longitude" in msg or "colonne" in msg or "column" in msg
+
+
+def test_filter_dataframe_by_zone_does_not_mutate_original_df(session_store):
+    """Le df original reste accessible — filter crée un nouveau df sous un autre nom."""
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    df = pd.DataFrame({
+        "latitude":  [74.0, 55.0],
+        "longitude": [-68.0, -55.0],
+    })
+    thread = "thread-filter-immut"
+    _load_df_into_session(session_store, thread, df, variable_name="df_loki_2024")
+
+    tools = make_geo_tools(thread, store=session_store)
+    fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
+    fn.invoke({"zone_name": "Baie de Baffin"})
+
+    original = session_store.get(f"{thread}:dataset:df_loki_2024")
+    assert original is not None
+    assert len(original["df"]) == 2  # original unchanged

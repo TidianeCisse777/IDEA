@@ -353,26 +353,39 @@ def make_source_tools(thread_id: str) -> list:
         bbox: dict | None = None,
         date_range: dict | None = None,
         instrument: str | None = None,
+        polygon_wkt: str | None = None,
+        zone_name: str | None = None,
     ) -> str:
         """Cherche les samples EcoTaxa dans une bbox géo et/ou une période.
 
         `bbox` : `{"south": float, "west": float, "north": float, "east": float}`.
         `date_range` : `{"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}`.
         `instrument` : nom exact ("UVP6", "UVP5SD", "Loki", ...).
+        `zone_name` : nom d'une zone NeoLab (ex. "Baie de Baffin",
+        "Baie d'Ungava", "Hudson Bay", "Hawke Channel", ...). Le tool
+        résout le polygone précis IHO/NeoLab en interne et applique un
+        post-filtre in-polygon — utiliser ça **par défaut** quand
+        l'utilisateur nomme une zone, même si la précision n'est pas
+        explicitement demandée. Évite de passer un `polygon_wkt` géant via
+        le LLM.
+        `polygon_wkt` : polygone précis (WKT WGS84) — réservé aux cas où
+        l'utilisateur fournit son propre polygone (pas une zone nommée).
         Réponse plafonnée à 500 samples avec un summary par projet.
         Lecture du cache local — pas de download.
 
-        Au moins UN filtre (bbox, date_range, ou instrument) est requis :
-        l'appel sans aucun paramètre renvoie une erreur.
+        Au moins UN filtre est requis (bbox, date_range, instrument,
+        zone_name ou polygon_wkt).
         """
-        if bbox is None and date_range is None and instrument is None:
+        if (bbox is None and date_range is None and instrument is None
+                and polygon_wkt is None and zone_name is None):
             return (
-                "Erreur : au moins un filtre requis (bbox, date_range, ou instrument). "
+                "Erreur : au moins un filtre requis (bbox, date_range, instrument, zone_name ou polygon_wkt). "
                 "Pour explorer sans filtre, précise une bbox large, une période, ou un instrument."
             )
         try:
             result = samples_in_region(
                 bbox=bbox, date_range=date_range, instrument=instrument,
+                polygon_wkt=polygon_wkt, zone_name=zone_name,
             )
         except EcoTaxaBrowserError as exc:
             return f"Erreur EcoTaxa ({exc.code}) : {exc}"
@@ -404,23 +417,35 @@ def make_source_tools(thread_id: str) -> list:
     def find_ecotaxa_projects_in_region(
         bbox: dict | None = None,
         date_range: dict | None = None,
+        polygon_wkt: str | None = None,
+        zone_name: str | None = None,
     ) -> str:
         """Liste les projets EcoTaxa avec au moins un sample dans une zone / période.
 
-        Même format `bbox` et `date_range` que `find_ecotaxa_samples_in_region`.
+        Même format que `find_ecotaxa_samples_in_region` :
+        - `zone_name` (recommandé pour les zones nommées NeoLab) : le tool
+          résout le polygone IHO en interne.
+        - `polygon_wkt` : polygone WKT fourni explicitement.
+        - `bbox` / `date_range` : filtres classiques.
+        Quand un polygone (résolu ou explicite) est appliqué, les counts par
+        projet excluent les samples hors zone.
         Réponse agrégée au niveau projet : nombre de samples, total objets,
         instruments, plage de dates.
 
-        Au moins UN filtre (bbox ou date_range) est requis : l'appel sans
-        paramètre renvoie une erreur.
+        Au moins UN filtre (bbox, date_range, zone_name ou polygon_wkt) est
+        requis.
         """
-        if bbox is None and date_range is None:
+        if (bbox is None and date_range is None
+                and polygon_wkt is None and zone_name is None):
             return (
-                "Erreur : au moins un filtre requis (bbox ou date_range). "
+                "Erreur : au moins un filtre requis (bbox, date_range, zone_name ou polygon_wkt). "
                 "Pour la liste de tous les projets, utilise list_ecotaxa_projects."
             )
         try:
-            result = projects_in_region(bbox=bbox, date_range=date_range)
+            result = projects_in_region(
+                bbox=bbox, date_range=date_range,
+                polygon_wkt=polygon_wkt, zone_name=zone_name,
+            )
         except EcoTaxaBrowserError as exc:
             return f"Erreur EcoTaxa ({exc.code}) : {exc}"
         except Exception as exc:
@@ -450,6 +475,8 @@ def make_source_tools(thread_id: str) -> list:
         date_range: dict | None = None,
         instrument: str | None = None,
         status: str = "V",
+        polygon_wkt: str | None = None,
+        zone_name: str | None = None,
     ) -> str:
         """Trouve les samples EcoTaxa dont le projet a le taxon attesté.
 
@@ -457,11 +484,18 @@ def make_source_tools(thread_id: str) -> list:
         appartenant à un projet où le taxon a au moins un objet du statut
         demandé (`V` validé, `P` prédit, `D` douteux, `all`). Pour des counts
         précis par projet, enchaîner sur `count_ecotaxa_taxa`.
+
+        `zone_name` (recommandé pour zones nommées) : le tool résout en
+        interne le polygone IHO/NeoLab. Le filtre est appliqué AVANT
+        l'attestation projet — un projet qui n'a que des samples hors
+        polygone est exclu.
+        `polygon_wkt` (alternative) : polygone WKT fourni explicitement.
         """
         try:
             result = find_observations(
                 taxon=taxon, bbox=bbox, date_range=date_range,
                 instrument=instrument, status=status,
+                polygon_wkt=polygon_wkt, zone_name=zone_name,
             )
         except EcoTaxaBrowserError as exc:
             details = ""
@@ -470,9 +504,9 @@ def make_source_tools(thread_id: str) -> list:
                     f"{c.get('taxon_id')}={c.get('display_name')}"
                     for c in exc.candidates[:5]
                 )
-            return f"Erreur EcoTaxa ({exc.code}) : {exc}{details}"
-        except Exception as exc:
-            return f"Erreur lors de la recherche EcoTaxa : {exc}"
+            raise EcoTaxaBrowserError(
+                exc.code, f"{exc}{details}", candidates=exc.candidates,
+            ) from exc
 
         if not result["samples"]:
             attested = result["attested_projects"]

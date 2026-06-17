@@ -13,6 +13,11 @@ import sqlite3
 from collections import Counter
 from typing import Iterable
 
+from shapely import wkt as shapely_wkt
+from shapely.errors import GEOSException, ShapelyError
+from shapely.geometry import Point
+from shapely.geometry.base import BaseGeometry
+
 from core.ecotaxa_browser.cache.repo import (
     cache_counts,
     open_connection,
@@ -63,6 +68,72 @@ def _validate_bbox(bbox: dict | None) -> tuple[float, float, float, float] | Non
     return south, north, west, east
 
 
+def _resolve_zone_polygon(zone_name: str | None) -> BaseGeometry | None:
+    """Résout un nom de zone NeoLab vers son polygone shapely.
+
+    Évite que les polygones (jusqu'à ~480 KB pour Hudson Bay) ne transitent
+    par le LLM : seul le `zone_name` court traverse la frontière, la lookup
+    se fait côté tool via `core.geo.resolve_zone` sur le registry commité.
+    Lève `UNKNOWN_ZONE` si le nom n'est pas reconnu (aliases inclus).
+    """
+    if zone_name is None:
+        return None
+    # Import différé pour éviter une dépendance circulaire au chargement
+    # (core.geo importe shapely, et region.py est importé tôt par MCP).
+    from core.geo import load_registry, resolve_zone
+
+    registry_path = os.getenv(
+        "ZONES_REGISTRY", "data/geo/zones_registry.geojson",
+    )
+    registry = load_registry(registry_path)
+    # Match exact canonical d'abord, puis aliases insensible à la casse.
+    canonical = None
+    needle = zone_name.strip().lower()
+    for z in registry.zones:
+        if z.canonical.lower() == needle or any(
+            a.lower() == needle for a in z.aliases
+        ):
+            canonical = z.canonical
+            break
+    if canonical is None:
+        raise EcoTaxaBrowserError(
+            "UNKNOWN_ZONE",
+            f"Zone '{zone_name}' inconnue du registry NeoLab. "
+            f"Zones disponibles : {[z.canonical for z in registry.zones]}",
+        )
+    return resolve_zone(canonical, registry=registry)["polygon"]
+
+
+def _validate_polygon_wkt(polygon_wkt: str | None) -> BaseGeometry | None:
+    """Parse une chaîne WKT en geometry shapely, ou lève INVALID_POLYGON."""
+    if polygon_wkt is None:
+        return None
+    if not isinstance(polygon_wkt, str) or not polygon_wkt.strip():
+        raise EcoTaxaBrowserError(
+            "INVALID_POLYGON",
+            "polygon_wkt must be a non-empty WKT string.",
+        )
+    try:
+        geom = shapely_wkt.loads(polygon_wkt)
+    except (GEOSException, ShapelyError, ValueError) as e:
+        raise EcoTaxaBrowserError(
+            "INVALID_POLYGON",
+            f"polygon_wkt could not be parsed as WKT: {e}",
+        ) from e
+    if geom.is_empty:
+        raise EcoTaxaBrowserError(
+            "INVALID_POLYGON",
+            "polygon_wkt parsed to an empty geometry.",
+        )
+    return geom
+
+
+def _bbox_from_polygon(geom: BaseGeometry) -> tuple[float, float, float, float]:
+    """(south, north, west, east) — même ordre que _validate_bbox renvoie."""
+    minx, miny, maxx, maxy = geom.bounds
+    return (miny, maxy, minx, maxx)
+
+
 def _validate_date_range(date_range: dict | None) -> tuple[str, str] | None:
     if date_range is None:
         return None
@@ -78,18 +149,34 @@ def samples_in_region(
     bbox: dict | None = None,
     date_range: dict | None = None,
     instrument: str | None = None,
+    polygon_wkt: str | None = None,
+    zone_name: str | None = None,
 ) -> dict:
-    """Return cached samples matching geo / temporal / instrument filters."""
+    """Return cached samples matching geo / temporal / instrument filters.
+
+    Three ways to constrain geography:
+    - ``bbox`` : rectangle in degrees (loose, fast).
+    - ``polygon_wkt`` : WKT polygon for in-polygon precision (heavy).
+    - ``zone_name`` : NeoLab zone name (e.g. "Baie de Baffin"). Resolved
+      internally via ``core.geo`` — the polygon never traverses the LLM.
+
+    ``zone_name`` wins over ``polygon_wkt`` if both are given. The resolved
+    polygon's own bbox is used as the SQL pre-filter when no explicit
+    ``bbox`` is provided.
+    """
     bbox_tuple = _validate_bbox(bbox)
     date_tuple = _validate_date_range(date_range)
+    polygon = _resolve_zone_polygon(zone_name) or _validate_polygon_wkt(polygon_wkt)
+
+    if bbox_tuple is None and polygon is not None:
+        bbox_tuple = _bbox_from_polygon(polygon)
 
     conn = _open_cache()
     try:
         _ensure_cache_ready(conn)
-        bbox_repo = None
-        if bbox_tuple is not None:
-            south, north, west, east = bbox_tuple
-            bbox_repo = (south, north, west, east)
+        bbox_repo = bbox_tuple if bbox_tuple is None else (
+            bbox_tuple[0], bbox_tuple[1], bbox_tuple[2], bbox_tuple[3]
+        )
         rows = list(query_samples_filtered(
             conn,
             bbox=bbox_repo,
@@ -98,6 +185,13 @@ def samples_in_region(
         ))
     finally:
         conn.close()
+
+    if polygon is not None:
+        rows = [
+            r for r in rows
+            if r["lat_avg"] is not None and r["lon_avg"] is not None
+            and polygon.contains(Point(r["lon_avg"], r["lat_avg"]))
+        ]
 
     total = len(rows)
     truncated = total > _SAMPLE_CAP
@@ -116,10 +210,22 @@ def samples_in_region(
 def projects_in_region(
     bbox: dict | None = None,
     date_range: dict | None = None,
+    polygon_wkt: str | None = None,
+    zone_name: str | None = None,
 ) -> dict:
-    """Group matching samples per project."""
+    """Group matching samples per project.
+
+    Same three geographic filters as ``samples_in_region`` (``bbox``,
+    ``polygon_wkt``, or ``zone_name``). When a polygon (resolved or passed)
+    is provided, samples outside the polygon are excluded before
+    project-level aggregation.
+    """
     bbox_tuple = _validate_bbox(bbox)
     date_tuple = _validate_date_range(date_range)
+    polygon = _resolve_zone_polygon(zone_name) or _validate_polygon_wkt(polygon_wkt)
+
+    if bbox_tuple is None and polygon is not None:
+        bbox_tuple = _bbox_from_polygon(polygon)
 
     conn = _open_cache()
     try:
@@ -132,6 +238,13 @@ def projects_in_region(
         ))
     finally:
         conn.close()
+
+    if polygon is not None:
+        rows = [
+            r for r in rows
+            if r["lat_avg"] is not None and r["lon_avg"] is not None
+            and polygon.contains(Point(r["lon_avg"], r["lat_avg"]))
+        ]
 
     by_project: dict[int, dict] = {}
     for row in rows:

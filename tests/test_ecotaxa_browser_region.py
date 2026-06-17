@@ -191,3 +191,148 @@ def test_samples_in_region_validates_bbox_dict_shape(cache_db):
         with pytest.raises(EcoTaxaBrowserError) as exc_info:
             samples_in_region(bbox=bad_bbox)
     assert exc_info.value.code == "INVALID_BBOX"
+
+
+# ---------------------------------------------------------------------------
+# Slice 2 : polygon_wkt — post-filtre précis sur le polygone IHO/NeoLab
+# ---------------------------------------------------------------------------
+
+def test_samples_in_region_polygon_wkt_excludes_points_outside_polygon(cache_db):
+    """Le polygone fin doit exclure des samples qui passent le bbox grossier.
+
+    Setup : 4 samples dans la même bbox 55-65°N × -95 à -75°W, mais seulement
+    le sample 1 tombe DANS le polygone diagonal (sud-est).
+    """
+    from core.ecotaxa_browser.region import samples_in_region
+
+    _seed(cache_db, [
+        {"sample_id": 1, "project_id": 42, "lat": 56.0, "lon": -78.0},  # IN
+        {"sample_id": 2, "project_id": 42, "lat": 64.0, "lon": -94.0},  # OUT (NW corner)
+        {"sample_id": 3, "project_id": 99, "lat": 64.0, "lon": -78.0},  # OUT (NE corner)
+        {"sample_id": 4, "project_id": 99, "lat": 56.0, "lon": -94.0},  # OUT (SW corner)
+    ])
+    # Polygone triangle qui ne contient que le sud-est du bbox
+    polygon_wkt = "POLYGON((-75 55, -80 55, -75 60, -75 55))"
+
+    with _with_cache(cache_db):
+        result = samples_in_region(polygon_wkt=polygon_wkt)
+
+    sample_ids = sorted(s["sample_id"] for s in result["samples"])
+    assert sample_ids == [1]
+    assert result["total_matching"] == 1
+
+
+def test_samples_in_region_combines_bbox_and_polygon_wkt(cache_db):
+    """bbox + polygon_wkt : bbox sert de pré-filtre rapide, polygone raffine.
+    Cas réaliste : la bbox d'Ungava capte des points en Détroit d'Hudson,
+    le polygone les exclut."""
+    from core.ecotaxa_browser.region import samples_in_region
+
+    _seed(cache_db, [
+        {"sample_id": 10, "project_id": 1, "lat": 59.0, "lon": -68.0},  # Ungava réel
+        {"sample_id": 11, "project_id": 1, "lat": 62.5, "lon": -72.0},  # Détroit (bbox-only)
+    ])
+    bbox = {"south": 55.0, "west": -75.0, "north": 65.0, "east": -64.0}
+    # Polygone qui ne couvre que la moitié sud (lat ≤ 61)
+    polygon_wkt = "POLYGON((-75 55, -64 55, -64 61, -75 61, -75 55))"
+
+    with _with_cache(cache_db):
+        result = samples_in_region(bbox=bbox, polygon_wkt=polygon_wkt)
+
+    sample_ids = sorted(s["sample_id"] for s in result["samples"])
+    assert sample_ids == [10]
+
+
+def test_samples_in_region_raises_INVALID_POLYGON_on_bad_wkt(cache_db):
+    from core.ecotaxa_browser.region import samples_in_region
+    from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+
+    _seed(cache_db, [{"sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0}])
+    with _with_cache(cache_db):
+        with pytest.raises(EcoTaxaBrowserError) as exc_info:
+            samples_in_region(polygon_wkt="NOT A WKT")
+    assert exc_info.value.code == "INVALID_POLYGON"
+
+
+def test_projects_in_region_polygon_wkt_filters_per_project_counts(cache_db):
+    """projects_in_region doit grouper par project APRÈS post-filter polygone.
+    Les samples hors polygone ne doivent pas gonfler les counts d'un projet."""
+    from core.ecotaxa_browser.region import projects_in_region
+
+    _seed(cache_db, [
+        {"sample_id": 100, "project_id": 1, "lat": 56.0, "lon": -78.0},  # IN
+        {"sample_id": 101, "project_id": 1, "lat": 64.0, "lon": -78.0},  # OUT
+        {"sample_id": 102, "project_id": 2, "lat": 56.0, "lon": -78.0},  # IN
+    ])
+    polygon_wkt = "POLYGON((-75 55, -80 55, -75 60, -75 55))"
+
+    with _with_cache(cache_db):
+        result = projects_in_region(polygon_wkt=polygon_wkt)
+
+    counts = {p["project_id"]: p["sample_count"] for p in result["projects"]}
+    assert counts == {1: 1, 2: 1}
+    assert result["total_samples"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Slice 2-bis : zone_name — résolution interne via core.geo, pas de WKT
+# côté LLM (les polygones IHO font 100+ KB, ils ne doivent pas transiter)
+# ---------------------------------------------------------------------------
+
+def test_samples_in_region_zone_name_resolves_polygon_internally(cache_db):
+    """zone_name doit déclencher la résolution interne du polygone : pour
+    une zone connue du registry NeoLab, les samples sont post-filtrés sans
+    que le LLM ait à passer le WKT volumineux."""
+    from core.ecotaxa_browser.region import samples_in_region
+
+    # Coords cibles : 73.74°N, -78.63°W tombent dans la bbox Baffin mais HORS
+    # du polygone IHO Baffin (Lancaster Sound) — c'est notre vérité terrain.
+    _seed(cache_db, [
+        {"sample_id": 7301, "project_id": 1, "lat": 73.5,  "lon": -65.0},  # IN Baffin
+        {"sample_id": 7302, "project_id": 1, "lat": 73.74, "lon": -78.63}, # OUT (Lancaster)
+    ])
+
+    with _with_cache(cache_db):
+        result = samples_in_region(zone_name="Baie de Baffin")
+
+    sample_ids = sorted(s["sample_id"] for s in result["samples"])
+    assert sample_ids == [7301]
+
+
+def test_samples_in_region_zone_name_raises_on_unknown_zone(cache_db):
+    from core.ecotaxa_browser.region import samples_in_region
+    from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+
+    _seed(cache_db, [{"sample_id": 1, "project_id": 1, "lat": 60.0, "lon": -80.0}])
+    with _with_cache(cache_db):
+        with pytest.raises(EcoTaxaBrowserError) as exc_info:
+            samples_in_region(zone_name="Mer de Nulle Part")
+    assert exc_info.value.code == "UNKNOWN_ZONE"
+
+
+def test_samples_in_region_zone_name_accepts_english_alias(cache_db):
+    """L'alias 'Hudson Bay' doit résoudre vers Baie d'Hudson sans erreur."""
+    from core.ecotaxa_browser.region import samples_in_region
+
+    _seed(cache_db, [
+        {"sample_id": 9001, "project_id": 1, "lat": 60.0, "lon": -85.0},  # Hudson Bay
+    ])
+    with _with_cache(cache_db):
+        result = samples_in_region(zone_name="Hudson Bay")
+
+    assert result["total_matching"] == 1
+
+
+def test_projects_in_region_zone_name(cache_db):
+    from core.ecotaxa_browser.region import projects_in_region
+
+    _seed(cache_db, [
+        {"sample_id": 8001, "project_id": 1, "lat": 73.5,  "lon": -65.0},  # IN Baffin
+        {"sample_id": 8002, "project_id": 2, "lat": 73.74, "lon": -78.63}, # OUT Lancaster
+    ])
+    with _with_cache(cache_db):
+        result = projects_in_region(zone_name="Baie de Baffin")
+
+    pids = sorted(p["project_id"] for p in result["projects"])
+    assert pids == [1]
+    assert result["total_samples"] == 1
