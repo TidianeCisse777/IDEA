@@ -6,8 +6,14 @@ en f-string. On utilise le format mustache (variables = `{{var}}`) pour
 conserver les `{...}` littéraux et n'expose qu'une seule variable d'entrée :
 `{{input}}` côté human.
 """
+from pathlib import Path
+import sys
+
 from dotenv import load_dotenv
-load_dotenv()
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+load_dotenv(REPO_ROOT / ".env")
 
 from langsmith import Client
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate

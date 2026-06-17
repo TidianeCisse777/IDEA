@@ -93,7 +93,7 @@ Les contraintes utiles ont été renumérotées et CT-AG-27/28/29 ajoutées pour
 | Liste UC | `assistant-copepodes-specs/docs/PRD_IDEA_copepod.md` § 5 | Ce document |
 | Liste contraintes | `assistant-copepodes-specs/docs/PRD_IDEA_copepod.md` § 7 | Ce document + system prompt |
 | Sources autorisées | `CONTEXT.md` § Sources de données + PRD § 6 | Toolset construit par `agent.py` |
-| Skills | `IDEA/CONTEXT.md` § Skills | `agents/skills/*.md` + push hub via `push_skills.py` |
+| Skills | `IDEA/CONTEXT.md` § Skills | `agents/skills/*.md` + push hub via `scripts/dev/push_skills.py` |
 | RAG | `IDEA/CONTEXT.md` § Skills et RAG | `core/copepod_rag/docs/*.md` + ChromaDB |
 
 Quand une contrainte ou un UC change : **mettre à jour le PRD d'abord** (source de vérité), puis remettre ce document à jour pour ancrer le point d'implémentation.

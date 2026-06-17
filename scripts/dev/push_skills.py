@@ -1,12 +1,13 @@
 """Pousse tous les skills locaux vers LangSmith Context Hub (production + staging)."""
-from dotenv import load_dotenv
-load_dotenv()
-
 from pathlib import Path
+
+from dotenv import load_dotenv
 from langsmith import Client
 from langsmith.schemas import FileEntry
 
-SKILLS_DIR = Path(__file__).parent / "agents" / "skills"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SKILLS_DIR = REPO_ROOT / "agents" / "skills"
+load_dotenv(REPO_ROOT / ".env")
 client = Client()
 
 

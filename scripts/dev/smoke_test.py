@@ -1,6 +1,10 @@
 """Smoke test — vérifie que LangChain + OpenRouter + LangSmith sont bien câblés."""
+from pathlib import Path
+
 from dotenv import load_dotenv
-load_dotenv()
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(REPO_ROOT / ".env")
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage

@@ -138,9 +138,9 @@ Chaque `thread_id` (= conversation Open WebUI) a sa propre suite de checkpoints.
 
 ## System prompt : pull depuis LangSmith Hub
 
-`agent._load_system_prompt` tente d'abord `langchain.hub.pull("copepod-system-prompt")`. Si LangSmith est inaccessible ou la clé absente, fallback sur `agents/copepod_system_prompt.COPEPOD_SYSTEM_PROMPT`. Cela permet de mettre à jour le prompt en production sans redéployer le conteneur — `python push_prompt.py` synchronise la version locale vers le hub.
+`agent._load_system_prompt` tente d'abord `langchain.hub.pull("copepod-system-prompt")`. Si LangSmith est inaccessible ou la clé absente, fallback sur `agents/copepod_system_prompt.COPEPOD_SYSTEM_PROMPT`. Cela permet de mettre à jour le prompt en production sans redéployer le conteneur — `python scripts/dev/push_prompt.py` synchronise la version locale vers le hub.
 
-Même chose pour les skills : `push_skills.py` sync `agents/skills/*.md` vers le hub, et `tools/skill_tool.py` les charge à la demande.
+Même chose pour les skills : `scripts/dev/push_skills.py` sync `agents/skills/*.md` vers le hub, et `tools/skill_tool.py` les charge à la demande.
 
 ---
 
@@ -149,7 +149,7 @@ Même chose pour les skills : `push_skills.py` sync `agents/skills/*.md` vers le
 ```
 agents/skills/*.md   ─ stockés en local
        │
-       ▼ push_skills.py
+       ▼ scripts/dev/push_skills.py
 LangSmith hub        ─ source de vérité en prod
        │
        ▼ load_skill(name) ─ tool exposé à l'agent

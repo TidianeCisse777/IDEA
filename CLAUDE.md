@@ -99,8 +99,8 @@ python serve.py                          # serveur FastAPI seul
 agent.py                  Agent ReAct + CLI
 serve.py                  FastAPI : /v1/chat/completions (SSE), /v1/models, /graphs/, /downloads/
 docker-compose.yml        copepod-agent + open-webui + watchtower
-push_prompt.py            Pousse le system prompt vers LangSmith Hub (copepod-system-prompt)
-push_skills.py            Sync les skills locaux vers LangSmith
+scripts/dev/push_prompt.py
+scripts/dev/push_skills.py
 studio.py                 LangGraph Studio entry
 
 agents/
@@ -147,8 +147,8 @@ scripts/                  Outils CLI ponctuels
 - **Ton clinique (CT-AG-26)** : pas de « je / moi / en tant qu'IA » dans les réponses LLM ; format Résultat / Source / Méthode / Limite / Prochaine action. Si tu modifies un skill, garde la même règle.
 - **Incertitude visible (CT-AG-27)** : si tu ajoutes un type de graphique dans `graph_writer.md`, applique la palette confirmed/exploratory/uncertain et le stamp de confiance.
 - **Rebuilt RAG** : `python core/copepod_rag/build_index.py` après modification de `core/copepod_rag/docs/*.md`.
-- **Push prompt** : `python push_prompt.py` pour synchroniser le system prompt vers LangSmith Hub (consommé par `agent.py` en prod, fallback local sinon).
-- **Push skills** : `python push_skills.py` pour synchroniser `agents/skills/*.md` vers LangSmith Hub.
+- **Push prompt** : `python scripts/dev/push_prompt.py` pour synchroniser le system prompt vers LangSmith Hub (consommé par `agent.py` en prod, fallback local sinon).
+- **Push skills** : `python scripts/dev/push_skills.py` pour synchroniser `agents/skills/*.md` vers LangSmith Hub.
 
 ---
 
