@@ -33,7 +33,7 @@ services:
       - OPENWEBUI_URL=http://open-webui:8080
       - OPENWEBUI_DATA_DIR=/owui-data
       - SESSION_STORE_DATABASE_URL=postgresql+psycopg://copepod:${POSTGRES_PASSWORD:-copepod_dev}@postgres:5432/copepod_sessions
-      - SERVE_BASE_URL=${SERVE_BASE_URL:-}
+      - SERVE_BASE_URL=${SERVE_BASE_URL:-http://localhost:8000}
     command: uvicorn serve:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app

@@ -1,58 +1,52 @@
 # Copepod Assistant
 
-Shareable Docker setup for the Copepod Assistant.
+Dockerized assistant for copepod data exploration, graph production, and
+technical reporting. It runs a FastAPI/LangGraph agent behind Open WebUI.
 
-## Setup
+User-facing docs:
 
-Requirements:
+- [`CAPABILITIES.md`](CAPABILITIES.md): what the assistant can do.
+- [`MCP_CAPABILITIES.md`](MCP_CAPABILITIES.md): what the EcoTaxa MCP layer can do.
+
+## Requirements
 
 - Docker Desktop with Docker Compose
-- The values provided by the project maintainers:
-  `OPENAI_API_KEY`, `ECOTAXA_USERNAME`, `ECOTAXA_PASSWORD`
+- `OPENAI_API_KEY`
+- EcoTaxa credentials: `ECOTAXA_USERNAME`, `ECOTAXA_PASSWORD`
+- Optional: `cloudflared` for temporary public URLs
+
+## Quick Start
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/TidianeCisse777/IDEA.git
 cd IDEA
 cp .env.example .env
 ```
 
-Open `.env` and edit only these three values:
+Edit `.env` and fill only:
 
 ```dotenv
-OPENAI_API_KEY=REPLACE_WITH_THE_OPENAI_KEY
-ECOTAXA_USERNAME=REPLACE_WITH_THE_ECOTAXA_USERNAME
-ECOTAXA_PASSWORD=REPLACE_WITH_THE_ECOTAXA_PASSWORD
+OPENAI_API_KEY=...
+ECOTAXA_USERNAME=...
+ECOTAXA_PASSWORD=...
 ```
 
-Everything else is managed by the project maintainers in Docker Compose and the
-application defaults.
-
-`MCP_AUTH_TOKEN` is not an EcoTaxa credential. It is an internal token used to
-protect the local MCP service, and `./start.sh` generates it automatically in
-`.env`.
-
-EcoTaxa itself only needs `ECOTAXA_USERNAME` and `ECOTAXA_PASSWORD` here. The
-code logs in with those credentials and receives the EcoTaxa bearer token
-internally.
-
-Start the app:
+Start the stack:
 
 ```bash
 ./start.sh
 ```
 
-`./start.sh` starts the Docker containers for Postgres, MCP EcoTaxa, the agent
-API, and Open WebUI. Open WebUI is available at:
+Open WebUI:
 
 ```text
 http://localhost:3000
 ```
 
-If `cloudflared` is installed, the script also prints temporary public URLs.
+`./start.sh` starts Postgres, MCP EcoTaxa, the agent API, and Open WebUI. It
+also generates `MCP_AUTH_TOKEN` in `.env` if missing.
 
-By default, `./start.sh` does not rebuild Docker images. This avoids downloading
-and reinstalling dependencies every time. Rebuild only when you explicitly need
-to refresh the images:
+If Docker images are missing or need rebuilding:
 
 ```bash
 ./start.sh --build
@@ -60,32 +54,60 @@ to refresh the images:
 
 ## Local Agent Mode
 
-If you do not want Docker to create or start the `copepod-agent` container, run:
+Run Open WebUI, Postgres, and MCP EcoTaxa in Docker, but keep the FastAPI agent
+local:
 
 ```bash
 ./start.sh --local-agent
 ```
 
-This starts only Postgres, MCP EcoTaxa, and Open WebUI in Docker. Open WebUI then
-calls your local agent at `http://localhost:8000`, so start the agent locally in
-another terminal:
-
-```bash
-python serve.py
-```
-
-You can combine both options if needed:
+With rebuild:
 
 ```bash
 ./start.sh --local-agent --build
 ```
 
+## Health Checks
+
+```bash
+docker compose ps
+docker compose exec -T copepod-agent curl -sf http://localhost:8000/
+docker compose exec -T mcp-ecotaxa curl -sf http://localhost:8001/health
+docker compose exec -T open-webui python3 -c "import urllib.request; print(urllib.request.urlopen('http://copepod-agent:8000/v1/models').status)"
+```
+
+Expected services:
+
+- `open_webui`: `http://localhost:3000`
+- `copepod_agent`: `http://localhost:8000`
+- `mcp_ecotaxa`: `http://localhost:8001`
+- `copepod_postgres`
+
+## Tests
+
+Useful smoke/unit tests inside the agent image:
+
+```bash
+docker compose exec -T copepod-agent python -m pip install pytest pytest-asyncio
+docker compose exec -T copepod-agent python -m pytest -q tests/test_public_url.py tests/test_serve_streaming.py tests/test_openwebui_uploads.py
+docker compose exec -T copepod-agent python -m pytest -q tests/test_mcp_compose.py tests/test_mcp_health.py tests/test_shareable_setup.py tests/test_requirements.py
+```
+
+For a broader suite in a fresh environment, build the RAG index first:
+
+```bash
+docker compose exec -T copepod-agent python core/copepod_rag/build_index.py
+docker compose exec -T copepod-agent env -u SESSION_STORE_DATABASE_URL python -m pytest -q -k 'not test_export_deliverable_configures_homebrew_library_path'
+```
+
+The excluded test is macOS/Homebrew-specific and is not required for Docker
+portability.
+
 ## Stop
 
-Press `Ctrl+C` in the `./start.sh` terminal. The script stops the containers it
-started.
+If `./start.sh` is running in the foreground, press `Ctrl+C`.
 
-To stop manually:
+Or stop services manually:
 
 ```bash
 docker compose stop open-webui copepod-agent mcp-ecotaxa postgres
