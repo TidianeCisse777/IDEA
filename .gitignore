@@ -199,6 +199,15 @@ data/**
 !data/papers/Banerdt_etal_2020_NatureGeo_InitialResultsInSight.pdf
 !data/papers/Chatain_etal_2021_GRL_SeasonalVariabilityAtmosphericTurbulenceInSight.pdf
 
+# Except, allow committed zones registry (built from IHO sources, gitignored)
+!data/geo/
+!data/geo/zones_registry.geojson
+!data/geo/README.md
+# Source IHO shapefile reste ignoré (~142 MB), mais on commit son README
+data/geo/sources/**
+!data/geo/sources/
+!data/geo/sources/README.md
+
 # Ignore outputs
 outputs
 

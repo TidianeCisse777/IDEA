@@ -236,10 +236,10 @@ Règle additionnelle Phase B : après chaque gate, vérifier les tool calls rée
 > Quels projets EcoTaxa couvrent la baie de Baffin en 2024 ?
 
 **Tools attendus :**
-`get_zone_filter(zone_name="baie de Baffin")` → `find_ecotaxa_projects_in_region(bbox=..., date_range=2024)`
+`get_zone_info(zone_name="baie de Baffin")` → `find_ecotaxa_projects_in_region(bbox=..., date_range=2024)`
 
 **PASS si :**
-- Commence par `get_zone_filter`
+- Commence par `get_zone_info`
 - Utilise `find_ecotaxa_projects_in_region`, pas `find_ecotaxa_samples_in_region`
 - Combine bbox + date_range dans l'appel projet
 - N'appelle pas `query_ecotaxa`
@@ -407,7 +407,7 @@ Réutilisation du contexte du filtre précédent ou nouvel appel au même tool a
 > Quels projets EcoTaxa accessibles couvrent la baie de Baffin entre 2015 et 2024, et parmi eux lesquels attestent Calanus glacialis validé ? Donne les périodes couvertes, le nombre de samples par projet, puis recommande quel projet inspecter avant export. N'exporte rien.
 
 **Tools attendus :**
-`get_zone_filter(zone_name="baie de Baffin")` → `find_ecotaxa_projects_in_region(bbox=..., date_range=2015-2024)` → `find_ecotaxa_observations(taxon="Calanus glacialis", bbox=..., date_range=2015-2024, status="V")`
+`get_zone_info(zone_name="baie de Baffin")` → `find_ecotaxa_projects_in_region(bbox=..., date_range=2015-2024)` → `find_ecotaxa_observations(taxon="Calanus glacialis", bbox=..., date_range=2015-2024, status="V")`
 
 **PASS si :**
 - Combine bien le filtre spatial et temporel dans les deux appels de recherche

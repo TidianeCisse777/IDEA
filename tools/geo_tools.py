@@ -1,181 +1,136 @@
-"""Geographic zone filter tool for NeoLab copepod data.
+"""Geographic zone tool for NeoLab copepod data.
 
-Returns lat/lon bounds and a ready-to-use pandas filter string for named
-northern Quebec / Arctic geographic zones.
+Backed by core.geo + the polygon registry built from IHO Marine Regions v3 +
+NeoLab cuts (Cap Henrietta Maria → Pointe Louis-XIV for James/Hudson; Cap
+Hopes Advance → Cape Chidley for Ungava/Hudson Strait).
+
+Replaces the old `get_zone_filter` (hand-typed bboxes) — bbox values are now
+derived from the actual polygons so they are tight and accurate. The polygon
+WKT is also returned so downstream tools (or run_pandas) can apply a precise
+in-polygon filter rather than a loose bbox filter.
 """
 from __future__ import annotations
+
 import re
+from functools import lru_cache
+from pathlib import Path
+
 from langchain_core.tools import tool
+from shapely.geometry.base import BaseGeometry
+
+from core.geo import Registry, load_registry, resolve_zone
 
 
-# ---------------------------------------------------------------------------
-# Zone registry — each entry: (lat_min, lat_max, lon_min, lon_max, canonical)
-# lon values are negative (West), stored as negative floats for direct use
-# ---------------------------------------------------------------------------
-_ZONES: dict[str, dict] = {
-    "baie_hudson": {
-        "canonical": "Baie d'Hudson",
-        "lat_min": 51, "lat_max": 65,
-        "lon_min": -95, "lon_max": -77,
-        "aliases": [
-            "baie d'hudson", "baie hudson", "hudson bay", "hudson",
-            "bay of hudson",
-        ],
-    },
-    "baie_james": {
-        "canonical": "Baie de James",
-        "lat_min": 51, "lat_max": 55,
-        "lon_min": -82, "lon_max": -79,
-        "aliases": [
-            "baie de james", "baie james", "james bay", "james",
-            "eeyou istchee",
-        ],
-    },
-    "detroit_hudson": {
-        "canonical": "Détroit d'Hudson",
-        "lat_min": 60, "lat_max": 63,
-        "lon_min": -80, "lon_max": -64,
-        "aliases": [
-            "détroit d'hudson", "detroit d'hudson", "detroit hudson",
-            "hudson strait", "hudson strait",
-        ],
-    },
-    "baie_ungava": {
-        "canonical": "Baie d'Ungava",
-        "lat_min": 58, "lat_max": 62,
-        "lon_min": -74, "lon_max": -67,
-        "aliases": [
-            "baie d'ungava", "baie ungava", "ungava bay", "ungava",
-        ],
-    },
-    "mer_labrador": {
-        "canonical": "Mer du Labrador",
-        "lat_min": 53, "lat_max": 65,
-        "lon_min": -64, "lon_max": -42,
-        "aliases": [
-            "mer du labrador", "mer labrador", "labrador sea", "labrador",
-        ],
-    },
-    "hawke_channel": {
-        "canonical": "Hawke Channel",
-        "lat_min": 52, "lat_max": 56,
-        "lon_min": -57, "lon_max": -53,
-        "aliases": [
-            "hawke channel", "hawke", "hc", "chenal hawke",
-        ],
-    },
-    "baie_baffin": {
-        "canonical": "Baie de Baffin",
-        "lat_min": 66, "lat_max": 83,
-        "lon_min": -80, "lon_max": -60,
-        "aliases": [
-            "baie de baffin", "baie baffin", "baffin bay", "baffin",
-        ],
-    },
-    "mer_beaufort": {
-        "canonical": "Mer de Beaufort",
-        "lat_min": 68, "lat_max": 80,
-        "lon_min": -165, "lon_max": -120,
-        "aliases": [
-            "mer de beaufort", "mer beaufort", "beaufort sea", "beaufort",
-        ],
-    },
-    "arctique": {
-        "canonical": "Arctique / Amundsen",
-        "lat_min": 65, "lat_max": 90,
-        "lon_min": -180, "lon_max": 180,
-        "aliases": [
-            "arctique", "arctic", "amundsen", "polaire",
-        ],
-    },
-    "nunavik": {
-        "canonical": "Nunavik",
-        "lat_min": 55, "lat_max": 63,
-        "lon_min": -82, "lon_max": -64,
-        "aliases": [
-            "nunavik", "nord québécois", "nord quebecois",
-            "québec nordique", "quebec nordique",
-        ],
-    },
-}
+_REGISTRY_PATH = Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
 
 
-def _build_filter(z: dict) -> str:
-    lat_min = z["lat_min"]
-    lat_max = z["lat_max"]
-    lon_min = z["lon_min"]
-    lon_max = z["lon_max"]
-    return (
-        f"df["
-        f"(df['latitude'] >= {lat_min}) & (df['latitude'] <= {lat_max}) & "
-        f"(df['longitude'] >= {lon_min}) & (df['longitude'] <= {lon_max})"
-        f"]"
-    )
+@lru_cache(maxsize=1)
+def _registry() -> Registry:
+    return load_registry(_REGISTRY_PATH)
 
 
 def _normalise(text: str) -> str:
     return re.sub(r"[''`]", "'", text.lower().strip())
 
 
-def _match_zone(zone_name: str) -> dict | None:
+def _match_canonical(zone_name: str) -> str | None:
+    """Résout un nom utilisateur vers le canonical du registry, via aliases.
+
+    Stratégie : match exact (normalisé) sur canonical ou aliases, puis
+    fallback substring (tolérant aux fautes courantes type 'baie ungava').
+    """
     key = _normalise(zone_name)
-    # Exact alias match
-    for z in _ZONES.values():
-        if key in [_normalise(a) for a in z["aliases"]]:
-            return z
-    # Substring match
-    for z in _ZONES.values():
-        for alias in z["aliases"]:
-            if key in _normalise(alias) or _normalise(alias) in key:
-                return z
+    reg = _registry()
+    for zone in reg.zones:
+        if key == _normalise(zone.canonical):
+            return zone.canonical
+        for alias in zone.aliases:
+            if key == _normalise(alias):
+                return zone.canonical
+    for zone in reg.zones:
+        candidates = [zone.canonical, *zone.aliases]
+        for cand in candidates:
+            n = _normalise(cand)
+            if key in n or n in key:
+                return zone.canonical
     return None
 
 
-@tool
-def get_zone_filter(zone_name: str) -> dict:
-    """Return bounding-box coordinates and a pandas filter string for a named
-    NeoLab geographic zone.
+def _bbox_from_polygon(polygon: BaseGeometry) -> dict[str, float]:
+    minx, miny, maxx, maxy = polygon.bounds
+    return {"south": miny, "west": minx, "north": maxy, "east": maxx}
 
-    Use this tool whenever the user asks to filter, select, or subset stations
-    or observations by geographic zone (e.g. "all Labrador Sea stations",
-    "filter to Hawke Channel", "stations in Hudson Bay").
+
+def _pandas_filter(bbox: dict[str, float]) -> str:
+    return (
+        "df["
+        f"(df['latitude'] >= {bbox['south']}) & (df['latitude'] <= {bbox['north']}) & "
+        f"(df['longitude'] >= {bbox['west']}) & (df['longitude'] <= {bbox['east']})"
+        "]"
+    )
+
+
+@tool
+def get_zone_info(zone_name: str) -> dict:
+    """Return the canonical polygon, bbox, and metadata for a named NeoLab
+    geographic zone.
+
+    Use this tool whenever the user mentions a named zone (e.g. "Baie d'Ungava",
+    "mer du Labrador", "Hudson Bay", "Hawke Channel", "Arctique"). The result
+    gives BOTH:
+    - bbox: lat/lon bounds (decimal degrees) for legacy bbox-based downstream
+      tools (find_ecotaxa_samples_in_region, Bio-ORACLE bbox sampling,
+      run_pandas filtering by latitude/longitude).
+    - polygon_wkt: precise polygon (WKT, WGS84) for in-polygon post-filtering
+      via run_pandas + shapely. Use polygon_wkt when station-level precision
+      matters (e.g. distinguishing Baie d'Ungava from Détroit d'Hudson).
 
     Parameters
     ----------
     zone_name : str
-        French, English, or common name of the zone. Supported zones:
-        Hawke Channel, Mer du Labrador, Détroit d'Hudson, Baie d'Ungava,
-        Baie d'Hudson, Baie de James, Baie de Baffin, Mer de Beaufort,
-        Arctique / Amundsen, Nunavik.
+        French, English, or common name of the zone (case-insensitive, aliases
+        accepted). Supported zones:
+        - Nord QC: Baie d'Hudson, Baie de James, Détroit d'Hudson,
+                   Baie d'Ungava, Nunavik, Hawke Channel
+        - Arctique canadien: Baie de Baffin, Détroit de Davis, Mer du Labrador
+        - Saint-Laurent: Golfe du Saint-Laurent
+        - Arctique élargi: Mer de Beaufort, Mer des Tchouktches,
+                           Mer du Groenland, Mer de Lincoln, Arctique
 
     Returns
     -------
     dict with keys:
-        - zone        : canonical zone name
-        - lat_min/max : latitude bounds (decimal degrees N)
-        - lon_min/max : longitude bounds (decimal degrees, negative = W)
-        - filter      : ready-to-use pandas expression, e.g.
-                        df[(df['latitude'] >= 53) & ...]
-        - usage_hint  : short note on which columns are expected
+        - canonical     : canonical zone name (FR)
+        - source        : where the polygon comes from (IHO v3, NeoLab cut,
+                          NeoLab composite, etc.)
+        - bbox          : {south, west, north, east} in decimal degrees
+                          (longitude negative for West, latitude positive N)
+        - polygon_wkt   : precise polygon as WKT (WGS84)
+        - aliases       : list of accepted alternate names
+        - pandas_filter : ready-to-use df expression based on bbox
+                          (e.g. df[(df['latitude'] >= ...) & ...])
     """
-    match = _match_zone(zone_name)
-    if match is None:
-        available = ", ".join(z["canonical"] for z in _ZONES.values())
+    canonical = _match_canonical(zone_name)
+    if canonical is None:
         return {
             "error": f"Zone '{zone_name}' not recognised.",
-            "available_zones": available,
+            "available_zones": [z.canonical for z in _registry().zones],
         }
 
+    zone = resolve_zone(canonical, registry=_registry())
+    polygon = zone["polygon"]
+    bbox = _bbox_from_polygon(polygon)
+
+    aliases = next(
+        (z.aliases for z in _registry().zones if z.canonical == canonical),
+        (),
+    )
+
     return {
-        "zone": match["canonical"],
-        "lat_min": match["lat_min"],
-        "lat_max": match["lat_max"],
-        "lon_min": match["lon_min"],
-        "lon_max": match["lon_max"],
-        "filter": _build_filter(match),
-        "usage_hint": (
-            "Apply the filter expression to any DataFrame that has 'latitude' "
-            "and 'longitude' columns (decimal degrees, longitude negative for West). "
-            "Example: zone_df = " + _build_filter(match)
-        ),
+        "canonical": canonical,
+        "source": zone["source"],
+        "bbox": bbox,
+        "polygon_wkt": polygon.wkt,
+        "aliases": list(aliases),
+        "pandas_filter": _pandas_filter(bbox),
     }

@@ -501,7 +501,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
 
         Parameters
         ----------
-        zones : list of zone names — any name accepted by get_zone_filter:
+        zones : list of zone names — any name accepted by get_zone_info:
             "Hawke Channel", "Mer du Labrador", "Baie d'Hudson",
             "Détroit d'Hudson", "Baie d'Ungava", "Baie de Baffin",
             "Mer de Beaufort", "Arctique", "Nunavik", "Baie de James"
@@ -512,7 +512,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         target_year : optional horizon such as 2050. If omitted, ERDDAP's
                       last available time slice is used.
         """
-        from tools.geo_tools import get_zone_filter
+        from tools.geo_tools import get_zone_info
 
         # Garde-fou : si une session contient déjà un DataFrame multi-lignes
         # avec lat/lon, signaler que le couple_zooplankton_bio_oracle est plus
@@ -540,12 +540,13 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         rows_out = []
         errors = []
         for zone_name in zones:
-            zf = get_zone_filter.invoke({"zone_name": zone_name})
+            zf = get_zone_info.invoke({"zone_name": zone_name})
             if "error" in zf:
                 errors.append(f"{zone_name}: {zf['error']}")
                 continue
-            lat_c = (zf["lat_min"] + zf["lat_max"]) / 2
-            lon_c = (zf["lon_min"] + zf["lon_max"]) / 2
+            bbox = zf["bbox"]
+            lat_c = (bbox["south"] + bbox["north"]) / 2
+            lon_c = (bbox["west"] + bbox["east"]) / 2
             try:
                 preview = _preview_bio_oracle_point({
                     "variable": variable,
@@ -559,7 +560,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 first_row = preview["rows"][0] if preview.get("rows") else {}
                 val = first_row.get(val_key) if first_row else None
                 rows_out.append({
-                    "zone": zf["zone"],
+                    "zone": zf["canonical"],
                     "lat_centre": round(lat_c, 2),
                     "lon_centre": round(lon_c, 2),
                     "variable": variable,

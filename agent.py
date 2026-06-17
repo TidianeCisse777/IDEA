@@ -22,7 +22,7 @@ from tools.sql_workspace import make_sql_tools
 from tools.rag_tool import make_rag_tool
 from tools.skill_tool import make_skill_tool
 from tools.deliverable_tool import export_deliverable
-from tools.geo_tools import get_zone_filter
+from tools.geo_tools import get_zone_info
 
 load_dotenv()
 
@@ -232,7 +232,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         + make_amundsen_tools(thread_id)
         + make_ogsl_tools(thread_id)
         + make_ecopart_tools(thread_id)
-        + [make_rag_tool(), make_skill_tool(), export_deliverable, get_zone_filter]
+        + [make_rag_tool(), make_skill_tool(), export_deliverable, get_zone_info]
     )
     try:
         tools += make_sql_tools(thread_id)

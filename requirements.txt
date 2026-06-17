@@ -45,3 +45,6 @@ chardet>=5.0.0
 requests>=2.30.0
 weasyprint>=60.0
 markdown>=3.5.0
+shapely>=2.0.0
+pyproj>=3.6.0
+pyshp>=2.3.0

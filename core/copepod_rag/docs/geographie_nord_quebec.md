@@ -12,73 +12,46 @@ Le nord du Québec désigne la région au-delà du 55e parallèle, dominée par 
 
 ## 1. Masses d'eau et mers
 
+> **Filtrage spatial** : pour obtenir la bbox ou le polygone d'une de ces zones, appeler `get_zone_info(zone_name=...)`. Le tool renvoie le polygone IHO/NeoLab précis et la bbox dérivée — ne pas coder en dur des bornes lat/lon.
+
 ### Baie d'Hudson
-- **Latitude** : 51°N – 65°N | **Longitude** : 77°W – 95°W
 - Mer intérieure peu profonde (profondeur moyenne ~150 m), entourée du Nunavik (est), de l'Ontario et du Manitoba (sud-ouest), du Nunavut (nord).
 - Couverture de glace saisonnière : novembre à juillet dans le nord.
 - Fort apport d'eau douce des rivières québécoises (Grande Baleine, Nastapoka, Rupert, Eastmain).
 - Stratification verticale marquée en été due au dégel des glaces.
 - Espèces dominantes : *Calanus hyperboreus*, *C. glacialis*, *Pseudocalanus* spp.
 
-```python
-mask = (df['latitude'] >= 51) & (df['latitude'] <= 65) & (df['longitude'] >= -95) & (df['longitude'] <= -77)
-```
-
 ### Baie de James (Baie James)
-- **Latitude** : 51°N – 55°N | **Longitude** : 79°W – 82°W
-- Extension sud de la baie d'Hudson. Peu profonde (~50 m), dessalinisation importante par les rivières Rupert, Broadback, Nottaway, Eastmain.
+- Extension sud de la baie d'Hudson, séparée par la ligne Cap Henrietta Maria → Pointe Louis-XIV. Peu profonde (~50 m), dessalinisation importante par les rivières Rupert, Broadback, Nottaway, Eastmain.
 - Zone estuarienne à faible salinité (< 20 PSU en été).
 - Territoire des Cris (Eeyou Istchee) sur la rive est.
 
-```python
-mask = (df['latitude'] >= 51) & (df['latitude'] <= 55) & (df['longitude'] >= -82) & (df['longitude'] <= -79)
-```
-
 ### Détroit d'Hudson
-- **Latitude** : 60°N – 63°N | **Longitude** : 64°W – 80°W
 - Passage entre la baie d'Hudson et la mer du Labrador. Largeur ~200 km, profondeur jusqu'à 900 m dans le chenal central.
 - Courants de marée très forts. Échange bidirectionnel : eau atlantique (est → ouest en profondeur), eau de la baie d'Hudson (ouest → est en surface).
 - Zone de forte turbulence et productivité biologique.
 - Hawke Channel est localisé dans la partie orientale du détroit d'Hudson.
 
-```python
-mask = (df['latitude'] >= 60) & (df['latitude'] <= 63) & (df['longitude'] >= -80) & (df['longitude'] <= -64)
-```
-
 ### Baie d'Ungava
-- **Latitude** : 58°N – 62°N | **Longitude** : 67°W – 74°W
-- Mer semi-fermée au nord-est du Nunavik. Macrées parmi les plus importantes au monde (jusqu'à 12 m).
+- Mer semi-fermée au nord-est du Nunavik, séparée du Détroit d'Hudson par la ligne Cap Hopes Advance → Cape Chidley. Marées parmi les plus importantes au monde (jusqu'à 12 m).
 - Apport d'eau douce : rivières George, Leaf (aux Feuilles), Arnaud (Payne).
 - Zone d'alimentation pour baleines bélugas et ours polaires.
 - Faible couverture de glace comparée à la baie d'Hudson.
 
-```python
-mask = (df['latitude'] >= 58) & (df['latitude'] <= 62) & (df['longitude'] >= -74) & (df['longitude'] <= -67)
-```
-
 ### Mer du Labrador
-- **Latitude** : 53°N – 65°N | **Longitude** : 42°W – 64°W
 - Mer ouverte entre le Québec-Labrador (ouest) et le Groenland (est).
 - Zone de formation d'eau profonde (convection hivernale profonde, NADW).
 - Courant du Labrador : courant froid (~0-4°C, salinité ~33 PSU) qui coule vers le sud le long de la côte.
 - Forte productivité printanière liée à la fonte des glaces (bloom phytoplancton).
 - Zone de diversité élevée de copépodes (*C. finmarchicus*, *C. hyperboreus*, *C. glacialis*).
 
-```python
-mask = (df['latitude'] >= 53) & (df['latitude'] <= 65) & (df['longitude'] >= -64) & (df['longitude'] <= -42)
-```
-
 ### Hawke Channel
-- **Latitude** : 52°N – 56°N | **Longitude** : 53°W – 57°W
-- Chenal sous-marin dans la partie orientale du détroit d'Hudson / côte du Labrador.
+- Chenal sous-marin sur le plateau labradorien, à l'est de la Mer du Labrador (NB : la formulation historique « partie orientale du détroit d'Hudson » est imprécise — Hawke Channel est sur la côte du Labrador, pas dans le Détroit d'Hudson).
 - Zone d'étude principale de la campagne NeoLab 2024 (stations HC-02 à HC-32).
 - Profondeurs variables : de ~100 m sur les plateaux à >500 m dans le chenal central.
-- Influence du courant du Labrador (eaux froides et denses) et apports d'eau de la baie d'Hudson.
+- Influence du courant du Labrador (eaux froides et denses).
 - 31 stations d'échantillonnage disposées en grille régulière (~1° de résolution).
-
-```python
-mask = (df['latitude'] >= 52) & (df['latitude'] <= 56) & (df['longitude'] >= -57) & (df['longitude'] <= -53)
-```
+- Le polygone NeoLab actuel est une bbox approximative — `get_zone_info("Hawke Channel")` renvoie un carré 52–56°N × 53–57°W (TODO : remplacer par convex hull des stations HC-* + buffer 25 km).
 
 **Stations HC (Hawke Channel 2024) :**
 

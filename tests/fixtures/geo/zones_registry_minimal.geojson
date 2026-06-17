@@ -1,0 +1,25 @@
+{
+  "type": "FeatureCollection",
+  "name": "zones_registry_minimal",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "canonical": "Baie d'Ungava",
+        "aliases": ["Ungava Bay", "Ungava"],
+        "source": "IHO + NeoLab cut",
+        "name_en": "Ungava Bay"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-69.5, 58.0],
+          [-65.0, 58.0],
+          [-65.0, 60.6],
+          [-69.5, 60.6],
+          [-69.5, 58.0]
+        ]]
+      }
+    }
+  ]
+}

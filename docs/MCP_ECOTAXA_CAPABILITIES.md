@@ -43,7 +43,7 @@ Chemin attendu :
 
 ```text
 zone nommée
-→ get_zone_filter
+→ get_zone_info
 → find_ecotaxa_projects_in_region
 ```
 
@@ -57,7 +57,7 @@ et parmi eux lesquels attestent Calanus glacialis validé ?
 Tool calls validés dans LangSmith :
 
 ```text
-get_zone_filter("baie de Baffin")
+get_zone_info("baie de Baffin")
 → find_ecotaxa_projects_in_region(bbox=baie_de_Baffin, date_range=2015-2024)
 → find_ecotaxa_observations(taxon="Calanus glacialis", bbox=baie_de_Baffin, date_range=2015-2024, status="V")
 ```

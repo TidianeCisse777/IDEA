@@ -1,94 +1,57 @@
 # Zones géographiques NeoLab — Amundsen et campagnes arctiques
 
-Mots-clés : zones géographiques, baie de Baffin, mer de Beaufort, golfe du Saint-Laurent, baie d'Hudson, détroit de Davis, Arctique canadien, stations, latitude, longitude, filtrage spatial
+Mots-clés : zones géographiques, baie de Baffin, mer de Beaufort, golfe du Saint-Laurent, baie d'Hudson, baie de James, baie d'Ungava, détroit d'Hudson, détroit de Davis, Hawke Channel, Nunavik, Arctique, stations, latitude, longitude, filtrage spatial
 
-Ce document liste les zones géographiques couvertes par les campagnes NeoLab et les croisières Amundsen. Pour filtrer les données par zone, utiliser les bornes lat/lon ci-dessous sur les colonnes `latitude`, `longitude` (données labo) ou `obj_latitude`, `obj_longitude` (EcoTaxa).
+## Comment filtrer les données par zone
 
----
+**Toujours appeler le tool `get_zone_info(zone_name=...)`** pour obtenir le polygone précis et la bbox d'une zone nommée. Le tool renvoie :
 
-## Baie de Baffin
+- `canonical` : nom canonique en français
+- `source` : provenance du polygone (IHO Marine Regions v3, NeoLab cut, NeoLab composite)
+- `bbox` : `{south, west, north, east}` — enveloppe rectangulaire, à utiliser pour les requêtes EcoTaxa `find_*_in_region` ou pour un pré-filtre pandas rapide
+- `polygon_wkt` : polygone précis (WKT, WGS84) — à utiliser via `shapely.wkt.loads(...).contains(...)` quand la précision station-niveau compte (ex. distinguer Baie d'Ungava de Détroit d'Hudson, Baie de James de Baie d'Hudson)
+- `pandas_filter` : expression `df[(df['latitude'] >= ...) & ...]` prête à coller dans `run_pandas` pour un filtre bbox
 
-- **Latitude** : 66°N – 78°N
-- **Longitude** : 58°W – 80°W
-- **Stations typiques** : FoxSIPP, BB, Baffin
-- **Contexte** : Zone de forte concentration de copépodes arctiques (Calanus hyperboreus, C. glacialis). Croisières Amundsen récurrentes.
+**Ne jamais coder en dur des bornes lat/lon dans une réponse ou un script** — les valeurs viennent toujours du tool.
 
-**Filtre pandas** :
-```python
-mask = (df['latitude'] >= 66) & (df['latitude'] <= 78) & (df['longitude'] >= -80) & (df['longitude'] <= -58)
-```
+## Zones couvertes (contexte scientifique)
 
----
+### Nord du Québec / Arctique de l'Est
 
-## Mer de Beaufort
+- **Baie d'Hudson** — eaux peu profondes (max ~250 m), saisonnières, couverture de glace importante en hiver. Polygone IHO + coupe pour séparer Baie de James au sud.
+- **Baie de James** — extension méridionale de la Baie d'Hudson, eaux très peu profondes, fortement influencée par les apports d'eau douce (rivières La Grande, Eastmain, Rupert). Limite Cap Henrietta Maria / Pointe Louis-XIV.
+- **Détroit d'Hudson** — passage entre la Baie d'Hudson et la Mer du Labrador. Forts courants, échanges d'eau atlantique. Polygone IHO + coupe pour séparer la Baie d'Ungava au sud-est.
+- **Baie d'Ungava** — bras de mer entre Cap Hopes Advance et Cape Chidley, ouvert sur le Détroit d'Hudson. Eaux saisonnières, communautés zooplanctoniques distinctes. Stations typiques NeoLab/Amundsen.
+- **Nunavik** — composite administratif des quatre zones ci-dessus (eaux bordant le territoire administratif du Nunavik).
 
-- **Latitude** : 68°N – 76°N
-- **Longitude** : 120°W – 145°W
-- **Stations typiques** : CB, Beaufort, ArcticNet
-- **Contexte** : Zone de glace saisonnière, données CTD et zooplancton Amundsen.
+### Arctique canadien
 
-**Filtre pandas** :
-```python
-mask = (df['latitude'] >= 68) & (df['latitude'] <= 76) & (df['longitude'] >= -145) & (df['longitude'] <= -120)
-```
+- **Baie de Baffin** — forte concentration de copépodes arctiques (*Calanus hyperboreus*, *C. glacialis*). Croisières Amundsen récurrentes. Stations typiques FoxSIPP, BB, Baffin.
+- **Détroit de Davis** — passage entre Baie de Baffin et Atlantique Nord. Zone de mélange de masses d'eau arctiques et atlantiques.
+- **Mer du Labrador** — convection profonde hivernale, masse d'eau distinctive (LSW). Bordée à l'est par Hawke Channel sur le plateau continental.
+- **Hawke Channel** — canyon du plateau continental labradorien, échantillonnage NeoLab récurrent (stations HC-*). Le polygone est une approximation bbox carrée (TODO : remplacer par une enveloppe convexe + buffer de 25 km dérivée des stations HC-*).
 
----
+### Saint-Laurent
 
-## Golfe du Saint-Laurent
+- **Golfe du Saint-Laurent** — zone côtière et estuarienne, données NeoLab labo + OGSL. Stations IML, Rimouski, etc.
 
-- **Latitude** : 45°N – 51°N
-- **Longitude** : 56°W – 67°W
-- **Stations typiques** : GSL, IML, Rimouski
-- **Contexte** : Zone côtière et estuarienne, données labo NeoLab et OGSL.
+### Arctique élargi (circumpolaire)
 
-**Filtre pandas** :
-```python
-mask = (df['latitude'] >= 45) & (df['latitude'] <= 51) & (df['longitude'] >= -67) & (df['longitude'] <= -56)
-```
+- **Mer de Beaufort** — zone de glace saisonnière, données CTD et zooplancton Amundsen. Stations CB, Beaufort, ArcticNet.
+- **Mer des Tchouktches**, **Mer du Groenland**, **Mer de Lincoln** — secteurs arctiques périphériques, polygones IHO standards.
+- **Arctique** — composite circumpolaire incluant le bassin polaire IHO + Mers de Beaufort, Tchouktches, Lincoln, Groenland. À utiliser quand l'utilisateur dit « Arctique » de manière générique sans préciser le secteur.
 
----
+## Aliases acceptés
 
-## Baie d'Hudson
+Le tool `get_zone_info` accepte des aliases insensibles à la casse, en français comme en anglais — ex. `"Baie d'Ungava"`, `"ungava bay"`, `"Ungava"`, `"baie ungava"` résolvent tous vers `Baie d'Ungava`. Si l'utilisateur prononce un nom non reconnu, le tool retourne un dict `{"error": ..., "available_zones": [...]}`.
 
-- **Latitude** : 51°N – 65°N
-- **Longitude** : 77°W – 95°W
-- **Stations typiques** : HB, Hudson
-- **Contexte** : Zone peu profonde, saisonnière. Couverture de glace importante en hiver.
+## Colonnes de coordonnées attendues
 
-**Filtre pandas** :
-```python
-mask = (df['latitude'] >= 51) & (df['latitude'] <= 65) & (df['longitude'] >= -95) & (df['longitude'] <= -77)
-```
+Quand un polygone ou un bbox est appliqué à un DataFrame :
 
----
+- Tables labo NeoLab : colonnes `latitude`, `longitude` (décimales, longitude négative pour ouest)
+- Tables EcoTaxa : colonnes `obj_latitude`, `obj_longitude` (objets) ou `lat`, `lon` (samples), selon le niveau d'export
+- Tables Amundsen CTD : colonnes `latitude`, `longitude`
+- Tables Bio-ORACLE : colonnes `latitude`, `longitude` (un point par requête)
 
-## Détroit de Davis
-
-- **Latitude** : 63°N – 70°N
-- **Longitude** : 52°W – 68°W
-- **Stations typiques** : DS, Davis
-- **Contexte** : Passage entre baie de Baffin et Atlantique Nord. Zone de mélange de masses d'eau.
-
-**Filtre pandas** :
-```python
-mask = (df['latitude'] >= 63) & (df['latitude'] <= 70) & (df['longitude'] >= -68) & (df['longitude'] <= -52)
-```
-
----
-
-## Arctique canadien (général)
-
-Regroupe l'ensemble des zones au nord de 60°N dans les eaux canadiennes.
-
-**Filtre pandas** :
-```python
-mask = df['latitude'] >= 60
-```
-
----
-
-## Notes d'utilisation
-
-- Les noms de zones peuvent varier selon le fichier : utiliser les bornes lat/lon plutôt que les noms de stations.
-- Si le fichier contient `STATION_NAME`, chercher les préfixes associés à la zone (ex. "FoxSIPP" → baie de Baffin).
-- Pour une carte, tracer `longitude` en X et `latitude` en Y avec `scatter` ou `folium`.
+Vérifier le nom exact via `load_file` avant de filtrer — ne pas supposer.
