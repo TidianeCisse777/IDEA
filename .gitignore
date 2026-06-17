@@ -22,6 +22,8 @@ coverage.xml
 logs/
 .git
 .langgraph_api/
+.agents/
+.claude/
 .mypy_cache
 .pytest_cache
 .hypothesis
@@ -99,7 +101,7 @@ cover/
 docs/_build/
 
 # Internal project notes; keep user-facing docs at repository root.
-docs/
+/docs/
 !docs/.gitkeep
 
 # PyBuilder
@@ -131,8 +133,8 @@ celerybeat.pid
 
 # Environments
 .env
-!.env.example
 .env.*
+!.env.example
 .venv
 env/
 venv/
