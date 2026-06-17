@@ -31,6 +31,7 @@ services:
       - .env
     environment:
       - OPENWEBUI_URL=http://open-webui:8080
+      - OPENWEBUI_DATA_DIR=/owui-data
       - SESSION_STORE_DATABASE_URL=postgresql+psycopg://copepod:${POSTGRES_PASSWORD:-copepod_dev}@postgres:5432/copepod_sessions
       - SERVE_BASE_URL=${SERVE_BASE_URL:-}
     command: uvicorn serve:app --host 0.0.0.0 --port 8000 --reload
@@ -41,6 +42,7 @@ services:
       - copepod_logs:/app/logs
       - copepod_static:/app/static
       - copepod_models:/app/models
+      - open_webui_data:/owui-data:ro
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
