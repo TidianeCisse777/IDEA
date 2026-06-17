@@ -37,6 +37,7 @@ services:
     volumes:
       - .:/app
       - copepod_data:/app/data
+      - ./data/geo:/app/data/geo:ro
       - copepod_logs:/app/logs
       - copepod_static:/app/static
       - copepod_models:/app/models
