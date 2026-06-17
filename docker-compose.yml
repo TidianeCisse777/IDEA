@@ -31,7 +31,7 @@ services:
       - .env
     environment:
       - OPENWEBUI_URL=http://open-webui:8080
-      - SESSION_STORE_DATABASE_URL=postgresql://copepod:${POSTGRES_PASSWORD:-copepod_dev}@postgres:5432/copepod_sessions
+      - SESSION_STORE_DATABASE_URL=postgresql+psycopg://copepod:${POSTGRES_PASSWORD:-copepod_dev}@postgres:5432/copepod_sessions
       - SERVE_BASE_URL=${SERVE_BASE_URL:-}
     command: uvicorn serve:app --host 0.0.0.0 --port 8000 --reload
     volumes:
