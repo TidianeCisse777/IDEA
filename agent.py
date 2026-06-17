@@ -220,7 +220,7 @@ async def arepair_invalid_tool_history(agent, config: dict) -> bool:
 def make_agent(thread_id: str, user_id: str = "anonymous"):
     """Crée un agent ReAct copépodes pour un thread donné."""
     llm = ChatOpenAI(
-        model=os.getenv("LLM_MODEL", "openai/gpt-5.4-mini"),
+        model=os.getenv("LLM_MODEL", "gpt-5.4-mini"),
         max_retries=2,
         max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "16000")),
     )

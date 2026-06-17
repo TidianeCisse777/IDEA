@@ -6,7 +6,7 @@ import os
 
 def serve_base_url() -> str:
     """Return the public base URL for the local serve.py API."""
-    return os.getenv("SERVE_BASE_URL", "http://localhost:8000").rstrip("/")
+    return (os.getenv("SERVE_BASE_URL") or "http://localhost:8000").rstrip("/")
 
 
 def download_url(filename: str) -> str:

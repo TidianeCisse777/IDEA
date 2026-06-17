@@ -6,6 +6,8 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
+import sqlite3
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -17,6 +19,25 @@ logger = logging.getLogger(__name__)
 # Override possible via OPENWEBUI_CONTAINER dans .env.
 DEFAULT_WEBUI_CONTAINER = os.getenv("OPENWEBUI_CONTAINER", "open_webui")
 
+# Chemin du volume open_webui_data monté en read-only dans le container agent.
+# Quand cette variable est définie (mode containerisé propre), on lit le
+# SQLite et les uploads OWUI directement depuis le filesystem au lieu de
+# faire `docker exec` (qui requerrait le binaire docker dans l'image agent).
+_OPENWEBUI_DATA_DIR = os.getenv("OPENWEBUI_DATA_DIR")
+# Préfixe du path que l'OWUI stocke en DB (/app/backend/data/uploads/...). On
+# le remplace par _OPENWEBUI_DATA_DIR pour résoudre côté agent.
+_OPENWEBUI_INTERNAL_DATA_DIR = "/app/backend/data"
+
+
+def _translate_owui_path(container_path: str) -> Path | None:
+    """Map un chemin OWUI vers la vue agent quand OPENWEBUI_DATA_DIR est set."""
+    if not _OPENWEBUI_DATA_DIR:
+        return None
+    if not container_path.startswith(_OPENWEBUI_INTERNAL_DATA_DIR):
+        return None
+    relative = container_path[len(_OPENWEBUI_INTERNAL_DATA_DIR):].lstrip("/")
+    return Path(_OPENWEBUI_DATA_DIR) / relative
+
 
 def _copy_from_webui_container(
     container_path: str,
@@ -25,6 +46,16 @@ def _copy_from_webui_container(
     webui_container: str,
 ) -> None:
     local_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Mode containerisé propre : on lit depuis le volume OWUI bind-mounté.
+    mounted = _translate_owui_path(container_path)
+    if mounted is not None:
+        if not mounted.exists():
+            raise FileNotFoundError(f"{mounted} (OWUI bind-mount)")
+        shutil.copyfile(mounted, local_path)
+        return
+
+    # Legacy : docker exec (requiert le binaire docker dans l'image).
     with open(local_path, "wb") as out_f:
         result = subprocess.run(
             ["docker", "exec", webui_container, "cat", container_path],
@@ -237,6 +268,42 @@ def _get_chat_files_from_db(
         logger.warning("chat_files_db: chat_id format invalide %s", chat_id[:40])
         return []
 
+    # Mode containerisé propre : lecture directe du SQLite via bind-mount.
+    if _OPENWEBUI_DATA_DIR:
+        db_path = Path(_OPENWEBUI_DATA_DIR) / "webui.db"
+        if not db_path.exists():
+            logger.warning("chat_files_db: %s missing under OPENWEBUI_DATA_DIR", db_path)
+            return []
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                rows = conn.execute(
+                    "SELECT f.id, f.filename, f.path, f.meta "
+                    "FROM chat_file cf JOIN file f ON cf.file_id = f.id "
+                    "WHERE cf.chat_id = ? "
+                    "ORDER BY cf.created_at DESC LIMIT ?",
+                    (chat_id, limit),
+                ).fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            logger.warning("chat_files_db_sqlite_error: %s", str(exc)[:200])
+            return []
+        import json as _json
+        files: list[dict] = []
+        for r in rows:
+            file_id, filename, path, meta_raw = r
+            try:
+                content_type = (_json.loads(meta_raw or "{}") or {}).get("content_type", "")
+            except Exception:
+                content_type = ""
+            files.append({
+                "id": file_id, "filename": filename,
+                "path": path, "content_type": content_type,
+            })
+        return files
+
+    # Legacy : docker exec dans le container OWUI.
     script = (
         "import sqlite3,json,sys;"
         "c=sqlite3.connect('/app/backend/data/webui.db');"
@@ -248,10 +315,14 @@ def _get_chat_files_from_db(
         "[(print(json.dumps({'id':r[0],'filename':r[1],'path':r[2],"
         "'content_type':(json.loads(r[3] or '{}').get('content_type',''))}))) for r in rows]"
     )
-    result = subprocess.run(
-        ["docker", "exec", webui_container, "python3", "-c", script],
-        capture_output=True, text=True, timeout=5,
-    )
+    try:
+        result = subprocess.run(
+            ["docker", "exec", webui_container, "python3", "-c", script],
+            capture_output=True, text=True, timeout=5,
+        )
+    except FileNotFoundError:
+        logger.warning("chat_files_db: docker CLI unavailable and OPENWEBUI_DATA_DIR not set")
+        return []
     if result.returncode != 0:
         logger.warning("chat_files_db_error: %s", result.stderr.strip()[:200])
         return []
