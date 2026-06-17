@@ -12,6 +12,7 @@ def test_compose_defines_mcp_ecotaxa_service():
     assert service["env_file"] == [".env"]
     assert service["build"]["dockerfile"] == "Dockerfile.mcp"
     assert service["image"] == "ghcr.io/tidianecisse777/mcp-ecotaxa:latest"
+    assert service["pull_policy"] == "missing"
     assert service["command"] == (
         "uvicorn core.mcp.ecotaxa_server:create_app "
         "--factory --host 0.0.0.0 --port 8001 --reload"

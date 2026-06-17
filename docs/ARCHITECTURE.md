@@ -181,7 +181,7 @@ L'embedding est calculé par OpenAI (via Open WebUI quand `BYPASS_EMBEDDING_AND_
 
 ## Open WebUI : intégration spécifique
 
-- **`OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1`** — Open WebUI pointe sur l'agent.
+- **`OPENAI_API_BASE_URL=http://copepod-agent:8000/v1`** — Open WebUI pointe sur le container agent dans le réseau Docker.
 - **`RAG_TEMPLATE=[query]`** — sans ça, Open WebUI injecte un template `### Task:…` qui masque le message original et `_is_internal_prompt` le filtre. Le commentaire dans `docker-compose.yml` documente la subtilité.
 - **`BYPASS_EMBEDDING_AND_RETRIEVAL=true`** — on désactive le RAG natif d'Open WebUI : c'est l'agent qui gère son RAG copépodes.
 - **Feedback polling** — `_feedback_polling_loop` interroge Open WebUI toutes les N secondes via `OPENWEBUI_URL` et remonte les 👍/👎 en signal LangSmith/Langfuse, mappé sur `run_id` du tour correspondant.

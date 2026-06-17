@@ -39,24 +39,17 @@ cp .env.example .env
 nano .env
 ```
 
-Variables obligatoires dans `.env` :
+Pour l'installation standard, ne modifier que ces variables dans `.env` :
 
 ```env
-# LLM
 OPENAI_API_KEY=sk-...
-LLM_MODEL=openai/gpt-4o-mini
-
-# EcoTaxa / EcoPart
-ECOTAXA_USER=...
+ECOTAXA_USERNAME=...
 ECOTAXA_PASSWORD=...
-
-# Base de données sessions
-POSTGRES_PASSWORD=choisir_un_mot_de_passe_fort
-
-# Tracing (optionnel)
-LANGSMITH_API_KEY=...
-LANGCHAIN_TRACING_V2=true
 ```
+
+`MCP_AUTH_TOKEN` est généré automatiquement par `./start.sh`. Tout le reste est
+géré par l'équipe projet : Postgres, LangSmith/LangChain, Open WebUI, Docker et
+les réglages applicatifs locaux.
 
 ```bash
 # 3. Lancer
@@ -109,7 +102,7 @@ Internet / LAN
     │
     ▼ port 3000
 open_webui (Docker)
-    │ http://host.docker.internal:8000  (local)
+    │ http://copepod-agent:8000  (réseau Docker)
     │ http://copepod_agent:8000         (Docker full)
     ▼
 copepod_agent — serve.py (port 8000)

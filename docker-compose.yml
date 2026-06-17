@@ -23,6 +23,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: ghcr.io/tidianecisse777/copepod-agent:latest
+    pull_policy: missing
     container_name: copepod_agent
     ports:
       - "8000:8000"
@@ -31,6 +32,7 @@ services:
     environment:
       - OPENWEBUI_URL=http://open-webui:8080
       - SESSION_STORE_DATABASE_URL=postgresql://copepod:${POSTGRES_PASSWORD:-copepod_dev}@postgres:5432/copepod_sessions
+      - SERVE_BASE_URL=${SERVE_BASE_URL:-}
     command: uvicorn serve:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
@@ -55,6 +57,7 @@ services:
       context: .
       dockerfile: Dockerfile.mcp
     image: ghcr.io/tidianecisse777/mcp-ecotaxa:latest
+    pull_policy: missing
     container_name: mcp_ecotaxa
     ports:
       - "8001:8001"
@@ -83,7 +86,7 @@ services:
       - "3000:8080"
     environment:
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
-      - OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1
+      - OPENAI_API_BASE_URL=${OPENWEBUI_AGENT_BASE_URL:-http://copepod-agent:8000/v1}
       - OPENAI_API_KEY=copepod-key
       - BYPASS_EMBEDDING_AND_RETRIEVAL=true
       # [query] → OpenWebUI injecte le message original à la place du template RAG
@@ -91,11 +94,13 @@ services:
       # messages avec fichier attaché et l'agent ne répond jamais.
       - RAG_TEMPLATE=[query]
       - RAG_EMBEDDING_ENGINE=openai
-      - RAG_OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1
+      - RAG_OPENAI_API_BASE_URL=${OPENWEBUI_AGENT_BASE_URL:-http://copepod-agent:8000/v1}
       - RAG_OPENAI_API_KEY=copepod-key
       - RAG_EMBEDDING_MODEL=copepod-embeddings
     volumes:
       - open_webui_data:/app/backend/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
