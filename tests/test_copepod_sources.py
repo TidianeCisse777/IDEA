@@ -100,6 +100,51 @@ def test_query_ecotaxa_uvp_hint_in_summary():
     assert "uvp_ecotaxa" in result
 
 
+def test_query_ecotaxa_filters_by_sample_ids():
+    df = pd.DataFrame({"object_id": ["obj_001"], "sample_id": [42000002]})
+    client = _make_fake_client(df)
+
+    with patch("tools.copepod_sources.EcotaxaClient", return_value=client):
+        from tools.copepod_sources import make_source_tools
+
+        query = next(t for t in make_source_tools("thread-sample-filter") if t.name == "query_ecotaxa")
+        result = query.invoke({"project_id": 1165, "sample_ids": [42000002, 42000003]})
+
+    client.start_export.assert_called_once_with(
+        1165,
+        {"statusfilter": "V", "samples": "42000002,42000003"},
+    )
+    assert "samples 42000002,42000003" in result
+
+
+def test_query_ecotaxa_sample_resolves_project_and_exports_sample():
+    df = pd.DataFrame({"object_id": ["obj_001"], "sample_id": [42000002]})
+    client = _make_fake_client(df)
+    fake_sample = {
+        "sample_id": 42000002,
+        "project_id": 1165,
+        "original_id": "Station 7",
+    }
+
+    with (
+        patch("tools.copepod_sources.core_get_sample", return_value=fake_sample),
+        patch("tools.copepod_sources.EcotaxaClient", return_value=client),
+    ):
+        from tools.copepod_sources import make_source_tools
+
+        query_sample = next(
+            t for t in make_source_tools("thread-query-sample") if t.name == "query_ecotaxa_sample"
+        )
+        result = query_sample.invoke({"sample_id": 42000002})
+
+    client.start_export.assert_called_once_with(
+        1165,
+        {"statusfilter": "V", "samples": "42000002"},
+    )
+    assert _store.get("thread-query-sample:dataset:df_ecotaxa_sample_42000002")["df"].equals(df)
+    assert "Sample 42000002" in result
+
+
 # ── Comportement 4 : EcotaxaClient.login() pose le header Bearer ───────────
 
 def test_ecotaxa_client_login_sets_bearer_from_token(monkeypatch):
@@ -471,6 +516,7 @@ def test_source_tools_include_get_ecotaxa_sample():
     tool_names = {source_tool.name for source_tool in make_source_tools("thread-get-sample")}
 
     assert "get_ecotaxa_sample" in tool_names
+    assert "query_ecotaxa_sample" in tool_names
 
 
 def test_get_ecotaxa_sample_renders_sample_metadata():

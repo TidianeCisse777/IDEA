@@ -34,6 +34,56 @@ def make_source_tools(thread_id: str) -> list:
             return f"{value:.2f}".rstrip("0").rstrip(".")
         return f"{int(value):,}".replace(",", " ")
 
+    def _normalize_sample_ids(sample_ids) -> list[int]:
+        if sample_ids is None:
+            return []
+        if isinstance(sample_ids, (int, str)):
+            sample_ids = [sample_ids]
+        normalized = []
+        for sample_id in sample_ids:
+            text = str(sample_id).strip()
+            if text:
+                normalized.append(int(text))
+        return normalized
+
+    def _download_ecotaxa_export(
+        *,
+        project_id: int,
+        filters: dict,
+        variable_name: str,
+        meta: dict,
+        label: str,
+    ) -> str:
+        client = EcotaxaClient()
+        client.login()
+        job_id = client.start_export(project_id, filters)
+        client.wait_for_job(job_id)
+        df = client.download_tsv(job_id)
+
+        store_dataset(
+            _store,
+            thread_id,
+            df,
+            variable_name=variable_name,
+            meta={**meta, "source": f"ecotaxa:{project_id}", "project_id": project_id, "n_rows": len(df)},
+            latest_alias="ecotaxa",
+        )
+
+        file_id = uuid.uuid4().hex
+        tsv_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
+        df.to_csv(tsv_path, sep="\t", index=False)
+
+        hint = _uvp_skill_hint(list(df.columns))
+        summary = (
+            f"{label} chargé — {len(df)} lignes, {len(df.columns)} colonnes.\n"
+            f"Données disponibles dans `{variable_name}` et `df_ecotaxa`.\n"
+            f"Appelle run_pandas directement pour analyser.\n"
+            f"Télécharger : {download_url(f'{file_id}.tsv')}"
+        )
+        if hint:
+            summary += f"\n{hint}"
+        return summary
+
     @tool
     def find_ecotaxa_projects(
         title: str | None = None,
@@ -138,51 +188,80 @@ def make_source_tools(thread_id: str) -> list:
         return "\n".join(lines)
 
     @tool
-    def query_ecotaxa(project_id: int, taxon: str | None = None, status: str = "V") -> str:
+    def query_ecotaxa(
+        project_id: int,
+        taxon: str | None = None,
+        status: str = "V",
+        sample_ids: list[int] | None = None,
+    ) -> str:
         """Interroge EcoTaxa et charge les données dans la session courante.
 
         Args:
             project_id: ID du projet EcoTaxa (ex: 1165, 2331).
             taxon: Filtre taxonomique optionnel (ex: "Copepoda").
             status: Statut des annotations — "V" (validé), "P" (prédit), "" (tous).
+            sample_ids: IDs de samples EcoTaxa à exporter dans ce projet.
         """
         try:
-            client = EcotaxaClient()
-            client.login()
             filters = {"statusfilter": status}
             if taxon:
                 filters["taxo"] = taxon
+            normalized_sample_ids = _normalize_sample_ids(sample_ids)
+            if normalized_sample_ids:
+                filters["samples"] = ",".join(str(sample_id) for sample_id in normalized_sample_ids)
+        except Exception as exc:
+            return f"Erreur dans les paramètres EcoTaxa : {exc}"
 
-            job_id = client.start_export(project_id, filters)
-            client.wait_for_job(job_id)
-            df = client.download_tsv(job_id)
+        sample_suffix = f"_samples_{'_'.join(str(sample_id) for sample_id in normalized_sample_ids)}" if normalized_sample_ids else ""
+        variable_name = dataset_variable_name("ecotaxa", f"{project_id}{sample_suffix}")
+        label = f"Projet {project_id}"
+        if normalized_sample_ids:
+            label += f" — samples {','.join(str(sample_id) for sample_id in normalized_sample_ids)}"
+
+        try:
+            return _download_ecotaxa_export(
+                project_id=project_id,
+                filters=filters,
+                variable_name=variable_name,
+                meta={"sample_ids": normalized_sample_ids},
+                label=label,
+            )
         except Exception as exc:
             return f"Erreur lors de l'accès à EcoTaxa : {exc}"
 
-        variable_name = dataset_variable_name("ecotaxa", project_id)
-        store_dataset(
-            _store,
-            thread_id,
-            df,
-            variable_name=variable_name,
-            meta={"source": f"ecotaxa:{project_id}", "project_id": project_id, "n_rows": len(df)},
-            latest_alias="ecotaxa",
-        )
+    @tool
+    def query_ecotaxa_sample(sample_id: int, taxon: str | None = None, status: str = "V") -> str:
+        """Exporte les objets d'un sample EcoTaxa et charge le résultat en session.
 
-        file_id = uuid.uuid4().hex
-        tsv_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
-        df.to_csv(tsv_path, sep="\t", index=False)
+        Utiliser quand l'utilisateur donne un `sample_id` ou veut télécharger /
+        analyser un sample précis sans connaître son `project_id`.
 
-        hint = _uvp_skill_hint(list(df.columns))
-        summary = (
-            f"Projet {project_id} chargé — {len(df)} lignes, {len(df.columns)} colonnes.\n"
-            f"Données disponibles dans `{variable_name}` et `df_ecotaxa`.\n"
-            f"Appelle run_pandas directement pour analyser.\n"
-            f"Télécharger : {download_url(f'{file_id}.tsv')}"
-        )
-        if hint:
-            summary += f"\n{hint}"
-        return summary
+        Args:
+            sample_id: ID du sample EcoTaxa (ex: 42000002).
+            taxon: Filtre taxonomique optionnel (ex: "Copepoda").
+            status: Statut des annotations — "V" (validé), "P" (prédit), "" (tous).
+        """
+        try:
+            sample = core_get_sample(sample_id)
+            project_id = int(sample["project_id"])
+            filters = {"statusfilter": status, "samples": str(sample_id)}
+            if taxon:
+                filters["taxo"] = taxon
+        except EcoTaxaBrowserError as exc:
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}"
+        except Exception as exc:
+            return f"Erreur lors de l'accès au sample {sample_id} : {exc}"
+
+        try:
+            return _download_ecotaxa_export(
+                project_id=project_id,
+                filters=filters,
+                variable_name=dataset_variable_name("ecotaxa", "sample", str(sample_id)),
+                meta={"sample_id": sample_id, "original_id": sample.get("original_id")},
+                label=f"Sample {sample_id} (projet {project_id})",
+            )
+        except Exception as exc:
+            return f"Erreur lors de l'export du sample {sample_id} : {exc}"
 
     @tool
     def inspect_ecotaxa_project_schema(
@@ -595,4 +674,5 @@ def make_source_tools(thread_id: str) -> list:
         list_ecotaxa_projects,
         preview_ecotaxa_project,
         query_ecotaxa,
+        query_ecotaxa_sample,
     ]

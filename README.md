@@ -1,7 +1,12 @@
 # Copepod Assistant
 
-Dockerized assistant for copepod data exploration, graph production, and
-technical reporting. It runs a FastAPI/LangGraph agent behind Open WebUI.
+Dockerized assistant for copepod file analysis, graph production, and technical
+reporting. It runs a FastAPI/LangGraph agent behind Open WebUI.
+
+Current status: loading and analysing local files works well. EcoTaxa
+project/sample exploration is in development. Amundsen CTD, OGSL, and
+Bio-ORACLE tools exist but are still being integrated more tightly into the
+agent workflow.
 
 User-facing docs:
 

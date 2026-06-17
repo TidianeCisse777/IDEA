@@ -1,12 +1,17 @@
 # MCP EcoTaxa Capabilities
 
-MCP EcoTaxa is the assistant's read-only exploration layer for EcoTaxa.
+MCP EcoTaxa is the assistant's read-only exploration layer for EcoTaxa. This
+layer is in development.
 
 Its purpose is simple: explore before exporting. It helps the assistant find
 which EcoTaxa projects are accessible, where and when samples exist, which taxa
 are attested, which columns are available, and whether projects can be combined.
 
 It does not modify EcoTaxa.
+
+Current status: useful for project/sample discovery and schema checks, but the
+agent routing around EcoTaxa exploration and sample export is still being
+tested.
 
 ## What It Can Do
 
@@ -143,6 +148,8 @@ For full object export, the assistant still uses:
 
 ```text
 query_ecotaxa(project_id=..., taxon=..., status="V")
+query_ecotaxa(project_id=..., sample_ids=[...], status="V")
+query_ecotaxa_sample(sample_id=..., status="V")
 ```
 
 Use MCP tools for exploration. Use `query_ecotaxa` only when the user explicitly

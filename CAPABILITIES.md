@@ -5,13 +5,19 @@ what is not supported yet.
 
 ## Primary Use Cases
 
-- Load and inspect copepod-related tabular files.
-- Produce static scientific graphs from loaded or downloaded data.
-- Query EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE, and read-only SQL
-  sources.
+Stable today:
+
+- Load, inspect, and analyse copepod-related tabular files.
+- Produce static scientific graphs from loaded files or downloaded tables.
+- Answer technical questions using the NeoLab knowledge base.
+
+In active development:
+
+- Explore EcoTaxa projects and samples through the local cache.
+- Export selected EcoTaxa projects or samples for analysis.
+- Integrate Amundsen CTD, OGSL, and Bio-ORACLE more tightly into the agent.
 - Join biological observations with environmental data.
 - Generate PDF deliverables from the current session.
-- Answer technical questions using the NeoLab knowledge base.
 
 ## Agent And Tool Architecture
 
@@ -125,7 +131,7 @@ not implemented yet.
 
 ## EcoTaxa
 
-The assistant can:
+EcoTaxa support is in active development. The assistant can currently:
 
 - list accessible projects
 - preview a project
@@ -133,11 +139,14 @@ The assistant can:
 - compare project schemas
 - count taxa by project
 - export project data by project ID, taxon, and status
+- export one EcoTaxa sample by `sample_id`
+- export selected samples from a project with `sample_ids`
 - search projects, samples, and observations through the local MCP EcoTaxa cache
 - filter by geographic bounding box, date range, and instrument when supported
 
 The MCP EcoTaxa service keeps a local read-only cache for fast geographic and
-temporal discovery.
+temporal discovery. This exploration layer is still being tested and improved,
+especially for project/sample discovery and sample-level export workflows.
 
 ## EcoPart
 
@@ -150,7 +159,7 @@ The assistant can:
 
 ## Amundsen CTD
 
-The assistant can access Amundsen CTD data through ERDDAP:
+Amundsen CTD integration is in development. Current tool coverage includes:
 
 - list known datasets
 - preview station/cast profiles
@@ -159,12 +168,13 @@ The assistant can access Amundsen CTD data through ERDDAP:
 
 ## OGSL
 
-The assistant can enrich a loaded station/time table with OGSL CTD profiles from
-the Gulf of St. Lawrence. It reports match quality using time and depth deltas.
+OGSL integration is in development. The current direction is to enrich loaded
+station/time tables with OGSL CTD profiles from the Gulf of St. Lawrence and
+report match quality using time and depth deltas.
 
 ## Bio-ORACLE
 
-The assistant can:
+Bio-ORACLE integration is in development. Current tool coverage includes:
 
 - list available variables and scenarios
 - preview a variable at a point
@@ -172,8 +182,8 @@ The assistant can:
 - couple zooplankton rows with environmental variables using latitude and
   longitude columns
 
-This area is functional but still considered partial because scenario coverage
-and end-to-end user workflows need more testing.
+This area is partial because scenario coverage and end-to-end agent workflows
+need more testing.
 
 ## SQL Workspace
 
