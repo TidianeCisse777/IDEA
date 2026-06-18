@@ -311,6 +311,20 @@ def test_system_prompt_routes_ecotaxa_stats_tables_to_project_summary():
     assert "do not call `query_ecotaxa`" in prompt
 
 
+def test_system_prompt_allows_operational_synthesis_without_scientific_interpretation():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "tool outputs are evidence, not necessarily the final answer" in prompt
+    assert "compute requested metrics" in prompt
+    assert "sort rankings" in prompt
+    assert "select relevant columns" in prompt
+    assert "non_annoté = p + d + u" in prompt
+    assert "return the ranked answer, not the raw wide tool table" in prompt
+    assert "scientific or biological interpretation" in prompt
+    assert "operational transformations requested by the user" in prompt
+
+
 def test_ecotaxa_navigation_skill_prefers_read_only_when_ambiguous():
     skill = Path("agents/skills/ecotaxa_navigation.md").read_text(
         encoding="utf-8"
