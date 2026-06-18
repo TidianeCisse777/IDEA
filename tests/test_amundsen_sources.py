@@ -911,3 +911,83 @@ def test_enrich_with_amundsen_ctd_diagnoses_all_empty_coordinates_without_erddap
         or "empty" in result.lower()
         or "aucune coordonnée" in result.lower()
     )
+
+
+def test_enrich_with_amundsen_ctd_can_target_specific_dataset_via_source_variable():
+    """Quand plusieurs fichiers sont en session, `source_variable` cible le bon."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-source-var"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    # Fichier A (filet) — persisté sous df_file_filet
+    filet = pd.DataFrame(
+        {
+            "station_id": ["FILET-1"],
+            "latitude": [60.0],
+            "longitude": [-65.0],
+            "object_date": ["2018-06-01"],
+        }
+    )
+    _store.set(
+        f"{thread_id}:dataset:df_file_filet",
+        filet,
+        {"source": "file:filet.tsv", "variable_name": "df_file_filet"},
+    )
+
+    # Fichier B (UVP) — devient le df actif (dernier chargé)
+    uvp = pd.DataFrame(
+        {
+            "Profile": ["UVP-A"],
+            "latitude": [74.0],
+            "longitude": [-80.0],
+            "object_date": ["2018-08-15"],
+        }
+    )
+    _store.set(thread_id, uvp, {"source": "file:uvp.tsv"})
+
+    def fake_fetch_bbox(*, bbox, time_window, variables):
+        return pd.DataFrame(
+            [
+                {
+                    "time": "2018-06-01T12:00:00Z",
+                    "latitude": 60.0,
+                    "longitude": -65.0,
+                    "station": "N01",
+                    "cast_number": 1,
+                    "PRES": 2.0,
+                    "TE90": -1.0,
+                    "PSAL": 32.0,
+                }
+            ]
+        )
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_bbox", side_effect=fake_fetch_bbox
+    ):
+        enrich = next(
+            tool
+            for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        enrich.invoke({"source_variable": "df_file_filet"})
+
+    # L'enrichissement doit avoir ciblé le FILET, pas l'UVP
+    keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert "station_id" in enriched.columns  # propre au filet
+    assert "Profile" not in enriched.columns  # serait l'UVP
+    assert enriched["station_id"].tolist() == ["FILET-1"]
+    assert enriched["amundsen_match_status"].tolist() == ["matched"]
+
+
+def test_system_prompt_documents_source_variable_for_multi_file_sessions():
+    """Le routage doit dire à l'agent de passer source_variable quand plusieurs fichiers."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "source_variable" in COPEPOD_SYSTEM_PROMPT

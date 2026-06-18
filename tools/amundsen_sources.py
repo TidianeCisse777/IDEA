@@ -117,7 +117,18 @@ def _format_table(rows: list[dict], columns: list[str]) -> str:
 def make_amundsen_tools(thread_id: str) -> list:
     """Create LangChain Amundsen CTD tools for one thread."""
 
-    def _source_dataframe() -> pd.DataFrame | None:
+    def _source_dataframe(source_variable: str | None = None) -> pd.DataFrame | None:
+        if source_variable:
+            for key in _store.keys(f"{thread_id}:dataset:"):
+                named = _store.get(key)
+                if not named:
+                    continue
+                var_name = (named.get("meta") or {}).get("variable_name") or key.rsplit(":", 1)[-1]
+                if var_name == source_variable:
+                    dataframe = named.get("df")
+                    if isinstance(dataframe, pd.DataFrame) and not dataframe.empty:
+                        return dataframe
+            return None
         session = _store.get(thread_id)
         dataframe = session.get("df") if session else None
         return dataframe if isinstance(dataframe, pd.DataFrame) and not dataframe.empty else None
@@ -401,6 +412,7 @@ def make_amundsen_tools(thread_id: str) -> list:
 
     @tool
     def enrich_with_amundsen_ctd(
+        source_variable: str | None = None,
         latitude_column: str | None = None,
         longitude_column: str | None = None,
         time_column: str | None = None,
@@ -415,8 +427,13 @@ def make_amundsen_tools(thread_id: str) -> list:
         sont pas fournies. Interroge Amundsen ERDDAP par bbox + fenêtre temps
         et matche localement au plus proche voisin.
         """
-        source = _source_dataframe()
+        source = _source_dataframe(source_variable)
         if source is None:
+            if source_variable:
+                return (
+                    f"Variable source introuvable en session : `{source_variable}`. "
+                    "Vérifie les datasets actifs."
+                )
             return "Aucune table chargée à enrichir."
 
         lat_col = latitude_column or _detect_column(source.columns, _LAT_CANDIDATES)

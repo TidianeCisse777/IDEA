@@ -660,16 +660,35 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         target_year: int | None = None,
         latitude_column: str | None = None,
         longitude_column: str | None = None,
+        source_variable: str | None = None,
     ) -> str:
         """Enrichit la table chargée avec Bio-ORACLE par lat/lon.
 
         Auto-détecte les colonnes latitude/longitude. Pour chaque (variable,
         scenario), interroge Bio-ORACLE au point exact et recolle une valeur
-        par ligne. Préfère ce tool dès que l'utilisateur dit "enrichis mon csv
-        avec Bio-ORACLE".
+        par ligne. Si plusieurs fichiers sont en session, passe
+        `source_variable` (par exemple `df_file_filet_arctic_2018`) pour cibler
+        un dataset précis au lieu du df actif.
         """
-        session = _store.get(thread_id)
-        source = session.get("df") if session else None
+        source: pd.DataFrame | None = None
+        if source_variable:
+            for key in _store.keys(f"{thread_id}:dataset:"):
+                named = _store.get(key)
+                if not named:
+                    continue
+                var_name = (named.get("meta") or {}).get("variable_name") or key.rsplit(":", 1)[-1]
+                if var_name == source_variable:
+                    candidate = named.get("df")
+                    if isinstance(candidate, pd.DataFrame) and not candidate.empty:
+                        source = candidate
+                    break
+            if source is None:
+                return (
+                    f"Variable source introuvable en session : `{source_variable}`."
+                )
+        else:
+            session = _store.get(thread_id)
+            source = session.get("df") if session else None
         if not isinstance(source, pd.DataFrame) or source.empty:
             return "Aucune table chargée à enrichir."
 

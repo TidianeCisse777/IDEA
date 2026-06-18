@@ -1003,3 +1003,55 @@ def test_enrich_with_bio_oracle_skips_out_of_range_coords_without_http():
         "no_value",
         "no_value",
     ]
+
+
+def test_enrich_with_bio_oracle_can_target_specific_dataset_via_source_variable():
+    """source_variable cible un dataset persistant au lieu du df actif."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-source-var"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    filet = pd.DataFrame(
+        {
+            "station_id": ["FILET-1"],
+            "latitude": [60.0],
+            "longitude": [-65.0],
+        }
+    )
+    _store.set(
+        f"{thread_id}:dataset:df_file_filet",
+        filet,
+        {"source": "file:filet.tsv", "variable_name": "df_file_filet"},
+    )
+    uvp = pd.DataFrame(
+        {"Profile": ["UVP-A"], "latitude": [74.0], "longitude": [-80.0]}
+    )
+    _store.set(thread_id, uvp, {"source": "file:uvp.tsv"})
+
+    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
+        return {"dataset_id": "x", "time": "2050-01-01", "value": 8.42}
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+    ):
+        enrich = next(
+            t for t in make_bio_oracle_tools(thread_id)
+            if t.name == "enrich_with_bio_oracle"
+        )
+        enrich.invoke({
+            "source_variable": "df_file_filet",
+            "variables": ["temperature"],
+            "scenarios": ["SSP5-8.5"],
+        })
+
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert "station_id" in enriched.columns
+    assert "Profile" not in enriched.columns
+    assert enriched["station_id"].tolist() == ["FILET-1"]

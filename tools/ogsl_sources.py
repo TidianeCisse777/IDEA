@@ -14,7 +14,7 @@ import requests
 from langchain_core.tools import tool
 
 from core.ogsl_client import query_ogsl as _query_ogsl, OGSL_DATASET_ID, OGSL_VARIABLES
-from core.ogsl_enrichment import build_station_windows, enrich_with_ogsl
+from core.ogsl_enrichment import build_station_windows, enrich_with_ogsl as _enrich_with_ogsl_helper
 from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
@@ -206,7 +206,7 @@ def make_ogsl_tools(thread_id: str) -> list:
                 latest_alias="ogsl",
             )
 
-            enriched = enrich_with_ogsl(
+            enriched = _enrich_with_ogsl_helper(
                 source,
                 raw_dataframe,
                 station_column=station_column,
@@ -265,16 +265,34 @@ def make_ogsl_tools(thread_id: str) -> list:
         variables: list[str] | None = None,
         spatial_tolerance_km: float = 25.0,
         time_tolerance_hours: float = 24.0,
+        source_variable: str | None = None,
     ) -> str:
         """Enrichit la table chargée avec OGSL ISMER CTD par lat/lon/time.
 
         Auto-détecte les colonnes lat/lon/time/depth. Interroge OGSL ERDDAP
         par bbox + fenêtre temps puis matche localement au plus proche voisin.
-        Pas besoin de stationID — fonctionne directement sur un fichier
-        EcoTaxa qui n'a que latitude/longitude/object_date.
+        Si plusieurs fichiers sont en session, passe `source_variable`
+        (ex. `df_file_filet_arctic_2018`) pour cibler un dataset précis.
         """
-        session = _store.get(thread_id)
-        source = session.get("df") if session else None
+        source: pd.DataFrame | None = None
+        if source_variable:
+            for key in _store.keys(f"{thread_id}:dataset:"):
+                named = _store.get(key)
+                if not named:
+                    continue
+                var_name = (named.get("meta") or {}).get("variable_name") or key.rsplit(":", 1)[-1]
+                if var_name == source_variable:
+                    candidate = named.get("df")
+                    if isinstance(candidate, pd.DataFrame) and not candidate.empty:
+                        source = candidate
+                    break
+            if source is None:
+                return (
+                    f"Variable source introuvable en session : `{source_variable}`."
+                )
+        else:
+            session = _store.get(thread_id)
+            source = session.get("df") if session else None
         if not isinstance(source, pd.DataFrame) or source.empty:
             return "Aucune table chargée à enrichir."
 
