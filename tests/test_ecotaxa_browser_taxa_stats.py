@@ -111,6 +111,27 @@ def test_taxa_stats_raises_AMBIGUOUS_TAXON_when_multiple_matches():
     ]
 
 
+def test_taxa_stats_resolves_accepted_exact_taxon_before_stage_variants():
+    from core.ecotaxa_browser.taxa_stats import taxa_stats
+
+    client = _fake_client()
+    client.search_taxa.return_value = [
+        {"id": 80126, "status": "A", "text": "Calanus"},
+        {"id": 95013, "status": "N", "text": "calanus ci-iii"},
+        {"id": 82431, "status": "A", "text": "Calanus finmarchicus"},
+    ]
+    client.project_taxo_stats.return_value = [
+        {"projid": 14853, "used_taxa": [80126], "nb_validated": 10, "nb_predicted": 5, "nb_dubious": 0},
+    ]
+
+    with _patched(client):
+        result = taxa_stats(project_ids=[14853], taxa=["Calanus"])
+
+    assert result["taxa_resolved"][0]["taxon_id"] == 80126
+    assert result["taxa_resolved"][0]["matched_name"] == "Calanus"
+    client.project_taxo_stats.assert_called_once_with([14853], taxa_ids="80126")
+
+
 def test_taxa_stats_resolves_string_taxa_via_exact_match_even_with_multiple_results():
     from core.ecotaxa_browser.taxa_stats import taxa_stats
 

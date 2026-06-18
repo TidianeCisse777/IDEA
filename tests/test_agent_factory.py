@@ -158,6 +158,27 @@ def test_graph_planner_treats_french_profile_requests_as_visual():
     assert "never answer the user with only this `<details>` block" in planner
 
 
+def test_graph_writer_supports_standalone_named_zone_maps():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8").lower()
+
+    assert "standalone named-zone map" in writer
+    assert "get_zone_info(zone_name=...)" in writer
+    assert "do not reference `df`" in writer
+    assert "bbox = {\"south\"" in writer
+    assert "ccrs.lambertconformal" in writer
+
+
+def test_system_prompt_routes_named_zone_map_requests():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "first tool call must be `get_zone_info" in prompt
+    assert "carte" in prompt
+    assert "load_skill(\"graph_planner\")" in prompt
+    assert "load_skill(\"graph_writer\")" in prompt
+    assert "very next tool call must be `run_graph`" in prompt
+
+
 def test_graph_rules_preserve_identifier_types_and_validate_non_empty_plot_df():
     planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8").lower()
     writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8").lower()

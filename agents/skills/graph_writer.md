@@ -66,6 +66,46 @@ plt.tight_layout()
 **Always use cartopy** for any map/geo scatter request — never use plain `plt.scatter` on lon/lat axes.
 Cartopy produces real geographic projections with coastlines, ocean fill, and graticules.
 
+### Standalone named-zone map
+
+Use this when the user asks to show a named zone itself, e.g. "montre-moi sur
+une carte la baie d'Hudson", and no loaded DataFrame is needed. Use the `bbox`
+returned by `get_zone_info(zone_name=...)`; do not reference `df`.
+
+```python
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+plt.style.use("dark_background")
+plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
+                     "grid.alpha": 0.25, "axes.edgecolor": "#444"})
+
+bbox = {"south": <south>, "west": <west>, "north": <north>, "east": <east>}
+central_lon = (bbox["west"] + bbox["east"]) / 2
+central_lat = (bbox["south"] + bbox["north"]) / 2
+proj = ccrs.LambertConformal(central_longitude=central_lon, central_latitude=central_lat)
+
+fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={"projection": proj})
+ax.set_extent([bbox["west"], bbox["east"], bbox["south"], bbox["north"]], crs=ccrs.PlateCarree())
+
+ax.add_feature(cfeature.LAND, facecolor="#2d2d2d", zorder=1)
+ax.add_feature(cfeature.OCEAN, facecolor="#1a3a5c", zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor="#aaaaaa", zorder=2)
+ax.add_feature(cfeature.BORDERS, linestyle=":", linewidth=0.5, edgecolor="#666666", zorder=2)
+
+gl = ax.gridlines(draw_labels=True, linewidth=0.5, color="gray", alpha=0.4, linestyle="--")
+gl.top_labels = False
+gl.right_labels = False
+
+ax.set_title("<zone name>", fontsize=13, color="white")
+plt.tight_layout()
+
+graph_explanation = "Carte de <zone name>. Axes : longitude x latitude. Source : get_zone_info."
+```
+
 ### Dark background (mandatory for all maps)
 
 Every map must start with:

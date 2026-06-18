@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.data_tools import make_tools, _uvp_skill_hint
+from tools.data_tools import make_tools, _patch_cartopy_gridliner_polygon, _uvp_skill_hint
 from tools.session_store import default_store as _store
 
 
@@ -268,6 +268,15 @@ def test_run_graph_works_without_loaded_file_for_standalone_map():
     assert "No file loaded" not in result
 
     _store.clear(thread_id)
+
+
+def test_cartopy_gridliner_polygon_patch_closes_open_ring():
+    gridliner = pytest.importorskip("cartopy.mpl.gridliner")
+
+    _patch_cartopy_gridliner_polygon()
+    poly = gridliner.sgeom.Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+
+    assert poly.exterior.is_ring
 
 
 def test_run_graph_exposes_multiple_ecopart_projects():

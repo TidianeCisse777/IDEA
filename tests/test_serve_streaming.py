@@ -99,6 +99,35 @@ def test_format_tool_result_details_linkifies_sample_and_project_columns():
     assert "Baie de Baffin" in block
 
 
+def test_format_tool_result_details_matches_p8_ecotaxa_samples_contract():
+    from serve import _format_tool_result_details
+
+    content = (
+        "| sample_id | project_id | date |\n"
+        "|---:|---:|---|\n"
+        "| 14853000001 | 14853 | 2024-10-06 |\n"
+    )
+    block = _format_tool_result_details(
+        "find_ecotaxa_samples_in_region",
+        content,
+        {
+            "zone_name": "Baie de Baffin",
+            "date_range": {"from": "2024-01-01", "to": "2024-12-31"},
+        },
+    )
+
+    assert (
+        "📊 EcoTaxa · samples par zone / période — "
+        "Baie de Baffin · 2024-01-01 → 2024-12-31"
+    ) in block
+    assert "find_ecotaxa_samples_in_region" not in block
+    assert (
+        "[14853000001](https://ecotaxa.obs-vlfr.fr/prj/14853?samples=14853000001)"
+    ) in block
+    assert "[14853](https://ecotaxa.obs-vlfr.fr/prj/14853)" in block
+    assert "*Source : EcoTaxa — [https://ecotaxa.obs-vlfr.fr](https://ecotaxa.obs-vlfr.fr)*" in block
+
+
 def test_format_tool_result_details_skips_sample_link_without_project():
     """Sans colonne projet dans la même ligne, on ne fabrique pas de lien
     sample (impossible à construire correctement)."""

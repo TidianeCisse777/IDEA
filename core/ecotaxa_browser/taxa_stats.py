@@ -117,7 +117,16 @@ def _resolve_taxon(client, item: int | str) -> dict:
         c for c in candidates
         if str(c.get("display_name") or c.get("text") or "").lower().startswith(lowered + " ")
     ]
-    if exact and not extending:
+    accepted_exact = [
+        c for c in exact
+        if str(c.get("status") or "").upper() == "A"
+    ]
+    if accepted_exact:
+        # EcoTaxa autocomplete can return composite/stage variants before or
+        # after an accepted exact taxon. For data queries, the accepted exact
+        # taxon is the intended broad match.
+        chosen = accepted_exact[0]
+    elif exact and not extending:
         # Exact match is unambiguous: no other candidate refines it.
         chosen = exact[0]
     elif len(candidates) == 1:
