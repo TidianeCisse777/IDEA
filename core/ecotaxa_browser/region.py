@@ -28,6 +28,7 @@ from core.ecotaxa_browser.errors import EcoTaxaBrowserError
 _SAMPLE_CAP = 500
 _BBOX_KEYS = {"south", "west", "north", "east"}
 _DATE_KEYS = {"from", "to"}
+_SAMPLE_PROJECT_FACTOR = 1_000_000
 
 
 def _cache_db_path() -> str:
@@ -39,19 +40,25 @@ def _open_cache() -> sqlite3.Connection:
 
 
 def resolve_sample_projects(sample_ids: list[int]) -> dict[int, int]:
-    """Map each ``sample_id`` to its ``project_id`` via the local cache.
+    """Map each ``sample_id`` to its ``project_id``.
 
-    Samples not present in the cache are absent from the returned mapping.
-    Used by the bulk-export planner to group a user's sample selection.
+    The local cache is authoritative when present. For samples missing from
+    the cache, fall back to EcoTaxa's numeric ID convention where the project
+    is the sample id prefix (``sample_id // 1_000_000``). This keeps explicit
+    user-provided sample exports usable even when the cache is stale.
     """
     from core.ecotaxa_browser.cache.repo import lookup_sample_projects
     if not sample_ids:
         return {}
     conn = _open_cache()
     try:
-        return lookup_sample_projects(conn, sample_ids)
+        resolved = lookup_sample_projects(conn, sample_ids)
     finally:
         conn.close()
+    for sample_id in sample_ids:
+        if sample_id not in resolved and sample_id >= _SAMPLE_PROJECT_FACTOR:
+            resolved[sample_id] = sample_id // _SAMPLE_PROJECT_FACTOR
+    return resolved
 
 
 def _ensure_cache_ready(conn: sqlite3.Connection) -> None:

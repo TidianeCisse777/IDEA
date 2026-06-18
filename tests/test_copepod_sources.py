@@ -844,6 +844,21 @@ def test_slice3_export_ecotaxa_samples_dry_run_groups_by_project(seeded_cache):
     assert "confirm" in result.lower() or "dry" in result.lower()
 
 
+def test_export_ecotaxa_samples_dry_run_derives_project_for_cache_miss(seeded_cache):
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-slice3-derived")
+    fn = next(t for t in tools if t.name == "export_ecotaxa_samples")
+
+    result = fn.invoke({
+        "sample_ids": [14853000001, 14853000003],
+    })
+
+    assert "14853" in result
+    assert "2" in result
+    assert "14853000003" in result
+    assert "absents du cache" not in result.lower()
+
+
 def test_slice3_export_ecotaxa_samples_confirmed_runs_one_export_per_project(seeded_cache):
     """Avec confirmed=True, un query_ecotaxa est lancé par projet (groupage
     automatique via le cache). Les sample_ids sont passés au bon projet."""
