@@ -520,3 +520,30 @@ async def test_stream_image_in_tool_result_replaced():
 
     assert "data:image/png;base64," not in full
     assert "/graphs/" in full
+
+
+@pytest.mark.asyncio
+async def test_stream_run_graph_url_tool_result_is_printed():
+    """run_graph retourne déjà une URL /graphs ; le stream doit l'afficher sans
+    dépendre de la réponse finale de l'agent."""
+    from serve import _stream_agent_sse
+
+    tool_content = (
+        "![graph](https://example.test/graphs/abc123.png)\n\n"
+        "Lecture rapide:\nCarte générée."
+    )
+    updates = [
+        {"agent": {"messages": [AIMessage(
+            content="",
+            tool_calls=[{"name": "run_graph", "args": {}, "id": "tc1", "type": "tool_call"}],
+        )]}},
+        {"tools": {"messages": [ToolMessage(content=tool_content, tool_call_id="tc1")]}},
+        {"agent": {"messages": [AIMessage(content="Voici la carte.", tool_calls=[])]}},
+    ]
+    agent = _make_mock_agent(updates)
+    chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
+    full = "".join(chunks)
+
+    assert "![graph](https://example.test/graphs/abc123.png)" in full
+    assert "Lecture rapide:" in full
+    assert "Voici la carte." in full

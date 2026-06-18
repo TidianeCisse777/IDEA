@@ -765,6 +765,10 @@ def _format_tool_result_details(name: str, content: str, args: dict | None = Non
     )
 
 
+def _has_graph_markdown_image(text: str) -> bool:
+    return bool(re.search(r"!\[[^\]]*\]\([^\)]*/graphs/[^\)]*\.png\)", text))
+
+
 async def _stream_agent_sse(
     agent,
     messages: dict,
@@ -780,7 +784,12 @@ async def _stream_agent_sse(
     """
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
     chunk_queue: asyncio.Queue[str | None] = asyncio.Queue()
-    shared: dict = {"last_ai_msg": None, "in_slow_tool": False, "pending_tool_args": {}}
+    shared: dict = {
+        "last_ai_msg": None,
+        "in_slow_tool": False,
+        "pending_tool_args": {},
+        "pending_tool_names": {},
+    }
 
     async def _run_agent() -> None:
         try:
@@ -808,6 +817,7 @@ async def _stream_agent_sse(
                             tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
                             if tc_id:
                                 shared["pending_tool_args"][tc_id] = tc_args
+                                shared["pending_tool_names"][tc_id] = name
                             await chunk_queue.put(_make_sse_chunk(completion_id, _format_tool_line(name, tc_args)))
                             shared["in_slow_tool"] = name in _SLOW_TOOLS
 
@@ -818,7 +828,15 @@ async def _stream_agent_sse(
                             tool_name = getattr(tool_msg, "name", "") or ""
                             tool_call_id = getattr(tool_msg, "tool_call_id", None)
                             tool_args = shared["pending_tool_args"].pop(tool_call_id, None) if tool_call_id else None
-                            if "data:image/png;base64," in tool_content:
+                            if not tool_name and tool_call_id:
+                                tool_name = shared["pending_tool_names"].pop(tool_call_id, "")
+                            elif tool_call_id:
+                                shared["pending_tool_names"].pop(tool_call_id, None)
+                            if tool_name == "run_graph" and tool_content:
+                                hosted = _extract_and_host_images(tool_content)
+                                if _has_graph_markdown_image(hosted):
+                                    await chunk_queue.put(_make_sse_chunk(completion_id, f"\n{hosted}\n"))
+                            elif "data:image/png;base64," in tool_content:
                                 hosted = _extract_and_host_images(tool_content)
                                 img_match = re.search(r"!\[.*?\]\(http[^\)]+\)", hosted)
                                 if img_match:
