@@ -49,6 +49,9 @@ def test_is_data_source_tool_recognizes_known_sources():
     assert _is_data_source_tool("query_ecotaxa")
     assert _is_data_source_tool("query_ecotaxa_sample")
     assert _is_data_source_tool("find_ecotaxa_observations")
+    assert _is_data_source_tool("summarize_ecotaxa_samples")
+    assert _is_data_source_tool("summarize_ecotaxa_projects")
+    assert _is_data_source_tool("export_ecotaxa_samples")
     assert _is_data_source_tool("query_ecopart")
     assert _is_data_source_tool("query_amundsen_ctd")
     assert _is_data_source_tool("enrich_loaded_table_with_amundsen_ctd")
@@ -128,6 +131,26 @@ def test_format_tool_result_details_matches_p8_ecotaxa_samples_contract():
     assert "*Source : EcoTaxa — [https://ecotaxa.obs-vlfr.fr](https://ecotaxa.obs-vlfr.fr)*" in block
 
 
+def test_format_tool_result_details_summarize_ecotaxa_keeps_source_links():
+    from serve import _format_tool_result_details
+
+    content = (
+        "| sample_id | projet | V | P | total |\n"
+        "|---:|---:|---:|---:|---:|\n"
+        "| 14853000001 | 14853 | 80 | 8348 | 8428 |\n"
+    )
+    block = _format_tool_result_details(
+        "summarize_ecotaxa_samples",
+        content,
+        {"sample_ids": [14853000001]},
+    )
+
+    assert "📊 EcoTaxa · résumé de samples" in block
+    assert "[14853000001](https://ecotaxa.obs-vlfr.fr/prj/14853?samples=14853000001)" in block
+    assert "[14853](https://ecotaxa.obs-vlfr.fr/prj/14853)" in block
+    assert "*Source : EcoTaxa — [https://ecotaxa.obs-vlfr.fr](https://ecotaxa.obs-vlfr.fr)*" in block
+
+
 def test_format_tool_result_details_skips_sample_link_without_project():
     """Sans colonne projet dans la même ligne, on ne fabrique pas de lien
     sample (impossible à construire correctement)."""
@@ -168,7 +191,8 @@ def test_format_tool_line_run_graph_with_code_uses_details():
     assert "run_graph" in line
     assert "plt.scatter" in line
     assert "```python" in line
-    assert "<details>" not in line  # pas de HTML — pas rendu par Open WebUI en stream
+    assert "<details>" in line
+    assert "<summary>🔧 run_graph</summary>" in line
 
 
 def test_format_tool_line_run_graph_shows_loading_indicator():
@@ -191,6 +215,7 @@ def test_format_tool_line_run_graph_without_code_no_loading_indicator():
     from serve import _format_tool_line
     line = _format_tool_line("run_graph", {})
     assert "Génération" not in line
+    assert "<details>" in line
 
 
 def test_format_tool_line_run_pandas_with_code_uses_details():
@@ -201,7 +226,8 @@ def test_format_tool_line_run_pandas_with_code_uses_details():
     assert "🔧" in line
     assert "run_pandas" in line
     assert "df.groupby" in line
-    assert "<details>" not in line
+    assert "<details>" in line
+    assert "<summary>🔧 run_pandas</summary>" in line
 
 
 def test_format_tool_line_run_graph_without_code_fallback():
@@ -210,7 +236,8 @@ def test_format_tool_line_run_graph_without_code_fallback():
     line = _format_tool_line("run_graph", {})
     assert "🔧" in line
     assert "run_graph" in line
-    assert "<details>" not in line
+    assert "<details>" in line
+    assert "Paramètres : —" in line
 
 
 def test_format_tool_line_load_file_shows_filename():
@@ -219,6 +246,7 @@ def test_format_tool_line_load_file_shows_filename():
     line = _format_tool_line("load_file", {"path": "/tmp/webui_uploads/stations.tsv"})
     assert "load_file" in line
     assert "stations.tsv" in line
+    assert "<details>" in line
 
 
 def test_format_tool_line_skill_shows_skill_name():
@@ -227,16 +255,70 @@ def test_format_tool_line_skill_shows_skill_name():
     line = _format_tool_line("load_skill", {"skill_name": "map_stations"})
     assert "load_skill" in line
     assert "map_stations" in line
+    assert "<details>" in line
+
+
+def test_format_tool_line_shows_generic_tool_parameters():
+    from serve import _format_tool_line
+
+    line = _format_tool_line("get_zone_info", {"zone_name": "Baie de Baffin"})
+
+    assert "get_zone_info" in line
+    assert "zone_name=`Baie de Baffin`" in line
+    assert "<details>" in line
+    assert "<summary>🔧 get_zone_info</summary>" in line
+
+
+def test_format_tool_line_shows_nested_ecotaxa_filters():
+    from serve import _format_tool_line
+
+    line = _format_tool_line(
+        "find_ecotaxa_samples_in_region",
+        {
+            "zone_name": "Baie de Baffin",
+            "instrument": "Loki",
+            "date_range": {"from": "2024-01-01", "to": "2024-12-31"},
+        },
+    )
+
+    assert "find_ecotaxa_samples_in_region" in line
+    assert "zone_name=`Baie de Baffin`" in line
+    assert "instrument=`Loki`" in line
+    assert 'date_range=`{"from": "2024-01-01", "to": "2024-12-31"}`' in line
+
+
+def test_format_tool_line_omits_large_and_secret_parameters():
+    from serve import _format_tool_line
+
+    line = _format_tool_line(
+        "find_ecotaxa_samples_in_region",
+        {
+            "zone_name": "Baie de Baffin",
+            "polygon_wkt": "POLYGON((" + "0 0," * 1000 + "0 0))",
+            "api_token": "secret-token",
+        },
+    )
+
+    assert "zone_name=`Baie de Baffin`" in line
+    assert "polygon_wkt" not in line
+    assert "secret-token" not in line
+    assert "api_token=`[secret]`" in line
 
 
 def test_format_tool_line_query_ecotaxa_shows_waiting_message():
     """query_ecotaxa → affiche le projet et un indicateur d'attente sans faux pourcentage."""
     from serve import _format_tool_line
 
-    line = _format_tool_line("query_ecotaxa", {"project_id": 14622})
+    line = _format_tool_line(
+        "query_ecotaxa",
+        {"project_id": 14622, "sample_ids": [14622000001, 14622000002], "status": "V"},
+    )
 
     assert "query_ecotaxa" in line
-    assert "14622" in line
+    assert "<summary>🔧 query_ecotaxa</summary>" in line
+    assert "project_id=`14622`" in line
+    assert "sample_ids=`[14622000001, 14622000002]`" in line
+    assert "status=`V`" in line
     assert "Export EcoTaxa en cours" in line
     assert "%" not in line
 
@@ -247,10 +329,14 @@ def test_format_tool_line_query_bio_oracle_shows_waiting_message():
 
     line = _format_tool_line(
         "query_bio_oracle",
-        {"scenario": "SSP245", "depth_layer": "depthsurf"},
+        {"scenario": "SSP245", "depth_layer": "depthsurf", "variable": "temperature"},
     )
 
     assert "query_bio_oracle" in line
+    assert "<summary>🔧 query_bio_oracle</summary>" in line
+    assert "scenario=`SSP245`" in line
+    assert "depth_layer=`depthsurf`" in line
+    assert "variable=`temperature`" in line
     assert "Export Bio-ORACLE en cours" in line
     assert "%" not in line
 
@@ -265,6 +351,9 @@ def test_format_tool_line_query_amundsen_shows_waiting_message():
     )
 
     assert "query_amundsen_ctd" in line
+    assert "<summary>🔧 query_amundsen_ctd</summary>" in line
+    assert "station=`BRK-15`" in line
+    assert "cast_number=`7`" in line
     assert "Export Amundsen CTD en cours" in line
     assert "%" not in line
 

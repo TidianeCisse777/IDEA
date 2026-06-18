@@ -188,3 +188,60 @@ def test_query_ogsl_requires_confirmation_above_ten_unique_stations():
     assert "Confirmation required" in result
     assert "11 unique stations" in result
     assert "confirmed=true" in result
+
+
+def test_enrich_with_ogsl_matches_by_lat_lon_time():
+    """Tracer bullet — table source avec lat/lon/time → 1 mesure CTD OGSL par ligne."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.ogsl_sources import make_ogsl_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-ogsl-tracer"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "latitude": [48.7],
+            "longitude": [-68.5],
+            "object_date": ["2024-06-01"],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:ogsl_tracer.tsv"})
+
+    def fake_fetch_bbox(*, bbox, time_window, variables):
+        return pd.DataFrame(
+            [
+                {
+                    "time": "2024-06-01T12:00:00Z",
+                    "latitude": 48.7,
+                    "longitude": -68.5,
+                    "cruiseID": "IML-2024",
+                    "stationID": "STN-4",
+                    "cast_number": 1,
+                    "PRES": 2.0,
+                    "TE90": 4.1,
+                    "PSAL": 30.5,
+                    "OXYM": 280.0,
+                }
+            ]
+        )
+
+    with patch("tools.ogsl_sources._fetch_ogsl_bbox", side_effect=fake_fetch_bbox):
+        enrich = next(
+            tool
+            for tool in make_ogsl_tools(thread_id)
+            if tool.name == "enrich_with_ogsl"
+        )
+        enrich.invoke({})
+
+    keys = _store.keys(f"{thread_id}:dataset:df_ogsl_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["ogsl_match_status"].tolist() == ["matched"]
+    assert enriched["ogsl_te90_degC"].tolist() == [4.1]
+    assert enriched["ogsl_psal_psu"].tolist() == [30.5]
+    assert enriched["ogsl_oxym_umol_kg"].tolist() == [280.0]
+    assert enriched["ogsl_station_id"].tolist() == ["STN-4"]
+    assert enriched["ogsl_dataset_id"].tolist() == ["ismerSgdeCtd"]

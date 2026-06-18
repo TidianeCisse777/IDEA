@@ -22,6 +22,61 @@ _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
 
 
+_BIO_LAT_CANDIDATES = ("latitude", "lat", "object_lat", "sample_lat")
+_BIO_LON_CANDIDATES = ("longitude", "lon", "object_lon", "sample_long", "sample_lon")
+
+
+def _bio_detect_column(columns, candidates: tuple[str, ...]) -> str | None:
+    lower_to_real = {str(c).lower(): c for c in columns}
+    for candidate in candidates:
+        match = lower_to_real.get(candidate.lower())
+        if match is not None:
+            return match
+    return None
+
+
+def _clean_label(value: str) -> str:
+    return str(value).lower().replace(".", "_").replace("-", "_").replace(" ", "_")
+
+
+def _fetch_bio_oracle_point(
+    *,
+    latitude: float,
+    longitude: float,
+    variable: str,
+    scenario: str,
+    depth_layer: str,
+    target_year: int | None,
+) -> dict:
+    """Fetch a single Bio-ORACLE value at one point.
+
+    Returns {"dataset_id", "time", "value"}.
+    """
+    preview = _preview_bio_oracle_point(
+        {
+            "latitude": latitude,
+            "longitude": longitude,
+            "variable": variable,
+            "scenario": scenario,
+            "depth_layer": depth_layer,
+            "target_year": target_year,
+        }
+    )
+    value_key = preview.get("variable", "")
+    rows = preview.get("rows") or []
+    first = rows[0] if rows else {}
+    raw_value = first.get(value_key)
+    try:
+        value = round(float(raw_value), 4) if raw_value is not None else None
+    except (TypeError, ValueError):
+        value = None
+    return {
+        "dataset_id": preview.get("dataset_id"),
+        "time": first.get("time"),
+        "value": value,
+    }
+
+
 def _format_table(rows: list[dict], columns: list[str]) -> str:
     if not rows:
         return "Aucun résultat Bio-ORACLE."
@@ -597,5 +652,152 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             out += "\n\nAvertissements : " + "; ".join(errors)
         return per_station_warning + out
 
+    @tool
+    def enrich_with_bio_oracle(
+        variables: list[str],
+        scenarios: list[str],
+        depth_layer: str = "surface",
+        target_year: int | None = None,
+        latitude_column: str | None = None,
+        longitude_column: str | None = None,
+    ) -> str:
+        """Enrichit la table chargée avec Bio-ORACLE par lat/lon.
+
+        Auto-détecte les colonnes latitude/longitude. Pour chaque (variable,
+        scenario), interroge Bio-ORACLE au point exact et recolle une valeur
+        par ligne. Préfère ce tool dès que l'utilisateur dit "enrichis mon csv
+        avec Bio-ORACLE".
+        """
+        session = _store.get(thread_id)
+        source = session.get("df") if session else None
+        if not isinstance(source, pd.DataFrame) or source.empty:
+            return "Aucune table chargée à enrichir."
+
+        lat_col = latitude_column or _bio_detect_column(source.columns, _BIO_LAT_CANDIDATES)
+        lon_col = longitude_column or _bio_detect_column(source.columns, _BIO_LON_CANDIDATES)
+        if lat_col is None or lon_col is None:
+            missing = [name for name, value in (("latitude", lat_col), ("longitude", lon_col)) if value is None]
+            return (
+                "Enrichissement Bio-ORACLE impossible : colonnes manquantes — "
+                f"{', '.join(missing)}. Préciser via `latitude_column`, `longitude_column`."
+            )
+
+        src_lat_num = pd.to_numeric(source[lat_col], errors="coerce")
+        src_lon_num = pd.to_numeric(source[lon_col], errors="coerce")
+        empty_groups = [
+            label
+            for label, series in (("latitude", src_lat_num), ("longitude", src_lon_num))
+            if series.notna().sum() == 0
+        ]
+        if empty_groups:
+            return (
+                "Enrichissement Bio-ORACLE impossible : colonnes "
+                f"{', '.join(empty_groups)} entièrement vides dans la table "
+                "chargée. Aucune coordonnée exploitable."
+            )
+
+        enriched = source.copy(deep=True)
+        n_rows = len(enriched)
+        row_has_value = [False] * n_rows
+        cache: dict[tuple, dict] = {}
+        for variable in variables:
+            for scenario in scenarios:
+                values: list[object] = []
+                dataset_ids: list[object] = []
+                times: list[object] = []
+                for position, (lat, lon) in enumerate(
+                    enriched[[lat_col, lon_col]].itertuples(index=False, name=None)
+                ):
+                    try:
+                        lat_f = float(lat)
+                        lon_f = float(lon)
+                    except (TypeError, ValueError):
+                        lat_f = lon_f = float("nan")
+                    coords_valid = (
+                        not pd.isna(lat_f)
+                        and not pd.isna(lon_f)
+                        and -90.0 <= lat_f <= 90.0
+                        and -180.0 <= lon_f <= 180.0
+                    )
+                    if not coords_valid:
+                        values.append(pd.NA)
+                        dataset_ids.append(pd.NA)
+                        times.append(pd.NA)
+                        continue
+                    key = (
+                        lat_f,
+                        lon_f,
+                        variable,
+                        scenario,
+                        depth_layer,
+                        target_year,
+                    )
+                    if key not in cache:
+                        cache[key] = _fetch_bio_oracle_point(
+                            latitude=lat_f,
+                            longitude=lon_f,
+                            variable=variable,
+                            scenario=scenario,
+                            depth_layer=depth_layer,
+                            target_year=target_year,
+                        )
+                    fetched = cache[key]
+                    value = fetched["value"]
+                    is_real_value = value is not None and not pd.isna(value)
+                    values.append(value if is_real_value else pd.NA)
+                    dataset_ids.append(fetched.get("dataset_id") or pd.NA)
+                    times.append(fetched.get("time") or pd.NA)
+                    if is_real_value:
+                        row_has_value[position] = True
+                stub = f"bio_oracle_{_clean_label(variable)}_{_clean_label(scenario)}"
+                enriched[stub] = values
+                enriched[f"{stub}_dataset_id"] = dataset_ids
+                enriched[f"{stub}_time"] = times
+
+        statuses = [
+            "matched" if has_value else "no_value" for has_value in row_has_value
+        ]
+
+        enriched["bio_oracle_match_status"] = statuses
+        variable_name = dataset_variable_name(
+            "bio_oracle_enriched", uuid.uuid4().hex[:12]
+        )
+        store_dataset(
+            _store,
+            thread_id,
+            enriched,
+            variable_name=variable_name,
+            meta={"source": "bio_oracle_enrichment", "n_rows": len(enriched)},
+        )
+        n_matched = statuses.count("matched")
+        n_no_value = statuses.count("no_value")
+        method_lines = [
+            "Méthode :",
+            (
+                f"- Colonnes source détectées : latitude={lat_col!r}, "
+                f"longitude={lon_col!r}"
+            ),
+            (
+                "- Datasets Bio-ORACLE : un par (variable × scénario), "
+                f"depth_layer={depth_layer!r}, target_year={target_year!r}"
+            ),
+            f"- Variables : {', '.join(variables)}",
+            f"- Scénarios : {', '.join(scenarios)}",
+            "- Dédup par point unique pour économiser les appels ERDDAP",
+            f"- Statuts : matched={n_matched}, no_value={n_no_value}",
+        ]
+        if n_no_value:
+            method_lines.append(
+                f"- Note : {n_no_value} ligne(s) sans valeur — point hors "
+                "couverture de la grille Bio-ORACLE (souvent terre ou bord)."
+            )
+        return (
+            f"Enrichissement Bio-ORACLE — {len(enriched)} ligne(s), "
+            f"{n_matched} matchée(s).\n"
+            f"Données disponibles dans `{variable_name}`.\n\n"
+            + "\n".join(method_lines)
+        )
+
     return [list_bio_oracle_datasets, preview_bio_oracle_point, query_bio_oracle,
-            couple_zooplankton_bio_oracle, query_bio_oracle_zones]
+            couple_zooplankton_bio_oracle, query_bio_oracle_zones,
+            enrich_with_bio_oracle]

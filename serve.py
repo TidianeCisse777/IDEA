@@ -461,59 +461,128 @@ async def _quick_sse_response(content: str) -> AsyncGenerator[str, None]:
 def _format_tool_line(name: str, args: dict | None = None) -> str:
     """Formate une étape outil pour le stream SSE.
 
-    - run_graph / run_pandas : bloc <details> collapsible avec le code Python
+    - run_graph / run_pandas : bloc replié avec le code Python
     - load_file : affiche le nom du fichier
     - skill_tool : affiche le nom du skill
-    - autres : juste 🔧 nom
+    - autres : bloc replié avec paramètres utiles
     """
     args = args or {}
 
     if name in ("run_graph", "run_pandas") and "code" in args:
         code = args["code"]
+        body = f"```python\n{code}\n```"
         if name == "run_graph":
-            return f"\n🔧 `{name}`\n```python\n{code}\n```\n*Génération du graphique...*\n"
-        return f"\n🔧 `{name}`\n```python\n{code}\n```\n"
+            body = f"{body}\n\n*Génération du graphique...*"
+        return _format_tool_call_details(name, body)
 
     if name == "load_file" and "path" in args:
         filename = Path(args["path"]).name
-        return f"\n🔧 `{name}` → `{filename}`\n"
+        return _format_tool_call_details(name, f"Paramètres : path=`{filename}`")
 
     if name == "load_skill" and "skill_name" in args:
         skill = args["skill_name"]
-        return f"\n🔧 `{name}` → `{skill}`\n"
+        return _format_tool_call_details(name, f"Paramètres : skill_name=`{skill}`")
 
     if name == "query_ecotaxa" and "project_id" in args:
-        project_id = args["project_id"]
+        params = _format_tool_call_params(args)
+        body = f"Paramètres : {params}" if params else ""
+        body = f"{body}\n\n*Export EcoTaxa en cours — cela peut prendre 1–2 minutes...*".strip()
         return (
-            f"\n🔧 `{name}` → projet `{project_id}`\n"
-            "*Export EcoTaxa en cours — cela peut prendre 1–2 minutes...*\n"
+            _format_tool_call_details(name, body, summary_note="export EcoTaxa en cours")
         )
 
     if name in ("query_bio_oracle", "couple_zooplankton_bio_oracle"):
-        scenario = args.get("scenario")
-        depth_layer = args.get("depth_layer")
-        suffix = ""
-        if scenario or depth_layer:
-            details = ", ".join(part for part in [scenario, depth_layer] if part)
-            suffix = f" → `{details}`"
+        params = _format_tool_call_params(args)
+        body = f"Paramètres : {params}" if params else ""
+        body = f"{body}\n\n*Export Bio-ORACLE en cours — cela peut prendre 1–2 minutes...*".strip()
         return (
-            f"\n🔧 `{name}`{suffix}\n"
-            "*Export Bio-ORACLE en cours — cela peut prendre 1–2 minutes...*\n"
+            _format_tool_call_details(name, body, summary_note="export Bio-ORACLE en cours")
         )
 
     if name == "query_amundsen_ctd":
-        station = args.get("station")
-        cast_number = args.get("cast_number")
-        suffix = ""
-        if station or cast_number is not None:
-            details = ", ".join(str(part) for part in [station, cast_number] if part is not None)
-            suffix = f" → `{details}`"
+        params = _format_tool_call_params(args)
+        body = f"Paramètres : {params}" if params else ""
+        body = f"{body}\n\n*Export Amundsen CTD en cours — cela peut prendre 1–2 minutes...*".strip()
         return (
-            f"\n🔧 `{name}`{suffix}\n"
-            "*Export Amundsen CTD en cours — cela peut prendre 1–2 minutes...*\n"
+            _format_tool_call_details(name, body, summary_note="export Amundsen CTD en cours")
         )
 
-    return f"\n🔧 `{name}`\n"
+    params = _format_tool_call_params(args)
+    body = f"Paramètres : {params}" if params else "Paramètres : —"
+    return _format_tool_call_details(name, body)
+
+
+def _format_tool_call_details(name: str, body: str, *, summary_note: str = "") -> str:
+    return (
+        "\n<details>\n"
+        f"<summary>🔧 {name}</summary>\n\n"
+        f"{body}\n\n"
+        "</details>\n"
+    )
+
+
+_TOOL_LINE_OMITTED_ARGS = {
+    "code",
+    "polygon_wkt",
+    "content",
+    "data",
+}
+_TOOL_LINE_SECRET_PARTS = (
+    "key",
+    "token",
+    "secret",
+    "password",
+    "credential",
+)
+
+
+def _format_tool_call_params(args: dict | None, *, max_len: int = 220) -> str:
+    """Compact, user-visible argument summary for streamed tool calls."""
+    if not args:
+        return ""
+
+    visible: dict[str, object] = {}
+    for key, value in args.items():
+        lowered = str(key).lower()
+        if lowered in _TOOL_LINE_OMITTED_ARGS:
+            continue
+        if any(part in lowered for part in _TOOL_LINE_SECRET_PARTS):
+            visible[key] = "[secret]"
+            continue
+        visible[key] = _compact_tool_arg_value(value)
+
+    if not visible:
+        return ""
+    text = ", ".join(
+        f"{key}={_format_tool_arg_literal(value)}"
+        for key, value in visible.items()
+    )
+    return text if len(text) <= max_len else text[: max_len - 1] + "…"
+
+
+def _compact_tool_arg_value(value):
+    if isinstance(value, str):
+        compact = " ".join(value.split())
+        return compact if len(compact) <= 80 else compact[:79] + "…"
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        if len(value) <= 8:
+            return [_compact_tool_arg_value(v) for v in value]
+        return [_compact_tool_arg_value(v) for v in value[:8]] + [f"... +{len(value) - 8}"]
+    if isinstance(value, dict):
+        return {
+            str(k): _compact_tool_arg_value(v)
+            for k, v in value.items()
+            if str(k).lower() not in _TOOL_LINE_OMITTED_ARGS
+        }
+    return str(value)
+
+
+def _format_tool_arg_literal(value) -> str:
+    if isinstance(value, str):
+        return f"`{value}`"
+    return f"`{json.dumps(value, ensure_ascii=False, default=str)}`"
 
 
 _SLOW_TOOLS = frozenset({
@@ -530,6 +599,7 @@ _HEARTBEAT_INTERVAL = 8.0  # seconds between heartbeat dots during slow tools
 _DATA_SOURCE_TOOL_PREFIXES = (
     "list_ecotaxa", "preview_ecotaxa", "query_ecotaxa", "find_ecotaxa",
     "inspect_ecotaxa", "count_ecotaxa", "compare_ecotaxa", "get_ecotaxa",
+    "summarize_ecotaxa", "export_ecotaxa",
     "list_ecopart", "preview_ecopart", "query_ecopart", "join_ecotaxa_ecopart",
     "list_amundsen", "preview_amundsen", "query_amundsen",
     "enrich_loaded_table_with_amundsen",
@@ -562,6 +632,11 @@ _ECOTAXA_TOOL_LABELS = {
     "find_ecotaxa_projects_in_region": "EcoTaxa · projets par zone / période",
     "find_ecotaxa_observations":       "EcoTaxa · observations par taxon",
     "get_ecotaxa_sample":              "EcoTaxa · métadonnées de sample",
+    "summarize_ecotaxa_samples":        "EcoTaxa · résumé de samples",
+    "summarize_ecotaxa_sample":         "EcoTaxa · résumé de sample",
+    "summarize_ecotaxa_projects":       "EcoTaxa · résumé de projets",
+    "summarize_ecotaxa_project":        "EcoTaxa · résumé de projet",
+    "export_ecotaxa_samples":           "EcoTaxa · export de samples",
 }
 
 

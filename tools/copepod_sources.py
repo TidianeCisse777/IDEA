@@ -32,7 +32,6 @@ _DOWNLOADS_DIR.mkdir(exist_ok=True)
 
 
 def make_source_tools(thread_id: str) -> list:
-
     def _format_number(value) -> str:
         if value is None:
             return "—"
@@ -355,6 +354,10 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Compte les objets validés / prédits / douteux par projet et par taxon.
 
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
         `taxa` accepte des IDs entiers ou des noms scientifiques. Utile pour
         évaluer la confiance des annotations avant d'exporter. Les noms sont
         d'abord résolus en `taxon_id` EcoTaxa, puis les counts viennent de
@@ -442,6 +445,10 @@ def make_source_tools(thread_id: str) -> list:
     def compare_ecotaxa_projects(project_ids: list[int]) -> str:
         """Compare les schémas de plusieurs projets EcoTaxa avant un export combiné.
 
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
         Retourne les colonnes communes, les conflits de type, les conflits de
         niveau, et les colonnes uniques par projet.
         """
@@ -486,6 +493,10 @@ def make_source_tools(thread_id: str) -> list:
         project_ids: list[int] | None = None,
     ) -> str:
         """Cherche les samples EcoTaxa dans une bbox géo et/ou une période.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
 
         `bbox` : `{"south": float, "west": float, "north": float, "east": float}`.
         `date_range` : `{"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}`.
@@ -557,6 +568,10 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Liste les projets EcoTaxa avec au moins un sample dans une zone / période.
 
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
         Même format que `find_ecotaxa_samples_in_region` :
         - `zone_name` (recommandé pour les zones nommées NeoLab) : le tool
           résout le polygone IHO en interne.
@@ -618,6 +633,10 @@ def make_source_tools(thread_id: str) -> list:
         project_ids: list[int] | None = None,
     ) -> str:
         """Trouve les samples EcoTaxa dont le projet a le taxon attesté.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
 
         Granularité projet-filtrée : retourne les samples (bbox/date/instrument)
         appartenant à un projet où le taxon a au moins un objet du statut
@@ -681,6 +700,10 @@ def make_source_tools(thread_id: str) -> list:
     def get_ecotaxa_sample(sample_id: int) -> str:
         """Renvoie les métadonnées complètes d'un sample (déploiement) EcoTaxa.
 
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
         `sample_id` est l'identifiant EcoTaxa du sample (entier, ex. 42000002).
         Réponse : identifiants, lat/lon, original_id (nom de station lisible),
         et tous les `free_fields` exposés par le projet (volume filtré, station,
@@ -728,6 +751,10 @@ def make_source_tools(thread_id: str) -> list:
     def summarize_ecotaxa_samples(sample_ids: list[int]) -> str:
         """Résume un batch de samples EcoTaxa sans télécharger les objets.
 
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
         Renvoie pour chaque `sample_id` un tableau markdown avec :
         - V (validés), P (prédits), D (douteux), U (non classés) — counts
           agrégés sur tous les taxa du sample
@@ -773,6 +800,10 @@ def make_source_tools(thread_id: str) -> list:
     def summarize_ecotaxa_sample(sample_id: int) -> str:
         """Résume UN sample EcoTaxa (V/P/D/U counts + taxa observés).
 
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
         Variante mono-sample de `summarize_ecotaxa_samples`. Renvoie le même
         tableau réduit à une ligne. Pas de download.
         """
@@ -781,6 +812,10 @@ def make_source_tools(thread_id: str) -> list:
     @tool
     def summarize_ecotaxa_projects(project_ids: list[int]) -> str:
         """Résume un batch de projets EcoTaxa sans télécharger les objets.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
 
         Pour chaque `project_id`, renvoie un tableau avec :
         - `n_samples` (depuis le cache local)
@@ -854,6 +889,10 @@ def make_source_tools(thread_id: str) -> list:
     def summarize_ecotaxa_project(project_id: int) -> str:
         """Résume UN projet EcoTaxa (n_samples + envelope + V/P/D/U + taxa).
 
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
         Variante mono-projet de `summarize_ecotaxa_projects`. Renvoie le
         même tableau réduit à une ligne. Pas de download.
         """
@@ -867,6 +906,10 @@ def make_source_tools(thread_id: str) -> list:
         taxon: str | None = None,
     ) -> str:
         """Exporte une sélection de samples EcoTaxa, multi-projets en 1 appel.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
 
         Groupe automatiquement les `sample_ids` par projet (via le cache
         local — pas d'appel API supplémentaire) et lance UN `query_ecotaxa`

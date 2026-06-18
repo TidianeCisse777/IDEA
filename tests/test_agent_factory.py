@@ -172,7 +172,7 @@ def test_system_prompt_routes_named_zone_map_requests():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "first tool call must be `get_zone_info" in prompt
+    assert "first geography/source-boundary tool must be `get_zone_info" in prompt
     assert "carte" in prompt
     assert "load_skill(\"graph_planner\")" in prompt
     assert "load_skill(\"graph_writer\")" in prompt
@@ -311,6 +311,33 @@ def test_system_prompt_routes_ecotaxa_stats_tables_to_project_summary():
     assert "do not call `query_ecotaxa`" in prompt
 
 
+def test_system_prompt_loads_ecotaxa_navigation_before_zone_lookup():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "for ecotaxa navigation requests with a named zone" in prompt
+    assert '(1) `load_skill("ecotaxa_navigation")`' in prompt
+    assert "(2) `get_zone_info(zone_name=...)`" in prompt
+    assert "first geography/source-boundary tool" in prompt
+
+
+def test_system_prompt_routes_current_ecotaxa_sample_followups_without_kb():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "current-result follow-ups" in prompt
+    assert "ambiguous cache/context wording" in prompt
+    assert "samples présents" in prompt
+    assert "which of these" in prompt
+    assert "extract the visible `sample_id`" in prompt
+    assert "ask one short clarification question" in prompt
+    assert "which" in prompt
+    assert "le plus" in prompt
+    assert "never route to the knowledge base" in prompt
+    assert "do not call `query_copepod_knowledge_base`" in prompt
+    assert "do not answer with a fresh metadata list" in prompt
+
+
 def test_system_prompt_allows_operational_synthesis_without_scientific_interpretation():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -336,6 +363,24 @@ def test_ecotaxa_navigation_skill_prefers_read_only_when_ambiguous():
     assert "do not switch to `run_pandas`" in skill
     assert "query_ecotaxa" in skill
     assert "choose the read-only summary" in skill
+
+
+def test_ecotaxa_navigation_skill_handles_current_sample_taxon_rankings():
+    skill = Path("agents/skills/ecotaxa_navigation.md").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert "parmi ceux-là" in skill
+    assert "reuse those ids" in skill
+    assert "samples présents" in skill
+    assert "ambiguous unless" in skill
+    assert "ecotaxa cache" in skill
+    assert "ask one short clarification question" in skill
+    assert "summarize_ecotaxa_samples(sample_ids=[...])" in skill
+    assert "taxon-specific limitation" in skill
+    assert "not exact per-sample counts" in skill
+    assert "do not fall back to a fresh sample" in skill
+    assert "exact object-level filtering requires an export/download" in skill
 
 
 def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():

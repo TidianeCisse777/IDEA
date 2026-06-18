@@ -566,6 +566,29 @@ def test_source_tools_include_get_ecotaxa_sample():
     assert "query_ecotaxa_sample" in tool_names
 
 
+def test_ecotaxa_navigation_tools_require_skill_load_in_description():
+    from tools.copepod_sources import make_source_tools
+
+    tools_by_name = {source_tool.name: source_tool for source_tool in make_source_tools("thread-descriptions")}
+    navigation_tools = [
+        "count_ecotaxa_taxa",
+        "compare_ecotaxa_projects",
+        "find_ecotaxa_samples_in_region",
+        "find_ecotaxa_projects_in_region",
+        "find_ecotaxa_observations",
+        "get_ecotaxa_sample",
+        "summarize_ecotaxa_samples",
+        "summarize_ecotaxa_sample",
+        "summarize_ecotaxa_projects",
+        "summarize_ecotaxa_project",
+        "export_ecotaxa_samples",
+    ]
+
+    for tool_name in navigation_tools:
+        assert tool_name in tools_by_name
+        assert 'load_skill("ecotaxa_navigation")' in tools_by_name[tool_name].description
+
+
 def test_get_ecotaxa_sample_renders_sample_metadata():
     fake_sample = {
         "sample_id": 42000002,

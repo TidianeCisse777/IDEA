@@ -619,3 +619,387 @@ def test_couple_bio_oracle_mixed_baseline_and_future_target_year_is_traceable():
         "2050-01-01T00:00:00Z",
         "2050-01-01T00:00:00Z",
     ]
+
+
+def test_enrich_with_bio_oracle_attaches_value_to_each_source_row():
+    """Tracer bullet — table source avec lat/lon → 1 valeur Bio-ORACLE par ligne.
+
+    Cas EcoTaxa typique : on appelle un seul tool avec variables + scenarios,
+    le tool auto-détecte lat/lon, interroge Bio-ORACLE et recolle une valeur
+    par ligne dans une colonne préfixée.
+    """
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-tracer"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "latitude": [60.0],
+            "longitude": [-65.0],
+            "object_date": ["2018-06-01"],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:bio.tsv"})
+
+    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
+        return {
+            "dataset_id": "thetao_ssp585_2020_2100_depthsurf",
+            "time": "2050-01-01T00:00:00Z",
+            "value": 8.42,
+        }
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+    ):
+        enrich = next(
+            tool
+            for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "enrich_with_bio_oracle"
+        )
+        enrich.invoke(
+            {
+                "variables": ["temperature"],
+                "scenarios": ["SSP5-8.5"],
+                "target_year": 2050,
+            }
+        )
+
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["bio_oracle_temperature_ssp5_8_5"].tolist() == [8.42]
+    assert enriched["bio_oracle_match_status"].tolist() == ["matched"]
+
+
+def test_enrich_with_bio_oracle_deduplicates_points_to_minimize_http_calls():
+    """3 lignes mais 2 points uniques → 2 appels Bio-ORACLE (pas 3)."""
+    import pandas as pd
+    from unittest.mock import MagicMock, patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-dedup"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "latitude": [60.0, 60.0, 61.0],
+            "longitude": [-65.0, -65.0, -66.0],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:dedup.tsv"})
+
+    counter = {"calls": 0}
+
+    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
+        counter["calls"] += 1
+        return {
+            "dataset_id": "thetao_ssp585_2020_2100_depthsurf",
+            "time": "2050-01-01T00:00:00Z",
+            "value": float(latitude),
+        }
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+    ):
+        enrich = next(
+            tool
+            for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "enrich_with_bio_oracle"
+        )
+        enrich.invoke(
+            {
+                "variables": ["temperature"],
+                "scenarios": ["SSP5-8.5"],
+                "target_year": 2050,
+            }
+        )
+
+    assert counter["calls"] == 2
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["bio_oracle_temperature_ssp5_8_5"].tolist() == [60.0, 60.0, 61.0]
+
+
+def test_enrich_with_bio_oracle_combines_multiple_variables_and_scenarios():
+    """2 variables × 2 scénarios → 4 colonnes distinctes."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-multi"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame({"latitude": [60.0], "longitude": [-65.0]})
+    _store.set(thread_id, source, {"source": "file:multi.tsv"})
+
+    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
+        return {
+            "dataset_id": f"{variable}_{scenario}",
+            "time": "2050-01-01T00:00:00Z",
+            "value": hash((variable, scenario)) % 100 / 10.0,
+        }
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+    ):
+        enrich = next(
+            tool
+            for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "enrich_with_bio_oracle"
+        )
+        enrich.invoke(
+            {
+                "variables": ["temperature", "salinity"],
+                "scenarios": ["baseline", "SSP5-8.5"],
+            }
+        )
+
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    expected_cols = {
+        "bio_oracle_temperature_baseline",
+        "bio_oracle_temperature_ssp5_8_5",
+        "bio_oracle_salinity_baseline",
+        "bio_oracle_salinity_ssp5_8_5",
+    }
+    assert expected_cols.issubset(set(enriched.columns))
+
+
+def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_none():
+    """Point hors grille / pas de valeur → statut `no_value`, valeur NaN propagée."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-novalue"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame({"latitude": [60.0, 0.0], "longitude": [-65.0, 0.0]})
+    _store.set(thread_id, source, {"source": "file:nv.tsv"})
+
+    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
+        if latitude == 0.0:
+            return {"dataset_id": "x", "time": None, "value": None}
+        return {"dataset_id": "x", "time": "2050-01-01", "value": 8.0}
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+    ):
+        enrich = next(
+            tool
+            for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "enrich_with_bio_oracle"
+        )
+        enrich.invoke({"variables": ["temperature"], "scenarios": ["SSP5-8.5"]})
+
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["bio_oracle_match_status"].tolist() == ["matched", "no_value"]
+
+
+def test_enrich_with_bio_oracle_diagnoses_empty_coordinates_without_http():
+    """Colonnes lat/lon présentes mais 100% vides : diagnostic, pas d'appel HTTP."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-empty"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame({"object_lat": [None, None], "object_lon": [None, None]})
+    _store.set(thread_id, source, {"source": "file:empty.tsv"})
+
+    with patch("tools.bio_oracle_sources._fetch_bio_oracle_point") as mock_fetch:
+        enrich = next(
+            tool
+            for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "enrich_with_bio_oracle"
+        )
+        result = enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"]})
+
+    mock_fetch.assert_not_called()
+    assert (
+        "vides" in result.lower()
+        or "aucune coordonnée" in result.lower()
+        or "empty" in result.lower()
+    )
+
+
+def test_enrich_with_bio_oracle_returns_method_block_and_traceability_columns():
+    """Transparence : bloc Méthode + colonnes dataset_id/time par (var, scénario)."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-method"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {"latitude": [60.0, 0.0], "longitude": [-65.0, 0.0]}
+    )
+    _store.set(thread_id, source, {"source": "file:m.tsv"})
+
+    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
+        if latitude == 0.0:
+            return {"dataset_id": None, "time": None, "value": None}
+        return {
+            "dataset_id": f"{variable}_{scenario}_2020_2100_depthsurf",
+            "time": "2050-01-01T00:00:00Z",
+            "value": 8.42,
+        }
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+    ):
+        enrich = next(
+            tool
+            for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "enrich_with_bio_oracle"
+        )
+        text = enrich.invoke(
+            {
+                "variables": ["temperature"],
+                "scenarios": ["SSP5-8.5"],
+                "depth_layer": "surface",
+                "target_year": 2050,
+            }
+        )
+
+    # Bloc Méthode
+    lowered = text.lower()
+    assert "méthode" in lowered or "method" in lowered
+    assert "latitude" in text and "longitude" in text
+    assert "surface" in text
+    assert "2050" in text
+    assert "ssp5-8.5" in lowered or "ssp5_8_5" in lowered
+    assert "matched=1" in text and "no_value=1" in text
+
+    # Traçabilité
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    dataset_col = "bio_oracle_temperature_ssp5_8_5_dataset_id"
+    time_col = "bio_oracle_temperature_ssp5_8_5_time"
+    assert dataset_col in enriched.columns
+    assert time_col in enriched.columns
+    assert enriched[dataset_col].iloc[0] == "temperature_SSP5-8.5_2020_2100_depthsurf"
+    assert enriched[time_col].iloc[0] == "2050-01-01T00:00:00Z"
+
+
+def test_system_prompt_prefers_enrich_with_bio_oracle_for_csv_enrichment():
+    """Le prompt doit mentionner enrich_with_bio_oracle avant couple_zooplankton_bio_oracle."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "enrich_with_bio_oracle" in prompt
+    new_idx = prompt.find("enrich_with_bio_oracle")
+    old_idx = prompt.find("couple_zooplankton_bio_oracle")
+    assert new_idx != -1
+    assert new_idx < old_idx or old_idx == -1
+
+
+def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_nan_float():
+    """Bio-ORACLE renvoie nan (point sur terre / hors océan) → statut no_value."""
+    import math
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-nan-float"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame({"latitude": [49.5], "longitude": [-63.0]})
+    _store.set(thread_id, source, {"source": "file:anticosti.tsv"})
+
+    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
+        return {
+            "dataset_id": "thetao_baseline_2000_2019_depthsurf",
+            "time": "2010-01-01T00:00:00Z",
+            "value": math.nan,
+        }
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+    ):
+        enrich = next(
+            t for t in make_bio_oracle_tools(thread_id)
+            if t.name == "enrich_with_bio_oracle"
+        )
+        enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"]})
+
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["bio_oracle_match_status"].tolist() == ["no_value"]
+
+
+def test_enrich_with_bio_oracle_skips_out_of_range_coords_without_http():
+    """Coordonnées hors plage valide (lat>90, lon>180) → no_value sans crash."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-bad-coords"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "latitude": [60.0, 999.0, 200.0, -91.0],
+            "longitude": [-65.0, 999.0, -90.0, 0.0],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:bad.tsv"})
+
+    fetch_calls = []
+
+    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
+        fetch_calls.append((latitude, longitude))
+        return {
+            "dataset_id": "thetao_baseline_2000_2019_depthsurf",
+            "time": "2010-01-01",
+            "value": 8.0,
+        }
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+    ):
+        enrich = next(
+            t for t in make_bio_oracle_tools(thread_id)
+            if t.name == "enrich_with_bio_oracle"
+        )
+        enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"]})
+
+    # Seul le 1er point (60, -65) doit être appelé
+    assert fetch_calls == [(60.0, -65.0)]
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["bio_oracle_match_status"].tolist() == [
+        "matched",
+        "no_value",
+        "no_value",
+        "no_value",
+    ]

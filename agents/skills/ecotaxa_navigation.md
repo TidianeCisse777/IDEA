@@ -19,7 +19,17 @@ General ambiguity rule:
 
 - Prefer read-only navigation tools over exports when the wording is
   ambiguous. "stats", "tableau", "résumé", "scan", "liste", "combien",
-  "où", "quels samples/projets" are exploration intents, not downloads.
+  "où", "quels samples/projets", "lesquels", "le plus", "top", and "rank"
+  are exploration intents, not downloads.
+- Follow-up wording such as "ces samples", "ce tableau", "parmi ceux-là",
+  "among these", or "which of these" means the user is referring to the
+  `sample_id` / `project_id` values already shown in the previous result.
+  Reuse those IDs; do not run a new broad `find_ecotaxa_samples_in_region`
+  call unless the user explicitly asks for a new geographic/project search.
+- Wording such as "samples présents" or "present samples" is ambiguous unless
+  the previous turn clearly established a table or scope. It can mean samples
+  present in the EcoTaxa cache, the current UI result, or a project/zone
+  subset. If the scope is unclear, ask one short clarification question.
 - Instrument names remain filters even if the user wording is sloppy. In
   samples-by-zone queries, `LOKI` / `Loki` means instrument Loki and must be
   passed as `instrument="Loki"`; do not drop it and do not reinterpret it as a
@@ -182,10 +192,29 @@ Routing rules :
 - DO use it instead of `query_ecotaxa_sample` when the user just wants to
   **know** what's in a sample. `query_ecotaxa_sample` downloads the whole
   thing.
+- DO use it for current-result ranking questions such as "lesquels de ces
+  samples contiennent le plus d'objets ?" or "parmi ceux-là, lesquels semblent
+  les plus riches ?" Rank by `total` unless the user names a more precise
+  V/P/D/U metric.
 - DO use the batch form (`summarize_ecotaxa_samples`) over multiple
   single-sample calls — it issues one API call per batch.
 - `summarize_ecotaxa_sample` (singular) is just sugar for one item; either
   form works.
+
+Taxon-specific limitation:
+
+- `summarize_ecotaxa_samples` exposes per-sample V/P/D/U totals and top taxa,
+  but NOT exact per-sample counts for one named taxon.
+- If the user asks "among these samples, which contain the most Copepoda /
+  copepods / Calanus", first reuse the current visible sample IDs. Then:
+  - if an approximate answer is acceptable from the summary, call
+    `summarize_ecotaxa_samples(sample_ids=[...])`, rank only samples where the
+    requested taxon appears in `top taxa`, and state that the ranking is based
+    on sample totals/top-taxa presence, not exact per-taxon counts;
+  - if exact taxon counts per sample are required, say the current read-only
+    sample summary cannot provide them. Do NOT fall back to a fresh sample
+    metadata listing. Exact object-level filtering requires an export/download
+    path and therefore confirmation.
 
 A sample with only `P` and no `V` means « model predictions, never
 validated by a human » — flag this to the user before they treat the
@@ -379,6 +408,8 @@ User wants to export…
 | « samples LOKI dans Baie de Baffin » | `find_ecotaxa_samples_in_region(zone_name=..., instrument="Loki")` |
 | « samples du projet LOKI dans Baie de Baffin » | `find_ecotaxa_projects(title="LOKI")` → `find_ecotaxa_samples_in_region(zone_name=..., project_ids=[<id>])` |
 | « scan ces 20 samples avant export » | `summarize_ecotaxa_samples(sample_ids=[...])` then user decides |
+| « parmi ceux-là, lesquels contiennent le plus de copepods ? » | Reuse the visible `sample_id` values → `summarize_ecotaxa_samples(sample_ids=[...])`; if exact per-sample Copepoda counts are required, state the read-only limitation instead of listing metadata again. |
+| « parmi les samples présents, lesquels contiennent le plus de copepods ? » | Ambiguous unless a scope was just established. Ask whether "présents" means current table, EcoTaxa cache, or a specific project/zone. |
 | « combien de Calanus validés dans ces 3 projets » | `count_ecotaxa_taxa(project_ids=[...], taxa=["Calanus"])` (skip the pipeline — count, not export) |
 | « les colonnes de ce projet contiennent-elles profondeur » | `inspect_ecotaxa_project_schema(project_id=...)` |
 | « peut-on merger ces 3 projets » | `compare_ecotaxa_projects(project_ids=[...])` before any export |
