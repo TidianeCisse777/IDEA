@@ -544,7 +544,125 @@ def _is_data_source_tool(name: str) -> bool:
     return any(name == p or name.startswith(p) for p in _DATA_SOURCE_TOOL_PREFIXES)
 
 
-def _format_tool_result_details(name: str, content: str) -> str:
+# Libellés FR pour le <summary> du bloc collapsible — pas de nom interne
+# (cf. CLAUDE.md « pas de nom de tool exposé »).
+_ECOTAXA_BASE_URL = "https://ecotaxa.obs-vlfr.fr"
+
+_ECOTAXA_TOOL_LABELS = {
+    "find_ecotaxa_projects":           "EcoTaxa · recherche de projets",
+    "list_ecotaxa_projects":           "EcoTaxa · projets accessibles",
+    "preview_ecotaxa_project":         "EcoTaxa · aperçu de projet",
+    "query_ecotaxa":                   "EcoTaxa · export de projet",
+    "query_ecotaxa_sample":            "EcoTaxa · export de sample",
+    "inspect_ecotaxa_project_schema":  "EcoTaxa · schéma de projet",
+    "count_ecotaxa_taxa":              "EcoTaxa · comptage par taxon",
+    "inspect_ecotaxa_column":          "EcoTaxa · inspection de colonne",
+    "compare_ecotaxa_projects":        "EcoTaxa · comparaison de projets",
+    "find_ecotaxa_samples_in_region":  "EcoTaxa · samples par zone / période",
+    "find_ecotaxa_projects_in_region": "EcoTaxa · projets par zone / période",
+    "find_ecotaxa_observations":       "EcoTaxa · observations par taxon",
+    "get_ecotaxa_sample":              "EcoTaxa · métadonnées de sample",
+}
+
+
+def _format_args_summary(name: str, args: dict | None) -> str:
+    """Résume les arguments saillants d'un tool pour le titre du bloc."""
+    if not args:
+        return ""
+    parts: list[str] = []
+    if (project_id := args.get("project_id")) is not None:
+        parts.append(f"projet {project_id}")
+    if (sample_id := args.get("sample_id")) is not None:
+        parts.append(f"sample {sample_id}")
+    if zone := args.get("zone_name"):
+        parts.append(str(zone))
+    if instrument := args.get("instrument"):
+        parts.append(str(instrument))
+    if taxon := args.get("taxon"):
+        parts.append(str(taxon))
+    if (dr := args.get("date_range")) and isinstance(dr, dict):
+        a, b = dr.get("from"), dr.get("to")
+        if a and b:
+            parts.append(f"{a} → {b}")
+        elif a:
+            parts.append(f"≥ {a}")
+        elif b:
+            parts.append(f"≤ {b}")
+    if (bbox := args.get("bbox")) and isinstance(bbox, dict):
+        try:
+            parts.append(
+                f"bbox {bbox['south']:.1f}/{bbox['west']:.1f}"
+                f"→{bbox['north']:.1f}/{bbox['east']:.1f}"
+            )
+        except (KeyError, TypeError, ValueError):
+            pass
+    return " · ".join(parts)
+
+
+def _linkify_ecotaxa(content: str) -> str:
+    """Rend les `project_id` / `sample_id` cliquables vers EcoTaxa.
+
+    URL canonique :
+    - projet → ``/prj/{project_id}``
+    - sample → ``/prj/{project_id}?samples={sample_id}`` (EcoTaxa n'a pas
+      de page sample isolée ; on ouvre le projet filtré sur le sample).
+
+    Si la ligne d'un sample n'a pas de colonne projet, le sample reste en
+    texte brut (lien impossible à fabriquer correctement).
+    """
+    base = _ECOTAXA_BASE_URL
+    lines = content.split("\n")
+
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        if ln.startswith("|") and any(
+            tok in ln for tok in ("sample_id", "project_id", "projet")
+        ):
+            cols = [c.strip().lower() for c in ln.strip("|").split("|")]
+            sample_idx = next((k for k, c in enumerate(cols) if c == "sample_id"), None)
+            project_idx = next(
+                (k for k, c in enumerate(cols) if c in ("project_id", "projet")),
+                None,
+            )
+            if sample_idx is None and project_idx is None:
+                i += 1
+                continue
+            # Saute la ligne de séparation markdown (|---|---|...)
+            j = i + 2
+            while j < len(lines) and lines[j].startswith("|"):
+                cells = [c.strip() for c in lines[j].strip("|").split("|")]
+                if len(cells) < len(cols):
+                    j += 1
+                    continue
+                project_id_value = (
+                    cells[project_idx]
+                    if project_idx is not None and cells[project_idx].isdigit()
+                    else None
+                )
+                if (
+                    sample_idx is not None
+                    and cells[sample_idx].isdigit()
+                    and project_id_value is not None
+                ):
+                    sid = cells[sample_idx]
+                    cells[sample_idx] = (
+                        f"[{sid}]({base}/prj/{project_id_value}?samples={sid})"
+                    )
+                if project_idx is not None and project_id_value is not None:
+                    cells[project_idx] = (
+                        f"[{project_id_value}]({base}/prj/{project_id_value})"
+                    )
+                lines[j] = "| " + " | ".join(cells) + " |"
+                j += 1
+            i = j
+            continue
+        i += 1
+
+    return "\n".join(lines)
+
+
+def _format_tool_result_details(name: str, content: str, args: dict | None = None) -> str:
     """Wrap a tool result in a collapsed <details> block for Open WebUI."""
     # Hide raw base64 image payloads (handled separately by image extraction).
     display = re.sub(
@@ -552,10 +670,22 @@ def _format_tool_result_details(name: str, content: str) -> str:
         "[image data]",
         content,
     )
+
+    is_ecotaxa = name in _ECOTAXA_TOOL_LABELS
+    if is_ecotaxa:
+        display = _linkify_ecotaxa(display)
+        label = _ECOTAXA_TOOL_LABELS[name]
+        suffix = _format_args_summary(name, args)
+        summary = f"📊 {label}" + (f" — {suffix}" if suffix else "")
+        source_line = f"\n\n*Source : EcoTaxa — [{_ECOTAXA_BASE_URL}]({_ECOTAXA_BASE_URL})*"
+    else:
+        summary = f"📊 Résultat de <code>{name}</code>"
+        source_line = ""
+
     return (
         f"\n<details>\n"
-        f"<summary>📊 Résultat de <code>{name}</code></summary>\n\n"
-        f"{display}\n\n"
+        f"<summary>{summary}</summary>\n\n"
+        f"{display}{source_line}\n\n"
         f"</details>\n"
     )
 
@@ -575,7 +705,7 @@ async def _stream_agent_sse(
     """
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
     chunk_queue: asyncio.Queue[str | None] = asyncio.Queue()
-    shared: dict = {"last_ai_msg": None, "in_slow_tool": False}
+    shared: dict = {"last_ai_msg": None, "in_slow_tool": False, "pending_tool_args": {}}
 
     async def _run_agent() -> None:
         try:
@@ -600,6 +730,9 @@ async def _stream_agent_sse(
                         for tc in tool_calls:
                             name = tc["name"] if isinstance(tc, dict) else tc.name
                             tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                            if tc_id:
+                                shared["pending_tool_args"][tc_id] = tc_args
                             await chunk_queue.put(_make_sse_chunk(completion_id, _format_tool_line(name, tc_args)))
                             shared["in_slow_tool"] = name in _SLOW_TOOLS
 
@@ -608,6 +741,8 @@ async def _stream_agent_sse(
                         for tool_msg in msgs:
                             tool_content = getattr(tool_msg, "content", "") or ""
                             tool_name = getattr(tool_msg, "name", "") or ""
+                            tool_call_id = getattr(tool_msg, "tool_call_id", None)
+                            tool_args = shared["pending_tool_args"].pop(tool_call_id, None) if tool_call_id else None
                             if "data:image/png;base64," in tool_content:
                                 hosted = _extract_and_host_images(tool_content)
                                 img_match = re.search(r"!\[.*?\]\(http[^\)]+\)", hosted)
@@ -616,7 +751,7 @@ async def _stream_agent_sse(
                             if tool_name and tool_content and _is_data_source_tool(tool_name):
                                 await chunk_queue.put(_make_sse_chunk(
                                     completion_id,
-                                    _format_tool_result_details(tool_name, tool_content),
+                                    _format_tool_result_details(tool_name, tool_content, tool_args),
                                 ))
         except Exception as exc:
             logger.error("stream_error thread=%s err=%s", thread_id, exc)

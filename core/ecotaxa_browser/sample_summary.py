@@ -8,7 +8,10 @@ full export via ``query_ecotaxa``. Hits the EcoTaxa endpoint
 
 from __future__ import annotations
 
+from core.ecotaxa_browser.region import resolve_sample_projects
 from tools.ecotaxa_client import EcotaxaClient
+
+_SAMPLE_PROJECT_FACTOR = 1_000_000
 
 
 def summarize_samples(sample_ids: list[int]) -> list[dict]:
@@ -35,6 +38,7 @@ def summarize_samples(sample_ids: list[int]) -> list[dict]:
     client = EcotaxaClient()
     client.login()
     raw = client.sample_taxo_stats(sample_ids)
+    project_by_sample = resolve_sample_projects(sample_ids)
 
     # Collect all taxon IDs once, resolve names in a single pass.
     taxon_ids: set[int] = set()
@@ -58,10 +62,11 @@ def summarize_samples(sample_ids: list[int]) -> list[dict]:
 
     out: list[dict] = []
     for entry in raw:
+        sample_id = int(entry["sample_id"])
         used = [int(t) for t in (entry.get("used_taxa") or []) if t is not None]
         out.append({
-            "sample_id": int(entry["sample_id"]),
-            "projid": int(entry.get("projid") or entry.get("project_id") or 0),
+            "sample_id": sample_id,
+            "projid": _project_id_for_sample(entry, sample_id, project_by_sample),
             "nb_validated": int(entry.get("nb_validated") or 0),
             "nb_predicted": int(entry.get("nb_predicted") or 0),
             "nb_dubious": int(entry.get("nb_dubious") or 0),
@@ -73,3 +78,16 @@ def summarize_samples(sample_ids: list[int]) -> list[dict]:
             ],
         })
     return out
+
+
+def _project_id_for_sample(
+    entry: dict,
+    sample_id: int,
+    project_by_sample: dict[int, int],
+) -> int:
+    explicit = entry.get("projid") or entry.get("project_id")
+    if explicit:
+        return int(explicit)
+    if sample_id in project_by_sample:
+        return int(project_by_sample[sample_id])
+    return sample_id // _SAMPLE_PROJECT_FACTOR

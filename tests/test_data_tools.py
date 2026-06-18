@@ -252,6 +252,24 @@ graph_explanation = (
     assert "courbe en ligne" in result
 
 
+def test_run_graph_works_without_loaded_file_for_standalone_map():
+    """Carte d'une zone nommée : pas de df nécessaire, run_graph doit exécuter."""
+    thread_id = "thread-standalone-graph"
+    _store.clear(thread_id)
+
+    run_graph = next(t for t in make_tools(thread_id) if t.name == "run_graph")
+    code = (
+        "fig, ax = plt.subplots(figsize=(4, 4))\n"
+        "ax.text(0.5, 0.5, 'Mer du Labrador', ha='center', va='center')\n"
+        "ax.set_xlim(0, 1); ax.set_ylim(0, 1)\n"
+    )
+    result = run_graph.invoke({"code": code})
+    assert "/graphs/" in result
+    assert "No file loaded" not in result
+
+    _store.clear(thread_id)
+
+
 def test_run_graph_exposes_multiple_ecopart_projects():
     thread_id = "thread-run-graph-multiple-ecopart"
     keys = [

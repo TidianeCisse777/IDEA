@@ -63,12 +63,62 @@ def test_is_data_source_tool_recognizes_known_sources():
 
 def test_format_tool_result_details_wraps_in_collapsible_block():
     from serve import _format_tool_result_details
-    block = _format_tool_result_details("query_ecotaxa", "| project_id | name |\n|---|---|\n| 42 | …|")
+    block = _format_tool_result_details(
+        "query_ecotaxa",
+        "| project_id | name |\n|---|---|\n| 42 | …|",
+        {"project_id": 42},
+    )
     assert "<details>" in block
     assert "</details>" in block
     assert "<summary>" in block
-    assert "<code>query_ecotaxa</code>" in block
-    assert "| project_id | name |" in block
+    # Libellé FR au lieu du nom interne du tool.
+    assert "EcoTaxa" in block
+    assert "query_ecotaxa" not in block
+    # Résumé des args dans le titre.
+    assert "projet 42" in block
+    # Source EcoTaxa affichée explicitement.
+    assert "ecotaxa.obs-vlfr.fr" in block
+    # project_id 42 devient un lien cliquable vers la page projet.
+    assert "(https://ecotaxa.obs-vlfr.fr/prj/42)" in block
+
+
+def test_format_tool_result_details_linkifies_sample_and_project_columns():
+    from serve import _format_tool_result_details
+    content = (
+        "| sample_id | projet | lat |\n"
+        "|---:|---:|---:|\n"
+        "| 42000002 | 1165 | 70.123 |\n"
+    )
+    block = _format_tool_result_details(
+        "find_ecotaxa_samples_in_region", content, {"zone_name": "Baie de Baffin"},
+    )
+    # sample_id pointe vers le projet filtré sur ce sample (EcoTaxa n'a pas de
+    # page sample isolée).
+    assert "(https://ecotaxa.obs-vlfr.fr/prj/1165?samples=42000002)" in block
+    assert "(https://ecotaxa.obs-vlfr.fr/prj/1165)" in block
+    assert "Baie de Baffin" in block
+
+
+def test_format_tool_result_details_skips_sample_link_without_project():
+    """Sans colonne projet dans la même ligne, on ne fabrique pas de lien
+    sample (impossible à construire correctement)."""
+    from serve import _format_tool_result_details
+    content = (
+        "| sample_id | lat |\n"
+        "|---:|---:|\n"
+        "| 42000002 | 70.123 |\n"
+    )
+    block = _format_tool_result_details("find_ecotaxa_observations", content, None)
+    assert "42000002" in block
+    assert "/sample/" not in block
+    assert "?samples=" not in block
+
+
+def test_format_tool_result_details_non_ecotaxa_tool_keeps_raw_name():
+    from serve import _format_tool_result_details
+    block = _format_tool_result_details("query_bio_oracle", "any content")
+    # Tools non-EcoTaxa gardent l'ancien format pour l'instant.
+    assert "<code>query_bio_oracle</code>" in block
 
 
 def test_format_tool_result_details_hides_raw_base64_image():

@@ -786,6 +786,38 @@ def test_slice2_summarize_ecotaxa_samples_returns_vpd_breakdown_and_top_taxa():
     assert "Metridia" in result
 
 
+def test_sample_summary_derives_project_id_when_taxo_stats_omits_projid(seeded_cache):
+    from core.ecotaxa_browser.sample_summary import summarize_samples
+
+    with patch("core.ecotaxa_browser.sample_summary.EcotaxaClient") as MockClient:
+        client = MockClient.return_value
+        client.sample_taxo_stats.return_value = [
+            {
+                "sample_id": 14853000001,
+                "used_taxa": [80126],
+                "nb_validated": 80,
+                "nb_predicted": 8348,
+                "nb_dubious": 0,
+                "nb_unclassified": 0,
+            },
+            {
+                "sample_id": 14853000003,
+                "used_taxa": [80126],
+                "nb_validated": 7761,
+                "nb_predicted": 11580,
+                "nb_dubious": 0,
+                "nb_unclassified": 0,
+            },
+        ]
+        client.get_taxon.return_value = {"id": 80126, "display_name": "Calanus"}
+
+        result = summarize_samples([14853000001, 14853000003])
+
+    by_sample = {row["sample_id"]: row for row in result}
+    assert by_sample[14853000001]["projid"] == 14853  # from cache
+    assert by_sample[14853000003]["projid"] == 14853  # derived from sample_id
+
+
 # ── SLICE 3 GATE ──────────────────────────────────────────────────────────────
 
 def test_slice3_export_ecotaxa_samples_dry_run_groups_by_project(seeded_cache):

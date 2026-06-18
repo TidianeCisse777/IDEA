@@ -10,6 +10,45 @@ _GRAPHS_DIR.mkdir(exist_ok=True)
 import pandas as pd
 from langchain_core.tools import tool
 
+
+def _patch_cartopy_gridliner_polygon() -> None:
+    """Workaround : cartopy 0.25 + shapely 2.1 crashent dans `_draw_gridliner`
+    quand le path frontière de la carte n'a pas un premier/dernier point
+    identique (`GEOSException: Points of LinearRing do not form a closed
+    linestring`). Visible sur de nombreuses bbox courantes — Hudson, Ungava…
+
+    On remplace `sgeom.Polygon` dans le namespace de `cartopy.mpl.gridliner`
+    par un proxy qui ferme le LinearRing si nécessaire.
+    """
+    try:
+        import cartopy.mpl.gridliner as _gridliner  # type: ignore
+    except Exception:
+        return
+    if getattr(_gridliner, "_idea_polygon_patched", False):
+        return
+
+    import numpy as np
+    _orig_sgeom = _gridliner.sgeom
+    _orig_polygon = _orig_sgeom.Polygon
+
+    def _safe_polygon(shell=None, holes=None):
+        try:
+            arr = np.asarray(shell)
+            if arr.ndim == 2 and arr.shape[0] >= 2 and not np.allclose(arr[0], arr[-1]):
+                shell = np.vstack([arr, arr[0:1]])
+        except Exception:
+            pass
+        return _orig_polygon(shell, holes)
+
+    class _SGeomShim:
+        def __getattr__(self, name):
+            if name == "Polygon":
+                return _safe_polygon
+            return getattr(_orig_sgeom, name)
+
+    _gridliner.sgeom = _SGeomShim()
+    _gridliner._idea_polygon_patched = True
+
 from tools.file_loader import load_file as _load_file
 from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.public_url import graph_url
@@ -209,20 +248,22 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         Do NOT call plt.show() or plt.savefig().
 
         The return value is the graph image — include it verbatim in your response.
+        Standalone figures (e.g. cartopy zone maps) work without any loaded file.
         """
         session = _store.get(thread_id)
-        if not session or session.get("df") is None:
-            return "No file loaded. Use load_file first."
-
-        df = session["df"]
+        df = session.get("df") if session else None
 
         try:
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             plt.close("all")
+            _patch_cartopy_gridliner_polygon()
 
-            local_vars = _dataframe_vars(_store, thread_id, df)
+            if df is not None:
+                local_vars = _dataframe_vars(_store, thread_id, df)
+            else:
+                local_vars = {"pd": pd}
             local_vars["plt"] = plt
             exec(code, local_vars)  # noqa: S102
 
@@ -245,7 +286,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             return "Code executed but no figure was produced. Make sure your matplotlib code creates a figure."
 
         except Exception as e:
-            cols_info = df.dtypes.to_string()
+            cols_info = df.dtypes.to_string() if df is not None else "(no file loaded)"
             return f"Error: {type(e).__name__}: {e}\n\nAvailable columns:\n{cols_info}"
 
     return [load_file, run_pandas, run_graph]
