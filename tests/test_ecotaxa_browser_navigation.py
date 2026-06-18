@@ -183,6 +183,118 @@ def test_search_taxa_returns_autocomplete_results():
 
 
 @pytest.mark.anyio
+async def test_fastmcp_v2_navigation_tools_gate():
+    """Gate test V2 du MCP — vérifie d'un coup les changements apportés par
+    les slices 1-4 du flow de navigation EcoTaxa :
+
+    - 2 nouveaux outils exposés : ``summarize_samples`` (sample-level
+      V/P/D/U + taxa) et ``summarize_projects`` (project-level overview
+      via cache + /project_set/taxo_stats).
+    - 3 outils existants acceptent désormais ``project_ids`` :
+      ``samples_in_region``, ``projects_in_region``, ``find_observations``.
+      Le paramètre est propagé tel quel à la couche core.
+
+    Si ce test passe, l'API MCP V2 est complète pour le flow de navigation.
+    """
+    from fastmcp import Client
+
+    from core.mcp.ecotaxa_server import create_mcp
+
+    # ── Nouveaux outils ────────────────────────────────────────────────
+    sample_summary_payload = [{
+        "sample_id": 14853000001, "projid": 14853,
+        "nb_validated": 50, "nb_predicted": 100,
+        "nb_dubious": 2, "nb_unclassified": 0,
+        "used_taxa": [80126], "per_taxon": [{"taxon_id": 80126, "name": "Calanus"}],
+    }]
+    project_summary_payload = [{
+        "project_id": 14853, "n_samples": 20,
+        "instruments": ["UVP6"],
+        "date_min": "2024-10-01", "date_max": "2024-10-15",
+        "bbox": {"south": 70.0, "west": -75.0, "north": 76.5, "east": -65.0},
+        "nb_validated": 1500, "nb_predicted": 8000,
+        "nb_dubious": 50, "nb_unclassified": 200,
+        "used_taxa": [80126],
+        "per_taxon": [{"taxon_id": 80126, "name": "Calanus"}],
+    }]
+
+    # ── Args reçus par les fonctions sous-jacentes (capture project_ids) ──
+    captured: dict[str, dict] = {}
+
+    def _make_capture(name: str, retval):
+        def _inner(**kwargs):
+            captured[name] = kwargs
+            return retval
+        return _inner
+
+    samples_payload = {"samples": [], "total_matching": 0, "truncated": False, "summary": {}}
+    projects_payload = {"projects": [], "total_projects": 0, "total_samples": 0, "summary": {}}
+    observations_payload = {
+        "taxon": {"taxon_id": 80126, "matched_name": "Calanus"},
+        "granularity": "project_filtered", "status_filter": "V",
+        "samples": [], "total_matching": 0, "truncated": False,
+        "attested_projects": [], "project_counts": {},
+    }
+
+    patches = [
+        # New tools
+        patch("core.mcp.ecotaxa_server.summarize_samples",
+              return_value=sample_summary_payload),
+        patch("core.mcp.ecotaxa_server.summarize_projects",
+              return_value=project_summary_payload),
+        # Existing tools — capture kwargs to verify project_ids propagation
+        patch("core.mcp.ecotaxa_server.samples_in_region",
+              side_effect=_make_capture("samples_in_region", samples_payload)),
+        patch("core.mcp.ecotaxa_server.projects_in_region",
+              side_effect=_make_capture("projects_in_region", projects_payload)),
+        patch("core.mcp.ecotaxa_server.find_observations",
+              side_effect=_make_capture("find_observations", observations_payload)),
+    ]
+    for p in patches:
+        p.start()
+
+    try:
+        async with Client(create_mcp()) as client:
+            tools = {tool.name for tool in await client.list_tools()}
+
+            # ── 1) Les 2 nouveaux outils sont publiés. ─────────────────
+            assert "summarize_samples" in tools, "summarize_samples missing from MCP V2"
+            assert "summarize_projects" in tools, "summarize_projects missing from MCP V2"
+
+            # ── 2) summarize_samples retourne le payload sample-level. ─
+            r1 = await client.call_tool("summarize_samples", {"sample_ids": [14853000001]})
+            assert r1.data == sample_summary_payload
+
+            # ── 3) summarize_projects retourne le payload project-level. ─
+            r2 = await client.call_tool("summarize_projects", {"project_ids": [14853]})
+            assert r2.data == project_summary_payload
+
+            # ── 4) project_ids est accepté par les 3 outils existants
+            #     ET propagé jusqu'à la couche core. ───────────────────
+            await client.call_tool("samples_in_region", {
+                "zone_name": "Baie de Baffin", "project_ids": [14853],
+            })
+            assert captured["samples_in_region"].get("project_ids") == [14853], \
+                "samples_in_region did not propagate project_ids"
+
+            await client.call_tool("projects_in_region", {
+                "zone_name": "Baie de Baffin", "project_ids": [14853, 2331],
+            })
+            assert captured["projects_in_region"].get("project_ids") == [14853, 2331], \
+                "projects_in_region did not propagate project_ids"
+
+            await client.call_tool("find_observations", {
+                "taxon": "Calanus", "zone_name": "Baie de Baffin",
+                "project_ids": [2331],
+            })
+            assert captured["find_observations"].get("project_ids") == [2331], \
+                "find_observations did not propagate project_ids"
+    finally:
+        for p in reversed(patches):
+            p.stop()
+
+
+@pytest.mark.anyio
 async def test_fastmcp_exposes_all_m2_tools_with_json_results():
     from fastmcp import Client
 
@@ -216,3 +328,43 @@ async def test_fastmcp_exposes_all_m2_tools_with_json_results():
     finally:
         for active_patch in reversed(patches):
             active_patch.stop()
+
+
+@pytest.mark.anyio
+async def test_fastmcp_returns_structured_business_errors():
+    from fastmcp import Client
+
+    from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+    from core.mcp.ecotaxa_server import create_mcp
+
+    ambiguous_taxon = EcoTaxaBrowserError(
+        "AMBIGUOUS_TAXON",
+        "Multiple EcoTaxa taxa match 'Calanus'.",
+        candidates=[{"taxon_id": 1, "display_name": "Calanus"}],
+    )
+
+    with patch("core.mcp.ecotaxa_server.taxa_stats", side_effect=ambiguous_taxon):
+        async with Client(create_mcp()) as client:
+            taxa_result = await client.call_tool(
+                "taxa_stats",
+                {"project_ids": [42], "taxa": ["Calanus"]},
+            )
+
+    assert taxa_result.data == {
+        "ok": False,
+        "error": {
+            "code": "AMBIGUOUS_TAXON",
+            "message": "Multiple EcoTaxa taxa match 'Calanus'.",
+            "candidates": [{"taxon_id": 1, "display_name": "Calanus"}],
+        },
+    }
+
+    async with Client(create_mcp()) as client:
+        status_result = await client.call_tool(
+            "find_observations",
+            {"taxon": "Calanus", "status": "validated"},
+        )
+
+    assert status_result.data["ok"] is False
+    assert status_result.data["error"]["code"] == "INVALID_STATUS"
+    assert status_result.data["error"]["candidates"] == ["D", "P", "V", "all"]

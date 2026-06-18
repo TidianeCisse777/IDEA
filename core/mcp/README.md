@@ -5,7 +5,7 @@ inspection, taxon counts, and cross-project geo+temporal browse to any
 MCP-capable agent (Claude Desktop, Claude Code CLI, custom agents,
 IDEA itself).
 
-The server is **curated**: 15 tools mapped to 7 use cases, no write
+The server is **curated**: 19 tools mapped to 7 use cases, no write
 endpoints, no exports (exports stay with the IDEA-native `query_ecotaxa`
 tool).
 
@@ -67,27 +67,36 @@ All Bearer-protected requests must carry `Authorization: Bearer $MCP_AUTH_TOKEN`
 
 ## Tools
 
-Surface is read-only, organised by use case. Every tool returns a JSON
-object. Business errors are returned structured (`{ok: false, error: {code, message, candidates}}`); infrastructure errors propagate as MCP `isError: true`.
+Surface is read-only, organised by use case. Every tool returns
+JSON-compatible data. Business errors are returned structured
+(`{ok: false, error: {code, message, candidates}}`); infrastructure
+errors propagate as MCP `isError: true`.
 
 ### UC1 — Geographic / temporal availability (cache-only)
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `samples_in_region` | `bbox?` (`{south, west, north, east}`), `date_range?` (`{from, to}`), `instrument?` | `{samples[], total_matching, truncated, summary}` — cap 500 |
-| `projects_in_region` | `bbox?`, `date_range?` | `{projects[], total_projects, total_samples}` — one row per project with `sample_count`, `object_count`, `instruments`, date range |
+| `samples_in_region` | `bbox?` (`{south, west, north, east}`), `date_range?` (`{from, to}`), `instrument?`, `zone_name?`, `polygon_wkt?`, `project_ids?` | `{samples[], total_matching, truncated, summary}` — cap 500 |
+| `projects_in_region` | `bbox?`, `date_range?`, `zone_name?`, `polygon_wkt?`, `project_ids?` | `{projects[], total_projects, total_samples}` — one row per project with `sample_count`, `object_count`, `instruments`, date range |
 
 ### UC2 — Taxon mapping (cache + live taxon counts)
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `find_observations` | `taxon` (str/int), `bbox?`, `date_range?`, `instrument?`, `status?` (`V`/`P`/`D`/`all`) | `{samples[], attested_projects, project_counts, granularity: "project_filtered"}` |
+| `find_observations` | `taxon` (str/int), `bbox?`, `date_range?`, `instrument?`, `status?` (`V`/`P`/`D`/`all`), `zone_name?`, `polygon_wkt?`, `project_ids?` | `{samples[], attested_projects, project_counts, granularity: "project_filtered"}` |
 
 ### UC3 — Counts
 
 | Tool | Inputs | Returns |
 |---|---|---|
 | `taxa_stats` | `project_ids`, `taxa` (mix of int IDs and strings) | `{rows[], inaccessible_project_ids, taxa_resolved}` with V/P/D/total per (project, taxon) |
+
+### UC3b — Lightweight summaries
+
+| Tool | Inputs | Returns |
+|---|---|---|
+| `summarize_projects` | `project_ids` | Per-project cache envelope plus aggregated V/P/D/U counts and resolved taxa |
+| `summarize_samples` | `sample_ids` | Per-sample V/P/D/U counts plus resolved taxa |
 
 ### UC4 — Schema inspection
 
@@ -134,6 +143,9 @@ object. Business errors are returned structured (`{ok: false, error: {code, mess
 | `TAXON_NOT_FOUND` | No taxon matches the name | Refine spelling |
 | `INVALID_BBOX` | bbox dict missing keys or south > north | Fix the bbox |
 | `INVALID_DATE_RANGE` | date_range dict missing keys | Fix the date_range |
+| `INVALID_STATUS` | `find_observations.status` is not `V`, `P`, `D`, or `all` | Re-call with one of the candidate values |
+| `INVALID_POLYGON` | `polygon_wkt` is empty or invalid WKT | Fix or omit the polygon |
+| `UNKNOWN_ZONE` | `zone_name` is not known in the NeoLab zone registry | Re-call with a known zone alias |
 | `CACHE_EMPTY` | Local cache has no samples (first boot, no sync yet) | `POST /admin/resync` and wait |
 
 ---

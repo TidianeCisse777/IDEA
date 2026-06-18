@@ -220,6 +220,98 @@ def query_samples_filtered(
     return conn.execute(f"SELECT * FROM samples_cache {where}", params)
 
 
+def query_project_envelopes(
+    conn: sqlite3.Connection,
+    project_ids: Sequence[int],
+) -> dict[int, dict]:
+    """Return per-project geographic + temporal envelopes from the cache.
+
+    For each requested ``project_id`` :
+        - ``n_samples`` : sample count in the cache
+        - ``date_min`` / ``date_max`` : temporal envelope across samples
+        - ``bbox`` : ``{south, west, north, east}`` of all sample centroids
+        - ``instruments`` : sorted list of distinct instruments
+        - ``sample_ids`` : list of all sample IDs in the local cache
+
+    Projects with no samples in the cache are simply absent from the result.
+    """
+    if not project_ids:
+        return {}
+    placeholders = ",".join("?" for _ in project_ids)
+    params = list(project_ids)
+    envelopes = conn.execute(
+        f"""
+        SELECT
+            project_id,
+            COUNT(*) AS n_samples,
+            MIN(date_min) AS date_min,
+            MAX(date_max) AS date_max,
+            MIN(lat_avg) AS south, MAX(lat_avg) AS north,
+            MIN(lon_avg) AS west,  MAX(lon_avg) AS east
+        FROM samples_cache
+        WHERE project_id IN ({placeholders})
+        GROUP BY project_id
+        """,
+        params,
+    ).fetchall()
+
+    out: dict[int, dict] = {}
+    for row in envelopes:
+        pid = int(row["project_id"])
+        out[pid] = {
+            "project_id": pid,
+            "n_samples": int(row["n_samples"]),
+            "date_min": row["date_min"],
+            "date_max": row["date_max"],
+            "bbox": {
+                "south": row["south"], "west": row["west"],
+                "north": row["north"], "east": row["east"],
+            },
+            "instruments": [],
+            "sample_ids": [],
+        }
+
+    # Fill instruments + sample_ids in a single second pass.
+    sample_rows = conn.execute(
+        f"SELECT project_id, sample_id, instrument FROM samples_cache "
+        f"WHERE project_id IN ({placeholders})",
+        params,
+    )
+    instruments_acc: dict[int, set[str]] = {pid: set() for pid in out}
+    for row in sample_rows:
+        pid = int(row["project_id"])
+        if pid not in out:
+            continue
+        out[pid]["sample_ids"].append(int(row["sample_id"]))
+        if row["instrument"]:
+            instruments_acc[pid].add(str(row["instrument"]))
+    for pid, names in instruments_acc.items():
+        out[pid]["instruments"] = sorted(names)
+
+    return out
+
+
+def lookup_sample_projects(
+    conn: sqlite3.Connection,
+    sample_ids: Sequence[int],
+) -> dict[int, int]:
+    """Return a ``{sample_id: project_id}`` map for the given sample IDs.
+
+    Samples not present in the cache are simply absent from the result.
+    Used by the bulk-export planner to group a sample selection by its
+    parent project before launching one ``query_ecotaxa`` per project.
+    """
+    if not sample_ids:
+        return {}
+    placeholders = ",".join("?" for _ in sample_ids)
+    rows = conn.execute(
+        f"SELECT sample_id, project_id FROM samples_cache "
+        f"WHERE sample_id IN ({placeholders})",
+        list(sample_ids),
+    )
+    return {int(row["sample_id"]): int(row["project_id"]) for row in rows}
+
+
 def start_sync_run(conn: sqlite3.Connection, *, started_at: str) -> int:
     cursor = conn.execute(
         "INSERT INTO sync_runs (started_at) VALUES (?)",

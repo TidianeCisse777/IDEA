@@ -38,6 +38,22 @@ def _open_cache() -> sqlite3.Connection:
     return open_connection(_cache_db_path())
 
 
+def resolve_sample_projects(sample_ids: list[int]) -> dict[int, int]:
+    """Map each ``sample_id`` to its ``project_id`` via the local cache.
+
+    Samples not present in the cache are absent from the returned mapping.
+    Used by the bulk-export planner to group a user's sample selection.
+    """
+    from core.ecotaxa_browser.cache.repo import lookup_sample_projects
+    if not sample_ids:
+        return {}
+    conn = _open_cache()
+    try:
+        return lookup_sample_projects(conn, sample_ids)
+    finally:
+        conn.close()
+
+
 def _ensure_cache_ready(conn: sqlite3.Connection) -> None:
     counts = cache_counts(conn)
     if counts["samples_indexed"] == 0:
@@ -151,6 +167,7 @@ def samples_in_region(
     instrument: str | None = None,
     polygon_wkt: str | None = None,
     zone_name: str | None = None,
+    project_ids: list[int] | None = None,
 ) -> dict:
     """Return cached samples matching geo / temporal / instrument filters.
 
@@ -163,6 +180,10 @@ def samples_in_region(
     ``zone_name`` wins over ``polygon_wkt`` if both are given. The resolved
     polygon's own bbox is used as the SQL pre-filter when no explicit
     ``bbox`` is provided.
+
+    ``project_ids`` restricts results to a subset of EcoTaxa projects (SQL
+    ``IN`` clause on ``samples_cache.project_id``). Combine with zone/date
+    to scope « samples du projet X dans la zone Y entre A et B ».
     """
     bbox_tuple = _validate_bbox(bbox)
     date_tuple = _validate_date_range(date_range)
@@ -182,6 +203,7 @@ def samples_in_region(
             bbox=bbox_repo,
             date_range=date_tuple,
             instrument=instrument,
+            project_ids=project_ids,
         ))
     finally:
         conn.close()
@@ -212,6 +234,7 @@ def projects_in_region(
     date_range: dict | None = None,
     polygon_wkt: str | None = None,
     zone_name: str | None = None,
+    project_ids: list[int] | None = None,
 ) -> dict:
     """Group matching samples per project.
 
@@ -219,6 +242,8 @@ def projects_in_region(
     ``polygon_wkt``, or ``zone_name``). When a polygon (resolved or passed)
     is provided, samples outside the polygon are excluded before
     project-level aggregation.
+
+    ``project_ids`` restricts to a subset of EcoTaxa projects.
     """
     bbox_tuple = _validate_bbox(bbox)
     date_tuple = _validate_date_range(date_range)
@@ -235,6 +260,7 @@ def projects_in_region(
             bbox=(bbox_tuple if bbox_tuple is None else
                   (bbox_tuple[0], bbox_tuple[1], bbox_tuple[2], bbox_tuple[3])),
             date_range=date_tuple,
+            project_ids=project_ids,
         ))
     finally:
         conn.close()

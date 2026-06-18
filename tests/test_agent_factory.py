@@ -249,6 +249,41 @@ def test_system_prompt_routes_ecotaxa_list_preview_and_export_separately():
     assert "exporte" in prompt
 
 
+def test_ecotaxa_navigation_distinguishes_loki_instrument_from_project():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    skill = Path("agents/skills/ecotaxa_navigation.md").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert 'load_skill("ecotaxa_navigation")' in prompt
+    assert "loki-as-instrument" in prompt
+    assert "samples loki" in skill
+    assert 'instrument="loki"' in skill
+    assert "samples du projet loki" in skill
+    assert "find_ecotaxa_projects" in skill
+
+
+def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    skill = Path("agents/skills/ecotaxa_navigation.md").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert 'load_skill("ecotaxa_navigation")' in prompt
+    assert "count_ecotaxa_taxa" in prompt
+    assert "25828" not in prompt
+    assert "copepoda<multicrustacea" not in prompt
+
+    assert "taxa_ids=<taxon_id" in skill
+    assert "25828" in skill
+    assert "copepoda<multicrustacea" in skill
+    assert "copépodes" in skill
+
+
 def test_system_prompt_routes_bio_oracle_list_preview_query_and_coupling():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

@@ -170,7 +170,7 @@ def test_ecotaxa_client_wait_for_job_raises_on_error():
 
     client = EcotaxaClient()
     with _patch.object(client._session, "get", return_value=mock_resp):
-        with pytest.raises(RuntimeError, match="failed with state=E"):
+        with pytest.raises(RuntimeError, match=r"failed \(state=E\)"):
             client.wait_for_job(job_id=99)
 
 
@@ -207,8 +207,55 @@ def test_query_ecotaxa_auth_failure_returns_error():
         query = next(t for t in tools if t.name == "query_ecotaxa")
         result = query.invoke({"project_id": 1165})
 
-    assert "Erreur" in result
+    # Marqueur explicite consommé par le system prompt.
+    assert result.startswith("EXPORT_FAILED")
+    assert "credentials missing" in result
     assert not _store.has("thread-err")
+
+
+def test_query_ecotaxa_export_failure_surfaces_server_message():
+    """Échec HTTP côté serveur EcoTaxa → message serveur visible + diagnostic."""
+    from tools.ecotaxa_client import EcotaxaExportError
+
+    with patch("tools.copepod_sources.EcotaxaClient") as MockClient:
+        MockClient.return_value.start_export.side_effect = EcotaxaExportError(
+            project_id=14853,
+            status_code=403,
+            server_message="User has no Export right on this project",
+        )
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-fail")
+        query = next(t for t in tools if t.name == "query_ecotaxa")
+        result = query.invoke({"project_id": 14853, "sample_ids": [14853000003]})
+
+    assert result.startswith("EXPORT_FAILED")
+    assert "14853" in result
+    assert "HTTP 403" in result
+    assert "no Export right" in result
+    # Diagnostic suggéré.
+    assert "preview_ecotaxa_project(14853)" in result
+    # Interdiction explicite de retomber sur la recherche.
+    assert "find_ecotaxa_samples_in_region" in result
+    assert not _store.has("thread-fail")
+
+
+def test_query_ecotaxa_sample_export_failure_keeps_sample_context():
+    from tools.ecotaxa_client import EcotaxaExportError
+
+    sample_meta = {"sample_id": 42000002, "project_id": "1165", "original_id": "stn-A"}
+    with patch("tools.copepod_sources.core_get_sample", return_value=sample_meta), \
+         patch("tools.copepod_sources.EcotaxaClient") as MockClient:
+        MockClient.return_value.start_export.side_effect = EcotaxaExportError(
+            project_id=1165, status_code=403, server_message="forbidden",
+        )
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-fail-sample")
+        query = next(t for t in tools if t.name == "query_ecotaxa_sample")
+        result = query.invoke({"sample_id": 42000002})
+
+    assert result.startswith("EXPORT_FAILED")
+    assert "sample 42000002" in result
+    assert "projet 1165" in result
 
 
 def test_query_ecotaxa_logs_in_before_starting_export():
@@ -578,3 +625,423 @@ def test_get_ecotaxa_sample_handles_browser_error():
 
     assert "SAMPLE_NOT_FOUND" in result
     assert "999" in result
+
+
+def test_count_ecotaxa_taxa_shows_resolved_taxon_id_and_u_count():
+    fake = {
+        "project_ids_resolved": [14853],
+        "taxa_resolved": [{
+            "input": "copépodes",
+            "taxon_id": 25828,
+            "matched_name": "Copepoda<Multicrustacea",
+        }],
+        "rows": [{
+            "project_id": 14853,
+            "taxon_id": 25828,
+            "taxon_name": "Copepoda<Multicrustacea",
+            "count_V": 2063,
+            "count_P": 15589,
+            "count_D": 0,
+            "count_U": 0,
+            "count_total": 17652,
+        }],
+        "inaccessible_project_ids": [],
+        "unresolved_taxa": [],
+    }
+    with patch("tools.copepod_sources.taxa_stats", return_value=fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-count-taxa")
+        fn = next(t for t in tools if t.name == "count_ecotaxa_taxa")
+        result = fn.invoke({"project_ids": [14853], "taxa": ["copépodes"]})
+
+    assert "taxon_id" in result
+    assert "25828" in result
+    assert "Copepoda<Multicrustacea" in result
+    assert "2063" in result
+    assert "non classés" in result
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Navigation slices — gate tests (1 par slice).
+# Chaque slice est jugée OK quand ce test passe au niveau LC tool.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def seeded_cache(tmp_path):
+    """SQLite cache EcoTaxa patché pour la durée du test."""
+    import sqlite3
+    from core.ecotaxa_browser.cache.repo import init_schema, upsert_sample
+
+    path = tmp_path / "ecotaxa_cache.sqlite"
+    conn = sqlite3.connect(str(path))
+    init_schema(conn)
+
+    samples = [
+        # Projet 14853 (UVP6 2024 Baie de Baffin)
+        {"sample_id": 14853000001, "project_id": 14853, "lat": 73.5, "lon": -66.0,
+         "date_min": "2024-10-10", "date_max": "2024-10-10", "instrument": "UVP6"},
+        {"sample_id": 14853000002, "project_id": 14853, "lat": 73.7, "lon": -66.8,
+         "date_min": "2024-10-11", "date_max": "2024-10-11", "instrument": "UVP6"},
+        # Projet 2331 (LOKI dans Baie de Baffin aussi)
+        {"sample_id": 2331000001, "project_id": 2331, "lat": 74.0, "lon": -67.0,
+         "date_min": "2015-08-01", "date_max": "2015-08-01", "instrument": "Loki"},
+        # Projet 4042 hors Baffin
+        {"sample_id": 4042000001, "project_id": 4042, "lat": 45.0, "lon": -60.0,
+         "date_min": "2018-06-01", "date_max": "2018-06-01", "instrument": "UVP5"},
+    ]
+    for s in samples:
+        upsert_sample(
+            conn,
+            sample_id=s["sample_id"],
+            project_id=s["project_id"],
+            lat_avg=s["lat"],
+            lon_avg=s["lon"],
+            date_min=s["date_min"],
+            date_max=s["date_max"],
+            object_count=100,
+            instrument=s["instrument"],
+            last_synced="ts",
+        )
+    conn.close()
+
+    with patch("core.ecotaxa_browser.region._cache_db_path", return_value=str(path)), \
+         patch("core.ecotaxa_browser.observations._cache_db_path", return_value=str(path)):
+        yield str(path)
+
+
+# ── SLICE 1 GATE ──────────────────────────────────────────────────────────────
+
+def test_slice1_find_ecotaxa_samples_in_region_filters_by_project_ids(seeded_cache):
+    """L'agent doit pouvoir dire : « samples de Baie de Baffin DANS le projet 2331 »
+    en un seul appel. project_ids est un filtre cache (SQL IN), pas un post-process.
+    """
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-slice1")
+    fn = next(t for t in tools if t.name == "find_ecotaxa_samples_in_region")
+
+    bbox = {"south": 70.0, "west": -80.0, "north": 80.0, "east": -60.0}
+
+    # Sans filtre projet : 3 samples Baffin (14853 ×2, 2331 ×1)
+    result_all = fn.invoke({"bbox": bbox})
+    assert "14853000001" in result_all
+    assert "14853000002" in result_all
+    assert "2331000001" in result_all
+
+    # Avec project_ids=[2331] : seul le sample LOKI doit ressortir
+    result_loki = fn.invoke({"bbox": bbox, "project_ids": [2331]})
+    assert "2331000001" in result_loki
+    assert "14853000001" not in result_loki
+    assert "14853000002" not in result_loki
+
+
+# ── SLICE 2 GATE ──────────────────────────────────────────────────────────────
+
+def test_slice2_summarize_ecotaxa_samples_returns_vpd_breakdown_and_top_taxa():
+    """L'agent doit pouvoir scanner un batch de samples (sans télécharger) et voir
+    pour chacun : V/P/D counts + top taxa. Source = endpoint EcoTaxa
+    /sample_set/taxo_stats (mockée ici).
+    """
+    fake_stats = [
+        {
+            "sample_id": 14853000001,
+            "used_taxa": [80126, 80155],  # Calanus, Metridia
+            "nb_validated": 82,
+            "nb_predicted": 340,
+            "nb_dubious": 12,
+            "nb_unclassified": 0,
+            "projid": 14853,
+            "per_taxon": [
+                {"taxon_id": 80126, "name": "Calanus", "count_V": 62, "count_P": 200, "count_D": 5},
+                {"taxon_id": 80155, "name": "Metridia", "count_V": 20, "count_P": 140, "count_D": 7},
+            ],
+        },
+        {
+            "sample_id": 14853000002,
+            "used_taxa": [80126],
+            "nb_validated": 50,
+            "nb_predicted": 100,
+            "nb_dubious": 3,
+            "nb_unclassified": 0,
+            "projid": 14853,
+            "per_taxon": [
+                {"taxon_id": 80126, "name": "Calanus", "count_V": 50, "count_P": 100, "count_D": 3},
+            ],
+        },
+    ]
+
+    with patch("tools.copepod_sources.summarize_samples", return_value=fake_stats):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-slice2")
+        fn = next(t for t in tools if t.name == "summarize_ecotaxa_samples")
+        result = fn.invoke({"sample_ids": [14853000001, 14853000002]})
+
+    # Les counts V/P/D des deux samples sont visibles.
+    assert "14853000001" in result
+    assert "14853000002" in result
+    assert "82" in result and "340" in result and "12" in result  # sample 1
+    assert "50" in result and "100" in result and "3" in result   # sample 2
+    # Top taxa surface dans le résumé.
+    assert "Calanus" in result
+    assert "Metridia" in result
+
+
+# ── SLICE 3 GATE ──────────────────────────────────────────────────────────────
+
+def test_slice3_export_ecotaxa_samples_dry_run_groups_by_project(seeded_cache):
+    """Sans confirmed=True, le tool doit montrer le breakdown par projet
+    SANS lancer aucun export (CT-AG-06 : confirmation avant op lourde).
+    """
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-slice3-dry")
+    fn = next(t for t in tools if t.name == "export_ecotaxa_samples")
+
+    # 3 samples spanning 2 projects (14853 ×2 + 2331 ×1)
+    with patch("tools.copepod_sources.EcotaxaClient") as MockClient:
+        result = fn.invoke({
+            "sample_ids": [14853000001, 14853000002, 2331000001],
+        })
+        # Pas de start_export ni de download tant que non confirmé.
+        MockClient.return_value.start_export.assert_not_called()
+
+    # Le résumé dry-run liste les deux projets et le nb de samples par projet.
+    assert "14853" in result
+    assert "2331" in result
+    assert "2" in result  # 2 samples sur 14853
+    # Marqueur clair que c'est un dry-run en attente de confirmation.
+    assert "confirm" in result.lower() or "dry" in result.lower()
+
+
+def test_slice3_export_ecotaxa_samples_confirmed_runs_one_export_per_project(seeded_cache):
+    """Avec confirmed=True, un query_ecotaxa est lancé par projet (groupage
+    automatique via le cache). Les sample_ids sont passés au bon projet."""
+    df = pd.DataFrame({"object_id": ["o1", "o2"]})
+
+    with patch("tools.copepod_sources.EcotaxaClient") as MockClient:
+        client = MockClient.return_value
+        client.start_export.return_value = 42
+        client.wait_for_job.return_value = {"state": "F"}
+        client.download_tsv.return_value = df
+
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-slice3-go")
+        fn = next(t for t in tools if t.name == "export_ecotaxa_samples")
+        result = fn.invoke({
+            "sample_ids": [14853000001, 14853000002, 2331000001],
+            "confirmed": True,
+        })
+
+        # Un appel start_export par projet (2 projets distincts).
+        assert client.start_export.call_count == 2
+        # Pour chaque appel, le bon project_id et les bons sample_ids.
+        call_args_by_project = {
+            call.args[0] if call.args else call.kwargs.get("project_id"): call
+            for call in client.start_export.call_args_list
+        }
+        assert set(call_args_by_project.keys()) == {14853, 2331}
+
+    assert "14853" in result
+    assert "2331" in result
+    # Mention de réussite ou de comptage de lignes téléchargées.
+    assert "✅" in result or "succès" in result.lower() or "ok" in result.lower()
+
+
+# ── SLICE 4 GATE ──────────────────────────────────────────────────────────────
+
+def test_project_summary_uses_project_taxo_stats_not_sample_rollup(seeded_cache):
+    from core.ecotaxa_browser.project_summary import summarize_projects
+
+    def _project_taxo_stats(project_ids, taxa_ids=""):
+        assert project_ids == [14853]
+        if taxa_ids == "all":
+            return [
+                {
+                    "projid": 14853,
+                    "used_taxa": [80126],
+                    "nb_validated": 500,
+                    "nb_predicted": 7000,
+                    "nb_dubious": 10,
+                    "nb_unclassified": 0,
+                },
+                {
+                    "projid": 14853,
+                    "used_taxa": [80155],
+                    "nb_validated": 1000,
+                    "nb_predicted": 1000,
+                    "nb_dubious": 40,
+                    "nb_unclassified": 200,
+                },
+            ]
+        return [{
+            "projid": 14853,
+            "used_taxa": [80126, 80155],
+            "nb_validated": 1500,
+            "nb_predicted": 8000,
+            "nb_dubious": 50,
+            "nb_unclassified": 200,
+        }]
+
+    def _get_taxon(taxon_id):
+        return {
+            80126: {"display_name": "Calanus"},
+            80155: {"display_name": "Metridia"},
+        }[taxon_id]
+
+    with patch("core.ecotaxa_browser.project_summary.EcotaxaClient") as MockClient:
+        client = MockClient.return_value
+        client.project_taxo_stats.side_effect = _project_taxo_stats
+        client.get_taxon.side_effect = _get_taxon
+
+        result = summarize_projects([14853])
+
+    assert result[0]["nb_validated"] == 1500
+    assert result[0]["nb_predicted"] == 8000
+    assert result[0]["nb_dubious"] == 50
+    assert result[0]["nb_unclassified"] == 200
+    assert result[0]["per_taxon"][0]["name"] == "Calanus"
+    assert result[0]["per_taxon"][0]["total"] == 7510
+    assert result[0]["per_taxon"][1]["name"] == "Metridia"
+    client.sample_taxo_stats.assert_not_called()
+
+
+def test_slice4_summarize_ecotaxa_projects_returns_overview_per_project():
+    """Pendant projet de summarize_ecotaxa_samples : pour chaque project_id,
+    renvoie n_samples, envelope géo/temporelle, V/P/D/U project-level
+    (via /project_set/taxo_stats), et top taxa.
+    """
+    fake = [
+        {
+            "project_id": 14853,
+            "n_samples": 20,
+            "instruments": ["UVP6"],
+            "date_min": "2024-10-01",
+            "date_max": "2024-10-15",
+            "bbox": {"south": 70.0, "west": -75.0, "north": 76.5, "east": -65.0},
+            "nb_validated": 1500,
+            "nb_predicted": 8000,
+            "nb_dubious": 50,
+            "nb_unclassified": 200,
+            "used_taxa": [80126, 80155],
+            "per_taxon": [
+                {"taxon_id": 80126, "name": "Calanus"},
+                {"taxon_id": 80155, "name": "Metridia"},
+            ],
+        },
+        {
+            "project_id": 2331,
+            "n_samples": 8,
+            "instruments": ["Loki"],
+            "date_min": "2015-07-15",
+            "date_max": "2015-08-10",
+            "bbox": {"south": 73.0, "west": -68.0, "north": 75.0, "east": -66.0},
+            "nb_validated": 400,
+            "nb_predicted": 50,
+            "nb_dubious": 5,
+            "nb_unclassified": 0,
+            "used_taxa": [80126],
+            "per_taxon": [
+                {"taxon_id": 80126, "name": "Calanus"},
+            ],
+        },
+    ]
+
+    with patch("tools.copepod_sources.summarize_projects", return_value=fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-slice4")
+        fn = next(t for t in tools if t.name == "summarize_ecotaxa_projects")
+        result = fn.invoke({"project_ids": [14853, 2331]})
+
+    # Les 2 projets apparaissent.
+    assert "14853" in result
+    assert "2331" in result
+    # n_samples visible.
+    assert "20" in result and "8" in result
+    # V/P/D/U counts visibles.
+    assert "1500" in result and "8000" in result
+    assert "400" in result and "50" in result
+    # Envelope temporelle.
+    assert "2024-10-01" in result and "2024-10-15" in result
+    assert "2015-07-15" in result
+    # Instruments.
+    assert "UVP6" in result and "Loki" in result
+    # Top taxa résolus.
+    assert "Calanus" in result
+    assert "Metridia" in result
+
+
+def test_summarize_ecotaxa_projects_reports_missing_cache_ids():
+    fake = [{
+        "project_id": 14853,
+        "n_samples": 4,
+        "instruments": ["UVP6"],
+        "date_min": "2024-10-06",
+        "date_max": "2024-10-11",
+        "bbox": {"south": 72.69, "west": -78.67, "north": 74.31, "east": -66.73},
+        "nb_validated": 0,
+        "nb_predicted": 0,
+        "nb_dubious": 0,
+        "nb_unclassified": 0,
+        "used_taxa": [],
+        "per_taxon": [],
+    }]
+    with patch("tools.copepod_sources.summarize_projects", return_value=fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-slice4-missing")
+        fn = next(t for t in tools if t.name == "summarize_ecotaxa_projects")
+        result = fn.invoke({"project_ids": [14853, 2331]})
+
+    assert "14853" in result
+    assert "2331" in result
+    assert "absent" in result.lower()
+    assert "cache" in result.lower()
+
+
+def test_slice4_summarize_ecotaxa_project_singular_wraps_batch():
+    """Variante mono-projet : wrap autour de summarize_ecotaxa_projects."""
+    fake = [{
+        "project_id": 14853, "n_samples": 1, "instruments": ["UVP6"],
+        "date_min": "2024-01-01", "date_max": "2024-12-31",
+        "bbox": {"south": 0, "west": 0, "north": 0, "east": 0},
+        "nb_validated": 1, "nb_predicted": 0, "nb_dubious": 0, "nb_unclassified": 0,
+        "used_taxa": [], "per_taxon": [],
+    }]
+    with patch("tools.copepod_sources.summarize_projects", return_value=fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-slice4-single")
+        fn = next(t for t in tools if t.name == "summarize_ecotaxa_project")
+        result = fn.invoke({"project_id": 14853})
+    assert "14853" in result
+
+
+def test_slice3_export_ecotaxa_samples_reports_partial_failure(seeded_cache):
+    """Si un projet refuse l'export (EXPORT_FAILED), les autres doivent quand
+    même passer, et le résumé doit lister succès ET échecs (réutilise
+    le marqueur EXPORT_FAILED du fix B)."""
+    from tools.ecotaxa_client import EcotaxaExportError
+    df = pd.DataFrame({"object_id": ["o1"]})
+
+    def _start_export(project_id, filters):
+        if project_id == 14853:
+            raise EcotaxaExportError(14853, 403, "User has no Export right")
+        return 42
+
+    with patch("tools.copepod_sources.EcotaxaClient") as MockClient:
+        client = MockClient.return_value
+        client.start_export.side_effect = _start_export
+        client.wait_for_job.return_value = {"state": "F"}
+        client.download_tsv.return_value = df
+
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-slice3-partial")
+        fn = next(t for t in tools if t.name == "export_ecotaxa_samples")
+        result = fn.invoke({
+            "sample_ids": [14853000001, 2331000001],
+            "confirmed": True,
+        })
+
+    # Succès projet 2331 visible.
+    assert "2331" in result
+    # Échec projet 14853 explicite avec le marqueur consommé par le system prompt.
+    assert "EXPORT_FAILED" in result
+    assert "14853" in result
+    assert "403" in result or "no Export right" in result

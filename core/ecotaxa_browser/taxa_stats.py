@@ -7,10 +7,20 @@ taxa raise a structured ``EcoTaxaBrowserError``.
 
 from __future__ import annotations
 
+import unicodedata
+
 import requests
 
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
 from tools.ecotaxa_client import EcotaxaClient
+
+_TAXON_ALIASES = {
+    "copepod": "Copepoda<Multicrustacea",
+    "copepods": "Copepoda<Multicrustacea",
+    "copepode": "Copepoda<Multicrustacea",
+    "copepodes": "Copepoda<Multicrustacea",
+    "copepoda": "Copepoda<Multicrustacea",
+}
 
 
 def taxa_stats(
@@ -28,32 +38,47 @@ def taxa_stats(
     client = EcotaxaClient()
     client.login()
 
-    taxa_resolved = [_resolve_taxon(client, item) for item in taxa]
+    taxa_resolved = _dedupe_resolved_taxa(
+        [_resolve_taxon(client, item) for item in taxa]
+    )
 
     rows = []
     inaccessible: list[int] = []
+    taxa_ids_param = ",".join(str(item["taxon_id"]) for item in taxa_resolved)
     for project_id in project_ids:
         if project_id in inaccessible:
             continue
+        try:
+            stats = client.project_taxo_stats([project_id], taxa_ids=taxa_ids_param)
+        except requests.HTTPError as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            if status_code in {401, 403}:
+                if project_id not in inaccessible:
+                    inaccessible.append(project_id)
+                continue
+            raise
+
+        stats_by_taxon: dict[int, dict] = {}
+        for entry in stats:
+            for taxon_id in entry.get("used_taxa") or []:
+                if taxon_id is not None:
+                    stats_by_taxon[int(taxon_id)] = entry
         for resolved in taxa_resolved:
-            try:
-                summary = client.taxon_summary(project_id, resolved["taxon_id"])
-            except requests.HTTPError as exc:
-                status_code = getattr(exc.response, "status_code", None)
-                if status_code in {401, 403}:
-                    if project_id not in inaccessible:
-                        inaccessible.append(project_id)
-                    break
-                raise
+            summary = stats_by_taxon.get(resolved["taxon_id"], {})
+            count_v = int(summary.get("nb_validated") or 0)
+            count_p = int(summary.get("nb_predicted") or 0)
+            count_d = int(summary.get("nb_dubious") or 0)
+            count_u = int(summary.get("nb_unclassified") or 0)
             rows.append(
                 {
                     "project_id": project_id,
                     "taxon_id": resolved["taxon_id"],
                     "taxon_name": resolved["matched_name"],
-                    "count_V": int(summary.get("validated_objects") or 0),
-                    "count_P": int(summary.get("predicted_objects") or 0),
-                    "count_D": int(summary.get("dubious_objects") or 0),
-                    "count_total": int(summary.get("total_objects") or 0),
+                    "count_V": count_v,
+                    "count_P": count_p,
+                    "count_D": count_d,
+                    "count_U": count_u,
+                    "count_total": count_v + count_p + count_d + count_u,
                 }
             )
 
@@ -78,14 +103,15 @@ def _resolve_taxon(client, item: int | str) -> dict:
         }
 
     name = str(item).strip()
-    candidates = client.search_taxa(name) or []
+    lookup_name = _TAXON_ALIASES.get(_normalize_taxon_query(name), name)
+    candidates = client.search_taxa(lookup_name) or []
     if not candidates:
         raise EcoTaxaBrowserError(
             "TAXON_NOT_FOUND",
             f"No EcoTaxa taxon matches '{name}'.",
         )
 
-    lowered = name.lower()
+    lowered = lookup_name.lower()
     exact = [c for c in candidates if str(c.get("display_name") or c.get("text") or "").lower() == lowered]
     extending = [
         c for c in candidates
@@ -113,3 +139,23 @@ def _resolve_taxon(client, item: int | str) -> dict:
         "taxon_id": int(chosen["id"]),
         "matched_name": str(chosen.get("display_name") or chosen.get("text") or ""),
     }
+
+
+def _dedupe_resolved_taxa(items: list[dict]) -> list[dict]:
+    unique: dict[int, dict] = {}
+    for item in items:
+        taxon_id = int(item["taxon_id"])
+        if taxon_id not in unique:
+            unique[taxon_id] = item
+            continue
+        existing = unique[taxon_id]
+        existing["input"] = f"{existing['input']}, {item['input']}"
+    return list(unique.values())
+
+
+def _normalize_taxon_query(value: str) -> str:
+    without_accents = "".join(
+        char for char in unicodedata.normalize("NFKD", value.lower())
+        if not unicodedata.combining(char)
+    )
+    return " ".join(without_accents.replace("-", " ").split())

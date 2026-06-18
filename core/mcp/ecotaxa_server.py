@@ -34,6 +34,8 @@ from core.ecotaxa_browser.compare_schemas import compare_project_schemas
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
 from core.ecotaxa_browser.observations import find_observations
 from core.ecotaxa_browser.region import projects_in_region, samples_in_region
+from core.ecotaxa_browser.project_summary import summarize_projects
+from core.ecotaxa_browser.sample_summary import summarize_samples
 from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
@@ -376,10 +378,15 @@ def create_mcp() -> FastMCP:
         """Return V/P/D classification counts per (project_id, taxon).
 
         ``taxa`` accepts integer taxon IDs or scientific names — names are
-        resolved via the taxonomy autocomplete. Inaccessible projects are
-        skipped silently and listed in ``inaccessible_project_ids``.
+        resolved via the taxonomy autocomplete, then sent to
+        ``/project_set/taxo_stats`` as ``taxa_ids=<id>``. Inaccessible
+        projects are skipped silently and listed in
+        ``inaccessible_project_ids``.
         """
-        return await _run_sync(taxa_stats, project_ids=project_ids, taxa=taxa)
+        try:
+            return await _run_sync(taxa_stats, project_ids=project_ids, taxa=taxa)
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
 
     @mcp.tool(name="get_column_distribution")
     async def get_column_distribution_tool(
@@ -422,6 +429,7 @@ def create_mcp() -> FastMCP:
         instrument: str | None = None,
         polygon_wkt: str | None = None,
         zone_name: str | None = None,
+        project_ids: list[int] | None = None,
     ) -> dict:
         """Return cached samples matching a bbox / date range / instrument.
 
@@ -431,6 +439,9 @@ def create_mcp() -> FastMCP:
         - ``zone_name``: a NeoLab zone (e.g. "Baie de Baffin") resolved
           internally; preferred, keeps the large polygon off the channel.
         - ``polygon_wkt``: an explicit WGS84 WKT polygon.
+        ``project_ids`` restricts to a subset of EcoTaxa projects (SQL ``IN``
+        on the cache index); pair with zone/date to scope « samples du
+        projet X dans la zone Y » in one shot.
         Capped at 500 samples with a ``truncated`` flag and a ``summary``
         aggregating project_breakdown + date range seen. Reads the local
         cache only — call ``/admin/resync`` first if empty.
@@ -440,6 +451,7 @@ def create_mcp() -> FastMCP:
                 samples_in_region,
                 bbox=bbox, date_range=date_range, instrument=instrument,
                 polygon_wkt=polygon_wkt, zone_name=zone_name,
+                project_ids=project_ids,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}
@@ -450,23 +462,49 @@ def create_mcp() -> FastMCP:
         date_range: dict | None = None,
         polygon_wkt: str | None = None,
         zone_name: str | None = None,
+        project_ids: list[int] | None = None,
     ) -> dict:
         """Aggregate cached samples per project for a region / time window.
 
         Same filters as ``samples_in_region`` (``bbox``, ``date_range``,
-        ``zone_name``, ``polygon_wkt``). When a polygon is applied, samples
-        outside it are excluded before project aggregation. Returns one row
-        per project with ``sample_count``, ``object_count``, ``instruments``,
-        ``date_min``, ``date_max``.
+        ``zone_name``, ``polygon_wkt``, ``project_ids``). When a polygon is
+        applied, samples outside it are excluded before project aggregation.
+        Returns one row per project with ``sample_count``, ``object_count``,
+        ``instruments``, ``date_min``, ``date_max``.
         """
         try:
             return await _run_sync(
                 projects_in_region,
                 bbox=bbox, date_range=date_range,
                 polygon_wkt=polygon_wkt, zone_name=zone_name,
+                project_ids=project_ids,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="summarize_projects")
+    async def summarize_projects_tool(project_ids: list[int]) -> list[dict]:
+        """Per-project overview without downloading objects.
+
+        Combines local cache envelopes (n_samples, date range, bbox,
+        instruments) with ``/project_set/taxo_stats`` project-level V/P/D/U
+        counts and per-taxon stats. Resolves taxon IDs to names. Light,
+        read-only.
+        """
+        return await _run_sync(summarize_projects, project_ids=project_ids)
+
+    @mcp.tool(name="summarize_samples")
+    async def summarize_samples_tool(sample_ids: list[int]) -> list[dict]:
+        """Per-sample classification breakdown without downloading objects.
+
+        Hits ``GET /sample_set/taxo_stats`` once for the whole batch. For each
+        sample returns ``nb_validated``, ``nb_predicted``, ``nb_dubious``,
+        ``nb_unclassified``, ``used_taxa`` (taxon IDs) and ``per_taxon``
+        (taxon IDs resolved to names). Light, read-only — use to scan a
+        list of samples (typically the output of ``samples_in_region``)
+        before deciding which ones are worth a full export.
+        """
+        return await _run_sync(summarize_samples, sample_ids=sample_ids)
 
     @mcp.tool(name="find_observations")
     async def find_observations_tool(
@@ -477,6 +515,7 @@ def create_mcp() -> FastMCP:
         status: str = "V",
         polygon_wkt: str | None = None,
         zone_name: str | None = None,
+        project_ids: list[int] | None = None,
     ) -> dict:
         """Find cached samples whose project has the taxon attested.
 
@@ -490,6 +529,8 @@ def create_mcp() -> FastMCP:
         applied BEFORE project attestation, so projects with only
         out-of-polygon samples are correctly excluded.
         ``polygon_wkt`` (alternative): explicit WGS84 WKT polygon.
+        ``project_ids``: optional subset of EcoTaxa projects to consider
+        before taxon attestation lookup.
         """
         try:
             return await _run_sync(
@@ -497,6 +538,7 @@ def create_mcp() -> FastMCP:
                 taxon=taxon, bbox=bbox, date_range=date_range,
                 instrument=instrument, status=status,
                 polygon_wkt=polygon_wkt, zone_name=zone_name,
+                project_ids=project_ids,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}

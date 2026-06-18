@@ -33,6 +33,7 @@ from core.ecotaxa_browser.taxa_stats import _resolve_taxon
 from tools.ecotaxa_client import EcotaxaClient
 
 StatusFilter = Literal["V", "P", "D", "all"]
+_VALID_STATUS_FILTERS = {"V", "P", "D", "all"}
 
 
 def _cache_db_path() -> str:
@@ -60,6 +61,7 @@ def find_observations(
     status: StatusFilter = "V",
     polygon_wkt: str | None = None,
     zone_name: str | None = None,
+    project_ids: list[int] | None = None,
 ) -> dict:
     """Return cached samples whose project has the taxon attested.
 
@@ -76,7 +78,17 @@ def find_observations(
             project attestation lookup, so projects with only out-of-polygon
             samples are correctly excluded. ``zone_name`` wins if both are
             provided.
+        project_ids: optional subset of EcoTaxa projects to consider before
+            taxon attestation lookup. Use to scope "taxon X in zone Y for
+            project Z" in one shot.
     """
+    if status not in _VALID_STATUS_FILTERS:
+        raise EcoTaxaBrowserError(
+            "INVALID_STATUS",
+            "status must be one of: V, P, D, all.",
+            candidates=sorted(_VALID_STATUS_FILTERS),
+        )
+
     bbox_tuple = _validate_bbox(bbox)
     date_tuple = _validate_date_range(date_range)
     polygon = _resolve_zone_polygon(zone_name) or _validate_polygon_wkt(polygon_wkt)
@@ -96,6 +108,7 @@ def find_observations(
             bbox=bbox_tuple,
             date_range=date_tuple,
             instrument=instrument,
+            project_ids=project_ids,
         ))
     finally:
         conn.close()
@@ -107,10 +120,10 @@ def find_observations(
             and polygon.contains(Point(r["lon_avg"], r["lat_avg"]))
         ]
 
-    project_ids = sorted({int(row["project_id"]) for row in rows})
+    candidate_project_ids = sorted({int(row["project_id"]) for row in rows})
     attested_projects: list[int] = []
     project_counts: dict[int, dict] = {}
-    for pid in project_ids:
+    for pid in candidate_project_ids:
         summary = client.taxon_summary(pid, resolved["taxon_id"])
         project_counts[pid] = summary
         if _matches_status(summary, status):

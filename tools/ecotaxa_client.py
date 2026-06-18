@@ -17,6 +17,33 @@ _BASE_URL = "https://ecotaxa.obs-vlfr.fr/api"
 _TIMEOUT = 60
 
 
+class EcotaxaExportError(RuntimeError):
+    """Échec d'export EcoTaxa porteur du code HTTP + message serveur."""
+
+    def __init__(self, project_id: int, status_code: int, server_message: str) -> None:
+        self.project_id = project_id
+        self.status_code = status_code
+        self.server_message = server_message
+        super().__init__(
+            f"EcoTaxa export refusé (projet {project_id}, HTTP {status_code}) : {server_message}"
+        )
+
+
+def _server_message(resp: requests.Response) -> str:
+    """Extrait un message d'erreur lisible depuis la réponse EcoTaxa."""
+    try:
+        payload = resp.json()
+    except ValueError:
+        text = (resp.text or "").strip()
+        return text[:300] if text else "(corps de réponse vide)"
+    if isinstance(payload, dict):
+        for key in ("detail", "message", "msg", "error"):
+            if key in payload and payload[key]:
+                return str(payload[key])[:300]
+        return str(payload)[:300]
+    return str(payload)[:300]
+
+
 class EcotaxaClient:
     def __init__(self) -> None:
         self._session = requests.Session()
@@ -127,6 +154,34 @@ class EcotaxaClient:
         resp.raise_for_status()
         return resp.json()
 
+    def sample_taxo_stats(self, sample_ids: list[int]) -> list[dict]:
+        """Classification stats per sample without downloading objects.
+
+        Maps to ``GET /sample_set/taxo_stats?sample_ids=...``. Returns one
+        entry per sample with ``nb_validated``, ``nb_predicted``,
+        ``nb_dubious``, ``nb_unclassified``, ``used_taxa`` and ``projid``.
+        Light call — used to scan a list of samples before deciding which
+        ones to export.
+        """
+        if not sample_ids:
+            return []
+        params = {"sample_ids": ",".join(str(s) for s in sample_ids)}
+        return self._get_json("/sample_set/taxo_stats", params=params)
+
+    def project_taxo_stats(self, project_ids: list[int], taxa_ids: str = "") -> list[dict]:
+        """Classification stats per project without downloading objects.
+
+        Maps to ``GET /project_set/taxo_stats?ids=...``. With the default
+        ``taxa_ids=""``, EcoTaxa returns one aggregate record per project.
+        With ``taxa_ids="all"``, it returns one record per populated taxon.
+        """
+        if not project_ids:
+            return []
+        params = {"ids": ",".join(str(p) for p in project_ids)}
+        if taxa_ids:
+            params["taxa_ids"] = taxa_ids
+        return self._get_json("/project_set/taxo_stats", params=params)
+
     def taxon_summary(self, project_id: int, taxon_id: int) -> dict:
         """Return classification counts for one (project, taxon) pair.
 
@@ -232,7 +287,8 @@ class EcotaxaClient:
             },
         }
         resp = self._session.post(f"{_BASE_URL}/object_set/export/general", json=payload, timeout=_TIMEOUT)
-        resp.raise_for_status()
+        if not resp.ok:
+            raise EcotaxaExportError(project_id, resp.status_code, _server_message(resp))
         return resp.json()["job_id"]
 
     def wait_for_job(self, job_id: int, poll_seconds: int = 5, max_polls: int = 60) -> dict:
@@ -248,7 +304,10 @@ class EcotaxaClient:
             if state == "F":
                 return job
             if state in {"E", "A"}:
-                raise RuntimeError(f"EcoTaxa job {job_id} failed with state={state}")
+                detail = job.get("errors") or job.get("messages") or job.get("progress_msg") or state
+                raise RuntimeError(
+                    f"EcoTaxa job {job_id} failed (state={state}) : {detail}"
+                )
             time.sleep(poll_seconds)
         raise RuntimeError(f"EcoTaxa job {job_id} did not finish after {max_polls} polls")
 
