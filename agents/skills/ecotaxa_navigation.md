@@ -15,6 +15,22 @@ Four tools form the navigation pipeline. Use them in this order whenever
 the user explores before exporting. Project-level scan (1b) is optional
 and lives between « list » and « scan samples ».
 
+General ambiguity rule:
+
+- Prefer read-only navigation tools over exports when the wording is
+  ambiguous. "stats", "tableau", "résumé", "scan", "liste", "combien",
+  "où", "quels samples/projets" are exploration intents, not downloads.
+- Instrument names remain filters even if the user wording is sloppy. In
+  samples-by-zone queries, `LOKI` / `Loki` means instrument Loki and must be
+  passed as `instrument="Loki"`; do not drop it and do not reinterpret it as a
+  project search.
+- If the user gives numeric project IDs and asks for project stats/summaries,
+  call `summarize_ecotaxa_projects`; do not switch to `run_pandas` or
+  `query_ecotaxa`.
+- If the only plausible routes are a read-only summary and a full export,
+  choose the read-only summary unless the user explicitly says "exporte",
+  "charge", "download", or "récupère les objets".
+
 ```
 ┌──────────────────────────────────────┐
 │ 1. LIST                              │
@@ -62,12 +78,12 @@ project_ids=[...], instrument="...")`.
 - `zone_name` is preferred over `polygon_wkt` (the polygon never traverses
   the LLM).
 - `project_ids` is a SQL `IN` filter, NOT a post-process. Use it when the
-  user explicitly names a project to narrow within (« samples du projet
-  LOKI dans Baie de Baffin 2024 » → resolve the project first with
-  `find_ecotaxa_projects(title="LOKI")`, then pass `project_ids=[...]`).
-  If the user says « samples LOKI » or « instrument LOKI », treat LOKI as
-  an instrument and pass `instrument="Loki"` instead of resolving a
-  project.
+  user gives numeric project IDs or when a previous tool result already
+  identified project IDs. In samples-by-zone queries, if the user says
+  "LOKI" / "Loki" (even with sloppy wording such as "projet loki"), treat it
+  as the instrument and pass `instrument="Loki"` instead of resolving a
+  project title. Only search project names when the user explicitly asks to
+  "chercher/trouver le projet nommé ...".
 - At least one filter is required — refusing without any filter is by
   design (avoid dumping 100k samples on the user).
 

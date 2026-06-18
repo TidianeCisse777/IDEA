@@ -280,10 +280,48 @@ def test_ecotaxa_navigation_distinguishes_loki_instrument_from_project():
 
     assert 'load_skill("ecotaxa_navigation")' in prompt
     assert "loki-as-instrument" in prompt
-    assert "samples loki" in skill
+    assert "samples-by-zone queries" in skill
+    assert "projet loki" in skill
+    assert "instrument loki" in skill
     assert 'instrument="loki"' in skill
-    assert "samples du projet loki" in skill
-    assert "find_ecotaxa_projects" in skill
+    assert "instead of resolving a" in skill
+    assert "project title" in skill
+
+
+def test_system_prompt_prioritizes_read_only_source_tools_over_generic_pandas():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "routing priority and ambiguity policy" in prompt
+    assert "most specific read-only source tool" in prompt
+    assert "generic `run_pandas` / graph planning" in prompt
+    assert "must not steal requests" in prompt
+    assert "ask one short clarification question" in prompt
+    assert "do not export by default" in prompt
+
+
+def test_system_prompt_routes_ecotaxa_stats_tables_to_project_summary():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "ecotaxa read-only routes beat dataframe/graph/export routes" in prompt
+    assert "tableau de stats des projets 14853 et 2331" in prompt
+    assert "summarize_ecotaxa_projects(project_ids=[14853, 2331])" in prompt
+    assert "do not call `run_pandas`" in prompt
+    assert "do not call `query_ecotaxa`" in prompt
+
+
+def test_ecotaxa_navigation_skill_prefers_read_only_when_ambiguous():
+    skill = Path("agents/skills/ecotaxa_navigation.md").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert "general ambiguity rule" in skill
+    assert "prefer read-only navigation tools over exports" in skill
+    assert "summarize_ecotaxa_projects" in skill
+    assert "do not switch to `run_pandas`" in skill
+    assert "query_ecotaxa" in skill
+    assert "choose the read-only summary" in skill
 
 
 def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
