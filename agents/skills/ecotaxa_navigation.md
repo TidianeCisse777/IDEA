@@ -37,6 +37,10 @@ General ambiguity rule:
 - If the user gives numeric project IDs and asks for project stats/summaries,
   call `summarize_ecotaxa_projects`; do not switch to `run_pandas` or
   `query_ecotaxa`.
+- If `summarize_ecotaxa_project(s)` says the project is absent from the local
+  cache, report that cache-missing result and suggest resync. Do not compensate
+  by exporting/downloading the project unless the user explicitly confirms a
+  full export.
 - "résume le projet", "summary", "stats avant export", "scan projet",
   "tableau de stats", "V/P/D/U", "top taxa", "bbox", "date_min/date_max",
   or "instruments" are summary intents. Use
@@ -54,6 +58,12 @@ General ambiguity rule:
 - If the only plausible routes are a read-only summary and a full export,
   choose the read-only summary unless the user explicitly says "exporte",
   "charge", "download", or "récupère les objets".
+- If a question names multiple zones, repeat the zone flow for each zone:
+  `get_zone_info(zone_name=...)` then the matching EcoTaxa browser tool with
+  the same date/instrument filters. Do not concatenate zones into a single
+  `zone_name`.
+- Preserve EcoTaxa project/sample source links when the UI/tool output has
+  them or when the user explicitly asks for links.
 
 ```
 ┌──────────────────────────────────────┐
@@ -182,6 +192,52 @@ If the tool returns `AMBIGUOUS_TAXON`, show the candidate `taxon_id` list and
 ask the user to choose; do not guess. If the user already provides an integer
 taxon ID, pass it directly.
 
+### Taxon disambiguation — `search_ecotaxa_taxa`
+
+When the user types a short, vernacular, or potentially misspelled taxon name,
+call `search_ecotaxa_taxa(query="...")` FIRST to retrieve candidate
+`taxon_id`s, then call `count_ecotaxa_taxa` / `find_ecotaxa_observations` with
+the resolved IDs.
+
+Triggers :
+
+- `count_ecotaxa_taxa` or `find_ecotaxa_observations` returned `AMBIGUOUS_TAXON`.
+- The user wording is short or unsure : "calanus glaci", "copepode", "Oithonna".
+- The user mixed Latin and vernacular and the right ID is non-obvious.
+
+What `search_ecotaxa_taxa` returns :
+
+- `taxon_id`, `nom`, EcoTaxa `statut` (`1` = validated, `0` = pending),
+  `in_project` flag (whether at least one project uses it), `aphia_id` (WoRMS).
+
+Never invent a `taxon_id`. If the autocomplete returns several plausible
+matches and the user has not chosen, surface the markdown table and ask which
+one to count. The Copepoda alias above still applies for the broad
+"copépodes" wording — use it directly instead of `search_ecotaxa_taxa` when
+the user clearly means the order-level count.
+
+---
+
+## Cache diagnostics — `get_ecotaxa_cache_status`
+
+The `find_ecotaxa_samples_in_region`, `find_ecotaxa_projects_in_region` and
+`find_ecotaxa_observations` tools all read the local SQLite cache
+(`data/ecotaxa_cache.sqlite`), refreshed by the nightly MCP sync at 3 AM UTC.
+Call `get_ecotaxa_cache_status` whenever :
+
+- a region/observation tool returned `CACHE_EMPTY` ;
+- the user asks "est-ce que le cache est à jour", "quand est-ce que ça a été
+  synchronisé", "combien de samples sont indexés", "is the cache fresh" ;
+- you are about to chain several zone+time queries and want to verify the
+  cache is populated before committing to a long exploration.
+
+Output covers : samples indexed, projects indexed, schemas indexed, last sync
+timestamp, sync status (`success`, `running`, `failed`), error message when
+present. The tool is read-only — it cannot trigger a sync. If the cache is
+empty or stale, tell the user the operator must call
+`POST /admin/resync` on the MCP server (`http://mcp-ecotaxa:8001`) to
+populate or refresh the cache.
+
 ---
 
 ## Step 2 — scan samples before exporting
@@ -256,6 +312,11 @@ If the user says "prépare l'export", "ne lance rien", "avant que je confirme",
 or asks for an export plan, still call
 `export_ecotaxa_samples(sample_ids=[...], confirmed=False)`. That call is the
 dry-run plan, not the confirmed export. Do not stop after `load_skill`.
+
+If the user reports a previous `EXPORT_FAILED` / missing export rights and asks
+to verify access without relaunching export, use `preview_ecotaxa_project` or
+`list_ecotaxa_projects` only. Do not call `query_ecotaxa`,
+`query_ecotaxa_sample`, or `export_ecotaxa_samples`.
 
 The dry-run shape :
 
@@ -397,6 +458,13 @@ you can branch without thinking.
 | Tool | When |
 |---|---|
 | `count_ecotaxa_taxa(project_ids=[...], taxa=[...])` | « combien de Calanus validés dans le projet X / sur ces 3 projets » — V/P/D counts per (project × taxon). Project-level only, NOT per-sample. |
+| `search_ecotaxa_taxa(query=...)` | « comment EcoTaxa appelle ce taxon » — autocomplete to resolve `taxon_id` before counting / locating observations. Call FIRST whenever `count_ecotaxa_taxa` or `find_ecotaxa_observations` returns `AMBIGUOUS_TAXON`. |
+
+### Cache diagnostics
+
+| Tool | When |
+|---|---|
+| `get_ecotaxa_cache_status()` | « cache à jour », « combien de samples indexés », debug after a `CACHE_EMPTY` error. Reports counts + last sync status. Read-only — operator must call `POST /admin/resync` on the MCP server to refresh. |
 
 ### Export (download into the session)
 

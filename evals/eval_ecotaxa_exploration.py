@@ -36,6 +36,7 @@ SCORE_KEYS = [
     "trajectory_subsequence",
     "forbidden_tools_absent",
     "required_tool_args_present",
+    "final_answer_contains",
 ]
 
 
@@ -302,6 +303,211 @@ EXPLORATION_CASES = [
             "category": "non_ecotaxa",
         },
     },
+    {
+        "id": "EX-11-export-failure-rights",
+        "inputs": {
+            "question": (
+                "EcoTaxa m'a renvoyé EXPORT_FAILED pour le projet 999999. "
+                "Vérifie l'accès sans relancer l'export."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["preview_ecotaxa_project"],
+            "required_tool_args": [
+                {
+                    "name": "preview_ecotaxa_project",
+                    "args": {"project_id": 999999},
+                },
+            ],
+            "forbidden_tools": [
+                "query_ecotaxa",
+                "query_ecotaxa_sample",
+                "export_ecotaxa_samples",
+                "find_ecotaxa_samples_in_region",
+                "run_pandas",
+                "run_graph",
+            ],
+            "final_answer_contains": ["accessible"],
+            "category": "export_rights",
+        },
+    },
+    {
+        "id": "EX-12-multiple-named-zones",
+        "inputs": {
+            "question": (
+                "Quels projets EcoTaxa couvrent la Baie de Baffin et la "
+                "Baie d'Ungava en 2024 ?"
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "get_zone_info",
+                "find_ecotaxa_projects_in_region",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {"zone_name": "Baie de Baffin"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {"zone_name": "Baie d'Ungava"},
+                },
+                {
+                    "name": "find_ecotaxa_projects_in_region",
+                    "args": {
+                        "zone_name": "Baie de Baffin",
+                        "date_range": {"from": "2024-01-01", "to": "2024-12-31"},
+                    },
+                },
+                {
+                    "name": "find_ecotaxa_projects_in_region",
+                    "args": {
+                        "zone_name": "Baie d'Ungava",
+                        "date_range": {"from": "2024-01-01", "to": "2024-12-31"},
+                    },
+                },
+            ],
+            "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "category": "multi_zone",
+        },
+    },
+    {
+        "id": "EX-13-source-links",
+        "inputs": {
+            "question": (
+                "Liste les samples EcoTaxa de la Baie de Baffin en octobre "
+                "2024 et garde les liens sources EcoTaxa dans la réponse."
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "get_zone_info",
+                "find_ecotaxa_samples_in_region",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {"zone_name": "Baie de Baffin"},
+                },
+                {
+                    "name": "find_ecotaxa_samples_in_region",
+                    "args": {
+                        "zone_name": "Baie de Baffin",
+                        "date_range": {"from": "2024-10-01", "to": "2024-10-31"},
+                    },
+                },
+            ],
+            "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "final_answer_contains": ["ecotaxa.obs-vlfr.fr", "/prj/"],
+            "category": "source_links",
+        },
+    },
+    {
+        "id": "EX-14-project-missing-cache",
+        "inputs": {
+            "question": (
+                "Résume le projet EcoTaxa 999999 avant export. S'il n'est "
+                "pas dans le cache, dis-le clairement."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["load_skill", "summarize_ecotaxa_project"],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "summarize_ecotaxa_project",
+                    "args": {"project_id": 999999},
+                },
+            ],
+            "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "final_answer_contains": ["cache"],
+            "category": "missing_cache",
+        },
+    },
+    {
+        "id": "EX-15-ambiguous-taxon-search",
+        "inputs": {
+            "question": (
+                "Dans EcoTaxa, Calanus est trop ambigu pour moi. Cherche les "
+                "taxon_id candidats avant de compter quoi que ce soit."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["load_skill", "search_ecotaxa_taxa"],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "search_ecotaxa_taxa",
+                    "args": {"query": "Calanus"},
+                },
+            ],
+            "forbidden_tools": [
+                "count_ecotaxa_taxa",
+                "query_ecotaxa",
+                "run_pandas",
+                "run_graph",
+            ],
+            "final_answer_contains": ["taxon_id"],
+            "category": "ambiguous_taxon",
+        },
+    },
+    {
+        "id": "EX-16-sample-taxon-exact-vs-approx",
+        "inputs": {
+            "question": (
+                "Parmi les samples EcoTaxa 14853000001, 14853000002 et "
+                "14853000003, lesquels contiennent le plus de Copepoda ? "
+                "Ne lance pas d'export ; si ce n'est pas exact par taxon au "
+                "niveau sample, dis que c'est une approximation."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["load_skill", "summarize_ecotaxa_samples"],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "summarize_ecotaxa_samples",
+                    "args": {
+                        "sample_ids": [
+                            14853000001,
+                            14853000002,
+                            14853000003,
+                        ],
+                    },
+                },
+            ],
+            "forbidden_tools": [
+                "query_ecotaxa",
+                "query_ecotaxa_sample",
+                "export_ecotaxa_samples",
+                "find_ecotaxa_samples_in_region",
+                "run_pandas",
+                "run_graph",
+            ],
+            "final_answer_contains": ["approx"],
+            "category": "sample_taxon_approximation",
+        },
+    },
 ]
 
 
@@ -511,6 +717,27 @@ def required_tool_args_present(outputs: dict, reference_outputs: dict) -> dict:
     }
 
 
+def final_answer_contains(outputs: dict, reference_outputs: dict) -> dict:
+    expected = reference_outputs.get("final_answer_contains", [])
+    if not expected:
+        return {
+            "key": "final_answer_contains",
+            "score": 1,
+            "comment": "No final-answer content requirements.",
+        }
+    text = str(outputs.get("final_answer", "")).lower()
+    missing = [item for item in expected if str(item).lower() not in text]
+    return {
+        "key": "final_answer_contains",
+        "score": (len(expected) - len(missing)) / len(expected),
+        "comment": (
+            f"Missing final-answer substrings: {missing}; "
+            f"answer={outputs.get('final_answer', '')[:700]}"
+            if missing else ""
+        ),
+    }
+
+
 def evaluator_trajectory_subsequence(run, example) -> dict:
     return trajectory_subsequence(run.outputs or {}, example.outputs or {})
 
@@ -521,6 +748,10 @@ def evaluator_forbidden_tools_absent(run, example) -> dict:
 
 def evaluator_required_tool_args_present(run, example) -> dict:
     return required_tool_args_present(run.outputs or {}, example.outputs or {})
+
+
+def evaluator_final_answer_contains(run, example) -> dict:
+    return final_answer_contains(run.outputs or {}, example.outputs or {})
 
 
 def _selected_cases() -> list[dict[str, Any]]:
@@ -697,10 +928,11 @@ def main() -> None:
             cases=batch_cases,
             run_fn=run_one_case,
             evaluators=[
-                evaluator_trajectory_subsequence,
-                evaluator_forbidden_tools_absent,
-                evaluator_required_tool_args_present,
-            ],
+            evaluator_trajectory_subsequence,
+            evaluator_forbidden_tools_absent,
+            evaluator_required_tool_args_present,
+            evaluator_final_answer_contains,
+        ],
             dataset_name=f"{DATASET_NAME}{suffix}",
             experiment_prefix=f"ecotaxa-exploration{suffix}",
             metadata={

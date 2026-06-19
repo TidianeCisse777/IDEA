@@ -337,6 +337,27 @@ def test_system_prompt_loads_ecotaxa_navigation_before_zone_lookup():
     assert "first geography/source-boundary tool" in prompt
 
 
+def test_system_prompt_handles_multiple_named_ecotaxa_zones_separately():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "multiple named zones" in prompt
+    assert "baie de baffin et baie d'ungava" in prompt
+    assert "do not merge names into one fake zone" in prompt
+    assert "call `get_zone_info` once per zone" in prompt
+    assert "once per zone with the same date/instrument filters" in prompt
+
+
+def test_system_prompt_preserves_ecotaxa_source_links():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "ecotaxa source links" in prompt
+    assert "https://ecotaxa.obs-vlfr.fr/prj/{project_id}" in prompt
+    assert "samples={sample_id}" in prompt
+    assert "do not remove links from copied ecotaxa tables" in prompt
+
+
 def test_system_prompt_loads_ecotaxa_navigation_before_column_inspection():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -357,6 +378,37 @@ def test_system_prompt_routes_ecotaxa_export_planning_to_dry_run_tool():
     assert "mais ne lance rien" in prompt
     assert "export_ecotaxa_samples(sample_ids=[...], confirmed=false)" in prompt
     assert "do not stop after loading the skill" in prompt
+
+
+def test_system_prompt_handles_export_failed_rights_without_relaunching_export():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "previous `export_failed` / rights failure" in prompt
+    assert "verify access without relaunching export" in prompt
+    assert "preview_ecotaxa_project(project_id=...)" in prompt
+    assert "do not call `query_ecotaxa`" in prompt
+    assert "or `export_ecotaxa_samples`" in prompt
+
+
+def test_system_prompt_handles_missing_ecotaxa_project_cache_read_only():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "absent from the ecotaxa cache" in prompt
+    assert "summarize_ecotaxa_project" in prompt
+    assert "cache-missing message" in prompt
+    assert "do not switch to `query_ecotaxa`" in prompt
+
+
+def test_system_prompt_handles_sample_taxon_exact_vs_approximation():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "no-export approximation" in prompt
+    assert "summarize_ecotaxa_samples(sample_ids=[...])" in prompt
+    assert "exact per-sample counts for one taxon" in prompt
+    assert "require an export/download path with confirmation" in prompt
 
 
 def test_system_prompt_routes_current_ecotaxa_sample_followups_without_kb():
@@ -407,6 +459,13 @@ def test_ecotaxa_navigation_skill_prefers_read_only_when_ambiguous():
     assert "do not rewrite a clear column name" in skill
     assert "ne lance rien" in skill
     assert "confirmed=false" in skill
+    assert "multiple zones" in skill
+    assert "do not concatenate zones" in skill
+    assert "export_failed" in skill
+    assert "missing export rights" in skill
+    assert "preserve ecotaxa project/sample source links" in skill
+    assert "absent from the local" in skill
+    assert "do not compensate" in skill
 
 
 def test_ecotaxa_navigation_skill_handles_current_sample_taxon_rankings():

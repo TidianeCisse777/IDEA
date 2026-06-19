@@ -32,7 +32,9 @@ from core.ecotaxa_browser.samples import get_sample, list_project_samples
 from core.ecotaxa_browser.column_distribution import get_column_distribution
 from core.ecotaxa_browser.compare_schemas import compare_project_schemas
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+from core.ecotaxa_browser.deployment_summary import summarize_sample_deployment
 from core.ecotaxa_browser.observations import find_observations
+from core.ecotaxa_browser.preview import preview_project
 from core.ecotaxa_browser.region import projects_in_region, samples_in_region
 from core.ecotaxa_browser.project_summary import summarize_projects
 from core.ecotaxa_browser.sample_summary import summarize_samples
@@ -542,6 +544,73 @@ def create_mcp() -> FastMCP:
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="preview_project")
+    async def preview_project_tool(
+        project_id: int, limit: int = 10,
+    ) -> dict:
+        """Quick metadata + a small sample of objects from a project.
+
+        Returns ``{metadata, summary, objects}`` — same payload as the IDEA
+        ``preview_ecotaxa_project`` @tool. Light, read-only, no export.
+        Use when the user asks « aperçu / preview / présente-moi le projet ».
+        """
+        return await _run_sync(
+            preview_project, project_id=project_id, limit=limit,
+        )
+
+    @mcp.tool(name="summarize_project")
+    async def summarize_project_tool(project_id: int) -> dict:
+        """Single-project overview (sugar over summarize_projects)."""
+        rows = await _run_sync(summarize_projects, project_ids=[project_id])
+        return rows[0] if rows else {}
+
+    @mcp.tool(name="summarize_sample")
+    async def summarize_sample_tool(sample_id: int) -> dict:
+        """Single-sample classification breakdown (sugar over summarize_samples)."""
+        rows = await _run_sync(summarize_samples, sample_ids=[sample_id])
+        return rows[0] if rows else {}
+
+    @mcp.tool(name="summarize_sample_deployment")
+    async def summarize_sample_deployment_tool(sample_id: int) -> dict:
+        """Per-sample deployment summary: lat/lon, dates, depths, free fields, objects scanned.
+
+        Reads sample metadata + a window of objects to compute the actual
+        date/depth envelopes. Returns identifiers, position, acquisition
+        details, and the free fields exposed by the parent project.
+        """
+        return await _run_sync(
+            summarize_sample_deployment, sample_id=sample_id,
+        )
+
+    @mcp.tool(name="cache_status")
+    async def cache_status_tool() -> dict:
+        """Diagnose the local EcoTaxa cache.
+
+        Returns ``{samples_indexed, projects_indexed, schemas_indexed,
+        last_sync, cache_age_hours, cache_db}``. ``last_sync`` is the row
+        from ``sync_runs`` (run_id, started_at, ended_at, status,
+        projects_synced, samples_synced, error_message) or null if the
+        cache has never been synchronised. Use when a region/observation
+        call returns ``CACHE_EMPTY`` or the user asks whether the cache
+        is fresh. Read-only — operators must call ``POST /admin/resync``
+        to trigger a refresh.
+        """
+        cache_db = _cache_db_path()
+        conn = _open_cache()
+        try:
+            counts = cache_counts(conn)
+            last_sync = latest_sync_status(conn)
+        finally:
+            conn.close()
+        return {
+            "samples_indexed": counts["samples_indexed"],
+            "projects_indexed": counts["projects_indexed"],
+            "schemas_indexed": counts["schemas_indexed"],
+            "last_sync": last_sync,
+            "cache_age_hours": _compute_cache_age_hours(last_sync),
+            "cache_db": cache_db,
+        }
 
     return mcp
 

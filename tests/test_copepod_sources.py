@@ -1165,3 +1165,119 @@ def test_slice3_export_ecotaxa_samples_reports_partial_failure(seeded_cache):
     assert "EXPORT_FAILED" in result
     assert "14853" in result
     assert "403" in result or "no Export right" in result
+
+
+# ── QW1 : search_ecotaxa_taxa — autocomplete taxon ────────────────────────
+
+def test_search_ecotaxa_taxa_returns_markdown_table_of_matches():
+    """Le tool doit retourner un tableau markdown listant les candidats."""
+    with patch("tools.copepod_sources.search_taxa") as mock_search:
+        mock_search.return_value = [
+            {
+                "taxon_id": 84963,
+                "name": "Calanus glacialis",
+                "status": "1",
+                "in_project": True,
+                "aphia_id": 104470,
+                "replacement_id": None,
+            },
+            {
+                "taxon_id": 84964,
+                "name": "Calanus finmarchicus",
+                "status": "1",
+                "in_project": True,
+                "aphia_id": 104464,
+                "replacement_id": None,
+            },
+        ]
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-qw1")
+        fn = next(t for t in tools if t.name == "search_ecotaxa_taxa")
+        result = fn.invoke({"query": "Calanus"})
+
+    assert "Calanus glacialis" in result
+    assert "Calanus finmarchicus" in result
+    assert "84963" in result
+    assert "84964" in result
+    assert mock_search.call_count == 1
+    call_args, call_kwargs = mock_search.call_args
+    assert call_args == ("Calanus",) or call_kwargs.get("query") == "Calanus"
+
+
+def test_search_ecotaxa_taxa_reports_no_match():
+    with patch("tools.copepod_sources.search_taxa") as mock_search:
+        mock_search.return_value = []
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-qw1-empty")
+        fn = next(t for t in tools if t.name == "search_ecotaxa_taxa")
+        result = fn.invoke({"query": "zzznotataxon"})
+
+    assert "Aucun" in result or "aucun" in result
+
+
+def test_search_ecotaxa_taxa_rejects_blank_query():
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-qw1-blank")
+    fn = next(t for t in tools if t.name == "search_ecotaxa_taxa")
+    result = fn.invoke({"query": "  "})
+    assert "vide" in result.lower() or "blank" in result.lower() or "query" in result.lower()
+
+
+# ── QW2 : get_ecotaxa_cache_status — diagnostic cache ─────────────────────
+
+def test_get_ecotaxa_cache_status_reports_counts_and_last_sync(tmp_path, monkeypatch):
+    import sqlite3
+    from core.ecotaxa_browser.cache.repo import init_schema
+
+    cache_db = tmp_path / "ecotaxa_cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO samples_cache (sample_id, project_id, lat_avg, lon_avg, "
+        "date_min, date_max, instrument, last_synced) VALUES (1, 100, 48.5, -68.0, "
+        "'2024-01-01', '2024-01-02', 'UVP6', '2026-06-15T03:01:00Z')"
+    )
+    conn.execute(
+        "INSERT INTO samples_cache (sample_id, project_id, lat_avg, lon_avg, "
+        "date_min, date_max, instrument, last_synced) VALUES (2, 200, 49.0, -69.0, "
+        "'2024-02-01', '2024-02-02', 'LOKI', '2026-06-15T03:01:30Z')"
+    )
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, ended_at, status, projects_synced, "
+        "samples_synced) VALUES ('2026-06-15T03:00:00Z', '2026-06-15T03:02:00Z', "
+        "'success', 12, 1500)"
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-qw2")
+    fn = next(t for t in tools if t.name == "get_ecotaxa_cache_status")
+    result = fn.invoke({})
+
+    assert "2" in result  # samples_indexed
+    assert "2026-06-15" in result  # last sync timestamp
+    assert "success" in result.lower()
+
+
+def test_get_ecotaxa_cache_status_reports_empty_cache(tmp_path, monkeypatch):
+    import sqlite3
+    from core.ecotaxa_browser.cache.repo import init_schema
+
+    cache_db = tmp_path / "empty_cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-qw2-empty")
+    fn = next(t for t in tools if t.name == "get_ecotaxa_cache_status")
+    result = fn.invoke({})
+
+    assert "0" in result
+    assert ("jamais" in result.lower() or "aucun" in result.lower() or "never" in result.lower())

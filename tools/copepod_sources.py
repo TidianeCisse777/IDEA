@@ -1,6 +1,7 @@
 """tools/copepod_sources.py — LangChain tools pour accès EcoTaxa/EcoPart."""
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 
@@ -22,6 +23,13 @@ from core.ecotaxa_browser.samples import get_sample as core_get_sample
 from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
+from core.ecotaxa_browser.taxonomy import search_taxa
+from core.ecotaxa_browser.cache.repo import (
+    cache_counts,
+    init_schema,
+    latest_sync_status,
+    open_connection,
+)
 from tools.ecotaxa_client import EcotaxaClient, EcotaxaExportError
 from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.public_url import download_url
@@ -390,6 +398,102 @@ def make_source_tools(thread_id: str) -> list:
             lines.append(
                 f"Projets non accessibles : {result['inaccessible_project_ids']}"
             )
+        return "\n".join(lines)
+
+    @tool
+    def search_ecotaxa_taxa(query: str) -> str:
+        """Recherche par autocomplétion les taxons EcoTaxa qui matchent une chaîne.
+
+        Routing requirement: appeler ce tool AVANT `count_ecotaxa_taxa` ou
+        `find_ecotaxa_observations` lorsque le nom de taxon est ambigu, mal
+        orthographié, ou que l'agent retourne `AMBIGUOUS_TAXON`. Le résultat
+        permet de désambiguïser en fournissant le `taxon_id` exact.
+
+        Retourne un tableau markdown avec `taxon_id`, `nom`, statut EcoTaxa
+        (`1` = validé, `0` = en attente), et indication si le taxon est utilisé
+        dans au moins un projet (`in_project`). Inclut aussi l'`aphia_id`
+        WoRMS quand disponible.
+        """
+        query = (query or "").strip()
+        if not query:
+            return "Erreur : `query` ne peut pas être vide."
+        try:
+            matches = search_taxa(query)
+        except Exception as exc:
+            return f"Erreur lors de la recherche taxonomique : {exc}"
+        if not matches:
+            return f"Aucun taxon EcoTaxa ne correspond à `{query}`."
+        lines = [
+            "| taxon_id | nom | statut | in_project | aphia_id |",
+            "|---:|---|:---:|:---:|---:|",
+        ]
+        for match in matches[:25]:
+            status = match.get("status") or "—"
+            in_project = "✓" if match.get("in_project") else "—"
+            aphia = match.get("aphia_id") or "—"
+            lines.append(
+                f"| {match['taxon_id']} | {match['name']} | {status} | "
+                f"{in_project} | {aphia} |"
+            )
+        if len(matches) > 25:
+            lines.append(f"\n_(et {len(matches) - 25} autres résultats tronqués)_")
+        return "\n".join(lines)
+
+    @tool
+    def get_ecotaxa_cache_status() -> str:
+        """Diagnostique l'état du cache local EcoTaxa.
+
+        Routing requirement: appeler ce tool quand une recherche cache retourne
+        `CACHE_EMPTY`, quand l'utilisateur demande « est-ce que le cache est à
+        jour », ou avant une exploration zone+temps si l'agent doute de la
+        fraîcheur des données.
+
+        Retourne :
+        - nombre de samples / projets / schémas indexés ;
+        - timestamp et statut du dernier sync (`success`, `running`, `failed`) ;
+        - fenêtres synchronisées (n samples, n projets) ;
+        - chemin du fichier SQLite utilisé.
+        """
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            counts = cache_counts(conn)
+            last_sync = latest_sync_status(conn)
+            conn.close()
+        except Exception as exc:
+            return f"Erreur lors de la lecture du cache EcoTaxa : {exc}"
+
+        lines = [
+            f"**Cache EcoTaxa** — `{cache_db}`",
+            "",
+            "| métrique | valeur |",
+            "|---|---:|",
+            f"| samples indexés | {counts['samples_indexed']} |",
+            f"| projets indexés | {counts['projects_indexed']} |",
+            f"| schémas indexés | {counts['schemas_indexed']} |",
+        ]
+        if last_sync is None:
+            lines.append("")
+            lines.append(
+                "Aucun sync enregistré (jamais synchronisé). "
+                "Lancer `POST /admin/resync` sur le MCP server pour amorcer le cache."
+            )
+        else:
+            lines.append("")
+            lines.append(
+                f"**Dernier sync** — `{last_sync.get('status', '?')}` "
+                f"démarré à `{last_sync.get('started_at', '?')}`"
+                + (
+                    f", terminé à `{last_sync.get('ended_at', '?')}`"
+                    if last_sync.get("ended_at")
+                    else ""
+                )
+                + f". Projets synchronisés : {last_sync.get('projects_synced', '—')}, "
+                f"samples : {last_sync.get('samples_synced', '—')}."
+            )
+            if last_sync.get("error_message"):
+                lines.append(f"\nErreur : {last_sync['error_message']}")
         return "\n".join(lines)
 
     @tool
@@ -1108,6 +1212,8 @@ def make_source_tools(thread_id: str) -> list:
         inspect_ecotaxa_project_schema,
         inspect_ecotaxa_column,
         count_ecotaxa_taxa,
+        search_ecotaxa_taxa,
+        get_ecotaxa_cache_status,
         compare_ecotaxa_projects,
         list_ecotaxa_projects,
         preview_ecotaxa_project,

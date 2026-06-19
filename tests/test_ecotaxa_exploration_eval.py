@@ -1,6 +1,7 @@
 from evals.eval_ecotaxa_exploration import (
     _apply_quick_defaults,
     _chunks,
+    final_answer_contains,
     forbidden_tools_absent,
     required_tool_args_present,
     trajectory_subsequence,
@@ -172,6 +173,34 @@ def test_required_tool_args_present_scores_partial_progress():
 
     assert result["score"] == 0.5
     assert "summarize_ecotaxa_project" in result["comment"]
+
+
+def test_final_answer_contains_scores_required_source_links():
+    outputs = {
+        "final_answer": (
+            "Sample [14853000001]"
+            "(https://ecotaxa.obs-vlfr.fr/prj/14853?samples=14853000001)"
+        )
+    }
+    reference = {
+        "final_answer_contains": ["ecotaxa.obs-vlfr.fr", "/prj/"]
+    }
+
+    result = final_answer_contains(outputs, reference)
+
+    assert result["score"] == 1
+
+
+def test_final_answer_contains_reports_missing_source_links():
+    outputs = {"final_answer": "Sample 14853000001"}
+    reference = {
+        "final_answer_contains": ["ecotaxa.obs-vlfr.fr", "/prj/"]
+    }
+
+    result = final_answer_contains(outputs, reference)
+
+    assert result["score"] == 0
+    assert "ecotaxa.obs-vlfr.fr" in result["comment"]
 
 
 def test_chunks_splits_cases_into_requested_batch_size():

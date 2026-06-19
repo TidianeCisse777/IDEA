@@ -1,13 +1,24 @@
 # MCP EcoTaxa Server
 
 Read-only MCP server exposing EcoTaxa catalogue navigation, schema
-inspection, taxon counts, and cross-project geo+temporal browse to any
-MCP-capable agent (Claude Desktop, Claude Code CLI, custom agents,
-IDEA itself).
+inspection, taxon counts, and cross-project geo+temporal browse to
+external MCP-capable agents (Claude Desktop, Claude Code CLI, Cursor,
+custom agents).
+
+**The IDEA copepod agent itself does NOT consume this HTTP server.**
+IDEA's LangChain tools (`tools/copepod_sources.py`) import the
+underlying functions directly from `core/ecotaxa_browser/*` — same
+codebase, same SQLite cache (`data/ecotaxa_cache.sqlite`), no HTTP
+hop. The MCP server is a parallel façade for clients that cannot
+import Python directly.
 
 The server is **curated**: 19 tools mapped to 7 use cases, no write
 endpoints, no exports (exports stay with the IDEA-native `query_ecotaxa`
-tool).
+tool, which goes through `EcotaxaClient` and the EcoTaxa REST API).
+
+See [`../../MCP_ECOTAXA_ORCHESTRATION.md`](../../MCP_ECOTAXA_ORCHESTRATION.md)
+for the full layer map (prompt → skill → @tool → MCP) and the planned
+convergence between the two façades.
 
 ---
 

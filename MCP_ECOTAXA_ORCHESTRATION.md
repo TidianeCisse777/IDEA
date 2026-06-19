@@ -194,6 +194,40 @@ rapprocher ou diverger les deux façades.
 
 ---
 
+## 4bis. Convention De Naming `@tool` (Source De Vérité)
+
+Tant que la couche `@tool` (C3) reste la surface utilisée par l'agent
+IDEA, c'est elle qui fait foi. Le serveur MCP (C4) suivra plus tard.
+
+**Convention adoptée** pour tous les `@tool` EcoTaxa :
+
+```
+<verbe>_ecotaxa_<nom>
+```
+
+- **`<verbe>`** = `find` (recherche/locate), `list` (énumération
+  complète), `preview` (échantillon léger), `inspect` (schéma/colonnes
+  d'un objet), `summarize` (agrégats V/P/D/U), `count` (comptes
+  taxon×projet), `compare` (diff entre projets), `search` (autocomplete),
+  `get` (un objet par ID), `query` (export/téléchargement),
+  `export` (téléchargement multi-projet).
+- **`<nom>`** = l'entité ciblée : `project`, `projects`, `sample`,
+  `samples`, `taxa`, `cache_status`, `column`, `project_schema`,
+  `observations`, `sample_deployment`.
+- Pour les variantes **régionales**, suffixer `_in_region` :
+  `find_ecotaxa_samples_in_region`, `find_ecotaxa_projects_in_region`.
+
+Côté MCP (C4) le naming est plus compact (`samples_in_region`,
+`taxa_stats`, `compare_project_schemas`). Cet écart est documenté
+mais pas corrigé tout de suite — pour mémoire la table des
+correspondances actuelles est dans [`docs/TOOLS.md`](docs/TOOLS.md).
+
+Quand on ajoutera un nouveau tool, on respecte la convention
+`@tool` d'abord, puis on duplique avec un nom compact côté MCP si
+besoin.
+
+---
+
 ## 5. Petites Améliorations Indépendantes Du Choix Ci-dessus
 
 Quelle que soit la direction, ces actions ont un ROI direct :
