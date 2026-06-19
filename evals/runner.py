@@ -11,6 +11,7 @@ def run_eval_suite(
     dataset_name: str,
     experiment_prefix: str,
     metadata: dict,
+    max_concurrency: int = 5,
 ) -> list[tuple[str, dict]]:
     """Run an eval suite, push to LangSmith, return scored rows.
 
@@ -46,7 +47,7 @@ def run_eval_suite(
         evaluators=evaluators,
         experiment_prefix=experiment_prefix,
         metadata=metadata,
-        max_concurrency=5,
+        max_concurrency=max_concurrency,
     )
 
     rows = []

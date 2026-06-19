@@ -18,6 +18,7 @@ import os
 import sys
 import uuid
 import argparse
+import time
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -336,17 +337,45 @@ def run_one_case(inputs: dict[str, Any]) -> dict[str, Any]:
         },
         "recursion_limit": 30,
     }
-    final_state = invoke_verbose(
-        agent,
-        {"messages": [{"role": "user", "content": inputs["question"]}]},
-        config,
-    )
+    case_delay = float(os.getenv("EVAL_CASE_DELAY_SECONDS", "0"))
+    if case_delay > 0:
+        time.sleep(case_delay)
+
+    max_attempts = int(os.getenv("EVAL_MAX_ATTEMPTS", "3"))
+    retry_delay = float(os.getenv("EVAL_RETRY_DELAY_SECONDS", "20"))
+    final_state: dict[str, Any] = {}
+    for attempt in range(1, max_attempts + 1):
+        try:
+            final_state = invoke_verbose(
+                agent,
+                {"messages": [{"role": "user", "content": inputs["question"]}]},
+                config,
+            )
+            break
+        except Exception as exc:
+            if attempt >= max_attempts or not _is_rate_limit_error(exc):
+                raise
+            wait_seconds = retry_delay * attempt
+            print(
+                f"Rate limit during case; retrying in {wait_seconds:.1f}s "
+                f"({attempt}/{max_attempts})"
+            )
+            time.sleep(wait_seconds)
     tool_calls = _capture_tool_calls(final_state)
     return {
         "trajectory": [call["name"] for call in tool_calls],
         "tool_calls": tool_calls,
         "final_answer": _final_text(final_state)[:1500],
     }
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "rate limit" in text
+        or "rate_limit_exceeded" in text
+        or exc.__class__.__name__ == "RateLimitError"
+    )
 
 
 def _matches_expected(expected: Any, actual: Any) -> bool:
@@ -402,15 +431,21 @@ def trajectory_subsequence(outputs: dict, reference_outputs: dict) -> dict:
             "comment": "No expected trajectory.",
         }
     cursor = 0
+    matched_indexes: list[int] = []
     for tool_name in actual:
-        if cursor < len(expected) and _expected_step_matches(
-            expected[cursor], tool_name
-        ):
-            cursor += 1
-    missing = [_format_expected_step(step) for step in expected[cursor:]]
+        for idx in range(cursor, len(expected)):
+            if _expected_step_matches(expected[idx], tool_name):
+                matched_indexes.append(idx)
+                cursor = idx + 1
+                break
+    missing = [
+        _format_expected_step(step)
+        for idx, step in enumerate(expected)
+        if idx not in matched_indexes
+    ]
     return {
         "key": "trajectory_subsequence",
-        "score": cursor / len(expected),
+        "score": len(matched_indexes) / len(expected),
         "comment": (
             f"Expected {expected}; observed {actual}"
             + (f"; missing {missing}" if missing else "")
@@ -549,12 +584,39 @@ def parse_args() -> argparse.Namespace:
         default=os.getenv("EVAL_VERBOSE", "").lower() in {"1", "true", "yes"},
         help="Print criteria before run and detailed evaluator comments after run.",
     )
+    parser.add_argument(
+        "--max-concurrency",
+        type=int,
+        default=int(os.getenv("EVAL_MAX_CONCURRENCY", "1")),
+        help="LangSmith evaluate concurrency. Keep at 1 to avoid OpenAI TPM 429s.",
+    )
+    parser.add_argument(
+        "--case-delay",
+        type=float,
+        default=float(os.getenv("EVAL_CASE_DELAY_SECONDS", "0")),
+        help="Seconds to wait before each case. Useful for TPM-limited models.",
+    )
+    parser.add_argument(
+        "--retry-delay",
+        type=float,
+        default=float(os.getenv("EVAL_RETRY_DELAY_SECONDS", "20")),
+        help="Base seconds to wait before retrying a rate-limited case.",
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=int(os.getenv("EVAL_MAX_ATTEMPTS", "3")),
+        help="Maximum attempts for a rate-limited case.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     os.environ.setdefault("LLM_MAX_OUTPUT_TOKENS", "1200")
+    os.environ["EVAL_CASE_DELAY_SECONDS"] = str(args.case_delay)
+    os.environ["EVAL_RETRY_DELAY_SECONDS"] = str(args.retry_delay)
+    os.environ["EVAL_MAX_ATTEMPTS"] = str(args.max_attempts)
     cases = _filter_cases(args.case_ids)
     print(f"Running {len(cases)} EcoTaxa exploration eval case(s).")
     if args.verbose or args.list_cases:
@@ -574,7 +636,9 @@ def main() -> None:
         metadata={
             "suite": "ecotaxa-exploration",
             "model": os.getenv("LLM_MODEL", "openai/gpt-5.4-mini"),
+            "max_concurrency": args.max_concurrency,
         },
+        max_concurrency=args.max_concurrency,
     )
     print_scores(
         rows,

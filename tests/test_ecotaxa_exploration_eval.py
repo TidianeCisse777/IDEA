@@ -45,6 +45,21 @@ def test_trajectory_subsequence_accepts_alternative_tools_for_a_step():
     assert result["score"] == 1
 
 
+def test_trajectory_subsequence_scores_late_expected_step_partially():
+    outputs = {"trajectory": ["inspect_ecotaxa_column"]}
+    reference = {
+        "expected_sequence": [
+            "load_skill",
+            "inspect_ecotaxa_column",
+        ]
+    }
+
+    result = trajectory_subsequence(outputs, reference)
+
+    assert result["score"] == 0.5
+    assert "load_skill" in result["comment"]
+
+
 def test_forbidden_tools_absent_rejects_exports_for_read_only_case():
     outputs = {
         "trajectory": [
