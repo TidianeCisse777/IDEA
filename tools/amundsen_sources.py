@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import io
-import math
 import uuid
 import hashlib
 from pathlib import Path
@@ -19,47 +18,17 @@ _AMUNDSEN_TABLEDAP_URL = (
 _AMUNDSEN_CORE_COLUMNS = ("time", "latitude", "longitude", "station", "cast_number", "PRES")
 
 
-_LAT_CANDIDATES = ("latitude", "lat", "object_lat", "sample_lat", "latitude (degrees_north)")
-_LON_CANDIDATES = ("longitude", "lon", "object_lon", "sample_long", "sample_lon", "longitude (degrees_east)")
-_TIME_CANDIDATES = (
-    "object_date",
-    "time",
-    "date",
-    "sampling_date",
-    "yyyy-mm-dd hh:mm",
-    "datetime",
+from core.environment_resolver import (
+    DEFAULT_DEPTH_CANDIDATES,
+    DEFAULT_LAT_CANDIDATES,
+    DEFAULT_LON_CANDIDATES,
+    DEFAULT_TIME_CANDIDATES,
+    compute_bbox_time_window,
+    detect_column,
+    match_ctd_rows,
+    parse_source_coords,
+    resolve_source_dataframe,
 )
-_DEPTH_CANDIDATES = (
-    "object_depth_min",
-    "depth",
-    "pressure",
-    "pres",
-    "Depth [m]",
-    "depth_m",
-)
-
-
-def _detect_column(columns, candidates: tuple[str, ...]) -> str | None:
-    lower_to_real = {str(c).lower(): c for c in columns}
-    for candidate in candidates:
-        match = lower_to_real.get(candidate.lower())
-        if match is not None:
-            return match
-    return None
-
-
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    radius = 6371.0
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = (
-        math.sin(dphi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
-    )
-    return 2 * radius * math.asin(math.sqrt(a))
-
 from core.amundsen_ctd_client import (
     list_amundsen_datasets as _list_amundsen_datasets,
     preview_amundsen_profile as _preview_amundsen_profile,
@@ -427,7 +396,7 @@ def make_amundsen_tools(thread_id: str) -> list:
         sont pas fournies. Interroge Amundsen ERDDAP par bbox + fenêtre temps
         et matche localement au plus proche voisin.
         """
-        source = _source_dataframe(source_variable)
+        source = resolve_source_dataframe(_store, thread_id, source_variable)
         if source is None:
             if source_variable:
                 return (
@@ -436,10 +405,10 @@ def make_amundsen_tools(thread_id: str) -> list:
                 )
             return "Aucune table chargée à enrichir."
 
-        lat_col = latitude_column or _detect_column(source.columns, _LAT_CANDIDATES)
-        lon_col = longitude_column or _detect_column(source.columns, _LON_CANDIDATES)
-        time_col = time_column or _detect_column(source.columns, _TIME_CANDIDATES)
-        depth_col = depth_column or _detect_column(source.columns, _DEPTH_CANDIDATES)
+        lat_col = latitude_column or detect_column(source.columns, DEFAULT_LAT_CANDIDATES)
+        lon_col = longitude_column or detect_column(source.columns, DEFAULT_LON_CANDIDATES)
+        time_col = time_column or detect_column(source.columns, DEFAULT_TIME_CANDIDATES)
+        depth_col = depth_column or detect_column(source.columns, DEFAULT_DEPTH_CANDIDATES)
 
         missing = [
             name
@@ -459,44 +428,28 @@ def make_amundsen_tools(thread_id: str) -> list:
 
         selected_variables = list(variables or ["TE90", "PSAL"])
 
-        src_lat = pd.to_numeric(source[lat_col], errors="coerce")
-        src_lon = pd.to_numeric(source[lon_col], errors="coerce")
-        src_time = pd.to_datetime(source[time_col], errors="coerce", utc=True)
-
-        empty_groups = [
-            label
-            for label, series in (
-                ("latitude", src_lat),
-                ("longitude", src_lon),
-                ("time", src_time),
-            )
-            if series.notna().sum() == 0
-        ]
-        if empty_groups:
+        coords = parse_source_coords(
+            source,
+            lat_col=lat_col,
+            lon_col=lon_col,
+            time_col=time_col,
+            depth_col=depth_col,
+        )
+        if coords.empty_groups:
             return (
                 "Enrichissement Amundsen impossible : colonnes "
-                f"{', '.join(empty_groups)} entièrement vides dans la table "
+                f"{', '.join(coords.empty_groups)} entièrement vides dans la table "
                 "chargée. Aucune coordonnée exploitable — vérifie le fichier "
                 "source."
             )
+        src_lat = coords.latitude
+        src_lon = coords.longitude
+        src_time = coords.time
+        src_depth = coords.depth
 
-        lat_padding = 0.25
-        lon_padding = 0.25
-        time_padding_hours = 24.0
-        bbox = {
-            "lat_min": float(src_lat.min()) - lat_padding,
-            "lat_max": float(src_lat.max()) + lat_padding,
-            "lon_min": float(src_lon.min()) - lon_padding,
-            "lon_max": float(src_lon.max()) + lon_padding,
-        }
-        time_window = {
-            "start": (
-                src_time.min() - pd.Timedelta(hours=time_padding_hours)
-            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "end": (
-                src_time.max() + pd.Timedelta(hours=time_padding_hours)
-            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
+        bbox, time_window = compute_bbox_time_window(
+            src_lat=src_lat, src_lon=src_lon, src_time=src_time
+        )
 
         ctd = _fetch_amundsen_bbox(
             bbox=bbox,
@@ -504,23 +457,16 @@ def make_amundsen_tools(thread_id: str) -> list:
             variables=selected_variables,
         )
 
-        ctd_lat = pd.to_numeric(ctd["latitude"], errors="coerce")
-        ctd_lon = pd.to_numeric(ctd["longitude"], errors="coerce")
-        ctd_time = (
-            pd.to_datetime(ctd["time"], errors="coerce", utc=True)
-            if "time" in ctd.columns
-            else pd.Series([pd.NaT] * len(ctd))
-        )
-        ctd_pres = (
-            pd.to_numeric(ctd["PRES"], errors="coerce")
-            if "PRES" in ctd.columns
-            else pd.Series([float("nan")] * len(ctd))
-        )
-        time_tolerance = pd.Timedelta(hours=float(time_tolerance_hours))
-        src_depth = (
-            pd.to_numeric(source[depth_col], errors="coerce")
-            if depth_col
-            else None
+        matches = match_ctd_rows(
+            src_lat=src_lat,
+            src_lon=src_lon,
+            src_time=src_time,
+            src_depth=src_depth,
+            ctd=ctd,
+            ctd_pres_col="PRES",
+            variables_for_value_check=selected_variables,
+            spatial_tolerance_km=spatial_tolerance_km,
+            time_tolerance_hours=time_tolerance_hours,
         )
 
         statuses: list[str] = []
@@ -532,16 +478,9 @@ def make_amundsen_tools(thread_id: str) -> list:
         distances_km: list[object] = []
         time_deltas_min: list[object] = []
         ctd_times_matched: list[object] = []
-        for position in range(len(source)):
-            src_t = src_time.iloc[position]
-            time_deltas = (ctd_time - src_t).abs()
-            within_time = (
-                time_deltas <= time_tolerance
-                if not pd.isna(src_t)
-                else pd.Series([True] * len(ctd))
-            )
-            if not within_time.any():
-                statuses.append("no_match")
+        for match in matches:
+            statuses.append(match.status)
+            if match.chosen_idx is None:
                 stations.append(pd.NA)
                 casts.append(pd.NA)
                 pres_values.append(pd.NA)
@@ -551,66 +490,15 @@ def make_amundsen_tools(thread_id: str) -> list:
                 time_deltas_min.append(pd.NA)
                 ctd_times_matched.append(pd.NA)
                 continue
-
-            distances = pd.Series(
-                [
-                    _haversine_km(
-                        src_lat.iloc[position],
-                        src_lon.iloc[position],
-                        ctd_lat.iloc[j],
-                        ctd_lon.iloc[j],
-                    )
-                    if within_time.iloc[j]
-                    else float("inf")
-                    for j in range(len(ctd))
-                ]
-            )
-            nearest_distance = float(distances.min())
-            if nearest_distance > float(spatial_tolerance_km):
-                statuses.append("no_match")
-                stations.append(pd.NA)
-                casts.append(pd.NA)
-                pres_values.append(pd.NA)
-                te90.append(pd.NA)
-                psal.append(pd.NA)
-                distances_km.append(pd.NA)
-                time_deltas_min.append(pd.NA)
-                ctd_times_matched.append(pd.NA)
-                continue
-
-            profile_mask = distances.eq(nearest_distance)
-            profile_indices = list(distances[profile_mask].index)
-            if src_depth is not None and not pd.isna(src_depth.iloc[position]):
-                target_depth = float(src_depth.iloc[position])
-                depth_deltas = (
-                    ctd_pres.iloc[profile_indices] - target_depth
-                ).abs()
-                chosen_idx = int(depth_deltas.idxmin())
-            else:
-                chosen_idx = profile_indices[0]
-            best = ctd.iloc[chosen_idx]
-            best_dt = time_deltas.iloc[chosen_idx]
-            best_te90 = best.get("TE90")
-            best_psal = best.get("PSAL")
-            requested_values = [
-                best.get(variable)
-                for variable in selected_variables
-                if variable in best.index
-            ]
-            all_nan = bool(requested_values) and all(
-                pd.isna(value) for value in requested_values
-            )
-            statuses.append("matched_no_value" if all_nan else "matched")
+            best = ctd.iloc[match.chosen_idx]
             stations.append(best.get("station"))
             casts.append(best.get("cast_number"))
             pres_values.append(best.get("PRES"))
-            te90.append(best_te90)
-            psal.append(best_psal)
-            distances_km.append(round(float(distances.iloc[chosen_idx]), 3))
+            te90.append(best.get("TE90"))
+            psal.append(best.get("PSAL"))
+            distances_km.append(match.distance_km)
             time_deltas_min.append(
-                round(best_dt.total_seconds() / 60.0, 1)
-                if pd.notna(best_dt)
-                else pd.NA
+                match.time_delta_min if match.time_delta_min is not None else pd.NA
             )
             ctd_times_matched.append(best.get("time"))
 

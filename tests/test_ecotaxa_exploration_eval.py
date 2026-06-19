@@ -1,0 +1,156 @@
+from evals.eval_ecotaxa_exploration import (
+    forbidden_tools_absent,
+    required_tool_args_present,
+    trajectory_subsequence,
+)
+
+
+def test_trajectory_subsequence_allows_extra_tools_between_expected_steps():
+    outputs = {
+        "trajectory": [
+            "query_copepod_knowledge_base",
+            "load_skill",
+            "get_zone_info",
+            "find_ecotaxa_samples_in_region",
+        ]
+    }
+    reference = {
+        "expected_sequence": [
+            "load_skill",
+            "find_ecotaxa_samples_in_region",
+        ]
+    }
+
+    result = trajectory_subsequence(outputs, reference)
+
+    assert result["score"] == 1
+
+
+def test_trajectory_subsequence_accepts_alternative_tools_for_a_step():
+    outputs = {
+        "trajectory": [
+            "load_skill",
+            "summarize_ecotaxa_project",
+        ]
+    }
+    reference = {
+        "expected_sequence": [
+            "load_skill",
+            ["summarize_ecotaxa_project", "summarize_ecotaxa_projects"],
+        ]
+    }
+
+    result = trajectory_subsequence(outputs, reference)
+
+    assert result["score"] == 1
+
+
+def test_forbidden_tools_absent_rejects_exports_for_read_only_case():
+    outputs = {
+        "trajectory": [
+            "load_skill",
+            "summarize_ecotaxa_project",
+            "query_ecotaxa",
+        ]
+    }
+    reference = {"forbidden_tools": ["query_ecotaxa", "run_pandas"]}
+
+    result = forbidden_tools_absent(outputs, reference)
+
+    assert result["score"] == 0
+    assert "query_ecotaxa" in result["comment"]
+
+
+def test_required_tool_args_present_accepts_recursive_subset():
+    outputs = {
+        "tool_calls": [
+            {
+                "name": "find_ecotaxa_samples_in_region",
+                "arguments": {
+                    "zone_name": "Baie de Baffin",
+                    "date_range": {
+                        "from": "2024-10-01",
+                        "to": "2024-10-31",
+                    },
+                    "project_ids": [2331, 14853],
+                },
+            }
+        ]
+    }
+    reference = {
+        "required_tool_args": [
+            {
+                "name": "find_ecotaxa_samples_in_region",
+                "args": {
+                    "zone_name": "Baie de Baffin",
+                    "project_ids": [14853, 2331],
+                },
+            }
+        ]
+    }
+
+    result = required_tool_args_present(outputs, reference)
+
+    assert result["score"] == 1
+
+
+def test_required_tool_args_present_rejects_wrong_parameter_value():
+    outputs = {
+        "tool_calls": [
+            {
+                "name": "export_ecotaxa_samples",
+                "arguments": {
+                    "sample_ids": [14853000001, 14853000002],
+                    "confirmed": True,
+                },
+            }
+        ]
+    }
+    reference = {
+        "required_tool_args": [
+            {
+                "name": "export_ecotaxa_samples",
+                "args": {
+                    "sample_ids": [14853000001, 14853000002],
+                    "confirmed": False,
+                },
+            }
+        ]
+    }
+
+    result = required_tool_args_present(outputs, reference)
+
+    assert result["score"] == 0
+    assert "confirmed" in result["comment"]
+
+
+def test_required_tool_args_present_scores_partial_progress():
+    outputs = {
+        "tool_calls": [
+            {
+                "name": "load_skill",
+                "arguments": {"skill_name": "ecotaxa_navigation"},
+            },
+            {
+                "name": "summarize_ecotaxa_project",
+                "arguments": {"project_id": 99999},
+            },
+        ]
+    }
+    reference = {
+        "required_tool_args": [
+            {
+                "name": "load_skill",
+                "args": {"skill_name": "ecotaxa_navigation"},
+            },
+            {
+                "name": "summarize_ecotaxa_project",
+                "args": {"project_id": 14853},
+            },
+        ]
+    }
+
+    result = required_tool_args_present(outputs, reference)
+
+    assert result["score"] == 0.5
+    assert "summarize_ecotaxa_project" in result["comment"]

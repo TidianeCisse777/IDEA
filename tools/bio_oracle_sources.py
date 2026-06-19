@@ -14,25 +14,19 @@ from core.bio_oracle_client import (
     preview_bio_oracle_point as _preview_bio_oracle_point,
     query_bio_oracle as _query_bio_oracle,
 )
+from core.environment_resolver import (
+    DEFAULT_LAT_CANDIDATES,
+    DEFAULT_LON_CANDIDATES,
+    detect_column,
+    parse_source_coords,
+    resolve_source_dataframe,
+)
 from tools.dataset_registry import dataset_variable_name, store_dataset
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
-
-
-_BIO_LAT_CANDIDATES = ("latitude", "lat", "object_lat", "sample_lat")
-_BIO_LON_CANDIDATES = ("longitude", "lon", "object_lon", "sample_long", "sample_lon")
-
-
-def _bio_detect_column(columns, candidates: tuple[str, ...]) -> str | None:
-    lower_to_real = {str(c).lower(): c for c in columns}
-    for candidate in candidates:
-        match = lower_to_real.get(candidate.lower())
-        if match is not None:
-            return match
-    return None
 
 
 def _clean_label(value: str) -> str:
@@ -670,30 +664,16 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         `source_variable` (par exemple `df_file_filet_arctic_2018`) pour cibler
         un dataset précis au lieu du df actif.
         """
-        source: pd.DataFrame | None = None
-        if source_variable:
-            for key in _store.keys(f"{thread_id}:dataset:"):
-                named = _store.get(key)
-                if not named:
-                    continue
-                var_name = (named.get("meta") or {}).get("variable_name") or key.rsplit(":", 1)[-1]
-                if var_name == source_variable:
-                    candidate = named.get("df")
-                    if isinstance(candidate, pd.DataFrame) and not candidate.empty:
-                        source = candidate
-                    break
-            if source is None:
+        source = resolve_source_dataframe(_store, thread_id, source_variable)
+        if source is None:
+            if source_variable:
                 return (
                     f"Variable source introuvable en session : `{source_variable}`."
                 )
-        else:
-            session = _store.get(thread_id)
-            source = session.get("df") if session else None
-        if not isinstance(source, pd.DataFrame) or source.empty:
             return "Aucune table chargée à enrichir."
 
-        lat_col = latitude_column or _bio_detect_column(source.columns, _BIO_LAT_CANDIDATES)
-        lon_col = longitude_column or _bio_detect_column(source.columns, _BIO_LON_CANDIDATES)
+        lat_col = latitude_column or detect_column(source.columns, DEFAULT_LAT_CANDIDATES)
+        lon_col = longitude_column or detect_column(source.columns, DEFAULT_LON_CANDIDATES)
         if lat_col is None or lon_col is None:
             missing = [name for name, value in (("latitude", lat_col), ("longitude", lon_col)) if value is None]
             return (
@@ -701,17 +681,11 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 f"{', '.join(missing)}. Préciser via `latitude_column`, `longitude_column`."
             )
 
-        src_lat_num = pd.to_numeric(source[lat_col], errors="coerce")
-        src_lon_num = pd.to_numeric(source[lon_col], errors="coerce")
-        empty_groups = [
-            label
-            for label, series in (("latitude", src_lat_num), ("longitude", src_lon_num))
-            if series.notna().sum() == 0
-        ]
-        if empty_groups:
+        coords = parse_source_coords(source, lat_col=lat_col, lon_col=lon_col)
+        if coords.empty_groups:
             return (
                 "Enrichissement Bio-ORACLE impossible : colonnes "
-                f"{', '.join(empty_groups)} entièrement vides dans la table "
+                f"{', '.join(coords.empty_groups)} entièrement vides dans la table "
                 "chargée. Aucune coordonnée exploitable."
             )
 

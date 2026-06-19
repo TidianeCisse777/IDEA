@@ -402,29 +402,28 @@ def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
     assert "copépodes" in skill
 
 
-def test_system_prompt_routes_bio_oracle_list_preview_query_and_coupling():
+def test_system_prompt_routes_bio_oracle_list_preview_query_and_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "list_bio_oracle_datasets" in prompt
     assert "preview_bio_oracle_point" in prompt
     assert "query_bio_oracle" in prompt
-    assert "couple_zooplankton_bio_oracle" in prompt
+    assert "enrich_with_bio_oracle" in prompt
     assert "only if `query_bio_oracle` succeeds" in prompt
 
 
-def test_system_prompt_routes_bio_oracle_same_stations_to_coupling():
+def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "les mêmes stations" in prompt
     assert "top n stations" in prompt
-    assert "top_n_stations" in prompt
     assert "scenarios" in prompt
     assert "never create empty placeholder columns" in prompt
     assert "do not use `query_bio_oracle_zones` for this case" in prompt
     assert "a download link alone is not an answer" in prompt
-    assert "df_bio_oracle_coupling_*" in prompt
+    assert "df_bio_oracle_enriched_*" in prompt
 
 
 def test_system_prompt_routes_bio_oracle_year_specific_requests_to_target_year():
@@ -486,19 +485,15 @@ def test_system_prompt_routes_amundsen_preview_and_query():
     assert "do not use `query_amundsen_ctd` for a whole loaded file" in prompt
 
 
-def test_system_prompt_acquires_ogsl_before_environmental_join():
+def test_system_prompt_routes_ogsl_enrichment_to_enrich_with_ogsl():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "query_ogsl" in prompt
-    assert "station column name" in prompt
-    assert "sampling-time column name" in prompt
-    assert "depth_column" in prompt
-    assert "df_ogsl" in prompt
-    assert "standard ogsl enrichment" in prompt
-    assert "do not call `run_pandas`" in prompt
-    assert "confirmed=true" in prompt
-    assert "more than ten unique stations" in prompt
+    assert "enrich_with_ogsl" in prompt
+    assert "spatial_tolerance_km" in prompt
+    assert "time_tolerance_hours" in prompt
+    assert "ogsl_te90_degc" in prompt
+    assert "ogsl_match_status" in prompt
 
 
 def test_system_prompt_loads_environmental_join_skill_for_ctd_and_bio_oracle_joins():

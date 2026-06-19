@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import math
 import uuid
 from pathlib import Path
 from urllib.parse import quote
@@ -13,6 +12,17 @@ import pandas as pd
 import requests
 from langchain_core.tools import tool
 
+from core.environment_resolver import (
+    DEFAULT_DEPTH_CANDIDATES,
+    DEFAULT_LAT_CANDIDATES,
+    DEFAULT_LON_CANDIDATES,
+    DEFAULT_TIME_CANDIDATES,
+    compute_bbox_time_window,
+    detect_column,
+    match_ctd_rows,
+    parse_source_coords,
+    resolve_source_dataframe,
+)
 from core.ogsl_client import query_ogsl as _query_ogsl, OGSL_DATASET_ID, OGSL_VARIABLES
 from core.ogsl_enrichment import build_station_windows, enrich_with_ogsl as _enrich_with_ogsl_helper
 from tools.dataset_registry import dataset_variable_name, store_dataset
@@ -34,48 +44,6 @@ _OGSL_CORE_COLUMNS = (
     "cast_number",
     "PRES",
 )
-
-_LAT_CANDIDATES = ("latitude", "lat", "object_lat", "sample_lat")
-_LON_CANDIDATES = ("longitude", "lon", "object_lon", "sample_long", "sample_lon")
-_TIME_CANDIDATES = (
-    "object_date",
-    "time",
-    "date",
-    "sampling_date",
-    "yyyy-mm-dd hh:mm",
-    "datetime",
-)
-_DEPTH_CANDIDATES = (
-    "object_depth_min",
-    "depth",
-    "pressure",
-    "pres",
-    "Depth [m]",
-    "depth_m",
-)
-
-
-def _detect_column(columns, candidates: tuple[str, ...]) -> str | None:
-    lower_to_real = {str(c).lower(): c for c in columns}
-    for candidate in candidates:
-        match = lower_to_real.get(candidate.lower())
-        if match is not None:
-            return match
-    return None
-
-
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    radius = 6371.0
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = (
-        math.sin(dphi / 2) ** 2
-        + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
-    )
-    return 2 * radius * math.asin(math.sqrt(a))
-
 
 def _fetch_ogsl_bbox(*, bbox: dict, time_window: dict, variables: list[str]) -> pd.DataFrame:
     """Fetch OGSL CTD rows within a bbox + time window from ERDDAP tabledap."""
@@ -274,32 +242,18 @@ def make_ogsl_tools(thread_id: str) -> list:
         Si plusieurs fichiers sont en session, passe `source_variable`
         (ex. `df_file_filet_arctic_2018`) pour cibler un dataset précis.
         """
-        source: pd.DataFrame | None = None
-        if source_variable:
-            for key in _store.keys(f"{thread_id}:dataset:"):
-                named = _store.get(key)
-                if not named:
-                    continue
-                var_name = (named.get("meta") or {}).get("variable_name") or key.rsplit(":", 1)[-1]
-                if var_name == source_variable:
-                    candidate = named.get("df")
-                    if isinstance(candidate, pd.DataFrame) and not candidate.empty:
-                        source = candidate
-                    break
-            if source is None:
+        source = resolve_source_dataframe(_store, thread_id, source_variable)
+        if source is None:
+            if source_variable:
                 return (
                     f"Variable source introuvable en session : `{source_variable}`."
                 )
-        else:
-            session = _store.get(thread_id)
-            source = session.get("df") if session else None
-        if not isinstance(source, pd.DataFrame) or source.empty:
             return "Aucune table chargée à enrichir."
 
-        lat_col = latitude_column or _detect_column(source.columns, _LAT_CANDIDATES)
-        lon_col = longitude_column or _detect_column(source.columns, _LON_CANDIDATES)
-        time_col = time_column or _detect_column(source.columns, _TIME_CANDIDATES)
-        depth_col = depth_column or _detect_column(source.columns, _DEPTH_CANDIDATES)
+        lat_col = latitude_column or detect_column(source.columns, DEFAULT_LAT_CANDIDATES)
+        lon_col = longitude_column or detect_column(source.columns, DEFAULT_LON_CANDIDATES)
+        time_col = time_column or detect_column(source.columns, DEFAULT_TIME_CANDIDATES)
+        depth_col = depth_column or detect_column(source.columns, DEFAULT_DEPTH_CANDIDATES)
 
         missing = [
             name
@@ -319,64 +273,46 @@ def make_ogsl_tools(thread_id: str) -> list:
 
         selected_variables = list(variables or ["TE90", "PSAL", "OXYM"])
 
-        src_lat = pd.to_numeric(source[lat_col], errors="coerce")
-        src_lon = pd.to_numeric(source[lon_col], errors="coerce")
-        src_time = pd.to_datetime(source[time_col], errors="coerce", utc=True)
-
-        empty_groups = [
-            label
-            for label, series in (
-                ("latitude", src_lat),
-                ("longitude", src_lon),
-                ("time", src_time),
-            )
-            if series.notna().sum() == 0
-        ]
-        if empty_groups:
+        coords = parse_source_coords(
+            source,
+            lat_col=lat_col,
+            lon_col=lon_col,
+            time_col=time_col,
+            depth_col=depth_col,
+        )
+        if coords.empty_groups:
             return (
                 "Enrichissement OGSL impossible : colonnes "
-                f"{', '.join(empty_groups)} entièrement vides dans la table "
+                f"{', '.join(coords.empty_groups)} entièrement vides dans la table "
                 "chargée. Aucune coordonnée exploitable."
             )
+        src_lat = coords.latitude
+        src_lon = coords.longitude
+        src_time = coords.time
+        src_depth = coords.depth
 
-        lat_padding = 0.25
-        lon_padding = 0.25
-        time_padding_hours = time_tolerance_hours
-        bbox = {
-            "lat_min": float(src_lat.min()) - lat_padding,
-            "lat_max": float(src_lat.max()) + lat_padding,
-            "lon_min": float(src_lon.min()) - lon_padding,
-            "lon_max": float(src_lon.max()) + lon_padding,
-        }
-        time_window = {
-            "start": (
-                src_time.min() - pd.Timedelta(hours=time_padding_hours)
-            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "end": (
-                src_time.max() + pd.Timedelta(hours=time_padding_hours)
-            ).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
+        bbox, time_window = compute_bbox_time_window(
+            src_lat=src_lat,
+            src_lon=src_lon,
+            src_time=src_time,
+            time_padding_hours=time_tolerance_hours,
+        )
 
         ctd = _fetch_ogsl_bbox(
             bbox=bbox, time_window=time_window, variables=selected_variables
         )
 
-        ctd_lat = pd.to_numeric(ctd["latitude"], errors="coerce") if not ctd.empty else pd.Series(dtype=float)
-        ctd_lon = pd.to_numeric(ctd["longitude"], errors="coerce") if not ctd.empty else pd.Series(dtype=float)
-        ctd_time = (
-            pd.to_datetime(ctd["time"], errors="coerce", utc=True)
-            if "time" in ctd.columns
-            else pd.Series([pd.NaT] * len(ctd))
+        matches = match_ctd_rows(
+            src_lat=src_lat,
+            src_lon=src_lon,
+            src_time=src_time,
+            src_depth=src_depth,
+            ctd=ctd,
+            ctd_pres_col="PRES",
+            variables_for_value_check=selected_variables,
+            spatial_tolerance_km=spatial_tolerance_km,
+            time_tolerance_hours=time_tolerance_hours,
         )
-        ctd_pres = (
-            pd.to_numeric(ctd["PRES"], errors="coerce")
-            if "PRES" in ctd.columns
-            else pd.Series([float("nan")] * len(ctd))
-        )
-        src_depth = (
-            pd.to_numeric(source[depth_col], errors="coerce") if depth_col else None
-        )
-        time_tolerance = pd.Timedelta(hours=float(time_tolerance_hours))
 
         statuses: list[str] = []
         station_ids: list[object] = []
@@ -389,89 +325,28 @@ def make_ogsl_tools(thread_id: str) -> list:
         te90_values: list[object] = []
         psal_values: list[object] = []
         oxym_values: list[object] = []
-
-        for position in range(len(source)):
-            if ctd.empty:
-                statuses.append("no_match")
+        for match in matches:
+            statuses.append(match.status)
+            if match.chosen_idx is None:
                 station_ids.append(pd.NA); cruise_ids.append(pd.NA)
                 cast_numbers.append(pd.NA); ctd_times_matched.append(pd.NA)
                 distances_km.append(pd.NA); time_deltas_min.append(pd.NA)
                 pres_values.append(pd.NA); te90_values.append(pd.NA)
                 psal_values.append(pd.NA); oxym_values.append(pd.NA)
                 continue
-            src_t = src_time.iloc[position]
-            time_deltas = (ctd_time - src_t).abs()
-            within_time = (
-                time_deltas <= time_tolerance
-                if not pd.isna(src_t)
-                else pd.Series([True] * len(ctd))
-            )
-            if not within_time.any():
-                statuses.append("no_match")
-                station_ids.append(pd.NA); cruise_ids.append(pd.NA)
-                cast_numbers.append(pd.NA); ctd_times_matched.append(pd.NA)
-                distances_km.append(pd.NA); time_deltas_min.append(pd.NA)
-                pres_values.append(pd.NA); te90_values.append(pd.NA)
-                psal_values.append(pd.NA); oxym_values.append(pd.NA)
-                continue
-
-            distances = pd.Series(
-                [
-                    _haversine_km(
-                        src_lat.iloc[position], src_lon.iloc[position],
-                        ctd_lat.iloc[j], ctd_lon.iloc[j],
-                    )
-                    if within_time.iloc[j]
-                    else float("inf")
-                    for j in range(len(ctd))
-                ]
-            )
-            nearest_distance = float(distances.min())
-            if nearest_distance > float(spatial_tolerance_km):
-                statuses.append("no_match")
-                station_ids.append(pd.NA); cruise_ids.append(pd.NA)
-                cast_numbers.append(pd.NA); ctd_times_matched.append(pd.NA)
-                distances_km.append(pd.NA); time_deltas_min.append(pd.NA)
-                pres_values.append(pd.NA); te90_values.append(pd.NA)
-                psal_values.append(pd.NA); oxym_values.append(pd.NA)
-                continue
-
-            profile_mask = distances.eq(nearest_distance)
-            profile_indices = list(distances[profile_mask].index)
-            if src_depth is not None and not pd.isna(src_depth.iloc[position]):
-                target_depth = float(src_depth.iloc[position])
-                depth_deltas = (ctd_pres.iloc[profile_indices] - target_depth).abs()
-                chosen_idx = int(depth_deltas.idxmin())
-            else:
-                chosen_idx = profile_indices[0]
-            best = ctd.iloc[chosen_idx]
-            best_dt = time_deltas.iloc[chosen_idx]
-            best_te90 = best.get("TE90")
-            best_psal = best.get("PSAL")
-            best_oxym = best.get("OXYM")
-            requested_values = [
-                best.get(variable)
-                for variable in selected_variables
-                if variable in best.index
-            ]
-            all_nan = bool(requested_values) and all(
-                pd.isna(value) for value in requested_values
-            )
-            statuses.append("matched_no_value" if all_nan else "matched")
+            best = ctd.iloc[match.chosen_idx]
             station_ids.append(best.get("stationID"))
             cruise_ids.append(best.get("cruiseID"))
             cast_numbers.append(best.get("cast_number"))
             ctd_times_matched.append(best.get("time"))
-            distances_km.append(round(float(distances.iloc[chosen_idx]), 3))
+            distances_km.append(match.distance_km)
             time_deltas_min.append(
-                round(best_dt.total_seconds() / 60.0, 1)
-                if pd.notna(best_dt)
-                else pd.NA
+                match.time_delta_min if match.time_delta_min is not None else pd.NA
             )
             pres_values.append(best.get("PRES"))
-            te90_values.append(best_te90)
-            psal_values.append(best_psal)
-            oxym_values.append(best_oxym)
+            te90_values.append(best.get("TE90"))
+            psal_values.append(best.get("PSAL"))
+            oxym_values.append(best.get("OXYM"))
 
         enriched = source.copy(deep=True)
         n = len(enriched)
