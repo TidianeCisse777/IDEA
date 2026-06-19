@@ -12,6 +12,7 @@ User-facing docs:
 
 - [`CAPABILITIES.md`](CAPABILITIES.md): what the assistant can do.
 - [`MCP_CAPABILITIES.md`](MCP_CAPABILITIES.md): what the EcoTaxa MCP layer can do.
+- [`MCP_ECOTAXA_SHARE_GUIDE.md`](MCP_ECOTAXA_SHARE_GUIDE.md): shareable EcoTaxa MCP setup and usage guide.
 
 ## Requirements
 
@@ -75,6 +76,13 @@ If Docker images are missing or need rebuilding:
 
 ```bash
 ./start.sh --build
+```
+
+To share only the EcoTaxa MCP server without the full IDEA stack, use:
+
+```bash
+cp .env.mcp.example .env.mcp
+docker compose -f docker-compose.mcp.yml up -d
 ```
 
 ## Local Agent Mode

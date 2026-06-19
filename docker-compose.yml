@@ -76,6 +76,7 @@ services:
     volumes:
       - .:/app
       - copepod_data:/app/data
+      - ./data/geo:/app/data/geo:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]

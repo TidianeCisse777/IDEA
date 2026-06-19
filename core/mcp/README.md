@@ -20,9 +20,22 @@ See [`../../MCP_ECOTAXA_ORCHESTRATION.md`](../../MCP_ECOTAXA_ORCHESTRATION.md)
 for the full layer map (prompt → skill → @tool → MCP) and the planned
 convergence between the two façades.
 
+For a shareable setup and usage guide, see
+[`../../MCP_ECOTAXA_SHARE_GUIDE.md`](../../MCP_ECOTAXA_SHARE_GUIDE.md).
+
 ---
 
 ## Quick start
+
+Standalone MCP-only deployment:
+
+```bash
+cp .env.mcp.example .env.mcp
+docker compose -f docker-compose.mcp.yml up -d
+curl http://localhost:8001/health
+```
+
+Full repo development stack:
 
 ```bash
 # In the repo root
@@ -31,7 +44,8 @@ docker compose up -d mcp-ecotaxa
 # Sanity check
 curl http://localhost:8001/health
 
-# First-time cache warmup (otherwise samples_in_region returns CACHE_EMPTY)
+# First-time cache warmup (otherwise cache tools return CACHE_EMPTY,
+# or SYNC_IN_PROGRESS while the first sync is running)
 curl -X POST http://localhost:8001/admin/resync \
   -H "Authorization: Bearer $MCP_AUTH_TOKEN"
 
@@ -49,7 +63,7 @@ After that, the nightly scheduler refreshes the cache automatically at
 | Env var | Required | Default | Role |
 |---|---|---|---|
 | `MCP_AUTH_TOKEN` | yes | — | Shared Bearer protecting `/mcp` and `/admin/*` |
-| `ECOTAXA_TOKEN` or (`ECOTAXA_USERNAME` + `ECOTAXA_PASSWORD`) | yes | — | Service account credentials |
+| `ECOTAXA_USERNAME` + `ECOTAXA_PASSWORD` | yes | — | EcoTaxa service account credentials |
 | `ECOTAXA_CACHE_DB` | no | `data/ecotaxa_cache.sqlite` | Path to the local SQLite cache |
 | `ECOTAXA_NIGHTLY_SYNC` | no | `true` | Set to `false` to disable the nightly cron |
 | `ECOTAXA_SYNC_HOUR` | no | `3` | UTC hour for the nightly sync (0–23) |
@@ -87,14 +101,14 @@ errors propagate as MCP `isError: true`.
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `samples_in_region` | `bbox?` (`{south, west, north, east}`), `date_range?` (`{from, to}`), `instrument?`, `zone_name?`, `polygon_wkt?`, `project_ids?` | `{samples[], total_matching, truncated, summary}` — cap 500 |
-| `projects_in_region` | `bbox?`, `date_range?`, `zone_name?`, `polygon_wkt?`, `project_ids?` | `{projects[], total_projects, total_samples}` — one row per project with `sample_count`, `object_count`, `instruments`, date range |
+| `samples_in_region` | `bbox?` (`{south, west, north, east}`), `date_range?` (`{from, to}`), `instrument?`, `zone_name?`, `polygon_wkt?`, `project_ids?` | `{samples[], total_matching, truncated, summary, partial, sync_in_progress}` — cap 500 |
+| `projects_in_region` | `bbox?`, `date_range?`, `zone_name?`, `polygon_wkt?`, `project_ids?` | `{projects[], total_projects, total_samples, partial, sync_in_progress}` — one row per project with `sample_count`, `object_count`, `instruments`, date range |
 
 ### UC2 — Taxon mapping (cache + live taxon counts)
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `find_observations` | `taxon` (str/int), `bbox?`, `date_range?`, `instrument?`, `status?` (`V`/`P`/`D`/`all`), `zone_name?`, `polygon_wkt?`, `project_ids?` | `{samples[], attested_projects, project_counts, granularity: "project_filtered"}` |
+| `find_observations` | `taxon` (str/int), `bbox?`, `date_range?`, `instrument?`, `status?` (`V`/`P`/`D`/`all`), `zone_name?`, `polygon_wkt?`, `project_ids?` | `{samples[], attested_projects, project_counts, granularity: "project_filtered", partial, sync_in_progress}` |
 
 ### UC3 — Counts
 
@@ -152,12 +166,17 @@ errors propagate as MCP `isError: true`.
 | `COLUMN_NOT_FOUND` | Column does not exist on the project | Call `get_project_schema` first |
 | `AMBIGUOUS_TAXON` | Scientific name matches multiple taxa | Re-call with integer ID from the `candidates` |
 | `TAXON_NOT_FOUND` | No taxon matches the name | Refine spelling |
+| `SYNC_IN_PROGRESS` | Cache sync is currently running and no samples are indexed yet | Wait briefly and call `cache_status` |
 | `INVALID_BBOX` | bbox dict missing keys or south > north | Fix the bbox |
 | `INVALID_DATE_RANGE` | date_range dict missing keys | Fix the date_range |
 | `INVALID_STATUS` | `find_observations.status` is not `V`, `P`, `D`, or `all` | Re-call with one of the candidate values |
 | `INVALID_POLYGON` | `polygon_wkt` is empty or invalid WKT | Fix or omit the polygon |
 | `UNKNOWN_ZONE` | `zone_name` is not known in the NeoLab zone registry | Re-call with a known zone alias |
-| `CACHE_EMPTY` | Local cache has no samples (first boot, no sync yet) | `POST /admin/resync` and wait |
+| `CACHE_EMPTY` | Local cache has no samples and no sync is running | `POST /admin/resync` and wait |
+
+When a sync is running but the cache already contains samples, cache-backed
+tools return usable but incomplete responses with `partial: true` and
+`sync_in_progress: true`.
 
 ---
 

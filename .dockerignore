@@ -8,6 +8,8 @@ __pycache__/
 .agents/
 .langgraph_api/
 data/
+!data/geo/
+!data/geo/zones_registry.geojson
 logs/
 static/
 models/

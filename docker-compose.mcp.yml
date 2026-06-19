@@ -1,0 +1,22 @@
+services:
+  mcp-ecotaxa:
+    image: ghcr.io/tidianecisse777/mcp-ecotaxa:latest
+    pull_policy: missing
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env.mcp
+    environment:
+      - ECOTAXA_CACHE_DB=/app/cache/ecotaxa_cache.sqlite
+      - ZONES_REGISTRY=/app/data/geo/zones_registry.geojson
+    volumes:
+      - mcp_ecotaxa_cache:/app/cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
+      interval: 30s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  mcp_ecotaxa_cache:

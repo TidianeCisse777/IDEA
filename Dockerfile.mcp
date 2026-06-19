@@ -16,6 +16,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY core ./core
 COPY tools/__init__.py tools/ecotaxa_client.py ./tools/
+COPY data/geo/zones_registry.geojson ./data/geo/zones_registry.geojson
 
 EXPOSE 8001
 
