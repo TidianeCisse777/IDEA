@@ -261,6 +261,12 @@ def test_start_and_finish_sync_run_record_status(conn):
     init_schema(conn)
     run_id = start_sync_run(conn, started_at="2026-06-15T03:00:00Z")
     assert isinstance(run_id, int)
+    running = conn.execute(
+        "SELECT status, ended_at FROM sync_runs WHERE run_id=?",
+        (run_id,),
+    ).fetchone()
+    assert running["status"] == "running"
+    assert running["ended_at"] is None
     finish_sync_run(
         conn,
         run_id=run_id,
@@ -277,6 +283,40 @@ def test_start_and_finish_sync_run_record_status(conn):
     assert row["status"] == "ok"
     assert row["projects_synced"] == 7
     assert row["samples_synced"] == 320
+
+
+def test_cache_progress_reports_running_sync(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        cache_progress,
+        init_schema,
+        start_sync_run,
+        upsert_sample,
+    )
+
+    init_schema(conn)
+    upsert_sample(
+        conn,
+        sample_id=1,
+        project_id=42,
+        lat_avg=70.0,
+        lon_avg=-64.0,
+        date_min="d",
+        date_max="d",
+        object_count=10,
+        instrument="UVP5",
+        last_synced="ts",
+    )
+    start_sync_run(conn, started_at="2026-06-15T03:00:00Z")
+
+    progress = cache_progress(conn)
+
+    assert progress["sync_running"] is True
+    assert progress["projects_indexed"] == 1
+    assert progress["samples_indexed"] == 1
+    assert progress["projects_synced"] == 1
+    assert progress["samples_synced"] == 1
+    assert progress["projects_total_estimated"] is None
+    assert progress["last_sync"]["status"] == "running"
 
 
 def test_latest_sync_status_returns_most_recent(conn):

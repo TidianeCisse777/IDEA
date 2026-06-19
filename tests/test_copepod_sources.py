@@ -10,9 +10,11 @@ from tools.session_store import default_store as _store
 
 @pytest.fixture(autouse=True)
 def clear_sessions():
-    _store._store.clear()
+    if hasattr(_store, "_store"):
+        _store._store.clear()
     yield
-    _store._store.clear()
+    if hasattr(_store, "_store"):
+        _store._store.clear()
 
 
 def _make_fake_client(df: pd.DataFrame):
@@ -1281,3 +1283,133 @@ def test_get_ecotaxa_cache_status_reports_empty_cache(tmp_path, monkeypatch):
 
     assert "0" in result
     assert ("jamais" in result.lower() or "aucun" in result.lower() or "never" in result.lower())
+
+
+def test_get_ecotaxa_cache_status_reports_running_sync(tmp_path, monkeypatch):
+    import sqlite3
+    from core.ecotaxa_browser.cache.repo import init_schema
+
+    cache_db = tmp_path / "running_cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO samples_cache (sample_id, project_id, lat_avg, lon_avg, "
+        "date_min, date_max, object_count, instrument, last_synced) VALUES "
+        "(1, 100, 48.5, -68.0, '2024-01-01', '2024-01-02', 10, 'UVP6', "
+        "'2026-06-15T03:01:00Z')"
+    )
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, status) VALUES "
+        "('2026-06-19T03:00:00Z', 'running')"
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-qw2-running")
+    fn = next(t for t in tools if t.name == "get_ecotaxa_cache_status")
+    result = fn.invoke({})
+
+    assert "sync en cours" in result.lower()
+    assert "oui" in result.lower()
+    assert "résultats partiels" in result.lower()
+
+
+def test_find_ecotaxa_samples_in_region_surfaces_partial_sync(monkeypatch):
+    from tools.copepod_sources import make_source_tools
+
+    monkeypatch.setattr(
+        "tools.copepod_sources.samples_in_region",
+        lambda **kwargs: {
+            "samples": [{
+                "sample_id": 1,
+                "project_id": 42,
+                "lat": 60.0,
+                "lon": -80.0,
+                "date_min": "2024-01-01",
+                "date_max": "2024-01-01",
+                "instrument": "UVP6",
+            }],
+            "total_matching": 1,
+            "truncated": False,
+            "summary": {},
+            "partial": True,
+            "sync_in_progress": True,
+        },
+    )
+    fn = next(
+        t for t in make_source_tools("thread-partial-samples")
+        if t.name == "find_ecotaxa_samples_in_region"
+    )
+
+    result = fn.invoke({"project_ids": [42]})
+
+    assert "résultat partiel" in result.lower()
+    assert "partial=True" in result
+
+
+def test_find_ecotaxa_projects_in_region_surfaces_partial_sync(monkeypatch):
+    from tools.copepod_sources import make_source_tools
+
+    monkeypatch.setattr(
+        "tools.copepod_sources.projects_in_region",
+        lambda **kwargs: {
+            "projects": [{
+                "project_id": 42,
+                "sample_count": 1,
+                "object_count": 10,
+                "instruments": ["UVP6"],
+                "date_min": "2024-01-01",
+                "date_max": "2024-01-01",
+            }],
+            "total_projects": 1,
+            "total_samples": 1,
+            "partial": True,
+            "sync_in_progress": True,
+        },
+    )
+    fn = next(
+        t for t in make_source_tools("thread-partial-projects")
+        if t.name == "find_ecotaxa_projects_in_region"
+    )
+
+    result = fn.invoke({"project_ids": [42]})
+
+    assert "résultat partiel" in result.lower()
+    assert "partial=True" in result
+
+
+def test_find_ecotaxa_observations_surfaces_partial_sync(monkeypatch):
+    from tools.copepod_sources import make_source_tools
+
+    monkeypatch.setattr(
+        "tools.copepod_sources.find_observations",
+        lambda **kwargs: {
+            "taxon": {"matched_name": "Copepoda"},
+            "status_filter": "V",
+            "samples": [{
+                "sample_id": 1,
+                "project_id": 42,
+                "lat": 60.0,
+                "lon": -80.0,
+                "date_min": "2024-01-01",
+                "date_max": "2024-01-01",
+            }],
+            "total_matching": 1,
+            "truncated": False,
+            "attested_projects": [42],
+            "partial": True,
+            "sync_in_progress": True,
+        },
+    )
+    fn = next(
+        t for t in make_source_tools("thread-partial-observations")
+        if t.name == "find_ecotaxa_observations"
+    )
+
+    result = fn.invoke({"taxon": "Copepoda"})
+
+    assert "résultat partiel" in result.lower()
+    assert "partial=True" in result

@@ -21,6 +21,7 @@ from core.ecotaxa_browser.acquisitions import (
 )
 from core.ecotaxa_browser.cache.repo import (
     cache_counts,
+    cache_progress,
     init_schema,
     latest_sync_status,
     open_connection,
@@ -588,9 +589,10 @@ def create_mcp() -> FastMCP:
         """Diagnose the local EcoTaxa cache.
 
         Returns ``{samples_indexed, projects_indexed, schemas_indexed,
-        last_sync, cache_age_hours, cache_db}``. ``last_sync`` is the row
-        from ``sync_runs`` (run_id, started_at, ended_at, status,
-        projects_synced, samples_synced, error_message) or null if the
+        sync_running, projects_synced, samples_synced,
+        projects_total_estimated, last_sync, cache_age_hours, cache_db}``.
+        ``last_sync`` is the row from ``sync_runs`` (run_id, started_at,
+        ended_at, status, projects_synced, samples_synced, error_message) or null if the
         cache has never been synchronised. Use when a region/observation
         call returns ``CACHE_EMPTY`` or the user asks whether the cache
         is fresh. Read-only — operators must call ``POST /admin/resync``
@@ -599,14 +601,18 @@ def create_mcp() -> FastMCP:
         cache_db = _cache_db_path()
         conn = _open_cache()
         try:
-            counts = cache_counts(conn)
-            last_sync = latest_sync_status(conn)
+            progress = cache_progress(conn)
+            last_sync = progress["last_sync"]
         finally:
             conn.close()
         return {
-            "samples_indexed": counts["samples_indexed"],
-            "projects_indexed": counts["projects_indexed"],
-            "schemas_indexed": counts["schemas_indexed"],
+            "samples_indexed": progress["samples_indexed"],
+            "projects_indexed": progress["projects_indexed"],
+            "schemas_indexed": progress["schemas_indexed"],
+            "sync_running": progress["sync_running"],
+            "projects_synced": progress["projects_synced"],
+            "samples_synced": progress["samples_synced"],
+            "projects_total_estimated": progress["projects_total_estimated"],
             "last_sync": last_sync,
             "cache_age_hours": _compute_cache_age_hours(last_sync),
             "cache_db": cache_db,

@@ -314,8 +314,8 @@ def lookup_sample_projects(
 
 def start_sync_run(conn: sqlite3.Connection, *, started_at: str) -> int:
     cursor = conn.execute(
-        "INSERT INTO sync_runs (started_at) VALUES (?)",
-        (started_at,),
+        "INSERT INTO sync_runs (started_at, status) VALUES (?, ?)",
+        (started_at, "running"),
     )
     conn.commit()
     return int(cursor.lastrowid)
@@ -353,6 +353,40 @@ def latest_sync_status(conn: sqlite3.Connection) -> dict | None:
     if row is None:
         return None
     return dict(row)
+
+
+def is_sync_running(sync_status: dict | None) -> bool:
+    """Return True when a sync run has started but not ended."""
+    if sync_status is None:
+        return False
+    return (
+        sync_status.get("ended_at") is None
+        and sync_status.get("status") in ("running", None)
+    )
+
+
+def cache_progress(conn: sqlite3.Connection) -> dict:
+    """Return cache counts plus the latest sync progress in one payload."""
+    counts = cache_counts(conn)
+    last_sync = latest_sync_status(conn)
+    projects_synced = (
+        int(last_sync["projects_synced"])
+        if last_sync and last_sync.get("projects_synced") is not None
+        else counts["projects_indexed"]
+    )
+    samples_synced = (
+        int(last_sync["samples_synced"])
+        if last_sync and last_sync.get("samples_synced") is not None
+        else counts["samples_indexed"]
+    )
+    return {
+        **counts,
+        "sync_running": is_sync_running(last_sync),
+        "projects_synced": projects_synced,
+        "samples_synced": samples_synced,
+        "projects_total_estimated": None,
+        "last_sync": last_sync,
+    }
 
 
 def cache_counts(conn: sqlite3.Connection) -> dict:

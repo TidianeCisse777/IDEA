@@ -20,6 +20,8 @@ from shapely.geometry.base import BaseGeometry
 
 from core.ecotaxa_browser.cache.repo import (
     cache_counts,
+    is_sync_running,
+    latest_sync_status,
     open_connection,
     query_samples_filtered,
 )
@@ -61,13 +63,25 @@ def resolve_sample_projects(sample_ids: list[int]) -> dict[int, int]:
     return resolved
 
 
+def _sync_in_progress(conn: sqlite3.Connection) -> bool:
+    """Return True if the latest sync run is still running (no ended_at)."""
+    return is_sync_running(latest_sync_status(conn))
+
+
 def _ensure_cache_ready(conn: sqlite3.Connection) -> None:
     counts = cache_counts(conn)
-    if counts["samples_indexed"] == 0:
+    if counts["samples_indexed"] > 0:
+        return
+    if _sync_in_progress(conn):
         raise EcoTaxaBrowserError(
-            "CACHE_EMPTY",
-            "EcoTaxa local cache is empty — trigger /admin/resync or wait for the nightly sync.",
+            "SYNC_IN_PROGRESS",
+            "EcoTaxa cache sync is currently running — retry in a moment. "
+            "Call cache_status to monitor progress.",
         )
+    raise EcoTaxaBrowserError(
+        "CACHE_EMPTY",
+        "EcoTaxa local cache is empty — trigger /admin/resync or wait for the nightly sync.",
+    )
 
 
 def _validate_bbox(bbox: dict | None) -> tuple[float, float, float, float] | None:
@@ -202,6 +216,7 @@ def samples_in_region(
     conn = _open_cache()
     try:
         _ensure_cache_ready(conn)
+        sync_in_progress = _sync_in_progress(conn)
         bbox_repo = bbox_tuple if bbox_tuple is None else (
             bbox_tuple[0], bbox_tuple[1], bbox_tuple[2], bbox_tuple[3]
         )
@@ -233,6 +248,8 @@ def samples_in_region(
         "total_matching": total,
         "truncated": truncated,
         "summary": summary,
+        "partial": sync_in_progress,
+        "sync_in_progress": sync_in_progress,
     }
 
 
@@ -262,6 +279,7 @@ def projects_in_region(
     conn = _open_cache()
     try:
         _ensure_cache_ready(conn)
+        sync_in_progress = _sync_in_progress(conn)
         rows = list(query_samples_filtered(
             conn,
             bbox=(bbox_tuple if bbox_tuple is None else
@@ -312,6 +330,8 @@ def projects_in_region(
         "projects": projects,
         "total_projects": len(projects),
         "total_samples": len(rows),
+        "partial": sync_in_progress,
+        "sync_in_progress": sync_in_progress,
     }
 
 

@@ -81,6 +81,7 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
         + [make_rag_tool()]
     )
     tool_names = {t.name for t in tools}
+    descriptions = {t.name: t.description for t in tools}
     assert "load_file" in tool_names
     assert "run_pandas" in tool_names
     assert "query_copepod_knowledge_base" in tool_names
@@ -95,6 +96,7 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
     assert "query_ogsl" in tool_names
     assert "list_sql_tables" in tool_names
     assert "copy_sql_query_to_workspace" in tool_names
+    assert 'load_skill("ecotaxa_navigation")' in descriptions["search_ecotaxa_taxa"]
 
 
 # --- Comportement 3 : prompt anti-hallucination ---

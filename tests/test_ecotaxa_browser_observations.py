@@ -55,6 +55,19 @@ def _with_setup(cache_db, client):
     )
 
 
+def _start_running_sync(cache_db: str) -> int:
+    conn = sqlite3.connect(cache_db)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sync_runs (started_at, status) VALUES (?, 'running')",
+            ("2026-06-19T03:00:00Z",),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
 def test_find_observations_filters_samples_to_projects_with_taxon(cache_db):
     from core.ecotaxa_browser.observations import find_observations
 
@@ -132,6 +145,43 @@ def test_find_observations_raises_CACHE_EMPTY(cache_db):
         with pytest.raises(EcoTaxaBrowserError) as exc_info:
             find_observations(taxon="Calanus finmarchicus")
     assert exc_info.value.code == "CACHE_EMPTY"
+
+
+def test_find_observations_raises_SYNC_IN_PROGRESS_when_cache_empty_but_sync_running(
+    cache_db,
+):
+    from core.ecotaxa_browser.observations import find_observations
+    from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+
+    _start_running_sync(cache_db)
+    client = _fake_client({})
+    patches = _with_setup(cache_db, client)
+    with patches[0], patches[1], patches[2]:
+        with pytest.raises(EcoTaxaBrowserError) as exc_info:
+            find_observations(taxon="Calanus finmarchicus")
+    assert exc_info.value.code == "SYNC_IN_PROGRESS"
+
+
+def test_find_observations_returns_partial_flag_when_sync_running_with_cache(
+    cache_db,
+):
+    from core.ecotaxa_browser.observations import find_observations
+
+    _seed(cache_db, [
+        {"sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0},
+    ])
+    _start_running_sync(cache_db)
+    client = _fake_client({
+        42: {"total_objects": 100, "validated_objects": 80,
+             "predicted_objects": 20, "dubious_objects": 0},
+    })
+    patches = _with_setup(cache_db, client)
+    with patches[0], patches[1], patches[2]:
+        result = find_observations(taxon="Calanus finmarchicus")
+
+    assert result["partial"] is True
+    assert result["sync_in_progress"] is True
+    assert result["samples"][0]["sample_id"] == 1
 
 
 def test_find_observations_returns_empty_when_no_project_attested(cache_db):

@@ -336,3 +336,90 @@ def test_projects_in_region_zone_name(cache_db):
     pids = sorted(p["project_id"] for p in result["projects"])
     assert pids == [1]
     assert result["total_samples"] == 1
+
+
+# ── Bootstrap progressif : SYNC_IN_PROGRESS vs CACHE_EMPTY ────────────────
+
+
+def _start_running_sync(cache_db: str) -> int:
+    """Insert a sync_run with no ended_at to simulate a sync in progress."""
+    conn = sqlite3.connect(cache_db)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sync_runs (started_at, status) VALUES (?, 'running')",
+            ("2026-06-19T03:00:00Z",),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
+def test_samples_in_region_raises_SYNC_IN_PROGRESS_when_cache_empty_but_sync_running(
+    cache_db,
+):
+    """Cache vide + sync en cours → SYNC_IN_PROGRESS (distinct de CACHE_EMPTY).
+
+    Le LLM doit dire « patiente, sync en cours » au lieu de « lance /admin/resync ».
+    """
+    from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+    from core.ecotaxa_browser.region import samples_in_region
+
+    _start_running_sync(cache_db)
+
+    with _with_cache(cache_db):
+        with pytest.raises(EcoTaxaBrowserError) as exc_info:
+            samples_in_region()
+    assert exc_info.value.code == "SYNC_IN_PROGRESS"
+
+
+def test_samples_in_region_returns_partial_flag_when_sync_running_with_cache(
+    cache_db,
+):
+    """Cache déjà partiellement rempli + sync en cours → résultats partiels avec flag."""
+    from core.ecotaxa_browser.region import samples_in_region
+
+    _seed(cache_db, [
+        {"sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0},
+    ])
+    _start_running_sync(cache_db)
+    bbox = {"south": 55.0, "west": -95.0, "north": 65.0, "east": -75.0}
+
+    with _with_cache(cache_db):
+        result = samples_in_region(bbox=bbox)
+
+    assert result["partial"] is True
+    assert result["sync_in_progress"] is True
+    assert len(result["samples"]) == 1
+
+
+def test_samples_in_region_no_partial_flag_when_sync_done(cache_db):
+    """Sync terminé → résultat normal, pas de flag partial."""
+    from core.ecotaxa_browser.region import samples_in_region
+
+    _seed(cache_db, [
+        {"sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0},
+    ])
+    # No running sync — leave sync_runs empty (mimics first non-cached call
+    # after a successful sync but before any new run started).
+    bbox = {"south": 55.0, "west": -95.0, "north": 65.0, "east": -75.0}
+
+    with _with_cache(cache_db):
+        result = samples_in_region(bbox=bbox)
+
+    assert result.get("partial", False) is False
+    assert result.get("sync_in_progress", False) is False
+
+
+def test_projects_in_region_raises_SYNC_IN_PROGRESS_when_cache_empty_but_sync_running(
+    cache_db,
+):
+    from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+    from core.ecotaxa_browser.region import projects_in_region
+
+    _start_running_sync(cache_db)
+
+    with _with_cache(cache_db):
+        with pytest.raises(EcoTaxaBrowserError) as exc_info:
+            projects_in_region()
+    assert exc_info.value.code == "SYNC_IN_PROGRESS"

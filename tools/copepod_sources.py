@@ -25,9 +25,8 @@ from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
 from core.ecotaxa_browser.taxonomy import search_taxa
 from core.ecotaxa_browser.cache.repo import (
-    cache_counts,
+    cache_progress,
     init_schema,
-    latest_sync_status,
     open_connection,
 )
 from tools.ecotaxa_client import EcotaxaClient, EcotaxaExportError
@@ -99,6 +98,15 @@ def make_source_tools(thread_id: str) -> list:
             if text:
                 normalized.append(int(text))
         return normalized
+
+    def _ecotaxa_partial_notice(result: dict) -> str:
+        if not result.get("partial"):
+            return ""
+        return (
+            "\n\nNote : sync EcoTaxa en cours, résultat partiel "
+            "(`partial=True`). Relancer la même question après la fin du sync "
+            "peut ajouter des samples/projets."
+        )
 
     def _download_ecotaxa_export(
         *,
@@ -404,7 +412,11 @@ def make_source_tools(thread_id: str) -> list:
     def search_ecotaxa_taxa(query: str) -> str:
         """Recherche par autocomplétion les taxons EcoTaxa qui matchent une chaîne.
 
-        Routing requirement: appeler ce tool AVANT `count_ecotaxa_taxa` ou
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
+        Appeler ce tool AVANT `count_ecotaxa_taxa` ou
         `find_ecotaxa_observations` lorsque le nom de taxon est ambigu, mal
         orthographié, ou que l'agent retourne `AMBIGUOUS_TAXON`. Le résultat
         permet de désambiguïser en fournissant le `taxon_id` exact.
@@ -458,8 +470,8 @@ def make_source_tools(thread_id: str) -> list:
         try:
             conn = open_connection(cache_db)
             init_schema(conn)
-            counts = cache_counts(conn)
-            last_sync = latest_sync_status(conn)
+            progress = cache_progress(conn)
+            last_sync = progress["last_sync"]
             conn.close()
         except Exception as exc:
             return f"Erreur lors de la lecture du cache EcoTaxa : {exc}"
@@ -469,9 +481,13 @@ def make_source_tools(thread_id: str) -> list:
             "",
             "| métrique | valeur |",
             "|---|---:|",
-            f"| samples indexés | {counts['samples_indexed']} |",
-            f"| projets indexés | {counts['projects_indexed']} |",
-            f"| schémas indexés | {counts['schemas_indexed']} |",
+            f"| samples indexés | {progress['samples_indexed']} |",
+            f"| projets indexés | {progress['projects_indexed']} |",
+            f"| schémas indexés | {progress['schemas_indexed']} |",
+            f"| sync en cours | {'oui' if progress['sync_running'] else 'non'} |",
+            f"| projets déjà synchronisés | {progress['projects_synced']} |",
+            f"| samples déjà synchronisés | {progress['samples_synced']} |",
+            "| total projets estimé | inconnu |",
         ]
         if last_sync is None:
             lines.append("")
@@ -492,6 +508,11 @@ def make_source_tools(thread_id: str) -> list:
                 + f". Projets synchronisés : {last_sync.get('projects_synced', '—')}, "
                 f"samples : {last_sync.get('samples_synced', '—')}."
             )
+            if progress["sync_running"]:
+                lines.append(
+                    "\nSync en cours : les recherches EcoTaxa peuvent retourner "
+                    "des résultats partiels (`partial=True`) jusqu'à la fin du run."
+                )
             if last_sync.get("error_message"):
                 lines.append(f"\nErreur : {last_sync['error_message']}")
         return "\n".join(lines)
@@ -651,11 +672,15 @@ def make_source_tools(thread_id: str) -> list:
             return f"Erreur lors de la recherche EcoTaxa : {exc}"
 
         if not result["samples"]:
-            return "Aucun sample dans cette zone / période."
+            return (
+                "Aucun sample dans cette zone / période."
+                + _ecotaxa_partial_notice(result)
+            )
 
         lines = [
             f"# {result['total_matching']} samples (cap {len(result['samples'])})"
-            + (" — tronqué" if result["truncated"] else ""),
+            + (" — tronqué" if result["truncated"] else "")
+            + (" — résultat partiel" if result.get("partial") else ""),
             "",
             "| sample_id | projet | lat | lon | date_min | date_max | instrument |",
             "|---:|---:|---:|---:|---|---|---|",
@@ -669,6 +694,8 @@ def make_source_tools(thread_id: str) -> list:
         if len(result["samples"]) > 50:
             lines.append("")
             lines.append(f"(50 premiers / {len(result['samples'])} affichés)")
+        if result.get("partial"):
+            lines.append(_ecotaxa_partial_notice(result).strip())
         return "\n".join(lines)
 
     @tool
@@ -718,10 +745,14 @@ def make_source_tools(thread_id: str) -> list:
             return f"Erreur lors de la recherche EcoTaxa : {exc}"
 
         if not result["projects"]:
-            return "Aucun projet dans cette zone / période."
+            return (
+                "Aucun projet dans cette zone / période."
+                + _ecotaxa_partial_notice(result)
+            )
 
         lines = [
-            f"# {result['total_projects']} projets, {result['total_samples']} samples",
+            f"# {result['total_projects']} projets, {result['total_samples']} samples"
+            + (" — résultat partiel" if result.get("partial") else ""),
             "",
             "| project_id | samples | objets | instruments | date_min | date_max |",
             "|---:|---:|---:|---|---|---|",
@@ -732,6 +763,8 @@ def make_source_tools(thread_id: str) -> list:
                 f"{p['object_count']} | {', '.join(p['instruments']) or '—'} | "
                 f"{p['date_min'] or '—'} | {p['date_max'] or '—'} |"
             )
+        if result.get("partial"):
+            lines.append(_ecotaxa_partial_notice(result).strip())
         return "\n".join(lines)
 
     @tool
@@ -788,11 +821,13 @@ def make_source_tools(thread_id: str) -> list:
                 f"Aucun sample (cache local) dans un projet attestant "
                 f"{result['taxon']['matched_name']} au statut {status} — "
                 f"projets attestés : {attested or 'aucun'}."
+                + _ecotaxa_partial_notice(result)
             )
 
         lines = [
             f"# {result['total_matching']} samples × {result['taxon']['matched_name']}"
-            + (" — tronqué" if result["truncated"] else ""),
+            + (" — tronqué" if result["truncated"] else "")
+            + (" — résultat partiel" if result.get("partial") else ""),
             f"Statut filtré : {result['status_filter']} · "
             f"Projets attestés : {result['attested_projects']}",
             "",
@@ -807,6 +842,8 @@ def make_source_tools(thread_id: str) -> list:
         if len(result["samples"]) > 50:
             lines.append("")
             lines.append(f"(50 premiers / {len(result['samples'])} affichés)")
+        if result.get("partial"):
+            lines.append(_ecotaxa_partial_notice(result).strip())
         return "\n".join(lines)
 
     @tool

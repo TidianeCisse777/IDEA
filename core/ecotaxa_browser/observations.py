@@ -14,6 +14,8 @@ from typing import Literal
 
 from core.ecotaxa_browser.cache.repo import (
     cache_counts,
+    is_sync_running,
+    latest_sync_status,
     open_connection,
     query_samples_filtered,
 )
@@ -44,13 +46,24 @@ def _open_cache() -> sqlite3.Connection:
     return open_connection(_cache_db_path())
 
 
+def _sync_in_progress(conn: sqlite3.Connection) -> bool:
+    return is_sync_running(latest_sync_status(conn))
+
+
 def _ensure_cache_ready(conn: sqlite3.Connection) -> None:
     counts = cache_counts(conn)
-    if counts["samples_indexed"] == 0:
+    if counts["samples_indexed"] > 0:
+        return
+    if _sync_in_progress(conn):
         raise EcoTaxaBrowserError(
-            "CACHE_EMPTY",
-            "EcoTaxa local cache is empty — trigger /admin/resync or wait for the nightly sync.",
+            "SYNC_IN_PROGRESS",
+            "EcoTaxa cache sync is currently running — retry in a moment. "
+            "Call cache_status to monitor progress.",
         )
+    raise EcoTaxaBrowserError(
+        "CACHE_EMPTY",
+        "EcoTaxa local cache is empty — trigger /admin/resync or wait for the nightly sync.",
+    )
 
 
 def find_observations(
@@ -103,6 +116,7 @@ def find_observations(
     conn = _open_cache()
     try:
         _ensure_cache_ready(conn)
+        sync_in_progress = _sync_in_progress(conn)
         rows = list(query_samples_filtered(
             conn,
             bbox=bbox_tuple,
@@ -151,6 +165,8 @@ def find_observations(
             }
             for pid, summary in project_counts.items()
         },
+        "partial": sync_in_progress,
+        "sync_in_progress": sync_in_progress,
     }
 
 
