@@ -563,6 +563,7 @@ def test_source_tools_include_get_ecotaxa_sample():
     tool_names = {source_tool.name for source_tool in make_source_tools("thread-get-sample")}
 
     assert "get_ecotaxa_sample" in tool_names
+    assert "summarize_ecotaxa_sample_deployment" in tool_names
     assert "query_ecotaxa_sample" in tool_names
 
 
@@ -577,6 +578,7 @@ def test_ecotaxa_navigation_tools_require_skill_load_in_description():
         "find_ecotaxa_projects_in_region",
         "find_ecotaxa_observations",
         "get_ecotaxa_sample",
+        "summarize_ecotaxa_sample_deployment",
         "summarize_ecotaxa_samples",
         "summarize_ecotaxa_sample",
         "summarize_ecotaxa_projects",
@@ -615,6 +617,54 @@ def test_get_ecotaxa_sample_renders_sample_metadata():
     assert "station" in result
     assert "ST12" in result
     assert "volume_filtered_m3" in result
+
+
+def test_summarize_ecotaxa_sample_deployment_renders_metadata_depths_and_uvp_fields():
+    fake_deployment = {
+        "sample": {
+            "sample_id": 42000013,
+            "project_id": 42,
+            "original_id": "gn2015_l2_019",
+            "latitude": 67.4795,
+            "longitude": -63.79,
+            "free_fields": {"profileid": "019", "stationid": "ice-camp"},
+        },
+        "acquisitions": [{
+            "acquisition_id": 420000014,
+            "sample_id": 42000013,
+            "original_id": "uvp5_gn2015_l2_019",
+            "instrument": "uvp5",
+            "free_fields": {"pixel": 0.147, "exposure": 12},
+        }],
+        "object_summary": {
+            "total_objects": 3420,
+            "objects_scanned": 3420,
+            "truncated": False,
+            "date_min": "2015-05-22",
+            "date_max": "2015-05-23",
+            "depth_min": 1.8,
+            "depth_max": 4.5,
+            "acquisition_ids": [420000014],
+        },
+    }
+
+    with patch("tools.copepod_sources.summarize_sample_deployment", return_value=fake_deployment):
+        from tools.copepod_sources import make_source_tools
+
+        tools = make_source_tools("thread-deployment-summary")
+        tool = next(t for t in tools if t.name == "summarize_ecotaxa_sample_deployment")
+        result = tool.invoke({"sample_id": 42000013})
+
+    assert "Déploiement EcoTaxa" in result
+    assert "42000013" in result
+    assert "gn2015_l2_019" in result
+    assert "2015-05-22" in result
+    assert "2015-05-23" in result
+    assert "1.8" in result
+    assert "4.5" in result
+    assert "profileid" in result
+    assert "pixel=0.147" in result
+    assert "uvp5" in result
 
 
 def test_find_ecotaxa_samples_in_region_requires_filter():

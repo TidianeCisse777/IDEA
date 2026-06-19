@@ -17,6 +17,7 @@ from core.ecotaxa_browser.region import (
 )
 from core.ecotaxa_browser.project_summary import summarize_projects
 from core.ecotaxa_browser.sample_summary import summarize_samples
+from core.ecotaxa_browser.deployment_summary import summarize_sample_deployment
 from core.ecotaxa_browser.samples import get_sample as core_get_sample
 from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
@@ -748,6 +749,83 @@ def make_source_tools(thread_id: str) -> list:
         return "\n".join(lines)
 
     @tool
+    def summarize_ecotaxa_sample_deployment(sample_id: int) -> str:
+        """Résume le déploiement d'un sample EcoTaxa sans export complet.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
+        Utiliser pour répondre aux questions sur date/lieu/profondeur de
+        déploiement, acquisition_id, instrument, cast/profile/station ids et
+        métadonnées UVP. Le tool lit les métadonnées sample + acquisitions,
+        puis calcule date_min/date_max et depth_min/depth_max depuis les
+        objets du sample via une requête légère paginée. Pas de job export,
+        pas d'images.
+        """
+        try:
+            deployment = summarize_sample_deployment(sample_id)
+        except Exception as exc:
+            return f"Erreur lors du résumé déploiement EcoTaxa : {exc}"
+
+        sample = deployment["sample"]
+        summary = deployment["object_summary"]
+        acquisitions = deployment["acquisitions"]
+
+        def _fmt(value) -> str:
+            if value is None:
+                return "—"
+            if isinstance(value, float):
+                return f"{value:.3f}".rstrip("0").rstrip(".")
+            return str(value)
+
+        lines = [
+            f"# Déploiement EcoTaxa — sample {sample['sample_id']} (projet {sample['project_id']})",
+            "",
+            "| Champ | Valeur |",
+            "|---|---|",
+            f"| sample_id | {sample['sample_id']} |",
+            f"| project_id | {sample['project_id']} |",
+            f"| original_id | {sample.get('original_id') or '—'} |",
+            f"| latitude | {_fmt(sample.get('latitude'))} |",
+            f"| longitude | {_fmt(sample.get('longitude'))} |",
+            f"| date_min objets | {_fmt(summary.get('date_min'))} |",
+            f"| date_max objets | {_fmt(summary.get('date_max'))} |",
+            f"| depth_min objets | {_fmt(summary.get('depth_min'))} |",
+            f"| depth_max objets | {_fmt(summary.get('depth_max'))} |",
+            f"| objets scannés | {summary.get('objects_scanned')} / {summary.get('total_objects')} |",
+            f"| résumé tronqué | {'oui' if summary.get('truncated') else 'non'} |",
+        ]
+
+        sample_free = sample.get("free_fields") or {}
+        if sample_free:
+            lines.extend(["", "## Free fields sample", "", "| Champ | Valeur |", "|---|---|"])
+            for key in sorted(sample_free):
+                lines.append(f"| {key} | {sample_free[key]} |")
+
+        lines.extend(["", "## Acquisitions", ""])
+        if acquisitions:
+            lines.extend([
+                "| acquisition_id | sample_id | original_id | instrument | free_fields |",
+                "|---:|---:|---|---|---|",
+            ])
+            for acquisition in acquisitions:
+                free_fields = acquisition.get("free_fields") or {}
+                free_cell = (
+                    ", ".join(f"{key}={free_fields[key]}" for key in sorted(free_fields))
+                    if free_fields else "—"
+                )
+                lines.append(
+                    f"| {acquisition['acquisition_id']} | {acquisition['sample_id']} | "
+                    f"{acquisition.get('original_id') or '—'} | "
+                    f"{acquisition.get('instrument') or '—'} | {free_cell} |"
+                )
+        else:
+            lines.append("Aucune acquisition associée retournée par EcoTaxa.")
+
+        return "\n".join(lines)
+
+    @tool
     def summarize_ecotaxa_samples(sample_ids: list[int]) -> str:
         """Résume un batch de samples EcoTaxa sans télécharger les objets.
 
@@ -1018,6 +1096,7 @@ def make_source_tools(thread_id: str) -> list:
         find_ecotaxa_projects_in_region,
         find_ecotaxa_observations,
         get_ecotaxa_sample,
+        summarize_ecotaxa_sample_deployment,
         inspect_ecotaxa_project_schema,
         inspect_ecotaxa_column,
         count_ecotaxa_taxa,

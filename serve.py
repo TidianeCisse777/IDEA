@@ -632,6 +632,7 @@ _ECOTAXA_TOOL_LABELS = {
     "find_ecotaxa_projects_in_region": "EcoTaxa · projets par zone / période",
     "find_ecotaxa_observations":       "EcoTaxa · observations par taxon",
     "get_ecotaxa_sample":              "EcoTaxa · métadonnées de sample",
+    "summarize_ecotaxa_sample_deployment": "EcoTaxa · déploiement de sample",
     "summarize_ecotaxa_samples":        "EcoTaxa · résumé de samples",
     "summarize_ecotaxa_sample":         "EcoTaxa · résumé de sample",
     "summarize_ecotaxa_projects":       "EcoTaxa · résumé de projets",

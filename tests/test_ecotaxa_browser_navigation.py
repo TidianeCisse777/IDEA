@@ -108,6 +108,67 @@ def test_get_acquisition_returns_stable_fields():
     assert acquisition["free_fields"] == {"pixel": 0.147}
 
 
+def test_summarize_sample_deployment_combines_sample_acquisition_and_depths():
+    from core.ecotaxa_browser.deployment_summary import summarize_sample_deployment
+
+    with patch("core.ecotaxa_browser.deployment_summary.EcotaxaClient") as client_class:
+        client = client_class.return_value
+        client.get_sample.return_value = {
+            "sampleid": 42000013,
+            "projid": 42,
+            "orig_id": "gn2015_l2_019",
+            "latitude": 67.4795,
+            "longitude": -63.79,
+            "free_columns": {"profileid": "019", "stationid": "ice-camp"},
+        }
+        client.list_acquisitions.return_value = [
+            {
+                "acquisid": 420000014,
+                "acq_sample_id": 42000013,
+                "orig_id": "uvp5_gn2015_l2_019",
+                "instrument": "uvp5",
+                "free_columns": {"pixel": 0.147},
+            },
+            {
+                "acquisid": 420000099,
+                "acq_sample_id": 42000099,
+                "orig_id": "other",
+                "instrument": "uvp5",
+                "free_columns": {},
+            },
+        ]
+        client.query_objects.return_value = {
+            "total_ids": 2,
+            "details": [
+                ["2015-05-22", 1.8, 2.0, 420000014],
+                ["2015-05-23", 3.3, 4.5, 420000014],
+            ],
+        }
+
+        result = summarize_sample_deployment(42000013, page_size=10)
+
+    client.query_objects.assert_called_once_with(
+        42,
+        {"samples": "42000013"},
+        "obj.objdate,obj.depth_min,obj.depth_max,obj.acquisid",
+        0,
+        10,
+    )
+    assert result["sample"]["free_fields"]["profileid"] == "019"
+    assert [a["acquisition_id"] for a in result["acquisitions"]] == [420000014]
+    assert result["acquisitions"][0]["free_fields"] == {"pixel": 0.147}
+    assert result["object_summary"] == {
+        "total_objects": 2,
+        "objects_scanned": 2,
+        "truncated": False,
+        "date_min": "2015-05-22",
+        "date_max": "2015-05-23",
+        "depth_min": 1.8,
+        "depth_max": 4.5,
+        "acquisition_ids": [420000014],
+    }
+
+
 @vcr.use_cassette("tests/cassettes/sample_objects.yaml", record_mode="none")
 def test_list_sample_objects_filters_and_paginates_in_two_requests():
     from core.ecotaxa_browser.objects import list_sample_objects
