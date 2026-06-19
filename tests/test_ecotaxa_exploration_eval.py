@@ -1,8 +1,11 @@
 from evals.eval_ecotaxa_exploration import (
+    _apply_quick_defaults,
+    _chunks,
     forbidden_tools_absent,
     required_tool_args_present,
     trajectory_subsequence,
 )
+from argparse import Namespace
 
 
 def test_trajectory_subsequence_allows_extra_tools_between_expected_steps():
@@ -169,3 +172,36 @@ def test_required_tool_args_present_scores_partial_progress():
 
     assert result["score"] == 0.5
     assert "summarize_ecotaxa_project" in result["comment"]
+
+
+def test_chunks_splits_cases_into_requested_batch_size():
+    cases = [{"id": str(index)} for index in range(7)]
+
+    chunks = _chunks(cases, 3)
+
+    assert [[case["id"] for case in chunk] for chunk in chunks] == [
+        ["0", "1", "2"],
+        ["3", "4", "5"],
+        ["6"],
+    ]
+
+
+def test_apply_quick_defaults_sets_fast_stable_eval_options():
+    args = Namespace(
+        quick=True,
+        max_concurrency=9,
+        case_delay=0,
+        retry_delay=30,
+        max_attempts=5,
+        output_tokens=1200,
+        batch_size=None,
+    )
+
+    _apply_quick_defaults(args)
+
+    assert args.max_concurrency == 1
+    assert args.case_delay == 5.0
+    assert args.retry_delay == 20.0
+    assert args.max_attempts == 2
+    assert args.output_tokens == 900
+    assert args.batch_size == 3

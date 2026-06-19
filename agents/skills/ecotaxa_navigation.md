@@ -37,6 +37,20 @@ General ambiguity rule:
 - If the user gives numeric project IDs and asks for project stats/summaries,
   call `summarize_ecotaxa_projects`; do not switch to `run_pandas` or
   `query_ecotaxa`.
+- "résume le projet", "summary", "stats avant export", "scan projet",
+  "tableau de stats", "V/P/D/U", "top taxa", "bbox", "date_min/date_max",
+  or "instruments" are summary intents. Use
+  `summarize_ecotaxa_project(project_id=X)` or
+  `summarize_ecotaxa_projects(project_ids=[...])`, not
+  `preview_ecotaxa_project`.
+- `preview_ecotaxa_project` is only for preview/object examples such as
+  "aperçu", "preview", or "montre quelques objets". It is not the project
+  summary tool.
+- Schema and column inspection are navigation/read-only intents too. If the
+  user asks for one named column, call
+  `inspect_ecotaxa_column(project_id=..., column_name="exact_user_column")`
+  directly. Do not inspect the whole schema first unless the column is absent
+  or ambiguous, and do not rewrite a clear column name into a nearby one.
 - If the only plausible routes are a read-only summary and a full export,
   choose the read-only summary unless the user explicitly says "exporte",
   "charge", "download", or "récupère les objets".
@@ -237,6 +251,11 @@ Default `confirmed=False` → **dry-run only**. Returns the project →
 sample_ids breakdown. ALWAYS show this plan to the user verbatim and ask
 for explicit confirmation (« oui », « go », « lance », « confirme »)
 before calling again with `confirmed=True`.
+
+If the user says "prépare l'export", "ne lance rien", "avant que je confirme",
+or asks for an export plan, still call
+`export_ecotaxa_samples(sample_ids=[...], confirmed=False)`. That call is the
+dry-run plan, not the confirmed export. Do not stop after `load_skill`.
 
 The dry-run shape :
 

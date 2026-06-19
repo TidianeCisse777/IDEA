@@ -305,10 +305,26 @@ def test_system_prompt_routes_ecotaxa_stats_tables_to_project_summary():
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "ecotaxa read-only routes beat dataframe/graph/export routes" in prompt
+    assert 'load_skill("ecotaxa_navigation")` first' in prompt
     assert "tableau de stats des projets 14853 et 2331" in prompt
     assert "summarize_ecotaxa_projects(project_ids=[14853, 2331])" in prompt
+    assert "résume le projet 14853 avant export" in prompt
+    assert "summarize_ecotaxa_project(project_id=14853)" in prompt
+    assert "prépare l'export de ces samples mais ne lance rien" in prompt
+    assert "confirmed=false" in prompt
     assert "do not call `run_pandas`" in prompt
     assert "do not call `query_ecotaxa`" in prompt
+
+
+def test_system_prompt_separates_ecotaxa_summary_from_preview():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "project preview / object sample" in prompt
+    assert "do not use `preview_ecotaxa_project` for project summaries" in prompt
+    assert "stats tables" in prompt
+    assert "scan-before-export" in prompt
+    assert "summarize_ecotaxa_project" in prompt
 
 
 def test_system_prompt_loads_ecotaxa_navigation_before_zone_lookup():
@@ -319,6 +335,28 @@ def test_system_prompt_loads_ecotaxa_navigation_before_zone_lookup():
     assert '(1) `load_skill("ecotaxa_navigation")`' in prompt
     assert "(2) `get_zone_info(zone_name=...)`" in prompt
     assert "first geography/source-boundary tool" in prompt
+
+
+def test_system_prompt_loads_ecotaxa_navigation_before_column_inspection():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "distribution de depth_min projet 14853" in prompt
+    assert 'inspect_ecotaxa_column(project_id=14853, column_name="depth_min")' in prompt
+    assert "first call `load_skill(\"ecotaxa_navigation\")`" in prompt
+    assert "do not call `inspect_ecotaxa_project_schema` before or after" in prompt
+    assert "`obj_depth` must stay `obj_depth`" in prompt
+
+
+def test_system_prompt_routes_ecotaxa_export_planning_to_dry_run_tool():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "ecotaxa dry-run export planning" in prompt
+    assert "prépare l'export" in prompt
+    assert "mais ne lance rien" in prompt
+    assert "export_ecotaxa_samples(sample_ids=[...], confirmed=false)" in prompt
+    assert "do not stop after loading the skill" in prompt
 
 
 def test_system_prompt_routes_current_ecotaxa_sample_followups_without_kb():
@@ -360,9 +398,15 @@ def test_ecotaxa_navigation_skill_prefers_read_only_when_ambiguous():
     assert "general ambiguity rule" in skill
     assert "prefer read-only navigation tools over exports" in skill
     assert "summarize_ecotaxa_projects" in skill
+    assert "summarize_ecotaxa_project(project_id=x)" in skill
+    assert "not the project" in skill
     assert "do not switch to `run_pandas`" in skill
     assert "query_ecotaxa" in skill
     assert "choose the read-only summary" in skill
+    assert "exact_user_column" in skill
+    assert "do not rewrite a clear column name" in skill
+    assert "ne lance rien" in skill
+    assert "confirmed=false" in skill
 
 
 def test_ecotaxa_navigation_skill_handles_current_sample_taxon_rankings():

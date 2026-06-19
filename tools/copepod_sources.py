@@ -400,9 +400,17 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Inspecte la distribution d'une colonne d'un projet EcoTaxa.
 
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
         Pour les colonnes numériques : min/max/mean/median/p25/p75. Pour les
         colonnes texte : top valeurs + nombre de distinctes. Précise `level`
         si l'agent renvoie une erreur d'ambiguïté.
+
+        Si l'utilisateur a fourni un `column_name` clair et que ce tool
+        retourne un résultat, ne pas appeler ensuite
+        `inspect_ecotaxa_project_schema` pour la même question.
         """
         try:
             result = get_column_distribution(

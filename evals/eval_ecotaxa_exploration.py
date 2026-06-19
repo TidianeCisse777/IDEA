@@ -32,6 +32,11 @@ load_dotenv()
 
 DATASET_NAME = "copepod-ecotaxa-exploration-evals"
 DEFAULT_PASS_THRESHOLD = 0.8
+SCORE_KEYS = [
+    "trajectory_subsequence",
+    "forbidden_tools_absent",
+    "required_tool_args_present",
+]
 
 
 EXPLORATION_CASES = [
@@ -206,7 +211,7 @@ EXPLORATION_CASES = [
         "inputs": {
             "question": (
                 "Dans le projet EcoTaxa 14853, inspecte la distribution de "
-                "la colonne obj_depth."
+                "la colonne depth_min."
             )
         },
         "outputs": {
@@ -218,10 +223,15 @@ EXPLORATION_CASES = [
                 },
                 {
                     "name": "inspect_ecotaxa_column",
-                    "args": {"project_id": 14853, "column_name": "obj_depth"},
+                    "args": {"project_id": 14853, "column_name": "depth_min"},
                 },
             ],
-            "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "forbidden_tools": [
+                "inspect_ecotaxa_project_schema",
+                "query_ecotaxa",
+                "run_pandas",
+                "run_graph",
+            ],
             "category": "column_inspection",
         },
     },
@@ -560,6 +570,24 @@ def _print_detailed_report(rows: list[tuple], cases: list[dict[str, Any]]) -> No
                 print(f"    {comment}")
 
 
+def _chunks(items: list[dict[str, Any]], size: int | None) -> list[list[dict[str, Any]]]:
+    if not size or size <= 0 or size >= len(items):
+        return [items]
+    return [items[index:index + size] for index in range(0, len(items), size)]
+
+
+def _apply_quick_defaults(args: argparse.Namespace) -> None:
+    if not args.quick:
+        return
+    args.max_concurrency = 1
+    args.case_delay = 5.0
+    args.retry_delay = 20.0
+    args.max_attempts = 2
+    args.output_tokens = min(args.output_tokens, 900)
+    if args.batch_size is None:
+        args.batch_size = 3
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -577,6 +605,29 @@ def parse_args() -> argparse.Namespace:
         "--list-cases",
         action="store_true",
         help="Print cases and expected criteria without running LangSmith.",
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help=(
+            "Use faster stable defaults: max_concurrency=1, case_delay=5, "
+            "retry_delay=20, max_attempts=2, output_tokens<=900, batch_size=3."
+        ),
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help=(
+            "Split selected cases into mini LangSmith runs. Useful to avoid "
+            "long full-suite runs and isolate failures."
+        ),
+    )
+    parser.add_argument(
+        "--output-tokens",
+        type=int,
+        default=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1200")),
+        help="LLM_MAX_OUTPUT_TOKENS value used for eval agent calls.",
     )
     parser.add_argument(
         "--verbose",
@@ -613,40 +664,60 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    os.environ.setdefault("LLM_MAX_OUTPUT_TOKENS", "1200")
+    _apply_quick_defaults(args)
+    os.environ["LLM_MAX_OUTPUT_TOKENS"] = str(args.output_tokens)
     os.environ["EVAL_CASE_DELAY_SECONDS"] = str(args.case_delay)
     os.environ["EVAL_RETRY_DELAY_SECONDS"] = str(args.retry_delay)
     os.environ["EVAL_MAX_ATTEMPTS"] = str(args.max_attempts)
     cases = _filter_cases(args.case_ids)
-    print(f"Running {len(cases)} EcoTaxa exploration eval case(s).")
+    batches = _chunks(cases, args.batch_size)
+    print(
+        f"Running {len(cases)} EcoTaxa exploration eval case(s) "
+        f"in {len(batches)} batch(es)."
+    )
+    print(
+        "Settings: "
+        f"tokens={args.output_tokens}, concurrency={args.max_concurrency}, "
+        f"case_delay={args.case_delay}, retry_delay={args.retry_delay}, "
+        f"max_attempts={args.max_attempts}, batch_size={args.batch_size or 'all'}"
+    )
     if args.verbose or args.list_cases:
         _print_case_catalog(cases)
     if args.list_cases:
         return
-    rows = run_eval_suite(
-        cases=cases,
-        run_fn=run_one_case,
-        evaluators=[
-            evaluator_trajectory_subsequence,
-            evaluator_forbidden_tools_absent,
-            evaluator_required_tool_args_present,
-        ],
-        dataset_name=DATASET_NAME,
-        experiment_prefix="ecotaxa-exploration",
-        metadata={
-            "suite": "ecotaxa-exploration",
-            "model": os.getenv("LLM_MODEL", "openai/gpt-5.4-mini"),
-            "max_concurrency": args.max_concurrency,
-        },
-        max_concurrency=args.max_concurrency,
-    )
+
+    rows = []
+    for batch_index, batch_cases in enumerate(batches, start=1):
+        suffix = f"-batch-{batch_index:02d}" if len(batches) > 1 else ""
+        print(
+            f"\n=== Running batch {batch_index}/{len(batches)}: "
+            f"{[case['id'] for case in batch_cases]} ==="
+        )
+        batch_rows = run_eval_suite(
+            cases=batch_cases,
+            run_fn=run_one_case,
+            evaluators=[
+                evaluator_trajectory_subsequence,
+                evaluator_forbidden_tools_absent,
+                evaluator_required_tool_args_present,
+            ],
+            dataset_name=f"{DATASET_NAME}{suffix}",
+            experiment_prefix=f"ecotaxa-exploration{suffix}",
+            metadata={
+                "suite": "ecotaxa-exploration",
+                "model": os.getenv("LLM_MODEL", "openai/gpt-5.4-mini"),
+                "max_concurrency": args.max_concurrency,
+                "batch": batch_index,
+                "batches_total": len(batches),
+            },
+            max_concurrency=args.max_concurrency,
+        )
+        rows.extend(batch_rows)
+
+    print("\n=== Combined score summary ===")
     print_scores(
         rows,
-        score_keys=[
-            "trajectory_subsequence",
-            "forbidden_tools_absent",
-            "required_tool_args_present",
-        ],
+        score_keys=SCORE_KEYS,
         threshold=args.threshold,
     )
     if args.verbose:
