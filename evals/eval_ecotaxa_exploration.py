@@ -36,6 +36,7 @@ SCORE_KEYS = [
     "trajectory_subsequence",
     "forbidden_tools_absent",
     "required_tool_args_present",
+    "forbidden_tool_args_absent",
     "final_answer_contains",
 ]
 
@@ -508,6 +509,271 @@ EXPLORATION_CASES = [
             "category": "sample_taxon_approximation",
         },
     },
+    {
+        "id": "EX-17-zone-alias-hudson-bay",
+        "inputs": {
+            "question": (
+                "Quels samples EcoTaxa UVP6 sont en mer d'Hudson en 2024 ? "
+                "Utilise la zone nommée, pas des coordonnées inventées."
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "get_zone_info",
+                "find_ecotaxa_samples_in_region",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {
+                        "zone_name": {
+                            "__any__": [
+                                "mer d'Hudson",
+                                "Baie d'Hudson",
+                                "Hudson Bay",
+                            ]
+                        }
+                    },
+                },
+                {
+                    "name": "find_ecotaxa_samples_in_region",
+                    "args": {
+                        "zone_name": {
+                            "__any__": [
+                                "mer d'Hudson",
+                                "Baie d'Hudson",
+                                "Hudson Bay",
+                            ]
+                        },
+                        "instrument": "UVP6",
+                        "date_range": {"from": "2024-01-01", "to": "2024-12-31"},
+                    },
+                },
+            ],
+            "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "forbidden_tool_args": [
+                {"name": "find_ecotaxa_samples_in_region", "args": ["polygon_wkt"]},
+            ],
+            "category": "zone_alias",
+        },
+    },
+    {
+        "id": "EX-18-zone-unknown-clarify",
+        "inputs": {
+            "question": (
+                "Quels projets EcoTaxa couvrent la zone Imaginaire du Nord "
+                "en 2024 ?"
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "get_zone_info",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {"zone_name": "Imaginaire du Nord"},
+                },
+            ],
+            "forbidden_tools": [
+                "find_ecotaxa_projects_in_region",
+                "find_ecotaxa_samples_in_region",
+                "query_ecotaxa",
+                "run_pandas",
+                "run_graph",
+            ],
+            "final_answer_contains": ["zone"],
+            "category": "unknown_zone",
+        },
+    },
+    {
+        "id": "EX-19-zone-taxon-observations",
+        "inputs": {
+            "question": (
+                "Où trouve-t-on des copépodes en Baie de Baffin dans EcoTaxa "
+                "en octobre 2024 ? Donne les projets ou samples sans export."
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "get_zone_info",
+                "find_ecotaxa_observations",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {"zone_name": "Baie de Baffin"},
+                },
+                {
+                    "name": "find_ecotaxa_observations",
+                    "args": {
+                        "zone_name": "Baie de Baffin",
+                        "taxon": "Copepoda",
+                        "date_range": {"from": "2024-10-01", "to": "2024-10-31"},
+                    },
+                },
+            ],
+            "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "forbidden_tool_args": [
+                {"name": "find_ecotaxa_observations", "args": ["polygon_wkt"]},
+            ],
+            "category": "zone_taxon_observations",
+        },
+    },
+    {
+        "id": "EX-20-zone-no-world-bbox",
+        "inputs": {
+            "question": (
+                "Quels projets EcoTaxa couvrent le Hawke Channel ? "
+                "Je veux un filtrage par la zone nommée."
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "get_zone_info",
+                "find_ecotaxa_projects_in_region",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {"zone_name": "Hawke Channel"},
+                },
+                {
+                    "name": "find_ecotaxa_projects_in_region",
+                    "args": {"zone_name": "Hawke Channel"},
+                },
+            ],
+            "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "forbidden_tool_args": [
+                {"name": "find_ecotaxa_projects_in_region", "args": ["polygon_wkt"]},
+                {
+                    "name": "find_ecotaxa_projects_in_region",
+                    "args": {
+                        "bbox": {
+                            "south": -90,
+                            "west": -180,
+                            "north": 90,
+                            "east": 180,
+                        }
+                    },
+                },
+            ],
+            "category": "zone_named_precision",
+        },
+    },
+    {
+        "id": "EX-21-taxonomic-knowledge-calanus",
+        "inputs": {
+            "question": (
+                "Dans le contexte taxonomique NeoLab, qu'est-ce que "
+                "Calanus glacialis ? Explique sans chercher des samples."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["query_copepod_knowledge_base"],
+            "required_tool_args": [],
+            "forbidden_tools": [
+                "load_skill",
+                "find_ecotaxa_observations",
+                "find_ecotaxa_samples_in_region",
+                "count_ecotaxa_taxa",
+                "query_ecotaxa",
+                "run_pandas",
+                "run_graph",
+            ],
+            "final_answer_contains": ["Calanus"],
+            "category": "taxonomic_knowledge",
+        },
+    },
+    {
+        "id": "EX-22-ecotaxa-taxon-bbox-time",
+        "inputs": {
+            "question": (
+                "Dans EcoTaxa, où trouve-t-on des Copepoda validés dans la "
+                "bbox 70N-75N, -80W à -60W, entre le 2024-10-01 et le "
+                "2024-10-31 ? Ne lance pas d'export."
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "find_ecotaxa_observations",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "find_ecotaxa_observations",
+                    "args": {
+                        "taxon": "Copepoda",
+                        "bbox": {
+                            "south": 70,
+                            "west": -80,
+                            "north": 75,
+                            "east": -60,
+                        },
+                        "date_range": {"from": "2024-10-01", "to": "2024-10-31"},
+                    },
+                },
+            ],
+            "forbidden_tools": [
+                "get_zone_info",
+                "query_ecotaxa",
+                "run_pandas",
+                "run_graph",
+            ],
+            "forbidden_tool_args": [
+                {"name": "find_ecotaxa_observations", "args": ["polygon_wkt"]},
+            ],
+            "category": "taxon_bbox_time",
+        },
+    },
+    {
+        "id": "EX-23-taxonomic-definition-not-data",
+        "inputs": {
+            "question": (
+                "Dans NeoLab/EcoTaxa, définis Copepoda et explique comment "
+                "ce taxon est utilisé dans les annotations."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["query_copepod_knowledge_base"],
+            "required_tool_args": [],
+            "forbidden_tools": [
+                "load_skill",
+                "count_ecotaxa_taxa",
+                "find_ecotaxa_observations",
+                "find_ecotaxa_samples_in_region",
+                "query_ecotaxa",
+                "run_pandas",
+                "run_graph",
+            ],
+            "final_answer_contains": ["Copepoda"],
+            "category": "taxonomic_knowledge",
+        },
+    },
 ]
 
 
@@ -601,6 +867,8 @@ def _matches_expected(expected: Any, actual: Any) -> bool:
     compared as order-insensitive when both sides contain only scalars.
     """
     if isinstance(expected, dict):
+        if set(expected) == {"__any__"}:
+            return any(_matches_expected(option, actual) for option in expected["__any__"])
         if not isinstance(actual, dict):
             return False
         return all(
@@ -717,6 +985,55 @@ def required_tool_args_present(outputs: dict, reference_outputs: dict) -> dict:
     }
 
 
+def _path_exists(payload: Any, path: list[str]) -> bool:
+    cursor = payload
+    for key in path:
+        if not isinstance(cursor, dict) or key not in cursor:
+            return False
+        cursor = cursor[key]
+    return True
+
+
+def _forbidden_args_match(forbidden_args: Any, actual_args: dict[str, Any]) -> bool:
+    if isinstance(forbidden_args, list):
+        return any(
+            _path_exists(actual_args, item.split("."))
+            for item in forbidden_args
+            if isinstance(item, str)
+        )
+    if isinstance(forbidden_args, dict):
+        return _matches_expected(forbidden_args, actual_args)
+    return False
+
+
+def forbidden_tool_args_absent(outputs: dict, reference_outputs: dict) -> dict:
+    checks = reference_outputs.get("forbidden_tool_args", [])
+    if not checks:
+        return {
+            "key": "forbidden_tool_args_absent",
+            "score": 1,
+            "comment": "No forbidden tool arguments.",
+        }
+
+    calls = outputs.get("tool_calls", [])
+    violations: list[str] = []
+    for check in checks:
+        name = check["name"]
+        forbidden_args = check.get("args", {})
+        for call in calls:
+            if call.get("name") != name:
+                continue
+            actual_args = call.get("arguments", {})
+            if _forbidden_args_match(forbidden_args, actual_args):
+                violations.append(f"{name} used forbidden args {forbidden_args}")
+
+    return {
+        "key": "forbidden_tool_args_absent",
+        "score": int(not violations),
+        "comment": "; ".join(violations),
+    }
+
+
 def final_answer_contains(outputs: dict, reference_outputs: dict) -> dict:
     expected = reference_outputs.get("final_answer_contains", [])
     if not expected:
@@ -748,6 +1065,10 @@ def evaluator_forbidden_tools_absent(run, example) -> dict:
 
 def evaluator_required_tool_args_present(run, example) -> dict:
     return required_tool_args_present(run.outputs or {}, example.outputs or {})
+
+
+def evaluator_forbidden_tool_args_absent(run, example) -> dict:
+    return forbidden_tool_args_absent(run.outputs or {}, example.outputs or {})
 
 
 def evaluator_final_answer_contains(run, example) -> dict:
@@ -931,6 +1252,7 @@ def main() -> None:
             evaluator_trajectory_subsequence,
             evaluator_forbidden_tools_absent,
             evaluator_required_tool_args_present,
+            evaluator_forbidden_tool_args_absent,
             evaluator_final_answer_contains,
         ],
             dataset_name=f"{DATASET_NAME}{suffix}",

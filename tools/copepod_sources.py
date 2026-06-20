@@ -632,6 +632,10 @@ def make_source_tools(thread_id: str) -> list:
         `load_skill("ecotaxa_navigation")` first unless it has already been
         called in the same turn.
 
+        Do NOT use this tool when the user names a taxon/group (Copepoda,
+        Calanus, copepods, etc.). This tool has no `taxon` argument. For
+        taxon + region/date questions, call `find_ecotaxa_observations`.
+
         `bbox` : `{"south": float, "west": float, "north": float, "east": float}`.
         `date_range` : `{"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}`.
         `instrument` : nom exact ("UVP6", "UVP5SD", "Loki", ...).
