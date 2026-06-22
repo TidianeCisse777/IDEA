@@ -64,6 +64,20 @@ def test_is_data_source_tool_recognizes_known_sources():
     assert not _is_data_source_tool("load_skill")
 
 
+def test_normalize_postgres_dsn_for_langgraph_strips_sqlalchemy_driver():
+    from serve import _normalize_postgres_dsn_for_langgraph
+
+    assert _normalize_postgres_dsn_for_langgraph(
+        "postgresql+psycopg://copepod:pass@postgres:5432/copepod_sessions"
+    ) == "postgresql://copepod:pass@postgres:5432/copepod_sessions"
+    assert _normalize_postgres_dsn_for_langgraph(
+        "postgresql+psycopg2://copepod:pass@postgres:5432/copepod_sessions"
+    ) == "postgresql://copepod:pass@postgres:5432/copepod_sessions"
+    assert _normalize_postgres_dsn_for_langgraph(
+        "postgresql://copepod:pass@postgres:5432/copepod_sessions"
+    ) == "postgresql://copepod:pass@postgres:5432/copepod_sessions"
+
+
 def test_format_tool_result_details_wraps_in_collapsible_block():
     from serve import _format_tool_result_details
     block = _format_tool_result_details(

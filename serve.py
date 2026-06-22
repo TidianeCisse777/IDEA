@@ -54,6 +54,11 @@ logging.basicConfig(
 logger = logging.getLogger("copepod.serve")
 
 
+def _normalize_postgres_dsn_for_langgraph(dsn: str) -> str:
+    """Convert SQLAlchemy PostgreSQL URLs to psycopg/libpq-compatible URLs."""
+    return re.sub(r"^postgresql\+[^:]+://", "postgresql://", dsn.strip())
+
+
 def _log_feedback_event(event: str, thread_id: str | None = None, **fields) -> None:
     """Écrit un audit JSONL dédié pour le chemin feedback → LangSmith."""
     entry = {
@@ -183,7 +188,7 @@ async def lifespan(app: FastAPI):
 
     # ── PostgreSQL long-term memory store ──────────────────────────────────────
     pg_dsn_raw = os.getenv("SESSION_STORE_DATABASE_URL", "")
-    pg_dsn = pg_dsn_raw.replace("postgresql+psycopg2://", "postgresql://")
+    pg_dsn = _normalize_postgres_dsn_for_langgraph(pg_dsn_raw)
     if pg_dsn:
         try:
             from langgraph.store.postgres import AsyncPostgresStore
