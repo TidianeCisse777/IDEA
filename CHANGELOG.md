@@ -12,6 +12,103 @@ Tracking démarré à partir de v3.3.0 — historique antérieur dans
 
 ---
 
+## [v3.4.0] — 2026-06-22 — Réduction du token-load et observabilité du contexte
+
+### Pourquoi cette release
+
+Audit du thread `cf6e5f8db0e21857` (6 turns, m5/m6 sur Hawke Channel) :
+le prompt envoyé au LLM atteignait **52 k tokens** alors que
+`MAX_CONTEXT_TOKENS=40000` était censé capper. Décomposition mesurée :
+~11 k pour le system prompt, ~15 k pour les schémas d'outils (30+ tools),
+~21 k pour l'historique (dominé à 72 % par les tool results malgré le
+truncation à 8 k chars). Conclusion : les leviers étaient surtout sur
+les docstrings volumineuses des tools et la verbosité des outputs
+d'inspection EcoTaxa. Cette release réduit le token-load des deux côtés
+**et** ajoute une instrumentation pour suivre la dérive en continu.
+
+### Changed
+
+- **`tools/bio_oracle_sources.py`** — docstrings de
+  `couple_zooplankton_bio_oracle` et `query_bio_oracle_zones` traduites
+  FR→EN et condensées (~25 lignes verbeuses → 6-7 lignes denses). Gain
+  direct sur le schéma JSON exposé au LLM à chaque tour : ~–1.6 k tokens
+  cumulés sur ces deux tools.
+
+- **`tools/geo_tools.py`** — `get_zone_info` : docstring réduite de
+  ~45 lignes (liste des zones supportées + spec du retour détaillée) à
+  7 lignes denses. Gain ~–1.2 k tokens.
+
+- **`tools/copepod_sources.py`** — troncatures dynamiques côté output :
+  - `inspect_ecotaxa_project_schema` : cap à 12 colonnes par niveau
+    (sample / acquisition / object) via `ECOTAXA_SCHEMA_COLUMNS_PER_LEVEL`,
+    avec une ligne « X colonnes masquées ; utiliser `inspect_ecotaxa_column`
+    pour une colonne précise » plutôt que de tout vomir.
+  - `find_ecotaxa_samples_in_region` : cap des lignes visibles
+    (`ECOTAXA_SAMPLE_RESULT_ROWS`) et compactage de la liste d'IDs
+    (`ECOTAXA_SAMPLE_ID_LIST_LIMIT`) + résumé `projets : pid: n, pid: n`
+    et `instruments : ...` plutôt qu'une re-énumération brute.
+  - Gain variable selon le projet (×2 à ×5 sur un schema riche, ~–1 k
+    tokens par sortie samples large).
+
+- **`agents/copepod_system_prompt.py`** — refonte avec densification
+  des règles (+90 lignes structurées, retrait des doublons).
+
+- **`agents/skills/ecotaxa_navigation.md`** — petits ajustements
+  alignés sur le nouveau système prompt (14 lignes).
+
+### Added
+
+- **`agent.py`** — instrumentation runtime de l'audit contexte :
+  - `_make_context_hook` collecte des métriques par appel
+    (`tool_messages_seen`, `tool_messages_truncated`,
+    `tool_result_chars_before/after/saved`, `max_tool_result_chars`,
+    `messages_trimmed`, `messages_kept`, etc.).
+  - Nouvelles fonctions publiques `get_context_audit(thread_id)` et
+    `clear_context_audit()` pour récupérer / réinitialiser le snapshot.
+
+- **`serve.py`** — exposition de l'audit :
+  - `_log_turn` écrit le snapshot dans le JSONL par thread sous la clé
+    `context_audit` et ajoute des champs structurés dans le log line
+    (`ctx_before=… ctx_after=… ctx_trimmed=… tool_truncated=…`).
+  - Nouveau endpoint **`GET /debug/context_audit`** qui retourne en JSON
+    les métriques du dernier passage par hook, soit pour un
+    `thread_id` donné soit pour tous.
+
+- **`tests/test_tool_schema_budget.py`** — garde-fou anti-régression :
+  budget conservatif sur les 3 plus gros tool schemas
+  (`couple_zooplankton_bio_oracle ≤ 900`,
+  `query_bio_oracle_zones ≤ 650`,
+  `get_zone_info ≤ 700` tokens). Si une docstring re-gonfle
+  silencieusement, le test casse au CI.
+
+- **`tests/test_agent_factory.py`** — couvre la collecte des métriques
+  par le pre-model hook (`tool_messages_truncated`, `chars_saved`, …).
+
+- **`tests/test_serve_user_logs.py`** — couvre :
+  - L'écriture du `context_audit` dans le JSONL par thread.
+  - Le retour du endpoint `/debug/context_audit`.
+
+### Fixed
+
+- Le `MAX_CONTEXT_TOKENS=40000` "cappait" un sous-ensemble mais le
+  prompt total au LLM (system + tool schemas + history) pouvait monter
+  bien au-delà. Cette release ne touche pas le cap (le cap continue de
+  s'appliquer à l'historique trim) mais réduit les **deux autres
+  composantes statiques** (system + tool schemas), de sorte que pour
+  un thread typique on reste sous 40 k au lieu de 52 k.
+
+### Trois leviers couverts
+
+1. **Statique au démarrage** : docstrings condensées → schémas plus
+   légers pour le LLM (Bio-ORACLE, geo_tools).
+2. **Dynamique à l'output** : env vars qui plafonnent les outputs
+   verbeux des tools EcoTaxa.
+3. **Garde-fou + observabilité** : `test_tool_schema_budget.py` au CI
+   + `/debug/context_audit` + log lines structurées pour repérer la
+   dérive avant qu'elle ne sature un thread.
+
+---
+
 ## [v3.3.0] — 2026-06-22 — UVP m5/m6 routing canonique, conversion m³↔L, skill loading par intent
 
 ### Pourquoi cette release
