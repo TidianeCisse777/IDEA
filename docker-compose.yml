@@ -23,7 +23,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: ghcr.io/tidianecisse777/copepod-agent:latest
-    pull_policy: missing
+    pull_policy: always
     container_name: copepod_agent
     ports:
       - "8000:8000"

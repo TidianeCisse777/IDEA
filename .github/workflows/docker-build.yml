@@ -4,21 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - "agent.py"
-      - "serve.py"
-      - "studio.py"
-      - "agents/**.py"
-      - "core/**.py"
-      - "models/**.py"
-      - "openwebui/**.py"
-      - "routers/**.py"
-      - "tools/**.py"
-      - "utils/**.py"
-      - "data/geo/**"
       - "requirements.txt"
       - "Dockerfile"
       - ".dockerignore"
-      - "agents/skills/**.md"
       - ".github/workflows/docker-build.yml"
 
 concurrency:
