@@ -219,6 +219,9 @@ data/geo/sources/**
 # Ignore outputs
 outputs
 
+# UVP/MCA pipeline reference (R project + raw EcoTaxa/EcoPart TSVs, ~543 MB)
+UVP_metrics_for_MCA/
+
 # config.js is now committed — URLs are dynamic (window.location), no secrets
 
 # Node.js dependencies
