@@ -289,6 +289,80 @@ def test_couple_zooplankton_bio_oracle_tool_persists_coupled_rows():
     assert df_coupled["thetao_ssp245"].tolist() == [48.7, 48.5, 48.7]
 
 
+def test_couple_zooplankton_bio_oracle_target_year_in_column_name_for_ssp():
+    """Quand un `target_year` est passé pour un scénario SSP, la colonne de
+    valeur doit inclure l'année dans son nom (ex `thetao_ssp585_2050`). Sans
+    ça, un tableau qui mêle Bio-ORACLE et données terrain (date du sample
+    UVP, etc.) peut induire l'utilisateur à associer la projection 2050/2090
+    à une autre date présente dans la table.
+
+    Pas de suffixe pour baseline (pas de point temporel à disambiguer) et
+    pas de suffixe quand target_year n'est pas fourni (rétrocompat).
+    """
+    import pandas as pd
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+    from unittest.mock import patch
+
+    source = pd.DataFrame(
+        [{"station": "A", "latitude": 50.0, "longitude": -60.0}]
+    )
+
+    def fake_preview(parameters):
+        return {
+            "dataset_id": "stub",
+            "variable": parameters["variable"],
+            "rows": [{
+                "time": f"{parameters['target_year']}-01-01T00:00:00Z"
+                if parameters.get("target_year") else "2090-01-01T00:00:00Z",
+                "latitude": parameters["latitude"],
+                "longitude": parameters["longitude"],
+                parameters["variable"]: 1.0,
+            }],
+        }
+
+    with patch("tools.bio_oracle_sources._preview_bio_oracle_point", side_effect=fake_preview):
+        # Case 1: SSP scenario + target_year → column name includes year
+        thread_a = "thread-target-year-ssp"
+        for key in _store.keys(thread_a):
+            _store.clear(key)
+        _store.set(thread_a, source.copy(), {"source": "uploaded_file"})
+        couple_a = next(
+            tool for tool in make_bio_oracle_tools(thread_a)
+            if tool.name == "couple_zooplankton_bio_oracle"
+        )
+        couple_a.invoke({
+            "latitude_column": "latitude", "longitude_column": "longitude",
+            "variable": "thetao", "scenario": "SSP5-8.5",
+            "depth_layer": "depthsurf", "target_year": 2050,
+        })
+        keys_a = _store.keys(f"{thread_a}:dataset:df_bio_oracle_coupling_")
+        assert len(keys_a) == 1
+        df1 = _store.get(keys_a[0])["df"]
+        assert "thetao_ssp5_8_5_2050" in df1.columns
+        assert "thetao_ssp5_8_5" not in df1.columns
+
+        # Case 2: baseline + target_year → no year suffix (baseline ignores it)
+        thread_b = "thread-target-year-baseline"
+        for key in _store.keys(thread_b):
+            _store.clear(key)
+        _store.set(thread_b, source.copy(), {"source": "uploaded_file"})
+        couple_b = next(
+            tool for tool in make_bio_oracle_tools(thread_b)
+            if tool.name == "couple_zooplankton_bio_oracle"
+        )
+        couple_b.invoke({
+            "latitude_column": "latitude", "longitude_column": "longitude",
+            "variable": "thetao", "scenario": "baseline",
+            "depth_layer": "depthsurf", "target_year": 2050,
+        })
+        keys_b = _store.keys(f"{thread_b}:dataset:df_bio_oracle_coupling_")
+        assert len(keys_b) == 1
+        df2 = _store.get(keys_b[0])["df"]
+        assert "thetao_baseline" in df2.columns
+        assert "thetao_baseline_2050" not in df2.columns
+
+
 def test_couple_zooplankton_bio_oracle_supports_multiple_variables_one_shot():
     """Quand l'utilisateur demande plusieurs variables Bio-ORACLE (température
     + salinité + oxygène), le tool doit faire UN SEUL appel et produire une
@@ -606,7 +680,9 @@ def test_couple_bio_oracle_passes_target_year_and_persists_time_columns():
     assert {call["target_year"] for call in calls} == {2050}
     keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_coupling_")
     coupled = _store.get(keys[0])["df"]
-    assert coupled["thetao_ssp1_2_6"].tolist() == [2.5, 2.5]
+    # Column name carries the target year for future scenarios — disambiguates
+    # decadal projections from any other date column in the table.
+    assert coupled["thetao_ssp1_2_6_2050"].tolist() == [2.5, 2.5]
     assert coupled["time"].tolist() == [
         "2050-01-01T00:00:00Z",
         "2050-01-01T00:00:00Z",

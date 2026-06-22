@@ -459,7 +459,16 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     scenario_clean = (
                         str(scenario_value).lower().replace(".", "_").replace("-", "_")
                     )
-                    value_col = f"{variable_value}_{scenario_clean}"
+                    # Include target year in the column name for future scenarios so
+                    # the reader cannot misinterpret a decadal projection as
+                    # contemporaneous with another date column in the table.
+                    year_suffix = (
+                        f"_{int(target_year):04d}"
+                        if target_year is not None
+                        and scenario_clean != "baseline"
+                        else ""
+                    )
+                    value_col = f"{variable_value}_{scenario_clean}{year_suffix}"
                     dataframe[value_col] = values
                     # Traceability columns: shared when there's only one slot,
                     # otherwise per-(variable,scenario) so columns don't collide.
