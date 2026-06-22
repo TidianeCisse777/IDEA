@@ -2,6 +2,7 @@
 import os
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -56,9 +57,25 @@ _SYSTEM_PROMPT = _load_system_prompt()
 _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "40000"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
+_context_audit_by_thread: dict[str, dict] = {}
 
 
-def _make_context_hook(user_id: str = "anonymous"):
+def get_context_audit(thread_id: str | None = None) -> dict:
+    """Return latest context-management audit metrics."""
+    if thread_id:
+        return dict(_context_audit_by_thread.get(thread_id, {}))
+    return {key: dict(value) for key, value in _context_audit_by_thread.items()}
+
+
+def clear_context_audit(thread_id: str | None = None) -> None:
+    """Clear context audit metrics, mainly for tests and debug endpoints."""
+    if thread_id:
+        _context_audit_by_thread.pop(thread_id, None)
+    else:
+        _context_audit_by_thread.clear()
+
+
+def _make_context_hook(user_id: str = "anonymous", thread_id: str = "unknown"):
     """pre_model_hook: inject long-term memories + truncate tool results + trim history."""
     from langchain_core.messages import trim_messages, ToolMessage, SystemMessage
 
@@ -67,27 +84,46 @@ def _make_context_hook(user_id: str = "anonymous"):
 
     def _truncate_tool_results(messages):
         out = []
+        metrics = {
+            "tool_messages_seen": 0,
+            "tool_messages_truncated": 0,
+            "tool_result_chars_before": 0,
+            "tool_result_chars_after": 0,
+            "tool_result_chars_saved": 0,
+            "max_tool_result_chars": _MAX_TOOL_RESULT_CHARS,
+        }
         for m in messages:
             if isinstance(m, ToolMessage) and isinstance(m.content, str) and len(m.content) > _MAX_TOOL_RESULT_CHARS:
+                metrics["tool_messages_seen"] += 1
                 truncated = m.content[:_MAX_TOOL_RESULT_CHARS] + f"\n[…tronqué — {len(m.content):,} chars total]"
+                metrics["tool_messages_truncated"] += 1
+                metrics["tool_result_chars_before"] += len(m.content)
+                metrics["tool_result_chars_after"] += len(truncated)
                 out.append(m.model_copy(update={"content": truncated}))
             else:
+                if isinstance(m, ToolMessage) and isinstance(m.content, str):
+                    metrics["tool_messages_seen"] += 1
+                    metrics["tool_result_chars_before"] += len(m.content)
+                    metrics["tool_result_chars_after"] += len(m.content)
                 out.append(m)
-        return out
+        metrics["tool_result_chars_saved"] = (
+            metrics["tool_result_chars_before"] - metrics["tool_result_chars_after"]
+        )
+        return out, metrics
 
     def _inject_memories(messages):
         """Prepend stored long-term memories to the system message."""
         try:
             memories = _store.search((user_id, "memories"))
             if not memories:
-                return messages
+                return messages, {"memories_found": 0, "memory_chars": 0, "memory_injected": False}
             mem_text = "\n".join(
                 f"- {item.value.get('content', '')}"
                 for item in memories
                 if item.value.get("content")
             )
             if not mem_text:
-                return messages
+                return messages, {"memories_found": len(memories), "memory_chars": 0, "memory_injected": False}
             memory_block = f"\n\n## Remembered preferences and corrections\n{mem_text}"
             updated = []
             injected = False
@@ -97,13 +133,21 @@ def _make_context_hook(user_id: str = "anonymous"):
                     injected = True
                 else:
                     updated.append(m)
-            return updated
+            return updated, {
+                "memories_found": len(memories),
+                "memory_chars": len(memory_block),
+                "memory_injected": injected,
+            }
         except Exception:
-            return messages
+            return messages, {"memories_found": 0, "memory_chars": 0, "memory_injected": False}
 
     def trim_context(state: dict) -> dict:
-        msgs = _truncate_tool_results(state["messages"])
-        msgs = _inject_memories(msgs)
+        original_messages = list(state["messages"])
+        original_tokens = _approx_tokens(original_messages)
+        msgs, truncate_metrics = _truncate_tool_results(original_messages)
+        truncated_tokens = _approx_tokens(msgs)
+        msgs, memory_metrics = _inject_memories(msgs)
+        injected_tokens = _approx_tokens(msgs)
         trimmed = trim_messages(
             msgs,
             max_tokens=_MAX_CONTEXT_TOKENS,
@@ -112,6 +156,26 @@ def _make_context_hook(user_id: str = "anonymous"):
             include_system=True,
             allow_partial=False,
         )
+        final_tokens = _approx_tokens(trimmed)
+        audit = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "messages_before": len(original_messages),
+            "messages_after_tool_truncation": len(msgs),
+            "messages_after_trim": len(trimmed),
+            "messages_trimmed": max(0, len(msgs) - len(trimmed)),
+            "approx_tokens_before": original_tokens,
+            "approx_tokens_after_tool_truncation": truncated_tokens,
+            "approx_tokens_after_memory": injected_tokens,
+            "approx_tokens_after_trim": final_tokens,
+            "approx_tokens_saved_by_tool_truncation": max(0, original_tokens - truncated_tokens),
+            "approx_tokens_saved_by_trim": max(0, injected_tokens - final_tokens),
+            "max_context_tokens": _MAX_CONTEXT_TOKENS,
+            **truncate_metrics,
+            **memory_metrics,
+        }
+        _context_audit_by_thread[thread_id] = audit
         return {"messages": trimmed}
 
     return trim_context
@@ -243,7 +307,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         llm,
         tools,
         prompt=_SYSTEM_PROMPT,
-        pre_model_hook=_make_context_hook(user_id=user_id),
+        pre_model_hook=_make_context_hook(user_id=user_id, thread_id=thread_id),
         checkpointer=_checkpointer,
         store=_store,
     )

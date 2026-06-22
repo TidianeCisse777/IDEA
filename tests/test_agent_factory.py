@@ -119,6 +119,37 @@ def test_system_prompt_mentions_sources():
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_context_hook_records_audit_metrics(monkeypatch):
+    from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+
+    import agent as agent_module
+
+    agent_module.clear_context_audit()
+    monkeypatch.setattr(agent_module, "_MAX_CONTEXT_TOKENS", 1000)
+    monkeypatch.setattr(agent_module, "_MAX_TOOL_RESULT_CHARS", 20)
+
+    hook = agent_module._make_context_hook(user_id="user-audit", thread_id="thread-audit")
+    result = hook(
+        {
+            "messages": [
+                SystemMessage(content="system"),
+                HumanMessage(content="question"),
+                ToolMessage(content="x" * 80, tool_call_id="tool-1"),
+            ]
+        }
+    )
+
+    audit = agent_module.get_context_audit("thread-audit")
+
+    assert result["messages"]
+    assert audit["user_id"] == "user-audit"
+    assert audit["thread_id"] == "thread-audit"
+    assert audit["tool_messages_seen"] == 1
+    assert audit["tool_messages_truncated"] == 1
+    assert audit["tool_result_chars_saved"] > 0
+    assert audit["approx_tokens_after_trim"] <= audit["approx_tokens_after_memory"]
+
+
 def test_system_prompt_is_grouped_by_routing_domain():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

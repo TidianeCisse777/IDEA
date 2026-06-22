@@ -23,7 +23,13 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-from agent import make_agent, _CHECKPOINTS_DB, repair_invalid_tool_history, arepair_invalid_tool_history
+from agent import (
+    make_agent,
+    _CHECKPOINTS_DB,
+    repair_invalid_tool_history,
+    arepair_invalid_tool_history,
+    get_context_audit,
+)
 from tools.openwebui_uploads import resolve_attached_files, resolve_request_files, resolve_chat_files
 from tools.public_url import graph_url, serve_base_url
 from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_workspace_database_url
@@ -108,6 +114,7 @@ def _request_callbacks(thread_id: str, message_id: str | None = None, chat_id: s
 
 
 def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict, user_id: str = "anonymous") -> None:
+    context_audit = get_context_audit(thread_id)
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "thread_id": thread_id,
@@ -115,15 +122,21 @@ def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict, us
         "user": user_msg,
         "assistant": assistant_msg,
         "usage": usage,
+        "context_audit": context_audit,
     }
     log_path = LOGS_DIR / f"{thread_id}.jsonl"
     with log_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    logger.info("thread=%s prompt=%s completion=%s cached=%s",
+    logger.info(
+        "thread=%s prompt=%s completion=%s cached=%s ctx_before=%s ctx_after=%s ctx_trimmed=%s tool_truncated=%s",
         thread_id,
         usage.get("prompt_tokens", 0),
         usage.get("completion_tokens", 0),
         usage.get("prompt_tokens_details", {}).get("cached_tokens", 0),
+        context_audit.get("approx_tokens_before", 0),
+        context_audit.get("approx_tokens_after_trim", 0),
+        context_audit.get("messages_trimmed", 0),
+        context_audit.get("tool_messages_truncated", 0),
     )
 
 
@@ -364,6 +377,15 @@ def root():
 @app.get("/version")
 def version():
     return {"agent": "copepod-agent", "sha": os.getenv("GIT_SHA", "unknown")}
+
+
+@app.get("/debug/context-audit")
+def debug_context_audit(thread_id: str | None = None):
+    """Expose latest context-management audit metrics."""
+    return {
+        "thread_id": thread_id,
+        "audit": get_context_audit(thread_id),
+    }
 
 
 @app.get("/v1/models")
