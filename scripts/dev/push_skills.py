@@ -3,12 +3,16 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from langsmith import Client
-from langsmith.schemas import FileEntry
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILLS_DIR = REPO_ROOT / "agents" / "skills"
 load_dotenv(REPO_ROOT / ".env")
 client = Client()
+
+try:
+    from langsmith.schemas import FileEntry
+except ImportError:
+    FileEntry = None
 
 
 def _hub_name(stem: str) -> str:
@@ -16,6 +20,8 @@ def _hub_name(stem: str) -> str:
 
 
 def push_skill(stem: str, content: str, env: str) -> str:
+    if not hasattr(client, "push_skill") or FileEntry is None:
+        raise RuntimeError("Installed LangSmith SDK does not expose skill push APIs")
     hub_name = _hub_name(stem)
     identifier = f"{hub_name}:{env}"
     client.push_skill(

@@ -176,6 +176,9 @@ cython_debug/
 *.png
 
 /static/
+UVP_metrics_for_MCA/
+output/
+tmp/
 
 # Ignore everything under data/
 data/**
