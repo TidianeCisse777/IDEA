@@ -268,6 +268,7 @@ def test_couple_zooplankton_bio_oracle_tool_persists_coupled_rows():
                 "variable": "thetao",
                 "scenario": "SSP245",
                 "depth_layer": "depthsurf",
+                "target_year": 2050,
             }
         )
 
@@ -285,8 +286,84 @@ def test_couple_zooplankton_bio_oracle_tool_persists_coupled_rows():
         df_coupled.loc[:, source.columns].reset_index(drop=True),
         source.reset_index(drop=True),
     )
-    assert "thetao_ssp245" in df_coupled.columns
-    assert df_coupled["thetao_ssp245"].tolist() == [48.7, 48.5, 48.7]
+    assert "thetao_ssp245_2050" in df_coupled.columns
+    assert df_coupled["thetao_ssp245_2050"].tolist() == [48.7, 48.5, 48.7]
+
+
+def test_couple_zooplankton_bio_oracle_refuses_ssp_without_target_year():
+    """Garde-fou structural : sur un scénario SSP, si `target_year` n'est pas
+    fourni, le tool DOIT refuser l'appel et renvoyer un marqueur clair
+    `TARGET_YEAR_REQUIRED` listant les décennies disponibles (2020, 2030, …,
+    2090). L'agent forwarde ce message à l'utilisateur et attend qu'il choisisse,
+    plutôt que de laisser ERDDAP retourner 2090 silencieusement (mal interprété
+    quand le tableau contient des dates UVP/zooplankton).
+
+    Baseline reste OK sans target_year (single climatology).
+    """
+    import pandas as pd
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+    from unittest.mock import patch
+
+    thread_id = "thread-ssp-refuse"
+    source = pd.DataFrame(
+        [{"station": "A", "latitude": 50.0, "longitude": -60.0}]
+    )
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+    _store.set(thread_id, source, {"source": "uploaded_file"})
+
+    preview_calls = []
+
+    def fake_preview(parameters):
+        preview_calls.append(parameters)
+        return {
+            "dataset_id": "stub",
+            "variable": parameters["variable"],
+            "rows": [{
+                "time": "2090-01-01T00:00:00Z",
+                "latitude": parameters["latitude"],
+                "longitude": parameters["longitude"],
+                parameters["variable"]: 1.0,
+            }],
+        }
+
+    with patch("tools.bio_oracle_sources._preview_bio_oracle_point", side_effect=fake_preview):
+        couple = next(
+            tool for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "couple_zooplankton_bio_oracle"
+        )
+
+        # 1. SSP without target_year → refuse, no preview call
+        result = couple.invoke({
+            "latitude_column": "latitude", "longitude_column": "longitude",
+            "variable": "thetao", "scenario": "SSP5-8.5",
+            "depth_layer": "depthsurf",
+        })
+        assert "TARGET_YEAR_REQUIRED" in result
+        assert "2050" in result and "2090" in result
+        assert preview_calls == []  # nothing was fetched
+
+        # 2. SSP with target_year → proceed as before
+        result2 = couple.invoke({
+            "latitude_column": "latitude", "longitude_column": "longitude",
+            "variable": "thetao", "scenario": "SSP5-8.5",
+            "depth_layer": "depthsurf", "target_year": 2050,
+        })
+        assert "TARGET_YEAR_REQUIRED" not in result2
+        assert "Couplage Bio-ORACLE chargé" in result2
+        assert len(preview_calls) == 1
+
+        # 3. baseline without target_year → still allowed (climatology)
+        preview_calls.clear()
+        result3 = couple.invoke({
+            "latitude_column": "latitude", "longitude_column": "longitude",
+            "variable": "thetao", "scenario": "baseline",
+            "depth_layer": "depthsurf",
+        })
+        assert "TARGET_YEAR_REQUIRED" not in result3
+        assert "Couplage Bio-ORACLE chargé" in result3
+        assert len(preview_calls) == 1
 
 
 def test_couple_zooplankton_bio_oracle_target_year_in_column_name_for_ssp():
@@ -416,6 +493,7 @@ def test_couple_zooplankton_bio_oracle_supports_multiple_variables_one_shot():
                 "variables": ["thetao", "so", "o2"],
                 "scenario": "ssp585",
                 "depth_layer": "depthsurf",
+                "target_year": 2050,
             }
         )
 
@@ -428,13 +506,13 @@ def test_couple_zooplankton_bio_oracle_supports_multiple_variables_one_shot():
     keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_coupling_")
     assert len(keys) == 1
     df_coupled = _store.get(keys[0])["df"]
-    # All three variable columns are present and filled
-    assert "thetao_ssp585" in df_coupled.columns
-    assert "so_ssp585" in df_coupled.columns
-    assert "o2_ssp585" in df_coupled.columns
-    assert df_coupled["thetao_ssp585"].tolist() == [5.9, 5.9]
-    assert df_coupled["so_ssp585"].tolist() == [32.5, 32.5]
-    assert df_coupled["o2_ssp585"].tolist() == [280.0, 280.0]
+    # All three variable columns are present and filled (with target year suffix)
+    assert "thetao_ssp585_2050" in df_coupled.columns
+    assert "so_ssp585_2050" in df_coupled.columns
+    assert "o2_ssp585_2050" in df_coupled.columns
+    assert df_coupled["thetao_ssp585_2050"].tolist() == [5.9, 5.9]
+    assert df_coupled["so_ssp585_2050"].tolist() == [32.5, 32.5]
+    assert df_coupled["o2_ssp585_2050"].tolist() == [280.0, 280.0]
 
 
 def test_query_bio_oracle_zones_does_not_replace_active_source_dataframe():
@@ -607,6 +685,7 @@ def test_couple_bio_oracle_supports_top_stations_and_multiple_scenarios():
                 "sample_column": "SAMPLE_ID",
                 "top_n_stations": 2,
                 "scenarios": ["baseline", "SSP1-2.6", "SSP5-8.5"],
+                "target_year": 2050,
             }
         )
 
@@ -616,9 +695,10 @@ def test_couple_bio_oracle_supports_top_stations_and_multiple_scenarios():
     coupled = _store.get(keys[0])["df"]
     assert coupled["STATION_NAME"].tolist() == ["24", "312"]
     assert coupled["n_samples"].tolist() == [3, 2]
+    # baseline ignores target_year → no year suffix; SSP get _2050 suffix.
     assert coupled["thetao_baseline"].tolist() == [1.0, 1.0]
-    assert coupled["thetao_ssp1_2_6"].tolist() == [2.0, 2.0]
-    assert coupled["thetao_ssp5_8_5"].tolist() == [5.0, 5.0]
+    assert coupled["thetao_ssp1_2_6_2050"].tolist() == [2.0, 2.0]
+    assert coupled["thetao_ssp5_8_5_2050"].tolist() == [5.0, 5.0]
 
 
 def test_couple_bio_oracle_passes_target_year_and_persists_time_columns():

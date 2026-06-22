@@ -346,6 +346,28 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             if not scenario_values:
                 return "Aucun scénario Bio-ORACLE fourni."
 
+            # Garde-fou : un scénario SSP* est décennal (2020, 2030, ..., 2090).
+            # Sans target_year explicite, ERDDAP renvoie la dernière décennie
+            # (2090) — rarement ce que l'utilisateur veut, et trompeur quand la
+            # table contient des dates terrain (UVP/zooplankton). On refuse et
+            # on demande l'année. baseline reste OK (single climatology).
+            if target_year is None:
+                ssp_scenarios = [
+                    s for s in scenario_values
+                    if str(s).lower().replace("-", "").replace(".", "").startswith("ssp")
+                ]
+                if ssp_scenarios:
+                    return (
+                        "TARGET_YEAR_REQUIRED: les datasets Bio-ORACLE SSP "
+                        f"({', '.join(ssp_scenarios)}) sont décennaux. "
+                        "Choisis une décennie cible parmi : "
+                        "2020, 2030, 2040, 2050, 2060, 2070, 2080, 2090 "
+                        "(8 tranches de 10 ans, valeur = moyenne climatique sur "
+                        "la décennie). Horizons standards : 2050 (mid-century), "
+                        "2070 (late-century), 2090 (end-of-century). "
+                        "Rappelle le tool avec `target_year=<année>`."
+                    )
+
             if station_column or top_n_stations is not None:
                 if not station_column:
                     return "`station_column` est requis avec `top_n_stations`."

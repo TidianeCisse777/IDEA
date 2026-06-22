@@ -63,34 +63,24 @@ scenario column unless the associated `time` / `time_<scenario>` column or
 metadata matches that requested year. A column named `temperature_ssp1_2_6` by
 itself does not prove whether it is 2050 or the dataset's last time slice.
 
-### 🛑 SSP scenario without an explicit target_year → CLARIFY, do not guess
+### SSP decadal slices and how to be honest about the target year
 
-Bio-ORACLE SSP datasets contain **9 decadal time slices** (2020, 2030, 2040,
-2050, 2060, 2070, 2080, 2090) — each value is a 10-year mean. Without a
-`target_year`, the ERDDAP client returns the **last available slice**
-(usually 2090), which is **end of century, not present-day**.
+Bio-ORACLE SSP datasets contain 8 decadal time slices (2020, 2030, 2040,
+2050, 2060, 2070, 2080, 2090); each value is a 10-year mean. When a
+`target_year` is passed, the ERDDAP client returns the nearest decade;
+without one, it returns the **last available slice** (2090).
 
-When the user asks for an SSP scenario (SSP1-2.6, SSP2-4.5, SSP5-8.5) **and
-does NOT specify a year**, you **MUST**:
+The huge gap between mid- and end-of-century is real (Labrador Sea
+SSP5-8.5 surface temperature: ~3.4 °C at 2050 vs ~5.9 °C at 2090). Always
+state the decade in the answer to avoid the reader misreading the table:
 
-1. NOT call `couple_zooplankton_bio_oracle`, `query_bio_oracle_zones` or
-   `enrich_with_bio_oracle` yet.
-2. Ask a short clarification question proposing the standard horizons:
-   `mid-century (2050)`, `late-century (2070)`, or `end-of-century (2090)`.
-3. Mention that the values are decadal means, so the horizon affects the
-   answer substantially (e.g. for the Labrador Sea SSP5-8.5 surface
-   temperature: ~3.4 °C at 2050 vs ~5.9 °C at 2090 — different climate
-   reality).
-4. Wait for the user to pick. Then pass `target_year=<chosen year>` to the
-   tool.
+- If the user named a year/horizon, pass `target_year` and write
+  `"Année cible : 2050"` in the answer.
+- If the user did NOT name one, do not invent one — let the client default
+  to 2090, write `"Année cible : 2090 (dernière décennie SSP, par défaut)"`,
+  and add a short note offering to redo at 2050 or 2070 if needed.
 
-Once the call is made, **always state in the answer** which year was used
-("Année cible : 2050" or "Année cible : 2090 (dernière décennie SSP)"). The
-column names alone are not enough — the user reads the table and may
-otherwise associate the value to an unrelated date column from a UVP or
-zooplankton sample.
-
-For `baseline` requests, no clarification is needed (one single time slice).
+For `baseline`, no year disclosure is needed (single climatology).
 
 ---
 
