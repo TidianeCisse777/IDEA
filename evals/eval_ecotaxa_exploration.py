@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import sys
 import uuid
 import argparse
@@ -63,6 +64,7 @@ EXPLORATION_CASES = [
                 },
             ],
             "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "final_answer_contains": ["UVP6"],
             "category": "project_summary",
         },
     },
@@ -87,6 +89,7 @@ EXPLORATION_CASES = [
                 },
             ],
             "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "final_answer_contains": ["2063", "Copepoda"],
             "category": "taxon_count",
         },
     },
@@ -285,6 +288,7 @@ EXPLORATION_CASES = [
                 },
             ],
             "forbidden_tools": ["query_ecotaxa", "run_pandas", "run_graph"],
+            "final_answer_contains": ["confirm"],
             "category": "export_dry_run",
         },
     },
@@ -774,6 +778,187 @@ EXPLORATION_CASES = [
             "category": "taxonomic_knowledge",
         },
     },
+    {
+        "id": "EX-24-list-accessible-projects",
+        "inputs": {
+            "question": "Quels projets EcoTaxa sont accessibles avec mon compte ?"
+        },
+        "outputs": {
+            "expected_sequence": ["list_ecotaxa_projects"],
+            "required_tool_args": [],
+            "forbidden_tools": [
+                "query_ecotaxa",
+                "run_pandas",
+                "run_graph",
+            ],
+            "category": "project_access_list",
+        },
+    },
+    {
+        "id": "EX-25-find-projects-by-instrument",
+        "inputs": {
+            "question": "Trouve les projets EcoTaxa avec l'instrument UVP6."
+        },
+        "outputs": {
+            "expected_sequence": ["find_ecotaxa_projects"],
+            "required_tool_args": [
+                {
+                    "name": "find_ecotaxa_projects",
+                    "args": {"instrument": "UVP6"},
+                },
+            ],
+            "forbidden_tools": [
+                "list_ecotaxa_projects",
+                "query_ecotaxa",
+                "run_pandas",
+                "run_graph",
+            ],
+            "category": "project_search",
+        },
+    },
+    {
+        "id": "EX-26-preview-project",
+        "inputs": {
+            "question": (
+                "Preview le projet EcoTaxa 14853 : donne les infos générales "
+                "et quelques objets, sans export complet."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["preview_ecotaxa_project"],
+            "required_tool_args": [
+                {
+                    "name": "preview_ecotaxa_project",
+                    "args": {"project_id": 14853},
+                },
+            ],
+            "forbidden_tools": [
+                "load_skill",
+                "query_ecotaxa",
+                "summarize_ecotaxa_project",
+                "run_pandas",
+                "run_graph",
+            ],
+            "category": "project_preview",
+        },
+    },
+    {
+        "id": "EX-27-get-sample-metadata",
+        "inputs": {
+            "question": (
+                "Donne-moi les métadonnées brutes du sample EcoTaxa "
+                "14853000001 : station, original_id, free fields et position."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["load_skill", "get_ecotaxa_sample"],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_ecotaxa_sample",
+                    "args": {"sample_id": 14853000001},
+                },
+            ],
+            "forbidden_tools": [
+                "query_ecotaxa",
+                "query_ecotaxa_sample",
+                "run_pandas",
+                "run_graph",
+            ],
+            "category": "sample_metadata",
+        },
+    },
+    {
+        "id": "EX-28-project-uvp-metadata-schema",
+        "inputs": {
+            "question": (
+                "Dans le projet EcoTaxa 14853, quels champs UVP, profondeur, "
+                "station, cast ou volume filtré sont disponibles ?"
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["load_skill", "inspect_ecotaxa_project_schema"],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "inspect_ecotaxa_project_schema",
+                    "args": {"project_id": 14853},
+                },
+            ],
+            "forbidden_tools": [
+                "query_ecotaxa",
+                "query_ecotaxa_sample",
+                "run_pandas",
+                "run_graph",
+            ],
+            "category": "uvp_metadata_schema",
+        },
+    },
+    {
+        "id": "EX-29-rank-projects-unannotated",
+        "inputs": {
+            "question": (
+                "Parmi les projets EcoTaxa 14853, 2331 et 4042, lequel "
+                "contient le plus d'images non annotées ? Réponds avec une "
+                "conclusion, pas seulement un tableau."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["load_skill", "summarize_ecotaxa_projects"],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "summarize_ecotaxa_projects",
+                    "args": {"project_ids": [14853, 2331, 4042]},
+                },
+            ],
+            "forbidden_tools": [
+                "query_ecotaxa",
+                "run_pandas",
+                "run_graph",
+            ],
+            "final_answer_contains": ["projet"],
+            "category": "project_rank_unannotated",
+        },
+    },
+    {
+        "id": "EX-30-export-specific-sample",
+        "inputs": {
+            "question": (
+                "Exporte le sample EcoTaxa 14853000001 avec les annotations "
+                "validées Copepoda."
+            )
+        },
+        "outputs": {
+            "expected_sequence": ["query_ecotaxa_sample"],
+            "required_tool_args": [
+                {
+                    "name": "query_ecotaxa_sample",
+                    "args": {
+                        "sample_id": 14853000001,
+                        "taxon": "Copepoda",
+                        "status": "V",
+                    },
+                },
+            ],
+            "forbidden_tools": [
+                "find_ecotaxa_samples_in_region",
+                "summarize_ecotaxa_samples",
+                "run_pandas",
+                "run_graph",
+            ],
+            "category": "sample_export_confirmed",
+        },
+    },
 ]
 
 
@@ -825,6 +1010,7 @@ def run_one_case(inputs: dict[str, Any]) -> dict[str, Any]:
 
     max_attempts = int(os.getenv("EVAL_MAX_ATTEMPTS", "3"))
     retry_delay = float(os.getenv("EVAL_RETRY_DELAY_SECONDS", "20"))
+    backoff_cap = float(os.getenv("EVAL_RETRY_CAP_SECONDS", "120"))
     final_state: dict[str, Any] = {}
     for attempt in range(1, max_attempts + 1):
         try:
@@ -837,7 +1023,10 @@ def run_one_case(inputs: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             if attempt >= max_attempts or not _is_rate_limit_error(exc):
                 raise
-            wait_seconds = retry_delay * attempt
+            wait_seconds = (
+                _retry_after_seconds(exc)
+                or _exponential_backoff(attempt, retry_delay, backoff_cap)
+            )
             print(
                 f"Rate limit during case; retrying in {wait_seconds:.1f}s "
                 f"({attempt}/{max_attempts})"
@@ -858,6 +1047,25 @@ def _is_rate_limit_error(exc: Exception) -> bool:
         or "rate_limit_exceeded" in text
         or exc.__class__.__name__ == "RateLimitError"
     )
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if not headers:
+        return None
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _exponential_backoff(attempt: int, base: float, cap: float) -> float:
+    expo = base * (2 ** (attempt - 1))
+    return min(expo, cap) + random.uniform(0.0, 1.0)
 
 
 def _matches_expected(expected: Any, actual: Any) -> bool:
@@ -1131,11 +1339,11 @@ def _chunks(items: list[dict[str, Any]], size: int | None) -> list[list[dict[str
 def _apply_quick_defaults(args: argparse.Namespace) -> None:
     if not args.quick:
         return
-    args.max_concurrency = 1
-    args.case_delay = 5.0
-    args.retry_delay = 20.0
-    args.max_attempts = 2
-    args.output_tokens = min(args.output_tokens, 900)
+    args.max_concurrency = 3
+    args.case_delay = 0.0
+    args.retry_delay = 10.0
+    args.max_attempts = 3
+    args.output_tokens = min(args.output_tokens, 600)
     if args.batch_size is None:
         args.batch_size = 3
 
@@ -1162,8 +1370,9 @@ def parse_args() -> argparse.Namespace:
         "--quick",
         action="store_true",
         help=(
-            "Use faster stable defaults: max_concurrency=1, case_delay=5, "
-            "retry_delay=20, max_attempts=2, output_tokens<=900, batch_size=3."
+            "Faster defaults relying on the exponential backoff to absorb 429s: "
+            "max_concurrency=3, case_delay=0, retry_delay=10, max_attempts=3, "
+            "output_tokens<=600, batch_size=3."
         ),
     )
     parser.add_argument(
@@ -1178,7 +1387,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-tokens",
         type=int,
-        default=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1200")),
+        default=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "800")),
         help="LLM_MAX_OUTPUT_TOKENS value used for eval agent calls.",
     )
     parser.add_argument(
@@ -1190,8 +1399,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-concurrency",
         type=int,
-        default=int(os.getenv("EVAL_MAX_CONCURRENCY", "1")),
-        help="LangSmith evaluate concurrency. Keep at 1 to avoid OpenAI TPM 429s.",
+        default=int(os.getenv("EVAL_MAX_CONCURRENCY", "3")),
+        help=(
+            "LangSmith evaluate concurrency. Bumped from 1 to 3: the new "
+            "exponential backoff with Retry-After absorbs TPM 429s."
+        ),
     )
     parser.add_argument(
         "--case-delay",

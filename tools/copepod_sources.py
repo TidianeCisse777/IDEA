@@ -203,7 +203,32 @@ def make_source_tools(thread_id: str) -> list:
 
     @tool
     def preview_ecotaxa_project(project_id: int) -> str:
-        """Présente rapidement un projet EcoTaxa sans lancer d'export complet."""
+        """Aperçu LÉGER d'un projet EcoTaxa : metadata + 10 objets exemple.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
+        Renvoie :
+        - une fiche metadata (instrument, statut, droits du compte, objets,
+          % validés / classifiés)
+        - jusqu'à 10 objets exemple avec orig_id, date, profondeur, taxon
+
+        À utiliser quand l'utilisateur veut **voir à quoi ressemble un projet**
+        sans en demander les stats agrégées ni un export. Intents typiques :
+        « présente-moi le projet X », « présente rapidement le projet X »,
+        « à quoi ressemble le projet X », « montre-moi le projet X »,
+        « aperçu du projet X », « preview », « combien d'objets + quelques
+        exemples ».
+
+        À NE PAS utiliser pour :
+        - un résumé V/P/D/U / top taxa / bbox / envelope temporelle →
+          `summarize_ecotaxa_project(s)`
+        - la liste des colonnes / champs / free fields →
+          `inspect_ecotaxa_project_schema`
+        - la distribution d'une colonne → `inspect_ecotaxa_column`
+        - un export → `query_ecotaxa` / `export_ecotaxa_samples`
+        """
         try:
             client = EcotaxaClient()
             client.login()
