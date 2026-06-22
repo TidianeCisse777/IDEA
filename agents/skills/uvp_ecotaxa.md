@@ -1,7 +1,248 @@
 # Skill: uvp_ecotaxa
 
-You just loaded a **UVP EcoTaxa file** (columns `fre_*` or `object_*` + `sample_id`).
-This skill provides the keys for interpreting it and computing metrics m5 and m6 (Vilgrain & Bourgouin 2026).
+You just loaded a **UVP EcoTaxa file** (columns `fre_*` or `object_*` + `sample_id`),
+or a **pre-joined intermediate table** from `scripts/uvp_metrics_pipeline.py`.
+This skill provides the keys for interpreting it and computing metrics m5 and
+m6 (Vilgrain & Bourgouin 2026).
+
+---
+
+## ⚠ Not for net samples (WP2, Multinet, Bongo…)
+
+This skill applies to **UVP imagery** (vertical profiles, 5 m bins, surface
++ bottom 50 m averaging). If the loaded file is a **zooplankton net
+sample** — telltale columns: `GEAR`, `TOW_TYPE`, `NET_MESH_SIZE`,
+`MIN_SAMPLE_DEPTH`/`MAX_SAMPLE_DEPTH`, `Total abundance (ind./m3 depth vol)`,
+`flowmeter` — m5/m6 do not apply (no fine depth bins, no surface/bottom
+split). In that case load **`neolabs_abundance_analysis`** instead and
+ignore the templates below.
+
+---
+
+## Units — UVP is per-litre, nets are per-m³
+
+UVP outputs (`m5`, `m6`, particle densities) are in **`ind./L`** (the
+volume basis is `sampled_volume` from EcoPart, in litres per 5-m bin).
+Zooplankton net abundance (NeoLabs `(ind./m3 depth vol)` /
+`(ind./m3 flowmeter vol)`) is in **`ind./m³`**.
+
+To compare or join the two sources you MUST convert before plotting:
+
+```python
+# UVP → per m³ (multiply by 1000)
+df_uvp["m5_cop_dens_ind_per_m3"] = df_uvp["m5_cop_dens_ind_per_L"] * 1000
+# Net → per L (divide by 1000)
+df_net["abundance_per_L"] = df_net["Total abundance (ind./m3 depth vol)"] / 1000
+```
+
+Name the derived column with the new unit (`*_ind_per_m3`,
+`*_per_L`) and state the conversion in the answer. See
+`neolabs_abundance_analysis` for the full conversion table and net-volume
+formulas (`DEPTH_CALC_VOL` vs `FLOWMETER_CALC_VOL`).
+
+---
+
+## 🛑 READ THIS FIRST — abondance / densité copépodes ≠ sum/sum
+
+When the user asks **"top stations abondantes copépodes" / "densité
+copépodes" / "abondance copépodes" / "ranking samples" / "profils
+verticaux"** on a UVP EcoTaxa file (raw or intermediate), you **MUST** use
+the **m5 formula** below. m5 = `(mean_density_surface_0_50 +
+mean_density_bottom_50) / 2`, computed per `sample_id`, with per-bin density
+first.
+
+### Answer template — always state the method explicitly
+
+Whenever you compute a copepod density / abundance / ranking on a UVP file,
+**start your answer with a one-line method note** before the table. Examples:
+
+- Default m5:
+  `Méthode : m5 (Vilgrain & Bourgouin 2026) = (densité moyenne surface 0-50 m + densité moyenne fond max-50 m) / 2, par sample, en ind./L.`
+- User override (global sum/sum):
+  `Méthode : densité moyenne globale sur tout le profil = somme(objets) / somme(volumes), par sample, en ind./L. (Override demandé par l'utilisateur — non m5.)`
+- m6:
+  `Méthode : m6 (Vilgrain & Bourgouin 2026) = identique à m5 mais filtré aux copépodes > 2 mm (taille = object_major × acq_pixel), en ind./L.`
+- Conversion appliquée:
+  Add `· Conversion : × 1000 pour passer de ind./L à ind./m³.` on a second line if you converted.
+
+This note is **not optional** — the user needs to see which formula
+produced the numbers in the same screen as the numbers themselves. Do not
+put it only inside a code fence or as a column name suffix.
+
+**FORBIDDEN — common LLM improvisation that produces wrong rankings:**
+
+```python
+# 🛑 DO NOT WRITE THIS. It is NOT m5. It collapses the whole profile.
+station_stats = df.groupby('sample_id').agg(
+    cop_objects=('category', 'size'),
+    sampled_volume=('sampled_volume', 'sum'),
+)
+station_stats['density'] = station_stats['cop_objects'] / station_stats['sampled_volume']
+```
+
+This shape (`sum(objects) / sum(volume)` over the whole profile) gives a
+different metric — global volume-weighted density — and produces a different
+top-N. The user said "abondance" or "densité", both of which canonically map
+to m5 in the NeoLab UVP context.
+
+**REQUIRED — the m5 template for an intermediate `taxa_db` (sampled_volume
+already joined):**
+
+```python
+import pandas as pd
+
+cop_cats = ["Copepoda<Multicrustacea", "Calanoida", "Heterorhabdidae",
+            "Calanus", "Paraeuchaeta", "Metridia",
+            "female+eggs<Paraeuchaeta", "copepoda eggs"]
+
+cop = df[df["category"].isin(cop_cats)].copy()
+cop["ind_nb"] = 1
+
+cop_bins = (
+    cop.groupby(["sample_id", "depth_bin", "sampled_volume"], as_index=False)["ind_nb"].sum()
+       .rename(columns={"ind_nb": "tot_cop"})
+)
+cop_bins["cop_dens"] = cop_bins["tot_cop"] / cop_bins["sampled_volume"]
+
+def m5(grp):
+    max_d = grp["depth_bin"].max()
+    surf = grp.loc[grp["depth_bin"] <= 50, "cop_dens"].mean()
+    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "cop_dens"].mean()
+    return (surf + bot) / 2
+
+result = (
+    cop_bins.groupby("sample_id").apply(m5).reset_index(name="m5_cop_dens_ind_per_L")
+            .sort_values("m5_cop_dens_ind_per_L", ascending=False)
+)
+```
+
+If the user **explicitly says** "non, je veux la moyenne sur tout le profil"
+or "sans la méthode surface+fond", switch to the global sum/sum formula and
+state the change in your answer. Otherwise, default to m5 above.
+
+If the user joins station-level wording ("top 5 stations"), apply m5 at the
+sample level then map back to station; do not collapse to station before
+computing density.
+
+---
+
+## 🛑 READ THIS FIRST — m6 (copépodes >2 mm) : filtrer AVANT le groupby
+
+**Pour m6**, le filtre `size_µm > 2000` doit être appliqué **AVANT** le
+groupby sur `(sample_id, depth_bin)`. Sinon, des bins avec des copépodes
+mais aucun >2 mm comptent comme `n_long = 0` et tirent les moyennes
+surface/fond vers le bas → m6 sous-estimé.
+
+**FORBIDDEN — agrégation post-groupby (bug subtil, valeurs trop basses) :**
+
+```python
+# 🛑 DO NOT WRITE THIS. n_long = 0 bins contaminent les moyennes.
+cop['is_long'] = cop['object_major'] * 73.0 > 2000.0
+bins = cop.groupby(['sample_id', 'depth_bin']).agg(
+    n_long=('is_long', 'sum'),
+    sampled_volume=('sampled_volume', 'first'),
+)
+bins['dens_long'] = bins['n_long'] / bins['sampled_volume']
+# → bins où n_long=0 restent et tirent (surf + bot)/2 vers le bas
+```
+
+**REQUIRED — filtre AVANT groupby (template m6 intermédiaire) :**
+
+Suppose `taxa_db.csv` et `taxa_morpho_db.csv` chargés en `df_file_taxa_db`
+et `df_file_taxa_morpho_db`. `acq_pixel = 73 µm` pour UVP6 (à confirmer
+projet par projet ; n'apparaît pas dans les tables intermédiaires).
+
+```python
+import pandas as pd
+
+cop_cats = ["Copepoda<Multicrustacea", "Calanoida", "Heterorhabdidae",
+            "Calanus", "Paraeuchaeta", "Metridia",
+            "female+eggs<Paraeuchaeta", "copepoda eggs"]
+ACQ_PIXEL_UM = 73  # UVP6 Hawke Channel; ask user if different
+
+# Join morpho avec taxa_db pour récupérer depth_bin + sampled_volume
+m = df_file_taxa_morpho_db.merge(
+    df_file_taxa_db[["sample_id", "object_id", "depth_bin", "sampled_volume"]],
+    on=["sample_id", "object_id"], how="left",
+)
+
+cop = m[m["category"].isin(cop_cats)].copy()
+cop["size_um"] = cop["object_major"] * ACQ_PIXEL_UM
+
+# ⚠ Filtre > 2000 µm AVANT le groupby
+large = cop[cop["size_um"] > 2000].copy()
+
+large_bins = (
+    large.groupby(["sample_id", "depth_bin", "sampled_volume"], as_index=False)
+         .size().rename(columns={"size": "n_large"})
+)
+large_bins["dens_large"] = large_bins["n_large"] / large_bins["sampled_volume"]
+
+def m6(grp):
+    max_d = grp["depth_bin"].max()
+    surf = grp.loc[grp["depth_bin"] <= 50, "dens_large"].mean()
+    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "dens_large"].mean()
+    return (surf + bot) / 2
+
+result = (
+    large_bins.groupby("sample_id").apply(m6).reset_index(name="m6_largecop_dens_ind_per_L")
+              .sort_values("m6_largecop_dens_ind_per_L", ascending=False)
+)
+```
+
+---
+
+## File shape: raw vs intermediate
+
+Two shapes are supported. Detect first, then route.
+
+| Shape | Signal columns | What to do |
+|---|---|---|
+| **Raw EcoTaxa export** | `fre_major` or `object_major` + `sample_id`, no `sampled_volume` | Compute `depth_bin` yourself, then merge with EcoPart for `sampled_volume`. Use the m5 template below. |
+| **Intermediate `taxa_db`** (from `scripts/uvp_metrics_pipeline.py`) | `sample_id` + `depth_bin` + `sampled_volume` + `category` (and no `LPM (...)` column) | `sampled_volume` and `depth_bin` are **already joined**. SKIP the EcoPart merge. Filter copepods → group by `(sample_id, depth_bin)` → divide by `sampled_volume` → apply the (surface+bottom)/2 formula directly. |
+| **Intermediate `taxa_morpho_db`** | `sample_id` + `object_major` + morphological columns, no `sampled_volume` | Join with `taxa_db` on `(sample_id, object_id)` to recover `depth_bin` + `sampled_volume`, then apply m6 formula. |
+
+---
+
+## Default routing when the user wording is ambiguous
+
+When the user asks for **"abondance copépodes" / "densité copépodes" / "top
+stations" / "profils verticaux" / "ranking des samples"** on a UVP EcoTaxa
+file or intermediate, and **does not specify the calculation method**,
+default to **m5 (Vilgrain & Bourgouin 2026)** = `(mean_surface_0_50 +
+mean_bottom_50) / 2`. This is the canonical NeoLab abundance metric for UVP
+deployments.
+
+**DO NOT** silently fall back to the naïve `sum(objects) / sum(sampled_volume)`
+over the whole profile — that produces a different metric (global
+volume-weighted density) and changes the ranking. The same "abondance" word
+can mean either thing; pick m5 by default and **say so in the answer**.
+
+If the user explicitly opposes m5 (e.g. "non, je veux la densité moyenne sur
+tout le profil", "non sans la méthode surface+fond"), switch to the global
+sum/sum formula and mention it in the answer.
+
+If the user gives a metric name you do not recognise (anything other than
+m1-m6 from the Vilgrain template), ask **one short clarifying question**
+listing the 2-3 most likely interpretations before computing.
+
+---
+
+## Common trap — DO NOT do this
+
+```python
+# WRONG: collapses the whole profile, ignores the surface/bottom split.
+station_stats = df.groupby('sample_id').agg(
+    cop_objects=('category', 'size'),
+    sampled_volume=('sampled_volume', 'sum'),
+)
+station_stats['m5'] = station_stats['cop_objects'] / station_stats['sampled_volume']
+```
+
+This is the most common improvisation when the LLM sees "densité moyenne par
+sample". It is **not** m5. The correct shape always has a per-bin density
+first, then two means (surface ≤ 50m and bottom ≥ max-50m), then their
+average — see the template in the m5 section below.
 
 ---
 
@@ -74,6 +315,38 @@ def m5_per_sample(grp):
 
 result = cop_bins.groupby("sample_id").apply(m5_per_sample).reset_index()
 result.columns = ["sample_id", "m5_cop_dens_ind_per_L"]
+```
+
+### m5 template for intermediate `taxa_db` (sampled_volume already joined)
+
+```python
+import pandas as pd
+
+cop_cats = ["Copepoda<Multicrustacea", "Calanoida", "Heterorhabdidae",
+            "Calanus", "Paraeuchaeta", "Metridia",
+            "female+eggs<Paraeuchaeta", "copepoda eggs"]
+
+cop = df[df["category"].isin(cop_cats)].copy()
+cop["ind_nb"] = 1
+
+# density per bin (sample_id × depth_bin) — sampled_volume already joined upstream
+cop_bins = (
+    cop.groupby(["sample_id", "depth_bin", "sampled_volume"], as_index=False)["ind_nb"].sum()
+       .rename(columns={"ind_nb": "tot_cop"})
+)
+cop_bins["cop_dens"] = cop_bins["tot_cop"] / cop_bins["sampled_volume"]
+
+def m5(grp):
+    max_d = grp["depth_bin"].max()
+    surf = grp.loc[grp["depth_bin"] <= 50, "cop_dens"].mean()
+    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "cop_dens"].mean()
+    return (surf + bot) / 2
+
+result = (
+    cop_bins.groupby("sample_id").apply(m5).reset_index()
+            .rename(columns={0: "m5_cop_dens_ind_per_L"})
+            .sort_values("m5_cop_dens_ind_per_L", ascending=False)
+)
 ```
 
 ---

@@ -56,10 +56,23 @@ from tools.session_store import SessionStore, default_store
 
 
 def _uvp_skill_hint(col_names: list[str]) -> str:
-    """Retourne un hint load_skill si le fichier est un export UVP EcoTaxa ou EcoPart."""
+    """Retourne un hint load_skill si le fichier est un export UVP EcoTaxa ou EcoPart.
+
+    Détecte deux familles de fichiers via des signaux **spécifiques** :
+
+    - **EcoPart raw** : colonne ``"Sampled volume [L]"`` + au moins une colonne
+      ``"LPM ("`` (nom EcoPart avec espace + crochets).
+    - **EcoTaxa UVP raw / taxa_morpho_db** : ``fre_major`` ou ``object_major``
+      + ``sample_id`` (colonnes morphométriques en pixels, exclusives à UVP).
+
+    Le routing par **intent** (« calcule l'abondance / la densité copépode ») est
+    géré dans le system prompt, pas ici. Détecter ``{sample_id, depth_bin,
+    sampled_volume, category}`` au load_file serait trop large — un export
+    filet (ZooScan minuscule, etc.) match ces colonnes aussi.
+    """
     col_set = set(col_names)
-    is_ecopart  = "Sampled volume [L]" in col_set and any("LPM (" in c for c in col_set)
-    is_ecotaxa_uvp = (
+    is_ecopart = "Sampled volume [L]" in col_set and any("LPM (" in c for c in col_set)
+    is_ecotaxa_uvp_raw = (
         ("fre_major" in col_set or "object_major" in col_set)
         and "sample_id" in col_set
         and not is_ecopart
@@ -69,7 +82,7 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
             "→ Fichier EcoPart UVP détecté. "
             "Charge le skill `uvp_ecopart` pour les méthodes de calcul (m1-m3)."
         )
-    if is_ecotaxa_uvp:
+    if is_ecotaxa_uvp_raw:
         return (
             "→ Fichier EcoTaxa UVP détecté. "
             "Charge le skill `uvp_ecotaxa` pour interpréter les colonnes et calculer m5/m6."

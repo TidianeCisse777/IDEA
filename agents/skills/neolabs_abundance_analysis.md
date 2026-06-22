@@ -32,6 +32,60 @@ Rules:
 - Never mix depth-vol and flowmeter-vol abundance in the same comparison without stating which rows use which volume basis.
 - Clip negative abundance values only for exploratory plots and explicitly report how many were affected.
 
+## Volumes filtrés et conversion d'unités
+
+NeoLabs net rows expose **two filtered-volume columns** in m³:
+
+| Column | Formula | When valid |
+|---|---|---|
+| `DEPTH_CALC_VOL` (m³) | `π × r² × (MAX_SAMPLE_DEPTH − MIN_SAMPLE_DEPTH) × E` (theoretical vertical tow volume; `E` ≈ 1 if not provided) | Always — derived purely from net geometry + strata |
+| `FLOWMETER_CALC_VOL` (m³) | `flowmeter constant × Δturns` (= section × distance actually travelled) | Only when the cast was equipped with a flowmeter |
+
+**Pick `DEPTH_CALC_VOL` by default** (matches `(ind./m3 depth vol)` columns,
+robust across casts). Use `FLOWMETER_CALC_VOL` (= `(ind./m3 flowmeter vol)`)
+when the user explicitly mentions flowmeter normalization or when depth-vol
+is missing on the rows of interest.
+
+If a recompute is needed (rare):
+
+```python
+import math
+NET_RADIUS_M = 0.5  # ⚠ ask the user; typical WP2 = 0.286 m, Bongo = 0.305 m
+EFFICIENCY = 1.0    # E in the formula; ask the user if unsure
+
+vol_depth_m3 = (
+    math.pi * NET_RADIUS_M**2
+    * (df["MAX_SAMPLE_DEPTH"] - df["MIN_SAMPLE_DEPTH"])
+    * EFFICIENCY
+)
+# flowmeter recompute (calibration constant in m³ per turn, usually printed on the device):
+# vol_flowmeter_m3 = FLOWMETER_CONSTANT * (turns_end - turns_start)
+```
+
+### Conversion m³ ↔ L (cross-source comparisons)
+
+NeoLabs net abundance is in **`ind./m³`**. UVP (EcoTaxa/EcoPart) and
+in-water sensors are typically in **`ind./L`** or per-image. When the user
+asks to compare or join a net dataset with UVP/EcoPart results, you MUST
+align units before comparing or plotting:
+
+| From | To | Multiply by |
+|---|---|---|
+| `ind./m³` | `ind./L` | `÷ 1000` (1 m³ = 1000 L) |
+| `ind./L` | `ind./m³` | `× 1000` |
+| `mm³/m³` (biovolume) | `mm³/L` | `÷ 1000` |
+
+```python
+# Compare UVP m5 (ind/L) vs NeoLabs net (ind/m3)
+df_uvp_m5["abundance_per_m3"] = df_uvp_m5["m5_cop_dens_ind_per_L"] * 1000
+# or, the other way:
+df_net["abundance_per_L"] = df_net["Total abundance (ind./m3 depth vol)"] / 1000
+```
+
+Name any derived column explicitly with the unit (`abundance_per_L`,
+`m5_cop_dens_ind_per_m3`) so the user can verify the conversion. Never
+plot a mixed-unit chart without stating the conversion in the answer.
+
 ## Build `sample_df`
 
 For sample-level analyses, group by:

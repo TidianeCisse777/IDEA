@@ -342,6 +342,50 @@ def test_uvp_hint_none_for_generic_file():
     assert hint == ""
 
 
+def test_uvp_hint_taxa_db_intermediate_does_not_trigger():
+    """taxa_db.csv intermédiaire (sortie de scripts/uvp_metrics_pipeline.py)
+    a sample_id + depth_bin + sampled_volume + category mais PAS object_major.
+    Sa signature de colonnes est trop générique (un export filet ZooScan
+    pourrait matcher), donc on NE déclenche PAS de hint au load_file.
+
+    Le routing vers uvp_ecotaxa pour cette table est désormais piloté par
+    intent (system prompt: "user asks abundance/density on UVP-like df →
+    load_skill uvp_ecotaxa"), pas par hint au load_file. Voir la règle
+    "UVP abundance / density intent" dans agents/copepod_system_prompt.py.
+    """
+    cols = [
+        "cruise", "ship", "station", "sample_id", "lat", "lon",
+        "date", "time", "object_id",
+        "depth", "depth_bin", "sampled_volume",
+        "status", "category", "hierarchy", "ctd_filename",
+    ]
+    hint = _uvp_skill_hint(cols)
+    assert hint == ""
+
+
+def test_uvp_hint_taxa_morpho_db_intermediate():
+    """taxa_morpho_db.csv (intermédiaire) a object_major + sample_id : le
+    hint doit déjà se déclencher (règle historique préservée).
+    """
+    cols = [
+        "station", "sample_id", "lat", "lon", "object_id",
+        "category", "depth", "object_area", "object_major",
+        "object_skeleton_area",
+    ]
+    hint = _uvp_skill_hint(cols)
+    assert "uvp_ecotaxa" in hint
+
+
+# Note: a previous version of this file asserted that the hint must NOT match
+# on net-sample exports (WP2, Multinet, ZooScan with sample_id/depth_bin/
+# sampled_volume/category in lowercase). We dropped that strict requirement
+# on purpose: a false positive is mild (the skill itself now contains a
+# "Not for net samples" guard at the top — see agents/skills/uvp_ecotaxa.md),
+# while a false negative (missing the UVP hint on a real UVP intermediate
+# table) was the actual bug that produced wrong m5 rankings. Keep the
+# signature broad; let the skill content disambiguate at read time.
+
+
 def test_load_file_includes_uvp_hint(tmp_path):
     """load_file sur un fichier EcoPart → réponse inclut le hint uvp_ecopart."""
     df = pd.DataFrame({
