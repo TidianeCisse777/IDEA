@@ -289,6 +289,80 @@ def test_couple_zooplankton_bio_oracle_tool_persists_coupled_rows():
     assert df_coupled["thetao_ssp245"].tolist() == [48.7, 48.5, 48.7]
 
 
+def test_couple_zooplankton_bio_oracle_supports_multiple_variables_one_shot():
+    """Quand l'utilisateur demande plusieurs variables Bio-ORACLE (température
+    + salinité + oxygène), le tool doit faire UN SEUL appel et produire une
+    colonne par variable. Avant ce fix, l'agent devait soit faire 3 appels
+    successifs (ce qu'il ne faisait jamais naturellement), soit accepter une
+    sortie incomplète.
+    """
+    import pandas as pd
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+    from unittest.mock import patch
+
+    thread_id = "thread-multi-vars"
+    source = pd.DataFrame(
+        [
+            {"station": "HC-05", "latitude": 53.4338, "longitude": -54.1171},
+            {"station": "HC-04", "latitude": 53.3330, "longitude": -54.3157},
+        ]
+    )
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+    _store.set(thread_id, source, {"source": "uploaded_file"})
+
+    preview_calls = []
+
+    def fake_preview(parameters):
+        preview_calls.append(parameters)
+        # different stub value per variable so we can assert columns are independent
+        stub = {"thetao": 5.9, "so": 32.5, "o2": 280.0}.get(parameters["variable"], 0.0)
+        return {
+            "dataset_id": f"{parameters['variable']}_{parameters['scenario']}_depthsurf",
+            "title": "stub",
+            "variable": parameters["variable"],
+            "rows": [
+                {
+                    "time": "2050-01-01T00:00:00Z",
+                    "latitude": parameters["latitude"],
+                    "longitude": parameters["longitude"],
+                    parameters["variable"]: stub,
+                }
+            ],
+        }
+
+    with patch("tools.bio_oracle_sources._preview_bio_oracle_point", side_effect=fake_preview):
+        tools = make_bio_oracle_tools(thread_id)
+        couple = next(tool for tool in tools if tool.name == "couple_zooplankton_bio_oracle")
+        result = couple.invoke(
+            {
+                "latitude_column": "latitude",
+                "longitude_column": "longitude",
+                "variables": ["thetao", "so", "o2"],
+                "scenario": "ssp585",
+                "depth_layer": "depthsurf",
+            }
+        )
+
+    assert "Couplage Bio-ORACLE chargé" in result
+    # one preview call per (point × variable) = 2 stations × 3 variables = 6 calls
+    assert len(preview_calls) == 6
+    variables_seen = {call["variable"] for call in preview_calls}
+    assert variables_seen == {"thetao", "so", "o2"}
+
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_coupling_")
+    assert len(keys) == 1
+    df_coupled = _store.get(keys[0])["df"]
+    # All three variable columns are present and filled
+    assert "thetao_ssp585" in df_coupled.columns
+    assert "so_ssp585" in df_coupled.columns
+    assert "o2_ssp585" in df_coupled.columns
+    assert df_coupled["thetao_ssp585"].tolist() == [5.9, 5.9]
+    assert df_coupled["so_ssp585"].tolist() == [32.5, 32.5]
+    assert df_coupled["o2_ssp585"].tolist() == [280.0, 280.0]
+
+
 def test_query_bio_oracle_zones_does_not_replace_active_source_dataframe():
     import pandas as pd
     from tools.bio_oracle_sources import make_bio_oracle_tools

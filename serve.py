@@ -792,6 +792,21 @@ def _has_graph_markdown_image(text: str) -> bool:
     return bool(re.search(r"!\[[^\]]*\]\([^\)]*/graphs/[^\)]*\.png\)", text))
 
 
+def _graph_image_urls(text: str) -> set[str]:
+    return set(re.findall(r"!\[[^\]]*\]\(([^\)]*/graphs/[^\)]*\.png)\)", text))
+
+
+def _remove_graph_markdown_images(text: str, urls: set[str]) -> str:
+    if not urls:
+        return text
+
+    def _replace(match: re.Match) -> str:
+        return "" if match.group(1) in urls else match.group(0)
+
+    deduped = re.sub(r"!\[[^\]]*\]\(([^\)]*/graphs/[^\)]*\.png)\)", _replace, text)
+    return re.sub(r"\n{3,}", "\n\n", deduped).strip()
+
+
 async def _stream_agent_sse(
     agent,
     messages: dict,
@@ -812,6 +827,7 @@ async def _stream_agent_sse(
         "in_slow_tool": False,
         "pending_tool_args": {},
         "pending_tool_names": {},
+        "streamed_graph_urls": set(),
     }
 
     async def _run_agent() -> None:
@@ -832,6 +848,10 @@ async def _stream_agent_sse(
 
                         if content:
                             content = _extract_and_host_images(content)
+                            content = _remove_graph_markdown_images(
+                                content,
+                                shared["streamed_graph_urls"],
+                            )
                             await chunk_queue.put(_make_sse_chunk(completion_id, content))
 
                         for tc in tool_calls:
@@ -858,11 +878,13 @@ async def _stream_agent_sse(
                             if tool_name == "run_graph" and tool_content:
                                 hosted = _extract_and_host_images(tool_content)
                                 if _has_graph_markdown_image(hosted):
+                                    shared["streamed_graph_urls"].update(_graph_image_urls(hosted))
                                     await chunk_queue.put(_make_sse_chunk(completion_id, f"\n{hosted}\n"))
                             elif "data:image/png;base64," in tool_content:
                                 hosted = _extract_and_host_images(tool_content)
                                 img_match = re.search(r"!\[.*?\]\(http[^\)]+\)", hosted)
                                 if img_match:
+                                    shared["streamed_graph_urls"].update(_graph_image_urls(img_match.group(0)))
                                     await chunk_queue.put(_make_sse_chunk(completion_id, f"\n{img_match.group(0)}\n"))
                             if tool_name and tool_content and _is_data_source_tool(tool_name):
                                 await chunk_queue.put(_make_sse_chunk(

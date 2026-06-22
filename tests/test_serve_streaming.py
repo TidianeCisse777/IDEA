@@ -547,3 +547,28 @@ async def test_stream_run_graph_url_tool_result_is_printed():
     assert "![graph](https://example.test/graphs/abc123.png)" in full
     assert "Lecture rapide:" in full
     assert "Voici la carte." in full
+
+
+@pytest.mark.asyncio
+async def test_stream_deduplicates_run_graph_image_when_final_repeats_it():
+    """If run_graph streams an image and the final AI message repeats it,
+    the SSE stream should contain one image, not two."""
+    from serve import _stream_agent_sse
+
+    image = "![graph](https://example.test/graphs/abc123.png)"
+    tool_content = f"{image}\n\nLecture rapide:\nCarte générée."
+    final_content = f"{image}\n\nCarte des stations."
+    updates = [
+        {"agent": {"messages": [AIMessage(
+            content="",
+            tool_calls=[{"name": "run_graph", "args": {}, "id": "tc1", "type": "tool_call"}],
+        )]}},
+        {"tools": {"messages": [ToolMessage(content=tool_content, tool_call_id="tc1")]}},
+        {"agent": {"messages": [AIMessage(content=final_content, tool_calls=[])]}},
+    ]
+    agent = _make_mock_agent(updates)
+    chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
+    full = "".join(chunks)
+
+    assert full.count(image) == 1
+    assert "Carte des stations." in full

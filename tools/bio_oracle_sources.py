@@ -299,9 +299,10 @@ def make_bio_oracle_tools(thread_id: str) -> list:
     def couple_zooplankton_bio_oracle(
         latitude_column: str,
         longitude_column: str,
-        variable: str,
         scenario: str,
         depth_layer: str,
+        variable: str | None = None,
+        variables: list[str] | None = None,
         station_column: str | None = None,
         sample_column: str | None = None,
         top_n_stations: int | None = None,
@@ -310,10 +311,12 @@ def make_bio_oracle_tools(thread_id: str) -> list:
     ) -> str:
         """Add Bio-ORACLE values per row/station of the loaded lat/lon table.
 
-        Use for per-station enrichment, not zone aggregates. Pass column names,
-        not row values. Supports top-N station reduction, multiple `scenarios`,
-        and SSP `target_year`; baseline remains historical. Output preserves
-        source rows and adds value, time and dataset traceability columns.
+        Per-station enrichment, not zone aggregates. Pass column names, not row
+        values. Supports top-N station reduction, multiple `scenarios`, SSP
+        `target_year` (baseline stays historical). Pass `variables=[...]` to
+        fetch several variables in one call (one column per variable × scenario,
+        named `<variable>_<scenario>`); `variable` is the legacy single-variable
+        path. Output preserves source rows + adds value, time, dataset columns.
         """
         try:
             source, fallback_name = _source_dataframe_with_columns(
@@ -332,6 +335,12 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     "Colonnes absentes de la table chargée : "
                     + ", ".join(missing_columns)
                 )
+
+            variable_values = list(variables) if variables else (
+                [variable] if variable else []
+            )
+            if not variable_values:
+                return "Aucune variable Bio-ORACLE fournie (`variable` ou `variables`)."
 
             scenario_values = list(scenarios or [scenario])
             if not scenario_values:
@@ -388,79 +397,80 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             # Dédup : un appel ERDDAP par (lat, lon, variable, scenario, depth_layer).
             # Deux lignes au même point recevront la même valeur via lookup.
             cache: dict[tuple, dict] = {}
+            single_scenario = len(scenario_values) == 1
+            single_variable = len(variable_values) == 1
             for scenario_value in scenario_values:
-                for latitude, longitude in dataframe[
-                    [latitude_column, longitude_column]
-                ].itertuples(index=False, name=None):
-                    key = (
-                        latitude,
-                        longitude,
-                        variable,
-                        scenario_value,
-                        depth_layer,
-                        target_year,
-                    )
-                    if key not in cache:
-                        preview = _preview_bio_oracle_point(
-                            {
-                                "latitude": latitude,
-                                "longitude": longitude,
-                                "variable": variable,
-                                "scenario": scenario_value,
-                                "depth_layer": depth_layer,
-                                "target_year": target_year,
-                            }
+                for variable_value in variable_values:
+                    for latitude, longitude in dataframe[
+                        [latitude_column, longitude_column]
+                    ].itertuples(index=False, name=None):
+                        key = (
+                            latitude,
+                            longitude,
+                            variable_value,
+                            scenario_value,
+                            depth_layer,
+                            target_year,
                         )
-                        val_key = preview.get("variable", "")
-                        preview_rows = preview.get("rows") or []
-                        first_row = preview_rows[0] if preview_rows else {}
-                        raw_value = first_row.get(val_key) if preview_rows else None
-                        try:
-                            value = round(float(raw_value), 4) if raw_value is not None else None
-                        except (TypeError, ValueError):
-                            value = None
-                        cache[key] = {
-                            "value": value,
-                            "dataset_id": preview.get("dataset_id"),
-                            "time": first_row.get("time"),
-                        }
+                        if key not in cache:
+                            preview = _preview_bio_oracle_point(
+                                {
+                                    "latitude": latitude,
+                                    "longitude": longitude,
+                                    "variable": variable_value,
+                                    "scenario": scenario_value,
+                                    "depth_layer": depth_layer,
+                                    "target_year": target_year,
+                                }
+                            )
+                            val_key = preview.get("variable", "")
+                            preview_rows = preview.get("rows") or []
+                            first_row = preview_rows[0] if preview_rows else {}
+                            raw_value = first_row.get(val_key) if preview_rows else None
+                            try:
+                                value = round(float(raw_value), 4) if raw_value is not None else None
+                            except (TypeError, ValueError):
+                                value = None
+                            cache[key] = {
+                                "value": value,
+                                "dataset_id": preview.get("dataset_id"),
+                                "time": first_row.get("time"),
+                            }
 
-                values = []
-                dataset_ids = []
-                times = []
-                for latitude, longitude in dataframe[
-                    [latitude_column, longitude_column]
-                ].itertuples(index=False, name=None):
-                    key = (
-                        latitude,
-                        longitude,
-                        variable,
-                        scenario_value,
-                        depth_layer,
-                        target_year,
+                    values = []
+                    dataset_ids = []
+                    times = []
+                    for latitude, longitude in dataframe[
+                        [latitude_column, longitude_column]
+                    ].itertuples(index=False, name=None):
+                        key = (
+                            latitude,
+                            longitude,
+                            variable_value,
+                            scenario_value,
+                            depth_layer,
+                            target_year,
+                        )
+                        cached = cache[key]
+                        values.append(cached["value"])
+                        dataset_ids.append(cached["dataset_id"])
+                        times.append(cached["time"])
+
+                    scenario_clean = (
+                        str(scenario_value).lower().replace(".", "_").replace("-", "_")
                     )
-                    cached = cache[key]
-                    values.append(cached["value"])
-                    dataset_ids.append(cached["dataset_id"])
-                    times.append(cached["time"])
-
-                scenario_clean = (
-                    str(scenario_value).lower().replace(".", "_").replace("-", "_")
-                )
-                value_col = f"{variable}_{scenario_clean}"
-                dataframe[value_col] = values
-                time_col = (
-                    "time"
-                    if len(scenario_values) == 1
-                    else f"time_{scenario_clean}"
-                )
-                dataframe[time_col] = times
-                dataset_col = (
-                    "dataset_id"
-                    if len(scenario_values) == 1
-                    else f"dataset_id_{scenario_clean}"
-                )
-                dataframe[dataset_col] = dataset_ids
+                    value_col = f"{variable_value}_{scenario_clean}"
+                    dataframe[value_col] = values
+                    # Traceability columns: shared when there's only one slot,
+                    # otherwise per-(variable,scenario) so columns don't collide.
+                    suffix_parts = []
+                    if not single_variable:
+                        suffix_parts.append(variable_value)
+                    if not single_scenario:
+                        suffix_parts.append(scenario_clean)
+                    suffix = ("_" + "_".join(suffix_parts)) if suffix_parts else ""
+                    dataframe[f"time{suffix}"] = times
+                    dataframe[f"dataset_id{suffix}"] = dataset_ids
 
             output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
             dataframe.to_csv(output_path, sep="\t", index=False)
@@ -469,7 +479,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             ].to_json(orient="records")
             query_id = hashlib.sha256(
                 (
-                    f"{query_fingerprint}|{variable}|{scenario_values}|{depth_layer}|{target_year}"
+                    f"{query_fingerprint}|{variable_values}|{scenario_values}|{depth_layer}|{target_year}"
                 ).encode("utf-8")
             ).hexdigest()[:12]
             variable_name = dataset_variable_name("bio_oracle_coupling", query_id)
@@ -481,6 +491,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 meta={
                     "source": "bio_oracle_coupling",
                     "query_id": query_id,
+                    "variables": variable_values,
                     "scenarios": scenario_values,
                     "target_year": target_year,
                     "n_rows": len(dataframe),
