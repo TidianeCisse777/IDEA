@@ -308,37 +308,12 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         scenarios: list[str] | None = None,
         target_year: int | None = None,
     ) -> str:
-        """Enrichit chaque ligne d'observations zooplancton avec UNE valeur Bio-ORACLE
-        propre à son point géographique (lat/lon).
+        """Add Bio-ORACLE values per row/station of the loaded lat/lon table.
 
-        Utilise CE tool — et pas `query_bio_oracle_zones` — dès que l'utilisateur
-        veut une valeur Bio-ORACLE **par station** d'un fichier zooplancton chargé
-        (fichier avec `latitude` / `longitude` par ligne). Le tool fait UN appel
-        Bio-ORACLE par point unique et conserve toutes les colonnes du fichier.
-        Capacités :
-        - enrichir chaque ligne ou chaque station avec une valeur Bio-ORACLE
-          extraite à ses propres coordonnées latitude/longitude ;
-        - construire directement les "top N stations" avec `station_column`,
-          `sample_column` et `top_n_stations` ;
-        - comparer plusieurs scénarios en une fois via `scenarios` ;
-        - appliquer un horizon futur explicite via `target_year`, par exemple
-          2050, aux scénarios SSP. Les datasets `baseline` sont historiques :
-          le client ignore automatiquement `target_year` pour baseline afin
-          d'éviter une requête impossible comme baseline 2050.
-        Le résultat inclut les colonnes de valeur, `time` / `time_<scenario>`,
-        et `dataset_id` / `dataset_id_<scenario>` pour tracer la provenance.
-
-        Passe uniquement les noms des colonnes latitude/longitude du fichier
-        chargé ainsi que la variable, le scénario et la couche demandés. Le tool
-        lit lui-même les lignes réelles de la session ; ne retranscris jamais les
-        observations dans les arguments.
-
-        Pour une demande du type "les mêmes stations", "top 10 stations" ou
-        "par station", passe aussi `station_column`, `sample_column` et
-        `top_n_stations`. Le tool construit alors lui-même la table stationnaire
-        à partir de la source chargée avant de faire les appels Bio-ORACLE.
-        Pour comparer plusieurs scénarios, passe `scenarios`; le résultat aura
-        une colonne par scénario.
+        Use for per-station enrichment, not zone aggregates. Pass column names,
+        not row values. Supports top-N station reduction, multiple `scenarios`,
+        and SSP `target_year`; baseline remains historical. Output preserves
+        source rows and adds value, time and dataset traceability columns.
         """
         try:
             source, fallback_name = _source_dataframe_with_columns(
@@ -535,31 +510,14 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         depth_layer: str = "surface",
         target_year: int | None = None,
     ) -> str:
-        """Extract Bio-ORACLE projected values for one or more named geographic zones.
+        """Return one Bio-ORACLE value per named zone.
 
-        Use this tool ONLY when the user asks for Bio-ORACLE data **aggregated
-        by zone name** (e.g. "température Bio-ORACLE dans Hawke Channel et mer
-        du Labrador", "compare les zones"). The tool returns ONE row per zone,
-        sampled at the zone's geographic centre.
-
-        DO NOT use this tool to enrich a loaded zooplankton / sampling file
-        with per-station environmental values — even if all stations happen to
-        fall in one zone. For that case, use `couple_zooplankton_bio_oracle`
-        instead: it calls Bio-ORACLE once per row (lat/lon) so two stations at
-        different coordinates receive different values.
-
-        Parameters
-        ----------
-        zones : list of zone names — any name accepted by get_zone_info:
-            "Hawke Channel", "Mer du Labrador", "Baie d'Hudson",
-            "Détroit d'Hudson", "Baie d'Ungava", "Baie de Baffin",
-            "Mer de Beaufort", "Arctique", "Nunavik", "Baie de James"
-        variable : one of: "temperature", "salinity", "oxygen",
-                   "chlorophyll", "nitrate"  — do NOT use ERDDAP internal names
-        scenario : "SSP5-8.5", "SSP1-2.6", "SSP2-4.5", or "baseline"
-        depth_layer : "surface" (default), "mean", "max", or "min"
-        target_year : optional horizon such as 2050. If omitted, ERDDAP's
-                      last available time slice is used.
+        Use only for zone-level questions ("compare les zones", temperature in
+        Hawke Channel, etc.). Do not use for per-station enrichment of a loaded
+        lat/lon table; use `couple_zooplankton_bio_oracle` for that. Variables
+        are friendly names: temperature, salinity, oxygen, chlorophyll, nitrate.
+        Scenarios: SSP5-8.5, SSP1-2.6, SSP2-4.5, baseline. Optional
+        `target_year` applies to SSP datasets.
         """
         from tools.geo_tools import get_zone_info
 

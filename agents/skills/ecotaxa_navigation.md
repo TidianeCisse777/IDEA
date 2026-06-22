@@ -33,7 +33,7 @@ General ambiguity rules:
   when the user says "samples présents" / "present samples" / "samples
   disponibles" / "qu'est-ce qu'on a" / "what's available" AND no scope
   (project_ids, zone, table) was established in the previous turn, you
-  **MUST ask a clarifying question and call ZERO tools in this turn**.
+  **MUST ask one short clarification question and call ZERO tools in this turn**.
   This is a hard zero-tool-call rule, not a preference. Concretely:
   - DO NOT call `find_ecotaxa_samples_in_region` at all — not with an
     invented zone (`"Arctique"`, `"Atlantique Nord"`, `"global"`), not
@@ -53,13 +53,11 @@ General ambiguity rules:
     turn and wait for the user.
 - Instrument names remain filters even when the user wording is sloppy.
   In samples-by-zone queries, `LOKI` / `Loki` means instrument Loki and
-  must be passed as `instrument="Loki"`; do not drop it and do not
+  must be passed as `instrument="Loki"`; it is the instrument, not the project. Do not drop it and do not
   reinterpret it as a project search.
 - When the user gives numeric project IDs and asks for project
-  stats/summaries, call `summarize_ecotaxa_projects`; do not switch to
-  `run_pandas` or `query_ecotaxa`.
-- When `summarize_ecotaxa_project(s)` reports the project is absent from
-  the local cache, surface that cache-missing result and suggest a
+  stats/summaries, call `summarize_ecotaxa_projects`; do not switch to `run_pandas` or `query_ecotaxa`.
+- When `summarize_ecotaxa_project(s)` reports the project is absent from the local cache, surface that cache-missing result and suggest a
   resync. Do not compensate by exporting/downloading the project unless
   the user explicitly confirms a full export.
 - Project-level intents split into two symmetric routes — pick by the
@@ -318,9 +316,7 @@ Taxon-specific limitation:
     ranking is based on sample totals/top-taxa presence, not exact
     per-taxon counts;
   - if exact taxon counts per sample are required, say the current
-    read-only sample summary cannot provide them. Do NOT fall back to a
-    fresh sample metadata listing. Exact object-level filtering
-    requires an export/download path and therefore confirmation.
+    read-only sample summary cannot provide them. Do NOT fall back to a fresh sample metadata listing. Exact object-level filtering requires an export/download path and therefore confirmation.
 
 A sample with only `P` and no `V` means "model predictions, never
 validated by a human" — flag this to the user before they treat the

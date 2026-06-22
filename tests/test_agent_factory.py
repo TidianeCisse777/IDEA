@@ -119,6 +119,33 @@ def test_system_prompt_mentions_sources():
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_system_prompt_is_grouped_by_routing_domain():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    headings = [
+        "## Identity and Operating Modes",
+        "## Authorized Data Sources",
+        "## Global Routing Principles",
+        "## Context and Session State",
+        "## Knowledge Base vs Data Requests",
+        "## Files and DataFrames",
+        "## Geographic Zones",
+        "## EcoTaxa",
+        "## EcoPart",
+        "## Environmental Enrichment",
+        "## SQL Workspace",
+        "## Graphs and Visual Outputs",
+        "## Deliverables",
+        "## Response Format and Tone",
+        "## Confirmation Gates",
+        "## Citations and Security",
+    ]
+
+    positions = [COPEPOD_SYSTEM_PROMPT.index(heading) for heading in headings]
+
+    assert positions == sorted(positions)
+
+
 def test_system_prompt_mentions_graph_explanation():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

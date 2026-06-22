@@ -99,6 +99,38 @@ def make_source_tools(thread_id: str) -> list:
                 normalized.append(int(text))
         return normalized
 
+    def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+        try:
+            return max(minimum, int(os.getenv(name, str(default))))
+        except (TypeError, ValueError):
+            return default
+
+    def _compact_instruments(samples: list[dict]) -> str:
+        instruments = sorted({
+            str(sample.get("instrument"))
+            for sample in samples
+            if sample.get("instrument")
+        })
+        if not instruments:
+            return "—"
+        suffix = f", +{len(instruments) - 8}" if len(instruments) > 8 else ""
+        return ", ".join(instruments[:8]) + suffix
+
+    def _sample_project_counts(samples: list[dict]) -> str:
+        counts: dict[int, int] = {}
+        for sample in samples:
+            pid = int(sample["project_id"])
+            counts[pid] = counts.get(pid, 0) + 1
+        parts = [
+            f"{pid}: {count}"
+            for pid, count in sorted(
+                counts.items(), key=lambda item: (-item[1], item[0])
+            )[:8]
+        ]
+        if len(counts) > 8:
+            parts.append(f"+{len(counts) - 8} projets")
+        return ", ".join(parts) if parts else "—"
+
     def _ecotaxa_partial_notice(result: dict) -> str:
         if not result.get("partial"):
             return ""
@@ -377,15 +409,32 @@ def make_source_tools(thread_id: str) -> list:
             "",
         ]
         for level_name, content in schema["levels"].items():
+            max_columns = _env_int("ECOTAXA_SCHEMA_COLUMNS_PER_LEVEL", 12)
+            fixed_columns = content["fixed"]
+            free_columns = content["free"]
             lines.append(f"## {level_name}")
+            lines.append(
+                f"{len(fixed_columns)} colonnes fixes, "
+                f"{len(free_columns)} colonnes libres."
+            )
             lines.append("")
             lines.append("| colonne | type | catégorie |")
             lines.append("|---|---|---|")
-            for fixed in content["fixed"]:
+            shown = 0
+            for fixed in fixed_columns[:max_columns]:
                 lines.append(f"| {fixed['name']} | {fixed['type']} | fixe |")
-            for free in content["free"]:
+                shown += 1
+            remaining_slots = max(0, max_columns - shown)
+            for free in free_columns[:remaining_slots]:
                 tag = f" `{free['code']}`" if verbose and "code" in free else ""
                 lines.append(f"| {free['label']}{tag} | {free['type']} | libre |")
+                shown += 1
+            hidden = len(fixed_columns) + len(free_columns) - shown
+            if hidden > 0:
+                lines.append(
+                    f"| ... | ... | {hidden} colonnes masquées ; utiliser "
+                    "`inspect_ecotaxa_column` pour une colonne précise |"
+                )
             lines.append("")
         return "\n".join(lines)
 
@@ -706,23 +755,39 @@ def make_source_tools(thread_id: str) -> list:
                 + _ecotaxa_partial_notice(result)
             )
 
+        max_rows = _env_int("ECOTAXA_SAMPLE_RESULT_ROWS", 15)
+        max_ids = _env_int("ECOTAXA_SAMPLE_ID_LIST_LIMIT", 120)
+        shown_samples = result["samples"][:max_rows]
+        shown_ids = [str(sample["sample_id"]) for sample in result["samples"][:max_ids]]
         lines = [
             f"# {result['total_matching']} samples (cap {len(result['samples'])})"
             + (" — tronqué" if result["truncated"] else "")
             + (" — résultat partiel" if result.get("partial") else ""),
+            f"Projets principaux : {_sample_project_counts(result['samples'])}",
+            f"Instruments : {_compact_instruments(result['samples'])}",
+            "sample_ids visibles : "
+            + ", ".join(shown_ids)
+            + (
+                f", ... (+{len(result['samples']) - max_ids})"
+                if len(result["samples"]) > max_ids
+                else ""
+            ),
             "",
             "| sample_id | projet | lat | lon | date_min | date_max | instrument |",
             "|---:|---:|---:|---:|---|---|---|",
         ]
-        for s in result["samples"][:50]:
+        for s in shown_samples:
             lines.append(
                 f"| {s['sample_id']} | {s['project_id']} | {s['lat']:.3f} | "
                 f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} | "
                 f"{s.get('instrument') or '—'} |"
             )
-        if len(result["samples"]) > 50:
+        if len(result["samples"]) > max_rows:
             lines.append("")
-            lines.append(f"(50 premiers / {len(result['samples'])} affichés)")
+            lines.append(
+                f"({max_rows} premiers / {len(result['samples'])} affichés ; "
+                "définir ECOTAXA_SAMPLE_RESULT_ROWS pour élargir l'aperçu)"
+            )
         if result.get("partial"):
             lines.append(_ecotaxa_partial_notice(result).strip())
         return "\n".join(lines)

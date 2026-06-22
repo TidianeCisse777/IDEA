@@ -74,45 +74,12 @@ def _pandas_filter(bbox: dict[str, float]) -> str:
 
 @tool
 def get_zone_info(zone_name: str) -> dict:
-    """Return the canonical polygon, bbox, and metadata for a named NeoLab
-    geographic zone.
+    """Resolve a named NeoLab zone to canonical name, bbox, aliases and filter.
 
-    Use this tool whenever the user mentions a named zone (e.g. "Baie d'Ungava",
-    "mer du Labrador", "Hudson Bay", "Hawke Channel", "Arctique"). The result
-    gives:
-    - bbox: lat/lon bounds (decimal degrees) for legacy bbox-based downstream
-      tools.
-    - canonical / aliases : confirm the resolved zone (use for display).
-    - polygon_wkt_preview : truncated preview of the WKT (debug only). For
-      precise in-polygon queries, DO NOT copy this — pass
-      `zone_name="<canonical>"` directly to the downstream tool
-      (find_ecotaxa_*_in_region, query_bio_oracle_zones), which will
-      resolve the polygon internally.
-
-    Parameters
-    ----------
-    zone_name : str
-        French, English, or common name of the zone (case-insensitive, aliases
-        accepted). Supported zones:
-        - Nord QC: Baie d'Hudson, Baie de James, Détroit d'Hudson,
-                   Baie d'Ungava, Nunavik, Hawke Channel
-        - Arctique canadien: Baie de Baffin, Détroit de Davis, Mer du Labrador
-        - Saint-Laurent: Golfe du Saint-Laurent
-        - Arctique élargi: Mer de Beaufort, Mer des Tchouktches,
-                           Mer du Groenland, Mer de Lincoln, Arctique
-
-    Returns
-    -------
-    dict with keys:
-        - canonical     : canonical zone name (FR)
-        - source        : where the polygon comes from (IHO v3, NeoLab cut,
-                          NeoLab composite, etc.)
-        - bbox          : {south, west, north, east} in decimal degrees
-                          (longitude negative for West, latitude positive N)
-        - polygon_wkt   : precise polygon as WKT (WGS84)
-        - aliases       : list of accepted alternate names
-        - pandas_filter : ready-to-use df expression based on bbox
-                          (e.g. df[(df['latitude'] >= ...) & ...])
+    Use for named zones such as "Baie d'Ungava", "mer du Labrador",
+    "Hudson Bay", "Hawke Channel", or "Arctique". For downstream EcoTaxa or
+    Bio-ORACLE tools, pass `zone_name` instead of copying polygon WKT. The
+    returned `polygon_wkt_preview` is debug-only; `bbox` is decimal degrees.
     """
     canonical = _match_canonical(zone_name)
     if canonical is None:
