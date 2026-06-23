@@ -8,6 +8,11 @@ ne contiennent **aucune référence à un fournisseur précis**. Le domaine,
 l'email TLS, les mots de passe et les clés d'API sont tous injectés via
 `.env`. Migrer d'un hôte à un autre = recopier `.env` + lancer le compose.
 
+> Si tu n'as pas encore de serveur 24/7 mais tu veux **partager une URL aux
+> testeurs maintenant** depuis ton Mac local, va directement à
+> [l'annexe Cloudflare Tunnel](#annexe--partage-rapide-via-cloudflare-tunnel-depuis-le-mac-local)
+> en bas du document.
+
 ---
 
 ## 1. Pré-requis sur l'hôte
@@ -245,3 +250,130 @@ Aucune ligne du compose, du Caddyfile ou du code Python à toucher.
 - [ ] Ports `5433` / `8000` / `8001` non joignables depuis l'extérieur
       (test depuis une autre machine : `curl -v http://$PUBLIC_IP:8000` doit
       timeout)
+
+---
+
+## Annexe — Partage rapide via Cloudflare Tunnel depuis le Mac local
+
+Mode "démo / partage avant qu'on ait une vraie VM". Le compose dev tourne
+sur ton Mac, Cloudflare expose Open WebUI en HTTPS public sans port
+forwarding et sans toucher au firewall réseau. URL utilisable tant que
+le Mac est allumé et le tunnel actif.
+
+### Prérequis (à valider une seule fois)
+
+1. **Compose dev up** : `docker compose up -d` (Open WebUI répond sur
+   `http://localhost:3000`).
+2. **`cloudflared` installé** : `brew install cloudflared` puis
+   `cloudflared --version`.
+3. **Open WebUI sécurisé AVANT d'exposer** — sinon le premier visiteur de
+   l'URL devient admin :
+   - Va sur `http://localhost:3000` et crée le compte admin (le premier
+     compte enregistré est admin par défaut).
+   - Settings → Admin Panel → Auth :
+     - `Enable New User Sign Ups` → **OFF**
+     - `Default User Role` → **Pending**
+   - Crée toi-même un compte par testeur, ou laisse les comptes en
+     `Pending` que tu approuves manuellement.
+
+### Démarrer le tunnel (relance manuelle)
+
+```bash
+cloudflared tunnel --url http://localhost:3000 --no-autoupdate --protocol http2
+```
+
+La commande imprime dans la sortie une ligne du type :
+
+```
+https://random-words-1234.trycloudflare.com
+```
+
+C'est l'URL publique à partager aux testeurs. Tant que la commande
+tourne (terminal ouvert), l'URL répond.
+
+### Faire tourner en arrière-plan sans monopoliser le terminal
+
+```bash
+mkdir -p ~/Library/Logs/cloudflared
+nohup cloudflared tunnel --url http://localhost:3000 --no-autoupdate --protocol http2 \
+  > ~/Library/Logs/cloudflared/tunnel.log 2>&1 &
+sleep 15
+grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' ~/Library/Logs/cloudflared/tunnel.log | head -1
+```
+
+La dernière ligne extrait l'URL du log. Le process tourne en background
+détaché du terminal — tu peux fermer le terminal sans tuer le tunnel.
+
+### Arrêter le tunnel
+
+```bash
+pkill -f "cloudflared tunnel --url"
+```
+
+### À savoir absolument
+
+- **L'URL change à chaque relance** du tunnel. C'est une limite des
+  *quick tunnels* anonymes. Pour une URL stable, il faut un compte
+  Cloudflare gratuit + un domaine sur leur zone DNS (out of scope ici).
+- **Le tunnel meurt si le Mac s'éteint, dort longtemps ou perd le Wi-Fi**.
+  À chaque redémarrage du Mac, il faut relancer la commande à la main.
+- **Pas d'auto-start configuré** (volontairement — c'est une persistance
+  système sensible). Pour le mettre en LaunchAgent plus tard, voir la
+  section dédiée plus bas.
+- **Pas un setup prod** — pas de TLS pinning sur ton domaine, pas
+  d'auth additionnelle au-delà d'Open WebUI, pas de monitoring. À
+  utiliser pour démo et tests pendant que la vraie VM est provisionnée.
+- **`docker.sock` est monté dans le container agent** en compose dev. Sur
+  une exposition publique prolongée c'est un risque — pour la prod
+  utiliser `docker-compose.prod.yml` qui retire ce mount.
+
+### Optionnel — LaunchAgent pour relance auto au login Mac
+
+À installer seulement si tu acceptes qu'un service système relance
+cloudflared à chaque login. Crée
+`~/Library/LaunchAgents/com.cloudflared.copepod.plist` :
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.cloudflared.copepod</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/cloudflared</string>
+    <string>tunnel</string>
+    <string>--url</string>
+    <string>http://localhost:3000</string>
+    <string>--no-autoupdate</string>
+    <string>--protocol</string>
+    <string>http2</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/&lt;ton-user&gt;/Library/Logs/cloudflared/tunnel.log</string>
+  <key>StandardErrorPath</key><string>/Users/&lt;ton-user&gt;/Library/Logs/cloudflared/tunnel.log</string>
+</dict>
+</plist>
+```
+
+Puis :
+```bash
+launchctl load -w ~/Library/LaunchAgents/com.cloudflared.copepod.plist
+```
+
+Pour désinstaller :
+```bash
+launchctl unload ~/Library/LaunchAgents/com.cloudflared.copepod.plist
+rm ~/Library/LaunchAgents/com.cloudflared.copepod.plist
+```
+
+### Migration vers la vraie VM plus tard
+
+Quand la VM (Oracle, Hetzner, Laval) est prête :
+1. Arrêter le tunnel et le compose dev sur le Mac.
+2. Suivre les sections **1 à 11** de ce document.
+3. Donner aux testeurs la nouvelle URL `https://$PROD_DOMAIN` — l'ancienne
+   `*.trycloudflare.com` ne sert plus.
+
+Aucune ligne de code à toucher entre les deux modes.
