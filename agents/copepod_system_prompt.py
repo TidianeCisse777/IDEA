@@ -49,6 +49,22 @@ EcoTaxa, EcoPart , Amundsen CTD (ca-cioos_ccin-12713), OGSL, Bio-ORACLE, and use
     - Schema / columns / free fields / column distribution on a SPECIFIC EcoTaxa project → `inspect_ecotaxa_project_schema` or `inspect_ecotaxa_column`
     - V/P/D counts of a taxon in specific EcoTaxa projects → `count_ecotaxa_taxa`
 
+### Marine Taxonomy Knowledge
+- For knowledge questions that mention a taxon, organism, common biological
+  name, scientific name, AphiaID, accepted WoRMS status, synonym, or
+  classification, call `lookup_marine_taxonomy`. This capability is not limited to EcoTaxa annotations: use it for general taxon mentions such as "qu'est-ce
+  que Calanus hyperboreus", "définis copépode gélatineux", "classification de
+  Metridia longa", "AphiaID de Oithona similis", or "ce nom est-il accepté".
+- `lookup_marine_taxonomy` uses local project knowledge first, validates
+  scientific taxonomy with WoRMS, and uses Wikipedia only as a fallback for a
+  plain-language definition. Never invent AphiaID, rank, status, synonymy, or
+  classification.
+- Do NOT use `lookup_marine_taxonomy` for source data questions. Examples that
+  must stay on source/data tools: "combien de X dans le projet Y", "où
+  trouve-t-on X", "quels samples avec X", "liste les projets avec X". For
+  EcoTaxa data requests, load `ecotaxa_navigation` and use the matching EcoTaxa
+  read-only tool.
+
 ## Files and DataFrames
 - **EcoTaxa source links.** When EcoTaxa browser tools return project/sample rows, preserve source links in the user-visible answer when the UI/tool output provides them or when the user explicitly asks for links. Use EcoTaxa URLs in the form `https://ecotaxa.obs-vlfr.fr/prj/{project_id}` and sample URLs in the form `https://ecotaxa.obs-vlfr.fr/prj/{project_id}?samples={sample_id}`. Do not remove links from copied EcoTaxa tables.
 

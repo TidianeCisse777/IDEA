@@ -45,6 +45,24 @@ def test_make_agent_returns_graph():
     assert agent is not None
 
 
+def test_make_agent_registers_marine_taxonomy_tool():
+    captured = {}
+
+    def fake_create_react_agent(llm, tools, **kwargs):
+        captured["tool_names"] = {tool.name for tool in tools}
+        return MagicMock()
+
+    with patch("agent.ChatOpenAI") as mock_llm, patch(
+        "agent.create_react_agent", side_effect=fake_create_react_agent
+    ):
+        mock_llm.return_value = MagicMock()
+        from agent import make_agent
+
+        make_agent("thread-taxonomy")
+
+    assert "lookup_marine_taxonomy" in captured["tool_names"]
+
+
 # --- Comportement 2 : les 3 tools sont présents ---
 
 def test_agent_has_required_tools(tmp_path, monkeypatch):
@@ -71,6 +89,7 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
     from tools.sql_workspace import make_sql_tools
     from tools.rag_tool import make_rag_tool
     from tools.copepod_sources import make_source_tools
+    from tools.taxonomy_tool import make_taxonomy_tool
     tools = (
         make_tools("thread-test")
         + make_source_tools("thread-test")
@@ -78,13 +97,14 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
         + make_amundsen_tools("thread-test")
         + make_ogsl_tools("thread-test")
         + make_sql_tools("thread-test")
-        + [make_rag_tool()]
+        + [make_rag_tool(), make_taxonomy_tool()]
     )
     tool_names = {t.name for t in tools}
     descriptions = {t.name: t.description for t in tools}
     assert "load_file" in tool_names
     assert "run_pandas" in tool_names
     assert "query_copepod_knowledge_base" in tool_names
+    assert "lookup_marine_taxonomy" in tool_names
     assert "list_bio_oracle_datasets" in tool_names
     assert "preview_bio_oracle_point" in tool_names
     assert "query_bio_oracle" in tool_names
@@ -108,6 +128,9 @@ def test_system_prompt_anti_hallucination():
     assert "numérique" in prompt or "numeric" in prompt or "valeur" in prompt
     assert "general reasoning" in prompt or "raisonnement général" in prompt
     assert "project-specific facts" in prompt or "faits spécifiques" in prompt
+    assert "lookup_marine_taxonomy" in COPEPOD_SYSTEM_PROMPT
+    assert "not limited to ecotaxa" in prompt
+    assert "combien de x dans le projet y" in prompt
 
 
 # --- Comportement 4 : prompt mentionne les sources autorisées ---
