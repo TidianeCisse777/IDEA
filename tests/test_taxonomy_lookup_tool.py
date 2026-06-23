@@ -102,7 +102,8 @@ def test_lookup_marine_taxonomy_uses_wikipedia_fallback_when_rag_is_empty():
     result = tool.invoke({"term": "copepode gelatineux"})
 
     assert "Les copepodes sont de petits crustaces." in result
-    assert "Wikipedia fallback" in result
+    assert "https://fr.wikipedia.org/wiki/Copepode" in result
+    assert "Wikipedia fallback" not in result
     assert "WoRMS n'a pas resolu" in result
     assert any("fr.wikipedia.org/w/api.php" in url for url, _params in calls)
 
@@ -146,7 +147,8 @@ def test_lookup_marine_taxonomy_searches_wikipedia_when_exact_page_is_missing():
     result = tool.invoke({"term": "copepode gelatineux"})
 
     assert "Les copepodes forment une sous-classe de crustaces." in result
-    assert "Wikipedia fallback" in result
+    assert "https://fr.wikipedia.org/wiki/Copepode" in result
+    assert "Wikipedia fallback" not in result
 
 
 def test_lookup_marine_taxonomy_ignores_weak_rag_match_before_wikipedia_fallback():
@@ -185,7 +187,8 @@ def test_lookup_marine_taxonomy_ignores_weak_rag_match_before_wikipedia_fallback
     result = tool.invoke({"term": "copepode gelatineux"})
 
     assert "Les copepodes sont un groupe de petits crustaces." in result
-    assert "Wikipedia fallback" in result
+    assert "https://fr.wikipedia.org/wiki/Copepode" in result
+    assert "Wikipedia fallback" not in result
     assert "sequence ontogenique" not in result
 
 

@@ -21,6 +21,7 @@ RagQuery = Callable[..., list[dict]]
 
 WORMS_BASE = "https://www.marinespecies.org/rest"
 WIKIPEDIA_API = "https://fr.wikipedia.org/w/api.php"
+WIKIPEDIA_ARTICLE_BASE = "https://fr.wikipedia.org/wiki"
 MAX_RAG_DEFINITION_DISTANCE = 0.35
 HTTP_USER_AGENT = "IDEA-Copepod-Agent/1.0 (taxonomy lookup; contact: local)"
 
@@ -104,18 +105,23 @@ def _definition_from_rag(term: str, rag_query: RagQuery) -> tuple[str | None, st
 def _definition_from_wikipedia(term: str, http_get: HttpGet) -> tuple[str | None, str | None]:
     variants = _wikipedia_term_variants(term)
     for variant in variants:
-        extract = _wikipedia_extract_for_title(variant, http_get)
+        extract, resolved_title = _wikipedia_extract_for_title(variant, http_get)
         if extract:
-            return extract, "Wikipedia fallback"
+            return extract, _wikipedia_article_url(resolved_title or variant)
 
     for variant in variants:
         title = _wikipedia_search_title(variant, http_get)
         if not title:
             continue
-        extract = _wikipedia_extract_for_title(title, http_get)
+        extract, resolved_title = _wikipedia_extract_for_title(title, http_get)
         if extract:
-            return extract, "Wikipedia fallback"
+            return extract, _wikipedia_article_url(resolved_title or title)
     return None, None
+
+
+def _wikipedia_article_url(title: str) -> str:
+    encoded = quote(title.strip().replace(" ", "_"), safe="_")
+    return f"{WIKIPEDIA_ARTICLE_BASE}/{encoded}"
 
 
 def _wikipedia_term_variants(term: str) -> list[str]:
@@ -141,7 +147,7 @@ def _restore_common_french_taxon_accents(value: str) -> str:
     )
 
 
-def _wikipedia_extract_for_title(title: str, http_get: HttpGet) -> str | None:
+def _wikipedia_extract_for_title(title: str, http_get: HttpGet) -> tuple[str | None, str | None]:
     try:
         response = _wikipedia_get(
             http_get,
@@ -160,7 +166,7 @@ def _wikipedia_extract_for_title(title: str, http_get: HttpGet) -> str | None:
         response.raise_for_status()
         payload = response.json() if getattr(response, "content", b"") else {}
     except Exception:
-        return None
+        return None, None
 
     pages = payload.get("query", {}).get("pages", {})
     for page_id, page in pages.items():
@@ -168,8 +174,9 @@ def _wikipedia_extract_for_title(title: str, http_get: HttpGet) -> str | None:
             continue
         extract = str(page.get("extract") or "").strip()
         if extract:
-            return extract
-    return None
+            resolved_title = str(page.get("title") or "").strip() or title
+            return extract, resolved_title
+    return None, None
 
 
 def _wikipedia_search_title(term: str, http_get: HttpGet) -> str | None:
