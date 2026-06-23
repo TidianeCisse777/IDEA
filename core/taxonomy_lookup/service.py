@@ -22,6 +22,7 @@ RagQuery = Callable[..., list[dict]]
 WORMS_BASE = "https://www.marinespecies.org/rest"
 WIKIPEDIA_API = "https://fr.wikipedia.org/w/api.php"
 MAX_RAG_DEFINITION_DISTANCE = 0.35
+HTTP_USER_AGENT = "IDEA-Copepod-Agent/1.0 (taxonomy lookup; contact: local)"
 
 
 def lookup_marine_taxonomy_markdown(
@@ -101,22 +102,49 @@ def _definition_from_rag(term: str, rag_query: RagQuery) -> tuple[str | None, st
 
 
 def _definition_from_wikipedia(term: str, http_get: HttpGet) -> tuple[str | None, str | None]:
-    extract = _wikipedia_extract_for_title(term, http_get)
-    if extract:
-        return extract, "Wikipedia fallback"
+    variants = _wikipedia_term_variants(term)
+    for variant in variants:
+        extract = _wikipedia_extract_for_title(variant, http_get)
+        if extract:
+            return extract, "Wikipedia fallback"
 
-    title = _wikipedia_search_title(term, http_get)
-    if not title:
-        return None, None
-    extract = _wikipedia_extract_for_title(title, http_get)
-    if extract:
-        return extract, "Wikipedia fallback"
+    for variant in variants:
+        title = _wikipedia_search_title(variant, http_get)
+        if not title:
+            continue
+        extract = _wikipedia_extract_for_title(title, http_get)
+        if extract:
+            return extract, "Wikipedia fallback"
     return None, None
+
+
+def _wikipedia_term_variants(term: str) -> list[str]:
+    normalized = " ".join(term.strip().split())
+    accented = _restore_common_french_taxon_accents(normalized)
+    first_word = normalized.split()[0] if normalized.split() else normalized
+    first_word_accented = _restore_common_french_taxon_accents(first_word)
+    variants = [normalized, accented, first_word, first_word_accented]
+    deduped: list[str] = []
+    for variant in variants:
+        if variant and variant not in deduped:
+            deduped.append(variant)
+    return deduped
+
+
+def _restore_common_french_taxon_accents(value: str) -> str:
+    return (
+        value
+        .replace("copepodes", "copépodes")
+        .replace("copepode", "copépode")
+        .replace("Copepodes", "Copépodes")
+        .replace("Copepode", "Copépode")
+    )
 
 
 def _wikipedia_extract_for_title(title: str, http_get: HttpGet) -> str | None:
     try:
-        response = http_get(
+        response = _wikipedia_get(
+            http_get,
             WIKIPEDIA_API,
             params={
                 "action": "query",
@@ -146,7 +174,8 @@ def _wikipedia_extract_for_title(title: str, http_get: HttpGet) -> str | None:
 
 def _wikipedia_search_title(term: str, http_get: HttpGet) -> str | None:
     try:
-        response = http_get(
+        response = _wikipedia_get(
+            http_get,
             WIKIPEDIA_API,
             params={
                 "action": "query",
@@ -167,6 +196,15 @@ def _wikipedia_search_title(term: str, http_get: HttpGet) -> str | None:
         return None
     title = str(matches[0].get("title") or "").strip()
     return title or None
+
+
+def _wikipedia_get(http_get: HttpGet, url: str, **kwargs):
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.setdefault("User-Agent", HTTP_USER_AGENT)
+    try:
+        return http_get(url, headers=headers, **kwargs)
+    except TypeError:
+        return http_get(url, **kwargs)
 
 
 def _lookup_worms(term: str, include_children: bool, http_get: HttpGet) -> dict:

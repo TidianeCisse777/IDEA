@@ -187,3 +187,37 @@ def test_lookup_marine_taxonomy_ignores_weak_rag_match_before_wikipedia_fallback
     assert "Les copepodes sont un groupe de petits crustaces." in result
     assert "Wikipedia fallback" in result
     assert "sequence ontogenique" not in result
+
+
+def test_lookup_marine_taxonomy_prefers_taxon_head_before_full_text_wikipedia_search():
+    def fake_get(url, params=None, timeout=10):
+        params = params or {}
+        if "AphiaRecordsByName" in url:
+            return _response([])
+        if "fr.wikipedia.org/w/api.php" in url and params.get("titles") in {
+            "copepode gelatineux",
+            "copépode gelatineux",
+            "copepode",
+        }:
+            return _response({"query": {"pages": {"-1": {"missing": ""}}}})
+        if "fr.wikipedia.org/w/api.php" in url and params.get("titles") == "copépode":
+            return _response(
+                {
+                    "query": {
+                        "pages": {
+                            "1025054": {
+                                "extract": "Les copepodes sont des crustaces du taxon Copepoda.",
+                            }
+                        }
+                    }
+                }
+            )
+        if "fr.wikipedia.org/w/api.php" in url and params.get("list") == "search":
+            return _response({"query": {"search": [{"title": "Meduse"}]}})
+        raise AssertionError(f"unexpected request: {url} {params}")
+
+    tool = make_taxonomy_tool(rag_query=lambda *_args, **_kwargs: [], http_get=fake_get)
+    result = tool.invoke({"term": "copepode gelatineux"})
+
+    assert "taxon Copepoda" in result
+    assert "Meduse" not in result
