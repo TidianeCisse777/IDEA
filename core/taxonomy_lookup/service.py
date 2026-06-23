@@ -97,6 +97,20 @@ def _definition_from_rag(term: str, rag_query: RagQuery) -> tuple[str | None, st
 
 
 def _definition_from_wikipedia(term: str, http_get: HttpGet) -> tuple[str | None, str | None]:
+    extract = _wikipedia_extract_for_title(term, http_get)
+    if extract:
+        return extract, "Wikipedia fallback"
+
+    title = _wikipedia_search_title(term, http_get)
+    if not title:
+        return None, None
+    extract = _wikipedia_extract_for_title(title, http_get)
+    if extract:
+        return extract, "Wikipedia fallback"
+    return None, None
+
+
+def _wikipedia_extract_for_title(title: str, http_get: HttpGet) -> str | None:
     try:
         response = http_get(
             WIKIPEDIA_API,
@@ -107,14 +121,14 @@ def _definition_from_wikipedia(term: str, http_get: HttpGet) -> tuple[str | None
                 "exintro": 1,
                 "explaintext": 1,
                 "redirects": 1,
-                "titles": term,
+                "titles": title,
             },
             timeout=10,
         )
         response.raise_for_status()
         payload = response.json() if getattr(response, "content", b"") else {}
-    except Exception as exc:
-        return None, f"Wikipedia fallback indisponible: {exc}"
+    except Exception:
+        return None
 
     pages = payload.get("query", {}).get("pages", {})
     for page_id, page in pages.items():
@@ -122,8 +136,33 @@ def _definition_from_wikipedia(term: str, http_get: HttpGet) -> tuple[str | None
             continue
         extract = str(page.get("extract") or "").strip()
         if extract:
-            return extract, "Wikipedia fallback"
-    return None, None
+            return extract
+    return None
+
+
+def _wikipedia_search_title(term: str, http_get: HttpGet) -> str | None:
+    try:
+        response = http_get(
+            WIKIPEDIA_API,
+            params={
+                "action": "query",
+                "format": "json",
+                "list": "search",
+                "srlimit": 1,
+                "srsearch": term,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json() if getattr(response, "content", b"") else {}
+    except Exception:
+        return None
+
+    matches = payload.get("query", {}).get("search", [])
+    if not matches:
+        return None
+    title = str(matches[0].get("title") or "").strip()
+    return title or None
 
 
 def _lookup_worms(term: str, include_children: bool, http_get: HttpGet) -> dict:
