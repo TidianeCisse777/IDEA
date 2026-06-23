@@ -99,6 +99,15 @@ def _source_alias_for_loaded_file(path: str, col_names: list[str]) -> str | None
         and {"TE90", "PSAL", "OXYM", "longitude", "latitude"} & col_set
     ):
         return "ogsl"
+    is_ecopart_uvp = "Sampled volume [L]" in col_set and any("LPM (" in c for c in col_set)
+    if is_ecopart_uvp:
+        return "ecopart"
+    is_ecotaxa_uvp = (
+        ("fre_major" in col_set or "object_major" in col_set)
+        and "sample_id" in col_set
+    )
+    if is_ecotaxa_uvp:
+        return "ecotaxa"
     return None
 
 

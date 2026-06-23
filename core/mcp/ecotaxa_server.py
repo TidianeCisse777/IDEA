@@ -36,7 +36,11 @@ from core.ecotaxa_browser.errors import EcoTaxaBrowserError
 from core.ecotaxa_browser.deployment_summary import summarize_sample_deployment
 from core.ecotaxa_browser.observations import find_observations
 from core.ecotaxa_browser.preview import preview_project
-from core.ecotaxa_browser.region import projects_in_region, samples_in_region
+from core.ecotaxa_browser.region import (
+    group_project_samples_by_region,
+    projects_in_region,
+    samples_in_region,
+)
 from core.ecotaxa_browser.project_summary import summarize_projects
 from core.ecotaxa_browser.sample_summary import summarize_samples
 from core.ecotaxa_browser.schema import get_project_schema
@@ -481,6 +485,23 @@ def create_mcp() -> FastMCP:
                 bbox=bbox, date_range=date_range,
                 polygon_wkt=polygon_wkt, zone_name=zone_name,
                 project_ids=project_ids,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="group_project_samples_by_region")
+    async def group_project_samples_by_region_tool(project_id: int) -> dict:
+        """Group one project's cached samples by NeoLab/IHO region.
+
+        Returns ``groups`` as ``region_name -> [sample_id, ...]`` plus a
+        compact ``markdown_summary`` for LLM display. Includes explicit
+        ``Hors zones IHO`` and ``Sans coordonnées`` buckets. Reads the local
+        cache only.
+        """
+        try:
+            return await _run_sync(
+                group_project_samples_by_region,
+                project_id=project_id,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}

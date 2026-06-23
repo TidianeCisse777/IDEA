@@ -91,6 +91,47 @@ def test_load_file_exposes_ogsl_alias_for_derived_ogsl_csv(tmp_path):
     assert "TE90" in result
 
 
+def test_load_file_exposes_ecotaxa_alias_for_uvp_export(tmp_path):
+    ecotaxa_path = tmp_path / "ecotaxa_uvp_sample.tsv"
+    pd.DataFrame({
+        "object_id": ["obj_1", "obj_2"],
+        "sample_id": ["ips_007", "ips_007"],
+        "object_depth_min": [3.0, 12.0],
+        "object_major": [12.5, 8.3],
+        "object_annotation_category": ["Calanus", "Oithona"],
+    }).to_csv(ecotaxa_path, sep="\t", index=False)
+
+    thread_id = "thread-ecotaxa-file"
+    load_file_tool = next(t for t in make_tools(thread_id) if t.name == "load_file")
+    load_file_tool.invoke({"path": str(ecotaxa_path)})
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "result = list(df_ecotaxa.columns)"})
+
+    assert "sample_id" in result
+    assert "object_depth_min" in result
+
+
+def test_load_file_exposes_ecopart_alias_for_uvp_export(tmp_path):
+    ecopart_path = tmp_path / "ecopart_uvp_sample.tsv"
+    pd.DataFrame({
+        "Profile": ["ips_007", "ips_007"],
+        "Depth [m]": [2.5, 7.5],
+        "Sampled volume [L]": [100.0, 110.0],
+        "LPM (1-2 µm) [# l-1]": [1.0, 1.5],
+    }).to_csv(ecopart_path, sep="\t", index=False)
+
+    thread_id = "thread-ecopart-file"
+    load_file_tool = next(t for t in make_tools(thread_id) if t.name == "load_file")
+    load_file_tool.invoke({"path": str(ecopart_path)})
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "result = list(df_ecopart.columns)"})
+
+    assert "Profile" in result
+    assert "Sampled volume [L]" in result
+
+
 # --- Comportement 2 : run_pandas ---
 
 def test_run_pandas_scalar(tsv_path):

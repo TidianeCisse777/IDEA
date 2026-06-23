@@ -31,6 +31,8 @@ _SAMPLE_CAP = 500
 _BBOX_KEYS = {"south", "west", "north", "east"}
 _DATE_KEYS = {"from", "to"}
 _SAMPLE_PROJECT_FACTOR = 1_000_000
+_OUTSIDE_IHO_REGION = "Hors zones IHO"
+_MISSING_COORDINATES_REGION = "Sans coordonnées"
 
 
 def _cache_db_path() -> str:
@@ -333,6 +335,96 @@ def projects_in_region(
         "partial": sync_in_progress,
         "sync_in_progress": sync_in_progress,
     }
+
+
+def group_project_samples_by_region(project_id: int) -> dict:
+    """Group one EcoTaxa project's cached samples by NeoLab/IHO zone.
+
+    Reads only the local cache. All registry zones are present in ``groups``
+    for a stable public shape, followed by two explicit buckets:
+    ``Hors zones IHO`` and ``Sans coordonnées``.
+    """
+    from core.geo import load_registry
+
+    pid = int(project_id)
+    registry_path = os.getenv(
+        "ZONES_REGISTRY", "data/geo/zones_registry.geojson",
+    )
+    registry = load_registry(registry_path)
+    groups: dict[str, list[int]] = {
+        zone.canonical: [] for zone in registry.zones
+    }
+    groups[_OUTSIDE_IHO_REGION] = []
+    groups[_MISSING_COORDINATES_REGION] = []
+
+    conn = _open_cache()
+    try:
+        _ensure_cache_ready(conn)
+        sync_in_progress = _sync_in_progress(conn)
+        rows = list(query_samples_filtered(conn, project_ids=[pid]))
+    finally:
+        conn.close()
+
+    for row in sorted(rows, key=lambda sample: int(sample["sample_id"])):
+        sample_id = int(row["sample_id"])
+        lat = row["lat_avg"]
+        lon = row["lon_avg"]
+        if lat is None or lon is None:
+            groups[_MISSING_COORDINATES_REGION].append(sample_id)
+            continue
+
+        point = Point(lon, lat)
+        region_name = _OUTSIDE_IHO_REGION
+        for zone in registry.zones:
+            if zone.polygon.contains(point):
+                region_name = zone.canonical
+                break
+        groups[region_name].append(sample_id)
+
+    return {
+        "project_id": pid,
+        "groups": groups,
+        "total_samples": len(rows),
+        "total_regions": len(registry.zones),
+        "partial": sync_in_progress,
+        "sync_in_progress": sync_in_progress,
+        "markdown_summary": _build_project_region_markdown(
+            project_id=pid,
+            groups=groups,
+            total_samples=len(rows),
+            partial=sync_in_progress,
+        ),
+    }
+
+
+def _build_project_region_markdown(
+    *,
+    project_id: int,
+    groups: dict[str, list[int]],
+    total_samples: int,
+    partial: bool,
+) -> str:
+    title = f"# Projet EcoTaxa {project_id} — samples par région"
+    if partial:
+        title += " — résultat partiel"
+    lines = [
+        title,
+        f"Total samples : {total_samples}",
+        "",
+        "| Région | Samples | sample_ids |",
+        "|---|---:|---|",
+    ]
+    visible_groups = [(name, ids) for name, ids in groups.items() if ids]
+    if not visible_groups:
+        lines.append("| Aucune région | 0 | — |")
+        return "\n".join(lines)
+
+    for name, sample_ids in visible_groups:
+        shown = ", ".join(str(sample_id) for sample_id in sample_ids[:20])
+        if len(sample_ids) > 20:
+            shown += f", ... (+{len(sample_ids) - 20})"
+        lines.append(f"| {name} | {len(sample_ids)} | {shown} |")
+    return "\n".join(lines)
 
 
 def _row_to_sample(row: sqlite3.Row) -> dict:

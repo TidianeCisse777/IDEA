@@ -29,6 +29,7 @@ CAPABILITY_TO_TOOLS: dict[str, list[str]] = {
     ],
     "Explorer Les Samples Par Zone, Date Ou Instrument": [
         "find_ecotaxa_samples_in_region",
+        "group_ecotaxa_project_samples_by_region",
     ],
     "Explorer Un Taxon": [
         "count_ecotaxa_taxa",
@@ -147,6 +148,7 @@ TOOL_TO_MCP_TOOL: dict[str, str] = {
     "compare_ecotaxa_projects": "compare_project_schemas",
     "find_ecotaxa_samples_in_region": "samples_in_region",
     "find_ecotaxa_projects_in_region": "projects_in_region",
+    "group_ecotaxa_project_samples_by_region": "group_project_samples_by_region",
     "find_ecotaxa_observations": "find_observations",
     "get_ecotaxa_sample": "get_sample",
     "summarize_ecotaxa_sample_deployment": "summarize_sample_deployment",

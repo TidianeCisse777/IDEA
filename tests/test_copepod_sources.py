@@ -578,6 +578,7 @@ def test_ecotaxa_navigation_tools_require_skill_load_in_description():
         "compare_ecotaxa_projects",
         "find_ecotaxa_samples_in_region",
         "find_ecotaxa_projects_in_region",
+        "group_ecotaxa_project_samples_by_region",
         "find_ecotaxa_observations",
         "get_ecotaxa_sample",
         "summarize_ecotaxa_sample_deployment",

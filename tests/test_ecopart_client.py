@@ -377,3 +377,66 @@ def test_download_tsv_raises_when_no_links():
     client = EcopartClient()
     with pytest.raises(RuntimeError, match="No download links"):
         client.download_tsv([])
+
+
+def test_parse_ecopart_task_error_classifies_empty_sample_set():
+    from core.ecopart_client import _parse_ecopart_task_error
+
+    page = (
+        "Task ID 60808 Class TaskPartExport State Error Step 1 Progress -1% "
+        "Message Unhandled SubProcess Exception : (<class 'psycopg2.errors.SyntaxError'>, "
+        "SyntaxError('ERREUR: erreur de syntaxe sur ou près de « ) » LINE 9: "
+        "where s.psampleid in ()'),"
+    )
+    kind, message, task_id = _parse_ecopart_task_error(page)
+
+    assert kind == "empty_sample_set"
+    assert task_id == 60808
+    assert "aucun sample exportable" in message
+    assert "VN" in message
+
+
+def test_parse_ecopart_task_error_classifies_db_error_without_empty_set_signature():
+    from core.ecopart_client import _parse_ecopart_task_error
+
+    page = "Task ID 4242 State Error psycopg2 internal failure during export"
+    kind, message, task_id = _parse_ecopart_task_error(page)
+
+    assert kind == "db_error"
+    assert task_id == 4242
+    assert "erreur interne" in message
+
+
+def test_wait_for_export_raises_ecopart_export_error_with_kind():
+    from unittest.mock import MagicMock
+
+    from core.ecopart_client import EcopartClient, EcopartExportError
+
+    error_html = """
+    <html><body>
+      Task ID 60808 State Error
+      Message Unhandled SubProcess Exception psycopg2.errors.SyntaxError
+      where s.psampleid in ()
+    </body></html>
+    """
+    mock_resp = MagicMock()
+    mock_resp.ok = True
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.text = error_html
+
+    import core.ecopart_client as ecopart_mod
+    orig_interval = ecopart_mod._EXPORT_POLL_INTERVAL
+    ecopart_mod._EXPORT_POLL_INTERVAL = 0
+    try:
+        client = EcopartClient()
+        client._session.get = MagicMock(return_value=mock_resp)
+
+        import pytest
+        with pytest.raises(EcopartExportError) as exc_info:
+            client._wait_for_export("/Task/Show/60808")
+
+        assert exc_info.value.kind == "empty_sample_set"
+        assert exc_info.value.task_id == 60808
+        assert "VN" in exc_info.value.message
+    finally:
+        ecopart_mod._EXPORT_POLL_INTERVAL = orig_interval

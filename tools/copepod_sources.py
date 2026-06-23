@@ -12,6 +12,7 @@ from core.ecotaxa_browser.compare_schemas import compare_project_schemas
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
 from core.ecotaxa_browser.observations import find_observations
 from core.ecotaxa_browser.region import (
+    group_project_samples_by_region,
     projects_in_region,
     resolve_sample_projects,
     samples_in_region,
@@ -862,6 +863,33 @@ def make_source_tools(thread_id: str) -> list:
         return "\n".join(lines)
 
     @tool
+    def group_ecotaxa_project_samples_by_region(project_id: int) -> str:
+        """Groupe tous les samples cache d'un projet EcoTaxa par zone IHO/NeoLab.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
+        Utiliser quand l'utilisateur demande une vue « par mer », « par
+        secteur », « par zone », ou « groupe les samples du projet X par
+        région ». Le tool lit uniquement le cache local, teste chaque sample
+        contre le registry NeoLab/IHO, et rend un récap compact :
+        region -> sample_ids, avec buckets explicites `Hors zones IHO` et
+        `Sans coordonnées`.
+        """
+        try:
+            result = group_project_samples_by_region(project_id)
+        except EcoTaxaBrowserError as exc:
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}"
+        except Exception as exc:
+            return f"Erreur lors du regroupement EcoTaxa : {exc}"
+
+        summary = result.get("markdown_summary", "")
+        if result.get("partial"):
+            summary += _ecotaxa_partial_notice(result)
+        return summary
+
+    @tool
     def find_ecotaxa_observations(
         taxon: str,
         bbox: dict | None = None,
@@ -1337,6 +1365,7 @@ def make_source_tools(thread_id: str) -> list:
         find_ecotaxa_projects,
         find_ecotaxa_samples_in_region,
         find_ecotaxa_projects_in_region,
+        group_ecotaxa_project_samples_by_region,
         find_ecotaxa_observations,
         get_ecotaxa_sample,
         summarize_ecotaxa_sample_deployment,

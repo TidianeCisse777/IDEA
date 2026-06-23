@@ -186,24 +186,193 @@ def test_make_ecopart_tools_includes_join_tool():
     tool_names = {t.name for t in tools}
 
     assert "join_ecotaxa_ecopart" in tool_names
+    assert "enrich_ecotaxa_with_ecopart_remote" in tool_names
 
 
-def test_join_ecotaxa_ecopart_produces_merged_dataframe():
+def test_enrich_remote_errors_without_ecotaxa_in_session():
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+
+    tool = next(
+        t for t in make_ecopart_tools("thread-remote-no-et")
+        if t.name == "enrich_ecotaxa_with_ecopart_remote"
+    )
+    result = tool.invoke({"ecotaxa_project_id": 1165})
+    assert "Données EcoTaxa manquantes" in result
+
+
+def test_enrich_remote_errors_when_no_project_id_resolvable():
     import pandas as pd
     from tools.ecopart_sources import make_ecopart_tools
     from tools.session_store import default_store as _store
 
     _store._store.clear()
 
+    _store.set(
+        "thread-remote-no-pid:ecotaxa",
+        pd.DataFrame({"obj_orig_id": ["ips_007_1"], "object_depth_min": [3.0]}),
+        {"source": "file:foo.tsv"},  # no project_id in meta
+    )
+
+    tool = next(
+        t for t in make_ecopart_tools("thread-remote-no-pid")
+        if t.name == "enrich_ecotaxa_with_ecopart_remote"
+    )
+    result = tool.invoke({})
+    assert "Projet EcoTaxa inconnu" in result
+
+
+def test_enrich_remote_uses_session_project_id_when_query_ecotaxa_was_run():
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+
+    _store.set(
+        "thread-remote-meta:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["ips_007_1"],
+            "object_depth_min": [3.0],
+        }),
+        {"source": "ecotaxa:1165", "project_id": 1165},
+    )
+
+    mock_client = MagicMock()
+    mock_client.start_export.return_value = ["/Task/Show/42"]
+    mock_client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["ips_007"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [100.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        tool = next(
+            t for t in make_ecopart_tools("thread-remote-meta")
+            if t.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({})
+
+    mock_client.start_export.assert_called_once_with(
+        project_id=None, ecotaxa_project_id=1165
+    )
+    assert "Enrichissement terminé" in result
+    merged = _store.get("thread-remote-meta")["df"]
+    assert merged.loc[0, "ecopart_Sampled volume [L]"] == 100.0
+
+
+def test_enrich_remote_surfaces_clean_message_on_server_export_error():
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from core.ecopart_client import EcopartExportError
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+
+    _store.set(
+        "thread-remote-err:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["ips_007_1"],
+            "object_depth_min": [3.0],
+        }),
+        {"source": "ecotaxa:1165", "project_id": 1165},
+    )
+
+    mock_client = MagicMock()
+    mock_client.start_export.side_effect = EcopartExportError(
+        kind="empty_sample_set",
+        message=(
+            "Le serveur EcoPart a refusé l'export : aucun sample exportable pour ce projet "
+            "(typiquement un projet récent dont les particules ne sont pas encore validées, "
+            "statut « VN »)."
+        ),
+        task_id=60808,
+    )
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        tool = next(
+            t for t in make_ecopart_tools("thread-remote-err")
+            if t.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({})
+
+    assert "Export EcoPart échoué" in result
+    assert "60808" in result
+    assert "VN" in result
+    # No giant HTML dump expected
+    assert "psycopg2" not in result
+    assert len(result) < 800
+
+
+def test_enrich_remote_accepts_explicit_ecopart_project_id():
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+
+    _store.set(
+        "thread-remote-ep:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["ips_007_1"],
+            "object_depth_min": [3.0],
+        }),
+        {"source": "file:foo.tsv"},
+    )
+
+    mock_client = MagicMock()
+    mock_client.start_export.return_value = ["/Task/Show/99"]
+    mock_client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["ips_007"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [222.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        tool = next(
+            t for t in make_ecopart_tools("thread-remote-ep")
+            if t.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({"ecopart_project_id": 105})
+
+    mock_client.start_export.assert_called_once_with(
+        project_id=105, ecotaxa_project_id=None
+    )
+    assert "EcoPart téléchargé" in result
+    merged = _store.get("thread-remote-ep")["df"]
+    assert merged.loc[0, "ecopart_Sampled volume [L]"] == 222.0
+
+
+def test_join_ecotaxa_ecopart_produces_merged_dataframe():
+    import math
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+
+    # Objects at depths 3 m, 7 m, 12 m → expected bins 2.5, 7.5, 12.5.
     df_ecotaxa = pd.DataFrame({
         "obj_orig_id": ["ips_007_1", "ips_007_2", "ips_008_1"],
+        "object_depth_min": [3.0, 7.0, 12.0],
         "object_major": [12.5, 8.3, 5.0],
         "taxon": ["Calanus", "Calanus", "Oithona"],
     })
+    # Two bins per profile; only the matching bins should be picked up.
     df_ecopart = pd.DataFrame({
-        "Profile": ["ips_007", "ips_008"],
-        "Depth [m]": [10.0, 25.0],
-        "temperature": [-1.1, -0.8],
+        "Profile": ["ips_007", "ips_007", "ips_008", "ips_008"],
+        "Depth [m]": [2.5, 7.5, 7.5, 12.5],
+        "Sampled volume [L]": [100.0, 110.0, 90.0, 95.0],
+        "temperature": [-1.1, -1.2, -0.8, -0.9],
     })
     _store.set("thread-join:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
     _store.set("thread-join:ecopart", df_ecopart, {"source": "ecopart:105"})
@@ -216,8 +385,78 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     merged = _store.get("thread-join")["df"]
     assert "obj_orig_id" in merged.columns
     assert "ecopart_temperature" in merged.columns
+    assert "ecopart_Sampled volume [L]" in merged.columns
+    assert "_join_sample_id" not in merged.columns
+    assert "_join_depth_bin" not in merged.columns
     assert len(merged) == 3
+
+    by_obj = merged.set_index("obj_orig_id")
+    assert by_obj.loc["ips_007_1", "ecopart_Sampled volume [L]"] == 100.0
+    assert by_obj.loc["ips_007_2", "ecopart_Sampled volume [L]"] == 110.0
+    assert by_obj.loc["ips_008_1", "ecopart_Sampled volume [L]"] == 95.0
+    assert by_obj.loc["ips_007_1", "ecopart_temperature"] == -1.1
+    assert by_obj.loc["ips_007_2", "ecopart_temperature"] == -1.2
     assert "3 lignes" in result
+    assert "3 matchées" in result
+
+
+def test_join_ecotaxa_ecopart_leaves_unmatched_bin_as_nan():
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+
+    # Object at depth 100 m → bin 102.5, not present in EcoPart.
+    df_ecotaxa = pd.DataFrame({
+        "obj_orig_id": ["ips_007_1", "ips_007_2"],
+        "object_depth_min": [3.0, 100.0],
+        "taxon": ["Calanus", "Oithona"],
+    })
+    df_ecopart = pd.DataFrame({
+        "Profile": ["ips_007"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [100.0],
+    })
+    _store.set("thread-join-nan:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
+    _store.set("thread-join-nan:ecopart", df_ecopart, {"source": "ecopart:105"})
+
+    join_tool = next(
+        t for t in make_ecopart_tools("thread-join-nan") if t.name == "join_ecotaxa_ecopart"
+    )
+    join_tool.invoke({})
+
+    merged = _store.get("thread-join-nan")["df"]
+    by_obj = merged.set_index("obj_orig_id")
+    assert by_obj.loc["ips_007_1", "ecopart_Sampled volume [L]"] == 100.0
+    assert pd.isna(by_obj.loc["ips_007_2", "ecopart_Sampled volume [L]"])
+
+
+def test_join_ecotaxa_ecopart_errors_without_depth_column():
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+
+    df_ecotaxa = pd.DataFrame({
+        "obj_orig_id": ["ips_007_1"],
+        "taxon": ["Calanus"],
+    })
+    df_ecopart = pd.DataFrame({
+        "Profile": ["ips_007"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [100.0],
+    })
+    _store.set("thread-join-nodepth:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
+    _store.set("thread-join-nodepth:ecopart", df_ecopart, {"source": "ecopart:105"})
+
+    join_tool = next(
+        t for t in make_ecopart_tools("thread-join-nodepth") if t.name == "join_ecotaxa_ecopart"
+    )
+    result = join_tool.invoke({})
+
+    assert "Colonne de profondeur introuvable" in result
 
 
 def test_join_ecotaxa_ecopart_preserves_named_join_after_later_dataset_load():
@@ -240,10 +479,12 @@ def test_join_ecotaxa_ecopart_preserves_named_join_after_later_dataset_load():
 
     df_ecotaxa = pd.DataFrame({
         "obj_orig_id": ["ips_007_1", "ips_008_1"],
+        "object_depth_min": [3.0, 3.0],
         "object_annotation_category": ["Copepoda", "Copepoda"],
     })
     df_ecopart = pd.DataFrame({
         "Profile": ["ips_007", "ips_008"],
+        "Depth [m]": [2.5, 2.5],
         "Sampled volume [L]": [218.835, 160.671],
     })
     _store.set(f"{thread_id}:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
@@ -295,9 +536,20 @@ def test_join_ecotaxa_ecopart_selects_explicit_project():
     from tools.session_store import default_store as _store
 
     thread_id = "thread-join-explicit"
-    df_ecotaxa = pd.DataFrame({"obj_orig_id": ["ips_007_1"]})
-    df_105 = pd.DataFrame({"Profile": ["ips_007"], "project_value": [105]})
-    df_42 = pd.DataFrame({"Profile": ["ips_007"], "project_value": [42]})
+    df_ecotaxa = pd.DataFrame({
+        "obj_orig_id": ["ips_007_1"],
+        "object_depth_min": [3.0],
+    })
+    df_105 = pd.DataFrame({
+        "Profile": ["ips_007"],
+        "Depth [m]": [2.5],
+        "project_value": [105],
+    })
+    df_42 = pd.DataFrame({
+        "Profile": ["ips_007"],
+        "Depth [m]": [2.5],
+        "project_value": [42],
+    })
     _store.set(f"{thread_id}:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
     store_dataset(
         _store,
@@ -336,13 +588,20 @@ def test_join_ecotaxa_ecopart_defaults_to_latest_project():
     thread_id = "thread-join-latest"
     _store.set(
         f"{thread_id}:ecotaxa",
-        pd.DataFrame({"obj_orig_id": ["ips_007_1"]}),
+        pd.DataFrame({
+            "obj_orig_id": ["ips_007_1"],
+            "object_depth_min": [3.0],
+        }),
         {"source": "ecotaxa:1165"},
     )
     store_dataset(
         _store,
         thread_id,
-        pd.DataFrame({"Profile": ["ips_007"], "project_value": [42]}),
+        pd.DataFrame({
+            "Profile": ["ips_007"],
+            "Depth [m]": [2.5],
+            "project_value": [42],
+        }),
         variable_name="df_ecopart_42",
         meta={"source": "ecopart:42", "project_id": 42},
         latest_alias="ecopart",

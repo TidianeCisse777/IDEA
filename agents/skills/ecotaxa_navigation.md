@@ -91,6 +91,10 @@ General ambiguity rules:
   zone: `get_zone_info(zone_name=...)` then the matching EcoTaxa browser
   tool with the same date/instrument filters. Do not concatenate zones
   into a single `zone_name`.
+- When the user asks to group one project's samples "par mer", "par
+  secteur", "par zone", or "par région", call
+  `group_ecotaxa_project_samples_by_region(project_id=...)`. This is a
+  project-level grouping tool, not an export.
 - Preserve EcoTaxa project/sample source links when the UI/tool output
   has them or when the user explicitly asks for links.
 
@@ -468,6 +472,7 @@ tools so you can branch without thinking.
 | Tool | When |
 |---|---|
 | `find_ecotaxa_samples_in_region(zone_name=..., date_range=..., project_ids=...)` | **Step 1 of the pipeline.** Default for "samples en zone X entre A et B", possibly narrowed by project. |
+| `group_ecotaxa_project_samples_by_region(project_id=...)` | "groupe les samples du projet X par mer / secteur / zone / région" — returns `region -> sample_ids` plus `Hors zones IHO` and `Sans coordonnées`. |
 | `find_ecotaxa_observations(taxon=..., zone_name=..., date_range=..., project_ids=...)` | "samples **avec Calanus** en Baie de Baffin" — taxon-centric. Returns samples whose project has the taxon attested. PREFER this over `find_ecotaxa_samples_in_region` whenever the user names a taxon — drop in for step 1. |
 
 ### Inspect a project before export
@@ -527,6 +532,7 @@ User wants to export…
 | "qu'y a-t-il dans le projet 1165 ?" | `preview_ecotaxa_project(1165)` (light) — full nav only if user asks "explore tous les samples" |
 | "samples LOKI dans Baie de Baffin" | `find_ecotaxa_samples_in_region(zone_name=..., instrument="Loki")` |
 | "samples du projet LOKI dans Baie de Baffin" | `find_ecotaxa_projects(title="LOKI")` → `find_ecotaxa_samples_in_region(zone_name=..., project_ids=[<id>])` |
+| "groupe les samples du projet 14853 par mer" | `group_ecotaxa_project_samples_by_region(project_id=14853)` |
 | "scan ces 20 samples avant export" | `summarize_ecotaxa_samples(sample_ids=[...])` then user decides |
 | "parmi ceux-là, lesquels contiennent le plus de copepods ?" | Reuse the visible `sample_id` values → `summarize_ecotaxa_samples(sample_ids=[...])`; if exact per-sample Copepoda counts are required, state the read-only limitation instead of listing metadata again. |
 | "parmi les samples présents, lesquels contiennent le plus de copepods ?" | Ambiguous unless a scope was just established. Ask whether "présents" means current table, EcoTaxa cache, or a specific project/zone. |
