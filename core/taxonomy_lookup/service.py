@@ -3,7 +3,7 @@
 Source order:
 1. Local copepod RAG for definitions.
 2. WoRMS REST for authoritative taxonomy.
-3. Wikipedia fallback is added by a later slice.
+3. French Wikipedia fallback for plain-language definitions.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ HttpGet = Callable[..., Any]
 RagQuery = Callable[..., list[dict]]
 
 WORMS_BASE = "https://www.marinespecies.org/rest"
+WIKIPEDIA_API = "https://fr.wikipedia.org/w/api.php"
 
 
 def lookup_marine_taxonomy_markdown(
@@ -35,13 +36,15 @@ def lookup_marine_taxonomy_markdown(
         return "Erreur : le terme taxonomique ne peut pas etre vide."
 
     definition, definition_source = _definition_from_rag(normalized, rag_query)
+    if not definition:
+        definition, definition_source = _definition_from_wikipedia(normalized, http_get)
     worms = _lookup_worms(normalized, include_children, http_get)
 
     lines = [f"# {normalized}", ""]
     if definition:
         lines.extend(["## Definition", f"{definition}", "", f"Source definition : {definition_source}", ""])
     else:
-        lines.extend(["## Definition", "Aucune definition locale trouvee.", ""])
+        lines.extend(["## Definition", "Aucune definition trouvee dans le RAG local ni Wikipedia.", ""])
 
     if worms.get("record"):
         record = worms["record"]
@@ -91,6 +94,36 @@ def _definition_from_rag(term: str, rag_query: RagQuery) -> tuple[str | None, st
     if not content:
         return None, None
     return content, "RAG local"
+
+
+def _definition_from_wikipedia(term: str, http_get: HttpGet) -> tuple[str | None, str | None]:
+    try:
+        response = http_get(
+            WIKIPEDIA_API,
+            params={
+                "action": "query",
+                "format": "json",
+                "prop": "extracts",
+                "exintro": 1,
+                "explaintext": 1,
+                "redirects": 1,
+                "titles": term,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json() if getattr(response, "content", b"") else {}
+    except Exception as exc:
+        return None, f"Wikipedia fallback indisponible: {exc}"
+
+    pages = payload.get("query", {}).get("pages", {})
+    for page_id, page in pages.items():
+        if str(page_id) == "-1":
+            continue
+        extract = str(page.get("extract") or "").strip()
+        if extract:
+            return extract, "Wikipedia fallback"
+    return None, None
 
 
 def _lookup_worms(term: str, include_children: bool, http_get: HttpGet) -> dict:

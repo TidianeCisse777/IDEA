@@ -71,3 +71,37 @@ def test_lookup_marine_taxonomy_prefers_rag_definition_and_validates_worms():
     assert "104467" in result
     assert "accepted" in result
     assert "Copepoda" in result
+
+
+def test_lookup_marine_taxonomy_uses_wikipedia_fallback_when_rag_is_empty():
+    calls = []
+
+    def fake_get(url, params=None, timeout=10):
+        calls.append((url, params or {}))
+        if "AphiaRecordsByName" in url:
+            return _response([])
+        if "fr.wikipedia.org/w/api.php" in url:
+            return _response(
+                {
+                    "query": {
+                        "pages": {
+                            "123": {
+                                "title": "Copepode",
+                                "extract": "Les copepodes sont de petits crustaces.",
+                            }
+                        }
+                    }
+                }
+            )
+        raise AssertionError(f"unexpected URL: {url}")
+
+    tool = make_taxonomy_tool(
+        rag_query=lambda *_args, **_kwargs: [],
+        http_get=fake_get,
+    )
+    result = tool.invoke({"term": "copepode gelatineux"})
+
+    assert "Les copepodes sont de petits crustaces." in result
+    assert "Wikipedia fallback" in result
+    assert "WoRMS n'a pas resolu" in result
+    assert any("fr.wikipedia.org/w/api.php" in url for url, _params in calls)
