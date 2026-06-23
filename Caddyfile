@@ -1,0 +1,38 @@
+# Caddyfile — reverse proxy public devant Open WebUI.
+# Domaine et email pilotés par les variables d'environnement injectées
+# par docker-compose.prod.yml (PROD_DOMAIN, PROD_TLS_EMAIL).
+# Migration vers un autre DNS / domaine = changer .env, pas ce fichier.
+
+{
+    email {$PROD_TLS_EMAIL}
+    # Auto HTTPS via Let's Encrypt. Pour ACME staging pendant les tests,
+    # décommenter la ligne suivante :
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$PROD_DOMAIN} {
+    encode gzip zstd
+
+    # Headers de sécurité de base.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Frame-Options "SAMEORIGIN"
+        # Cache des assets statiques par défaut côté navigateur.
+        ?Cache-Control "no-store"
+    }
+
+    # Open WebUI a besoin de WebSockets pour le streaming SSE.
+    reverse_proxy open-webui:8080 {
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-Proto {scheme}
+        flush_interval -1
+    }
+
+    log {
+        output stdout
+        format console
+        level INFO
+    }
+}
