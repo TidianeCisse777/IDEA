@@ -21,6 +21,7 @@ RagQuery = Callable[..., list[dict]]
 
 WORMS_BASE = "https://www.marinespecies.org/rest"
 WIKIPEDIA_API = "https://fr.wikipedia.org/w/api.php"
+MAX_RAG_DEFINITION_DISTANCE = 0.35
 
 
 def lookup_marine_taxonomy_markdown(
@@ -89,6 +90,9 @@ def _definition_from_rag(term: str, rag_query: RagQuery) -> tuple[str | None, st
     except Exception as exc:
         return None, f"RAG local indisponible: {exc}"
     if not chunks:
+        return None, None
+    score = chunks[0].get("score")
+    if score is not None and float(score) > MAX_RAG_DEFINITION_DISTANCE:
         return None, None
     content = str(chunks[0].get("content") or "").strip()
     if not content:
