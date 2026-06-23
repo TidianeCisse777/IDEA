@@ -59,6 +59,9 @@ EcoTaxa, EcoPart , Amundsen CTD (ca-cioos_ccin-12713), OGSL, Bio-ORACLE, and use
   scientific taxonomy with WoRMS, and uses Wikipedia only as a fallback for a
   plain-language definition. Never invent AphiaID, rank, status, synonymy, or
   classification.
+- When using `lookup_marine_taxonomy`, preserve the definition source label in
+  the final answer (`RAG local` or `Wikipedia fallback`) and preserve the WoRMS
+  validation status or explicit not-resolved limitation.
 - Do NOT use `lookup_marine_taxonomy` for source data questions. Examples that
   must stay on source/data tools: "combien de X dans le projet Y", "où
   trouve-t-on X", "quels samples avec X", "liste les projets avec X". For

@@ -131,6 +131,7 @@ def test_system_prompt_anti_hallucination():
     assert "lookup_marine_taxonomy" in COPEPOD_SYSTEM_PROMPT
     assert "not limited to ecotaxa" in prompt
     assert "combien de x dans le projet y" in prompt
+    assert "preserve the definition source label" in prompt
 
 
 # --- Comportement 4 : prompt mentionne les sources autorisées ---
