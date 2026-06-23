@@ -63,17 +63,24 @@ class EcotaxaClient:
         jwt = resp.json()
         self._session.headers["Authorization"] = f"Bearer {jwt}"
 
-    def list_projects(self) -> list[dict[str, int | str]]:
+    def list_projects(self) -> list[dict]:
         resp = self._session.get(
             f"{_BASE_URL}/projects/search",
             params={"title_filter": "", "instrument_filter": ""},
             timeout=_TIMEOUT,
         )
         resp.raise_for_status()
-        return [
-            {"project_id": int(project["projid"]), "name": str(project["title"])}
-            for project in resp.json()
-        ]
+        projects = []
+        for project in resp.json():
+            project_id = int(project.get("projid") or project.get("project_id"))
+            title = str(project.get("title") or project.get("name") or "")
+            normalized = dict(project)
+            normalized["projid"] = project_id
+            normalized["project_id"] = project_id
+            normalized["name"] = title
+            normalized["title"] = title
+            projects.append(normalized)
+        return projects
 
     def search_projects(
         self,

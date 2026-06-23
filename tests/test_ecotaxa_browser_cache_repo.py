@@ -23,7 +23,12 @@ def test_init_schema_creates_required_tables(conn):
             "SELECT name FROM sqlite_master WHERE type='table'"
         )
     }
-    assert {"samples_cache", "project_schemas_cache", "sync_runs"}.issubset(tables)
+    assert {
+        "samples_cache",
+        "project_schemas_cache",
+        "project_signatures_cache",
+        "sync_runs",
+    }.issubset(tables)
 
 
 def test_init_schema_is_idempotent(conn):
@@ -249,6 +254,38 @@ def test_upsert_project_schema_inserts_and_updates(conn):
     ).fetchone()
     assert row["schema_json"] == '{"title": "v2"}'
     assert row["last_synced"] == "2026-06-16T03:00:00Z"
+
+
+def test_project_signature_inserts_updates_and_reads_rounded_tuple(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        get_project_signature,
+        init_schema,
+        upsert_project_signature,
+    )
+
+    init_schema(conn)
+    assert get_project_signature(conn, 42) is None
+
+    upsert_project_signature(
+        conn,
+        project_id=42,
+        objcount=100,
+        pctvalidated=12.345678,
+        pctclassified=98.765432,
+        last_synced="2026-06-15T03:00:00Z",
+    )
+    assert get_project_signature(conn, 42) == (100, 12.3457, 98.7654)
+
+    upsert_project_signature(
+        conn,
+        project_id=42,
+        objcount=101,
+        pctvalidated=12.0,
+        pctclassified=99.0,
+        last_synced="2026-06-16T03:00:00Z",
+    )
+
+    assert get_project_signature(conn, 42) == (101, 12.0, 99.0)
 
 
 def test_start_and_finish_sync_run_record_status(conn):

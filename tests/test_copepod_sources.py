@@ -299,8 +299,51 @@ def test_ecotaxa_client_list_projects_normalizes_api_response():
     )
     response.raise_for_status.assert_called_once_with()
     assert projects == [
-        {"project_id": 2331, "name": "LOKI ArcticNet"},
-        {"project_id": 1165, "name": "UVP5 Amundsen 2018"},
+        {
+            "projid": 2331,
+            "project_id": 2331,
+            "name": "LOKI ArcticNet",
+            "title": "LOKI ArcticNet",
+            "instrument": "LOKI",
+        },
+        {
+            "projid": 1165,
+            "project_id": 1165,
+            "name": "UVP5 Amundsen 2018",
+            "title": "UVP5 Amundsen 2018",
+            "instrument": "UVP5",
+        },
+    ]
+
+
+def test_ecotaxa_client_list_projects_preserves_cache_signature_fields():
+    from tools.ecotaxa_client import EcotaxaClient
+
+    response = MagicMock()
+    response.json.return_value = [
+        {
+            "projid": 1165,
+            "title": "UVP5 Amundsen 2018",
+            "objcount": 47469,
+            "pctvalidated": 81.234567,
+            "pctclassified": 99.5,
+        },
+    ]
+    client = EcotaxaClient()
+
+    with patch.object(client._session, "get", return_value=response):
+        projects = client.list_projects()
+
+    assert projects == [
+        {
+            "projid": 1165,
+            "project_id": 1165,
+            "name": "UVP5 Amundsen 2018",
+            "title": "UVP5 Amundsen 2018",
+            "objcount": 47469,
+            "pctvalidated": 81.234567,
+            "pctclassified": 99.5,
+        }
     ]
 
 

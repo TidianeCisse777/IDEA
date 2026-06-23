@@ -60,6 +60,7 @@ def get_project_schema(
     *,
     verbose: bool = False,
     include_process: bool = False,
+    client: EcotaxaClient | None = None,
 ) -> dict:
     """Return the typed schema of a project (3 or 4 levels).
 
@@ -70,8 +71,9 @@ def get_project_schema(
         include_process: When True, also expose the ``process`` level. Default
             keeps it hidden because it is rarely useful for scientific browsing.
     """
-    client = EcotaxaClient()
-    client.login()
+    if client is None:
+        client = EcotaxaClient()
+        client.login()
     raw = client.get_project(project_id)
 
     visible_levels: list[Level] = ["sample", "acquisition", "object"]

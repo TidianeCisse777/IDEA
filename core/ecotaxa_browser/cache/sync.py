@@ -4,6 +4,12 @@ Strategy: full sync (F1), per-project transaction (E3), 5 req/s throttle,
 object cap 50k per project (P2). Pulls (lat, lon, objdate, sample_id) via
 ``POST /object_set/{id}/query`` paginated, aggregates to sample-level
 averages, and replaces the project's slice of ``samples_cache`` atomically.
+
+Parallelism: HTTP fetches run in a ThreadPoolExecutor (default 8 workers);
+SQLite writes stay in the main thread to avoid cross-thread connection
+issues. Incremental sync: each project carries a signature
+(objcount, pctvalidated, pctclassified) read straight from `list_projects`;
+projects whose signature did not change since the last sync are skipped.
 """
 
 from __future__ import annotations
@@ -11,15 +17,23 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
+from http.client import RemoteDisconnected
+from collections.abc import Callable
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
+
+import requests
 
 from core.ecotaxa_browser.cache.repo import (
     finish_sync_run,
+    get_project_signature,
     replace_project_samples,
     start_sync_run,
     upsert_project_schema,
+    upsert_project_signature,
 )
 from core.ecotaxa_browser.schema import get_project_schema
 
@@ -29,26 +43,54 @@ _QUERY_FIELDS = "obj.latitude,obj.longitude,obj.objdate"
 _DEFAULT_WINDOW_SIZE = 5000
 _DEFAULT_OBJECT_CAP = 50_000
 _DEFAULT_RATE_LIMIT_RPS = 5.0
+_DEFAULT_CONCURRENCY = 8
+_DEFAULT_RETRY_ATTEMPTS = 3
+_DEFAULT_RETRY_DELAY_SECONDS = 0.25
+
+_TRANSIENT_EXCEPTIONS = (
+    requests.RequestException,
+    ConnectionError,
+    TimeoutError,
+    RemoteDisconnected,
+    OSError,
+)
 
 
-def sync_project(
-    conn: sqlite3.Connection,
+def _with_retries(
+    operation: Callable[[], Any],
+    *,
+    attempts: int = _DEFAULT_RETRY_ATTEMPTS,
+    delay_seconds: float = _DEFAULT_RETRY_DELAY_SECONDS,
+) -> Any:
+    """Retry transient EcoTaxa HTTP failures a small number of times."""
+    last_exc: BaseException | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            return operation()
+        except _TRANSIENT_EXCEPTIONS as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                raise
+            time.sleep(delay_seconds)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("unreachable retry state")
+
+
+def _fetch_project_samples(
     client: Any,
     *,
     project_id: int,
-    last_synced: str,
     window_size: int = _DEFAULT_WINDOW_SIZE,
     object_cap: int = _DEFAULT_OBJECT_CAP,
     rate_limit_rps: float = _DEFAULT_RATE_LIMIT_RPS,
-) -> int:
-    """Synchronize one project's samples into the cache.
+) -> tuple[list[dict], str | None]:
+    """HTTP-only: fetch + aggregate, no DB writes. Returns (samples, instrument).
 
-    Returns the number of samples cached. Raises on EcoTaxa failure —
-    the caller is responsible for catching and tagging the project as
-    failed in the sync_runs row. Existing rows for this project are not
-    touched until the in-memory aggregation succeeds.
+    Safe to call from a worker thread when the caller provides a thread-local
+    client/session. Raises on EcoTaxa failure.
     """
-    project_meta = client.get_project(project_id)
+    project_meta = _with_retries(lambda: client.get_project(project_id))
     instrument = project_meta.get("instrument")
 
     aggregates: dict[int, dict] = {}
@@ -60,12 +102,14 @@ def sync_project(
         remaining_cap = object_cap - objects_seen
         size = min(window_size, remaining_cap)
         before = time.monotonic()
-        payload = client.query_objects(
-            project_id=project_id,
-            filters={},
-            fields=_QUERY_FIELDS,
-            window_start=window_start,
-            window_size=size,
+        payload = _with_retries(
+            lambda: client.query_objects(
+                project_id=project_id,
+                filters={},
+                fields=_QUERY_FIELDS,
+                window_start=window_start,
+                window_size=size,
+            )
         )
         rows = payload.get("details") or []
         parallel_sample_ids = payload.get("sample_ids") or []
@@ -125,7 +169,27 @@ def sync_project(
         }
         for sid, agg in aggregates.items()
     ]
+    return samples, instrument
 
+
+def sync_project(
+    conn: sqlite3.Connection,
+    client: Any,
+    *,
+    project_id: int,
+    last_synced: str,
+    window_size: int = _DEFAULT_WINDOW_SIZE,
+    object_cap: int = _DEFAULT_OBJECT_CAP,
+    rate_limit_rps: float = _DEFAULT_RATE_LIMIT_RPS,
+) -> int:
+    """Backward-compatible single-project sync (fetch + DB write)."""
+    samples, _instrument = _fetch_project_samples(
+        client,
+        project_id=project_id,
+        window_size=window_size,
+        object_cap=object_cap,
+        rate_limit_rps=rate_limit_rps,
+    )
     replace_project_samples(
         conn,
         project_id=project_id,
@@ -148,7 +212,7 @@ def _snapshot_project_schema(
     original_factory = schema_module.EcotaxaClient
     schema_module.EcotaxaClient = lambda: client  # type: ignore[assignment]
     try:
-        schema = get_project_schema(project_id)
+        schema = get_project_schema(project_id, client=client)
     finally:
         schema_module.EcotaxaClient = original_factory  # type: ignore[assignment]
 
@@ -160,6 +224,27 @@ def _snapshot_project_schema(
     )
 
 
+def _fetch_project_schema_json(client: Any, *, project_id: int) -> str:
+    """HTTP-only schema snapshot for one project."""
+    schema = _with_retries(lambda: get_project_schema(project_id, client=client))
+    return json.dumps(schema)
+
+
+def _project_signature(project_meta: dict) -> tuple | None:
+    """Coarse change tag derived from list_projects payload (no extra HTTP call)."""
+    signature_values = [
+        project_meta.get(key)
+        for key in ("objcount", "pctvalidated", "pctclassified")
+    ]
+    if all(value in (None, "") for value in signature_values):
+        return None
+    return (
+        int(project_meta.get("objcount") or 0),
+        round(float(project_meta.get("pctvalidated") or 0.0), 4),
+        round(float(project_meta.get("pctclassified") or 0.0), 4),
+    )
+
+
 def run_full_sync(
     conn: sqlite3.Connection,
     client: Any,
@@ -168,12 +253,20 @@ def run_full_sync(
     window_size: int = _DEFAULT_WINDOW_SIZE,
     object_cap: int = _DEFAULT_OBJECT_CAP,
     rate_limit_rps: float = _DEFAULT_RATE_LIMIT_RPS,
+    concurrency: int = _DEFAULT_CONCURRENCY,
+    force: bool = False,
+    client_factory: Callable[[], Any] | None = None,
 ) -> dict:
-    """Full sync (F1) across every project the service account sees.
+    """Full sync across every project the service account sees.
 
-    Per-project transactional (E3) — a failure on one project rolls back
-    that project's rows but leaves the others committed. Returns a summary
-    dict mirroring the ``sync_runs`` row.
+    - Parallel HTTP fetches via ThreadPoolExecutor (default 8 workers).
+      When ``client_factory`` is supplied, each worker thread gets its own
+      logged-in client/session; sqlite writes stay in the main thread
+      (single connection).
+    - Incremental: skip projects whose (objcount, pctvalidated, pctclassified)
+      signature matches the cached value. Pass ``force=True`` to bypass.
+    - Per-project transactional — a failure on one project records the error
+      and leaves the others committed.
     """
     run_id = start_sync_run(conn, started_at=now_iso)
 
@@ -181,32 +274,100 @@ def run_full_sync(
     projects = client.list_projects()
 
     projects_synced = 0
+    projects_skipped = 0
     samples_synced = 0
     failures: list[str] = []
 
+    pending: list[tuple[int, dict, tuple | None]] = []
     for project_meta in projects:
-        project_id = int(
-            project_meta.get("projid")
-            or project_meta.get("project_id")
-        )
         try:
-            samples_synced += sync_project(
-                conn,
-                client,
-                project_id=project_id,
-                last_synced=now_iso,
-                window_size=window_size,
-                object_cap=object_cap,
-                rate_limit_rps=rate_limit_rps,
+            project_id = int(
+                project_meta.get("projid")
+                or project_meta.get("project_id")
             )
-            _snapshot_project_schema(
-                conn, client, project_id=project_id, last_synced=now_iso,
-            )
-            projects_synced += 1
-        except Exception as exc:  # noqa: BLE001 — record per-project failure
-            failure_msg = f"{project_id}: {type(exc).__name__}: {exc}"
-            _LOGGER.warning("sync project %s failed: %s", project_id, exc)
-            failures.append(failure_msg)
+        except (TypeError, ValueError):
+            continue
+        signature = _project_signature(project_meta)
+        if (
+            signature is not None
+            and not force
+            and get_project_signature(conn, project_id) == signature
+        ):
+            projects_skipped += 1
+            continue
+        pending.append((project_id, project_meta, signature))
+
+    worker_state = threading.local()
+
+    def worker_client() -> Any:
+        if client_factory is None:
+            return client
+        thread_client = getattr(worker_state, "client", None)
+        if thread_client is None:
+            thread_client = client_factory()
+            thread_client.login()
+            worker_state.client = thread_client
+        return thread_client
+
+    effective_concurrency = max(1, concurrency)
+    worker_rate_limit_rps = (
+        rate_limit_rps / effective_concurrency
+        if rate_limit_rps > 0
+        else rate_limit_rps
+    )
+
+    def fetch_one(args: tuple[int, dict, tuple | None]):
+        project_id, _meta, _sig = args
+        thread_client = worker_client()
+        samples, _instrument = _fetch_project_samples(
+            thread_client,
+            project_id=project_id,
+            window_size=window_size,
+            object_cap=object_cap,
+            rate_limit_rps=worker_rate_limit_rps,
+        )
+        schema_json = _fetch_project_schema_json(thread_client, project_id=project_id)
+        return project_id, samples, schema_json
+
+    if pending:
+        with ThreadPoolExecutor(max_workers=effective_concurrency) as executor:
+            futures = {executor.submit(fetch_one, item): item for item in pending}
+            for future in as_completed(futures):
+                project_id, _meta, signature = futures[future]
+                try:
+                    pid, samples, schema_json = future.result()
+                except Exception as exc:  # noqa: BLE001 — record per-project failure
+                    failures.append(f"{project_id}: {type(exc).__name__}: {exc}")
+                    _LOGGER.warning("sync project %s failed: %s", project_id, exc)
+                    continue
+                try:
+                    replace_project_samples(
+                        conn,
+                        project_id=pid,
+                        samples=samples,
+                        last_synced=now_iso,
+                    )
+                    upsert_project_schema(
+                        conn,
+                        project_id=pid,
+                        schema_json=schema_json,
+                        last_synced=now_iso,
+                    )
+                    if signature is not None:
+                        upsert_project_signature(
+                            conn,
+                            project_id=pid,
+                            objcount=signature[0],
+                            pctvalidated=signature[1],
+                            pctclassified=signature[2],
+                            last_synced=now_iso,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(f"{pid}: {type(exc).__name__}: {exc}")
+                    _LOGGER.warning("write project %s failed: %s", pid, exc)
+                    continue
+                samples_synced += len(samples)
+                projects_synced += 1
 
     status = "ok" if not failures else ("partial" if projects_synced > 0 else "failed")
     error_message = "; ".join(failures) if failures else None
@@ -224,6 +385,7 @@ def run_full_sync(
         "run_id": run_id,
         "status": status,
         "projects_synced": projects_synced,
+        "projects_skipped": projects_skipped,
         "samples_synced": samples_synced,
         "error_message": error_message,
     }

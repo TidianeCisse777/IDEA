@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS project_schemas_cache (
     last_synced TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS project_signatures_cache (
+    project_id INTEGER PRIMARY KEY,
+    objcount INTEGER NOT NULL,
+    pctvalidated REAL NOT NULL,
+    pctclassified REAL NOT NULL,
+    last_synced TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sync_runs (
     run_id INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at TEXT NOT NULL,
@@ -152,6 +160,45 @@ def upsert_project_schema(
             last_synced = excluded.last_synced
         """,
         (project_id, schema_json, last_synced),
+    )
+    conn.commit()
+
+
+def get_project_signature(
+    conn: sqlite3.Connection, project_id: int
+) -> tuple | None:
+    """Return the cached (objcount, pctvalidated, pctclassified) tuple or None."""
+    row = conn.execute(
+        "SELECT objcount, pctvalidated, pctclassified FROM project_signatures_cache "
+        "WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return (int(row[0]), round(float(row[1]), 4), round(float(row[2]), 4))
+
+
+def upsert_project_signature(
+    conn: sqlite3.Connection,
+    *,
+    project_id: int,
+    objcount: int,
+    pctvalidated: float,
+    pctclassified: float,
+    last_synced: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO project_signatures_cache
+            (project_id, objcount, pctvalidated, pctclassified, last_synced)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(project_id) DO UPDATE SET
+            objcount = excluded.objcount,
+            pctvalidated = excluded.pctvalidated,
+            pctclassified = excluded.pctclassified,
+            last_synced = excluded.last_synced
+        """,
+        (project_id, objcount, pctvalidated, pctclassified, last_synced),
     )
     conn.commit()
 

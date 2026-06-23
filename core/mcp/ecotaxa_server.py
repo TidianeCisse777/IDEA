@@ -132,7 +132,7 @@ def _run_full_sync_with_real_client(cache_db: str) -> None:
     try:
         init_schema(conn)
         now = datetime.now(timezone.utc).isoformat()
-        run_full_sync(conn, client, now_iso=now)
+        run_full_sync(conn, client, now_iso=now, client_factory=EcotaxaClient)
     finally:
         conn.close()
 

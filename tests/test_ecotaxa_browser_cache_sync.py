@@ -2,6 +2,9 @@
 
 import json
 import sqlite3
+import threading
+import time
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from unittest.mock import MagicMock
 
 import pytest
@@ -262,3 +265,294 @@ def test_run_full_sync_stores_schema_snapshot_per_project(conn):
     schema = json.loads(row["schema_json"])
     assert schema["instrument"] == "UVP5SD"
     assert "sample" in schema["levels"]
+
+
+def test_run_full_sync_skips_project_when_signature_is_unchanged(conn):
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    projects = [
+        {
+            "projid": 42,
+            "title": "A",
+            "instrument": "UVP5",
+            "objcount": 1,
+            "pctvalidated": 50.0,
+            "pctclassified": 75.0,
+        }
+    ]
+    first_client = _make_client(
+        projects=projects,
+        objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
+    )
+    first = run_full_sync(conn, first_client, now_iso="2026-06-15T03:00:00Z")
+    assert first["projects_synced"] == 1
+    assert first["projects_skipped"] == 0
+
+    second_client = _make_client(
+        projects=projects,
+        objects_by_project={42: [[71.0, -65.0, "2018-08-02", "2", "UVP5"]]},
+    )
+    second = run_full_sync(conn, second_client, now_iso="2026-06-16T03:00:00Z")
+
+    assert second["status"] == "ok"
+    assert second["projects_synced"] == 0
+    assert second["projects_skipped"] == 1
+    second_client.query_objects.assert_not_called()
+    rows = list(conn.execute("SELECT sample_id FROM samples_cache WHERE project_id=42"))
+    assert [row["sample_id"] for row in rows] == [1]
+
+
+def test_run_full_sync_does_not_skip_when_signature_fields_are_unavailable(conn):
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    projects_without_signature = [
+        {
+            "projid": 42,
+            "title": "A",
+            "instrument": "UVP5",
+            "objcount": None,
+            "pctvalidated": "",
+            "pctclassified": None,
+        }
+    ]
+    first_client = _make_client(
+        projects=projects_without_signature,
+        objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
+    )
+    run_full_sync(conn, first_client, now_iso="2026-06-15T03:00:00Z")
+
+    second_client = _make_client(
+        projects=projects_without_signature,
+        objects_by_project={42: [[71.0, -65.0, "2018-08-02", "2", "UVP5"]]},
+    )
+    second = run_full_sync(conn, second_client, now_iso="2026-06-16T03:00:00Z")
+
+    assert second["projects_synced"] == 1
+    assert second["projects_skipped"] == 0
+    assert second_client.query_objects.call_count == 1
+    rows = list(conn.execute("SELECT sample_id FROM samples_cache WHERE project_id=42"))
+    assert [row["sample_id"] for row in rows] == [2]
+
+
+def test_run_full_sync_force_bypasses_unchanged_signature(conn):
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    projects = [
+        {
+            "projid": 42,
+            "title": "A",
+            "instrument": "UVP5",
+            "objcount": 1,
+            "pctvalidated": 50.0,
+            "pctclassified": 75.0,
+        }
+    ]
+    first_client = _make_client(
+        projects=projects,
+        objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
+    )
+    run_full_sync(conn, first_client, now_iso="2026-06-15T03:00:00Z")
+
+    second_client = _make_client(
+        projects=projects,
+        objects_by_project={42: [[71.0, -65.0, "2018-08-02", "2", "UVP5"]]},
+    )
+    second = run_full_sync(
+        conn,
+        second_client,
+        now_iso="2026-06-16T03:00:00Z",
+        force=True,
+    )
+
+    assert second["projects_synced"] == 1
+    assert second["projects_skipped"] == 0
+    assert second_client.query_objects.call_count == 1
+    rows = list(conn.execute("SELECT sample_id FROM samples_cache WHERE project_id=42"))
+    assert [row["sample_id"] for row in rows] == [2]
+
+
+def test_run_full_sync_fetches_projects_concurrently(conn):
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    client = _make_client(
+        projects=[
+            {"projid": 42, "title": "A", "instrument": "UVP5", "objcount": 1},
+            {"projid": 99, "title": "B", "instrument": "UVP5", "objcount": 1},
+        ],
+        objects_by_project={
+            42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]],
+            99: [[60.0, -50.0, "2019-08-01", "2", "UVP5"]],
+        },
+    )
+    real_query_objects = client.query_objects.side_effect
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def slow_query_objects(**kwargs):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            time.sleep(0.05)
+            return real_query_objects(**kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    client.query_objects.side_effect = slow_query_objects
+
+    result = run_full_sync(
+        conn,
+        client,
+        now_iso="2026-06-15T03:00:00Z",
+        concurrency=2,
+    )
+
+    assert result["status"] == "ok"
+    assert result["projects_synced"] == 2
+    assert max_active == 2
+
+
+def test_run_full_sync_can_use_worker_client_factory_for_fetches(conn):
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    list_client = MagicMock()
+    list_client.login.return_value = None
+    list_client.list_projects.return_value = [
+        {"projid": 42, "title": "A", "instrument": "UVP5", "objcount": 1},
+        {"projid": 99, "title": "B", "instrument": "UVP5", "objcount": 1},
+    ]
+    list_client.get_project.side_effect = lambda pid: {
+        "projid": pid,
+        "title": f"Project {pid}",
+        "instrument": "UVP5",
+    }
+    list_client.query_objects.side_effect = AssertionError(
+        "the shared listing client must not be used for parallel object fetches"
+    )
+    objects_by_project = {
+        42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]],
+        99: [[60.0, -50.0, "2019-08-01", "2", "UVP5"]],
+    }
+    created_workers = []
+
+    class WorkerClient:
+        def __init__(self):
+            self.login_count = 0
+            created_workers.append(self)
+
+        def login(self):
+            self.login_count += 1
+
+        def get_project(self, project_id):
+            return {
+                "projid": project_id,
+                "title": f"Project {project_id}",
+                "instrument": "UVP5",
+                "sample_free_cols": {},
+                "acquisition_free_cols": {},
+                "obj_free_cols": {},
+            }
+
+        def query_objects(
+            self, *, project_id, filters, fields, window_start, window_size
+        ):
+            rows = objects_by_project[project_id][window_start : window_start + window_size]
+            return {
+                "details": [[row[0], row[1], row[2]] for row in rows],
+                "sample_ids": [int(row[3]) for row in rows],
+            }
+
+    result = run_full_sync(
+        conn,
+        list_client,
+        now_iso="2026-06-15T03:00:00Z",
+        concurrency=2,
+        client_factory=WorkerClient,
+    )
+
+    assert result["status"] == "ok"
+    assert result["projects_synced"] == 2
+    assert created_workers
+    assert all(worker.login_count == 1 for worker in created_workers)
+
+
+def test_run_full_sync_retries_transient_schema_connection_drop(conn):
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    client = _make_client(
+        projects=[{"projid": 42, "title": "A", "instrument": "UVP5", "objcount": 1}],
+        objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
+        project_details={
+            42: {
+                "projid": 42,
+                "title": "A",
+                "instrument": "UVP5",
+                "sample_free_cols": {},
+                "acquisition_free_cols": {},
+                "obj_free_cols": {},
+            }
+        },
+    )
+    calls = {"get_project": 0}
+
+    def flaky_get_project(project_id):
+        calls["get_project"] += 1
+        if calls["get_project"] == 1:
+            return {"projid": project_id, "title": "A", "instrument": "UVP5"}
+        if calls["get_project"] == 2:
+            raise RequestsConnectionError("remote disconnected")
+        return {
+            "projid": project_id,
+            "title": "A",
+            "instrument": "UVP5",
+            "sample_free_cols": {},
+            "acquisition_free_cols": {},
+            "obj_free_cols": {},
+        }
+
+    client.get_project.side_effect = flaky_get_project
+
+    result = run_full_sync(conn, client, now_iso="2026-06-15T03:00:00Z")
+
+    assert result["status"] == "ok"
+    assert result["projects_synced"] == 1
+    assert result["error_message"] is None
+    assert calls["get_project"] == 3
+    assert conn.execute(
+        "SELECT COUNT(*) FROM samples_cache WHERE project_id=42"
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM project_schemas_cache WHERE project_id=42"
+    ).fetchone()[0] == 1
+
+
+def test_run_full_sync_does_not_commit_samples_when_schema_snapshot_fails(conn):
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    client = _make_client(
+        projects=[{"projid": 42, "title": "A", "instrument": "UVP5", "objcount": 1}],
+        objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
+    )
+    calls = {"get_project": 0}
+
+    def get_project(project_id):
+        calls["get_project"] += 1
+        # First call fetches project metadata for sample aggregation; later calls
+        # are schema snapshot attempts and all fail.
+        if calls["get_project"] == 1:
+            return {"projid": project_id, "title": "A", "instrument": "UVP5"}
+        raise RequestsConnectionError("remote disconnected")
+
+    client.get_project.side_effect = get_project
+
+    result = run_full_sync(conn, client, now_iso="2026-06-15T03:00:00Z")
+
+    assert result["status"] == "failed"
+    assert result["projects_synced"] == 0
+    assert "42" in (result["error_message"] or "")
+    assert conn.execute(
+        "SELECT COUNT(*) FROM samples_cache WHERE project_id=42"
+    ).fetchone()[0] == 0
