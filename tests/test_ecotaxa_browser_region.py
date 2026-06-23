@@ -30,6 +30,8 @@ def _seed(cache_db, samples):
             date_max=sample.get("date_max", sample.get("date", "2018-01-01")),
             object_count=sample.get("object_count", 10),
             instrument=sample.get("instrument", "UVP5"),
+            depth_min=sample.get("depth_min"),
+            depth_max=sample.get("depth_max"),
             last_synced="ts",
         )
     conn.close()
@@ -109,6 +111,103 @@ def test_samples_in_region_filters_by_instrument(cache_db):
         result = samples_in_region(instrument="UVP6")
     sample_ids = sorted(s["sample_id"] for s in result["samples"])
     assert sample_ids == [2]
+
+
+def test_samples_in_region_filters_by_depth_max_lt(cache_db):
+    from core.ecotaxa_browser.region import samples_in_region
+
+    _seed(cache_db, [
+        {
+            "sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0,
+            "date_min": "2018-07-01", "date_max": "2018-07-01",
+            "depth_min": 0.0, "depth_max": 82.0,
+        },
+        {
+            "sample_id": 2, "project_id": 42, "lat": 60.0, "lon": -80.0,
+            "date_min": "2018-07-02", "date_max": "2018-07-02",
+            "depth_min": 0.0, "depth_max": 100.0,
+        },
+        {
+            "sample_id": 3, "project_id": 42, "lat": 60.0, "lon": -80.0,
+            "date_min": "2018-07-03", "date_max": "2018-07-03",
+            "depth_min": None, "depth_max": None,
+        },
+    ])
+
+    with _with_cache(cache_db):
+        result = samples_in_region(
+            date_range={"from": "2018-07-01", "to": "2018-07-31"},
+            depth_max_lt=100,
+        )
+
+    assert [s["sample_id"] for s in result["samples"]] == [1]
+    assert result["samples"][0]["depth_max"] == pytest.approx(82.0)
+
+
+def test_samples_in_region_filters_by_calendar_month(cache_db):
+    from core.ecotaxa_browser.region import samples_in_region
+
+    _seed(cache_db, [
+        {
+            "sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0,
+            "date_min": "2018-07-01", "date_max": "2018-07-01",
+        },
+        {
+            "sample_id": 2, "project_id": 42, "lat": 60.0, "lon": -80.0,
+            "date_min": "2019-07-15", "date_max": "2019-07-15",
+        },
+        {
+            "sample_id": 3, "project_id": 42, "lat": 60.0, "lon": -80.0,
+            "date_min": "2019-06-30", "date_max": "2019-06-30",
+        },
+    ])
+
+    with _with_cache(cache_db):
+        result = samples_in_region(month=7)
+
+    assert [s["sample_id"] for s in result["samples"]] == [1, 2]
+
+
+def test_samples_in_region_migrates_legacy_cache_before_depth_filter(tmp_path):
+    from core.ecotaxa_browser.region import samples_in_region
+
+    path = tmp_path / "legacy-cache.sqlite"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        """
+        CREATE TABLE samples_cache (
+            sample_id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            lat_avg REAL,
+            lon_avg REAL,
+            date_min TEXT,
+            date_max TEXT,
+            object_count INTEGER,
+            instrument TEXT,
+            last_synced TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO samples_cache (
+            sample_id, project_id, lat_avg, lon_avg,
+            date_min, date_max, object_count, instrument, last_synced
+        )
+        VALUES (1, 42, 60.0, -80.0, '2018-07-01', '2018-07-01', 10, 'UVP5', 'ts')
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    with patch(
+        "core.ecotaxa_browser.region._cache_db_path",
+        return_value=str(path),
+    ):
+        result = samples_in_region(month=7)
+
+    assert result["samples"][0]["sample_id"] == 1
+    assert result["samples"][0]["depth_max"] is None
 
 
 def test_samples_in_region_caps_at_500_and_flags_truncated(cache_db):

@@ -42,6 +42,35 @@ def test_init_schema_is_idempotent(conn):
     assert count == 1
 
 
+def test_init_schema_migrates_existing_samples_cache_with_depth_columns(conn):
+    from core.ecotaxa_browser.cache.repo import init_schema
+
+    conn.execute(
+        """
+        CREATE TABLE samples_cache (
+            sample_id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL,
+            lat_avg REAL,
+            lon_avg REAL,
+            date_min TEXT,
+            date_max TEXT,
+            object_count INTEGER,
+            instrument TEXT,
+            last_synced TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+
+    init_schema(conn)
+
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(samples_cache)")
+    }
+    assert {"depth_min", "depth_max"}.issubset(columns)
+
+
 def test_upsert_sample_inserts_and_then_updates(conn):
     from core.ecotaxa_browser.cache.repo import init_schema, upsert_sample
 

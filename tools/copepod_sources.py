@@ -700,6 +700,9 @@ def make_source_tools(thread_id: str) -> list:
         polygon_wkt: str | None = None,
         zone_name: str | None = None,
         project_ids: list[int] | None = None,
+        depth_max_lt: float | None = None,
+        depth_max_gte: float | None = None,
+        month: int | None = None,
     ) -> str:
         """Cherche les samples EcoTaxa dans une bbox géo et/ou une période.
 
@@ -726,17 +729,25 @@ def make_source_tools(thread_id: str) -> list:
         `project_ids` : restreint la recherche à une liste de projets
         EcoTaxa. Utile pour « samples du projet X dans la zone Y » en un
         seul appel (filtre côté SQL, pas post-process).
+        `depth_max_lt` / `depth_max_gte` : filtre la profondeur maximale
+        atteinte par le sample (en mètres), calculée depuis les objets
+        EcoTaxa indexés. Pour « samples qui n'ont pas atteint 100 m »,
+        utiliser `depth_max_lt=100`. Les samples sans profondeur connue ne
+        matchent pas ce filtre.
+        `month` : mois calendaire 1-12, toutes années confondues. Pour
+        « samples du mois de juillet », utiliser `month=7`.
         Réponse plafonnée à 500 samples avec un summary par projet.
         Lecture du cache local — pas de download.
 
         Au moins UN filtre est requis (bbox, date_range, instrument,
-        zone_name, polygon_wkt ou project_ids).
+        zone_name, polygon_wkt, project_ids, depth_max_lt, depth_max_gte ou month).
         """
         if (bbox is None and date_range is None and instrument is None
                 and polygon_wkt is None and zone_name is None
-                and not project_ids):
+                and not project_ids and depth_max_lt is None
+                and depth_max_gte is None and month is None):
             return (
-                "Erreur : au moins un filtre requis (bbox, date_range, instrument, zone_name, polygon_wkt ou project_ids). "
+                "Erreur : au moins un filtre requis (bbox, date_range, instrument, zone_name, polygon_wkt, project_ids, profondeur ou month). "
                 "Pour explorer sans filtre, précise une bbox large, une période, ou un instrument."
             )
         try:
@@ -744,6 +755,9 @@ def make_source_tools(thread_id: str) -> list:
                 bbox=bbox, date_range=date_range, instrument=instrument,
                 polygon_wkt=polygon_wkt, zone_name=zone_name,
                 project_ids=project_ids,
+                depth_max_lt=depth_max_lt,
+                depth_max_gte=depth_max_gte,
+                month=month,
             )
         except EcoTaxaBrowserError as exc:
             return f"Erreur EcoTaxa ({exc.code}) : {exc}"
@@ -774,13 +788,15 @@ def make_source_tools(thread_id: str) -> list:
                 else ""
             ),
             "",
-            "| sample_id | projet | lat | lon | date_min | date_max | instrument |",
-            "|---:|---:|---:|---:|---|---|---|",
+            "| sample_id | projet | lat | lon | date_min | date_max | depth_min | depth_max | instrument |",
+            "|---:|---:|---:|---:|---|---|---:|---:|---|",
         ]
         for s in shown_samples:
             lines.append(
                 f"| {s['sample_id']} | {s['project_id']} | {s['lat']:.3f} | "
                 f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} | "
+                f"{_format_number(s.get('depth_min'))} | "
+                f"{_format_number(s.get('depth_max'))} | "
                 f"{s.get('instrument') or '—'} |"
             )
         if len(result["samples"]) > max_rows:
@@ -899,6 +915,9 @@ def make_source_tools(thread_id: str) -> list:
         polygon_wkt: str | None = None,
         zone_name: str | None = None,
         project_ids: list[int] | None = None,
+        depth_max_lt: float | None = None,
+        depth_max_gte: float | None = None,
+        month: int | None = None,
     ) -> str:
         """Trouve les samples EcoTaxa dont le projet a le taxon attesté.
 
@@ -918,6 +937,11 @@ def make_source_tools(thread_id: str) -> list:
         `polygon_wkt` (alternative) : polygone WKT fourni explicitement.
         `project_ids` : restreint à une sous-liste de projets avant
         l'attestation taxon. Pour « taxon X dans la zone Y du projet Z ».
+        `depth_max_lt` / `depth_max_gte` : filtre la profondeur maximale
+        atteinte par les samples avant l'attestation taxon. Pour « samples
+        avec Calanus qui n'ont pas atteint 100 m », utiliser
+        `depth_max_lt=100`.
+        `month` : mois calendaire 1-12, toutes années confondues.
         """
         try:
             result = find_observations(
@@ -925,6 +949,9 @@ def make_source_tools(thread_id: str) -> list:
                 instrument=instrument, status=status,
                 polygon_wkt=polygon_wkt, zone_name=zone_name,
                 project_ids=project_ids,
+                depth_max_lt=depth_max_lt,
+                depth_max_gte=depth_max_gte,
+                month=month,
             )
         except EcoTaxaBrowserError as exc:
             details = ""
@@ -953,13 +980,15 @@ def make_source_tools(thread_id: str) -> list:
             f"Statut filtré : {result['status_filter']} · "
             f"Projets attestés : {result['attested_projects']}",
             "",
-            "| sample_id | projet | lat | lon | date_min | date_max |",
-            "|---:|---:|---:|---:|---|---|",
+            "| sample_id | projet | lat | lon | date_min | date_max | depth_min | depth_max |",
+            "|---:|---:|---:|---:|---|---|---:|---:|",
         ]
         for s in result["samples"][:50]:
             lines.append(
                 f"| {s['sample_id']} | {s['project_id']} | {s['lat']:.3f} | "
-                f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} |"
+                f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} | "
+                f"{_format_number(s.get('depth_min'))} | "
+                f"{_format_number(s.get('depth_max'))} |"
             )
         if len(result["samples"]) > 50:
             lines.append("")

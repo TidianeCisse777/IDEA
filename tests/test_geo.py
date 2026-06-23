@@ -176,6 +176,35 @@ def test_prod_registry_includes_composite_and_synthetic_zones():
 
 
 @pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_prod_registry_includes_meow_hudson_complex():
+    """Étape 2 MEOW : 'MEOW: Hudson Complex' (Spalding 2007) doit être présent
+    dans le registry de prod en complément de 'Baie d'Hudson' IHO."""
+    registry = load_registry(PROD_REGISTRY)
+    canonicals = {z.canonical for z in registry.zones}
+    assert "MEOW: Hudson Complex" in canonicals
+    assert "Baie d'Hudson" in canonicals  # coexistence IHO + MEOW
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_prod_registry_meow_hudson_complex_contains_central_hudson_bay():
+    """MEOW Hudson Complex (composite Hudson+James+Strait+Ungava de Spalding) doit
+    contenir une station typique du centre de la baie d'Hudson (~-85°W, 60°N)."""
+    registry = load_registry(PROD_REGISTRY)
+    hudson_meow = resolve_zone("MEOW: Hudson Complex", registry=registry)["polygon"]
+    station = Point(-85.0, 60.0)
+    assert hudson_meow.contains(station)
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_prod_registry_includes_meow_northern_labrador():
+    """L'écorégion 'Northern Labrador' (MEOW Spalding 2007) doit être intégrée —
+    nouveau découpage écologique non-couvert par IHO."""
+    registry = load_registry(PROD_REGISTRY)
+    canonicals = {z.canonical for z in registry.zones}
+    assert "MEOW: Northern Labrador" in canonicals
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
 def test_prod_registry_classifies_hudson_strait_station_north_of_cut():
     """Une station dans le détroit proprement dit (~62.5°N, 72°W, bien au nord
     de la coupe Cap Hopes Advance) doit être dans Détroit d'Hudson."""

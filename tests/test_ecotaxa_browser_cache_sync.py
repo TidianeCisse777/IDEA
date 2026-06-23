@@ -41,14 +41,17 @@ def _make_client(
     def _query_objects(*, project_id, filters, fields, window_start, window_size):
         rows = objects_by_project.get(project_id, [])
         page = rows[window_start : window_start + window_size]
-        details = [
-            [row[0], row[1], row[2]] if row else row
-            for row in page
-        ]
-        sample_ids = [
-            (int(row[3]) if row and len(row) > 3 and row[3] is not None else None)
-            for row in page
-        ]
+        details = []
+        sample_ids = []
+        for row in page:
+            if row and len(row) >= 6:
+                details.append([row[0], row[1], row[2], row[3], row[4]])
+                sample_ids.append(int(row[5]) if row[5] is not None else None)
+            else:
+                details.append([row[0], row[1], row[2]] if row else row)
+                sample_ids.append(
+                    int(row[3]) if row and len(row) > 3 and row[3] is not None else None
+                )
         return {"details": details, "sample_ids": sample_ids, "total_ids": len(rows)}
 
     client.query_objects.side_effect = _query_objects
@@ -86,6 +89,36 @@ def test_sync_one_project_aggregates_lat_lon_date_per_sample(conn):
     assert rows[1]["sample_id"] == 2
     assert rows[1]["date_min"] == "2018-08-10"
     assert rows[1]["date_max"] == "2018-08-15"
+
+
+def test_sync_one_project_aggregates_depth_envelope_per_sample(conn):
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    objects = [
+        # [latitude, longitude, objdate, depth_min, depth_max, sample_id]
+        [70.0, -64.0, "2018-07-01", 0.0, 25.0, "1"],
+        [70.2, -64.4, "2018-07-02", 25.0, 82.0, "1"],
+        [70.5, -64.5, "2018-07-03", 0.0, 100.0, "2"],
+        [70.7, -64.7, "2018-07-04", 100.0, 125.0, "2"],
+    ]
+    client = _make_client(
+        projects=[{"projid": 42, "title": "P", "instrument": "UVP5SD"}],
+        objects_by_project={42: objects},
+    )
+
+    samples_synced = sync_project(conn, client, project_id=42, last_synced="ts")
+
+    assert samples_synced == 2
+    rows = list(conn.execute(
+        "SELECT sample_id, depth_min, depth_max FROM samples_cache "
+        "WHERE project_id=42 ORDER BY sample_id"
+    ))
+    assert rows[0]["sample_id"] == 1
+    assert rows[0]["depth_min"] == pytest.approx(0.0)
+    assert rows[0]["depth_max"] == pytest.approx(82.0)
+    assert rows[1]["sample_id"] == 2
+    assert rows[1]["depth_min"] == pytest.approx(0.0)
+    assert rows[1]["depth_max"] == pytest.approx(125.0)
 
 
 def test_sync_drops_objects_without_lat_lon_silently(conn):

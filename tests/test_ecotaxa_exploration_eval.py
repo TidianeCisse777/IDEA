@@ -1,4 +1,5 @@
 from evals.eval_ecotaxa_exploration import (
+    EXPLORATION_CASES,
     _apply_quick_defaults,
     _chunks,
     final_answer_contains,
@@ -7,6 +8,10 @@ from evals.eval_ecotaxa_exploration import (
     trajectory_subsequence,
 )
 from argparse import Namespace
+
+
+def _case(case_id: str) -> dict:
+    return next(case for case in EXPLORATION_CASES if case["id"] == case_id)
 
 
 def test_trajectory_subsequence_allows_extra_tools_between_expected_steps():
@@ -228,9 +233,117 @@ def test_apply_quick_defaults_sets_fast_stable_eval_options():
 
     _apply_quick_defaults(args)
 
-    assert args.max_concurrency == 1
-    assert args.case_delay == 5.0
-    assert args.retry_delay == 20.0
-    assert args.max_attempts == 2
-    assert args.output_tokens == 900
+    assert args.max_concurrency == 3
+    assert args.case_delay == 0.0
+    assert args.retry_delay == 10.0
+    assert args.max_attempts == 3
+    assert args.output_tokens == 600
     assert args.batch_size == 3
+
+
+def test_mixed_taxon_zone_month_depth_prompt_routes_to_observations():
+    case = _case("EX-31-taxon-zone-month-depth")
+    outputs = case["outputs"]
+
+    assert outputs["expected_sequence"] == [
+        "load_skill",
+        "get_zone_info",
+        "find_ecotaxa_observations",
+    ]
+    assert "find_ecotaxa_samples_in_region" in outputs["forbidden_tools"]
+    result = required_tool_args_present(
+        {
+            "tool_calls": [
+                {
+                    "name": "load_skill",
+                    "arguments": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "arguments": {"zone_name": "Baie de Baffin"},
+                },
+                {
+                    "name": "find_ecotaxa_observations",
+                    "arguments": {
+                        "taxon": "Calanus finmarchicus",
+                        "zone_name": "Baie de Baffin",
+                        "month": 7,
+                        "depth_max_lt": 100,
+                    },
+                }
+            ]
+        },
+        outputs,
+    )
+    assert result["score"] == 1
+
+
+def test_mixed_samples_zone_month_depth_prompt_routes_to_samples_without_taxon():
+    case = _case("EX-32-samples-zone-month-depth-no-taxon")
+    outputs = case["outputs"]
+
+    assert outputs["expected_sequence"] == [
+        "load_skill",
+        "get_zone_info",
+        "find_ecotaxa_samples_in_region",
+    ]
+    assert "find_ecotaxa_observations" in outputs["forbidden_tools"]
+    result = required_tool_args_present(
+        {
+            "tool_calls": [
+                {
+                    "name": "load_skill",
+                    "arguments": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "arguments": {"zone_name": "Baie de Baffin"},
+                },
+                {
+                    "name": "find_ecotaxa_samples_in_region",
+                    "arguments": {
+                        "zone_name": "Baie de Baffin",
+                        "month": 7,
+                        "depth_max_lt": 100,
+                    },
+                }
+            ]
+        },
+        outputs,
+    )
+    assert result["score"] == 1
+
+
+def test_mixed_taxon_zone_date_depth_status_prompt_preserves_all_filters():
+    case = _case("EX-33-taxon-zone-date-depth-status-all")
+    outputs = case["outputs"]
+
+    result = required_tool_args_present(
+        {
+            "tool_calls": [
+                {
+                    "name": "load_skill",
+                    "arguments": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "arguments": {"zone_name": "Baie d'Hudson"},
+                },
+                {
+                    "name": "find_ecotaxa_observations",
+                    "arguments": {
+                        "taxon": "Copepoda",
+                        "zone_name": "Baie d'Hudson",
+                        "date_range": {
+                            "from": "2018-06-01",
+                            "to": "2018-06-30",
+                        },
+                        "depth_max_gte": 100,
+                        "status": "all",
+                    },
+                }
+            ]
+        },
+        outputs,
+    )
+    assert result["score"] == 1

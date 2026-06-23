@@ -851,7 +851,7 @@ async def _stream_agent_sse(
                         content = getattr(last_msg, "content", "") or ""
                         tool_calls = getattr(last_msg, "tool_calls", []) or []
 
-                        if content:
+                        if content and not tool_calls:
                             content = _extract_and_host_images(content)
                             content = _remove_graph_markdown_images(
                                 content,

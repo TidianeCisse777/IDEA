@@ -20,6 +20,7 @@ from shapely.geometry.base import BaseGeometry
 
 from core.ecotaxa_browser.cache.repo import (
     cache_counts,
+    init_schema,
     is_sync_running,
     latest_sync_status,
     open_connection,
@@ -40,7 +41,9 @@ def _cache_db_path() -> str:
 
 
 def _open_cache() -> sqlite3.Connection:
-    return open_connection(_cache_db_path())
+    conn = open_connection(_cache_db_path())
+    init_schema(conn)
+    return conn
 
 
 def resolve_sample_projects(sample_ids: list[int]) -> dict[int, int]:
@@ -184,6 +187,18 @@ def _validate_date_range(date_range: dict | None) -> tuple[str, str] | None:
     return str(date_range["from"]), str(date_range["to"])
 
 
+def _validate_month(month: int | None) -> int | None:
+    if month is None:
+        return None
+    value = int(month)
+    if value < 1 or value > 12:
+        raise EcoTaxaBrowserError(
+            "INVALID_MONTH",
+            "month must be an integer between 1 and 12.",
+        )
+    return value
+
+
 def samples_in_region(
     bbox: dict | None = None,
     date_range: dict | None = None,
@@ -191,6 +206,9 @@ def samples_in_region(
     polygon_wkt: str | None = None,
     zone_name: str | None = None,
     project_ids: list[int] | None = None,
+    depth_max_lt: float | None = None,
+    depth_max_gte: float | None = None,
+    month: int | None = None,
 ) -> dict:
     """Return cached samples matching geo / temporal / instrument filters.
 
@@ -207,9 +225,15 @@ def samples_in_region(
     ``project_ids`` restricts results to a subset of EcoTaxa projects (SQL
     ``IN`` clause on ``samples_cache.project_id``). Combine with zone/date
     to scope « samples du projet X dans la zone Y entre A et B ».
+
+    ``depth_max_lt`` and ``depth_max_gte`` filter the cached sample-level
+    maximum object depth. NULL depths are excluded by these SQL comparisons.
+    ``month`` filters samples whose cached date envelope overlaps a calendar
+    month (1-12), regardless of year.
     """
     bbox_tuple = _validate_bbox(bbox)
     date_tuple = _validate_date_range(date_range)
+    month_value = _validate_month(month)
     polygon = _resolve_zone_polygon(zone_name) or _validate_polygon_wkt(polygon_wkt)
 
     if bbox_tuple is None and polygon is not None:
@@ -228,6 +252,9 @@ def samples_in_region(
             date_range=date_tuple,
             instrument=instrument,
             project_ids=project_ids,
+            depth_max_lt=depth_max_lt,
+            depth_max_gte=depth_max_gte,
+            month=month_value,
         ))
     finally:
         conn.close()
@@ -435,6 +462,8 @@ def _row_to_sample(row: sqlite3.Row) -> dict:
         "lon": row["lon_avg"],
         "date_min": row["date_min"],
         "date_max": row["date_max"],
+        "depth_min": row["depth_min"],
+        "depth_max": row["depth_max"],
         "object_count": int(row["object_count"] or 0),
         "instrument": row["instrument"],
     }

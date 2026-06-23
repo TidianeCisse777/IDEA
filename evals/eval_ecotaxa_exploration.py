@@ -959,6 +959,140 @@ EXPLORATION_CASES = [
             "category": "sample_export_confirmed",
         },
     },
+    {
+        "id": "EX-31-taxon-zone-month-depth",
+        "inputs": {
+            "question": (
+                "Cite-moi les samples EcoTaxa avec Calanus finmarchicus en "
+                "Baie de Baffin, au mois de juillet, qui n'ont pas atteint "
+                "100 m de profondeur max."
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "get_zone_info",
+                "find_ecotaxa_observations",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {"zone_name": "Baie de Baffin"},
+                },
+                {
+                    "name": "find_ecotaxa_observations",
+                    "args": {
+                        "taxon": "Calanus finmarchicus",
+                        "zone_name": "Baie de Baffin",
+                        "month": 7,
+                        "depth_max_lt": 100,
+                    },
+                },
+            ],
+            "forbidden_tools": [
+                "find_ecotaxa_samples_in_region",
+                "query_ecotaxa",
+                "query_copepod_knowledge_base",
+                "run_pandas",
+                "run_graph",
+            ],
+            "category": "mixed_taxon_zone_month_depth",
+        },
+    },
+    {
+        "id": "EX-32-samples-zone-month-depth-no-taxon",
+        "inputs": {
+            "question": (
+                "Liste les samples EcoTaxa de juillet en Baie de Baffin qui "
+                "n'ont pas eu 100 m de depth max."
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "get_zone_info",
+                "find_ecotaxa_samples_in_region",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {"zone_name": "Baie de Baffin"},
+                },
+                {
+                    "name": "find_ecotaxa_samples_in_region",
+                    "args": {
+                        "zone_name": "Baie de Baffin",
+                        "month": 7,
+                        "depth_max_lt": 100,
+                    },
+                },
+            ],
+            "forbidden_tools": [
+                "find_ecotaxa_observations",
+                "query_ecotaxa",
+                "query_copepod_knowledge_base",
+                "run_pandas",
+                "run_graph",
+            ],
+            "category": "mixed_samples_zone_month_depth",
+        },
+    },
+    {
+        "id": "EX-33-taxon-zone-date-depth-status-all",
+        "inputs": {
+            "question": (
+                "Trouve les samples EcoTaxa avec Copepoda en Baie d'Hudson "
+                "entre 2018-06-01 et 2018-06-30, profondeur max au moins "
+                "100 m, en incluant aussi les prédictions."
+            )
+        },
+        "outputs": {
+            "expected_sequence": [
+                "load_skill",
+                "get_zone_info",
+                "find_ecotaxa_observations",
+            ],
+            "required_tool_args": [
+                {
+                    "name": "load_skill",
+                    "args": {"skill_name": "ecotaxa_navigation"},
+                },
+                {
+                    "name": "get_zone_info",
+                    "args": {"zone_name": "Baie d'Hudson"},
+                },
+                {
+                    "name": "find_ecotaxa_observations",
+                    "args": {
+                        "taxon": "Copepoda",
+                        "zone_name": "Baie d'Hudson",
+                        "date_range": {
+                            "from": "2018-06-01",
+                            "to": "2018-06-30",
+                        },
+                        "depth_max_gte": 100,
+                        "status": "all",
+                    },
+                },
+            ],
+            "forbidden_tools": [
+                "find_ecotaxa_samples_in_region",
+                "query_ecotaxa",
+                "query_copepod_knowledge_base",
+                "run_pandas",
+                "run_graph",
+            ],
+            "category": "mixed_taxon_zone_date_depth_status",
+        },
+    },
 ]
 
 

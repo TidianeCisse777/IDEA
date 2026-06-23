@@ -76,10 +76,17 @@ def _pandas_filter(bbox: dict[str, float]) -> str:
 def get_zone_info(zone_name: str) -> dict:
     """Resolve a named NeoLab zone to canonical name, bbox, aliases and filter.
 
-    Use for named zones such as "Baie d'Ungava", "mer du Labrador",
-    "Hudson Bay", "Hawke Channel", or "Arctique". For downstream EcoTaxa or
-    Bio-ORACLE tools, pass `zone_name` instead of copying polygon WKT. The
-    returned `polygon_wkt_preview` is debug-only; `bbox` is decimal degrees.
+    Two layered families coexist :
+    - IHO zones (mers/baies/détroits physiques) : "Baie d'Ungava",
+      "Mer du Labrador", "Hudson Bay", "Hawke Channel", "Arctique"…
+    - MEOW ecoregions (écorégions Spalding 2007, peer-reviewed) : passe le
+      nom ECOREGION exact (ex. "Hudson Complex", "Northern Labrador",
+      "Lancaster Sound", "West Greenland Shelf", "Gulf of St. Lawrence -
+      Eastern Scotian Shelf") OU avec le préfixe explicite "MEOW: <ECOREGION>".
+
+    Pour downstream EcoTaxa / Bio-ORACLE / filter_dataframe_by_zone : passer
+    `zone_name` plutôt que copier le WKT. `polygon_wkt_preview` est debug-only ;
+    `bbox` est en degrés décimaux.
     """
     canonical = _match_canonical(zone_name)
     if canonical is None:

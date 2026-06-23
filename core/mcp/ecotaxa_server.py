@@ -437,6 +437,9 @@ def create_mcp() -> FastMCP:
         polygon_wkt: str | None = None,
         zone_name: str | None = None,
         project_ids: list[int] | None = None,
+        depth_max_lt: float | None = None,
+        depth_max_gte: float | None = None,
+        month: int | None = None,
     ) -> dict:
         """Return cached samples matching a bbox / date range / instrument.
 
@@ -452,6 +455,9 @@ def create_mcp() -> FastMCP:
         Capped at 500 samples with a ``truncated`` flag and a ``summary``
         aggregating project_breakdown + date range seen. Reads the local
         cache only — call ``/admin/resync`` first if empty.
+        ``depth_max_lt`` / ``depth_max_gte`` filter the cached sample-level
+        maximum object depth in metres.
+        ``month`` filters calendar month 1-12 across years.
         """
         try:
             return await _run_sync(
@@ -459,6 +465,9 @@ def create_mcp() -> FastMCP:
                 bbox=bbox, date_range=date_range, instrument=instrument,
                 polygon_wkt=polygon_wkt, zone_name=zone_name,
                 project_ids=project_ids,
+                depth_max_lt=depth_max_lt,
+                depth_max_gte=depth_max_gte,
+                month=month,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}
@@ -540,6 +549,9 @@ def create_mcp() -> FastMCP:
         polygon_wkt: str | None = None,
         zone_name: str | None = None,
         project_ids: list[int] | None = None,
+        depth_max_lt: float | None = None,
+        depth_max_gte: float | None = None,
+        month: int | None = None,
     ) -> dict:
         """Find cached samples whose project has the taxon attested.
 
@@ -555,6 +567,8 @@ def create_mcp() -> FastMCP:
         ``polygon_wkt`` (alternative): explicit WGS84 WKT polygon.
         ``project_ids``: optional subset of EcoTaxa projects to consider
         before taxon attestation lookup.
+        ``depth_max_lt`` / ``depth_max_gte`` and ``month`` filter cached
+        samples before project taxon attestation lookup.
         """
         try:
             return await _run_sync(
@@ -563,6 +577,9 @@ def create_mcp() -> FastMCP:
                 instrument=instrument, status=status,
                 polygon_wkt=polygon_wkt, zone_name=zone_name,
                 project_ids=project_ids,
+                depth_max_lt=depth_max_lt,
+                depth_max_gte=depth_max_gte,
+                month=month,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}

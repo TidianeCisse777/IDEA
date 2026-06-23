@@ -30,6 +30,8 @@ def _seed(cache_db, samples):
             date_max=sample.get("date_max", "2018-01-01"),
             object_count=sample.get("object_count", 10),
             instrument=sample.get("instrument", "UVP5"),
+            depth_min=sample.get("depth_min"),
+            depth_max=sample.get("depth_max"),
             last_synced="ts",
         )
     conn.close()
@@ -133,6 +135,42 @@ def test_find_observations_status_all_accepts_predictions(cache_db):
         result = find_observations(taxon="Calanus finmarchicus", status="all")
 
     assert 42 in result["attested_projects"]
+
+
+def test_find_observations_filters_by_month_and_depth_max(cache_db):
+    from core.ecotaxa_browser.observations import find_observations
+
+    _seed(cache_db, [
+        {
+            "sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0,
+            "date_min": "2018-07-01", "date_max": "2018-07-01",
+            "depth_min": 0.0, "depth_max": 82.0,
+        },
+        {
+            "sample_id": 2, "project_id": 42, "lat": 60.0, "lon": -80.0,
+            "date_min": "2018-07-02", "date_max": "2018-07-02",
+            "depth_min": 0.0, "depth_max": 125.0,
+        },
+        {
+            "sample_id": 3, "project_id": 42, "lat": 60.0, "lon": -80.0,
+            "date_min": "2018-06-30", "date_max": "2018-06-30",
+            "depth_min": 0.0, "depth_max": 80.0,
+        },
+    ])
+    client = _fake_client({
+        42: {"total_objects": 100, "validated_objects": 80,
+             "predicted_objects": 20, "dubious_objects": 0},
+    })
+    patches = _with_setup(cache_db, client)
+    with patches[0], patches[1], patches[2]:
+        result = find_observations(
+            taxon="Calanus finmarchicus",
+            month=7,
+            depth_max_lt=100,
+        )
+
+    assert [s["sample_id"] for s in result["samples"]] == [1]
+    assert result["samples"][0]["depth_max"] == pytest.approx(82.0)
 
 
 def test_find_observations_raises_CACHE_EMPTY(cache_db):

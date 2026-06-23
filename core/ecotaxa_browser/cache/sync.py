@@ -39,7 +39,7 @@ from core.ecotaxa_browser.schema import get_project_schema
 
 _LOGGER = logging.getLogger(__name__)
 
-_QUERY_FIELDS = "obj.latitude,obj.longitude,obj.objdate"
+_QUERY_FIELDS = "obj.latitude,obj.longitude,obj.objdate,obj.depth_min,obj.depth_max"
 _DEFAULT_WINDOW_SIZE = 5000
 _DEFAULT_OBJECT_CAP = 50_000
 _DEFAULT_RATE_LIMIT_RPS = 5.0
@@ -120,6 +120,8 @@ def _fetch_project_samples(
             if not row or len(row) < 3:
                 continue
             lat, lon, objdate = row[0], row[1], row[2]
+            obj_depth_min = _as_float(row[3]) if len(row) > 3 else None
+            obj_depth_max = _as_float(row[4]) if len(row) > 4 else None
             if lat is None or lon is None or sample_id is None:
                 continue
             try:
@@ -136,6 +138,8 @@ def _fetch_project_samples(
                     "count": 0,
                     "date_min": objdate,
                     "date_max": objdate,
+                    "depth_min": obj_depth_min,
+                    "depth_max": obj_depth_max,
                 },
             )
             agg["lat_sum"] += latf
@@ -146,6 +150,12 @@ def _fetch_project_samples(
                     agg["date_min"] = objdate
                 if agg["date_max"] is None or objdate > agg["date_max"]:
                     agg["date_max"] = objdate
+            if obj_depth_min is not None:
+                if agg["depth_min"] is None or obj_depth_min < agg["depth_min"]:
+                    agg["depth_min"] = obj_depth_min
+            if obj_depth_max is not None:
+                if agg["depth_max"] is None or obj_depth_max > agg["depth_max"]:
+                    agg["depth_max"] = obj_depth_max
 
         objects_seen += len(rows)
         window_start += len(rows)
@@ -164,12 +174,23 @@ def _fetch_project_samples(
             "lon_avg": agg["lon_sum"] / agg["count"],
             "date_min": agg["date_min"],
             "date_max": agg["date_max"],
+            "depth_min": agg["depth_min"],
+            "depth_max": agg["depth_max"],
             "object_count": agg["count"],
             "instrument": instrument,
         }
         for sid, agg in aggregates.items()
     ]
     return samples, instrument
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def sync_project(

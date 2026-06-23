@@ -14,6 +14,7 @@ from typing import Literal
 
 from core.ecotaxa_browser.cache.repo import (
     cache_counts,
+    init_schema,
     is_sync_running,
     latest_sync_status,
     open_connection,
@@ -29,6 +30,7 @@ from core.ecotaxa_browser.region import (
     _row_to_sample,
     _validate_bbox,
     _validate_date_range,
+    _validate_month,
     _validate_polygon_wkt,
 )
 from core.ecotaxa_browser.taxa_stats import _resolve_taxon
@@ -43,7 +45,9 @@ def _cache_db_path() -> str:
 
 
 def _open_cache() -> sqlite3.Connection:
-    return open_connection(_cache_db_path())
+    conn = open_connection(_cache_db_path())
+    init_schema(conn)
+    return conn
 
 
 def _sync_in_progress(conn: sqlite3.Connection) -> bool:
@@ -75,6 +79,9 @@ def find_observations(
     polygon_wkt: str | None = None,
     zone_name: str | None = None,
     project_ids: list[int] | None = None,
+    depth_max_lt: float | None = None,
+    depth_max_gte: float | None = None,
+    month: int | None = None,
 ) -> dict:
     """Return cached samples whose project has the taxon attested.
 
@@ -94,6 +101,9 @@ def find_observations(
         project_ids: optional subset of EcoTaxa projects to consider before
             taxon attestation lookup. Use to scope "taxon X in zone Y for
             project Z" in one shot.
+        depth_max_lt/depth_max_gte: filter the cached sample-level maximum
+            object depth in metres before project taxon attestation.
+        month: calendar month 1-12, across years.
     """
     if status not in _VALID_STATUS_FILTERS:
         raise EcoTaxaBrowserError(
@@ -104,6 +114,7 @@ def find_observations(
 
     bbox_tuple = _validate_bbox(bbox)
     date_tuple = _validate_date_range(date_range)
+    month_value = _validate_month(month)
     polygon = _resolve_zone_polygon(zone_name) or _validate_polygon_wkt(polygon_wkt)
 
     if bbox_tuple is None and polygon is not None:
@@ -123,6 +134,9 @@ def find_observations(
             date_range=date_tuple,
             instrument=instrument,
             project_ids=project_ids,
+            depth_max_lt=depth_max_lt,
+            depth_max_gte=depth_max_gte,
+            month=month_value,
         ))
     finally:
         conn.close()

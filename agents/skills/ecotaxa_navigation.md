@@ -137,7 +137,8 @@ General ambiguity rules:
 ## Step 1 — list samples by zone + time + (optional) project
 
 `find_ecotaxa_samples_in_region(zone_name="...", date_range={...},
-project_ids=[...], instrument="...")`.
+project_ids=[...], instrument="...", depth_max_lt=..., depth_max_gte=...,
+month=...)`.
 
 - The EcoTaxa public API has **no bbox/datetime endpoint** — this tool
   reads the local cache (`samples_cache` SQLite). That's why the cache
@@ -151,13 +152,23 @@ project_ids=[...], instrument="...")`.
   "projet loki"), treat it as the instrument and pass `instrument="Loki"`
   instead of resolving a project title. Only search project names when
   the user explicitly asks to "chercher/trouver le projet nommé ...".
+- `depth_max_lt` / `depth_max_gte` filter the cached sample-level
+  maximum object depth in metres. Use `depth_max_lt=100` for wording
+  such as "n'ont pas atteint 100 m", "pas eu 100 m", "sans données à
+  100 m", or "moins de 100 m de profondeur max". Samples whose
+  `depth_max` is unknown do not match these depth filters.
+- `month` filters calendar month 1-12 across years. Use `month=7` for
+  "mois de juillet" when no specific year is given. If the user gives a
+  precise year or date interval, use `date_range` instead or combine it
+  with `month` only when both constraints are explicit.
 - At least one filter is required — refusing without any filter is by
   design (avoid dumping 100k samples on the user).
 
 Output: a markdown table with `sample_id | projet | lat | lon |
-date_min | date_max | instrument`. The result is already clickable
-(sample IDs linkified to `/prj/{project_id}?samples={sample_id}` and
-project IDs to `/prj/{project_id}`).
+date_min | date_max | depth_min | depth_max | instrument`. The result
+is already clickable (sample IDs linkified to
+`/prj/{project_id}?samples={sample_id}` and project IDs to
+`/prj/{project_id}`).
 
 ---
 
@@ -473,7 +484,7 @@ tools so you can branch without thinking.
 |---|---|
 | `find_ecotaxa_samples_in_region(zone_name=..., date_range=..., project_ids=...)` | **Step 1 of the pipeline.** Default for "samples en zone X entre A et B", possibly narrowed by project. |
 | `group_ecotaxa_project_samples_by_region(project_id=...)` | "groupe les samples du projet X par mer / secteur / zone / région" — returns `region -> sample_ids` plus `Hors zones IHO` and `Sans coordonnées`. |
-| `find_ecotaxa_observations(taxon=..., zone_name=..., date_range=..., project_ids=...)` | "samples **avec Calanus** en Baie de Baffin" — taxon-centric. Returns samples whose project has the taxon attested. PREFER this over `find_ecotaxa_samples_in_region` whenever the user names a taxon — drop in for step 1. |
+| `find_ecotaxa_observations(taxon=..., zone_name=..., date_range=..., month=..., depth_max_lt=..., depth_max_gte=..., project_ids=...)` | "samples **avec Calanus** en Baie de Baffin", including month/depth filters — taxon-centric. Returns samples whose project has the taxon attested. PREFER this over `find_ecotaxa_samples_in_region` whenever the user names a taxon — drop in for step 1. |
 
 ### Inspect a project before export
 
@@ -529,6 +540,7 @@ User wants to export…
 |---|---|
 | "projets EcoTaxa actifs en Baie de Baffin 2024" | `find_ecotaxa_projects_in_region(zone_name=..., date_range=...)` |
 | "samples avec Calanus en mer du Labrador" | `find_ecotaxa_observations(taxon="Calanus", zone_name=...)` |
+| "samples avec Calanus en juillet en Baie de Baffin qui n'ont pas atteint 100 m" | `find_ecotaxa_observations(taxon="Calanus", zone_name="Baie de Baffin", month=7, depth_max_lt=100)` |
 | "qu'y a-t-il dans le projet 1165 ?" | `preview_ecotaxa_project(1165)` (light) — full nav only if user asks "explore tous les samples" |
 | "samples LOKI dans Baie de Baffin" | `find_ecotaxa_samples_in_region(zone_name=..., instrument="Loki")` |
 | "samples du projet LOKI dans Baie de Baffin" | `find_ecotaxa_projects(title="LOKI")` → `find_ecotaxa_samples_in_region(zone_name=..., project_ids=[<id>])` |

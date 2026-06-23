@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS samples_cache (
     lon_avg REAL,
     date_min TEXT,
     date_max TEXT,
+    depth_min REAL,
+    depth_max REAL,
     object_count INTEGER,
     instrument TEXT,
     last_synced TEXT NOT NULL
@@ -59,7 +61,29 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 def init_schema(conn: sqlite3.Connection) -> None:
     """Create tables and indexes if they do not exist (idempotent)."""
     conn.executescript(_SCHEMA)
+    _ensure_column(conn, "samples_cache", "depth_min", "REAL")
+    _ensure_column(conn, "samples_cache", "depth_max", "REAL")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_samples_depth_max "
+        "ON samples_cache(depth_max)"
+    )
     conn.commit()
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    definition: str,
+) -> None:
+    columns = {
+        row[1]
+        for row in conn.execute(f"PRAGMA table_info({table_name})")
+    }
+    if column_name not in columns:
+        conn.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
+        )
 
 
 def upsert_sample(
@@ -74,28 +98,34 @@ def upsert_sample(
     object_count: int,
     instrument: str | None,
     last_synced: str,
+    depth_min: float | None = None,
+    depth_max: float | None = None,
 ) -> None:
     """Insert or update a single sample row."""
     conn.execute(
         """
         INSERT INTO samples_cache (
             sample_id, project_id, lat_avg, lon_avg,
-            date_min, date_max, object_count, instrument, last_synced
+            date_min, date_max, depth_min, depth_max,
+            object_count, instrument, last_synced
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(sample_id) DO UPDATE SET
             project_id = excluded.project_id,
             lat_avg = excluded.lat_avg,
             lon_avg = excluded.lon_avg,
             date_min = excluded.date_min,
             date_max = excluded.date_max,
+            depth_min = excluded.depth_min,
+            depth_max = excluded.depth_max,
             object_count = excluded.object_count,
             instrument = excluded.instrument,
             last_synced = excluded.last_synced
         """,
         (
             sample_id, project_id, lat_avg, lon_avg,
-            date_min, date_max, object_count, instrument, last_synced,
+            date_min, date_max, depth_min, depth_max,
+            object_count, instrument, last_synced,
         ),
     )
     conn.commit()
@@ -122,9 +152,10 @@ def replace_project_samples(
                 """
                 INSERT INTO samples_cache (
                     sample_id, project_id, lat_avg, lon_avg,
-                    date_min, date_max, object_count, instrument, last_synced
+                    date_min, date_max, depth_min, depth_max,
+                    object_count, instrument, last_synced
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(sample["sample_id"]),
@@ -133,6 +164,8 @@ def replace_project_samples(
                     sample.get("lon_avg"),
                     sample.get("date_min"),
                     sample.get("date_max"),
+                    sample.get("depth_min"),
+                    sample.get("depth_max"),
                     int(sample.get("object_count") or 0),
                     sample.get("instrument"),
                     last_synced,
@@ -243,6 +276,9 @@ def query_samples_filtered(
     date_range: tuple[str, str] | None = None,
     instrument: str | None = None,
     project_ids: Sequence[int] | None = None,
+    depth_max_lt: float | None = None,
+    depth_max_gte: float | None = None,
+    month: int | None = None,
 ) -> Iterable[sqlite3.Row]:
     clauses: list[str] = []
     params: list = []
@@ -256,9 +292,21 @@ def query_samples_filtered(
         date_from, date_to = date_range
         clauses.append("date_max >= ? AND date_min <= ?")
         params.extend([date_from, date_to])
+    if month is not None:
+        clauses.append(
+            "CAST(strftime('%m', date_min) AS INTEGER) <= ? "
+            "AND CAST(strftime('%m', date_max) AS INTEGER) >= ?"
+        )
+        params.extend([int(month), int(month)])
     if instrument is not None:
         clauses.append("instrument = ?")
         params.append(instrument)
+    if depth_max_lt is not None:
+        clauses.append("depth_max < ?")
+        params.append(float(depth_max_lt))
+    if depth_max_gte is not None:
+        clauses.append("depth_max >= ?")
+        params.append(float(depth_max_gte))
     if project_ids:
         placeholders = ",".join("?" for _ in project_ids)
         clauses.append(f"project_id IN ({placeholders})")

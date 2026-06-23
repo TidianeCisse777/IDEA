@@ -101,7 +101,7 @@ errors propagate as MCP `isError: true`.
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `samples_in_region` | `bbox?` (`{south, west, north, east}`), `date_range?` (`{from, to}`), `instrument?`, `zone_name?`, `polygon_wkt?`, `project_ids?` | `{samples[], total_matching, truncated, summary, partial, sync_in_progress}` — cap 500 |
+| `samples_in_region` | `bbox?` (`{south, west, north, east}`), `date_range?` (`{from, to}`), `month?` (`1..12`), `instrument?`, `zone_name?`, `polygon_wkt?`, `project_ids?`, `depth_max_lt?`, `depth_max_gte?` | `{samples[], total_matching, truncated, summary, partial, sync_in_progress}` — cap 500 |
 | `projects_in_region` | `bbox?`, `date_range?`, `zone_name?`, `polygon_wkt?`, `project_ids?` | `{projects[], total_projects, total_samples, partial, sync_in_progress}` — one row per project with `sample_count`, `object_count`, `instruments`, date range |
 
 ### UC2 — Taxon mapping (cache + live taxon counts)
@@ -215,6 +215,48 @@ curl -s -X POST "$URL" \
     }
   }'
 ```
+
+---
+
+## Example: samples in July that did not reach 100 m
+
+```bash
+TOKEN="$MCP_AUTH_TOKEN"
+URL="http://localhost:8001/mcp"
+
+# Initialize and keep the returned mcp-session-id header.
+curl -i -sS -X POST "$URL" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","id":1,"method":"initialize",
+    "params":{"protocolVersion":"2025-11-25","capabilities":{},
+              "clientInfo":{"name":"curl","version":"0"}}
+  }'
+
+SESSION_ID="<mcp-session-id-from-response-header>"
+
+curl -sS -X POST "$URL" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Mcp-Session-Id: $SESSION_ID" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","id":2,"method":"tools/call",
+    "params":{
+      "name":"samples_in_region",
+      "arguments":{
+        "zone_name":"Baie de Baffin",
+        "month":7,
+        "depth_max_lt":100
+      }
+    }
+  }'
+```
+
+`depth_max_lt` excludes samples whose maximum indexed object depth is
+unknown (`null`) or greater than/equal to the threshold.
 
 ---
 
