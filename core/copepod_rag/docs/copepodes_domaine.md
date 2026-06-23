@@ -68,7 +68,7 @@ Espèce boréale dominante de l'Atlantique Nord. Espèce clé du réseau trophiq
 # Qu'est-ce que Calanus helgolandicus ?
 
 **Abréviation labo :** Chel
-**AphiaID WoRMS :** 104466
+**AphiaID WoRMS :** 104466 *(alternative representation ; valid ssp. nominale C. helgolandicus helgolandicus, AphiaID 1805501)*
 **Taille ♀ adulte :** ~2.5 mm
 **Ordre :** Calanoida | **Famille :** Calanidae
 
@@ -79,7 +79,7 @@ Espèce d'eaux tempérées et côtières. Rare dans les zones d'intérêt princi
 # Qu'est-ce que Metridia longa et quel est son comportement ?
 
 **Abréviation labo :** Mlon
-**AphiaID WoRMS :** 104520
+**AphiaID WoRMS :** 104632 *(alternative representation ; valid ssp. nominale Metridia longa longa, AphiaID 1806771)*
 **Taille ♀ adulte :** ~3 mm
 **Ordre :** Calanoida
 
@@ -98,7 +98,7 @@ Espèce omnivore à migration verticale nocturne marquée. Stades CI–CIII rest
 # Qu'est-ce que Oithona similis et quel est son rôle dans le cycle du carbone ?
 
 **Abréviation labo :** Osim
-**AphiaID WoRMS :** 106485
+**AphiaID WoRMS :** 106656
 **Taille ♀ adulte :** ~0.6 mm
 **Ordre :** Cyclopoida ← ordre différent des autres espèces du labo
 
@@ -117,9 +117,9 @@ Petite taille mais très abondante en Arctique et dans le Saint-Laurent. Rôle c
 # Qu'est-ce que Pseudocalanus minutus ?
 
 **Abréviation labo :** Pmin
-**AphiaID WoRMS :** 104522
+**AphiaID WoRMS :** 104517
 **Taille ♀ adulte :** ~1 mm
-**Ordre :** Calanoida
+**Ordre :** Calanoida | **Famille :** Clausocalanidae *(ex-Pseudocalanidae, unaccepted dans WoRMS)*
 
 Très abondant en Arctique. Herbivore au printemps (régime diatomes), omnivore le reste de l'année. Fort turnover lipidique — s'adapte rapidement au type de nourriture disponible.
 

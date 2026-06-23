@@ -14,26 +14,26 @@ Biota
         └── Crustacea (Sous-embranchement)
             └── Multicrustacea (Superclasse)
                 └── Copepoda (Classe — AphiaID : 1080)
-                    ├── Calanoida (Ordre — AphiaID : 1081)  ← copépodes du labo Maps
-                    │   ├── Calanidae (Famille — AphiaID : 106358)
-                    │   │   └── Calanus (Genre — AphiaID : 104421)
+                    ├── Calanoida (Ordre — AphiaID : 1100)  ← copépodes du labo Maps
+                    │   ├── Calanidae (Famille — AphiaID : 104079)
+                    │   │   └── Calanus (Genre — AphiaID : 104152)
                     │   │       ├── Calanus finmarchicus   (104464)
                     │   │       ├── Calanus glacialis      (104465)
-                    │   │       ├── Calanus helgolandicus  (104466)
+                    │   │       ├── Calanus helgolandicus  (104466)  ← alternative representation ; valid = sous-espèce nominale C. helgolandicus helgolandicus (AphiaID 1805501)
                     │   │       └── Calanus hyperboreus    (104467)
                     │   ├── Metridinidae (Famille)
-                    │   │   └── Metridia (Genre — AphiaID : 104517)
-                    │   │       └── Metridia longa         (104520)
-                    │   ├── Pseudocalanidae (Famille)
-                    │   │   └── Pseudocalanus (Genre)
-                    │   │       └── Pseudocalanus minutus  (104522)
+                    │   │   └── Metridia (Genre — AphiaID : 104190)
+                    │   │       └── Metridia longa         (104632)  ← alternative representation ; valid = sous-espèce nominale Metridia longa longa (AphiaID 1806771)
+                    │   ├── Clausocalanidae (Famille — AphiaID : 104082)  ← ex-Pseudocalanidae (149739, unaccepted)
+                    │   │   └── Pseudocalanus (Genre — AphiaID : 104165)
+                    │   │       └── Pseudocalanus minutus  (104517)
                     │   └── Temoridae (Famille)
-                    │       └── Temora (Genre)
-                    │           └── Temora longicornis
-                    ├── Cyclopoida (Ordre — AphiaID : 1089)  ← Oithona
+                    │       └── Temora (Genre — AphiaID : 104241)
+                    │           └── Temora longicornis     (104878)
+                    ├── Cyclopoida (Ordre — AphiaID : 1101)  ← Oithona
                     │   └── Oithonidae (Famille)
-                    │       └── Oithona (Genre — AphiaID : 106484)
-                    │           └── Oithona similis        (106485)
+                    │       └── Oithona (Genre — AphiaID : 106485)
+                    │           └── Oithona similis        (106656)
                     └── Harpacticoida (Ordre)  ← hors périmètre labo Maps
 ```
 
@@ -68,26 +68,26 @@ Règne      : Animalia
   Embranchement : Arthropoda
     Sous-embranchement : Crustacea
       Classe : Copepoda (AphiaID : 1080)
-        Ordre : Calanoida  (AphiaID : 1080 → sous-taxon)
-          Famille : Calanidae
-            Genre : Calanus
-              Espèce : Calanus hyperboreus   (AphiaID : 104464)
-              Espèce : Calanus glacialis     (AphiaID : 104466)
-              Espèce : Calanus finmarchicus  (AphiaID : 104464*)
-              Espèce : Calanus helgolandicus (AphiaID : 104467)
+        Ordre : Calanoida  (AphiaID : 1100)
+          Famille : Calanidae (AphiaID : 104079)
+            Genre : Calanus (AphiaID : 104152)
+              Espèce : Calanus hyperboreus   (AphiaID : 104467)
+              Espèce : Calanus glacialis     (AphiaID : 104465)
+              Espèce : Calanus finmarchicus  (AphiaID : 104464)
+              Espèce : Calanus helgolandicus (AphiaID : 104466)  [alt. repr. ; valid ssp. 1805501]
           Famille : Metridinidae
-            Genre : Metridia
-              Espèce : Metridia longa        (AphiaID : 104520)
-          Famille : Pseudocalanidae
-            Genre : Pseudocalanus
-              Espèce : Pseudocalanus minutus  (AphiaID : 104522)
+            Genre : Metridia (AphiaID : 104190)
+              Espèce : Metridia longa        (AphiaID : 104632)  [alt. repr. ; valid ssp. 1806771]
+          Famille : Clausocalanidae (AphiaID : 104082)  [ex-Pseudocalanidae 149739, unaccepted]
+            Genre : Pseudocalanus (AphiaID : 104165)
+              Espèce : Pseudocalanus minutus  (AphiaID : 104517)
           Famille : Temoridae
-            Genre : Temora
-              Espèce : Temora longicornis
-        Ordre : Cyclopoida
+            Genre : Temora (AphiaID : 104241)
+              Espèce : Temora longicornis     (AphiaID : 104878)
+        Ordre : Cyclopoida (AphiaID : 1101)
           Famille : Oithonidae
-            Genre : Oithona
-              Espèce : Oithona similis       (AphiaID : 106485)
+            Genre : Oithona (AphiaID : 106485)
+              Espèce : Oithona similis       (AphiaID : 106656)
 ```
 
 **Note :** Les Calanoida regroupent la majorité des copépodes d'intérêt au labo Maps. Les Cyclopoida (Oithona) appartiennent à un ordre différent.
@@ -104,9 +104,9 @@ L'API WoRMS est publique, sans authentification. Elle retourne du JSON ou XML.
 GET https://www.marinespecies.org/rest/AphiaClassificationByAphiaID/{AphiaID}
 ```
 
-Exemple — hiérarchie de Calanus hyperboreus (AphiaID : 104464) :
+Exemple — hiérarchie de Calanus hyperboreus (AphiaID : 104467) :
 ```
-https://www.marinespecies.org/rest/AphiaClassificationByAphiaID/104464
+https://www.marinespecies.org/rest/AphiaClassificationByAphiaID/104467
 ```
 
 Retourne la chaîne complète du règne jusqu'à l'espèce.
@@ -146,16 +146,16 @@ Paramètres utiles :
 
 **Exemple — toutes les espèces du genre Calanus :**
 
-L'AphiaID du genre Calanus est 104421.
+L'AphiaID du genre Calanus est 104152.
 ```
-https://www.marinespecies.org/rest/AphiaChildrenByAphiaID/104421?marine_only=true
+https://www.marinespecies.org/rest/AphiaChildrenByAphiaID/104152?marine_only=true
 ```
 
 **Exemple — tous les genres de la famille Calanidae :**
 
-L'AphiaID de Calanidae est 106358.
+L'AphiaID de Calanidae est 104079.
 ```
-https://www.marinespecies.org/rest/AphiaChildrenByAphiaID/106358
+https://www.marinespecies.org/rest/AphiaChildrenByAphiaID/104079
 ```
 
 ---
@@ -185,28 +185,39 @@ Retourne une liste de correspondances avec AphiaID, nom accepté, rang et statut
 
 # AphiaID des taxons clés pour les données du labo Maps
 
-| Taxon | Rang | AphiaID |
-|-------|------|---------|
-| Copepoda | Classe | 1080 |
-| Calanoida | Ordre | 1081 |
-| Cyclopoida | Ordre | 1089 |
-| Calanidae | Famille | 106358 |
-| Calanus | Genre | 104421 |
-| Calanus finmarchicus | Espèce | 104464 |
-| Calanus glacialis | Espèce | 104465 |
-| Calanus helgolandicus | Espèce | 104466 |
-| Calanus hyperboreus | Espèce | 104467 |
-| Metridia | Genre | 104517 |
-| Metridia longa | Espèce | 104520 |
-| Pseudocalanus minutus | Espèce | 104522 |
-| Oithona | Genre | 106484 |
-| Oithona similis | Espèce | 106485 |
-| Eurytemora affinis | Espèce | 149081 |
+| Taxon | Rang | AphiaID | Note WoRMS |
+|-------|------|---------|------------|
+| Copepoda | Classe | 1080 | accepted |
+| Calanoida | Ordre | 1100 | accepted |
+| Cyclopoida | Ordre | 1101 | accepted |
+| Calanidae | Famille | 104079 | accepted |
+| Calanus | Genre | 104152 | accepted |
+| Calanus finmarchicus | Espèce | 104464 | accepted |
+| Calanus glacialis | Espèce | 104465 | accepted |
+| Calanus helgolandicus | Espèce | 104466 | alternative representation ; valid = ssp. nominale *C. helgolandicus helgolandicus* (AphiaID 1805501) |
+| Calanus hyperboreus | Espèce | 104467 | accepted |
+| Metridinidae | Famille | 104092 | accepted |
+| Metridia | Genre | 104190 | accepted |
+| Metridia longa | Espèce | 104632 | alternative representation ; valid = ssp. nominale *M. longa longa* (AphiaID 1806771) |
+| Clausocalanidae | Famille | 104082 | accepted ; famille actuelle de *Pseudocalanus* (l'ancienne *Pseudocalanidae* — AphiaID 149739 — est unaccepted dans WoRMS et redirige ici) |
+| Pseudocalanus | Genre | 104165 | accepted ; parent : Clausocalanidae |
+| Pseudocalanus minutus | Espèce | 104517 | accepted |
+| Temoridae | Famille | 104106 | accepted |
+| Temora | Genre | 104241 | accepted |
+| Temora longicornis | Espèce | 104878 | accepted |
+| Eurytemora | Genre | 104240 | accepted |
+| Eurytemora affinis | Espèce | 104872 | alternative representation ; vérifier ssp. valide via `lookup_marine_taxonomy` |
+| Oithonidae | Famille | 106422 | accepted |
+| Oithona | Genre | 106485 | accepted |
+| Oithona similis | Espèce | 106656 | accepted |
 
-**Note :** L'AphiaID de *Calanus finmarchicus* est à valider — il est distinct de *C. hyperboreus* (104464). Requête recommandée :
+**Note — espèces en statut "alternative representation" :** WoRMS a introduit des sous-espèces nominales acceptées pour *C. helgolandicus*, *M. longa* et *E. affinis*. L'AphiaID au rang espèce reste exploitable et reste l'usage courant côté EcoTaxa, mais la forme strictement acceptée par WoRMS est la sous-espèce trinomial. En cas de doute, requalifier via :
 ```
-https://www.marinespecies.org/rest/AphiaIDByName/Calanus%20finmarchicus
+https://www.marinespecies.org/rest/AphiaRecordsByName/{name}?like=false&marine_only=true
 ```
+et regarder les champs `status` et `valid_AphiaID`.
+
+**Note — révision taxonomique *Pseudocalanidae* → *Clausocalanidae* :** dans WoRMS aujourd'hui, le genre *Pseudocalanus* (104165) est rattaché à la famille **Clausocalanidae** (AphiaID 104082). L'ancien nom *Pseudocalanidae* (AphiaID 149739) est marqué *unaccepted* et redirige vers *Clausocalanidae*. La littérature plus ancienne et certains exports EcoTaxa peuvent encore utiliser *Pseudocalanidae*.
 
 ---
 
@@ -249,13 +260,13 @@ OBIS utilise WoRMS comme taxonomie de référence. Une requête OBIS filtrée pa
 
 # Quelles sont toutes les espèces du genre Calanus reconnues dans WoRMS ?
 
-Le genre Calanus (AphiaID : 104421, famille Calanidae) contient plusieurs dizaines d'espèces. Espèces présentes dans les données du labo Maps ou dans les zones d'intérêt (Arctique, Atlantique Nord, golfe du Saint-Laurent) :
+Le genre Calanus (AphiaID : 104152, famille Calanidae AphiaID : 104079) contient plusieurs dizaines d'espèces. Espèces présentes dans les données du labo Maps ou dans les zones d'intérêt (Arctique, Atlantique Nord, golfe du Saint-Laurent) :
 
 | Espèce | AphiaID | Zones principales | Notes |
 |--------|---------|-------------------|-------|
 | *Calanus finmarchicus* | 104464 | Atlantique Nord, mer du Labrador, golfe du Saint-Laurent | Espèce boréale dominante |
 | *Calanus glacialis* | 104465 | Plateaux arctiques, baie de Baffin, golfe du Saint-Laurent | Espèce de glace, confusion avec *C. finmarchicus* |
-| *Calanus helgolandicus* | 104466 | Atlantique Nord-Est, mer du Nord | Rare dans les données du labo |
+| *Calanus helgolandicus* | 104466 | Atlantique Nord-Est, mer du Nord | Rare dans les données du labo ; alternative representation (valid ssp. *C. helgolandicus helgolandicus* AphiaID 1805501) |
 | *Calanus hyperboreus* | 104467 | Arctique central, baie de Baffin, mer du Labrador, golfe du Saint-Laurent | Plus grande espèce, diapause la plus longue |
 | *Calanus marshallae* | — | Pacifique Nord-Est | Hors périmètre labo Maps |
 | *Calanus pacificus* | — | Pacifique Nord | Hors périmètre labo Maps |
@@ -263,9 +274,9 @@ Le genre Calanus (AphiaID : 104421, famille Calanidae) contient plusieurs dizain
 
 **Pour obtenir la liste complète et à jour des espèces Calanus :**
 ```
-GET https://www.marinespecies.org/rest/AphiaChildrenByAphiaID/104421?marine_only=true
+GET https://www.marinespecies.org/rest/AphiaChildrenByAphiaID/104152?marine_only=true
 ```
-→ Utiliser le tool `lookup_worms_taxonomy("Calanus", include_children=True)` pour une réponse live.
+→ Utiliser le tool `lookup_marine_taxonomy("Calanus", include_children=True)` pour une réponse live.
 
 ---
 
@@ -277,18 +288,18 @@ Dans les exports EcoTaxa (colonne `object_annotation_category`), les annotations
 
 | Annotation EcoTaxa | Genre WoRMS | Stade | AphiaID applicable |
 |--------------------|-------------|-------|-------------------|
-| `Calanus` | Calanus | indéterminé | 104421 (genre) |
-| `Calanus_CV` | Calanus | Copépodite stade V | 104421 (genre seulement) |
-| `Calanus_CIII` | Calanus | Copépodite stade III | 104421 |
-| `Calanus_CIV` | Calanus | Copépodite stade IV | 104421 |
-| `Calanus_AF` | Calanus | Adulte femelle | 104421 |
-| `Calanus_hyperboreus` | *C. hyperboreus* | indéterminé | 104464 |
-| `Calanus_glacialis_CV` | *C. glacialis* | CV | 104466 |
+| `Calanus` | Calanus | indéterminé | 104152 (genre) |
+| `Calanus_CV` | Calanus | Copépodite stade V | 104152 (genre seulement) |
+| `Calanus_CIII` | Calanus | Copépodite stade III | 104152 |
+| `Calanus_CIV` | Calanus | Copépodite stade IV | 104152 |
+| `Calanus_AF` | Calanus | Adulte femelle | 104152 |
+| `Calanus_hyperboreus` | *C. hyperboreus* | indéterminé | 104467 |
+| `Calanus_glacialis_CV` | *C. glacialis* | CV | 104465 |
 | `Copepoda` | Copepoda | indéterminé | 1080 (classe) |
 
 **Règles importantes :**
 - Un stade (CV, CIII, AF) n'est PAS un taxon WoRMS — il doit être extrait séparément.
-- Si le genre seul est annoté (sans espèce), l'AphiaID applicable est celui du genre (104421), pas d'une espèce.
+- Si le genre seul est annoté (sans espèce), l'AphiaID applicable est celui du genre (104152), pas d'une espèce.
 - Pour les analyses nécessitant une espèce précise, vérifier si la méthode d'identification de l'annotateur discrimine *C. glacialis* et *C. finmarchicus*.
 
 ---
@@ -305,4 +316,4 @@ Dans les exports EcoTaxa (colonne `object_annotation_category`), les annotations
 | Vérifier si un nom est accepté ou synonyme | Tool WoRMS |
 | AphiaID d'une espèce rare ou nouvelle | Tool WoRMS |
 
-*Dernière mise à jour : mai 2026*
+*Dernière mise à jour : juin 2026 — recalibration complète des AphiaID contre WoRMS live ; révision Pseudocalanidae → Clausocalanidae.*

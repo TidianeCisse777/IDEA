@@ -2,13 +2,15 @@
 
 ## Goal
 
-Improve the agent's taxonomic knowledge for marine organisms by adding a
-single deterministic tool that combines local project knowledge, authoritative
-WoRMS validation, and a Wikipedia fallback for plain-language definitions.
+Improve the agent's taxonomic knowledge for marine organisms and taxon terms by
+adding a single deterministic tool that combines local project knowledge,
+authoritative WoRMS validation, and a Wikipedia fallback for plain-language
+definitions.
 
-The feature must help the agent understand scientific terms and definitions
-without weakening existing EcoTaxa data routing. Data questions still use
-EcoTaxa tools; knowledge questions use the taxonomy lookup.
+The feature must help the agent understand scientific terms and definitions on
+any taxon mention, not only EcoTaxa annotations. It must not weaken existing
+EcoTaxa data routing: data questions still use EcoTaxa tools; knowledge
+questions use the taxonomy lookup.
 
 ## Current State
 
