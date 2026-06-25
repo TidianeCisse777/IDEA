@@ -281,6 +281,73 @@ def test_match_ctd_rows_marks_no_match_when_distance_above_tolerance():
     assert matches[0].status == "no_match"
 
 
+def test_match_ctd_rows_uses_exact_deployment_window_when_time_end_provided():
+    """When source row has both time and time_end (e.g. NeoLabs deployment),
+    a CTD profile within that window matches even if it's outside the
+    default ±tolerance around the start time alone."""
+    src_lat = pd.Series([48.0])
+    src_lon = pd.Series([-68.0])
+    src_time = pd.to_datetime(pd.Series(["2020-01-01T00:00:00Z"]), utc=True)
+    src_time_end = pd.to_datetime(pd.Series(["2020-01-01T02:30:00Z"]), utc=True)
+    ctd = _build_ctd(
+        [
+            {
+                "latitude": 48.0,
+                "longitude": -68.0,
+                # CTD time 2h after start, well within the deployment window
+                "time": "2020-01-01T02:00:00Z",
+                "PRES": 5.0,
+                "TE90": 1.0,
+            }
+        ]
+    )
+    matches = match_ctd_rows(
+        src_lat=src_lat,
+        src_lon=src_lon,
+        src_time=src_time,
+        src_time_end=src_time_end,
+        src_depth=None,
+        ctd=ctd,
+        variables_for_value_check=["TE90"],
+        spatial_tolerance_km=25.0,
+        # Even with 0 tolerance, the window-based match should succeed
+        time_tolerance_hours=0.0,
+    )
+    assert matches[0].status == "matched"
+
+
+def test_match_ctd_rows_rejects_ctd_outside_deployment_window():
+    """CTD profile clearly outside [time, time_end] window should not match."""
+    src_lat = pd.Series([48.0])
+    src_lon = pd.Series([-68.0])
+    src_time = pd.to_datetime(pd.Series(["2020-01-01T00:00:00Z"]), utc=True)
+    src_time_end = pd.to_datetime(pd.Series(["2020-01-01T02:00:00Z"]), utc=True)
+    ctd = _build_ctd(
+        [
+            {
+                "latitude": 48.0,
+                "longitude": -68.0,
+                # CTD time 5h after end of deployment, far past slack
+                "time": "2020-01-01T07:00:00Z",
+                "PRES": 5.0,
+                "TE90": 1.0,
+            }
+        ]
+    )
+    matches = match_ctd_rows(
+        src_lat=src_lat,
+        src_lon=src_lon,
+        src_time=src_time,
+        src_time_end=src_time_end,
+        src_depth=None,
+        ctd=ctd,
+        variables_for_value_check=["TE90"],
+        spatial_tolerance_km=25.0,
+        time_tolerance_hours=24.0,
+    )
+    assert matches[0].status == "no_match"
+
+
 def test_match_ctd_rows_marks_no_match_when_outside_time_tolerance():
     src_lat = pd.Series([48.0])
     src_lon = pd.Series([-68.0])

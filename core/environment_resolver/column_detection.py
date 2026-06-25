@@ -27,6 +27,13 @@ DEFAULT_TIME_CANDIDATES: tuple[str, ...] = (
     "yyyy-mm-dd hh:mm",
     "datetime",
 )
+DEFAULT_TIME_END_CANDIDATES: tuple[str, ...] = (
+    "deployment_datetime_end",
+    "time_end",
+    "datetime_end",
+    "end_time",
+    "sampling_date_end",
+)
 DEFAULT_DEPTH_CANDIDATES: tuple[str, ...] = (
     "object_depth_min",
     "max_sample_depth",

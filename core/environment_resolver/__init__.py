@@ -11,6 +11,7 @@ from core.environment_resolver.column_detection import (
     DEFAULT_LAT_CANDIDATES,
     DEFAULT_LON_CANDIDATES,
     DEFAULT_TIME_CANDIDATES,
+    DEFAULT_TIME_END_CANDIDATES,
     detect_column,
 )
 from core.environment_resolver.coords import (
@@ -28,6 +29,7 @@ __all__ = [
     "DEFAULT_LAT_CANDIDATES",
     "DEFAULT_LON_CANDIDATES",
     "DEFAULT_TIME_CANDIDATES",
+    "DEFAULT_TIME_END_CANDIDATES",
     "compute_bbox_time_window",
     "detect_column",
     "haversine_km",

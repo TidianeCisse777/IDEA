@@ -34,11 +34,15 @@ def match_ctd_rows(
     variables_for_value_check: list[str],
     spatial_tolerance_km: float,
     time_tolerance_hours: float,
+    src_time_end: pd.Series | None = None,
 ) -> list[CtdMatch]:
     """Match each source row to the nearest CTD row within tolerance windows.
 
     The match strategy mirrors the original Amundsen/OGSL behaviour:
-    1. Drop CTD rows outside the time tolerance window.
+    1. Drop CTD rows outside the time window. When `src_time_end` is provided
+       AND its value is not NaT for the row, the window is the exact deployment
+       interval `[src_time, src_time_end]` widened by ±15 min for clock skew.
+       Otherwise the window is `src_time ± time_tolerance_hours`.
     2. Compute Haversine distance to each remaining CTD row.
     3. If the nearest distance exceeds `spatial_tolerance_km`, mark "no_match".
     4. Among rows tied at the nearest distance (same profile), pick the row
@@ -63,16 +67,25 @@ def match_ctd_rows(
         else pd.Series([float("nan")] * len(ctd))
     )
     time_tolerance = pd.Timedelta(hours=float(time_tolerance_hours))
+    window_slack = pd.Timedelta(minutes=15)
 
     n_rows = len(src_lat)
     for position in range(n_rows):
         src_t = src_time.iloc[position]
-        time_deltas = (ctd_time - src_t).abs()
-        within_time = (
-            time_deltas <= time_tolerance
-            if not pd.isna(src_t)
-            else pd.Series([True] * len(ctd))
+        src_t_end = (
+            src_time_end.iloc[position]
+            if src_time_end is not None
+            else pd.NaT
         )
+        time_deltas = (ctd_time - src_t).abs()
+        if pd.notna(src_t) and pd.notna(src_t_end):
+            within_time = (ctd_time >= src_t - window_slack) & (
+                ctd_time <= src_t_end + window_slack
+            )
+        elif not pd.isna(src_t):
+            within_time = time_deltas <= time_tolerance
+        else:
+            within_time = pd.Series([True] * len(ctd))
         if not within_time.any():
             matches.append(CtdMatch(status="no_match"))
             continue

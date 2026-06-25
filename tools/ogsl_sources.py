@@ -18,6 +18,7 @@ from core.environment_resolver import (
     DEFAULT_LAT_CANDIDATES,
     DEFAULT_LON_CANDIDATES,
     DEFAULT_TIME_CANDIDATES,
+    DEFAULT_TIME_END_CANDIDATES,
     compute_bbox_time_window,
     detect_column,
     match_ctd_rows,
@@ -280,6 +281,7 @@ def make_ogsl_tools(thread_id: str) -> list:
         lat_col = latitude_column or detect_column(source.columns, DEFAULT_LAT_CANDIDATES)
         lon_col = longitude_column or detect_column(source.columns, DEFAULT_LON_CANDIDATES)
         time_col = time_column or detect_column(source.columns, DEFAULT_TIME_CANDIDATES)
+        time_end_col = detect_column(source.columns, DEFAULT_TIME_END_CANDIDATES)
         depth_col = depth_column or detect_column(source.columns, DEFAULT_DEPTH_CANDIDATES)
 
         missing = [
@@ -310,6 +312,7 @@ def make_ogsl_tools(thread_id: str) -> list:
             lat_col=lat_col,
             lon_col=lon_col,
             time_col=time_col,
+            time_end_col=time_end_col,
             depth_col=depth_col,
         )
         if coords.empty_groups:
@@ -321,6 +324,7 @@ def make_ogsl_tools(thread_id: str) -> list:
         src_lat = coords.latitude
         src_lon = coords.longitude
         src_time = coords.time
+        src_time_end = coords.time_end
         src_depth = coords.depth
 
         unique_positions, row_to_unique = unique_coordinate_positions(
@@ -332,6 +336,11 @@ def make_ogsl_tools(thread_id: str) -> list:
         unique_lat = src_lat.iloc[unique_positions].reset_index(drop=True)
         unique_lon = src_lon.iloc[unique_positions].reset_index(drop=True)
         unique_time = src_time.iloc[unique_positions].reset_index(drop=True)
+        unique_time_end = (
+            src_time_end.iloc[unique_positions].reset_index(drop=True)
+            if src_time_end is not None
+            else None
+        )
         unique_depth = (
             src_depth.iloc[unique_positions].reset_index(drop=True)
             if src_depth is not None
@@ -367,6 +376,11 @@ def make_ogsl_tools(thread_id: str) -> list:
             batch_lat = unique_lat.iloc[positions].reset_index(drop=True)
             batch_lon = unique_lon.iloc[positions].reset_index(drop=True)
             batch_time = unique_time.iloc[positions].reset_index(drop=True)
+            batch_time_end = (
+                unique_time_end.iloc[positions].reset_index(drop=True)
+                if unique_time_end is not None
+                else None
+            )
             batch_depth = (
                 unique_depth.iloc[positions].reset_index(drop=True)
                 if unique_depth is not None
@@ -412,6 +426,7 @@ def make_ogsl_tools(thread_id: str) -> list:
                 src_lat=batch_lat,
                 src_lon=batch_lon,
                 src_time=batch_time,
+                src_time_end=batch_time_end,
                 src_depth=batch_depth,
                 ctd=ctd,
                 ctd_pres_col="PRES",
