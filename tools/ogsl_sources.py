@@ -298,7 +298,12 @@ def make_ogsl_tools(thread_id: str) -> list:
                 "`longitude_column`, `time_column`."
             )
 
-        selected_variables = list(variables or ["TE90", "PSAL", "OXYM"])
+        # Default pack aligned with Amundsen so users get a coherent set of
+        # variables across CTD sources (physical niche + redox + productivity).
+        # OGSL uses "PHPH" for pH (Amundsen uses "pH").
+        selected_variables = list(
+            variables or ["TE90", "PSAL", "SIGT", "OXYM", "PHPH", "NTRA", "FLOR"]
+        )
 
         coords = parse_source_coords(
             source,

@@ -769,8 +769,8 @@ def make_bio_oracle_tools(thread_id: str) -> list:
 
     @tool
     def enrich_with_bio_oracle(
-        variables: list[str],
-        scenarios: list[str],
+        variables: list[str] | None = None,
+        scenarios: list[str] | None = None,
         depth_layer: str = "surface",
         target_year: int | None = None,
         latitude_column: str | None = None,
@@ -789,6 +789,17 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         passe `source_variable` (par exemple `df_file_filet_arctic_2018`) pour
         cibler un dataset précis au lieu du df actif.
         """
+        # Default copepod pack — aligned with Amundsen/OGSL defaults.
+        # Bio-ORACLE has no warmup so cold runs hit the lazy cache on first
+        # call; the cache then accumulates across files.
+        if not variables:
+            variables = [
+                "temperature", "salinity", "oxygen", "ph", "nitrate",
+                "chlorophyll", "iron",
+            ]
+        if not scenarios:
+            scenarios = ["baseline"]
+
         source = resolve_source_dataframe(_store, thread_id, source_variable)
         if source is None:
             if source_variable:

@@ -474,7 +474,13 @@ def make_amundsen_tools(thread_id: str) -> list:
                 "`latitude_column`, `longitude_column`, `time_column`."
             )
 
-        selected_variables = list(variables or ["TE90", "PSAL"])
+        # Default pack aligned with scripts/warmup_amundsen_arctic.py so cached
+        # arctic tiles are reused on every default enrich. Same 7 vars cover
+        # physical niche (TE90/PSAL/SIGT) + redox/biogeochem (OXYM/pH/NTRA) +
+        # productivity proxy (FLOR).
+        selected_variables = list(
+            variables or ["TE90", "PSAL", "SIGT", "OXYM", "pH", "NTRA", "FLOR"]
+        )
 
         coords = parse_source_coords(
             source,
