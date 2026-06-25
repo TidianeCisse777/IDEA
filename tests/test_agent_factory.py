@@ -693,6 +693,44 @@ def test_system_prompt_loads_environmental_join_skill_for_ctd_and_bio_oracle_joi
     assert "bio-oracle" in prompt
 
 
+def test_system_prompt_routes_copepod_micro_hydrodynamics_to_dedicated_skill():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert 'load_skill("copepod_hydrodynamic_micro_zoom")' in prompt
+    assert "front thermique" in prompt
+    assert "panache" in prompt
+    assert "upwelling" in prompt
+    assert "migration verticale" in prompt
+    assert "not fixed geographic zones" in prompt
+    assert "for explicit file/dataset loading requests" in prompt
+    assert "for ecotaxa browser/data requests that mention these structures" in prompt
+    assert "then load the source-specific skill" in prompt
+    assert "ecotaxa read-only skill-loading order" in prompt
+    assert "does not override an explicit file/dataset loading request" in prompt
+    assert "call `load_file` first" in prompt
+    assert 'next tool call must be `load_skill("copepod_hydrodynamic_micro_zoom")`' in prompt
+    assert "before `query_copepod_knowledge_base`" in prompt
+    assert "analysis, graphing, or scientific claims" in prompt
+    assert "micro-hydrodynamic file-analysis exception" in prompt
+    assert "the route is file-analysis first, not" in prompt
+    assert "`load_file` → `load_skill(\"copepod_hydrodynamic_micro_zoom\")`" in prompt
+
+
+def test_copepod_hydrodynamic_micro_zoom_skill_is_copepod_centered():
+    skill = Path("agents/skills/copepod_hydrodynamic_micro_zoom.md").read_text(
+        encoding="utf-8",
+    ).lower()
+
+    assert "copepod-centric" in skill
+    assert "front" in skill
+    assert "panache" in skill
+    assert "upwelling" in skill
+    assert "migration verticale" in skill
+    assert "reproduction" in skill
+    assert "do not present fronts, plumes, upwellings, or currents as fixed zones" in skill
+
+
 def test_system_prompt_routes_neolabs_abundance_analysis_to_dedicated_skill():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

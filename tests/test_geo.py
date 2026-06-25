@@ -25,6 +25,15 @@ def test_resolve_zone_returns_canonical_name_source_and_polygon_for_ungava():
     assert not result["polygon"].contains(Point(-67.0, 50.0))
 
 
+def test_resolve_zone_accepts_alias_case_insensitively():
+    registry = load_registry(FIXTURE)
+
+    result = resolve_zone("ungava bay", registry=registry)
+
+    assert result["canonical"] == "Baie d'Ungava"
+    assert result["polygon"].contains(Point(-67.0, 59.5))
+
+
 def test_points_inside_keeps_points_strictly_within_polygon():
     """Tracer 2 : filtre un DataFrame par appartenance au polygone.
 

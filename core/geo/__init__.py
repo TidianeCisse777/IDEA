@@ -61,11 +61,12 @@ def load_registry(path: Path | str) -> Registry:
 def resolve_zone(name: str, *, registry: Registry) -> dict:
     """Résout un nom de zone vers son entrée canonique du registry.
 
-    Match exact sur le nom canonique uniquement pour ce premier tracer ;
-    aliases et désambiguation arriveront aux tracers suivants.
+    Match insensible à la casse sur le nom canonique ou ses aliases.
     """
+    needle = name.strip().lower()
     for zone in registry.zones:
-        if zone.canonical == name:
+        names = (zone.canonical, *zone.aliases)
+        if any(candidate.strip().lower() == needle for candidate in names):
             return {
                 "canonical": zone.canonical,
                 "source": zone.source,
