@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import threading
 import uuid
 import hashlib
 from pathlib import Path
@@ -11,11 +12,22 @@ import pandas as pd
 import requests
 from langchain_core.tools import tool
 
+from core.erddap_batching import (
+    source_batch_positions,
+    spatial_subbatch_positions,
+    unique_coordinate_positions,
+    run_batches_in_parallel,
+)
+from core.canonical_grid import canonicalize_amundsen_query
+from core.erddap_cache import cache_get, cache_set
+
 _AMUNDSEN_DATASET_ID = "amundsen12713"
 _AMUNDSEN_TABLEDAP_URL = (
     f"https://erddap.amundsenscience.com/erddap/tabledap/{_AMUNDSEN_DATASET_ID}.csv"
 )
 _AMUNDSEN_CORE_COLUMNS = ("time", "latitude", "longitude", "station", "cast_number", "PRES")
+_AMUNDSEN_TIME_MIN = pd.Timestamp("2014-07-15T08:20:04Z")
+_AMUNDSEN_TIME_MAX = pd.Timestamp("2024-10-01T02:03:25Z")
 
 
 from core.environment_resolver import (
@@ -42,35 +54,60 @@ _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
 
 
-def _fetch_amundsen_bbox(*, bbox: dict, time_window: dict, variables: list[str]) -> pd.DataFrame:
-    """Fetch Amundsen CTD rows within a bbox + time window from ERDDAP tabledap.
+def _fetch_amundsen_bbox(
+    *,
+    bbox: dict,
+    time_window: dict,
+    variables: list[str],
+    pres_range: dict | None = None,
+) -> pd.DataFrame:
+    """Fetch Amundsen CTD rows for a bbox + time window from ERDDAP tabledap.
 
-    Returns a DataFrame with `time`, `latitude`, `longitude`, `station`,
-    `cast_number`, `PRES`, and the requested variables. ERDDAP CSV emits a
-    units row right after the header — it is dropped here.
+    The source bbox/time_window/variables are snapped to a canonical
+    (5° tile × calendar month × sorted variables) key so cache hits compose
+    across different source files in the same zone. The `pres_range` is
+    dropped from the canonical key — local matching applies depth tolerance
+    on the cached profile.
     """
-    columns = list(dict.fromkeys([*_AMUNDSEN_CORE_COLUMNS, *variables]))
+    canon_bbox, canon_time, canon_variables = canonicalize_amundsen_query(
+        bbox=bbox, time_window=time_window, variables=variables
+    )
+    cache_key = {
+        "bbox": canon_bbox,
+        "time_window": canon_time,
+        "variables": canon_variables,
+    }
+    cached = cache_get("amundsen_bbox", cache_key)
+    if cached is not None:
+        return cached
+    columns = list(dict.fromkeys([*_AMUNDSEN_CORE_COLUMNS, *canon_variables]))
     constraints = [
-        f"latitude>={float(bbox['lat_min']):.4f}",
-        f"latitude<={float(bbox['lat_max']):.4f}",
-        f"longitude>={float(bbox['lon_min']):.4f}",
-        f"longitude<={float(bbox['lon_max']):.4f}",
-        f"time>={time_window['start']}",
-        f"time<={time_window['end']}",
+        f"latitude>={float(canon_bbox['lat_min']):.4f}",
+        f"latitude<={float(canon_bbox['lat_max']):.4f}",
+        f"longitude>={float(canon_bbox['lon_min']):.4f}",
+        f"longitude<={float(canon_bbox['lon_max']):.4f}",
+        f"time>={canon_time['start']}",
+        f"time<={canon_time['end']}",
     ]
     query = ",".join(columns) + "&" + "&".join(
         quote(constraint, safe="><=:-T.Z") for constraint in constraints
     )
     url = f"{_AMUNDSEN_TABLEDAP_URL}?{query}"
-    response = requests.get(url, timeout=60)
+    response = requests.get(url, timeout=120)
     if response.status_code == 404:
-        return pd.DataFrame(columns=columns)
+        result = pd.DataFrame(columns=columns)
+        cache_set("amundsen_bbox", cache_key, result)
+        return result
     response.raise_for_status()
     lines = response.text.splitlines()
     if len(lines) <= 1:
-        return pd.DataFrame(columns=columns)
+        result = pd.DataFrame(columns=columns)
+        cache_set("amundsen_bbox", cache_key, result)
+        return result
     body = "\n".join([lines[0]] + lines[2:]) if len(lines) > 2 else lines[0]
-    return pd.read_csv(io.StringIO(body))
+    result = pd.read_csv(io.StringIO(body))
+    cache_set("amundsen_bbox", cache_key, result)
+    return result
 
 
 def _format_table(rows: list[dict], columns: list[str]) -> str:
@@ -81,6 +118,11 @@ def _format_table(rows: list[dict], columns: list[str]) -> str:
     if available_columns:
         dataframe = dataframe.loc[:, available_columns]
     return dataframe.to_markdown(index=False)
+
+
+_source_batch_positions = source_batch_positions
+_spatial_subbatch_positions = spatial_subbatch_positions
+_unique_coordinate_positions = unique_coordinate_positions
 
 
 def make_amundsen_tools(thread_id: str) -> list:
@@ -389,12 +431,18 @@ def make_amundsen_tools(thread_id: str) -> list:
         variables: list[str] | None = None,
         spatial_tolerance_km: float = 25.0,
         time_tolerance_hours: float = 24.0,
+        initial_batch_spatial_degrees: float = 5.0,
+        batch_spatial_degrees: float = 5.0,
+        max_source_points_per_batch: int = 50,
+        max_ctd_rows_per_batch: int = 200000,
+        depth_padding_dbar: float = 25.0,
+        max_workers: int = 6,
     ) -> str:
         """Enrichit la table chargée avec la CTD Amundsen par lat/lon/time.
 
         Auto-détecte les colonnes `latitude`, `longitude` et `time` si elles ne
-        sont pas fournies. Interroge Amundsen ERDDAP par bbox + fenêtre temps
-        et matche localement au plus proche voisin.
+        sont pas fournies. Interroge Amundsen ERDDAP par lots bbox + fenêtre
+        temps en parallèle, puis matche localement au plus proche voisin.
         """
         source = resolve_source_dataframe(_store, thread_id, source_variable)
         if source is None:
@@ -447,63 +495,194 @@ def make_amundsen_tools(thread_id: str) -> list:
         src_time = coords.time
         src_depth = coords.depth
 
-        bbox, time_window = compute_bbox_time_window(
-            src_lat=src_lat, src_lon=src_lon, src_time=src_time
-        )
-
-        ctd = _fetch_amundsen_bbox(
-            bbox=bbox,
-            time_window=time_window,
-            variables=selected_variables,
-        )
-
-        matches = match_ctd_rows(
+        enriched = source.copy(deep=True)
+        n = len(enriched)
+        unique_positions, row_to_unique = _unique_coordinate_positions(
             src_lat=src_lat,
             src_lon=src_lon,
             src_time=src_time,
             src_depth=src_depth,
-            ctd=ctd,
-            ctd_pres_col="PRES",
-            variables_for_value_check=selected_variables,
-            spatial_tolerance_km=spatial_tolerance_km,
-            time_tolerance_hours=time_tolerance_hours,
+        )
+        unique_lat = src_lat.iloc[unique_positions].reset_index(drop=True)
+        unique_lon = src_lon.iloc[unique_positions].reset_index(drop=True)
+        unique_time = src_time.iloc[unique_positions].reset_index(drop=True)
+        unique_depth = (
+            src_depth.iloc[unique_positions].reset_index(drop=True)
+            if src_depth is not None
+            else None
+        )
+        n_unique = len(unique_positions)
+        unique_statuses: list[object] = ["no_match"] * n_unique
+        time_in_amundsen_range = (
+            unique_time.ge(_AMUNDSEN_TIME_MIN) & unique_time.le(_AMUNDSEN_TIME_MAX)
+        )
+        outside_amundsen_range = unique_time.notna() & ~time_in_amundsen_range
+        for unique_position, is_outside in enumerate(outside_amundsen_range.tolist()):
+            if is_outside:
+                unique_statuses[unique_position] = "outside_amundsen_ctd_range"
+        query_unique_positions = [
+            unique_position
+            for unique_position, can_query in enumerate(
+                (
+                    unique_lat.notna()
+                    & unique_lon.notna()
+                    & unique_time.notna()
+                    & time_in_amundsen_range
+                ).tolist()
+            )
+            if can_query
+        ]
+        unique_stations: list[object] = [pd.NA] * n_unique
+        unique_casts: list[object] = [pd.NA] * n_unique
+        unique_pres_values: list[object] = [pd.NA] * n_unique
+        unique_te90: list[object] = [pd.NA] * n_unique
+        unique_psal: list[object] = [pd.NA] * n_unique
+        unique_distances_km: list[object] = [pd.NA] * n_unique
+        unique_time_deltas_min: list[object] = [pd.NA] * n_unique
+        unique_ctd_times_matched: list[object] = [pd.NA] * n_unique
+
+        batch_positions = _source_batch_positions(
+            src_lat=unique_lat,
+            src_lon=unique_lon,
+            src_time=unique_time,
+            spatial_bin_degrees=float(initial_batch_spatial_degrees),
+            max_positions=int(max_source_points_per_batch),
+            candidate_positions=query_unique_positions,
+        )
+        fetch_failures: list[str] = []
+        counters = {"erddap_calls": 0}
+        fallback_months = 0
+        fallback_subbatches = 0
+        counters_lock = threading.Lock()
+
+        def _fetch_and_match_positions(positions: list[int]) -> tuple[bool, str | None]:
+            batch_lat = unique_lat.iloc[positions].reset_index(drop=True)
+            batch_lon = unique_lon.iloc[positions].reset_index(drop=True)
+            batch_time = unique_time.iloc[positions].reset_index(drop=True)
+            batch_depth = (
+                unique_depth.iloc[positions].reset_index(drop=True)
+                if unique_depth is not None
+                else None
+            )
+            pres_range = None
+            if batch_depth is not None and batch_depth.notna().any():
+                valid_depth = batch_depth.dropna()
+                pres_range = {
+                    "min": max(0.0, float(valid_depth.min()) - float(depth_padding_dbar)),
+                    "max": float(valid_depth.max()) + float(depth_padding_dbar),
+                }
+            bbox, time_window = compute_bbox_time_window(
+                src_lat=batch_lat,
+                src_lon=batch_lon,
+                src_time=batch_time,
+                time_padding_hours=time_tolerance_hours,
+            )
+
+            try:
+                with counters_lock:
+                    counters["erddap_calls"] += 1
+                fetch_kwargs = {
+                    "bbox": bbox,
+                    "time_window": time_window,
+                    "variables": selected_variables,
+                }
+                if pres_range is not None:
+                    fetch_kwargs["pres_range"] = pres_range
+                try:
+                    ctd = _fetch_amundsen_bbox(**fetch_kwargs)
+                except TypeError as exc:
+                    if "pres_range" not in fetch_kwargs:
+                        raise
+                    fetch_kwargs.pop("pres_range")
+                    ctd = _fetch_amundsen_bbox(**fetch_kwargs)
+            except Exception as exc:
+                return False, str(exc)
+            if len(ctd) > int(max_ctd_rows_per_batch):
+                return False, (
+                    f"too_many_ctd_rows:{len(ctd)}>"
+                    f"{int(max_ctd_rows_per_batch)}"
+                )
+
+            matches = match_ctd_rows(
+                src_lat=batch_lat,
+                src_lon=batch_lon,
+                src_time=batch_time,
+                src_depth=batch_depth,
+                ctd=ctd,
+                ctd_pres_col="PRES",
+                variables_for_value_check=selected_variables,
+                spatial_tolerance_km=spatial_tolerance_km,
+                time_tolerance_hours=time_tolerance_hours,
+            )
+
+            for local_position, match in enumerate(matches):
+                unique_position = positions[local_position]
+                unique_statuses[unique_position] = match.status
+                if match.chosen_idx is None:
+                    continue
+                best = ctd.iloc[match.chosen_idx]
+                unique_stations[unique_position] = best.get("station")
+                unique_casts[unique_position] = best.get("cast_number")
+                unique_pres_values[unique_position] = best.get("PRES")
+                unique_te90[unique_position] = best.get("TE90")
+                unique_psal[unique_position] = best.get("PSAL")
+                unique_distances_km[unique_position] = match.distance_km
+                unique_time_deltas_min[unique_position] = (
+                    match.time_delta_min
+                    if match.time_delta_min is not None
+                    else pd.NA
+                )
+                unique_ctd_times_matched[unique_position] = best.get("time")
+
+            return True, None
+
+        initial_results = run_batches_in_parallel(
+            batch_positions,
+            _fetch_and_match_positions,
+            max_workers=int(max_workers),
         )
 
-        statuses: list[str] = []
-        stations: list[object] = []
-        casts: list[object] = []
-        pres_values: list[object] = []
-        te90: list[object] = []
-        psal: list[object] = []
-        distances_km: list[object] = []
-        time_deltas_min: list[object] = []
-        ctd_times_matched: list[object] = []
-        for match in matches:
-            statuses.append(match.status)
-            if match.chosen_idx is None:
-                stations.append(pd.NA)
-                casts.append(pd.NA)
-                pres_values.append(pd.NA)
-                te90.append(pd.NA)
-                psal.append(pd.NA)
-                distances_km.append(pd.NA)
-                time_deltas_min.append(pd.NA)
-                ctd_times_matched.append(pd.NA)
+        fallback_subbatch_jobs: list[list[int]] = []
+        for positions, (ok, error) in zip(batch_positions, initial_results):
+            if ok:
                 continue
-            best = ctd.iloc[match.chosen_idx]
-            stations.append(best.get("station"))
-            casts.append(best.get("cast_number"))
-            pres_values.append(best.get("PRES"))
-            te90.append(best.get("TE90"))
-            psal.append(best.get("PSAL"))
-            distances_km.append(match.distance_km)
-            time_deltas_min.append(
-                match.time_delta_min if match.time_delta_min is not None else pd.NA
+            subbatches = spatial_subbatch_positions(
+                positions=positions,
+                src_lat=unique_lat,
+                src_lon=unique_lon,
+                spatial_bin_degrees=float(batch_spatial_degrees),
+                src_time=unique_time,
+                max_positions=int(max_source_points_per_batch),
             )
-            ctd_times_matched.append(best.get("time"))
+            if len(subbatches) <= 1:
+                if error:
+                    fetch_failures.append(error)
+                continue
+            fallback_months += 1
+            fallback_subbatches += len(subbatches)
+            fallback_subbatch_jobs.extend(subbatches)
 
-        enriched = source.copy(deep=True)
-        n = len(enriched)
+        fallback_results = run_batches_in_parallel(
+            fallback_subbatch_jobs,
+            _fetch_and_match_positions,
+            max_workers=int(max_workers),
+        )
+        for sub_ok, sub_error in fallback_results:
+            if not sub_ok and sub_error:
+                fetch_failures.append(sub_error)
+
+        erddap_calls = counters["erddap_calls"]
+
+        statuses = [unique_statuses[code] for code in row_to_unique]
+        stations = [unique_stations[code] for code in row_to_unique]
+        casts = [unique_casts[code] for code in row_to_unique]
+        ctd_times_matched = [unique_ctd_times_matched[code] for code in row_to_unique]
+        distances_km = [unique_distances_km[code] for code in row_to_unique]
+        time_deltas_min = [unique_time_deltas_min[code] for code in row_to_unique]
+        pres_values = [unique_pres_values[code] for code in row_to_unique]
+        te90 = [unique_te90[code] for code in row_to_unique]
+        psal = [unique_psal[code] for code in row_to_unique]
+
         enriched["amundsen_match_status"] = statuses
         enriched["amundsen_dataset_id"] = ["amundsen12713"] * n
         enriched["amundsen_station"] = stations
@@ -516,6 +695,8 @@ def make_amundsen_tools(thread_id: str) -> list:
         enriched["amundsen_psal_psu"] = psal
 
         variable_name = dataset_variable_name("amundsen_enriched", uuid.uuid4().hex[:12])
+        output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
+        enriched.to_csv(output_path, sep="\t", index=False)
         store_dataset(
             _store,
             thread_id,
@@ -524,6 +705,7 @@ def make_amundsen_tools(thread_id: str) -> list:
             meta={
                 "source": "amundsen_enrichment",
                 "n_rows": n,
+                "unique_source_points": n_unique,
                 "matched_rows": int((enriched["amundsen_match_status"] == "matched").sum()),
             },
             latest_alias="ctd_enriched",
@@ -532,6 +714,7 @@ def make_amundsen_tools(thread_id: str) -> list:
         n_matched = int(status_counts.get("matched", 0))
         n_no_value = int(status_counts.get("matched_no_value", 0))
         n_no_match = int(status_counts.get("no_match", 0))
+        n_outside_range = int(status_counts.get("outside_amundsen_ctd_range", 0))
         plural = "matchées" if n_matched > 1 else "matchée"
 
         method_lines = [
@@ -547,16 +730,50 @@ def make_amundsen_tools(thread_id: str) -> list:
                 f"temps={time_tolerance_hours:g} h"
             ),
             f"- Variables récupérées : {', '.join(selected_variables)}",
-            "- 1 seule requête ERDDAP bbox+fenêtre pour toutes les lignes",
+            (
+                f"- Couverture temporelle Amundsen CTD : "
+                f"{_AMUNDSEN_TIME_MIN.isoformat()} à "
+                f"{_AMUNDSEN_TIME_MAX.isoformat()}"
+            ),
+            (
+                f"- Points source uniques interrogés : "
+                f"{len(query_unique_positions)} sur {n_unique} point(s) unique(s), "
+                f"{n_unique} point(s) unique(s) sur {n} ligne(s)"
+            ),
+            (
+                f"- Bornes batch : max_source_points={int(max_source_points_per_batch)}, "
+                f"max_ctd_rows={int(max_ctd_rows_per_batch)}, "
+                f"depth_padding_dbar={float(depth_padding_dbar):g}"
+            ),
+            (
+                f"- Requêtes ERDDAP : {erddap_calls} lot(s) temps-espace "
+                f"({len(batch_positions)} lot(s) initiaux par mois/grille "
+                f"{float(initial_batch_spatial_degrees):g}°, "
+                f"{fallback_months} mois splitté(s) en "
+                f"{fallback_subbatches} sous-lot(s) grille "
+                f"{float(batch_spatial_degrees):g}°)"
+            ),
             (
                 f"- Statuts : matched={n_matched}, "
-                f"matched_no_value={n_no_value}, no_match={n_no_match}"
+                f"matched_no_value={n_no_value}, no_match={n_no_match}, "
+                f"outside_amundsen_ctd_range={n_outside_range}"
             ),
         ]
+        if fetch_failures:
+            method_lines.append(
+                f"- Avertissement : {len(fetch_failures)} lot(s) ERDDAP en erreur, "
+                "lignes conservées avec `no_match`."
+            )
         if n_no_match:
             method_lines.append(
                 f"- Note : {n_no_match} ligne(s) sans match — la zone-date "
-                "n'est probablement pas couverte par Amundsen Science."
+                "est dans la plage temporelle Amundsen mais aucun profil CTD "
+                "n'a été trouvé dans les tolérances."
+            )
+        if n_outside_range:
+            method_lines.append(
+                f"- Note : {n_outside_range} ligne(s) hors plage temporelle "
+                "Amundsen CTD — aucune requête ERDDAP envoyée pour ces points."
             )
         if n_no_value:
             method_lines.append(
@@ -566,7 +783,8 @@ def make_amundsen_tools(thread_id: str) -> list:
 
         return (
             f"Enrichissement Amundsen — {n} ligne(s), {n_matched} {plural}.\n"
-            f"Données disponibles dans `{variable_name}`.\n\n"
+            f"Données disponibles dans `{variable_name}`.\n"
+            f"Télécharger : {download_url(output_path.name)}\n\n"
             + "\n".join(method_lines)
         )
 

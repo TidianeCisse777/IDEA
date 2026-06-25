@@ -253,7 +253,7 @@ def test_enrich_with_amundsen_ctd_matches_by_lat_lon_time():
         {
             "latitude": [74.10],
             "longitude": [-80.20],
-            "object_date": ["2013-08-01"],
+            "object_date": ["2018-08-01"],
         }
     )
     _store.set(thread_id, source, {"source": "file:ecotaxa_sample.tsv"})
@@ -262,7 +262,7 @@ def test_enrich_with_amundsen_ctd_matches_by_lat_lon_time():
         return pd.DataFrame(
             [
                 {
-                    "time": "2013-08-01T12:00:00Z",
+                    "time": "2018-08-01T12:00:00Z",
                     "latitude": 74.10,
                     "longitude": -80.20,
                     "station": "BRK-15",
@@ -282,9 +282,10 @@ def test_enrich_with_amundsen_ctd_matches_by_lat_lon_time():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({})
+        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
 
     assert "1 matchée" in result
+    assert "Télécharger :" in result
     keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
     assert len(keys) == 1
     enriched = _store.get(keys[0])["df"]
@@ -311,7 +312,7 @@ def test_enrich_with_amundsen_ctd_matches_each_row_to_its_nearest_profile():
         {
             "latitude": [74.10, 70.00],
             "longitude": [-80.20, -65.00],
-            "object_date": ["2013-08-01", "2013-08-02"],
+            "object_date": ["2018-08-01", "2018-08-02"],
         }
     )
     _store.set(thread_id, source, {"source": "file:multi.tsv"})
@@ -320,7 +321,7 @@ def test_enrich_with_amundsen_ctd_matches_each_row_to_its_nearest_profile():
         return pd.DataFrame(
             [
                 {
-                    "time": "2013-08-01T12:00:00Z",
+                    "time": "2018-08-01T12:00:00Z",
                     "latitude": 74.11,
                     "longitude": -80.18,
                     "station": "NORTH",
@@ -330,7 +331,7 @@ def test_enrich_with_amundsen_ctd_matches_each_row_to_its_nearest_profile():
                     "PSAL": 31.4,
                 },
                 {
-                    "time": "2013-08-02T12:00:00Z",
+                    "time": "2018-08-02T12:00:00Z",
                     "latitude": 70.02,
                     "longitude": -65.05,
                     "station": "SOUTH",
@@ -374,7 +375,7 @@ def test_enrich_with_amundsen_ctd_reports_no_match_when_point_is_far():
         {
             "latitude": [0.0],
             "longitude": [0.0],
-            "object_date": ["2013-08-01"],
+            "object_date": ["2018-08-01"],
         }
     )
     _store.set(thread_id, source, {"source": "file:atlantic_equator.tsv"})
@@ -383,7 +384,7 @@ def test_enrich_with_amundsen_ctd_reports_no_match_when_point_is_far():
         return pd.DataFrame(
             [
                 {
-                    "time": "2013-08-01T12:00:00Z",
+                    "time": "2018-08-01T12:00:00Z",
                     "latitude": 74.0,
                     "longitude": -80.0,
                     "station": "ARCTIC",
@@ -435,14 +436,14 @@ def test_enrich_with_amundsen_ctd_diagnoses_missing_coordinates():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({})
+        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
 
     mock_fetch.assert_not_called()
     assert "coordonnées" in result.lower() or "latitude" in result.lower()
 
 
 def test_enrich_with_amundsen_ctd_emits_single_bbox_call_for_n_points():
-    """Le tool calcule la bbox+fenêtre depuis la source et fait UN seul appel ERDDAP."""
+    """Un groupe source compact reste un seul appel ERDDAP."""
     import pandas as pd
     from unittest.mock import MagicMock, patch
 
@@ -458,10 +459,10 @@ def test_enrich_with_amundsen_ctd_emits_single_bbox_call_for_n_points():
             "latitude": [74.0, 74.5, 73.8, 74.2],
             "longitude": [-80.0, -79.5, -80.4, -80.1],
             "object_date": [
-                "2013-08-01",
-                "2013-08-02",
-                "2013-08-03",
-                "2013-08-04",
+                "2018-08-01",
+                "2018-08-02",
+                "2018-08-03",
+                "2018-08-04",
             ],
         }
     )
@@ -471,7 +472,7 @@ def test_enrich_with_amundsen_ctd_emits_single_bbox_call_for_n_points():
         return_value=pd.DataFrame(
             [
                 {
-                    "time": "2013-08-02T12:00:00Z",
+                    "time": "2018-08-02T12:00:00Z",
                     "latitude": 74.1,
                     "longitude": -80.1,
                     "station": "S1",
@@ -497,8 +498,283 @@ def test_enrich_with_amundsen_ctd_emits_single_bbox_call_for_n_points():
     assert bbox["lat_min"] <= 73.8 and bbox["lat_max"] >= 74.5
     assert bbox["lon_min"] <= -80.4 and bbox["lon_max"] >= -79.5
     time_window = kwargs["time_window"]
-    assert time_window["start"] <= "2013-08-01"
-    assert time_window["end"] >= "2013-08-04"
+    assert time_window["start"] <= "2018-08-01"
+    assert time_window["end"] >= "2018-08-04"
+
+
+def test_enrich_with_amundsen_ctd_batches_large_spatiotemporal_sources():
+    """Un fichier multi-années/multi-zones doit éviter la requête globale énorme."""
+    import pandas as pd
+    from requests import HTTPError
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-batched-large-source"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "latitude": [74.10, 74.20, 60.00],
+            "longitude": [-80.20, -80.25, -65.00],
+            "object_date": ["2018-08-01", "2018-08-02", "2024-09-25"],
+            "max_sample_depth": [5.0, 10.0, 40.0],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:large.tsv"})
+
+    calls = []
+
+    def fake_fetch_bbox(*, bbox, time_window, variables):
+        calls.append({"bbox": bbox, "time_window": time_window})
+        if time_window["start"] < "2020":
+            return pd.DataFrame(
+                [
+                    {
+                        "time": "2018-08-01T12:00:00Z",
+                        "latitude": 74.10,
+                        "longitude": -80.20,
+                        "station": "ARCTIC-2018",
+                        "cast_number": 1,
+                        "PRES": 5.0,
+                        "TE90": -1.2,
+                        "PSAL": 31.4,
+                    },
+                    {
+                        "time": "2018-08-02T12:00:00Z",
+                        "latitude": 74.20,
+                        "longitude": -80.25,
+                        "station": "ARCTIC-2018",
+                        "cast_number": 2,
+                        "PRES": 10.0,
+                        "TE90": -1.0,
+                        "PSAL": 31.8,
+                    },
+                ]
+            )
+        raise HTTPError("400 Client Error: query too broad")
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_bbox", side_effect=fake_fetch_bbox
+    ):
+        enrich = next(
+            tool
+            for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
+
+    assert len(calls) == 2
+    assert "2 matchées" in result
+    assert "erreur" in result.lower() or "failed" in result.lower()
+
+    keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["amundsen_match_status"].tolist() == [
+        "matched",
+        "matched",
+        "no_match",
+    ]
+    assert enriched["amundsen_station"].tolist()[:2] == ["ARCTIC-2018", "ARCTIC-2018"]
+    assert pd.isna(enriched["amundsen_station"].iloc[2])
+    assert all(call["time_window"]["end"] >= call["time_window"]["start"] for call in calls)
+
+
+def test_enrich_with_amundsen_ctd_splits_only_failed_month_batches():
+    """Le chemin normal reste mensuel; la grille spatiale sert de fallback."""
+    import pandas as pd
+    from requests import HTTPError
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-adaptive-split"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "latitude": [60.00, 74.00],
+            "longitude": [-65.00, -80.00],
+            "object_date": ["2024-09-10", "2024-09-11"],
+            "max_sample_depth": [10.0, 20.0],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:wide-month.tsv"})
+
+    calls = []
+
+    def fake_fetch_bbox(*, bbox, time_window, variables):
+        calls.append(bbox)
+        if bbox["lat_max"] - bbox["lat_min"] > 5:
+            raise HTTPError("400 Client Error: query too broad")
+        if bbox["lat_min"] < 65:
+            return pd.DataFrame(
+                [
+                    {
+                        "time": "2024-09-10T12:00:00Z",
+                        "latitude": 60.00,
+                        "longitude": -65.00,
+                        "station": "SOUTH",
+                        "cast_number": 1,
+                        "PRES": 10.0,
+                        "TE90": 2.0,
+                        "PSAL": 32.0,
+                    }
+                ]
+            )
+        return pd.DataFrame(
+            [
+                {
+                    "time": "2024-09-11T12:00:00Z",
+                    "latitude": 74.00,
+                    "longitude": -80.00,
+                    "station": "NORTH",
+                    "cast_number": 2,
+                    "PRES": 20.0,
+                    "TE90": -1.0,
+                    "PSAL": 31.0,
+                }
+            ]
+        )
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_bbox", side_effect=fake_fetch_bbox
+    ):
+        enrich = next(
+            tool
+            for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
+
+    assert len(calls) == 3
+    assert "1 mois splitté" in result
+    keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["amundsen_match_status"].tolist() == ["matched", "matched"]
+    assert enriched["amundsen_station"].tolist() == ["SOUTH", "NORTH"]
+
+
+def test_enrich_with_amundsen_ctd_deduplicates_repeated_source_coordinates():
+    """Les lignes répétées ne doivent pas multiplier le matching ni les requêtes."""
+    import pandas as pd
+    from unittest.mock import MagicMock, patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-dedup-coords"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "row_id": ["a", "b", "c"],
+            "latitude": [74.10, 74.10, 60.00],
+            "longitude": [-80.20, -80.20, -65.00],
+            "object_date": ["2018-08-01", "2018-08-01", "2018-08-02"],
+            "max_sample_depth": [5.0, 5.0, 10.0],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:duplicates.tsv"})
+
+    fetch_mock = MagicMock(
+        return_value=pd.DataFrame(
+            [
+                {
+                    "time": "2018-08-01T12:00:00Z",
+                    "latitude": 74.10,
+                    "longitude": -80.20,
+                    "station": "DUP",
+                    "cast_number": 1,
+                    "PRES": 5.0,
+                    "TE90": -1.2,
+                    "PSAL": 31.4,
+                },
+                {
+                    "time": "2018-08-02T12:00:00Z",
+                    "latitude": 60.00,
+                    "longitude": -65.00,
+                    "station": "UNIQ",
+                    "cast_number": 2,
+                    "PRES": 10.0,
+                    "TE90": 2.0,
+                    "PSAL": 32.0,
+                },
+            ]
+        )
+    )
+
+    with patch("tools.amundsen_sources._fetch_amundsen_bbox", fetch_mock):
+        enrich = next(
+            tool
+            for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({})
+
+    assert fetch_mock.call_count == 2
+    assert "Points source uniques interrogés : 2 sur 2 point(s) unique(s)" in result
+    keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["amundsen_match_status"].tolist() == ["matched", "matched", "matched"]
+    assert enriched["amundsen_station"].tolist() == ["DUP", "DUP", "UNIQ"]
+
+
+def test_enrich_with_amundsen_ctd_caps_source_points_per_batch():
+    """Les gros lots sont chunkés par nombre de points source uniques."""
+    import pandas as pd
+    from unittest.mock import MagicMock, patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-max-source-points"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "latitude": [70.0, 70.1, 70.2],
+            "longitude": [-80.0, -80.1, -80.2],
+            "object_date": [
+                "2024-08-01T00:00:00Z",
+                "2024-08-01T01:00:00Z",
+                "2024-08-01T02:00:00Z",
+            ],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:max_points.tsv"})
+
+    fetch_mock = MagicMock(
+        return_value=pd.DataFrame(
+            columns=[
+                "time",
+                "latitude",
+                "longitude",
+                "station",
+                "cast_number",
+                "PRES",
+                "TE90",
+                "PSAL",
+            ]
+        )
+    )
+
+    with patch("tools.amundsen_sources._fetch_amundsen_bbox", fetch_mock):
+        enrich = next(
+            tool
+            for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({"max_source_points_per_batch": 1})
+
+    assert fetch_mock.call_count == 3
+    assert "max_source_points=1" in result
 
 
 def test_fetch_amundsen_bbox_queries_erddap_with_bbox_and_time_constraints():
@@ -528,14 +804,21 @@ def test_fetch_amundsen_bbox_queries_erddap_with_bbox_and_time_constraints():
                 "end": "2013-08-02T12:00:00Z",
             },
             variables=["TE90", "PSAL"],
+            pres_range={"min": 0.0, "max": 100.0},
         )
 
     assert mock_get.called
     url = mock_get.call_args.args[0]
     assert "amundsen12713.csv" in url
-    assert "latitude%3E%3D73.85" in url or "latitude>=73.85" in url
+    # bbox snapped to canonical 5° tile (70-75 × -85 to -80)
+    assert "latitude>=70.0000" in url or "latitude%3E%3D70.0000" in url
+    assert "latitude<=75.0000" in url or "latitude%3C%3D75.0000" in url
+    assert "longitude>=-85.0000" in url or "longitude%3E%3D-85.0000" in url
     assert "TE90" in url and "PSAL" in url
-    assert "2013-07-31" in url and "2013-08-02" in url
+    # time snapped to month (start of July → start of September)
+    assert "2013-07-01" in url and "2013-09-01" in url
+    # pres_range is dropped from canonical fetch
+    assert "PRES>=" not in url and "PRES%3E%3D" not in url
     assert dataframe.iloc[0]["station"] == "BRK-15"
     assert float(dataframe.iloc[0]["TE90"]) == -1.2
 
@@ -556,7 +839,7 @@ def test_enrich_with_amundsen_ctd_matches_depth_within_profile():
         {
             "latitude": [74.10, 74.10],
             "longitude": [-80.20, -80.20],
-            "object_date": ["2013-08-01", "2013-08-01"],
+            "object_date": ["2018-08-01", "2018-08-01"],
             "object_depth_min": [5.0, 50.0],
         }
     )
@@ -566,7 +849,7 @@ def test_enrich_with_amundsen_ctd_matches_depth_within_profile():
         return pd.DataFrame(
             [
                 {
-                    "time": "2013-08-01T12:00:00Z",
+                    "time": "2018-08-01T12:00:00Z",
                     "latitude": 74.10,
                     "longitude": -80.20,
                     "station": "BRK-15",
@@ -576,7 +859,7 @@ def test_enrich_with_amundsen_ctd_matches_depth_within_profile():
                     "PSAL": 30.0,
                 },
                 {
-                    "time": "2013-08-01T12:00:00Z",
+                    "time": "2018-08-01T12:00:00Z",
                     "latitude": 74.10,
                     "longitude": -80.20,
                     "station": "BRK-15",
@@ -586,7 +869,7 @@ def test_enrich_with_amundsen_ctd_matches_depth_within_profile():
                     "PSAL": 33.5,
                 },
                 {
-                    "time": "2013-08-01T12:00:00Z",
+                    "time": "2018-08-01T12:00:00Z",
                     "latitude": 74.10,
                     "longitude": -80.20,
                     "station": "BRK-15",
@@ -631,7 +914,7 @@ def test_enrich_with_amundsen_ctd_filters_candidates_outside_time_tolerance():
         {
             "latitude": [74.10],
             "longitude": [-80.20],
-            "object_date": ["2013-08-01T12:00:00Z"],
+            "object_date": ["2018-08-01T12:00:00Z"],
         }
     )
     _store.set(thread_id, source, {"source": "file:tt.tsv"})
@@ -642,7 +925,7 @@ def test_enrich_with_amundsen_ctd_filters_candidates_outside_time_tolerance():
         return pd.DataFrame(
             [
                 {
-                    "time": "2013-08-01T11:30:00Z",
+                    "time": "2018-08-01T11:30:00Z",
                     "latitude": 74.11,
                     "longitude": -80.21,
                     "station": "ON_TIME",
@@ -652,7 +935,7 @@ def test_enrich_with_amundsen_ctd_filters_candidates_outside_time_tolerance():
                     "PSAL": 31.0,
                 },
                 {
-                    "time": "2013-08-11T11:30:00Z",
+                    "time": "2018-08-11T11:30:00Z",
                     "latitude": 74.10,
                     "longitude": -80.20,
                     "station": "LATE",
@@ -911,6 +1194,49 @@ def test_enrich_with_amundsen_ctd_diagnoses_all_empty_coordinates_without_erddap
         or "empty" in result.lower()
         or "aucune coordonnée" in result.lower()
     )
+
+
+def test_enrich_with_amundsen_ctd_skips_rows_outside_amundsen_time_range():
+    """Les dates hors couverture CTD Amundsen sont annotées sans appel ERDDAP."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-outside-range"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    source = pd.DataFrame(
+        {
+            "latitude": [62.0, 63.0],
+            "longitude": [-70.0, -71.0],
+            "deployment_datetime_start": [
+                "2010-07-15T05:31:54Z",
+                "2025-07-15T05:31:54Z",
+            ],
+            "max_sample_depth": [80.0, 120.0],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:outside_range.csv"})
+
+    with patch("tools.amundsen_sources._fetch_amundsen_bbox") as mock_fetch:
+        enrich = next(
+            tool
+            for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({})
+
+    mock_fetch.assert_not_called()
+    enriched = _store.get(f"{thread_id}:ctd_enriched")["df"]
+    assert enriched["amundsen_match_status"].tolist() == [
+        "outside_amundsen_ctd_range",
+        "outside_amundsen_ctd_range",
+    ]
+    assert "outside_amundsen_ctd_range=2" in result
+    assert "Requêtes ERDDAP : 0" in result
 
 
 def test_enrich_with_amundsen_ctd_can_target_specific_dataset_via_source_variable():

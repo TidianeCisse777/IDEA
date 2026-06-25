@@ -1,6 +1,7 @@
 # Skill: amundsen_ctd_query
 
-You just called `query_amundsen_ctd` or `enrich_loaded_table_with_amundsen_ctd`.
+You just called `query_amundsen_ctd`, `enrich_loaded_table_with_amundsen_ctd`,
+or `enrich_with_amundsen_ctd`.
 The Amundsen vertical CTD profile is now loaded, exported or joined to the
 active table in the session.
 
@@ -12,6 +13,12 @@ active table in the session.
 - For a quick profile preview: `preview_amundsen_profile`.
 - To load, export, download or analyse ONE specific vertical profile (single station/cast): `query_amundsen_ctd`.
 - **To enrich a table already loaded in the session** with CTD context (the default expectation when the user says "enrichis avec le CTD", "joins avec Amundsen", "ajoute les variables CTD à mes samples"): `enrich_loaded_table_with_amundsen_ctd`. This is a one-shot tool — it handles catalogue lookup, per-profile fetch and join internally. **Do not** chain `list_amundsen_datasets` or `query_amundsen_ctd` before it.
+- If the source table has latitude/longitude/time but no reliable station/cast
+  keys, use `enrich_with_amundsen_ctd`. It deduplicates repeated
+  coordinate/time/depth rows, batches ERDDAP requests by month with coarse
+  spatial splitting for broad months, adds `PRES` constraints around source
+  depths, caps source points and CTD rows per batch, then only splits rejected
+  batches more finely. This is the safer path for large NeoLabs/EcoTaxa files.
 
 ---
 

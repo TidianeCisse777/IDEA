@@ -25,8 +25,7 @@ def test_compose_defines_mcp_ecotaxa_service():
     assert "ECOTAXA_PASSWORD=${ECOTAXA_PASSWORD:-}" in environment
 
     assert ".:/app" in service["volumes"]
-    assert "copepod_data:/app/data" in service["volumes"]
-    assert "./data/geo:/app/data/geo:ro" in service["volumes"]
+    assert "./data:/app/data" in service["volumes"]
     assert service["healthcheck"]["test"] == [
         "CMD",
         "curl",

@@ -2,18 +2,29 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
+import requests
 from langchain_core.tools import tool
 
 from core.bio_oracle_client import (
+    _ERDDAP_BASE,
+    _find_dataset_id,
+    _resolve_depth,
+    _resolve_scenario,
+    _resolve_var,
+    _time_selector,
     describe_bio_oracle_source,
     list_bio_oracle_datasets as _list_bio_oracle_datasets,
     preview_bio_oracle_point as _preview_bio_oracle_point,
     query_bio_oracle as _query_bio_oracle,
 )
+from core.canonical_grid import snap_bbox
+from core.erddap_cache import cache_get, cache_set
 from core.environment_resolver import (
     DEFAULT_LAT_CANDIDATES,
     DEFAULT_LON_CANDIDATES,
@@ -31,6 +42,116 @@ _DOWNLOADS_DIR.mkdir(exist_ok=True)
 
 def _clean_label(value: str) -> str:
     return str(value).lower().replace(".", "_").replace("-", "_").replace(" ", "_")
+
+
+def _snap_coordinate(value: float, bin_degrees: float) -> float:
+    if bin_degrees <= 0:
+        return float(value)
+    return round(round(float(value) / float(bin_degrees)) * float(bin_degrees), 6)
+
+
+def _canonical_tile_for(latitude: float, longitude: float, tile_degrees: float = 5.0) -> dict:
+    """Return the 5° canonical tile containing the given lat/lon."""
+    return snap_bbox(
+        {
+            "lat_min": float(latitude),
+            "lat_max": float(latitude),
+            "lon_min": float(longitude),
+            "lon_max": float(longitude),
+        },
+        tile_degrees=tile_degrees,
+    )
+
+
+def _fetch_bio_oracle_bbox(
+    *,
+    variable: str,
+    scenario: str,
+    depth_layer: str,
+    target_year: int | None,
+    tile: dict,
+) -> pd.DataFrame:
+    """Fetch all Bio-ORACLE grid points within a canonical tile (one HTTP call).
+
+    Returns a DataFrame with columns: time, latitude, longitude, value, plus
+    `dataset_id` available via `df.attrs['dataset_id']`. Cached on disk under
+    the canonical (tile × variable × scenario × depth × year) key so future
+    enrichments touching the same tile cost ~milliseconds.
+    """
+    var = _resolve_var(variable)
+    scen = _resolve_scenario(scenario)
+    depth = _resolve_depth(depth_layer)
+    cache_key = {
+        "tile": tile,
+        "variable": var,
+        "scenario": scen,
+        "depth_layer": depth,
+        "target_year": target_year,
+    }
+    cached = cache_get("bio_oracle_bbox", cache_key)
+    if cached is not None:
+        return cached
+
+    dataset_id = _find_dataset_id(var, scen, depth)
+    griddap_url = f"{_ERDDAP_BASE}/griddap/{dataset_id}"
+    query_var = f"{var}_mean"
+    time_sel = _time_selector({"target_year": target_year}, scenario=scen)
+    url = (
+        f"{griddap_url}.csv?{query_var}"
+        f"[({time_sel})]"
+        f"[({tile['lat_min']:.4f}):1:({tile['lat_max']:.4f})]"
+        f"[({tile['lon_min']:.4f}):1:({tile['lon_max']:.4f})]"
+    )
+    response = requests.get(url, timeout=120)
+    response.raise_for_status()
+    lines = response.text.splitlines()
+    body = "\n".join([lines[0]] + lines[2:]) if len(lines) > 2 else response.text
+    raw = pd.read_csv(io.StringIO(body))
+    # Normalize: ERDDAP returns columns like time, latitude, longitude, thetao_mean
+    value_col = query_var if query_var in raw.columns else raw.columns[-1]
+    result = raw.rename(columns={value_col: "value"}).copy()
+    result.attrs["dataset_id"] = dataset_id
+    cache_set("bio_oracle_bbox", cache_key, result)
+    return result
+
+
+def _lookup_in_tile(
+    tile_df: pd.DataFrame, *, latitude: float, longitude: float
+) -> dict:
+    """Find the nearest grid point in a cached tile DataFrame.
+
+    Returns {"dataset_id", "time", "value"}. Returns NaN value if the tile is
+    empty or all values are masked.
+    """
+    if tile_df.empty:
+        return {
+            "dataset_id": tile_df.attrs.get("dataset_id"),
+            "time": None,
+            "value": None,
+        }
+    valid = tile_df.dropna(subset=["value"])
+    if valid.empty:
+        return {
+            "dataset_id": tile_df.attrs.get("dataset_id"),
+            "time": (
+                tile_df["time"].iloc[0] if "time" in tile_df.columns else None
+            ),
+            "value": None,
+        }
+    dlat = valid["latitude"].to_numpy() - float(latitude)
+    dlon = valid["longitude"].to_numpy() - float(longitude)
+    idx = (dlat * dlat + dlon * dlon).argmin()
+    nearest = valid.iloc[int(idx)]
+    raw_value = nearest["value"]
+    try:
+        value = round(float(raw_value), 4) if raw_value is not None else None
+    except (TypeError, ValueError):
+        value = None
+    return {
+        "dataset_id": tile_df.attrs.get("dataset_id"),
+        "time": nearest.get("time"),
+        "value": value,
+    }
 
 
 def _fetch_bio_oracle_point(
@@ -655,14 +776,18 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         latitude_column: str | None = None,
         longitude_column: str | None = None,
         source_variable: str | None = None,
+        coordinate_bin_degrees: float = 1 / 12,
+        max_unique_queries: int = 1000,
+        confirmed: bool = False,
+        max_workers: int = 8,
     ) -> str:
         """Enrichit la table chargée avec Bio-ORACLE par lat/lon.
 
         Auto-détecte les colonnes latitude/longitude. Pour chaque (variable,
-        scenario), interroge Bio-ORACLE au point exact et recolle une valeur
-        par ligne. Si plusieurs fichiers sont en session, passe
-        `source_variable` (par exemple `df_file_filet_arctic_2018`) pour cibler
-        un dataset précis au lieu du df actif.
+        scenario), interroge Bio-ORACLE au point exact en parallèle, puis
+        recolle une valeur par ligne. Si plusieurs fichiers sont en session,
+        passe `source_variable` (par exemple `df_file_filet_arctic_2018`) pour
+        cibler un dataset précis au lieu du df actif.
         """
         source = resolve_source_dataframe(_store, thread_id, source_variable)
         if source is None:
@@ -691,32 +816,112 @@ def make_bio_oracle_tools(thread_id: str) -> list:
 
         enriched = source.copy(deep=True)
         n_rows = len(enriched)
-        row_has_value = [False] * n_rows
+        row_query_coords: list[tuple[float, float] | None] = []
+        for lat, lon in enriched[[lat_col, lon_col]].itertuples(index=False, name=None):
+            try:
+                lat_f = float(lat)
+                lon_f = float(lon)
+            except (TypeError, ValueError):
+                row_query_coords.append(None)
+                continue
+            coords_valid = (
+                not pd.isna(lat_f)
+                and not pd.isna(lon_f)
+                and -90.0 <= lat_f <= 90.0
+                and -180.0 <= lon_f <= 180.0
+            )
+            if not coords_valid:
+                row_query_coords.append(None)
+                continue
+            row_query_coords.append(
+                (
+                    _snap_coordinate(lat_f, float(coordinate_bin_degrees)),
+                    _snap_coordinate(lon_f, float(coordinate_bin_degrees)),
+                )
+            )
+        unique_query_keys = {
+            (coords[0], coords[1], variable, scenario, depth_layer, target_year)
+            for coords in row_query_coords
+            if coords is not None
+            for variable in variables
+            for scenario in scenarios
+        }
+        unique_query_count = len(unique_query_keys)
+        if unique_query_count > int(max_unique_queries) and not confirmed:
+            return (
+                f"Confirmation required: {unique_query_count} unique Bio-ORACLE "
+                "queries would be sent "
+                f"({len(variables)} variable(s) × {len(scenarios)} scenario(s), "
+                f"coordinate_bin_degrees={float(coordinate_bin_degrees):g}). "
+                "Ask the user for confirmation, then call again with "
+                "`confirmed=true`, or reduce variables/scenarios/source rows."
+            )
+
+        # Build canonical tile fetch jobs: one HTTP per (tile × var × scenario)
+        tile_jobs: dict[tuple, dict] = {}
+        point_to_tile_key: dict[tuple, tuple] = {}
+        for key in unique_query_keys:
+            lat_f, lon_f, variable, scenario, layer, year = key
+            tile = _canonical_tile_for(lat_f, lon_f)
+            tile_key = (
+                tile["lat_min"], tile["lat_max"],
+                tile["lon_min"], tile["lon_max"],
+                variable, scenario, layer, year,
+            )
+            point_to_tile_key[key] = tile_key
+            tile_jobs.setdefault(tile_key, {
+                "tile": tile,
+                "variable": variable,
+                "scenario": scenario,
+                "depth_layer": layer,
+                "target_year": year,
+            })
+
+        def _fetch_tile(args: tuple) -> tuple[tuple, pd.DataFrame | None]:
+            tile_key, payload = args
+            try:
+                df = _fetch_bio_oracle_bbox(**payload)
+                return tile_key, df
+            except Exception:
+                return tile_key, None
+
+        tile_dfs: dict[tuple, pd.DataFrame | None] = {}
+        job_items = list(tile_jobs.items())
+        effective_workers = max(1, min(int(max_workers), len(job_items) or 1))
+        if effective_workers == 1 or len(job_items) <= 1:
+            for item in job_items:
+                tk, df = _fetch_tile(item)
+                tile_dfs[tk] = df
+        else:
+            with ThreadPoolExecutor(max_workers=effective_workers) as pool:
+                for tk, df in pool.map(_fetch_tile, job_items):
+                    tile_dfs[tk] = df
+
         cache: dict[tuple, dict] = {}
+        for key in unique_query_keys:
+            lat_f, lon_f, *_ = key
+            tile_key = point_to_tile_key[key]
+            tile_df = tile_dfs.get(tile_key)
+            if tile_df is None:
+                cache[key] = {"value": None, "dataset_id": None, "time": None}
+            else:
+                cache[key] = _lookup_in_tile(
+                    tile_df, latitude=lat_f, longitude=lon_f
+                )
+
+        row_has_value = [False] * n_rows
         for variable in variables:
             for scenario in scenarios:
                 values: list[object] = []
                 dataset_ids: list[object] = []
                 times: list[object] = []
-                for position, (lat, lon) in enumerate(
-                    enriched[[lat_col, lon_col]].itertuples(index=False, name=None)
-                ):
-                    try:
-                        lat_f = float(lat)
-                        lon_f = float(lon)
-                    except (TypeError, ValueError):
-                        lat_f = lon_f = float("nan")
-                    coords_valid = (
-                        not pd.isna(lat_f)
-                        and not pd.isna(lon_f)
-                        and -90.0 <= lat_f <= 90.0
-                        and -180.0 <= lon_f <= 180.0
-                    )
-                    if not coords_valid:
+                for position, query_coords in enumerate(row_query_coords):
+                    if query_coords is None:
                         values.append(pd.NA)
                         dataset_ids.append(pd.NA)
                         times.append(pd.NA)
                         continue
+                    lat_f, lon_f = query_coords
                     key = (
                         lat_f,
                         lon_f,
@@ -725,15 +930,6 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                         depth_layer,
                         target_year,
                     )
-                    if key not in cache:
-                        cache[key] = _fetch_bio_oracle_point(
-                            latitude=lat_f,
-                            longitude=lon_f,
-                            variable=variable,
-                            scenario=scenario,
-                            depth_layer=depth_layer,
-                            target_year=target_year,
-                        )
                     fetched = cache[key]
                     value = fetched["value"]
                     is_real_value = value is not None and not pd.isna(value)
@@ -776,7 +972,15 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             ),
             f"- Variables : {', '.join(variables)}",
             f"- Scénarios : {', '.join(scenarios)}",
-            "- Dédup par point unique pour économiser les appels ERDDAP",
+            (
+                f"- Dédup par point unique sur grille "
+                f"{float(coordinate_bin_degrees):g}° pour économiser les appels ERDDAP"
+            ),
+            (
+                f"- Requêtes Bio-ORACLE uniques : {unique_query_count} "
+                f"(max_unique_queries={int(max_unique_queries)}, "
+                f"confirmed={bool(confirmed)})"
+            ),
             f"- Statuts : matched={n_matched}, no_value={n_no_value}",
         ]
         if n_no_value:

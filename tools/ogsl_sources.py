@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import threading
 import uuid
 from pathlib import Path
 from urllib.parse import quote
@@ -22,6 +23,12 @@ from core.environment_resolver import (
     match_ctd_rows,
     parse_source_coords,
     resolve_source_dataframe,
+)
+from core.erddap_batching import (
+    source_batch_positions,
+    spatial_subbatch_positions,
+    unique_coordinate_positions,
+    run_batches_in_parallel,
 )
 from core.ogsl_client import query_ogsl as _query_ogsl, OGSL_DATASET_ID, OGSL_VARIABLES
 from core.ogsl_enrichment import build_station_windows, enrich_with_ogsl as _enrich_with_ogsl_helper
@@ -45,7 +52,13 @@ _OGSL_CORE_COLUMNS = (
     "PRES",
 )
 
-def _fetch_ogsl_bbox(*, bbox: dict, time_window: dict, variables: list[str]) -> pd.DataFrame:
+def _fetch_ogsl_bbox(
+    *,
+    bbox: dict,
+    time_window: dict,
+    variables: list[str],
+    pres_range: dict | None = None,
+) -> pd.DataFrame:
     """Fetch OGSL CTD rows within a bbox + time window from ERDDAP tabledap."""
     columns = list(dict.fromkeys([*_OGSL_CORE_COLUMNS, *variables]))
     constraints = [
@@ -56,6 +69,13 @@ def _fetch_ogsl_bbox(*, bbox: dict, time_window: dict, variables: list[str]) -> 
         f"time>={time_window['start']}",
         f"time<={time_window['end']}",
     ]
+    if pres_range is not None:
+        constraints.extend(
+            [
+                f"PRES>={float(pres_range['min']):.3f}",
+                f"PRES<={float(pres_range['max']):.3f}",
+            ]
+        )
     query = ",".join(columns) + "&" + "&".join(
         quote(c, safe="><=:-T.Z") for c in constraints
     )
@@ -234,13 +254,20 @@ def make_ogsl_tools(thread_id: str) -> list:
         spatial_tolerance_km: float = 25.0,
         time_tolerance_hours: float = 24.0,
         source_variable: str | None = None,
+        initial_batch_spatial_degrees: float = 5.0,
+        batch_spatial_degrees: float = 5.0,
+        max_source_points_per_batch: int = 50,
+        max_ctd_rows_per_batch: int = 20000,
+        depth_padding_dbar: float = 25.0,
+        max_workers: int = 6,
     ) -> str:
         """Enrichit la table chargée avec OGSL ISMER CTD par lat/lon/time.
 
         Auto-détecte les colonnes lat/lon/time/depth. Interroge OGSL ERDDAP
-        par bbox + fenêtre temps puis matche localement au plus proche voisin.
-        Si plusieurs fichiers sont en session, passe `source_variable`
-        (ex. `df_file_filet_arctic_2018`) pour cibler un dataset précis.
+        par lots bbox + fenêtre temps en parallèle, puis matche localement au
+        plus proche voisin. Si plusieurs fichiers sont en session, passe
+        `source_variable` (ex. `df_file_filet_arctic_2018`) pour cibler un
+        dataset précis.
         """
         source = resolve_source_dataframe(_store, thread_id, source_variable)
         if source is None:
@@ -291,62 +318,173 @@ def make_ogsl_tools(thread_id: str) -> list:
         src_time = coords.time
         src_depth = coords.depth
 
-        bbox, time_window = compute_bbox_time_window(
-            src_lat=src_lat,
-            src_lon=src_lon,
-            src_time=src_time,
-            time_padding_hours=time_tolerance_hours,
-        )
-
-        ctd = _fetch_ogsl_bbox(
-            bbox=bbox, time_window=time_window, variables=selected_variables
-        )
-
-        matches = match_ctd_rows(
+        unique_positions, row_to_unique = unique_coordinate_positions(
             src_lat=src_lat,
             src_lon=src_lon,
             src_time=src_time,
             src_depth=src_depth,
-            ctd=ctd,
-            ctd_pres_col="PRES",
-            variables_for_value_check=selected_variables,
-            spatial_tolerance_km=spatial_tolerance_km,
-            time_tolerance_hours=time_tolerance_hours,
+        )
+        unique_lat = src_lat.iloc[unique_positions].reset_index(drop=True)
+        unique_lon = src_lon.iloc[unique_positions].reset_index(drop=True)
+        unique_time = src_time.iloc[unique_positions].reset_index(drop=True)
+        unique_depth = (
+            src_depth.iloc[unique_positions].reset_index(drop=True)
+            if src_depth is not None
+            else None
+        )
+        n_unique = len(unique_positions)
+        unique_statuses: list[object] = ["no_match"] * n_unique
+        unique_station_ids: list[object] = [pd.NA] * n_unique
+        unique_cruise_ids: list[object] = [pd.NA] * n_unique
+        unique_cast_numbers: list[object] = [pd.NA] * n_unique
+        unique_ctd_times_matched: list[object] = [pd.NA] * n_unique
+        unique_distances_km: list[object] = [pd.NA] * n_unique
+        unique_time_deltas_min: list[object] = [pd.NA] * n_unique
+        unique_pres_values: list[object] = [pd.NA] * n_unique
+        unique_te90_values: list[object] = [pd.NA] * n_unique
+        unique_psal_values: list[object] = [pd.NA] * n_unique
+        unique_oxym_values: list[object] = [pd.NA] * n_unique
+
+        batch_positions = source_batch_positions(
+            src_lat=unique_lat,
+            src_lon=unique_lon,
+            src_time=unique_time,
+            spatial_bin_degrees=float(initial_batch_spatial_degrees),
+            max_positions=int(max_source_points_per_batch),
+        )
+        counters = {"erddap_calls": 0}
+        fallback_months = 0
+        fallback_subbatches = 0
+        fetch_failures: list[str] = []
+        counters_lock = threading.Lock()
+
+        def _fetch_and_match_positions(positions: list[int]) -> tuple[bool, str | None]:
+            batch_lat = unique_lat.iloc[positions].reset_index(drop=True)
+            batch_lon = unique_lon.iloc[positions].reset_index(drop=True)
+            batch_time = unique_time.iloc[positions].reset_index(drop=True)
+            batch_depth = (
+                unique_depth.iloc[positions].reset_index(drop=True)
+                if unique_depth is not None
+                else None
+            )
+            pres_range = None
+            if batch_depth is not None and batch_depth.notna().any():
+                valid_depth = batch_depth.dropna()
+                pres_range = {
+                    "min": max(0.0, float(valid_depth.min()) - float(depth_padding_dbar)),
+                    "max": float(valid_depth.max()) + float(depth_padding_dbar),
+                }
+            bbox, time_window = compute_bbox_time_window(
+                src_lat=batch_lat,
+                src_lon=batch_lon,
+                src_time=batch_time,
+                time_padding_hours=time_tolerance_hours,
+            )
+            try:
+                with counters_lock:
+                    counters["erddap_calls"] += 1
+                fetch_kwargs = {
+                    "bbox": bbox,
+                    "time_window": time_window,
+                    "variables": selected_variables,
+                }
+                if pres_range is not None:
+                    fetch_kwargs["pres_range"] = pres_range
+                try:
+                    ctd = _fetch_ogsl_bbox(**fetch_kwargs)
+                except TypeError:
+                    fetch_kwargs.pop("pres_range", None)
+                    ctd = _fetch_ogsl_bbox(**fetch_kwargs)
+            except Exception as exc:
+                return False, str(exc)
+            if len(ctd) > int(max_ctd_rows_per_batch):
+                return False, (
+                    f"too_many_ctd_rows:{len(ctd)}>"
+                    f"{int(max_ctd_rows_per_batch)}"
+                )
+
+            matches = match_ctd_rows(
+                src_lat=batch_lat,
+                src_lon=batch_lon,
+                src_time=batch_time,
+                src_depth=batch_depth,
+                ctd=ctd,
+                ctd_pres_col="PRES",
+                variables_for_value_check=selected_variables,
+                spatial_tolerance_km=spatial_tolerance_km,
+                time_tolerance_hours=time_tolerance_hours,
+            )
+
+            for local_position, match in enumerate(matches):
+                unique_position = positions[local_position]
+                unique_statuses[unique_position] = match.status
+                if match.chosen_idx is None:
+                    continue
+                best = ctd.iloc[match.chosen_idx]
+                unique_station_ids[unique_position] = best.get("stationID")
+                unique_cruise_ids[unique_position] = best.get("cruiseID")
+                unique_cast_numbers[unique_position] = best.get("cast_number")
+                unique_ctd_times_matched[unique_position] = best.get("time")
+                unique_distances_km[unique_position] = match.distance_km
+                unique_time_deltas_min[unique_position] = (
+                    match.time_delta_min
+                    if match.time_delta_min is not None
+                    else pd.NA
+                )
+                unique_pres_values[unique_position] = best.get("PRES")
+                unique_te90_values[unique_position] = best.get("TE90")
+                unique_psal_values[unique_position] = best.get("PSAL")
+                unique_oxym_values[unique_position] = best.get("OXYM")
+            return True, None
+
+        initial_results = run_batches_in_parallel(
+            batch_positions,
+            _fetch_and_match_positions,
+            max_workers=int(max_workers),
         )
 
-        statuses: list[str] = []
-        station_ids: list[object] = []
-        cruise_ids: list[object] = []
-        cast_numbers: list[object] = []
-        ctd_times_matched: list[object] = []
-        distances_km: list[object] = []
-        time_deltas_min: list[object] = []
-        pres_values: list[object] = []
-        te90_values: list[object] = []
-        psal_values: list[object] = []
-        oxym_values: list[object] = []
-        for match in matches:
-            statuses.append(match.status)
-            if match.chosen_idx is None:
-                station_ids.append(pd.NA); cruise_ids.append(pd.NA)
-                cast_numbers.append(pd.NA); ctd_times_matched.append(pd.NA)
-                distances_km.append(pd.NA); time_deltas_min.append(pd.NA)
-                pres_values.append(pd.NA); te90_values.append(pd.NA)
-                psal_values.append(pd.NA); oxym_values.append(pd.NA)
+        fallback_subbatch_jobs: list[list[int]] = []
+        for positions, (ok, error) in zip(batch_positions, initial_results):
+            if ok:
                 continue
-            best = ctd.iloc[match.chosen_idx]
-            station_ids.append(best.get("stationID"))
-            cruise_ids.append(best.get("cruiseID"))
-            cast_numbers.append(best.get("cast_number"))
-            ctd_times_matched.append(best.get("time"))
-            distances_km.append(match.distance_km)
-            time_deltas_min.append(
-                match.time_delta_min if match.time_delta_min is not None else pd.NA
+            subbatches = spatial_subbatch_positions(
+                positions=positions,
+                src_lat=unique_lat,
+                src_lon=unique_lon,
+                spatial_bin_degrees=float(batch_spatial_degrees),
+                src_time=unique_time,
+                max_positions=int(max_source_points_per_batch),
             )
-            pres_values.append(best.get("PRES"))
-            te90_values.append(best.get("TE90"))
-            psal_values.append(best.get("PSAL"))
-            oxym_values.append(best.get("OXYM"))
+            if len(subbatches) <= 1:
+                if error:
+                    fetch_failures.append(error)
+                continue
+            fallback_months += 1
+            fallback_subbatches += len(subbatches)
+            fallback_subbatch_jobs.extend(subbatches)
+
+        fallback_results = run_batches_in_parallel(
+            fallback_subbatch_jobs,
+            _fetch_and_match_positions,
+            max_workers=int(max_workers),
+        )
+        for sub_ok, sub_error in fallback_results:
+            if not sub_ok and sub_error:
+                fetch_failures.append(sub_error)
+
+        erddap_calls = counters["erddap_calls"]
+
+        statuses = [unique_statuses[code] for code in row_to_unique]
+        station_ids = [unique_station_ids[code] for code in row_to_unique]
+        cruise_ids = [unique_cruise_ids[code] for code in row_to_unique]
+        cast_numbers = [unique_cast_numbers[code] for code in row_to_unique]
+        ctd_times_matched = [unique_ctd_times_matched[code] for code in row_to_unique]
+        distances_km = [unique_distances_km[code] for code in row_to_unique]
+        time_deltas_min = [unique_time_deltas_min[code] for code in row_to_unique]
+        pres_values = [unique_pres_values[code] for code in row_to_unique]
+        te90_values = [unique_te90_values[code] for code in row_to_unique]
+        psal_values = [unique_psal_values[code] for code in row_to_unique]
+        oxym_values = [unique_oxym_values[code] for code in row_to_unique]
 
         enriched = source.copy(deep=True)
         n = len(enriched)
@@ -392,12 +530,33 @@ def make_ogsl_tools(thread_id: str) -> list:
                 f"temps={time_tolerance_hours:g} h"
             ),
             f"- Variables récupérées : {', '.join(selected_variables)}",
-            "- 1 seule requête ERDDAP bbox+fenêtre pour toutes les lignes",
+            (
+                f"- Points source uniques interrogés : {n_unique} sur "
+                f"{n} ligne(s)"
+            ),
+            (
+                f"- Bornes batch : max_source_points={int(max_source_points_per_batch)}, "
+                f"max_ctd_rows={int(max_ctd_rows_per_batch)}, "
+                f"depth_padding_dbar={float(depth_padding_dbar):g}"
+            ),
+            (
+                f"- Requêtes ERDDAP : {erddap_calls} lot(s) temps-espace "
+                f"({len(batch_positions)} lot(s) initiaux par mois/grille "
+                f"{float(initial_batch_spatial_degrees):g}°, "
+                f"{fallback_months} lot(s) splitté(s) en "
+                f"{fallback_subbatches} sous-lot(s) grille "
+                f"{float(batch_spatial_degrees):g}°)"
+            ),
             (
                 f"- Statuts : matched={n_matched}, "
                 f"matched_no_value={n_no_value}, no_match={n_no_match}"
             ),
         ]
+        if fetch_failures:
+            method_lines.append(
+                f"- Avertissement : {len(fetch_failures)} lot(s) ERDDAP en erreur, "
+                "lignes conservées avec `no_match`."
+            )
         if n_no_match:
             method_lines.append(
                 f"- Note : {n_no_match} ligne(s) sans match — la zone-date "

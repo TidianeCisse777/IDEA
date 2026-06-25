@@ -367,6 +367,49 @@ def test_enrich_with_ogsl_emits_single_bbox_call_with_proper_window():
     assert bbox["lon_min"] <= -69.0 and bbox["lon_max"] >= -67.5
 
 
+def test_enrich_with_ogsl_batches_large_latlon_sources():
+    """Les gros fichiers lat/lon/time ne doivent pas partir en une bbox globale."""
+    import pandas as pd
+    from unittest.mock import patch
+    from tools.ogsl_sources import make_ogsl_tools
+    from tools.session_store import default_store as _store
+
+    tid = "thread-ogsl-large-latlon-batches"
+    for k in _store.keys(tid):
+        _store.clear(k)
+    src = pd.DataFrame(
+        {
+            "latitude": [48.7, 49.0, 74.0, 74.2],
+            "longitude": [-68.5, -68.0, -80.0, -80.2],
+            "object_date": [
+                "2024-06-01",
+                "2024-06-02",
+                "2024-08-01",
+                "2024-08-02",
+            ],
+            "object_depth_min": [5.0, 10.0, 50.0, 55.0],
+        }
+    )
+    _store.set(tid, src, {"source": "smoke"})
+    calls = []
+
+    def fake_bbox(*, bbox, time_window, variables, pres_range=None):
+        calls.append({"bbox": bbox, "time_window": time_window, "pres_range": pres_range})
+        return pd.DataFrame(columns=[
+            "time", "latitude", "longitude", "cruiseID", "stationID",
+            "cast_number", "PRES", "TE90", "PSAL", "OXYM",
+        ])
+
+    with patch("tools.ogsl_sources._fetch_ogsl_bbox", side_effect=fake_bbox):
+        enrich = next(t for t in make_ogsl_tools(tid) if t.name == "enrich_with_ogsl")
+        text = enrich.invoke({"initial_batch_spatial_degrees": 5})
+
+    assert len(calls) == 2
+    assert all(call["pres_range"] is not None for call in calls)
+    assert "Requêtes ERDDAP : 2" in text
+    assert "Points source uniques interrogés : 4" in text
+
+
 def test_enrich_with_ogsl_returns_method_block_and_metrics():
     import pandas as pd
     from unittest.mock import patch

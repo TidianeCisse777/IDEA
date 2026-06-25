@@ -38,8 +38,7 @@ services:
     command: uvicorn serve:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
-      - copepod_data:/app/data
-      - ./data/geo:/app/data/geo:ro
+      - ./data:/app/data
       - copepod_logs:/app/logs
       - copepod_static:/app/static
       - copepod_models:/app/models
@@ -75,8 +74,7 @@ services:
     command: uvicorn core.mcp.ecotaxa_server:create_app --factory --host 0.0.0.0 --port 8001 --reload
     volumes:
       - .:/app
-      - copepod_data:/app/data
-      - ./data/geo:/app/data/geo:ro
+      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
@@ -126,7 +124,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  copepod_data:
   copepod_logs:
   copepod_static:
   copepod_models:

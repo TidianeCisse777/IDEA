@@ -1,6 +1,16 @@
 """TDD — tools/bio_oracle_sources.py."""
 
 
+def _bbox_tile_df(value, *, dataset_id="ds_test", time="2010-01-01T00:00:00Z", latitude=60.0, longitude=-65.0):
+    """Build a one-row tile DataFrame for mocking _fetch_bio_oracle_bbox."""
+    import pandas as pd
+    df = pd.DataFrame([
+        {"time": time, "latitude": latitude, "longitude": longitude, "value": value}
+    ])
+    df.attrs["dataset_id"] = dataset_id
+    return df
+
+
 def test_make_bio_oracle_tools_exposes_expected_tools():
     from tools.bio_oracle_sources import make_bio_oracle_tools
 
@@ -877,15 +887,17 @@ def test_enrich_with_bio_oracle_attaches_value_to_each_source_row():
     )
     _store.set(thread_id, source, {"source": "file:bio.tsv"})
 
-    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
-        return {
-            "dataset_id": "thetao_ssp585_2020_2100_depthsurf",
-            "time": "2050-01-01T00:00:00Z",
-            "value": 8.42,
-        }
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+        return _bbox_tile_df(
+            8.42,
+            dataset_id="thetao_ssp585_2020_2100_depthsurf",
+            time="2050-01-01T00:00:00Z",
+            latitude=60.0,
+            longitude=-65.0,
+        )
 
     with patch(
-        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox
     ):
         enrich = next(
             tool
@@ -918,26 +930,30 @@ def test_enrich_with_bio_oracle_deduplicates_points_to_minimize_http_calls():
     for key in _store.keys(thread_id):
         _store.clear(key)
 
+    # All 3 points snap to the same canonical 5° tile (60-65 × -70 to -65)
     source = pd.DataFrame(
         {
-            "latitude": [60.0, 60.0, 61.0],
-            "longitude": [-65.0, -65.0, -66.0],
+            "latitude": [60.5, 60.5, 62.0],
+            "longitude": [-67.0, -67.0, -68.0],
         }
     )
     _store.set(thread_id, source, {"source": "file:dedup.tsv"})
 
+    import pandas as pd_local
     counter = {"calls": 0}
 
-    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
         counter["calls"] += 1
-        return {
-            "dataset_id": "thetao_ssp585_2020_2100_depthsurf",
-            "time": "2050-01-01T00:00:00Z",
-            "value": float(latitude),
-        }
+        # tile DataFrame with one row per source point — lookup picks nearest
+        df = pd_local.DataFrame([
+            {"time": "2050-01-01T00:00:00Z", "latitude": 60.5, "longitude": -67.0, "value": 60.5},
+            {"time": "2050-01-01T00:00:00Z", "latitude": 62.0, "longitude": -68.0, "value": 62.0},
+        ])
+        df.attrs["dataset_id"] = "thetao_ssp585_2020_2100_depthsurf"
+        return df
 
     with patch(
-        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox
     ):
         enrich = next(
             tool
@@ -952,10 +968,96 @@ def test_enrich_with_bio_oracle_deduplicates_points_to_minimize_http_calls():
             }
         )
 
-    assert counter["calls"] == 2
+    # All 3 source points fall in the same canonical 5° tile → 1 HTTP call
+    assert counter["calls"] == 1
     keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
     enriched = _store.get(keys[-1])["df"]
-    assert enriched["bio_oracle_temperature_ssp5_8_5"].tolist() == [60.0, 60.0, 61.0]
+    assert enriched["bio_oracle_temperature_ssp5_8_5"].tolist() == [60.5, 60.5, 62.0]
+
+
+def test_enrich_with_bio_oracle_snaps_to_grid_and_requires_confirmation_when_too_large():
+    """Gros fichier : dédup sur grille Bio-ORACLE puis garde-fou sur le nombre d'appels."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-large-guard"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    # 3 unique cells AFTER 1/12° snap (60.0, 60.0, 61.0, 62.0 / -67, -67, -67, -67)
+    # all in the same canonical 5° tile (60-65 × -70 to -65)
+    source = pd.DataFrame(
+        {
+            "latitude": [60.501, 60.502, 61.501, 62.501],
+            "longitude": [-67.001, -67.002, -67.501, -67.502],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:large.csv"})
+
+    refusal_calls = []
+
+    def fake_refusal_fetch(*, variable, scenario, depth_layer, target_year, tile):
+        refusal_calls.append(tile)
+        return _bbox_tile_df(1.0, dataset_id="thetao_baseline")
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox",
+        side_effect=fake_refusal_fetch,
+    ):
+        enrich = next(
+            t for t in make_bio_oracle_tools(thread_id)
+            if t.name == "enrich_with_bio_oracle"
+        )
+        refused = enrich.invoke({
+            "variables": ["temperature"],
+            "scenarios": ["baseline"],
+            "max_unique_queries": 2,
+        })
+
+    assert refusal_calls == []
+    assert "Confirmation required" in refused
+    assert "3 unique Bio-ORACLE queries" in refused
+
+    calls = []
+
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+        calls.append(tile)
+        import pandas as pd_local
+        df = pd_local.DataFrame([
+            {"time": "baseline", "latitude": 60.0, "longitude": -65.0, "value": 60.0},
+            {"time": "baseline", "latitude": 61.0, "longitude": -66.0, "value": 61.0},
+            {"time": "baseline", "latitude": 62.0, "longitude": -67.0, "value": 62.0},
+        ])
+        df.attrs["dataset_id"] = "thetao_baseline"
+        return df
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox",
+        side_effect=fake_fetch_bbox,
+    ):
+        enrich.invoke({
+            "variables": ["temperature"],
+            "scenarios": ["baseline"],
+            "max_unique_queries": 2,
+            "confirmed": True,
+        })
+
+    # All 4 source points across 60-62°N × -65 to -67°W → 1 canonical 5° tile
+    assert len(calls) == 1
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["bio_oracle_match_status"].tolist() == [
+        "matched",
+        "matched",
+        "matched",
+        "matched",
+    ]
+    assert enriched["bio_oracle_temperature_baseline"].iloc[0] == enriched[
+        "bio_oracle_temperature_baseline"
+    ].iloc[1]
 
 
 def test_enrich_with_bio_oracle_combines_multiple_variables_and_scenarios():
@@ -973,15 +1075,17 @@ def test_enrich_with_bio_oracle_combines_multiple_variables_and_scenarios():
     source = pd.DataFrame({"latitude": [60.0], "longitude": [-65.0]})
     _store.set(thread_id, source, {"source": "file:multi.tsv"})
 
-    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
-        return {
-            "dataset_id": f"{variable}_{scenario}",
-            "time": "2050-01-01T00:00:00Z",
-            "value": hash((variable, scenario)) % 100 / 10.0,
-        }
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+        return _bbox_tile_df(
+            hash((variable, scenario)) % 100 / 10.0,
+            dataset_id=f"{variable}_{scenario}",
+            time="2050-01-01T00:00:00Z",
+            latitude=60.0,
+            longitude=-65.0,
+        )
 
     with patch(
-        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox
     ):
         enrich = next(
             tool
@@ -1021,13 +1125,23 @@ def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_none():
     source = pd.DataFrame({"latitude": [60.0, 0.0], "longitude": [-65.0, 0.0]})
     _store.set(thread_id, source, {"source": "file:nv.tsv"})
 
-    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
-        if latitude == 0.0:
-            return {"dataset_id": "x", "time": None, "value": None}
-        return {"dataset_id": "x", "time": "2050-01-01", "value": 8.0}
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+        import pandas as pd_local
+        # Tile around the first source point only — second point (0, 0) gets
+        # a tile fetch returning all-NaN → no_value.
+        if tile["lat_min"] <= 0 <= tile["lat_max"]:
+            df = pd_local.DataFrame([
+                {"time": None, "latitude": 0.0, "longitude": 0.0, "value": None}
+            ])
+        else:
+            df = pd_local.DataFrame([
+                {"time": "2050-01-01", "latitude": 60.0, "longitude": -65.0, "value": 8.0}
+            ])
+        df.attrs["dataset_id"] = "x"
+        return df
 
     with patch(
-        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox
     ):
         enrich = next(
             tool
@@ -1056,7 +1170,7 @@ def test_enrich_with_bio_oracle_diagnoses_empty_coordinates_without_http():
     source = pd.DataFrame({"object_lat": [None, None], "object_lon": [None, None]})
     _store.set(thread_id, source, {"source": "file:empty.tsv"})
 
-    with patch("tools.bio_oracle_sources._fetch_bio_oracle_point") as mock_fetch:
+    with patch("tools.bio_oracle_sources._fetch_bio_oracle_bbox") as mock_fetch:
         enrich = next(
             tool
             for tool in make_bio_oracle_tools(thread_id)
@@ -1089,17 +1203,22 @@ def test_enrich_with_bio_oracle_returns_method_block_and_traceability_columns():
     )
     _store.set(thread_id, source, {"source": "file:m.tsv"})
 
-    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
-        if latitude == 0.0:
-            return {"dataset_id": None, "time": None, "value": None}
-        return {
-            "dataset_id": f"{variable}_{scenario}_2020_2100_depthsurf",
-            "time": "2050-01-01T00:00:00Z",
-            "value": 8.42,
-        }
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+        import pandas as pd_local
+        if tile["lat_min"] <= 0 <= tile["lat_max"]:
+            df = pd_local.DataFrame([
+                {"time": None, "latitude": 0.0, "longitude": 0.0, "value": None}
+            ])
+            df.attrs["dataset_id"] = None
+            return df
+        df = pd_local.DataFrame([
+            {"time": "2050-01-01T00:00:00Z", "latitude": 60.0, "longitude": -65.0, "value": 8.42}
+        ])
+        df.attrs["dataset_id"] = f"{variable}_{scenario}_2020_2100_depthsurf"
+        return df
 
     with patch(
-        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox
     ):
         enrich = next(
             tool
@@ -1163,15 +1282,17 @@ def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_nan_float():
     source = pd.DataFrame({"latitude": [49.5], "longitude": [-63.0]})
     _store.set(thread_id, source, {"source": "file:anticosti.tsv"})
 
-    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
-        return {
-            "dataset_id": "thetao_baseline_2000_2019_depthsurf",
-            "time": "2010-01-01T00:00:00Z",
-            "value": math.nan,
-        }
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+        return _bbox_tile_df(
+            math.nan,
+            dataset_id="thetao_baseline_2000_2019_depthsurf",
+            time="2010-01-01T00:00:00Z",
+            latitude=49.5,
+            longitude=-63.0,
+        )
 
     with patch(
-        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox
     ):
         enrich = next(
             t for t in make_bio_oracle_tools(thread_id)
@@ -1206,16 +1327,18 @@ def test_enrich_with_bio_oracle_skips_out_of_range_coords_without_http():
 
     fetch_calls = []
 
-    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
-        fetch_calls.append((latitude, longitude))
-        return {
-            "dataset_id": "thetao_baseline_2000_2019_depthsurf",
-            "time": "2010-01-01",
-            "value": 8.0,
-        }
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+        fetch_calls.append(tile)
+        return _bbox_tile_df(
+            8.0,
+            dataset_id="thetao_baseline_2000_2019_depthsurf",
+            time="2010-01-01",
+            latitude=60.0,
+            longitude=-65.0,
+        )
 
     with patch(
-        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox
     ):
         enrich = next(
             t for t in make_bio_oracle_tools(thread_id)
@@ -1223,8 +1346,8 @@ def test_enrich_with_bio_oracle_skips_out_of_range_coords_without_http():
         )
         enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"]})
 
-    # Seul le 1er point (60, -65) doit être appelé
-    assert fetch_calls == [(60.0, -65.0)]
+    # Only the 1st point (60, -65) generates a tile fetch — others are out-of-range
+    assert len(fetch_calls) == 1
     keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
     enriched = _store.get(keys[-1])["df"]
     assert enriched["bio_oracle_match_status"].tolist() == [
@@ -1264,11 +1387,11 @@ def test_enrich_with_bio_oracle_can_target_specific_dataset_via_source_variable(
     )
     _store.set(thread_id, uvp, {"source": "file:uvp.tsv"})
 
-    def fake_fetch_point(*, latitude, longitude, variable, scenario, depth_layer, target_year):
-        return {"dataset_id": "x", "time": "2050-01-01", "value": 8.42}
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+        return _bbox_tile_df(8.42, dataset_id="x", time="2050-01-01")
 
     with patch(
-        "tools.bio_oracle_sources._fetch_bio_oracle_point", side_effect=fake_fetch_point
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox
     ):
         enrich = next(
             t for t in make_bio_oracle_tools(thread_id)
