@@ -45,3 +45,4 @@ markdown>=3.5.0
 shapely>=2.0.0
 pyproj>=3.6.0
 pyshp>=2.3.0
+filelock>=3.0,<4.0

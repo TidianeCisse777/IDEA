@@ -5,6 +5,11 @@ SQLite-backed key/value store. Used by `tools/bio_oracle_sources.py` and
 sessions. Bio-ORACLE climatology is essentially static; Amundsen bbox responses
 are stable as well for a given (bbox, time_window, variables, pres_range) key.
 
+Cross-process safe: each connection acquires a file lock before any read or
+write. Required because the cache is shared between the warmup script (host),
+the agent (container), and any ad-hoc python scripts — concurrent SQLite
+writes without coordination corrupt the database header.
+
 Cache path: env `ERDDAP_CACHE_PATH`, default `data/erddap_cache.sqlite`.
 Disable globally: set env `ERDDAP_CACHE_DISABLED=1`.
 """
@@ -20,9 +25,15 @@ import time
 from pathlib import Path
 from typing import Any
 
+from filelock import FileLock
+
 _DEFAULT_PATH = Path("data/erddap_cache.sqlite")
 _lock = threading.Lock()
 _initialized: dict[Path, bool] = {}
+
+
+def _file_lock(path: Path) -> FileLock:
+    return FileLock(str(path) + ".lock", timeout=60)
 
 
 def cache_path() -> Path:
@@ -38,20 +49,21 @@ def _ensure_schema(path: Path) -> None:
     if _initialized.get(path):
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
-    try:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS cache ("
-            "namespace TEXT NOT NULL, "
-            "key TEXT NOT NULL, "
-            "value BLOB NOT NULL, "
-            "ts REAL NOT NULL, "
-            "PRIMARY KEY (namespace, key))"
-        )
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.commit()
-    finally:
-        conn.close()
+    with _file_lock(path):
+        conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS cache ("
+                "namespace TEXT NOT NULL, "
+                "key TEXT NOT NULL, "
+                "value BLOB NOT NULL, "
+                "ts REAL NOT NULL, "
+                "PRIMARY KEY (namespace, key))"
+            )
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.commit()
+        finally:
+            conn.close()
     _initialized[path] = True
 
 
@@ -69,7 +81,7 @@ def cache_get(namespace: str, key: Any) -> Any:
     path = cache_path()
     _ensure_schema(path)
     digest = _hash_key(key)
-    with _lock:
+    with _lock, _file_lock(path):
         conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
         try:
             row = conn.execute(
@@ -94,7 +106,7 @@ def cache_set(namespace: str, key: Any, value: Any) -> None:
     _ensure_schema(path)
     digest = _hash_key(key)
     blob = pickle.dumps(value)
-    with _lock:
+    with _lock, _file_lock(path):
         conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
         try:
             conn.execute(
@@ -113,7 +125,7 @@ def cache_clear(namespace: str | None = None) -> None:
     if not path.exists():
         return
     _ensure_schema(path)
-    with _lock:
+    with _lock, _file_lock(path):
         conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
         try:
             if namespace is None:
