@@ -25,6 +25,7 @@ from core.environment_resolver import (
     parse_source_coords,
     resolve_source_dataframe,
 )
+from core.enrich_scoping import scope_dataframe
 from core.erddap_batching import (
     source_batch_positions,
     spatial_subbatch_positions,
@@ -284,6 +285,8 @@ def make_ogsl_tools(thread_id: str) -> list:
         max_ctd_rows_per_batch: int = 20000,
         depth_padding_dbar: float = 25.0,
         max_workers: int = 6,
+        zone_name: str | None = None,
+        date_range: list | None = None,
     ) -> str:
         """Enrichit la table chargée avec OGSL ISMER CTD par lat/lon/time.
 
@@ -334,6 +337,27 @@ def make_ogsl_tools(thread_id: str) -> list:
             translated = _normalize_ogsl_var(v)
             if translated not in selected_variables:
                 selected_variables.append(translated)
+
+        scoping_lines: list[str] = []
+        if zone_name or date_range is not None:
+            scoped = scope_dataframe(
+                source,
+                zone_name=zone_name,
+                date_range=date_range,
+                lat_col=lat_col,
+                lon_col=lon_col,
+                time_col=time_col,
+            )
+            if scoped.error:
+                return f"Enrichissement OGSL impossible : {scoped.error}"
+            source = scoped.df
+            scoping_lines = list(scoped.description_lines)
+            if source.empty:
+                return (
+                    "Enrichissement OGSL impossible : le filtre zone/date "
+                    "a éliminé toutes les lignes.\n"
+                    + "\n".join(scoping_lines)
+                )
 
         coords = parse_source_coords(
             source,
@@ -567,6 +591,7 @@ def make_ogsl_tools(thread_id: str) -> list:
         plural = "matchées" if n_matched > 1 else "matchée"
         method_lines = [
             "Méthode :",
+            *scoping_lines,
             (
                 f"- Colonnes source détectées : latitude={lat_col!r}, "
                 f"longitude={lon_col!r}, time={time_col!r}"

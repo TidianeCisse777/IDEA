@@ -13,34 +13,18 @@ Use this skill for NeoLabs taxonomy abundance files, especially tables like `neo
 
 When this trigger fires, you MUST run the following tool calls in this exact order BEFORE any taxon-level analysis. Skipping ANY of these steps is a bug — the analysis will end with NaN / NA / no_match on every row.
 
-### Sub-step 1a — filter_dataframe_by_zone (MANDATORY when the request names a zone)
+### Sub-step 1a + 1b + 1c — single enrich call with zone_name + date_range (RECOMMENDED)
 
-If the user names ANY geographic zone (e.g. "baie de Baffin", "Hudson", "Beaufort", "détroit de Davis", "MEOW Arctic", "golfe du Saint-Laurent") :
-
-```
-filter_dataframe_by_zone(zone_name="<canonical zone>")
-```
-
-This persists `df_in_<zone>_<source>` in session. The subsequent enrich MUST receive `source_variable="df_in_<zone>_<source>"` — otherwise the enrich runs on the full 6105-row file, returns no_match everywhere, and your final analysis collapses. **Do not skip this even when the request also asks for date filtering, abundance join, top N, or any other downstream step — those come AFTER.**
-
-### Sub-step 1b — date filter via run_pandas (when the request names a date range)
-
-If the user names a date range (e.g. "entre 2018 et 2020", "été 2019") :
+Each enrich tool now accepts `zone_name` and `date_range` directly. ONE tool call applies the filter and the enrich deterministically — no manual chaining, no LLM variance risk.
 
 ```
-run_pandas("df_dated = df_in_<zone>_<source>[df_in_<zone>_<source>['deployment_datetime_start'].between('2018-01-01', '2020-12-31')]")
-```
-
-Persist the filtered frame under an explicit name and use that name as `source_variable` for the enrich.
-
-### Sub-step 1c — enrich on the FILTERED subset (never on the raw sample file)
-
-```
-enrich_with_amundsen_ctd(source_variable="df_dated")   # or the zone subset
+enrich_with_amundsen_ctd(zone_name="Baie de Baffin", date_range=["2018-01-01", "2020-12-31"])
 # and / or
-enrich_with_bio_oracle(source_variable="df_dated", ...)
-enrich_with_ogsl(source_variable="df_dated", ...)
+enrich_with_bio_oracle(zone_name="Baie de Baffin", date_range=["2018-01-01", "2020-12-31"], variables=["temperature", "salinity"])
+enrich_with_ogsl(zone_name="Golfe du Saint-Laurent", date_range=["2020-06-01", "2020-09-30"])
 ```
+
+The legacy two-step chain (`filter_dataframe_by_zone` then enrich with `source_variable="df_in_<zone>_<source>"`) is still supported when the user explicitly wants to inspect the filtered subset between the two steps. Prefer the single-call form by default.
 
 ### Sub-step 1d — join abundance via run_pandas
 

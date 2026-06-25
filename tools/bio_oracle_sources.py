@@ -24,6 +24,8 @@ from core.bio_oracle_client import (
     query_bio_oracle as _query_bio_oracle,
 )
 from core.canonical_grid import snap_bbox
+from core.enrich_scoping import scope_dataframe
+from core.environment_resolver import DEFAULT_TIME_CANDIDATES
 from core.erddap_cache import cache_get, cache_set
 from core.environment_resolver import (
     DEFAULT_LAT_CANDIDATES,
@@ -780,6 +782,8 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         max_unique_queries: int = 1000,
         confirmed: bool = False,
         max_workers: int = 8,
+        zone_name: str | None = None,
+        date_range: list | None = None,
     ) -> str:
         """Enrichit la table chargée avec Bio-ORACLE par lat/lon.
 
@@ -816,6 +820,28 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 "Enrichissement Bio-ORACLE impossible : colonnes manquantes — "
                 f"{', '.join(missing)}. Préciser via `latitude_column`, `longitude_column`."
             )
+
+        scoping_lines: list[str] = []
+        if zone_name or date_range is not None:
+            time_col_for_scope = detect_column(source.columns, DEFAULT_TIME_CANDIDATES)
+            scoped = scope_dataframe(
+                source,
+                zone_name=zone_name,
+                date_range=date_range,
+                lat_col=lat_col,
+                lon_col=lon_col,
+                time_col=time_col_for_scope,
+            )
+            if scoped.error:
+                return f"Enrichissement Bio-ORACLE impossible : {scoped.error}"
+            source = scoped.df
+            scoping_lines = list(scoped.description_lines)
+            if source.empty:
+                return (
+                    "Enrichissement Bio-ORACLE impossible : le filtre zone/date "
+                    "a éliminé toutes les lignes.\n"
+                    + "\n".join(scoping_lines)
+                )
 
         coords = parse_source_coords(source, lat_col=lat_col, lon_col=lon_col)
         if coords.empty_groups:
@@ -973,6 +999,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         n_no_value = statuses.count("no_value")
         method_lines = [
             "Méthode :",
+            *scoping_lines,
             (
                 f"- Colonnes source détectées : latitude={lat_col!r}, "
                 f"longitude={lon_col!r}"

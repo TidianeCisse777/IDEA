@@ -19,6 +19,7 @@ from core.erddap_batching import (
     run_batches_in_parallel,
 )
 from core.canonical_grid import canonicalize_amundsen_query
+from core.enrich_scoping import scope_dataframe
 from core.erddap_cache import cache_get, cache_set
 
 _AMUNDSEN_DATASET_ID = "amundsen12713"
@@ -463,12 +464,20 @@ def make_amundsen_tools(thread_id: str) -> list:
         max_ctd_rows_per_batch: int = 200000,
         depth_padding_dbar: float = 25.0,
         max_workers: int = 6,
+        zone_name: str | None = None,
+        date_range: list | None = None,
     ) -> str:
         """Enrichit la table chargée avec la CTD Amundsen par lat/lon/time.
 
         Auto-détecte les colonnes `latitude`, `longitude` et `time` si elles ne
         sont pas fournies. Interroge Amundsen ERDDAP par lots bbox + fenêtre
         temps en parallèle, puis matche localement au plus proche voisin.
+
+        Si `zone_name` est fourni, le df est filtré au polygone IHO/MEOW de
+        cette zone avant l'enrichissement (équivalent à appeler
+        `filter_dataframe_by_zone` puis enrich avec source_variable=filtré).
+        Si `date_range=[start_iso, end_iso]` est fourni, un filtre date est
+        appliqué sur la colonne time détectée. Les deux peuvent être combinés.
         """
         source = resolve_source_dataframe(_store, thread_id, source_variable)
         if source is None:
@@ -484,6 +493,27 @@ def make_amundsen_tools(thread_id: str) -> list:
         time_col = time_column or detect_column(source.columns, DEFAULT_TIME_CANDIDATES)
         time_end_col = detect_column(source.columns, DEFAULT_TIME_END_CANDIDATES)
         depth_col = depth_column or detect_column(source.columns, DEFAULT_DEPTH_CANDIDATES)
+
+        scoping_lines: list[str] = []
+        if zone_name or date_range is not None:
+            scoped = scope_dataframe(
+                source,
+                zone_name=zone_name,
+                date_range=date_range,
+                lat_col=lat_col or "latitude",
+                lon_col=lon_col or "longitude",
+                time_col=time_col,
+            )
+            if scoped.error:
+                return f"Enrichissement Amundsen impossible : {scoped.error}"
+            source = scoped.df
+            scoping_lines = list(scoped.description_lines)
+            if source.empty:
+                return (
+                    "Enrichissement Amundsen impossible : le filtre zone/date "
+                    "a éliminé toutes les lignes.\n"
+                    + "\n".join(scoping_lines)
+                )
 
         missing = [
             name
@@ -773,6 +803,7 @@ def make_amundsen_tools(thread_id: str) -> list:
 
         method_lines = [
             "Méthode :",
+            *scoping_lines,
             (
                 f"- Colonnes source détectées : latitude={lat_col!r}, "
                 f"longitude={lon_col!r}, time={time_col!r}"
