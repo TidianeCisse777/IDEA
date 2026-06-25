@@ -780,6 +780,32 @@ def make_amundsen_tools(thread_id: str) -> list:
                 f"outside_amundsen_ctd_range={n_outside_range}"
             ),
         ]
+        matched_mask = enriched["amundsen_match_status"].isin(
+            ["matched", "matched_no_value"]
+        )
+        if matched_mask.any():
+            dist_series = pd.to_numeric(
+                enriched.loc[matched_mask, "amundsen_distance_km"], errors="coerce"
+            ).dropna()
+            time_series = pd.to_numeric(
+                enriched.loc[matched_mask, "amundsen_time_delta_min"], errors="coerce"
+            ).dropna()
+            if len(dist_series) or len(time_series):
+                quality_bits: list[str] = []
+                if len(dist_series):
+                    quality_bits.append(
+                        f"distance_km min={dist_series.min():.2f} "
+                        f"med={dist_series.median():.2f} max={dist_series.max():.2f}"
+                    )
+                if len(time_series):
+                    quality_bits.append(
+                        f"time_delta_min min={time_series.min():.1f} "
+                        f"med={time_series.median():.1f} max={time_series.max():.1f}"
+                    )
+                method_lines.append(
+                    "- Qualité d'appariement (sur lignes matched) : "
+                    + " ; ".join(quality_bits)
+                )
         if fetch_failures:
             method_lines.append(
                 f"- Avertissement : {len(fetch_failures)} lot(s) ERDDAP en erreur, "
