@@ -52,6 +52,29 @@ _OGSL_CORE_COLUMNS = (
     "cast_number",
     "PRES",
 )
+# Friendly-name → OGSL-native mapping (Bio-ORACLE-style names → ERDDAP cols).
+_OGSL_FRIENDLY_VARS: dict[str, str] = {
+    "temperature": "TE90", "temp": "TE90", "température": "TE90",
+    "te90": "TE90",
+    "salinity": "PSAL", "salinité": "PSAL", "salinite": "PSAL", "sal": "PSAL",
+    "psal": "PSAL",
+    "oxygen": "OXYM", "oxygène": "OXYM", "oxygene": "OXYM", "o2": "OXYM",
+    "oxym": "OXYM",
+    "ph": "PHPH", "phph": "PHPH",
+    "nitrate": "NTRA", "no3": "NTRA", "ntra": "NTRA",
+    "chlorophyll": "FLOR", "chlorophylle": "FLOR", "chl": "FLOR",
+    "fluorescence": "FLOR", "flor": "FLOR",
+    "density": "SIGT", "densité": "SIGT", "sigma": "SIGT", "sigt": "SIGT",
+    "turbidity": "TRB", "trb": "TRB",
+    "iron": "FLOR",
+    "dfe": "FLOR",
+}
+
+
+def _normalize_ogsl_var(value: str) -> str:
+    if not isinstance(value, str):
+        return str(value)
+    return _OGSL_FRIENDLY_VARS.get(value.strip().lower(), value)
 
 def _fetch_ogsl_bbox(
     *,
@@ -303,9 +326,14 @@ def make_ogsl_tools(thread_id: str) -> list:
         # Default pack aligned with Amundsen so users get a coherent set of
         # variables across CTD sources (physical niche + redox + productivity).
         # OGSL uses "PHPH" for pH (Amundsen uses "pH").
-        selected_variables = list(
+        raw_variables = list(
             variables or ["TE90", "PSAL", "SIGT", "OXYM", "PHPH", "NTRA", "FLOR"]
         )
+        selected_variables: list[str] = []
+        for v in raw_variables:
+            translated = _normalize_ogsl_var(v)
+            if translated not in selected_variables:
+                selected_variables.append(translated)
 
         coords = parse_source_coords(
             source,

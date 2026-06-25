@@ -22,6 +22,31 @@ from core.canonical_grid import canonicalize_amundsen_query
 from core.erddap_cache import cache_get, cache_set
 
 _AMUNDSEN_DATASET_ID = "amundsen12713"
+# Friendly-name → ERDDAP-native mapping so the agent can call this tool
+# with the same Bio-ORACLE-friendly vocabulary (temperature, salinity, …)
+# without crashing the ERDDAP query.
+_AMUNDSEN_FRIENDLY_VARS: dict[str, str] = {
+    "temperature": "TE90", "temp": "TE90", "température": "TE90",
+    "te90": "TE90",
+    "salinity": "PSAL", "salinité": "PSAL", "salinite": "PSAL", "sal": "PSAL",
+    "psal": "PSAL",
+    "oxygen": "OXYM", "oxygène": "OXYM", "oxygene": "OXYM", "o2": "OXYM",
+    "oxym": "OXYM",
+    "ph": "pH",
+    "nitrate": "NTRA", "no3": "NTRA", "ntra": "NTRA",
+    "chlorophyll": "FLOR", "chlorophylle": "FLOR", "chl": "FLOR",
+    "fluorescence": "FLOR", "flor": "FLOR",
+    "density": "SIGT", "densité": "SIGT", "sigma": "SIGT", "sigt": "SIGT",
+    "iron": "FLOR",  # Amundsen has no iron — fall back to chlorophyll proxy
+    "dfe": "FLOR",
+}
+
+
+def _normalize_amundsen_var(value: str) -> str:
+    """Translate a user-facing variable name to the Amundsen ERDDAP column."""
+    if not isinstance(value, str):
+        return str(value)
+    return _AMUNDSEN_FRIENDLY_VARS.get(value.strip().lower(), value)
 _AMUNDSEN_TABLEDAP_URL = (
     f"https://erddap.amundsenscience.com/erddap/tabledap/{_AMUNDSEN_DATASET_ID}.csv"
 )
@@ -480,9 +505,17 @@ def make_amundsen_tools(thread_id: str) -> list:
         # arctic tiles are reused on every default enrich. Same 7 vars cover
         # physical niche (TE90/PSAL/SIGT) + redox/biogeochem (OXYM/pH/NTRA) +
         # productivity proxy (FLOR).
-        selected_variables = list(
+        raw_variables = list(
             variables or ["TE90", "PSAL", "SIGT", "OXYM", "pH", "NTRA", "FLOR"]
         )
+        # Accept Bio-ORACLE-friendly names ("temperature", "salinity", …) and
+        # translate to Amundsen ERDDAP column names so the agent's vocabulary
+        # stays consistent across CTD/climatology sources.
+        selected_variables: list[str] = []
+        for v in raw_variables:
+            translated = _normalize_amundsen_var(v)
+            if translated not in selected_variables:
+                selected_variables.append(translated)
 
         coords = parse_source_coords(
             source,
