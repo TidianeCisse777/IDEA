@@ -7,17 +7,54 @@ description: Standard ecological analysis workflow for NeoLabs taxonomy abundanc
 
 Use this skill for NeoLabs taxonomy abundance files, especially tables like `neolabs_taxonomy_abundance_amundsen_ctd.tsv`.
 
-## Pre-step — make sure CTD columns exist BEFORE analysing
+## ⚠️ STEP 1 — MANDATORY ENV PRE-STEP (executes BEFORE any analysis tool)
 
-If the user asks for CTD-related quantities (température, salinité, oxygène, etc. on the taxon table) AND the abundance file does NOT already have `amundsen_*` / `ogsl_*` / `bio_oracle_*` columns, you MUST enrich first:
+**Trigger** : the user request mentions a CTD quantity (température, salinité, oxygène, pH, nitrate, chlorophylle, density, environmental, CTD) **AND** the loaded files do NOT already contain `amundsen_*` / `ogsl_*` / `bio_oracle_*` columns.
 
-1. Load `neolabs_sample.csv` (it carries `latitude`, `longitude`, `deployment_datetime_start`, `deployment_datetime_end`, `max_sample_depth` — abundance.csv does not).
-2. Apply zone/time scoping via `filter_dataframe_by_zone(zone_name="…")` and/or `run_pandas` date filter.
-3. Call `enrich_with_amundsen_ctd(source_variable="df_in_<zone>_<source>")` (and/or `enrich_with_bio_oracle`, `enrich_with_ogsl`) on the filtered subset.
-4. Load `neolabs_abundance.csv` and join via `run_pandas`: `merged = abundance.merge(enriched_sample, left_on="SAMPLE_ID", right_on="sample_id")`. Each taxon row now has its env columns.
-5. Then continue with the standard workflow below.
+When this trigger fires, you MUST run the following tool calls in this exact order BEFORE any taxon-level analysis. Skipping ANY of these steps is a bug — the analysis will end with NaN / NA / no_match on every row.
 
-Skip this pre-step only when the loaded file already has `amundsen_*` (or equivalent) columns — typical of pre-enriched deliverables like `neolabs_taxonomy_abundance_amundsen_ctd.tsv`.
+### Sub-step 1a — filter_dataframe_by_zone (MANDATORY when the request names a zone)
+
+If the user names ANY geographic zone (e.g. "baie de Baffin", "Hudson", "Beaufort", "détroit de Davis", "MEOW Arctic", "golfe du Saint-Laurent") :
+
+```
+filter_dataframe_by_zone(zone_name="<canonical zone>")
+```
+
+This persists `df_in_<zone>_<source>` in session. The subsequent enrich MUST receive `source_variable="df_in_<zone>_<source>"` — otherwise the enrich runs on the full 6105-row file, returns no_match everywhere, and your final analysis collapses. **Do not skip this even when the request also asks for date filtering, abundance join, top N, or any other downstream step — those come AFTER.**
+
+### Sub-step 1b — date filter via run_pandas (when the request names a date range)
+
+If the user names a date range (e.g. "entre 2018 et 2020", "été 2019") :
+
+```
+run_pandas("df_dated = df_in_<zone>_<source>[df_in_<zone>_<source>['deployment_datetime_start'].between('2018-01-01', '2020-12-31')]")
+```
+
+Persist the filtered frame under an explicit name and use that name as `source_variable` for the enrich.
+
+### Sub-step 1c — enrich on the FILTERED subset (never on the raw sample file)
+
+```
+enrich_with_amundsen_ctd(source_variable="df_dated")   # or the zone subset
+# and / or
+enrich_with_bio_oracle(source_variable="df_dated", ...)
+enrich_with_ogsl(source_variable="df_dated", ...)
+```
+
+### Sub-step 1d — join abundance via run_pandas
+
+```
+merged = abundance.merge(enriched_sample, left_on="SAMPLE_ID", right_on="sample_id")
+```
+
+Each taxon row now has env columns; THEN continue with the standard workflow below.
+
+### When to skip this whole pre-step
+
+Skip only when:
+- The user's request has NO env/CTD vocabulary (pure biology: top taxa, diversity, abundance only), OR
+- The loaded file already contains the env columns (e.g. `neolabs_taxonomy_abundance_amundsen_ctd.tsv` deliverable).
 
 ## Core rule
 
