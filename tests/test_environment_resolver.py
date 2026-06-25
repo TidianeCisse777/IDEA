@@ -317,7 +317,9 @@ def test_match_ctd_rows_uses_exact_deployment_window_when_time_end_provided():
 
 
 def test_match_ctd_rows_rejects_ctd_outside_deployment_window():
-    """CTD profile clearly outside [time, time_end] window should not match."""
+    """CTD outside the deployment window widened by time_tolerance/2 should
+    not match. With time_tolerance=2h → slack=1h each side → effective
+    window [start-1h, end+1h]. A CTD 5h after end falls outside."""
     src_lat = pd.Series([48.0])
     src_lon = pd.Series([-68.0])
     src_time = pd.to_datetime(pd.Series(["2020-01-01T00:00:00Z"]), utc=True)
@@ -327,7 +329,7 @@ def test_match_ctd_rows_rejects_ctd_outside_deployment_window():
             {
                 "latitude": 48.0,
                 "longitude": -68.0,
-                # CTD time 5h after end of deployment, far past slack
+                # CTD 5h after end of deployment, far past 1h slack
                 "time": "2020-01-01T07:00:00Z",
                 "PRES": 5.0,
                 "TE90": 1.0,
@@ -343,7 +345,7 @@ def test_match_ctd_rows_rejects_ctd_outside_deployment_window():
         ctd=ctd,
         variables_for_value_check=["TE90"],
         spatial_tolerance_km=25.0,
-        time_tolerance_hours=24.0,
+        time_tolerance_hours=2.0,
     )
     assert matches[0].status == "no_match"
 

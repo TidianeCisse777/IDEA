@@ -40,8 +40,9 @@ def match_ctd_rows(
 
     The match strategy mirrors the original Amundsen/OGSL behaviour:
     1. Drop CTD rows outside the time window. When `src_time_end` is provided
-       AND its value is not NaT for the row, the window is the exact deployment
-       interval `[src_time, src_time_end]` widened by ±15 min for clock skew.
+       AND its value is not NaT for the row, the window is the deployment
+       interval widened by `time_tolerance_hours / 2` on each side — the CTD
+       cast is rarely simultaneous with the net deployment on the same cruise.
        Otherwise the window is `src_time ± time_tolerance_hours`.
     2. Compute Haversine distance to each remaining CTD row.
     3. If the nearest distance exceeds `spatial_tolerance_km`, mark "no_match".
@@ -67,7 +68,7 @@ def match_ctd_rows(
         else pd.Series([float("nan")] * len(ctd))
     )
     time_tolerance = pd.Timedelta(hours=float(time_tolerance_hours))
-    window_slack = pd.Timedelta(minutes=15)
+    window_slack = time_tolerance / 2
 
     n_rows = len(src_lat)
     for position in range(n_rows):
