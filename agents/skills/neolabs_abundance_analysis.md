@@ -7,6 +7,18 @@ description: Standard ecological analysis workflow for NeoLabs taxonomy abundanc
 
 Use this skill for NeoLabs taxonomy abundance files, especially tables like `neolabs_taxonomy_abundance_amundsen_ctd.tsv`.
 
+## Pre-step — make sure CTD columns exist BEFORE analysing
+
+If the user asks for CTD-related quantities (température, salinité, oxygène, etc. on the taxon table) AND the abundance file does NOT already have `amundsen_*` / `ogsl_*` / `bio_oracle_*` columns, you MUST enrich first:
+
+1. Load `neolabs_sample.csv` (it carries `latitude`, `longitude`, `deployment_datetime_start`, `deployment_datetime_end`, `max_sample_depth` — abundance.csv does not).
+2. Apply zone/time scoping via `filter_dataframe_by_zone(zone_name="…")` and/or `run_pandas` date filter.
+3. Call `enrich_with_amundsen_ctd(source_variable="df_in_<zone>_<source>")` (and/or `enrich_with_bio_oracle`, `enrich_with_ogsl`) on the filtered subset.
+4. Load `neolabs_abundance.csv` and join via `run_pandas`: `merged = abundance.merge(enriched_sample, left_on="SAMPLE_ID", right_on="sample_id")`. Each taxon row now has its env columns.
+5. Then continue with the standard workflow below.
+
+Skip this pre-step only when the loaded file already has `amundsen_*` (or equivalent) columns — typical of pre-enriched deliverables like `neolabs_taxonomy_abundance_amundsen_ctd.tsv`.
+
 ## Core rule
 
 NeoLabs abundance rows are taxon-level rows. Do not analyse temporal, spatial, environmental, or station-level patterns directly from raw rows without first rebuilding the correct working table.
