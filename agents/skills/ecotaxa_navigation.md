@@ -522,6 +522,7 @@ tools so you can branch without thinking.
 | `query_ecotaxa(project_id=..., sample_ids=..., taxon=..., status=...)` | "charge / exporte le projet X" — full single-project export, optionally narrowed by `sample_ids` and `taxon`. |
 | `query_ecotaxa_sample(sample_id=..., taxon=..., status=...)` | "exporte ce sample" — single sample, project resolved automatically. |
 | `export_ecotaxa_samples(sample_ids=[...], confirmed=...)` | **Step 3 of the pipeline.** Multi-project sample selection in one call, with dry-run + per-project success/failure. Use when the selection spans 2+ projects OR when the user gave a flat list of sample_ids from an earlier table. |
+| `summarize_ecotaxa_samples(selection_name="latest")` / `export_ecotaxa_samples(selection_name="latest", confirmed=...)` | Reuse the current named selection created by `find_ecotaxa_samples_in_region`. Use this when the user says "cette sélection", "ces samples", "le tableau précédent", or names the selection shown in the previous tool output. |
 
 ### Decision tree (which export tool?)
 
@@ -546,6 +547,8 @@ User wants to export…
 | "samples du projet LOKI dans Baie de Baffin" | `find_ecotaxa_projects(title="LOKI")` → `find_ecotaxa_samples_in_region(zone_name=..., project_ids=[<id>])` |
 | "groupe les samples du projet 14853 par mer" | `group_ecotaxa_project_samples_by_region(project_id=14853)` |
 | "scan ces 20 samples avant export" | `summarize_ecotaxa_samples(sample_ids=[...])` then user decides |
+| "résume cette sélection" | `summarize_ecotaxa_samples(selection_name="latest")` |
+| "exporte cette sélection" | `export_ecotaxa_samples(selection_name="latest", confirmed=False)` unless the user explicitly confirms the export |
 | "parmi ceux-là, lesquels contiennent le plus de copepods ?" | Reuse the visible `sample_id` values → `summarize_ecotaxa_samples(sample_ids=[...])`; if exact per-sample Copepoda counts are required, state the read-only limitation instead of listing metadata again. |
 | "parmi les samples présents, lesquels contiennent le plus de copepods ?" | Ambiguous unless a scope was just established. Ask whether "présents" means current table, EcoTaxa cache, or a specific project/zone. |
 | "combien de Calanus validés dans ces 3 projets" | `count_ecotaxa_taxa(project_ids=[...], taxa=["Calanus"])` (skip the pipeline — count, not export) |

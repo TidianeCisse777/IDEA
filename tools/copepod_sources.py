@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import re
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -99,6 +101,87 @@ def make_source_tools(thread_id: str) -> list:
             if text:
                 normalized.append(int(text))
         return normalized
+
+    def _slug_part(value: object) -> str:
+        text = unicodedata.normalize("NFKD", str(value).strip().lower())
+        text = text.encode("ascii", "ignore").decode("ascii")
+        text = re.sub(r"[^a-z0-9]+", "_", text)
+        return text.strip("_")
+
+    def _selection_name(
+        *,
+        zone_name: str | None = None,
+        instrument: str | None = None,
+        date_range: dict | None = None,
+        month: int | None = None,
+        project_ids: list[int] | None = None,
+    ) -> str:
+        parts = ["selection"]
+        if zone_name:
+            parts.append(_slug_part(zone_name))
+        else:
+            parts.extend(["ecotaxa", "samples"])
+        if instrument:
+            parts.append(_slug_part(instrument))
+        if date_range:
+            start = date_range.get("from")
+            end = date_range.get("to")
+            if start and end:
+                parts.append(_slug_part(f"{start}_{end}"))
+            elif start:
+                parts.append(_slug_part(f"from_{start}"))
+            elif end:
+                parts.append(_slug_part(f"to_{end}"))
+        if month is not None:
+            parts.append(f"m{int(month):02d}")
+        if project_ids:
+            parts.append("projects_" + "_".join(str(int(pid)) for pid in project_ids[:4]))
+        return "_".join(part for part in parts if part)
+
+    def _store_sample_selection(
+        *,
+        name: str,
+        samples: list[dict],
+        filters: dict,
+    ) -> None:
+        sample_ids = [int(sample["sample_id"]) for sample in samples]
+        project_ids = sorted({int(sample["project_id"]) for sample in samples})
+        meta = {
+            "selection_name": name,
+            "sample_ids": sample_ids,
+            "project_ids": project_ids,
+            "n_samples": len(sample_ids),
+            "filters": filters,
+            "source": "ecotaxa_selection",
+        }
+        _store.set(f"{thread_id}:selection:{name}", None, meta)
+        _store.set(f"{thread_id}:ecotaxa_selection_latest", None, meta)
+
+    def _load_sample_selection(selection_name: str | None) -> tuple[str | None, list[int]]:
+        if not selection_name:
+            return None, []
+        key = str(selection_name).strip()
+        if key.lower() in {
+            "latest", "last", "current", "cette sélection", "cette selection",
+            "dernière sélection", "derniere selection",
+        }:
+            session = _store.get(f"{thread_id}:ecotaxa_selection_latest")
+        else:
+            session = _store.get(f"{thread_id}:selection:{key}")
+        if not session:
+            return key, []
+        meta = session.get("meta") or {}
+        resolved_name = str(meta.get("selection_name") or key)
+        return resolved_name, _normalize_sample_ids(meta.get("sample_ids"))
+
+    def _selection_actions(name: str, sample_count: int, project_count: int) -> list[str]:
+        return [
+            f"résume cette sélection : `summarize_ecotaxa_samples(selection_name=\"{name}\")`",
+            f"exporte cette sélection : d'abord `export_ecotaxa_samples(selection_name=\"{name}\", confirmed=false)`",
+            "export représentatif : demander `exporte 1 sample par projet`",
+            "filtrer davantage : ajouter une profondeur, une période, un instrument ou des projets",
+            f"contexte : {sample_count} samples sur {project_count} projets",
+        ]
 
     def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
         try:
@@ -774,10 +857,34 @@ def make_source_tools(thread_id: str) -> list:
         max_ids = _env_int("ECOTAXA_SAMPLE_ID_LIST_LIMIT", 120)
         shown_samples = result["samples"][:max_rows]
         shown_ids = [str(sample["sample_id"]) for sample in result["samples"][:max_ids]]
+        selection_name = _selection_name(
+            zone_name=zone_name,
+            instrument=instrument,
+            date_range=date_range,
+            month=month,
+            project_ids=project_ids,
+        )
+        _store_sample_selection(
+            name=selection_name,
+            samples=result["samples"],
+            filters={
+                "bbox": bbox,
+                "date_range": date_range,
+                "instrument": instrument,
+                "polygon_wkt": bool(polygon_wkt),
+                "zone_name": zone_name,
+                "project_ids": project_ids,
+                "depth_max_lt": depth_max_lt,
+                "depth_max_gte": depth_max_gte,
+                "month": month,
+            },
+        )
+        project_count = len({int(sample["project_id"]) for sample in result["samples"]})
         lines = [
             f"# {result['total_matching']} samples (cap {len(result['samples'])})"
             + (" — tronqué" if result["truncated"] else "")
             + (" — résultat partiel" if result.get("partial") else ""),
+            f"Sélection mémorisée : `{selection_name}`",
             f"Projets principaux : {_sample_project_counts(result['samples'])}",
             f"Instruments : {_compact_instruments(result['samples'])}",
             "sample_ids visibles : "
@@ -805,6 +912,13 @@ def make_source_tools(thread_id: str) -> list:
                 f"({max_rows} premiers / {len(result['samples'])} affichés ; "
                 "définir ECOTAXA_SAMPLE_RESULT_ROWS pour élargir l'aperçu)"
             )
+        lines.extend([
+            "",
+            "## Actions possibles",
+        ])
+        lines.extend(f"- {action}" for action in _selection_actions(
+            selection_name, len(result["samples"]), project_count,
+        ))
         if result.get("partial"):
             lines.append(_ecotaxa_partial_notice(result).strip())
         return "\n".join(lines)
@@ -1126,12 +1240,20 @@ def make_source_tools(thread_id: str) -> list:
         return "\n".join(lines)
 
     @tool
-    def summarize_ecotaxa_samples(sample_ids: list[int]) -> str:
+    def summarize_ecotaxa_samples(
+        sample_ids: list[int] | None = None,
+        selection_name: str | None = None,
+    ) -> str:
         """Résume un batch de samples EcoTaxa sans télécharger les objets.
 
         Routing requirement: before calling this tool in an agent turn, call
         `load_skill("ecotaxa_navigation")` first unless it has already been
         called in the same turn.
+
+        Args:
+            sample_ids: Liste explicite de sample_ids EcoTaxa.
+            selection_name: Nom d'une sélection mémorisée par
+                `find_ecotaxa_samples_in_region`, ou `"latest"` / `"cette sélection"`.
 
         Renvoie pour chaque `sample_id` un tableau markdown avec :
         - V (validés), P (prédits), D (douteux), U (non classés) — counts
@@ -1147,8 +1269,16 @@ def make_source_tools(thread_id: str) -> list:
 
         Pour un seul sample, utilise plutôt `summarize_ecotaxa_sample`.
         """
+        resolved_selection_name = None
         normalized = _normalize_sample_ids(sample_ids)
+        if not normalized and selection_name:
+            resolved_selection_name, normalized = _load_sample_selection(selection_name)
         if not normalized:
+            if selection_name:
+                return (
+                    f"Erreur : sélection `{selection_name}` introuvable ou vide. "
+                    "Relance une recherche EcoTaxa ou passe des sample_ids explicites."
+                )
             return "Erreur : sample_ids vide."
         try:
             stats = summarize_samples(normalized)
@@ -1157,10 +1287,16 @@ def make_source_tools(thread_id: str) -> list:
         if not stats:
             return "Aucune statistique retournée par EcoTaxa pour ces samples."
 
-        lines = [
+        lines = []
+        if resolved_selection_name:
+            lines.extend([
+                f"Sélection : {resolved_selection_name}",
+                "",
+            ])
+        lines.extend([
             "| sample_id | projet | V | P | D | U | total | top taxa |",
             "|---:|---:|---:|---:|---:|---:|---:|---|",
-        ]
+        ])
         for entry in stats:
             v = entry["nb_validated"]
             p = entry["nb_predicted"]
@@ -1278,7 +1414,8 @@ def make_source_tools(thread_id: str) -> list:
 
     @tool
     def export_ecotaxa_samples(
-        sample_ids: list[int],
+        sample_ids: list[int] | None = None,
+        selection_name: str | None = None,
         confirmed: bool = False,
         status: str = "V",
         taxon: str | None = None,
@@ -1296,6 +1433,10 @@ def make_source_tools(thread_id: str) -> list:
         sont systématiquement listés dans la réponse (plan dry-run et
         résumé d'exécution) pour traçabilité.
 
+        `selection_name` peut référencer une sélection mémorisée par
+        `find_ecotaxa_samples_in_region` ; `"latest"` / `"cette sélection"`
+        reprend la dernière sélection EcoTaxa du fil.
+
         **Confirmation obligatoire (CT-AG-06)** : `confirmed=False` par
         défaut → renvoie un dry-run montrant le grouping projet → samples
         et demande confirmation. Pour exécuter réellement les exports,
@@ -1311,8 +1452,16 @@ def make_source_tools(thread_id: str) -> list:
           single-project, avec code HTTP + message serveur)
         - samples non résolus (absents du cache) listés à part
         """
+        resolved_selection_name = None
         normalized = _normalize_sample_ids(sample_ids)
+        if not normalized and selection_name:
+            resolved_selection_name, normalized = _load_sample_selection(selection_name)
         if not normalized:
+            if selection_name:
+                return (
+                    f"Erreur : sélection `{selection_name}` introuvable ou vide. "
+                    "Relance une recherche EcoTaxa ou passe des sample_ids explicites."
+                )
             return "Erreur : sample_ids vide."
 
         try:
@@ -1336,10 +1485,14 @@ def make_source_tools(thread_id: str) -> list:
         if not confirmed:
             lines = [
                 f"# Plan d'export — {len(normalized)} samples sur {len(groups)} projets",
+            ]
+            if resolved_selection_name:
+                lines.extend(["", f"Sélection : `{resolved_selection_name}`"])
+            lines.extend([
                 "",
                 "| project_id | nb_samples | sample_ids |",
                 "|---:|---:|---|",
-            ]
+            ])
             for pid in sorted(groups):
                 sids = groups[pid]
                 preview = ", ".join(str(s) for s in sids[:5])

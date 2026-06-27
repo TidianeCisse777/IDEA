@@ -854,6 +854,113 @@ def test_slice1_find_ecotaxa_samples_in_region_filters_by_project_ids(seeded_cac
     assert "14853000002" not in result_loki
 
 
+def test_find_ecotaxa_samples_in_region_stores_named_selection(seeded_cache):
+    from tools.copepod_sources import make_source_tools
+    from tools.session_store import default_store
+
+    thread_id = "thread-selection-memory"
+    tools = make_source_tools(thread_id)
+    fn = next(t for t in tools if t.name == "find_ecotaxa_samples_in_region")
+
+    result = fn.invoke({
+        "zone_name": "Baie de Baffin",
+        "instrument": "UVP6",
+    })
+
+    assert "Sélection mémorisée" in result
+    assert "selection_baie_de_baffin_uvp6" in result
+    assert "Actions possibles" in result
+    assert "résume cette sélection" in result
+    assert "exporte cette sélection" in result
+
+    latest = default_store.get(f"{thread_id}:ecotaxa_selection_latest")
+    assert latest is not None
+    assert latest["meta"]["selection_name"] == "selection_baie_de_baffin_uvp6"
+    assert latest["meta"]["sample_ids"] == [14853000001, 14853000002]
+
+    named = default_store.get(
+        f"{thread_id}:selection:selection_baie_de_baffin_uvp6"
+    )
+    assert named is not None
+    assert named["meta"]["sample_ids"] == [14853000001, 14853000002]
+
+
+def test_export_ecotaxa_samples_uses_named_selection_for_dry_run(seeded_cache):
+    from tools.copepod_sources import make_source_tools
+    from tools.session_store import default_store
+
+    thread_id = "thread-export-selection"
+    default_store.set(
+        f"{thread_id}:selection:selection_baie_de_baffin_uvp6",
+        None,
+        {
+            "selection_name": "selection_baie_de_baffin_uvp6",
+            "sample_ids": [14853000001, 2331000001],
+        },
+    )
+
+    tools = make_source_tools(thread_id)
+    fn = next(t for t in tools if t.name == "export_ecotaxa_samples")
+    result = fn.invoke({
+        "selection_name": "selection_baie_de_baffin_uvp6",
+    })
+
+    assert "selection_baie_de_baffin_uvp6" in result
+    assert "14853" in result
+    assert "2331" in result
+    assert "14853000001" in result
+    assert "2331000001" in result
+
+
+def test_summarize_ecotaxa_samples_uses_latest_selection(monkeypatch):
+    from tools.copepod_sources import make_source_tools
+    from tools.session_store import default_store
+
+    thread_id = "thread-summarize-selection"
+    default_store.set(
+        f"{thread_id}:ecotaxa_selection_latest",
+        None,
+        {
+            "selection_name": "selection_baie_de_baffin_uvp6",
+            "sample_ids": [14853000001, 14853000002],
+        },
+    )
+
+    monkeypatch.setattr(
+        "tools.copepod_sources.summarize_samples",
+        lambda sample_ids: [
+            {
+                "sample_id": sample_ids[0],
+                "projid": 14853,
+                "nb_validated": 10,
+                "nb_predicted": 20,
+                "nb_dubious": 0,
+                "nb_unclassified": 1,
+                "per_taxon": [{"name": "Calanus"}],
+            },
+            {
+                "sample_id": sample_ids[1],
+                "projid": 14853,
+                "nb_validated": 11,
+                "nb_predicted": 21,
+                "nb_dubious": 0,
+                "nb_unclassified": 2,
+                "per_taxon": [{"name": "Copepoda"}],
+            },
+        ],
+    )
+
+    tools = make_source_tools(thread_id)
+    fn = next(t for t in tools if t.name == "summarize_ecotaxa_samples")
+    result = fn.invoke({"selection_name": "latest"})
+
+    assert "Sélection : selection_baie_de_baffin_uvp6" in result
+    assert "14853000001" in result
+    assert "14853000002" in result
+    assert "Calanus" in result
+    assert "Copepoda" in result
+
+
 # ── SLICE 2 GATE ──────────────────────────────────────────────────────────────
 
 def test_slice2_summarize_ecotaxa_samples_returns_vpd_breakdown_and_top_taxa():
