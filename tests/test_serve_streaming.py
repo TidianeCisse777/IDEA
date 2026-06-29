@@ -6,6 +6,7 @@ On vérifie :
 3. _stream_agent_sse → émet tool_call puis réponse finale, termine par [DONE]
 4. _stream_agent_sse → image base64 remplacée par URL hébergée
 """
+import asyncio
 import json
 import pytest
 from unittest.mock import MagicMock
@@ -400,6 +401,15 @@ def test_format_tool_line_enrich_with_bio_oracle_shows_progress_panel():
     assert "%" not in line
 
 
+def test_render_progress_bar_is_visual():
+    from serve import _render_progress_bar
+
+    bar = _render_progress_bar(50)
+    assert "█" in bar
+    assert "░" in bar
+    assert bar.endswith("50%")
+
+
 def test_sql_workspace_config_message_matches_raw_url_and_key_value_forms():
     from serve import _is_sql_workspace_config_message
 
@@ -562,6 +572,46 @@ async def test_stream_image_in_tool_result_replaced():
 
     assert "data:image/png;base64," not in full
     assert "/graphs/" in full
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_visual_progress_bar_for_slow_tool(monkeypatch):
+    """Un tool lent déclenche une barre visuelle avant son résultat final."""
+    from serve import _stream_agent_sse
+
+    monkeypatch.setattr("serve._HEARTBEAT_INTERVAL", 0.01)
+
+    async def _astream(*args, **kwargs):
+        yield {
+            "agent": {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "enrich_with_bio_oracle",
+                                "args": {"scenario": "SSP245", "depth_layer": "surface"},
+                                "id": "tc1",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ]
+            }
+        }
+        await asyncio.sleep(0.03)
+        yield {"tools": {"messages": [ToolMessage(content="Résultat enrichi", tool_call_id="tc1")]}}
+        yield {"agent": {"messages": [AIMessage(content="Terminé.", tool_calls=[])]}}
+
+    agent = MagicMock()
+    agent.astream = _astream
+
+    chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
+    full = "".join(chunks)
+
+    assert "enrich_with_bio_oracle" in full
+    assert "████" in full or "░" in full
+    assert "100%" in full
 
 
 @pytest.mark.asyncio
