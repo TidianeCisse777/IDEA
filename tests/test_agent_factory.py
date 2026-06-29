@@ -369,6 +369,25 @@ def test_system_prompt_routes_ecotaxa_enrichment_with_ecopart_to_remote_when_mis
     assert "heavy operation" in prompt
 
 
+def test_system_prompt_requires_reporting_ecopart_join_match_coverage():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    # The agent must report match coverage and warn on weak/empty joins.
+    assert "report join coverage" in prompt
+    assert "matchées sur un bin ecopart" in prompt
+    assert "same campaign" in prompt or "different campaign" in prompt
+    assert "depth range actually covered" in prompt
+    assert "not scientific interpretation" in prompt
+
+
+def test_enrichment_skills_require_reporting_match_coverage():
+    for path in ("agents/skills/ecopart_query.md", "agents/skills/ecotaxa_query.md"):
+        skill = Path(path).read_text(encoding="utf-8").lower()
+        assert "always report match coverage" in skill, path
+        assert "did not really take" in skill, path
+
+
 def test_ecopart_query_skill_prefers_remote_enrichment_when_ecotaxa_is_already_loaded():
     skill = Path("agents/skills/ecopart_query.md").read_text(encoding="utf-8").lower()
 

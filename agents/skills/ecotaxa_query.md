@@ -101,6 +101,12 @@ the `_NNN` object suffix, e.g. `ips_007_899` → `ips_007`, or the profile/stati
 columns of its own bin (`Depth [m]`, `Sampled volume [L]`, LPM, CTD), preserved not averaged.
 See skill `uvp_ecopart` for m1-m3 metrics computable from EcoPart.
 
+**Always report match coverage.** The join/enrich result states how many objects matched an
+EcoPart bin. Relay that count, and if it is 0 or low, warn the user that the enrichment
+did not really take — usually different campaigns (no shared profiles) or objects outside the
+depth range the EcoPart cast actually covered (`NaN` columns). Never present a `NaN`-filled
+enrichment, or metrics derived from it, as a success.
+
 ---
 
 ## Edge cases

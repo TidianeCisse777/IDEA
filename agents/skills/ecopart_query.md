@@ -82,6 +82,8 @@ derails the join.
 
 If the loaded EcoTaxa export already exposes `sample_id`, `object_depth_min`, `object_lat`, or `object_lon`, the remote enrichment tool can use those columns directly; do not force a fresh EcoTaxa download.
 
+**Always report match coverage.** The join/enrich result states how many objects matched an EcoPart bin. Relay that count, and if it is 0 or low, warn the user that the enrichment did not really take — usually because the two datasets are different campaigns (no shared profiles) or the objects sit outside the depth range the EcoPart cast actually covered (shallower than its first bin → `NaN`). Never present a `NaN`-filled enrichment, or metrics derived from it, as a success.
+
 ---
 
 ## Edge cases
