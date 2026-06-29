@@ -2,6 +2,17 @@
 
 import pytest
 
+from tools.session_store import SessionStore
+
+
+@pytest.fixture(autouse=True)
+def _isolated_store(monkeypatch):
+    """Fresh in-memory store so tests run under SESSION_STORE_DATABASE_URL/SessionStorePG."""
+    store = SessionStore()
+    monkeypatch.setattr("tools.session_store.default_store", store)
+    monkeypatch.setattr("tools.amundsen_sources._store", store)
+    return store
+
 
 @pytest.fixture(autouse=True)
 def _clear_amundsen_dataset_cache():

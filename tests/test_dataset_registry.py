@@ -40,3 +40,38 @@ def test_store_dataset_preserves_stable_entry_and_updates_alias(tmp_path):
     assert stable["df"].equals(df)
     assert stable["meta"]["variable_name"] == "df_ecotaxa_1165"
 
+
+def test_enrichment_source_note_uses_explicit_variable_and_lists_prior_enrichments(tmp_path):
+    from tools.dataset_registry import enrichment_source_note
+    from tools.session_store import SessionStore
+
+    store = SessionStore(storage_dir=tmp_path / "sessions")
+    # A table already enriched with EcoPart, about to be enriched again.
+    df = pd.DataFrame({
+        "obj_orig_id": ["ips_007_1"],
+        "ecopart_Sampled volume [L]": [29.7],
+        "ecopart_temperature [degc]": [-1.1],
+    })
+
+    note = enrichment_source_note(store, "t", df, "df_ecotaxa_ecopart_105")
+
+    assert "df_ecotaxa_ecopart_105" in note
+    assert "2 ecopart_*" in note
+
+
+def test_enrichment_source_note_falls_back_to_active_df_variable(tmp_path):
+    from tools.dataset_registry import enrichment_source_note, store_dataset
+    from tools.session_store import SessionStore
+
+    store = SessionStore(storage_dir=tmp_path / "sessions")
+    df = pd.DataFrame({"latitude": [48.5], "longitude": [-68.1]})
+    store_dataset(store, "t", df, variable_name="df_file_filet_2018",
+                  meta={"source": "file:filet"}, latest_alias=None)
+
+    # source_variable=None → name read back from the active session metadata.
+    note = enrichment_source_note(store, "t", df, None)
+
+    assert "df_file_filet_2018" in note
+    # No enrichment columns yet → no "déjà présent" clause.
+    assert "déjà présent" not in note
+

@@ -73,7 +73,7 @@ from core.amundsen_ctd_client import (
     preview_amundsen_profile as _preview_amundsen_profile,
     query_amundsen_ctd as _query_amundsen_ctd,
 )
-from tools.dataset_registry import dataset_variable_name, store_dataset
+from tools.dataset_registry import dataset_variable_name, enrichment_source_note, store_dataset
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 
@@ -519,6 +519,7 @@ def make_amundsen_tools(thread_id: str) -> list:
                     "Vérifie les datasets actifs."
                 )
             return "Aucune table chargée à enrichir."
+        source_note = enrichment_source_note(_store, thread_id, source, source_variable)
 
         lat_col = latitude_column or detect_column(source.columns, DEFAULT_LAT_CANDIDATES)
         lon_col = longitude_column or detect_column(source.columns, DEFAULT_LON_CANDIDATES)
@@ -937,6 +938,7 @@ def make_amundsen_tools(thread_id: str) -> list:
 
         return (
             f"Enrichissement Amundsen — {n} ligne(s), {n_matched} {plural}.\n"
+            f"{source_note}\n"
             f"Données disponibles dans `{variable_name}`.\n"
             f"Télécharger : {download_url(output_path.name)}\n\n"
             + "\n".join(method_lines)

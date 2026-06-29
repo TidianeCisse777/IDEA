@@ -34,7 +34,7 @@ from core.environment_resolver import (
     parse_source_coords,
     resolve_source_dataframe,
 )
-from tools.dataset_registry import dataset_variable_name, store_dataset
+from tools.dataset_registry import dataset_variable_name, enrichment_source_note, store_dataset
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 
@@ -811,6 +811,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     f"Variable source introuvable en session : `{source_variable}`."
                 )
             return "Aucune table chargée à enrichir."
+        source_note = enrichment_source_note(_store, thread_id, source, source_variable)
 
         lat_col = latitude_column or detect_column(source.columns, DEFAULT_LAT_CANDIDATES)
         lon_col = longitude_column or detect_column(source.columns, DEFAULT_LON_CANDIDATES)
@@ -1029,6 +1030,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         return (
             f"Enrichissement Bio-ORACLE — {len(enriched)} ligne(s), "
             f"{n_matched} matchée(s).\n"
+            f"{source_note}\n"
             f"Données disponibles dans `{variable_name}`.\n\n"
             + "\n".join(method_lines)
         )

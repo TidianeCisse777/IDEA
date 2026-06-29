@@ -43,3 +43,38 @@ def store_dataset(
     if latest_alias:
         store.set(f"{thread_id}:{latest_alias}", dataframe, dataset_meta)
     store.set(f"{thread_id}:dataset:{variable_name}", dataframe, dataset_meta)
+
+
+# Column prefixes added by each enrichment tool. Used to surface, in an enrich
+# tool's reply, which enrichments the source table already carries — so chaining
+# enrichments on the wrong (stale active) table becomes visible instead of silent.
+_ENRICHMENT_PREFIXES = ("ecopart_", "amundsen_", "bio_oracle_", "ogsl_")
+
+
+def enrichment_source_note(
+    store: SessionStore,
+    thread_id: str,
+    source_df: pd.DataFrame,
+    source_variable: str | None,
+) -> str:
+    """One-line provenance note naming the table being enriched and its prior enrichments.
+
+    Call it right after resolving the source dataframe (before the new result is
+    stored, which would overwrite the active-df metadata). When ``source_variable``
+    is ``None`` the active session df is used and its variable name is read back from
+    the session metadata.
+    """
+    name = source_variable
+    if not name:
+        session = store.get(thread_id)
+        name = (session.get("meta") or {}).get("variable_name") if session else None
+    name = name or "df actif"
+
+    already = [
+        f"{count} {prefix}*"
+        for prefix in _ENRICHMENT_PREFIXES
+        if (count := sum(1 for column in source_df.columns if str(column).startswith(prefix)))
+    ]
+    if already:
+        return f"Table enrichie : `{name}` (déjà présent : {', '.join(already)})."
+    return f"Table enrichie : `{name}`."
