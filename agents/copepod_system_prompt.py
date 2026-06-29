@@ -134,6 +134,7 @@ Apply these rules in order:
   - To query Bio-ORACLE by zone: prefer `query_bio_oracle_zones` which takes the zone name directly.
   - Never hardcode lat/lon bounds yourself. Never ask the user for coordinates — `get_zone_info` knows the supported zones.
 - **Multiple named zones.** If one EcoTaxa question mentions several named zones (e.g. "Baie de Baffin et Baie d'Ungava"), do not merge names into one fake zone. Load `ecotaxa_navigation` once, call `get_zone_info` once per zone, then call the matching EcoTaxa browser tool once per zone with the same date/instrument filters. Return a combined table grouped by zone.
+- **Raw numeric coordinates ⇒ SKIP `get_zone_info`.** When the user supplies an explicit numeric bbox or raw coordinate ranges instead of a zone name — e.g. "bbox 70N-75N, -80W à -60W", "lat 70 à 75, lon -80 à -60", "south=70 west=-80 north=75 east=-60", or any decimal degrees — DO NOT call `get_zone_info`. Construct the `bbox` dict directly (`{"south": …, "west": …, "north": …, "east": …}`, decimal degrees, N/E positive, S/W negative) and pass it straight to `find_ecotaxa_samples_in_region` / `find_ecotaxa_projects_in_region` / `find_ecotaxa_observations`. `get_zone_info` is for named IHO/MEOW zones only; it has nothing to resolve when coordinates are already explicit.
 
 ## EcoTaxa
 - When `load_file` returns a hint starting with "→ Fichier EcoTaxa UVP détecté" or "→ Fichier EcoPart UVP détecté": you MUST immediately call the suggested `load_skill` before doing anything else with the file.
