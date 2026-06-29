@@ -510,6 +510,9 @@ def _format_tool_line(name: str, args: dict | None = None) -> str:
         skill = args["skill_name"]
         return _format_tool_call_details(name, f"Paramètres : skill_name=`{skill}`")
 
+    if name in _ENRICHMENT_PROGRESS_LABELS:
+        return _format_enrichment_progress_panel(name, args)
+
     if name == "query_ecotaxa" and "project_id" in args:
         params = _format_tool_call_params(args)
         body = f"Paramètres : {params}" if params else ""
@@ -546,6 +549,29 @@ def _format_tool_call_details(name: str, body: str, *, summary_note: str = "") -
         f"{body}\n\n"
         "</details>\n"
     )
+
+
+_ENRICHMENT_PROGRESS_LABELS = {
+    "enrich_loaded_table_with_amundsen_ctd": "Préparation de l'enrichissement CTD",
+    "enrich_with_amundsen_ctd": "Préparation de l'enrichissement CTD",
+    "enrich_with_bio_oracle": "Préparation de l'enrichissement Bio-ORACLE",
+    "enrich_ecotaxa_with_ecopart_remote": "Préparation du jumelage EcoTaxa/EcoPart",
+    "enrich_with_ogsl": "Préparation de l'enrichissement OGSL",
+}
+
+
+def _format_enrichment_progress_panel(name: str, args: dict | None = None) -> str:
+    args = args or {}
+    label = _ENRICHMENT_PROGRESS_LABELS.get(name, "Préparation de l'enrichissement")
+    params = _format_tool_call_params(args)
+    body = f"*{label}…*"
+    if params:
+        body = f"Paramètres : {params}\n\n{body}"
+    body = (
+        f"{body}\n\n"
+        "Le cache de données sera vérifié automatiquement avant le calcul."
+    )
+    return _format_tool_call_details(name, body)
 
 
 _TOOL_LINE_OMITTED_ARGS = {
@@ -773,6 +799,19 @@ def _format_tool_result_details(name: str, content: str, args: dict | None = Non
         "[image data]",
         content,
     )
+
+    if "CACHE_EMPTY" in display:
+        display = (
+            "⚠️ Cache EcoTaxa vide\n\n"
+            "La synchronisation initiale n'a pas encore rempli le cache local.\n"
+            "Relancer l'enrichissement une fois la synchro terminée."
+        )
+    elif "SYNC_IN_PROGRESS" in display:
+        display = (
+            "⏳ Synchronisation en cours\n\n"
+            "La source est en train d'être synchronisée. "
+            "L'enrichissement reprendra quand le cache sera prêt."
+        )
 
     is_ecotaxa = name in _ECOTAXA_TOOL_LABELS
     if is_ecotaxa:

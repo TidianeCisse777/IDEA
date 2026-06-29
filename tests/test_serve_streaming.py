@@ -187,6 +187,18 @@ def test_format_tool_result_details_non_ecotaxa_tool_keeps_raw_name():
     assert "<code>query_bio_oracle</code>" in block
 
 
+def test_format_tool_result_details_shows_cache_status_banners():
+    from serve import _format_tool_result_details
+
+    empty_block = _format_tool_result_details("query_ecotaxa", "CACHE_EMPTY")
+    assert "Cache EcoTaxa vide" in empty_block
+    assert "CACHE_EMPTY" not in empty_block
+
+    syncing_block = _format_tool_result_details("query_ecotaxa", "SYNC_IN_PROGRESS")
+    assert "Synchronisation en cours" in syncing_block
+    assert "SYNC_IN_PROGRESS" not in syncing_block
+
+
 def test_format_tool_result_details_hides_raw_base64_image():
     from serve import _format_tool_result_details
     payload = "before data:image/png;base64,AAAABBBBCCCCDDDD== after"
@@ -369,6 +381,22 @@ def test_format_tool_line_query_amundsen_shows_waiting_message():
     assert "station=`BRK-15`" in line
     assert "cast_number=`7`" in line
     assert "Export Amundsen CTD en cours" in line
+    assert "%" not in line
+
+
+def test_format_tool_line_enrich_with_bio_oracle_shows_progress_panel():
+    """Les enrichissements affichent un panneau de progression explicite."""
+    from serve import _format_tool_line
+
+    line = _format_tool_line(
+        "enrich_with_bio_oracle",
+        {"scenario": "SSP245", "depth_layer": "depthsurf", "variable": "temperature"},
+    )
+
+    assert "enrich_with_bio_oracle" in line
+    assert "<summary>🔧 enrich_with_bio_oracle</summary>" in line
+    assert "Préparation de l'enrichissement Bio-ORACLE" in line
+    assert "Le cache de données sera vérifié automatiquement" in line
     assert "%" not in line
 
 
