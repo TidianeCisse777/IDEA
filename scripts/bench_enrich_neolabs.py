@@ -1,7 +1,7 @@
-"""Bench parallel enrich on neolabs_sample.csv (slice).
+"""Bench parallel enrich on a NeoLabs-like file (slice).
 
 Usage:
-    PYTHONPATH=. python scripts/bench_enrich_neolabs.py [n_rows] [--vars=v1,v2,..] [--only=bio|amundsen|both]
+    PYTHONPATH=. python scripts/bench_enrich_neolabs.py [n_rows] [--vars=v1,v2,..] [--only=bio|amundsen|both] [--file=path]
     n_rows=0 → full file
 """
 from __future__ import annotations
@@ -20,6 +20,13 @@ CSV_PATH = Path("data/neolabs/neolabs_sample.csv")
 THREAD_ID = "bench-neolabs"
 
 
+def _read_table(path: Path) -> pd.DataFrame:
+    sep = "\t" if path.suffix.lower() == ".tsv" else ","
+    df = pd.read_csv(path, sep=sep)
+    df.columns = [c.lower() for c in df.columns]
+    return df
+
+
 def _seed_session(df: pd.DataFrame) -> None:
     for key in _store.keys(THREAD_ID):
         _store.clear(key)
@@ -33,7 +40,7 @@ def _get_tool(tools, name):
 def _print_method_block(text: str) -> None:
     print(f">> {text.splitlines()[0]}", flush=True)
     for line in text.splitlines():
-        if line.startswith(("- Requ", "- Points", "- Statuts", "- Avertissement", "- Note", "- Bornes", "- Couverture")):
+        if line.startswith(("- Requ", "- Points", "- Statuts", "- Avertissement", "- Note", "- Bornes", "- Couverture", "  ·")):
             print(line, flush=True)
 
 
@@ -67,11 +74,12 @@ def run_bio_oracle(df: pd.DataFrame, variables: list[str], scenarios: list[str],
     return elapsed
 
 
-def _parse_args(argv: list[str]) -> tuple[int, list[str], list[str], str]:
+def _parse_args(argv: list[str]) -> tuple[int, list[str], list[str], str, Path]:
     n_rows = 200
     variables = ["temperature"]
     scenarios = ["baseline"]
     only = "both"
+    file_path = CSV_PATH
     for arg in argv:
         if arg.startswith("--vars="):
             variables = [v.strip() for v in arg.split("=", 1)[1].split(",") if v.strip()]
@@ -79,15 +87,17 @@ def _parse_args(argv: list[str]) -> tuple[int, list[str], list[str], str]:
             scenarios = [s.strip() for s in arg.split("=", 1)[1].split(",") if s.strip()]
         elif arg.startswith("--only="):
             only = arg.split("=", 1)[1]
+        elif arg.startswith("--file="):
+            file_path = Path(arg.split("=", 1)[1])
         elif arg.isdigit():
             n_rows = int(arg)
-    return n_rows, variables, scenarios, only
+    return n_rows, variables, scenarios, only, file_path
 
 
 def main() -> None:
-    n_rows, variables, scenarios, only = _parse_args(sys.argv[1:])
-    print(f"Loading {CSV_PATH} ...", flush=True)
-    df = pd.read_csv(CSV_PATH)
+    n_rows, variables, scenarios, only, file_path = _parse_args(sys.argv[1:])
+    print(f"Loading {file_path} ...", flush=True)
+    df = _read_table(file_path)
     if n_rows > 0:
         df = df.sample(n=min(n_rows, len(df)), random_state=42).reset_index(drop=True)
     print(f"Rows: {len(df)} | only={only} | vars={variables} | scenarios={scenarios}", flush=True)

@@ -81,6 +81,36 @@ _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
 
 
+def _filter_to_request(
+    df: pd.DataFrame, *, bbox: dict, time_window: dict
+) -> pd.DataFrame:
+    """Narrow a cached canonical tile down to the consumer's actual bbox/window.
+
+    The cache holds full 5° tiles for reuse across files; consumers want
+    only the rows inside their own (smaller) bbox + time window so the
+    `max_ctd_rows_per_batch` guard and downstream matching see a proportional
+    slice instead of the whole tile.
+    """
+    if df.empty:
+        return df
+    lat = pd.to_numeric(df.get("latitude"), errors="coerce")
+    lon = pd.to_numeric(df.get("longitude"), errors="coerce")
+    t = pd.to_datetime(df.get("time"), errors="coerce", utc=True)
+    start = pd.Timestamp(time_window["start"])
+    end = pd.Timestamp(time_window["end"])
+    start = start.tz_localize("UTC") if start.tz is None else start.tz_convert("UTC")
+    end = end.tz_localize("UTC") if end.tz is None else end.tz_convert("UTC")
+    mask = (
+        lat.ge(float(bbox["lat_min"]))
+        & lat.le(float(bbox["lat_max"]))
+        & lon.ge(float(bbox["lon_min"]))
+        & lon.le(float(bbox["lon_max"]))
+        & t.ge(start)
+        & t.le(end)
+    )
+    return df.loc[mask].reset_index(drop=True)
+
+
 def _fetch_amundsen_bbox(
     *,
     bbox: dict,
@@ -94,7 +124,9 @@ def _fetch_amundsen_bbox(
     (5° tile × calendar month × sorted variables) key so cache hits compose
     across different source files in the same zone. The `pres_range` is
     dropped from the canonical key — local matching applies depth tolerance
-    on the cached profile.
+    on the cached profile. The returned DataFrame is then narrowed back to
+    the caller's actual bbox/window so the consumer never sees more than it
+    asked for.
     """
     canon_bbox, canon_time, canon_variables = canonicalize_amundsen_query(
         bbox=bbox, time_window=time_window, variables=variables
@@ -106,7 +138,7 @@ def _fetch_amundsen_bbox(
     }
     cached = cache_get("amundsen_bbox", cache_key)
     if cached is not None:
-        return cached
+        return _filter_to_request(cached, bbox=bbox, time_window=time_window)
     columns = list(dict.fromkeys([*_AMUNDSEN_CORE_COLUMNS, *canon_variables]))
     constraints = [
         f"latitude>={float(canon_bbox['lat_min']):.4f}",
@@ -124,17 +156,17 @@ def _fetch_amundsen_bbox(
     if response.status_code == 404:
         result = pd.DataFrame(columns=columns)
         cache_set("amundsen_bbox", cache_key, result)
-        return result
+        return _filter_to_request(result, bbox=bbox, time_window=time_window)
     response.raise_for_status()
     lines = response.text.splitlines()
     if len(lines) <= 1:
         result = pd.DataFrame(columns=columns)
         cache_set("amundsen_bbox", cache_key, result)
-        return result
+        return _filter_to_request(result, bbox=bbox, time_window=time_window)
     body = "\n".join([lines[0]] + lines[2:]) if len(lines) > 2 else lines[0]
     result = pd.read_csv(io.StringIO(body))
     cache_set("amundsen_bbox", cache_key, result)
-    return result
+    return _filter_to_request(result, bbox=bbox, time_window=time_window)
 
 
 def _format_table(rows: list[dict], columns: list[str]) -> str:
@@ -459,7 +491,7 @@ def make_amundsen_tools(thread_id: str) -> list:
         spatial_tolerance_km: float = 25.0,
         time_tolerance_hours: float = 24.0,
         initial_batch_spatial_degrees: float = 5.0,
-        batch_spatial_degrees: float = 5.0,
+        batch_spatial_degrees: float = 1.0,
         max_source_points_per_batch: int = 50,
         max_ctd_rows_per_batch: int = 200000,
         depth_padding_dbar: float = 25.0,
@@ -875,6 +907,17 @@ def make_amundsen_tools(thread_id: str) -> list:
                 f"- Avertissement : {len(fetch_failures)} lot(s) ERDDAP en erreur, "
                 "lignes conservées avec `no_match`."
             )
+            sample_errors = []
+            seen: set[str] = set()
+            for raw in fetch_failures:
+                short = (raw or "").strip().replace("\n", " ")[:200]
+                if short and short not in seen:
+                    seen.add(short)
+                    sample_errors.append(short)
+                if len(sample_errors) >= 3:
+                    break
+            for sample in sample_errors:
+                method_lines.append(f"  · {sample}")
         if n_no_match:
             method_lines.append(
                 f"- Note : {n_no_match} ligne(s) sans match — la zone-date "
