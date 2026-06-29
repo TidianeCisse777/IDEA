@@ -38,7 +38,17 @@ def _isolated_store(monkeypatch):
     monkeypatch.setattr("tools.session_store.default_store", store)
     monkeypatch.setattr("tools.ecopart_sources._store", store)
     monkeypatch.setattr("tools.copepod_sources._store", store)
+    monkeypatch.setattr("tools.bio_oracle_sources._store", store)
     return store
+
+
+def _bio_tile(value: float) -> pd.DataFrame:
+    """One-row Bio-ORACLE tile DataFrame, shaped like _fetch_bio_oracle_bbox output."""
+    tile = pd.DataFrame([
+        {"time": "2050-01-01T00:00:00Z", "latitude": 60.0, "longitude": -65.0, "value": value}
+    ])
+    tile.attrs["dataset_id"] = "thetao_ssp585_2020_2100_depthsurf"
+    return tile
 
 
 def _real_ecopart(profile: str | None = None) -> pd.DataFrame:
@@ -227,6 +237,52 @@ def test_warning_zero_match_on_campaign_mismatch(_isolated_store):
     assert "Aucune correspondance" in result
     # No join table is produced on a zero-overlap result.
     assert not _isolated_store.has("mm:ecotaxa_ecopart")
+
+
+# --------------------------------------------------------------------------- #
+# 8. Local import → environmental enrichment (Amundsen / Bio-ORACLE / OGSL)
+# --------------------------------------------------------------------------- #
+def test_local_import_then_environmental_enrich(_isolated_store, tmp_path, monkeypatch):
+    """A file imported locally via load_file is enrichable with an environmental source.
+
+    Starts from the REAL load_file tool (not a hand-built session), then enriches
+    with the REAL enrich_with_bio_oracle (only the ERDDAP fetch is mocked). Also
+    checks the provenance note names the imported file variable.
+    """
+    from tools.data_tools import make_tools
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+
+    # A plain station file with coordinates — NOT an EcoTaxa export.
+    src = tmp_path / "stations.tsv"
+    pd.DataFrame({
+        "latitude": [60.0],
+        "longitude": [-65.0],
+        "object_date": ["2018-06-01"],
+    }).to_csv(src, sep="\t", index=False)
+
+    # 1) Real load_file (data tools share the isolated store).
+    load_file = next(t for t in make_tools("imp", store=_isolated_store) if t.name == "load_file")
+    load_msg = load_file.invoke({"path": str(src)})
+    assert "df_file_stations" in load_msg
+
+    # 2) Real enrich_with_bio_oracle on the imported file; ERDDAP fetch mocked.
+    monkeypatch.setattr(
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox",
+        lambda *, variable, scenario, depth_layer, target_year, tile: _bio_tile(8.42),
+    )
+    enrich = next(
+        t for t in make_bio_oracle_tools("imp") if t.name == "enrich_with_bio_oracle"
+    )
+    result = enrich.invoke(
+        {"variables": ["temperature"], "scenarios": ["SSP5-8.5"], "target_year": 2050}
+    )
+
+    # Provenance note names the imported file variable, and the value is attached.
+    assert "df_file_stations" in result
+    keys = _isolated_store.keys("imp:dataset:df_bio_oracle_enriched_")
+    enriched = _isolated_store.get(keys[-1])["df"]
+    temp_col = next(c for c in enriched.columns if c.startswith("bio_oracle_temperature"))
+    assert enriched[temp_col].tolist() == [8.42]
 
 
 # --------------------------------------------------------------------------- #
