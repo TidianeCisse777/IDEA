@@ -1,13 +1,14 @@
 """Tests TDD — tools/data_tools.py (slice 2)"""
 import io
 import base64
+import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from tools.data_tools import make_tools, _patch_cartopy_gridliner_polygon, _uvp_skill_hint
-from tools.session_store import default_store as _store
+from tools.session_store import SessionStore, default_store as _store
 
 
 @pytest.fixture
@@ -23,10 +24,19 @@ def tsv_path(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def clear_sessions():
-    _store._store.clear()
+def clear_sessions(monkeypatch):
+    """Isolate each test on a fresh in-memory SessionStore (backend-agnostic).
+
+    `make_tools` resolves its store via `tools.data_tools.default_store` at call
+    time, so patching that global plus this module's `_store` keeps tool writes
+    and test reads on the same in-memory store regardless of
+    `SESSION_STORE_DATABASE_URL` (which would otherwise swap in `SessionStorePG`).
+    """
+    store = SessionStore()
+    monkeypatch.setattr("tools.session_store.default_store", store)
+    monkeypatch.setattr("tools.data_tools.default_store", store)
+    monkeypatch.setattr(sys.modules[__name__], "_store", store)
     yield
-    _store._store.clear()
 
 
 # --- Comportement 1 : load_file_tool ---

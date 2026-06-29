@@ -1,5 +1,28 @@
 """TDD — tools/ecopart_sources.py."""
 
+import pytest
+
+from tools.session_store import SessionStore
+
+
+@pytest.fixture(autouse=True)
+def _isolated_store(monkeypatch):
+    """Force a fresh in-memory SessionStore so tests are backend-agnostic.
+
+    The tools bind their store via the module global ``tools.ecopart_sources._store``
+    (imported from ``default_store``). Patching both that global and
+    ``tools.session_store.default_store`` keeps tool writes and test reads on the
+    same in-memory store, independent of ``SESSION_STORE_DATABASE_URL`` (which would
+    otherwise swap in ``SessionStorePG``, breaking ``_store._store.clear()``).
+    """
+    store = SessionStore()
+    monkeypatch.setattr("tools.session_store.default_store", store)
+    monkeypatch.setattr("tools.ecopart_sources._store", store)
+    # copepod_sources (query_ecotaxa) binds its own module-global store; share the
+    # same instance so the full-remote chain (query_ecotaxa → enrich) is coherent.
+    monkeypatch.setattr("tools.copepod_sources._store", store)
+    return store
+
 
 def test_make_ecopart_tools_exposes_expected_tools():
     from tools.ecopart_sources import make_ecopart_tools
@@ -265,6 +288,72 @@ def test_enrich_remote_uses_session_project_id_when_query_ecotaxa_was_run():
     assert merged.loc[0, "ecopart_Sampled volume [L]"] == 100.0
 
 
+def test_full_remote_workflow_query_ecotaxa_then_enrich_remote():
+    """Integration — Workflow 3 (full remote): real query_ecotaxa → real enrich_remote.
+
+    No local file, no hand-built session: query_ecotaxa downloads EcoTaxa and is the
+    only thing that leaves `:ecotaxa` + `meta.project_id` in session. The remote enrich
+    must then reuse that project_id with no args and produce a matched join. This locks
+    the contract (session key + meta) between the two tools.
+    """
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.copepod_sources import make_source_tools
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-full-remote"
+
+    # --- Step 1: real query_ecotaxa (EcoTaxa client mocked at the HTTP boundary) ---
+    ecotaxa_client = MagicMock()
+    ecotaxa_client.start_export.return_value = "job-1"
+    ecotaxa_client.download_tsv.return_value = pd.DataFrame({
+        "obj_orig_id": ["ips_007_1", "ips_007_2"],
+        "object_depth_min": [3.0, 7.0],
+        "taxon": ["Calanus", "Calanus"],
+    })
+
+    with patch("tools.copepod_sources.EcotaxaClient", return_value=ecotaxa_client):
+        query_ecotaxa = next(
+            t for t in make_source_tools(thread_id) if t.name == "query_ecotaxa"
+        )
+        et_result = query_ecotaxa.invoke({"project_id": 1165})
+
+    # query_ecotaxa is the sole writer of the session here.
+    assert "chargé" in et_result
+    session_et = _store.get(f"{thread_id}:ecotaxa")
+    assert session_et is not None
+    assert session_et["meta"]["project_id"] == 1165
+
+    # --- Step 2: real enrich_ecotaxa_with_ecopart_remote, no args ---
+    ecopart_client = MagicMock()
+    ecopart_client.start_export.return_value = ["/Task/Show/42"]
+    ecopart_client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["ips_007", "ips_007"],
+        "Depth [m]": [2.5, 7.5],
+        "Sampled volume [L]": [100.0, 110.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=ecopart_client):
+        enrich = next(
+            t for t in make_ecopart_tools(thread_id)
+            if t.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = enrich.invoke({})
+
+    # The remote enrich reused the project_id left by query_ecotaxa, with no manual id.
+    ecopart_client.start_export.assert_called_once_with(
+        project_id=None, ecotaxa_project_id=1165
+    )
+    assert "Enrichissement terminé" in result
+
+    merged = _store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    by_obj = merged.set_index("obj_orig_id")
+    assert by_obj.loc["ips_007_1", "ecopart_Sampled volume [L]"] == 100.0
+    assert by_obj.loc["ips_007_2", "ecopart_Sampled volume [L]"] == 110.0
+
+
 def test_enrich_remote_surfaces_clean_message_on_server_export_error():
     from unittest.mock import MagicMock, patch
 
@@ -401,6 +490,52 @@ def test_enrich_remote_uses_sample_lat_long_for_standard_ecotaxa_export():
     assert _store.get("thread-remote-sample-coords")["df"].shape[0] == 1
 
 
+def test_enrich_remote_uses_sample_profileid_when_no_coordinates_are_available():
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+
+    _store.set(
+        "thread-remote-profile-fallback:ecotaxa",
+        pd.DataFrame({
+            "sample_id": ["20130815 104200 655"],
+            "sample_profileid": ["1.0"],
+            "sample_stationid": ["101"],
+            "sample_cruise": ["ArcticNet2013"],
+            "object_depth_min": [3.0],
+        }),
+        {"source": "file:ecotaxa_sample_50.tsv"},
+    )
+
+    mock_client = MagicMock()
+    mock_client.search_samples.return_value = [{"id": 11, "name": "1.0", "visibility": "YY"}]
+    mock_client.get_sample_metadata.return_value = {
+        "profile_id": "1.0",
+        "ecopart_project_id": 105,
+    }
+    mock_client.start_export.return_value = ["/Task/Show/101"]
+    mock_client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["1.0"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [111.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        tool = next(
+            t for t in make_ecopart_tools("thread-remote-profile-fallback")
+            if t.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({})
+
+    assert "Projet EcoPart résolu automatiquement" in result
+    assert "profile `1.0`" in result
+    assert "Enrichissement terminé" in result
+
+
 def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     import math
 
@@ -438,6 +573,8 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert "ecopart_Sampled volume [L]" in merged.columns
     assert "_join_sample_id" not in merged.columns
     assert "_join_depth_bin" not in merged.columns
+    # The 5 m bin used for the join is kept as a first-class column for m5/m6 grouping.
+    assert "depth_bin" in merged.columns
     assert len(merged) == 3
 
     by_obj = merged.set_index("obj_orig_id")
@@ -446,8 +583,80 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert by_obj.loc["ips_008_1", "ecopart_Sampled volume [L]"] == 95.0
     assert by_obj.loc["ips_007_1", "ecopart_temperature"] == -1.1
     assert by_obj.loc["ips_007_2", "ecopart_temperature"] == -1.2
+    # depth_bin = (depth // 5) * 5 + 2.5 → 3 m, 7 m, 12 m map to 2.5, 7.5, 12.5.
+    assert by_obj.loc["ips_007_1", "depth_bin"] == 2.5
+    assert by_obj.loc["ips_007_2", "depth_bin"] == 7.5
+    assert by_obj.loc["ips_008_1", "depth_bin"] == 12.5
     assert "3 lignes" in result
     assert "3 matchées" in result
+    assert "depth_bin" in result
+
+
+def test_join_ecotaxa_ecopart_picks_key_by_overlap_not_first_row():
+    """Key selection must use real overlap, not the first row.
+
+    Here the first sample_id is absent from EcoPart but the other rows match,
+    while obj_orig_id (also present) never matches. The previous first-row
+    heuristic fell back to obj_orig_id and produced a silent 0-match join.
+    """
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    df_ecotaxa = pd.DataFrame({
+        "sample_id": ["ips_999", "ips_007", "ips_008"],
+        "obj_orig_id": ["zzz_1", "zzz_2", "zzz_3"],
+        "object_depth_min": [3.0, 3.0, 3.0],
+        "taxon": ["Calanus", "Calanus", "Oithona"],
+    })
+    df_ecopart = pd.DataFrame({
+        "Profile": ["ips_007", "ips_008"],
+        "Depth [m]": [2.5, 2.5],
+        "Sampled volume [L]": [100.0, 95.0],
+    })
+    _store.set("thread-overlap:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
+    _store.set("thread-overlap:ecopart", df_ecopart, {"source": "ecopart:105"})
+
+    join_tool = next(
+        t for t in make_ecopart_tools("thread-overlap") if t.name == "join_ecotaxa_ecopart"
+    )
+    result = join_tool.invoke({})
+
+    merged = _store.get("thread-overlap")["df"]
+    by_id = merged.set_index("sample_id")
+    assert by_id.loc["ips_007", "ecopart_Sampled volume [L]"] == 100.0
+    assert by_id.loc["ips_008", "ecopart_Sampled volume [L]"] == 95.0
+    assert pd.isna(by_id.loc["ips_999", "ecopart_Sampled volume [L]"])
+    assert "2 matchées" in result
+
+
+def test_join_ecotaxa_ecopart_reports_zero_overlap_clearly():
+    """When no candidate key overlaps EcoPart profiles, surface a clear diagnostic."""
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    df_ecotaxa = pd.DataFrame({
+        "sample_id": ["aaa", "bbb"],
+        "object_depth_min": [3.0, 3.0],
+    })
+    df_ecopart = pd.DataFrame({
+        "Profile": ["ips_007"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [100.0],
+    })
+    _store.set("thread-no-overlap:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
+    _store.set("thread-no-overlap:ecopart", df_ecopart, {"source": "ecopart:105"})
+
+    join_tool = next(
+        t for t in make_ecopart_tools("thread-no-overlap") if t.name == "join_ecotaxa_ecopart"
+    )
+    result = join_tool.invoke({})
+
+    assert "Aucune correspondance" in result
+    assert "ips_007" in result
+    # No join table should be stored on a zero-overlap result.
+    assert not _store.has("thread-no-overlap:ecotaxa_ecopart")
 
 
 def test_join_ecotaxa_ecopart_leaves_unmatched_bin_as_nan():

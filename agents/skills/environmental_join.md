@@ -13,7 +13,7 @@ You are about to perform a join between zooplankton and an environmental source.
 
 | Join | Method |
 |---|---|
-| EcoTaxa + EcoPart (by `profile_id`) | `join_ecotaxa_ecopart` tool — do **not** use this skill |
+| EcoTaxa + EcoPart (by `(sample_id, depth_bin)`) | `join_ecotaxa_ecopart` (EcoPart in session) or `enrich_ecotaxa_with_ecopart_remote` (EcoPart not loaded) — do **not** use this skill |
 | EcoTaxa + CTD Amundsen | `run_pandas` using patterns below |
 | EcoTaxa + Bio-ORACLE | `run_pandas` using patterns below |
 | Standard loaded-table + OGSL enrichment | `query_ogsl` — do **not** use this skill |
@@ -82,7 +82,7 @@ Produce a traceable join table with an explicit match rule, stable keys, and qua
 - Vertical CTD: join by station, cast, time, then depth or pressure.
 - Bio-ORACLE: join by latitude, longitude, variable, scenario and `depth_layer`.
 - OGSL: join by station or mission, then time and depth.
-- EcoTaxa + EcoPart: join by `profile_id` then depth bin.
+- EcoTaxa + EcoPart: handled by the dedicated tool on `(sample_id, depth_bin)` — the EcoTaxa profile identifier matched to EcoPart `Profile`, then a 5 m depth bin. Never hand-roll this merge.
 
 ---
 
