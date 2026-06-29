@@ -112,6 +112,24 @@ class EcopartClient:
             if "id" in s
         ]
 
+    def search_samples(self, project_id: int | None = None) -> list[dict]:
+        """Search accessible EcoPart samples, optionally restricted to one project."""
+        params = {}
+        if project_id is not None:
+            params["filt_uproj"] = str(project_id)
+        resp = self._session.get(f"{_BASE_URL}/searchsample", params=params or None, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        raw = resp.json() or []
+        return [
+            {
+                "id": int(s["id"]),
+                "name": str(s.get("name") or s.get("samplename") or ""),
+                "visibility": str(s.get("visibility") or ""),
+            }
+            for s in raw
+            if "id" in s
+        ]
+
     def preview_sample(self, sample_id: int) -> dict:
         resp = self._session.get(f"{_BASE_URL}/getsamplepopover/{sample_id}", timeout=_TIMEOUT)
         text = BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True) if resp.ok else ""

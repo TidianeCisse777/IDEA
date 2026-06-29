@@ -64,15 +64,48 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
     if "Depth [m]" not in df_ep.columns:
         return "Colonne 'Depth [m]' absente du dataset EcoPart — relance `query_ecopart`."
 
-    if "sample_id" in df_et.columns and df_et["sample_id"].iloc[0] in df_ep["Profile"].values:
-        df_et["_join_sample_id"] = df_et["sample_id"]
-    elif "obj_orig_id" in df_et.columns:
-        df_et["_join_sample_id"] = df_et["obj_orig_id"].str.replace(r"_\d+$", "", regex=True)
-    elif "sample_id" in df_et.columns:
-        df_et["_join_sample_id"] = df_et["sample_id"]
-    else:
+    # Candidate join keys, compared on real overlap with EcoPart profiles rather
+    # than on the first row only — a single non-matching first row must not pick
+    # the wrong key when other rows would match. We try several EcoTaxa shapes:
+    # raw sample_id, sample_id/obj_orig_id stripped of the object suffix `_NNN`,
+    # and the profile/station labels used by the remote resolver.
+    profile_values = set(df_ep["Profile"].astype("string").dropna())
+    candidates: list[tuple[str, pd.Series]] = []
+    if "sample_id" in df_et.columns:
+        sample_id = df_et["sample_id"].astype("string")
+        candidates.append(("sample_id", sample_id))
+        candidates.append(("sample_id (profil)", sample_id.str.replace(r"_\d+$", "", regex=True)))
+    if "obj_orig_id" in df_et.columns:
+        candidates.append((
+            "obj_orig_id",
+            df_et["obj_orig_id"].astype("string").str.replace(r"_\d+$", "", regex=True),
+        ))
+    for label_col in ("sample_profileid", "sample_stationid", "sample_station_name", "sample_cruise"):
+        if label_col in df_et.columns:
+            candidates.append((label_col, df_et[label_col].astype("string").str.strip()))
+
+    if not candidates:
         available = ", ".join(df_et.columns[:20].tolist())
         return f"Colonne de jointure introuvable dans EcoTaxa. Colonnes disponibles : {available}"
+
+    best_key, best_series, best_overlap = None, None, -1
+    for name, series in candidates:
+        overlap = int(series.isin(profile_values).sum())
+        if overlap > best_overlap:
+            best_key, best_series, best_overlap = name, series, overlap
+
+    if best_overlap == 0:
+        sample_et = ", ".join(sorted({str(v) for v in best_series.dropna().unique()})[:5])
+        sample_ep = ", ".join(sorted({str(v) for v in profile_values})[:5])
+        return (
+            "Aucune correspondance entre les identifiants EcoTaxa et les profils EcoPart "
+            f"(clé EcoTaxa essayée : `{best_key}`). "
+            f"{len(profile_values)} profil(s) EcoPart vs {best_series.nunique()} clé(s) EcoTaxa. "
+            f"Exemples EcoTaxa : {sample_et or '—'} · Exemples EcoPart : {sample_ep or '—'}. "
+            "Vérifie que les deux jeux proviennent de la même campagne / du même projet."
+        )
+
+    df_et["_join_sample_id"] = best_series
 
     depth_col = next(
         (c for c in ("object_depth_min", "obj_depth_min", "depth_min", "depth") if c in df_et.columns),
@@ -90,6 +123,9 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
     df_et["_join_depth_bin"] = (depth_numeric // 5) * 5 + 2.5
 
     df_ep = df_ep.rename(columns={"Profile": "_join_sample_id", "Depth [m]": "_join_depth_bin"})
+    # Match the stringified EcoTaxa key so an int/str dtype mismatch never silently
+    # zeroes the join.
+    df_ep["_join_sample_id"] = df_ep["_join_sample_id"].astype("string")
     df_ep = df_ep.rename(
         columns={
             c: f"ecopart_{c}"
@@ -104,7 +140,11 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
     sentinel = next((c for c in merged.columns if c.startswith("ecopart_")), None)
     n_matched = int(merged[sentinel].notna().sum()) if sentinel else 0
 
-    merged = merged.drop(columns=["_join_sample_id", "_join_depth_bin"], errors="ignore")
+    # Keep the 5 m bin used for the join as a first-class `depth_bin` column — the
+    # m5/m6 density templates (skill uvp_ecotaxa) group by (sample_id, depth_bin,
+    # sampled volume). Only the internal sample-key helper is dropped.
+    merged = merged.rename(columns={"_join_depth_bin": "depth_bin"})
+    merged = merged.drop(columns=["_join_sample_id"], errors="ignore")
 
     source = "join:ecotaxa+ecopart"
     if selected_project_id is not None:
@@ -134,12 +174,38 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
     return (
         f"Enrichissement terminé{project_note} — {len(merged)} lignes "
         f"({n_matched} matchées sur un bin EcoPart), {len(merged.columns)} colonnes.\n"
-        f"Clé de jointure : (sample_id, depth_bin) calculé depuis `{depth_col}`.\n"
-        f"Colonnes EcoPart préfixées `ecopart_` — notamment `ecopart_Sampled volume [L]` "
-        f"pour les calculs d'abondance (nb objets / volume filtré).\n"
+        f"Clé de jointure : (sample_id, depth_bin) calculé depuis `{depth_col}`. "
+        f"Bin conservé dans la colonne `depth_bin` (centre du bin 5 m).\n"
+        f"Colonnes EcoPart préfixées `ecopart_` — `ecopart_Sampled volume [L]` est le volume "
+        f"filtré du bin. Pour l'abondance/densité (m5/m6), grouper par bin "
+        f"(`sample_id`, `depth_bin`) : densité = nb objets du bin / volume du bin, jamais "
+        f"sum(objets)/sum(volume) global — voir skill `uvp_ecotaxa`.\n"
         f"Données disponibles dans `{joined_variable_name}` et `df_ecotaxa_ecopart` — "
         f"appelle run_pandas directement pour analyser."
     )
+
+
+def _candidate_ecotaxa_profile_labels(df_et: pd.DataFrame) -> list[str]:
+    """Collect plausible profile/station labels from an EcoTaxa export."""
+    labels: list[str] = []
+    for col in ("sample_profileid", "sample_stationid", "sample_station_name", "sample_cruise"):
+        if col not in df_et.columns:
+            continue
+        values = (
+            df_et[col]
+            .dropna()
+            .astype("string")
+            .str.strip()
+            .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        for value in values:
+            if value not in labels:
+                labels.append(value)
+    return labels
 
 
 def make_ecopart_tools(thread_id: str) -> list:
@@ -260,62 +326,99 @@ def make_ecopart_tools(thread_id: str) -> list:
                 None,
             )
             if lat_col is None or lon_col is None:
-                return (
-                    "Projet EcoTaxa inconnu et coordonnées absentes du fichier — "
-                    "fournis `ecotaxa_project_id` ou `ecopart_project_id`."
-                )
-            lat = pd.to_numeric(df_et[lat_col], errors="coerce").dropna()
-            lon = pd.to_numeric(df_et[lon_col], errors="coerce").dropna()
-            if lat.empty or lon.empty:
-                return "Coordonnées du fichier EcoTaxa illisibles — fournis `ecotaxa_project_id`."
-            margin = 0.05
-            try:
-                candidates = client.search_samples_by_bbox(
-                    north=float(lat.max()) + margin,
-                    south=float(lat.min()) - margin,
-                    west=float(lon.min()) - margin,
-                    east=float(lon.max()) + margin,
-                )
-            except Exception as exc:
-                return f"Erreur de recherche EcoPart par bbox : {exc}"
-            if not candidates:
-                return (
-                    "Aucun sample EcoPart trouvé dans la zone du fichier EcoTaxa — "
-                    "fournis `ecopart_project_id` manuellement."
-                )
-            sample_ids_et = set()
-            if "sample_id" in df_et.columns:
-                sample_ids_et = set(df_et["sample_id"].astype(str).head(50).unique())
-            elif "obj_orig_id" in df_et.columns:
-                sample_ids_et = set(
-                    df_et["obj_orig_id"].astype(str).str.replace(r"_\d+$", "", regex=True).head(50).unique()
-                )
-            found_ecopart_pid = None
-            for cand in candidates[:10]:
-                meta_ep = client.get_sample_metadata(cand["id"])
-                pf = meta_ep.get("profile_id")
-                ep_pid = meta_ep.get("ecopart_project_id")
-                if ep_pid is None:
-                    continue
-                if not sample_ids_et or pf in sample_ids_et:
-                    found_ecopart_pid = ep_pid
-                    resolution_note = (
-                        f"Projet EcoPart résolu automatiquement : {ep_pid} "
-                        f"(via sample `{pf}` à {cand['lat']:.3f}/{cand['lon']:.3f})."
+                candidate_labels = _candidate_ecotaxa_profile_labels(df_et)
+                if not candidate_labels:
+                    return (
+                        "Projet EcoTaxa inconnu et coordonnées absentes du fichier — "
+                        "fournis `ecotaxa_project_id` ou `ecopart_project_id`."
                     )
-                    break
-            if found_ecopart_pid is None:
-                found_ecopart_pid = candidates[0] and client.get_sample_metadata(candidates[0]["id"]).get("ecopart_project_id")
-                if found_ecopart_pid is not None:
-                    resolution_note = (
-                        f"Projet EcoPart résolu par fallback géographique : {found_ecopart_pid}."
+                try:
+                    candidates = client.search_samples()
+                except Exception as exc:
+                    return f"Erreur de recherche EcoPart par profil : {exc}"
+                if not candidates:
+                    return (
+                        "Aucun sample EcoPart accessible pour tenter une résolution par profil — "
+                        "fournis `ecotaxa_project_id` ou `ecopart_project_id`."
                     )
-            if found_ecopart_pid is None:
-                return (
-                    "Impossible de résoudre le projet EcoPart depuis la bbox EcoTaxa — "
-                    "fournis `ecopart_project_id`."
-                )
-            ecopart_project_id = found_ecopart_pid
+                found_ecopart_pid = None
+                for cand in candidates[:200]:
+                    try:
+                        meta_ep = client.get_sample_metadata(cand["id"])
+                    except Exception:
+                        continue
+                    pf = str(meta_ep.get("profile_id") or "").strip()
+                    ep_pid = meta_ep.get("ecopart_project_id")
+                    if ep_pid is None:
+                        continue
+                    if pf and pf in candidate_labels:
+                        found_ecopart_pid = ep_pid
+                        resolution_note = (
+                            f"Projet EcoPart résolu automatiquement : {ep_pid} "
+                            f"(via profile `{pf}`)."
+                        )
+                        break
+                if found_ecopart_pid is None:
+                    return (
+                        "Le fichier EcoTaxa ne contient pas de coordonnées utilisables pour l’enrichissement "
+                        "automatique EcoPart et aucun profil compatible n’a été trouvé. "
+                        "Il faut fournir `ecotaxa_project_id` ou `ecopart_project_id`."
+                    )
+                ecopart_project_id = found_ecopart_pid
+            else:
+                lat = pd.to_numeric(df_et[lat_col], errors="coerce").dropna()
+                lon = pd.to_numeric(df_et[lon_col], errors="coerce").dropna()
+                if lat.empty or lon.empty:
+                    return "Coordonnées du fichier EcoTaxa illisibles — fournis `ecotaxa_project_id`."
+                margin = 0.05
+                try:
+                    candidates = client.search_samples_by_bbox(
+                        north=float(lat.max()) + margin,
+                        south=float(lat.min()) - margin,
+                        west=float(lon.min()) - margin,
+                        east=float(lon.max()) + margin,
+                    )
+                except Exception as exc:
+                    return f"Erreur de recherche EcoPart par bbox : {exc}"
+                if not candidates:
+                    return (
+                        "Aucun sample EcoPart trouvé dans la zone du fichier EcoTaxa — "
+                        "fournis `ecopart_project_id` manuellement."
+                    )
+                sample_ids_et = set()
+                if "sample_id" in df_et.columns:
+                    sample_ids_et = set(df_et["sample_id"].astype(str).head(50).unique())
+                elif "obj_orig_id" in df_et.columns:
+                    sample_ids_et = set(
+                        df_et["obj_orig_id"].astype(str).str.replace(r"_\d+$", "", regex=True).head(50).unique()
+                    )
+                found_ecopart_pid = None
+                for cand in candidates[:10]:
+                    meta_ep = client.get_sample_metadata(cand["id"])
+                    pf = meta_ep.get("profile_id")
+                    ep_pid = meta_ep.get("ecopart_project_id")
+                    if ep_pid is None:
+                        continue
+                    if not sample_ids_et or pf in sample_ids_et:
+                        found_ecopart_pid = ep_pid
+                        resolution_note = (
+                            f"Projet EcoPart résolu automatiquement : {ep_pid} "
+                            f"(via sample `{pf}` à {cand['lat']:.3f}/{cand['lon']:.3f})."
+                        )
+                        break
+                if found_ecopart_pid is None:
+                    fallback_candidate = candidates[0]
+                    found_ecopart_pid = client.get_sample_metadata(fallback_candidate["id"]).get("ecopart_project_id")
+                    if found_ecopart_pid is not None:
+                        resolution_note = (
+                            f"Projet EcoPart résolu par fallback géographique : {found_ecopart_pid}."
+                        )
+                if found_ecopart_pid is None:
+                    return (
+                        "Impossible de résoudre le projet EcoPart depuis la bbox EcoTaxa — "
+                        "fournis `ecopart_project_id`."
+                    )
+                ecopart_project_id = found_ecopart_pid
 
         try:
             links = client.start_export(

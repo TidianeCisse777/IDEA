@@ -84,21 +84,21 @@ The summary returned by `query_ecotaxa` contains a link `http://localhost:8000/d
 ## Combining EcoTaxa with EcoPart
 
 EcoPart provides **CTD + UVP particle profiles** for the same Amundsen casts.
-To combine the data:
+Pick the route by what is already in session — do **not** hand-roll the merge in
+`run_pandas`, the dedicated tools do the binning and dtype handling for you:
 
-1. Load EcoTaxa: `query_ecotaxa(project_id=1165)`
-2. Load EcoPart: `query_ecopart(project_id=105)`
-3. Join: `join_ecotaxa_ecopart`
+- **EcoPart already loaded** (`df_ecopart` in session) → `join_ecotaxa_ecopart`.
+- **EcoPart not loaded** → `enrich_ecotaxa_with_ecopart_remote` (default). It auto-resolves
+  the EcoPart project from the session EcoTaxa (project id, coordinates, or profile/station
+  labels) and joins — no EcoPart id needed.
+- Only call `query_ecopart(project_id=...)` first when the user explicitly names a specific
+  EcoPart project to load.
 
-**Join key:**
-`obj_orig_id` in EcoTaxa (e.g. `ips_007_899`) → strip `_NNN` suffix → `profile_id` (`ips_007`) → matches the EcoPart sample identifier.
-
-```python
-df["profile_id"] = df["obj_orig_id"].str.replace(r"_\d+$", "", regex=True)
-```
-
-The join result contains both EcoTaxa taxonomy/morphometry and EcoPart CTD columns
-(`Depth [m]`, `Sampled volume [L]`, LPM columns).
+**Join key (handled by the tool):** the join is on `(sample_id, depth_bin)`, where the EcoTaxa
+side resolves to the profile identifier (raw `sample_id`, `sample_id`/`obj_orig_id` stripped of
+the `_NNN` object suffix, e.g. `ips_007_899` → `ips_007`, or the profile/station label) and
+`depth_bin` is a 5 m bin computed from the object depth. Each EcoTaxa object keeps the EcoPart
+columns of its own bin (`Depth [m]`, `Sampled volume [L]`, LPM, CTD), preserved not averaged.
 See skill `uvp_ecopart` for m1-m3 metrics computable from EcoPart.
 
 ---
