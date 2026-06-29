@@ -7,6 +7,7 @@ import unicodedata
 import uuid
 from pathlib import Path
 
+import requests
 from langchain_core.tools import tool
 
 from core.ecotaxa_browser.column_distribution import get_column_distribution
@@ -62,10 +63,18 @@ def make_source_tools(thread_id: str) -> list:
         interdit à l'agent de retomber silencieusement sur une recherche
         (cf. règle « après EXPORT_FAILED, ne pas re-lister »).
         """
+        status_code: int | None = None
+        server = ""
         if isinstance(exc, EcotaxaExportError):
             target = f"projet {exc.project_id}"
-            status = f"HTTP {exc.status_code}"
+            status_code = int(exc.status_code)
+            status = f"HTTP {status_code}"
             server = exc.server_message
+        elif isinstance(exc, requests.HTTPError) and exc.response is not None:
+            target = f"projet {project_id}" if project_id is not None else "EcoTaxa"
+            status_code = int(exc.response.status_code)
+            status = f"HTTP {status_code}"
+            server = str(exc) or "(pas de message serveur)"
         else:
             target = f"projet {project_id}" if project_id is not None else "EcoTaxa"
             status = type(exc).__name__
@@ -73,19 +82,54 @@ def make_source_tools(thread_id: str) -> list:
         if sample_id is not None:
             target += f", sample {sample_id}"
 
-        diagnostic = (
-            f"preview_ecotaxa_project({project_id})"
-            if project_id is not None
-            else "list_ecotaxa_projects()"
-        )
+        if status_code is not None and 500 <= status_code < 600:
+            cause = (
+                "Cause : serveur EcoTaxa temporairement indisponible "
+                f"(HTTP {status_code}). Retenter dans quelques minutes — "
+                "ce n'est pas un problème de droits ni de paramètres."
+            )
+            suggestion = "Diagnostic : aucun, attendre que le serveur EcoTaxa revienne."
+        elif status_code in (401, 403):
+            cause = (
+                f"Cause : EcoTaxa a refusé l'accès (HTTP {status_code}) — "
+                "droits Export manquants pour le compte configuré, projet "
+                "privé, ou identifiants invalides."
+            )
+            diag = (
+                f"preview_ecotaxa_project({project_id})"
+                if project_id is not None
+                else "list_ecotaxa_projects()"
+            )
+            suggestion = (
+                f"Diagnostic suggéré : {diag} pour vérifier l'accès, puis "
+                "proposer un projet alternatif si l'accès reste refusé."
+            )
+        elif status_code == 404:
+            cause = (
+                f"Cause : projet introuvable côté EcoTaxa (HTTP 404). "
+                "Soit l'identifiant n'existe pas, soit il n'est plus exposé."
+            )
+            suggestion = (
+                "Diagnostic suggéré : list_ecotaxa_projects() ou "
+                "find_ecotaxa_projects(title=...) pour trouver un projet valide."
+            )
+        else:
+            cause = (
+                "Cause : erreur EcoTaxa inattendue — droits manquants, "
+                "projet privé, identifiants invalides, ou paramètres refusés."
+            )
+            diag = (
+                f"preview_ecotaxa_project({project_id})"
+                if project_id is not None
+                else "list_ecotaxa_projects()"
+            )
+            suggestion = f"Diagnostic suggéré : {diag} pour vérifier l'accès."
 
         return (
             f"EXPORT_FAILED — {target} ({status})\n"
             f"Message serveur : {server}\n"
-            "Causes probables : droits Export manquants sur ce projet pour le "
-            "compte configuré, projet privé, ou identifiants invalides.\n"
-            f"Diagnostic suggéré : {diagnostic} pour vérifier l'accès, puis "
-            "proposer un projet alternatif si l'accès est refusé. "
+            f"{cause}\n"
+            f"{suggestion} "
             "NE PAS contourner avec find_ecotaxa_samples_in_region — ce serait "
             "une recherche, pas un export."
         )
@@ -396,6 +440,8 @@ def make_source_tools(thread_id: str) -> list:
         taxon: str | None = None,
         status: str = "V",
         sample_ids: list[int] | None = None,
+        obj_depth_gte: float | None = None,
+        obj_depth_lte: float | None = None,
     ) -> str:
         """Interroge EcoTaxa et charge les données dans la session courante.
 
@@ -404,6 +450,17 @@ def make_source_tools(thread_id: str) -> list:
             taxon: Filtre taxonomique optionnel (ex: "Copepoda").
             status: Statut des annotations — "V" (validé), "P" (prédit), "" (tous).
             sample_ids: IDs de samples EcoTaxa à exporter dans ce projet.
+            obj_depth_gte: profondeur **objet** minimale en mètres
+                (inclusif). Filtre côté serveur EcoTaxa
+                (`ProjectFilter.depthmin`). Pour « objets à au moins 50 m »,
+                `obj_depth_gte=50`.
+            obj_depth_lte: profondeur **objet** maximale en mètres
+                (inclusif). Filtre côté serveur EcoTaxa
+                (`ProjectFilter.depthmax`). Combiner avec `obj_depth_gte`
+                pour une bande, p.ex. « objets autour de 100 m »
+                → `obj_depth_gte=95, obj_depth_lte=105`. Granularité
+                **objet** (PAS sample) : utile quand on veut les objets
+                à une profondeur précise, pas tout le sample.
         """
         try:
             filters = {"statusfilter": status}
@@ -412,6 +469,10 @@ def make_source_tools(thread_id: str) -> list:
             normalized_sample_ids = _normalize_sample_ids(sample_ids)
             if normalized_sample_ids:
                 filters["samples"] = ",".join(str(sample_id) for sample_id in normalized_sample_ids)
+            if obj_depth_gte is not None:
+                filters["depthmin"] = float(obj_depth_gte)
+            if obj_depth_lte is not None:
+                filters["depthmax"] = float(obj_depth_lte)
         except Exception as exc:
             return f"Erreur dans les paramètres EcoTaxa : {exc}"
 
@@ -785,6 +846,8 @@ def make_source_tools(thread_id: str) -> list:
         project_ids: list[int] | None = None,
         depth_max_lt: float | None = None,
         depth_max_gte: float | None = None,
+        depth_min_lt: float | None = None,
+        depth_min_gte: float | None = None,
         month: int | None = None,
     ) -> str:
         """Cherche les samples EcoTaxa dans une bbox géo et/ou une période.
@@ -812,23 +875,30 @@ def make_source_tools(thread_id: str) -> list:
         `project_ids` : restreint la recherche à une liste de projets
         EcoTaxa. Utile pour « samples du projet X dans la zone Y » en un
         seul appel (filtre côté SQL, pas post-process).
-        `depth_max_lt` / `depth_max_gte` : filtre la profondeur maximale
-        atteinte par le sample (en mètres), calculée depuis les objets
-        EcoTaxa indexés. Pour « samples qui n'ont pas atteint 100 m »,
-        utiliser `depth_max_lt=100`. Les samples sans profondeur connue ne
-        matchent pas ce filtre.
+        `depth_max_lt` / `depth_max_gte` : filtre la profondeur **maximale**
+        atteinte par le sample (en mètres). Pour « n'ont pas atteint 100 m »,
+        `depth_max_lt=100` ; pour « descendent à plus de 200 m » /
+        « descendent en-dessous de 200 m », `depth_max_gte=200`.
+        `depth_min_lt` / `depth_min_gte` : filtre la profondeur **minimale**
+        du sample (où le cast démarre). Pour « ne touche pas la surface,
+        depth_min ≥ 50 m », `depth_min_gte=50` ; pour « passe dans les 10
+        premiers mètres », `depth_min_lt=10`. Combiner
+        `depth_min_gte=A, depth_max_lt=B` pour « cast contenu dans la tranche
+        A–B m ».
+        Les samples sans profondeur connue ne matchent pas ces filtres.
         `month` : mois calendaire 1-12, toutes années confondues. Pour
         « samples du mois de juillet », utiliser `month=7`.
         Réponse plafonnée à 500 samples avec un summary par projet.
         Lecture du cache local — pas de download.
 
         Au moins UN filtre est requis (bbox, date_range, instrument,
-        zone_name, polygon_wkt, project_ids, depth_max_lt, depth_max_gte ou month).
+        zone_name, polygon_wkt, project_ids, depth_*_lt/gte ou month).
         """
         if (bbox is None and date_range is None and instrument is None
                 and polygon_wkt is None and zone_name is None
                 and not project_ids and depth_max_lt is None
-                and depth_max_gte is None and month is None):
+                and depth_max_gte is None and depth_min_lt is None
+                and depth_min_gte is None and month is None):
             return (
                 "Erreur : au moins un filtre requis (bbox, date_range, instrument, zone_name, polygon_wkt, project_ids, profondeur ou month). "
                 "Pour explorer sans filtre, précise une bbox large, une période, ou un instrument."
@@ -840,6 +910,8 @@ def make_source_tools(thread_id: str) -> list:
                 project_ids=project_ids,
                 depth_max_lt=depth_max_lt,
                 depth_max_gte=depth_max_gte,
+                depth_min_lt=depth_min_lt,
+                depth_min_gte=depth_min_gte,
                 month=month,
             )
         except EcoTaxaBrowserError as exc:
@@ -876,6 +948,8 @@ def make_source_tools(thread_id: str) -> list:
                 "project_ids": project_ids,
                 "depth_max_lt": depth_max_lt,
                 "depth_max_gte": depth_max_gte,
+                "depth_min_lt": depth_min_lt,
+                "depth_min_gte": depth_min_gte,
                 "month": month,
             },
         )
@@ -930,6 +1004,10 @@ def make_source_tools(thread_id: str) -> list:
         polygon_wkt: str | None = None,
         zone_name: str | None = None,
         project_ids: list[int] | None = None,
+        depth_max_lt: float | None = None,
+        depth_max_gte: float | None = None,
+        depth_min_lt: float | None = None,
+        depth_min_gte: float | None = None,
     ) -> str:
         """Liste les projets EcoTaxa avec au moins un sample dans une zone / période.
 
@@ -943,19 +1021,27 @@ def make_source_tools(thread_id: str) -> list:
         - `polygon_wkt` : polygone WKT fourni explicitement.
         - `bbox` / `date_range` : filtres classiques.
         - `project_ids` : restreint à une sous-liste de projets EcoTaxa.
+        - `depth_max_lt` / `depth_max_gte` / `depth_min_lt` / `depth_min_gte` :
+          filtres profondeur sample-level appliqués AVANT l'agrégation par
+          projet. Pour « projets avec samples descendant à plus de 1000 m »,
+          `depth_max_gte=1000`. Pour « projets dont les samples ne touchent
+          pas la surface (depth_min ≥ 50 m) », `depth_min_gte=50`. Un projet
+          est exclu si aucun de ses samples ne matche.
         Quand un polygone (résolu ou explicite) est appliqué, les counts par
         projet excluent les samples hors zone.
         Réponse agrégée au niveau projet : nombre de samples, total objets,
         instruments, plage de dates.
 
-        Au moins UN filtre (bbox, date_range, zone_name, polygon_wkt ou
-        project_ids) est requis.
+        Au moins UN filtre (bbox, date_range, zone_name, polygon_wkt,
+        project_ids ou depth_*_lt/gte) est requis.
         """
         if (bbox is None and date_range is None
                 and polygon_wkt is None and zone_name is None
-                and not project_ids):
+                and not project_ids and depth_max_lt is None
+                and depth_max_gte is None and depth_min_lt is None
+                and depth_min_gte is None):
             return (
-                "Erreur : au moins un filtre requis (bbox, date_range, zone_name, polygon_wkt ou project_ids). "
+                "Erreur : au moins un filtre requis (bbox, date_range, zone_name, polygon_wkt, project_ids ou profondeur). "
                 "Pour la liste de tous les projets, utilise list_ecotaxa_projects."
             )
         try:
@@ -963,6 +1049,10 @@ def make_source_tools(thread_id: str) -> list:
                 bbox=bbox, date_range=date_range,
                 polygon_wkt=polygon_wkt, zone_name=zone_name,
                 project_ids=project_ids,
+                depth_max_lt=depth_max_lt,
+                depth_max_gte=depth_max_gte,
+                depth_min_lt=depth_min_lt,
+                depth_min_gte=depth_min_gte,
             )
         except EcoTaxaBrowserError as exc:
             return f"Erreur EcoTaxa ({exc.code}) : {exc}"
@@ -1031,6 +1121,8 @@ def make_source_tools(thread_id: str) -> list:
         project_ids: list[int] | None = None,
         depth_max_lt: float | None = None,
         depth_max_gte: float | None = None,
+        depth_min_lt: float | None = None,
+        depth_min_gte: float | None = None,
         month: int | None = None,
     ) -> str:
         """Trouve les samples EcoTaxa dont le projet a le taxon attesté.
@@ -1051,10 +1143,14 @@ def make_source_tools(thread_id: str) -> list:
         `polygon_wkt` (alternative) : polygone WKT fourni explicitement.
         `project_ids` : restreint à une sous-liste de projets avant
         l'attestation taxon. Pour « taxon X dans la zone Y du projet Z ».
-        `depth_max_lt` / `depth_max_gte` : filtre la profondeur maximale
+        `depth_max_lt` / `depth_max_gte` : filtre la profondeur **maximale**
         atteinte par les samples avant l'attestation taxon. Pour « samples
-        avec Calanus qui n'ont pas atteint 100 m », utiliser
-        `depth_max_lt=100`.
+        avec Calanus qui n'ont pas atteint 100 m », `depth_max_lt=100` ;
+        pour « samples qui descendent à plus de 200 m », `depth_max_gte=200`.
+        `depth_min_lt` / `depth_min_gte` : filtre la profondeur **minimale**
+        du sample. Pour « ne touche pas la surface (depth_min ≥ 50 m) »,
+        `depth_min_gte=50`. Combiner `depth_min_gte=A, depth_max_lt=B` pour
+        « cast contenu dans la tranche A–B m ».
         `month` : mois calendaire 1-12, toutes années confondues.
         """
         try:
@@ -1065,6 +1161,8 @@ def make_source_tools(thread_id: str) -> list:
                 project_ids=project_ids,
                 depth_max_lt=depth_max_lt,
                 depth_max_gte=depth_max_gte,
+                depth_min_lt=depth_min_lt,
+                depth_min_gte=depth_min_gte,
                 month=month,
             )
         except EcoTaxaBrowserError as exc:

@@ -514,12 +514,22 @@ def _format_tool_line(name: str, args: dict | None = None) -> str:
     if name in _ENRICHMENT_PROGRESS_LABELS:
         return _format_enrichment_progress_panel(name, args)
 
-    if name == "query_ecotaxa" and "project_id" in args:
+    if name in ("query_ecotaxa", "query_ecotaxa_sample", "query_ecopart"):
         params = _format_tool_call_params(args)
         body = f"Paramètres : {params}" if params else ""
-        body = f"{body}\n\n*Export EcoTaxa en cours — cela peut prendre 1–2 minutes...*".strip()
+        if name == "query_ecotaxa":
+            status = "Export EcoTaxa en cours — cela peut prendre 1–2 minutes..."
+        elif name == "query_ecotaxa_sample":
+            status = "Export EcoTaxa sample en cours — cela peut prendre 1–2 minutes..."
+        else:
+            status = "Téléchargement EcoPart en cours — cela peut prendre 1–2 minutes..."
+        body = f"{body}\n\n*{status}*".strip()
         return (
-            _format_tool_call_details(name, body, summary_note="export EcoTaxa en cours")
+            _format_tool_call_details(
+                name,
+                body,
+                summary_note="export EcoTaxa en cours",
+            )
         )
 
     if name in ("query_bio_oracle", "couple_zooplankton_bio_oracle"):
@@ -562,6 +572,7 @@ _ENRICHMENT_PROGRESS_LABELS = {
 
 _SLOW_TOOL_PROGRESS_LABELS = {
     "query_ecotaxa": "Téléchargement EcoTaxa",
+    "query_ecotaxa_sample": "Téléchargement EcoTaxa sample",
     "query_ecopart": "Téléchargement EcoPart",
     "query_amundsen_ctd": "Téléchargement Amundsen CTD",
     "query_bio_oracle": "Téléchargement Bio-ORACLE",
@@ -680,7 +691,7 @@ def _format_tool_arg_literal(value) -> str:
 
 
 _SLOW_TOOLS = frozenset({
-    "query_ecotaxa", "query_ecopart", "query_amundsen_ctd",
+    "query_ecotaxa", "query_ecotaxa_sample", "query_ecopart", "query_amundsen_ctd",
     "query_bio_oracle", "couple_zooplankton_bio_oracle", "query_ogsl",
     "enrich_loaded_table_with_amundsen_ctd",
     "enrich_with_amundsen_ctd",

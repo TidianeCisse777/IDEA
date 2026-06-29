@@ -208,6 +208,8 @@ def samples_in_region(
     project_ids: list[int] | None = None,
     depth_max_lt: float | None = None,
     depth_max_gte: float | None = None,
+    depth_min_lt: float | None = None,
+    depth_min_gte: float | None = None,
     month: int | None = None,
 ) -> dict:
     """Return cached samples matching geo / temporal / instrument filters.
@@ -226,8 +228,13 @@ def samples_in_region(
     ``IN`` clause on ``samples_cache.project_id``). Combine with zone/date
     to scope « samples du projet X dans la zone Y entre A et B ».
 
-    ``depth_max_lt`` and ``depth_max_gte`` filter the cached sample-level
-    maximum object depth. NULL depths are excluded by these SQL comparisons.
+    ``depth_max_lt`` / ``depth_max_gte`` filter the cached sample-level
+    maximum object depth (the deepest object the sample reached).
+    ``depth_min_lt`` / ``depth_min_gte`` filter the sample-level minimum
+    object depth (the shallowest object — where the cast started). Combine
+    ``depth_min_gte=A`` with ``depth_max_lt=B`` to keep only samples whose
+    cast is entirely contained in the [A, B[ band. NULL depths are excluded
+    by these SQL comparisons.
     ``month`` filters samples whose cached date envelope overlaps a calendar
     month (1-12), regardless of year.
     """
@@ -254,6 +261,8 @@ def samples_in_region(
             project_ids=project_ids,
             depth_max_lt=depth_max_lt,
             depth_max_gte=depth_max_gte,
+            depth_min_lt=depth_min_lt,
+            depth_min_gte=depth_min_gte,
             month=month_value,
         ))
     finally:
@@ -288,6 +297,10 @@ def projects_in_region(
     polygon_wkt: str | None = None,
     zone_name: str | None = None,
     project_ids: list[int] | None = None,
+    depth_max_lt: float | None = None,
+    depth_max_gte: float | None = None,
+    depth_min_lt: float | None = None,
+    depth_min_gte: float | None = None,
 ) -> dict:
     """Group matching samples per project.
 
@@ -297,6 +310,11 @@ def projects_in_region(
     project-level aggregation.
 
     ``project_ids`` restricts to a subset of EcoTaxa projects.
+
+    ``depth_max_lt`` / ``depth_max_gte`` / ``depth_min_lt`` /
+    ``depth_min_gte`` filter the sample-level depth envelope **before**
+    project-level aggregation. A project is excluded from the result if
+    none of its samples match. Same semantics as ``samples_in_region``.
     """
     bbox_tuple = _validate_bbox(bbox)
     date_tuple = _validate_date_range(date_range)
@@ -315,6 +333,10 @@ def projects_in_region(
                   (bbox_tuple[0], bbox_tuple[1], bbox_tuple[2], bbox_tuple[3])),
             date_range=date_tuple,
             project_ids=project_ids,
+            depth_max_lt=depth_max_lt,
+            depth_max_gte=depth_max_gte,
+            depth_min_lt=depth_min_lt,
+            depth_min_gte=depth_min_gte,
         ))
     finally:
         conn.close()

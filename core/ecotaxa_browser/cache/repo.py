@@ -278,6 +278,8 @@ def query_samples_filtered(
     project_ids: Sequence[int] | None = None,
     depth_max_lt: float | None = None,
     depth_max_gte: float | None = None,
+    depth_min_lt: float | None = None,
+    depth_min_gte: float | None = None,
     month: int | None = None,
 ) -> Iterable[sqlite3.Row]:
     clauses: list[str] = []
@@ -307,6 +309,12 @@ def query_samples_filtered(
     if depth_max_gte is not None:
         clauses.append("depth_max >= ?")
         params.append(float(depth_max_gte))
+    if depth_min_lt is not None:
+        clauses.append("depth_min < ?")
+        params.append(float(depth_min_lt))
+    if depth_min_gte is not None:
+        clauses.append("depth_min >= ?")
+        params.append(float(depth_min_gte))
     if project_ids:
         placeholders = ",".join("?" for _ in project_ids)
         clauses.append(f"project_id IN ({placeholders})")

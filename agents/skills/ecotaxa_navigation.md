@@ -153,10 +153,38 @@ month=...)`.
   instead of resolving a project title. Only search project names when
   the user explicitly asks to "chercher/trouver le projet nommé ...".
 - `depth_max_lt` / `depth_max_gte` filter the cached sample-level
-  maximum object depth in metres. Use `depth_max_lt=100` for wording
-  such as "n'ont pas atteint 100 m", "pas eu 100 m", "sans données à
-  100 m", or "moins de 100 m de profondeur max". Samples whose
-  `depth_max` is unknown do not match these depth filters.
+  **maximum** object depth in metres (the deepest object the sample
+  reached). FR wording maps as follows:
+  - `depth_max_lt=X` (sample.depth_max < X) — "moins de X m de
+    profondeur max", "n'ont pas atteint X m", "pas eu X m", "sans
+    données à X m", "ne dépasse pas X m", "shallow / superficiel".
+  - `depth_max_gte=X` (sample.depth_max ≥ X) — "descend à plus de X m",
+    "descend en-dessous de X m", "atteint X m", "atteignent X m",
+    "samples profonds (≥ X m)", "samples qui plongent à X m". **The
+    French idiom "descend en-dessous de X" means "reaches deeper than
+    X" — map to `depth_max_gte`, NOT `depth_max_lt`.**
+  - A band: combine both — `depth_max_gte=50, depth_max_lt=200` for
+    "depth_max entre 50 et 200 m".
+  - **Never set both args to the same value** (`depth_max_lt=100 AND
+    depth_max_gte=100` is an empty band). If the user wants "exactly X
+    metres" or "objets entre A et B m", that's an **object-level**
+    request — route to `query_ecotaxa(project_id=..., taxon=...,
+    obj_depth_gte=A, obj_depth_lte=B)` which filters server-side via
+    EcoTaxa's `depthmin`/`depthmax`. For « exactement 100 m » use a
+    small symmetric band (e.g. `obj_depth_gte=95, obj_depth_lte=105`)
+    rather than a degenerate single value. `query_ecotaxa` is a
+    confirmed export — ask the user before launching (CT-AG-06).
+  - Samples whose `depth_max` is unknown do not match these filters.
+- `depth_min_lt` / `depth_min_gte` filter the cached sample-level
+  **minimum** object depth in metres (the shallowest object the sample
+  reached, i.e. where the cast started). FR wording:
+  - `depth_min_gte=X` — "ne touche pas la surface (depth_min ≥ X)",
+    "samples qui démarrent profond", "profondeur minimale ≥ X m".
+  - `depth_min_lt=X` — "samples qui passent dans les X premiers mètres",
+    "remontent jusqu'à X m", "qui touchent la surface".
+  - Combine `depth_min_gte=A, depth_max_lt=B` to get "samples
+    entièrement contenus dans la tranche A–B m" (cast démarre à ≥A,
+    descend < B).
 - `month` filters calendar month 1-12 across years. Use `month=7` for
   "mois de juillet" when no specific year is given. If the user gives a
   precise year or date interval, use `date_range` instead or combine it
@@ -476,7 +504,7 @@ tools so you can branch without thinking.
 |---|---|
 | `list_ecotaxa_projects()` | "quels projets j'ai accès" — full list of accessible projects. |
 | `find_ecotaxa_projects(title=..., instrument=...)` | "cherche un projet UVP5 / Calanus / Amundsen" — keyword search. |
-| `find_ecotaxa_projects_in_region(zone_name=..., date_range=...)` | "quels projets couvrent Baie de Baffin 2020-2022" — aggregate per project. Accepts `project_ids=` to narrow. |
+| `find_ecotaxa_projects_in_region(zone_name=..., date_range=..., depth_max_lt=..., depth_max_gte=..., depth_min_lt=..., depth_min_gte=...)` | "quels projets couvrent Baie de Baffin 2020-2022" — aggregate per project. Accepts `project_ids=` to narrow and depth filters at the sample level (a project is excluded when none of its samples match). |
 
 ### Locate samples (zone / time / taxon / project)
 
@@ -484,7 +512,7 @@ tools so you can branch without thinking.
 |---|---|
 | `find_ecotaxa_samples_in_region(zone_name=..., date_range=..., project_ids=...)` | **Step 1 of the pipeline.** Default for "samples en zone X entre A et B", possibly narrowed by project. |
 | `group_ecotaxa_project_samples_by_region(project_id=...)` | "groupe les samples du projet X par mer / secteur / zone / région" — returns `region -> sample_ids` plus `Hors zones IHO` and `Sans coordonnées`. |
-| `find_ecotaxa_observations(taxon=..., zone_name=..., date_range=..., month=..., depth_max_lt=..., depth_max_gte=..., project_ids=...)` | "samples **avec Calanus** en Baie de Baffin", including month/depth filters — taxon-centric. Returns samples whose project has the taxon attested. PREFER this over `find_ecotaxa_samples_in_region` whenever the user names a taxon — drop in for step 1. |
+| `find_ecotaxa_observations(taxon=..., zone_name=..., date_range=..., month=..., depth_max_lt=..., depth_max_gte=..., depth_min_lt=..., depth_min_gte=..., project_ids=...)` | "samples **avec Calanus** en Baie de Baffin", including month/depth filters — taxon-centric. Returns samples whose project has the taxon attested. PREFER this over `find_ecotaxa_samples_in_region` whenever the user names a taxon — drop in for step 1. |
 
 ### Inspect a project before export
 
@@ -542,6 +570,12 @@ User wants to export…
 | "projets EcoTaxa actifs en Baie de Baffin 2024" | `find_ecotaxa_projects_in_region(zone_name=..., date_range=...)` |
 | "samples avec Calanus en mer du Labrador" | `find_ecotaxa_observations(taxon="Calanus", zone_name=...)` |
 | "samples avec Calanus en juillet en Baie de Baffin qui n'ont pas atteint 100 m" | `find_ecotaxa_observations(taxon="Calanus", zone_name="Baie de Baffin", month=7, depth_max_lt=100)` |
+| "samples en Baie de Baffin 2024 qui descendent en-dessous de 200 m" | `find_ecotaxa_samples_in_region(zone_name=..., date_range=..., depth_max_gte=200)` |
+| "samples en Baie de Baffin 2024 qui ne touchent pas la surface (depth_min ≥ 50 m)" | `find_ecotaxa_samples_in_region(zone_name=..., date_range=..., depth_min_gte=50)` |
+| "samples avec Copepoda en oct. 2024 dans la tranche 50-200 m max" | `find_ecotaxa_observations(taxon="Copepoda", zone_name=..., date_range=..., depth_max_gte=50, depth_max_lt=200)` |
+| "samples avec Calanus dont le cast est contenu dans 50-200 m" | `find_ecotaxa_observations(taxon="Calanus", depth_min_gte=50, depth_max_lt=200)` |
+| "objets de Copepoda à ~100 m dans le projet 14853 (export)" | `query_ecotaxa(project_id=14853, taxon="Copepoda", obj_depth_gte=95, obj_depth_lte=105)` (confirmer avant) |
+| "projets EcoTaxa avec samples descendant à plus de 1000 m en Baie de Baffin 2024" | `find_ecotaxa_projects_in_region(zone_name="Baie de Baffin", date_range=..., depth_max_gte=1000)` |
 | "qu'y a-t-il dans le projet 1165 ?" | `preview_ecotaxa_project(1165)` (light) — full nav only if user asks "explore tous les samples" |
 | "samples LOKI dans Baie de Baffin" | `find_ecotaxa_samples_in_region(zone_name=..., instrument="Loki")` |
 | "samples du projet LOKI dans Baie de Baffin" | `find_ecotaxa_projects(title="LOKI")` → `find_ecotaxa_samples_in_region(zone_name=..., project_ids=[<id>])` |

@@ -350,6 +350,39 @@ def test_format_tool_line_query_ecotaxa_shows_waiting_message():
     assert "%" not in line
 
 
+def test_format_tool_line_query_ecotaxa_sample_shows_waiting_message():
+    """query_ecotaxa_sample → affiche le sample et un indicateur d'attente."""
+    from serve import _format_tool_line
+
+    line = _format_tool_line(
+        "query_ecotaxa_sample",
+        {"sample_id": 42000002, "status": "V"},
+    )
+
+    assert "query_ecotaxa_sample" in line
+    assert "<summary>🔧 query_ecotaxa_sample</summary>" in line
+    assert "sample_id=`42000002`" in line
+    assert "status=`V`" in line
+    assert "Export EcoTaxa sample en cours" in line
+    assert "%" not in line
+
+
+def test_format_tool_line_query_ecopart_shows_waiting_message():
+    """query_ecopart → affiche un indicateur d'attente lisible."""
+    from serve import _format_tool_line
+
+    line = _format_tool_line(
+        "query_ecopart",
+        {"project_id": 105},
+    )
+
+    assert "query_ecopart" in line
+    assert "<summary>🔧 query_ecopart</summary>" in line
+    assert "project_id=`105`" in line
+    assert "Téléchargement EcoPart" in line
+    assert "%" not in line
+
+
 def test_format_tool_line_query_bio_oracle_shows_waiting_message():
     """query_bio_oracle → affiche un indicateur d'attente sans faux pourcentage."""
     from serve import _format_tool_line

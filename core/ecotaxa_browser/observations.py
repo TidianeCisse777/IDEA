@@ -81,6 +81,8 @@ def find_observations(
     project_ids: list[int] | None = None,
     depth_max_lt: float | None = None,
     depth_max_gte: float | None = None,
+    depth_min_lt: float | None = None,
+    depth_min_gte: float | None = None,
     month: int | None = None,
 ) -> dict:
     """Return cached samples whose project has the taxon attested.
@@ -102,7 +104,11 @@ def find_observations(
             taxon attestation lookup. Use to scope "taxon X in zone Y for
             project Z" in one shot.
         depth_max_lt/depth_max_gte: filter the cached sample-level maximum
-            object depth in metres before project taxon attestation.
+            object depth in metres (the deepest object the sample reached).
+        depth_min_lt/depth_min_gte: filter the cached sample-level minimum
+            object depth in metres (the shallowest object — where the cast
+            started). Combine ``depth_min_gte`` and ``depth_max_lt`` to keep
+            only samples whose cast is contained in a depth band.
         month: calendar month 1-12, across years.
     """
     if status not in _VALID_STATUS_FILTERS:
@@ -136,6 +142,8 @@ def find_observations(
             project_ids=project_ids,
             depth_max_lt=depth_max_lt,
             depth_max_gte=depth_max_gte,
+            depth_min_lt=depth_min_lt,
+            depth_min_gte=depth_min_gte,
             month=month_value,
         ))
     finally:
