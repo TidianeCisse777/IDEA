@@ -1,5 +1,18 @@
 """TDD — tools/bio_oracle_sources.py."""
 
+import pytest
+
+from tools.session_store import SessionStore
+
+
+@pytest.fixture(autouse=True)
+def _isolated_store(monkeypatch):
+    """Fresh in-memory store so tests run under SESSION_STORE_DATABASE_URL/SessionStorePG."""
+    store = SessionStore()
+    monkeypatch.setattr("tools.session_store.default_store", store)
+    monkeypatch.setattr("tools.bio_oracle_sources._store", store)
+    return store
+
 
 def _bbox_tile_df(value, *, dataset_id="ds_test", time="2010-01-01T00:00:00Z", latitude=60.0, longitude=-65.0):
     """Build a one-row tile DataFrame for mocking _fetch_bio_oracle_bbox."""

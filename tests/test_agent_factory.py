@@ -381,6 +381,17 @@ def test_system_prompt_requires_reporting_ecopart_join_match_coverage():
     assert "not scientific interpretation" in prompt
 
 
+def test_system_prompt_requires_source_variable_when_chaining_enrichments():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "chaining enrichments on the same ecotaxa-derived table" in prompt
+    assert "exact variable produced by the previous step" in prompt
+    assert "do not rely on the bare active `df`" in prompt
+    assert "silently enrich the wrong table" in prompt
+    assert "table enrichie" in prompt
+
+
 def test_enrichment_skills_require_reporting_match_coverage():
     for path in ("agents/skills/ecopart_query.md", "agents/skills/ecotaxa_query.md"):
         skill = Path(path).read_text(encoding="utf-8").lower()
