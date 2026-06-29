@@ -112,6 +112,19 @@ def test_load_file_exposes_ecotaxa_alias_for_uvp_export(tmp_path):
     assert "object_depth_min" in result
 
 
+def test_load_file_exposes_ecotaxa_alias_for_standard_ecotaxa_export():
+    thread_id = "thread-standard-ecotaxa-export"
+    load_file_tool = next(t for t in make_tools(thread_id) if t.name == "load_file")
+    load_result = load_file_tool.invoke({"path": "data/demo/ecotaxa_sample_50.tsv"})
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "result = 'df_ecotaxa' in locals()"})
+
+    assert "Alias de session : `ecotaxa`" in load_result
+    assert "Route EcoPart" in load_result
+    assert result == "True"
+
+
 def test_load_file_exposes_ecopart_alias_for_uvp_export(tmp_path):
     ecopart_path = tmp_path / "ecopart_uvp_sample.tsv"
     pd.DataFrame({
@@ -442,3 +455,13 @@ def test_load_file_includes_uvp_hint(tmp_path):
     load_file_tool = next(t for t in tools if t.name == "load_file")
     result = load_file_tool.invoke({"path": str(p)})
     assert "uvp_ecopart" in result
+
+
+def test_ecotaxa_demo_export_does_not_trigger_uvp_hint():
+    """Un export EcoTaxa de démo ne doit pas déclencher le hint UVP raw."""
+    path = Path("data/demo/ecotaxa_sample_50.tsv")
+    df = pd.read_csv(path, sep="\t")
+
+    hint = _uvp_skill_hint(list(df.columns))
+
+    assert hint == ""

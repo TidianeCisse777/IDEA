@@ -68,12 +68,15 @@ The summary returned by `query_ecopart` contains a link `http://localhost:8000/d
 EcoPart provides **CTD + UVP particle profiles**; EcoTaxa provides **annotated taxonomy**.
 To combine:
 
-1. Load EcoTaxa: `query_ecotaxa(project_id=1165)`
-2. Load EcoPart: `query_ecopart(project_id=105)`
-3. Join: `join_ecotaxa_ecopart`
+1. If EcoTaxa is already in session from `load_file` or a prior export, do **not** call `query_ecotaxa` again.
+2. If an EcoPart project is already loaded in session, join locally with `join_ecotaxa_ecopart`.
+3. If EcoPart is not yet loaded, use `enrich_ecotaxa_with_ecopart_remote` as the default route.
+4. Only call `query_ecotaxa(project_id=...)` when the user explicitly asks to load or export a specific EcoTaxa project.
 
 **Join key:**
 `obj_orig_id` in EcoTaxa (e.g. `ips_007_899`) → strip `_NNN` suffix → `profile_id` (`ips_007`) → matches the `Profile` column in EcoPart.
+
+If the loaded EcoTaxa export already exposes `sample_id`, `object_depth_min`, `object_lat`, or `object_lon`, the remote enrichment tool can use those columns directly; do not force a fresh EcoTaxa download.
 
 ```python
 df_ecotaxa["profile_id"] = df_ecotaxa["obj_orig_id"].str.replace(r"_\d+$", "", regex=True)

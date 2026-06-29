@@ -351,6 +351,56 @@ def test_enrich_remote_accepts_explicit_ecopart_project_id():
     assert merged.loc[0, "ecopart_Sampled volume [L]"] == 222.0
 
 
+def test_enrich_remote_uses_sample_lat_long_for_standard_ecotaxa_export():
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+
+    _store.set(
+        "thread-remote-sample-coords:ecotaxa",
+        pd.DataFrame({
+            "sample_id": ["ips_007_1"],
+            "sample_lat": [48.5],
+            "sample_long": [-68.1],
+            "object_depth_min": [3.0],
+        }),
+        {"source": "file:ecotaxa_sample_50.tsv"},
+    )
+
+    mock_client = MagicMock()
+    mock_client.search_samples_by_bbox.return_value = [
+        {"id": 11, "lat": 48.5, "lon": -68.1},
+    ]
+    mock_client.get_sample_metadata.return_value = {
+        "profile_id": "ips_007",
+        "ecopart_project_id": 105,
+    }
+    mock_client.start_export.return_value = ["/Task/Show/101"]
+    mock_client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["ips_007"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [111.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        tool = next(
+            t for t in make_ecopart_tools("thread-remote-sample-coords")
+            if t.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({})
+
+    assert (
+        "Projet EcoPart résolu automatiquement" in result
+        or "Projet EcoPart résolu par fallback géographique" in result
+    )
+    assert "Enrichissement terminé" in result
+    assert _store.get("thread-remote-sample-coords")["df"].shape[0] == 1
+
+
 def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     import math
 

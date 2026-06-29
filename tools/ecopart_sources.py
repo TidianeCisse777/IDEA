@@ -251,8 +251,14 @@ def make_ecopart_tools(thread_id: str) -> list:
         resolution_note = ""
         if ecotaxa_project_id is None and ecopart_project_id is None:
             df_et = session_et["df"]
-            lat_col = next((c for c in ("object_lat", "latitude", "lat") if c in df_et.columns), None)
-            lon_col = next((c for c in ("object_lon", "longitude", "lon") if c in df_et.columns), None)
+            lat_col = next(
+                (c for c in ("object_lat", "sample_lat", "latitude", "lat") if c in df_et.columns),
+                None,
+            )
+            lon_col = next(
+                (c for c in ("object_lon", "sample_long", "longitude", "lon") if c in df_et.columns),
+                None,
+            )
             if lat_col is None or lon_col is None:
                 return (
                     "Projet EcoTaxa inconnu et coordonnées absentes du fichier — "

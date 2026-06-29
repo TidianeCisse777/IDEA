@@ -179,9 +179,11 @@ def test_system_prompt_is_grouped_by_routing_domain():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     headings = [
-        "## Identity and Operating Modes",
+        "## Identity",
+        "## Operating Model",
         "## Authorized Data Sources",
-        "## Global Routing Principles",
+        "## Routing Priority",
+        "## Session Rules",
         "## Context and Session State",
         "## Knowledge Base vs Data Requests",
         "## Files and DataFrames",
@@ -355,6 +357,26 @@ def test_system_prompt_routes_ecotaxa_list_preview_and_export_separately():
     assert "exporte" in prompt
 
 
+def test_system_prompt_routes_ecotaxa_enrichment_with_ecopart_to_remote_when_missing_loaded_ecopart():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "enrich_ecotaxa_with_ecopart_remote" in prompt
+    assert "no ecopart file/project is already loaded in session" in prompt
+    assert "even if `df_ecotaxa` is already loaded" in prompt
+    assert "detour through `query_ecotaxa`" in prompt
+    assert "no args by default" in prompt
+    assert "heavy operation" in prompt
+
+
+def test_ecopart_query_skill_prefers_remote_enrichment_when_ecotaxa_is_already_loaded():
+    skill = Path("agents/skills/ecopart_query.md").read_text(encoding="utf-8").lower()
+
+    assert "do **not** call `query_ecotaxa` again" in skill
+    assert "use `enrich_ecotaxa_with_ecopart_remote` as the default route" in skill
+    assert "only call `query_ecotaxa(project_id=...`" in skill or "only call `query_ecotaxa(project_id=...)" in skill
+
+
 def test_ecotaxa_navigation_distinguishes_loki_instrument_from_project():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -377,12 +399,12 @@ def test_system_prompt_prioritizes_read_only_source_tools_over_generic_pandas():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "routing priority and ambiguity policy" in prompt
-    assert "most specific read-only source tool" in prompt
-    assert "generic `run_pandas` / graph planning" in prompt
-    assert "must not steal requests" in prompt
-    assert "ask one short clarification question" in prompt
-    assert "do not export by default" in prompt
+    assert "## routing priority" in prompt
+    assert "prefer the most specific read-only source tool" in prompt
+    assert "generic `run_pandas`, graph planning, or export/download tools" in prompt
+    assert "ecotaxa read-only requests" in prompt
+    assert "heavy exports/downloads" in prompt
+    assert "explicit confirmation" in prompt
 
 
 def test_system_prompt_routes_ecotaxa_stats_tables_to_project_summary():
@@ -505,9 +527,8 @@ def test_system_prompt_routes_current_ecotaxa_sample_followups_without_kb():
     assert "samples présents" in prompt
     assert "which of these" in prompt
     assert "extract the visible `sample_id`" in prompt
-    assert "ask one short clarification question" in prompt
-    assert "which" in prompt
-    assert "le plus" in prompt
+    assert "short clarifying question" in prompt
+    assert "2–3 concrete scope options" in prompt
     assert "never route to the knowledge base" in prompt
     assert "do not call `query_copepod_knowledge_base`" in prompt
     assert "do not answer with a fresh metadata list" in prompt
@@ -707,7 +728,6 @@ def test_system_prompt_routes_copepod_micro_hydrodynamics_to_dedicated_skill():
     assert "for ecotaxa browser/data requests that mention these structures" in prompt
     assert "then load the source-specific skill" in prompt
     assert "ecotaxa read-only skill-loading order" in prompt
-    assert "does not override an explicit file/dataset loading request" in prompt
     assert "call `load_file` first" in prompt
     assert 'next tool call must be `load_skill("copepod_hydrodynamic_micro_zoom")`' in prompt
     assert "before `query_copepod_knowledge_base`" in prompt

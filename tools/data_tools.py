@@ -108,6 +108,18 @@ def _source_alias_for_loaded_file(path: str, col_names: list[str]) -> str | None
     )
     if is_ecotaxa_uvp:
         return "ecotaxa"
+    is_ecotaxa_export = (
+        "object_id" in col_set
+        and "sample_id" in col_set
+        and (
+            "object_annotation_category" in col_set
+            or "object_annotation_hierarchy" in col_set
+            or "object_annotation_status" in col_set
+            or "object_annotation_person_name" in col_set
+        )
+    )
+    if is_ecotaxa_export:
+        return "ecotaxa"
     return None
 
 
@@ -186,6 +198,17 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         cols = ", ".join(col_names)
 
         hint = _uvp_skill_hint(col_names)
+        alias_note = f"\nAlias de session : `{source_alias}`" if source_alias else ""
+        route_note = ""
+        if source_alias == "ecotaxa":
+            route_note = (
+                "\nRoute EcoPart : `enrich_ecotaxa_with_ecopart_remote` "
+                "(ne pas relancer `query_ecotaxa`)."
+            )
+        elif source_alias == "ecopart":
+            route_note = (
+                "\nRoute de jointure : `join_ecotaxa_ecopart` si EcoTaxa est déjà chargé."
+            )
 
         enc_note = f" (encodage : {meta['encoding']})" if meta.get("encoding") else ""
         return (
@@ -193,6 +216,8 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             f"{meta['n_rows']} lignes × {meta['n_cols']} colonnes\n"
             f"Variable persistante : `{variable_name}`\n"
             f"Colonnes : {cols}"
+            f"{alias_note}"
+            f"{route_note}"
             + (f"\n\n{hint}" if hint else "")
         )
 
