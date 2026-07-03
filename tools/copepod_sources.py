@@ -42,6 +42,27 @@ from tools.data_tools import _uvp_skill_hint
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
 
+_ECOTAXA_UI_BASE = "https://ecotaxa.obs-vlfr.fr"
+
+
+def _ecotaxa_project_url(project_id) -> str:
+    """Return the canonical EcoTaxa project page URL, or empty if id missing."""
+    try:
+        pid = int(project_id)
+    except (TypeError, ValueError):
+        return ""
+    return f"{_ECOTAXA_UI_BASE}/prj/{pid}"
+
+
+def _ecotaxa_sample_url(project_id, sample_id) -> str:
+    """Return the EcoTaxa project page URL filtered on one sample."""
+    try:
+        pid = int(project_id)
+        sid = int(sample_id)
+    except (TypeError, ValueError):
+        return ""
+    return f"{_ECOTAXA_UI_BASE}/prj/{pid}?samples={sid}"
+
 
 def _resolve_taxo_filter(taxon: str | int) -> dict:
     """Turn a taxon name or id into the EcoTaxa `taxo` filter fragment.
@@ -351,12 +372,19 @@ def make_source_tools(thread_id: str) -> list:
         df.to_csv(tsv_path, sep="\t", index=False)
 
         hint = _uvp_skill_hint(list(df.columns))
+        # Prefer a sample-scoped URL when the export targets one sample.
+        sample_id_from_meta = (meta or {}).get("sample_id")
+        source_url = (
+            _ecotaxa_sample_url(project_id, sample_id_from_meta)
+            if sample_id_from_meta is not None
+            else _ecotaxa_project_url(project_id)
+        )
         summary = (
             f"{label} chargé — {len(df)} lignes, {len(df.columns)} colonnes.\n"
             f"Données disponibles dans `{variable_name}` et `df_ecotaxa`.\n"
             f"Appelle run_pandas directement pour analyser.\n"
             f"Télécharger : {download_url(f'{file_id}.tsv')}\n"
-            f"Source EcoTaxa : https://ecotaxa.obs-vlfr.fr/prj/{project_id}"
+            f"Source EcoTaxa : {source_url}"
         )
         if hint:
             summary += f"\n{hint}"
@@ -388,14 +416,15 @@ def make_source_tools(thread_id: str) -> list:
             return "Aucun projet EcoTaxa ne correspond aux critères."
 
         lines = [
-            "| project_id | name | instrument | status | objects | validated |",
-            "|---:|---|---|---|---:|---:|",
+            "| project_id | name | instrument | status | objects | validated | url |",
+            "|---:|---|---|---|---:|---:|---|",
         ]
         lines.extend(
             f"| {project['project_id']} | {project['name']} | "
             f"{project.get('instrument') or '—'} | {project.get('status') or '—'} | "
             f"{_format_number(project.get('object_count'))} | "
-            f"{_format_number(project.get('percent_validated'))} % |"
+            f"{_format_number(project.get('percent_validated'))} % | "
+            f"{_ecotaxa_project_url(project['project_id'])} |"
             for project in projects
         )
         return "\n".join(lines)
@@ -413,8 +442,12 @@ def make_source_tools(thread_id: str) -> list:
         if not projects:
             return "Aucun projet EcoTaxa accessible."
 
-        lines = ["| project_id | name |", "|---:|---|"]
-        lines.extend(f"| {project['project_id']} | {project['name']} |" for project in projects)
+        lines = ["| project_id | name | url |", "|---:|---|---|"]
+        lines.extend(
+            f"| {project['project_id']} | {project['name']} | "
+            f"{_ecotaxa_project_url(project['project_id'])} |"
+            for project in projects
+        )
         return "\n".join(lines)
 
     @tool
@@ -476,6 +509,8 @@ def make_source_tools(thread_id: str) -> list:
         if not objects:
             lines.append("")
             lines.append("Aucun objet dans l'aperçu.")
+            lines.append("")
+            lines.append(f"Source EcoTaxa : {_ecotaxa_project_url(project_id)}")
             return "\n".join(lines)
 
         lines.extend([
@@ -488,6 +523,8 @@ def make_source_tools(thread_id: str) -> list:
             f"{_format_number(obj.get('depth_min'))} | {obj.get('taxon') or '—'} |"
             for obj in objects
         )
+        lines.append("")
+        lines.append(f"Source EcoTaxa : {_ecotaxa_project_url(project_id)}")
         return "\n".join(lines)
 
     @tool
@@ -890,6 +927,10 @@ def make_source_tools(thread_id: str) -> list:
         lines.append("## Colonnes uniques par projet")
         for pid, cols in result["unique_to_project"].items():
             lines.append(f"- projet {pid} : {cols if cols else '(aucune)'}")
+        lines.append("")
+        lines.append("## Sources")
+        for pid in project_ids:
+            lines.append(f"- projet {pid} : {_ecotaxa_project_url(pid)}")
         return "\n".join(lines)
 
     @tool
@@ -1025,8 +1066,8 @@ def make_source_tools(thread_id: str) -> list:
                 else ""
             ),
             "",
-            "| sample_id | projet | lat | lon | date_min | date_max | depth_min | depth_max | instrument |",
-            "|---:|---:|---:|---:|---|---|---:|---:|---|",
+            "| sample_id | projet | lat | lon | date_min | date_max | depth_min | depth_max | instrument | url |",
+            "|---:|---:|---:|---:|---|---|---:|---:|---|---|",
         ]
         for s in shown_samples:
             lines.append(
@@ -1034,7 +1075,8 @@ def make_source_tools(thread_id: str) -> list:
                 f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} | "
                 f"{_format_number(s.get('depth_min'))} | "
                 f"{_format_number(s.get('depth_max'))} | "
-                f"{s.get('instrument') or '—'} |"
+                f"{s.get('instrument') or '—'} | "
+                f"{_ecotaxa_sample_url(s['project_id'], s['sample_id'])} |"
             )
         if len(result["samples"]) > max_rows:
             lines.append("")
@@ -1125,14 +1167,15 @@ def make_source_tools(thread_id: str) -> list:
             f"# {result['total_projects']} projets, {result['total_samples']} samples"
             + (" — résultat partiel" if result.get("partial") else ""),
             "",
-            "| project_id | samples | objets | instruments | date_min | date_max |",
-            "|---:|---:|---:|---|---|---|",
+            "| project_id | samples | objets | instruments | date_min | date_max | url |",
+            "|---:|---:|---:|---|---|---|---|",
         ]
         for p in result["projects"]:
             lines.append(
                 f"| {p['project_id']} | {p['sample_count']} | "
                 f"{p['object_count']} | {', '.join(p['instruments']) or '—'} | "
-                f"{p['date_min'] or '—'} | {p['date_max'] or '—'} |"
+                f"{p['date_min'] or '—'} | {p['date_max'] or '—'} | "
+                f"{_ecotaxa_project_url(p['project_id'])} |"
             )
         if result.get("partial"):
             lines.append(_ecotaxa_partial_notice(result).strip())
@@ -1248,15 +1291,16 @@ def make_source_tools(thread_id: str) -> list:
             f"Statut filtré : {result['status_filter']} · "
             f"Projets attestés : {result['attested_projects']}",
             "",
-            "| sample_id | projet | lat | lon | date_min | date_max | depth_min | depth_max |",
-            "|---:|---:|---:|---:|---|---|---:|---:|",
+            "| sample_id | projet | lat | lon | date_min | date_max | depth_min | depth_max | url |",
+            "|---:|---:|---:|---:|---|---|---:|---:|---|",
         ]
         for s in result["samples"][:50]:
             lines.append(
                 f"| {s['sample_id']} | {s['project_id']} | {s['lat']:.3f} | "
                 f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} | "
                 f"{_format_number(s.get('depth_min'))} | "
-                f"{_format_number(s.get('depth_max'))} |"
+                f"{_format_number(s.get('depth_max'))} | "
+                f"{_ecotaxa_sample_url(s['project_id'], s['sample_id'])} |"
             )
         if len(result["samples"]) > 50:
             lines.append("")
@@ -1314,6 +1358,10 @@ def make_source_tools(thread_id: str) -> list:
             lines.append("")
             lines.append("(Aucun free field exposé par le projet pour ce sample.)")
 
+        lines.append("")
+        lines.append(
+            f"Source EcoTaxa : {_ecotaxa_sample_url(sample['project_id'], sample['sample_id'])}"
+        )
         return "\n".join(lines)
 
     @tool
@@ -1448,8 +1496,8 @@ def make_source_tools(thread_id: str) -> list:
                 "",
             ])
         lines.extend([
-            "| sample_id | projet | V | P | D | U | total | top taxa |",
-            "|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| sample_id | projet | V | P | D | U | total | top taxa | url |",
+            "|---:|---:|---:|---:|---:|---:|---:|---|---|",
         ])
         for entry in stats:
             v = entry["nb_validated"]
@@ -1460,7 +1508,8 @@ def make_source_tools(thread_id: str) -> list:
             names = [t["name"] for t in entry.get("per_taxon", [])[:5]]
             top = ", ".join(names) if names else "—"
             lines.append(
-                f"| {entry['sample_id']} | {entry['projid']} | {v} | {p} | {d} | {u} | {total} | {top} |"
+                f"| {entry['sample_id']} | {entry['projid']} | {v} | {p} | {d} | {u} | {total} | {top} | "
+                f"{_ecotaxa_sample_url(entry['projid'], entry['sample_id'])} |"
             )
         return "\n".join(lines)
 
@@ -1517,8 +1566,8 @@ def make_source_tools(thread_id: str) -> list:
             )
 
         lines = [
-            "| project_id | n_samples | date_min | date_max | bbox (S/W/N/E) | instruments | V | P | D | U | top taxa |",
-            "|---:|---:|---|---|---|---|---:|---:|---:|---:|---|",
+            "| project_id | n_samples | date_min | date_max | bbox (S/W/N/E) | instruments | V | P | D | U | top taxa | url |",
+            "|---:|---:|---|---|---|---|---:|---:|---:|---:|---|---|",
         ]
         for entry in stats:
             bbox = entry.get("bbox") or {}
@@ -1540,7 +1589,8 @@ def make_source_tools(thread_id: str) -> list:
                 f"{entry.get('date_min') or '—'} | {entry.get('date_max') or '—'} | "
                 f"{bbox_cell} | {instruments} | "
                 f"{entry['nb_validated']} | {entry['nb_predicted']} | "
-                f"{entry['nb_dubious']} | {entry['nb_unclassified']} | {top} |"
+                f"{entry['nb_dubious']} | {entry['nb_unclassified']} | {top} | "
+                f"{_ecotaxa_project_url(entry['project_id'])} |"
             )
         returned_ids = {int(entry["project_id"]) for entry in stats}
         missing_ids = [int(pid) for pid in project_ids if int(pid) not in returned_ids]
