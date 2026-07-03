@@ -171,6 +171,23 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
     project_note = (
         f" avec EcoPart {selected_project_id}" if selected_project_id is not None else ""
     )
+    source_lines = ["\nSources :"]
+    session_et = _store.get(f"{thread_id}:ecotaxa")
+    ecotaxa_pid = None
+    if session_et:
+        ecotaxa_pid = (session_et.get("meta") or {}).get("project_id")
+    if ecotaxa_pid is not None:
+        source_lines.append(
+            f"- EcoTaxa projet {ecotaxa_pid} : "
+            f"https://ecotaxa.obs-vlfr.fr/prj/{ecotaxa_pid}"
+        )
+    if selected_project_id is not None:
+        source_lines.append(
+            f"- EcoPart projet {selected_project_id} : "
+            f"https://ecopart.obs-vlfr.fr/prj/{selected_project_id}"
+        )
+    sources_block = "\n".join(source_lines) if len(source_lines) > 1 else ""
+
     return (
         f"Enrichissement terminé{project_note} — {len(merged)} lignes "
         f"({n_matched} matchées sur un bin EcoPart), {len(merged.columns)} colonnes.\n"
@@ -182,6 +199,7 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
         f"sum(objets)/sum(volume) global — voir skill `uvp_ecotaxa`.\n"
         f"Données disponibles dans `{joined_variable_name}` et `df_ecotaxa_ecopart` — "
         f"appelle run_pandas directement pour analyser."
+        f"{sources_block}"
     )
 
 
@@ -615,7 +633,8 @@ def make_ecopart_tools(thread_id: str) -> list:
             f"{f' (« {name} »)' if name and name != '?' else ''}.\n"
             f"Résolution : {how}. "
             "Aucun export n'a été lancé — c'est juste un lookup. "
-            "Pour enrichir, utiliser `enrich_ecotaxa_with_ecopart_remote`."
+            "Pour enrichir, utiliser `enrich_ecotaxa_with_ecopart_remote`.\n\n"
+            f"Source EcoPart : https://ecopart.obs-vlfr.fr/prj/{pid}"
         )
 
     return [

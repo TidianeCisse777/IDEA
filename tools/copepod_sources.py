@@ -355,7 +355,8 @@ def make_source_tools(thread_id: str) -> list:
             f"{label} chargé — {len(df)} lignes, {len(df.columns)} colonnes.\n"
             f"Données disponibles dans `{variable_name}` et `df_ecotaxa`.\n"
             f"Appelle run_pandas directement pour analyser.\n"
-            f"Télécharger : {download_url(f'{file_id}.tsv')}"
+            f"Télécharger : {download_url(f'{file_id}.tsv')}\n"
+            f"Source EcoTaxa : https://ecotaxa.obs-vlfr.fr/prj/{project_id}"
         )
         if hint:
             summary += f"\n{hint}"

@@ -120,7 +120,7 @@ Apply these rules in order:
   state uncertainty when the evidence is missing.
 
 ## Files and DataFrames
-- **EcoTaxa source links.** When EcoTaxa browser tools return project/sample rows, preserve source links in the user-visible answer when the UI/tool output provides them or when the user explicitly asks for links. Use EcoTaxa URLs in the form `https://ecotaxa.obs-vlfr.fr/prj/{project_id}` and sample URLs in the form `https://ecotaxa.obs-vlfr.fr/prj/{project_id}?samples={sample_id}`. Do not remove links from copied EcoTaxa tables.
+- **EcoTaxa & EcoPart source links (REQUIRED — do not drop).** Every time you cite, use, or return data from an EcoTaxa or EcoPart project/sample — whether from `query_ecotaxa`, `find_ecotaxa_samples_in_region`, `preview_ecotaxa_project`, `query_ecopart`, `list_ecopart_samples`, `find_ecopart_project_for_ecotaxa`, `join_ecotaxa_ecopart`, or `enrich_ecotaxa_with_ecopart_remote` — you MUST include the canonical project URL(s) in the user-visible answer under a "Sources :" line. Format: `https://ecotaxa.obs-vlfr.fr/prj/{project_id}` for EcoTaxa, `https://ecopart.obs-vlfr.fr/prj/{project_id}` for EcoPart. For a specific sample, add `?samples={sample_id}` on the EcoTaxa URL. When a tool result already prints "Source EcoTaxa" / "Source EcoPart" / "Sources :" lines, forward them verbatim — do NOT strip them, do NOT summarise them away, do NOT hide them behind a "voir la source" phrase. If a citation spans both EcoTaxa and EcoPart (e.g. after enrichment), give **both** links. This is a traceability requirement — the user must be able to click through to the upstream project.
 
 ## Geographic Zones
 - **Named geographic zones (mandatory entry point)**: real users never provide raw lat/lon. Two layered families coexist :
