@@ -8,9 +8,21 @@ project/sample exploration is in development. Amundsen CTD, OGSL, and
 Bio-ORACLE tools exist but are still being integrated more tightly into the
 agent workflow.
 
-User-facing docs:
+## Documentation (spec figée)
 
-- [`CAPABILITIES.md`](CAPABILITIES.md): what the assistant can do.
+Le jeu de documents de référence figés, en français, à la racine du repo :
+
+| Doc | Contenu |
+|---|---|
+| [`SPEC.md`](SPEC.md) | Spécification figée : identité, périmètre, use cases classés (UC-A…UC-J), inventaire complet des ~53 tools, skills, RAG, contraintes dures |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Architecture logicielle : serve.py / agent.py / tools / RAG / MCP / Open WebUI, état de session, config, ADR |
+| [`PARTAGE.md`](PARTAGE.md) | Partage & déploiement : état actuel (Cloudflare Tunnel) et cible (VM prod / sous-domaine ULaval) |
+| [`SEQUENCES.md`](SEQUENCES.md) | Diagrammes de séquence par use case (S0…S9) |
+
+Runbooks et docs complémentaires :
+
+- [`CONTEXT.md`](CONTEXT.md) : identité métier de l'agent.
+- [`DEPLOY.md`](DEPLOY.md) : runbook prod détaillé (hardening, TLS, backups, migration).
 - [`MCP_CAPABILITIES.md`](MCP_CAPABILITIES.md): what the EcoTaxa MCP layer can do.
 - [`MCP_ECOTAXA_SHARE_GUIDE.md`](MCP_ECOTAXA_SHARE_GUIDE.md): shareable EcoTaxa MCP setup and usage guide.
 

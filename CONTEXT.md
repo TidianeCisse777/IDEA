@@ -22,7 +22,7 @@ Ce document définit l'identité métier de l'agent qui tourne dans ce repo et l
 - Produit des graphiques matplotlib via `run_graph` après planification (`graph_planner` + `graph_writer`).
 - Interroge un workspace SQL en lecture seule via `list_sql_tables`, `preview_sql_table`, `copy_sql_query_to_workspace`.
 - Charge des skills à la demande pour les opérations spécialisées (`load_skill`).
-- Interroge la base de connaissances copépodes (9 docs RAG, ChromaDB) via `query_copepod_knowledge_base`.
+- Interroge la base de connaissances copépodes (11 docs RAG, ChromaDB) via `query_copepod_knowledge_base`.
 - Génère des livrables PDF via `deliverable_writer` + `export_deliverable`.
 
 ## Ce que l'agent ne fait pas
@@ -53,20 +53,23 @@ La production graphique impose toujours la séquence : `load_skill("graph_planne
 
 ## Skills et RAG : deux registres distincts
 
-- **RAG** (`query_copepod_knowledge_base`) — recherche vectorielle sur 9 documents (`core/copepod_rag/docs/`). Sert au savoir : colonnes, méthodes, taxonomie, sources.
+- **RAG** (`query_copepod_knowledge_base`) — recherche vectorielle sur 11 documents (`core/copepod_rag/docs/`). Sert au savoir : colonnes, méthodes, taxonomie, sources.
 - **Skill** (`load_skill(name)`) — chargement en bloc d'un document Markdown. Sert au geste : comment lancer une extraction EcoTaxa, comment écrire un graphique matplotlib, comment compiler un livrable.
 
-Les 11 skills disponibles sont dans `agents/skills/` :
+Les 14 skills disponibles sont dans `agents/skills/` :
 
 | Skill | Rôle |
 |---|---|
 | `graph_planner` | Décide type de graphique, colonnes, filtres, unités. |
 | `graph_writer` | Template de code matplotlib exécutable. |
+| `ecotaxa_navigation` | Routage read-only EcoTaxa : list/scan/export, counts, schéma, dry-run. |
 | `ecotaxa_query` | Règles d'extraction EcoTaxa et interprétation des résultats. |
 | `ecopart_query` | Règles d'extraction EcoPart. |
 | `amundsen_ctd_query` | Règles d'extraction Amundsen CTD via ERDDAP. |
 | `bio_oracle_query` | Règles d'extraction Bio-ORACLE par scénario / couche. |
 | `environmental_join` | Stratégie de jointure biologique ↔ environnemental. |
+| `neolabs_abundance_analysis` | Abondance / diversité / ordination des fichiers NeoLabs. |
+| `copepod_hydrodynamic_micro_zoom` | Garde-fous d'interprétation micro-hydrodynamique (fronts, panaches…). |
 | `sql_workspace_query` | Règles du workspace SQL lecture seule. |
 | `uvp_ecotaxa` | Auto-chargé quand `load_file` détecte un export UVP EcoTaxa. |
 | `uvp_ecopart` | Auto-chargé quand `load_file` détecte un export UVP EcoPart. |

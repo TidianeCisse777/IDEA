@@ -220,7 +220,7 @@ IDEA, c'est elle qui fait foi. Le serveur MCP (C4) suivra plus tard.
 Côté MCP (C4) le naming est plus compact (`samples_in_region`,
 `taxa_stats`, `compare_project_schemas`). Cet écart est documenté
 mais pas corrigé tout de suite — pour mémoire la table des
-correspondances actuelles est dans [`docs/TOOLS.md`](docs/TOOLS.md).
+correspondances actuelles est dans [`TOOLS.md`](TOOLS.md).
 
 Quand on ajoutera un nouveau tool, on respecte la convention
 `@tool` d'abord, puis on duplique avec un nom compact côté MCP si
@@ -253,9 +253,8 @@ Quelle que soit la direction, ces actions ont un ROI direct :
 ## 6. Pour Aller Plus Loin
 
 - Capacités utilisateur : [`MCP_CAPABILITIES.md`](MCP_CAPABILITIES.md)
-- Spec d'enrichissement par lat/lon/temps :
-  [`ENRICHMENT_CAPABILITIES.md`](ENRICHMENT_CAPABILITIES.md) +
-  [`ENRICHMENT_QUICKSTART.md`](ENRICHMENT_QUICKSTART.md)
-- Architecture globale : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- Inventaire tools : [`docs/TOOLS.md`](docs/TOOLS.md)
+- Use cases & capacités (spec figée) : [`SPEC.md`](SPEC.md) (UC-F/UC-G pour l'enrichissement)
+- Mécanique EcoTaxa ↔ EcoPart : [`ENRICHMENT_ECOTAXA_ECOPART.md`](ENRICHMENT_ECOTAXA_ECOPART.md)
+- Architecture globale : [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- Inventaire tools : [`TOOLS.md`](TOOLS.md)
 - README MCP : [`core/mcp/README.md`](core/mcp/README.md)

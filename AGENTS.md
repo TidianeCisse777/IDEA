@@ -10,8 +10,8 @@ Utilisateurs : professeurs et étudiants. Réponses en français par défaut.
 | Doc | Pour quoi faire |
 |---|---|
 | `CONTEXT.md` | Identité métier de l'agent, périmètre, ce qu'il fait / ne fait pas, sources, skills, RAG |
-| `docs/ARCHITECTURE.md` | Comment `agent.py`, `serve.py`, les tools, le RAG, OpenWebUI sont câblés |
-| `docs/TOOLS.md` | Inventaire des 23 tools exposés au LLM, par catégorie |
+| `ARCHITECTURE.md` | Comment `agent.py`, `serve.py`, les tools, le RAG, OpenWebUI sont câblés |
+| `TOOLS.md` | Inventaire des ~53 tools exposés au LLM, par catégorie |
 | `agents/copepod_system_prompt.py` | System prompt complet (règles de routage des tools, périmètre, sécurité) |
 | `assistant-copepodes-specs/` | Repo des specs métier (PRD V1.2, 14 UC, 29 contraintes, glossaire) |
 
@@ -41,9 +41,9 @@ agent.py — LangGraph create_react_agent
     ├── tools/sql_workspace.py      → list/preview/copy SQL (read-only)
     └── tools/deliverable_tool.py   → export_deliverable (PDF via WeasyPrint)
 
-core/copepod_rag/    ChromaDB (9 docs RAG)
+core/copepod_rag/    ChromaDB (11 docs RAG)
 core/ecotaxa_client/ core/ecopart_client/ core/amundsen_ctd_client/ core/bio_oracle_client/
-agents/skills/       11 skills Markdown chargeables à la demande
+agents/skills/       14 skills Markdown chargeables à la demande
 ```
 
 Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction. Il n'y a pas de « mode » de session — le comportement est piloté par le system prompt.
@@ -107,12 +107,12 @@ agents/
   copepod_system_prompt.py  System prompt complet (anglais, ~64 lignes)
   copepod_profile.py        Métadonnées de profil
   copepod_prompt.py         (déprécié — référence historique uniquement)
-  skills/                   11 skills Markdown
+  skills/                   14 skills Markdown
 
-tools/                    23 tools @tool LangChain (voir docs/TOOLS.md)
+tools/                    ~53 tools @tool LangChain (voir TOOLS.md)
 
 core/
-  copepod_rag/            ChromaDB + 9 docs RAG
+  copepod_rag/            ChromaDB + 11 docs RAG
   ecotaxa_client.py … *_client.py
   instruction_renderer/   Composition des system prompts
   mcp/                    MCP integrations (si actives)
@@ -120,11 +120,8 @@ core/
 
 tests/                    pytest (~30 modules, 42 tests verts au dernier merge main)
 evals/                    Évaluations LangSmith (copepod graph happy path…)
-docs/
-  ARCHITECTURE.md         Comment ça tourne
-  TOOLS.md                Inventaire détaillé des tools
-  openwebui-feedback-realtime.md
-  superpowers/            Notes spec ad-hoc
+SPEC.md ARCHITECTURE.md TOOLS.md PARTAGE.md SEQUENCES.md   Docs de référence figées (racine)
+docs/                     Notes internes / test maps (gitignored sauf exceptions)
 data/                     checkpoints.sqlite, fichiers de session (gitignored)
 logs/                     Logs runtime
 openwebui/                Hooks et bridges OpenWebUI
@@ -183,6 +180,6 @@ pytest tests/test_serve_streaming.py       # SSE / OpenWebUI
 
 ## Pour aller plus loin
 
-- Le flow exact d'un message utilisateur jusqu'à l'image renvoyée : `docs/ARCHITECTURE.md`.
-- L'inventaire détaillé de chaque tool, ce qu'il prend, ce qu'il rend : `docs/TOOLS.md`.
+- Le flow exact d'un message utilisateur jusqu'à l'image renvoyée : `ARCHITECTURE.md`.
+- L'inventaire détaillé de chaque tool, ce qu'il prend, ce qu'il rend : `TOOLS.md`.
 - Les 14 UC et 29 contraintes du PRD V1.2 et leur point d'ancrage côté IDEA : `docs/UC_TRACEABILITY.md`.
