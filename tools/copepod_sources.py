@@ -451,6 +451,171 @@ def make_source_tools(thread_id: str) -> list:
         return "\n".join(lines)
 
     @tool
+    def list_ecotaxa_campaigns(
+        query: str | None = None,
+        min_legs: int = 1,
+        instrument: str | None = None,
+    ) -> str:
+        """Liste les campagnes EcoTaxa (regroupement de projets par titre-racine).
+
+        Utiliser quand l'utilisateur pose une question sur les **campagnes**,
+        **legs**, **missions**, ou **expéditions** — p.ex. « quelles campagnes
+        sont dans EcoTaxa ? », « donne-moi les legs Amundsen 2024 »,
+        « samples de la campagne ArcticNet 2015 », « combien de legs pour la
+        mission GreenEdge ? ». Une campagne = ensemble de projets EcoTaxa
+        partageant le même titre-racine (ex. `uvp6_sn000006hf_2024_am_leg5`,
+        `uvp6_sn000006hf_2024_am_leg2` → racine `uvp6_sn000006hf_2024_am`,
+        2 legs).
+
+        Args:
+            query: filtre par sous-chaîne insensible à la casse sur la racine
+                ou un titre de projet (ex. "am 2024", "ArcticNet", "greenedge").
+            min_legs: n'affiche que les campagnes avec au moins N legs (≥ 1).
+            instrument: filtre par instrument (ex. "UVP6", "Loki", "UVP5SD").
+
+        Renvoie un tableau par campagne avec : racine, nb de legs, instrument,
+        project_ids (à passer ensuite à `find_ecotaxa_samples_in_region`
+        pour drill dans les samples). Lecture du cache local — pas de download.
+        """
+        import json as _json
+        import re as _re
+
+        # Natural-name → in-title code aliases. Users type "Amundsen 2024" or
+        # "GreenEdge" — titles carry the short codes ("am", "green_edge"…).
+        _campaign_aliases: dict[str, list[str]] = {
+            "amundsen": ["am"],
+            "arcticnet": ["arctic_net", "arcticnet", "arctic"],
+            "greenedge": ["green_edge", "green edge", "greenedge"],
+            "green edge": ["green_edge", "greenedge"],
+            "green_edge": ["greenedge"],
+            "ge": ["green_edge", "greenedge"],
+            "iaos": ["iaos"],
+            "arctica": ["arctic"],
+        }
+
+        def _query_variants(raw: str) -> list[str]:
+            base = (raw or "").strip().lower()
+            variants = {base}
+            for alias, syns in _campaign_aliases.items():
+                if alias and alias in base:
+                    for syn in syns:
+                        variants.add(base.replace(alias, syn))
+            return [v for v in variants if v]
+
+        def _norm(text: str) -> str:
+            return _re.sub(r"[\W_]+", "", (text or "").lower())
+
+        def _matches_query(variants: list[str], *fields: str) -> bool:
+            haystack_norm = " ".join(_norm(field) for field in fields if field)
+            for variant in variants:
+                tokens = _re.findall(r"\w+", variant.lower())
+                if tokens and all(token in haystack_norm for token in tokens):
+                    return True
+            return False
+
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            rows = conn.execute(
+                "SELECT project_id, schema_json FROM project_schemas_cache"
+            ).fetchall()
+            sample_counts = {
+                int(row[0]): int(row[1])
+                for row in conn.execute(
+                    "SELECT project_id, COUNT(*) FROM samples_cache GROUP BY project_id"
+                ).fetchall()
+            }
+            conn.close()
+        except Exception as exc:
+            return f"Erreur lors de la lecture du cache EcoTaxa : {exc}"
+
+        if not rows:
+            return "Aucun projet EcoTaxa dans le cache local."
+
+        _leg_re = _re.compile(r"[_\-\s](leg|lg|l)\s*\d+\s*$", _re.IGNORECASE)
+
+        campaigns: dict[str, dict] = {}
+        query_variants = _query_variants(query) if query else []
+        instrument_lc = (instrument or "").strip().lower()
+
+        for pid, schema_json in rows:
+            try:
+                schema = _json.loads(schema_json)
+            except Exception:
+                continue
+            title = str(schema.get("title") or "").strip()
+            if not title:
+                continue
+            project_instrument = str(schema.get("instrument") or "").strip()
+            if instrument_lc and project_instrument.lower() != instrument_lc:
+                continue
+
+            root = _leg_re.sub("", title).strip("_- ") or title
+            root_key = root.lower()
+
+            if query_variants and not _matches_query(query_variants, title, root):
+                continue
+
+            group = campaigns.setdefault(
+                root_key,
+                {
+                    "root": root,
+                    "example_title": title,
+                    "project_ids": [],
+                    "instruments": set(),
+                    "n_samples": 0,
+                },
+            )
+            group["project_ids"].append(int(pid))
+            if project_instrument:
+                group["instruments"].add(project_instrument)
+            group["n_samples"] += int(sample_counts.get(int(pid), 0))
+
+        campaigns = {
+            key: value
+            for key, value in campaigns.items()
+            if len(value["project_ids"]) >= max(1, int(min_legs))
+        }
+        if not campaigns:
+            return (
+                "Aucune campagne EcoTaxa ne correspond aux critères "
+                f"(query={query!r}, min_legs={min_legs}, instrument={instrument!r})."
+            )
+
+        # Sort: most legs first, then alphabetical root.
+        ordered = sorted(
+            campaigns.values(),
+            key=lambda item: (-len(item["project_ids"]), item["root"].lower()),
+        )
+
+        lines = [
+            f"# {len(ordered)} campagne(s) EcoTaxa",
+            "",
+            "| campagne (racine) | legs | instruments | samples | project_ids | exemple |",
+            "|---|---:|---|---:|---|---|",
+        ]
+        for item in ordered:
+            pids = sorted(item["project_ids"])
+            pids_cell = (
+                ", ".join(str(pid) for pid in pids[:8])
+                + (f" +{len(pids) - 8}" if len(pids) > 8 else "")
+            )
+            lines.append(
+                f"| `{item['root']}` | {len(pids)} | "
+                f"{', '.join(sorted(item['instruments'])) or '—'} | "
+                f"{item['n_samples']} | {pids_cell} | "
+                f"{item['example_title']} |"
+            )
+        lines.extend([
+            "",
+            "Pour drill dans une campagne : "
+            "`find_ecotaxa_samples_in_region(project_ids=[...], date_range=..., zone_name=...)` "
+            "avec les project_ids de la ligne voulue.",
+        ])
+        return "\n".join(lines)
+
+    @tool
     def preview_ecotaxa_project(project_id: int) -> str:
         """Aperçu LÉGER d'un projet EcoTaxa : metadata + 10 objets exemple.
 
@@ -1762,6 +1927,7 @@ def make_source_tools(thread_id: str) -> list:
         get_ecotaxa_cache_status,
         compare_ecotaxa_projects,
         list_ecotaxa_projects,
+        list_ecotaxa_campaigns,
         preview_ecotaxa_project,
         query_ecotaxa,
         query_ecotaxa_sample,
