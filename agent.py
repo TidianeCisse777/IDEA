@@ -300,7 +300,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         + [
             make_rag_tool(),
             make_taxonomy_tool(),
-            make_skill_tool(),
+            make_skill_tool(thread_id=thread_id),
             export_deliverable,
             get_zone_info,
         ]

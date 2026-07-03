@@ -243,6 +243,8 @@ def test_graph_planner_treats_french_profile_requests_as_visual():
     assert "trace" in planner
     assert "affiche" in planner
     assert "never answer the user with only this `<details>` block" in planner
+    assert 'never call `run_graph` immediately after `load_skill("graph_planner")`' in planner
+    assert 'first call `load_skill("graph_writer")`' in planner
 
 
 def test_graph_writer_supports_standalone_named_zone_maps():
@@ -253,6 +255,98 @@ def test_graph_writer_supports_standalone_named_zone_maps():
     assert "do not reference `df`" in writer
     assert "bbox = {\"south\"" in writer
     assert "ccrs.lambertconformal" in writer
+
+
+def test_biodiversity_graph_plan_is_frozen_in_docs():
+    plan = Path("docs/biodiversity_graph_test_plan.md")
+
+    assert plan.exists()
+    text = plan.read_text(encoding="utf-8").lower()
+    for expected in [
+        "profil vertical",
+        "composition taxonomique",
+        "rarefaction",
+        "accumulation",
+        "nmds",
+        "pcoa",
+        "heatmap",
+        "rank-abundance",
+        "neolabs_taxonomy_2014_2020.tsv",
+    ]:
+        assert expected in text
+
+
+def test_graph_planner_lists_biodiversity_graph_types():
+    planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8").lower()
+
+    for expected in [
+        "vertical profile",
+        "taxonomic composition",
+        "rarefaction",
+        "species accumulation",
+        "composition heatmap",
+        "rank-abundance",
+        "nmds",
+        "pcoa",
+    ]:
+        assert expected in planner
+
+
+def test_graph_writer_has_biodiversity_templates():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8").lower()
+
+    for expected in [
+        "vertical profile template",
+        "taxonomic composition stacked bar template",
+        "taxonomic composition heatmap template",
+        "rarefaction curve template",
+        "species accumulation curve template",
+        "nmds / pcoa ordination template",
+        "rank-abundance template",
+        "ax.invert_yaxis()",
+        "braycurtis",
+        "mds(",
+        "fill_between",
+    ]:
+        assert expected in writer
+
+
+def test_graph_writer_documents_readability_guards():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8").lower()
+
+    for expected in [
+        "`figsize` must stay at or below",
+        "more than 15 levels",
+        "do not call `ax.legend()`",
+        "legend omitted",
+        "never show more than 50 visible tick labels",
+        "display only the terminal taxon name",
+        "truncate labels longer than 35 characters",
+        "do not replace it with `/graphs/graph.png`",
+        "top_groups",
+        "groups_to_plot",
+    ]:
+        assert expected in writer
+
+
+def test_graph_evals_include_biodiversity_benchmark_cases():
+    text = Path("evals/eval_graphs.py").read_text(encoding="utf-8").lower()
+
+    for expected in [
+        "data/demo/neolabs_taxonomy_2014_2020.tsv",
+        "required_skills",
+        "make_skills_called_evaluator",
+        "graph_writer",
+        "gr-12",
+        "rarefaction",
+        "gr-13",
+        "nmds",
+        "gr-14",
+        "heatmap",
+        "gr-15",
+        "rank-abundance",
+    ]:
+        assert expected in text
 
 
 def test_system_prompt_routes_named_zone_map_requests():
@@ -793,6 +887,16 @@ def test_system_prompt_routes_neolabs_abundance_analysis_to_dedicated_skill():
     assert "rda" in prompt
 
 
+def test_system_prompt_neolabs_graphs_still_require_graph_writer():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "neolabs_abundance_analysis is not a replacement for graph_planner or graph_writer" in prompt
+    assert 'then call `load_skill("graph_planner")`' in prompt
+    assert 'then call `load_skill("graph_writer")`' in prompt
+    assert "the very next execution call must be `run_graph`" in prompt
+
+
 def test_graph_planner_requires_sample_df_for_neolabs_taxon_level_data():
     from pathlib import Path
 
@@ -802,3 +906,14 @@ def test_graph_planner_requires_sample_df_for_neolabs_taxon_level_data():
     assert "taxon-level" in planner or "niveau taxon" in planner
     assert "total abundance (ind./m3 depth vol)" in planner
     assert "ctd_match_status" in planner
+
+
+def test_neolabs_skill_routes_visual_outputs_through_graph_writer():
+    skill = Path("agents/skills/neolabs_abundance_analysis.md").read_text(
+        encoding="utf-8",
+    ).lower()
+
+    assert "not a graph_writer replacement" in skill
+    assert 'load_skill("graph_planner")' in skill
+    assert 'load_skill("graph_writer")' in skill
+    assert "very next execution call must be `run_graph`" in skill

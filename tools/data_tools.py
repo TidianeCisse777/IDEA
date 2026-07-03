@@ -55,6 +55,50 @@ from tools.public_url import graph_url
 from tools.session_store import SessionStore, default_store
 
 
+def _graph_quality_issue(plt: Any) -> str | None:
+    """Return a blocking message when a produced figure is likely unreadable."""
+    for fig_num in plt.get_fignums():
+        fig = plt.figure(fig_num)
+        width, height = fig.get_size_inches()
+        if width > 16 or height > 14:
+            return (
+                "Graph quality blocked: figure size is too large/readability is poor. "
+                "Use a compact figsize (max 16 x 14 inches), aggregate groups, or limit labels. "
+                "Do not answer with a table; revise the matplotlib code and call run_graph again."
+            )
+        for ax in fig.axes:
+            legend = ax.get_legend()
+            if legend is None:
+                labels = []
+            else:
+                labels = [t.get_text() for t in legend.get_texts() if t.get_text()]
+                if len(labels) > 15:
+                    return (
+                        f"Graph quality blocked: {len(labels)} legend entries is too many. "
+                        "Omit the legend, aggregate groups, or show only the top 12 groups. "
+                        "Do not answer with a table; revise the matplotlib code and call run_graph again."
+                    )
+            for axis_name, tick_labels in [
+                ("x", ax.get_xticklabels()),
+                ("y", ax.get_yticklabels()),
+            ]:
+                visible = [label for label in tick_labels if label.get_visible() and label.get_text()]
+                if len(visible) > 50:
+                    return (
+                        f"Graph quality blocked: {len(visible)} visible {axis_name}-axis tick labels is too many. "
+                        "Limit to the top 40 groups, aggregate categories, or show sparse ticks only. "
+                        "Do not answer with a table; revise the matplotlib code and call run_graph again."
+                    )
+                long_labels = [label.get_text() for label in visible if len(label.get_text()) > 45]
+                if len(long_labels) > 8:
+                    return (
+                        f"Graph quality blocked: {len(long_labels)} {axis_name}-axis tick labels are too long. "
+                        "Shorten labels to the terminal taxon/station name, wrap text, or truncate to 35 characters. "
+                        "Do not answer with a table; revise the matplotlib code and call run_graph again."
+                    )
+    return None
+
+
 def _uvp_skill_hint(col_names: list[str]) -> str:
     """Retourne un hint load_skill si le fichier est un export UVP EcoTaxa ou EcoPart.
 
@@ -246,6 +290,12 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
             return "Aucun fichier chargé. Utilise load_file d'abord."
+        meta = session.get("meta") or {}
+        if meta.get("graph_quality_blocked") and "graph_writer" in (meta.get("loaded_skills") or []):
+            return (
+                "Graph quality recovery: the previous graph was blocked for readability. "
+                "Do not answer with a table; revise the matplotlib code and call run_graph again."
+            )
 
         df = session["df"]
 
@@ -299,6 +349,12 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         """
         session = _store.get(thread_id)
         df = session.get("df") if session else None
+        loaded_skills = ((session or {}).get("meta") or {}).get("loaded_skills") or []
+        if loaded_skills and "graph_writer" not in loaded_skills:
+            return (
+                'Graph workflow blocked: call load_skill("graph_writer") before run_graph. '
+                "Loaded analysis/planning skills are not executable graph templates; graph_writer provides the required template."
+            )
 
         try:
             import matplotlib
@@ -315,12 +371,18 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
+                quality_issue = _graph_quality_issue(plt)
+                if quality_issue:
+                    plt.close("all")
+                    _store.update_meta(thread_id, {"graph_quality_blocked": True})
+                    return quality_issue
                 buf = io.BytesIO()
                 plt.savefig(buf, format="png", bbox_inches="tight")
                 buf.seek(0)
                 plt.close("all")
                 graph_id = uuid.uuid4().hex[:12]
                 (_GRAPHS_DIR / f"{graph_id}.png").write_bytes(buf.read())
+                _store.update_meta(thread_id, {"graph_quality_blocked": False})
                 image_markdown = f"![graph]({graph_url(f'{graph_id}.png')})"
                 graph_explanation = local_vars.get("graph_explanation")
                 if isinstance(graph_explanation, str) and graph_explanation.strip():

@@ -73,6 +73,30 @@ def test_load_skill_skips_hub_when_no_api_key(monkeypatch, tmp_path):
     assert result == "# Local graph planner"
 
 
+def test_load_skill_records_loaded_skills_in_session(monkeypatch, tmp_path):
+    from tools.session_store import SessionStore
+
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "graph_writer.md").write_text("# Local graph writer")
+    store = SessionStore(tmp_path / "sessions")
+
+    with patch("tools.skill_tool.SKILLS_DIR", skills_dir):
+        from tools.skill_tool import make_skill_tool
+
+        skill_tool = make_skill_tool(thread_id="thread-skills", store=store)
+        result = skill_tool.invoke({"skill_name": "graph_writer"})
+
+    session = store.get("thread-skills")
+    assert result == "# Local graph writer"
+    assert session is not None
+    assert session["meta"]["loaded_skills"] == ["graph_writer"]
+
+
 def test_neolabs_abundance_skill_documents_standard_analysis_workflow():
     skill = Path("agents/skills/neolabs_abundance_analysis.md").read_text(encoding="utf-8")
     text = skill.lower()

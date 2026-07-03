@@ -334,6 +334,120 @@ def test_run_graph_works_without_loaded_file_for_standalone_map():
     _store.clear(thread_id)
 
 
+def test_run_graph_requires_graph_writer_after_loaded_analysis_skill(tmp_path):
+    thread_id = "thread-graph-writer-gate"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    store.set(thread_id, df, {"loaded_skills": ["neolabs_abundance_analysis"]})
+
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    result = run_graph.invoke({
+        "code": "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])",
+    })
+
+    assert "load_skill(\"graph_writer\")" in result
+    assert "before run_graph" in result
+    assert "/graphs/" not in result
+
+
+def test_run_graph_blocks_unreadable_oversized_figures(tmp_path):
+    thread_id = "thread-oversized-graph"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    store.set(thread_id, df, {"loaded_skills": ["graph_writer"]})
+
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    result = run_graph.invoke({
+        "code": "fig, ax = plt.subplots(figsize=(10, 22)); ax.plot(df['x'], df['y'])",
+    })
+
+    assert "Graph quality blocked" in result
+    assert "figure size" in result
+    assert "/graphs/" not in result
+
+
+def test_run_graph_blocks_legends_with_too_many_entries(tmp_path):
+    thread_id = "thread-legend-graph"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    store.set(thread_id, df, {"loaded_skills": ["graph_writer"]})
+
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+fig, ax = plt.subplots(figsize=(8, 6))
+for i in range(25):
+    ax.plot([1, 2], [i, i + 1], label=f"group-{i}")
+ax.legend()
+"""
+    result = run_graph.invoke({"code": code})
+
+    assert "Graph quality blocked" in result
+    assert "legend entries" in result
+    assert "/graphs/" not in result
+
+
+def test_run_graph_blocks_too_many_visible_tick_labels(tmp_path):
+    thread_id = "thread-tick-label-graph"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": list(range(80)), "y": list(range(80))})
+    store.set(thread_id, df, {"loaded_skills": ["graph_writer"]})
+
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+fig, ax = plt.subplots(figsize=(10, 8))
+ax.imshow([[0, 1], [1, 0]])
+ax.set_yticks(range(80))
+ax.set_yticklabels([f"station-{i}" for i in range(80)])
+"""
+    result = run_graph.invoke({"code": code})
+
+    assert "Graph quality blocked" in result
+    assert "tick labels" in result
+    assert "/graphs/" not in result
+
+
+def test_run_graph_blocks_overlong_tick_labels(tmp_path):
+    thread_id = "thread-long-label-graph"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    store.set(thread_id, df, {"loaded_skills": ["graph_writer"]})
+
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+fig, ax = plt.subplots(figsize=(10, 8))
+ax.imshow([[0, 1], [1, 0]])
+ax.set_xticks(range(12))
+ax.set_xticklabels([
+    "Animalia | Arthropoda | Copepoda | Calanoida | Calanidae | Calanus hyperboreus"
+    for _ in range(12)
+], rotation=45)
+"""
+    result = run_graph.invoke({"code": code})
+
+    assert "Graph quality blocked" in result
+    assert "tick labels are too long" in result
+    assert "call run_graph again" in result
+    assert "/graphs/" not in result
+
+
+def test_run_pandas_refuses_table_after_graph_quality_block(tmp_path):
+    thread_id = "thread-graph-quality-recovery"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    store.set(
+        thread_id,
+        df,
+        {"loaded_skills": ["graph_writer"], "graph_quality_blocked": True},
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id, store=store) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "result = df"})
+
+    assert "Graph quality recovery" in result
+    assert "call run_graph again" in result
+    assert "x" not in result
+
+
 def test_cartopy_gridliner_polygon_patch_closes_open_ring():
     gridliner = pytest.importorskip("cartopy.mpl.gridliner")
 

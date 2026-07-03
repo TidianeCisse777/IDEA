@@ -44,6 +44,13 @@ Skip only when:
 
 NeoLabs abundance rows are taxon-level rows. Do not analyse temporal, spatial, environmental, or station-level patterns directly from raw rows without first rebuilding the correct working table.
 
+## Visual output routing
+
+This skill is not a graph_writer replacement. For any visual request on a
+NeoLabs abundance file, use this skill only to choose the correct ecological
+working table and transformations. Then call `load_skill("graph_planner")`,
+then call `load_skill("graph_writer")`; the very next execution call must be `run_graph`.
+
 Recommended levels:
 
 | Analysis | Working table |

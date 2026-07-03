@@ -1,4 +1,4 @@
-"""Evals catégorie Graphs — cartes, stades, biomasse, profondeur, lacunes, temporel."""
+"""Evals catégorie Graphs — cartes, stades, biomasse, profondeur, biodiversité."""
 import uuid
 import sys
 import os
@@ -15,8 +15,10 @@ load_dotenv()
 
 DATASET_NAME = "copepod-graphs-evals"
 
+REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
 TSV_ABUNDANCE = "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv/neolabs_taxonomy_abundance_amundsen_ctd.tsv"
 TSV_STAGES = "/Users/tidianecisse/PROJET_INFO/assistant-copepodes-specs/data_exploration/examples_tsv/neolabs_taxonomy_stages_amundsen_ctd.tsv"
+TSV_BIODIVERSITY = os.path.join(REPO_ROOT, "data/demo/neolabs_taxonomy_2014_2020.tsv")
 
 GRAPHS_CASES = [
     {
@@ -213,6 +215,71 @@ GRAPHS_CASES = [
             "required_tools": ["load_skill", "run_graph"],
         },
     },
+    # --- Biodiversité / communauté ---
+    {
+        "id": "GR-12",
+        "inputs": {
+            "file_path": TSV_BIODIVERSITY,
+            "question": "trace une courbe de rarefaction de la richesse taxonomique par station",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must produce a rarefaction curve for taxon richness by station or sample group. "
+                "The chart must have sampling effort or sample size on one axis and expected richness on the other. "
+                "The agent should treat the result as exploratory if the source values are normalized abundances."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+            "required_skills": ["neolabs_abundance_analysis", "graph_planner", "graph_writer"],
+        },
+    },
+    {
+        "id": "GR-13",
+        "inputs": {
+            "file_path": TSV_BIODIVERSITY,
+            "question": "fais une NMDS Bray-Curtis de la composition taxonomique coloree par station",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must build a sample by taxon matrix and produce an exploratory NMDS using Bray-Curtis dissimilarity. "
+                "The plot must show two ordination axes and points colored or grouped by station. "
+                "The response must not claim causality or biological interpretation."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+            "required_skills": ["neolabs_abundance_analysis", "graph_planner", "graph_writer"],
+        },
+    },
+    {
+        "id": "GR-14",
+        "inputs": {
+            "file_path": TSV_BIODIVERSITY,
+            "question": "fais une heatmap de composition taxonomique des 20 taxons dominants par station",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must produce a heatmap where one axis is station, the other is dominant taxa, "
+                "and color encodes abundance or log-transformed abundance. "
+                "The agent must aggregate taxon-level rows before plotting."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+            "required_skills": ["neolabs_abundance_analysis", "graph_planner", "graph_writer"],
+        },
+    },
+    {
+        "id": "GR-15",
+        "inputs": {
+            "file_path": TSV_BIODIVERSITY,
+            "question": "trace une courbe rank-abundance des taxons de copepodes",
+        },
+        "outputs": {
+            "criteria": (
+                "The agent must rank taxa by total abundance and produce a rank-abundance curve. "
+                "The X axis must represent taxon rank and the Y axis abundance or relative abundance, "
+                "preferably with a log scale for abundance."
+            ),
+            "required_tools": ["load_skill", "run_graph"],
+            "required_skills": ["neolabs_abundance_analysis", "graph_planner", "graph_writer"],
+        },
+    },
 ]
 
 
@@ -233,6 +300,25 @@ def _extract_graph_image(messages: list) -> str | None:
     return None
 
 
+def _extract_graph_markdown(messages: list) -> str | None:
+    """Extract the first graph markdown URL returned by run_graph."""
+    import re
+
+    for msg in messages:
+        content = getattr(msg, "content", None)
+        if content is None:
+            continue
+        if isinstance(content, list):
+            parts = [p.get("text", "") if isinstance(p, dict) else str(p) for p in content]
+            content = "\n".join(parts)
+        if not isinstance(content, str):
+            continue
+        match = re.search(r"!\[[^\]]*\]\((?:https?://[^)\s]+)?/graphs/[A-Za-z0-9_.-]+\.png\)", content)
+        if match:
+            return match.group(0)
+    return None
+
+
 def _extract_tools_called(messages: list) -> list[str]:
     tools_called = []
     for msg in messages:
@@ -241,6 +327,25 @@ def _extract_tools_called(messages: list) -> list[str]:
                 name = tc["name"] if isinstance(tc, dict) else tc.name
                 tools_called.append(name)
     return tools_called
+
+
+def _extract_skill_names(messages: list) -> list[str]:
+    skill_names = []
+    for msg in messages:
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                if isinstance(tc, dict):
+                    name = tc.get("name")
+                    args = tc.get("args") or {}
+                else:
+                    name = tc.name
+                    args = getattr(tc, "args", {}) or {}
+                if name != "load_skill":
+                    continue
+                skill_name = args.get("skill_name")
+                if skill_name:
+                    skill_names.append(skill_name)
+    return skill_names
 
 
 def make_vision_judge_evaluator(criteria_key: str = "criteria"):
@@ -274,9 +379,41 @@ def make_tools_called_evaluator(tools_key: str = "required_tools"):
     return evaluator
 
 
+def make_valid_graph_url_evaluator():
+    def evaluator(outputs: dict, reference_outputs: dict) -> dict:
+        response = outputs.get("response", "")
+        graph_markdown = outputs.get("graph_markdown", "")
+        if "/graphs/graph.png" in response:
+            return {
+                "key": "valid_graph_url",
+                "score": 0.0,
+                "comment": "Final response contains placeholder /graphs/graph.png.",
+            }
+        if not graph_markdown:
+            return {
+                "key": "valid_graph_url",
+                "score": 0.0,
+                "comment": "No graph markdown URL found in tool output.",
+            }
+        return {"key": "valid_graph_url", "score": 1.0, "comment": "Valid graph URL found"}
+    return evaluator
+
+
+def make_skills_called_evaluator(skills_key: str = "required_skills"):
+    def evaluator(outputs: dict, reference_outputs: dict) -> dict:
+        skills_called = outputs.get("skills_called", [])
+        required = reference_outputs.get(skills_key, [])
+        missing = [s for s in required if s not in skills_called]
+        score = 1.0 if not missing else 0.0
+        comment = "All required skills loaded" if not missing else f"Missing skills: {missing}"
+        return {"key": "skills_called", "score": score, "comment": comment}
+    return evaluator
+
+
 def _run_graph(inputs: dict) -> dict:
     thread_id = str(uuid.uuid4())
     default_store.clear(thread_id)
+    os.environ.setdefault("SKILL_PREFER_LOCAL", "true")
     agent = make_agent(thread_id)
     config = {"configurable": {"thread_id": thread_id}}
 
@@ -285,11 +422,15 @@ def _run_graph(inputs: dict) -> dict:
 
     msgs = result.get("messages", [])
     tools_called = _extract_tools_called(msgs)
+    skills_called = _extract_skill_names(msgs)
     image_b64 = _extract_graph_image(msgs)
+    graph_markdown = _extract_graph_markdown(msgs)
     return {
         "response": msgs[-1].content if msgs else "",
         "tools_called": tools_called,
+        "skills_called": skills_called,
         "image_b64": image_b64 or "",
+        "graph_markdown": graph_markdown or "",
     }
 
 
@@ -298,12 +439,17 @@ def run_graphs_evals(experiment_prefix: str = "graphs") -> None:
     rows = run_eval_suite(
         cases=GRAPHS_CASES,
         run_fn=_run_graph,
-        evaluators=[make_vision_judge_evaluator("criteria"), make_tools_called_evaluator("required_tools")],
+        evaluators=[
+            make_vision_judge_evaluator("criteria"),
+            make_tools_called_evaluator("required_tools"),
+            make_skills_called_evaluator("required_skills"),
+            make_valid_graph_url_evaluator(),
+        ],
         dataset_name=DATASET_NAME,
         experiment_prefix=experiment_prefix,
         metadata={"category": "graphs", "agent_version": "slice-5"},
     )
-    print_scores(rows, score_keys=["vision_judge", "tools_called"])
+    print_scores(rows, score_keys=["vision_judge", "tools_called", "skills_called", "valid_graph_url"])
 
 
 if __name__ == "__main__":

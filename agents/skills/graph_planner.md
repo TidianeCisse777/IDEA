@@ -85,6 +85,15 @@ For ordination requests (`PCA`, `PCoA`, `NMDS`, `RDA`, `CCA`, `ordination`):
    - **line**: evolution over time or depth
    - **scatter**: relationship between two numeric variables (e.g. temperature vs depth)
    - **histogram**: distribution of a numeric variable
+   - **vertical profile**: abundance, biomass, temperature, salinity, oxygen, or fluorescence by depth. Put the measurement on X, depth on Y, and invert Y so deeper values are lower.
+   - **taxonomic composition**: stacked bar chart of relative or absolute abundance by taxon across station, month, depth bin, sample, or zone.
+   - **composition heatmap**: heatmap of log1p or relative abundance for dominant taxa across station, month, depth bin, sample, or zone.
+   - **rarefaction**: expected taxon richness as a function of sample size / sampling effort. Use only count-like non-negative taxon matrices.
+   - **species accumulation**: cumulative observed richness as sites/samples are added, preferably with permutation mean and interval if enough samples exist.
+   - **rank-abundance**: taxa ordered by decreasing total or relative abundance.
+   - **NMDS**: exploratory Bray-Curtis ordination of taxonomic composition.
+   - **PCoA**: exploratory Bray-Curtis principal coordinates ordination of taxonomic composition.
+   - **PCA/RDA/CCA**: exploratory environment/community ordination when the request explicitly names the method or asks for community-environment structure.
 6. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
    - For station/sample/profile/cast/taxon filters, preserve identifiers as labels and normalize comparisons as text. Example: use `df["STATION_NAME"].astype(str).str.strip() == str(station).strip()`, never `int(station)` for filtering.
 7. Flag any missing values that could affect the output
@@ -116,4 +125,4 @@ Output the plan wrapped in a `<details>` block so it is hidden by default:
 </details>
 ```
 
-The plan is not the final answer for visual output. For any visual output, after this plan the agent must immediately use `graph_writer` and execute the generated matplotlib code with `run_graph` in the same turn. Never answer the user with only this `<details>` block unless a real blocker makes the figure impossible.
+The plan is not the final answer for visual output. For any visual output, after this plan the agent must immediately use `graph_writer` and execute the generated matplotlib code with `run_graph` in the same turn. Never call `run_graph` immediately after `load_skill("graph_planner")`: first call `load_skill("graph_writer")`, then the next execution call is `run_graph`. Never answer the user with only this `<details>` block unless a real blocker makes the figure impossible.

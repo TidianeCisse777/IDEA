@@ -6,7 +6,14 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from unittest.mock import MagicMock, patch
-from evals.eval_graphs import _extract_graph_image, _extract_tools_called, make_vision_judge_evaluator
+from evals.eval_graphs import (
+    _extract_graph_image,
+    _extract_graph_markdown,
+    _extract_skill_names,
+    _extract_tools_called,
+    make_valid_graph_url_evaluator,
+    make_vision_judge_evaluator,
+)
 
 
 # --- Fixtures ---
@@ -56,6 +63,12 @@ def test_extract_graph_image_empty():
     assert _extract_graph_image([]) is None
 
 
+def test_extract_graph_markdown_from_tool_message_url():
+    image = "![graph](http://localhost:8000/graphs/abc123.png)"
+    result = _extract_graph_markdown([_make_tool_message(image)])
+    assert result == image
+
+
 # --- Tests _extract_tools_called ---
 
 def test_extract_tools_called():
@@ -72,6 +85,18 @@ def test_extract_tools_called_empty():
     msgs = [_make_tool_message("no tools")]
     result = _extract_tools_called(msgs)
     assert result == []
+
+
+# --- Tests _extract_skill_names ---
+
+def test_extract_skill_names_from_load_skill_calls():
+    msg = _make_ai_message_with_tool_calls(["load_skill", "load_skill", "run_graph"])
+    msg.tool_calls[0]["args"] = {"skill_name": "neolabs_abundance_analysis"}
+    msg.tool_calls[1]["args"] = {"skill_name": "graph_writer"}
+
+    result = _extract_skill_names([msg])
+
+    assert result == ["neolabs_abundance_analysis", "graph_writer"]
 
 
 # --- Tests make_vision_judge_evaluator ---
@@ -98,3 +123,13 @@ def test_vision_judge_falls_back_to_text_when_no_image():
             reference_outputs={"criteria": "Must produce a bar chart"},
         )
         assert result["key"] == "vision_judge"
+
+
+def test_valid_graph_url_evaluator_rejects_placeholder_graph_url():
+    evaluator = make_valid_graph_url_evaluator()
+    result = evaluator(
+        outputs={"response": "![graph](/graphs/graph.png)", "graph_markdown": ""},
+        reference_outputs={},
+    )
+    assert result["score"] == 0.0
+    assert result["key"] == "valid_graph_url"

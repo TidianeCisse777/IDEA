@@ -6,6 +6,8 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from tools.session_store import SessionStore, default_store
+
 try:
     from langsmith import Client as _LangSmithClient
 except ImportError:
@@ -47,7 +49,19 @@ def _pull_from_hub(skill_name: str) -> str | None:
         return None
 
 
-def make_skill_tool():
+def _record_loaded_skill(store: SessionStore, thread_id: str | None, skill_name: str) -> None:
+    if not thread_id:
+        return
+    session = store.get(thread_id) or {"df": None, "meta": {}}
+    meta = dict(session.get("meta") or {})
+    loaded = list(meta.get("loaded_skills") or [])
+    if skill_name not in loaded:
+        loaded.append(skill_name)
+    store.update_meta(thread_id, {"loaded_skills": loaded})
+
+
+def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = None):
+    _store = store or default_store
     skills = _discover_skills()
     available_list = ", ".join(skills.keys()) or "none"
     description = (
@@ -61,12 +75,14 @@ def make_skill_tool():
         """Load a skill by name. Pulls from LangSmith Context Hub, falls back to local file."""
         content = _pull_from_hub(skill_name)
         if content:
+            _record_loaded_skill(_store, thread_id, skill_name)
             return content
 
         current_skills = _discover_skills()
         if skill_name not in current_skills:
             available = ", ".join(current_skills.keys()) or "none"
             return f"Skill '{skill_name}' not found. Available: {available}"
+        _record_loaded_skill(_store, thread_id, skill_name)
         return current_skills[skill_name].read_text(encoding="utf-8")
 
     return load_skill

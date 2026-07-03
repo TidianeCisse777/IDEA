@@ -101,8 +101,9 @@ cover/
 docs/_build/
 
 # Internal project notes; keep user-facing docs at repository root.
-/docs/
-!docs/.gitkeep
+/docs/*
+!/docs/.gitkeep
+!/docs/biodiversity_graph_test_plan.md
 
 # PyBuilder
 .pybuilder/
