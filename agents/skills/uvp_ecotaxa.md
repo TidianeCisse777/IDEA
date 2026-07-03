@@ -198,7 +198,7 @@ Two shapes are supported. Detect first, then route.
 
 | Shape | Signal columns | What to do |
 |---|---|---|
-| **Raw EcoTaxa export** | `fre_major` or `object_major` + `sample_id`, no `sampled_volume` | Compute `depth_bin` yourself, then merge with EcoPart for `sampled_volume`. Use the m5 template below. |
+| **Raw EcoTaxa export** | `fre_major` or `object_major` + `sample_id`, no `sampled_volume` | Call `join_ecotaxa_ecopart` to get `df_ecotaxa_ecopart` (5m-binned `sampled_volume` + all `ecopart_*` columns). Then apply the m5 template below to that joined table. **Never** hand-roll the merge in `run_pandas`. |
 | **Intermediate `taxa_db`** (from `scripts/uvp_metrics_pipeline.py`) | `sample_id` + `depth_bin` + `sampled_volume` + `category` (and no `LPM (...)` column) | `sampled_volume` and `depth_bin` are **already joined**. SKIP the EcoPart merge. Filter copepods → group by `(sample_id, depth_bin)` → divide by `sampled_volume` → apply the (surface+bottom)/2 formula directly. |
 | **Intermediate `taxa_morpho_db`** | `sample_id` + `object_major` + morphological columns, no `sampled_volume` | Join with `taxa_db` on `(sample_id, object_id)` to recover `depth_bin` + `sampled_volume`, then apply m6 formula. |
 
@@ -273,38 +273,31 @@ If `acq_pixel` is absent, use `process_pixel` or note that µm conversion is not
 
 **Requires EcoPart** for `sampled_volume`. If EcoPart is not loaded, ask the user to load it.
 
-### Full m5 template (EcoTaxa + EcoPart already loaded in `df_ecopart`)
+### Pre-step — Join EcoTaxa ↔ EcoPart before m5 (MANDATORY)
+
+Before running the m5 template, call `join_ecotaxa_ecopart` to obtain the joined table (`df_ecotaxa_ecopart`) with `depth_bin`, `ecopart_Sampled volume [L]`, and all `ecopart_*` columns per object. The tool handles key detection (`sample_id` / `sample_profileid` / `obj_orig_id` / `sample_cruise`), 5m binning, `ecopart_` prefixing, session storage, and campaign-mismatch / partial-depth-coverage warnings. **Never** re-implement this merge in `run_pandas` — you lose those guarantees and the join becomes untraceable.
+
+### Full m5 template (starting from `df_ecotaxa_ecopart`)
 
 ```python
 import pandas as pd
 import numpy as np
 
+df = df_ecotaxa_ecopart  # joined table from join_ecotaxa_ecopart
+
 # ── 1. Identify columns based on file schema ───────────────────────────────
-depth_col     = "obj_depth_min" if "obj_depth_min" in df.columns else "object_depth_min"
 category_col  = "txo_display_name" if "txo_display_name" in df.columns else "object_annotation_category"
+volume_col    = "ecopart_Sampled volume [L]"
 
-# ── 2. Compute depth bins (5m intervals) ──────────────────────────────────
-df["depth_bin"] = (df[depth_col] // 5) * 5 + 2.5
-
-# ── 3. Filter copepods (predicted or validated) ───────────────────────────
+# ── 2. Filter copepods (predicted or validated) ───────────────────────────
 copepod_keywords = ["Copepoda", "Calanoida", "Calanus", "Metridia",
                     "Paraeuchaeta", "Heterorhabdidae"]
 df_cop = df[df[category_col].str.contains("|".join(copepod_keywords), na=False, case=False)].copy()
 
-# ── 4. Join with EcoPart to get sampled_volume ────────────────────────────
-# df_ecopart must have columns: sample_id, depth_bin (rounded to 5m), Sampled volume [L]
-df_ecopart["depth_bin"] = (df_ecopart["Depth [m]"] // 5) * 5 + 2.5
-df_cop = df_cop.merge(
-    df_ecopart[["sample_id", "depth_bin", "Sampled volume [L]"]].rename(columns={"Profile": "sample_id"})
-    if "Profile" in df_ecopart.columns else
-    df_ecopart[["sample_id", "depth_bin", "Sampled volume [L]"]],
-    on=["sample_id", "depth_bin"], how="left"
-)
-
-# ── 5. Density per bin ─────────────────────────────────────────────────────
+# ── 3. Density per bin ─────────────────────────────────────────────────────
 df_cop["count"] = 1
-cop_bins = df_cop.groupby(["sample_id", "depth_bin", "Sampled volume [L]"])["count"].sum().reset_index()
-cop_bins["cop_dens"] = cop_bins["count"] / cop_bins["Sampled volume [L]"]
+cop_bins = df_cop.groupby(["sample_id", "depth_bin", volume_col])["count"].sum().reset_index()
+cop_bins["cop_dens"] = cop_bins["count"] / cop_bins[volume_col]
 
 # ── 6. m5: mean surface (0-50m) + bottom (last 50m) ──────────────────────
 def m5_per_sample(grp):

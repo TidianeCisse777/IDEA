@@ -326,7 +326,16 @@ class EcotaxaClient:
         import io, zipfile
         if resp.content[:4] == b"PK\x03\x04":
             with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
-                tsv_name = next(n for n in z.namelist() if n.endswith(".tsv") or n.endswith(".csv"))
+                tsv_name = next(
+                    (n for n in z.namelist() if n.endswith(".tsv") or n.endswith(".csv")),
+                    None,
+                )
+                if tsv_name is None:
+                    raise RuntimeError(
+                        f"EcoTaxa job {job_id} — aucun objet ne correspond aux filtres "
+                        "(le ZIP renvoyé ne contient qu'un log, pas de TSV). "
+                        "Élargis les filtres (taxon, sample_ids, status) et réessaie."
+                    )
                 with z.open(tsv_name) as f:
                     return pd.read_csv(f, sep="\t", low_memory=False)
         return pd.read_csv(io.BytesIO(resp.content), sep="\t", low_memory=False)

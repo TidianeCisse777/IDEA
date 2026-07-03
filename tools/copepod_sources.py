@@ -43,6 +43,61 @@ _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
 
 
+def _resolve_taxo_filter(taxon: str | int) -> dict:
+    """Turn a taxon name or id into the EcoTaxa `taxo` filter fragment.
+
+    Returns a dict ready to merge into `filters` for `start_export`:
+      - `taxo` : stringified taxon id (single canonical taxon)
+      - `taxochild` : `"Y"` when the input was a **name** — EcoTaxa then
+        expands descendants server-side (e.g. Copepoda → includes Calanus,
+        Paraeuchaeta, Calanoida). Without this flag, an export filtered by
+        `taxo=25828` only returns objects directly classified as
+        `Copepoda<Multicrustacea` (8 rows in a sample vs 77 with descent).
+
+    Integer / int-like input is treated as an explicit id: no lookup, no
+    descendant expansion — the caller stated exactly what they want.
+
+    Name resolution prefers, in order:
+      1. Exact case-insensitive match on display_name (e.g. `Copepoda<Multicrustacea`)
+      2. Exact match on `name`
+      3. Any hit with `aphia_id` set (WoRMS-mapped canonical taxon)
+      4. Top autocomplete hit
+
+    Preference (1)-(3) avoids landing on EcoTaxa's compound morphology-mix
+    taxa like `copepoda + actinopterygii` (id 94987, aphia_id=None) that
+    look like the query but include unrelated groups.
+    """
+    if isinstance(taxon, int):
+        return {"taxo": str(taxon)}
+    text = str(taxon).strip()
+    if not text:
+        raise ValueError("taxon is empty")
+    if text.lstrip("-").isdigit():
+        return {"taxo": text}
+    hits = search_taxa(text)
+    if not hits:
+        raise ValueError(f"Taxon `{text}` introuvable dans EcoTaxa.")
+
+    text_lc = text.lower()
+
+    def _score(hit: dict) -> tuple:
+        # Higher is better.
+        name_lc = str(hit.get("name", "")).strip().lower()
+        has_aphia = 1 if hit.get("aphia_id") else 0
+        is_approved = 1 if hit.get("status") == "A" else 0
+        # Exact case-insensitive match on `name` (bare canonical taxon).
+        name_exact = 1 if name_lc == text_lc else 0
+        # `name` starts with "text<" — EcoTaxa's compound canonical form
+        # (e.g. `Copepoda<Multicrustacea`).
+        display_exact = 1 if name_lc.startswith(text_lc + "<") else 0
+        # Prefer approved WoRMS-mapped canonical taxa first, then exact name
+        # matches, then compound canonical, then anything else.
+        return (has_aphia, is_approved, name_exact, display_exact)
+
+    chosen = max(hits, key=_score)
+    return {"taxo": str(chosen["taxon_id"]), "taxochild": "Y"}
+
+
 def make_source_tools(thread_id: str) -> list:
     def _format_number(value) -> str:
         if value is None:
@@ -465,7 +520,7 @@ def make_source_tools(thread_id: str) -> list:
         try:
             filters = {"statusfilter": status}
             if taxon:
-                filters["taxo"] = taxon
+                filters.update(_resolve_taxo_filter(taxon))
             normalized_sample_ids = _normalize_sample_ids(sample_ids)
             if normalized_sample_ids:
                 filters["samples"] = ",".join(str(sample_id) for sample_id in normalized_sample_ids)
@@ -510,7 +565,7 @@ def make_source_tools(thread_id: str) -> list:
             project_id = int(sample["project_id"])
             filters = {"statusfilter": status, "samples": str(sample_id)}
             if taxon:
-                filters["taxo"] = taxon
+                filters.update(_resolve_taxo_filter(taxon))
         except EcoTaxaBrowserError as exc:
             return f"Erreur EcoTaxa ({exc.code}) : {exc}"
         except Exception as exc:
@@ -1615,7 +1670,7 @@ def make_source_tools(thread_id: str) -> list:
             sids = groups[pid]
             filters: dict = {"statusfilter": status}
             if taxon:
-                filters["taxo"] = taxon
+                filters.update(_resolve_taxo_filter(taxon))
             filters["samples"] = ",".join(str(s) for s in sids)
             variable_name = dataset_variable_name(
                 "ecotaxa", f"{pid}_bulk_{'_'.join(str(s) for s in sids[:3])}"
