@@ -150,11 +150,48 @@ def _compute_cache_age_hours(last_sync: dict | None) -> float | None:
     return delta.total_seconds() / 3600.0
 
 
+def _resolve_or_generate_mcp_token() -> str:
+    """Return MCP_AUTH_TOKEN from env, else read/persist one at data/.mcp_auth_token.
+
+    Lets a fresh `docker compose up -d` boot without a manual token step: on
+    first start the file is created with a random token, and both the MCP
+    server and any consumer that reads the same file get the same value.
+    Explicit env always wins. Container-local token can be inspected via
+    `docker exec mcp_ecotaxa cat data/.mcp_auth_token` or the container logs.
+    """
+    token = os.getenv("MCP_AUTH_TOKEN")
+    if token:
+        return token
+
+    from pathlib import Path
+    import secrets
+
+    token_path = Path(os.getenv("MCP_AUTH_TOKEN_FILE", "data/.mcp_auth_token"))
+    if token_path.exists():
+        cached = token_path.read_text(encoding="utf-8").strip()
+        if cached:
+            print(
+                f"[mcp] MCP_AUTH_TOKEN loaded from {token_path} (env var unset)."
+            )
+            return cached
+
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    generated = secrets.token_urlsafe(48)
+    token_path.write_text(generated + "\n", encoding="utf-8")
+    try:
+        token_path.chmod(0o600)
+    except OSError:
+        pass
+    print(
+        f"[mcp] MCP_AUTH_TOKEN was empty — generated a new one and persisted "
+        f"it at {token_path}. Set MCP_AUTH_TOKEN in .env if you want to pin it."
+    )
+    return generated
+
+
 def create_app() -> ASGIApp:
     """Build the authenticated EcoTaxa MCP ASGI application."""
-    token = os.getenv("MCP_AUTH_TOKEN")
-    if not token:
-        raise RuntimeError("MCP_AUTH_TOKEN must be configured")
+    token = _resolve_or_generate_mcp_token()
 
     mcp = create_mcp()
 

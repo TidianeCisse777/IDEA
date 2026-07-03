@@ -26,6 +26,13 @@ ENV GIT_SHA=$GIT_SHA
 
 COPY . .
 
+# Bake the copepod RAG index (chroma_db) into the image so a fresh clone
+# never has to build it. The `.dockerignore` intentionally does NOT skip
+# `core/copepod_rag/chroma_db`, and docker-compose keeps this path on a
+# named volume (see `copepod_rag_index`) so the host `.:/app` bind mount
+# does not shadow the baked index at runtime.
+RUN python core/copepod_rag/build_index.py
+
 EXPOSE 8000
 
 CMD ["python", "serve.py"]

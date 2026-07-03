@@ -42,6 +42,11 @@ services:
       - copepod_logs:/app/logs
       - copepod_static:/app/static
       - copepod_models:/app/models
+      # Keep the image-baked RAG index visible at runtime. Without this
+      # named volume, the `.:/app` bind mount above would shadow
+      # `core/copepod_rag/chroma_db` (gitignored, so absent on fresh
+      # clones) and the RAG queries would return an empty collection.
+      - copepod_rag_index:/app/core/copepod_rag/chroma_db
       - open_webui_data:/owui-data:ro
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -127,5 +132,6 @@ volumes:
   copepod_logs:
   copepod_static:
   copepod_models:
+  copepod_rag_index:
   open_webui_data:
   postgres_data:
