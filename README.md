@@ -84,6 +84,54 @@ http://localhost:3000
 `./start.sh` starts Postgres, MCP EcoTaxa, the agent API, and Open WebUI. It
 also generates `MCP_AUTH_TOKEN` in `.env` if missing.
 
+### First run: wait for the EcoTaxa cache
+
+On the first start the EcoTaxa cache fills in the background (~1–2 min).
+Until it is populated, EcoTaxa questions return an empty result even though
+the agent is up. Check it before querying EcoTaxa:
+
+```bash
+curl -s http://localhost:8001/health | jq .cache
+```
+
+Wait until `samples_indexed > 0` (and `last_sync_status` is `ok`). If it
+stays at `0`, force a sync:
+
+```bash
+source .env
+curl -X POST http://localhost:8001/admin/resync -H "Authorization: Bearer $MCP_AUTH_TOKEN"
+```
+
+### Confirm the agent actually sees the cache
+
+`http://localhost:8001/health` is the **MCP server's** view — it does **not**
+prove the agent reads the same data. The agent and the MCP server must read
+the same `data/ecotaxa_cache.sqlite` file. Compare the two views:
+
+```bash
+# MCP-side view (the server that fills the cache)
+curl -s http://localhost:8001/health | jq .cache
+
+# Agent-side view (what the LLM actually reads)
+docker compose exec -T copepod-agent python -c "
+import sqlite3, os
+p = os.getenv('ECOTAXA_CACHE_DB', 'data/ecotaxa_cache.sqlite')
+c = sqlite3.connect(p)
+print('agent samples =', c.execute('SELECT COUNT(*) FROM samples_cache').fetchone()[0])
+print('agent projects=', c.execute('SELECT COUNT(DISTINCT project_id) FROM samples_cache').fetchone()[0])
+"
+```
+
+Read the result like this:
+
+- **Agent counts == MCP counts, and > 0** → the cache is shared and complete.
+  If the agent still answers EcoTaxa questions poorly, it is **not** a cache
+  problem (look at the LLM/tool routing, not the cache).
+- **Agent counts = 0 while MCP shows data** → the agent is reading a
+  *different* file than the MCP server. Do not run the standalone
+  `docker-compose.mcp.yml` alongside `./start.sh`: it stores the cache in an
+  isolated Docker volume that the agent never mounts. Use `./start.sh` only.
+
 If Docker images are missing or need rebuilding:
 
 ```bash
