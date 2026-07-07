@@ -75,3 +75,41 @@ def test_enrichment_source_note_falls_back_to_active_df_variable(tmp_path):
     # No enrichment columns yet → no "déjà présent" clause.
     assert "déjà présent" not in note
 
+
+def test_source_aliases_registry_is_single_source_of_truth():
+    """Les alias de sources fixes vivent dans un seul registre, incluant ogsl_enriched."""
+    from tools.dataset_registry import SOURCE_ALIASES, source_variable
+
+    # Le bug historique : ogsl_enriched était écrit mais absent de la relecture.
+    assert "ogsl_enriched" in SOURCE_ALIASES
+    for expected in ("ecotaxa", "ecopart", "ctd", "ctd_enriched", "bio_oracle",
+                     "ogsl", "sql", "ecotaxa_ecopart"):
+        assert expected in SOURCE_ALIASES
+
+    # La variable est toujours dérivée de l'alias : df_{alias}.
+    assert source_variable("ogsl_enriched") == "df_ogsl_enriched"
+    assert source_variable("ecotaxa") == "df_ecotaxa"
+
+
+def test_no_raw_latest_alias_literals_remain_in_tools():
+    """Garde-fou : aucun latest_alias="..." en dur ne doit traîner dans tools/.
+
+    Tout passe par les constantes du registre, sinon une source peut être écrite
+    sous un alias jamais relu (casse silencieuse). geo_tools passe un nom dynamique
+    (variable_name), pas un littéral — donc il n'est pas concerné.
+    """
+    import re
+    from pathlib import Path
+
+    tools_dir = Path(__file__).resolve().parent.parent / "tools"
+    offenders = []
+    literal = re.compile(r'latest_alias\s*=\s*["\']')
+    for path in tools_dir.glob("*.py"):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if literal.search(line):
+                offenders.append(f"{path.name}:{lineno}")
+    assert not offenders, (
+        "latest_alias en dur (utilise les constantes de dataset_registry) : "
+        + ", ".join(offenders)
+    )
+

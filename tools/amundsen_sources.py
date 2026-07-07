@@ -73,7 +73,13 @@ from core.amundsen_ctd_client import (
     preview_amundsen_profile as _preview_amundsen_profile,
     query_amundsen_ctd as _query_amundsen_ctd,
 )
-from tools.dataset_registry import dataset_variable_name, enrichment_source_note, store_dataset
+from tools.dataset_registry import (
+    CTD,
+    CTD_ENRICHED,
+    dataset_variable_name,
+    enrichment_source_note,
+    store_dataset,
+)
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 
@@ -268,7 +274,7 @@ def make_amundsen_tools(thread_id: str) -> list:
                     "cast_number": cast_number,
                     "n_rows": len(dataframe),
                 },
-                latest_alias="ctd",
+                latest_alias=CTD,
             )
             return (
                 f"Amundsen CTD chargé — {result['row_count']} lignes.\n"
@@ -381,7 +387,7 @@ def make_amundsen_tools(thread_id: str) -> list:
                         "missing_columns": list(dict.fromkeys(missing_groups)),
                         "n_rows": len(dataframe),
                     },
-                    latest_alias="ctd_enriched",
+                    latest_alias=CTD_ENRICHED,
                 )
                 preview = dataframe.head(20).to_markdown(index=False)
                 return (
@@ -467,7 +473,7 @@ def make_amundsen_tools(thread_id: str) -> list:
                     "n_rows": len(dataframe),
                     "matched_rows": int((dataframe["ctd_match_status"] == "matched").sum()),
                 },
-                latest_alias="ctd_enriched",
+                latest_alias=CTD_ENRICHED,
             )
             preview = dataframe.head(20).to_markdown(index=False)
             return (
@@ -825,7 +831,7 @@ def make_amundsen_tools(thread_id: str) -> list:
                 "unique_source_points": n_unique,
                 "matched_rows": int((enriched["amundsen_match_status"] == "matched").sum()),
             },
-            latest_alias="ctd_enriched",
+            latest_alias=CTD_ENRICHED,
         )
         status_counts = enriched["amundsen_match_status"].value_counts().to_dict()
         n_matched = int(status_counts.get("matched", 0))

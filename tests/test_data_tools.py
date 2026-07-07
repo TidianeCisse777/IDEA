@@ -235,6 +235,30 @@ def test_run_pandas_exposes_registered_datasets_from_multiple_sources():
     assert result == "(3, 2)"
 
 
+def test_run_pandas_exposes_ogsl_enriched_table():
+    """Régression : une table rangée sous l'alias ogsl_enriched doit être relue
+    comme df_ogsl_enriched dans run_pandas (elle disparaissait en silence)."""
+    from tools.dataset_registry import store_dataset, OGSL_ENRICHED
+
+    thread_id = "thread-run-pandas-ogsl-enriched"
+    df_base = pd.DataFrame({"value": [1, 2, 3]})
+    df_enriched = pd.DataFrame({"value": [1, 2, 3, 4]})
+    store_dataset(_store, thread_id, df_base,
+                  variable_name="df_file_ogsl", meta={"source": "file:ogsl"})
+    store_dataset(_store, thread_id, df_enriched,
+                  variable_name="df_ogsl_enriched",
+                  meta={"source": "ogsl_enriched"}, latest_alias=OGSL_ENRICHED)
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "result = len(df_ogsl_enriched)"})
+
+    assert result == "4"
+
+    for key in (thread_id, f"{thread_id}:ogsl_enriched",
+                f"{thread_id}:dataset:df_ogsl_enriched"):
+        _store.clear(key)
+
+
 def test_run_pandas_can_execute_sklearn_pca_for_ordination(tsv_path):
     tools = make_tools("thread-pca")
     load_file_tool = next(t for t in tools if t.name == "load_file")

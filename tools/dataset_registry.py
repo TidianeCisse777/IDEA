@@ -8,6 +8,40 @@ import pandas as pd
 
 from tools.session_store import SessionStore
 
+# --- Registre des sources fixes -------------------------------------------
+# Alias sous lequel chaque source range son dernier résultat dans la session.
+# UNE seule liste de référence : le côté écriture (store_dataset via ces
+# constantes) et le côté lecture (data_tools._dataframe_vars) la partagent, donc
+# une source enregistrée ici est forcément relue — plus de disparition en silence.
+# Les noms dynamiques (filtres de zone, projets EcoPart par id) ne sont PAS ici :
+# ils passent par le scan de préfixe `dataset:` / `ecopart:`.
+ECOTAXA = "ecotaxa"
+ECOPART = "ecopart"
+CTD = "ctd"
+CTD_ENRICHED = "ctd_enriched"
+BIO_ORACLE = "bio_oracle"
+OGSL = "ogsl"
+OGSL_ENRICHED = "ogsl_enriched"
+SQL = "sql"
+ECOTAXA_ECOPART = "ecotaxa_ecopart"
+
+SOURCE_ALIASES: tuple[str, ...] = (
+    ECOTAXA,
+    ECOPART,
+    CTD,
+    CTD_ENRICHED,
+    BIO_ORACLE,
+    OGSL,
+    OGSL_ENRICHED,
+    SQL,
+    ECOTAXA_ECOPART,
+)
+
+
+def source_variable(alias: str) -> str:
+    """Variable exposée à run_pandas/run_graph pour une source : df_{alias}."""
+    return f"df_{alias}"
+
 
 def _identifier_part(value: object) -> str:
     if isinstance(value, Real) and not isinstance(value, bool):

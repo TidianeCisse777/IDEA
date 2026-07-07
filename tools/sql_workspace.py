@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 from sqlalchemy import create_engine, inspect, text
 
 from tools.public_url import download_url
-from tools.dataset_registry import dataset_variable_name, store_dataset
+from tools.dataset_registry import SQL, dataset_variable_name, store_dataset
 from tools.session_store import default_store as _store
 
 _SQL_DATABASE_URL_META_KEY = "sql_database_url"
@@ -595,7 +595,7 @@ def make_sql_tools(thread_id: str) -> list:
                 dataframe,
                 variable_name=variable_name,
                 meta={"source": "sql_workspace", "n_rows": len(dataframe), "path": str(output_path)},
-                latest_alias="sql",
+                latest_alias=SQL,
             )
             return (
                 f"Copie SQL créée — {len(dataframe)} lignes, {len(dataframe.columns)} colonnes.\n"

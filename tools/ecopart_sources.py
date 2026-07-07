@@ -8,7 +8,12 @@ import pandas as pd
 from langchain_core.tools import tool
 
 from core.ecopart_client import EcopartClient, EcopartExportError
-from tools.dataset_registry import dataset_variable_name, store_dataset
+from tools.dataset_registry import (
+    ECOPART,
+    ECOTAXA_ECOPART,
+    dataset_variable_name,
+    store_dataset,
+)
 from tools.session_store import default_store as _store
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
@@ -166,7 +171,7 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
             "n_matched": n_matched,
             "depth_col_used": depth_col,
         },
-        latest_alias="ecotaxa_ecopart",
+        latest_alias=ECOTAXA_ECOPART,
     )
     project_note = (
         f" avec EcoPart {selected_project_id}" if selected_project_id is not None else ""
@@ -386,7 +391,7 @@ def make_ecopart_tools(thread_id: str) -> list:
                 df,
                 variable_name=variable_name,
                 meta=meta,
-                latest_alias="ecopart",
+                latest_alias=ECOPART,
             )
             # Keep the pre-registry project key readable by existing sessions/tools.
             _store.set(f"{thread_id}:ecopart:{project_id}", df, meta)
@@ -581,7 +586,7 @@ def make_ecopart_tools(thread_id: str) -> list:
             df_ep,
             variable_name=variable_name,
             meta=meta,
-            latest_alias="ecopart",
+            latest_alias=ECOPART,
         )
         if ecopart_project_id is not None:
             _store.set(f"{thread_id}:ecopart:{ecopart_project_id}", df_ep, meta)

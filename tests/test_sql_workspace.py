@@ -320,7 +320,7 @@ def test_preview_sql_table_supports_where_and_order_by(tmp_path):
 
 def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
     from tools.sql_workspace import make_sql_tools
-    from tools.session_store import default_store
+    from tools.session_store import SessionStore
 
     db_path = tmp_path / "source.sqlite"
     conn = sqlite3.connect(db_path)
@@ -335,7 +335,13 @@ def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
     workspace_dir = tmp_path / "workspace"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setenv("SQL_WORKSPACE_DIR", str(workspace_dir))
-    default_store._store.clear()
+    # Isolate on a fresh in-memory store, backend-agnostic (avoids poking
+    # `_store`, which only exists on SessionStore and not SessionStorePG).
+    # sql_workspace and data_tools must share the SAME store so run_pandas
+    # below can read what copy_sql_query_to_workspace wrote.
+    store = SessionStore(tmp_path / "sessions")
+    monkeypatch.setattr("tools.sql_workspace._store", store)
+    monkeypatch.setattr("tools.data_tools.default_store", store)
 
     tools = make_sql_tools("thread-sql")
     tool_names = {tool.name for tool in tools}
@@ -357,14 +363,14 @@ def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
     assert "casts" in listed
     assert "1 lignes × 2 colonnes" in previewed
     assert "Télécharger" in copied
-    assert default_store.has("thread-sql")
-    session = default_store.get("thread-sql")
+    assert store.has("thread-sql")
+    session = store.get("thread-sql")
     assert session["df"].shape == (2, 2)
-    stable = default_store.get("thread-sql:dataset:df_sql_station_summary")
+    stable = store.get("thread-sql:dataset:df_sql_station_summary")
     assert stable["df"].shape == (2, 2)
     assert "df_sql_station_summary" in copied
     assert "df_sql" in copied
-    assert default_store.get("thread-sql:sql")["df"].shape == (2, 2)
+    assert store.get("thread-sql:sql")["df"].shape == (2, 2)
 
     from tools.data_tools import make_tools as make_data_tools
 
@@ -374,7 +380,7 @@ def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
 
 def test_list_sql_tables_tool_returns_database_overview(tmp_path, monkeypatch):
     from tools.sql_workspace import make_sql_tools
-    from tools.session_store import default_store
+    from tools.session_store import SessionStore
 
     db_path = tmp_path / "source.sqlite"
     conn = sqlite3.connect(db_path)
@@ -407,7 +413,9 @@ def test_list_sql_tables_tool_returns_database_overview(tmp_path, monkeypatch):
     conn.close()
 
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
-    default_store._store.clear()
+    # Isolate on a fresh in-memory store, backend-agnostic (avoids poking
+    # `_store`, which only exists on SessionStore and not SessionStorePG).
+    monkeypatch.setattr("tools.sql_workspace._store", SessionStore(tmp_path / "sessions"))
 
     tools = make_sql_tools("thread-sql-overview")
     list_tool = next(tool for tool in tools if tool.name == "list_sql_tables")

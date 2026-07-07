@@ -34,7 +34,13 @@ from core.erddap_batching import (
 )
 from core.ogsl_client import query_ogsl as _query_ogsl, OGSL_DATASET_ID, OGSL_VARIABLES
 from core.ogsl_enrichment import build_station_windows, enrich_with_ogsl as _enrich_with_ogsl_helper
-from tools.dataset_registry import dataset_variable_name, enrichment_source_note, store_dataset
+from tools.dataset_registry import (
+    OGSL,
+    OGSL_ENRICHED,
+    dataset_variable_name,
+    enrichment_source_note,
+    store_dataset,
+)
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 
@@ -216,7 +222,7 @@ def make_ogsl_tools(thread_id: str) -> list:
                     "variables": selected_variables,
                     "n_rows": len(raw_dataframe),
                 },
-                latest_alias="ogsl",
+                latest_alias=OGSL,
             )
 
             enriched = _enrich_with_ogsl_helper(
@@ -587,7 +593,7 @@ def make_ogsl_tools(thread_id: str) -> list:
                 "n_rows": n,
                 "matched_rows": n_matched,
             },
-            latest_alias="ogsl_enriched",
+            latest_alias=OGSL_ENRICHED,
         )
         plural = "matchées" if n_matched > 1 else "matchée"
         method_lines = [

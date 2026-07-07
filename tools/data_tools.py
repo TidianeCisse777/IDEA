@@ -50,7 +50,12 @@ def _patch_cartopy_gridliner_polygon() -> None:
     _gridliner._idea_polygon_patched = True
 
 from tools.file_loader import load_file as _load_file
-from tools.dataset_registry import dataset_variable_name, store_dataset
+from tools.dataset_registry import (
+    SOURCE_ALIASES,
+    dataset_variable_name,
+    source_variable,
+    store_dataset,
+)
 from tools.public_url import graph_url
 from tools.session_store import SessionStore, default_store
 
@@ -174,19 +179,10 @@ def _dataframe_vars(
 ) -> dict[str, Any]:
     """Build the DataFrame namespace shared by pandas and graph tools."""
     local_vars: dict[str, Any] = {"df": df, "pd": pd}
-    for source, var in [
-        ("ecotaxa", "df_ecotaxa"),
-        ("ctd", "df_ctd"),
-        ("ecopart", "df_ecopart"),
-        ("ecotaxa_ecopart", "df_ecotaxa_ecopart"),
-        ("ctd_enriched", "df_ctd_enriched"),
-        ("bio_oracle", "df_bio_oracle"),
-        ("ogsl", "df_ogsl"),
-        ("sql", "df_sql"),
-    ]:
-        named = store.get(f"{thread_id}:{source}")
+    for alias in SOURCE_ALIASES:
+        named = store.get(f"{thread_id}:{alias}")
         if named and named.get("df") is not None:
-            local_vars[var] = named["df"]
+            local_vars[source_variable(alias)] = named["df"]
 
     for key in store.keys(f"{thread_id}:dataset:"):
         named = store.get(key)
@@ -276,8 +272,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - `df_ecopart`   : données EcoPart (après query_ecopart)
         - `df_ecotaxa_ecopart`: dernière jointure EcoTaxa + EcoPart
         - `df_ecopart_105`: projet EcoPart 105 (même règle pour chaque ID chargé)
+        - `df_ctd_enriched`: dernière table enrichie avec Amundsen CTD
         - `df_bio_oracle`: données Bio-ORACLE (après query_bio_oracle)
         - `df_ogsl`      : dernier fichier OGSL chargé ou dérivé
+        - `df_ogsl_enriched`: dernière table enrichie avec OGSL
         - `df_sql`       : dernière copie SQL matérialisée
 
         Assigne le résultat à la variable `result`.

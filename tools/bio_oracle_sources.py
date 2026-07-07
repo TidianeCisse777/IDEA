@@ -34,7 +34,12 @@ from core.environment_resolver import (
     parse_source_coords,
     resolve_source_dataframe,
 )
-from tools.dataset_registry import dataset_variable_name, enrichment_source_note, store_dataset
+from tools.dataset_registry import (
+    BIO_ORACLE,
+    dataset_variable_name,
+    enrichment_source_note,
+    store_dataset,
+)
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 
@@ -366,7 +371,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                         "longitude": lon,
                         "n_rows": len(dataframe),
                     },
-                    latest_alias=None if multi else "bio_oracle",
+                    latest_alias=None if multi else BIO_ORACLE,
                 )
                 per_point_frames.append(dataframe)
                 per_point_names.append(variable_name)
@@ -406,7 +411,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     "n_points": len(lat_list),
                     "n_rows": len(merged),
                 },
-                latest_alias="bio_oracle",
+                latest_alias=BIO_ORACLE,
             )
             return (
                 f"Bio-ORACLE chargé — {len(merged)} lignes pour {len(lat_list)} points.\n"

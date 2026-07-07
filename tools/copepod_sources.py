@@ -34,7 +34,7 @@ from core.ecotaxa_browser.cache.repo import (
     open_connection,
 )
 from tools.ecotaxa_client import EcotaxaClient, EcotaxaExportError
-from tools.dataset_registry import dataset_variable_name, store_dataset
+from tools.dataset_registry import ECOTAXA, dataset_variable_name, store_dataset
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 from tools.data_tools import _uvp_skill_hint
@@ -364,7 +364,7 @@ def make_source_tools(thread_id: str) -> list:
             df,
             variable_name=variable_name,
             meta={**meta, "source": f"ecotaxa:{project_id}", "project_id": project_id, "n_rows": len(df)},
-            latest_alias="ecotaxa",
+            latest_alias=ECOTAXA,
         )
 
         file_id = uuid.uuid4().hex
