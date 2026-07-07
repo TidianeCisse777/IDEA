@@ -178,7 +178,6 @@ instable en multi-source.
 | `geo/`, `environment_resolver/`, `enrich_scoping.py` | Résolution zones + scoping des enrichissements |
 | `taxonomy_lookup/` | Résolution taxon (WoRMS/Wikipedia) |
 | `instruction_renderer/` | Composition des system prompts |
-| `tool_registry/` | Ancienne architecture — **en cours de retrait** |
 
 ---
 

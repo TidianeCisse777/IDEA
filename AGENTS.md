@@ -105,7 +105,6 @@ studio.py                 LangGraph Studio entry
 
 agents/
   copepod_system_prompt.py  System prompt complet (anglais, ~64 lignes)
-  copepod_profile.py        Métadonnées de profil
   copepod_prompt.py         (déprécié — référence historique uniquement)
   skills/                   14 skills Markdown
 
@@ -116,7 +115,6 @@ core/
   ecotaxa_client.py … *_client.py
   instruction_renderer/   Composition des system prompts
   mcp/                    MCP integrations (si actives)
-  tool_registry/          Ancienne architecture — en cours de retrait
 
 tests/                    pytest (~30 modules, 42 tests verts au dernier merge main)
 evals/                    Évaluations LangSmith (copepod graph happy path…)
