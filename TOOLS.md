@@ -23,7 +23,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 2. EcoTaxa — `tools/copepod_sources.py` (22)
+## 2. EcoTaxa — `tools/copepod_sources.py` (23)
 
 ### Catalogue & recherche
 | Tool | Rôle | Coûteux ? |
@@ -68,6 +68,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 |---|---|---|
 | `query_ecotaxa` | Export d'un projet (`project_id`, `sample_ids`, filtres taxon/statut/`obj_depth_*`) | **oui** |
 | `query_ecotaxa_sample` | Export d'un sample unique (résout le projet auto) | **oui** |
+| `export_ecotaxa_samples` | Export d'une sélection nommée de samples (`selection_name`, `confirmed`) | **oui** |
 
 ---
 

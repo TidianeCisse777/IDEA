@@ -223,3 +223,17 @@ Or stop services manually:
 ```bash
 docker compose stop open-webui copepod-agent mcp-ecotaxa postgres
 ```
+
+## Agent capabilities
+
+The agent exposes ~54 tools to the LLM, grouped by category:
+
+- **Files & analysis** — load CSV/TSV/Excel, controlled pandas, graph production
+- **EcoTaxa** (read-only via MCP cache + confirmed exports) — catalogue, schema, taxa, zone/period search, summaries, export
+- **EcoPart** — samples, join, remote enrichment
+- **Amundsen CTD / OGSL** — profile preview, per-row CTD enrichment
+- **Bio-ORACLE** — env variables & climate scenarios by point/zone/row
+- **SQL workspace** (read-only, optional), **named geography**, **taxonomy (WoRMS)**, **knowledge base (RAG)**, **deliverables (PDF)**
+
+Full, up-to-date inventory and use cases → **[`SPEC.md`](SPEC.md)** (capabilities + UC-A…UC-J).
+Tool-by-tool reference → **[`TOOLS.md`](TOOLS.md)**.

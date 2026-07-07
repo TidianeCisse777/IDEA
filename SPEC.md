@@ -178,6 +178,7 @@ ajoutés que si `DATABASE_URL` est résolvable.
 | `get_ecotaxa_cache_status` | État du cache MCP | non |
 | `query_ecotaxa` | **Export projet complet** | **oui** |
 | `query_ecotaxa_sample` | **Export d'un sample** | **oui** |
+| `export_ecotaxa_samples` | **Export d'une sélection nommée de samples** | **oui** |
 
 ### 4.3 EcoPart (`tools/ecopart_sources.py`)
 | Tool | Rôle | Coûteux ? |
