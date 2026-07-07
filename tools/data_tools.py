@@ -59,6 +59,45 @@ from tools.dataset_registry import (
 from tools.public_url import graph_url
 from tools.session_store import SessionStore, default_store
 
+# --- Cycle de vie du blocage qualité graphique ----------------------------
+# Quand run_graph bloque une figure pour lisibilité, il pose ce flag ; run_pandas
+# refuse alors de produire un tableau de repli et renvoie vers run_graph. Le
+# blocage ne vaut QUE pour la tentative de graphe en cours : il est effacé au
+# succès d'un graphe (run_graph) et au début de chaque nouveau tour utilisateur
+# (pre_model_hook), sinon il coince une question chiffrée légitime au tour suivant.
+_GRAPH_QUALITY_BLOCKED_KEY = "graph_quality_blocked"
+
+
+def graph_recovery_pending(meta: dict[str, Any]) -> bool:
+    """True si un graphe a été bloqué pour lisibilité et que graph_writer est chargé."""
+    return bool(meta.get(_GRAPH_QUALITY_BLOCKED_KEY)) and "graph_writer" in (
+        meta.get("loaded_skills") or []
+    )
+
+
+def _mark_graph_quality_blocked(store: SessionStore, thread_id: str) -> None:
+    store.update_meta(thread_id, {_GRAPH_QUALITY_BLOCKED_KEY: True})
+
+
+def _clear_graph_quality_block(store: SessionStore, thread_id: str) -> None:
+    store.update_meta(thread_id, {_GRAPH_QUALITY_BLOCKED_KEY: False})
+
+
+def reset_graph_block_on_new_turn(store: SessionStore, thread_id: str, messages: list) -> None:
+    """Efface le blocage graphique au début d'un nouveau tour utilisateur.
+
+    Nouveau tour = le dernier message est un message humain. En milieu de boucle
+    ReAct (dernier message = résultat d'outil), on ne touche à rien pour préserver
+    la protection anti-repli-tableau de la tentative de graphe en cours.
+    """
+    from langchain_core.messages import HumanMessage  # noqa: PLC0415
+
+    if not (messages and isinstance(messages[-1], HumanMessage)):
+        return
+    session = store.get(thread_id)
+    if session and (session.get("meta") or {}).get(_GRAPH_QUALITY_BLOCKED_KEY):
+        _clear_graph_quality_block(store, thread_id)
+
 
 def _graph_quality_issue(plt: Any) -> str | None:
     """Return a blocking message when a produced figure is likely unreadable."""
@@ -289,7 +328,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         if not session or session.get("df") is None:
             return "Aucun fichier chargé. Utilise load_file d'abord."
         meta = session.get("meta") or {}
-        if meta.get("graph_quality_blocked") and "graph_writer" in (meta.get("loaded_skills") or []):
+        if graph_recovery_pending(meta):
             return (
                 "Graph quality recovery: the previous graph was blocked for readability. "
                 "Do not answer with a table; revise the matplotlib code and call run_graph again."
@@ -372,7 +411,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 quality_issue = _graph_quality_issue(plt)
                 if quality_issue:
                     plt.close("all")
-                    _store.update_meta(thread_id, {"graph_quality_blocked": True})
+                    _mark_graph_quality_blocked(_store, thread_id)
                     return quality_issue
                 buf = io.BytesIO()
                 plt.savefig(buf, format="png", bbox_inches="tight")
@@ -380,7 +419,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 plt.close("all")
                 graph_id = uuid.uuid4().hex[:12]
                 (_GRAPHS_DIR / f"{graph_id}.png").write_bytes(buf.read())
-                _store.update_meta(thread_id, {"graph_quality_blocked": False})
+                _clear_graph_quality_block(_store, thread_id)
                 image_markdown = f"![graph]({graph_url(f'{graph_id}.png')})"
                 graph_explanation = local_vars.get("graph_explanation")
                 if isinstance(graph_explanation, str) and graph_explanation.strip():

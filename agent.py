@@ -144,6 +144,13 @@ def _make_context_hook(user_id: str = "anonymous", thread_id: str = "unknown"):
 
     def trim_context(state: dict) -> dict:
         original_messages = list(state["messages"])
+        # Réarme le blocage qualité graphique au début d'un nouveau tour utilisateur.
+        try:
+            from tools.data_tools import reset_graph_block_on_new_turn
+            from tools.session_store import default_store as _session_store
+            reset_graph_block_on_new_turn(_session_store, thread_id, original_messages)
+        except Exception:
+            pass
         original_tokens = _approx_tokens(original_messages)
         msgs, truncate_metrics = _truncate_tool_results(original_messages)
         truncated_tokens = _approx_tokens(msgs)

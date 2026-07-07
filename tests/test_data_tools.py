@@ -613,3 +613,72 @@ def test_ecotaxa_demo_export_does_not_trigger_uvp_hint():
     hint = _uvp_skill_hint(list(df.columns))
 
     assert hint == ""
+
+
+def test_graph_recovery_pending_requires_block_and_graph_writer():
+    from tools.data_tools import graph_recovery_pending
+
+    assert graph_recovery_pending(
+        {"graph_quality_blocked": True, "loaded_skills": ["graph_writer"]}) is True
+    # graph_writer pas chargé → pas de recovery
+    assert graph_recovery_pending(
+        {"graph_quality_blocked": True, "loaded_skills": ["graph_planner"]}) is False
+    # pas de blocage → pas de recovery
+    assert graph_recovery_pending(
+        {"graph_quality_blocked": False, "loaded_skills": ["graph_writer"]}) is False
+    assert graph_recovery_pending({}) is False
+
+
+def test_graph_block_clears_on_new_user_turn_not_mid_loop(tmp_path):
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from tools.data_tools import _mark_graph_quality_blocked, reset_graph_block_on_new_turn
+    from tools.session_store import SessionStore
+
+    store = SessionStore(tmp_path / "sessions")
+    tid = "thread-graph-turn"
+    store.update_meta(tid, {"loaded_skills": ["graph_writer"]})
+    _mark_graph_quality_blocked(store, tid)
+
+    # Milieu de boucle ReAct : dernier message = résultat d'outil → flag conservé.
+    reset_graph_block_on_new_turn(
+        store, tid,
+        [HumanMessage("fais un graphe"), AIMessage(""),
+         ToolMessage("blocked", tool_call_id="c1")],
+    )
+    assert (store.get(tid)["meta"] or {}).get("graph_quality_blocked") is True
+
+    # Nouveau tour utilisateur : dernier message = message humain → flag effacé.
+    reset_graph_block_on_new_turn(
+        store, tid,
+        [ToolMessage("blocked", tool_call_id="c1"), HumanMessage("moyenne de X ?")],
+    )
+    assert (store.get(tid)["meta"] or {}).get("graph_quality_blocked") is False
+
+
+def test_run_pandas_unblocks_after_new_user_turn(tmp_path):
+    """Régression du flag collant : après un graphe bloqué, run_pandas est gaté
+    dans le même tour, mais répond à nouveau au tour utilisateur suivant."""
+    from langchain_core.messages import HumanMessage
+
+    from tools.dataset_registry import store_dataset
+    from tools.data_tools import _mark_graph_quality_blocked, reset_graph_block_on_new_turn
+    from tools.session_store import SessionStore
+
+    store = SessionStore(tmp_path / "sessions")
+    tid = "thread-graph-jam"
+    df = pd.DataFrame({"x": [1, 2, 3]})
+    store_dataset(store, tid, df, variable_name="df_file_x", meta={"source": "file:x"})
+    store.update_meta(tid, {"loaded_skills": ["graph_writer"]})
+    _mark_graph_quality_blocked(store, tid)
+
+    run_pandas = next(t for t in make_tools(tid, store=store) if t.name == "run_pandas")
+
+    # Même tour : le repli tableau est bloqué (protection conservée).
+    blocked = run_pandas.invoke({"code": "result = len(df)"})
+    assert "recovery" in blocked.lower()
+
+    # Nouveau tour utilisateur : le flag est réarmé, run_pandas répond.
+    reset_graph_block_on_new_turn(store, tid, [HumanMessage("moyenne de X ?")])
+    ok = run_pandas.invoke({"code": "result = len(df)"})
+    assert ok == "3"
