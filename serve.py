@@ -556,7 +556,7 @@ def _format_tool_line(name: str, args: dict | None = None) -> str:
 def _format_tool_call_details(name: str, body: str, *, summary_note: str = "") -> str:
     return (
         "\n<details>\n"
-        f"<summary>🔧 {name}</summary>\n\n"
+        f"<summary>{name}</summary>\n\n"
         f"{body}\n\n"
         "</details>\n"
     )
@@ -620,7 +620,7 @@ def _format_slow_tool_progress(name: str, percent: int, args: dict | None = None
     )
     stage = _progress_stage_label(percent)
     details = _format_tool_call_params(args)
-    lines = [f"⏳ {label} {_render_progress_bar(percent)}", f"Étape : {stage}"]
+    lines = [f"{label} {_render_progress_bar(percent)}", f"Étape : {stage}"]
     if details:
         lines.append(f"Paramètres : {details}")
     return "\n".join(lines)
@@ -859,13 +859,13 @@ def _format_tool_result_details(name: str, content: str, args: dict | None = Non
 
     if "CACHE_EMPTY" in display:
         display = (
-            "⚠️ Cache EcoTaxa vide\n\n"
+            "Cache EcoTaxa vide\n\n"
             "La synchronisation initiale n'a pas encore rempli le cache local.\n"
             "Relancer l'enrichissement une fois la synchro terminée."
         )
     elif "SYNC_IN_PROGRESS" in display:
         display = (
-            "⏳ Synchronisation en cours\n\n"
+            "Synchronisation en cours\n\n"
             "La source est en train d'être synchronisée. "
             "L'enrichissement reprendra quand le cache sera prêt."
         )
@@ -875,10 +875,10 @@ def _format_tool_result_details(name: str, content: str, args: dict | None = Non
         display = _linkify_ecotaxa(display)
         label = _ECOTAXA_TOOL_LABELS[name]
         suffix = _format_args_summary(name, args)
-        summary = f"📊 {label}" + (f" — {suffix}" if suffix else "")
+        summary = f"{label}" + (f" — {suffix}" if suffix else "")
         source_line = f"\n\n*Source : EcoTaxa — [{_ECOTAXA_BASE_URL}]({_ECOTAXA_BASE_URL})*"
     else:
-        summary = f"📊 Résultat de <code>{name}</code>"
+        summary = f"Résultat de {name}"
         source_line = ""
 
     return (
