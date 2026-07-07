@@ -86,21 +86,39 @@ also generates `MCP_AUTH_TOKEN` in `.env` if missing.
 
 ### First run: wait for the EcoTaxa cache
 
-On the first start the EcoTaxa cache fills in the background (~1–2 min).
-Until it is populated, EcoTaxa questions return an empty result even though
-the agent is up. Check it before querying EcoTaxa:
+On the first start the EcoTaxa cache fills in the background (~1–2 min, longer
+for large accounts). Until it is populated, EcoTaxa questions return an empty
+result even though the agent is up.
+
+**Watch the progress live** — `last_sync_status` is `running` while the sync
+is in progress, and `samples_indexed` / `projects_indexed` climb as it goes:
 
 ```bash
-curl -s http://localhost:8001/health | jq .cache
+# refresh every 3s; stop when last_sync_status flips to "ok"
+while true; do
+  curl -s http://localhost:8001/health | jq -c .cache
+  sleep 3
+done
 ```
 
-Wait until `samples_indexed > 0` (and `last_sync_status` is `ok`). If it
-stays at `0`, force a sync:
+You will see the counts rise, for example:
+
+```jsonc
+{"samples_indexed":0,  "projects_indexed":0, "last_sync_status":"running"}  // just started
+{"samples_indexed":28, "projects_indexed":2, "last_sync_status":"running"}  // in progress
+{"samples_indexed":97, "projects_indexed":6, "last_sync_status":"ok"}       // done — safe to query
+```
+
+The cache is ready when `last_sync_status` is `ok` and `samples_indexed > 0`.
+If it stays at `0` with no `running` status, force a sync:
 
 ```bash
 source .env
 curl -X POST http://localhost:8001/admin/resync -H "Authorization: Bearer $MCP_AUTH_TOKEN"
 ```
+
+You can also ask the agent directly — *"le cache EcoTaxa est-il à jour ?"* — it
+reports the indexed counts, the last sync time, and whether a sync is running.
 
 ### Confirm the agent actually sees the cache
 
