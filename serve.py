@@ -573,6 +573,7 @@ _ENRICHMENT_PROGRESS_LABELS = {
 _SLOW_TOOL_PROGRESS_LABELS = {
     "query_ecotaxa": "Téléchargement EcoTaxa",
     "query_ecotaxa_sample": "Téléchargement EcoTaxa sample",
+    "export_ecotaxa_samples": "Export EcoTaxa (sélection)",
     "query_ecopart": "Téléchargement EcoPart",
     "query_amundsen_ctd": "Téléchargement Amundsen CTD",
     "query_bio_oracle": "Téléchargement Bio-ORACLE",
@@ -691,7 +692,8 @@ def _format_tool_arg_literal(value) -> str:
 
 
 _SLOW_TOOLS = frozenset({
-    "query_ecotaxa", "query_ecotaxa_sample", "query_ecopart", "query_amundsen_ctd",
+    "query_ecotaxa", "query_ecotaxa_sample", "export_ecotaxa_samples",
+    "query_ecopart", "query_amundsen_ctd",
     "query_bio_oracle", "couple_zooplankton_bio_oracle", "query_ogsl",
     "enrich_loaded_table_with_amundsen_ctd",
     "enrich_with_amundsen_ctd",
