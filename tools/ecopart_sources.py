@@ -10,10 +10,12 @@ from langchain_core.tools import tool
 from core.ecopart_client import EcopartClient, EcopartExportError
 from tools.dataset_registry import (
     ECOPART,
+    ECOTAXA,
     ECOTAXA_ECOPART,
     dataset_variable_name,
     store_dataset,
 )
+from tools.ecotaxa_client import EcotaxaClient
 from tools.session_store import default_store as _store
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
@@ -235,6 +237,32 @@ def _candidate_ecotaxa_profile_labels(df_et: pd.DataFrame) -> list[str]:
 # stable server-side fact, so it is shared across threads/sessions. The user's
 # workflow (find -> enrich -> density) otherwise re-resolves 2-3 times.
 _ECOPART_RESOLUTION_CACHE: dict[int, dict] = {}
+
+
+def _ensure_ecotaxa_project_loaded(thread_id: str, project_id: int) -> None:
+    """Guard: load an EcoTaxa project into session if it is not already there.
+
+    Makes `enrich_ecotaxa_with_ecopart_remote` self-sufficient when the caller
+    named an EcoTaxa project but skipped `query_ecotaxa` first — a routing lapse
+    that otherwise fails the whole turn. Loading the EcoTaxa source is a
+    prerequisite of the enrichment the user has already confirmed. No-op if an
+    EcoTaxa dataset is already in session.
+    """
+    if _store.get(f"{thread_id}:ecotaxa") is not None:
+        return
+    client = EcotaxaClient()
+    client.login()
+    job_id = client.start_export(project_id, {"statusfilter": "V"})
+    client.wait_for_job(job_id)
+    df = client.download_tsv(job_id)
+    store_dataset(
+        _store,
+        thread_id,
+        df,
+        variable_name=dataset_variable_name("ecotaxa", project_id),
+        meta={"source": f"ecotaxa:{project_id}", "project_id": project_id, "n_rows": len(df)},
+        latest_alias=ECOTAXA,
+    )
 
 
 def _lookup_ecopart_project_for_ecotaxa(
@@ -500,7 +528,20 @@ def make_ecopart_tools(thread_id: str) -> list:
         """
         session_et = _store.get(f"{thread_id}:ecotaxa")
         if session_et is None:
-            return "Données EcoTaxa manquantes — charge d'abord un fichier UVP (`load_file`) ou `query_ecotaxa`."
+            # Guard: the caller named an EcoTaxa project but no EcoTaxa is loaded
+            # (query_ecotaxa was skipped). Auto-load it so this confirmed
+            # enrichment is self-sufficient instead of failing the turn.
+            if ecotaxa_project_id is not None:
+                try:
+                    _ensure_ecotaxa_project_loaded(thread_id, int(ecotaxa_project_id))
+                except Exception as exc:
+                    return (
+                        f"Le projet EcoTaxa {ecotaxa_project_id} n'a pas pu être chargé "
+                        f"automatiquement : {exc}"
+                    )
+                session_et = _store.get(f"{thread_id}:ecotaxa")
+            if session_et is None:
+                return "Données EcoTaxa manquantes — charge d'abord un fichier UVP (`load_file`) ou `query_ecotaxa`."
 
         if ecotaxa_project_id is None and ecopart_project_id is None:
             ecotaxa_project_id = session_et.get("meta", {}).get("project_id")

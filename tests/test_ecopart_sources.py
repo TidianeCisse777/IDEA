@@ -212,17 +212,21 @@ def test_make_ecopart_tools_includes_join_tool():
     assert "enrich_ecotaxa_with_ecopart_remote" in tool_names
 
 
-def test_enrich_remote_errors_without_ecotaxa_in_session():
+def test_enrich_remote_errors_without_ecotaxa_and_without_project_id():
+    """With no EcoTaxa in session AND no project id to auto-load, enrich still
+    errors (the guard only auto-loads when a project id is provided)."""
     from tools.ecopart_sources import make_ecopart_tools
     from tools.session_store import default_store as _store
 
     _store._store.clear()
+    for key in ("thread-remote-no-et", "thread-remote-no-et:ecotaxa"):
+        _store.clear(key)  # also drop any on-disk session for this thread
 
     tool = next(
         t for t in make_ecopart_tools("thread-remote-no-et")
         if t.name == "enrich_ecotaxa_with_ecopart_remote"
     )
-    result = tool.invoke({"ecotaxa_project_id": 1165})
+    result = tool.invoke({})  # no ecotaxa_project_id -> nothing to auto-load
     assert "Données EcoTaxa manquantes" in result
 
 
@@ -286,6 +290,48 @@ def test_enrich_remote_uses_session_project_id_when_query_ecotaxa_was_run():
     assert "Enrichissement terminé" in result
     merged = _store.get("thread-remote-meta")["df"]
     assert merged.loc[0, "ecopart_Sampled volume [L]"] == 100.0
+
+
+def test_enrich_remote_auto_loads_ecotaxa_when_project_named_but_not_in_session():
+    """Guard: enrich called with an ecotaxa_project_id but no EcoTaxa in session
+    (query_ecotaxa skipped) must auto-load the project instead of failing."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()  # NO EcoTaxa preloaded
+    # get() falls back to on-disk sessions, so also purge this thread's disk state.
+    for key in ("thread-autoload", "thread-autoload:ecotaxa"):
+        _store.clear(key)
+
+    mock_et = MagicMock()
+    mock_et.start_export.return_value = "job-1"
+    mock_et.download_tsv.return_value = pd.DataFrame(
+        {"obj_orig_id": ["ips_007_1"], "object_depth_min": [3.0]}
+    )
+
+    mock_ep = MagicMock()
+    mock_ep.start_export.return_value = ["/Task/Show/7"]
+    mock_ep.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["ips_007"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [100.0],
+    })
+
+    with patch("tools.ecopart_sources.EcotaxaClient", return_value=mock_et), \
+         patch("tools.ecopart_sources.EcopartClient", return_value=mock_ep):
+        tool = next(
+            t for t in make_ecopart_tools("thread-autoload")
+            if t.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({"ecotaxa_project_id": 14853})
+
+    mock_et.start_export.assert_called_once()  # auto-loaded the EcoTaxa project
+    assert "Données EcoTaxa manquantes" not in result
+    assert "Enrichissement terminé" in result
+    assert _store.get("thread-autoload:ecotaxa") is not None
 
 
 def test_full_remote_workflow_query_ecotaxa_then_enrich_remote():
