@@ -77,21 +77,26 @@ Use this when the user asks to show a named zone itself, e.g. "montre-moi sur
 une carte la baie d'Hudson", and no loaded DataFrame is needed. Use the `bbox`
 returned by `get_zone_info(zone_name=...)`; do not reference `df`.
 
+For a standalone zone map, use `ccrs.PlateCarree()` and put lon/lat labels via
+`set_xticks`/`set_yticks` + the cartopy formatters. Do **not** use
+`ax.gridlines(draw_labels=True)` here: on this cartopy build the gridline
+labeler raises `ValueError: cannot convert float NaN to integer` (especially on
+`LambertConformal`), which has nothing to do with a missing file.
+
 ```python
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 
 plt.style.use("dark_background")
 plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
                      "grid.alpha": 0.25, "axes.edgecolor": "#444"})
 
 bbox = {"south": <south>, "west": <west>, "north": <north>, "east": <east>}
-central_lon = (bbox["west"] + bbox["east"]) / 2
-central_lat = (bbox["south"] + bbox["north"]) / 2
-proj = ccrs.LambertConformal(central_longitude=central_lon, central_latitude=central_lat)
+proj = ccrs.PlateCarree()
 
 fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={"projection": proj})
 ax.set_extent([bbox["west"], bbox["east"], bbox["south"], bbox["north"]], crs=ccrs.PlateCarree())
@@ -101,9 +106,14 @@ ax.add_feature(cfeature.OCEAN, facecolor="#1a3a5c", zorder=0)
 ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor="#aaaaaa", zorder=2)
 ax.add_feature(cfeature.BORDERS, linestyle=":", linewidth=0.5, edgecolor="#666666", zorder=2)
 
-gl = ax.gridlines(draw_labels=True, linewidth=0.5, color="gray", alpha=0.4, linestyle="--")
-gl.top_labels = False
-gl.right_labels = False
+# lon/lat labels via the axis (avoids the broken gridline labeler)
+import numpy as np
+ax.set_xticks(np.linspace(bbox["west"], bbox["east"], 5), crs=ccrs.PlateCarree())
+ax.set_yticks(np.linspace(bbox["south"], bbox["north"], 5), crs=ccrs.PlateCarree())
+ax.xaxis.set_major_formatter(LongitudeFormatter())
+ax.yaxis.set_major_formatter(LatitudeFormatter())
+ax.tick_params(colors="#aaaaaa", labelsize=8)
+ax.gridlines(linewidth=0.5, color="gray", alpha=0.3, linestyle="--")  # lines only, no draw_labels
 
 ax.set_title("<zone name>", fontsize=13, color="white")
 plt.tight_layout()

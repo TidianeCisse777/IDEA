@@ -432,7 +432,15 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             return "Code executed but no figure was produced. Make sure your matplotlib code creates a figure."
 
         except Exception as e:
-            cols_info = df.dtypes.to_string() if df is not None else "(no file loaded)"
-            return f"Error: {type(e).__name__}: {e}\n\nAvailable columns:\n{cols_info}"
+            # Only surface the columns hint when a loaded dataframe is actually
+            # in play. For standalone figures (e.g. cartopy zone maps) there is
+            # no file, and appending "(no file loaded)" wrongly suggests the
+            # error is a missing file rather than a plotting bug.
+            if df is not None:
+                return (
+                    f"Error: {type(e).__name__}: {e}\n\n"
+                    f"Available columns:\n{df.dtypes.to_string()}"
+                )
+            return f"Error: {type(e).__name__}: {e}"
 
     return [load_file, run_pandas, run_graph]
