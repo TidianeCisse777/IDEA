@@ -30,6 +30,7 @@ def _make_client(
     projects: list[dict],
     objects_by_project: dict[int, list[list]],
     project_details: dict[int, dict] | None = None,
+    samples_by_project: dict[int, list[dict]] | None = None,
 ):
     client = MagicMock()
     client.login.return_value = None
@@ -55,6 +56,9 @@ def _make_client(
         return {"details": details, "sample_ids": sample_ids, "total_ids": len(rows)}
 
     client.query_objects.side_effect = _query_objects
+    client.list_samples.side_effect = lambda project_id: (
+        samples_by_project or {}
+    ).get(project_id, [])
     return client
 
 
@@ -119,6 +123,50 @@ def test_sync_one_project_aggregates_depth_envelope_per_sample(conn):
     assert rows[1]["sample_id"] == 2
     assert rows[1]["depth_min"] == pytest.approx(0.0)
     assert rows[1]["depth_max"] == pytest.approx(125.0)
+
+
+def test_sync_one_project_enriches_light_sample_metadata(conn):
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    objects = [
+        [70.0, -64.0, "2018-07-01", 0.0, 25.0, "42000001"],
+        [70.2, -64.4, "2018-07-02", 25.0, 82.0, "42000001"],
+    ]
+    client = _make_client(
+        projects=[{"projid": 42, "title": "P", "instrument": "UVP5SD"}],
+        objects_by_project={42: objects},
+        samples_by_project={
+            42: [
+                {
+                    "sampleid": 42000001,
+                    "projid": 42,
+                    "orig_id": "gn2015_l2_001",
+                    "latitude": 70.1,
+                    "longitude": -64.2,
+                    "free_columns": {
+                        "stationid": "ice-camp",
+                        "profileid": "001",
+                        "other": "kept",
+                    },
+                },
+            ],
+        },
+    )
+
+    sync_project(conn, client, project_id=42, last_synced="ts")
+
+    row = conn.execute(
+        "SELECT original_id, station_id, profile_id, free_fields_json "
+        "FROM samples_cache WHERE sample_id=42000001"
+    ).fetchone()
+    assert row["original_id"] == "gn2015_l2_001"
+    assert row["station_id"] == "ice-camp"
+    assert row["profile_id"] == "001"
+    assert json.loads(row["free_fields_json"]) == {
+        "stationid": "ice-camp",
+        "profileid": "001",
+        "other": "kept",
+    }
 
 
 def test_sync_drops_objects_without_lat_lon_silently(conn):

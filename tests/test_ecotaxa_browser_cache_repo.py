@@ -42,7 +42,7 @@ def test_init_schema_is_idempotent(conn):
     assert count == 1
 
 
-def test_init_schema_migrates_existing_samples_cache_with_depth_columns(conn):
+def test_init_schema_migrates_existing_samples_cache_with_light_sample_metadata_columns(conn):
     from core.ecotaxa_browser.cache.repo import init_schema
 
     conn.execute(
@@ -68,7 +68,14 @@ def test_init_schema_migrates_existing_samples_cache_with_depth_columns(conn):
         row["name"]
         for row in conn.execute("PRAGMA table_info(samples_cache)")
     }
-    assert {"depth_min", "depth_max"}.issubset(columns)
+    assert {
+        "depth_min",
+        "depth_max",
+        "original_id",
+        "station_id",
+        "profile_id",
+        "free_fields_json",
+    }.issubset(columns)
 
 
 def test_upsert_sample_inserts_and_then_updates(conn):
@@ -86,6 +93,10 @@ def test_upsert_sample_inserts_and_then_updates(conn):
         object_count=120,
         instrument="UVP5SD",
         last_synced="2026-06-15T03:00:00Z",
+        original_id="gn2015_l2_001",
+        station_id="ice-camp",
+        profile_id="001",
+        free_fields_json='{"stationid": "ice-camp", "profileid": "001"}',
     )
     upsert_sample(
         conn,
@@ -98,6 +109,10 @@ def test_upsert_sample_inserts_and_then_updates(conn):
         object_count=130,
         instrument="UVP5SD",
         last_synced="2026-06-16T03:00:00Z",
+        original_id="gn2015_l2_001b",
+        station_id="station-b",
+        profile_id="001b",
+        free_fields_json='{"stationid": "station-b", "profileid": "001b"}',
     )
 
     rows = list(conn.execute("SELECT * FROM samples_cache"))
@@ -105,6 +120,10 @@ def test_upsert_sample_inserts_and_then_updates(conn):
     assert rows[0]["lat_avg"] == 70.2
     assert rows[0]["object_count"] == 130
     assert rows[0]["last_synced"] == "2026-06-16T03:00:00Z"
+    assert rows[0]["original_id"] == "gn2015_l2_001b"
+    assert rows[0]["station_id"] == "station-b"
+    assert rows[0]["profile_id"] == "001b"
+    assert rows[0]["free_fields_json"] == '{"stationid": "station-b", "profileid": "001b"}'
 
 
 def test_query_samples_in_bbox_returns_inclusive_borders(conn):
@@ -201,7 +220,9 @@ def test_replace_project_samples_drops_obsolete_rows(conn):
         samples=[
             {"sample_id": 1, "lat_avg": 70.0, "lon_avg": -64.0,
              "date_min": "2018-08-01", "date_max": "2018-08-10",
-             "object_count": 10, "instrument": "UVP5"},
+             "object_count": 10, "instrument": "UVP5",
+             "original_id": "sample-1", "station_id": "station-1",
+             "profile_id": "profile-1", "free_fields_json": '{"stationid": "station-1"}'},
             {"sample_id": 2, "lat_avg": 71.0, "lon_avg": -63.0,
              "date_min": "2018-08-05", "date_max": "2018-08-12",
              "object_count": 20, "instrument": "UVP5"},
@@ -227,13 +248,16 @@ def test_replace_project_samples_drops_obsolete_rows(conn):
         last_synced="ts2",
     )
     rows_after_second = list(conn.execute(
-        "SELECT sample_id, object_count, last_synced FROM samples_cache "
+        "SELECT sample_id, object_count, last_synced, original_id, station_id, "
+        "profile_id, free_fields_json FROM samples_cache "
         "WHERE project_id=42 ORDER BY sample_id"
     ))
     assert [(r["sample_id"], r["object_count"]) for r in rows_after_second] == [
         (1, 15), (3, 30)
     ]
     assert all(r["last_synced"] == "ts2" for r in rows_after_second)
+    assert rows_after_second[0]["original_id"] is None
+    assert rows_after_second[0]["station_id"] is None
 
 
 def test_replace_project_samples_is_transactional(conn):

@@ -446,6 +446,170 @@ def group_project_samples_by_region(project_id: int) -> dict:
     }
 
 
+def rank_samples_by_region(
+    include_empty: bool = False,
+    sort_by: str = "sample_count",
+    sort_order: str = "asc",
+) -> dict:
+    """Rank all cached EcoTaxa samples by NeoLab/IHO/MEOW region.
+
+    Reads only the local cache. By default, only regions that contain at
+    least one cached sample are returned, plus explicit outside/missing
+    buckets when they contain samples. Set ``include_empty=True`` to include
+    empty registry zones for gap analysis.
+    """
+    from core.geo import load_registry
+
+    order = sort_order.strip().lower()
+    if order not in {"asc", "desc"}:
+        raise EcoTaxaBrowserError(
+            "INVALID_SORT_ORDER",
+            "sort_order must be 'asc' or 'desc'.",
+        )
+    metric = sort_by.strip().lower()
+    if metric not in {"sample_count", "date_min", "date_max"}:
+        raise EcoTaxaBrowserError(
+            "INVALID_SORT_BY",
+            "sort_by must be 'sample_count', 'date_min', or 'date_max'.",
+        )
+
+    registry_path = os.getenv(
+        "ZONES_REGISTRY", "data/geo/zones_registry.geojson",
+    )
+    registry = load_registry(registry_path)
+    groups: dict[str, list[sqlite3.Row]] = {
+        zone.canonical: [] for zone in registry.zones
+    }
+    groups[_OUTSIDE_IHO_REGION] = []
+    groups[_MISSING_COORDINATES_REGION] = []
+
+    conn = _open_cache()
+    try:
+        _ensure_cache_ready(conn)
+        sync_in_progress = _sync_in_progress(conn)
+        rows = list(query_samples_filtered(conn))
+    finally:
+        conn.close()
+
+    for row in rows:
+        lat = row["lat_avg"]
+        lon = row["lon_avg"]
+        if lat is None or lon is None:
+            groups[_MISSING_COORDINATES_REGION].append(row)
+            continue
+
+        point = Point(lon, lat)
+        region_name = _OUTSIDE_IHO_REGION
+        for zone in registry.zones:
+            if zone.polygon.contains(point):
+                region_name = zone.canonical
+                break
+        groups[region_name].append(row)
+
+    region_rows = []
+    for region_name, sample_rows in groups.items():
+        if not include_empty and not sample_rows:
+            continue
+        sample_ids = sorted(int(row["sample_id"]) for row in sample_rows)
+        project_ids = sorted({int(row["project_id"]) for row in sample_rows})
+        date_min_values = [
+            str(row["date_min"]) for row in sample_rows
+            if row["date_min"] is not None
+        ]
+        date_max_values = [
+            str(row["date_max"]) for row in sample_rows
+            if row["date_max"] is not None
+        ]
+        region_rows.append({
+            "region": region_name,
+            "sample_count": len(sample_rows),
+            "project_count": len(project_ids),
+            "date_min": min(date_min_values) if date_min_values else None,
+            "date_max": max(date_max_values) if date_max_values else None,
+            "sample_ids": sample_ids,
+            "project_ids": project_ids,
+        })
+
+    def _sort_value(row: dict) -> tuple[int, int | str, str]:
+        if metric == "sample_count":
+            value = int(row["sample_count"])
+            return (0, -value if order == "desc" else value, row["region"])
+        value = row[metric]
+        if value is None:
+            return (1, "", row["region"])
+        sortable = str(value)
+        return (0, _reverse_string(sortable) if order == "desc" else sortable, row["region"])
+
+    region_rows.sort(
+        key=_sort_value
+    )
+    regions_with_samples = sum(1 for row in region_rows if row["sample_count"] > 0)
+
+    return {
+        "regions": region_rows,
+        "total_samples": len(rows),
+        "regions_with_samples": regions_with_samples,
+        "total_regions": len(registry.zones),
+        "include_empty": include_empty,
+        "sort_by": metric,
+        "sort_order": order,
+        "partial": sync_in_progress,
+        "sync_in_progress": sync_in_progress,
+        "markdown_summary": _build_region_rank_markdown(
+            regions=region_rows,
+            total_samples=len(rows),
+            include_empty=include_empty,
+            sort_by=metric,
+            sort_order=order,
+            partial=sync_in_progress,
+        ),
+    }
+
+
+def _reverse_string(value: str) -> str:
+    """Return a lexicographic inverse for ISO date descending sorts."""
+    return "".join(chr(0x10FFFF - ord(char)) for char in value)
+
+
+def _build_region_rank_markdown(
+    *,
+    regions: list[dict],
+    total_samples: int,
+    include_empty: bool,
+    sort_by: str,
+    sort_order: str,
+    partial: bool,
+) -> str:
+    title = "# EcoTaxa — samples par région"
+    if partial:
+        title += " — résultat partiel"
+    lines = [
+        title,
+        f"Total samples cache : {total_samples}",
+        f"Zones vides incluses : {'oui' if include_empty else 'non'}",
+        f"Tri : {sort_by} "
+        f"({'décroissant' if sort_order == 'desc' else 'croissant'})",
+        "",
+        "| Région | Samples | Projets | Date min | Date max | sample_ids |",
+        "|---|---:|---:|---|---|---|",
+    ]
+    if not regions:
+        lines.append("| Aucune région | 0 | 0 | — |")
+        return "\n".join(lines)
+
+    for row in regions:
+        sample_ids = row["sample_ids"]
+        shown = ", ".join(str(sample_id) for sample_id in sample_ids[:20])
+        if len(sample_ids) > 20:
+            shown += f", ... (+{len(sample_ids) - 20})"
+        lines.append(
+            f"| {row['region']} | {row['sample_count']} | "
+            f"{row['project_count']} | {row['date_min'] or '—'} | "
+            f"{row['date_max'] or '—'} | {shown or '—'} |"
+        )
+    return "\n".join(lines)
+
+
 def _build_project_region_markdown(
     *,
     project_id: int,
@@ -486,6 +650,10 @@ def _row_to_sample(row: sqlite3.Row) -> dict:
         "date_max": row["date_max"],
         "depth_min": row["depth_min"],
         "depth_max": row["depth_max"],
+        "original_id": row["original_id"],
+        "station_id": row["station_id"],
+        "profile_id": row["profile_id"],
+        "free_fields_json": row["free_fields_json"],
         "object_count": int(row["object_count"] or 0),
         "instrument": row["instrument"],
     }

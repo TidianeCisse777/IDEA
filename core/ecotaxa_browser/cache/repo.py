@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS samples_cache (
     date_max TEXT,
     depth_min REAL,
     depth_max REAL,
+    original_id TEXT,
+    station_id TEXT,
+    profile_id TEXT,
+    free_fields_json TEXT,
     object_count INTEGER,
     instrument TEXT,
     last_synced TEXT NOT NULL
@@ -63,6 +67,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     _ensure_column(conn, "samples_cache", "depth_min", "REAL")
     _ensure_column(conn, "samples_cache", "depth_max", "REAL")
+    _ensure_column(conn, "samples_cache", "original_id", "TEXT")
+    _ensure_column(conn, "samples_cache", "station_id", "TEXT")
+    _ensure_column(conn, "samples_cache", "profile_id", "TEXT")
+    _ensure_column(conn, "samples_cache", "free_fields_json", "TEXT")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_samples_depth_max "
         "ON samples_cache(depth_max)"
@@ -100,6 +108,10 @@ def upsert_sample(
     last_synced: str,
     depth_min: float | None = None,
     depth_max: float | None = None,
+    original_id: str | None = None,
+    station_id: str | None = None,
+    profile_id: str | None = None,
+    free_fields_json: str | None = None,
 ) -> None:
     """Insert or update a single sample row."""
     conn.execute(
@@ -107,9 +119,10 @@ def upsert_sample(
         INSERT INTO samples_cache (
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
+            original_id, station_id, profile_id, free_fields_json,
             object_count, instrument, last_synced
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(sample_id) DO UPDATE SET
             project_id = excluded.project_id,
             lat_avg = excluded.lat_avg,
@@ -118,6 +131,10 @@ def upsert_sample(
             date_max = excluded.date_max,
             depth_min = excluded.depth_min,
             depth_max = excluded.depth_max,
+            original_id = excluded.original_id,
+            station_id = excluded.station_id,
+            profile_id = excluded.profile_id,
+            free_fields_json = excluded.free_fields_json,
             object_count = excluded.object_count,
             instrument = excluded.instrument,
             last_synced = excluded.last_synced
@@ -125,6 +142,7 @@ def upsert_sample(
         (
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
+            original_id, station_id, profile_id, free_fields_json,
             object_count, instrument, last_synced,
         ),
     )
@@ -153,9 +171,10 @@ def replace_project_samples(
                 INSERT INTO samples_cache (
                     sample_id, project_id, lat_avg, lon_avg,
                     date_min, date_max, depth_min, depth_max,
+                    original_id, station_id, profile_id, free_fields_json,
                     object_count, instrument, last_synced
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(sample["sample_id"]),
@@ -166,6 +185,10 @@ def replace_project_samples(
                     sample.get("date_max"),
                     sample.get("depth_min"),
                     sample.get("depth_max"),
+                    sample.get("original_id"),
+                    sample.get("station_id"),
+                    sample.get("profile_id"),
+                    sample.get("free_fields_json"),
                     int(sample.get("object_count") or 0),
                     sample.get("instrument"),
                     last_synced,

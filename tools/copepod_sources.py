@@ -17,6 +17,7 @@ from core.ecotaxa_browser.observations import find_observations
 from core.ecotaxa_browser.region import (
     group_project_samples_by_region,
     projects_in_region,
+    rank_samples_by_region,
     resolve_sample_projects,
     samples_in_region,
 )
@@ -1231,13 +1232,20 @@ def make_source_tools(thread_id: str) -> list:
                 else ""
             ),
             "",
-            "| sample_id | projet | lat | lon | date_min | date_max | depth_min | depth_max | instrument | url |",
-            "|---:|---:|---:|---:|---|---|---:|---:|---|---|",
+            "| sample_id | projet | station | lat | lon | date_min | date_max | depth_min | depth_max | instrument | url |",
+            "|---:|---:|---|---:|---:|---|---|---:|---:|---|---|",
         ]
         for s in shown_samples:
+            station_label = (
+                s.get("station_id")
+                or s.get("original_id")
+                or s.get("profile_id")
+                or "—"
+            )
             lines.append(
-                f"| {s['sample_id']} | {s['project_id']} | {s['lat']:.3f} | "
-                f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} | "
+                f"| {s['sample_id']} | {s['project_id']} | {station_label} | "
+                f"{s['lat']:.3f} | {s['lon']:.3f} | "
+                f"{s['date_min']} | {s['date_max']} | "
                 f"{_format_number(s.get('depth_min'))} | "
                 f"{_format_number(s.get('depth_max'))} | "
                 f"{s.get('instrument') or '—'} | "
@@ -1367,6 +1375,58 @@ def make_source_tools(thread_id: str) -> list:
             return f"Erreur EcoTaxa ({exc.code}) : {exc}"
         except Exception as exc:
             return f"Erreur lors du regroupement EcoTaxa : {exc}"
+
+        summary = result.get("markdown_summary", "")
+        if result.get("partial"):
+            summary += _ecotaxa_partial_notice(result)
+        return summary
+
+    @tool
+    def rank_ecotaxa_samples_by_region(
+        include_empty: bool = False,
+        sort_by: str = "sample_count",
+        sort_order: str = "asc",
+    ) -> str:
+        """Classe les régions / mers EcoTaxa par nombre ou ancienneté des samples.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
+        Utiliser quand l'utilisateur demande les zones, mers, secteurs ou
+        régions les moins / plus échantillonnés dans le cache EcoTaxa, ou un
+        classement global par couverture d'échantillonnage. Le tool lit
+        uniquement le cache local, agrège tous les samples indexés par
+        polygone NeoLab/IHO/MEOW, puis retourne un tableau avec nombre de
+        samples, nombre de projets, `date_min` et `date_max` par région.
+
+        `include_empty=False` par défaut exclut les zones à 0 sample pour
+        éviter de noyer la réponse dans les régions mondiales hors périmètre.
+        Passer `include_empty=True` seulement si l'utilisateur demande
+        explicitement les zones vides / lacunes d'échantillonnage.
+        `sort_order="asc"` classe du moins au plus échantillonné. Utiliser
+        `sort_order="desc"` pour "le plus échantillonné", "décroissant",
+        "top zones", ou "du plus au moins".
+        `sort_by="sample_count"` trie par nombre de samples. Utiliser
+        `sort_by="date_min", sort_order="asc"` pour "les plus anciennes
+        zones échantillonnées", "ancienneté", "premières zones
+        échantillonnées". Utiliser `sort_by="date_max", sort_order="desc"`
+        pour les zones les plus récemment échantillonnées.
+
+        Limite : le cache indexe les coordonnées des samples, mais pas les
+        noms de stations; ce tool classe donc les régions / mers, pas les
+        stations nominales.
+        """
+        try:
+            result = rank_samples_by_region(
+                include_empty=include_empty,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+        except EcoTaxaBrowserError as exc:
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}"
+        except Exception as exc:
+            return f"Erreur lors du classement EcoTaxa par région : {exc}"
 
         summary = result.get("markdown_summary", "")
         if result.get("partial"):
@@ -1917,6 +1977,7 @@ def make_source_tools(thread_id: str) -> list:
         find_ecotaxa_samples_in_region,
         find_ecotaxa_projects_in_region,
         group_ecotaxa_project_samples_by_region,
+        rank_ecotaxa_samples_by_region,
         find_ecotaxa_observations,
         get_ecotaxa_sample,
         summarize_ecotaxa_sample_deployment,

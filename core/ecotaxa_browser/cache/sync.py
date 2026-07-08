@@ -92,6 +92,7 @@ def _fetch_project_samples(
     """
     project_meta = _with_retries(lambda: client.get_project(project_id))
     instrument = project_meta.get("instrument")
+    sample_metadata = _fetch_project_sample_metadata(client, project_id=project_id)
 
     aggregates: dict[int, dict] = {}
     window_start = 0
@@ -178,10 +179,59 @@ def _fetch_project_samples(
             "depth_max": agg["depth_max"],
             "object_count": agg["count"],
             "instrument": instrument,
+            **sample_metadata.get(sid, {}),
         }
         for sid, agg in aggregates.items()
     ]
     return samples, instrument
+
+
+def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int, dict]:
+    """Fetch lightweight sample metadata once per project."""
+    if not hasattr(client, "list_samples"):
+        return {}
+    raw_samples = _with_retries(lambda: client.list_samples(project_id))
+    metadata: dict[int, dict] = {}
+    for sample in raw_samples or []:
+        try:
+            sample_id = int(sample["sampleid"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        free_fields = sample.get("free_columns") or {}
+        if not isinstance(free_fields, dict):
+            free_fields = {}
+        metadata[sample_id] = {
+            "original_id": _as_optional_str(sample.get("orig_id")),
+            "station_id": _first_optional_str(
+                free_fields,
+                ("stationid", "station_id", "station", "sample_stationid"),
+            ),
+            "profile_id": _first_optional_str(
+                free_fields,
+                ("profileid", "profile_id", "profile", "sample_profileid"),
+            ),
+            "free_fields_json": json.dumps(
+                free_fields,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        }
+    return metadata
+
+
+def _first_optional_str(values: dict, keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = _as_optional_str(values.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _as_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None
 
 
 def _as_float(value: Any) -> float | None:

@@ -50,9 +50,10 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 ### Zone & période
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
-| `find_ecotaxa_samples_in_region` | Samples par `bbox`/`zone_name`/`date_range`/`instrument`/`project_ids` ; crée une sélection nommée | non |
+| `find_ecotaxa_samples_in_region` | Samples par `bbox`/`zone_name`/`date_range`/`instrument`/`project_ids` ; inclut station/profile si le cache a été resynchronisé ; crée une sélection nommée | non |
 | `find_ecotaxa_projects_in_region` | Projets agrégés par zone/période (row/projet) | non |
 | `group_ecotaxa_project_samples_by_region` | Samples d'un projet groupés par zone | non |
+| `rank_ecotaxa_samples_by_region` | Classement global des samples cache par zone/mer/région (`sample_count`, `date_min`, `date_max`) | non |
 
 ### Samples & résumés (sans export)
 | Tool | Rôle | Coûteux ? |

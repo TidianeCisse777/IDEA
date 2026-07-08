@@ -32,6 +32,10 @@ def _seed(cache_db, samples):
             instrument=sample.get("instrument", "UVP5"),
             depth_min=sample.get("depth_min"),
             depth_max=sample.get("depth_max"),
+            original_id=sample.get("original_id"),
+            station_id=sample.get("station_id"),
+            profile_id=sample.get("profile_id"),
+            free_fields_json=sample.get("free_fields_json"),
             last_synced="ts",
         )
     conn.close()
@@ -60,6 +64,33 @@ def test_samples_in_region_returns_samples_inside_bbox(cache_db):
 
     sample_ids = sorted(s["sample_id"] for s in result["samples"])
     assert sample_ids == [1, 2]
+
+
+def test_samples_in_region_returns_light_sample_metadata(cache_db):
+    from core.ecotaxa_browser.region import samples_in_region
+
+    _seed(cache_db, [
+        {
+            "sample_id": 1,
+            "project_id": 42,
+            "lat": 60.0,
+            "lon": -80.0,
+            "original_id": "gn2015_l2_001",
+            "station_id": "ice-camp",
+            "profile_id": "001",
+            "free_fields_json": '{"stationid": "ice-camp", "profileid": "001"}',
+        },
+    ])
+
+    bbox = {"south": 55.0, "west": -95.0, "north": 65.0, "east": -75.0}
+    with _with_cache(cache_db):
+        result = samples_in_region(bbox=bbox)
+
+    sample = result["samples"][0]
+    assert sample["original_id"] == "gn2015_l2_001"
+    assert sample["station_id"] == "ice-camp"
+    assert sample["profile_id"] == "001"
+    assert sample["free_fields_json"] == '{"stationid": "ice-camp", "profileid": "001"}'
 
 
 def test_samples_in_region_bbox_borders_are_inclusive(cache_db):

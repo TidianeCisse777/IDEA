@@ -30,6 +30,7 @@ CAPABILITY_TO_TOOLS: dict[str, list[str]] = {
     "Explorer Les Samples Par Zone, Date Ou Instrument": [
         "find_ecotaxa_samples_in_region",
         "group_ecotaxa_project_samples_by_region",
+        "rank_ecotaxa_samples_by_region",
     ],
     "Explorer Un Taxon": [
         "count_ecotaxa_taxa",

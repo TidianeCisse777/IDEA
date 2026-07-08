@@ -39,6 +39,7 @@ from core.ecotaxa_browser.preview import preview_project
 from core.ecotaxa_browser.region import (
     group_project_samples_by_region,
     projects_in_region,
+    rank_samples_by_region,
     samples_in_region,
 )
 from core.ecotaxa_browser.project_summary import summarize_projects
@@ -548,6 +549,32 @@ def create_mcp() -> FastMCP:
             return await _run_sync(
                 group_project_samples_by_region,
                 project_id=project_id,
+            )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="rank_samples_by_region")
+    async def rank_samples_by_region_tool(
+        include_empty: bool = False,
+        sort_by: str = "sample_count",
+        sort_order: str = "asc",
+    ) -> dict:
+        """Rank all cached EcoTaxa samples by NeoLab/IHO/MEOW region.
+
+        Returns one row per region with ``sample_count``, ``project_count``,
+        ``project_ids`` and ``sample_ids``. By default only non-empty
+        regions are returned; set ``include_empty=True`` for sampling-gap
+        analysis that includes empty registry zones. ``sort_order`` accepts
+        ``asc`` (least sampled / oldest first) or ``desc`` (most sampled /
+        newest first). ``sort_by`` accepts ``sample_count``, ``date_min`` or
+        ``date_max``.
+        """
+        try:
+            return await _run_sync(
+                rank_samples_by_region,
+                include_empty=include_empty,
+                sort_by=sort_by,
+                sort_order=sort_order,
             )
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}

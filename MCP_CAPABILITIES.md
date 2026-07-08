@@ -65,6 +65,10 @@ L'utilisateur peut demander :
 - `Quels samples du projet 14853 sont en Baie de Baffin ?`
 - `Groupe les samples du projet 14853 par mer.`
 - `Répartis les samples du projet 14853 par secteur ou par zone.`
+- `Quelles mers ont le moins d'échantillons EcoTaxa ?`
+- `Classe toutes les zones du moins au plus échantillonné.`
+- `Quelles zones ont été échantillonnées le plus anciennement ?`
+- `Quelles mers ont été échantillonnées le plus récemment ?`
 - `Quels samples existent entre 2015 et 2024 ?`
 - `Quels samples sont dans cette zone et cette période ?`
 
@@ -76,6 +80,8 @@ Le MCP peut répondre avec :
 - `date_min` / `date_max` ;
 - instrument ;
 - total de samples trouvés ;
+- classement global par région / mer ;
+- ancienneté par région (`date_min`, `date_max`) ;
 - groupes `région -> sample_ids` pour un projet ;
 - buckets explicites hors zones IHO ou sans coordonnées ;
 - indication si la réponse est tronquée.
