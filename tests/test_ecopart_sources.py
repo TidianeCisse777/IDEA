@@ -244,7 +244,7 @@ def test_enrich_remote_errors_when_no_project_id_resolvable():
         if t.name == "enrich_ecotaxa_with_ecopart_remote"
     )
     result = tool.invoke({})
-    assert "Projet EcoTaxa inconnu" in result
+    assert "impossible" in result and "ecotaxa_project_id" in result
 
 
 def test_enrich_remote_uses_session_project_id_when_query_ecotaxa_was_run():
@@ -532,8 +532,46 @@ def test_enrich_remote_uses_sample_profileid_when_no_coordinates_are_available()
         result = tool.invoke({})
 
     assert "Projet EcoPart résolu automatiquement" in result
-    assert "profile `1.0`" in result
+    assert "105" in result and "profil" in result
     assert "Enrichissement terminé" in result
+
+
+def test_lookup_ecopart_project_prefers_ecotaxa_link_and_is_deterministic():
+    """Two EcoPart projects share the bbox; the one linked to the known EcoTaxa
+    project must win even if it has fewer samples, and the choice must be stable
+    regardless of the order the server returns candidates in (the 59/105 flip)."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import _lookup_ecopart_project_for_ecotaxa
+
+    df_et = pd.DataFrame({
+        "object_lat": [72.69, 73.79],
+        "object_lon": [-70.10, -66.83],
+        "sample_id": ["14853000003", "14853000002"],
+    })
+
+    # id 1 & 3 -> EcoPart 59 (unrelated, statut VN); id 2 -> EcoPart 105 linked
+    # to EcoTaxa 14853. Project 59 has the majority of bbox candidates.
+    meta = {
+        1: {"profile_id": "ips_007", "ecopart_project_id": 59, "ecotaxa_project_id": 999},
+        2: {"profile_id": "am_leg5_TCA_T3_09_02", "ecopart_project_id": 105, "ecotaxa_project_id": 14853},
+        3: {"profile_id": "ips_008", "ecopart_project_id": 59, "ecotaxa_project_id": 999},
+    }
+    base = [
+        {"id": 1, "lat": 72.6, "lon": -70.0},
+        {"id": 2, "lat": 73.7, "lon": -66.8},
+        {"id": 3, "lat": 74.3, "lon": -66.7},
+    ]
+
+    for order in (base, list(reversed(base))):
+        mock_client = MagicMock()
+        mock_client.search_samples_by_bbox.return_value = order
+        mock_client.get_sample_metadata.side_effect = lambda sid: meta[sid]
+        with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+            res = _lookup_ecopart_project_for_ecotaxa(df_et, known_ecotaxa_pid=14853)
+        assert res["project_id"] == 105, f"order={order} -> {res}"
+        assert "lien EcoTaxa" in res["resolution"]
 
 
 def test_join_ecotaxa_ecopart_produces_merged_dataframe():

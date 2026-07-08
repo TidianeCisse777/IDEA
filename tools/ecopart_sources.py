@@ -232,15 +232,24 @@ def _candidate_ecotaxa_profile_labels(df_et: pd.DataFrame) -> list[str]:
 
 
 def _lookup_ecopart_project_for_ecotaxa(
-    df_et: pd.DataFrame, *, bbox_margin: float = 0.05, max_candidates: int = 10
+    df_et: pd.DataFrame,
+    *,
+    known_ecotaxa_pid: int | None = None,
+    bbox_margin: float = 0.05,
+    max_candidates: int = 30,
 ) -> dict:
     """Resolve the EcoPart project matching an EcoTaxa dataframe **without** starting
     any export. Returns a dict `{project_id, project_name, resolution, error}`.
 
-    Cheap version of the resolution step at the top of
-    `enrich_ecotaxa_with_ecopart_remote`: bbox search + a few `get_sample_metadata`
-    calls, no `start_export`, no download. Same signals so the two agree on which
-    project would be picked if the user later asks for enrichment.
+    Deterministic. Instead of returning the first bbox candidate (whose order the
+    EcoPart server does not guarantee — the source of the 59/105 flip), it scans a
+    bounded set of candidates and **votes per EcoPart project**, ranking by:
+      1. candidates whose metadata `ecotaxa_project_id` == `known_ecotaxa_pid`
+         (the authoritative EcoTaxa↔EcoPart link — same signal the server's
+         `filt_proj` uses, so `find` agrees with what enrichment would download);
+      2. candidates whose `profile_id` matches an EcoTaxa profile label;
+      3. sheer candidate count in the bbox.
+    Ties break on the lowest EcoPart project id, so the result is stable run to run.
     """
     lat_col = next(
         (c for c in ("object_lat", "sample_lat", "latitude", "lat") if c in df_et.columns),
@@ -257,81 +266,103 @@ def _lookup_ecopart_project_for_ecotaxa(
     except Exception as exc:
         return {"error": f"Erreur EcoPart : {exc}"}
 
+    profile_labels = set(_candidate_ecotaxa_profile_labels(df_et))
+
     if lat_col is None or lon_col is None:
-        candidate_labels = _candidate_ecotaxa_profile_labels(df_et)
-        if not candidate_labels:
+        if not profile_labels:
             return {"error": "Pas de coordonnées ni de labels de profil dans le fichier EcoTaxa."}
         try:
             candidates = client.search_samples()
         except Exception as exc:
             return {"error": f"Erreur de recherche EcoPart par profil : {exc}"}
-        for cand in candidates[:200]:
-            try:
-                meta = client.get_sample_metadata(cand["id"])
-            except Exception:
-                continue
-            pf = str(meta.get("profile_id") or "").strip()
-            ep_pid = meta.get("ecopart_project_id")
-            if ep_pid is not None and pf and pf in candidate_labels:
-                return {
-                    "project_id": ep_pid,
-                    "project_name": meta.get("ecopart_project_name"),
-                    "resolution": f"via profil `{pf}`",
-                }
-        return {"error": "Aucun profil EcoPart compatible avec les labels EcoTaxa."}
+        search_note = "profil"
+    else:
+        lat = pd.to_numeric(df_et[lat_col], errors="coerce").dropna()
+        lon = pd.to_numeric(df_et[lon_col], errors="coerce").dropna()
+        if lat.empty or lon.empty:
+            return {"error": "Coordonnées lat/lon illisibles dans le fichier EcoTaxa."}
+        try:
+            candidates = client.search_samples_by_bbox(
+                north=float(lat.max()) + bbox_margin,
+                south=float(lat.min()) - bbox_margin,
+                west=float(lon.min()) - bbox_margin,
+                east=float(lon.max()) + bbox_margin,
+            )
+        except Exception as exc:
+            return {"error": f"Erreur de recherche EcoPart par bbox : {exc}"}
+        search_note = "bbox"
 
-    lat = pd.to_numeric(df_et[lat_col], errors="coerce").dropna()
-    lon = pd.to_numeric(df_et[lon_col], errors="coerce").dropna()
-    if lat.empty or lon.empty:
-        return {"error": "Coordonnées lat/lon illisibles dans le fichier EcoTaxa."}
-    try:
-        candidates = client.search_samples_by_bbox(
-            north=float(lat.max()) + bbox_margin,
-            south=float(lat.min()) - bbox_margin,
-            west=float(lon.min()) - bbox_margin,
-            east=float(lon.max()) + bbox_margin,
-        )
-    except Exception as exc:
-        return {"error": f"Erreur de recherche EcoPart par bbox : {exc}"}
     if not candidates:
-        return {"error": "Aucun sample EcoPart trouvé dans la bbox du fichier EcoTaxa."}
+        return {"error": "Aucun sample EcoPart trouvé pour le fichier EcoTaxa."}
 
-    sample_ids_et = set()
-    if "sample_id" in df_et.columns:
-        sample_ids_et = set(df_et["sample_id"].astype(str).head(50).unique())
-    elif "obj_orig_id" in df_et.columns:
-        sample_ids_et = set(
-            df_et["obj_orig_id"].astype(str).str.replace(r"_\d+$", "", regex=True).head(50).unique()
-        )
-    for cand in candidates[: int(max_candidates)]:
+    # Order candidates closest-to-centroid first: an EcoTaxa's own EcoPart
+    # profiles sit at its coordinates, so the authoritative link surfaces within
+    # a few candidates even when its sample ids are high. Plain id order would
+    # bury it and scan only unrelated low-id projects sharing the bbox (the bug
+    # where 14853 resolved to 59 instead of its real project 1063). Id breaks
+    # ties; falls back to id order when candidates carry no coordinates.
+    if lat_col is not None and lon_col is not None:
+        clat = float(pd.to_numeric(df_et[lat_col], errors="coerce").dropna().mean())
+        clon = float(pd.to_numeric(df_et[lon_col], errors="coerce").dropna().mean())
+
+        def _dist_key(c: dict) -> tuple:
+            try:
+                return (
+                    (float(c.get("lat", 0.0)) - clat) ** 2
+                    + (float(c.get("lon", 0.0)) - clon) ** 2,
+                    int(c.get("id", 0)),
+                )
+            except Exception:
+                return (float("inf"), int(c.get("id", 0)))
+
+        ordered = sorted(candidates, key=_dist_key)[: int(max_candidates)]
+    else:
+        ordered = sorted(candidates, key=lambda c: int(c.get("id", 0)))[: int(max_candidates)]
+
+    # Per EcoPart project, tally profile matches and candidate count as fallback.
+    votes: dict[int, list[int]] = {}
+    names: dict[int, str] = {}
+    for cand in ordered:
         try:
             meta = client.get_sample_metadata(cand["id"])
         except Exception:
             continue
-        pf = meta.get("profile_id")
         ep_pid = meta.get("ecopart_project_id")
         if ep_pid is None:
             continue
-        if not sample_ids_et or pf in sample_ids_et:
+        ep_pid = int(ep_pid)
+        pf = str(meta.get("profile_id") or "").strip()
+        et_pid = meta.get("ecotaxa_project_id")
+        # Authoritative EcoTaxa↔EcoPart link: definitive — return immediately.
+        if known_ecotaxa_pid is not None and et_pid is not None and int(et_pid) == int(known_ecotaxa_pid):
             return {
                 "project_id": ep_pid,
-                "project_name": meta.get("ecopart_project_name"),
+                "project_name": meta.get("ecopart_project_name") or None,
                 "resolution": (
-                    f"via sample `{pf}` à {cand['lat']:.3f}/{cand['lon']:.3f}"
+                    f"lien EcoTaxa↔EcoPart (projet EcoTaxa {known_ecotaxa_pid}, profil `{pf}`)"
                 ),
             }
-    # No profile match — fallback on the first bbox candidate.
-    try:
-        meta0 = client.get_sample_metadata(candidates[0]["id"])
-    except Exception as exc:
-        return {"error": f"Impossible de lire le sample EcoPart fallback : {exc}"}
-    ep_pid0 = meta0.get("ecopart_project_id")
-    if ep_pid0 is None:
-        return {"error": "Sample EcoPart trouvé mais sans project_id lisible."}
+        tally = votes.setdefault(ep_pid, [0, 0])
+        if pf and pf in profile_labels:
+            tally[0] += 1
+        tally[1] += 1
+        names.setdefault(ep_pid, meta.get("ecopart_project_name") or "")
+
+    if not votes:
+        return {"error": "Aucun sample EcoPart exploitable (project_id illisible)."}
+
+    # No authoritative link found: prefer profile matches, then candidate count;
+    # lowest project id breaks ties so the result is stable across runs.
+    best_pid = max(votes, key=lambda pid: (votes[pid][0], votes[pid][1], -pid))
+    mid, weak = votes[best_pid]
+    if mid:
+        how = f"correspondance de profil ({mid} sample(s) sur {weak})"
+    else:
+        how = f"proximité géographique par {search_note} ({weak} sample(s), aucun lien EcoTaxa direct)"
     return {
-        "project_id": ep_pid0,
-        "project_name": meta0.get("ecopart_project_name"),
-        "resolution": "fallback géographique (premier sample de la bbox)",
+        "project_id": best_pid,
+        "project_name": names.get(best_pid) or None,
+        "resolution": how,
     }
 
 
@@ -443,109 +474,19 @@ def make_ecopart_tools(thread_id: str) -> list:
 
         resolution_note = ""
         if ecotaxa_project_id is None and ecopart_project_id is None:
-            df_et = session_et["df"]
-            lat_col = next(
-                (c for c in ("object_lat", "sample_lat", "latitude", "lat") if c in df_et.columns),
-                None,
+            # Same deterministic resolver as find_ecopart_project_for_ecotaxa, so
+            # the preview and the actual enrichment always agree on the project.
+            result = _lookup_ecopart_project_for_ecotaxa(session_et["df"])
+            if "error" in result:
+                return (
+                    f"Résolution EcoPart automatique impossible — {result['error']} "
+                    "Fournis `ecotaxa_project_id` ou `ecopart_project_id`."
+                )
+            ecopart_project_id = result["project_id"]
+            resolution_note = (
+                f"Projet EcoPart résolu automatiquement : {ecopart_project_id} "
+                f"({result['resolution']})."
             )
-            lon_col = next(
-                (c for c in ("object_lon", "sample_long", "longitude", "lon") if c in df_et.columns),
-                None,
-            )
-            if lat_col is None or lon_col is None:
-                candidate_labels = _candidate_ecotaxa_profile_labels(df_et)
-                if not candidate_labels:
-                    return (
-                        "Projet EcoTaxa inconnu et coordonnées absentes du fichier — "
-                        "fournis `ecotaxa_project_id` ou `ecopart_project_id`."
-                    )
-                try:
-                    candidates = client.search_samples()
-                except Exception as exc:
-                    return f"Erreur de recherche EcoPart par profil : {exc}"
-                if not candidates:
-                    return (
-                        "Aucun sample EcoPart accessible pour tenter une résolution par profil — "
-                        "fournis `ecotaxa_project_id` ou `ecopart_project_id`."
-                    )
-                found_ecopart_pid = None
-                for cand in candidates[:200]:
-                    try:
-                        meta_ep = client.get_sample_metadata(cand["id"])
-                    except Exception:
-                        continue
-                    pf = str(meta_ep.get("profile_id") or "").strip()
-                    ep_pid = meta_ep.get("ecopart_project_id")
-                    if ep_pid is None:
-                        continue
-                    if pf and pf in candidate_labels:
-                        found_ecopart_pid = ep_pid
-                        resolution_note = (
-                            f"Projet EcoPart résolu automatiquement : {ep_pid} "
-                            f"(via profile `{pf}`)."
-                        )
-                        break
-                if found_ecopart_pid is None:
-                    return (
-                        "Le fichier EcoTaxa ne contient pas de coordonnées utilisables pour l’enrichissement "
-                        "automatique EcoPart et aucun profil compatible n’a été trouvé. "
-                        "Il faut fournir `ecotaxa_project_id` ou `ecopart_project_id`."
-                    )
-                ecopart_project_id = found_ecopart_pid
-            else:
-                lat = pd.to_numeric(df_et[lat_col], errors="coerce").dropna()
-                lon = pd.to_numeric(df_et[lon_col], errors="coerce").dropna()
-                if lat.empty or lon.empty:
-                    return "Coordonnées du fichier EcoTaxa illisibles — fournis `ecotaxa_project_id`."
-                margin = 0.05
-                try:
-                    candidates = client.search_samples_by_bbox(
-                        north=float(lat.max()) + margin,
-                        south=float(lat.min()) - margin,
-                        west=float(lon.min()) - margin,
-                        east=float(lon.max()) + margin,
-                    )
-                except Exception as exc:
-                    return f"Erreur de recherche EcoPart par bbox : {exc}"
-                if not candidates:
-                    return (
-                        "Aucun sample EcoPart trouvé dans la zone du fichier EcoTaxa — "
-                        "fournis `ecopart_project_id` manuellement."
-                    )
-                sample_ids_et = set()
-                if "sample_id" in df_et.columns:
-                    sample_ids_et = set(df_et["sample_id"].astype(str).head(50).unique())
-                elif "obj_orig_id" in df_et.columns:
-                    sample_ids_et = set(
-                        df_et["obj_orig_id"].astype(str).str.replace(r"_\d+$", "", regex=True).head(50).unique()
-                    )
-                found_ecopart_pid = None
-                for cand in candidates[:10]:
-                    meta_ep = client.get_sample_metadata(cand["id"])
-                    pf = meta_ep.get("profile_id")
-                    ep_pid = meta_ep.get("ecopart_project_id")
-                    if ep_pid is None:
-                        continue
-                    if not sample_ids_et or pf in sample_ids_et:
-                        found_ecopart_pid = ep_pid
-                        resolution_note = (
-                            f"Projet EcoPart résolu automatiquement : {ep_pid} "
-                            f"(via sample `{pf}` à {cand['lat']:.3f}/{cand['lon']:.3f})."
-                        )
-                        break
-                if found_ecopart_pid is None:
-                    fallback_candidate = candidates[0]
-                    found_ecopart_pid = client.get_sample_metadata(fallback_candidate["id"]).get("ecopart_project_id")
-                    if found_ecopart_pid is not None:
-                        resolution_note = (
-                            f"Projet EcoPart résolu par fallback géographique : {found_ecopart_pid}."
-                        )
-                if found_ecopart_pid is None:
-                    return (
-                        "Impossible de résoudre le projet EcoPart depuis la bbox EcoTaxa — "
-                        "fournis `ecopart_project_id`."
-                    )
-                ecopart_project_id = found_ecopart_pid
 
         try:
             links = client.start_export(
@@ -627,7 +568,8 @@ def make_ecopart_tools(thread_id: str) -> list:
         df_et = session_et.get("df")
         if df_et is None or getattr(df_et, "empty", True):
             return "Le dataset EcoTaxa en session est vide."
-        result = _lookup_ecopart_project_for_ecotaxa(df_et)
+        known_pid = session_et.get("meta", {}).get("project_id")
+        result = _lookup_ecopart_project_for_ecotaxa(df_et, known_ecotaxa_pid=known_pid)
         if "error" in result:
             return f"Aucun projet EcoPart associé trouvé — {result['error']}"
         pid = result["project_id"]
