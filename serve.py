@@ -532,6 +532,16 @@ def _format_tool_line(name: str, args: dict | None = None) -> str:
             )
         )
 
+    if name == "export_ecotaxa_samples":
+        params = _format_tool_call_params(args)
+        body = f"Paramètres : {params}" if params else ""
+        # Only the real export (confirmed=true) is slow; the confirmed=false
+        # dry-run returns instantly and must not advertise a running export.
+        if args and args.get("confirmed"):
+            body = f"{body}\n\n*Export EcoTaxa (sélection) en cours — cela peut prendre 1–2 minutes...*".strip()
+            return _format_tool_call_details(name, body, summary_note="export EcoTaxa en cours")
+        return _format_tool_call_details(name, body)
+
     if name in ("query_bio_oracle", "couple_zooplankton_bio_oracle"):
         params = _format_tool_call_params(args)
         body = f"Paramètres : {params}" if params else ""
@@ -570,19 +580,6 @@ _ENRICHMENT_PROGRESS_LABELS = {
     "enrich_with_ogsl": "Préparation de l'enrichissement OGSL",
 }
 
-_SLOW_TOOL_PROGRESS_LABELS = {
-    "query_ecotaxa": "Téléchargement EcoTaxa",
-    "query_ecotaxa_sample": "Téléchargement EcoTaxa sample",
-    "export_ecotaxa_samples": "Export EcoTaxa (sélection)",
-    "query_ecopart": "Téléchargement EcoPart",
-    "query_amundsen_ctd": "Téléchargement Amundsen CTD",
-    "query_bio_oracle": "Téléchargement Bio-ORACLE",
-    "couple_zooplankton_bio_oracle": "Téléchargement Bio-ORACLE",
-    "load_file": "Chargement du fichier",
-    "export_deliverable": "Génération du livrable",
-}
-
-
 def _format_enrichment_progress_panel(name: str, args: dict | None = None) -> str:
     args = args or {}
     label = _ENRICHMENT_PROGRESS_LABELS.get(name, "Préparation de l'enrichissement")
@@ -595,36 +592,6 @@ def _format_enrichment_progress_panel(name: str, args: dict | None = None) -> st
         "Le cache de données sera vérifié automatiquement avant le calcul."
     )
     return _format_tool_call_details(name, body)
-
-
-def _progress_stage_label(percent: int) -> str:
-    if percent < 20:
-        return "préparation"
-    if percent < 50:
-        return "chargement"
-    if percent < 80:
-        return "traitement"
-    return "finalisation"
-
-
-def _render_progress_bar(percent: int, *, width: int = 10) -> str:
-    percent = max(0, min(100, int(percent)))
-    filled = round(width * percent / 100)
-    filled = max(0, min(width, filled))
-    return f"[{'█' * filled}{'░' * (width - filled)}] {percent:>3d}%"
-
-
-def _format_slow_tool_progress(name: str, percent: int, args: dict | None = None) -> str:
-    label = _ENRICHMENT_PROGRESS_LABELS.get(
-        name,
-        _SLOW_TOOL_PROGRESS_LABELS.get(name, "Traitement en cours"),
-    )
-    stage = _progress_stage_label(percent)
-    details = _format_tool_call_params(args)
-    lines = [f"{label} {_render_progress_bar(percent)}", f"Étape : {stage}"]
-    if details:
-        lines.append(f"Paramètres : {details}")
-    return "\n".join(lines)
 
 
 _TOOL_LINE_OMITTED_ARGS = {
@@ -702,7 +669,7 @@ _SLOW_TOOLS = frozenset({
     "enrich_with_ogsl",
     "load_file", "export_deliverable",
 })
-_HEARTBEAT_INTERVAL = 8.0  # seconds between heartbeat dots during slow tools
+_HEARTBEAT_INTERVAL = 8.0  # seconds between SSE keepalive pings during slow tools
 
 # Tools whose textual result is shown inline in the SSE stream inside a
 # collapsible <details> block, so the user can inspect what the source actually
@@ -927,40 +894,13 @@ async def _stream_agent_sse(
     chunk_queue: asyncio.Queue[str | None] = asyncio.Queue()
     shared: dict = {
         "last_ai_msg": None,
+        # in_slow_tool only gates the SSE keepalive during long tool calls;
+        # the "en cours…" notice lives once in the tool's <details> panel.
         "in_slow_tool": False,
-        "slow_tool_name": None,
-        "slow_tool_started_at": None,
-        "slow_tool_percent": 0,
-        "slow_tool_call_id": None,
         "pending_tool_args": {},
         "pending_tool_names": {},
         "streamed_graph_urls": set(),
     }
-
-    def _next_slow_tool_percent() -> int:
-        started_at = shared.get("slow_tool_started_at")
-        if started_at is None:
-            return 10
-        elapsed = max(0.0, time.monotonic() - float(started_at))
-        percent = 10 + int(elapsed / max(_HEARTBEAT_INTERVAL, 0.1)) * 15
-        return min(92, max(shared.get("slow_tool_percent", 10), percent))
-
-    async def _emit_slow_tool_progress(*, final: bool = False) -> None:
-        name = shared.get("slow_tool_name")
-        if not name or (name not in _SLOW_TOOL_PROGRESS_LABELS and name not in _ENRICHMENT_PROGRESS_LABELS):
-            return
-        percent = 100 if final else _next_slow_tool_percent()
-        shared["slow_tool_percent"] = percent
-        await chunk_queue.put(
-            _make_sse_chunk(
-                completion_id,
-                _format_slow_tool_progress(
-                    name,
-                    percent,
-                    shared["pending_tool_args"].get(shared.get("slow_tool_call_id")),
-                ),
-            )
-        )
 
     async def _run_agent() -> None:
         try:
@@ -995,21 +935,9 @@ async def _stream_agent_sse(
                                 shared["pending_tool_names"][tc_id] = name
                             await chunk_queue.put(_make_sse_chunk(completion_id, _format_tool_line(name, tc_args)))
                             shared["in_slow_tool"] = name in _SLOW_TOOLS
-                            if shared["in_slow_tool"]:
-                                shared["slow_tool_name"] = name
-                                shared["slow_tool_started_at"] = time.monotonic()
-                                shared["slow_tool_percent"] = 10
-                                shared["slow_tool_call_id"] = tc_id
-                                await _emit_slow_tool_progress()
 
                     elif node == "tools":
-                        if shared.get("in_slow_tool"):
-                            await _emit_slow_tool_progress(final=True)
                         shared["in_slow_tool"] = False
-                        shared["slow_tool_name"] = None
-                        shared["slow_tool_started_at"] = None
-                        shared["slow_tool_percent"] = 0
-                        shared["slow_tool_call_id"] = None
                         for tool_msg in msgs:
                             tool_content = getattr(tool_msg, "content", "") or ""
                             tool_name = getattr(tool_msg, "name", "") or ""
@@ -1047,9 +975,12 @@ async def _stream_agent_sse(
         try:
             chunk = await asyncio.wait_for(chunk_queue.get(), timeout=_HEARTBEAT_INTERVAL)
         except asyncio.TimeoutError:
+            # Keep the SSE connection warm during long tool calls without
+            # polluting the message: a comment line (":") is ignored by the
+            # client and never appended to the assistant content.
             if shared["in_slow_tool"]:
-                await _emit_slow_tool_progress()
-                continue
+                yield ": keepalive\n\n"
+            continue
         if chunk is None:
             break
         yield chunk
