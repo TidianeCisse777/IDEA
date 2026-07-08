@@ -564,14 +564,55 @@ def test_lookup_ecopart_project_prefers_ecotaxa_link_and_is_deterministic():
         {"id": 3, "lat": 74.3, "lon": -66.7},
     ]
 
+    import tools.ecopart_sources as es
     for order in (base, list(reversed(base))):
+        es._ECOPART_RESOLUTION_CACHE.clear()
         mock_client = MagicMock()
+        mock_client.search_samples.return_value = []  # force the bbox fallback path
         mock_client.search_samples_by_bbox.return_value = order
         mock_client.get_sample_metadata.side_effect = lambda sid: meta[sid]
         with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
             res = _lookup_ecopart_project_for_ecotaxa(df_et, known_ecotaxa_pid=14853)
         assert res["project_id"] == 105, f"order={order} -> {res}"
         assert "lien EcoTaxa" in res["resolution"]
+
+
+def test_lookup_ecopart_uses_filt_proj_fast_path_and_caches():
+    """When the EcoTaxa project id is known, resolve via the server filt_proj link
+    (one search + one popover, no bbox scan) and serve repeats from cache."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    import tools.ecopart_sources as es
+
+    es._ECOPART_RESOLUTION_CACHE.clear()
+
+    df_et = pd.DataFrame({"object_lat": [72.7], "object_lon": [-70.1]})
+
+    mock_client = MagicMock()
+    mock_client.search_samples.return_value = [{"id": 58321, "lat": 60.0, "lon": -69.6}]
+    mock_client.get_sample_metadata.return_value = {
+        "profile_id": "am_leg5_TCA_BB2_01",
+        "ecopart_project_id": 1063,
+        "ecopart_project_name": "uvp6_sn000006hf_2024_am_leg5",
+        "ecotaxa_project_id": 14853,
+    }
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        res = es._lookup_ecopart_project_for_ecotaxa(df_et, known_ecotaxa_pid=14853)
+
+    assert res["project_id"] == 1063
+    assert "filt_proj" in res["resolution"]
+    mock_client.search_samples.assert_called_once_with(ecotaxa_project_id=14853)
+    mock_client.search_samples_by_bbox.assert_not_called()  # no bbox scan needed
+
+    # Second call is served from the cache — the client is never instantiated.
+    with patch(
+        "tools.ecopart_sources.EcopartClient",
+        side_effect=AssertionError("resolution should be cached"),
+    ):
+        res2 = es._lookup_ecopart_project_for_ecotaxa(df_et, known_ecotaxa_pid=14853)
+    assert res2["project_id"] == 1063
 
 
 def test_join_ecotaxa_ecopart_produces_merged_dataframe():

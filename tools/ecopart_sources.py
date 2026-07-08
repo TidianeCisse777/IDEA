@@ -231,6 +231,12 @@ def _candidate_ecotaxa_profile_labels(df_et: pd.DataFrame) -> list[str]:
     return labels
 
 
+# Global cache of resolved EcoTaxa project id -> resolution dict. The link is a
+# stable server-side fact, so it is shared across threads/sessions. The user's
+# workflow (find -> enrich -> density) otherwise re-resolves 2-3 times.
+_ECOPART_RESOLUTION_CACHE: dict[int, dict] = {}
+
+
 def _lookup_ecopart_project_for_ecotaxa(
     df_et: pd.DataFrame,
     *,
@@ -241,16 +247,24 @@ def _lookup_ecopart_project_for_ecotaxa(
     """Resolve the EcoPart project matching an EcoTaxa dataframe **without** starting
     any export. Returns a dict `{project_id, project_name, resolution, error}`.
 
-    Deterministic. Instead of returning the first bbox candidate (whose order the
-    EcoPart server does not guarantee — the source of the 59/105 flip), it scans a
-    bounded set of candidates and **votes per EcoPart project**, ranking by:
-      1. candidates whose metadata `ecotaxa_project_id` == `known_ecotaxa_pid`
-         (the authoritative EcoTaxa↔EcoPart link — same signal the server's
-         `filt_proj` uses, so `find` agrees with what enrichment would download);
-      2. candidates whose `profile_id` matches an EcoTaxa profile label;
-      3. sheer candidate count in the bbox.
-    Ties break on the lowest EcoPart project id, so the result is stable run to run.
+    Deterministic. Resolution order:
+      1. cached result for `known_ecotaxa_pid` (instant, no HTTP);
+      2. server `filt_proj=known_ecotaxa_pid` — the authoritative EcoTaxa↔EcoPart
+         link (same one `start_export` uses), one search + one popover;
+      3. fallback bbox scan (no project id known): candidates ordered by distance
+         to the EcoTaxa centroid, first authoritative link wins, else profile /
+         geographic majority with a lowest-id tie-break.
     """
+    if known_ecotaxa_pid is not None:
+        cached = _ECOPART_RESOLUTION_CACHE.get(int(known_ecotaxa_pid))
+        if cached is not None:
+            return dict(cached)
+
+    def _cache_and_return(result: dict) -> dict:
+        if known_ecotaxa_pid is not None and "project_id" in result:
+            _ECOPART_RESOLUTION_CACHE[int(known_ecotaxa_pid)] = dict(result)
+        return result
+
     lat_col = next(
         (c for c in ("object_lat", "sample_lat", "latitude", "lat") if c in df_et.columns),
         None,
@@ -265,6 +279,31 @@ def _lookup_ecopart_project_for_ecotaxa(
         client.login()
     except Exception as exc:
         return {"error": f"Erreur EcoPart : {exc}"}
+
+    # Fast, authoritative path: ask the server directly for the EcoPart samples
+    # linked to this EcoTaxa project (filt_proj), then read one popover for the
+    # EcoPart project id. Avoids the bbox scan and its per-sample popovers.
+    if known_ecotaxa_pid is not None:
+        try:
+            linked = client.search_samples(ecotaxa_project_id=int(known_ecotaxa_pid))
+        except Exception:
+            linked = []
+        for cand in sorted(linked, key=lambda c: int(c.get("id", 0))):
+            try:
+                meta = client.get_sample_metadata(cand["id"])
+            except Exception:
+                continue
+            ep_pid = meta.get("ecopart_project_id")
+            if ep_pid is None:
+                continue
+            return _cache_and_return({
+                "project_id": int(ep_pid),
+                "project_name": meta.get("ecopart_project_name") or None,
+                "resolution": (
+                    f"lien serveur EcoTaxa↔EcoPart (filt_proj, projet EcoTaxa "
+                    f"{known_ecotaxa_pid}, profil `{meta.get('profile_id') or '?'}`)"
+                ),
+            })
 
     profile_labels = set(_candidate_ecotaxa_profile_labels(df_et))
 
@@ -335,13 +374,13 @@ def _lookup_ecopart_project_for_ecotaxa(
         et_pid = meta.get("ecotaxa_project_id")
         # Authoritative EcoTaxa↔EcoPart link: definitive — return immediately.
         if known_ecotaxa_pid is not None and et_pid is not None and int(et_pid) == int(known_ecotaxa_pid):
-            return {
+            return _cache_and_return({
                 "project_id": ep_pid,
                 "project_name": meta.get("ecopart_project_name") or None,
                 "resolution": (
                     f"lien EcoTaxa↔EcoPart (projet EcoTaxa {known_ecotaxa_pid}, profil `{pf}`)"
                 ),
-            }
+            })
         tally = votes.setdefault(ep_pid, [0, 0])
         if pf and pf in profile_labels:
             tally[0] += 1
@@ -359,11 +398,11 @@ def _lookup_ecopart_project_for_ecotaxa(
         how = f"correspondance de profil ({mid} sample(s) sur {weak})"
     else:
         how = f"proximité géographique par {search_note} ({weak} sample(s), aucun lien EcoTaxa direct)"
-    return {
+    return _cache_and_return({
         "project_id": best_pid,
         "project_name": names.get(best_pid) or None,
         "resolution": how,
-    }
+    })
 
 
 def make_ecopart_tools(thread_id: str) -> list:

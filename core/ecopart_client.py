@@ -112,11 +112,21 @@ class EcopartClient:
             if "id" in s
         ]
 
-    def search_samples(self, project_id: int | None = None) -> list[dict]:
-        """Search accessible EcoPart samples, optionally restricted to one project."""
+    def search_samples(
+        self, project_id: int | None = None, ecotaxa_project_id: int | None = None
+    ) -> list[dict]:
+        """Search accessible EcoPart samples.
+
+        `project_id` restricts to one EcoPart project (`filt_uproj`).
+        `ecotaxa_project_id` restricts to the EcoPart samples linked to an EcoTaxa
+        project (`filt_proj`) — the server-authoritative EcoTaxa↔EcoPart link, the
+        same one `start_export` uses.
+        """
         params = {}
         if project_id is not None:
             params["filt_uproj"] = str(project_id)
+        if ecotaxa_project_id is not None:
+            params["filt_proj"] = str(ecotaxa_project_id)
         resp = self._session.get(f"{_BASE_URL}/searchsample", params=params or None, timeout=_TIMEOUT)
         resp.raise_for_status()
         raw = resp.json() or []
