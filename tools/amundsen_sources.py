@@ -487,6 +487,85 @@ def make_amundsen_tools(thread_id: str) -> list:
             return f"Erreur lors de l'enrichissement Amundsen : {exc}"
 
     @tool
+    def find_amundsen_data_for_table(
+        source_variable: str | None = None,
+        latitude_column: str | None = None,
+        longitude_column: str | None = None,
+        time_column: str | None = None,
+    ) -> str:
+        """Vérifie si des données CTD Amundsen existent pour la table chargée, SANS enrichir.
+
+        À utiliser sur une question de DISPONIBILITÉ, avant tout enrichissement —
+        « est-ce qu'il existe des données Amundsen pour ce fichier ? », « est-ce
+        possible d'enrichir avec Amundsen (CTD) ? », « y a-t-il de la CTD Amundsen
+        dans ma zone / ma période ? », « avant d'enrichir, dis-moi si ça existe ».
+        Lecture seule : calcule l'emprise (bbox + période) de la table chargée et
+        compte les profils CTD Amundsen dans cette emprise via ERDDAP. Ne
+        télécharge ni ne stocke aucune donnée enrichie. Si des profils existent,
+        proposer d'enrichir avec `enrich_with_amundsen_ctd` ; sinon dire clairement
+        qu'il n'y a rien à enrichir.
+        """
+        source = resolve_source_dataframe(_store, thread_id, source_variable)
+        if source is None:
+            if source_variable:
+                return f"Variable source introuvable en session : `{source_variable}`."
+            return (
+                "Aucune table chargée. Charge d'abord un fichier avec des colonnes "
+                "latitude/longitude/date (`load_file`)."
+            )
+
+        lat_col = latitude_column or detect_column(source.columns, DEFAULT_LAT_CANDIDATES)
+        lon_col = longitude_column or detect_column(source.columns, DEFAULT_LON_CANDIDATES)
+        time_col = time_column or detect_column(source.columns, DEFAULT_TIME_CANDIDATES)
+        missing = [
+            name
+            for name, value in (("latitude", lat_col), ("longitude", lon_col), ("time", time_col))
+            if value is None
+        ]
+        if missing:
+            return (
+                "Vérification Amundsen impossible : colonnes manquantes dans la table "
+                f"chargée — {', '.join(missing)}. Préciser via `latitude_column`, "
+                "`longitude_column`, `time_column`."
+            )
+
+        coords = parse_source_coords(source, lat_col=lat_col, lon_col=lon_col, time_col=time_col)
+        if coords.empty_groups:
+            return (
+                "Vérification Amundsen impossible : colonnes "
+                f"{', '.join(coords.empty_groups)} entièrement vides — aucune coordonnée "
+                "exploitable dans la table."
+            )
+
+        bbox, time_window = compute_bbox_time_window(
+            src_lat=coords.latitude, src_lon=coords.longitude, src_time=coords.time
+        )
+        try:
+            ctd = _fetch_amundsen_bbox(bbox=bbox, time_window=time_window, variables=["TE90"])
+        except Exception as exc:
+            return f"Erreur lors de l'accès à Amundsen : {exc}"
+
+        env = (
+            f"lat {bbox['lat_min']:.2f}→{bbox['lat_max']:.2f}, "
+            f"lon {bbox['lon_min']:.2f}→{bbox['lon_max']:.2f}, "
+            f"{time_window['start'][:10]} → {time_window['end'][:10]}"
+        )
+        if len(ctd) == 0:
+            return (
+                f"Aucune donnée CTD Amundsen dans l'emprise de la table ({env}). "
+                "Rien à enrichir depuis Amundsen pour ce fichier."
+            )
+        station_col = next((c for c in ("station", "cast_number") if c in ctd.columns), None)
+        n_profiles = int(ctd[station_col].nunique()) if station_col else 0
+        profiles_txt = f"{n_profiles} profil(s)/station(s), " if n_profiles else ""
+        return (
+            f"Données Amundsen disponibles : {profiles_txt}{len(ctd)} ligne(s) CTD dans "
+            f"l'emprise de la table ({env}). Enrichissement possible — lancer "
+            "`enrich_with_amundsen_ctd` pour matcher chaque ligne à son profil CTD le "
+            "plus proche (lat/lon/temps)."
+        )
+
+    @tool
     def enrich_with_amundsen_ctd(
         source_variable: str | None = None,
         latitude_column: str | None = None,
@@ -954,6 +1033,7 @@ def make_amundsen_tools(thread_id: str) -> list:
         list_amundsen_datasets,
         preview_amundsen_profile,
         query_amundsen_ctd,
+        find_amundsen_data_for_table,
         enrich_loaded_table_with_amundsen_ctd,
         enrich_with_amundsen_ctd,
     ]

@@ -33,6 +33,78 @@ def test_make_amundsen_tools_exposes_expected_tools():
     assert "preview_amundsen_profile" in tool_names
     assert "query_amundsen_ctd" in tool_names
     assert "enrich_loaded_table_with_amundsen_ctd" in tool_names
+    assert "find_amundsen_data_for_table" in tool_names
+
+
+def test_find_amundsen_data_reports_availability_without_enriching():
+    """Availability check: reports profiles found, proposes enrich, stores nothing."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+    _store.set(
+        "thread-avail",
+        pd.DataFrame({
+            "station": ["A", "B"],
+            "latitude": [70.0, 71.0],
+            "longitude": [-60.0, -61.0],
+            "date": ["2018-08-01", "2018-08-02"],
+        }),
+        {"source": "file:zoo.tsv"},
+    )
+
+    fake_ctd = pd.DataFrame({
+        "time": ["2018-08-01T00:00:00Z", "2018-08-01T00:00:00Z", "2018-08-02T00:00:00Z"],
+        "latitude": [70.0, 70.0, 71.0],
+        "longitude": [-60.0, -60.0, -61.0],
+        "station": ["s1", "s1", "s2"],
+        "cast_number": [1, 1, 2],
+        "PRES": [5.0, 10.0, 5.0],
+        "TE90": [1.1, 1.0, 0.9],
+    })
+
+    with patch("tools.amundsen_sources._fetch_amundsen_bbox", MagicMock(return_value=fake_ctd)):
+        tool = next(
+            t for t in make_amundsen_tools("thread-avail")
+            if t.name == "find_amundsen_data_for_table"
+        )
+        result = tool.invoke({})
+
+    assert "amundsen" in result.lower()
+    assert "enrich_with_amundsen_ctd" in result  # proposes the enrich next step
+    # Read-only: no enriched dataset stored.
+    assert not _store.keys("thread-avail:dataset:df_amundsen_enriched_")
+
+
+def test_find_amundsen_data_reports_none_when_no_profiles():
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+    _store.set(
+        "thread-none",
+        pd.DataFrame({
+            "latitude": [10.0],
+            "longitude": [10.0],
+            "date": ["2000-01-01"],
+        }),
+        {"source": "file:zoo.tsv"},
+    )
+
+    with patch("tools.amundsen_sources._fetch_amundsen_bbox", MagicMock(return_value=pd.DataFrame())):
+        tool = next(
+            t for t in make_amundsen_tools("thread-none")
+            if t.name == "find_amundsen_data_for_table"
+        )
+        result = tool.invoke({})
+
+    assert "aucune" in result.lower()
 
 
 def test_query_amundsen_ctd_tool_stores_dataframe_and_returns_download_link():
