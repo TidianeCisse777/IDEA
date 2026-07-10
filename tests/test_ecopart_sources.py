@@ -282,7 +282,7 @@ def test_enrich_remote_uses_session_project_id_when_query_ecotaxa_was_run():
             t for t in make_ecopart_tools("thread-remote-meta")
             if t.name == "enrich_ecotaxa_with_ecopart_remote"
         )
-        result = tool.invoke({})
+        result = tool.invoke({"confirmed": True})
 
     mock_client.start_export.assert_called_once_with(
         project_id=None, ecotaxa_project_id=1165
@@ -290,6 +290,37 @@ def test_enrich_remote_uses_session_project_id_when_query_ecotaxa_was_run():
     assert "Enrichissement terminé" in result
     merged = _store.get("thread-remote-meta")["df"]
     assert merged.loc[0, "ecopart_Sampled volume [L]"] == 100.0
+
+
+def test_enrich_remote_dry_run_by_default_does_not_download():
+    """CT-AG-06: confirmed=False (default) returns a plan and never downloads."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+    _store.set(
+        "thread-dry:ecotaxa",
+        pd.DataFrame({"obj_orig_id": ["ips_007_1"], "object_depth_min": [3.0]}),
+        {"source": "ecotaxa:1165", "project_id": 1165},
+    )
+
+    mock_client = MagicMock()
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        tool = next(
+            t for t in make_ecopart_tools("thread-dry")
+            if t.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({})  # confirmed defaults to False
+
+    mock_client.start_export.assert_not_called()
+    mock_client.download_tsv.assert_not_called()
+    assert "dry-run" in result.lower()
+    assert "confirmed=True" in result
+    # No enrichment/join table was stored in dry-run.
+    assert _store.get("thread-dry") is None
 
 
 def test_enrich_remote_auto_loads_ecotaxa_when_project_named_but_not_in_session():
@@ -326,7 +357,7 @@ def test_enrich_remote_auto_loads_ecotaxa_when_project_named_but_not_in_session(
             t for t in make_ecopart_tools("thread-autoload")
             if t.name == "enrich_ecotaxa_with_ecopart_remote"
         )
-        result = tool.invoke({"ecotaxa_project_id": 14853})
+        result = tool.invoke({"ecotaxa_project_id": 14853, "confirmed": True})
 
     mock_et.start_export.assert_called_once()  # auto-loaded the EcoTaxa project
     assert "Données EcoTaxa manquantes" not in result
@@ -386,7 +417,7 @@ def test_full_remote_workflow_query_ecotaxa_then_enrich_remote():
             t for t in make_ecopart_tools(thread_id)
             if t.name == "enrich_ecotaxa_with_ecopart_remote"
         )
-        result = enrich.invoke({})
+        result = enrich.invoke({"confirmed": True})
 
     # The remote enrich reused the project_id left by query_ecotaxa, with no manual id.
     ecopart_client.start_export.assert_called_once_with(
@@ -435,7 +466,7 @@ def test_enrich_remote_surfaces_clean_message_on_server_export_error():
             t for t in make_ecopart_tools("thread-remote-err")
             if t.name == "enrich_ecotaxa_with_ecopart_remote"
         )
-        result = tool.invoke({})
+        result = tool.invoke({"confirmed": True})
 
     assert "Export EcoPart échoué" in result
     assert "60808" in result
@@ -476,7 +507,7 @@ def test_enrich_remote_accepts_explicit_ecopart_project_id():
             t for t in make_ecopart_tools("thread-remote-ep")
             if t.name == "enrich_ecotaxa_with_ecopart_remote"
         )
-        result = tool.invoke({"ecopart_project_id": 105})
+        result = tool.invoke({"ecopart_project_id": 105, "confirmed": True})
 
     mock_client.start_export.assert_called_once_with(
         project_id=105, ecotaxa_project_id=None
@@ -526,7 +557,7 @@ def test_enrich_remote_uses_sample_lat_long_for_standard_ecotaxa_export():
             t for t in make_ecopart_tools("thread-remote-sample-coords")
             if t.name == "enrich_ecotaxa_with_ecopart_remote"
         )
-        result = tool.invoke({})
+        result = tool.invoke({"confirmed": True})
 
     assert (
         "Projet EcoPart résolu automatiquement" in result
@@ -575,7 +606,7 @@ def test_enrich_remote_uses_sample_profileid_when_no_coordinates_are_available()
             t for t in make_ecopart_tools("thread-remote-profile-fallback")
             if t.name == "enrich_ecotaxa_with_ecopart_remote"
         )
-        result = tool.invoke({})
+        result = tool.invoke({"confirmed": True})
 
     assert "Projet EcoPart résolu automatiquement" in result
     assert "105" in result and "profil" in result

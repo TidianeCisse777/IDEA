@@ -143,7 +143,7 @@ def test_workflow2_ecotaxa_local_then_remote_ecopart(_isolated_store):
     client.download_tsv.return_value = ep_subset
 
     with patch("tools.ecopart_sources.EcopartClient", return_value=client):
-        result = _enrich_tool("wf2").invoke({})
+        result = _enrich_tool("wf2").invoke({"confirmed": True})
 
     assert "Enrichissement terminé" in result
     merged = _isolated_store.get("wf2:ecotaxa_ecopart")["df"]
@@ -180,7 +180,7 @@ def test_workflow3_full_remote_query_then_enrich(_isolated_store):
     ecopart_client.start_export.return_value = ["/Task/Show/42"]
     ecopart_client.download_tsv.return_value = ep_subset
     with patch("tools.ecopart_sources.EcopartClient", return_value=ecopart_client):
-        result = _enrich_tool(thread_id).invoke({})
+        result = _enrich_tool(thread_id).invoke({"confirmed": True})
 
     # The remote enrich reused the project_id left by query_ecotaxa.
     ecopart_client.start_export.assert_called_once_with(project_id=None, ecotaxa_project_id=1165)

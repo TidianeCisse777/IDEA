@@ -235,8 +235,8 @@ route to `count_ecotaxa_taxa(project_ids=[...], taxa=[...])`.
 
 Example triggers:
 
-- "combien de copépodes validés dans le projet 14853"
-- "combien de Copepoda dans 14853"
+- "combien de copépodes validés dans le projet 17498"
+- "combien de Copepoda dans 17498"
 - "comptes V/P/D pour Calanus finmarchicus dans les projets 1165 et 2331"
 
 Do NOT use `query_ecotaxa` for these questions. Counts are server-side
@@ -401,7 +401,7 @@ The dry-run shape:
 
 | project_id | nb_samples | sample_ids |
 |---:|---:|---|
-| 14853 | 7 | 14853000003, 14853000002, … (+4) |
+| 17498 | 7 | 17498000003, 17498000002, … (+4) |
 | 2331  | 3 | 2331000001, 2331000002, 2331000003 |
 | 4042  | 2 | 4042000010, 4042000011 |
 ```
@@ -575,12 +575,12 @@ User wants to export…
 | "samples en Baie de Baffin 2024 qui ne touchent pas la surface (depth_min ≥ 50 m)" | `find_ecotaxa_samples_in_region(zone_name=..., date_range=..., depth_min_gte=50)` |
 | "samples avec Copepoda en oct. 2024 dans la tranche 50-200 m max" | `find_ecotaxa_observations(taxon="Copepoda", zone_name=..., date_range=..., depth_max_gte=50, depth_max_lt=200)` |
 | "samples avec Calanus dont le cast est contenu dans 50-200 m" | `find_ecotaxa_observations(taxon="Calanus", depth_min_gte=50, depth_max_lt=200)` |
-| "objets de Copepoda à ~100 m dans le projet 14853 (export)" | `query_ecotaxa(project_id=14853, taxon="Copepoda", obj_depth_gte=95, obj_depth_lte=105)` (confirmer avant) |
+| "objets de Copepoda à ~100 m dans le projet 17498 (export)" | `query_ecotaxa(project_id=17498, taxon="Copepoda", obj_depth_gte=95, obj_depth_lte=105)` (confirmer avant) |
 | "projets EcoTaxa avec samples descendant à plus de 1000 m en Baie de Baffin 2024" | `find_ecotaxa_projects_in_region(zone_name="Baie de Baffin", date_range=..., depth_max_gte=1000)` |
 | "qu'y a-t-il dans le projet 1165 ?" | `preview_ecotaxa_project(1165)` (light) — full nav only if user asks "explore tous les samples" |
 | "samples LOKI dans Baie de Baffin" | `find_ecotaxa_samples_in_region(zone_name=..., instrument="Loki")` |
 | "samples du projet LOKI dans Baie de Baffin" | `find_ecotaxa_projects(title="LOKI")` → `find_ecotaxa_samples_in_region(zone_name=..., project_ids=[<id>])` |
-| "groupe les samples du projet 14853 par mer" | `group_ecotaxa_project_samples_by_region(project_id=14853)` |
+| "groupe les samples du projet 17498 par mer" | `group_ecotaxa_project_samples_by_region(project_id=17498)` |
 | "scan ces 20 samples avant export" | `summarize_ecotaxa_samples(sample_ids=[...])` then user decides |
 | "résume cette sélection" | `summarize_ecotaxa_samples(selection_name="latest")` |
 | "exporte cette sélection" | `export_ecotaxa_samples(selection_name="latest", confirmed=False)` unless the user explicitly confirms the export |

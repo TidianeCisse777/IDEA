@@ -515,6 +515,7 @@ def make_ecopart_tools(thread_id: str) -> list:
     def enrich_ecotaxa_with_ecopart_remote(
         ecotaxa_project_id: int | None = None,
         ecopart_project_id: int | None = None,
+        confirmed: bool = False,
     ) -> str:
         """Enrichit l'EcoTaxa en session avec les variables EcoPart téléchargées **à distance**.
 
@@ -525,6 +526,11 @@ def make_ecopart_tools(thread_id: str) -> list:
         Pré-requis : un EcoTaxa doit être en session (load_file UVP ou query_ecotaxa).
         Pré-requis ID : passer `ecotaxa_project_id` (recommandé) OU `ecopart_project_id`.
         Si aucun n'est fourni, l'outil tente de lire `meta.project_id` posé par `query_ecotaxa`.
+
+        **Confirmation obligatoire (CT-AG-06)** : `confirmed=False` par défaut →
+        renvoie un dry-run montrant le projet EcoPart résolu et le plan de
+        jointure, sans rien télécharger. Pour lancer réellement le téléchargement
+        et la jointure, rappeler avec `confirmed=True`.
         """
         session_et = _store.get(f"{thread_id}:ecotaxa")
         if session_et is None:
@@ -566,6 +572,27 @@ def make_ecopart_tools(thread_id: str) -> list:
             resolution_note = (
                 f"Projet EcoPart résolu automatiquement : {ecopart_project_id} "
                 f"({result['resolution']})."
+            )
+
+        if not confirmed:
+            scope = (
+                f"projet EcoTaxa {ecotaxa_project_id}"
+                if ecotaxa_project_id is not None
+                else f"projet EcoPart {ecopart_project_id}"
+            )
+            ep_target = (
+                str(ecopart_project_id)
+                if ecopart_project_id is not None
+                else "(résolu au lancement)"
+            )
+            prefix = f"{resolution_note}\n" if resolution_note else ""
+            return (
+                f"{prefix}Plan d'enrichissement EcoPart (dry-run) — {scope} → "
+                f"EcoPart {ep_target}.\n"
+                "Opération lourde : téléchargement de l'EcoPart puis jointure sur "
+                "(sample_id, depth_bin). Aucune donnée téléchargée pour l'instant.\n"
+                "Confirme pour lancer : rappelle `enrich_ecotaxa_with_ecopart_remote` "
+                "avec `confirmed=True`."
             )
 
         try:
