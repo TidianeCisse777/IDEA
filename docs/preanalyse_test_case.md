@@ -338,8 +338,9 @@ multi-turn de `evals/eval_ecotaxa_exploration_extra.py`).
 
 Runner : `scripts/run_preanalyse_test_case.py`. Contexte : agent live sur `:8000`.
 
-**État final : 9/10 verts** : P1, P3, P4, P5, P6, P7, P8A, P8Bb, P9.
-Reste rouge : **P8Ba** (workflow-1 non-déterministe, ci-dessous).
+**État final : 10/10 verts** : P1, P3, P4, P5, P6, P7, P8A, P8Ba, P8Bb, P9.
+(P8Ba : routage LLM probabiliste mais fiable après fix — 7/8 runs verts, voir
+ci-dessous.)
 
 **Root cause du bloc « stats à 0 »** : le projet `14853` (exemple canonique
 historique) est **supprimé côté EcoTaxa** — `GET /api/projects/14853` → **404**,
@@ -374,14 +375,17 @@ code ni d'auth. Correctif : test re-baseliné sur `17498` + valeurs live fraîch
   périssables (project_id ↔ campagne) sans les invalider quand EcoTaxa change.
   À réfléchir (TTL sur les mémoires « data-grounded », ou ne pas mémoriser
   d'IDs de projet).
-- **P8Ba — workflow 1 non-déterministe (vrai bug de routage).** Deux fichiers
-  (EcoTaxa + EcoPart) en session : le prompt (ligne ~205) impose « you MUST call
-  `join_ecotaxa_ecopart` » d'abord. Observé : l'agent appelle tantôt
-  `join_ecotaxa_ecopart` (correct, puis fallback remote légitime sur 0-match),
-  tantôt il **saute direct** à `enrich_ecotaxa_with_ecopart_remote` sans tenter
-  la jointure locale. Le test `expect join_ecotaxa_ecopart` est correct et
-  attrape le cas où la jointure locale est sautée. Fix candidat : durcir la
-  détection « EcoPart en session » et/ou la règle prompt workflow-1.
+- **P8Ba — workflow 1 non-déterministe — ✅ RÉSOLU (2026-07-10).** Cause :
+  collision de triggers. Le prompt listait « enrichis EcoTaxa avec EcoPart »
+  comme trigger du **workflow 2 (remote)** ; quand EcoPart était pourtant déjà
+  en session mais que l'user disait « enrichis », le verbe tirait vers le
+  téléchargement remote au lieu de la jointure locale. Fix : durci le prompt
+  pour que **le facteur décisif soit l'état de session (EcoPart chargé ou non),
+  jamais le verbe** — « enrichis » n'override plus l'in-session check, et un
+  garde-fou explicite « ne jamais télécharger un EcoPart quand un est déjà
+  chargé » dans le workflow 2. Vérifié : 7/8 runs verts après fix (routage LLM
+  probabiliste, mais l'agent appelle désormais fiablement `join_ecotaxa_ecopart`
+  puis relaye l'avertissement 0-match campagne).
 - **P8Bb — gate CT-AG-06 sur l'enrich remote — ✅ RÉSOLU (2026-07-10).**
   `enrich_ecotaxa_with_ecopart_remote` a maintenant un paramètre
   `confirmed=False` (défaut) qui renvoie un dry-run (projet EcoPart résolu + plan
