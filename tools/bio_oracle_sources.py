@@ -775,6 +775,94 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         return per_station_warning + out
 
     @tool
+    def find_bio_oracle_data_for_table(
+        source_variable: str | None = None,
+        latitude_column: str | None = None,
+        longitude_column: str | None = None,
+        variable: str = "temperature",
+        scenario: str = "baseline",
+        depth_layer: str = "surface",
+    ) -> str:
+        """Vérifie si Bio-ORACLE couvre la table chargée, SANS enrichir.
+
+        À utiliser sur une question de DISPONIBILITÉ, avant tout enrichissement —
+        « est-ce qu'il existe des données Bio-ORACLE pour ce fichier ? », « est-ce
+        possible d'enrichir avec Bio-ORACLE ? », « y a-t-il de la couverture
+        Bio-ORACLE dans ma zone ? », « avant d'enrichir, dis-moi si ça existe ».
+        Lecture seule : sonde quelques points représentatifs de la table (grille
+        océanique globale Bio-ORACLE) pour confirmer la couverture, sans enrichir
+        toutes les lignes ni stocker de dataset. Si la zone est couverte, proposer
+        d'enrichir avec `enrich_with_bio_oracle` ; sinon signaler que les points
+        sont probablement à terre / hors grille.
+        """
+        source = resolve_source_dataframe(_store, thread_id, source_variable)
+        if source is None:
+            if source_variable:
+                return f"Variable source introuvable en session : `{source_variable}`."
+            return (
+                "Aucune table chargée. Charge d'abord un fichier avec des colonnes "
+                "latitude/longitude (`load_file`)."
+            )
+
+        lat_col = latitude_column or detect_column(source.columns, DEFAULT_LAT_CANDIDATES)
+        lon_col = longitude_column or detect_column(source.columns, DEFAULT_LON_CANDIDATES)
+        missing = [
+            name for name, value in (("latitude", lat_col), ("longitude", lon_col))
+            if value is None
+        ]
+        if missing:
+            return (
+                "Vérification Bio-ORACLE impossible : colonnes manquantes dans la table "
+                f"chargée — {', '.join(missing)}. Préciser via `latitude_column`, "
+                "`longitude_column`."
+            )
+
+        coords = source[[lat_col, lon_col]].apply(pd.to_numeric, errors="coerce").dropna()
+        if coords.empty:
+            return (
+                "Vérification Bio-ORACLE impossible : latitude/longitude entièrement "
+                "vides ou non numériques — aucune coordonnée exploitable."
+            )
+
+        # Probe a few representative points (first / middle / last) — read only.
+        n = len(coords)
+        probe_positions = sorted({0, n // 2, n - 1})
+        probed: list[object] = []
+        for pos in probe_positions:
+            row = coords.iloc[pos]
+            try:
+                point = _fetch_bio_oracle_point(
+                    latitude=float(row[lat_col]),
+                    longitude=float(row[lon_col]),
+                    variable=variable,
+                    scenario=scenario,
+                    depth_layer=depth_layer,
+                    target_year=None,
+                )
+            except Exception as exc:
+                return f"Erreur lors de l'accès à Bio-ORACLE : {exc}"
+            probed.append(point.get("value"))
+
+        n_cov = sum(1 for v in probed if v is not None)
+        lat_min, lat_max = float(coords[lat_col].min()), float(coords[lat_col].max())
+        lon_min, lon_max = float(coords[lon_col].min()), float(coords[lon_col].max())
+        env = f"lat {lat_min:.2f}→{lat_max:.2f}, lon {lon_min:.2f}→{lon_max:.2f}"
+        if n_cov == 0:
+            return (
+                f"Aucune couverture Bio-ORACLE aux points testés de la table ({env}). "
+                "Les points sont probablement à terre ou en bord de grille — vérifie "
+                "que les coordonnées sont bien en mer."
+            )
+        example = next((v for v in probed if v is not None), None)
+        example_txt = f" (ex. {variable} = {example})" if example is not None else ""
+        return (
+            f"Bio-ORACLE couvre cette zone : {n_cov}/{len(probed)} point(s) testé(s) ont "
+            f"une valeur{example_txt}, emprise {env}. Enrichissement possible — lancer "
+            "`enrich_with_bio_oracle` (variables + scénarios voulus) pour ajouter une "
+            "colonne par (variable × scénario) sur chaque ligne."
+        )
+
+    @tool
     def enrich_with_bio_oracle(
         variables: list[str] | None = None,
         scenarios: list[str] | None = None,
@@ -1042,4 +1130,4 @@ def make_bio_oracle_tools(thread_id: str) -> list:
 
     return [list_bio_oracle_datasets, preview_bio_oracle_point, query_bio_oracle,
             couple_zooplankton_bio_oracle, query_bio_oracle_zones,
-            enrich_with_bio_oracle]
+            find_bio_oracle_data_for_table, enrich_with_bio_oracle]

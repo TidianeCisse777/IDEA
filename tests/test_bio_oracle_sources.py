@@ -34,6 +34,64 @@ def test_make_bio_oracle_tools_exposes_expected_tools():
     assert "preview_bio_oracle_point" in tool_names
     assert "query_bio_oracle" in tool_names
     assert "couple_zooplankton_bio_oracle" in tool_names
+    assert "find_bio_oracle_data_for_table" in tool_names
+
+
+def test_find_bio_oracle_data_reports_coverage_without_enriching():
+    """Availability check: reports Bio-ORACLE coverage, proposes enrich, stores nothing."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+    _store.set(
+        "thread-bo-avail",
+        pd.DataFrame({
+            "latitude": [70.0, 71.0, 72.0],
+            "longitude": [-60.0, -61.0, -62.0],
+        }),
+        {"source": "file:zoo.tsv"},
+    )
+
+    fake_point = MagicMock(return_value={"dataset_id": "thetao", "time": "2010", "value": 2.5})
+    with patch("tools.bio_oracle_sources._fetch_bio_oracle_point", fake_point):
+        tool = next(
+            t for t in make_bio_oracle_tools("thread-bo-avail")
+            if t.name == "find_bio_oracle_data_for_table"
+        )
+        result = tool.invoke({})
+
+    assert "bio-oracle" in result.lower()
+    assert "enrich_with_bio_oracle" in result  # proposes the enrich next step
+    # Read-only: no enriched dataset stored.
+    assert not _store.keys("thread-bo-avail:dataset:df_bio_oracle_enriched_")
+
+
+def test_find_bio_oracle_data_reports_no_coverage_when_all_points_land():
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    _store._store.clear()
+    _store.set(
+        "thread-bo-land",
+        pd.DataFrame({"latitude": [45.0], "longitude": [5.0]}),  # inland point
+        {"source": "file:zoo.tsv"},
+    )
+
+    fake_point = MagicMock(return_value={"dataset_id": "thetao", "time": None, "value": None})
+    with patch("tools.bio_oracle_sources._fetch_bio_oracle_point", fake_point):
+        tool = next(
+            t for t in make_bio_oracle_tools("thread-bo-land")
+            if t.name == "find_bio_oracle_data_for_table"
+        )
+        result = tool.invoke({})
+
+    assert "couverture" in result.lower() or "aucune" in result.lower()
 
 
 def test_query_bio_oracle_tool_stores_dataframe_and_returns_download_link(tmp_path):
