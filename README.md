@@ -8,23 +8,35 @@ project/sample exploration is in development. Amundsen CTD, OGSL, and
 Bio-ORACLE tools exist but are still being integrated more tightly into the
 agent workflow.
 
-## Documentation (spec figée)
+## Documentation
 
-Le jeu de documents de référence figés, en français, à la racine du repo :
+La doc suit une règle simple : **la référence figée est à la racine, les guides
+et notes détaillées sont sous [`docs/`](docs/README.md)**. Les notes internes
+(test maps, brouillons) restent locales et ne sont pas versionnées — voir
+[`docs/README.md`](docs/README.md) pour la carte complète.
+
+**Référence figée (racine) — à lire en premier :**
 
 | Doc | Contenu |
 |---|---|
-| [`SPEC.md`](SPEC.md) | Spécification figée : identité, périmètre, use cases classés (UC-A…UC-J), inventaire complet des ~53 tools, skills, RAG, contraintes dures |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Architecture logicielle : serve.py / agent.py / tools / RAG / MCP / Open WebUI, état de session, config, ADR |
-| [`PARTAGE.md`](PARTAGE.md) | Partage & déploiement : état actuel (Cloudflare Tunnel) et cible (VM prod / sous-domaine ULaval) |
-| [`SEQUENCES.md`](SEQUENCES.md) | Diagrammes de séquence par use case (S0…S9) |
+| [`CONTEXT.md`](CONTEXT.md) | Identité métier de l'agent : périmètre, ce qu'il fait / ne fait pas, sources. |
+| [`SPEC.md`](SPEC.md) | Spécification figée : use cases (UC-A…UC-J), inventaire des ~54 tools, skills, RAG, contraintes dures. |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Câblage logiciel : serve.py / agent.py / tools / RAG / MCP / Open WebUI, config, ADR. |
+| [`TOOLS.md`](TOOLS.md) | Référence tool par tool, par catégorie. |
+| [`SEQUENCES.md`](SEQUENCES.md) | Diagrammes de séquence par use case (S0…S9). |
+| [`PARTAGE.md`](PARTAGE.md) | Partage & déploiement : état actuel (Cloudflare Tunnel) et cible (VM prod / sous-domaine ULaval). |
+| [`CHANGELOG.md`](CHANGELOG.md) | Historique des releases. |
+| [`CLAUDE.md`](CLAUDE.md) · [`AGENTS.md`](AGENTS.md) | Consignes pour les assistants de code (Claude Code, Codex…). |
 
-Runbooks et docs complémentaires :
+**Guides détaillés ([`docs/`](docs/README.md), versionnés) :**
 
-- [`CONTEXT.md`](CONTEXT.md) : identité métier de l'agent.
-- [`DEPLOY.md`](DEPLOY.md) : runbook prod détaillé (hardening, TLS, backups, migration).
-- [`MCP_CAPABILITIES.md`](MCP_CAPABILITIES.md): what the EcoTaxa MCP layer can do.
-- [`MCP_ECOTAXA_SHARE_GUIDE.md`](MCP_ECOTAXA_SHARE_GUIDE.md): shareable EcoTaxa MCP setup and usage guide.
+| Doc | Contenu |
+|---|---|
+| [`docs/deploy/DEPLOY.md`](docs/deploy/DEPLOY.md) | Runbook prod détaillé : hardening, TLS, backups, migration. |
+| [`docs/features/ENRICHMENT_ECOTAXA_ECOPART.md`](docs/features/ENRICHMENT_ECOTAXA_ECOPART.md) | Enrichissement EcoTaxa ↔ EcoPart et métriques d'abondance. |
+| [`docs/mcp/MCP_CAPABILITIES.md`](docs/mcp/MCP_CAPABILITIES.md) | Ce que couvre la couche MCP EcoTaxa. |
+| [`docs/mcp/MCP_ECOTAXA_ORCHESTRATION.md`](docs/mcp/MCP_ECOTAXA_ORCHESTRATION.md) | Orchestration des 4 couches (prompt → skill → tool → MCP). |
+| [`docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`](docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md) | Partage, lancement et test du serveur MCP EcoTaxa. |
 
 ## Requirements
 

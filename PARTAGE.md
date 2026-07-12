@@ -1,8 +1,8 @@
 # PARTAGE.md — Partage & déploiement · IDEA
 
 > Comment l'application est partagée **aujourd'hui** et comment elle **devra**
-> l'être. Consolide `DEPLOY.md` (guide prod détaillé) et
-> `MCP_ECOTAXA_SHARE_GUIDE.md` (partage du MCP seul). Ce document donne la
+> l'être. Consolide `docs/deploy/DEPLOY.md` (guide prod détaillé) et
+> `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md` (partage du MCP seul). Ce document donne la
 > vision d'ensemble et la trajectoire ; les deux autres restent les runbooks
 > pas-à-pas.
 
@@ -13,9 +13,9 @@
 | Mode | Cible | Stabilité | URL | Runbook |
 |---|---|---|---|---|
 | **A. Local dev** | Développeur seul | — | `http://localhost:3000` | `README.md` |
-| **B. Tunnel Cloudflare** | Démo / testeurs, avant VM | éphémère | `*.trycloudflare.com` (change à chaque relance) | `DEPLOY.md` annexe |
-| **C. VM prod provider-agnostic** | Profs + étudiants, 24/7 | stable | `https://$PROD_DOMAIN` | `DEPLOY.md` §1-11 |
-| **D. MCP EcoTaxa seul** | Agent externe / intégrateur | selon hôte | `http://…:8001/mcp` | `MCP_ECOTAXA_SHARE_GUIDE.md` |
+| **B. Tunnel Cloudflare** | Démo / testeurs, avant VM | éphémère | `*.trycloudflare.com` (change à chaque relance) | `docs/deploy/DEPLOY.md` annexe |
+| **C. VM prod provider-agnostic** | Profs + étudiants, 24/7 | stable | `https://$PROD_DOMAIN` | `docs/deploy/DEPLOY.md` §1-11 |
+| **D. MCP EcoTaxa seul** | Agent externe / intégrateur | selon hôte | `http://…:8001/mcp` | `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md` |
 
 ---
 
@@ -55,7 +55,7 @@ Postgres et Open WebUI ne le sont **pas** (protection des chats / de la base).
 - **Démo / testeurs** : mode B (Cloudflare Tunnel depuis le Mac local). URL
   `*.trycloudflare.com` valable tant que le Mac est allumé et le tunnel actif.
   L'URL change à chaque relance — c'est une limite des quick tunnels anonymes.
-- **Pas encore de VM 24/7** dédiée : la cible C est documentée (`DEPLOY.md`) mais
+- **Pas encore de VM 24/7** dédiée : la cible C est documentée (`docs/deploy/DEPLOY.md`) mais
   pas provisionnée de façon permanente.
 - **Partage du MCP seul** (mode D) possible via `docker-compose.mcp.yml` +
   `.env.mcp`, avec accès au package GHCR privé si nécessaire (rôle `Read` GitHub
@@ -104,7 +104,7 @@ Objectif : remplacer le tunnel éphémère par une **URL stable** sur une VM Lin
   → tous dans `.env`. Migrer d'un hôte à l'autre = recopier `.env` + relancer.
 - **TLS auto** via Caddy + Let's Encrypt sur `$PROD_DOMAIN`.
 - **Domaine** : DNS dynamique gratuit (DuckDNS) → domaine perso (~10 $/an) → sous-domaine institutionnel.
-- **Runbook complet** : `DEPLOY.md` sections 1 à 11 (hardening, domaine, lancement, bootstrap Open WebUI, mise à jour, backups, monitoring, migration, checklist).
+- **Runbook complet** : `docs/deploy/DEPLOY.md` sections 1 à 11 (hardening, domaine, lancement, bootstrap Open WebUI, mise à jour, backups, monitoring, migration, checklist).
 
 ### 3.3 Cible institutionnelle — sous-domaine Université Laval *(mode D)*
 
@@ -145,7 +145,7 @@ Si l'image GHCR est privée : le propriétaire donne un accès `Read` GitHub, le
 testeur se connecte à `ghcr.io` avec un PAT `read:packages`.
 
 Runbook complet, catalogue des tools MCP, codes d'erreur et tests de fumée :
-**`MCP_ECOTAXA_SHARE_GUIDE.md`**.
+**`docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`**.
 
 ---
 
@@ -164,7 +164,7 @@ Runbook complet, catalogue des tools MCP, codes d'erreur et tests de fumée :
 - [ ] UptimeRobot configuré sur `/health`
 - [ ] `.env` sauvegardé chiffré hors VM
 
-Détail exhaustif : `DEPLOY.md` §11.
+Détail exhaustif : `docs/deploy/DEPLOY.md` §11.
 
 ---
 
@@ -174,4 +174,4 @@ Tout ce qui caractérise une instance est dans `.env` + les volumes Docker.
 Migrer = arrêter le compose, dump Postgres, tar les volumes, recopier sur le
 nouvel hôte, restaurer, mettre à jour le DNS, relancer. Caddy refait un
 certificat sur le même domaine, transparent côté testeurs. **Aucun code à
-toucher.** Voir `DEPLOY.md` §10.
+toucher.** Voir `docs/deploy/DEPLOY.md` §10.
