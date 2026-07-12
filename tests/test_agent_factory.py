@@ -45,6 +45,23 @@ def test_make_agent_returns_graph():
     assert agent is not None
 
 
+def test_agent_graph_node_names_match_sse_stream_filter():
+    """serve._stream_agent_sse ne diffuse le contenu/tool_calls que pour le
+    nœud nommé "model" (et les résultats de tools pour "tools"). Si create_agent
+    renomme ces nœuds, le stream SSE jette silencieusement toute la réponse
+    (bug observé après la migration create_react_agent → create_agent, où le
+    nœud modèle s'appelait "model" et non plus "agent"). On verrouille le
+    contrat ici pour que ça pète côté test, pas côté UI.
+    """
+    with patch("agent.ChatOpenAI") as mock_llm:
+        mock_llm.return_value = MagicMock()
+        from agent import make_agent
+        agent = make_agent("thread-nodes")
+    node_names = set(agent.get_graph().nodes)
+    assert "model" in node_names, f"nœud 'model' attendu, obtenu: {sorted(node_names)}"
+    assert "tools" in node_names, f"nœud 'tools' attendu, obtenu: {sorted(node_names)}"
+
+
 def test_make_agent_registers_marine_taxonomy_tool():
     captured = {}
 

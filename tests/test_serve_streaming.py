@@ -483,12 +483,12 @@ async def test_stream_tool_call_then_final_response():
     from serve import _stream_agent_sse
 
     updates = [
-        {"agent": {"messages": [AIMessage(
+        {"model": {"messages": [AIMessage(
             content="Je vais charger le fichier.",
             tool_calls=[{"name": "load_file", "args": {"path": "/tmp/x.tsv"}, "id": "tc1", "type": "tool_call"}],
         )]}},
         {"tools": {"messages": [ToolMessage(content="Fichier chargé", tool_call_id="tc1")]}},
-        {"agent": {"messages": [AIMessage(content="Voici les données.", tool_calls=[])]}},
+        {"model": {"messages": [AIMessage(content="Voici les données.", tool_calls=[])]}},
     ]
 
     agent = _make_mock_agent(updates)
@@ -504,7 +504,7 @@ async def test_stream_ends_with_done():
     from serve import _stream_agent_sse
 
     updates = [
-        {"agent": {"messages": [AIMessage(content="Réponse simple.", tool_calls=[])]}},
+        {"model": {"messages": [AIMessage(content="Réponse simple.", tool_calls=[])]}},
     ]
     agent = _make_mock_agent(updates)
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
@@ -518,7 +518,7 @@ async def test_stream_multiple_tool_calls():
     from serve import _stream_agent_sse
 
     updates = [
-        {"agent": {"messages": [AIMessage(
+        {"model": {"messages": [AIMessage(
             content="",
             tool_calls=[
                 {"name": "load_file", "args": {}, "id": "tc1", "type": "tool_call"},
@@ -529,7 +529,7 @@ async def test_stream_multiple_tool_calls():
             ToolMessage(content="ok", tool_call_id="tc1"),
             ToolMessage(content="ok", tool_call_id="tc2"),
         ]}},
-        {"agent": {"messages": [AIMessage(content="Voilà.", tool_calls=[])]}},
+        {"model": {"messages": [AIMessage(content="Voilà.", tool_calls=[])]}},
     ]
     agent = _make_mock_agent(updates)
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
@@ -555,7 +555,7 @@ async def test_stream_image_in_agent_response_replaced():
 
     content_with_image = f"Voici la carte.\n\n![carte](data:image/png;base64,{tiny_png})"
     updates = [
-        {"agent": {"messages": [AIMessage(content=content_with_image, tool_calls=[])]}},
+        {"model": {"messages": [AIMessage(content=content_with_image, tool_calls=[])]}},
     ]
     agent = _make_mock_agent(updates)
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
@@ -580,12 +580,12 @@ async def test_stream_image_in_tool_result_replaced():
 
     tool_content = f"![graph](data:image/png;base64,{tiny_png})"
     updates = [
-        {"agent": {"messages": [AIMessage(
+        {"model": {"messages": [AIMessage(
             content="",
             tool_calls=[{"name": "run_graph", "args": {}, "id": "tc1", "type": "tool_call"}],
         )]}},
         {"tools": {"messages": [ToolMessage(content=tool_content, tool_call_id="tc1")]}},
-        {"agent": {"messages": [AIMessage(content="Voici la carte.", tool_calls=[])]}},
+        {"model": {"messages": [AIMessage(content="Voici la carte.", tool_calls=[])]}},
     ]
     agent = _make_mock_agent(updates)
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
@@ -605,7 +605,7 @@ async def test_stream_emits_keepalive_for_slow_tool(monkeypatch):
 
     async def _astream(*args, **kwargs):
         yield {
-            "agent": {
+            "model": {
                 "messages": [
                     AIMessage(
                         content="",
@@ -623,7 +623,7 @@ async def test_stream_emits_keepalive_for_slow_tool(monkeypatch):
         }
         await asyncio.sleep(0.03)
         yield {"tools": {"messages": [ToolMessage(content="Résultat enrichi", tool_call_id="tc1")]}}
-        yield {"agent": {"messages": [AIMessage(content="Terminé.", tool_calls=[])]}}
+        yield {"model": {"messages": [AIMessage(content="Terminé.", tool_calls=[])]}}
 
     agent = MagicMock()
     agent.astream = _astream
@@ -648,12 +648,12 @@ async def test_stream_run_graph_url_tool_result_is_printed():
         "Lecture rapide:\nCarte générée."
     )
     updates = [
-        {"agent": {"messages": [AIMessage(
+        {"model": {"messages": [AIMessage(
             content="",
             tool_calls=[{"name": "run_graph", "args": {}, "id": "tc1", "type": "tool_call"}],
         )]}},
         {"tools": {"messages": [ToolMessage(content=tool_content, tool_call_id="tc1")]}},
-        {"agent": {"messages": [AIMessage(content="Voici la carte.", tool_calls=[])]}},
+        {"model": {"messages": [AIMessage(content="Voici la carte.", tool_calls=[])]}},
     ]
     agent = _make_mock_agent(updates)
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
@@ -674,12 +674,12 @@ async def test_stream_deduplicates_run_graph_image_when_final_repeats_it():
     tool_content = f"{image}\n\nLecture rapide:\nCarte générée."
     final_content = f"{image}\n\nCarte des stations."
     updates = [
-        {"agent": {"messages": [AIMessage(
+        {"model": {"messages": [AIMessage(
             content="",
             tool_calls=[{"name": "run_graph", "args": {}, "id": "tc1", "type": "tool_call"}],
         )]}},
         {"tools": {"messages": [ToolMessage(content=tool_content, tool_call_id="tc1")]}},
-        {"agent": {"messages": [AIMessage(content=final_content, tool_calls=[])]}},
+        {"model": {"messages": [AIMessage(content=final_content, tool_calls=[])]}},
     ]
     agent = _make_mock_agent(updates)
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
