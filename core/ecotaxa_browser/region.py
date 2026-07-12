@@ -9,6 +9,7 @@ filter.
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from collections import Counter
 from typing import Iterable
@@ -300,6 +301,39 @@ def _sample_station_label(row) -> str | None:
     return None
 
 
+# Préfixe date d'acquisition (YYYYMMDD_) et suffixe de cast (_cast#N / _castN / _N)
+# fréquemment encodés dans original_id quand station_id n'est pas renseigné.
+_DATE_PREFIX_RE = re.compile(r"^\d{8}[_-]")
+_CAST_SUFFIX_RE = re.compile(r"[_-](?:cast#?\d+|\d+)$", re.IGNORECASE)
+
+
+def _station_key(row) -> str | None:
+    """Clé de station réelle pour dédupliquer les casts d'un même point.
+
+    Préfère ``station_id`` s'il est renseigné. Sinon dérive une clé depuis
+    ``original_id`` en retirant le préfixe de date d'acquisition (``YYYYMMDD_``)
+    et un suffixe de cast (``_cast#N`` / ``_N``), de sorte que plusieurs casts
+    ou plusieurs dates d'une même station se replient sur une clé unique.
+    Dernier recours : ``profile_id``.
+    """
+    station_id = row["station_id"] if "station_id" in row.keys() else None
+    if station_id:
+        return str(station_id).strip().lower()
+
+    original_id = row["original_id"] if "original_id" in row.keys() else None
+    if original_id:
+        key = _DATE_PREFIX_RE.sub("", str(original_id).strip())
+        key = _CAST_SUFFIX_RE.sub("", key)
+        key = key.strip().lower()
+        if key:
+            return key
+
+    profile_id = row["profile_id"] if "profile_id" in row.keys() else None
+    if profile_id:
+        return str(profile_id).strip().lower()
+    return None
+
+
 def _row_matches_station(row, station: str) -> bool:
     """Vrai si `station` (insensible à la casse) apparaît dans un identifiant du sample."""
     needle = station.strip().lower()
@@ -407,9 +441,9 @@ def samples_by_year(
             "date_max": None,
         })
         bucket["sample_ids"].append(sid)
-        station_label = _sample_station_label(row)
-        if station_label:
-            bucket["stations"].add(station_label)
+        station_key = _station_key(row)
+        if station_key:
+            bucket["stations"].add(station_key)
         if row["instrument"]:
             bucket["instruments"].add(row["instrument"])
         bucket["project_ids"].add(int(row["project_id"]))
