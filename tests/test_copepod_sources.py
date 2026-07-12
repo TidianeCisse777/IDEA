@@ -1,4 +1,5 @@
 """Tests TDD — tools/copepod_sources.py"""
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -205,14 +206,17 @@ def test_query_ecotaxa_auth_failure_returns_error():
     with patch("tools.copepod_sources.EcotaxaClient") as MockClient:
         MockClient.return_value.start_export.side_effect = RuntimeError("EcoTaxa credentials missing")
         from tools.copepod_sources import make_source_tools
-        tools = make_source_tools("thread-err")
+        # Thread id unique : le session store peut être un Postgres persistant
+        # partagé (via .env) — un id figé collerait à des lignes de runs passés.
+        thread_id = f"thread-err-{uuid.uuid4().hex}"
+        tools = make_source_tools(thread_id)
         query = next(t for t in tools if t.name == "query_ecotaxa")
         result = query.invoke({"project_id": 1165})
 
     # Marqueur explicite consommé par le system prompt.
     assert result.startswith("EXPORT_FAILED")
     assert "credentials missing" in result
-    assert not _store.has("thread-err")
+    assert not _store.has(thread_id)
 
 
 def test_query_ecotaxa_export_failure_surfaces_server_message():
@@ -226,7 +230,8 @@ def test_query_ecotaxa_export_failure_surfaces_server_message():
             server_message="User has no Export right on this project",
         )
         from tools.copepod_sources import make_source_tools
-        tools = make_source_tools("thread-fail")
+        thread_id = f"thread-fail-{uuid.uuid4().hex}"
+        tools = make_source_tools(thread_id)
         query = next(t for t in tools if t.name == "query_ecotaxa")
         result = query.invoke({"project_id": 14853, "sample_ids": [14853000003]})
 
@@ -238,7 +243,7 @@ def test_query_ecotaxa_export_failure_surfaces_server_message():
     assert "preview_ecotaxa_project(14853)" in result
     # Interdiction explicite de retomber sur la recherche.
     assert "find_ecotaxa_samples_in_region" in result
-    assert not _store.has("thread-fail")
+    assert not _store.has(thread_id)
 
 
 def test_query_ecotaxa_sample_export_failure_keeps_sample_context():

@@ -94,8 +94,15 @@ async def test_mcp_accepts_valid_bearer_token_for_initialize(monkeypatch):
     assert response.status_code == 200
 
 
-def test_app_requires_auth_token(monkeypatch):
+def test_app_generates_token_when_unset(monkeypatch, tmp_path):
+    """Sans MCP_AUTH_TOKEN explicite, l'app ne refuse plus de démarrer : elle
+    génère et persiste un token (démarrage docker sans étape manuelle)."""
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+    token_file = tmp_path / ".mcp_auth_token"
+    monkeypatch.setenv("MCP_AUTH_TOKEN_FILE", str(token_file))
 
-    with pytest.raises(RuntimeError, match="MCP_AUTH_TOKEN"):
-        create_app()
+    app = create_app()
+
+    assert app is not None
+    assert token_file.exists()
+    assert token_file.read_text(encoding="utf-8").strip()

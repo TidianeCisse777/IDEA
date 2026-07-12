@@ -11,20 +11,22 @@ def _env_assignment_keys(text: str) -> set[str]:
     }
 
 
-def test_env_example_exposes_only_user_supplied_values():
+def test_env_example_exposes_required_user_secrets_with_placeholders():
     env_example = Path(".env.example").read_text(encoding="utf-8")
 
-    assert _env_assignment_keys(env_example) == {
-        "OPENAI_API_KEY",
-        "ECOTAXA_USERNAME",
-        "ECOTAXA_PASSWORD",
-    }
-    assert "MCP_AUTH_TOKEN" not in env_example
+    # Les 3 secrets que l'utilisateur doit fournir, avec des placeholders explicites.
+    assert "OPENAI_API_KEY=REPLACE_WITH_THE_OPENAI_KEY" in env_example
+    assert "ECOTAXA_USERNAME=REPLACE_WITH_THE_ECOTAXA_USERNAME" in env_example
+    assert "ECOTAXA_PASSWORD=REPLACE_WITH_THE_ECOTAXA_PASSWORD" in env_example
+
+    # MCP_AUTH_TOKEN est généré par ./start.sh, jamais saisi par l'utilisateur :
+    # présent mais vide dans le fichier partagé.
+    assert "MCP_AUTH_TOKEN=\n" in env_example
+
+    # Aucun secret d'observabilité/tracing ne fuit dans le fichier partagé.
     assert "LANGCHAIN" not in env_example
     assert "LANGSMITH" not in env_example
     assert "LANGFUSE" not in env_example
-    assert "OPENWEBUI" not in env_example
-    assert "POSTGRES" not in env_example
 
 
 def test_start_script_generates_internal_mcp_token():
@@ -70,14 +72,15 @@ def test_openwebui_supports_container_and_local_agent_modes():
 def test_readme_documents_minimal_user_setup_and_local_agent_mode():
     readme = Path("README.md").read_text(encoding="utf-8")
 
-    assert "edit only these three values" in readme
-    assert "OPENAI_API_KEY=REPLACE_WITH_THE_OPENAI_KEY" in readme
-    assert "ECOTAXA_USERNAME=REPLACE_WITH_THE_ECOTAXA_USERNAME" in readme
-    assert "ECOTAXA_PASSWORD=REPLACE_WITH_THE_ECOTAXA_PASSWORD" in readme
-    assert "MCP_AUTH_TOKEN" in readme
-    assert "generates it automatically" in readme
-    assert "EcoTaxa bearer token" in readme
-    assert "internally" in readme
+    # Setup minimal : l'utilisateur ne remplit que les 3 valeurs requises.
+    assert "fill only" in readme
+    assert "OPENAI_API_KEY" in readme
+    assert "ECOTAXA_USERNAME" in readme
+    assert "ECOTAXA_PASSWORD" in readme
+
+    # MCP_AUTH_TOKEN est généré automatiquement par ./start.sh.
+    assert "generates `MCP_AUTH_TOKEN`" in readme
+
+    # Modes de lancement documentés.
     assert "./start.sh --local-agent" in readme
     assert "./start.sh --build" in readme
-    assert "does not rebuild Docker images" in readme

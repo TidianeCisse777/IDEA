@@ -2,7 +2,7 @@
 
 On vérifie :
 1. _make_sse_chunk  → format JSON correct
-2. _format_tool_line → contient 🔧 + nom de l'outil
+2. _format_tool_line → bloc <details> avec le nom de l'outil (sans emoji ni <code>)
 3. _stream_agent_sse → émet tool_call puis réponse finale, termine par [DONE]
 4. _stream_agent_sse → image base64 remplacée par URL hébergée
 """
@@ -32,11 +32,11 @@ def test_sse_chunk_stop_has_no_content_key():
     assert payload["choices"][0]["finish_reason"] == "stop"
 
 
-def test_format_tool_line_contains_icon_and_name():
+def test_format_tool_line_contains_name_in_summary():
     from serve import _format_tool_line
     line = _format_tool_line("load_file")
-    assert "🔧" in line
-    assert "load_file" in line
+    assert "<summary>load_file</summary>" in line
+    assert "<details>" in line
 
 
 def test_format_tool_line_skill():
@@ -135,7 +135,7 @@ def test_format_tool_result_details_matches_p8_ecotaxa_samples_contract():
     )
 
     assert (
-        "📊 EcoTaxa · samples par zone / période — "
+        "EcoTaxa · samples par zone / période — "
         "Baie de Baffin · 2024-01-01 → 2024-12-31"
     ) in block
     assert "find_ecotaxa_samples_in_region" not in block
@@ -160,7 +160,7 @@ def test_format_tool_result_details_summarize_ecotaxa_keeps_source_links():
         {"sample_ids": [14853000001]},
     )
 
-    assert "📊 EcoTaxa · résumé de samples" in block
+    assert "EcoTaxa · résumé de samples" in block
     assert "[14853000001](https://ecotaxa.obs-vlfr.fr/prj/14853?samples=14853000001)" in block
     assert "[14853](https://ecotaxa.obs-vlfr.fr/prj/14853)" in block
     assert "*Source : EcoTaxa — [https://ecotaxa.obs-vlfr.fr](https://ecotaxa.obs-vlfr.fr)*" in block
@@ -184,8 +184,9 @@ def test_format_tool_result_details_skips_sample_link_without_project():
 def test_format_tool_result_details_non_ecotaxa_tool_keeps_raw_name():
     from serve import _format_tool_result_details
     block = _format_tool_result_details("query_bio_oracle", "any content")
-    # Tools non-EcoTaxa gardent l'ancien format pour l'instant.
-    assert "<code>query_bio_oracle</code>" in block
+    # Tools non-EcoTaxa : bloc <details> avec le nom brut du tool (sans emoji ni <code>).
+    assert "Résultat de query_bio_oracle" in block
+    assert "<details>" in block
 
 
 def test_format_tool_result_details_shows_cache_status_banners():
@@ -214,12 +215,11 @@ def test_format_tool_line_run_graph_with_code_uses_details():
     from serve import _format_tool_line
     code = "plt.scatter(df['lon'], df['lat'])\nplt.show()"
     line = _format_tool_line("run_graph", {"code": code})
-    assert "🔧" in line
     assert "run_graph" in line
     assert "plt.scatter" in line
     assert "```python" in line
     assert "<details>" in line
-    assert "<summary>🔧 run_graph</summary>" in line
+    assert "<summary>run_graph</summary>" in line
 
 
 def test_format_tool_line_run_graph_shows_loading_indicator():
@@ -250,19 +250,17 @@ def test_format_tool_line_run_pandas_with_code_uses_details():
     from serve import _format_tool_line
     code = "df.groupby('station').mean()"
     line = _format_tool_line("run_pandas", {"code": code})
-    assert "🔧" in line
     assert "run_pandas" in line
     assert "df.groupby" in line
     assert "<details>" in line
-    assert "<summary>🔧 run_pandas</summary>" in line
+    assert "<summary>run_pandas</summary>" in line
 
 
 def test_format_tool_line_run_graph_without_code_fallback():
-    """run_graph sans args → fallback simple avec 🔧."""
+    """run_graph sans args → fallback simple en bloc <details>."""
     from serve import _format_tool_line
     line = _format_tool_line("run_graph", {})
-    assert "🔧" in line
-    assert "run_graph" in line
+    assert "<summary>run_graph</summary>" in line
     assert "<details>" in line
     assert "Paramètres : —" in line
 
@@ -293,7 +291,7 @@ def test_format_tool_line_shows_generic_tool_parameters():
     assert "get_zone_info" in line
     assert "zone_name=`Baie de Baffin`" in line
     assert "<details>" in line
-    assert "<summary>🔧 get_zone_info</summary>" in line
+    assert "<summary>get_zone_info</summary>" in line
 
 
 def test_format_tool_line_shows_nested_ecotaxa_filters():
@@ -342,7 +340,7 @@ def test_format_tool_line_query_ecotaxa_shows_waiting_message():
     )
 
     assert "query_ecotaxa" in line
-    assert "<summary>🔧 query_ecotaxa</summary>" in line
+    assert "<summary>query_ecotaxa</summary>" in line
     assert "project_id=`14622`" in line
     assert "sample_ids=`[14622000001, 14622000002]`" in line
     assert "status=`V`" in line
@@ -360,7 +358,7 @@ def test_format_tool_line_query_ecotaxa_sample_shows_waiting_message():
     )
 
     assert "query_ecotaxa_sample" in line
-    assert "<summary>🔧 query_ecotaxa_sample</summary>" in line
+    assert "<summary>query_ecotaxa_sample</summary>" in line
     assert "sample_id=`42000002`" in line
     assert "status=`V`" in line
     assert "Export EcoTaxa sample en cours" in line
@@ -377,7 +375,7 @@ def test_format_tool_line_query_ecopart_shows_waiting_message():
     )
 
     assert "query_ecopart" in line
-    assert "<summary>🔧 query_ecopart</summary>" in line
+    assert "<summary>query_ecopart</summary>" in line
     assert "project_id=`105`" in line
     assert "Téléchargement EcoPart" in line
     assert "%" not in line
@@ -393,7 +391,7 @@ def test_format_tool_line_query_bio_oracle_shows_waiting_message():
     )
 
     assert "query_bio_oracle" in line
-    assert "<summary>🔧 query_bio_oracle</summary>" in line
+    assert "<summary>query_bio_oracle</summary>" in line
     assert "scenario=`SSP245`" in line
     assert "depth_layer=`depthsurf`" in line
     assert "variable=`temperature`" in line
@@ -411,7 +409,7 @@ def test_format_tool_line_query_amundsen_shows_waiting_message():
     )
 
     assert "query_amundsen_ctd" in line
-    assert "<summary>🔧 query_amundsen_ctd</summary>" in line
+    assert "<summary>query_amundsen_ctd</summary>" in line
     assert "station=`BRK-15`" in line
     assert "cast_number=`7`" in line
     assert "Export Amundsen CTD en cours" in line
@@ -428,19 +426,10 @@ def test_format_tool_line_enrich_with_bio_oracle_shows_progress_panel():
     )
 
     assert "enrich_with_bio_oracle" in line
-    assert "<summary>🔧 enrich_with_bio_oracle</summary>" in line
+    assert "<summary>enrich_with_bio_oracle</summary>" in line
     assert "Préparation de l'enrichissement Bio-ORACLE" in line
     assert "Le cache de données sera vérifié automatiquement" in line
     assert "%" not in line
-
-
-def test_render_progress_bar_is_visual():
-    from serve import _render_progress_bar
-
-    bar = _render_progress_bar(50)
-    assert "█" in bar
-    assert "░" in bar
-    assert bar.endswith("50%")
 
 
 def test_sql_workspace_config_message_matches_raw_url_and_key_value_forms():
@@ -490,7 +479,7 @@ def _make_mock_agent(updates: list):
 
 @pytest.mark.asyncio
 async def test_stream_tool_call_then_final_response():
-    """Le stream émet 🔧 nom_outil puis la réponse finale."""
+    """Le stream émet le bloc du tool puis la réponse finale."""
     from serve import _stream_agent_sse
 
     updates = [
@@ -506,7 +495,6 @@ async def test_stream_tool_call_then_final_response():
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
     full = "".join(chunks)
 
-    assert "🔧" in full
     assert "load_file" in full
     assert "Voici les données." in full
 
@@ -608,8 +596,9 @@ async def test_stream_image_in_tool_result_replaced():
 
 
 @pytest.mark.asyncio
-async def test_stream_emits_visual_progress_bar_for_slow_tool(monkeypatch):
-    """Un tool lent déclenche une barre visuelle avant son résultat final."""
+async def test_stream_emits_keepalive_for_slow_tool(monkeypatch):
+    """Un tool lent maintient la connexion SSE chaude via des commentaires
+    keepalive invisibles, sans polluer le message, avant son résultat final."""
     from serve import _stream_agent_sse
 
     monkeypatch.setattr("serve._HEARTBEAT_INTERVAL", 0.01)
@@ -643,8 +632,9 @@ async def test_stream_emits_visual_progress_bar_for_slow_tool(monkeypatch):
     full = "".join(chunks)
 
     assert "enrich_with_bio_oracle" in full
-    assert "████" in full or "░" in full
-    assert "100%" in full
+    # Keepalive émis pendant l'attente du tool lent (commentaire SSE ignoré par le client).
+    assert ": keepalive" in full
+    assert "Terminé." in full
 
 
 @pytest.mark.asyncio
