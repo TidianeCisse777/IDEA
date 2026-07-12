@@ -77,8 +77,8 @@ mapping requête OpenAI ↔ invocation LangGraph.
 flowchart LR
     IN[Message utilisateur] --> HOOK
 
-    subgraph Agent["create_react_agent"]
-        HOOK["pre_model_hook<br/>truncate tool results<br/>+ trim history (40k tokens)<br/>+ inject memory"]
+    subgraph Agent["create_agent"]
+        HOOK["_ContextMiddleware<br/>before_model : truncate tool results<br/>wrap_model_call : inject memory"]
         MODEL["LLM<br/>ChatOpenAI"]
         TOOLS["Tools node<br/>~53 tools"]
         HOOK --> MODEL
@@ -111,7 +111,10 @@ flowchart LR
   )
   tools += make_sql_tools(thread_id)   # seulement si DATABASE_URL résolvable
   ```
-- **`pre_model_hook`** (`_make_context_hook`) : tronque les résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), trim l'historique au-delà de `MAX_CONTEXT_TOKENS` (défaut 40000) via `trim_messages`, et injecte un bloc mémoire.
+- **`_ContextMiddleware`** (agent construit via `create_agent`, LangChain 1.x) :
+  - `before_model` (réutilise `_make_context_hook`) : tronque le *contenu* des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000) et enregistre l'audit contexte.
+  - `wrap_model_call` / `awrap_model_call` : injecte le bloc mémoire long terme (`store.search` / `asearch` sur `(user_id, "memories")`) dans le system prompt. Les deux variantes existent car `serve.py` invoque en async avec un store async.
+  - ⚠️ Le trim d'historique à `MAX_CONTEXT_TOKENS` (défaut 40000) via `trim_messages` est **actuellement inactif** : le hook retourne un sous-ensemble sur le canal `messages` (reducer `add_messages`, sans `RemoveMessage`), donc l'historique complet reste envoyé au LLM. Seule la troncature du contenu des gros résultats de tools plafonne réellement les tokens. Pour activer un vrai plafond de contexte, préférer un middleware intégré (`ContextEditingMiddleware` / `SummarizationMiddleware`) qui gère l'appariement tool_call/ToolMessage.
 - **Checkpointer** : `AsyncSqliteSaver` sur `CHECKPOINTS_DB` (`data/checkpoints.sqlite`), clé par `thread_id`. Fallback `MemorySaver` selon le contexte.
 - **Store** : mémoire long terme (`InMemoryStore` ou store persistant).
 

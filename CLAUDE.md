@@ -29,10 +29,10 @@ Open WebUI (port 3000)
 serve.py — FastAPI (port 8000)
     │ SSE streaming, feedback polling, image hosting, downloads
     ▼
-agent.py — LangGraph create_react_agent
+agent.py — LangChain create_agent (ex-create_react_agent, déprécié en LangGraph 1.0)
     │ system prompt copépodes (hub: copepod-system-prompt, fallback local)
     │ checkpointer AsyncSqliteSaver (data/checkpoints.sqlite)
-    │ pre_model_hook : truncate tool results + trim history (40k tokens)
+    │ _ContextMiddleware : truncate tool results (before_model) + inject long-term memory (wrap_model_call)
     │
     ├── tools/data_tools.py         → load_file, run_pandas, run_graph
     ├── tools/rag_tool.py           → query_copepod_knowledge_base
