@@ -66,6 +66,44 @@ def _ecotaxa_sample_url(project_id, sample_id) -> str:
     return f"{_ECOTAXA_UI_BASE}/prj/{pid}?samples={sid}"
 
 
+_YEAR_DATE_COLUMNS = (
+    "object_date", "sample_date", "acq_date", "sample_sampledatetime",
+    "object_annotation_date",
+)
+
+
+def _add_year_column(df):
+    """Ajoute une colonne `year` à un export EcoTaxa, dérivée de la date.
+
+    Cherche une colonne de date connue (``object_date`` = ``YYYYMMDD`` en
+    priorité), en déduit l'année et l'expose comme colonne entière nullable
+    ``year`` en tête de DataFrame. Permet un ``groupby("year")`` direct pour
+    les analyses/​graphes interannuels sur un export consolidé multi-années.
+    Si aucune colonne de date exploitable n'est trouvée, renvoie le DataFrame
+    inchangé (l'année reste dérivable manuellement).
+    """
+    import pandas as pd
+
+    if df is None or getattr(df, "empty", True):
+        return df
+    lower = {str(c).lower(): c for c in df.columns}
+    date_col = next((lower[name] for name in _YEAR_DATE_COLUMNS if name in lower), None)
+    if date_col is None:
+        date_col = next((orig for low, orig in lower.items() if "date" in low), None)
+    if date_col is None:
+        return df
+
+    raw = df[date_col].astype("string").str.strip()
+    # object_date EcoTaxa = YYYYMMDD (8 chiffres) ; sinon parse générique.
+    year = raw.str.extract(r"^(\d{4})", expand=False)
+    parsed = pd.to_numeric(year, errors="coerce")
+    if parsed.isna().all():
+        parsed = pd.to_datetime(raw, errors="coerce").dt.year
+    df = df.copy()
+    df.insert(0, "year", parsed.astype("Int64"))
+    return df
+
+
 def _resolve_taxo_filter(taxon: str | int) -> dict:
     """Turn a taxon name or id into the EcoTaxa `taxo` filter fragment.
 
@@ -359,6 +397,7 @@ def make_source_tools(thread_id: str) -> list:
         job_id = client.start_export(project_id, filters)
         client.wait_for_job(job_id)
         df = client.download_tsv(job_id)
+        df = _add_year_column(df)
 
         store_dataset(
             _store,
@@ -381,9 +420,15 @@ def make_source_tools(thread_id: str) -> list:
             if sample_id_from_meta is not None
             else _ecotaxa_project_url(project_id)
         )
+        year_note = (
+            "Colonne `year` ajoutée (dérivée de la date) → `groupby(\"year\")` "
+            "direct pour l'analyse/le graphe interannuel.\n"
+            if "year" in df.columns else ""
+        )
         summary = (
             f"{label} chargé — {len(df)} lignes, {len(df.columns)} colonnes.\n"
             f"Données disponibles dans `{variable_name}` et `df_ecotaxa`.\n"
+            f"{year_note}"
             f"Appelle run_pandas directement pour analyser.\n"
             f"Télécharger : {download_url(f'{file_id}.tsv')}\n"
             f"Source EcoTaxa : {source_url}"

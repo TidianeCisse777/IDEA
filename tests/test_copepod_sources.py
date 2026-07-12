@@ -1626,3 +1626,32 @@ def test_group_ecotaxa_samples_by_year_station_filter_passed_through():
         fn.invoke({"station": "St-27"})
 
     assert captured["station"] == "St-27"
+
+
+def test_add_year_column_from_object_date():
+    import pandas as pd
+    from tools.copepod_sources import _add_year_column
+    df = pd.DataFrame({
+        "sample_id": [1, 2, 3],
+        "object_date": ["20150422", "20240730", "20241011"],
+        "taxon": ["Calanus", "Oithona", "Calanus"],
+    })
+    out = _add_year_column(df)
+    assert list(out.columns)[0] == "year"
+    assert out["year"].tolist() == [2015, 2024, 2024]
+
+
+def test_add_year_column_noop_without_date_column():
+    import pandas as pd
+    from tools.copepod_sources import _add_year_column
+    df = pd.DataFrame({"sample_id": [1], "taxon": ["Calanus"]})
+    out = _add_year_column(df)
+    assert "year" not in out.columns  # rien à dériver, DataFrame inchangé
+
+
+def test_add_year_column_handles_iso_dates():
+    import pandas as pd
+    from tools.copepod_sources import _add_year_column
+    df = pd.DataFrame({"sample_id": [1, 2], "sample_date": ["2015-04-22", "2024-07-30"]})
+    out = _add_year_column(df)
+    assert out["year"].tolist() == [2015, 2024]
