@@ -645,3 +645,34 @@ def test_samples_by_year_reports_dates_instruments_projects(cache_db):
     assert y2018["date_max"] == "2018-08-14"
     assert sorted(y2018["instruments"]) == ["UVP5", "UVP6"]
     assert sorted(y2018["project_ids"]) == [42, 240]
+
+
+def test_samples_by_year_dedupes_casts_into_one_station(cache_db):
+    """n_stations compte des stations réelles : casts et préfixes de date d'une
+    même station se replient sur une seule station (station_id absent → clé
+    dérivée d'original_id)."""
+    from core.ecotaxa_browser.region import samples_by_year
+
+    _seed(cache_db, [
+        # 2015 : même station (ice camp), 2 dates, 2 casts → 1 station
+        {"sample_id": 1, "project_id": 14622, "lat": 67.5, "lon": -64.0,
+         "date_min": "2015-04-22", "original_id": "20150422_St-Qikiqtarjuak-Ice Camp_cast#1"},
+        {"sample_id": 2, "project_id": 14622, "lat": 67.5, "lon": -64.0,
+         "date_min": "2015-04-24", "original_id": "20150424_St-Qikiqtarjuak-Ice Camp_cast#2"},
+        # 2024 : station RA25, 2 casts → 1 station ; RA27 → 2e station
+        {"sample_id": 3, "project_id": 17498, "lat": 70.0, "lon": -70.0,
+         "date_min": "2024-09-08", "original_id": "am_leg4_RA25_1"},
+        {"sample_id": 4, "project_id": 17498, "lat": 70.0, "lon": -70.0,
+         "date_min": "2024-09-09", "original_id": "am_leg4_RA25_2"},
+        {"sample_id": 5, "project_id": 17498, "lat": 71.0, "lon": -71.0,
+         "date_min": "2024-09-10", "original_id": "am_leg4_RA27_1"},
+    ])
+    bbox = {"south": 60.0, "west": -95.0, "north": 84.0, "east": -55.0}
+    with _with_cache(cache_db):
+        result = samples_by_year(bbox=bbox)
+
+    years = {y["year"]: y for y in result["years"]}
+    assert years[2015]["n_samples"] == 2
+    assert years[2015]["n_stations"] == 1   # ice camp, casts repliés
+    assert years[2024]["n_samples"] == 3
+    assert years[2024]["n_stations"] == 2   # RA25 (2 casts) + RA27
