@@ -19,7 +19,7 @@ registres.
 >
 > Ces deux chemins convergent vers la **même jointure** `(sample_id, depth_bin)`.
 > C'est le cœur à tester ; les étapes P8-A / P8-B / P9 ci-dessous en sont la
-> version bout-en-bout. Détail d'implémentation : `ENRICHMENT_ECOTAXA_ECOPART.md`.
+> version bout-en-bout. Détail d'implémentation : `docs/features/ENRICHMENT_ECOTAXA_ECOPART.md`.
 
 Ce test case se lit comme **un seul parcours chaîné** (P0 → P9) : chaque étape
 suppose que la précédente a réussi et laisse un contexte de session exploitable.
@@ -54,7 +54,7 @@ d'annotation, à rafraîchir si le test dérive) :
 
 Les valeurs EcoPart / enrichissement ne sont **pas figées** ici : sur les données
 démo, EcoTaxa et EcoPart doivent être de la **même campagne** pour matcher (voir
-`ENRICHMENT_ECOTAXA_ECOPART.md`). Le test valide le **routage et les garde-fous**,
+`docs/features/ENRICHMENT_ECOTAXA_ECOPART.md`). Le test valide le **routage et les garde-fous**,
 pas un taux de match numérique.
 
 ---
@@ -184,7 +184,7 @@ Critère de réussite :
 
 # ★ Cœur du test — enrichir par les deux entrées
 
-Les 3 workflows réels (cf. `ENRICHMENT_ECOTAXA_ECOPART.md`), à couvrir :
+Les 3 workflows réels (cf. `docs/features/ENRICHMENT_ECOTAXA_ECOPART.md`), à couvrir :
 
 | # | Situation de départ | Tool | Remote ? | Chemin |
 |---|---|---|---|---|
@@ -312,7 +312,7 @@ Critère de réussite :
   `docs/ecotaxa_exploration_ui_tests.md` et des evals `EX-*`
   (`evals/eval_ecotaxa_exploration*.py`).
 - Étapes enrichissement (P8–P9) : couvertes côté implémentation par
-  `ENRICHMENT_ECOTAXA_ECOPART.md` et
+  `docs/features/ENRICHMENT_ECOTAXA_ECOPART.md` et
   `tests/test_enrichment_workflows_integration.py` ; ce test case en ajoute la
   version **parcours utilisateur** (confirmation + honnêteté du taux de match).
 - Étapes taxonomiques (P4–P5) : s'appuient sur `tools/rag_tool.py`

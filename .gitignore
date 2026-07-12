@@ -100,10 +100,22 @@ cover/
 # Sphinx documentation
 docs/_build/
 
-# Internal project notes; keep user-facing docs at repository root.
+# docs/ holds two things:
+#   - Tracked, user-facing documentation in the whitelisted subfolders below.
+#   - Internal working notes (test maps, scratch) that stay local only.
+# Default: ignore everything under docs/, then re-include what should ship.
 /docs/*
 !/docs/.gitkeep
+!/docs/README.md
 !/docs/biodiversity_graph_test_plan.md
+# Tracked documentation subfolders (see docs/README.md for the map)
+!/docs/deploy/
+!/docs/features/
+!/docs/mcp/
+
+# Claude Code / assistant session transcripts accidentally dumped in the repo
+*local-command-caveat*.txt
+*-the-messages-below.txt
 
 # PyBuilder
 .pybuilder/

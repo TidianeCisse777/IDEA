@@ -156,7 +156,7 @@ scripts/                  Outils CLI ponctuels
 |---|---|---|
 | Fichier local | `load_file`, `run_pandas`, `run_graph` | implémenté |
 | EcoTaxa | `list_ecotaxa_projects`, `preview_ecotaxa_project`, `query_ecotaxa` | implémenté |
-| EcoPart | `list_ecopart_samples`, `preview_ecopart_sample`, `query_ecopart`, `join_ecotaxa_ecopart`, `enrich_ecotaxa_with_ecopart_remote` | implémenté — voir `ENRICHMENT_ECOTAXA_ECOPART.md` |
+| EcoPart | `list_ecopart_samples`, `preview_ecopart_sample`, `query_ecopart`, `join_ecotaxa_ecopart`, `enrich_ecotaxa_with_ecopart_remote` | implémenté — voir `docs/features/ENRICHMENT_ECOTAXA_ECOPART.md` |
 | Amundsen CTD (ERDDAP) | `list_amundsen_datasets`, `preview_amundsen_profile`, `query_amundsen_ctd` | implémenté |
 | Bio-ORACLE | `list_bio_oracle_datasets`, `preview_bio_oracle_point`, `query_bio_oracle`, `couple_zooplankton_bio_oracle` | implémenté |
 | OGSL | — | annoncé dans le prompt, tool dédié à venir |

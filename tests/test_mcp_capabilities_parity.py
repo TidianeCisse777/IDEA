@@ -83,7 +83,7 @@ def tool_names() -> set[str]:
 
 @pytest.fixture(scope="module")
 def capabilities_doc_text() -> str:
-    return Path("MCP_CAPABILITIES.md").read_text(encoding="utf-8")
+    return Path("docs/mcp/MCP_CAPABILITIES.md").read_text(encoding="utf-8")
 
 
 def test_every_capability_maps_to_at_least_one_existing_tool(tool_names):

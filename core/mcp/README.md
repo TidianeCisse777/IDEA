@@ -16,12 +16,12 @@ The server is **curated**: 19 tools mapped to 7 use cases, no write
 endpoints, no exports (exports stay with the IDEA-native `query_ecotaxa`
 tool, which goes through `EcotaxaClient` and the EcoTaxa REST API).
 
-See [`../../MCP_ECOTAXA_ORCHESTRATION.md`](../../MCP_ECOTAXA_ORCHESTRATION.md)
+See [`../../docs/mcp/MCP_ECOTAXA_ORCHESTRATION.md`](../../docs/mcp/MCP_ECOTAXA_ORCHESTRATION.md)
 for the full layer map (prompt → skill → @tool → MCP) and the planned
 convergence between the two façades.
 
 For a shareable setup and usage guide, see
-[`../../MCP_ECOTAXA_SHARE_GUIDE.md`](../../MCP_ECOTAXA_SHARE_GUIDE.md).
+[`../../docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`](../../docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md).
 
 ---
 
