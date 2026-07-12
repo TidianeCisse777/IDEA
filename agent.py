@@ -9,8 +9,9 @@ from typing import Sequence
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.tracers import LangChainTracer
-from langchain_core.messages import AIMessage, ToolMessage, RemoveMessage
-from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import AIMessage, ToolMessage, RemoveMessage, SystemMessage
+from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 from tools.data_tools import make_tools
@@ -189,6 +190,84 @@ def _make_context_hook(user_id: str = "anonymous", thread_id: str = "unknown"):
     return trim_context
 
 
+def _build_memory_block(memories) -> tuple[str, dict]:
+    """Construit le bloc mémoire long-terme à ajouter au system prompt.
+
+    Retourne (bloc_texte, metrics). `bloc_texte` est vide si aucune mémoire
+    exploitable n'a été trouvée.
+    """
+    if not memories:
+        return "", {"memories_found": 0, "memory_chars": 0, "memory_injected": False}
+    mem_text = "\n".join(
+        f"- {item.value.get('content', '')}"
+        for item in memories
+        if item.value.get("content")
+    )
+    if not mem_text:
+        return "", {"memories_found": len(memories), "memory_chars": 0, "memory_injected": False}
+    block = f"\n\n## Remembered preferences and corrections\n{mem_text}"
+    return block, {
+        "memories_found": len(memories),
+        "memory_chars": len(block),
+        "memory_injected": True,
+    }
+
+
+class _ContextMiddleware(AgentMiddleware):
+    """Équivalent `create_agent` de l'ancien `pre_model_hook`.
+
+    - `before_model` réutilise tel quel `_make_context_hook` : troncature des
+      résultats de tools + audit. Même sémantique que l'ancien hook (reducer
+      `add_messages`), donc l'entrée vue par le LLM est identique.
+    - `wrap_model_call` / `awrap_model_call` injectent les mémoires long-terme
+      dans le system prompt (`request.system_message`). L'ancien hook les
+      injectait dans la liste des messages, où aucun `SystemMessage` n'était
+      présent : l'injection ne se déclenchait jamais. Ici on cible le vrai
+      system prompt. Les deux variantes sync/async sont nécessaires :
+      `serve.py` invoque en async avec un store async (`asearch`).
+    """
+
+    def __init__(self, user_id: str = "anonymous", thread_id: str = "unknown"):
+        super().__init__()
+        self.user_id = user_id
+        self.thread_id = thread_id
+        self._hook = _make_context_hook(user_id=user_id, thread_id=thread_id)
+
+    def before_model(self, state, runtime):
+        return self._hook(state)
+
+    def _apply_memories(self, request, memories):
+        block, metrics = _build_memory_block(memories)
+        audit = _context_audit_by_thread.get(self.thread_id)
+        if audit is not None:
+            audit.update(metrics)
+        if not block:
+            return request
+        system_message = request.system_message
+        base = system_message.content if system_message is not None else ""
+        return request.override(system_message=SystemMessage(content=base + block))
+
+    def wrap_model_call(self, request, handler):
+        store = getattr(request.runtime, "store", None)
+        memories = []
+        if store is not None:
+            try:
+                memories = store.search((self.user_id, "memories"))
+            except Exception:
+                memories = []
+        return handler(self._apply_memories(request, memories))
+
+    async def awrap_model_call(self, request, handler):
+        store = getattr(request.runtime, "store", None)
+        memories = []
+        if store is not None:
+            try:
+                memories = await store.asearch((self.user_id, "memories"))
+            except Exception:
+                memories = []
+        return await handler(self._apply_memories(request, memories))
+
+
 def _find_invalid_tool_history_cut_index(messages: Sequence) -> int | None:
     """Retourne l'index à partir duquel l'historique devient invalide.
 
@@ -317,11 +396,11 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
     except ValueError:
         pass
 
-    return create_react_agent(
+    return create_agent(
         llm,
         tools,
-        prompt=_SYSTEM_PROMPT,
-        pre_model_hook=_make_context_hook(user_id=user_id, thread_id=thread_id),
+        system_prompt=_SYSTEM_PROMPT,
+        middleware=[_ContextMiddleware(user_id=user_id, thread_id=thread_id)],
         checkpointer=_checkpointer,
         store=_store,
     )

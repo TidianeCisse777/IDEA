@@ -48,12 +48,12 @@ def test_make_agent_returns_graph():
 def test_make_agent_registers_marine_taxonomy_tool():
     captured = {}
 
-    def fake_create_react_agent(llm, tools, **kwargs):
+    def fake_create_agent(llm, tools, **kwargs):
         captured["tool_names"] = {tool.name for tool in tools}
         return MagicMock()
 
     with patch("agent.ChatOpenAI") as mock_llm, patch(
-        "agent.create_react_agent", side_effect=fake_create_react_agent
+        "agent.create_agent", side_effect=fake_create_agent
     ):
         mock_llm.return_value = MagicMock()
         from agent import make_agent
@@ -173,6 +173,83 @@ def test_context_hook_records_audit_metrics(monkeypatch):
     assert audit["tool_messages_truncated"] == 1
     assert audit["tool_result_chars_saved"] > 0
     assert audit["approx_tokens_after_trim"] <= audit["approx_tokens_after_memory"]
+
+
+def _spy_model():
+    """FakeMessagesListChatModel qui capture le system prompt vu par le LLM."""
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+
+    seen = {}
+
+    class Spy(FakeMessagesListChatModel):
+        def _generate(self, messages, *args, **kwargs):
+            seen["system"] = "\n".join(m.content for m in messages if m.type == "system")
+            return super()._generate(messages, *args, **kwargs)
+
+    return Spy(responses=[AIMessage(content="ok")]), seen
+
+
+def test_context_middleware_injects_memories_into_system_prompt():
+    from langchain_core.messages import HumanMessage
+    from langgraph.store.memory import InMemoryStore
+    from langchain.agents import create_agent
+    import agent as agent_module
+
+    store = InMemoryStore()
+    store.put(("user-mem", "memories"), "m1", {"content": "préfère les graphiques en violet"})
+
+    model, seen = _spy_model()
+    mw = agent_module._ContextMiddleware(user_id="user-mem", thread_id="t-mem")
+    graph = create_agent(model, [], system_prompt="BASE", middleware=[mw], store=store)
+    graph.invoke(
+        {"messages": [HumanMessage(content="salut")]},
+        {"configurable": {"thread_id": "t-mem"}},
+    )
+
+    assert "préfère les graphiques en violet" in seen["system"]
+    assert "BASE" in seen["system"]
+
+
+def test_context_middleware_injects_memories_on_async_path():
+    """serve.py invoque en async avec un store async — awrap_model_call doit marcher."""
+    import asyncio
+    from langchain_core.messages import HumanMessage
+    from langgraph.store.memory import InMemoryStore
+    from langchain.agents import create_agent
+    import agent as agent_module
+
+    store = InMemoryStore()
+    store.put(("user-async", "memories"), "m1", {"content": "toujours en français"})
+
+    model, seen = _spy_model()
+    mw = agent_module._ContextMiddleware(user_id="user-async", thread_id="t-async")
+    graph = create_agent(model, [], system_prompt="BASE", middleware=[mw], store=store)
+    asyncio.run(
+        graph.ainvoke(
+            {"messages": [HumanMessage(content="salut")]},
+            {"configurable": {"thread_id": "t-async"}},
+        )
+    )
+
+    assert "toujours en français" in seen["system"]
+
+
+def test_context_middleware_no_memories_leaves_system_prompt_untouched():
+    from langchain_core.messages import HumanMessage
+    from langgraph.store.memory import InMemoryStore
+    from langchain.agents import create_agent
+    import agent as agent_module
+
+    model, seen = _spy_model()
+    mw = agent_module._ContextMiddleware(user_id="user-empty", thread_id="t-empty")
+    graph = create_agent(model, [], system_prompt="BASE", middleware=[mw], store=InMemoryStore())
+    graph.invoke(
+        {"messages": [HumanMessage(content="salut")]},
+        {"configurable": {"thread_id": "t-empty"}},
+    )
+
+    assert seen["system"] == "BASE"
 
 
 def test_system_prompt_is_grouped_by_routing_domain():

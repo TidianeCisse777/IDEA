@@ -6,7 +6,7 @@ En production (serve.py), le checkpointer AsyncSqliteSaver reste actif.
 import os
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 from tools.data_tools import make_tools
@@ -41,8 +41,8 @@ except ValueError:
     pass
 
 # Pas de checkpointer — Studio injecte le sien automatiquement
-graph = create_react_agent(
+graph = create_agent(
     _llm,
     _tools,
-    prompt=COPEPOD_SYSTEM_PROMPT,
+    system_prompt=COPEPOD_SYSTEM_PROMPT,
 )

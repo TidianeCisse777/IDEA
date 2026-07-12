@@ -28,11 +28,11 @@ def test_run_query_returns_response(tsv_path):
         mock_llm = MagicMock()
         mock_llm_cls.return_value = mock_llm
 
-        # create_react_agent retourne un graph dont invoke retourne {"messages": [...]}
+        # create_agent retourne un graph dont invoke retourne {"messages": [...]}
         mock_graph = MagicMock()
         mock_graph.invoke.return_value = {"messages": [mock_msg]}
 
-        with patch("agent.create_react_agent", return_value=mock_graph):
+        with patch("agent.create_agent", return_value=mock_graph):
             from agent import run_query
             result = run_query(tsv_path, "combien de profils ?")
 
@@ -51,7 +51,7 @@ def test_run_query_passes_langsmith_callbacks(tsv_path):
         mock_graph = MagicMock()
         mock_graph.invoke.return_value = {"messages": [mock_msg]}
 
-        with patch("agent.create_react_agent", return_value=mock_graph):
+        with patch("agent.create_agent", return_value=mock_graph):
             with patch("agent.LangChainTracer") as mock_tracer_cls:
                 mock_tracer = MagicMock()
                 mock_tracer_cls.return_value = mock_tracer
