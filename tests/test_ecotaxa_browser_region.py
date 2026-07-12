@@ -553,3 +553,95 @@ def test_projects_in_region_raises_SYNC_IN_PROGRESS_when_cache_empty_but_sync_ru
         with pytest.raises(EcoTaxaBrowserError) as exc_info:
             projects_in_region()
     assert exc_info.value.code == "SYNC_IN_PROGRESS"
+
+
+# ── samples_by_year : regroupement interannuel station/zone ─────────────────
+
+def test_samples_by_year_buckets_by_year_with_counts(cache_db):
+    """Regroupe les samples d'une zone par année, comptes par année, tri croissant."""
+    from core.ecotaxa_browser.region import samples_by_year
+
+    _seed(cache_db, [
+        {"sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0,
+         "date_min": "2018-07-02", "date_max": "2018-07-02", "station_id": "st-27"},
+        {"sample_id": 2, "project_id": 42, "lat": 60.1, "lon": -80.1,
+         "date_min": "2018-08-14", "date_max": "2018-08-14", "station_id": "st-bb3"},
+        {"sample_id": 3, "project_id": 388, "lat": 60.0, "lon": -80.0,
+         "date_min": "2019-07-05", "date_max": "2019-07-05", "station_id": "st-27"},
+    ])
+    bbox = {"south": 55.0, "west": -95.0, "north": 65.0, "east": -75.0}
+    with _with_cache(cache_db):
+        result = samples_by_year(bbox=bbox)
+
+    years = {y["year"]: y for y in result["years"]}
+    assert [y["year"] for y in result["years"]] == [2018, 2019]  # tri croissant
+    assert years[2018]["n_samples"] == 2
+    assert years[2019]["n_samples"] == 1
+    assert result["total_matching"] == 3
+    assert result["n_years"] == 2
+
+
+def test_samples_by_year_counts_distinct_stations_per_year(cache_db):
+    """Une zone peut contenir plusieurs stations la même année."""
+    from core.ecotaxa_browser.region import samples_by_year
+
+    _seed(cache_db, [
+        {"sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0,
+         "date_min": "2021-07-01", "station_id": "st-27"},
+        {"sample_id": 2, "project_id": 42, "lat": 60.0, "lon": -80.0,
+         "date_min": "2021-07-10", "station_id": "st-27"},   # même station
+        {"sample_id": 3, "project_id": 42, "lat": 60.5, "lon": -80.5,
+         "date_min": "2021-08-01", "station_id": "st-bb3"},  # station distincte
+    ])
+    bbox = {"south": 55.0, "west": -95.0, "north": 65.0, "east": -75.0}
+    with _with_cache(cache_db):
+        result = samples_by_year(bbox=bbox)
+
+    y2021 = next(y for y in result["years"] if y["year"] == 2021)
+    assert y2021["n_samples"] == 3
+    assert y2021["n_stations"] == 2  # st-27 et st-bb3
+
+
+def test_samples_by_year_station_filter_spans_years(cache_db):
+    """Filtrer une station précise ne garde que ses samples, sur toutes les années."""
+    from core.ecotaxa_browser.region import samples_by_year
+
+    _seed(cache_db, [
+        {"sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0,
+         "date_min": "2018-07-02", "station_id": "st-27"},
+        {"sample_id": 2, "project_id": 42, "lat": 60.5, "lon": -80.5,
+         "date_min": "2018-07-03", "station_id": "st-bb3"},   # autre station, exclue
+        {"sample_id": 3, "project_id": 388, "lat": 60.0, "lon": -80.0,
+         "date_min": "2019-07-05", "station_id": "st-27"},
+    ])
+    bbox = {"south": 55.0, "west": -95.0, "north": 65.0, "east": -75.0}
+    with _with_cache(cache_db):
+        result = samples_by_year(bbox=bbox, station="st-27")
+
+    all_ids = sorted(sid for y in result["years"] for sid in y["sample_ids"])
+    assert all_ids == [1, 3]
+    assert [y["year"] for y in result["years"]] == [2018, 2019]
+    assert result["station"] == "st-27"
+
+
+def test_samples_by_year_reports_dates_instruments_projects(cache_db):
+    """Par année : envelope de dates, instruments et projets distincts."""
+    from core.ecotaxa_browser.region import samples_by_year
+
+    _seed(cache_db, [
+        {"sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0,
+         "date_min": "2018-07-02", "date_max": "2018-07-02", "instrument": "UVP5",
+         "station_id": "st-27"},
+        {"sample_id": 2, "project_id": 240, "lat": 60.1, "lon": -80.1,
+         "date_min": "2018-08-14", "date_max": "2018-08-14", "instrument": "UVP6",
+         "station_id": "st-bb3"},
+    ])
+    bbox = {"south": 55.0, "west": -95.0, "north": 65.0, "east": -75.0}
+    with _with_cache(cache_db):
+        result = samples_by_year(bbox=bbox)
+
+    y2018 = next(y for y in result["years"] if y["year"] == 2018)
+    assert y2018["date_min"] == "2018-07-02"
+    assert y2018["date_max"] == "2018-08-14"
+    assert sorted(y2018["instruments"]) == ["UVP5", "UVP6"]
+    assert sorted(y2018["project_ids"]) == [42, 240]

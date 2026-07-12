@@ -19,6 +19,7 @@ from core.ecotaxa_browser.region import (
     projects_in_region,
     rank_samples_by_region,
     resolve_sample_projects,
+    samples_by_year,
     samples_in_region,
 )
 from core.ecotaxa_browser.project_summary import summarize_projects
@@ -1269,6 +1270,138 @@ def make_source_tools(thread_id: str) -> list:
         return "\n".join(lines)
 
     @tool
+    def group_ecotaxa_samples_by_year(
+        zone_name: str | None = None,
+        station: str | None = None,
+        bbox: dict | None = None,
+        polygon_wkt: str | None = None,
+        date_range: dict | None = None,
+        instrument: str | None = None,
+        project_ids: list[int] | None = None,
+        month: int | None = None,
+    ) -> str:
+        """Regroupe par ANNÉE les samples EcoTaxa d'un lieu suivi dans la durée.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
+        À utiliser quand l'utilisateur veut une vue **interannuelle** d'un
+        même endroit : « couverture par année à la station X », « combien de
+        samples par année dans la Baie de Baffin », « quelles années sont
+        échantillonnées ici », avant un export étalé sur plusieurs années.
+        Une zone peut couvrir **plusieurs stations** ; le tool compte les
+        stations distinctes par année.
+
+        `zone_name` : nom d'une zone NeoLab/IHO (ex. "Baie de Baffin"). Résolu
+        en polygone précis en interne (post-filtre in-polygon).
+        `station` : nom/identifiant d'une station précise (ex. "St-27",
+        "ice-camp"). Ne garde que les samples dont un identifiant
+        (station_id / original_id / profile_id) contient cette chaîne.
+        `bbox` / `polygon_wkt` : alternatives géographiques (voir
+        `find_ecotaxa_samples_in_region`).
+        `date_range` : `{"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}` pour borner
+        la fenêtre d'années.
+        `instrument`, `project_ids`, `month` : mêmes sémantiques que
+        `find_ecotaxa_samples_in_region`.
+
+        Renvoie un tableau année × (n_samples, n_stations, dates, instruments,
+        projets) et **mémorise la sélection multi-années** pour un export
+        ultérieur via `export_ecotaxa_samples(selection_name=...)`. Lecture du
+        cache local — pas de download.
+
+        Au moins UN filtre de lieu/temps est requis (zone_name, station, bbox,
+        polygon_wkt, date_range, instrument, project_ids ou month).
+        """
+        if (zone_name is None and station is None and bbox is None
+                and polygon_wkt is None and date_range is None
+                and instrument is None and not project_ids and month is None):
+            return (
+                "Erreur : au moins un filtre requis (zone_name, station, bbox, "
+                "polygon_wkt, date_range, instrument, project_ids ou month)."
+            )
+        try:
+            result = samples_by_year(
+                bbox=bbox, date_range=date_range, instrument=instrument,
+                polygon_wkt=polygon_wkt, zone_name=zone_name, station=station,
+                project_ids=project_ids, month=month,
+            )
+        except EcoTaxaBrowserError as exc:
+            return f"Erreur EcoTaxa ({exc.code}) : {exc}"
+        except Exception as exc:
+            return f"Erreur lors du regroupement par année : {exc}"
+
+        years = result["years"]
+        if not years:
+            return (
+                "Aucun sample pour ce lieu / cette période."
+                + _ecotaxa_partial_notice(result)
+            )
+
+        location = station or zone_name or "sélection EcoTaxa"
+        selection_name = _selection_name(
+            zone_name=(station or zone_name),
+            instrument=instrument,
+            date_range=date_range,
+            month=month,
+            project_ids=project_ids,
+        )
+        # Réutilise la sélection : un "sample" minimal (sample_id + project_id)
+        # par sample, sur toutes les années, pour l'export multi-années.
+        selection_samples = [
+            {"sample_id": sid, "project_id": year["project_ids"][0] if year["project_ids"] else 0}
+            for year in years
+            for sid in year["sample_ids"]
+        ]
+        _store_sample_selection(
+            name=selection_name,
+            samples=selection_samples,
+            filters={
+                "zone_name": zone_name, "station": station, "bbox": bbox,
+                "polygon_wkt": bool(polygon_wkt), "date_range": date_range,
+                "instrument": instrument, "project_ids": project_ids,
+                "month": month, "grouped_by": "year",
+            },
+        )
+
+        real_years = [y for y in years if y["year"] is not None]
+        year_span = (
+            f"{real_years[0]['year']}–{real_years[-1]['year']}"
+            if real_years else "années inconnues"
+        )
+        lines = [
+            f"# {location} — {result['total_matching']} samples sur "
+            f"{result['n_years']} année(s) ({year_span})",
+            f"Sélection mémorisée : `{selection_name}`",
+            "",
+            "| année | n_samples | n_stations | date_min | date_max | instruments | projets |",
+            "|---:|---:|---:|---|---|---|---|",
+        ]
+        for y in years:
+            year_label = y["year"] if y["year"] is not None else "sans date"
+            instruments = ", ".join(y["instruments"]) or "—"
+            projects = ", ".join(str(p) for p in y["project_ids"][:6]) or "—"
+            if len(y["project_ids"]) > 6:
+                projects += f", … (+{len(y['project_ids']) - 6})"
+            lines.append(
+                f"| {year_label} | {y['n_samples']} | {y['n_stations']} | "
+                f"{y['date_min'] or '—'} | {y['date_max'] or '—'} | "
+                f"{instruments} | {projects} |"
+            )
+        lines.extend([
+            "",
+            "## Actions possibles",
+            f"- exporter cette sélection multi-années : "
+            f"`export_ecotaxa_samples(selection_name=\"{selection_name}\", confirmed=false)`",
+            "- l'export consolide toutes les années ; regrouper ensuite par "
+            "année avec `run_pandas` (colonne de date → année) pour l'analyse "
+            "interannuelle",
+        ])
+        if result.get("partial"):
+            lines.append(_ecotaxa_partial_notice(result).strip())
+        return "\n".join(lines)
+
+    @tool
     def find_ecotaxa_projects_in_region(
         bbox: dict | None = None,
         date_range: dict | None = None,
@@ -1975,6 +2108,7 @@ def make_source_tools(thread_id: str) -> list:
     return [
         find_ecotaxa_projects,
         find_ecotaxa_samples_in_region,
+        group_ecotaxa_samples_by_year,
         find_ecotaxa_projects_in_region,
         group_ecotaxa_project_samples_by_region,
         rank_ecotaxa_samples_by_region,

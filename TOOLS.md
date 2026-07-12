@@ -23,7 +23,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 2. EcoTaxa — `tools/copepod_sources.py` (23)
+## 2. EcoTaxa — `tools/copepod_sources.py` (24)
 
 ### Catalogue & recherche
 | Tool | Rôle | Coûteux ? |
@@ -51,6 +51,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `find_ecotaxa_samples_in_region` | Samples par `bbox`/`zone_name`/`date_range`/`instrument`/`project_ids` ; inclut station/profile si le cache a été resynchronisé ; crée une sélection nommée | non |
+| `group_ecotaxa_samples_by_year` | Vue **interannuelle** d'un lieu (station ou zone, plusieurs stations possibles) : tableau année × (n_samples, n_stations, dates, instruments, projets) ; mémorise une sélection multi-années pour un export étalé sur les années | non |
 | `find_ecotaxa_projects_in_region` | Projets agrégés par zone/période (row/projet) | non |
 | `group_ecotaxa_project_samples_by_region` | Samples d'un projet groupés par zone | non |
 | `rank_ecotaxa_samples_by_region` | Classement global des samples cache par zone/mer/région (`sample_count`, `date_min`, `date_max`) | non |

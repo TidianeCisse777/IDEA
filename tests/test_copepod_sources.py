@@ -1569,3 +1569,60 @@ def test_find_ecotaxa_observations_surfaces_partial_sync(monkeypatch):
 
     assert "résultat partiel" in result.lower()
     assert "partial=True" in result
+
+
+def test_group_ecotaxa_samples_by_year_requires_filter():
+    from tools.copepod_sources import make_source_tools
+    tools = make_source_tools("thread-year-no-filter")
+    fn = next(t for t in tools if t.name == "group_ecotaxa_samples_by_year")
+    result = fn.invoke({})
+    assert "filtre" in result.lower()
+
+
+def test_group_ecotaxa_samples_by_year_renders_year_table_and_stores_selection():
+    from unittest.mock import patch
+    fake = {
+        "years": [
+            {"year": 2018, "n_samples": 2, "n_stations": 2, "date_min": "2018-07-02",
+             "date_max": "2018-08-14", "instruments": ["UVP5"], "project_ids": [42, 240],
+             "sample_ids": [1, 2]},
+            {"year": 2019, "n_samples": 1, "n_stations": 1, "date_min": "2019-07-05",
+             "date_max": "2019-07-05", "instruments": ["UVP5"], "project_ids": [388],
+             "sample_ids": [3]},
+        ],
+        "total_matching": 3, "n_years": 2, "station": None,
+        "sample_ids": [1, 2, 3], "partial": False, "sync_in_progress": False,
+    }
+    with patch("tools.copepod_sources.samples_by_year", return_value=fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-year-render")
+        fn = next(t for t in tools if t.name == "group_ecotaxa_samples_by_year")
+        result = fn.invoke({"zone_name": "Baie de Baffin"})
+
+    assert "2018" in result and "2019" in result
+    assert "n_stations" in result
+    assert "Sélection mémorisée" in result
+    # la sélection couvre bien les 3 samples multi-années
+    export_tool = next(t for t in tools if t.name == "export_ecotaxa_samples")
+    import re
+    m = re.search(r"`(selection_[^`]+)`", result)
+    assert m, "nom de sélection introuvable dans la sortie"
+
+
+def test_group_ecotaxa_samples_by_year_station_filter_passed_through():
+    from unittest.mock import patch
+    captured = {}
+
+    def _fake(**kwargs):
+        captured.update(kwargs)
+        return {"years": [], "total_matching": 0, "n_years": 0,
+                "station": kwargs.get("station"), "sample_ids": [],
+                "partial": False, "sync_in_progress": False}
+
+    with patch("tools.copepod_sources.samples_by_year", side_effect=_fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-year-station")
+        fn = next(t for t in tools if t.name == "group_ecotaxa_samples_by_year")
+        fn.invoke({"station": "St-27"})
+
+    assert captured["station"] == "St-27"
