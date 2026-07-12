@@ -291,6 +291,168 @@ def samples_in_region(
     }
 
 
+def _sample_station_label(row) -> str | None:
+    """Identifiant de station lisible d'un sample (station_id > original_id > profile_id)."""
+    for key in ("station_id", "original_id", "profile_id"):
+        value = row[key] if key in row.keys() else None
+        if value:
+            return str(value)
+    return None
+
+
+def _row_matches_station(row, station: str) -> bool:
+    """Vrai si `station` (insensible à la casse) apparaît dans un identifiant du sample."""
+    needle = station.strip().lower()
+    for key in ("station_id", "original_id", "profile_id"):
+        value = row[key] if key in row.keys() else None
+        if value and needle in str(value).lower():
+            return True
+    return False
+
+
+def samples_by_year(
+    bbox: dict | None = None,
+    date_range: dict | None = None,
+    instrument: str | None = None,
+    polygon_wkt: str | None = None,
+    zone_name: str | None = None,
+    station: str | None = None,
+    project_ids: list[int] | None = None,
+    depth_max_lt: float | None = None,
+    depth_max_gte: float | None = None,
+    depth_min_lt: float | None = None,
+    depth_min_gte: float | None = None,
+    month: int | None = None,
+) -> dict:
+    """Regroupe par **année** les samples cache d'un lieu (station ou zone).
+
+    Vue de couverture interannuelle : pour un même endroit suivi dans la
+    durée (une zone peut couvrir plusieurs stations), renvoie pour chaque
+    année le nombre de samples, le nombre de stations distinctes, l'envelope
+    de dates, les instruments et les projets. Sert à repérer les années
+    exploitables avant un export étalé sur plusieurs années.
+
+    Mêmes filtres géo/temporels/instrument/profondeur/projets que
+    ``samples_in_region``, plus ``station`` : ne garde que les samples dont un
+    identifiant (station_id / original_id / profile_id) contient la chaîne
+    donnée (insensible à la casse). L'agrégation porte sur **tous** les samples
+    correspondants (pas de plafond), pour des comptes annuels exacts.
+
+    Retour : ``{"years": [...], "total_matching", "n_years", "station",
+    "sample_ids", "partial", "sync_in_progress"}``. Chaque entrée d'année :
+    ``{"year", "n_samples", "n_stations", "date_min", "date_max",
+    "instruments", "project_ids", "sample_ids"}``, triée par année croissante
+    (les samples sans date parseable sont regroupés sous ``year=None`` en fin
+    de liste). Lecture du cache local — pas de download.
+    """
+    bbox_tuple = _validate_bbox(bbox)
+    date_tuple = _validate_date_range(date_range)
+    month_value = _validate_month(month)
+    polygon = _resolve_zone_polygon(zone_name) or _validate_polygon_wkt(polygon_wkt)
+
+    if bbox_tuple is None and polygon is not None:
+        bbox_tuple = _bbox_from_polygon(polygon)
+
+    conn = _open_cache()
+    try:
+        _ensure_cache_ready(conn)
+        sync_in_progress = _sync_in_progress(conn)
+        bbox_repo = bbox_tuple if bbox_tuple is None else (
+            bbox_tuple[0], bbox_tuple[1], bbox_tuple[2], bbox_tuple[3]
+        )
+        rows = list(query_samples_filtered(
+            conn,
+            bbox=bbox_repo,
+            date_range=date_tuple,
+            instrument=instrument,
+            project_ids=project_ids,
+            depth_max_lt=depth_max_lt,
+            depth_max_gte=depth_max_gte,
+            depth_min_lt=depth_min_lt,
+            depth_min_gte=depth_min_gte,
+            month=month_value,
+        ))
+    finally:
+        conn.close()
+
+    if polygon is not None:
+        rows = [
+            r for r in rows
+            if r["lat_avg"] is not None and r["lon_avg"] is not None
+            and polygon.contains(Point(r["lon_avg"], r["lat_avg"]))
+        ]
+
+    if station:
+        rows = [r for r in rows if _row_matches_station(r, station)]
+
+    def _year_of(row) -> int | None:
+        raw = row["date_min"] or row["date_max"]
+        if not raw or len(str(raw)) < 4 or not str(raw)[:4].isdigit():
+            return None
+        return int(str(raw)[:4])
+
+    buckets: dict = {}
+    all_ids: list[int] = []
+    for row in rows:
+        year = _year_of(row)
+        sid = int(row["sample_id"])
+        all_ids.append(sid)
+        bucket = buckets.setdefault(year, {
+            "year": year,
+            "sample_ids": [],
+            "stations": set(),
+            "instruments": set(),
+            "project_ids": set(),
+            "date_min": None,
+            "date_max": None,
+        })
+        bucket["sample_ids"].append(sid)
+        station_label = _sample_station_label(row)
+        if station_label:
+            bucket["stations"].add(station_label)
+        if row["instrument"]:
+            bucket["instruments"].add(row["instrument"])
+        bucket["project_ids"].add(int(row["project_id"]))
+        for field in ("date_min", "date_max"):
+            value = row["date_min"] if field == "date_min" else row["date_max"]
+            if not value:
+                continue
+            current = bucket[field]
+            if current is None:
+                bucket[field] = value
+            elif field == "date_min":
+                bucket[field] = min(current, value)
+            else:
+                bucket[field] = max(current, value)
+
+    def _sort_key(year):
+        return (year is None, year if year is not None else 0)
+
+    years = []
+    for year in sorted(buckets, key=_sort_key):
+        b = buckets[year]
+        years.append({
+            "year": year,
+            "n_samples": len(b["sample_ids"]),
+            "n_stations": len(b["stations"]),
+            "date_min": b["date_min"],
+            "date_max": b["date_max"],
+            "instruments": sorted(b["instruments"]),
+            "project_ids": sorted(b["project_ids"]),
+            "sample_ids": b["sample_ids"],
+        })
+
+    return {
+        "years": years,
+        "total_matching": len(rows),
+        "n_years": len([y for y in years if y["year"] is not None]),
+        "station": station,
+        "sample_ids": all_ids,
+        "partial": sync_in_progress,
+        "sync_in_progress": sync_in_progress,
+    }
+
+
 def projects_in_region(
     bbox: dict | None = None,
     date_range: dict | None = None,
