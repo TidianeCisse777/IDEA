@@ -914,7 +914,7 @@ async def _stream_agent_sse(
                         continue
                     last_msg = msgs[-1]
 
-                    if node == "agent":
+                    if node == "model":
                         shared["last_ai_msg"] = last_msg
                         content = getattr(last_msg, "content", "") or ""
                         tool_calls = getattr(last_msg, "tool_calls", []) or []

@@ -241,7 +241,7 @@ async def test_stream_chat_completions_captures_run_id_for_feedback(monkeypatch)
                 run_id=__import__("uuid").UUID(run_id),
                 parent_run_id=None,
             )
-        yield {"agent": {"messages": [mock_msg]}}
+        yield {"model": {"messages": [mock_msg]}}
 
     mock_agent = MagicMock()
     mock_agent.astream = fake_astream
