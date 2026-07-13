@@ -256,5 +256,6 @@ local_scripts/
 .codex/
 !.codex/config.toml
 !.codex/AGENTS.md
+.worktrees/
 core/copepod_rag/chroma_db/
 !langgraph.json
