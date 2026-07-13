@@ -216,6 +216,8 @@ def test_context_middleware_injects_memories_into_system_prompt():
 
     assert "préfère les graphiques en violet" in seen["system"]
     assert "BASE" in seen["system"]
+    audit = agent_module.get_context_audit("t-mem")
+    assert audit["approx_tokens_after_memory"] == audit["approx_tokens_model_request"]
 
 
 def test_context_middleware_injects_memories_on_async_path():

@@ -226,7 +226,7 @@ class _ContextMiddleware(AgentMiddleware):
             ),
             "approx_tokens_before": original_tokens,
             "approx_tokens_after_tool_truncation": truncated_tokens,
-            "approx_tokens_after_memory": truncated_tokens,
+                "approx_tokens_after_memory": system_tokens + truncated_tokens,
             "approx_tokens_after_trim": final_tokens,
             "approx_tokens_system_message": system_tokens,
             "approx_tokens_model_request": system_tokens + final_tokens,
