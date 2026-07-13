@@ -6,10 +6,68 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_chat_completions_resumes_persisted_dataframe_after_restart(
+    monkeypatch, tmp_path
+):
+    import pandas as pd
+    import serve as serve_module
+    from tools.session_store import SessionStore
+
+    req = serve_module.ChatRequest(
+        messages=[serve_module.Message(role="user", content="Continue l'analyse")],
+        stream=False,
+    )
+    chat_id = "restart-chat-123"
+    thread_id = serve_module._thread_id(
+        req.messages,
+        chat_id=chat_id,
+        session_id=None,
+        metadata=None,
+    )
+    store_dir = tmp_path / "sessions"
+    before_restart = SessionStore(store_dir)
+    dataframe = pd.DataFrame({"sample_id": [101], "depth": [12.5]})
+    alias = f"{thread_id}:dataset:df_ecotaxa"
+    before_restart.set(thread_id, dataframe, {"variable_name": "df"})
+    before_restart.set(alias, dataframe, {"variable_name": "df_ecotaxa"})
+
+    restarted_store = SessionStore(store_dir)
+
+    mock_msg = MagicMock()
+    mock_msg.content = "réponse"
+    mock_msg.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+    mock_msg.response_metadata = {}
+    mock_agent = MagicMock()
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
+    mock_agent.aget_state = AsyncMock(
+        return_value=MagicMock(values={"messages": []})
+    )
+
+    monkeypatch.setattr(serve_module, "default_store", restarted_store)
+    monkeypatch.setattr(
+        serve_module,
+        "make_agent",
+        lambda thread_id, user_id="anonymous": mock_agent,
+    )
+    monkeypatch.setattr(serve_module, "_log_turn", lambda *args, **kwargs: None)
+    request = MagicMock()
+    request.headers = {}
+
+    await serve_module.chat_completions(
+        req,
+        request,
+        x_openwebui_chat_id=chat_id,
+    )
+
+    active = restarted_store.get(thread_id)
+    derived = restarted_store.get(alias)
+    assert active is not None and active["df"].equals(dataframe)
+    assert derived is not None and derived["df"].equals(dataframe)
+
+
+@pytest.mark.asyncio
 async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_key(monkeypatch):
     import serve as serve_module
-
-    serve_module._known_threads.clear()
 
     mock_msg = MagicMock()
     mock_msg.content = "réponse"
@@ -28,7 +86,6 @@ async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_ke
         return mock_agent
 
     monkeypatch.setattr(serve_module, "make_agent", fake_make_agent)
-    monkeypatch.setattr(serve_module.default_store, "clear", lambda thread_id: None)
     monkeypatch.setattr(serve_module, "_log_turn", lambda *args, **kwargs: None)
 
     req = serve_module.ChatRequest(
@@ -64,8 +121,6 @@ async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_ke
 async def test_chat_completions_uses_metadata_message_id_when_header_missing(monkeypatch):
     import serve as serve_module
 
-    serve_module._known_threads.clear()
-
     mock_msg = MagicMock()
     mock_msg.content = "réponse"
     mock_msg.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
@@ -83,7 +138,6 @@ async def test_chat_completions_uses_metadata_message_id_when_header_missing(mon
         return mock_agent
 
     monkeypatch.setattr(serve_module, "make_agent", fake_make_agent)
-    monkeypatch.setattr(serve_module.default_store, "clear", lambda thread_id: None)
     monkeypatch.setattr(serve_module, "_log_turn", lambda *args, **kwargs: None)
 
     req = serve_module.ChatRequest(
@@ -120,8 +174,6 @@ async def test_chat_completions_uses_metadata_message_id_when_header_missing(mon
 async def test_chat_completions_propagates_user_headers_to_metadata(monkeypatch):
     import serve as serve_module
 
-    serve_module._known_threads.clear()
-
     mock_msg = MagicMock()
     mock_msg.content = "réponse"
     mock_msg.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
@@ -132,7 +184,6 @@ async def test_chat_completions_propagates_user_headers_to_metadata(monkeypatch)
     mock_agent.aget_state = AsyncMock(return_value=MagicMock(values={"messages": []}))
 
     monkeypatch.setattr(serve_module, "make_agent", lambda tid, user_id="anonymous": mock_agent)
-    monkeypatch.setattr(serve_module.default_store, "clear", lambda tid: None)
     monkeypatch.setattr(serve_module, "_log_turn", lambda *a, **kw: None)
 
     req = serve_module.ChatRequest(
@@ -164,8 +215,6 @@ async def test_chat_completions_propagates_user_headers_to_metadata(monkeypatch)
 async def test_chat_completions_uses_anonymous_when_no_user_headers(monkeypatch):
     import serve as serve_module
 
-    serve_module._known_threads.clear()
-
     mock_msg = MagicMock()
     mock_msg.content = "réponse"
     mock_msg.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
@@ -176,7 +225,6 @@ async def test_chat_completions_uses_anonymous_when_no_user_headers(monkeypatch)
     mock_agent.aget_state = AsyncMock(return_value=MagicMock(values={"messages": []}))
 
     monkeypatch.setattr(serve_module, "make_agent", lambda tid, user_id="anonymous": mock_agent)
-    monkeypatch.setattr(serve_module.default_store, "clear", lambda tid: None)
     monkeypatch.setattr(serve_module, "_log_turn", lambda *a, **kw: None)
 
     req = serve_module.ChatRequest(
