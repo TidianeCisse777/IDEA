@@ -67,3 +67,25 @@ def test_session_store_lists_persisted_keys_after_restart(tmp_path):
         "thread:ecopart:105",
         "thread:ecopart:42",
     ]
+
+
+def test_clear_conversation_removes_exact_and_colon_family_only(tmp_path):
+    from tools.session_store import SessionStore
+
+    store = SessionStore(storage_dir=tmp_path / "sessions")
+    df = pd.DataFrame({"value": [1]})
+    for key in (
+        "thread-abc",
+        "thread-abc:ecotaxa",
+        "thread-abc:dataset:df_ecotaxa",
+        "thread-abc-other",
+        "thread-abcd:dataset:df_neighbor",
+    ):
+        store.set(key, df, {"key": key})
+
+    store.clear_conversation("thread-abc")
+
+    assert store.get("thread-abc") is None
+    assert store.keys("thread-abc:") == []
+    assert store.get("thread-abc-other") is not None
+    assert store.get("thread-abcd:dataset:df_neighbor") is not None

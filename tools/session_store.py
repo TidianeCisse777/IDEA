@@ -97,6 +97,15 @@ class SessionStore:
         with contextlib.suppress(FileNotFoundError):
             self._meta_path(thread_id).unlink()
 
+    def clear_conversation(self, thread_id: str) -> None:
+        prefix = f"{thread_id}:"
+        family = [
+            key for key in self.keys()
+            if key == thread_id or key.startswith(prefix)
+        ]
+        for key in family:
+            self.clear(key)
+
     def has(self, thread_id: str) -> bool:
         return thread_id in self._store or self._data_path(thread_id).exists()
 
