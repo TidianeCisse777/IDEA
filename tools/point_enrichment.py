@@ -105,6 +105,7 @@ class MatchResult:
     method_lines: list[str] = field(default_factory=list)
     n_matched: int = 0
     diagnostics: dict = field(default_factory=dict)
+    error: str | None = None  # matcher refuses (e.g. confirmation gate) → outcome.error
 
 
 @dataclass
@@ -243,16 +244,17 @@ def run_point_enrichment(
     # 2. provenance note (before the new result overwrites active-df metadata)
     source_note = enrichment_source_note(store, thread_id, source, source_variable)
 
-    # 3. detect coord columns per matcher.required_coords()
+    # 3. detect coord columns. Time is always detected (zone/date scoping may
+    # need it) but only parsed/required when the matcher asks for it; depth is
+    # detected only when asked and is never required.
     lat_col = latitude_column or (
         detect_column(source.columns, DEFAULT_LAT_CANDIDATES) if need.lat else None
     )
     lon_col = longitude_column or (
         detect_column(source.columns, DEFAULT_LON_CANDIDATES) if need.lon else None
     )
-    time_col = time_column or (
-        detect_column(source.columns, DEFAULT_TIME_CANDIDATES) if need.time else None
-    )
+    scoping_time_col = time_column or detect_column(source.columns, DEFAULT_TIME_CANDIDATES)
+    time_col = scoping_time_col if need.time else None
     time_end_col = (
         detect_column(source.columns, DEFAULT_TIME_END_CANDIDATES) if need.time else None
     )
@@ -269,7 +271,7 @@ def run_point_enrichment(
             date_range=date_range,
             lat_col=lat_col or "latitude",
             lon_col=lon_col or "longitude",
-            time_col=time_col,
+            time_col=scoping_time_col,
         )
         if scoped.error:
             return _fail(f"Enrichissement {label} impossible : {scoped.error}")
@@ -320,10 +322,13 @@ def run_point_enrichment(
     keys = matcher.dedup_keys(coords).reset_index(drop=True)
     unique_positions, row_to_unique = _dedup_from_keys(keys)
     n = len(enriched)
+    # Status a matcher assigns to rows it never queries (null dedup key). CTD
+    # sources keep the default; Bio-ORACLE overrides it to "no_value".
+    no_query_status = getattr(matcher, "no_coordinates_status", NO_COORDINATES_STATUS)
 
-    # No queryable point: every row gets the no-coordinates status, no MATCH.
+    # No queryable point: every row gets the no-query status, no MATCH.
     if not unique_positions:
-        enriched[status_col] = NO_COORDINATES_STATUS
+        enriched[status_col] = no_query_status
         return EnrichmentOutcome(
             enriched=enriched, n_rows=n, n_matched=0, n_unique=0,
             status_col=status_col, source_note=source_note,
@@ -350,11 +355,13 @@ def run_point_enrichment(
 
     # 9. delegate the MATCH to the adapter
     result = matcher.match(points)
+    if result.error:  # matcher refused (e.g. confirmation gate) — no store
+        return _fail(result.error)
 
     # 10. remap unique→row: append value columns + status column
     statuses = result.statuses.reset_index(drop=True)
     enriched[status_col] = [
-        statuses.iloc[u] if u is not None else NO_COORDINATES_STATUS
+        statuses.iloc[u] if u is not None else no_query_status
         for u in row_to_unique
     ]
     for column in result.columns.columns:
