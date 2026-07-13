@@ -3,15 +3,22 @@
 `run_point_enrichment` owns the single sequence shared by every lat/lon
 enrichment source (Amundsen CTD, OGSL, Bio-ORACLE): resolve source table,
 detect coord columns, scope by zone/date, validate, deduplicate query points,
-delegate the MATCH to a `PointMatcher` adapter, remap the result back onto
-every row, store the enriched dataset and render the method block with the
-coverage line.
+delegate the MATCH to a `PointMatcher` adapter, and remap the result back onto
+every row (value columns + `<prefix>_match_status`). It returns an
+`EnrichmentOutcome` — the enriched DataFrame + counts + provenance — WITHOUT
+storing or rendering the final reply.
+
+The epilogue (store_dataset with the source-specific alias/variable name,
+optional TSV download link, method block) genuinely varies per source, so the
+tool owns it — folding it into the shell would over-parameterise it into a
+shallow module. The shell stays deep on the part that is actually duplicated
+and error-prone: the prelude guards (identical messages) and the dedup/remap
+bookkeeping.
 
 The `PointMatcher` at the seam carries only what genuinely varies per source:
-the dedup key and the MATCH (ERDDAP batching / nearest-neighbour / grid
-lookup). Error messages, guard ordering and the coverage-warning rule live
-here, once. EcoPart is NOT a point enrichment (it joins on
-`(sample_id, depth_bin)`), so it does not use this shell.
+the dedup key, the MATCH (ERDDAP batching / nearest-neighbour / grid lookup),
+and its own method-block detail lines. EcoPart is NOT a point enrichment (it
+joins on `(sample_id, depth_bin)`), so it does not use this shell.
 """
 from __future__ import annotations
 
@@ -31,7 +38,7 @@ from core.environment_resolver.column_detection import (
 )
 from core.environment_resolver.coords import CoordsValidation, parse_source_coords
 from core.environment_resolver.source import resolve_source_dataframe
-from tools.dataset_registry import enrichment_source_note, store_dataset
+from tools.dataset_registry import enrichment_source_note
 
 
 @dataclass(frozen=True)
@@ -49,11 +56,15 @@ class RequiredCoords:
 
 @dataclass(frozen=True)
 class QueryPoints:
-    """Deduplicated query points handed to a matcher.
+    """Deduplicated query points + context handed to a matcher.
 
-    Every Series has length `n_unique`, index reset, and is positionally
-    aligned. `time`/`time_end`/`depth` are None when the matcher did not
-    request them via `required_coords()`.
+    Coordinate Series have length `n_unique` (one per unique point), index
+    reset, positionally aligned. `time`/`time_end`/`depth` are None when the
+    matcher did not request them via `required_coords()`.
+
+    The `*_col` names and `n_rows` are provenance the matcher needs to render
+    its own method block (e.g. "detected columns", "N unique points over M
+    rows") — the shell already resolved them, so the matcher doesn't re-detect.
     """
 
     latitude: pd.Series
@@ -61,6 +72,11 @@ class QueryPoints:
     time: pd.Series | None = None
     time_end: pd.Series | None = None
     depth: pd.Series | None = None
+    lat_col: str | None = None
+    lon_col: str | None = None
+    time_col: str | None = None
+    depth_col: str | None = None
+    n_rows: int = 0
 
     def __len__(self) -> int:
         return len(self.latitude)
@@ -88,6 +104,37 @@ class MatchResult:
     statuses: pd.Series
     method_lines: list[str] = field(default_factory=list)
     n_matched: int = 0
+    diagnostics: dict = field(default_factory=dict)
+
+
+@dataclass
+class EnrichmentOutcome:
+    """What the shell hands back to the tool for the (varying) epilogue.
+
+    On success `error` is None and `enriched` is the source table with the
+    matcher's value columns and `<status_col>` appended. On a guard failure
+    `error` holds the user-facing message and `enriched` is None — the tool
+    returns `error` verbatim.
+
+    The tool owns store_dataset / download link / method block. It MUST surface
+    the coverage counts (`n_matched` of `n_rows`) — they are carried here so
+    they cannot be silently dropped. `method_lines` come from the matcher.
+    """
+
+    enriched: pd.DataFrame | None
+    n_rows: int = 0
+    n_matched: int = 0
+    n_unique: int = 0
+    status_col: str = ""
+    source_note: str = ""
+    scoping_lines: list[str] = field(default_factory=list)
+    method_lines: list[str] = field(default_factory=list)
+    diagnostics: dict = field(default_factory=dict)
+    lat_col: str | None = None
+    lon_col: str | None = None
+    time_col: str | None = None
+    depth_col: str | None = None
+    error: str | None = None
 
 
 @runtime_checkable
@@ -119,6 +166,15 @@ class PointMatcher(Protocol):
 NO_COORDINATES_STATUS = "no_coordinates"
 
 
+def format_method_block(outcome: "EnrichmentOutcome") -> list[str]:
+    """Standard `Méthode :` block: header + shell scoping lines + matcher lines.
+
+    Shared so tools don't each re-duplicate the header/scoping wrapper around
+    their matcher's detail lines.
+    """
+    return ["Méthode :", *outcome.scoping_lines, *outcome.method_lines]
+
+
 def _dedup_from_keys(keys: pd.Series) -> tuple[list[int], list[int | None]]:
     """Group rows by dedup key. Rows with a null key are not queryable.
 
@@ -148,14 +204,6 @@ def _dedup_from_keys(keys: pd.Series) -> tuple[list[int], list[int | None]]:
     return unique_positions, row_to_unique
 
 
-def _source_variable_name(store, thread_id: str, source_variable: str | None) -> str:
-    if source_variable:
-        return source_variable
-    session = store.get(thread_id)
-    name = (session.get("meta") or {}).get("variable_name") if session else None
-    return name or "df_enriched"
-
-
 def run_point_enrichment(
     store,
     thread_id: str,
@@ -168,20 +216,29 @@ def run_point_enrichment(
     depth_column: str | None = None,
     zone_name: str | None = None,
     date_range: list | None = None,
-) -> str:
-    """Single, testable sequence for lat/lon point enrichment. See module doc."""
+) -> EnrichmentOutcome:
+    """Single, testable sequence for lat/lon point enrichment. See module doc.
+
+    Returns an `EnrichmentOutcome`: on failure `.error` is set (tool returns it
+    verbatim); on success `.enriched` carries the value columns + status column.
+    The tool owns store_dataset / download link / method-block framing.
+    """
     label = matcher.label
     need = matcher.required_coords()
+    status_col = f"{matcher.prefix}_match_status"
+
+    def _fail(message: str) -> EnrichmentOutcome:
+        return EnrichmentOutcome(enriched=None, status_col=status_col, error=message)
 
     # 1. resolve source + guard
     source = resolve_source_dataframe(store, thread_id, source_variable)
     if source is None:
         if source_variable:
-            return (
+            return _fail(
                 f"Variable source introuvable en session : `{source_variable}`. "
                 "Vérifie les datasets actifs."
             )
-        return "Aucune table chargée à enrichir."
+        return _fail("Aucune table chargée à enrichir.")
 
     # 2. provenance note (before the new result overwrites active-df metadata)
     source_note = enrichment_source_note(store, thread_id, source, source_variable)
@@ -215,28 +272,28 @@ def run_point_enrichment(
             time_col=time_col,
         )
         if scoped.error:
-            return f"Enrichissement {label} impossible : {scoped.error}"
+            return _fail(f"Enrichissement {label} impossible : {scoped.error}")
         source = scoped.df
         scoping_lines = list(scoped.description_lines)
         if source.empty:
-            return (
+            return _fail(
                 f"Enrichissement {label} impossible : le filtre zone/date a "
                 "éliminé toutes les lignes.\n" + "\n".join(scoping_lines)
             )
 
-    # 5. missing-column guard (before parsing)
+    # 5. missing-column guard (before parsing). Depth is detected when the
+    # matcher asks for it but is never mandatory — it only refines the query.
     missing = [
         name
         for name, needed, value in (
             ("latitude", need.lat, lat_col),
             ("longitude", need.lon, lon_col),
             ("time", need.time, time_col),
-            ("depth", need.depth, depth_col),
         )
         if needed and value is None
     ]
     if missing:
-        return (
+        return _fail(
             f"Enrichissement {label} impossible : colonnes manquantes dans la "
             f"table chargée — {', '.join(missing)}. Préciser via les paramètres "
             "de colonne."
@@ -252,7 +309,7 @@ def run_point_enrichment(
         depth_col=depth_col,
     )
     if coords.empty_groups:
-        return (
+        return _fail(
             f"Enrichissement {label} impossible : colonnes "
             f"{', '.join(coords.empty_groups)} entièrement vides dans la table "
             "chargée. Aucune coordonnée exploitable — vérifie le fichier source."
@@ -262,21 +319,15 @@ def run_point_enrichment(
     enriched = source.copy(deep=True).reset_index(drop=True)
     keys = matcher.dedup_keys(coords).reset_index(drop=True)
     unique_positions, row_to_unique = _dedup_from_keys(keys)
-
     n = len(enriched)
-    status_col = f"{matcher.prefix}_match_status"
 
+    # No queryable point: every row gets the no-coordinates status, no MATCH.
     if not unique_positions:
         enriched[status_col] = NO_COORDINATES_STATUS
-        variable_name = _source_variable_name(store, thread_id, source_variable)
-        store_dataset(
-            store, thread_id, enriched,
-            variable_name=variable_name,
-            meta={"variable_name": variable_name, "source": f"enrich:{matcher.prefix}"},
-        )
-        return (
-            f"Enrichissement {label} : 0 lignes matchées sur {n} — aucune "
-            f"coordonnée exploitable.\n{source_note}"
+        return EnrichmentOutcome(
+            enriched=enriched, n_rows=n, n_matched=0, n_unique=0,
+            status_col=status_col, source_note=source_note,
+            scoping_lines=scoping_lines,
         )
 
     def _at(series: pd.Series | None) -> pd.Series | None:
@@ -290,6 +341,11 @@ def run_point_enrichment(
         time=_at(coords.time),
         time_end=_at(coords.time_end),
         depth=_at(coords.depth),
+        lat_col=lat_col,
+        lon_col=lon_col,
+        time_col=time_col,
+        depth_col=depth_col,
+        n_rows=n,
     )
 
     # 9. delegate the MATCH to the adapter
@@ -297,7 +353,7 @@ def run_point_enrichment(
 
     # 10. remap unique→row: append value columns + status column
     statuses = result.statuses.reset_index(drop=True)
-    row_status = [
+    enriched[status_col] = [
         statuses.iloc[u] if u is not None else NO_COORDINATES_STATUS
         for u in row_to_unique
     ]
@@ -307,21 +363,11 @@ def run_point_enrichment(
             unique_values.iloc[u] if u is not None else pd.NA
             for u in row_to_unique
         ]
-    enriched[status_col] = row_status
 
-    # 11. store enriched dataset back to session
-    variable_name = _source_variable_name(store, thread_id, source_variable)
-    store_dataset(
-        store, thread_id, enriched,
-        variable_name=variable_name,
-        meta={"variable_name": variable_name, "source": f"enrich:{matcher.prefix}"},
+    return EnrichmentOutcome(
+        enriched=enriched, n_rows=n, n_matched=result.n_matched,
+        n_unique=len(unique_positions), status_col=status_col,
+        source_note=source_note, scoping_lines=scoping_lines,
+        method_lines=list(result.method_lines), diagnostics=dict(result.diagnostics),
+        lat_col=lat_col, lon_col=lon_col, time_col=time_col, depth_col=depth_col,
     )
-
-    # 12. method block with the coverage line (shell-owned invariant)
-    lines = [
-        f"Enrichissement {label} — {result.n_matched} lignes matchées sur {n}.",
-        source_note,
-        *scoping_lines,
-        *result.method_lines,
-    ]
-    return "\n".join(line for line in lines if line)

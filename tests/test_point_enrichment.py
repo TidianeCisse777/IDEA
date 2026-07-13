@@ -58,7 +58,7 @@ def _store_with(df: pd.DataFrame, thread_id="thr-pe") -> SessionStore:
     return store
 
 
-def test_shell_dedups_remaps_and_adds_status_column():
+def test_shell_dedups_remaps_and_returns_enriched():
     # rows 0 and 2 share coords → 1 unique; row 1 distinct; row 3 invalid coords
     df = pd.DataFrame({
         "latitude": [60.0, 61.0, 60.0, None],
@@ -68,41 +68,48 @@ def test_shell_dedups_remaps_and_adds_status_column():
     store = _store_with(df)
     matcher = FakeMatcher()
 
-    summary = run_point_enrichment(store, "thr-pe", matcher=matcher)
+    outcome = run_point_enrichment(store, "thr-pe", matcher=matcher)
 
     # matcher saw only the 2 valid unique points
     assert matcher.seen is not None
     assert len(matcher.seen) == 2
 
-    enriched = store.get("thr-pe:dataset:df_file_test")["df"]
+    assert outcome.error is None
+    enriched = outcome.enriched
     assert "fake_value" in enriched.columns
-    assert "fake_match_status" in enriched.columns
+    assert outcome.status_col == "fake_match_status"
     # duplicate coords (rows 0 & 2) got the SAME value (remap unique→row)
     assert enriched.loc[0, "fake_value"] == enriched.loc[2, "fake_value"]
     assert enriched.loc[0, "fake_match_status"] == "matched"
     # invalid-coord row got the shell status, no value
     assert enriched.loc[3, "fake_match_status"] == NO_COORDINATES_STATUS
     assert pd.isna(enriched.loc[3, "fake_value"])
-    # coverage line surfaced
-    assert "match" in summary.lower()
+    # coverage counts carried for the tool's epilogue (shell does NOT store)
+    assert outcome.n_rows == 4
+    assert outcome.n_unique == 2
+    assert outcome.n_matched == 2
+    assert outcome.method_lines  # matcher detail passed through
 
 
 def test_shell_no_source_loaded():
     store = SessionStore()
     out = run_point_enrichment(store, "empty-thread", matcher=FakeMatcher())
-    assert "aucune table" in out.lower()
+    assert out.enriched is None
+    assert "aucune table" in out.error.lower()
 
 
 def test_shell_missing_lat_lon_uses_label():
     df = pd.DataFrame({"foo": [1, 2], "bar": [3, 4]})
     store = _store_with(df)
     out = run_point_enrichment(store, "thr-pe", matcher=FakeMatcher())
-    assert "Fake Source" in out
-    assert "latitude" in out.lower()
+    assert out.enriched is None
+    assert "Fake Source" in out.error
+    assert "latitude" in out.error.lower()
 
 
 def test_shell_empty_coords_uses_label():
     df = pd.DataFrame({"latitude": [None, None], "longitude": [None, None]})
     store = _store_with(df)
     out = run_point_enrichment(store, "thr-pe", matcher=FakeMatcher())
-    assert "Fake Source" in out
+    assert out.enriched is None
+    assert "Fake Source" in out.error
