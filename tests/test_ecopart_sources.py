@@ -962,7 +962,9 @@ def test_join_ecotaxa_ecopart_preserves_named_join_after_later_dataset_load():
         latest_alias="bio_oracle",
     )
 
-    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    run_pandas = next(
+        t for t in make_tools(thread_id, store=_store) if t.name == "run_pandas"
+    )
     output = run_pandas.invoke({
         "code": (
             "result = (list(df.columns), "
