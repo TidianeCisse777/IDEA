@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import threading
 import uuid
 from pathlib import Path
 from urllib.parse import quote
@@ -13,42 +12,17 @@ import pandas as pd
 import requests
 from langchain_core.tools import tool
 
-from core.environment_resolver import (
-    DEFAULT_DEPTH_CANDIDATES,
-    DEFAULT_LAT_CANDIDATES,
-    DEFAULT_LON_CANDIDATES,
-    DEFAULT_TIME_CANDIDATES,
-    DEFAULT_TIME_END_CANDIDATES,
-    compute_bbox_time_window,
-    detect_column,
-    match_ctd_rows,
-    parse_source_coords,
-    resolve_source_dataframe,
-)
-from core.enrich_scoping import scope_dataframe
-from core.erddap_batching import (
-    source_batch_positions,
-    spatial_subbatch_positions,
-    unique_coordinate_positions,
-    run_batches_in_parallel,
-)
-from core.ogsl_client import query_ogsl as _query_ogsl, OGSL_DATASET_ID, OGSL_VARIABLES
+from core.ogsl_client import query_ogsl as _query_ogsl, OGSL_DATASET_ID
 from core.ogsl_enrichment import build_station_windows, enrich_with_ogsl as _enrich_with_ogsl_helper
 from tools.dataset_registry import (
     OGSL,
     OGSL_ENRICHED,
     dataset_variable_name,
-    enrichment_source_note,
     store_dataset,
 )
 from tools.public_url import download_url
-from tools.point_enrichment import (
-    MatchResult,
-    QueryPoints,
-    RequiredCoords,
-    format_method_block,
-    run_point_enrichment,
-)
+from tools.ctd_matcher import CtdProfileMatcher
+from tools.point_enrichment import format_method_block, run_point_enrichment
 from tools.session_store import default_store as _store
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
@@ -91,248 +65,40 @@ def _normalize_ogsl_var(value: str) -> str:
     return _OGSL_FRIENDLY_VARS.get(value.strip().lower(), value)
 
 
-class OgslMatcher:
-    """PointMatcher adapter for OGSL ISMER CTD nearest-profile matching.
+class OgslMatcher(CtdProfileMatcher):
+    """CTD nearest-profile matcher for OGSL ISMER ERDDAP.
 
-    Same shape as AmundsenMatcher (ERDDAP bbox batching + fallback + nearest
-    profile) minus the hardcoded time-range gate — OGSL has no fixed coverage
-    window. Produces `ogsl_*` value columns + per-unique statuses + batching
-    diagnostics; the tool owns store/method block.
+    Uses the shared CtdProfileMatcher machinery with the default query policy
+    (no fixed time-range gate) and adds OGSL's station/cruise/oxygen columns.
     """
 
     prefix = "ogsl"
     label = "OGSL"
+    dataset_id = OGSL_DATASET_ID
 
-    def __init__(
-        self,
-        *,
-        selected_variables: list[str],
-        spatial_tolerance_km: float,
-        time_tolerance_hours: float,
-        initial_batch_spatial_degrees: float,
-        batch_spatial_degrees: float,
-        max_source_points_per_batch: int,
-        max_ctd_rows_per_batch: int,
-        depth_padding_dbar: float,
-        max_workers: int,
-    ):
-        self.selected_variables = selected_variables
-        self.spatial_tolerance_km = spatial_tolerance_km
-        self.time_tolerance_hours = time_tolerance_hours
-        self.initial_batch_spatial_degrees = initial_batch_spatial_degrees
-        self.batch_spatial_degrees = batch_spatial_degrees
-        self.max_source_points_per_batch = max_source_points_per_batch
-        self.max_ctd_rows_per_batch = max_ctd_rows_per_batch
-        self.depth_padding_dbar = depth_padding_dbar
-        self.max_workers = max_workers
+    def _fetch(self, **kwargs):
+        return _fetch_ogsl_bbox(**kwargs)
 
-    def required_coords(self) -> RequiredCoords:
-        return RequiredCoords(lat=True, lon=True, time=True, depth=True)
-
-    def dedup_keys(self, coords) -> pd.Series:
-        lat = coords.latitude.reset_index(drop=True)
-        lon = coords.longitude.reset_index(drop=True)
-        time = (
-            coords.time.reset_index(drop=True)
-            if coords.time is not None else pd.Series([pd.NA] * len(lat))
-        )
-        depth = (
-            coords.depth.reset_index(drop=True)
-            if coords.depth is not None else pd.Series([pd.NA] * len(lat))
-        )
-        keys = []
-        for i in range(len(lat)):
-            if pd.isna(lat.iloc[i]) or pd.isna(lon.iloc[i]):
-                keys.append(pd.NA)
+    def _extra_columns(self, matched, n_unique):
+        station_id: list = [pd.NA] * n_unique
+        cruise_id: list = [pd.NA] * n_unique
+        cast: list = [pd.NA] * n_unique
+        oxym: list = [pd.NA] * n_unique
+        for position, item in enumerate(matched):
+            if item is None:
                 continue
-            t = time.iloc[i]
-            d = depth.iloc[i]
-            keys.append((
-                round(float(lat.iloc[i]), 6),
-                round(float(lon.iloc[i]), 6),
-                "<NA>" if pd.isna(t) else str(t),
-                "<NA>" if pd.isna(d) else round(float(d), 3),
-            ))
-        return pd.Series(keys)
+            best, _ = item
+            station_id[position] = best.get("stationID")
+            cruise_id[position] = best.get("cruiseID")
+            cast[position] = best.get("cast_number")
+            oxym[position] = best.get("OXYM")
+        return {
+            "ogsl_station_id": station_id,
+            "ogsl_cruise_id": cruise_id,
+            "ogsl_cast_number": cast,
+            "ogsl_oxym_umol_kg": oxym,
+        }
 
-    def match(self, points: QueryPoints) -> MatchResult:
-        unique_lat = points.latitude
-        unique_lon = points.longitude
-        unique_time = points.time
-        unique_time_end = points.time_end
-        unique_depth = points.depth
-        n_unique = len(points)
-
-        unique_statuses: list[object] = ["no_match"] * n_unique
-        unique_station_ids: list[object] = [pd.NA] * n_unique
-        unique_cruise_ids: list[object] = [pd.NA] * n_unique
-        unique_cast_numbers: list[object] = [pd.NA] * n_unique
-        unique_ctd_times_matched: list[object] = [pd.NA] * n_unique
-        unique_distances_km: list[object] = [pd.NA] * n_unique
-        unique_time_deltas_min: list[object] = [pd.NA] * n_unique
-        unique_pres_values: list[object] = [pd.NA] * n_unique
-        unique_te90_values: list[object] = [pd.NA] * n_unique
-        unique_psal_values: list[object] = [pd.NA] * n_unique
-        unique_oxym_values: list[object] = [pd.NA] * n_unique
-
-        batch_positions = source_batch_positions(
-            src_lat=unique_lat,
-            src_lon=unique_lon,
-            src_time=unique_time,
-            spatial_bin_degrees=float(self.initial_batch_spatial_degrees),
-            max_positions=int(self.max_source_points_per_batch),
-        )
-        counters = {"erddap_calls": 0}
-        fallback_months = 0
-        fallback_subbatches = 0
-        fetch_failures: list[str] = []
-        counters_lock = threading.Lock()
-
-        def _fetch_and_match_positions(positions: list[int]) -> tuple[bool, str | None]:
-            batch_lat = unique_lat.iloc[positions].reset_index(drop=True)
-            batch_lon = unique_lon.iloc[positions].reset_index(drop=True)
-            batch_time = unique_time.iloc[positions].reset_index(drop=True)
-            batch_time_end = (
-                unique_time_end.iloc[positions].reset_index(drop=True)
-                if unique_time_end is not None
-                else None
-            )
-            batch_depth = (
-                unique_depth.iloc[positions].reset_index(drop=True)
-                if unique_depth is not None
-                else None
-            )
-            pres_range = None
-            if batch_depth is not None and batch_depth.notna().any():
-                valid_depth = batch_depth.dropna()
-                pres_range = {
-                    "min": max(0.0, float(valid_depth.min()) - float(self.depth_padding_dbar)),
-                    "max": float(valid_depth.max()) + float(self.depth_padding_dbar),
-                }
-            bbox, time_window = compute_bbox_time_window(
-                src_lat=batch_lat,
-                src_lon=batch_lon,
-                src_time=batch_time,
-                time_padding_hours=self.time_tolerance_hours,
-            )
-            try:
-                with counters_lock:
-                    counters["erddap_calls"] += 1
-                fetch_kwargs = {
-                    "bbox": bbox,
-                    "time_window": time_window,
-                    "variables": self.selected_variables,
-                }
-                if pres_range is not None:
-                    fetch_kwargs["pres_range"] = pres_range
-                try:
-                    ctd = _fetch_ogsl_bbox(**fetch_kwargs)
-                except TypeError:
-                    fetch_kwargs.pop("pres_range", None)
-                    ctd = _fetch_ogsl_bbox(**fetch_kwargs)
-            except Exception as exc:
-                return False, str(exc)
-            if len(ctd) > int(self.max_ctd_rows_per_batch):
-                return False, (
-                    f"too_many_ctd_rows:{len(ctd)}>"
-                    f"{int(self.max_ctd_rows_per_batch)}"
-                )
-
-            matches = match_ctd_rows(
-                src_lat=batch_lat,
-                src_lon=batch_lon,
-                src_time=batch_time,
-                src_time_end=batch_time_end,
-                src_depth=batch_depth,
-                ctd=ctd,
-                ctd_pres_col="PRES",
-                variables_for_value_check=self.selected_variables,
-                spatial_tolerance_km=self.spatial_tolerance_km,
-                time_tolerance_hours=self.time_tolerance_hours,
-            )
-
-            for local_position, match in enumerate(matches):
-                unique_position = positions[local_position]
-                unique_statuses[unique_position] = match.status
-                if match.chosen_idx is None:
-                    continue
-                best = ctd.iloc[match.chosen_idx]
-                unique_station_ids[unique_position] = best.get("stationID")
-                unique_cruise_ids[unique_position] = best.get("cruiseID")
-                unique_cast_numbers[unique_position] = best.get("cast_number")
-                unique_ctd_times_matched[unique_position] = best.get("time")
-                unique_distances_km[unique_position] = match.distance_km
-                unique_time_deltas_min[unique_position] = (
-                    match.time_delta_min
-                    if match.time_delta_min is not None
-                    else pd.NA
-                )
-                unique_pres_values[unique_position] = best.get("PRES")
-                unique_te90_values[unique_position] = best.get("TE90")
-                unique_psal_values[unique_position] = best.get("PSAL")
-                unique_oxym_values[unique_position] = best.get("OXYM")
-            return True, None
-
-        initial_results = run_batches_in_parallel(
-            batch_positions,
-            _fetch_and_match_positions,
-            max_workers=int(self.max_workers),
-        )
-
-        fallback_subbatch_jobs: list[list[int]] = []
-        for positions, (ok, error) in zip(batch_positions, initial_results):
-            if ok:
-                continue
-            subbatches = spatial_subbatch_positions(
-                positions=positions,
-                src_lat=unique_lat,
-                src_lon=unique_lon,
-                spatial_bin_degrees=float(self.batch_spatial_degrees),
-                src_time=unique_time,
-                max_positions=int(self.max_source_points_per_batch),
-            )
-            if len(subbatches) <= 1:
-                if error:
-                    fetch_failures.append(error)
-                continue
-            fallback_months += 1
-            fallback_subbatches += len(subbatches)
-            fallback_subbatch_jobs.extend(subbatches)
-
-        fallback_results = run_batches_in_parallel(
-            fallback_subbatch_jobs,
-            _fetch_and_match_positions,
-            max_workers=int(self.max_workers),
-        )
-        for sub_ok, sub_error in fallback_results:
-            if not sub_ok and sub_error:
-                fetch_failures.append(sub_error)
-
-        columns = pd.DataFrame({
-            "ogsl_dataset_id": [OGSL_DATASET_ID] * n_unique,
-            "ogsl_station_id": unique_station_ids,
-            "ogsl_cruise_id": unique_cruise_ids,
-            "ogsl_cast_number": unique_cast_numbers,
-            "ogsl_time": unique_ctd_times_matched,
-            "ogsl_distance_km": unique_distances_km,
-            "ogsl_time_delta_min": unique_time_deltas_min,
-            "ogsl_pres_dbar": unique_pres_values,
-            "ogsl_te90_degC": unique_te90_values,
-            "ogsl_psal_psu": unique_psal_values,
-            "ogsl_oxym_umol_kg": unique_oxym_values,
-        })
-        return MatchResult(
-            columns=columns,
-            statuses=pd.Series(unique_statuses),
-            n_matched=unique_statuses.count("matched"),
-            diagnostics={
-                "erddap_calls": counters["erddap_calls"],
-                "batch_count": len(batch_positions),
-                "fallback_months": fallback_months,
-                "fallback_subbatches": fallback_subbatches,
-                "fetch_failures": fetch_failures,
-            },
-        )
 
 def _fetch_ogsl_bbox(
     *,
