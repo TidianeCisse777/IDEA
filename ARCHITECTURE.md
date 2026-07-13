@@ -80,7 +80,7 @@ flowchart LR
     subgraph Agent["create_agent"]
         HOOK["_ContextMiddleware<br/>prepare model request : trim + audit<br/>inject memory"]
         MODEL["LLM<br/>ChatOpenAI"]
-        TOOLS["Tools node<br/>~53 tools"]
+        TOOLS["Tools node<br/>55 tools (+3 SQL optionnels)"]
         HOOK --> MODEL
         MODEL -->|tool call| TOOLS
         TOOLS -->|observation| MODEL
@@ -98,19 +98,14 @@ flowchart LR
 - **LLM** : `ChatOpenAI(model=LLM_MODEL)`, `max_tokens=LLM_MAX_OUTPUT_TOKENS` (défaut 16000), `max_retries=2`.
 - **Assemblage des tools** :
   ```python
-  tools = (
-      make_tools(thread_id)            # load_file, run_pandas, run_graph
-      + make_source_tools(thread_id)   # EcoTaxa
-      + make_bio_oracle_tools(...)     # Bio-ORACLE
-      + make_amundsen_tools(...)       # Amundsen CTD
-      + make_ogsl_tools(...)           # OGSL
-      + make_ecopart_tools(...)        # EcoPart
-      + make_geo_tools(...)            # zones
-      + [make_rag_tool(), make_taxonomy_tool(),
-         make_skill_tool(...), export_deliverable, get_zone_info]
-  )
-  tools += make_sql_tools(thread_id)   # seulement si DATABASE_URL résolvable
+  catalog = build_tool_catalog(thread_id)
+  create_agent(llm, list(catalog.tools), ...)
   ```
+  `tools/tool_catalog.py` est le seam unique de composition et de présentation :
+  il appelle les factories par famille, ajoute les 3 tools SQL seulement si
+  `DATABASE_URL` est résolvable, valide les noms uniques et fournit les libellés
+  utilisateur français/anglais. Les noms internes et les schémas LangChain ne
+  changent pas.
 - **`_ContextMiddleware`** (agent construit via `create_agent`, LangChain 1.x) :
   - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 40000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`.
   - Le trim utilise `request.override(messages=...)` : il borne le contexte du modèle sans supprimer l'historique complet conservé dans le checkpoint LangGraph.
@@ -134,6 +129,7 @@ dont la **docstring** est lue par le LLM pour décider quand l'appeler.
 
 | Module | Famille | Détail SPEC |
 |---|---|---|
+| `tool_catalog.py` | Composition, validation et présentation bilingue des 55/58 tools | §3, §4 |
 | `data_tools.py` | Fichier & analyse & graphe | §4.1 |
 | `copepod_sources.py` | EcoTaxa (read-only + export) | §4.2 |
 | `ecopart_sources.py` | EcoPart + join/enrichissement | §4.3 |

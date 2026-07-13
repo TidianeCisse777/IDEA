@@ -86,7 +86,7 @@ Les 14 skills disponibles sont dans `agents/skills/` :
 | EcoPart | implémenté | `list_ecopart_samples`, `preview_ecopart_sample`, `query_ecopart`, `join_ecotaxa_ecopart` |
 | Amundsen CTD | implémenté | `list_amundsen_datasets`, `preview_amundsen_profile`, `query_amundsen_ctd` |
 | Bio-ORACLE | implémenté | `list_bio_oracle_datasets`, `preview_bio_oracle_point`, `query_bio_oracle`, `couple_zooplankton_bio_oracle` |
-| OGSL | annoncé dans le prompt, tool dédié à venir | — |
+| OGSL | implémenté | `query_ogsl`, `enrich_with_ogsl` |
 | Workspace SQL | implémenté | `list_sql_tables`, `preview_sql_table`, `copy_sql_query_to_workspace` |
 
 OBIS n'est pas une source autorisée.

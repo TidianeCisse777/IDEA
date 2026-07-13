@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 
 
 def _schema_tokens(tool) -> int:
@@ -43,3 +44,32 @@ def test_conservative_tool_schema_budget(monkeypatch):
         for name, tokens in actual.items()
         if tokens <= budgets[name]
     }
+
+
+def test_complete_catalog_inventory_and_schema_budget(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("SESSION_STORE_DATABASE_URL", raising=False)
+
+    from tools.tool_catalog import build_tool_catalog
+
+    catalog = build_tool_catalog("complete-schema-budget")
+    family_counts = Counter(
+        catalog.presentation(name).family for name in catalog.names
+    )
+    schema_tokens = {
+        tool.name: _schema_tokens(tool) for tool in catalog.tools
+    }
+
+    assert len(catalog.tools) == len(catalog.names) == 55
+    assert family_counts == {
+        "data": 3,
+        "ecotaxa": 25,
+        "ecopart": 6,
+        "amundsen": 6,
+        "bio_oracle": 7,
+        "ogsl": 2,
+        "geography": 2,
+        "core": 4,
+    }
+    assert max(schema_tokens.values()) <= 1_600
+    assert sum(schema_tokens.values()) <= 26_000
