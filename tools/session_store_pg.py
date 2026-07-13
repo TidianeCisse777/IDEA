@@ -105,6 +105,31 @@ class SessionStorePG:
 
     # ── reads ──────────────────────────────────────────────────────────────────
 
+    def clear_conversation(self, session_key: str) -> None:
+        prefix = f"{session_key}:"
+        where = (
+            "session_key = :key OR "
+            "substr(session_key, 1, length(:prefix)) = :prefix"
+        )
+        params = {"key": session_key, "prefix": prefix}
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                text(f"SELECT session_key, storage_path FROM sessions WHERE {where}"),
+                params,
+            ).fetchall()
+            conn.execute(text(f"DELETE FROM sessions WHERE {where}"), params)
+
+        cached_family = [
+            key for key in self._cache
+            if key == session_key or key.startswith(prefix)
+        ]
+        for key in cached_family:
+            self._cache.pop(key, None)
+        for _, storage_path in rows:
+            if storage_path:
+                with contextlib.suppress(FileNotFoundError):
+                    Path(storage_path).unlink()
+
     def get(self, session_key: str) -> dict[str, Any] | None:
         if session_key in self._cache:
             return self._cache[session_key]
