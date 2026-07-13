@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import io
-import threading
 import uuid
 import hashlib
 from pathlib import Path
@@ -12,14 +11,7 @@ import pandas as pd
 import requests
 from langchain_core.tools import tool
 
-from core.erddap_batching import (
-    source_batch_positions,
-    spatial_subbatch_positions,
-    unique_coordinate_positions,
-    run_batches_in_parallel,
-)
 from core.canonical_grid import canonicalize_amundsen_query
-from core.enrich_scoping import scope_dataframe
 from core.erddap_cache import cache_get, cache_set
 
 _AMUNDSEN_DATASET_ID = "amundsen12713"
@@ -57,14 +49,11 @@ _AMUNDSEN_TIME_MAX = pd.Timestamp("2024-10-01T02:03:25Z")
 
 
 from core.environment_resolver import (
-    DEFAULT_DEPTH_CANDIDATES,
     DEFAULT_LAT_CANDIDATES,
     DEFAULT_LON_CANDIDATES,
     DEFAULT_TIME_CANDIDATES,
-    DEFAULT_TIME_END_CANDIDATES,
     compute_bbox_time_window,
     detect_column,
-    match_ctd_rows,
     parse_source_coords,
     resolve_source_dataframe,
 )
@@ -77,17 +66,11 @@ from tools.dataset_registry import (
     CTD,
     CTD_ENRICHED,
     dataset_variable_name,
-    enrichment_source_note,
     store_dataset,
 )
 from tools.public_url import download_url
-from tools.point_enrichment import (
-    MatchResult,
-    QueryPoints,
-    RequiredCoords,
-    format_method_block,
-    run_point_enrichment,
-)
+from tools.ctd_matcher import CtdProfileMatcher
+from tools.point_enrichment import format_method_block, run_point_enrichment
 from tools.session_store import default_store as _store
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
@@ -192,276 +175,60 @@ def _format_table(rows: list[dict], columns: list[str]) -> str:
     return dataframe.to_markdown(index=False)
 
 
-_source_batch_positions = source_batch_positions
-_spatial_subbatch_positions = spatial_subbatch_positions
-_unique_coordinate_positions = unique_coordinate_positions
+class AmundsenMatcher(CtdProfileMatcher):
+    """CTD nearest-profile matcher for Amundsen ERDDAP.
 
-
-class AmundsenMatcher:
-    """PointMatcher adapter for Amundsen CTD nearest-profile matching.
-
-    The shell (`run_point_enrichment`) resolves/scopes/dedups; this adapter
-    owns only the Amundsen-specific MATCH: the ERDDAP bbox batching, the
-    fallback spatial sub-batching, nearest-profile selection and the
-    outside-time-range status. It reports value columns + per-unique statuses
-    + batching diagnostics; the tool renders store/download/method block.
+    Adds the Amundsen-only fixed time-range gate (points outside the dataset's
+    coverage are flagged `outside_amundsen_ctd_range` and never queried) on top
+    of the shared CtdProfileMatcher machinery.
     """
 
     prefix = "amundsen"
     label = "Amundsen CTD"
+    dataset_id = _AMUNDSEN_DATASET_ID
 
-    def __init__(
-        self,
-        *,
-        selected_variables: list[str],
-        spatial_tolerance_km: float,
-        time_tolerance_hours: float,
-        initial_batch_spatial_degrees: float,
-        batch_spatial_degrees: float,
-        max_source_points_per_batch: int,
-        max_ctd_rows_per_batch: int,
-        depth_padding_dbar: float,
-        max_workers: int,
-    ):
-        self.selected_variables = selected_variables
-        self.spatial_tolerance_km = spatial_tolerance_km
-        self.time_tolerance_hours = time_tolerance_hours
-        self.initial_batch_spatial_degrees = initial_batch_spatial_degrees
-        self.batch_spatial_degrees = batch_spatial_degrees
-        self.max_source_points_per_batch = max_source_points_per_batch
-        self.max_ctd_rows_per_batch = max_ctd_rows_per_batch
-        self.depth_padding_dbar = depth_padding_dbar
-        self.max_workers = max_workers
+    def _fetch(self, **kwargs):
+        return _fetch_amundsen_bbox(**kwargs)
 
-    def required_coords(self) -> RequiredCoords:
-        return RequiredCoords(lat=True, lon=True, time=True, depth=True)
-
-    def dedup_keys(self, coords) -> pd.Series:
-        # Same key as the historical `unique_coordinate_positions`
-        # (lat/lon/time/depth), but a null key for rows without lat/lon so the
-        # shell excludes them from the query.
-        lat = coords.latitude.reset_index(drop=True)
-        lon = coords.longitude.reset_index(drop=True)
-        time = (
-            coords.time.reset_index(drop=True)
-            if coords.time is not None else pd.Series([pd.NA] * len(lat))
-        )
-        depth = (
-            coords.depth.reset_index(drop=True)
-            if coords.depth is not None else pd.Series([pd.NA] * len(lat))
-        )
-        keys = []
-        for i in range(len(lat)):
-            if pd.isna(lat.iloc[i]) or pd.isna(lon.iloc[i]):
-                keys.append(pd.NA)
-                continue
-            t = time.iloc[i]
-            d = depth.iloc[i]
-            keys.append((
-                round(float(lat.iloc[i]), 6),
-                round(float(lon.iloc[i]), 6),
-                "<NA>" if pd.isna(t) else str(t),
-                "<NA>" if pd.isna(d) else round(float(d), 3),
-            ))
-        return pd.Series(keys)
-
-    def match(self, points: QueryPoints) -> MatchResult:
-        unique_lat = points.latitude
-        unique_lon = points.longitude
+    def _init_queryable(self, points):
         unique_time = points.time
-        unique_time_end = points.time_end
-        unique_depth = points.depth
         n_unique = len(points)
-
-        unique_statuses: list[object] = ["no_match"] * n_unique
-        time_in_amundsen_range = (
+        statuses: list = ["no_match"] * n_unique
+        time_in_range = (
             unique_time.ge(_AMUNDSEN_TIME_MIN) & unique_time.le(_AMUNDSEN_TIME_MAX)
         )
-        outside_amundsen_range = unique_time.notna() & ~time_in_amundsen_range
-        for unique_position, is_outside in enumerate(outside_amundsen_range.tolist()):
+        outside = unique_time.notna() & ~time_in_range
+        for position, is_outside in enumerate(outside.tolist()):
             if is_outside:
-                unique_statuses[unique_position] = "outside_amundsen_ctd_range"
-        query_unique_positions = [
-            unique_position
-            for unique_position, can_query in enumerate(
+                statuses[position] = "outside_amundsen_ctd_range"
+        candidate_positions = [
+            position
+            for position, can_query in enumerate(
                 (
-                    unique_lat.notna()
-                    & unique_lon.notna()
+                    points.latitude.notna()
+                    & points.longitude.notna()
                     & unique_time.notna()
-                    & time_in_amundsen_range
+                    & time_in_range
                 ).tolist()
             )
             if can_query
         ]
-        unique_stations: list[object] = [pd.NA] * n_unique
-        unique_casts: list[object] = [pd.NA] * n_unique
-        unique_pres_values: list[object] = [pd.NA] * n_unique
-        unique_te90: list[object] = [pd.NA] * n_unique
-        unique_psal: list[object] = [pd.NA] * n_unique
-        unique_distances_km: list[object] = [pd.NA] * n_unique
-        unique_time_deltas_min: list[object] = [pd.NA] * n_unique
-        unique_ctd_times_matched: list[object] = [pd.NA] * n_unique
+        return statuses, candidate_positions
 
-        batch_positions = _source_batch_positions(
-            src_lat=unique_lat,
-            src_lon=unique_lon,
-            src_time=unique_time,
-            spatial_bin_degrees=float(self.initial_batch_spatial_degrees),
-            max_positions=int(self.max_source_points_per_batch),
-            candidate_positions=query_unique_positions,
-        )
-        fetch_failures: list[str] = []
-        counters = {"erddap_calls": 0}
-        fallback_months = 0
-        fallback_subbatches = 0
-        counters_lock = threading.Lock()
-
-        def _fetch_and_match_positions(positions: list[int]) -> tuple[bool, str | None]:
-            batch_lat = unique_lat.iloc[positions].reset_index(drop=True)
-            batch_lon = unique_lon.iloc[positions].reset_index(drop=True)
-            batch_time = unique_time.iloc[positions].reset_index(drop=True)
-            batch_time_end = (
-                unique_time_end.iloc[positions].reset_index(drop=True)
-                if unique_time_end is not None
-                else None
-            )
-            batch_depth = (
-                unique_depth.iloc[positions].reset_index(drop=True)
-                if unique_depth is not None
-                else None
-            )
-            pres_range = None
-            if batch_depth is not None and batch_depth.notna().any():
-                valid_depth = batch_depth.dropna()
-                pres_range = {
-                    "min": max(0.0, float(valid_depth.min()) - float(self.depth_padding_dbar)),
-                    "max": float(valid_depth.max()) + float(self.depth_padding_dbar),
-                }
-            bbox, time_window = compute_bbox_time_window(
-                src_lat=batch_lat,
-                src_lon=batch_lon,
-                src_time=batch_time,
-                time_padding_hours=self.time_tolerance_hours,
-            )
-
-            try:
-                with counters_lock:
-                    counters["erddap_calls"] += 1
-                fetch_kwargs = {
-                    "bbox": bbox,
-                    "time_window": time_window,
-                    "variables": self.selected_variables,
-                }
-                if pres_range is not None:
-                    fetch_kwargs["pres_range"] = pres_range
-                try:
-                    ctd = _fetch_amundsen_bbox(**fetch_kwargs)
-                except TypeError:
-                    if "pres_range" not in fetch_kwargs:
-                        raise
-                    fetch_kwargs.pop("pres_range")
-                    ctd = _fetch_amundsen_bbox(**fetch_kwargs)
-            except Exception as exc:
-                return False, str(exc)
-            if len(ctd) > int(self.max_ctd_rows_per_batch):
-                return False, (
-                    f"too_many_ctd_rows:{len(ctd)}>"
-                    f"{int(self.max_ctd_rows_per_batch)}"
-                )
-
-            matches = match_ctd_rows(
-                src_lat=batch_lat,
-                src_lon=batch_lon,
-                src_time=batch_time,
-                src_time_end=batch_time_end,
-                src_depth=batch_depth,
-                ctd=ctd,
-                ctd_pres_col="PRES",
-                variables_for_value_check=self.selected_variables,
-                spatial_tolerance_km=self.spatial_tolerance_km,
-                time_tolerance_hours=self.time_tolerance_hours,
-            )
-
-            for local_position, match in enumerate(matches):
-                unique_position = positions[local_position]
-                unique_statuses[unique_position] = match.status
-                if match.chosen_idx is None:
-                    continue
-                best = ctd.iloc[match.chosen_idx]
-                unique_stations[unique_position] = best.get("station")
-                unique_casts[unique_position] = best.get("cast_number")
-                unique_pres_values[unique_position] = best.get("PRES")
-                unique_te90[unique_position] = best.get("TE90")
-                unique_psal[unique_position] = best.get("PSAL")
-                unique_distances_km[unique_position] = match.distance_km
-                unique_time_deltas_min[unique_position] = (
-                    match.time_delta_min
-                    if match.time_delta_min is not None
-                    else pd.NA
-                )
-                unique_ctd_times_matched[unique_position] = best.get("time")
-
-            return True, None
-
-        initial_results = run_batches_in_parallel(
-            batch_positions,
-            _fetch_and_match_positions,
-            max_workers=int(self.max_workers),
-        )
-
-        fallback_subbatch_jobs: list[list[int]] = []
-        for positions, (ok, error) in zip(batch_positions, initial_results):
-            if ok:
+    def _extra_columns(self, matched, n_unique):
+        station: list = [pd.NA] * n_unique
+        cast: list = [pd.NA] * n_unique
+        for position, item in enumerate(matched):
+            if item is None:
                 continue
-            subbatches = spatial_subbatch_positions(
-                positions=positions,
-                src_lat=unique_lat,
-                src_lon=unique_lon,
-                spatial_bin_degrees=float(self.batch_spatial_degrees),
-                src_time=unique_time,
-                max_positions=int(self.max_source_points_per_batch),
-            )
-            if len(subbatches) <= 1:
-                if error:
-                    fetch_failures.append(error)
-                continue
-            fallback_months += 1
-            fallback_subbatches += len(subbatches)
-            fallback_subbatch_jobs.extend(subbatches)
+            best, _ = item
+            station[position] = best.get("station")
+            cast[position] = best.get("cast_number")
+        return {"amundsen_station": station, "amundsen_cast_number": cast}
 
-        fallback_results = run_batches_in_parallel(
-            fallback_subbatch_jobs,
-            _fetch_and_match_positions,
-            max_workers=int(self.max_workers),
-        )
-        for sub_ok, sub_error in fallback_results:
-            if not sub_ok and sub_error:
-                fetch_failures.append(sub_error)
+    def _extra_diagnostics(self, points, candidate_positions):
+        return {"query_unique_count": len(candidate_positions or [])}
 
-        columns = pd.DataFrame({
-            "amundsen_dataset_id": [_AMUNDSEN_DATASET_ID] * n_unique,
-            "amundsen_station": unique_stations,
-            "amundsen_cast_number": unique_casts,
-            "amundsen_time": unique_ctd_times_matched,
-            "amundsen_distance_km": unique_distances_km,
-            "amundsen_time_delta_min": unique_time_deltas_min,
-            "amundsen_pres_dbar": unique_pres_values,
-            "amundsen_te90_degC": unique_te90,
-            "amundsen_psal_psu": unique_psal,
-        })
-        return MatchResult(
-            columns=columns,
-            statuses=pd.Series(unique_statuses),
-            n_matched=unique_statuses.count("matched"),
-            diagnostics={
-                "erddap_calls": counters["erddap_calls"],
-                "batch_count": len(batch_positions),
-                "fallback_months": fallback_months,
-                "fallback_subbatches": fallback_subbatches,
-                "query_unique_count": len(query_unique_positions),
-                "fetch_failures": fetch_failures,
-            },
-        )
 
 
 def make_amundsen_tools(thread_id: str) -> list:
