@@ -193,3 +193,21 @@ def test_legacy_collision_is_not_loaded_or_cleared_for_another_key(tmp_path):
     neighbor = SessionStore(storage_dir=store_dir).get(stored_key)
     assert neighbor is not None
     assert neighbor["df"].equals(expected_df)
+
+
+def test_long_key_can_be_reloaded_and_cleared_without_legacy_path_error(tmp_path):
+    from tools.session_store import SessionStore
+
+    store_dir = tmp_path / "sessions"
+    key = "thread-" + ("x" * 993)
+    expected_df = pd.DataFrame({"value": [1]})
+    SessionStore(storage_dir=store_dir).set(key, expected_df, {"owner": "long"})
+
+    reloaded = SessionStore(storage_dir=store_dir)
+    session = reloaded.get(key)
+    assert session is not None
+    assert session["df"].equals(expected_df)
+    reloaded.clear(key)
+
+    assert reloaded.get(key) is None
+    assert reloaded.has(key) is False

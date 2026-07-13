@@ -61,10 +61,9 @@ class SessionStore:
         data_path: Path,
         meta_path: Path,
     ) -> dict[str, Any] | None:
-        if not meta_path.exists():
-            return None
-
         try:
+            if not meta_path.exists():
+                return None
             payload = json.loads(meta_path.read_text(encoding="utf-8"))
             if not isinstance(payload, dict) or payload.get("session_key") != thread_id:
                 return None
