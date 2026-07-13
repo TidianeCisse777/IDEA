@@ -161,35 +161,24 @@ def test_system_prompt_mentions_sources():
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
 
 
-def test_context_hook_records_audit_metrics(monkeypatch):
-    from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+def test_context_preparation_records_tool_truncation_metrics(monkeypatch):
+    from langchain_core.messages import HumanMessage, ToolMessage
 
     import agent as agent_module
 
-    agent_module.clear_context_audit()
-    monkeypatch.setattr(agent_module, "_MAX_CONTEXT_TOKENS", 1000)
     monkeypatch.setattr(agent_module, "_MAX_TOOL_RESULT_CHARS", 20)
 
-    hook = agent_module._make_context_hook(user_id="user-audit", thread_id="thread-audit")
-    result = hook(
-        {
-            "messages": [
-                SystemMessage(content="system"),
-                HumanMessage(content="question"),
-                ToolMessage(content="x" * 80, tool_call_id="tool-1"),
-            ]
-        }
+    messages, metrics = agent_module._truncate_tool_results(
+        [
+            HumanMessage(content="question"),
+            ToolMessage(content="x" * 80, tool_call_id="tool-1"),
+        ]
     )
 
-    audit = agent_module.get_context_audit("thread-audit")
-
-    assert result["messages"]
-    assert audit["user_id"] == "user-audit"
-    assert audit["thread_id"] == "thread-audit"
-    assert audit["tool_messages_seen"] == 1
-    assert audit["tool_messages_truncated"] == 1
-    assert audit["tool_result_chars_saved"] > 0
-    assert audit["approx_tokens_after_trim"] <= audit["approx_tokens_after_memory"]
+    assert "tronqué" in messages[-1].content
+    assert metrics["tool_messages_seen"] == 1
+    assert metrics["tool_messages_truncated"] == 1
+    assert metrics["tool_result_chars_saved"] > 0
 
 
 def _spy_model():
@@ -202,6 +191,7 @@ def _spy_model():
     class Spy(FakeMessagesListChatModel):
         def _generate(self, messages, *args, **kwargs):
             seen["system"] = "\n".join(m.content for m in messages if m.type == "system")
+            seen["messages"] = list(messages)
             return super()._generate(messages, *args, **kwargs)
 
     return Spy(responses=[AIMessage(content="ok")]), seen
@@ -267,6 +257,55 @@ def test_context_middleware_no_memories_leaves_system_prompt_untouched():
     )
 
     assert seen["system"] == "BASE"
+
+
+def test_context_middleware_trims_the_request_seen_by_model_without_mutating_checkpoint(monkeypatch):
+    from langchain.agents import create_agent
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from langchain_core.messages.utils import count_tokens_approximately
+    from langgraph.checkpoint.memory import MemorySaver
+
+    import agent as agent_module
+
+    agent_module.clear_context_audit()
+    monkeypatch.setattr(agent_module, "_MAX_CONTEXT_TOKENS", 50)
+    monkeypatch.setattr(agent_module, "_MAX_TOOL_RESULT_CHARS", 20)
+
+    model, seen = _spy_model()
+    graph = create_agent(
+        model,
+        [],
+        system_prompt="BASE",
+        middleware=[agent_module._ContextMiddleware(thread_id="trim-real")],
+        checkpointer=MemorySaver(),
+    )
+    config = {"configurable": {"thread_id": "trim-real"}}
+    old_content = "ancien-tour:" + "x" * 240
+    messages = [
+        HumanMessage(content=old_content),
+        AIMessage(content="ancienne réponse"),
+        HumanMessage(content="question récente"),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "noop", "args": {}, "id": "call-1", "type": "tool_call"}],
+        ),
+        ToolMessage(content="résultat:" + "y" * 100, tool_call_id="call-1"),
+    ]
+
+    graph.invoke({"messages": messages}, config)
+
+    visible = [message for message in seen["messages"] if message.type != "system"]
+    assert all(old_content not in str(message.content) for message in visible)
+    assert [message.type for message in visible[:3]] == ["human", "ai", "tool"]
+    assert visible[1].tool_calls[0]["id"] == visible[2].tool_call_id
+    assert "tronqué" in visible[2].content
+
+    audit = agent_module.get_context_audit("trim-real")
+    assert audit["messages_after_trim"] == len(visible)
+    assert audit["approx_tokens_after_trim"] == count_tokens_approximately(visible)
+
+    checkpoint_messages = graph.get_state(config).values["messages"]
+    assert any(old_content in str(message.content) for message in checkpoint_messages)
 
 
 def test_system_prompt_is_grouped_by_routing_domain():
