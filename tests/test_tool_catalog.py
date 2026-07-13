@@ -20,6 +20,7 @@ from tools.tool_catalog import (
         ({"language": "en"}, "fr-CA", "en"),
         ({"locale": "fr-CA"}, "en-US", "fr"),
         (None, "en-US,en;q=0.9", "en"),
+        (None, "fr-CA;q=0,en-US;q=0.8", "en"),
         (None, "de-DE", "fr"),
         ({"language": "de"}, "en-CA", "en"),
         (None, None, "fr"),
@@ -77,6 +78,48 @@ def test_validate_catalog_rejects_source_result_without_source_identity(monkeypa
         validate_catalog({"source_tool"})
 
 
+@pytest.mark.parametrize(
+    "presentation",
+    [
+        ToolPresentation(
+            label=LocalizedText(fr="", en="Loading"),
+            family="data",
+        ),
+        ToolPresentation(
+            label=LocalizedText(fr="Chargement", en="Loading"),
+            family="",
+        ),
+        ToolPresentation(
+            label=LocalizedText(fr="Chargement", en="Loading"),
+            family="data",
+            progress=LocalizedText(fr="En cours", en=""),
+        ),
+    ],
+)
+def test_validate_catalog_rejects_incomplete_presentation(
+    monkeypatch,
+    presentation,
+):
+    monkeypatch.setattr(
+        tool_catalog,
+        "TOOL_PRESENTATION",
+        {"load_file": presentation},
+    )
+
+    with pytest.raises(ValueError, match="incomplete presentation.*load_file"):
+        validate_catalog({"load_file"})
+
+
+def test_presentation_builder_rejects_one_sided_progress_translation():
+    with pytest.raises(ValueError, match="progress requires both French and English"):
+        tool_catalog._presentation(
+            "Chargement",
+            "Loading",
+            "data",
+            progress_fr="En cours",
+        )
+
+
 def test_build_tool_catalog_has_exact_mandatory_tool_count(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
@@ -106,6 +149,26 @@ def test_build_tool_catalog_adds_exactly_three_optional_sql_tools(tmp_path, monk
         "preview_sql_table",
         "copy_sql_query_to_workspace",
     } <= catalog.names
+    assert all(
+        catalog.presentation(name).label.fr.strip()
+        and catalog.presentation(name).label.en.strip()
+        for name in {
+            "list_sql_tables",
+            "preview_sql_table",
+            "copy_sql_query_to_workspace",
+        }
+    )
+
+
+def test_build_tool_catalog_propagates_unexpected_sql_construction_error(monkeypatch):
+    monkeypatch.setattr(
+        tool_catalog,
+        "make_sql_tools",
+        lambda thread_id: (_ for _ in ()).throw(ValueError("invalid SQL catalog")),
+    )
+
+    with pytest.raises(ValueError, match="invalid SQL catalog"):
+        build_tool_catalog("catalog-invalid-sql")
 
 
 def test_build_tool_catalog_rejects_duplicate_runtime_names(monkeypatch):
@@ -160,3 +223,15 @@ def test_every_catalog_label_is_bilingual_and_hides_runtime_name(monkeypatch):
         assert presentation.label.en.strip()
         assert name not in presentation.label.fr
         assert name not in presentation.label.en
+
+
+def test_catalog_presentation_mappings_are_immutable(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    catalog = build_tool_catalog("catalog-immutable")
+
+    with pytest.raises(TypeError):
+        catalog.presentations["load_file"] = catalog.presentation("load_file")
+    with pytest.raises(TypeError):
+        tool_catalog.TOOL_PRESENTATION["load_file"] = catalog.presentation(
+            "load_file"
+        )

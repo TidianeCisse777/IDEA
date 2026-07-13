@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections import Counter
 
 
@@ -73,3 +74,30 @@ def test_complete_catalog_inventory_and_schema_budget(monkeypatch):
     }
     assert max(schema_tokens.values()) <= 1_600
     assert sum(schema_tokens.values()) <= 26_000
+
+
+def test_complete_catalog_with_sql_stays_within_schema_budget(
+    tmp_path,
+    monkeypatch,
+):
+    database_path = tmp_path / "catalog.sqlite"
+    connection = sqlite3.connect(database_path)
+    connection.execute("CREATE TABLE casts (id INTEGER PRIMARY KEY)")
+    connection.commit()
+    connection.close()
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("SQL_WORKSPACE_DIR", str(tmp_path / "workspace"))
+
+    from tools.tool_catalog import build_tool_catalog
+
+    catalog = build_tool_catalog("complete-schema-budget-sql")
+    schema_tokens = {
+        tool.name: _schema_tokens(tool) for tool in catalog.tools
+    }
+
+    assert len(catalog.tools) == len(catalog.names) == 58
+    assert sum(
+        catalog.presentation(name).family == "sql" for name in catalog.names
+    ) == 3
+    assert max(schema_tokens.values()) <= 1_600
+    assert sum(schema_tokens.values()) <= 28_000

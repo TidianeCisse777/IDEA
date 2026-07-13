@@ -27,6 +27,10 @@ _DEFAULT_MAX_COPY_ROWS = 100_000
 _POSTGRES_DIALECTS = {"postgresql"}
 _MYSQL_DIALECTS = {"mysql", "mariadb"}
 
+
+class SQLWorkspaceNotConfiguredError(ValueError):
+    """Raised when a conversation has no SQL workspace configuration."""
+
 def _sqlite_path_from_url(database_url: str) -> Path:
     parsed = urlparse(database_url)
     if parsed.scheme != "sqlite":
@@ -416,7 +420,7 @@ def resolve_sql_database_url(thread_id: str) -> str:
     if env_database_url:
         return env_database_url
 
-    raise ValueError(
+    raise SQLWorkspaceNotConfiguredError(
         "DATABASE_URL is required for SQL tools. Paste the SQLAlchemy URL in the conversation or set it in the local .env."
     )
 

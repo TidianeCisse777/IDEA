@@ -7,8 +7,9 @@ presentation layer. LLM routing remains exclusively in the system prompt.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Literal
 
 from langchain_core.tools import BaseTool
@@ -23,7 +24,7 @@ from tools.geo_tools import get_zone_info, make_geo_tools
 from tools.ogsl_sources import make_ogsl_tools
 from tools.rag_tool import make_rag_tool
 from tools.skill_tool import make_skill_tool
-from tools.sql_workspace import make_sql_tools
+from tools.sql_workspace import SQLWorkspaceNotConfiguredError, make_sql_tools
 from tools.taxonomy_tool import make_taxonomy_tool
 
 Language = Literal["fr", "en"]
@@ -60,9 +61,10 @@ class ToolCatalog:
 
     tools: tuple[BaseTool, ...]
     names: frozenset[str]
+    presentations: Mapping[str, ToolPresentation]
 
     def presentation(self, name: str) -> ToolPresentation | None:
-        return get_tool_presentation(name)
+        return self.presentations.get(name)
 
 
 def _text(fr: str, en: str) -> LocalizedText:
@@ -83,6 +85,18 @@ def _presentation(
     source_label: LocalizedText | None = None,
     source_url: str | None = None,
 ) -> ToolPresentation:
+    if not fr.strip() or not en.strip() or not family.strip():
+        raise ValueError("Tool presentation requires French, English, and family")
+    if bool(progress_fr and progress_fr.strip()) != bool(
+        progress_en and progress_en.strip()
+    ):
+        raise ValueError("progress requires both French and English")
+    if bool(progress_detail_fr and progress_detail_fr.strip()) != bool(
+        progress_detail_en and progress_detail_en.strip()
+    ):
+        raise ValueError("progress_detail requires both French and English")
+    if progress_detail_fr and not progress_fr:
+        raise ValueError("progress_detail requires progress")
     progress = None
     if progress_fr and progress_en:
         progress = _text(progress_fr, progress_en)
@@ -137,7 +151,7 @@ def _source(
     )
 
 
-TOOL_PRESENTATION: dict[str, ToolPresentation] = {
+TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     # Local workspace and analysis.
     "load_file": _presentation("Chargement de fichier", "File loading", "data", slow=True),
     "run_pandas": _presentation("Analyse du tableau", "Table analysis", "data"),
@@ -204,7 +218,7 @@ TOOL_PRESENTATION: dict[str, ToolPresentation] = {
     "list_sql_tables": _source("SQL · tables accessibles", "SQL · accessible tables", "sql", SQL_SOURCE, None),
     "preview_sql_table": _source("SQL · aperçu de table", "SQL · table preview", "sql", SQL_SOURCE, None),
     "copy_sql_query_to_workspace": _source("SQL · copie vers l’espace de travail", "SQL · copy to workspace", "sql", SQL_SOURCE, None),
-}
+})
 
 OPTIONAL_SQL_TOOL_NAMES = frozenset(
     {"list_sql_tables", "preview_sql_table", "copy_sql_query_to_workspace"}
@@ -214,12 +228,25 @@ OPTIONAL_SQL_TOOL_NAMES = frozenset(
 def _normalize_supported_language(value: object) -> Language | None:
     if not isinstance(value, str):
         return None
+    selected: Language | None = None
+    selected_quality = -1.0
     for preference in value.split(","):
-        token = preference.split(";", 1)[0].strip().lower().replace("_", "-")
+        parts = [part.strip() for part in preference.split(";")]
+        token = parts[0].lower().replace("_", "-")
         base = token.split("-", 1)[0]
-        if base in {"fr", "en"}:
-            return base  # type: ignore[return-value]
-    return None
+        if base not in {"fr", "en"}:
+            continue
+        quality = 1.0
+        for parameter in parts[1:]:
+            if parameter.lower().startswith("q="):
+                try:
+                    quality = float(parameter.split("=", 1)[1])
+                except ValueError:
+                    quality = 0.0
+        if quality > 0 and quality > selected_quality:
+            selected = base  # type: ignore[assignment]
+            selected_quality = quality
+    return selected
 
 
 def resolve_user_language(
@@ -270,6 +297,33 @@ def validate_catalog(
             "Tool catalog source identity missing: "
             + ", ".join(missing_source_identity)
         )
+    incomplete = []
+    for name in sorted(names | optional):
+        presentation = TOOL_PRESENTATION[name]
+        localized_values = [presentation.label]
+        if presentation.progress is not None:
+            localized_values.append(presentation.progress)
+        if presentation.progress_detail is not None:
+            localized_values.append(presentation.progress_detail)
+        if presentation.source_label is not None:
+            localized_values.append(presentation.source_label)
+        localized_complete = all(
+            value.fr.strip() and value.en.strip() for value in localized_values
+        )
+        progress_complete = not (
+            presentation.progress_detail is not None
+            and presentation.progress is None
+        )
+        if (
+            not presentation.family.strip()
+            or not localized_complete
+            or not progress_complete
+        ):
+            incomplete.append(name)
+    if incomplete:
+        raise ValueError(
+            "Tool catalog incomplete presentation: " + ", ".join(incomplete)
+        )
 
 
 def build_tool_catalog(thread_id: str) -> ToolCatalog:
@@ -292,7 +346,7 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
     sql_available = True
     try:
         tools.extend(make_sql_tools(thread_id))
-    except ValueError:
+    except SQLWorkspaceNotConfiguredError:
         sql_available = False
 
     name_counts = Counter(tool.name for tool in tools)
@@ -306,4 +360,10 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
         names,
         optional_names=() if sql_available else OPTIONAL_SQL_TOOL_NAMES,
     )
-    return ToolCatalog(tools=tuple(tools), names=names)
+    return ToolCatalog(
+        tools=tuple(tools),
+        names=names,
+        presentations=MappingProxyType(
+            {name: TOOL_PRESENTATION[name] for name in names}
+        ),
+    )
