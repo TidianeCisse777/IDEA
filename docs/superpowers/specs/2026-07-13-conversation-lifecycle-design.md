@@ -41,6 +41,14 @@ delete one dataset or alias.
 the store's public `keys()` interface, then delegates exact deletion to
 `clear()`. This removes both cached entries and their `.json`/`.pkl` files.
 
+Durable file addressing uses a bounded readable prefix followed by the full
+SHA-256 digest of the logical key. Distinct logical keys therefore cannot
+collide merely because filename sanitization maps their punctuation to the
+same characters. Existing files at the legacy sanitized paths remain
+readable only when the metadata's stored `session_key` exactly matches the
+requested key. A successful legacy load persists the DataFrame and metadata
+at the collision-resistant paths before removing that matching legacy pair.
+
 ### PostgreSQL-backed `SessionStorePG`
 
 `clear_conversation` provides the same observable contract. The metadata rows
@@ -98,4 +106,4 @@ or system prompt change is required.
 - Public or unauthenticated reset endpoints.
 - Open WebUI delete-event integration.
 - Deleting LangGraph checkpoints or long-term user memories.
-- Changing dataset key names or persistence formats.
+- Changing dataset key names or DataFrame serialization formats.

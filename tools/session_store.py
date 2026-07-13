@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -23,15 +24,27 @@ class SessionStore:
         self._storage_dir = Path(storage_dir or os.getenv("SESSION_STORE_DIR", "data/session_store"))
         self._storage_dir.mkdir(parents=True, exist_ok=True)
 
-    def _safe_thread_id(self, thread_id: str) -> str:
+    def _legacy_stem(self, thread_id: str) -> str:
         cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(thread_id).strip())
         return cleaned or "thread"
+
+    def _safe_thread_id(self, thread_id: str) -> str:
+        logical_key = str(thread_id)
+        readable_prefix = self._legacy_stem(logical_key)[:48]
+        digest = hashlib.sha256(logical_key.encode("utf-8")).hexdigest()
+        return f"{readable_prefix}--{digest}"
 
     def _data_path(self, thread_id: str) -> Path:
         return self._storage_dir / f"{self._safe_thread_id(thread_id)}.pkl"
 
     def _meta_path(self, thread_id: str) -> Path:
         return self._storage_dir / f"{self._safe_thread_id(thread_id)}.json"
+
+    def _legacy_data_path(self, thread_id: str) -> Path:
+        return self._storage_dir / f"{self._legacy_stem(thread_id)}.pkl"
+
+    def _legacy_meta_path(self, thread_id: str) -> Path:
+        return self._storage_dir / f"{self._legacy_stem(thread_id)}.json"
 
     def _persist(self, thread_id: str, df: pd.DataFrame | None, meta: dict) -> None:
         data_path = self._data_path(thread_id)
@@ -42,20 +55,56 @@ class SessionStore:
             encoding="utf-8",
         )
 
-    def _load_from_disk(self, thread_id: str) -> dict[str, Any] | None:
-        data_path = self._data_path(thread_id)
-        meta_path = self._meta_path(thread_id)
+    def _read_persisted_entry(
+        self,
+        thread_id: str,
+        data_path: Path,
+        meta_path: Path,
+    ) -> dict[str, Any] | None:
         if not meta_path.exists():
             return None
 
         try:
             payload = json.loads(meta_path.read_text(encoding="utf-8"))
-            meta = payload["meta"] if "session_key" in payload else payload
+            if not isinstance(payload, dict) or payload.get("session_key") != thread_id:
+                return None
+            meta = payload["meta"]
             df = pd.read_pickle(data_path) if data_path.exists() else None
         except Exception:
             return None
 
-        session = {"df": df, "meta": meta}
+        return {"df": df, "meta": meta}
+
+    def _remove_matching_legacy_entry(self, thread_id: str) -> None:
+        legacy_meta_path = self._legacy_meta_path(thread_id)
+        try:
+            payload = json.loads(legacy_meta_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return
+        if not isinstance(payload, dict) or payload.get("session_key") != thread_id:
+            return
+        with contextlib.suppress(FileNotFoundError):
+            self._legacy_data_path(thread_id).unlink()
+        with contextlib.suppress(FileNotFoundError):
+            legacy_meta_path.unlink()
+
+    def _load_from_disk(self, thread_id: str) -> dict[str, Any] | None:
+        session = self._read_persisted_entry(
+            thread_id,
+            self._data_path(thread_id),
+            self._meta_path(thread_id),
+        )
+        if session is None:
+            session = self._read_persisted_entry(
+                thread_id,
+                self._legacy_data_path(thread_id),
+                self._legacy_meta_path(thread_id),
+            )
+            if session is None:
+                return None
+            self._persist(thread_id, session["df"], session["meta"])
+            self._remove_matching_legacy_entry(thread_id)
+
         self._store[thread_id] = session
         return session
 
@@ -96,6 +145,7 @@ class SessionStore:
             self._data_path(thread_id).unlink()
         with contextlib.suppress(FileNotFoundError):
             self._meta_path(thread_id).unlink()
+        self._remove_matching_legacy_entry(thread_id)
 
     def clear_conversation(self, thread_id: str) -> None:
         prefix = f"{thread_id}:"
@@ -107,7 +157,14 @@ class SessionStore:
             self.clear(key)
 
     def has(self, thread_id: str) -> bool:
-        return thread_id in self._store or self._data_path(thread_id).exists()
+        if thread_id in self._store or self._data_path(thread_id).exists():
+            return True
+        legacy_session = self._read_persisted_entry(
+            thread_id,
+            self._legacy_data_path(thread_id),
+            self._legacy_meta_path(thread_id),
+        )
+        return legacy_session is not None and legacy_session["df"] is not None
 
 
 def _make_default_store() -> "SessionStore":

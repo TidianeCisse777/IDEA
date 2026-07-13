@@ -163,11 +163,11 @@ L'état d'une conversation est réparti sur trois supports :
 | Session store (`session_store*.py`) | DataFrames nommées, métadonnées de session | PostgreSQL si `SESSION_STORE_DATABASE_URL`, sinon fichiers locaux dans `data/` |
 | Store LangGraph | Mémoire long terme (préférences, contexte) | InMemory ou persistant |
 
-Une conversation portant le même `chat_id` reprend ses DataFrames et alias
-persistés après un redémarrage du serveur. Aucune requête ne réinitialise cet
-état implicitement. La remise à zéro interne passe par
-`clear_conversation(thread_id)`, qui supprime la clé active et toute sa famille
-`thread_id:*`; `clear(key)` reste une suppression ciblée.
+Une conversation portant la même identité utilisateur et le même `chat_id`
+reprend ses DataFrames et alias persistés après un redémarrage du serveur.
+Aucune requête ne réinitialise cet état implicitement. La remise à zéro interne
+passe par `clear_conversation(thread_id)`, qui supprime la clé active et toute
+sa famille `thread_id:*`; `clear(key)` reste une suppression ciblée.
 
 Les DataFrames de session sont référencées par variables explicites
 (`df_ecotaxa`, `df_ecopart`, `df_ecotaxa_ecopart_105`, `df_ctd`, `df_bio_oracle`,

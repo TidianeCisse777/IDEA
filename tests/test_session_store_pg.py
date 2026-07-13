@@ -77,6 +77,45 @@ def test_clear_conversation_deletes_literal_family_in_one_transaction(tmp_path):
 
 
 @_skip
+def test_clear_conversation_real_postgres_preserves_literal_neighbor(tmp_path):
+    from tools.session_store_pg import SessionStorePG
+
+    store = _fresh_store(tmp_path)
+    root = _key("contract_%_root")
+    child = f"{root}:dataset"
+    neighbor = f"{root}-neighbor"
+    sessions = {
+        root: (pd.DataFrame({"value": [1]}), {"owner": "exact"}),
+        child: (pd.DataFrame({"value": [2]}), {"owner": "child"}),
+        neighbor: (pd.DataFrame({"value": [3]}), {"owner": "neighbor"}),
+    }
+    try:
+        for key, (df, meta) in sessions.items():
+            store.set(key, df, meta)
+        paths = {key: store._pkl_path(key) for key in sessions}
+
+        store.clear_conversation(root)
+
+        assert root not in store._cache
+        assert child not in store._cache
+        assert neighbor in store._cache
+        assert not paths[root].exists()
+        assert not paths[child].exists()
+        assert paths[neighbor].exists()
+
+        restarted = SessionStorePG(_TEST_DSN, storage_dir=tmp_path / "pkl")
+        assert restarted.get(root) is None
+        assert restarted.get(child) is None
+        persisted_neighbor = restarted.get(neighbor)
+        assert persisted_neighbor is not None
+        assert persisted_neighbor["df"].equals(sessions[neighbor][0])
+        assert persisted_neighbor["meta"] == sessions[neighbor][1]
+    finally:
+        for key in sessions:
+            store.clear(key)
+
+
+@_skip
 def test_set_get_roundtrip(tmp_path):
     store = _fresh_store(tmp_path)
     df = pd.DataFrame({"profile_id": ["ips_001"], "depth": [12.5]})
