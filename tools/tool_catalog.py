@@ -49,6 +49,7 @@ class ToolPresentation:
     source_result: bool = False
     slow: bool = False
     progress: LocalizedText | None = None
+    progress_detail: LocalizedText | None = None
     source_label: LocalizedText | None = None
     source_url: str | None = None
 
@@ -77,18 +78,24 @@ def _presentation(
     slow: bool = False,
     progress_fr: str | None = None,
     progress_en: str | None = None,
+    progress_detail_fr: str | None = None,
+    progress_detail_en: str | None = None,
     source_label: LocalizedText | None = None,
     source_url: str | None = None,
 ) -> ToolPresentation:
     progress = None
     if progress_fr and progress_en:
         progress = _text(progress_fr, progress_en)
+    progress_detail = None
+    if progress_detail_fr and progress_detail_en:
+        progress_detail = _text(progress_detail_fr, progress_detail_en)
     return ToolPresentation(
         label=_text(fr, en),
         family=family,
         source_result=source_result,
         slow=slow,
         progress=progress,
+        progress_detail=progress_detail,
         source_label=source_label,
         source_url=source_url,
     )
@@ -112,6 +119,8 @@ def _source(
     slow: bool = False,
     progress_fr: str | None = None,
     progress_en: str | None = None,
+    progress_detail_fr: str | None = None,
+    progress_detail_en: str | None = None,
 ) -> ToolPresentation:
     return _presentation(
         fr,
@@ -121,6 +130,8 @@ def _source(
         slow=slow,
         progress_fr=progress_fr,
         progress_en=progress_en,
+        progress_detail_fr=progress_detail_fr,
+        progress_detail_en=progress_detail_en,
         source_label=source_label,
         source_url=source_url,
     )
@@ -133,7 +144,7 @@ TOOL_PRESENTATION: dict[str, ToolPresentation] = {
     "run_graph": _presentation("Génération du graphique", "Chart generation", "data"),
     # EcoTaxa.
     "find_ecotaxa_projects": _source("EcoTaxa · recherche de projets", "EcoTaxa · project search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "find_ecotaxa_samples_in_region": _source("EcoTaxa · samples par zone", "EcoTaxa · samples by region", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "find_ecotaxa_samples_in_region": _source("EcoTaxa · samples par zone / période", "EcoTaxa · samples by region / period", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "group_ecotaxa_samples_by_year": _source("EcoTaxa · samples par année", "EcoTaxa · samples by year", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "find_ecotaxa_projects_in_region": _source("EcoTaxa · projets par zone", "EcoTaxa · projects by region", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "group_ecotaxa_project_samples_by_region": _source("EcoTaxa · répartition régionale", "EcoTaxa · regional distribution", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
@@ -153,7 +164,7 @@ TOOL_PRESENTATION: dict[str, ToolPresentation] = {
     "query_ecotaxa": _source("EcoTaxa · export du projet", "EcoTaxa · project export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True, progress_fr="Export EcoTaxa en cours — cela peut prendre 1–2 minutes", progress_en="EcoTaxa export in progress — this may take 1–2 minutes"),
     "query_ecotaxa_sample": _source("EcoTaxa · export du sample", "EcoTaxa · sample export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True, progress_fr="Export du sample EcoTaxa en cours — cela peut prendre 1–2 minutes", progress_en="EcoTaxa sample export in progress — this may take 1–2 minutes"),
     "summarize_ecotaxa_sample": _source("EcoTaxa · résumé du sample", "EcoTaxa · sample summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "summarize_ecotaxa_samples": _source("EcoTaxa · résumé des samples", "EcoTaxa · samples summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "summarize_ecotaxa_samples": _source("EcoTaxa · résumé de samples", "EcoTaxa · samples summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_project": _source("EcoTaxa · résumé du projet", "EcoTaxa · project summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_projects": _source("EcoTaxa · résumé des projets", "EcoTaxa · projects summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "export_ecotaxa_samples": _source("EcoTaxa · export des samples", "EcoTaxa · samples export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True),
@@ -164,23 +175,23 @@ TOOL_PRESENTATION: dict[str, ToolPresentation] = {
     "couple_zooplankton_bio_oracle": _source("Bio-ORACLE · couplage environnemental", "Bio-ORACLE · environmental coupling", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap", slow=True),
     "query_bio_oracle_zones": _source("Bio-ORACLE · extraction par zones", "Bio-ORACLE · zone extraction", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
     "find_bio_oracle_data_for_table": _source("Bio-ORACLE · disponibilité pour le tableau", "Bio-ORACLE · availability for table", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
-    "enrich_with_bio_oracle": _source("Bio-ORACLE · enrichissement du tableau", "Bio-ORACLE · table enrichment", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap", slow=True, progress_fr="Préparation de l’enrichissement Bio-ORACLE", progress_en="Preparing Bio-ORACLE enrichment"),
+    "enrich_with_bio_oracle": _source("Bio-ORACLE · enrichissement du tableau", "Bio-ORACLE · table enrichment", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap", slow=True, progress_fr="Préparation de l’enrichissement Bio-ORACLE", progress_en="Preparing Bio-ORACLE enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     # Amundsen CTD.
     "list_amundsen_datasets": _source("Amundsen · jeux de données CTD", "Amundsen · CTD datasets", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap"),
     "preview_amundsen_profile": _source("Amundsen · aperçu du profil CTD", "Amundsen · CTD profile preview", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap"),
     "query_amundsen_ctd": _source("Amundsen · extraction CTD", "Amundsen · CTD extraction", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Extraction Amundsen CTD en cours — cela peut prendre 1–2 minutes", progress_en="Amundsen CTD extraction in progress — this may take 1–2 minutes"),
     "find_amundsen_data_for_table": _source("Amundsen · disponibilité pour le tableau", "Amundsen · availability for table", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap"),
-    "enrich_loaded_table_with_amundsen_ctd": _source("Amundsen · enrichissement du tableau chargé", "Amundsen · loaded table enrichment", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Préparation de l’enrichissement CTD", progress_en="Preparing CTD enrichment"),
-    "enrich_with_amundsen_ctd": _source("Amundsen · enrichissement CTD", "Amundsen · CTD enrichment", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Préparation de l’enrichissement CTD", progress_en="Preparing CTD enrichment"),
+    "enrich_loaded_table_with_amundsen_ctd": _source("Amundsen · enrichissement du tableau chargé", "Amundsen · loaded table enrichment", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Préparation de l’enrichissement CTD", progress_en="Preparing CTD enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
+    "enrich_with_amundsen_ctd": _source("Amundsen · enrichissement CTD", "Amundsen · CTD enrichment", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Préparation de l’enrichissement CTD", progress_en="Preparing CTD enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     # OGSL.
     "query_ogsl": _source("OGSL · extraction CTD", "OGSL · CTD extraction", "ogsl", OGSL_SOURCE, "https://erddap.ogsl.ca/erddap", slow=True),
-    "enrich_with_ogsl": _source("OGSL · enrichissement CTD", "OGSL · CTD enrichment", "ogsl", OGSL_SOURCE, "https://erddap.ogsl.ca/erddap", slow=True, progress_fr="Préparation de l’enrichissement OGSL", progress_en="Preparing OGSL enrichment"),
+    "enrich_with_ogsl": _source("OGSL · enrichissement CTD", "OGSL · CTD enrichment", "ogsl", OGSL_SOURCE, "https://erddap.ogsl.ca/erddap", slow=True, progress_fr="Préparation de l’enrichissement OGSL", progress_en="Preparing OGSL enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     # EcoPart.
     "list_ecopart_samples": _source("EcoPart · samples accessibles", "EcoPart · accessible samples", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     "preview_ecopart_sample": _source("EcoPart · aperçu du sample", "EcoPart · sample preview", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     "query_ecopart": _source("EcoPart · extraction", "EcoPart · extraction", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr", slow=True, progress_fr="Téléchargement EcoPart en cours — cela peut prendre 1–2 minutes", progress_en="EcoPart download in progress — this may take 1–2 minutes"),
     "join_ecotaxa_ecopart": _source("EcoTaxa/EcoPart · jumelage", "EcoTaxa/EcoPart · join", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
-    "enrich_ecotaxa_with_ecopart_remote": _source("EcoTaxa/EcoPart · enrichissement distant", "EcoTaxa/EcoPart · remote enrichment", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr", slow=True, progress_fr="Préparation du jumelage EcoTaxa/EcoPart", progress_en="Preparing EcoTaxa/EcoPart join"),
+    "enrich_ecotaxa_with_ecopart_remote": _source("EcoTaxa/EcoPart · enrichissement distant", "EcoTaxa/EcoPart · remote enrichment", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr", slow=True, progress_fr="Préparation du jumelage EcoTaxa/EcoPart", progress_en="Preparing EcoTaxa/EcoPart join", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     "find_ecopart_project_for_ecotaxa": _source("EcoPart · projet correspondant", "EcoPart · matching project", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     # Geography and core services.
     "filter_dataframe_by_zone": _presentation("Filtrage géographique", "Geographic filtering", "geography"),

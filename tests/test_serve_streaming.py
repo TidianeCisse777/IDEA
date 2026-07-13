@@ -32,17 +32,43 @@ def test_sse_chunk_stop_has_no_content_key():
     assert payload["choices"][0]["finish_reason"] == "stop"
 
 
-def test_format_tool_line_contains_name_in_summary():
+def test_format_tool_line_contains_user_label_in_summary():
     from serve import _format_tool_line
     line = _format_tool_line("load_file")
-    assert "<summary>load_file</summary>" in line
+    assert "<summary>Chargement de fichier</summary>" in line
+    assert "load_file" not in line
     assert "<details>" in line
+
+
+def test_format_tool_line_uses_bilingual_label_without_internal_name():
+    from serve import _format_tool_line
+
+    french = _format_tool_line(
+        "load_file", {"path": "/tmp/stations.tsv"}, language="fr"
+    )
+    english = _format_tool_line(
+        "load_file", {"path": "/tmp/stations.tsv"}, language="en"
+    )
+
+    assert "load_file" not in french + english
+    assert "<summary>Chargement de fichier</summary>" in french
+    assert "<summary>File loading</summary>" in english
+
+
+def test_format_unknown_tool_uses_generic_label_without_internal_name():
+    from serve import _format_tool_line
+
+    block = _format_tool_line("private_unknown_tool", language="en")
+
+    assert "private_unknown_tool" not in block
+    assert "<summary>Operation</summary>" in block
 
 
 def test_format_tool_line_skill():
     from serve import _format_tool_line
     line = _format_tool_line("skill_tool")
-    assert "skill_tool" in line
+    assert "<summary>Opération</summary>" in line
+    assert "skill_tool" not in line
 
 
 def test_is_data_source_tool_recognizes_known_sources():
@@ -63,6 +89,28 @@ def test_is_data_source_tool_recognizes_known_sources():
     assert not _is_data_source_tool("run_graph")
     assert not _is_data_source_tool("load_file")
     assert not _is_data_source_tool("load_skill")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "enrich_ecotaxa_with_ecopart_remote",
+        "enrich_with_amundsen_ctd",
+        "enrich_with_bio_oracle",
+        "enrich_with_ogsl",
+        "find_amundsen_data_for_table",
+        "find_bio_oracle_data_for_table",
+        "find_ecopart_project_for_ecotaxa",
+        "group_ecotaxa_project_samples_by_region",
+        "group_ecotaxa_samples_by_year",
+        "rank_ecotaxa_samples_by_region",
+        "search_ecotaxa_taxa",
+    ],
+)
+def test_is_data_source_tool_includes_canonical_discovery_and_enrichment(name):
+    from serve import _is_data_source_tool
+
+    assert _is_data_source_tool(name)
 
 
 def test_normalize_postgres_dsn_for_langgraph_strips_sqlalchemy_driver():
@@ -181,12 +229,29 @@ def test_format_tool_result_details_skips_sample_link_without_project():
     assert "?samples=" not in block
 
 
-def test_format_tool_result_details_non_ecotaxa_tool_keeps_raw_name():
+def test_format_tool_result_details_non_ecotaxa_tool_uses_catalog_label():
     from serve import _format_tool_result_details
     block = _format_tool_result_details("query_bio_oracle", "any content")
-    # Tools non-EcoTaxa : bloc <details> avec le nom brut du tool (sans emoji ni <code>).
-    assert "Résultat de query_bio_oracle" in block
+    assert "<summary>Bio-ORACLE · extraction</summary>" in block
+    assert "query_bio_oracle" not in block
     assert "<details>" in block
+
+
+def test_format_tool_result_details_uses_bilingual_source_label():
+    from serve import _format_tool_result_details
+
+    french = _format_tool_result_details(
+        "query_bio_oracle", "résultat", language="fr"
+    )
+    english = _format_tool_result_details(
+        "query_bio_oracle", "result", language="en"
+    )
+
+    assert "query_bio_oracle" not in french + english
+    assert "<summary>Bio-ORACLE · extraction</summary>" in french
+    assert "<summary>Bio-ORACLE · extraction</summary>" in english
+    assert "*Source : Bio-ORACLE" in french
+    assert "*Source: Bio-ORACLE" in english
 
 
 def test_format_tool_result_details_shows_cache_status_banners():
@@ -215,11 +280,11 @@ def test_format_tool_line_run_graph_with_code_uses_details():
     from serve import _format_tool_line
     code = "plt.scatter(df['lon'], df['lat'])\nplt.show()"
     line = _format_tool_line("run_graph", {"code": code})
-    assert "run_graph" in line
+    assert "run_graph" not in line
     assert "plt.scatter" in line
     assert "```python" in line
     assert "<details>" in line
-    assert "<summary>run_graph</summary>" in line
+    assert "<summary>Génération du graphique</summary>" in line
 
 
 def test_format_tool_line_run_graph_shows_loading_indicator():
@@ -241,7 +306,7 @@ def test_format_tool_line_run_graph_without_code_no_loading_indicator():
     """run_graph sans code → pas d'indicateur (pas de génération en cours)."""
     from serve import _format_tool_line
     line = _format_tool_line("run_graph", {})
-    assert "Génération" not in line
+    assert "*Génération du graphique…*" not in line
     assert "<details>" in line
 
 
@@ -250,17 +315,18 @@ def test_format_tool_line_run_pandas_with_code_uses_details():
     from serve import _format_tool_line
     code = "df.groupby('station').mean()"
     line = _format_tool_line("run_pandas", {"code": code})
-    assert "run_pandas" in line
+    assert "run_pandas" not in line
     assert "df.groupby" in line
     assert "<details>" in line
-    assert "<summary>run_pandas</summary>" in line
+    assert "<summary>Analyse du tableau</summary>" in line
 
 
 def test_format_tool_line_run_graph_without_code_fallback():
     """run_graph sans args → fallback simple en bloc <details>."""
     from serve import _format_tool_line
     line = _format_tool_line("run_graph", {})
-    assert "<summary>run_graph</summary>" in line
+    assert "<summary>Génération du graphique</summary>" in line
+    assert "run_graph" not in line
     assert "<details>" in line
     assert "Paramètres : —" in line
 
@@ -269,7 +335,8 @@ def test_format_tool_line_load_file_shows_filename():
     """load_file avec path → affiche le nom de fichier, pas le chemin complet."""
     from serve import _format_tool_line
     line = _format_tool_line("load_file", {"path": "/tmp/webui_uploads/stations.tsv"})
-    assert "load_file" in line
+    assert "load_file" not in line
+    assert "Chargement de fichier" in line
     assert "stations.tsv" in line
     assert "<details>" in line
 
@@ -278,7 +345,8 @@ def test_format_tool_line_skill_shows_skill_name():
     """load_skill avec skill_name → affiche le nom du skill."""
     from serve import _format_tool_line
     line = _format_tool_line("load_skill", {"skill_name": "map_stations"})
-    assert "load_skill" in line
+    assert "load_skill" not in line
+    assert "Chargement des instructions spécialisées" in line
     assert "map_stations" in line
     assert "<details>" in line
 
@@ -288,10 +356,10 @@ def test_format_tool_line_shows_generic_tool_parameters():
 
     line = _format_tool_line("get_zone_info", {"zone_name": "Baie de Baffin"})
 
-    assert "get_zone_info" in line
+    assert "get_zone_info" not in line
     assert "zone_name=`Baie de Baffin`" in line
     assert "<details>" in line
-    assert "<summary>get_zone_info</summary>" in line
+    assert "<summary>Information géographique</summary>" in line
 
 
 def test_format_tool_line_shows_nested_ecotaxa_filters():
@@ -306,7 +374,8 @@ def test_format_tool_line_shows_nested_ecotaxa_filters():
         },
     )
 
-    assert "find_ecotaxa_samples_in_region" in line
+    assert "find_ecotaxa_samples_in_region" not in line
+    assert "EcoTaxa · samples par zone / période" in line
     assert "zone_name=`Baie de Baffin`" in line
     assert "instrument=`Loki`" in line
     assert 'date_range=`{"from": "2024-01-01", "to": "2024-12-31"}`' in line
@@ -339,8 +408,8 @@ def test_format_tool_line_query_ecotaxa_shows_waiting_message():
         {"project_id": 14622, "sample_ids": [14622000001, 14622000002], "status": "V"},
     )
 
-    assert "query_ecotaxa" in line
-    assert "<summary>query_ecotaxa</summary>" in line
+    assert "query_ecotaxa" not in line
+    assert "<summary>EcoTaxa · export du projet</summary>" in line
     assert "project_id=`14622`" in line
     assert "sample_ids=`[14622000001, 14622000002]`" in line
     assert "status=`V`" in line
@@ -357,11 +426,11 @@ def test_format_tool_line_query_ecotaxa_sample_shows_waiting_message():
         {"sample_id": 42000002, "status": "V"},
     )
 
-    assert "query_ecotaxa_sample" in line
-    assert "<summary>query_ecotaxa_sample</summary>" in line
+    assert "query_ecotaxa_sample" not in line
+    assert "<summary>EcoTaxa · export du sample</summary>" in line
     assert "sample_id=`42000002`" in line
     assert "status=`V`" in line
-    assert "Export EcoTaxa sample en cours" in line
+    assert "Export du sample EcoTaxa en cours" in line
     assert "%" not in line
 
 
@@ -374,8 +443,8 @@ def test_format_tool_line_query_ecopart_shows_waiting_message():
         {"project_id": 105},
     )
 
-    assert "query_ecopart" in line
-    assert "<summary>query_ecopart</summary>" in line
+    assert "query_ecopart" not in line
+    assert "<summary>EcoPart · extraction</summary>" in line
     assert "project_id=`105`" in line
     assert "Téléchargement EcoPart" in line
     assert "%" not in line
@@ -390,12 +459,12 @@ def test_format_tool_line_query_bio_oracle_shows_waiting_message():
         {"scenario": "SSP245", "depth_layer": "depthsurf", "variable": "temperature"},
     )
 
-    assert "query_bio_oracle" in line
-    assert "<summary>query_bio_oracle</summary>" in line
+    assert "query_bio_oracle" not in line
+    assert "<summary>Bio-ORACLE · extraction</summary>" in line
     assert "scenario=`SSP245`" in line
     assert "depth_layer=`depthsurf`" in line
     assert "variable=`temperature`" in line
-    assert "Export Bio-ORACLE en cours" in line
+    assert "Extraction Bio-ORACLE en cours" in line
     assert "%" not in line
 
 
@@ -408,11 +477,11 @@ def test_format_tool_line_query_amundsen_shows_waiting_message():
         {"station": "BRK-15", "cast_number": 7},
     )
 
-    assert "query_amundsen_ctd" in line
-    assert "<summary>query_amundsen_ctd</summary>" in line
+    assert "query_amundsen_ctd" not in line
+    assert "<summary>Amundsen · extraction CTD</summary>" in line
     assert "station=`BRK-15`" in line
     assert "cast_number=`7`" in line
-    assert "Export Amundsen CTD en cours" in line
+    assert "Extraction Amundsen CTD en cours" in line
     assert "%" not in line
 
 
@@ -425,9 +494,9 @@ def test_format_tool_line_enrich_with_bio_oracle_shows_progress_panel():
         {"scenario": "SSP245", "depth_layer": "depthsurf", "variable": "temperature"},
     )
 
-    assert "enrich_with_bio_oracle" in line
-    assert "<summary>enrich_with_bio_oracle</summary>" in line
-    assert "Préparation de l'enrichissement Bio-ORACLE" in line
+    assert "enrich_with_bio_oracle" not in line
+    assert "<summary>Bio-ORACLE · enrichissement du tableau</summary>" in line
+    assert "Préparation de l’enrichissement Bio-ORACLE" in line
     assert "Le cache de données sera vérifié automatiquement" in line
     assert "%" not in line
 
@@ -495,7 +564,8 @@ async def test_stream_tool_call_then_final_response():
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
     full = "".join(chunks)
 
-    assert "load_file" in full
+    assert "Chargement de fichier" in full
+    assert "load_file" not in full
     assert "Voici les données." in full
 
 
@@ -535,8 +605,8 @@ async def test_stream_multiple_tool_calls():
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
     full = "".join(chunks)
 
-    idx_load = full.index("load_file")
-    idx_graph = full.index("run_graph")
+    idx_load = full.index("Chargement de fichier")
+    idx_graph = full.index("Génération du graphique")
     assert idx_load < idx_graph
 
 
@@ -631,7 +701,8 @@ async def test_stream_emits_keepalive_for_slow_tool(monkeypatch):
     chunks = [c async for c in _stream_agent_sse(agent, {}, {}, "tid-test")]
     full = "".join(chunks)
 
-    assert "enrich_with_bio_oracle" in full
+    assert "Bio-ORACLE · enrichissement du tableau" in full
+    assert "enrich_with_bio_oracle" not in full
     # Keepalive émis pendant l'attente du tool lent (commentaire SSE ignoré par le client).
     assert ": keepalive" in full
     assert "Terminé." in full

@@ -37,6 +37,10 @@ from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_work
 from tools.session_store import default_store
 from tools.run_store import default_run_store
 from tools.feedback import submit_feedback
+from tools.tool_catalog import (
+    get_tool_presentation,
+    resolve_user_language,
+)
 from openwebui.feedback_pipeline import (
     fetch_openwebui_feedback_export as _owui_fetch,
     sync_openwebui_feedback_export as _owui_sync,
@@ -483,7 +487,27 @@ async def _quick_sse_response(content: str) -> AsyncGenerator[str, None]:
     yield "data: [DONE]\n\n"
 
 
-def _format_tool_line(name: str, args: dict | None = None) -> str:
+def _ui(language: str, fr: str, en: str) -> str:
+    return en if language == "en" else fr
+
+
+def _tool_label(name: str, language: str) -> str:
+    presentation = get_tool_presentation(name)
+    if presentation is None:
+        return _ui(language, "Opération", "Operation")
+    return presentation.label.for_language(language)
+
+
+def _parameters_prefix(language: str) -> str:
+    return _ui(language, "Paramètres :", "Parameters:")
+
+
+def _format_tool_line(
+    name: str,
+    args: dict | None = None,
+    *,
+    language: str = "fr",
+) -> str:
     """Formate une étape outil pour le stream SSE.
 
     - run_graph / run_pandas : bloc replié avec le code Python
@@ -493,102 +517,48 @@ def _format_tool_line(name: str, args: dict | None = None) -> str:
     """
     args = args or {}
 
+    label = _tool_label(name, language)
+    presentation = get_tool_presentation(name)
+
     if name in ("run_graph", "run_pandas") and "code" in args:
         code = args["code"]
         body = f"```python\n{code}\n```"
         if name == "run_graph":
-            body = f"{body}\n\n*Génération du graphique...*"
-        return _format_tool_call_details(name, body)
+            body = f"{body}\n\n*{_ui(language, 'Génération du graphique…', 'Generating chart…')}*"
+        return _format_tool_call_details(label, body)
 
     if name == "load_file" and "path" in args:
         filename = Path(args["path"]).name
-        return _format_tool_call_details(name, f"Paramètres : path=`{filename}`")
+        return _format_tool_call_details(
+            label, f"{_parameters_prefix(language)} path=`{filename}`"
+        )
 
     if name == "load_skill" and "skill_name" in args:
         skill = args["skill_name"]
-        return _format_tool_call_details(name, f"Paramètres : skill_name=`{skill}`")
-
-    if name in _ENRICHMENT_PROGRESS_LABELS:
-        return _format_enrichment_progress_panel(name, args)
-
-    if name in ("query_ecotaxa", "query_ecotaxa_sample", "query_ecopart"):
-        params = _format_tool_call_params(args)
-        body = f"Paramètres : {params}" if params else ""
-        if name == "query_ecotaxa":
-            status = "Export EcoTaxa en cours — cela peut prendre 1–2 minutes..."
-        elif name == "query_ecotaxa_sample":
-            status = "Export EcoTaxa sample en cours — cela peut prendre 1–2 minutes..."
-        else:
-            status = "Téléchargement EcoPart en cours — cela peut prendre 1–2 minutes..."
-        body = f"{body}\n\n*{status}*".strip()
-        return (
-            _format_tool_call_details(
-                name,
-                body,
-                summary_note="export EcoTaxa en cours",
-            )
-        )
-
-    if name == "export_ecotaxa_samples":
-        params = _format_tool_call_params(args)
-        body = f"Paramètres : {params}" if params else ""
-        # Only the real export (confirmed=true) is slow; the confirmed=false
-        # dry-run returns instantly and must not advertise a running export.
-        if args and args.get("confirmed"):
-            body = f"{body}\n\n*Export EcoTaxa (sélection) en cours — cela peut prendre 1–2 minutes...*".strip()
-            return _format_tool_call_details(name, body, summary_note="export EcoTaxa en cours")
-        return _format_tool_call_details(name, body)
-
-    if name in ("query_bio_oracle", "couple_zooplankton_bio_oracle"):
-        params = _format_tool_call_params(args)
-        body = f"Paramètres : {params}" if params else ""
-        body = f"{body}\n\n*Export Bio-ORACLE en cours — cela peut prendre 1–2 minutes...*".strip()
-        return (
-            _format_tool_call_details(name, body, summary_note="export Bio-ORACLE en cours")
-        )
-
-    if name == "query_amundsen_ctd":
-        params = _format_tool_call_params(args)
-        body = f"Paramètres : {params}" if params else ""
-        body = f"{body}\n\n*Export Amundsen CTD en cours — cela peut prendre 1–2 minutes...*".strip()
-        return (
-            _format_tool_call_details(name, body, summary_note="export Amundsen CTD en cours")
+        return _format_tool_call_details(
+            label, f"{_parameters_prefix(language)} skill_name=`{skill}`"
         )
 
     params = _format_tool_call_params(args)
-    body = f"Paramètres : {params}" if params else "Paramètres : —"
-    return _format_tool_call_details(name, body)
+    parameters = _parameters_prefix(language)
+    body = f"{parameters} {params}" if params else f"{parameters} —"
+    show_progress = presentation is not None and presentation.progress is not None
+    if name == "export_ecotaxa_samples" and not args.get("confirmed"):
+        show_progress = False
+    if show_progress:
+        body += f"\n\n*{presentation.progress.for_language(language)}*"
+        if presentation.progress_detail is not None:
+            body += f"\n\n{presentation.progress_detail.for_language(language)}"
+    return _format_tool_call_details(label, body)
 
 
-def _format_tool_call_details(name: str, body: str, *, summary_note: str = "") -> str:
+def _format_tool_call_details(label: str, body: str) -> str:
     return (
         "\n<details>\n"
-        f"<summary>{name}</summary>\n\n"
+        f"<summary>{label}</summary>\n\n"
         f"{body}\n\n"
         "</details>\n"
     )
-
-
-_ENRICHMENT_PROGRESS_LABELS = {
-    "enrich_loaded_table_with_amundsen_ctd": "Préparation de l'enrichissement CTD",
-    "enrich_with_amundsen_ctd": "Préparation de l'enrichissement CTD",
-    "enrich_with_bio_oracle": "Préparation de l'enrichissement Bio-ORACLE",
-    "enrich_ecotaxa_with_ecopart_remote": "Préparation du jumelage EcoTaxa/EcoPart",
-    "enrich_with_ogsl": "Préparation de l'enrichissement OGSL",
-}
-
-def _format_enrichment_progress_panel(name: str, args: dict | None = None) -> str:
-    args = args or {}
-    label = _ENRICHMENT_PROGRESS_LABELS.get(name, "Préparation de l'enrichissement")
-    params = _format_tool_call_params(args)
-    body = f"*{label}…*"
-    if params:
-        body = f"Paramètres : {params}\n\n{body}"
-    body = (
-        f"{body}\n\n"
-        "Le cache de données sera vérifié automatiquement avant le calcul."
-    )
-    return _format_tool_call_details(name, body)
 
 
 _TOOL_LINE_OMITTED_ARGS = {
@@ -655,76 +625,38 @@ def _format_tool_arg_literal(value) -> str:
     return f"`{json.dumps(value, ensure_ascii=False, default=str)}`"
 
 
-_SLOW_TOOLS = frozenset({
-    "query_ecotaxa", "query_ecotaxa_sample", "export_ecotaxa_samples",
-    "query_ecopart", "query_amundsen_ctd",
-    "query_bio_oracle", "couple_zooplankton_bio_oracle", "query_ogsl",
-    "enrich_loaded_table_with_amundsen_ctd",
-    "enrich_with_amundsen_ctd",
-    "enrich_with_bio_oracle",
-    "enrich_ecotaxa_with_ecopart_remote",
-    "enrich_with_ogsl",
-    "load_file", "export_deliverable",
-})
 _HEARTBEAT_INTERVAL = 8.0  # seconds between SSE keepalive pings during slow tools
 
-# Tools whose textual result is shown inline in the SSE stream inside a
-# collapsible <details> block, so the user can inspect what the source actually
-# returned (tables, project lists, schema, download links). The agent already
-# paraphrases this in its final answer — the block is for transparency.
-_DATA_SOURCE_TOOL_PREFIXES = (
-    "list_ecotaxa", "preview_ecotaxa", "query_ecotaxa", "find_ecotaxa",
-    "inspect_ecotaxa", "count_ecotaxa", "compare_ecotaxa", "get_ecotaxa",
-    "summarize_ecotaxa", "export_ecotaxa",
-    "list_ecopart", "preview_ecopart", "query_ecopart", "join_ecotaxa_ecopart",
-    "list_amundsen", "preview_amundsen", "query_amundsen",
-    "enrich_loaded_table_with_amundsen",
-    "list_bio_oracle", "preview_bio_oracle", "query_bio_oracle",
-    "couple_zooplankton_bio_oracle",
-    "query_ogsl",
-    "list_sql", "preview_sql", "copy_sql",
-)
+
+def _is_slow_tool(name: str, args: dict | None = None) -> bool:
+    presentation = get_tool_presentation(name)
+    if presentation is None or not presentation.slow:
+        return False
+    if name == "export_ecotaxa_samples":
+        return bool((args or {}).get("confirmed"))
+    return True
 
 
 def _is_data_source_tool(name: str) -> bool:
-    return any(name == p or name.startswith(p) for p in _DATA_SOURCE_TOOL_PREFIXES)
+    presentation = get_tool_presentation(name)
+    return bool(presentation and presentation.source_result)
 
 
-# Libellés FR pour le <summary> du bloc collapsible — pas de nom interne
-# (cf. CLAUDE.md « pas de nom de tool exposé »).
 _ECOTAXA_BASE_URL = "https://ecotaxa.obs-vlfr.fr"
 
-_ECOTAXA_TOOL_LABELS = {
-    "find_ecotaxa_projects":           "EcoTaxa · recherche de projets",
-    "list_ecotaxa_projects":           "EcoTaxa · projets accessibles",
-    "preview_ecotaxa_project":         "EcoTaxa · aperçu de projet",
-    "query_ecotaxa":                   "EcoTaxa · export de projet",
-    "query_ecotaxa_sample":            "EcoTaxa · export de sample",
-    "inspect_ecotaxa_project_schema":  "EcoTaxa · schéma de projet",
-    "count_ecotaxa_taxa":              "EcoTaxa · comptage par taxon",
-    "inspect_ecotaxa_column":          "EcoTaxa · inspection de colonne",
-    "compare_ecotaxa_projects":        "EcoTaxa · comparaison de projets",
-    "find_ecotaxa_samples_in_region":  "EcoTaxa · samples par zone / période",
-    "find_ecotaxa_projects_in_region": "EcoTaxa · projets par zone / période",
-    "rank_ecotaxa_samples_by_region":  "EcoTaxa · classement samples par zone",
-    "find_ecotaxa_observations":       "EcoTaxa · observations par taxon",
-    "get_ecotaxa_sample":              "EcoTaxa · métadonnées de sample",
-    "summarize_ecotaxa_sample_deployment": "EcoTaxa · déploiement de sample",
-    "summarize_ecotaxa_samples":        "EcoTaxa · résumé de samples",
-    "summarize_ecotaxa_sample":         "EcoTaxa · résumé de sample",
-    "summarize_ecotaxa_projects":       "EcoTaxa · résumé de projets",
-    "summarize_ecotaxa_project":        "EcoTaxa · résumé de projet",
-    "export_ecotaxa_samples":           "EcoTaxa · export de samples",
-}
 
-
-def _format_args_summary(name: str, args: dict | None) -> str:
+def _format_args_summary(
+    name: str,
+    args: dict | None,
+    *,
+    language: str = "fr",
+) -> str:
     """Résume les arguments saillants d'un tool pour le titre du bloc."""
     if not args:
         return ""
     parts: list[str] = []
     if (project_id := args.get("project_id")) is not None:
-        parts.append(f"projet {project_id}")
+        parts.append(f"{_ui(language, 'projet', 'project')} {project_id}")
     if (sample_id := args.get("sample_id")) is not None:
         parts.append(f"sample {sample_id}")
     if zone := args.get("zone_name"):
@@ -815,7 +747,13 @@ def _linkify_ecotaxa(content: str) -> str:
     return "\n".join(lines)
 
 
-def _format_tool_result_details(name: str, content: str, args: dict | None = None) -> str:
+def _format_tool_result_details(
+    name: str,
+    content: str,
+    args: dict | None = None,
+    *,
+    language: str = "fr",
+) -> str:
     """Wrap a tool result in a collapsed <details> block for Open WebUI."""
     # Hide raw base64 image payloads (handled separately by image extraction).
     display = re.sub(
@@ -825,27 +763,49 @@ def _format_tool_result_details(name: str, content: str, args: dict | None = Non
     )
 
     if "CACHE_EMPTY" in display:
-        display = (
+        display = _ui(
+            language,
             "Cache EcoTaxa vide\n\n"
             "La synchronisation initiale n'a pas encore rempli le cache local.\n"
-            "Relancer l'enrichissement une fois la synchro terminée."
+            "Relancer l'enrichissement une fois la synchro terminée.",
+            "Empty EcoTaxa cache\n\n"
+            "The initial synchronization has not populated the local cache yet.\n"
+            "Retry the enrichment after synchronization completes.",
         )
     elif "SYNC_IN_PROGRESS" in display:
-        display = (
+        display = _ui(
+            language,
             "Synchronisation en cours\n\n"
             "La source est en train d'être synchronisée. "
-            "L'enrichissement reprendra quand le cache sera prêt."
+            "L'enrichissement reprendra quand le cache sera prêt.",
+            "Synchronization in progress\n\n"
+            "The source is being synchronized. "
+            "Enrichment will resume when the cache is ready.",
         )
 
-    is_ecotaxa = name in _ECOTAXA_TOOL_LABELS
+    presentation = get_tool_presentation(name)
+    is_ecotaxa = bool(presentation and presentation.family == "ecotaxa")
     if is_ecotaxa:
         display = _linkify_ecotaxa(display)
-        label = _ECOTAXA_TOOL_LABELS[name]
-        suffix = _format_args_summary(name, args)
-        summary = f"{label}" + (f" — {suffix}" if suffix else "")
-        source_line = f"\n\n*Source : EcoTaxa — [{_ECOTAXA_BASE_URL}]({_ECOTAXA_BASE_URL})*"
+    if presentation is not None:
+        label = presentation.label.for_language(language)
+        suffix = _format_args_summary(name, args, language=language)
+        summary = label + (f" — {suffix}" if suffix else "")
+        source_line = ""
+        if presentation.source_label is not None:
+            source_name = presentation.source_label.for_language(language)
+            source_prefix = _ui(language, "Source :", "Source:")
+            if presentation.source_url:
+                source_value = (
+                    f"[{presentation.source_url}]({presentation.source_url})"
+                )
+                source_line = (
+                    f"\n\n*{source_prefix} {source_name} — {source_value}*"
+                )
+            else:
+                source_line = f"\n\n*{source_prefix} {source_name}*"
     else:
-        summary = f"Résultat de {name}"
+        summary = _ui(language, "Résultat", "Result")
         source_line = ""
 
     return (
@@ -882,6 +842,7 @@ async def _stream_agent_sse(
     thread_id: str,
     last_user_text: str = "",
     user_id: str = "anonymous",
+    language: str = "fr",
 ) -> AsyncGenerator[str, None]:
     """Génère les chunks SSE depuis l'agent LangGraph (stream_mode='updates').
 
@@ -931,8 +892,17 @@ async def _stream_agent_sse(
                             if tc_id:
                                 shared["pending_tool_args"][tc_id] = tc_args
                                 shared["pending_tool_names"][tc_id] = name
-                            await chunk_queue.put(_make_sse_chunk(completion_id, _format_tool_line(name, tc_args)))
-                            shared["in_slow_tool"] = name in _SLOW_TOOLS
+                            await chunk_queue.put(
+                                _make_sse_chunk(
+                                    completion_id,
+                                    _format_tool_line(
+                                        name,
+                                        tc_args,
+                                        language=language,
+                                    ),
+                                )
+                            )
+                            shared["in_slow_tool"] = _is_slow_tool(name, tc_args)
 
                     elif node == "tools":
                         shared["in_slow_tool"] = False
@@ -959,7 +929,12 @@ async def _stream_agent_sse(
                             if tool_name and tool_content and _is_data_source_tool(tool_name):
                                 await chunk_queue.put(_make_sse_chunk(
                                     completion_id,
-                                    _format_tool_result_details(tool_name, tool_content, tool_args),
+                                    _format_tool_result_details(
+                                        tool_name,
+                                        tool_content,
+                                        tool_args,
+                                        language=language,
+                                    ),
                                 ))
         except Exception as exc:
             logger.error("stream_error thread=%s err=%s", thread_id, exc)
@@ -1044,6 +1019,10 @@ async def chat_completions(
     x_openwebui_user_role: str | None = Header(default=None, alias="X-OpenWebUI-User-Role"),
 ):
     user_id = x_openwebui_user_id if isinstance(x_openwebui_user_id, str) else "anonymous"
+    language = resolve_user_language(
+        req.metadata,
+        request.headers.get("accept-language"),
+    )
 
     # [DEBUG-f1a2] dump raw body — trouve où OpenWebUI met les infos fichier
     try:
@@ -1168,6 +1147,7 @@ async def chat_completions(
             "user_name": x_openwebui_user_name,
             "user_email": x_openwebui_user_email,
             "user_role": x_openwebui_user_role,
+            "language": language,
         },
         "callbacks": _request_callbacks(tid, openwebui_message_id, chat_id=x_openwebui_chat_id or req.chat_id),
     }
@@ -1178,7 +1158,15 @@ async def chat_completions(
     if req.stream:
         logger.info("thread=%s STREAM start", tid)
         return StreamingResponse(
-            _stream_agent_sse(agent, messages, config, tid, last_user_text=last_user_text, user_id=user_id),
+            _stream_agent_sse(
+                agent,
+                messages,
+                config,
+                tid,
+                last_user_text=last_user_text,
+                user_id=user_id,
+                language=language,
+            ),
             media_type="text/event-stream",
         )
 
