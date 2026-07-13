@@ -243,6 +243,8 @@ def _normalize_supported_language(value: object) -> Language | None:
                     quality = float(parameter.split("=", 1)[1])
                 except ValueError:
                     quality = 0.0
+                if not 0.0 <= quality <= 1.0:
+                    quality = 0.0
         if quality > 0 and quality > selected_quality:
             selected = base  # type: ignore[assignment]
             selected_quality = quality

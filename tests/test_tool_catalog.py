@@ -21,6 +21,7 @@ from tools.tool_catalog import (
         ({"locale": "fr-CA"}, "en-US", "fr"),
         (None, "en-US,en;q=0.9", "en"),
         (None, "fr-CA;q=0,en-US;q=0.8", "en"),
+        (None, "en-US;q=2", "fr"),
         (None, "de-DE", "fr"),
         ({"language": "de"}, "en-CA", "en"),
         (None, None, "fr"),
