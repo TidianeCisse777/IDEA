@@ -1628,6 +1628,74 @@ def test_group_ecotaxa_samples_by_year_station_filter_passed_through():
     assert captured["station"] == "St-27"
 
 
+def test_group_ecotaxa_samples_by_year_depth_filters_passed_through():
+    from unittest.mock import patch
+    captured = {}
+
+    def _fake(**kwargs):
+        captured.update(kwargs)
+        return {"years": [], "total_matching": 0, "n_years": 0,
+                "station": None, "sample_ids": [],
+                "partial": False, "sync_in_progress": False}
+
+    with patch("tools.copepod_sources.samples_by_year", side_effect=_fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-year-depth")
+        fn = next(t for t in tools if t.name == "group_ecotaxa_samples_by_year")
+        fn.invoke({
+            "zone_name": "Baie de Baffin",
+            "depth_min_gte": 50,
+            "depth_max_lt": 200,
+        })
+
+    assert captured["depth_min_gte"] == 50
+    assert captured["depth_max_lt"] == 200
+    assert captured["depth_max_gte"] is None
+    assert captured["depth_min_lt"] is None
+
+
+def test_group_ecotaxa_samples_by_year_depth_alone_is_a_valid_filter():
+    from unittest.mock import patch
+
+    def _fake(**kwargs):
+        return {"years": [], "total_matching": 0, "n_years": 0,
+                "station": None, "sample_ids": [],
+                "partial": False, "sync_in_progress": False}
+
+    with patch("tools.copepod_sources.samples_by_year", side_effect=_fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-year-depth-only")
+        fn = next(t for t in tools if t.name == "group_ecotaxa_samples_by_year")
+        result = fn.invoke({"depth_min_gte": 100, "depth_max_lt": 300})
+
+    # profondeur seule ne doit PAS déclencher l'erreur « au moins un filtre »
+    assert "filtre requis" not in result.lower()
+
+
+def test_group_ecotaxa_samples_by_year_stores_depth_in_selection_filters():
+    from unittest.mock import patch
+    fake = {
+        "years": [
+            {"year": 2018, "n_samples": 2, "n_stations": 1, "date_min": "2018-07-02",
+             "date_max": "2018-08-14", "instruments": ["UVP5"], "project_ids": [42],
+             "sample_ids": [1, 2]},
+        ],
+        "total_matching": 2, "n_years": 1, "station": None,
+        "sample_ids": [1, 2], "partial": False, "sync_in_progress": False,
+    }
+    with patch("tools.copepod_sources.samples_by_year", return_value=fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-year-depth-sel")
+        fn = next(t for t in tools if t.name == "group_ecotaxa_samples_by_year")
+        fn.invoke({"zone_name": "Baie de Baffin", "depth_min_gte": 50, "depth_max_lt": 200})
+
+    # la sélection mémorisée doit tracer la tranche de profondeur pour l'export
+    meta = _store.get("thread-year-depth-sel:ecotaxa_selection_latest")
+    filters = (meta or {}).get("meta", {}).get("filters", {})
+    assert filters.get("depth_min_gte") == 50
+    assert filters.get("depth_max_lt") == 200
+
+
 def test_add_year_column_from_object_date():
     import pandas as pd
     from tools.copepod_sources import _add_year_column

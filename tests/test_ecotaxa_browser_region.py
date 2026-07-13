@@ -676,3 +676,37 @@ def test_samples_by_year_dedupes_casts_into_one_station(cache_db):
     assert years[2015]["n_stations"] == 1   # ice camp, casts repliés
     assert years[2024]["n_samples"] == 3
     assert years[2024]["n_stations"] == 2   # RA25 (2 casts) + RA27
+
+
+def test_samples_by_year_depth_band_keeps_only_casts_in_band(cache_db):
+    """Une tranche de profondeur ne garde que les casts contenus dedans, par
+    année : brique du profil vertical d'abondance sur une zone à profondeur
+    précise (on ne regroupe que les samples de la bande visée)."""
+    from core.ecotaxa_browser.region import samples_by_year
+
+    _seed(cache_db, [
+        # 2022 : cast de surface (0–40 m), hors bande 50–200
+        {"sample_id": 1, "project_id": 42, "lat": 60.0, "lon": -80.0,
+         "date_min": "2022-07-02", "station_id": "st-27",
+         "depth_min": 0.0, "depth_max": 40.0},
+        # 2022 : cast mésopélagique (60–180 m), dans la bande [50, 200[
+        {"sample_id": 2, "project_id": 42, "lat": 60.1, "lon": -80.1,
+         "date_min": "2022-08-14", "station_id": "st-bb3",
+         "depth_min": 60.0, "depth_max": 180.0},
+        # 2023 : cast profond (120–500 m), depth_max déborde la bande → exclu
+        {"sample_id": 3, "project_id": 388, "lat": 60.0, "lon": -80.0,
+         "date_min": "2023-07-05", "station_id": "st-27",
+         "depth_min": 120.0, "depth_max": 500.0},
+        # profondeur inconnue → jamais dans une bande
+        {"sample_id": 4, "project_id": 388, "lat": 60.0, "lon": -80.0,
+         "date_min": "2023-07-06", "station_id": "st-27",
+         "depth_min": None, "depth_max": None},
+    ])
+    bbox = {"south": 55.0, "west": -95.0, "north": 65.0, "east": -75.0}
+    with _with_cache(cache_db):
+        result = samples_by_year(bbox=bbox, depth_min_gte=50, depth_max_lt=200)
+
+    all_ids = sorted(sid for y in result["years"] for sid in y["sample_ids"])
+    assert all_ids == [2]                       # seul le cast 60–180 m survit
+    assert [y["year"] for y in result["years"]] == [2022]
+    assert result["total_matching"] == 1

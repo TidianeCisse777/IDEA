@@ -1323,6 +1323,10 @@ def make_source_tools(thread_id: str) -> list:
         date_range: dict | None = None,
         instrument: str | None = None,
         project_ids: list[int] | None = None,
+        depth_max_lt: float | None = None,
+        depth_max_gte: float | None = None,
+        depth_min_lt: float | None = None,
+        depth_min_gte: float | None = None,
         month: int | None = None,
     ) -> str:
         """Regroupe par ANNÉE les samples EcoTaxa d'un lieu suivi dans la durée.
@@ -1349,27 +1353,43 @@ def make_source_tools(thread_id: str) -> list:
         la fenêtre d'années.
         `instrument`, `project_ids`, `month` : mêmes sémantiques que
         `find_ecotaxa_samples_in_region`.
+        `depth_max_lt` / `depth_max_gte` : filtre la profondeur **maximale**
+        atteinte par le sample (objet le plus profond). Pour « couverture
+        interannuelle des casts qui descendent sous 200 m », `depth_max_gte=200`.
+        `depth_min_lt` / `depth_min_gte` : filtre la profondeur **minimale** du
+        sample (objet le moins profond). Pour restreindre la vue interannuelle
+        à une tranche précise, combiner `depth_min_gte=A, depth_max_lt=B` →
+        ne garde que les samples dont le cast est contenu dans [A, B[ m (utile
+        pour un profil vertical d'abondance sur une bande de profondeur donnée).
+        Les samples sans profondeur connue ne matchent pas ces filtres.
 
         Renvoie un tableau année × (n_samples, n_stations, dates, instruments,
         projets) et **mémorise la sélection multi-années** pour un export
         ultérieur via `export_ecotaxa_samples(selection_name=...)`. Lecture du
         cache local — pas de download.
 
-        Au moins UN filtre de lieu/temps est requis (zone_name, station, bbox,
-        polygon_wkt, date_range, instrument, project_ids ou month).
+        Au moins UN filtre de lieu/temps/profondeur est requis (zone_name,
+        station, bbox, polygon_wkt, date_range, instrument, project_ids,
+        depth_*_lt/gte ou month).
         """
         if (zone_name is None and station is None and bbox is None
                 and polygon_wkt is None and date_range is None
-                and instrument is None and not project_ids and month is None):
+                and instrument is None and not project_ids and month is None
+                and depth_max_lt is None and depth_max_gte is None
+                and depth_min_lt is None and depth_min_gte is None):
             return (
                 "Erreur : au moins un filtre requis (zone_name, station, bbox, "
-                "polygon_wkt, date_range, instrument, project_ids ou month)."
+                "polygon_wkt, date_range, instrument, project_ids, profondeur "
+                "ou month)."
             )
         try:
             result = samples_by_year(
                 bbox=bbox, date_range=date_range, instrument=instrument,
                 polygon_wkt=polygon_wkt, zone_name=zone_name, station=station,
-                project_ids=project_ids, month=month,
+                project_ids=project_ids,
+                depth_max_lt=depth_max_lt, depth_max_gte=depth_max_gte,
+                depth_min_lt=depth_min_lt, depth_min_gte=depth_min_gte,
+                month=month,
             )
         except EcoTaxaBrowserError as exc:
             return f"Erreur EcoTaxa ({exc.code}) : {exc}"
@@ -1405,6 +1425,8 @@ def make_source_tools(thread_id: str) -> list:
                 "zone_name": zone_name, "station": station, "bbox": bbox,
                 "polygon_wkt": bool(polygon_wkt), "date_range": date_range,
                 "instrument": instrument, "project_ids": project_ids,
+                "depth_max_lt": depth_max_lt, "depth_max_gte": depth_max_gte,
+                "depth_min_lt": depth_min_lt, "depth_min_gte": depth_min_gte,
                 "month": month, "grouped_by": "year",
             },
         )
