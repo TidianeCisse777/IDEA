@@ -22,18 +22,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-from tools.data_tools import make_tools
-from tools.bio_oracle_sources import make_bio_oracle_tools
-from tools.amundsen_sources import make_amundsen_tools
-from tools.ogsl_sources import make_ogsl_tools
-from tools.ecopart_sources import make_ecopart_tools
-from tools.copepod_sources import make_source_tools
-from tools.sql_workspace import make_sql_tools
-from tools.rag_tool import make_rag_tool
-from tools.skill_tool import make_skill_tool
-from tools.taxonomy_tool import make_taxonomy_tool
-from tools.deliverable_tool import export_deliverable
-from tools.geo_tools import get_zone_info, make_geo_tools
+from tools.tool_catalog import build_tool_catalog
 
 load_dotenv()
 
@@ -376,30 +365,11 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         max_retries=2,
         max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "16000")),
     )
-    tools = (
-        make_tools(thread_id)
-        + make_source_tools(thread_id)
-        + make_bio_oracle_tools(thread_id)
-        + make_amundsen_tools(thread_id)
-        + make_ogsl_tools(thread_id)
-        + make_ecopart_tools(thread_id)
-        + make_geo_tools(thread_id)
-        + [
-            make_rag_tool(),
-            make_taxonomy_tool(),
-            make_skill_tool(thread_id=thread_id),
-            export_deliverable,
-            get_zone_info,
-        ]
-    )
-    try:
-        tools += make_sql_tools(thread_id)
-    except ValueError:
-        pass
+    catalog = build_tool_catalog(thread_id)
 
     return create_agent(
         llm,
-        tools,
+        list(catalog.tools),
         system_prompt=_SYSTEM_PROMPT,
         middleware=[_ContextMiddleware(user_id=user_id, thread_id=thread_id)],
         checkpointer=_checkpointer,

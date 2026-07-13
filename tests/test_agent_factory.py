@@ -80,6 +80,35 @@ def test_make_agent_registers_marine_taxonomy_tool():
     assert "lookup_marine_taxonomy" in captured["tool_names"]
 
 
+def test_make_agent_delegates_exact_tool_collection_to_catalog():
+    from langchain_core.tools import tool
+
+    @tool
+    def sentinel_catalog_tool() -> str:
+        """Return a sentinel value for the agent construction contract."""
+        return "sentinel"
+
+    catalog = MagicMock(tools=(sentinel_catalog_tool,))
+    captured = {}
+
+    def fake_create_agent(llm, tools, **kwargs):
+        captured["tools"] = tuple(tools)
+        return MagicMock()
+
+    with patch("agent.ChatOpenAI") as mock_llm, patch(
+        "agent.build_tool_catalog", return_value=catalog
+    ) as mock_build_catalog, patch(
+        "agent.create_agent", side_effect=fake_create_agent
+    ):
+        mock_llm.return_value = MagicMock()
+        from agent import make_agent
+
+        make_agent("thread-catalog")
+
+    mock_build_catalog.assert_called_once_with("thread-catalog")
+    assert captured["tools"] == catalog.tools
+
+
 # --- Comportement 2 : les 3 tools sont présents ---
 
 def test_agent_has_required_tools(tmp_path, monkeypatch):
