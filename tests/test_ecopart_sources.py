@@ -366,9 +366,9 @@ def test_enrich_remote_auto_loads_ecotaxa_when_project_named_but_not_in_session(
     from tools.session_store import default_store as _store
 
     _store._store.clear()  # NO EcoTaxa preloaded
-    # get() falls back to on-disk sessions, so also purge this thread's disk state.
-    for key in ("thread-autoload", "thread-autoload:ecotaxa"):
-        _store.clear(key)
+    # get() and project resolution fall back to named on-disk datasets, so purge
+    # the whole conversation family to model a genuinely empty session.
+    _store.clear_conversation("thread-autoload")
 
     mock_et = MagicMock()
     mock_et.start_export.return_value = "job-1"

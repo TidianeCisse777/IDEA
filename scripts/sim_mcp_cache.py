@@ -168,11 +168,24 @@ def _kept_db_path(n_projects, spp):
 
 
 def build_kept_db(n_projects, spp):
-    """Build (or reuse) a persistent sim cache and return its path."""
+    """Build (or reuse) a persistent sim cache and return its path.
+
+    Builds through the deferred-index first-fill path — same as what
+    run_full_sync now produces on an empty cache, and ~5x faster to seed.
+    """
     path = _kept_db_path(n_projects, spp)
     if not os.path.exists(path):
         conn = repo.open_connection(path)
-        build(conn, n_projects, spp)
+        repo.init_schema(conn)
+        with repo.deferred_secondary_indexes(conn):
+            now = _iso(0)
+            base = 1
+            for pid in range(1, n_projects + 1):
+                samples = _make_samples(pid, spp, base)
+                base += spp
+                repo.replace_project_samples(
+                    conn, project_id=pid, samples=samples, last_synced=now
+                )
         conn.close()
     return path
 

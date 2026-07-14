@@ -13,9 +13,64 @@ You are about to produce a structured scientific report from this session.
 
 ## Usage rule
 
-- After loading this skill, compile the full document from the conversation history, then call `export_deliverable(content=..., filename=...)` in the same turn.
+- After loading this skill, compile the full document and a `traceability_manifest` from the conversation history, then call `export_deliverable(content=..., filename=..., traceability_manifest=...)` in the same turn.
 - Do NOT ask the user to provide the content — extract it yourself from the session.
 - Write the document in the language of the conversation.
+- The manifest is the source of truth. Include only facts visible in user messages,
+  assistant messages, or tool results from the current conversation.
+- Never add a source because a citation template exists below. A source and its
+  citation are allowed only when that source was actually used in the session.
+
+## Traceability manifest
+
+Pass a dictionary with two lists:
+
+```json
+{
+  "study_context": {
+    "objective": "Scientific or analytical objective",
+    "geographic_scope": "Exact zone, or 'Non applicable' when no geographic scope exists",
+    "temporal_scope": "Exact period, or 'Non applicable' when no temporal scope exists",
+    "taxonomic_scope": "Taxon or identification scope",
+    "projects": ["Project identifiers actually used"],
+    "samples": ["Sample identifiers actually retained"],
+    "selection_criteria": "How projects, samples, dates, zones, and taxa were selected"
+  },
+  "sources": [
+    {
+      "name": "EcoTaxa — projet 17498",
+      "url": "https://ecotaxa.obs-vlfr.fr/prj/17498",
+      "citation": "APA citation for the source actually used"
+    }
+  ],
+  "operations": [
+    {
+      "category": "exploration | export | enrichissement | analyse | graphique",
+      "title": "Descriptive operation title",
+      "status": "réussie | partielle | échouée | annulée | non confirmée",
+      "source": "Exact source or session table",
+      "input": "Input dataset/table and scope",
+      "parameters": "Filters, variables, join keys, calculation",
+      "result": "Observed result, including an error or zero match",
+      "coverage": "Matched/total count when available",
+      "limitations": "Limit explicitly observed during this operation"
+    }
+  ]
+}
+```
+
+- Every `study_context` text field is required. Use `Non applicable` only when
+  the dimension genuinely does not apply; never use it to hide missing context.
+- Copy the geographic and temporal scope from the user's request and verified
+  tool results. Never infer a zone or period from memory.
+- List the exact project and sample identifiers retained by the workflow. Empty
+  lists are allowed only when no project/sample was selected.
+- Record every exploration, export, enrichment, analysis, and graph in chronological order.
+- Keep failed, partial, cancelled, and unconfirmed operations. Never report only successes.
+- For enrichment, always record coverage when the session provides it, including zero matches.
+- Use descriptive user-facing operation titles; do not expose internal tool names.
+- Every URL written in the References section must occur in `sources`. The exporter
+  rebuilds the final bibliography exclusively from this list and rejects undeclared URLs.
 
 ---
 
@@ -28,6 +83,11 @@ Produce a markdown document with the following sections, in order:
 
 *Date : [today's date]*
 
+## Cadre de l'étude
+
+[Automatically inserted from `study_context`: objective, geographic scope,
+temporal scope, taxonomic scope, projects, samples, and selection criteria.]
+
 ## 1. Contexte scientifique
 
 [What question was explored. What hypothesis. What data.]
@@ -35,11 +95,13 @@ Produce a markdown document with the following sections, in order:
 ## 2. Données et sources
 
 [Table: Source | Description | N lignes | Téléchargement]
-[List every query_ecotaxa / query_amundsen_ctd / query_bio_oracle / load_file call.]
+[List every data search or file load performed, using user-facing source names.]
 
 ## 3. Méthodes
 
-[Summarize the analytical steps: joins performed, pandas operations, derived variables.]
+[Detailed chronological account of exports, enrichments, joins, filters,
+calculations, and derived variables. State the input, parameters, result,
+coverage, status, and limitation of each step.]
 
 ## 4. Résultats
 
@@ -61,7 +123,7 @@ Produce a markdown document with the following sections, in order:
 
 ## 5. Limites
 
-[List every limitation mentioned or implied:]
+[List every limitation observed or explicitly mentioned:]
 - Jointure temporelle ou spatiale non vérifiée
 - Annotations non validées par un expert
 - Couverture partielle (stations, périodes)
@@ -74,7 +136,11 @@ Produce a markdown document with the following sections, in order:
 
 ---
 
-## APA citation templates
+## Conditional APA citation templates
+
+These templates are lookup aids, not a default bibliography. Use a template only
+when its corresponding source appears in the current conversation and in
+`traceability_manifest.sources`.
 
 **EcoTaxa:**
 > Picheral, M., Colin, S., & Irisson, J.-O. (2017). *EcoTaxa, a tool for the taxonomic classification of images*. SEANOE. https://doi.org/10.17882/55741
