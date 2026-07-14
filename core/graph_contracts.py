@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 
 _REQUIRED_FIELDS = {
     "kind",
@@ -38,6 +40,25 @@ def _declared_inversions(contract: dict) -> set[tuple[int, str]] | str:
             return _blocked("inverted_axes entries require axis_index and axis x/y")
         declared.add((axis_index, axis_name))
     return declared
+
+
+def _artist_by_gid(figure: Any, gid: str | None) -> Any | None:
+    if not gid:
+        return None
+    for artist in figure.findobj():
+        getter = getattr(artist, "get_gid", None)
+        if getter is not None and getter() == gid:
+            return artist
+    return None
+
+
+def _mapping_issue(contract: dict, figure: Any, name: str) -> str | None:
+    mapping = contract["mappings"].get(name)
+    if not isinstance(mapping, dict) or not mapping.get("variable"):
+        return _blocked(f"{name} mapping is missing")
+    if _artist_by_gid(figure, mapping.get("artist_gid")) is None:
+        return _blocked(f"{name} mapping artist is missing")
+    return None
 
 
 def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
@@ -85,6 +106,92 @@ def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
             return _blocked("abundance x-axis must remain normal")
         if declared.difference({(axis_index, "y")}):
             return _blocked("only the depth y-axis may be inverted")
+
+    if contract["kind"] == "environment_relationships":
+        panel_indexes = list(axes_by_index)
+        for position, left_index in enumerate(panel_indexes):
+            left = figure.axes[left_index]
+            for right_index in panel_indexes[position + 1:]:
+                right = figure.axes[right_index]
+                if (
+                    left.get_shared_x_axes().joined(left, right)
+                    or left.get_shared_y_axes().joined(left, right)
+                ):
+                    return _blocked("environmental panels must use independent axes")
+        for axis_index, axis_contract in axes_by_index.items():
+            axis = figure.axes[axis_index]
+            if (
+                axis_contract["x"] in _ABUNDANCE_ROLES and axis.xaxis_inverted()
+            ) or (
+                axis_contract["y"] in _ABUNDANCE_ROLES and axis.yaxis_inverted()
+            ):
+                return _blocked("abundance axes must remain normal")
+
+    if contract["kind"] == "temperature_salinity":
+        if len(axes_by_index) != 1:
+            return _blocked("temperature-salinity diagram requires exactly one data axis")
+        _, axis_contract = next(iter(axes_by_index.items()))
+        if axis_contract["x"] != "salinity" or axis_contract["y"] != "temperature":
+            return _blocked("temperature-salinity axes must be salinity x temperature")
+        expected_variables = {
+            "size": "abundance_ind_L",
+            "color": "depth_m",
+            "station": "station",
+        }
+        for name, expected_variable in expected_variables.items():
+            issue = _mapping_issue(contract, figure, name)
+            if issue:
+                return issue
+            if contract["mappings"][name]["variable"] != expected_variable:
+                return _blocked(f"{name} mapping must use {expected_variable}")
+        zero_policy = contract["zero_policy"]
+        if zero_policy.get("mode") != "hollow":
+            return _blocked("zero abundance must use hollow markers")
+        zero_artist = _artist_by_gid(figure, zero_policy.get("artist_gid"))
+        if zero_artist is None:
+            return _blocked("zero abundance artist is missing")
+        get_facecolors = getattr(zero_artist, "get_facecolors", None)
+        if get_facecolors is None:
+            return _blocked("zero abundance must use hollow markers")
+        facecolors = np.asarray(get_facecolors())
+        is_hollow = facecolors.size == 0 or (
+            facecolors.ndim == 2
+            and facecolors.shape[1] >= 4
+            and bool(np.all(facecolors[:, 3] == 0))
+        )
+        if not is_hollow:
+            return _blocked("zero abundance must use hollow markers")
+
+    if contract["kind"] == "abundance_environment_map":
+        if len(axes_by_index) != 1:
+            return _blocked("geographic map requires exactly one data axis")
+        axis_index, axis_contract = next(iter(axes_by_index.items()))
+        axis = figure.axes[axis_index]
+        if not axis.__class__.__module__.startswith("cartopy."):
+            return _blocked("geographic map requires a Cartopy GeoAxes")
+        if axis_contract["x"] != "longitude" or axis_contract["y"] != "latitude":
+            return _blocked("geographic map axes must be longitude x latitude")
+        required_mappings = {
+            "position": "longitude_latitude",
+            "size": "abundance_ind_L",
+        }
+        for name, expected_variable in required_mappings.items():
+            issue = _mapping_issue(contract, figure, name)
+            if issue:
+                return issue
+            if contract["mappings"][name]["variable"] != expected_variable:
+                return _blocked(f"{name} mapping must use {expected_variable}")
+        for name in ("color", "size_legend", "color_legend"):
+            issue = _mapping_issue(contract, figure, name)
+            if issue:
+                return issue
+        if (
+            contract["mappings"]["color_legend"]["variable"]
+            != contract["mappings"]["color"]["variable"]
+        ):
+            return _blocked("environment color legend must describe the color mapping")
+        if contract["mappings"]["size_legend"]["variable"] != "abundance_ind_L":
+            return _blocked("size legend must describe abundance_ind_L")
 
     for axis_index in axes_by_index:
         axis = figure.axes[axis_index]

@@ -4,6 +4,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
 
 from core.graph_contracts import validate_graph_contract
 
@@ -27,6 +28,94 @@ def _vertical_contract(*, inverted_axes=None):
         "zero_policy": {"mode": "include", "artist_gid": None},
         "source_variables": ["depth_m", "abundance_ind_L"],
     }
+
+
+def _environment_contract():
+    return {
+        "kind": "environment_relationships",
+        "axes": [
+            {"axis_index": 0, "x": "temperature", "y": "abundance_ind_L"},
+            {"axis_index": 1, "x": "salinity", "y": "abundance_ind_L"},
+            {"axis_index": 2, "x": "oxygen", "y": "abundance_ind_L"},
+        ],
+        "inverted_axes": [],
+        "mappings": {},
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": [
+            "temperature", "salinity", "oxygen", "abundance_ind_L"
+        ],
+    }
+
+
+def _temperature_salinity_contract():
+    return {
+        "kind": "temperature_salinity",
+        "axes": [{"axis_index": 0, "x": "salinity", "y": "temperature"}],
+        "inverted_axes": [],
+        "mappings": {
+            "size": {"variable": "abundance_ind_L", "artist_gid": "ts_points"},
+            "color": {"variable": "depth_m", "artist_gid": "ts_points"},
+            "station": {"variable": "station", "artist_gid": "station_shapes"},
+        },
+        "zero_policy": {"mode": "hollow", "artist_gid": "zero_abundance"},
+        "source_variables": [
+            "salinity", "temperature", "abundance_ind_L", "depth_m", "station"
+        ],
+    }
+
+
+def _add_ts_artists(ax, *, hollow_zeros: bool):
+    points = ax.scatter([31.0], [-1.2], s=[40], c=[10.0])
+    points.set_gid("ts_points")
+    stations = ax.scatter([31.1], [-1.1], marker="s")
+    stations.set_gid("station_shapes")
+    zeros = ax.scatter(
+        [31.2],
+        [-1.0],
+        facecolors="none" if hollow_zeros else "red",
+        edgecolors="white",
+    )
+    zeros.set_gid("zero_abundance")
+
+
+def _map_contract():
+    return {
+        "kind": "abundance_environment_map",
+        "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+        "inverted_axes": [],
+        "mappings": {
+            "position": {
+                "variable": "longitude_latitude",
+                "artist_gid": "map_points",
+            },
+            "size": {"variable": "abundance_ind_L", "artist_gid": "map_points"},
+            "color": {"variable": "temperature", "artist_gid": "map_points"},
+            "size_legend": {
+                "variable": "abundance_ind_L",
+                "artist_gid": "abundance_size_legend",
+            },
+            "color_legend": {
+                "variable": "temperature",
+                "artist_gid": "environment_color_legend",
+            },
+        },
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": [
+            "longitude", "latitude", "abundance_ind_L", "temperature"
+        ],
+    }
+
+
+def _add_map_artists(ax, *, include_color_legend=True):
+    points = ax.scatter(
+        [-80.2], [74.1], s=[40], c=[-1.2], transform=ccrs.PlateCarree()
+    )
+    points.set_gid("map_points")
+    size_legend = ax.text(0.01, 0.01, "Abondance (ind./L)")
+    size_legend.set_gid("abundance_size_legend")
+    if include_color_legend:
+        color_legend = ax.text(0.01, 0.05, "Température (°C)")
+        color_legend.set_gid("environment_color_legend")
 
 
 def test_missing_contract_is_blocked():
@@ -68,4 +157,98 @@ def test_vertical_profile_blocks_contract_that_does_not_declare_depth_inversion(
     assert issue == (
         "graph contract blocked: axis 0 y inversion differs from graph_contract"
     )
+    plt.close(fig)
+
+
+def test_environment_relationships_accept_three_independent_normal_axes():
+    fig, _ = plt.subplots(1, 3)
+
+    issue = validate_graph_contract(_environment_contract(), fig)
+
+    assert issue is None
+    plt.close(fig)
+
+
+def test_environment_relationships_block_shared_axes():
+    fig, _ = plt.subplots(1, 3, sharey=True)
+
+    issue = validate_graph_contract(_environment_contract(), fig)
+
+    assert issue == "graph contract blocked: environmental panels must use independent axes"
+    plt.close(fig)
+
+
+def test_environment_relationships_block_inverted_abundance_axis():
+    fig, axes = plt.subplots(1, 3)
+    axes[1].invert_yaxis()
+    contract = _environment_contract()
+    contract["inverted_axes"] = [{"axis_index": 1, "axis": "y"}]
+
+    issue = validate_graph_contract(contract, fig)
+
+    assert issue == "graph contract blocked: abundance axes must remain normal"
+    plt.close(fig)
+
+
+def test_temperature_salinity_accepts_all_mappings_and_hollow_zeros():
+    fig, ax = plt.subplots()
+    _add_ts_artists(ax, hollow_zeros=True)
+
+    issue = validate_graph_contract(_temperature_salinity_contract(), fig)
+
+    assert issue is None
+    plt.close(fig)
+
+
+def test_temperature_salinity_blocks_filled_zero_markers():
+    fig, ax = plt.subplots()
+    _add_ts_artists(ax, hollow_zeros=False)
+
+    issue = validate_graph_contract(_temperature_salinity_contract(), fig)
+
+    assert issue == "graph contract blocked: zero abundance must use hollow markers"
+    plt.close(fig)
+
+
+def test_temperature_salinity_blocks_missing_station_mapping_artist():
+    fig, ax = plt.subplots()
+    _add_ts_artists(ax, hollow_zeros=True)
+    for artist in ax.collections:
+        if artist.get_gid() == "station_shapes":
+            artist.set_gid(None)
+
+    issue = validate_graph_contract(_temperature_salinity_contract(), fig)
+
+    assert issue == "graph contract blocked: station mapping artist is missing"
+    plt.close(fig)
+
+
+def test_abundance_environment_map_accepts_cartopy_and_complete_mappings():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    _add_map_artists(ax)
+
+    issue = validate_graph_contract(_map_contract(), fig)
+
+    assert issue is None
+    plt.close(fig)
+
+
+def test_abundance_environment_map_blocks_plain_matplotlib_axis():
+    fig, ax = plt.subplots()
+    points = ax.scatter([-80.2], [74.1], s=[40], c=[-1.2])
+    points.set_gid("map_points")
+
+    issue = validate_graph_contract(_map_contract(), fig)
+
+    assert issue == "graph contract blocked: geographic map requires a Cartopy GeoAxes"
+    plt.close(fig)
+
+
+def test_abundance_environment_map_blocks_missing_environment_legend():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    _add_map_artists(ax, include_color_legend=False)
+
+    issue = validate_graph_contract(_map_contract(), fig)
+
+    assert issue == "graph contract blocked: color_legend mapping artist is missing"
     plt.close(fig)
