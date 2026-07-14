@@ -39,9 +39,51 @@ def _format_ecopart_export_error(
     return f"Export EcoPart échoué{scope_text}{task_note} — {exc.message}"
 
 
-def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
+def _ecotaxa_session_for_project(
+    thread_id: str,
+    project_id: int | None,
+) -> dict | None:
+    """Resolve the EcoTaxa dataset requested by project, not just the latest alias."""
+    latest = _store.get(f"{thread_id}:ecotaxa")
+    if project_id is None:
+        return latest
+
+    requested = int(project_id)
+    if latest is not None:
+        latest_project = (latest.get("meta") or {}).get("project_id")
+        if latest_project is not None and int(latest_project) == requested:
+            return latest
+
+    candidates: list[dict] = []
+    prefix = f"{thread_id}:dataset:df_ecotaxa_"
+    for key in _store.keys(prefix):
+        session = _store.get(key)
+        if session is None:
+            continue
+        candidate_project = (session.get("meta") or {}).get("project_id")
+        if candidate_project is not None and int(candidate_project) == requested:
+            candidates.append(session)
+
+    if not candidates:
+        return None
+
+    # Prefer the canonical full-project variable when both a full export and a
+    # scoped bulk export exist. Otherwise the sole/latest named dataset is safe.
+    canonical = f"df_ecotaxa_{requested}"
+    for session in candidates:
+        if (session.get("meta") or {}).get("variable_name") == canonical:
+            return session
+    return candidates[-1]
+
+
+def _perform_enrichment(
+    thread_id: str,
+    project_id: int | None,
+    *,
+    ecotaxa_session: dict | None = None,
+) -> str:
     """Run the (sample_id, depth_bin) join from the session-resolved EcoTaxa/EcoPart."""
-    session_et = _store.get(f"{thread_id}:ecotaxa")
+    session_et = ecotaxa_session or _store.get(f"{thread_id}:ecotaxa")
     if project_id is None:
         session_ep = _store.get(f"{thread_id}:ecopart")
     else:
@@ -179,7 +221,6 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
         f" avec EcoPart {selected_project_id}" if selected_project_id is not None else ""
     )
     source_lines = ["\nSources :"]
-    session_et = _store.get(f"{thread_id}:ecotaxa")
     ecotaxa_pid = None
     if session_et:
         ecotaxa_pid = (session_et.get("meta") or {}).get("project_id")
@@ -532,7 +573,7 @@ def make_ecopart_tools(thread_id: str) -> list:
         jointure, sans rien télécharger. Pour lancer réellement le téléchargement
         et la jointure, rappeler avec `confirmed=True`.
         """
-        session_et = _store.get(f"{thread_id}:ecotaxa")
+        session_et = _ecotaxa_session_for_project(thread_id, ecotaxa_project_id)
         if session_et is None:
             if not confirmed:
                 if ecotaxa_project_id is None:
@@ -561,7 +602,10 @@ def make_ecopart_tools(thread_id: str) -> list:
                         f"Le projet EcoTaxa {ecotaxa_project_id} n'a pas pu être chargé "
                         f"automatiquement : {exc}"
                     )
-                session_et = _store.get(f"{thread_id}:ecotaxa")
+                session_et = _ecotaxa_session_for_project(
+                    thread_id,
+                    ecotaxa_project_id,
+                )
             if session_et is None:
                 return "Données EcoTaxa manquantes — charge d'abord un fichier UVP (`load_file`) ou `query_ecotaxa`."
 
@@ -655,7 +699,11 @@ def make_ecopart_tools(thread_id: str) -> list:
         if ecopart_project_id is not None:
             _store.set(f"{thread_id}:ecopart:{ecopart_project_id}", df_ep, meta)
 
-        join_result = _perform_enrichment(thread_id, ecopart_project_id)
+        join_result = _perform_enrichment(
+            thread_id,
+            ecopart_project_id,
+            ecotaxa_session=session_et,
+        )
         download_url = f"http://localhost:8000/downloads/{output_path.name}"
         scope = (
             f"projet EcoTaxa {ecotaxa_project_id}"

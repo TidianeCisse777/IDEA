@@ -6,6 +6,7 @@ import re
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 from langchain_core.tools import tool
 
@@ -105,6 +106,191 @@ def _replace_graph_urls(markdown: str) -> str:
     return re.sub(r"http[^\s\"')]+/graphs/([^)\s\"']+\.png)", sub, markdown)
 
 
+def _reference_urls(markdown: str) -> set[str]:
+    """Return URLs written in the report references section only."""
+    match = re.search(
+        r"^##\s+(?:\d+\.\s*)?Références\s*$([\s\S]*?)(?=^##\s|\Z)",
+        markdown,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if not match:
+        return set()
+    return {
+        url.rstrip(".,;)")
+        for url in re.findall(r"https?://[^\s<>\]]+", match.group(1))
+    }
+
+
+def _manifest_source_urls(manifest: dict[str, Any]) -> set[str]:
+    urls: set[str] = set()
+    for source in manifest.get("sources", []):
+        if not isinstance(source, dict):
+            continue
+        value = source.get("url")
+        if isinstance(value, str) and value.strip():
+            urls.add(value.strip().rstrip("/"))
+        for item in source.get("urls", []):
+            if isinstance(item, str) and item.strip():
+                urls.add(item.strip().rstrip("/"))
+    return urls
+
+
+def _validate_reference_sources(
+    content: str,
+    manifest: dict[str, Any],
+) -> list[str]:
+    allowed = _manifest_source_urls(manifest)
+    return sorted(
+        url for url in _reference_urls(content) if url.rstrip("/") not in allowed
+    )
+
+
+_REQUIRED_CONTEXT_FIELDS = (
+    "objective",
+    "geographic_scope",
+    "temporal_scope",
+    "taxonomic_scope",
+    "selection_criteria",
+)
+
+
+def _missing_study_context_fields(manifest: dict[str, Any]) -> list[str]:
+    context = manifest.get("study_context")
+    if not isinstance(context, dict):
+        return list(_REQUIRED_CONTEXT_FIELDS)
+    return [
+        field
+        for field in _REQUIRED_CONTEXT_FIELDS
+        if not isinstance(context.get(field), str) or not context[field].strip()
+    ]
+
+
+def _render_study_context(manifest: dict[str, Any]) -> str:
+    context = manifest.get("study_context", {})
+    projects = ", ".join(str(item) for item in context.get("projects", [])) or "Aucun"
+    samples = ", ".join(str(item) for item in context.get("samples", [])) or "Aucun"
+    return "\n".join(
+        [
+            "## Cadre de l'étude",
+            "",
+            f"- **Objectif :** {context.get('objective', '')}",
+            f"- **Zone géographique :** {context.get('geographic_scope', '')}",
+            f"- **Période :** {context.get('temporal_scope', '')}",
+            f"- **Périmètre taxonomique :** {context.get('taxonomic_scope', '')}",
+            f"- **Projets :** {projects}",
+            f"- **Samples :** {samples}",
+            f"- **Critères de sélection :** {context.get('selection_criteria', '')}",
+        ]
+    )
+
+
+def _inject_study_context(content: str, manifest: dict[str, Any]) -> str:
+    summary = _render_study_context(manifest)
+    first_section = re.search(r"^##\s", content, flags=re.MULTILINE)
+    if first_section:
+        return (
+            content[: first_section.start()].rstrip()
+            + "\n\n"
+            + summary
+            + "\n\n"
+            + content[first_section.start() :].lstrip()
+        )
+    return content.rstrip() + "\n\n" + summary
+
+
+def _render_traceability_journal(manifest: dict[str, Any]) -> str:
+    """Render every declared operation, including partial and failed attempts."""
+    operations = manifest.get("operations", [])
+    if not operations:
+        return ""
+    labels = (
+        ("input", "Entrée"),
+        ("parameters", "Paramètres"),
+        ("result", "Résultat"),
+        ("coverage", "Couverture"),
+        ("limitations", "Limites"),
+    )
+    lines = ["## Journal détaillé des opérations", ""]
+    for index, operation in enumerate(operations, start=1):
+        if not isinstance(operation, dict):
+            continue
+        title = str(operation.get("title") or f"Opération {index}")
+        category = str(operation.get("category") or "non classée")
+        status = str(operation.get("status") or "non renseigné")
+        lines.extend(
+            [
+                f"### {index}. {title}",
+                "",
+                f"- **Catégorie :** {category}",
+                f"- **Statut :** {status}",
+            ]
+        )
+        source = operation.get("source")
+        if source:
+            lines.append(f"- **Source :** {source}")
+        for key, label in labels:
+            value = operation.get(key)
+            if value not in (None, "", [], {}):
+                lines.append(f"- **{label} :** {value}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def _append_traceability_journal(content: str, manifest: dict[str, Any]) -> str:
+    journal = _render_traceability_journal(manifest)
+    if not journal:
+        return content
+    references = re.search(
+        r"^##\s+(?:\d+\.\s*)?Références\s*$",
+        content,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if references:
+        return (
+            content[: references.start()].rstrip()
+            + "\n\n"
+            + journal
+            + "\n\n"
+            + content[references.start() :].lstrip()
+        )
+    return content.rstrip() + "\n\n" + journal
+
+
+def _render_manifest_references(manifest: dict[str, Any]) -> str:
+    entries: list[str] = []
+    for source in manifest.get("sources", []):
+        if not isinstance(source, dict):
+            continue
+        name = str(source.get("name") or "Source non nommée").strip()
+        citation = str(source.get("citation") or name).strip()
+        urls: list[str] = []
+        if isinstance(source.get("url"), str) and source["url"].strip():
+            urls.append(source["url"].strip())
+        urls.extend(
+            url.strip()
+            for url in source.get("urls", [])
+            if isinstance(url, str) and url.strip()
+        )
+        suffix = " ".join(dict.fromkeys(urls))
+        entries.append(f"- {citation}" + (f" {suffix}" if suffix else ""))
+    if not entries:
+        return "## 6. Références\n\nAucune source externe utilisée."
+    return "## 6. Références\n\n" + "\n".join(entries)
+
+
+def _replace_reference_section(content: str, manifest: dict[str, Any]) -> str:
+    """Build the bibliography exclusively from sources declared as used."""
+    rendered = _render_manifest_references(manifest)
+    match = re.search(
+        r"^##\s+(?:\d+\.\s*)?Références\s*$[\s\S]*\Z",
+        content,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if match:
+        return content[: match.start()].rstrip() + "\n\n" + rendered
+    return content.rstrip() + "\n\n" + rendered
+
+
 def _markdown_to_html(md: str, title: str) -> str:
     """Convertit le markdown en HTML complet avec CSS académique."""
     try:
@@ -148,7 +334,11 @@ def _markdown_to_html(md: str, title: str) -> str:
 
 
 @tool
-def export_deliverable(content: str, filename: str = "rapport") -> str:
+def export_deliverable(
+    content: str,
+    filename: str = "rapport",
+    traceability_manifest: dict[str, Any] | None = None,
+) -> str:
     """Génère un PDF scientifique à partir du contenu markdown fourni.
 
     Le markdown peut contenir des images via les URLs /graphs/{id}.png —
@@ -157,10 +347,33 @@ def export_deliverable(content: str, filename: str = "rapport") -> str:
     Args:
         content: Contenu markdown du livrable (sections, figures, citations…).
         filename: Nom du fichier sans extension (ex: 'rapport_ecotaxa_2026').
+        traceability_manifest: Sources réellement utilisées et journal structuré
+            des opérations de la conversation. Le bloc ``study_context`` doit
+            préciser l'objectif, la zone, la période, le périmètre taxonomique
+            et les critères de sélection. Toute URL de la section Références doit
+            être déclarée dans ``sources``.
 
     Returns:
         URL de téléchargement du PDF généré.
     """
+    manifest = traceability_manifest or {"sources": [], "operations": []}
+    missing_context = _missing_study_context_fields(manifest)
+    if missing_context:
+        return (
+            "Livrable refusé — contexte d'étude incomplet : "
+            + ", ".join(missing_context)
+        )
+    undeclared_urls = _validate_reference_sources(content, manifest)
+    if undeclared_urls:
+        return (
+            "Livrable refusé — source(s) absente(s) du manifeste de traçabilité : "
+            + ", ".join(undeclared_urls)
+        )
+
+    content = _inject_study_context(content, manifest)
+    content = _append_traceability_journal(content, manifest)
+    content = _replace_reference_section(content, manifest)
+
     downloads = _downloads_dir()
     downloads.mkdir(parents=True, exist_ok=True)
 
