@@ -34,6 +34,7 @@ from core.ecotaxa_browser.cache.repo import (
     cache_progress,
     init_schema,
     open_connection,
+    query_samples_filtered,
 )
 from tools.ecotaxa_client import EcotaxaClient, EcotaxaExportError
 from tools.dataset_registry import ECOTAXA, dataset_variable_name, store_dataset
@@ -660,6 +661,52 @@ def make_source_tools(thread_id: str) -> list:
             "`find_ecotaxa_samples_in_region(project_ids=[...], date_range=..., zone_name=...)` "
             "avec les project_ids de la ligne voulue.",
         ])
+        return "\n".join(lines)
+
+    @tool
+    def list_ecotaxa_project_samples(project_id: int) -> str:
+        """Liste les samples d'un projet EcoTaxa avec leur `sample_id` numérique.
+
+        À utiliser pour résoudre le `sample_id` numérique EcoTaxa (ex.
+        `17498000023`) à partir du label / `original_id` d'un sample (ex.
+        `am_leg4_RA76_1`). Les autres outils de présentation montrent le label,
+        mais l'export et l'enrichissement exigent le numéro : cet outil fait le
+        pont, sans deviner ni inventer d'identifiant.
+
+        Renvoie un tableau : `sample_id` numérique, label (`original_id`),
+        station, latitude, longitude, profondeur max. Lecture seule, depuis le
+        cache local EcoTaxa.
+        """
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            rows = list(query_samples_filtered(conn, project_ids=[int(project_id)]))
+            conn.close()
+        except Exception as exc:
+            return f"Erreur lors de la lecture du cache EcoTaxa : {exc}"
+
+        if not rows:
+            return (
+                f"Aucun sample dans le cache local pour le projet {project_id}. "
+                "Le projet n'a peut-être pas encore été synchronisé."
+            )
+
+        rows.sort(key=lambda row: (row["original_id"] or "", row["sample_id"]))
+        lines = [
+            f"# Samples du projet EcoTaxa {project_id}",
+            "",
+            "| sample_id | label | station | latitude | longitude | profondeur max |",
+            "|---:|---|---|---:|---:|---:|",
+        ]
+        lines.extend(
+            f"| {row['sample_id']} | {row['original_id'] or '—'} | "
+            f"{row['station_id'] or '—'} | {_format_number(row['lat_avg'])} | "
+            f"{_format_number(row['lon_avg'])} | {_format_number(row['depth_max'])} |"
+            for row in rows
+        )
+        lines.append("")
+        lines.append(f"Source EcoTaxa : {_ecotaxa_project_url(project_id)}")
         return "\n".join(lines)
 
     @tool
@@ -2190,6 +2237,7 @@ def make_source_tools(thread_id: str) -> list:
         compare_ecotaxa_projects,
         list_ecotaxa_projects,
         list_ecotaxa_campaigns,
+        list_ecotaxa_project_samples,
         preview_ecotaxa_project,
         query_ecotaxa,
         query_ecotaxa_sample,
