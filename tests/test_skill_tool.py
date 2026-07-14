@@ -114,3 +114,11 @@ def test_neolabs_abundance_skill_documents_standard_analysis_workflow():
     assert "nmds" in text
     assert "pcoa" in text
     assert "rda" in text
+
+
+def test_uvp_skill_requires_strict_hierarchy_resolver():
+    content = Path("agents/skills/uvp_ecotaxa.md").read_text(encoding="utf-8")
+
+    assert "from core.copepod_taxonomy import copepod_hierarchy_mask" in content
+    assert "copepod_keywords" not in content
+    assert "cop_cats =" not in content

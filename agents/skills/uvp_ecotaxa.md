@@ -40,6 +40,14 @@ Name the derived column with the new unit (`*_ind_per_m3`,
 `neolabs_abundance_analysis` for the full conversion table and net-volume
 formulas (`DEPTH_CALC_VOL` vs `FLOWMETER_CALC_VOL`).
 
+## Mandatory taxonomic selection — hierarchy only
+
+Every Copepoda selection MUST use `object_annotation_hierarchy` through
+`copepod_hierarchy_mask`. Never construct a keyword regex or a manual list of
+descendant names. If the hierarchy column is missing, let the helper refuse the
+calculation and explain that a new EcoTaxa export containing
+`object_annotation_hierarchy` is required.
+
 ---
 
 ## 🛑 READ THIS FIRST — abondance / densité copépodes ≠ sum/sum
@@ -90,12 +98,9 @@ already joined):**
 
 ```python
 import pandas as pd
+from core.copepod_taxonomy import copepod_hierarchy_mask
 
-cop_cats = ["Copepoda<Multicrustacea", "Calanoida", "Heterorhabdidae",
-            "Calanus", "Paraeuchaeta", "Metridia",
-            "female+eggs<Paraeuchaeta", "copepoda eggs"]
-
-cop = df[df["category"].isin(cop_cats)].copy()
+cop = df.loc[copepod_hierarchy_mask(df)].copy()
 cop["ind_nb"] = 1
 
 cop_bins = (
@@ -154,19 +159,18 @@ projet par projet ; n'apparaît pas dans les tables intermédiaires).
 
 ```python
 import pandas as pd
+from core.copepod_taxonomy import copepod_hierarchy_mask
 
-cop_cats = ["Copepoda<Multicrustacea", "Calanoida", "Heterorhabdidae",
-            "Calanus", "Paraeuchaeta", "Metridia",
-            "female+eggs<Paraeuchaeta", "copepoda eggs"]
 ACQ_PIXEL_UM = 73  # UVP6 Hawke Channel; ask user if different
 
 # Join morpho avec taxa_db pour récupérer depth_bin + sampled_volume
 m = df_file_taxa_morpho_db.merge(
-    df_file_taxa_db[["sample_id", "object_id", "depth_bin", "sampled_volume"]],
+    df_file_taxa_db[["sample_id", "object_id", "depth_bin", "sampled_volume",
+                     "object_annotation_hierarchy"]],
     on=["sample_id", "object_id"], how="left",
 )
 
-cop = m[m["category"].isin(cop_cats)].copy()
+cop = m.loc[copepod_hierarchy_mask(m)].copy()
 cop["size_um"] = cop["object_major"] * ACQ_PIXEL_UM
 
 # ⚠ Filtre > 2000 µm AVANT le groupby
@@ -286,13 +290,12 @@ import numpy as np
 df = df_ecotaxa_ecopart  # joined table from join_ecotaxa_ecopart
 
 # ── 1. Identify columns based on file schema ───────────────────────────────
-category_col  = "txo_display_name" if "txo_display_name" in df.columns else "object_annotation_category"
 volume_col    = "ecopart_Sampled volume [L]"
 
 # ── 2. Filter copepods (predicted or validated) ───────────────────────────
-copepod_keywords = ["Copepoda", "Calanoida", "Calanus", "Metridia",
-                    "Paraeuchaeta", "Heterorhabdidae"]
-df_cop = df[df[category_col].str.contains("|".join(copepod_keywords), na=False, case=False)].copy()
+from core.copepod_taxonomy import copepod_hierarchy_mask
+
+df_cop = df.loc[copepod_hierarchy_mask(df)].copy()
 
 # ── 3. Density per bin ─────────────────────────────────────────────────────
 df_cop["count"] = 1
@@ -314,12 +317,9 @@ result.columns = ["sample_id", "m5_cop_dens_ind_per_L"]
 
 ```python
 import pandas as pd
+from core.copepod_taxonomy import copepod_hierarchy_mask
 
-cop_cats = ["Copepoda<Multicrustacea", "Calanoida", "Heterorhabdidae",
-            "Calanus", "Paraeuchaeta", "Metridia",
-            "female+eggs<Paraeuchaeta", "copepoda eggs"]
-
-cop = df[df["category"].isin(cop_cats)].copy()
+cop = df.loc[copepod_hierarchy_mask(df)].copy()
 cop["ind_nb"] = 1
 
 # density per bin (sample_id × depth_bin) — sampled_volume already joined upstream

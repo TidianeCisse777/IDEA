@@ -881,6 +881,17 @@ def test_system_prompt_routes_bio_oracle_list_preview_query_and_enrichment():
     assert "only if `query_bio_oracle` succeeds" in prompt
 
 
+def test_system_prompt_requires_shared_hierarchy_resolver_for_loaded_copepod_data():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+
+    assert "all copepoda filtering on a loaded dataframe" in prompt
+    assert "copepod_hierarchy_mask" in prompt
+    assert "do not reimplement" in prompt
+    assert "object_annotation_hierarchy" in prompt
+
+
 def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
