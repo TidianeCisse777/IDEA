@@ -322,7 +322,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
         IMPORTANT: each call to run_pandas is isolated — variables computed in a
         previous call (e.g. `station_stats`, `delta_df`) are NOT available in the
-        next call. Always recompute or include all required logic in a single call.
+        next call. Exception: a canonical sample-depth DataFrame assigned to
+        `result` is persisted automatically as `df_canonical_sample_depth` and
+        MUST be reused by later tables, correlations, and graphs.
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
@@ -360,7 +362,39 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 n_rows, n_cols = result.shape
                 preview = result.head(20).to_markdown(index=False)
                 suffix = " (aperçu 20 premières)" if n_rows > 20 else ""
-                return f"{n_rows} lignes × {n_cols} colonnes{suffix}\n\n{preview}"
+                persistence_note = ""
+                canonical_columns = {
+                    "sample_id",
+                    "depth_bin",
+                    "copepod_count",
+                    "sampled_volume_L",
+                    "abundance_ind_L",
+                    "abundance_ind_m3",
+                    "canonical_method_version",
+                }
+                if canonical_columns.issubset(result.columns) and result[
+                    "canonical_method_version"
+                ].eq("copepod-sample-depth-v1").all():
+                    variable_name = "df_canonical_sample_depth"
+                    store_dataset(
+                        _store,
+                        thread_id,
+                        result,
+                        variable_name=variable_name,
+                        meta={
+                            "source": "analysis:canonical-sample-depth",
+                            "method_version": "copepod-sample-depth-v1",
+                            "n_rows": n_rows,
+                        },
+                    )
+                    persistence_note = (
+                        f"\nVariable persistante : `{variable_name}` — réutiliser "
+                        "cette table sans reconstruire les bins."
+                    )
+                return (
+                    f"{n_rows} lignes × {n_cols} colonnes{suffix}{persistence_note}"
+                    f"\n\n{preview}"
+                )
             return str(result)
 
         except Exception as e:

@@ -176,6 +176,37 @@ def test_run_pandas_dataframe_returns_markdown(tsv_path):
     assert "lignes" in result
 
 
+def test_run_pandas_persists_canonical_sample_depth_result_for_later_calls(tsv_path):
+    thread_id = "thread-canonical-sample-depth"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    first = run_pandas.invoke(
+        {
+            "code": (
+                "result = pd.DataFrame({"
+                "'sample_id': ['RA18'], 'depth_bin': [212.5], "
+                "'copepod_count': [1], 'sampled_volume_L': [100.0], "
+                "'abundance_ind_L': [0.01], 'abundance_ind_m3': [10.0], "
+                "'canonical_method_version': ['copepod-sample-depth-v1']})"
+            )
+        }
+    )
+    second = run_pandas.invoke(
+        {"code": "result = int(df_canonical_sample_depth['copepod_count'].sum())"}
+    )
+
+    stored = _store.get(
+        f"{thread_id}:dataset:df_canonical_sample_depth"
+    )
+    assert stored is not None
+    assert stored["df"]["copepod_count"].tolist() == [1]
+    assert "Variable persistante : `df_canonical_sample_depth`" in first
+    assert second == "1"
+
+
 def test_run_pandas_exposes_multiple_ecopart_projects():
     thread_id = "thread-run-pandas-multiple-ecopart"
     keys = [
