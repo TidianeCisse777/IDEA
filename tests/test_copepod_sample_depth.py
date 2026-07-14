@@ -103,3 +103,15 @@ def test_refuses_contradictory_stable_metadata_in_same_key():
 
     with pytest.raises(ValueError, match=r"sample_stationid.*RA18.*212\.5"):
         build_canonical_sample_depth(rows, stable_columns=("sample_stationid",))
+
+
+@pytest.mark.parametrize(("column", "invalid"), [("sample_id", None), ("depth_bin", "bad")])
+def test_refuses_rows_with_invalid_sample_depth_key(column: str, invalid):
+    from core.copepod_sample_depth import build_canonical_sample_depth
+
+    rows = _joined_uvp_rows()
+    rows[column] = rows[column].astype("object")
+    rows.loc[0, column] = invalid
+
+    with pytest.raises(ValueError, match=column):
+        build_canonical_sample_depth(rows)

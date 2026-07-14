@@ -41,6 +41,17 @@ def build_canonical_sample_depth(
     work["_is_copepod"] = copepod_hierarchy_mask(work).astype("int64")
     work["depth_bin"] = pd.to_numeric(work["depth_bin"], errors="coerce")
     work[volume_column] = pd.to_numeric(work[volume_column], errors="coerce")
+    invalid_keys = {
+        "sample_id": work["sample_id"].isna() | work["sample_id"].astype("string").str.strip().eq(""),
+        "depth_bin": work["depth_bin"].isna() | ~np.isfinite(work["depth_bin"]),
+    }
+    for column, mask in invalid_keys.items():
+        if mask.any():
+            bad_rows = ", ".join(str(index) for index in work.index[mask][:5])
+            raise ValueError(
+                f"Clé sample–profondeur invalide : `{column}` absent ou invalide "
+                f"à la/aux ligne(s) {bad_rows}."
+            )
 
     rows: list[dict[str, object]] = []
     for key, group in work.groupby(list(_KEY_COLUMNS), sort=True):
