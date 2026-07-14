@@ -27,9 +27,13 @@ from typing import Any
 
 import requests
 
+from contextlib import nullcontext
+
 from core.ecotaxa_browser.cache.repo import (
+    deferred_secondary_indexes,
     finish_sync_run,
     get_project_signature,
+    is_samples_cache_empty,
     replace_project_samples,
     start_sync_run,
     upsert_project_schema,
@@ -400,8 +404,19 @@ def run_full_sync(
         schema_json = _fetch_project_schema_json(thread_client, project_id=project_id)
         return project_id, samples, schema_json
 
+    # First fill of an empty cache: defer secondary-index maintenance and
+    # rebuild the indexes once at the end (~5x faster to fill a large cache
+    # from scratch). An incremental refresh of a populated cache keeps its
+    # indexes so concurrent reads stay fast — see deferred_secondary_indexes.
+    first_fill = is_samples_cache_empty(conn)
+    index_ctx = (
+        deferred_secondary_indexes(conn) if first_fill else nullcontext()
+    )
+
     if pending:
-        with ThreadPoolExecutor(max_workers=effective_concurrency) as executor:
+        with index_ctx, ThreadPoolExecutor(
+            max_workers=effective_concurrency
+        ) as executor:
             futures = {executor.submit(fetch_one, item): item for item in pending}
             for future in as_completed(futures):
                 project_id, _meta, signature = futures[future]

@@ -563,3 +563,93 @@ def test_open_connection_sets_busy_timeout(tmp_path):
         assert timeout == 5000
     finally:
         connection.close()
+
+
+def _secondary_index_names(conn):
+    return {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name LIKE 'idx_samples_%'"
+        )
+    }
+
+
+def test_init_schema_creates_the_declared_secondary_indexes(conn):
+    from core.ecotaxa_browser.cache.repo import _SECONDARY_INDEXES, init_schema
+
+    init_schema(conn)
+    assert _secondary_index_names(conn) == set(_SECONDARY_INDEXES)
+
+
+def test_drop_and_create_secondary_indexes_round_trip(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        _SECONDARY_INDEXES,
+        create_secondary_indexes,
+        drop_secondary_indexes,
+        init_schema,
+    )
+
+    init_schema(conn)
+    drop_secondary_indexes(conn)
+    assert _secondary_index_names(conn) == set()
+    create_secondary_indexes(conn)
+    assert _secondary_index_names(conn) == set(_SECONDARY_INDEXES)
+
+
+def test_is_samples_cache_empty(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        init_schema,
+        is_samples_cache_empty,
+        upsert_sample,
+    )
+
+    init_schema(conn)
+    assert is_samples_cache_empty(conn) is True
+    upsert_sample(
+        conn, sample_id=1, project_id=42, lat_avg=70.0, lon_avg=-64.0,
+        date_min="2018-08-01", date_max="2018-08-01", object_count=10,
+        instrument="UVP5", last_synced="ts",
+    )
+    assert is_samples_cache_empty(conn) is False
+
+
+def test_deferred_secondary_indexes_drops_then_rebuilds(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        _SECONDARY_INDEXES,
+        deferred_secondary_indexes,
+        init_schema,
+        query_samples_in_bbox,
+        upsert_sample,
+    )
+
+    init_schema(conn)
+    with deferred_secondary_indexes(conn):
+        # Indexes are gone during the bulk load.
+        assert _secondary_index_names(conn) == set()
+        upsert_sample(
+            conn, sample_id=1, project_id=42, lat_avg=70.0, lon_avg=-64.0,
+            date_min="2018-08-01", date_max="2018-08-01", object_count=10,
+            instrument="UVP5", last_synced="ts",
+        )
+    # Rebuilt on exit, and reads through the index still return the row.
+    assert _secondary_index_names(conn) == set(_SECONDARY_INDEXES)
+    rows = list(query_samples_in_bbox(
+        conn, lat_min=60.0, lat_max=75.0, lon_min=-70.0, lon_max=-60.0,
+    ))
+    assert [r["sample_id"] for r in rows] == [1]
+
+
+def test_deferred_secondary_indexes_rebuilds_even_on_error(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        _SECONDARY_INDEXES,
+        deferred_secondary_indexes,
+        init_schema,
+    )
+
+    init_schema(conn)
+    with pytest.raises(RuntimeError):
+        with deferred_secondary_indexes(conn):
+            raise RuntimeError("load blew up mid-sync")
+    # A crash mid-load must not leave the cache permanently index-less.
+    assert _secondary_index_names(conn) == set(_SECONDARY_INDEXES)

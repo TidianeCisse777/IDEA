@@ -285,6 +285,30 @@ def test_run_full_sync_records_status_ok_when_all_projects_succeed(conn):
     assert counts["schemas_indexed"] == 2
 
 
+def test_run_full_sync_first_fill_rebuilds_secondary_indexes(conn):
+    from core.ecotaxa_browser.cache.repo import _SECONDARY_INDEXES, query_samples_in_bbox
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    client = _make_client(
+        projects=[{"projid": 42, "title": "A", "instrument": "UVP5"}],
+        objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
+    )
+    run_full_sync(conn, client, now_iso="2026-06-15T03:00:00Z")
+
+    present = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name LIKE 'idx_samples_%'"
+        )
+    }
+    assert present == set(_SECONDARY_INDEXES)
+    rows = list(query_samples_in_bbox(
+        conn, lat_min=60.0, lat_max=75.0, lon_min=-70.0, lon_max=-60.0,
+    ))
+    assert [r["sample_id"] for r in rows] == [1]
+
+
 def test_run_full_sync_marks_partial_on_per_project_failure(conn):
     from core.ecotaxa_browser.cache.sync import run_full_sync
 

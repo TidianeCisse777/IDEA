@@ -8,7 +8,19 @@ extension required, bbox math is plain numeric SQL.
 from __future__ import annotations
 
 import sqlite3
-from typing import Iterable, Sequence
+from contextlib import contextmanager
+from typing import Iterable, Iterator, Sequence
+
+# Single source of truth for the samples_cache secondary indexes: name -> the
+# indexed column expression. init_schema builds them, and the deferred-index
+# bulk-load path drops and rebuilds exactly this set — keep them here so the two
+# can never drift.
+_SECONDARY_INDEXES = {
+    "idx_samples_project": "samples_cache(project_id)",
+    "idx_samples_bbox": "samples_cache(lat_avg, lon_avg)",
+    "idx_samples_date": "samples_cache(date_min, date_max)",
+    "idx_samples_depth_max": "samples_cache(depth_max)",
+}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples_cache (
@@ -28,13 +40,6 @@ CREATE TABLE IF NOT EXISTS samples_cache (
     instrument TEXT,
     last_synced TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_samples_project
-    ON samples_cache(project_id);
-CREATE INDEX IF NOT EXISTS idx_samples_bbox
-    ON samples_cache(lat_avg, lon_avg);
-CREATE INDEX IF NOT EXISTS idx_samples_date
-    ON samples_cache(date_min, date_max);
 
 CREATE TABLE IF NOT EXISTS project_schemas_cache (
     project_id INTEGER PRIMARY KEY,
@@ -71,11 +76,45 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "samples_cache", "station_id", "TEXT")
     _ensure_column(conn, "samples_cache", "profile_id", "TEXT")
     _ensure_column(conn, "samples_cache", "free_fields_json", "TEXT")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_samples_depth_max "
-        "ON samples_cache(depth_max)"
-    )
+    create_secondary_indexes(conn)
     conn.commit()
+
+
+def create_secondary_indexes(conn: sqlite3.Connection) -> None:
+    """Create the samples_cache secondary indexes (idempotent)."""
+    for name, target in _SECONDARY_INDEXES.items():
+        conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+    conn.commit()
+
+
+def drop_secondary_indexes(conn: sqlite3.Connection) -> None:
+    """Drop the samples_cache secondary indexes (idempotent)."""
+    for name in _SECONDARY_INDEXES:
+        conn.execute(f"DROP INDEX IF EXISTS {name}")
+    conn.commit()
+
+
+def is_samples_cache_empty(conn: sqlite3.Connection) -> bool:
+    """True when no sample rows are cached — i.e. a first-fill sync."""
+    return conn.execute("SELECT 1 FROM samples_cache LIMIT 1").fetchone() is None
+
+
+@contextmanager
+def deferred_secondary_indexes(conn: sqlite3.Connection) -> Iterator[None]:
+    """Drop the secondary indexes for a bulk first-fill, rebuild on exit.
+
+    Building each index once at the end (a single sorted pass) is far cheaper
+    than maintaining it incrementally across a large load — ~5x faster to fill
+    a multi-million-row cache from scratch. Only safe when no reader depends on
+    the indexes meanwhile, so this is for an *empty-cache* first fill, not an
+    incremental refresh of a populated cache. The indexes are rebuilt even if
+    the body raises, so a crash mid-sync never leaves the cache index-less.
+    """
+    drop_secondary_indexes(conn)
+    try:
+        yield
+    finally:
+        create_secondary_indexes(conn)
 
 
 def _ensure_column(
