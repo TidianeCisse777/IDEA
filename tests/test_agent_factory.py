@@ -892,6 +892,17 @@ def test_system_prompt_requires_shared_hierarchy_resolver_for_loaded_copepod_dat
     assert "object_annotation_hierarchy" in prompt
 
 
+def test_system_prompt_requires_canonical_sample_depth_for_uvp_analyses():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+
+    assert "build_canonical_sample_depth" in prompt
+    assert "one row per (`sample_id`, `depth_bin`)" in prompt
+    assert "tables, correlations, and graph datasets" in prompt
+    assert "do not independently rebuild" in prompt
+
+
 def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

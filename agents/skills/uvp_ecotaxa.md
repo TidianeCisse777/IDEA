@@ -48,6 +48,33 @@ descendant names. If the hierarchy column is missing, let the helper refuse the
 calculation and explain that a new EcoTaxa export containing
 `object_annotation_hierarchy` is required.
 
+## Mandatory canonical sample–depth table
+
+For an object-level UVP table already joined with EcoPart, build the bin table
+exactly once with the shared constructor:
+
+```python
+from core.copepod_sample_depth import build_canonical_sample_depth
+
+volume_col = (
+    "ecopart_Sampled volume [L]"
+    if "ecopart_Sampled volume [L]" in df.columns
+    else "sampled_volume"
+)
+canonical_bins = build_canonical_sample_depth(
+    df,
+    volume_column=volume_col,
+)
+```
+
+The result has one row per (`sample_id`, `depth_bin`), includes sampled zero
+bins, and exposes `copepod_count`, `sampled_volume_L`, `abundance_ind_L`, and
+`abundance_ind_m3`. All downstream tables, correlations, and graph datasets
+MUST reuse the same `canonical_bins`. Do not rebuild the copepod mask or bins
+independently in a later code block, and never add sampled volume to the group
+key. If metadata or environmental columns are needed downstream, pass their
+names through `stable_columns=(...)` when building the table.
+
 ---
 
 ## 🛑 READ THIS FIRST — abondance / densité copépodes ≠ sum/sum
@@ -97,26 +124,21 @@ to m5 in the NeoLab UVP context.
 already joined):**
 
 ```python
-import pandas as pd
-from core.copepod_taxonomy import copepod_hierarchy_mask
+from core.copepod_sample_depth import build_canonical_sample_depth
 
-cop = df.loc[copepod_hierarchy_mask(df)].copy()
-cop["ind_nb"] = 1
-
-cop_bins = (
-    cop.groupby(["sample_id", "depth_bin", "sampled_volume"], as_index=False)["ind_nb"].sum()
-       .rename(columns={"ind_nb": "tot_cop"})
+canonical_bins = build_canonical_sample_depth(
+    df,
+    volume_column="sampled_volume",
 )
-cop_bins["cop_dens"] = cop_bins["tot_cop"] / cop_bins["sampled_volume"]
 
 def m5(grp):
     max_d = grp["depth_bin"].max()
-    surf = grp.loc[grp["depth_bin"] <= 50, "cop_dens"].mean()
-    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "cop_dens"].mean()
+    surf = grp.loc[grp["depth_bin"] <= 50, "abundance_ind_L"].mean()
+    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "abundance_ind_L"].mean()
     return (surf + bot) / 2
 
 result = (
-    cop_bins.groupby("sample_id").apply(m5).reset_index(name="m5_cop_dens_ind_per_L")
+    canonical_bins.groupby("sample_id").apply(m5).reset_index(name="m5_cop_dens_ind_per_L")
             .sort_values("m5_cop_dens_ind_per_L", ascending=False)
 )
 ```
@@ -284,59 +306,40 @@ Before running the m5 template, call `join_ecotaxa_ecopart` to obtain the joined
 ### Full m5 template (starting from `df_ecotaxa_ecopart`)
 
 ```python
-import pandas as pd
-import numpy as np
+from core.copepod_sample_depth import build_canonical_sample_depth
 
 df = df_ecotaxa_ecopart  # joined table from join_ecotaxa_ecopart
-
-# ── 1. Identify columns based on file schema ───────────────────────────────
-volume_col    = "ecopart_Sampled volume [L]"
-
-# ── 2. Filter copepods (predicted or validated) ───────────────────────────
-from core.copepod_taxonomy import copepod_hierarchy_mask
-
-df_cop = df.loc[copepod_hierarchy_mask(df)].copy()
-
-# ── 3. Density per bin ─────────────────────────────────────────────────────
-df_cop["count"] = 1
-cop_bins = df_cop.groupby(["sample_id", "depth_bin", volume_col])["count"].sum().reset_index()
-cop_bins["cop_dens"] = cop_bins["count"] / cop_bins[volume_col]
+canonical_bins = build_canonical_sample_depth(df)
 
 # ── 6. m5: mean surface (0-50m) + bottom (last 50m) ──────────────────────
 def m5_per_sample(grp):
     max_depth = grp["depth_bin"].max()
-    surface   = grp[grp["depth_bin"] <= 50]["cop_dens"].mean()
-    bottom    = grp[grp["depth_bin"] >= (max_depth - 50)]["cop_dens"].mean()
+    surface   = grp[grp["depth_bin"] <= 50]["abundance_ind_L"].mean()
+    bottom    = grp[grp["depth_bin"] >= (max_depth - 50)]["abundance_ind_L"].mean()
     return (surface + bottom) / 2
 
-result = cop_bins.groupby("sample_id").apply(m5_per_sample).reset_index()
+result = canonical_bins.groupby("sample_id").apply(m5_per_sample).reset_index()
 result.columns = ["sample_id", "m5_cop_dens_ind_per_L"]
 ```
 
 ### m5 template for intermediate `taxa_db` (sampled_volume already joined)
 
 ```python
-import pandas as pd
-from core.copepod_taxonomy import copepod_hierarchy_mask
+from core.copepod_sample_depth import build_canonical_sample_depth
 
-cop = df.loc[copepod_hierarchy_mask(df)].copy()
-cop["ind_nb"] = 1
-
-# density per bin (sample_id × depth_bin) — sampled_volume already joined upstream
-cop_bins = (
-    cop.groupby(["sample_id", "depth_bin", "sampled_volume"], as_index=False)["ind_nb"].sum()
-       .rename(columns={"ind_nb": "tot_cop"})
+canonical_bins = build_canonical_sample_depth(
+    df,
+    volume_column="sampled_volume",
 )
-cop_bins["cop_dens"] = cop_bins["tot_cop"] / cop_bins["sampled_volume"]
 
 def m5(grp):
     max_d = grp["depth_bin"].max()
-    surf = grp.loc[grp["depth_bin"] <= 50, "cop_dens"].mean()
-    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "cop_dens"].mean()
+    surf = grp.loc[grp["depth_bin"] <= 50, "abundance_ind_L"].mean()
+    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "abundance_ind_L"].mean()
     return (surf + bot) / 2
 
 result = (
-    cop_bins.groupby("sample_id").apply(m5).reset_index()
+    canonical_bins.groupby("sample_id").apply(m5).reset_index()
             .rename(columns={0: "m5_cop_dens_ind_per_L"})
             .sort_values("m5_cop_dens_ind_per_L", ascending=False)
 )

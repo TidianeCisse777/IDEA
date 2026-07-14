@@ -122,3 +122,15 @@ def test_uvp_skill_requires_strict_hierarchy_resolver():
     assert "from core.copepod_taxonomy import copepod_hierarchy_mask" in content
     assert "copepod_keywords" not in content
     assert "cop_cats =" not in content
+
+
+def test_uvp_skill_requires_canonical_sample_depth_builder_for_downstream_views():
+    content = Path("agents/skills/uvp_ecotaxa.md").read_text(encoding="utf-8")
+
+    assert (
+        "from core.copepod_sample_depth import build_canonical_sample_depth"
+        in content
+    )
+    assert "canonical_bins = build_canonical_sample_depth(" in content
+    assert "tables, correlations, and graph datasets" in content
+    assert "reuse the same `canonical_bins`" in content
