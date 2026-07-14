@@ -12,13 +12,13 @@ _HIERARCHY_SEPARATOR = re.compile(r"\s*[>|;/]\s*")
 
 def copepod_hierarchy_mask(
     df: pd.DataFrame,
-    hierarchy_column: str = "object_annotation_hierarchy",
 ) -> pd.Series:
     """Retourne les lignes dont la hiérarchie contient le nœud Copepoda.
 
     La colonne de hiérarchie est obligatoire. Aucun fallback par catégorie,
     liste de descendants ou résolution réseau n'est appliqué.
     """
+    hierarchy_column = "object_annotation_hierarchy"
     if hierarchy_column not in df.columns:
         raise ValueError(
             "Sélection Copepoda refusée : la colonne "

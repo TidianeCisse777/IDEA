@@ -890,6 +890,8 @@ def test_system_prompt_requires_shared_hierarchy_resolver_for_loaded_copepod_dat
     assert "copepod_hierarchy_mask" in prompt
     assert "do not reimplement" in prompt
     assert "object_annotation_hierarchy" in prompt
+    assert "do not copy or rename another column" in prompt
+    assert "`hierarchy` is not an accepted substitute" in prompt
 
 
 def test_system_prompt_requires_canonical_sample_depth_for_uvp_analyses():

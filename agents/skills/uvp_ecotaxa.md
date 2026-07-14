@@ -48,6 +48,12 @@ descendant names. If the hierarchy column is missing, let the helper refuse the
 calculation and explain that a new EcoTaxa export containing
 `object_annotation_hierarchy` is required.
 
+Do not copy or rename an alternate column to bypass this requirement, even on a
+temporary dataframe. In particular, `hierarchy` is not an accepted substitute
+for `object_annotation_hierarchy`. Do not pass an alternate column name to the
+helper. A legacy intermediate table lacking the exact required column must be
+refused and re-exported with the EcoTaxa hierarchy field.
+
 ## Mandatory canonical sample–depth table
 
 For an object-level UVP table already joined with EcoPart, build the bin table

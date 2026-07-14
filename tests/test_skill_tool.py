@@ -122,6 +122,8 @@ def test_uvp_skill_requires_strict_hierarchy_resolver():
     assert "from core.copepod_taxonomy import copepod_hierarchy_mask" in content
     assert "copepod_keywords" not in content
     assert "cop_cats =" not in content
+    assert "Do not copy or rename an alternate column" in content
+    assert "`hierarchy` is not an accepted substitute" in content
 
 
 def test_uvp_skill_requires_canonical_sample_depth_builder_for_downstream_views():
