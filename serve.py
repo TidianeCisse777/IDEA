@@ -286,9 +286,6 @@ def _extract_and_host_images(text: str) -> str:
         flags=re.DOTALL,
     )
 
-_known_threads: set[str] = set()
-
-
 class Message(BaseModel):
     role: str
     content: str | list  # list = format multimodal OpenAI (Open WebUI file upload)
@@ -1158,10 +1155,6 @@ async def chat_completions(
         if req.stream:
             return StreamingResponse(_quick_sse_response(""), media_type="text/event-stream")
         return _quick_response("")
-
-    if tid not in _known_threads:
-        _known_threads.add(tid)
-        default_store.clear(tid)
 
     agent = make_agent(tid, user_id=user_id)
     config = {

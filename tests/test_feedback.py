@@ -212,10 +212,8 @@ async def test_stream_chat_completions_captures_run_id_for_feedback(monkeypatch)
     from tools.run_store import RunStore
     import serve as serve_module
 
-    serve_module._known_threads.clear()
     monkeypatch.setattr(serve_module, "default_run_store", RunStore())
     monkeypatch.setattr(serve_module, "submit_feedback", MagicMock())
-    monkeypatch.setattr(serve_module.default_store, "clear", lambda thread_id: None)
     monkeypatch.setattr(serve_module, "_log_turn", lambda *args, **kwargs: None)
 
     thread_id = serve_module._thread_id(

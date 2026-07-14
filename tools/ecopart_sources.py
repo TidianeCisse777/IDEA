@@ -534,6 +534,22 @@ def make_ecopart_tools(thread_id: str) -> list:
         """
         session_et = _store.get(f"{thread_id}:ecotaxa")
         if session_et is None:
+            if not confirmed:
+                if ecotaxa_project_id is None:
+                    return (
+                        "Données EcoTaxa manquantes — charge d'abord un fichier UVP "
+                        "(`load_file`) ou `query_ecotaxa`."
+                    )
+                return (
+                    "Plan d'enrichissement EcoPart (dry-run) — projet EcoTaxa "
+                    f"{ecotaxa_project_id}.\n"
+                    f"Le projet EcoTaxa {ecotaxa_project_id} sera exporté après "
+                    "confirmation, puis le projet EcoPart correspondant sera "
+                    "téléchargé et joint sur (sample_id, depth_bin). "
+                    "Aucune donnée téléchargée pour l'instant.\n"
+                    "Confirme pour lancer : rappelle "
+                    "`enrich_ecotaxa_with_ecopart_remote` avec `confirmed=True`."
+                )
             # Guard: the caller named an EcoTaxa project but no EcoTaxa is loaded
             # (query_ecotaxa was skipped). Auto-load it so this confirmed
             # enrichment is self-sufficient instead of failing the turn.

@@ -457,3 +457,109 @@ def test_cache_counts_returns_indexed_sizes(conn):
     assert counts["samples_indexed"] == 3
     assert counts["projects_indexed"] == 2  # distinct project_id in samples_cache
     assert counts["schemas_indexed"] == 1
+
+
+def _seed_rows(conn, rows):
+    from core.ecotaxa_browser.cache.repo import upsert_sample
+
+    for row in rows:
+        upsert_sample(
+            conn,
+            sample_id=row["sample_id"],
+            project_id=row.get("project_id", 42),
+            lat_avg=row.get("lat_avg", 70.0),
+            lon_avg=row.get("lon_avg", -64.0),
+            date_min=row.get("date_min", "2018-08-01"),
+            date_max=row.get("date_max", "2018-08-10"),
+            object_count=row.get("object_count", 10),
+            instrument=row.get("instrument", "UVP5"),
+            last_synced="ts",
+        )
+
+
+def test_query_samples_filtered_respects_limit(conn):
+    from core.ecotaxa_browser.cache.repo import init_schema, query_samples_filtered
+
+    init_schema(conn)
+    _seed_rows(conn, [{"sample_id": i} for i in range(1, 11)])
+
+    unlimited = list(query_samples_filtered(conn))
+    limited = list(query_samples_filtered(conn, limit=3))
+
+    assert len(unlimited) == 10
+    assert len(limited) == 3
+
+
+def test_aggregate_samples_filtered_returns_total_breakdown_dates_centroid(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        aggregate_samples_filtered,
+        init_schema,
+    )
+
+    init_schema(conn)
+    _seed_rows(conn, [
+        {"sample_id": 1, "project_id": 42, "lat_avg": 60.0, "lon_avg": -80.0,
+         "date_min": "2018-01-01", "date_max": "2018-01-10"},
+        {"sample_id": 2, "project_id": 42, "lat_avg": 62.0, "lon_avg": -82.0,
+         "date_min": "2019-05-01", "date_max": "2019-05-10"},
+        {"sample_id": 3, "project_id": 99, "lat_avg": 64.0, "lon_avg": -84.0,
+         "date_min": "2017-03-01", "date_max": "2020-06-30"},
+    ])
+
+    agg = aggregate_samples_filtered(conn)
+
+    assert agg["total"] == 3
+    # ordered by count desc: project 42 (2) before project 99 (1)
+    assert agg["project_breakdown"] == [(42, 2), (99, 1)]
+    assert agg["date_min"] == "2017-03-01"
+    assert agg["date_max"] == "2020-06-30"
+    # centroid is the mean of the three lat/lon pairs
+    assert agg["centroid"] == (62.0, -82.0)
+
+
+def test_aggregate_samples_filtered_honours_filters(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        aggregate_samples_filtered,
+        init_schema,
+    )
+
+    init_schema(conn)
+    _seed_rows(conn, [
+        {"sample_id": 1, "project_id": 42, "lat_avg": 70.0, "lon_avg": -64.0,
+         "instrument": "UVP6"},
+        {"sample_id": 2, "project_id": 42, "lat_avg": 70.0, "lon_avg": -64.0,
+         "instrument": "UVP5"},
+    ])
+
+    agg = aggregate_samples_filtered(conn, instrument="UVP6")
+
+    assert agg["total"] == 1
+    assert agg["project_breakdown"] == [(42, 1)]
+
+
+def test_aggregate_samples_filtered_empty_returns_none_centroid(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        aggregate_samples_filtered,
+        init_schema,
+    )
+
+    init_schema(conn)
+
+    agg = aggregate_samples_filtered(conn)
+
+    assert agg["total"] == 0
+    assert agg["project_breakdown"] == []
+    assert agg["centroid"] is None
+    assert agg["date_min"] is None
+
+
+def test_open_connection_sets_busy_timeout(tmp_path):
+    from core.ecotaxa_browser.cache.repo import open_connection
+
+    db = tmp_path / "cache.sqlite"
+    connection = open_connection(str(db))
+    try:
+        timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout == 5000
+    finally:
+        connection.close()

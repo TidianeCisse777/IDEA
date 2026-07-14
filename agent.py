@@ -9,7 +9,15 @@ from typing import Sequence
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.tracers import LangChainTracer
-from langchain_core.messages import AIMessage, ToolMessage, RemoveMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+    trim_messages,
+)
+from langchain_core.messages.utils import count_tokens_approximately
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 
@@ -77,117 +85,70 @@ def clear_context_audit(thread_id: str | None = None) -> None:
         _context_audit_by_thread.clear()
 
 
-def _make_context_hook(user_id: str = "anonymous", thread_id: str = "unknown"):
-    """pre_model_hook: inject long-term memories + truncate tool results + trim history."""
-    from langchain_core.messages import trim_messages, ToolMessage, SystemMessage
+def _approx_tokens(messages) -> int:
+    """Fast, stable token estimate used by trimming and its audit."""
+    return count_tokens_approximately(messages)
 
-    def _approx_tokens(messages) -> int:
-        return sum(len(str(m.content)) for m in messages) // 4
 
-    def _truncate_tool_results(messages):
-        out = []
-        metrics = {
-            "tool_messages_seen": 0,
-            "tool_messages_truncated": 0,
-            "tool_result_chars_before": 0,
-            "tool_result_chars_after": 0,
-            "tool_result_chars_saved": 0,
-            "max_tool_result_chars": _MAX_TOOL_RESULT_CHARS,
-        }
-        for m in messages:
-            if isinstance(m, ToolMessage) and isinstance(m.content, str) and len(m.content) > _MAX_TOOL_RESULT_CHARS:
-                metrics["tool_messages_seen"] += 1
-                truncated = m.content[:_MAX_TOOL_RESULT_CHARS] + f"\n[…tronqué — {len(m.content):,} chars total]"
+def _truncate_tool_results(messages):
+    """Return request-local ToolMessage copies capped to the configured size."""
+    output = []
+    metrics = {
+        "tool_messages_seen": 0,
+        "tool_messages_truncated": 0,
+        "tool_result_chars_before": 0,
+        "tool_result_chars_after": 0,
+        "tool_result_chars_saved": 0,
+        "max_tool_result_chars": _MAX_TOOL_RESULT_CHARS,
+    }
+    for message in messages:
+        if isinstance(message, ToolMessage) and isinstance(message.content, str):
+            metrics["tool_messages_seen"] += 1
+            metrics["tool_result_chars_before"] += len(message.content)
+            if len(message.content) > _MAX_TOOL_RESULT_CHARS:
+                content = (
+                    message.content[:_MAX_TOOL_RESULT_CHARS]
+                    + f"\n[…tronqué — {len(message.content):,} chars total]"
+                )
                 metrics["tool_messages_truncated"] += 1
-                metrics["tool_result_chars_before"] += len(m.content)
-                metrics["tool_result_chars_after"] += len(truncated)
-                out.append(m.model_copy(update={"content": truncated}))
+                output.append(message.model_copy(update={"content": content}))
             else:
-                if isinstance(m, ToolMessage) and isinstance(m.content, str):
-                    metrics["tool_messages_seen"] += 1
-                    metrics["tool_result_chars_before"] += len(m.content)
-                    metrics["tool_result_chars_after"] += len(m.content)
-                out.append(m)
-        metrics["tool_result_chars_saved"] = (
-            metrics["tool_result_chars_before"] - metrics["tool_result_chars_after"]
-        )
-        return out, metrics
+                content = message.content
+                output.append(message)
+            metrics["tool_result_chars_after"] += len(content)
+        else:
+            output.append(message)
+    metrics["tool_result_chars_saved"] = (
+        metrics["tool_result_chars_before"] - metrics["tool_result_chars_after"]
+    )
+    return output, metrics
 
-    def _inject_memories(messages):
-        """Prepend stored long-term memories to the system message."""
-        try:
-            memories = _store.search((user_id, "memories"))
-            if not memories:
-                return messages, {"memories_found": 0, "memory_chars": 0, "memory_injected": False}
-            mem_text = "\n".join(
-                f"- {item.value.get('content', '')}"
-                for item in memories
-                if item.value.get("content")
-            )
-            if not mem_text:
-                return messages, {"memories_found": len(memories), "memory_chars": 0, "memory_injected": False}
-            memory_block = f"\n\n## Remembered preferences and corrections\n{mem_text}"
-            updated = []
-            injected = False
-            for m in messages:
-                if isinstance(m, SystemMessage) and not injected:
-                    updated.append(m.model_copy(update={"content": m.content + memory_block}))
-                    injected = True
-                else:
-                    updated.append(m)
-            return updated, {
-                "memories_found": len(memories),
-                "memory_chars": len(memory_block),
-                "memory_injected": injected,
-            }
-        except Exception:
-            return messages, {"memories_found": 0, "memory_chars": 0, "memory_injected": False}
 
-    def trim_context(state: dict) -> dict:
-        original_messages = list(state["messages"])
-        # Réarme le blocage qualité graphique au début d'un nouveau tour utilisateur.
-        try:
-            from tools.data_tools import reset_graph_block_on_new_turn
-            from tools.session_store import default_store as _session_store
-            reset_graph_block_on_new_turn(_session_store, thread_id, original_messages)
-        except Exception:
-            pass
-        original_tokens = _approx_tokens(original_messages)
-        msgs, truncate_metrics = _truncate_tool_results(original_messages)
-        truncated_tokens = _approx_tokens(msgs)
-        msgs, memory_metrics = _inject_memories(msgs)
-        injected_tokens = _approx_tokens(msgs)
-        trimmed = trim_messages(
-            msgs,
-            max_tokens=_MAX_CONTEXT_TOKENS,
-            strategy="last",
-            token_counter=_approx_tokens,
-            include_system=True,
-            allow_partial=False,
-        )
-        final_tokens = _approx_tokens(trimmed)
-        audit = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "thread_id": thread_id,
-            "user_id": user_id,
-            "messages_before": len(original_messages),
-            "messages_after_tool_truncation": len(msgs),
-            "messages_after_trim": len(trimmed),
-            "messages_trimmed": max(0, len(msgs) - len(trimmed)),
-            "approx_tokens_before": original_tokens,
-            "approx_tokens_after_tool_truncation": truncated_tokens,
-            "approx_tokens_after_memory": injected_tokens,
-            "approx_tokens_after_trim": final_tokens,
-            "approx_tokens_saved_by_tool_truncation": max(0, original_tokens - truncated_tokens),
-            "approx_tokens_saved_by_trim": max(0, injected_tokens - final_tokens),
-            "max_context_tokens": _MAX_CONTEXT_TOKENS,
-            **truncate_metrics,
-            **memory_metrics,
-        }
-        _context_audit_by_thread[thread_id] = audit
-        return {"messages": trimmed}
+def _trim_request_messages(messages):
+    """Keep a recent, valid conversation suffix for one model request."""
+    trimmed = trim_messages(
+        messages,
+        max_tokens=_MAX_CONTEXT_TOKENS,
+        strategy="last",
+        token_counter=_approx_tokens,
+        start_on="human",
+        include_system=False,
+        allow_partial=False,
+    )
+    if trimmed or not messages:
+        return list(trimmed)
 
-    return trim_context
+    # A single current turn can exceed the budget. Keep it whole rather than
+    # sending orphaned ToolMessages or dropping the user's request entirely.
+    last_human_index = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if isinstance(messages[index], HumanMessage)
+        ),
+        len(messages) - 1,
+    )
+    return list(messages[last_human_index:])
 
 
 def _build_memory_block(memories) -> tuple[str, dict]:
@@ -214,38 +175,78 @@ def _build_memory_block(memories) -> tuple[str, dict]:
 
 
 class _ContextMiddleware(AgentMiddleware):
-    """Équivalent `create_agent` de l'ancien `pre_model_hook`.
-
-    - `before_model` réutilise tel quel `_make_context_hook` : troncature des
-      résultats de tools + audit. Même sémantique que l'ancien hook (reducer
-      `add_messages`), donc l'entrée vue par le LLM est identique.
-    - `wrap_model_call` / `awrap_model_call` injectent les mémoires long-terme
-      dans le system prompt (`request.system_message`). L'ancien hook les
-      injectait dans la liste des messages, où aucun `SystemMessage` n'était
-      présent : l'injection ne se déclenchait jamais. Ici on cible le vrai
-      system prompt. Les deux variantes sync/async sont nécessaires :
-      `serve.py` invoque en async avec un store async (`asearch`).
-    """
+    """Prepare the exact request seen by the model without mutating checkpoints."""
 
     def __init__(self, user_id: str = "anonymous", thread_id: str = "unknown"):
         super().__init__()
         self.user_id = user_id
         self.thread_id = thread_id
-        self._hook = _make_context_hook(user_id=user_id, thread_id=thread_id)
 
-    def before_model(self, state, runtime):
-        return self._hook(state)
+    def _prepare_request(self, request, memories):
+        original_messages = list(request.messages)
+        try:
+            from tools.data_tools import reset_graph_block_on_new_turn
+            from tools.session_store import default_store as session_store
 
-    def _apply_memories(self, request, memories):
+            reset_graph_block_on_new_turn(
+                session_store, self.thread_id, original_messages
+            )
+        except Exception:
+            pass
+
+        original_tokens = _approx_tokens(original_messages)
+        truncated_messages, truncate_metrics = _truncate_tool_results(
+            original_messages
+        )
+        truncated_tokens = _approx_tokens(truncated_messages)
+        trimmed_messages = _trim_request_messages(truncated_messages)
+        final_tokens = _approx_tokens(trimmed_messages)
+
         block, metrics = _build_memory_block(memories)
-        audit = _context_audit_by_thread.get(self.thread_id)
-        if audit is not None:
-            audit.update(metrics)
-        if not block:
-            return request
         system_message = request.system_message
         base = system_message.content if system_message is not None else ""
-        return request.override(system_message=SystemMessage(content=base + block))
+        prepared_system_message = (
+            SystemMessage(content=base + block) if block else system_message
+        )
+        system_tokens = (
+            _approx_tokens([prepared_system_message])
+            if prepared_system_message is not None
+            else 0
+        )
+
+        _context_audit_by_thread[self.thread_id] = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "thread_id": self.thread_id,
+            "user_id": self.user_id,
+            "messages_before": len(original_messages),
+            "messages_after_tool_truncation": len(truncated_messages),
+            "messages_after_trim": len(trimmed_messages),
+            "messages_trimmed": max(
+                0, len(truncated_messages) - len(trimmed_messages)
+            ),
+            "approx_tokens_before": original_tokens,
+            "approx_tokens_after_tool_truncation": truncated_tokens,
+                "approx_tokens_after_memory": system_tokens + truncated_tokens,
+            "approx_tokens_after_trim": final_tokens,
+            "approx_tokens_system_message": system_tokens,
+            "approx_tokens_model_request": system_tokens + final_tokens,
+            "approx_tokens_saved_by_tool_truncation": max(
+                0, original_tokens - truncated_tokens
+            ),
+            "approx_tokens_saved_by_trim": max(
+                0, truncated_tokens - final_tokens
+            ),
+            "max_context_tokens": _MAX_CONTEXT_TOKENS,
+            "context_limit_exceeded_by_latest_turn": (
+                final_tokens > _MAX_CONTEXT_TOKENS
+            ),
+            **truncate_metrics,
+            **metrics,
+        }
+        return request.override(
+            messages=trimmed_messages,
+            system_message=prepared_system_message,
+        )
 
     def wrap_model_call(self, request, handler):
         store = getattr(request.runtime, "store", None)
@@ -255,7 +256,7 @@ class _ContextMiddleware(AgentMiddleware):
                 memories = store.search((self.user_id, "memories"))
             except Exception:
                 memories = []
-        return handler(self._apply_memories(request, memories))
+        return handler(self._prepare_request(request, memories))
 
     async def awrap_model_call(self, request, handler):
         store = getattr(request.runtime, "store", None)
@@ -265,7 +266,7 @@ class _ContextMiddleware(AgentMiddleware):
                 memories = await store.asearch((self.user_id, "memories"))
             except Exception:
                 memories = []
-        return await handler(self._apply_memories(request, memories))
+        return await handler(self._prepare_request(request, memories))
 
 
 def _find_invalid_tool_history_cut_index(messages: Sequence) -> int | None:

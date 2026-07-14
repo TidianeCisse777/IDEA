@@ -323,6 +323,39 @@ def test_enrich_remote_dry_run_by_default_does_not_download():
     assert _store.get("thread-dry") is None
 
 
+def test_enrich_remote_dry_run_with_project_does_not_auto_load_ecotaxa():
+    """CT-AG-06: planning a named project must not export or mutate session."""
+    from unittest.mock import MagicMock, patch
+
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-dry-autoload"
+    for key in (thread_id, f"{thread_id}:ecotaxa"):
+        _store.clear(key)
+
+    mock_et = MagicMock()
+    mock_ep = MagicMock()
+
+    with patch("tools.ecopart_sources.EcotaxaClient", return_value=mock_et), \
+         patch("tools.ecopart_sources.EcopartClient", return_value=mock_ep):
+        tool = next(
+            t for t in make_ecopart_tools(thread_id)
+            if t.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({"ecotaxa_project_id": 14853, "confirmed": False})
+
+    mock_et.start_export.assert_not_called()
+    mock_et.wait_for_job.assert_not_called()
+    mock_et.download_tsv.assert_not_called()
+    mock_ep.start_export.assert_not_called()
+    mock_ep.download_tsv.assert_not_called()
+    assert _store.get(thread_id) is None
+    assert _store.get(f"{thread_id}:ecotaxa") is None
+    assert "dry-run" in result.lower()
+    assert "sera exporté après confirmation" in result
+
+
 def test_enrich_remote_auto_loads_ecotaxa_when_project_named_but_not_in_session():
     """Guard: enrich called with an ecotaxa_project_id but no EcoTaxa in session
     (query_ecotaxa skipped) must auto-load the project instead of failing."""
@@ -929,7 +962,9 @@ def test_join_ecotaxa_ecopart_preserves_named_join_after_later_dataset_load():
         latest_alias="bio_oracle",
     )
 
-    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    run_pandas = next(
+        t for t in make_tools(thread_id, store=_store) if t.name == "run_pandas"
+    )
     output = run_pandas.invoke({
         "code": (
             "result = (list(df.columns), "

@@ -78,7 +78,7 @@ flowchart LR
     IN[Message utilisateur] --> HOOK
 
     subgraph Agent["create_agent"]
-        HOOK["_ContextMiddleware<br/>before_model : truncate tool results<br/>wrap_model_call : inject memory"]
+        HOOK["_ContextMiddleware<br/>prepare model request : trim + audit<br/>inject memory"]
         MODEL["LLM<br/>ChatOpenAI"]
         TOOLS["Tools node<br/>~53 tools"]
         HOOK --> MODEL
@@ -112,9 +112,10 @@ flowchart LR
   tools += make_sql_tools(thread_id)   # seulement si DATABASE_URL résolvable
   ```
 - **`_ContextMiddleware`** (agent construit via `create_agent`, LangChain 1.x) :
-  - `before_model` (réutilise `_make_context_hook`) : tronque le *contenu* des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000) et enregistre l'audit contexte.
-  - `wrap_model_call` / `awrap_model_call` : injecte le bloc mémoire long terme (`store.search` / `asearch` sur `(user_id, "memories")`) dans le system prompt. Les deux variantes existent car `serve.py` invoque en async avec un store async.
-  - ⚠️ Le trim d'historique à `MAX_CONTEXT_TOKENS` (défaut 40000) via `trim_messages` est **actuellement inactif** : le hook retourne un sous-ensemble sur le canal `messages` (reducer `add_messages`, sans `RemoveMessage`), donc l'historique complet reste envoyé au LLM. Seule la troncature du contenu des gros résultats de tools plafonne réellement les tokens. Pour activer un vrai plafond de contexte, préférer un middleware intégré (`ContextEditingMiddleware` / `SummarizationMiddleware`) qui gère l'appariement tool_call/ToolMessage.
+  - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 40000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`.
+  - Le trim utilise `request.override(messages=...)` : il borne le contexte du modèle sans supprimer l'historique complet conservé dans le checkpoint LangGraph.
+  - Les mêmes wrappers injectent le bloc mémoire long terme (`store.search` / `asearch` sur `(user_id, "memories")`) dans le system prompt. Les deux variantes existent car `serve.py` invoque en async avec un store async.
+  - L'audit `/debug/context-audit` décrit la requête préparée, avec les tokens du system prompt, le total modèle et un indicateur explicite lorsque le dernier tour complet dépasse à lui seul la limite.
 - **Checkpointer** : `AsyncSqliteSaver` sur `CHECKPOINTS_DB` (`data/checkpoints.sqlite`), clé par `thread_id`. Fallback `MemorySaver` selon le contexte.
 - **Store** : mémoire long terme (`InMemoryStore` ou store persistant).
 
@@ -161,6 +162,12 @@ L'état d'une conversation est réparti sur trois supports :
 | LangGraph checkpoints (`AsyncSqliteSaver`) | Historique des messages par `thread_id` | `data/checkpoints.sqlite` |
 | Session store (`session_store*.py`) | DataFrames nommées, métadonnées de session | PostgreSQL si `SESSION_STORE_DATABASE_URL`, sinon fichiers locaux dans `data/` |
 | Store LangGraph | Mémoire long terme (préférences, contexte) | InMemory ou persistant |
+
+Une conversation portant la même identité utilisateur et le même `chat_id`
+reprend ses DataFrames et alias persistés après un redémarrage du serveur.
+Aucune requête ne réinitialise cet état implicitement. La remise à zéro interne
+passe par `clear_conversation(thread_id)`, qui supprime la clé active et toute
+sa famille `thread_id:*`; `clear(key)` reste une suppression ciblée.
 
 Les DataFrames de session sont référencées par variables explicites
 (`df_ecotaxa`, `df_ecopart`, `df_ecotaxa_ecopart_105`, `df_ctd`, `df_bio_oracle`,

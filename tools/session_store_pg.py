@@ -7,6 +7,7 @@ Utilise SQLAlchemy Core pour la portabilité (psycopg2 ou psycopg3 selon driver)
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -69,8 +70,21 @@ class SessionStorePG:
     # ── path helpers ───────────────────────────────────────────────────────────
 
     def _pkl_path(self, session_key: str) -> Path:
-        stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(session_key).strip())
-        return self._storage_dir / f"{stem}.pkl"
+        logical_key = str(session_key)
+        readable_prefix = re.sub(
+            r"[^A-Za-z0-9_.-]+",
+            "_",
+            logical_key.strip(),
+        )[:48] or "session"
+        digest = hashlib.sha256(logical_key.encode("utf-8")).hexdigest()
+        return self._storage_dir / f"{readable_prefix}--{digest}.pkl"
+
+    @staticmethod
+    def _path_is_referenced(conn, storage_path: str) -> bool:
+        return conn.execute(
+            text("SELECT 1 FROM sessions WHERE storage_path = :path LIMIT 1"),
+            {"path": storage_path},
+        ).fetchone() is not None
 
     # ── writes ─────────────────────────────────────────────────────────────────
 
@@ -80,12 +94,27 @@ class SessionStorePG:
             path = self._pkl_path(session_key)
             df.to_pickle(path)
             storage_path = str(path)
+        stale_path: str | None = None
         with self._engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT storage_path FROM sessions WHERE session_key = :key"),
+                {"key": session_key},
+            ).fetchone()
             conn.execute(
                 _UPSERT,
                 {"key": session_key, "path": storage_path, "meta": json.dumps(meta)},
             )
+            old_path = row[0] if row is not None else None
+            if (
+                old_path
+                and old_path != storage_path
+                and not self._path_is_referenced(conn, old_path)
+            ):
+                stale_path = old_path
         self._cache[session_key] = {"df": df, "meta": meta}
+        if stale_path:
+            with contextlib.suppress(FileNotFoundError):
+                Path(stale_path).unlink()
 
     def update_meta(self, session_key: str, meta_updates: dict) -> None:
         session = self.get(session_key) or {"df": None, "meta": {}}
@@ -94,16 +123,55 @@ class SessionStorePG:
         self.set(session_key, session.get("df"), meta)
 
     def clear(self, session_key: str) -> None:
-        self._cache.pop(session_key, None)
-        with contextlib.suppress(FileNotFoundError):
-            self._pkl_path(session_key).unlink()
+        stale_path: str | None = None
         with self._engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT storage_path FROM sessions WHERE session_key = :key"),
+                {"key": session_key},
+            ).fetchone()
             conn.execute(
                 text("DELETE FROM sessions WHERE session_key = :key"),
                 {"key": session_key},
             )
+            old_path = row[0] if row is not None else None
+            if old_path and not self._path_is_referenced(conn, old_path):
+                stale_path = old_path
+        self._cache.pop(session_key, None)
+        if stale_path:
+            with contextlib.suppress(FileNotFoundError):
+                Path(stale_path).unlink()
 
     # ── reads ──────────────────────────────────────────────────────────────────
+
+    def clear_conversation(self, session_key: str) -> None:
+        prefix = f"{session_key}:"
+        where = (
+            "session_key = :key OR "
+            "substr(session_key, 1, length(:prefix)) = :prefix"
+        )
+        params = {"key": session_key, "prefix": prefix}
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                text(f"SELECT session_key, storage_path FROM sessions WHERE {where}"),
+                params,
+            ).fetchall()
+            conn.execute(text(f"DELETE FROM sessions WHERE {where}"), params)
+            stale_paths = {
+                storage_path
+                for _, storage_path in rows
+                if storage_path
+                and not self._path_is_referenced(conn, storage_path)
+            }
+
+        cached_family = [
+            key for key in self._cache
+            if key == session_key or key.startswith(prefix)
+        ]
+        for key in cached_family:
+            self._cache.pop(key, None)
+        for storage_path in stale_paths:
+            with contextlib.suppress(FileNotFoundError):
+                Path(storage_path).unlink()
 
     def get(self, session_key: str) -> dict[str, Any] | None:
         if session_key in self._cache:

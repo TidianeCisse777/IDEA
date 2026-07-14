@@ -29,6 +29,148 @@ def _key(suffix: str) -> str:
     return f"{_PREFIX}{suffix}"
 
 
+def test_clear_conversation_deletes_literal_family_in_one_transaction(tmp_path):
+    from sqlalchemy import create_engine, text
+    from tools.session_store_pg import SessionStorePG
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'sessions.sqlite'}")
+    exact_path = tmp_path / "exact.pkl"
+    child_path = tmp_path / "child.pkl"
+    neighbor_path = tmp_path / "neighbor.pkl"
+    for path in (exact_path, child_path, neighbor_path):
+        pd.DataFrame({"value": [1]}).to_pickle(path)
+
+    rows = [
+        ("thread_%", str(exact_path)),
+        ("thread_%:dataset:df", str(child_path)),
+        ("thread_%other", str(neighbor_path)),
+    ]
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE sessions (session_key TEXT PRIMARY KEY, storage_path TEXT)"
+        ))
+        for key, path in rows:
+            conn.execute(
+                text("INSERT INTO sessions VALUES (:key, :path)"),
+                {"key": key, "path": path},
+            )
+
+    store = object.__new__(SessionStorePG)
+    store._engine = engine
+    store._storage_dir = tmp_path
+    store._cache = {key: {"df": None, "meta": {}} for key, _ in rows}
+
+    store.clear_conversation("thread_%")
+
+    with engine.connect() as conn:
+        remaining_keys = list(conn.execute(
+            text("SELECT session_key FROM sessions ORDER BY session_key")
+        ).scalars())
+
+    assert remaining_keys == ["thread_%other"]
+    assert not exact_path.exists()
+    assert not child_path.exists()
+    assert neighbor_path.exists()
+    assert "thread_%" not in store._cache
+    assert "thread_%:dataset:df" not in store._cache
+    assert "thread_%other" in store._cache
+
+
+def test_clear_conversation_keeps_legacy_file_referenced_by_neighbor(tmp_path):
+    from sqlalchemy import create_engine, text
+    from tools.session_store_pg import SessionStorePG
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'sessions.sqlite'}")
+    shared_path = tmp_path / "shared-legacy.pkl"
+    expected_df = pd.DataFrame({"owner": ["neighbor"]})
+    expected_df.to_pickle(shared_path)
+    root = "thread-abc"
+    child = f"{root}:dataset"
+    neighbor = f"{root}_dataset"
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE sessions (session_key TEXT PRIMARY KEY, storage_path TEXT)"
+        ))
+        for key in (child, neighbor):
+            conn.execute(
+                text("INSERT INTO sessions VALUES (:key, :path)"),
+                {"key": key, "path": str(shared_path)},
+            )
+
+    store = object.__new__(SessionStorePG)
+    store._engine = engine
+    store._storage_dir = tmp_path
+    store._cache = {
+        child: {"df": expected_df, "meta": {"owner": "child"}},
+        neighbor: {"df": expected_df, "meta": {"owner": "neighbor"}},
+    }
+
+    store.clear_conversation(root)
+
+    with engine.connect() as conn:
+        remaining_keys = list(conn.execute(
+            text("SELECT session_key FROM sessions ORDER BY session_key")
+        ).scalars())
+    assert remaining_keys == [neighbor]
+    assert shared_path.exists()
+    assert child not in store._cache
+    assert neighbor in store._cache
+
+
+@_skip
+@pytest.mark.parametrize(
+    "insertion_order",
+    [
+        ("child", "neighbor"),
+        ("neighbor", "child"),
+    ],
+)
+def test_clear_conversation_real_postgres_preserves_literal_neighbor(
+    tmp_path,
+    insertion_order,
+):
+    from tools.session_store_pg import SessionStorePG
+
+    store = _fresh_store(tmp_path)
+    root = _key("contract_%_root")
+    child = f"{root}:dataset"
+    neighbor = f"{root}_dataset"
+    sessions = {
+        root: (pd.DataFrame({"value": [1]}), {"owner": "exact"}),
+        child: (pd.DataFrame({"value": [2]}), {"owner": "child"}),
+        neighbor: (pd.DataFrame({"value": [3]}), {"owner": "neighbor"}),
+    }
+    try:
+        store.set(root, *sessions[root])
+        named_keys = {"child": child, "neighbor": neighbor}
+        for name in insertion_order:
+            key = named_keys[name]
+            df, meta = sessions[key]
+            store.set(key, df, meta)
+        paths = {key: store._pkl_path(key) for key in sessions}
+        assert paths[child] != paths[neighbor]
+
+        store.clear_conversation(root)
+
+        assert root not in store._cache
+        assert child not in store._cache
+        assert neighbor in store._cache
+        assert not paths[root].exists()
+        assert not paths[child].exists()
+        assert paths[neighbor].exists()
+
+        restarted = SessionStorePG(_TEST_DSN, storage_dir=tmp_path / "pkl")
+        assert restarted.get(root) is None
+        assert restarted.get(child) is None
+        persisted_neighbor = restarted.get(neighbor)
+        assert persisted_neighbor is not None
+        assert persisted_neighbor["df"].equals(sessions[neighbor][0])
+        assert persisted_neighbor["meta"] == sessions[neighbor][1]
+    finally:
+        for key in sessions:
+            store.clear(key)
+
+
 @_skip
 def test_set_get_roundtrip(tmp_path):
     store = _fresh_store(tmp_path)
