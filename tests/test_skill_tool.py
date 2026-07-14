@@ -149,5 +149,7 @@ def test_uvp_skill_requires_zero_inclusive_environment_contract_and_explicit_m5(
     assert "report `n_retained` and `n_zero_abundance`" in content
     assert "Generic abundance requests never produce m5 or m6" in content
     assert "m5/m6 are explicit-only" in content
+    assert "compute the requested coefficient from `analysis_df` after preparation" in content
+    assert "The preparer does not store coefficients in `attrs`" in content
     assert "default to **m5" not in content
     assert "canonically map to m5" not in content

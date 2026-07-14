@@ -917,6 +917,8 @@ def test_system_prompt_requires_zero_inclusive_correlations_and_explicit_profile
     assert "generic abundance requests never produce m5 or m6" in prompt
     assert "m5/m6 are explicit-only" in prompt
     assert "surface + bottom" in prompt
+    assert "compute the requested coefficient from `analysis_df`" in prompt
+    assert "do not look for coefficients in the preparer's attrs" in prompt
 
 
 def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():

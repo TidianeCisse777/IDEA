@@ -116,6 +116,12 @@ Default `presence_only=False` includes every sampled zero-abundance bin. Use
 positive bins, or non-zero values. You must report `n_retained` and `n_zero_abundance`
 from `analysis_df.attrs` with the statistical result.
 
+The preparer does not store coefficients in `attrs`. If the user requests a
+Pearson, Spearman, or other named statistic, compute the requested coefficient from `analysis_df` after preparation,
+in the same analysis call. Return the
+coefficient together with `n_retained` and `n_zero_abundance`; do not look for a
+coefficient or p-value in the attrs.
+
 ## m5/m6 are explicit-only
 
 m5 or m6 may be computed only if the user writes `m5`/`m6`, or clearly asks
