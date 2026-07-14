@@ -1,0 +1,7 @@
+sample_id	station	depth_m	abundance_ind_L	temperature	salinity	oxygen	latitude	longitude
+RA01	Station-A	5	0.0	-1.4	30.8	7.2	74.10	-80.20
+RA01	Station-A	25	0.8	-1.2	31.1	7.0	74.10	-80.20
+RA01	Station-A	50	1.6	-0.9	31.5	6.8	74.10	-80.20
+RA02	Station-B	5	0.2	-1.1	31.0	7.4	73.80	-79.50
+RA02	Station-B	25	1.1	-0.7	31.4	7.1	73.80	-79.50
+RA02	Station-B	50	0.0	-0.3	31.9	6.7	73.80	-79.50
