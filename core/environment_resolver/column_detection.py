@@ -20,6 +20,7 @@ DEFAULT_LON_CANDIDATES: tuple[str, ...] = (
 )
 DEFAULT_TIME_CANDIDATES: tuple[str, ...] = (
     "object_date",
+    "sampledatetime",
     "time",
     "date",
     "sampling_date",
