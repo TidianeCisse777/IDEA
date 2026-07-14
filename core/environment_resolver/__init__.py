@@ -25,6 +25,7 @@ from core.environment_resolver.schema import (
     ResolvedEnvironmentSchema,
     resolve_environment_schema,
 )
+from core.environment_resolver.provenance import build_enrichment_provenance
 
 __all__ = [
     "CoordsValidation",
@@ -42,4 +43,5 @@ __all__ = [
     "resolve_source_dataframe",
     "ResolvedEnvironmentSchema",
     "resolve_environment_schema",
+    "build_enrichment_provenance",
 ]
