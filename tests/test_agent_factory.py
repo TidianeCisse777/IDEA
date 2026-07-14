@@ -919,6 +919,9 @@ def test_system_prompt_requires_zero_inclusive_correlations_and_explicit_profile
     assert "surface + bottom" in prompt
     assert "compute the requested coefficient from `analysis_df`" in prompt
     assert "do not look for coefficients in the preparer's attrs" in prompt
+    assert "compute_m5" in prompt
+    assert "never hand-write the m5 aggregation" in prompt
+    assert "missing surface coverage" in prompt
 
 
 def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():

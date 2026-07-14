@@ -129,3 +129,37 @@ def test_refuses_missing_required_column(missing: str):
     canonical = _canonical_bins().drop(columns=missing)
     with pytest.raises(ValueError, match=missing):
         prepare_environment_correlation(canonical, ("amundsen_temperature",))
+
+
+def test_compute_m5_uses_zero_inclusive_surface_and_bottom_bins():
+    from core.copepod_abundance_analysis import compute_m5
+
+    canonical = _canonical_bins()
+    canonical.loc[len(canonical)] = {
+        "sample_id": "RA18",
+        "depth_bin": 12.5,
+        "abundance_ind_L": 0.02,
+        "abundance_ind_m3": 20.0,
+        "amundsen_temperature": -1.3,
+        "canonical_method_version": "copepod-sample-depth-v1",
+    }
+
+    result = compute_m5(canonical, sample_id="RA18")
+
+    assert result == pytest.approx(
+        {
+            "m5_cop_dens_ind_per_L": 0.0125,
+            "surface_mean_ind_L": 0.02,
+            "bottom_mean_ind_L": 0.005,
+            "n_surface_bins": 1,
+            "n_bottom_bins": 2,
+            "max_depth_bin": 217.5,
+        }
+    )
+
+
+def test_compute_m5_refuses_missing_surface_coverage():
+    from core.copepod_abundance_analysis import compute_m5
+
+    with pytest.raises(ValueError, match=r"RA18.*0.?50"):
+        compute_m5(_canonical_bins(), sample_id="RA18")

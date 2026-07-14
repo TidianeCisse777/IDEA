@@ -151,5 +151,8 @@ def test_uvp_skill_requires_zero_inclusive_environment_contract_and_explicit_m5(
     assert "m5/m6 are explicit-only" in content
     assert "compute the requested coefficient from `analysis_df` after preparation" in content
     assert "The preparer does not store coefficients in `attrs`" in content
+    assert "from core.copepod_abundance_analysis import compute_m5" in content
+    assert "Never hand-write the m5 aggregation" in content
+    assert "refuses missing 0–50 m coverage" in content
     assert "default to **m5" not in content
     assert "canonically map to m5" not in content

@@ -10,6 +10,69 @@ _CANONICAL_VERSION = "copepod-sample-depth-v1"
 _ABUNDANCE_COLUMNS = frozenset({"abundance_ind_L", "abundance_ind_m3"})
 
 
+def compute_m5(canonical: pd.DataFrame, *, sample_id: object) -> dict[str, float | int]:
+    """Calcule m5 pour un sample seulement si surface et fond sont couverts."""
+    required = {
+        "sample_id",
+        "depth_bin",
+        "abundance_ind_L",
+        "canonical_method_version",
+    }
+    missing = sorted(required.difference(canonical.columns))
+    if missing:
+        raise ValueError(
+            "Table canonique invalide : colonne(s) absente(s) : "
+            + ", ".join(f"`{column}`" for column in missing)
+            + "."
+        )
+    if not canonical["canonical_method_version"].eq(_CANONICAL_VERSION).all():
+        raise ValueError(
+            f"`canonical_method_version` doit valoir `{_CANONICAL_VERSION}`."
+        )
+
+    sample = canonical.loc[canonical["sample_id"] == sample_id].copy()
+    if sample.empty:
+        raise ValueError(f"Sample introuvable pour m5 : `{sample_id}`.")
+    sample["depth_bin"] = pd.to_numeric(sample["depth_bin"], errors="coerce")
+    sample["abundance_ind_L"] = pd.to_numeric(
+        sample["abundance_ind_L"], errors="coerce"
+    )
+    valid = (
+        sample["depth_bin"].notna()
+        & np.isfinite(sample["depth_bin"])
+        & sample["abundance_ind_L"].notna()
+        & np.isfinite(sample["abundance_ind_L"])
+        & sample["abundance_ind_L"].ge(0)
+    )
+    if not valid.all():
+        raise ValueError(f"Valeur profondeur/abondance invalide pour `{sample_id}`.")
+
+    max_depth = float(sample["depth_bin"].max())
+    surface = sample.loc[sample["depth_bin"] <= 50, "abundance_ind_L"]
+    bottom = sample.loc[
+        sample["depth_bin"] >= (max_depth - 50), "abundance_ind_L"
+    ]
+    if surface.empty:
+        raise ValueError(
+            f"m5 refusé pour `{sample_id}` : aucun bin de surface 0–50 m."
+        )
+    if bottom.empty:
+        raise ValueError(
+            f"m5 refusé pour `{sample_id}` : aucun bin dans les derniers 50 m."
+        )
+
+    surface_mean = float(surface.mean())
+    bottom_mean = float(bottom.mean())
+    return {
+        "m5_cop_dens_ind_per_L": (surface_mean + bottom_mean) / 2.0,
+        "surface_mean_ind_L": surface_mean,
+        "bottom_mean_ind_L": bottom_mean,
+        "n_surface_bins": len(surface),
+        "n_bottom_bins": len(bottom),
+        "max_depth_bin": max_depth,
+    }
+
+
 def prepare_environment_correlation(
     canonical: pd.DataFrame,
     environmental_columns: tuple[str, ...],

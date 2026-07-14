@@ -128,6 +128,17 @@ m5 or m6 may be computed only if the user writes `m5`/`m6`, or clearly asks
 for the surface + bottom metric using the first and last 50 m. A generic
 station ranking or abundance request is not sufficient.
 
+For m5, always import the shared contract:
+
+```python
+from core.copepod_abundance_analysis import compute_m5
+
+result = compute_m5(df_canonical_sample_depth, sample_id="<requested sample>")
+```
+
+Never hand-write the m5 aggregation. `compute_m5` includes zero-abundance bins
+and refuses missing 0–50 m coverage instead of inventing a surface value.
+
 ### Answer template — always state the method explicitly
 
 Whenever you compute a copepod density / abundance / ranking on a UVP file,
@@ -165,25 +176,8 @@ explicitly requested profile metric.
 **REQUIRED — the m5 template for an intermediate `taxa_db` (sampled_volume
 already joined):**
 
-```python
-from core.copepod_sample_depth import build_canonical_sample_depth
-
-canonical_bins = build_canonical_sample_depth(
-    df,
-    volume_column="sampled_volume",
-)
-
-def m5(grp):
-    max_d = grp["depth_bin"].max()
-    surf = grp.loc[grp["depth_bin"] <= 50, "abundance_ind_L"].mean()
-    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "abundance_ind_L"].mean()
-    return (surf + bot) / 2
-
-result = (
-    canonical_bins.groupby("sample_id").apply(m5).reset_index(name="m5_cop_dens_ind_per_L")
-            .sort_values("m5_cop_dens_ind_per_L", ascending=False)
-)
-```
+Use `compute_m5(df_canonical_sample_depth, sample_id=...)` after the canonical
+table has been built and persisted. Do not rebuild it for m5.
 
 If the user **explicitly says** "je veux la moyenne sur tout le profil", that
 is a separate requested metric. State its exact formula; never label it m5.
@@ -336,43 +330,17 @@ Before running the m5 template, call `join_ecotaxa_ecopart` to obtain the joined
 ### Full m5 template (starting from `df_ecotaxa_ecopart`)
 
 ```python
-from core.copepod_sample_depth import build_canonical_sample_depth
+from core.copepod_abundance_analysis import compute_m5
 
-df = df_ecotaxa_ecopart  # joined table from join_ecotaxa_ecopart
-canonical_bins = build_canonical_sample_depth(df)
-
-# ── 6. m5: mean surface (0-50m) + bottom (last 50m) ──────────────────────
-def m5_per_sample(grp):
-    max_depth = grp["depth_bin"].max()
-    surface   = grp[grp["depth_bin"] <= 50]["abundance_ind_L"].mean()
-    bottom    = grp[grp["depth_bin"] >= (max_depth - 50)]["abundance_ind_L"].mean()
-    return (surface + bottom) / 2
-
-result = canonical_bins.groupby("sample_id").apply(m5_per_sample).reset_index()
-result.columns = ["sample_id", "m5_cop_dens_ind_per_L"]
+result = compute_m5(df_canonical_sample_depth, sample_id="<requested sample>")
 ```
 
 ### m5 template for intermediate `taxa_db` (sampled_volume already joined)
 
 ```python
-from core.copepod_sample_depth import build_canonical_sample_depth
+from core.copepod_abundance_analysis import compute_m5
 
-canonical_bins = build_canonical_sample_depth(
-    df,
-    volume_column="sampled_volume",
-)
-
-def m5(grp):
-    max_d = grp["depth_bin"].max()
-    surf = grp.loc[grp["depth_bin"] <= 50, "abundance_ind_L"].mean()
-    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "abundance_ind_L"].mean()
-    return (surf + bot) / 2
-
-result = (
-    canonical_bins.groupby("sample_id").apply(m5).reset_index()
-            .rename(columns={0: "m5_cop_dens_ind_per_L"})
-            .sort_values("m5_cop_dens_ind_per_L", ascending=False)
-)
+result = compute_m5(df_canonical_sample_depth, sample_id="<requested sample>")
 ```
 
 ---
