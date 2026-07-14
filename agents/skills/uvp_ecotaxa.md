@@ -133,11 +133,13 @@ For m5, always import the shared contract:
 ```python
 from core.copepod_abundance_analysis import compute_m5
 
-result = compute_m5(df_canonical_sample_depth, sample_id="<requested sample>")
+requested_sample_id = "<sample named by the user>"
+result = compute_m5(df_canonical_sample_depth, sample_id=requested_sample_id)
 ```
 
 Never hand-write the m5 aggregation. `compute_m5` includes zero-abundance bins
 and refuses missing 0–50 m coverage instead of inventing a surface value.
+Do not pre-filter the dataframe before this call and do not omit `sample_id`.
 
 ### Answer template — always state the method explicitly
 
@@ -332,7 +334,7 @@ Before running the m5 template, call `join_ecotaxa_ecopart` to obtain the joined
 ```python
 from core.copepod_abundance_analysis import compute_m5
 
-result = compute_m5(df_canonical_sample_depth, sample_id="<requested sample>")
+result = compute_m5(df_canonical_sample_depth, sample_id=requested_sample_id)
 ```
 
 ### m5 template for intermediate `taxa_db` (sampled_volume already joined)
@@ -340,7 +342,7 @@ result = compute_m5(df_canonical_sample_depth, sample_id="<requested sample>")
 ```python
 from core.copepod_abundance_analysis import compute_m5
 
-result = compute_m5(df_canonical_sample_depth, sample_id="<requested sample>")
+result = compute_m5(df_canonical_sample_depth, sample_id=requested_sample_id)
 ```
 
 ---

@@ -154,5 +154,7 @@ def test_uvp_skill_requires_zero_inclusive_environment_contract_and_explicit_m5(
     assert "from core.copepod_abundance_analysis import compute_m5" in content
     assert "Never hand-write the m5 aggregation" in content
     assert "refuses missing 0–50 m coverage" in content
+    assert "compute_m5(df_canonical_sample_depth, sample_id=requested_sample_id)" in content
+    assert "Do not pre-filter the dataframe before this call" in content
     assert "default to **m5" not in content
     assert "canonically map to m5" not in content

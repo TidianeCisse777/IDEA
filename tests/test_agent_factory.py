@@ -922,6 +922,8 @@ def test_system_prompt_requires_zero_inclusive_correlations_and_explicit_profile
     assert "compute_m5" in prompt
     assert "never hand-write the m5 aggregation" in prompt
     assert "missing surface coverage" in prompt
+    assert "compute_m5(df_canonical_sample_depth, sample_id=<requested sample>)" in prompt
+    assert "do not pre-filter the canonical dataframe" in prompt
 
 
 def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():
