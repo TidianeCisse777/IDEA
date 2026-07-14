@@ -11,6 +11,18 @@ from tools.data_tools import make_tools, _patch_cartopy_gridliner_polygon, _uvp_
 from tools.session_store import SessionStore, default_store as _store
 
 
+_GENERIC_GRAPH_CONTRACT_CODE = """
+graph_contract = {
+    'kind': 'generic',
+    'axes': [{'axis_index': 0, 'x': 'x', 'y': 'y'}],
+    'inverted_axes': [],
+    'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': [],
+}
+"""
+
+
 @pytest.fixture
 def tsv_path(tmp_path):
     df = pd.DataFrame({
@@ -387,7 +399,7 @@ graph_explanation = (
 )
 """
 
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
     assert "/graphs/" in result
     assert "Lecture rapide" in result
     assert "courbe en ligne" in result
@@ -404,7 +416,7 @@ def test_run_graph_works_without_loaded_file_for_standalone_map():
         "ax.text(0.5, 0.5, 'Mer du Labrador', ha='center', va='center')\n"
         "ax.set_xlim(0, 1); ax.set_ylim(0, 1)\n"
     )
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
     assert "/graphs/" in result
     assert "No file loaded" not in result
 
@@ -427,6 +439,54 @@ def test_run_graph_requires_graph_writer_after_loaded_analysis_skill(tmp_path):
     assert "/graphs/" not in result
 
 
+def test_run_graph_blocks_missing_graph_contract(tmp_path):
+    thread_id = "thread-missing-graph-contract"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({"x": [1, 2], "y": [3, 4]}),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+
+    result = run_graph.invoke({
+        "code": "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])",
+    })
+
+    assert result == "graph contract blocked: graph_contract is missing"
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is True
+    assert "/graphs/" not in result
+
+
+def test_run_graph_renders_compliant_vertical_profile_contract(tmp_path):
+    thread_id = "thread-valid-vertical-contract"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({"depth_m": [5, 10], "abundance_ind_L": [0.0, 1.2]}),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+fig, ax = plt.subplots()
+ax.plot(df['abundance_ind_L'], df['depth_m'])
+ax.invert_yaxis()
+graph_contract = {
+    'kind': 'vertical_profile',
+    'axes': [{'axis_index': 0, 'x': 'abundance_ind_L', 'y': 'depth_m'}],
+    'inverted_axes': [{'axis_index': 0, 'axis': 'y'}],
+    'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['abundance_ind_L', 'depth_m'],
+}
+"""
+
+    result = run_graph.invoke({"code": code})
+
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
+
+
 def test_run_graph_blocks_unreadable_oversized_figures(tmp_path):
     thread_id = "thread-oversized-graph"
     store = SessionStore(tmp_path / "sessions")
@@ -435,7 +495,10 @@ def test_run_graph_blocks_unreadable_oversized_figures(tmp_path):
 
     run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
     result = run_graph.invoke({
-        "code": "fig, ax = plt.subplots(figsize=(10, 22)); ax.plot(df['x'], df['y'])",
+        "code": (
+            "fig, ax = plt.subplots(figsize=(10, 22)); ax.plot(df['x'], df['y'])"
+            + _GENERIC_GRAPH_CONTRACT_CODE
+        ),
     })
 
     assert "Graph quality blocked" in result
@@ -456,7 +519,7 @@ for i in range(25):
     ax.plot([1, 2], [i, i + 1], label=f"group-{i}")
 ax.legend()
 """
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
     assert "Graph quality blocked" in result
     assert "legend entries" in result
@@ -473,10 +536,11 @@ def test_run_graph_blocks_too_many_visible_tick_labels(tmp_path):
     code = """
 fig, ax = plt.subplots(figsize=(10, 8))
 ax.imshow([[0, 1], [1, 0]])
+ax.invert_yaxis()
 ax.set_yticks(range(80))
 ax.set_yticklabels([f"station-{i}" for i in range(80)])
 """
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
     assert "Graph quality blocked" in result
     assert "tick labels" in result
@@ -493,13 +557,14 @@ def test_run_graph_blocks_overlong_tick_labels(tmp_path):
     code = """
 fig, ax = plt.subplots(figsize=(10, 8))
 ax.imshow([[0, 1], [1, 0]])
+ax.invert_yaxis()
 ax.set_xticks(range(12))
 ax.set_xticklabels([
     "Animalia | Arthropoda | Copepoda | Calanoida | Calanidae | Calanus hyperboreus"
     for _ in range(12)
 ], rotation=45)
 """
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
     assert "Graph quality blocked" in result
     assert "tick labels are too long" in result
@@ -557,6 +622,7 @@ def test_run_graph_exposes_multiple_ecopart_projects():
         "code": (
             "fig, ax = plt.subplots()\n"
             "ax.bar(['105', '42'], [len(df_ecopart_105), len(df_ecopart_42)])"
+            + _GENERIC_GRAPH_CONTRACT_CODE
         )
     })
 

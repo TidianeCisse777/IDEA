@@ -11,6 +11,8 @@ _GRAPHS_DIR.mkdir(exist_ok=True)
 import pandas as pd
 from langchain_core.tools import tool
 
+from core.graph_contracts import validate_graph_contract
+
 
 def _patch_cartopy_gridliner_polygon() -> None:
     """Workaround : cartopy 0.25 + shapely 2.1 crashent dans `_draw_gridliner`
@@ -454,6 +456,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
+                graph_contract = local_vars.get("graph_contract")
+                for fig_num in plt.get_fignums():
+                    contract_issue = validate_graph_contract(
+                        graph_contract,
+                        plt.figure(fig_num),
+                    )
+                    if contract_issue:
+                        plt.close("all")
+                        _mark_graph_quality_blocked(_store, thread_id)
+                        return contract_issue
                 quality_issue = _graph_quality_issue(plt)
                 if quality_issue:
                     plt.close("all")
