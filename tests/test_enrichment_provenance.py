@@ -72,3 +72,22 @@ def test_builds_json_serializable_enrichment_provenance():
 def test_refuses_invalid_provenance(override, match):
     with pytest.raises(ValueError, match=match):
         _build(**override)
+
+
+def test_accepts_structured_join_schema():
+    result = _build(
+        source="EcoTaxa + EcoPart",
+        dataset_id="ecopart:105",
+        dataset_url="https://ecopart.obs-vlfr.fr/prj/105",
+        resolved_schema={
+            "columns": {
+                "sample": "obj_orig_id (profil)",
+                "depth": "object_depth_min",
+                "ecopart_sample": "Profile",
+                "ecopart_depth": "Depth [m]",
+            },
+            "resolution": {"sample": "overlap", "depth": "detected"},
+        },
+    )
+
+    assert result["resolved_columns"]["columns"]["sample"] == "obj_orig_id (profil)"

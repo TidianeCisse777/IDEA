@@ -1,5 +1,7 @@
 """TDD — tools/ecopart_sources.py."""
 
+import json
+
 import pytest
 
 from tools.session_store import SessionStore
@@ -749,7 +751,11 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
         "temperature": [-1.1, -1.2, -0.8, -0.9],
     })
     _store.set("thread-join:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
-    _store.set("thread-join:ecopart", df_ecopart, {"source": "ecopart:105"})
+    _store.set(
+        "thread-join:ecopart",
+        df_ecopart,
+        {"source": "ecopart:105", "project_id": 105},
+    )
 
     tools = make_ecopart_tools("thread-join")
     join_tool = next(t for t in tools if t.name == "join_ecotaxa_ecopart")
@@ -779,6 +785,26 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert "3 lignes" in result
     assert "3 matchées" in result
     assert "depth_bin" in result
+    joined_session = _store.get("thread-join:ecotaxa_ecopart")
+    provenance = joined_session["meta"]["provenance"]
+    assert provenance["source"] == "EcoTaxa + EcoPart"
+    assert provenance["dataset_id"] == "ecopart:105"
+    assert provenance["dataset_url"] == "https://ecopart.obs-vlfr.fr/prj/105"
+    assert provenance["resolved_columns"]["columns"] == {
+        "sample": "obj_orig_id",
+        "depth": "object_depth_min",
+        "ecopart_sample": "Profile",
+        "ecopart_depth": "Depth [m]",
+    }
+    assert provenance["coverage"] == {
+        "total_rows": 3,
+        "matched_rows": 3,
+        "match_rate": 1.0,
+        "status_counts": {"matched": 3, "unmatched": 0},
+    }
+    assert "Source : https://ecopart.obs-vlfr.fr/prj/105" in result
+    assert "Provenance :" in result
+    assert json.dumps(provenance, ensure_ascii=False, sort_keys=True) in result
 
 
 def test_join_ecotaxa_ecopart_picks_key_by_overlap_not_first_row():

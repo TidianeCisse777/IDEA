@@ -16,7 +16,7 @@ def build_enrichment_provenance(
     dataset_url: str,
     completed_at: datetime,
     parameters: dict,
-    resolved_schema: ResolvedEnvironmentSchema,
+    resolved_schema: ResolvedEnvironmentSchema | dict,
     variables: list[str],
     coverage: dict,
 ) -> dict:
@@ -49,13 +49,25 @@ def build_enrichment_provenance(
     if not math.isclose(float(coverage["match_rate"]), expected_rate, abs_tol=1e-12):
         raise ValueError("`match_rate` diffère de matched_rows / total_rows.")
 
+    if isinstance(resolved_schema, ResolvedEnvironmentSchema):
+        resolved_columns = resolved_schema.to_dict()
+    elif isinstance(resolved_schema, dict):
+        resolved_columns = {
+            "columns": dict(resolved_schema.get("columns", {})),
+            "resolution": dict(resolved_schema.get("resolution", {})),
+        }
+        if not resolved_columns["columns"]:
+            raise ValueError("`resolved_schema.columns` est obligatoire.")
+    else:
+        raise ValueError("`resolved_schema` doit être un schéma structuré.")
+
     return {
         "source": str(source),
         "dataset_id": str(dataset_id),
         "dataset_url": str(dataset_url),
         "completed_at_utc": completed_utc.isoformat(),
         "parameters": dict(parameters),
-        "resolved_columns": resolved_schema.to_dict(),
+        "resolved_columns": resolved_columns,
         "variables": list(variables),
         "coverage": {
             "total_rows": total_rows,

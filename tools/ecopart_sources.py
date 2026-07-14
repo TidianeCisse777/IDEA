@@ -1,13 +1,16 @@
 """LangChain tools for EcoPart."""
 from __future__ import annotations
 
+import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 from langchain_core.tools import tool
 
 from core.ecopart_client import EcopartClient, EcopartExportError
+from core.environment_resolver import build_enrichment_provenance
 from tools.dataset_registry import (
     ECOPART,
     ECOTAXA,
@@ -112,6 +115,10 @@ def _perform_enrichment(
         return "Colonne 'Profile' absente du dataset EcoPart — relance `query_ecopart`."
     if "Depth [m]" not in df_ep.columns:
         return "Colonne 'Depth [m]' absente du dataset EcoPart — relance `query_ecopart`."
+    ecopart_variables = [
+        str(column) for column in df_ep.columns
+        if column not in {"Profile", "Depth [m]"}
+    ]
 
     # Candidate join keys, compared on real overlap with EcoPart profiles rather
     # than on the first row only — a single non-matching first row must not pick
@@ -203,6 +210,50 @@ def _perform_enrichment(
         if selected_project_id is not None
         else dataset_variable_name("ecotaxa_ecopart")
     )
+    dataset_id = (
+        f"ecopart:{selected_project_id}"
+        if selected_project_id is not None
+        else "ecopart:session"
+    )
+    dataset_url = (
+        f"https://ecopart.obs-vlfr.fr/prj/{selected_project_id}"
+        if selected_project_id is not None
+        else "https://ecopart.obs-vlfr.fr/searchsample"
+    )
+    n_unmatched = len(merged) - n_matched
+    provenance = build_enrichment_provenance(
+        source="EcoTaxa + EcoPart",
+        dataset_id=dataset_id,
+        dataset_url=dataset_url,
+        completed_at=datetime.now(timezone.utc),
+        parameters={
+            "join_type": "left",
+            "depth_bin_width_m": 5.0,
+            "depth_bin_center_offset_m": 2.5,
+            "duplicate_policy": "first_by_sample_depth",
+        },
+        resolved_schema={
+            "columns": {
+                "sample": best_key,
+                "depth": depth_col,
+                "ecopart_sample": "Profile",
+                "ecopart_depth": "Depth [m]",
+            },
+            "resolution": {
+                "sample": "maximum_overlap",
+                "depth": "documented_alias_priority",
+                "ecopart_sample": "required",
+                "ecopart_depth": "required",
+            },
+        },
+        variables=ecopart_variables,
+        coverage={
+            "total_rows": len(merged),
+            "matched_rows": n_matched,
+            "match_rate": n_matched / len(merged) if len(merged) else 0.0,
+            "status_counts": {"matched": n_matched, "unmatched": n_unmatched},
+        },
+    )
     store_dataset(
         _store,
         thread_id,
@@ -214,6 +265,7 @@ def _perform_enrichment(
             "n_rows": len(merged),
             "n_matched": n_matched,
             "depth_col_used": depth_col,
+            "provenance": provenance,
         },
         latest_alias=ECOTAXA_ECOPART,
     )
@@ -247,7 +299,10 @@ def _perform_enrichment(
         f"sum(objets)/sum(volume) global — voir skill `uvp_ecotaxa`.\n"
         f"Données disponibles dans `{joined_variable_name}` et `df_ecotaxa_ecopart` — "
         f"appelle run_pandas directement pour analyser."
-        f"{sources_block}"
+        f"{sources_block}\n"
+        f"Source : {dataset_url}\n"
+        "Provenance : "
+        + json.dumps(provenance, ensure_ascii=False, sort_keys=True)
     )
 
 
