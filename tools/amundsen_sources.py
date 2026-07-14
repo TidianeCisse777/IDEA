@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import io
+import json
 import uuid
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -43,6 +45,9 @@ def _normalize_amundsen_var(value: str) -> str:
 _AMUNDSEN_TABLEDAP_URL = (
     f"https://erddap.amundsenscience.com/erddap/tabledap/{_AMUNDSEN_DATASET_ID}.csv"
 )
+_AMUNDSEN_DATASET_URL = (
+    f"https://erddap.amundsenscience.com/erddap/tabledap/{_AMUNDSEN_DATASET_ID}.html"
+)
 _AMUNDSEN_CORE_COLUMNS = ("time", "latitude", "longitude", "station", "cast_number", "PRES")
 _AMUNDSEN_TIME_MIN = pd.Timestamp("2014-07-15T08:20:04Z")
 _AMUNDSEN_TIME_MAX = pd.Timestamp("2024-10-01T02:03:25Z")
@@ -56,6 +61,7 @@ from core.environment_resolver import (
     detect_column,
     parse_source_coords,
     resolve_source_dataframe,
+    build_enrichment_provenance,
 )
 from core.amundsen_ctd_client import (
     list_amundsen_datasets as _list_amundsen_datasets,
@@ -677,7 +683,42 @@ def make_amundsen_tools(thread_id: str) -> list:
         n_unique = outcome.n_unique
         diag = outcome.diagnostics
 
-        # Epilogue (source-specific): store with the CTD alias + TSV download.
+        status_counts = enriched["amundsen_match_status"].value_counts().to_dict()
+        n_matched = int(status_counts.get("matched", 0))
+        n_no_value = int(status_counts.get("matched_no_value", 0))
+        n_no_match = int(status_counts.get("no_match", 0))
+        n_outside_range = int(status_counts.get("outside_amundsen_ctd_range", 0))
+        plural = "matchées" if n_matched > 1 else "matchée"
+
+        provenance = build_enrichment_provenance(
+            source="Amundsen Science CTD",
+            dataset_id=_AMUNDSEN_DATASET_ID,
+            dataset_url=_AMUNDSEN_DATASET_URL,
+            completed_at=datetime.now(timezone.utc),
+            parameters={
+                "spatial_tolerance_km": spatial_tolerance_km,
+                "time_tolerance_hours": time_tolerance_hours,
+                "initial_batch_spatial_degrees": initial_batch_spatial_degrees,
+                "batch_spatial_degrees": batch_spatial_degrees,
+                "max_source_points_per_batch": max_source_points_per_batch,
+                "max_ctd_rows_per_batch": max_ctd_rows_per_batch,
+                "depth_padding_dbar": depth_padding_dbar,
+                "max_workers": max_workers,
+                "zone_name": zone_name,
+                "date_range": date_range,
+            },
+            resolved_schema=outcome.resolved_schema,
+            variables=selected_variables,
+            coverage={
+                "total_rows": n,
+                "matched_rows": n_matched,
+                "match_rate": n_matched / n if n else 0.0,
+                "status_counts": status_counts,
+            },
+        )
+
+        # Epilogue (source-specific): the exact provenance object rendered
+        # below is persisted with the enriched dataset.
         variable_name = dataset_variable_name("amundsen_enriched", uuid.uuid4().hex[:12])
         output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
         enriched.to_csv(output_path, sep="\t", index=False)
@@ -690,17 +731,11 @@ def make_amundsen_tools(thread_id: str) -> list:
                 "source": "amundsen_enrichment",
                 "n_rows": n,
                 "unique_source_points": n_unique,
-                "matched_rows": int((enriched["amundsen_match_status"] == "matched").sum()),
+                "matched_rows": n_matched,
+                "provenance": provenance,
             },
             latest_alias=CTD_ENRICHED,
         )
-
-        status_counts = enriched["amundsen_match_status"].value_counts().to_dict()
-        n_matched = int(status_counts.get("matched", 0))
-        n_no_value = int(status_counts.get("matched_no_value", 0))
-        n_no_match = int(status_counts.get("no_match", 0))
-        n_outside_range = int(status_counts.get("outside_amundsen_ctd_range", 0))
-        plural = "matchées" if n_matched > 1 else "matchée"
 
         method_lines = format_method_block(outcome) + [
             (
@@ -809,6 +844,9 @@ def make_amundsen_tools(thread_id: str) -> list:
             f"Données disponibles dans `{variable_name}`.\n"
             f"Télécharger : {download_url(output_path.name)}\n\n"
             + "\n".join(method_lines)
+            + f"\n\nSource : {_AMUNDSEN_DATASET_URL}\n"
+            + "Provenance : "
+            + json.dumps(provenance, ensure_ascii=False, sort_keys=True)
         )
 
 

@@ -29,14 +29,14 @@ import pandas as pd
 
 from core.enrich_scoping import scope_dataframe
 from core.environment_resolver.column_detection import (
-    DEFAULT_DEPTH_CANDIDATES,
-    DEFAULT_LAT_CANDIDATES,
-    DEFAULT_LON_CANDIDATES,
-    DEFAULT_TIME_CANDIDATES,
     DEFAULT_TIME_END_CANDIDATES,
     detect_column,
 )
 from core.environment_resolver.coords import CoordsValidation, parse_source_coords
+from core.environment_resolver.schema import (
+    ResolvedEnvironmentSchema,
+    resolve_environment_schema,
+)
 from core.environment_resolver.source import resolve_source_dataframe
 from tools.dataset_registry import enrichment_source_note
 
@@ -135,6 +135,7 @@ class EnrichmentOutcome:
     lon_col: str | None = None
     time_col: str | None = None
     depth_col: str | None = None
+    resolved_schema: ResolvedEnvironmentSchema | None = None
     error: str | None = None
 
 
@@ -244,23 +245,31 @@ def run_point_enrichment(
     # 2. provenance note (before the new result overwrites active-df metadata)
     source_note = enrichment_source_note(store, thread_id, source, source_variable)
 
-    # 3. detect coord columns. Time is always detected (zone/date scoping may
-    # need it) but only parsed/required when the matcher asks for it; depth is
-    # detected only when asked and is never required.
-    lat_col = latitude_column or (
-        detect_column(source.columns, DEFAULT_LAT_CANDIDATES) if need.lat else None
-    )
-    lon_col = longitude_column or (
-        detect_column(source.columns, DEFAULT_LON_CANDIDATES) if need.lon else None
-    )
-    scoping_time_col = time_column or detect_column(source.columns, DEFAULT_TIME_CANDIDATES)
+    # 3. Resolve once. Explicit overrides are rejected before parsing or MATCH.
+    try:
+        resolved_schema = resolve_environment_schema(
+            source,
+            latitude_column=latitude_column,
+            longitude_column=longitude_column,
+            time_column=time_column,
+            depth_column=depth_column,
+            require_time=need.time,
+            require_depth=False,
+        )
+    except ValueError as exc:
+        return _fail(
+            f"Enrichissement {label} impossible : colonnes manquantes ou "
+            f"override invalide — {exc}"
+        )
+
+    lat_col = resolved_schema.latitude_column
+    lon_col = resolved_schema.longitude_column
+    scoping_time_col = resolved_schema.time_column
     time_col = scoping_time_col if need.time else None
     time_end_col = (
         detect_column(source.columns, DEFAULT_TIME_END_CANDIDATES) if need.time else None
     )
-    depth_col = depth_column or (
-        detect_column(source.columns, DEFAULT_DEPTH_CANDIDATES) if need.depth else None
-    )
+    depth_col = resolved_schema.depth_column if need.depth else None
 
     # 4. optional zone/date scoping + guards
     scoping_lines: list[str] = []
@@ -332,7 +341,7 @@ def run_point_enrichment(
         return EnrichmentOutcome(
             enriched=enriched, n_rows=n, n_matched=0, n_unique=0,
             status_col=status_col, source_note=source_note,
-            scoping_lines=scoping_lines,
+            scoping_lines=scoping_lines, resolved_schema=resolved_schema,
         )
 
     def _at(series: pd.Series | None) -> pd.Series | None:
@@ -377,4 +386,5 @@ def run_point_enrichment(
         source_note=source_note, scoping_lines=scoping_lines,
         method_lines=list(result.method_lines), diagnostics=dict(result.diagnostics),
         lat_col=lat_col, lon_col=lon_col, time_col=time_col, depth_col=depth_col,
+        resolved_schema=resolved_schema,
     )
