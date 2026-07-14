@@ -176,6 +176,28 @@ def test_run_pandas_dataframe_returns_markdown(tsv_path):
     assert "lignes" in result
 
 
+def test_run_pandas_dataframe_returns_analysis_attrs(tsv_path):
+    tools = make_tools("thread-dataframe-attrs")
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    result = run_pandas.invoke(
+        {
+            "code": (
+                "result = df.head(2).copy(); "
+                "result.attrs = {'pearson': -0.6417, 'n_retained': 3, "
+                "'n_zero_abundance': 1}"
+            )
+        }
+    )
+
+    assert "Attributs d'analyse" in result
+    assert '"pearson": -0.6417' in result
+    assert '"n_retained": 3' in result
+    assert '"n_zero_abundance": 1' in result
+
+
 def test_run_pandas_persists_canonical_sample_depth_result_for_later_calls(tsv_path):
     thread_id = "thread-canonical-sample-depth"
     tools = make_tools(thread_id)

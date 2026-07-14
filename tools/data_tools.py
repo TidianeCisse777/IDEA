@@ -1,5 +1,6 @@
 """Tools LangChain pour l'analyse de données — slice 2."""
 import io
+import json
 import uuid
 from pathlib import Path
 from typing import Any
@@ -391,8 +392,19 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         f"\nVariable persistante : `{variable_name}` — réutiliser "
                         "cette table sans reconstruire les bins."
                     )
+                attrs_note = ""
+                if result.attrs:
+                    attrs_note = (
+                        "\nAttributs d'analyse : "
+                        + json.dumps(
+                            result.attrs,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            default=str,
+                        )
+                    )
                 return (
-                    f"{n_rows} lignes × {n_cols} colonnes{suffix}{persistence_note}"
+                    f"{n_rows} lignes × {n_cols} colonnes{suffix}{persistence_note}{attrs_note}"
                     f"\n\n{preview}"
                 )
             return str(result)
