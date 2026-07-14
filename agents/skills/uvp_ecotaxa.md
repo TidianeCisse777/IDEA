@@ -89,21 +89,45 @@ Because analysis calls are isolated, the first call MUST return
 
 ---
 
-## 🛑 READ THIS FIRST — abondance / densité copépodes ≠ sum/sum
+## 🛑 READ THIS FIRST — elementary abundance is the default
 
-When the user asks **"top stations abondantes copépodes" / "densité
-copépodes" / "abondance copépodes" / "ranking samples" / "profils
-verticaux"** on a UVP EcoTaxa file (raw or intermediate), you **MUST** use
-the **m5 formula** below. m5 = `(mean_density_surface_0_50 +
-mean_density_bottom_50) / 2`, computed per `sample_id`, with per-bin density
-first.
+Generic abundance requests never produce m5 or m6. For **"densité
+copépodes" / "abondance copépodes" / "profils verticaux" / environmental
+relationships**, use `abundance_ind_L` or `abundance_ind_m3` from
+`df_canonical_sample_depth`. These are the only elementary abundance columns.
+Do not create ambiguous aliases such as `abundance`, `density`, or `cop_dens`.
+
+For an environmental relationship or correlation, use the shared preparer:
+
+```python
+from core.copepod_abundance_analysis import prepare_environment_correlation
+
+analysis_df = prepare_environment_correlation(
+    df_canonical_sample_depth,
+    ("amundsen_temperature",),
+    abundance_column="abundance_ind_L",
+    presence_only=False,
+)
+result = analysis_df
+```
+
+Default `presence_only=False` includes every sampled zero-abundance bin. Use
+`presence_only=True` only when the user explicitly asks for presence-only,
+positive bins, or non-zero values. You must report `n_retained` and `n_zero_abundance`
+from `analysis_df.attrs` with the statistical result.
+
+## m5/m6 are explicit-only
+
+m5 or m6 may be computed only if the user writes `m5`/`m6`, or clearly asks
+for the surface + bottom metric using the first and last 50 m. A generic
+station ranking or abundance request is not sufficient.
 
 ### Answer template — always state the method explicitly
 
 Whenever you compute a copepod density / abundance / ranking on a UVP file,
 **start your answer with a one-line method note** before the table. Examples:
 
-- Default m5:
+- Explicit m5:
   `Méthode : m5 (Vilgrain & Bourgouin 2026) = (densité moyenne surface 0-50 m + densité moyenne fond max-50 m) / 2, par sample, en ind./L.`
 - User override (global sum/sum):
   `Méthode : densité moyenne globale sur tout le profil = somme(objets) / somme(volumes), par sample, en ind./L. (Override demandé par l'utilisateur — non m5.)`
@@ -129,8 +153,8 @@ station_stats['density'] = station_stats['cop_objects'] / station_stats['sampled
 
 This shape (`sum(objects) / sum(volume)` over the whole profile) gives a
 different metric — global volume-weighted density — and produces a different
-top-N. The user said "abondance" or "densité", both of which canonically map
-to m5 in the NeoLab UVP context.
+top-N. Do not substitute it for either elementary per-bin abundance or an
+explicitly requested profile metric.
 
 **REQUIRED — the m5 template for an intermediate `taxa_db` (sampled_volume
 already joined):**
@@ -155,9 +179,8 @@ result = (
 )
 ```
 
-If the user **explicitly says** "non, je veux la moyenne sur tout le profil"
-or "sans la méthode surface+fond", switch to the global sum/sum formula and
-state the change in your answer. Otherwise, default to m5 above.
+If the user **explicitly says** "je veux la moyenne sur tout le profil", that
+is a separate requested metric. State its exact formula; never label it m5.
 
 If the user joins station-level wording ("top 5 stations"), apply m5 at the
 sample level then map back to station; do not collapse to station before
@@ -236,29 +259,18 @@ Two shapes are supported. Detect first, then route.
 
 | Shape | Signal columns | What to do |
 |---|---|---|
-| **Raw EcoTaxa export** | `fre_major` or `object_major` + `sample_id`, no `sampled_volume` | Call `join_ecotaxa_ecopart` to get `df_ecotaxa_ecopart` (5m-binned `sampled_volume` + all `ecopart_*` columns). Then apply the m5 template below to that joined table. **Never** hand-roll the merge in `run_pandas`. |
-| **Intermediate `taxa_db`** (from `scripts/uvp_metrics_pipeline.py`) | `sample_id` + `depth_bin` + `sampled_volume` + `category` (and no `LPM (...)` column) | `sampled_volume` and `depth_bin` are **already joined**. SKIP the EcoPart merge. Filter copepods → group by `(sample_id, depth_bin)` → divide by `sampled_volume` → apply the (surface+bottom)/2 formula directly. |
+| **Raw EcoTaxa export** | `fre_major` or `object_major` + `sample_id`, no `sampled_volume` | Call `join_ecotaxa_ecopart` to get `df_ecotaxa_ecopart` (5m-binned `sampled_volume` + all `ecopart_*` columns). Then build the canonical sample-depth table. **Never** hand-roll the merge in `run_pandas`. |
+| **Intermediate `taxa_db`** (from `scripts/uvp_metrics_pipeline.py`) | `sample_id` + `depth_bin` + `sampled_volume` + `category` (and no `LPM (...)` column) | The file remains unusable for Copepoda unless it contains the exact `object_annotation_hierarchy` column. If present, build the canonical sample-depth table with `volume_column="sampled_volume"`. |
 | **Intermediate `taxa_morpho_db`** | `sample_id` + `object_major` + morphological columns, no `sampled_volume` | Join with `taxa_db` on `(sample_id, object_id)` to recover `depth_bin` + `sampled_volume`, then apply m6 formula. |
 
 ---
 
-## Default routing when the user wording is ambiguous
+## Default routing when the user wording is generic
 
-When the user asks for **"abondance copépodes" / "densité copépodes" / "top
-stations" / "profils verticaux" / "ranking des samples"** on a UVP EcoTaxa
-file or intermediate, and **does not specify the calculation method**,
-default to **m5 (Vilgrain & Bourgouin 2026)** = `(mean_surface_0_50 +
-mean_bottom_50) / 2`. This is the canonical NeoLab abundance metric for UVP
-deployments.
-
-**DO NOT** silently fall back to the naïve `sum(objects) / sum(sampled_volume)`
-over the whole profile — that produces a different metric (global
-volume-weighted density) and changes the ranking. The same "abondance" word
-can mean either thing; pick m5 by default and **say so in the answer**.
-
-If the user explicitly opposes m5 (e.g. "non, je veux la densité moyenne sur
-tout le profil", "non sans la méthode surface+fond"), switch to the global
-sum/sum formula and mention it in the answer.
+For **"abondance copépodes" / "densité copépodes" / "profils verticaux"**,
+use the elementary per-bin columns from `df_canonical_sample_depth`. For a
+sample/station summary, ask which aggregation is wanted rather than inventing
+one. Never infer m5, m6, or global sum/sum from generic wording.
 
 If the user gives a metric name you do not recognise (anything other than
 m1-m6 from the Vilgrain template), ask **one short clarifying question**

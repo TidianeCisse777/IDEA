@@ -136,3 +136,18 @@ def test_uvp_skill_requires_canonical_sample_depth_builder_for_downstream_views(
     assert "canonical_bins = build_canonical_sample_depth(" in content
     assert "tables, correlations, and graph datasets" in content
     assert "reuse the same `canonical_bins`" in content
+
+
+def test_uvp_skill_requires_zero_inclusive_environment_contract_and_explicit_m5():
+    content = Path("agents/skills/uvp_ecotaxa.md").read_text(encoding="utf-8")
+
+    assert (
+        "from core.copepod_abundance_analysis import prepare_environment_correlation"
+        in content
+    )
+    assert "presence_only=False" in content
+    assert "report `n_retained` and `n_zero_abundance`" in content
+    assert "Generic abundance requests never produce m5 or m6" in content
+    assert "m5/m6 are explicit-only" in content
+    assert "default to **m5" not in content
+    assert "canonically map to m5" not in content

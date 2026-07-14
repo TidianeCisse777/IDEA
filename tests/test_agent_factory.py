@@ -905,6 +905,20 @@ def test_system_prompt_requires_canonical_sample_depth_for_uvp_analyses():
     assert "do not independently rebuild" in prompt
 
 
+def test_system_prompt_requires_zero_inclusive_correlations_and_explicit_profile_metrics():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+
+    assert "prepare_environment_correlation" in prompt
+    assert "includes sampled zero-abundance bins by default" in prompt
+    assert "presence_only=true" in prompt
+    assert "explicit presence-only" in prompt
+    assert "generic abundance requests never produce m5 or m6" in prompt
+    assert "m5/m6 are explicit-only" in prompt
+    assert "surface + bottom" in prompt
+
+
 def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
