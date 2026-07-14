@@ -165,35 +165,41 @@ def replace_project_samples(
     try:
         conn.execute("BEGIN")
         conn.execute("DELETE FROM samples_cache WHERE project_id = ?", (project_id,))
-        for sample in samples:
-            conn.execute(
-                """
-                INSERT INTO samples_cache (
-                    sample_id, project_id, lat_avg, lon_avg,
-                    date_min, date_max, depth_min, depth_max,
-                    original_id, station_id, profile_id, free_fields_json,
-                    object_count, instrument, last_synced
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    int(sample["sample_id"]),
-                    project_id,
-                    sample.get("lat_avg"),
-                    sample.get("lon_avg"),
-                    sample.get("date_min"),
-                    sample.get("date_max"),
-                    sample.get("depth_min"),
-                    sample.get("depth_max"),
-                    sample.get("original_id"),
-                    sample.get("station_id"),
-                    sample.get("profile_id"),
-                    sample.get("free_fields_json"),
-                    int(sample.get("object_count") or 0),
-                    sample.get("instrument"),
-                    last_synced,
-                ),
+        # Build every row tuple up front (raises on bad payload before any
+        # insert, keeping the transaction atomic) then bulk-insert in one
+        # executemany — far faster than a per-row execute loop at scale.
+        rows = [
+            (
+                int(sample["sample_id"]),
+                project_id,
+                sample.get("lat_avg"),
+                sample.get("lon_avg"),
+                sample.get("date_min"),
+                sample.get("date_max"),
+                sample.get("depth_min"),
+                sample.get("depth_max"),
+                sample.get("original_id"),
+                sample.get("station_id"),
+                sample.get("profile_id"),
+                sample.get("free_fields_json"),
+                int(sample.get("object_count") or 0),
+                sample.get("instrument"),
+                last_synced,
             )
+            for sample in samples
+        ]
+        conn.executemany(
+            """
+            INSERT INTO samples_cache (
+                sample_id, project_id, lat_avg, lon_avg,
+                date_min, date_max, depth_min, depth_max,
+                original_id, station_id, profile_id, free_fields_json,
+                object_count, instrument, last_synced
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
         conn.commit()
     except Exception:
         conn.rollback()
@@ -292,8 +298,7 @@ def query_samples_in_date_range(
     )
 
 
-def query_samples_filtered(
-    conn: sqlite3.Connection,
+def _build_sample_filter(
     *,
     bbox: tuple[float, float, float, float] | None = None,
     date_range: tuple[str, str] | None = None,
@@ -304,7 +309,12 @@ def query_samples_filtered(
     depth_min_lt: float | None = None,
     depth_min_gte: float | None = None,
     month: int | None = None,
-) -> Iterable[sqlite3.Row]:
+) -> tuple[str, list]:
+    """Build the shared WHERE clause + params for sample-level filters.
+
+    Returns ``("WHERE ...", params)`` or ``("", [])`` when no filter applies,
+    so it can be spliced into both row-fetch and aggregate queries.
+    """
     clauses: list[str] = []
     params: list = []
     if bbox is not None:
@@ -343,7 +353,96 @@ def query_samples_filtered(
         clauses.append(f"project_id IN ({placeholders})")
         params.extend(project_ids)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    return conn.execute(f"SELECT * FROM samples_cache {where}", params)
+    return where, params
+
+
+def query_samples_filtered(
+    conn: sqlite3.Connection,
+    *,
+    bbox: tuple[float, float, float, float] | None = None,
+    date_range: tuple[str, str] | None = None,
+    instrument: str | None = None,
+    project_ids: Sequence[int] | None = None,
+    depth_max_lt: float | None = None,
+    depth_max_gte: float | None = None,
+    depth_min_lt: float | None = None,
+    depth_min_gte: float | None = None,
+    month: int | None = None,
+    limit: int | None = None,
+) -> Iterable[sqlite3.Row]:
+    where, params = _build_sample_filter(
+        bbox=bbox, date_range=date_range, instrument=instrument,
+        project_ids=project_ids, depth_max_lt=depth_max_lt,
+        depth_max_gte=depth_max_gte, depth_min_lt=depth_min_lt,
+        depth_min_gte=depth_min_gte, month=month,
+    )
+    sql = f"SELECT * FROM samples_cache {where}"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = [*params, int(limit)]
+    return conn.execute(sql, params)
+
+
+def aggregate_samples_filtered(
+    conn: sqlite3.Connection,
+    *,
+    bbox: tuple[float, float, float, float] | None = None,
+    date_range: tuple[str, str] | None = None,
+    instrument: str | None = None,
+    project_ids: Sequence[int] | None = None,
+    depth_max_lt: float | None = None,
+    depth_max_gte: float | None = None,
+    depth_min_lt: float | None = None,
+    depth_min_gte: float | None = None,
+    month: int | None = None,
+) -> dict:
+    """Aggregate the filtered sample set in SQL (no row materialization).
+
+    Returns total count, per-project breakdown (ordered by count desc),
+    the date envelope, and the lat/lon centroid — everything the region
+    summary needs — computed by SQLite instead of a Python pass over every
+    matching row. NULL lat/lon are ignored by AVG, matching the old
+    Python mean-over-non-null behaviour.
+    """
+    where, params = _build_sample_filter(
+        bbox=bbox, date_range=date_range, instrument=instrument,
+        project_ids=project_ids, depth_max_lt=depth_max_lt,
+        depth_max_gte=depth_max_gte, depth_min_lt=depth_min_lt,
+        depth_min_gte=depth_min_gte, month=month,
+    )
+    agg = conn.execute(
+        f"""
+        SELECT
+            COUNT(*) AS total,
+            MIN(date_min) AS date_min,
+            MAX(date_max) AS date_max,
+            AVG(lat_avg) AS lat_c,
+            AVG(lon_avg) AS lon_c
+        FROM samples_cache {where}
+        """,
+        params,
+    ).fetchone()
+    breakdown_rows = conn.execute(
+        f"""
+        SELECT project_id, COUNT(*) AS n
+        FROM samples_cache {where}
+        GROUP BY project_id
+        ORDER BY n DESC, project_id ASC
+        """,
+        params,
+    ).fetchall()
+
+    lat_c, lon_c = agg["lat_c"], agg["lon_c"]
+    centroid = (lat_c, lon_c) if lat_c is not None and lon_c is not None else None
+    return {
+        "total": int(agg["total"]),
+        "date_min": agg["date_min"],
+        "date_max": agg["date_max"],
+        "centroid": centroid,
+        "project_breakdown": [
+            (int(r["project_id"]), int(r["n"])) for r in breakdown_rows
+        ],
+    }
 
 
 def query_project_envelopes(
@@ -531,4 +630,11 @@ def cache_counts(conn: sqlite3.Connection) -> dict:
 def open_connection(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    # busy_timeout makes a reader wait out the brief write-lock window of a
+    # sync's per-project transaction instead of raising "database is locked".
+    # (Rollback journal is kept on purpose: WAL grows unbounded during a full
+    # sync because continuous readers starve the passive checkpoint — see
+    # docs/mcp note. A concurrent-read benchmark shows this timeout alone
+    # yields zero lock errors at 500k+ rows.)
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
