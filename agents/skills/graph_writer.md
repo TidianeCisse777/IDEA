@@ -66,6 +66,120 @@ plt.tight_layout()
   `if plot_df.empty: raise ValueError("No rows remain after filtering; check identifier type normalization and filter criteria.")`
 - Before plotting numeric axes, coerce only the plotted measurement columns with `pd.to_numeric(..., errors="coerce")`, then drop missing values from all plotted columns. Validate again that `plot_df` is not empty after this drop.
 
+## Executable graph contract (mandatory)
+
+Every visual must define `graph_contract`. Rendering is blocked when it is
+missing or disagrees with the actual matplotlib axes/artists. Use exactly these
+fields: `"kind"`, `"axes"`, `"inverted_axes"`, `"mappings"`,
+`"zero_policy"`, and `"source_variables"`.
+
+For a visual outside the four specialised families:
+
+```python
+graph_contract = {
+    "kind": "generic",
+    "axes": [{"axis_index": 0, "x": "<x role>", "y": "<y role>"}],
+    "inverted_axes": [],
+    "mappings": {},
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["<actual plotted columns>"],
+}
+```
+
+### Vertical abundance profile
+
+Only the depth y-axis is inverted. Never invert the abundance x-axis.
+
+```python
+ax.plot(plot_df["abundance_ind_L"], plot_df["depth_m"])
+ax.invert_yaxis()
+graph_contract = {
+    "kind": "vertical_profile",
+    "axes": [{"axis_index": 0, "x": "abundance_ind_L", "y": "depth_m"}],
+    "inverted_axes": [{"axis_index": 0, "axis": "y"}],
+    "mappings": {},
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["abundance_ind_L", "depth_m"],
+}
+```
+
+### Independent environmental relationships
+
+Create separate subplots without `sharex` or `sharey`. All abundance axes stay
+normal.
+
+```python
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+graph_contract = {
+    "kind": "environment_relationships",
+    "axes": [
+        {"axis_index": 0, "x": "temperature", "y": "abundance_ind_L"},
+        {"axis_index": 1, "x": "salinity", "y": "abundance_ind_L"},
+        {"axis_index": 2, "x": "oxygen", "y": "abundance_ind_L"},
+    ],
+    "inverted_axes": [],
+    "mappings": {},
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["temperature", "salinity", "oxygen", "abundance_ind_L"],
+}
+```
+
+### Temperature–salinity sample–depth diagram
+
+The non-zero collection carries size and depth colour. Distinguish stations by
+shape or facet. Put sampled zeros in a separate hollow collection.
+
+```python
+ts_points = ax.scatter(x, y, s=sizes, c=depth, cmap="viridis")
+ts_points.set_gid("ts_points")
+station_shapes = ax.scatter([], [], marker="s")
+station_shapes.set_gid("station_shapes")
+zero_points = ax.scatter(zero_x, zero_y, facecolors="none", edgecolors="white")
+zero_points.set_gid("zero_abundance")
+graph_contract = {
+    "kind": "temperature_salinity",
+    "axes": [{"axis_index": 0, "x": "salinity", "y": "temperature"}],
+    "inverted_axes": [],
+    "mappings": {
+        "size": {"variable": "abundance_ind_L", "artist_gid": "ts_points"},
+        "color": {"variable": "depth_m", "artist_gid": "ts_points"},
+        "station": {"variable": "station", "artist_gid": "station_shapes"},
+    },
+    "zero_policy": {"mode": "hollow", "artist_gid": "zero_abundance"},
+    "source_variables": ["salinity", "temperature", "abundance_ind_L", "depth_m", "station"],
+}
+```
+
+### Abundance–environment map
+
+The data axis must be a Cartopy GeoAxes. Give the point collection and both
+distinct legend artists stable gids.
+
+```python
+map_points = ax.scatter(lon, lat, s=sizes, c=environment,
+                        transform=ccrs.PlateCarree())
+map_points.set_gid("map_points")
+size_legend = ax.legend(handles=size_handles, title="Abondance (ind./L)")
+size_legend.set_gid("abundance_size_legend")
+ax.add_artist(size_legend)
+environment_legend = fig.colorbar(map_points, ax=ax)
+environment_legend.ax.set_gid("environment_color_legend")
+graph_contract = {
+    "kind": "abundance_environment_map",
+    "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+    "inverted_axes": [],
+    "mappings": {
+        "position": {"variable": "longitude_latitude", "artist_gid": "map_points"},
+        "size": {"variable": "abundance_ind_L", "artist_gid": "map_points"},
+        "color": {"variable": "<environment column>", "artist_gid": "map_points"},
+        "size_legend": {"variable": "abundance_ind_L", "artist_gid": "abundance_size_legend"},
+        "color_legend": {"variable": "<environment column>", "artist_gid": "environment_color_legend"},
+    },
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["longitude", "latitude", "abundance_ind_L", "<environment column>"],
+}
+```
+
 ## Geographic maps
 
 **Always use cartopy** for any map/geo scatter request — never use plain `plt.scatter` on lon/lat axes.

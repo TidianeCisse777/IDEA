@@ -1097,3 +1097,38 @@ def test_neolabs_skill_routes_visual_outputs_through_graph_writer():
     assert 'load_skill("graph_planner")' in skill
     assert 'load_skill("graph_writer")' in skill
     assert "very next execution call must be `run_graph`" in skill
+
+
+def test_system_prompt_requires_executable_graph_contracts():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "graph_contract" in COPEPOD_SYSTEM_PROMPT
+    assert "only the depth y-axis" in COPEPOD_SYSTEM_PROMPT
+    assert "independent axes" in COPEPOD_SYSTEM_PROMPT
+    assert "zero_abundance" in COPEPOD_SYSTEM_PROMPT
+    assert "abundance_size_legend" in COPEPOD_SYSTEM_PROMPT
+    assert "environment_color_legend" in COPEPOD_SYSTEM_PROMPT
+
+
+def test_graph_writer_defines_all_executable_contract_families():
+    skill = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    for kind in (
+        "generic",
+        "vertical_profile",
+        "environment_relationships",
+        "temperature_salinity",
+        "abundance_environment_map",
+    ):
+        assert f'"kind": "{kind}"' in skill
+    for field in (
+        '"axes"',
+        '"inverted_axes"',
+        '"mappings"',
+        '"zero_policy"',
+        '"source_variables"',
+    ):
+        assert field in skill
+    assert 'set_gid("zero_abundance")' in skill
+    assert 'set_gid("abundance_size_legend")' in skill
+    assert 'set_gid("environment_color_legend")' in skill

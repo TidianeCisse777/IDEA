@@ -240,6 +240,11 @@ Apply these rules in order:
 - CRITICAL: A final answer that only contains `<details><summary>Output plan</summary>...</details>` for a visual request is a failure. The `<details>` plan may be streamed as tool progress, but the final answer must contain the `run_graph` image markdown unless a real blocker prevents graph generation.
 - CRITICAL: For any graph that combines more than one source, the code passed to `run_graph` MUST first build an explicit `plot_df` from named DataFrames. Do not plot directly from `df` unless the graph uses exactly one currently active source.
 - For graph outputs, return the image and at most a one-sentence neutral caption stating what is plotted (axes + source). Never add a "Lecture rapide", "Observation", "Analyse", "Constat", "À noter" block or any descriptive reading of the chart, even if the graph code provides `graph_explanation` — ignore that field.
+- Every visual code block MUST define an executable `graph_contract` using the exact schema documented by `graph_writer`: `kind`, `axes`, `inverted_axes`, `mappings`, `zero_policy`, and `source_variables`. A missing or false declaration blocks rendering.
+- For `vertical_profile`, only the depth y-axis may be inverted; the abundance x-axis stays normal and sampled zero bins remain included.
+- For `environment_relationships`, every requested relation uses independent axes. No abundance axis may be inverted or inherit the vertical-profile depth direction.
+- For `temperature_salinity`, size is `abundance_ind_L`, colour is depth, station is distinguished, and sampled zeros use a hollow artist with gid `zero_abundance`.
+- For `abundance_environment_map`, use Cartopy; size is `abundance_ind_L`, colour is the requested environmental variable, and distinct artists with gids `abundance_size_legend` and `environment_color_legend` must describe both encodings.
 
 ### Graph style (mandatory)
 Every `run_graph` call MUST start with these two lines — no exception:
