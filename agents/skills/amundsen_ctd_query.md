@@ -72,3 +72,8 @@ Report that diagnostic to the user; do not try to invent a fallback join.
 
 - The profile must stay raw and traceable.
 - Aliases are helpers, not a substitute for the original columns.
+
+## Runtime routing contract
+
+- Dataset discovery for `amundsen12713` uses `list_amundsen_datasets`; one-profile inspection uses `preview_amundsen_profile`; a full explicit retrieval uses `query_amundsen_ctd`.
+- For a loaded file request such as "récupère ça avec Amundsen Science", call `enrich_loaded_table_with_amundsen_ctd`/the standard enrichment path. Surface `missing_sample_metadata`; do not use `query_amundsen_ctd` for a whole loaded file.

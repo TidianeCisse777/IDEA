@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 import numpy as np
@@ -60,6 +61,51 @@ def _mapping_issue(contract: dict, figure: Any, name: str) -> str | None:
     if _artist_by_gid(figure, mapping.get("artist_gid")) is None:
         return _blocked(f"{name} mapping artist is missing")
     return None
+
+
+def normalize_graph_contract(contract: dict | None, figure: Any) -> dict | None:
+    """Bind deterministic station-map mappings to the primary scatter artist."""
+    if not isinstance(contract, dict) or contract.get("kind") != "station_map":
+        return contract
+    normalized = deepcopy(contract)
+    axes = normalized.get("axes")
+    if not isinstance(axes, list) or len(axes) != 1:
+        return normalized
+    axis_index = axes[0].get("axis_index") if isinstance(axes[0], dict) else None
+    if not isinstance(axis_index, int) or not 0 <= axis_index < len(figure.axes):
+        return normalized
+
+    primary = None
+    for artist in getattr(figure.axes[axis_index], "collections", []):
+        get_offsets = getattr(artist, "get_offsets", None)
+        if get_offsets is not None and len(get_offsets()) > 0:
+            primary = artist
+            break
+    if primary is None:
+        return normalized
+
+    gid = getattr(primary, "get_gid", lambda: None)() or "station_map_points"
+    primary.set_gid(gid)
+    mappings = normalized.setdefault("mappings", {})
+    position = mappings.get("position")
+    if (
+        not isinstance(position, dict)
+        or position.get("variable") != "longitude_latitude"
+        or _artist_by_gid(figure, position.get("artist_gid")) is None
+    ):
+        mappings["position"] = {
+            "variable": "longitude_latitude",
+            "artist_gid": gid,
+        }
+    for name in ("size", "color"):
+        mapping = mappings.get(name)
+        if (
+            isinstance(mapping, dict)
+            and mapping.get("variable")
+            and _artist_by_gid(figure, mapping.get("artist_gid")) is None
+        ):
+            mapping["artist_gid"] = gid
+    return normalized
 
 
 def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:

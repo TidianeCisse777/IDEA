@@ -469,9 +469,16 @@ def test_fetch_ogsl_bbox_queries_erddap_with_bbox_and_time_constraints():
 
 
 def test_system_prompt_prefers_enrich_with_ogsl_for_latlon_files():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-    prompt = COPEPOD_SYSTEM_PROMPT
-    assert "enrich_with_ogsl" in prompt
+    from pathlib import Path
+
+    skills = "\n".join(
+        Path(path).read_text()
+        for path in (
+            "agents/skills/neolabs_abundance_analysis.md",
+            "agents/skills/copepod_hydrodynamic_micro_zoom.md",
+        )
+    )
+    assert "enrich_with_ogsl" in skills
 
 
 def test_enrich_with_ogsl_can_target_specific_dataset_via_source_variable():

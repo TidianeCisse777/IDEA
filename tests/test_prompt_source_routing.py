@@ -57,3 +57,15 @@ def test_graph_writer_has_exact_station_position_mapping():
     text = Path("agents/skills/graph_writer.md").read_text()
     assert '"position": {"variable": "longitude_latitude"' in text
     assert "A position mapping with `x` / `y` keys is invalid" in text
+
+
+def test_source_procedures_are_not_duplicated_in_system_prompt():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "## EcoTaxa\n" not in prompt
+    assert "find_ecotaxa_samples_in_region" not in prompt
+    assert "summarize_ecotaxa_projects" not in prompt
+    assert prompt.count('load_skill("ecotaxa_navigation")') <= 2
+
+
+def test_system_prompt_is_small_enough_for_routing_rules_to_stay_salient():
+    assert len(COPEPOD_SYSTEM_PROMPT) < 45_000

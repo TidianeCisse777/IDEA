@@ -1095,16 +1095,13 @@ def test_enrich_with_amundsen_ctd_filters_candidates_outside_time_tolerance():
 
 def test_system_prompt_prefers_enrich_with_amundsen_ctd_for_latlon_files():
     """Le routage doit guider le LLM vers le nouveau tool lat/lon/time."""
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+    from pathlib import Path
 
-    prompt = COPEPOD_SYSTEM_PROMPT
+    prompt = Path("agents/skills/amundsen_ctd_query.md").read_text()
     assert "enrich_with_amundsen_ctd" in prompt
     lowered = prompt.lower()
     assert "latitude" in lowered and "longitude" in lowered
-    new_idx = prompt.find("enrich_with_amundsen_ctd")
-    old_idx = prompt.find("enrich_loaded_table_with_amundsen_ctd")
-    assert new_idx != -1
-    assert new_idx < old_idx or old_idx == -1
+    assert "safer path for large neolabs/ecotaxa files" in lowered
 
 
 def test_enrich_with_amundsen_ctd_exposes_distance_and_time_delta_columns():

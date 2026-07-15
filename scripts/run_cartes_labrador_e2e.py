@@ -142,7 +142,12 @@ def _run() -> int:
     for i, turn in enumerate(SCENARIO):
         repair_invalid_tool_history(agent, config)
         print(f"\n=== Tour {i} — {turn.name} ===", file=sys.stderr)
-        seen, last, calls = 0, None, []
+        # stream_mode="values" returns the complete message history in every
+        # chunk. Start after the existing history so a turn is graded only on
+        # its own tool calls (otherwise old calls are replayed on every turn).
+        state = agent.get_state(config)
+        seen = len(state.values.get("messages", [])) if state.values else 0
+        last, calls = None, []
         t0 = time.monotonic()
         for chunk in agent.stream({"messages": [{"role": "user", "content": turn.prompt}]},
                                   config=config, stream_mode="values"):
@@ -178,6 +183,11 @@ def _write_conversation(results: list[TurnResult], thread_id: str) -> None:
         if r.tool_calls:
             out.append("**Outils appelés :** " + ", ".join(n for n, _ in r.tool_calls))
             out.append("")
+            out.append("<details><summary>Arguments des outils</summary>")
+            out.append("")
+            for name, args in r.tool_calls:
+                out += [f"`{name}`", "", "```python", args, "```", ""]
+            out += ["</details>", ""]
         out += ["**Réponse :**", "", r.answer or "_(vide)_", ""]
         out.append("**Défauts :** " + ("; ".join(r.defects) if r.defects else "aucun"))
         out.append("")

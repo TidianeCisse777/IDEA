@@ -9,7 +9,7 @@ import pandas as pd
 from langchain_core.tools import tool
 
 from core.cartography import configure_offline_cartopy
-from core.graph_contracts import validate_graph_contract
+from core.graph_contracts import normalize_graph_contract, validate_graph_contract
 from core.runtime_paths import graphs_dir
 
 
@@ -614,10 +614,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             if plt.get_fignums():
                 graph_contract = local_vars.get("graph_contract")
                 for fig_num in plt.get_fignums():
-                    contract_issue = validate_graph_contract(
-                        graph_contract,
-                        plt.figure(fig_num),
-                    )
+                    figure = plt.figure(fig_num)
+                    graph_contract = normalize_graph_contract(graph_contract, figure)
+                    contract_issue = validate_graph_contract(graph_contract, figure)
                     if contract_issue:
                         plt.close("all")
                         _mark_graph_quality_blocked(_store, thread_id)

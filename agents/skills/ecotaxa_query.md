@@ -124,3 +124,9 @@ enrichment, or metrics derived from it, as a success.
 - If the project has >100,000 objects, the export can take 1-2 minutes — warn the user.
 - If `taxon` is specified but returns 0 rows: check the exact spelling of the taxon name (case-sensitive in EcoTaxa).
 - Without valid credentials (`ECOTAXA_TOKEN` or `ECOTAXA_USERNAME`/`ECOTAXA_PASSWORD`), the tool returns an error — ask the user to check their `.env`.
+
+## Runtime routing contract
+
+- Only if `query_ecotaxa` succeeds, call `load_skill("ecotaxa_query")`. Do not call `load_skill("ecotaxa_query")` after an error.
+- Do not call `query_ecotaxa` for preview-only requests such as "présente-moi"; reserve it for explicit "charge" or "exporte" requests.
+- Preserve EcoTaxa source links and do not remove links from copied EcoTaxa tables.

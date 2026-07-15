@@ -393,6 +393,14 @@ m4 quantifies the morphological diversity of particles via 5 clusters (dark, elo
 ## Interpretation rules
 
 - `fre_*` = LOKI/UVP6 export; `object_*` = UVP5/ZooScan export → same logic, different column names
+
+## Runtime routing contract
+
+- All Copepoda filtering on a loaded DataFrame must use `copepod_hierarchy_mask`; do not reimplement it. Resolve `object_annotation_hierarchy`; do not copy or rename another column, and `hierarchy` is not an accepted substitute.
+- Build `df_canonical_sample_depth` with `build_canonical_sample_depth`, one row per (`sample_id`, `depth_bin`). Tables, correlations, and graph datasets use it directly; do not independently rebuild it.
+- `prepare_environment_correlation` includes sampled zero-abundance bins by default. `presence_only=True` is explicit presence-only. Generic abundance requests never produce M5 or M6; M5/M6 are explicit-only and require surface + bottom coverage.
+- Compute the requested coefficient from `analysis_df`; do not look for coefficients in the preparer's attrs.
+- Use `compute_m5`; never hand-write the M5 aggregation. Report missing surface coverage. Call `compute_m5(df_canonical_sample_depth, sample_id=<requested sample>)`; do not pre-filter the canonical DataFrame.
 - `acq_pixel` is in **µm/pixel** in recent UVP exports — always verify the unit
 - One profile = one `sample_id` = one UVP cast
 - Concentrations are in **ind/L**, not ind/m³ (unlike raw EcoTaxa counts)

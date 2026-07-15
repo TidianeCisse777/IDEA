@@ -6,7 +6,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 
-from core.graph_contracts import validate_graph_contract
+from core.graph_contracts import normalize_graph_contract, validate_graph_contract
 
 
 def _vertical_contract(*, inverted_axes=None):
@@ -144,6 +144,38 @@ def test_station_map_accepts_positions_without_abundance():
     issue = validate_graph_contract(_station_map_contract(), fig)
 
     assert issue is None
+    plt.close(fig)
+
+
+def test_station_map_normalizer_binds_primary_scatter_to_missing_mappings():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    ax.scatter([-52.8], [58.6], s=[40], c=[3.0], transform=ccrs.PlateCarree())
+    contract = _station_map_contract(
+        mappings={"size": {"variable": "sample_count", "artist_gid": None}}
+    )
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["mappings"]["position"] == {
+        "variable": "longitude_latitude",
+        "artist_gid": "station_map_points",
+    }
+    assert normalized["mappings"]["size"]["artist_gid"] == "station_map_points"
+    assert validate_graph_contract(normalized, fig) is None
+    plt.close(fig)
+
+
+def test_station_map_normalizer_replaces_invalid_xy_position_mapping():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    ax.scatter([-52.8], [58.6], transform=ccrs.PlateCarree())
+    contract = _station_map_contract(
+        mappings={"position": {"x": "longitude", "y": "latitude"}}
+    )
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["mappings"]["position"]["variable"] == "longitude_latitude"
+    assert validate_graph_contract(normalized, fig) is None
     plt.close(fig)
 
 

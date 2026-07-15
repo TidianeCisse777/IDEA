@@ -281,3 +281,8 @@ Ask only if the file lacks an essential column and no equivalent can be inferred
 - no date/station/lat/lon for coverage analysis
 
 Otherwise inspect the file and proceed with the closest valid workflow.
+
+## Runtime routing contract
+
+- Load with `load_skill("neolabs_abundance_analysis")` for NeoLabs abundance tables keyed by `sample_id + analysis_id`, including ordination, NMDS, and RDA.
+- `neolabs_abundance_analysis` is not a replacement for `graph_planner` or `graph_writer`. Then call `load_skill("graph_planner")`, then call `load_skill("graph_writer")`; the very next execution call must be `run_graph`.
