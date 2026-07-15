@@ -78,6 +78,9 @@ le modèle a réutilisé l'ID 1004 visible dans l'historique.
 
 **Priorité : P0 — validité et traçabilité scientifiques.**
 
+**Statut campagne : corrigé par C2 le 2026-07-15. La jointure conserve aussi
+six bins EcoPart échantillonnés sans objet, détectés pendant la validation.**
+
 ### Symptôme
 
 Après le refus D01, l'agent reconstruit manuellement la jointure avec

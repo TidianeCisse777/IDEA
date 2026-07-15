@@ -915,6 +915,14 @@ def test_system_prompt_routes_two_local_ecotaxa_ecopart_files_by_variable():
     assert "ignore any numeric EcoPart project from earlier turns" in prompt
 
 
+def test_system_prompt_routes_join_control_to_persisted_audit_tool():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "audit_ecotaxa_ecopart_join" in prompt
+    assert "never reconstruct the join for an audit" in prompt
+
+
 def test_system_prompt_requires_zero_inclusive_correlations_and_explicit_profile_metrics():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

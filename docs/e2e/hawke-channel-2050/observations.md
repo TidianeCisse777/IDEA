@@ -173,3 +173,23 @@
   sans fallback pandas.
 - Registre après curl : `df_ecotaxa_ecopart`, 137 128 × 202,
   137 128 lignes appariées, `depth_col_used=object_depth_min`.
+
+## Campagne de correction — C2
+
+- Statut : corrigé et validé le 2026-07-15.
+- La formule de bin 5 m est centralisée et partagée par la jointure et l'audit.
+- Un contrôle métier audite désormais la table persistée sans la reconstruire
+  avec pandas.
+- Défaut supplémentaire découvert : la jointure orientée EcoTaxa supprimait six
+  bins EcoPart échantillonnés sans objet.
+- Bins restaurés : `hc_04_030924/2.5`, `hc_08_040924/17.5`,
+  `hc_10_040924/187.5`, `hc_18_060924/582.5`,
+  `hc_20_070924/32.5`, `hc_32_090924/7.5`.
+- Ces bins sont maintenant représentés par une ligne sans `object_id`, avec le
+  volume EcoPart conservé ; ils deviendront des zéros dans la table canonique.
+- Validation curl : 137 134 lignes = 137 128 objets appariés + 6 bins zéro.
+- Audit : 1 946 clés sample–bin, zéro doublon objet, zéro volume manquant,
+  non positif ou contradictoire, zéro objet hors bin.
+- Trace : un seul appel `audit_ecotaxa_ecopart_join`, aucun `run_pandas`.
+- Limite restante : les URLs projet 42/1004 ajoutées par le modèle restent à
+  corriger dans C4/C6.

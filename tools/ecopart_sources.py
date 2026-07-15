@@ -10,6 +10,10 @@ import pandas as pd
 from langchain_core.tools import tool
 
 from core.ecopart_client import EcopartClient, EcopartExportError
+from core.ecotaxa_ecopart_join import (
+    audit_ecotaxa_ecopart_dataframe,
+    depth_bin_5m,
+)
 from core.environment_resolver import build_enrichment_provenance
 from tools.dataset_registry import (
     ECOPART,
@@ -200,7 +204,7 @@ def _perform_enrichment(
         )
 
     depth_numeric = pd.to_numeric(df_et[depth_col], errors="coerce")
-    df_et["_join_depth_bin"] = (depth_numeric // 5) * 5 + 2.5
+    df_et["_join_depth_bin"] = depth_bin_5m(depth_numeric)
 
     df_ep = df_ep.rename(columns={"Profile": "_join_sample_id", "Depth [m]": "_join_depth_bin"})
     # Match the stringified EcoTaxa key so an int/str dtype mismatch never silently
@@ -216,9 +220,50 @@ def _perform_enrichment(
     df_ep = df_ep.drop_duplicates(subset=["_join_sample_id", "_join_depth_bin"])
 
     merged = df_et.merge(df_ep, on=["_join_sample_id", "_join_depth_bin"], how="left")
+    if "sample_id" not in merged.columns:
+        merged["sample_id"] = merged["_join_sample_id"]
 
     sentinel = next((c for c in merged.columns if c.startswith("ecopart_")), None)
     n_matched = int(merged[sentinel].notna().sum()) if sentinel else 0
+
+    # Preserve sampled EcoPart bins that contain no EcoTaxa object. They become
+    # explicit zero-object rows so the canonical sample-depth table can retain
+    # true sampled zeros instead of silently dropping those bins.
+    object_keys = df_et[["_join_sample_id", "_join_depth_bin"]].drop_duplicates()
+    matched_profiles = set(best_series.dropna())
+    missing_bins = df_ep.loc[
+        df_ep["_join_sample_id"].isin(matched_profiles)
+    ].merge(
+        object_keys,
+        on=["_join_sample_id", "_join_depth_bin"],
+        how="left",
+        indicator=True,
+    )
+    missing_bins = missing_bins.loc[missing_bins["_merge"] == "left_only"].drop(
+        columns="_merge"
+    )
+    n_zero_object_bins = int(len(missing_bins))
+    if n_zero_object_bins:
+        if "sample_id" in df_et.columns:
+            sample_map = df_et[["_join_sample_id", "sample_id"]].drop_duplicates()
+            ambiguous = sample_map.groupby("_join_sample_id")["sample_id"].nunique()
+            if (ambiguous > 1).any():
+                return (
+                    "Bins EcoPart sans objet non conservés — plusieurs `sample_id` "
+                    "correspondent à une même clé de profil."
+                )
+            missing_bins = missing_bins.merge(
+                sample_map, on="_join_sample_id", how="left"
+            )
+        else:
+            missing_bins["sample_id"] = missing_bins["_join_sample_id"]
+
+        missing_bins = missing_bins.reset_index(drop=True)
+        zero_rows = merged.iloc[:0].copy().reindex(range(n_zero_object_bins))
+        for column in missing_bins.columns:
+            if column in zero_rows.columns:
+                zero_rows[column] = missing_bins[column].values
+        merged = pd.concat([merged, zero_rows], ignore_index=True, sort=False)
 
     # Keep the 5 m bin used for the join as a first-class `depth_bin` column — the
     # m5/m6 density templates (skill uvp_ecotaxa) group by (sample_id, depth_bin,
@@ -244,7 +289,7 @@ def _perform_enrichment(
         if selected_project_id is not None
         else "https://ecopart.obs-vlfr.fr/searchsample"
     )
-    n_unmatched = len(merged) - n_matched
+    n_unmatched = len(df_et) - n_matched
     provenance = build_enrichment_provenance(
         source="EcoTaxa + EcoPart",
         dataset_id=dataset_id,
@@ -255,6 +300,7 @@ def _perform_enrichment(
             "depth_bin_width_m": 5.0,
             "depth_bin_center_offset_m": 2.5,
             "duplicate_policy": "first_by_sample_depth",
+            "sampled_zero_object_bins": n_zero_object_bins,
         },
         resolved_schema={
             "columns": {
@@ -272,10 +318,13 @@ def _perform_enrichment(
         },
         variables=ecopart_variables,
         coverage={
-            "total_rows": len(merged),
+            "total_rows": len(df_et),
             "matched_rows": n_matched,
-            "match_rate": n_matched / len(merged) if len(merged) else 0.0,
-            "status_counts": {"matched": n_matched, "unmatched": n_unmatched},
+            "match_rate": n_matched / len(df_et) if len(df_et) else 0.0,
+            "status_counts": {
+                "matched": n_matched,
+                "unmatched": n_unmatched,
+            },
         },
     )
     store_dataset(
@@ -288,6 +337,7 @@ def _perform_enrichment(
             "ecopart_project_id": selected_project_id,
             "n_rows": len(merged),
             "n_matched": n_matched,
+            "n_zero_object_bins": n_zero_object_bins,
             "depth_col_used": depth_col,
             "provenance": provenance,
         },
@@ -314,7 +364,9 @@ def _perform_enrichment(
 
     return (
         f"Enrichissement terminé{project_note} — {len(merged)} lignes "
-        f"({n_matched} matchées sur un bin EcoPart), {len(merged.columns)} colonnes.\n"
+        f"({n_matched} matchées sur un bin EcoPart ; "
+        f"{n_zero_object_bins} bin EcoPart sans objet conservé), "
+        f"{len(merged.columns)} colonnes.\n"
         f"Clé de jointure : (sample_id, depth_bin) calculé depuis `{depth_col}`. "
         f"Bin conservé dans la colonne `depth_bin` (centre du bin 5 m).\n"
         f"Colonnes EcoPart préfixées `ecopart_` — `ecopart_Sampled volume [L]` est le volume "
@@ -647,6 +699,43 @@ def make_ecopart_tools(thread_id: str) -> list:
         )
 
     @tool
+    def audit_ecotaxa_ecopart_join(
+        source_variable: str = "df_ecotaxa_ecopart",
+    ) -> str:
+        """Contrôle une jointure EcoTaxa–EcoPart persistée sans la reconstruire.
+
+        Utilise cet outil après ``join_ecotaxa_ecopart`` pour vérifier la colonne
+        de profondeur officielle, les identifiants objet, les volumes, les clés
+        sample–bin et la distance au centre des bins de 5 m.
+        """
+        session = _session_for_variable(thread_id, source_variable)
+        if session is None and source_variable == "df_ecotaxa_ecopart":
+            session = _store.get(f"{thread_id}:ecotaxa_ecopart")
+        if session is None:
+            return f"Variable de jointure introuvable : `{source_variable}`."
+
+        audit = audit_ecotaxa_ecopart_dataframe(
+            session["df"], session.get("meta") or {}
+        )
+        verdict = "VALIDÉ" if audit["verdict"] == "validated" else "REFUSÉ"
+        anomalies = ", ".join(audit["anomalies"]) or "aucune"
+        return (
+            f"Verdict : {verdict}\n"
+            f"Variable contrôlée : `{source_variable}`\n"
+            f"Colonne de profondeur : `{audit['depth_column']}`\n"
+            f"Lignes : {audit['n_rows']} ; appariées : {audit['n_matched']}\n"
+            f"Clés sample–bin : {audit['n_sample_depth_bins']}\n"
+            f"Doublons object_id : {audit['duplicate_object_ids']}\n"
+            f"Bins échantillonnés sans objet : {audit['sampled_zero_object_bins']}\n"
+            f"Volumes manquants : {audit['missing_volume_rows']} ; "
+            f"non positifs : {audit['non_positive_volume_rows']} ; "
+            f"bins contradictoires : {audit['conflicting_volume_bins']}\n"
+            f"Objets hors bin 5 m : {audit['objects_outside_5m_bin']} ; "
+            f"écart maximal au centre : {audit['max_depth_distance_m']} m\n"
+            f"Anomalies : {anomalies}"
+        )
+
+    @tool
     def enrich_ecotaxa_with_ecopart_remote(
         ecotaxa_project_id: int | None = None,
         ecopart_project_id: int | None = None,
@@ -854,6 +943,7 @@ def make_ecopart_tools(thread_id: str) -> list:
         preview_ecopart_sample,
         query_ecopart,
         join_ecotaxa_ecopart,
+        audit_ecotaxa_ecopart_join,
         enrich_ecotaxa_with_ecopart_remote,
         find_ecopart_project_for_ecotaxa,
     ]

@@ -35,6 +35,44 @@ def test_make_ecopart_tools_exposes_expected_tools():
     assert "list_ecopart_samples" in tool_names
     assert "preview_ecopart_sample" in tool_names
     assert "query_ecopart" in tool_names
+    assert "audit_ecotaxa_ecopart_join" in tool_names
+
+
+def test_audit_ecotaxa_ecopart_join_reads_persisted_join(_isolated_store):
+    import pandas as pd
+
+    from tools.ecopart_sources import make_ecopart_tools
+
+    thread_id = "thread-audit-persisted-join"
+    joined = pd.DataFrame({
+        "sample_id": ["hc_02", "hc_02"],
+        "object_id": ["o1", "o2"],
+        "object_depth_min": [12.5, 17.5],
+        "depth_bin": [12.5, 17.5],
+        "ecopart_Sampled volume [L]": [29.7, 37.8],
+    })
+    meta = {
+        "variable_name": "df_ecotaxa_ecopart",
+        "depth_col_used": "object_depth_min",
+        "n_rows": 2,
+        "n_matched": 2,
+    }
+    _isolated_store.set(f"{thread_id}:ecotaxa_ecopart", joined, meta)
+    _isolated_store.set(
+        f"{thread_id}:dataset:df_ecotaxa_ecopart", joined, meta
+    )
+    audit_tool = next(
+        tool
+        for tool in make_ecopart_tools(thread_id)
+        if tool.name == "audit_ecotaxa_ecopart_join"
+    )
+
+    result = audit_tool.invoke({})
+
+    assert "VALIDÉ" in result
+    assert "object_depth_min" in result
+    assert "Doublons object_id : 0" in result
+    assert "Variable contrôlée : `df_ecotaxa_ecopart`" in result
 
 
 def test_list_ecopart_samples_returns_markdown_table():
@@ -743,7 +781,7 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
         "object_major": [12.5, 8.3, 5.0],
         "taxon": ["Calanus", "Calanus", "Oithona"],
     })
-    # Two bins per profile; only the matching bins should be picked up.
+    # Two bins per profile; sampled bins without objects must remain explicit.
     df_ecopart = pd.DataFrame({
         "Profile": ["ips_007", "ips_007", "ips_008", "ips_008"],
         "Depth [m]": [2.5, 7.5, 7.5, 12.5],
@@ -770,7 +808,7 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert "_join_depth_bin" not in merged.columns
     # The 5 m bin used for the join is kept as a first-class column for m5/m6 grouping.
     assert "depth_bin" in merged.columns
-    assert len(merged) == 3
+    assert len(merged) == 4
 
     by_obj = merged.set_index("obj_orig_id")
     assert by_obj.loc["ips_007_1", "ecopart_Sampled volume [L]"] == 100.0
@@ -782,8 +820,13 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert by_obj.loc["ips_007_1", "depth_bin"] == 2.5
     assert by_obj.loc["ips_007_2", "depth_bin"] == 7.5
     assert by_obj.loc["ips_008_1", "depth_bin"] == 12.5
-    assert "3 lignes" in result
+    zero_bin = merged.loc[merged["obj_orig_id"].isna()].iloc[0]
+    assert zero_bin["sample_id"] == "ips_008"
+    assert zero_bin["depth_bin"] == 7.5
+    assert zero_bin["ecopart_Sampled volume [L]"] == 90.0
+    assert "4 lignes" in result
     assert "3 matchées" in result
+    assert "1 bin EcoPart sans objet conservé" in result
     assert "depth_bin" in result
     joined_session = _store.get("thread-join:ecotaxa_ecopart")
     provenance = joined_session["meta"]["provenance"]
@@ -805,6 +848,49 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert "Source : https://ecopart.obs-vlfr.fr/prj/105" in result
     assert "Provenance :" in result
     assert json.dumps(provenance, ensure_ascii=False, sort_keys=True) in result
+
+
+def test_join_ecotaxa_ecopart_preserves_sampled_bins_without_objects():
+    import pandas as pd
+
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-zero-object-bin"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "sample_id": ["hc_02"],
+            "object_id": ["o1"],
+            "object_depth_min": [12.5],
+            "object_annotation_hierarchy": ["Biota>Animalia>Copepoda"],
+        }),
+        {"source": "file:ecotaxa.tsv"},
+    )
+    _store.set(
+        f"{thread_id}:ecopart",
+        pd.DataFrame({
+            "Profile": ["hc_02", "hc_02"],
+            "Depth [m]": [12.5, 17.5],
+            "Sampled volume [L]": [29.7, 37.8],
+        }),
+        {"source": "file:ecopart.tsv"},
+    )
+    join_tool = next(
+        tool
+        for tool in make_ecopart_tools(thread_id)
+        if tool.name == "join_ecotaxa_ecopart"
+    )
+
+    result = join_tool.invoke({})
+
+    merged = _store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    assert len(merged) == 2
+    zero_bin = merged.loc[merged["depth_bin"] == 17.5].iloc[0]
+    assert pd.isna(zero_bin["object_id"])
+    assert zero_bin["sample_id"] == "hc_02"
+    assert zero_bin["ecopart_Sampled volume [L]"] == 37.8
+    assert "1 bin EcoPart sans objet conservé" in result
 
 
 def test_join_ecotaxa_ecopart_resolves_explicit_local_file_variables():

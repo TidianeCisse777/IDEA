@@ -74,7 +74,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 3. EcoPart — `tools/ecopart_sources.py` (6)
+## 3. EcoPart — `tools/ecopart_sources.py` (7)
 
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
@@ -83,6 +83,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 | `find_ecopart_project_for_ecotaxa` | Vérifie la disponibilité d'un EcoPart lié (read-only, pas d'export) | non |
 | `query_ecopart` | Export d'un projet EcoPart | **oui** |
 | `join_ecotaxa_ecopart` | Join local `(sample_id, depth_bin 5m)`, préfixe `ecopart_*`, stocke `df_ecotaxa_ecopart` | non |
+| `audit_ecotaxa_ecopart_join` | Audite la jointure persistée : provenance profondeur, unicité objets, volumes et bins | non |
 | `enrich_ecotaxa_with_ecopart_remote` | Fetch EcoPart distant (auto-résolution projet) puis join | **oui** |
 
 ---

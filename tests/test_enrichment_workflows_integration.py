@@ -199,7 +199,11 @@ def test_remote_enrichment_selects_named_ecotaxa_project_not_latest_alias(
     assert "EcoTaxa projet 14859" in result
     assert "EcoTaxa projet 17498" not in result
     merged = _isolated_store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
-    assert set(merged["obj_orig_id"]) == {f"{_PROFILE}_0", f"{_PROFILE}_1"}
+    assert set(merged["obj_orig_id"].dropna()) == {
+        f"{_PROFILE}_0",
+        f"{_PROFILE}_1",
+    }
+    assert merged["obj_orig_id"].isna().any()
 
 
 # --------------------------------------------------------------------------- #
