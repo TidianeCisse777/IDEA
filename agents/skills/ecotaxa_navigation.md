@@ -1,8 +1,16 @@
 # Skill: ecotaxa_navigation
 
-Loaded when the user asks to **explore** or **export** EcoTaxa samples by
-zone, time, project, or any combination — typically the path
-**zone+time → drill into samples → export a selection**.
+## Activation precondition
+
+Apply this skill only when the current user request explicitly names EcoTaxa
+and the active session does not forbid EcoTaxa. Do not load or apply this skill
+for generic requests about samples, projects, stations, positions, zones,
+maps, counts, or analyses. A loaded file remains the default source unless the
+user explicitly requests EcoTaxa.
+
+After activation, use this skill to **explore** or **export** EcoTaxa samples
+by zone, time, project, or any combination — typically the path **zone+time →
+drill into samples → export a selection**.
 
 This skill bundles the 3-slice navigation flow so the rules don't bloat
 the always-on system prompt.

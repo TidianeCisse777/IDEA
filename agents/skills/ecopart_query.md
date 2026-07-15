@@ -1,5 +1,13 @@
 # Skill: ecopart_query
 
+## Activation precondition
+
+Apply this skill only when the current user request explicitly names EcoPart
+and the active session does not forbid EcoPart. Do not load or apply this skill
+for generic requests about samples, projects, stations, positions, zones,
+maps, counts, environmental variables, or analyses. A loaded file remains the
+default source unless the user explicitly requests EcoPart.
+
 You just called `query_ecopart` and EcoPart data is now loaded in the session.
 This skill provides the rules for interpreting the result and guiding the user.
 

@@ -1,5 +1,13 @@
 # Skill: amundsen_ctd_query
 
+## Activation precondition
+
+Apply this skill only when the current user request explicitly names Amundsen CTD
+and the active session does not forbid Amundsen CTD. Do not load or apply this skill
+for generic requests about samples, projects, stations, positions, zones,
+temperature, salinity, environment, maps, or analyses. A loaded file remains
+the default source unless the user explicitly requests Amundsen CTD.
+
 You just called `query_amundsen_ctd`, `enrich_loaded_table_with_amundsen_ctd`,
 or `enrich_with_amundsen_ctd`.
 The Amundsen vertical CTD profile is now loaded, exported or joined to the

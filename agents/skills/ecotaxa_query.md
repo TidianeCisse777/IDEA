@@ -1,5 +1,15 @@
 # Skill: ecotaxa_query
 
+## Activation precondition
+
+Apply this skill only when the current user request explicitly names EcoTaxa
+and the active session does not forbid EcoTaxa, or immediately after a
+successful EcoTaxa extraction that was explicitly authorized in the current
+source scope. Do not load or apply this skill for generic requests about
+samples, projects, stations, positions, zones, maps, counts, or analyses. A
+loaded file remains the default source unless the user explicitly requests
+EcoTaxa.
+
 You just called `query_ecotaxa` and EcoTaxa data is now loaded in the session.
 This skill provides the rules for interpreting the result and guiding the user.
 

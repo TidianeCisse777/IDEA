@@ -1,5 +1,13 @@
 # Skill: bio_oracle_query
 
+## Activation precondition
+
+Apply this skill only when the current user request explicitly names Bio-ORACLE
+and the active session does not forbid Bio-ORACLE. Do not load or apply this skill
+for generic requests about samples, projects, stations, positions, zones,
+temperature, environment, maps, scenarios, or analyses. A loaded file remains
+the default source unless the user explicitly requests Bio-ORACLE.
+
 Bio-ORACLE data is now loaded or being requested. Follow the workflow below.
 
 ---
