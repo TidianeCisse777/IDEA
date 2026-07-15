@@ -150,6 +150,55 @@ graph_contract = {
 }
 ```
 
+### Choosing the map kind
+
+There are exactly two valid `graph_contract["kind"]` values for a map with data
+points. Never emit `kind: "map"` or `kind: "scatter"` for a geographic map — the
+contract validator rejects them and the user is told the map "is not supported".
+
+- **`station_map`** — sample positions, and any encoding that is **not**
+  measured abundance: number of samples per position, taxa richness
+  (`n_taxa`), counts, presence. `size`/`color` are optional and map to the
+  **real** variable name.
+- **`abundance_environment_map`** — only when `size` genuinely encodes
+  `abundance_ind_L` and `color` encodes an environmental variable.
+
+**Never rename a count or a richness to `abundance_ind_L` to satisfy the
+contract.** If the user asked for positions / number of samples / number of
+taxa, use `station_map` with that variable — inventing an abundance column is a
+data-integrity violation.
+
+### Station / position map (`station_map`)
+
+The data axis must be a Cartopy GeoAxes. Give the point collection a stable gid.
+`size` and `color` are optional; when you show a colour or size legend, give it a
+gid and point its mapping at the **same variable** as the encoding it explains.
+
+```python
+map_points = ax.scatter(lon, lat, s=sizes, c=values,
+                        transform=ccrs.PlateCarree())
+map_points.set_gid("map_points")
+# optional — only if you actually encode a variable by colour:
+color_legend = fig.colorbar(map_points, ax=ax)
+color_legend.ax.set_gid("station_color_legend")
+graph_contract = {
+    "kind": "station_map",
+    "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+    "inverted_axes": [],
+    "mappings": {
+        "position": {"variable": "longitude_latitude", "artist_gid": "map_points"},
+        # include size/color ONLY if you encode them, with the real variable:
+        "color": {"variable": "n_taxa", "artist_gid": "map_points"},
+        "color_legend": {"variable": "n_taxa", "artist_gid": "station_color_legend"},
+    },
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["longitude", "latitude", "sample_id", "n_taxa"],
+}
+```
+
+For a plain positions map, keep only the `position` mapping and drop
+`size`/`color`/legends entirely.
+
 ### Abundance–environment map
 
 The data axis must be a Cartopy GeoAxes. Give the point collection and both

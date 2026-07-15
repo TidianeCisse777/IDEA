@@ -21,7 +21,8 @@ from core.runtime_paths import graphs_dir
 def test_bundled_cartopy_manifest_is_complete():
     paths = validate_cartopy_assets()
 
-    assert len(paths) == 20
+    # 4 layers × 2 vendored scales (110m + 50m) × 5 extensions.
+    assert len(paths) == 40
     assert all(path.is_file() for path in paths)
     assert all(BUNDLED_CARTOPY_DATA_DIR in path.parents for path in paths)
 
@@ -64,6 +65,47 @@ def test_bundled_layers_render_without_calling_cartopy_downloader(monkeypatch):
     plt.close(fig)
 
     assert configured == BUNDLED_CARTOPY_DATA_DIR
+    assert output.getbuffer().nbytes > 0
+
+
+def test_scale_guard_coerces_unvendored_scale_and_renders_offline(monkeypatch):
+    import cartopy
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    import cartopy.io.shapereader as shapereader
+    import matplotlib.pyplot as plt
+
+    def reject_download(*args, **kwargs):
+        raise AssertionError("Cartopy attempted a runtime download")
+
+    monkeypatch.setattr(shapereader.NEShpDownloader, "acquire_resource", reject_download)
+    monkeypatch.setitem(cartopy.config, "data_dir", Path("/nonexistent-cartopy-cache"))
+    monkeypatch.setitem(cartopy.config, "pre_existing_data_dir", Path(""))
+    configure_offline_cartopy()
+
+    # A free-form 10m request (not vendored) must be pinned to a vendored scale.
+    feature = cfeature.NaturalEarthFeature("physical", "coastline", "10m")
+    assert feature.scale == "50m"
+
+    # The bare adaptive singletons must not resolve to 10m on a zoomed regional
+    # extent — this is the graph_writer template path that broke offline.
+    assert cfeature.LAND.scaler.scale_from_extent([-64.5, -43.3, 47.0, 61.0]) in {
+        "110m",
+        "50m",
+    }
+
+    fig, ax = plt.subplots(
+        subplot_kw={"projection": ccrs.LambertConformal(central_longitude=-55)}
+    )
+    ax.set_extent([-64.5, -43.3, 47.0, 61.0], crs=ccrs.PlateCarree())
+    ax.add_feature(cfeature.LAND)  # adaptive scaler would otherwise pick 10m
+    ax.add_feature(cfeature.OCEAN)
+    ax.coastlines(resolution="10m")
+    ax.add_feature(cfeature.BORDERS.with_scale("10m"))
+    output = io.BytesIO()
+    fig.savefig(output, format="png")
+    plt.close(fig)
+
     assert output.getbuffer().nbytes > 0
 
 

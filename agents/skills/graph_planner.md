@@ -8,8 +8,16 @@ Before any other decision, check whether the question has a spatial component:
 - Are there columns named `latitude`, `longitude`, `STATION_NAME`, `station`, `deployment_id`?
 - Does the question mention a location, station, area, map, carte, distribution spatiale?
 
-If yes → the graph must include the geographic dimension:
-- **map**: station distribution on a real cartopy map with coastlines and projection
+If yes → the graph must include the geographic dimension. A cartopy map takes
+one of two contract kinds (never `kind:"map"` or `kind:"scatter"` — the
+validator rejects those):
+- **`station_map`**: sample positions on a real cartopy map with coastlines and
+  projection; optional size/colour for a **non-abundance** variable (number of
+  samples per position, taxa richness, counts). This is the default for
+  "positions des échantillons", "où sont les samples", "nombre de taxons par
+  échantillon". Do **not** manufacture an `abundance_ind_L` column for it.
+- **`abundance_environment_map`**: only when size encodes measured
+  `abundance_ind_L` and colour encodes an environmental variable.
 - **geo scatter**: abundance or biomass as a function of position (lat or lon on X axis)
 - **bar by station**: compare a variable across named stations
 
@@ -40,7 +48,7 @@ and bbox from the IHO-based registry):
 | Baie de Baffin | 75°N, -65°W | `LambertConformal(central_longitude=-65, central_latitude=75)` |
 | Arctique / Amundsen | > 65°N | `NorthPolarStereo` |
 
-**Always use `map` (cartopy) when the user asks for a geographic map, carte, or spatial distribution.** Never produce a plain scatter on lon/lat axes for a map request — it has no geographic context (no coastlines, no projection).
+**Always use a cartopy map (`station_map`, or `abundance_environment_map` for true abundance) when the user asks for a geographic map, carte, or spatial distribution.** Never produce a plain scatter on lon/lat axes for a map request — it has no geographic context (no coastlines, no projection) — and never emit `kind:"map"` or `kind:"scatter"` in the contract.
 
 ## Step 0b — NeoLabs taxonomy-abundance level check
 

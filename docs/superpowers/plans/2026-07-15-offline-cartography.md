@@ -12,7 +12,7 @@
 
 - Support both `pip install -r requirements.txt` and Docker installations.
 - Do not download cartographic assets at map-render time.
-- Vendor only land, ocean, coastline, and national-boundary Natural Earth layers at 110m.
+- Vendor only land, ocean, coastline, and national-boundary Natural Earth layers, at both 110m and 50m. (50m is required: the bare `cfeature.*` singletons carry an `AdaptiveScaler` that resolves zoomed regional extents to a finer scale than the 110m default; a runtime scale guard clamps any request — including 10m/auto — to the finest vendored scale so no download is ever triggered.)
 - Keep the 142 MB IHO source shapefile excluded.
 - Do not trigger or bundle scientific source downloads.
 - The user explicitly waived TDD for this implementation.

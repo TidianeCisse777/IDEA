@@ -27,13 +27,20 @@ de données persistant de l'application plutôt que dans `/tmp`.
 
 ## Décision
 
-Le dépôt versionne uniquement les quatre jeux de fichiers Natural Earth `110m`
-réellement consommés :
+Le dépôt versionne les quatre couches Natural Earth réellement consommées, à
+**deux échelles** (`110m` bassin entier et `50m` régional) :
 
-- `physical/ne_110m_land.*` ;
-- `physical/ne_110m_ocean.*` ;
-- `physical/ne_110m_coastline.*` ;
-- `cultural/ne_110m_admin_0_boundary_lines_land.*`.
+- `physical/ne_{110m,50m}_land.*` ;
+- `physical/ne_{110m,50m}_ocean.*` ;
+- `physical/ne_{110m,50m}_coastline.*` ;
+- `cultural/ne_{110m,50m}_admin_0_boundary_lines_land.*`.
+
+Le `50m` est indispensable : les singletons `cfeature.LAND/OCEAN/COASTLINE`
+portent un `AdaptiveScaler` qui, au rendu d'un extent régional zoomé, choisit
+une échelle plus fine que le `110m` par défaut (jusqu'à `10m`). Un garde-fou
+runtime (`core.cartography._install_scale_guard`) borne toute échelle demandée
+— `10m`, `auto` ou explicite — à la plus fine échelle vendorée (`50m`), afin
+que Cartopy ne lise que des fichiers embarqués et ne télécharge jamais rien.
 
 Ils résident sous `assets/cartopy/shapefiles/natural_earth/` selon l'arborescence
 attendue nativement par Cartopy. Les fichiers nécessaires au fonctionnement de

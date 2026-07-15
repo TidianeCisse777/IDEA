@@ -21,6 +21,7 @@ _ALLOWED_KINDS = {
     "environment_relationships",
     "temperature_salinity",
     "abundance_environment_map",
+    "station_map",
 }
 _ABUNDANCE_ROLES = {"abundance_ind_L", "abundance_ind_m3"}
 
@@ -161,6 +162,40 @@ def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
         )
         if not is_hollow:
             return _blocked("zero abundance must use hollow markers")
+
+    if contract["kind"] == "station_map":
+        if len(axes_by_index) != 1:
+            return _blocked("station map requires exactly one data axis")
+        axis_index, axis_contract = next(iter(axes_by_index.items()))
+        axis = figure.axes[axis_index]
+        if not axis.__class__.__module__.startswith("cartopy."):
+            return _blocked("station map requires a Cartopy GeoAxes")
+        if axis_contract["x"] != "longitude" or axis_contract["y"] != "latitude":
+            return _blocked("station map axes must be longitude x latitude")
+        issue = _mapping_issue(contract, figure, "position")
+        if issue:
+            return issue
+        if contract["mappings"]["position"]["variable"] != "longitude_latitude":
+            return _blocked("position mapping must use longitude_latitude")
+        # size/color are optional and map to any variable (sample_count,
+        # n_taxa, richness, …) — a station map must never be forced to invent
+        # an abundance_ind_L column just to pass validation. When an encoding
+        # legend is present it must describe its own encoding.
+        mappings = contract["mappings"]
+        for encoding, legend in (("size", "size_legend"), ("color", "color_legend")):
+            encoding_map = mappings.get(encoding)
+            if not (isinstance(encoding_map, dict) and encoding_map.get("variable")):
+                continue
+            issue = _mapping_issue(contract, figure, encoding)
+            if issue:
+                return issue
+            legend_map = mappings.get(legend)
+            if isinstance(legend_map, dict) and legend_map.get("variable"):
+                issue = _mapping_issue(contract, figure, legend)
+                if issue:
+                    return issue
+                if legend_map["variable"] != encoding_map["variable"]:
+                    return _blocked(f"{legend} must describe the {encoding} mapping")
 
     if contract["kind"] == "abundance_environment_map":
         if len(axes_by_index) != 1:

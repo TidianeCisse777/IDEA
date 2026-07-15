@@ -118,6 +118,99 @@ def _add_map_artists(ax, *, include_color_legend=True):
         color_legend.set_gid("environment_color_legend")
 
 
+def _station_map_contract(mappings=None):
+    return {
+        "kind": "station_map",
+        "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+        "inverted_axes": [],
+        "mappings": mappings
+        if mappings is not None
+        else {
+            "position": {
+                "variable": "longitude_latitude",
+                "artist_gid": "map_points",
+            }
+        },
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": ["longitude", "latitude", "sample_id"],
+    }
+
+
+def test_station_map_accepts_positions_without_abundance():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    points = ax.scatter([-52.8], [58.6], transform=ccrs.PlateCarree())
+    points.set_gid("map_points")
+
+    issue = validate_graph_contract(_station_map_contract(), fig)
+
+    assert issue is None
+    plt.close(fig)
+
+
+def test_station_map_accepts_free_size_and_color_variables():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    points = ax.scatter([-52.8], [58.6], s=[40], c=[3.0], transform=ccrs.PlateCarree())
+    points.set_gid("map_points")
+    legend = ax.text(0.01, 0.01, "Nb de taxons")
+    legend.set_gid("taxa_color_legend")
+
+    contract = _station_map_contract(
+        mappings={
+            "position": {"variable": "longitude_latitude", "artist_gid": "map_points"},
+            "size": {"variable": "sample_count", "artist_gid": "map_points"},
+            "color": {"variable": "n_taxa", "artist_gid": "map_points"},
+            "color_legend": {"variable": "n_taxa", "artist_gid": "taxa_color_legend"},
+        }
+    )
+
+    issue = validate_graph_contract(contract, fig)
+
+    assert issue is None
+    plt.close(fig)
+
+
+def test_station_map_blocks_plain_matplotlib_axis():
+    fig, ax = plt.subplots()
+    points = ax.scatter([-52.8], [58.6])
+    points.set_gid("map_points")
+
+    issue = validate_graph_contract(_station_map_contract(), fig)
+
+    assert issue == "graph contract blocked: station map requires a Cartopy GeoAxes"
+    plt.close(fig)
+
+
+def test_station_map_blocks_missing_position_artist():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    ax.scatter([-52.8], [58.6], transform=ccrs.PlateCarree())  # no gid
+
+    issue = validate_graph_contract(_station_map_contract(), fig)
+
+    assert issue == "graph contract blocked: position mapping artist is missing"
+    plt.close(fig)
+
+
+def test_station_map_blocks_inconsistent_color_legend():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    points = ax.scatter([-52.8], [58.6], c=[3.0], transform=ccrs.PlateCarree())
+    points.set_gid("map_points")
+    legend = ax.text(0.01, 0.01, "legende")
+    legend.set_gid("color_legend_gid")
+
+    contract = _station_map_contract(
+        mappings={
+            "position": {"variable": "longitude_latitude", "artist_gid": "map_points"},
+            "color": {"variable": "n_taxa", "artist_gid": "map_points"},
+            "color_legend": {"variable": "depth_m", "artist_gid": "color_legend_gid"},
+        }
+    )
+
+    issue = validate_graph_contract(contract, fig)
+
+    assert issue == "graph contract blocked: color_legend must describe the color mapping"
+    plt.close(fig)
+
+
 def test_missing_contract_is_blocked():
     fig, _ = plt.subplots()
 
