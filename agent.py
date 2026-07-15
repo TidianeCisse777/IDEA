@@ -324,10 +324,47 @@ class _ContextMiddleware(AgentMiddleware):
             "dataset_capsule_injected": bool(dataset_block),
             "dataset_capsule_chars": len(dataset_block),
         }
-        return request.override(
-            messages=trimmed_messages,
-            system_message=prepared_system_message,
+        # Source-scope gate: when a file is loaded and the turn carries no
+        # explicit EcoTaxa signal, hide the EcoTaxa/EcoPart source tools so the
+        # model cannot drift off the file (see docs/e2e/cartes-samples-labrador-2026).
+        try:
+            from tools.source_scope import filter_tools_for_scope, is_file_scoped_turn
+
+            file_scoped = is_file_scoped_turn(
+                session_store, self.thread_id, original_messages
+            )
+            scoped_tools = filter_tools_for_scope(list(request.tools), file_scoped)
+            return request.override(
+                messages=trimmed_messages,
+                system_message=prepared_system_message,
+                tools=scoped_tools,
+            )
+        except TypeError:
+            # request.override may not accept tools on this build; the
+            # wrap_tool_call guard still enforces the scope hard.
+            return request.override(
+                messages=trimmed_messages,
+                system_message=prepared_system_message,
+            )
+
+    def _source_scope_rejection(self, request) -> str | None:
+        from tools.session_store import default_store as session_store
+        from tools.source_scope import (
+            FILE_SCOPE_REDIRECT,
+            is_ecotaxa_scoped_tool,
+            is_ecotaxa_skill_load,
+            is_file_scoped_turn,
         )
+
+        tool_call = request.tool_call
+        name = str(tool_call.get("name") or "")
+        args = dict(tool_call.get("args") or {})
+        if not (is_ecotaxa_scoped_tool(name) or is_ecotaxa_skill_load(name, args)):
+            return None
+        messages = request.state.get("messages") or []
+        if is_file_scoped_turn(session_store, self.thread_id, messages):
+            return FILE_SCOPE_REDIRECT
+        return None
 
     def _tool_identifier_rejection(self, request) -> str | None:
         from tools.session_context import reject_ungrounded_ecotaxa_identifiers
@@ -343,7 +380,7 @@ class _ContextMiddleware(AgentMiddleware):
         )
 
     def wrap_tool_call(self, request, handler):
-        rejection = self._tool_identifier_rejection(request)
+        rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
             return ToolMessage(
                 content=rejection,
@@ -353,7 +390,7 @@ class _ContextMiddleware(AgentMiddleware):
         return handler(request)
 
     async def awrap_tool_call(self, request, handler):
-        rejection = self._tool_identifier_rejection(request)
+        rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
             return ToolMessage(
                 content=rejection,

@@ -13,14 +13,29 @@ suivre la progression en direct — y compris quand le tour est lent (Bio-ORACLE
 gros export). La réponse finale est imprimée sur stdout.
 """
 
+import os
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime
+from pathlib import Path
 
+import agent as agent_module
 from agent import make_agent, repair_invalid_tool_history
 
 
 _START = time.monotonic()
+
+
+@contextmanager
+def persistent_checkpointer(path: str | Path):
+    """Open the SQLite checkpointer shared by successive driver processes."""
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    checkpoint_path = Path(path)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    with SqliteSaver.from_conn_string(str(checkpoint_path)) as checkpointer:
+        yield checkpointer
 
 
 def _log(msg: str) -> None:
@@ -59,24 +74,27 @@ def main() -> None:
         raise SystemExit(2)
     thread_id, user_id, question = sys.argv[1], sys.argv[2], sys.argv[3]
     _log(f"construction de l'agent (thread={thread_id}, user={user_id})")
-    agent = make_agent(thread_id, user_id=user_id)
-    config = {"configurable": {"thread_id": thread_id}}
-    repair_invalid_tool_history(agent, config)
+    checkpoint_path = Path(os.getenv("CHECKPOINTS_DB", "data/checkpoints.sqlite"))
+    with persistent_checkpointer(checkpoint_path) as checkpointer:
+        agent_module._checkpointer = checkpointer
+        agent = make_agent(thread_id, user_id=user_id)
+        config = {"configurable": {"thread_id": thread_id}}
+        repair_invalid_tool_history(agent, config)
 
-    _log("envoi de la question, streaming des étapes…")
-    seen = 0
-    last = None
-    for chunk in agent.stream(
-        {"messages": [{"role": "user", "content": question}]},
-        config=config,
-        stream_mode="values",
-    ):
-        messages = chunk.get("messages", [])
-        for message in messages[seen:]:
-            _log_message(message)
-        if len(messages) > seen:
-            seen = len(messages)
-            last = messages[-1]
+        _log("envoi de la question, streaming des étapes…")
+        seen = 0
+        last = None
+        for chunk in agent.stream(
+            {"messages": [{"role": "user", "content": question}]},
+            config=config,
+            stream_mode="values",
+        ):
+            messages = chunk.get("messages", [])
+            for message in messages[seen:]:
+                _log_message(message)
+            if len(messages) > seen:
+                seen = len(messages)
+                last = messages[-1]
 
     _log("tour terminé.")
     if last is not None:
