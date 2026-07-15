@@ -69,6 +69,20 @@ Responsabilités : streaming SSE des tokens et de la progression des tools,
 hébergement des images et des downloads, polling du feedback Open WebUI,
 mapping requête OpenAI ↔ invocation LangGraph.
 
+### Cartographie autonome et stockage des PNG
+
+Les quatre fonds Natural Earth 110m utilisés par les gabarits Cartopy (terre,
+océan, côtes et frontières nationales) sont embarqués sous `assets/cartopy/`,
+hors du volume runtime `/app/data`.
+`core/cartography.py` valide ce bundle et le déclare comme
+`pre_existing_data_dir` avant chaque exécution de `run_graph` : une première
+carte ne déclenche donc aucun téléchargement Cartopy.
+
+`core/runtime_paths.py` donne un répertoire commun au producteur graphique et à
+la route `/graphs/`. Par défaut local, il s'agit de `data/graphs`; les fichiers
+Compose définissent `GRAPHS_DIR=/app/data/graphs`, à l'intérieur du volume
+persistant `copepod_data`.
+
 ---
 
 ## 3. Couche agent — `agent.py` (LangGraph ReAct)

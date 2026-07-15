@@ -18,9 +18,12 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Header, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from openai import RateLimitError
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel
+
+from core.runtime_paths import graphs_dir
 
 load_dotenv()
 
@@ -57,6 +60,30 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("copepod.serve")
+
+
+def _retry_after_seconds(exc: RateLimitError) -> int:
+    raw = exc.response.headers.get("retry-after") if exc.response is not None else None
+    try:
+        return max(1, min(int(float(raw)), 60))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _provider_rate_limit_payload(exc: RateLimitError) -> dict:
+    return {
+        "error": {"code": "provider_rate_limit", "retryable": True},
+        "retry_after": _retry_after_seconds(exc),
+    }
+
+
+def _provider_rate_limit_response(exc: RateLimitError) -> JSONResponse:
+    retry_after = _retry_after_seconds(exc)
+    return JSONResponse(
+        status_code=429,
+        headers={"Retry-After": str(retry_after)},
+        content={"error": {"code": "provider_rate_limit", "retryable": True}},
+    )
 
 
 def _normalize_postgres_dsn_for_langgraph(dsn: str) -> str:
@@ -265,8 +292,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GRAPHS_DIR = Path("/tmp/copepod_graphs")
-GRAPHS_DIR.mkdir(exist_ok=True)
+GRAPHS_DIR = graphs_dir()
 
 def _extract_and_host_images(text: str) -> str:
     """Remplace les data URIs base64 par des URLs hébergées sur /graphs/."""
@@ -936,6 +962,18 @@ async def _stream_agent_sse(
                                         language=language,
                                     ),
                                 ))
+        except RateLimitError as exc:
+            retry_after = _retry_after_seconds(exc)
+            logger.warning(
+                "provider_rate_limit thread=%s retry_after=%s",
+                thread_id,
+                retry_after,
+            )
+            await chunk_queue.put(
+                "data: "
+                + json.dumps(_provider_rate_limit_payload(exc), ensure_ascii=False)
+                + "\n\n"
+            )
         except Exception as exc:
             logger.error("stream_error thread=%s err=%s", thread_id, exc)
             await chunk_queue.put(_make_sse_chunk(completion_id, f"\n\n[Erreur : {exc}]"))
@@ -1023,29 +1061,6 @@ async def chat_completions(
         req.metadata,
         request.headers.get("accept-language"),
     )
-
-    # [DEBUG-f1a2] dump raw body — trouve où OpenWebUI met les infos fichier
-    try:
-        raw_body = await request.body()
-        import json as _json
-        body_obj = _json.loads(raw_body)
-        last_msg = next((m for m in reversed(body_obj.get("messages", [])) if m.get("role") == "user"), {})
-        logger.info(
-            "[DEBUG-f1a2] RAW BODY keys=%s | last_user_content=%s | top_files=%s | meta=%s",
-            list(body_obj.keys()),
-            repr(str(last_msg.get("content", ""))[:300]),
-            body_obj.get("files"),
-            repr(str(body_obj.get("metadata", {}))[:300]),
-        )
-    except Exception as _e:
-        logger.info("[DEBUG-f1a2] raw body parse error: %s", _e)
-
-    # Log all headers to diagnose missing chat_id
-    owui_headers = {k: v for k, v in request.headers.items() if "openwebui" in k.lower() or "chat" in k.lower() or "session" in k.lower()}
-    logger.info(
-        "completions_request headers=%s body_chat_id=%s body_session=%s body_meta=%s",
-        owui_headers, req.chat_id, req.session_id, req.metadata,
-    )
     openwebui_message_id = _openwebui_message_id(req, x_openwebui_message_id)
     tid = _thread_id(
         req.messages,
@@ -1061,6 +1076,15 @@ async def chat_completions(
         metadata=req.metadata,
         user_id=user_id,
     )
+    logger.info(
+        "completions_request thread=%s stream=%s has_chat_id=%s "
+        "has_session_id=%s message_count=%s",
+        tid,
+        req.stream,
+        bool(x_openwebui_chat_id or req.chat_id),
+        bool(req.session_id),
+        len(req.messages),
+    )
 
     last_user = next((m for m in reversed(req.messages) if m.role == "user"), None)
 
@@ -1070,7 +1094,11 @@ async def chat_completions(
     raw_last_user_text = last_user.text() if last_user else ""
     if _is_internal_prompt(raw_last_user_text):
         original_query = (req.metadata or {}).get("user_prompt", "")
-        logger.info("thread=%s RAG template detected, restored user_prompt=%r", tid, original_query[:120])
+        logger.info(
+            "thread=%s RAG template detected restored_prompt_chars=%s",
+            tid,
+            len(original_query),
+        )
         if last_user and original_query:
             last_user = Message(role="user", content=original_query)
         elif not original_query:
@@ -1170,7 +1198,15 @@ async def chat_completions(
             media_type="text/event-stream",
         )
 
-    result = await agent.ainvoke(messages, config=config)
+    try:
+        result = await agent.ainvoke(messages, config=config)
+    except RateLimitError as exc:
+        logger.warning(
+            "provider_rate_limit thread=%s retry_after=%s",
+            tid,
+            _retry_after_seconds(exc),
+        )
+        return _provider_rate_limit_response(exc)
 
     # Capture run_id for feedback
     run_id = result.get("__run_id") or default_run_store.get(tid)

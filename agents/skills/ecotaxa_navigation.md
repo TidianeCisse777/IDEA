@@ -1,8 +1,16 @@
 # Skill: ecotaxa_navigation
 
-Loaded when the user asks to **explore** or **export** EcoTaxa samples by
-zone, time, project, or any combination — typically the path
-**zone+time → drill into samples → export a selection**.
+## Activation precondition
+
+Apply this skill only when the current user request explicitly names EcoTaxa
+and the active session does not forbid EcoTaxa. Do not load or apply this skill
+for generic requests about samples, projects, stations, positions, zones,
+maps, counts, or analyses. A loaded file remains the default source unless the
+user explicitly requests EcoTaxa.
+
+After activation, use this skill to **explore** or **export** EcoTaxa samples
+by zone, time, project, or any combination — typically the path **zone+time →
+drill into samples → export a selection**.
 
 This skill bundles the 3-slice navigation flow so the rules don't bloat
 the always-on system prompt.
@@ -589,3 +597,17 @@ User wants to export…
 | "combien de Calanus validés dans ces 3 projets" | `count_ecotaxa_taxa(project_ids=[...], taxa=["Calanus"])` (skip the pipeline — count, not export) |
 | "les colonnes de ce projet contiennent-elles profondeur" | `inspect_ecotaxa_project_schema(project_id=...)` |
 | "peut-on merger ces 3 projets" | `compare_ecotaxa_projects(project_ids=[...])` before any export |
+
+## Runtime routing contract
+
+- Authorized EcoTaxa read-only routes beat DataFrame/graph/export routes, but only after the source selection gateway has explicitly authorized EcoTaxa. Call `load_skill("ecotaxa_navigation")` first; do not call `run_pandas` or `query_ecotaxa` for read-only navigation.
+- Project discovery uses `list_ecotaxa_projects`. A project preview / object sample uses `preview_ecotaxa_project`; do not use `preview_ecotaxa_project` for project summaries, stats tables, or scan-before-export. Use `summarize_ecotaxa_project` or `summarize_ecotaxa_projects`.
+- For EcoTaxa navigation requests with a named zone: (1) `load_skill("ecotaxa_navigation")`, (2) `get_zone_info(zone_name=...)`, then the first geography/source-boundary tool. With multiple named zones such as "Baie de Baffin et Baie d'Ungava", do not merge names into one fake zone: call `get_zone_info` once per zone, then query once per zone with the same date/instrument filters.
+- Preserve EcoTaxa source links exactly: `https://ecotaxa.obs-vlfr.fr/prj/{project_id}` and `?samples={sample_id}`. Do not remove links from copied EcoTaxa tables.
+- For the distribution, range, statistics, or distinct values of one column, first call `load_skill("ecotaxa_navigation")`, then call `inspect_ecotaxa_column` with `project_id`. Do not call `inspect_ecotaxa_project_schema` before or after; `obj_depth` must stay `obj_depth`.
+- EcoTaxa dry-run export planning includes "prépare l'export" / "mais ne lance rien": call `export_ecotaxa_samples(sample_ids=[...], confirmed=False)` and do not stop after loading the skill.
+- After a previous `EXPORT_FAILED` / rights failure, verify access without relaunching export using `preview_ecotaxa_project(project_id=...)`; do not call `query_ecotaxa` or `export_ecotaxa_samples`.
+- When a project is absent from the EcoTaxa cache, surface the cache-missing message from `summarize_ecotaxa_project`; do not switch to `query_ecotaxa`.
+- A no-export approximation uses `summarize_ecotaxa_samples(sample_ids=[...])`. Exact per-sample counts for one taxon require an export/download path with confirmation.
+- Current-result follow-ups such as "samples présents" or "which of these" must extract the visible `sample_id` values. For ambiguous cache/context wording, ask one short clarifying question with 2–3 concrete scope options. Never route to the knowledge base, do not call `query_copepod_knowledge_base`, and do not answer with a fresh metadata list.
+- In samples-by-zone queries, LOKI-as-instrument is distinct from a project title: use `instrument="Loki"` instead of resolving a project title unless the user explicitly says "projet LOKI".

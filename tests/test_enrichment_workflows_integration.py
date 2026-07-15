@@ -152,6 +152,60 @@ def test_workflow2_ecotaxa_local_then_remote_ecopart(_isolated_store):
     assert by_obj.loc[f"{_PROFILE}_1", "ecopart_Sampled volume [L]"] == _vol_for_bin(ep_subset, _PROFILE, 17.5)
 
 
+def test_remote_enrichment_selects_named_ecotaxa_project_not_latest_alias(
+    _isolated_store,
+):
+    """A multi-project export must join the project requested by the caller."""
+    thread_id = "multi-project"
+    matching = _ecotaxa_aligned_to(
+        _PROFILE,
+        [12.5, 17.5],
+        ["Calanus", "Oithona"],
+    )
+    unrelated = _ecotaxa_aligned_to(
+        "other_leg_profile",
+        [12.5],
+        ["Calanus"],
+    )
+    # The latest alias points at another project, reproducing the Baffin export.
+    _isolated_store.set(
+        f"{thread_id}:ecotaxa",
+        unrelated,
+        {"source": "ecotaxa:17498", "project_id": 17498},
+    )
+    _isolated_store.set(
+        f"{thread_id}:dataset:df_ecotaxa_14859_bulk_samples",
+        matching,
+        {
+            "source": "ecotaxa:14859",
+            "project_id": 14859,
+            "variable_name": "df_ecotaxa_14859_bulk_samples",
+        },
+    )
+
+    ep_subset = _real_ecopart(_PROFILE)
+    client = MagicMock()
+    client.start_export.return_value = ["/Task/Show/42"]
+    client.download_tsv.return_value = ep_subset
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client):
+        result = _enrich_tool(thread_id).invoke({
+            "ecotaxa_project_id": 14859,
+            "ecopart_project_id": 1064,
+            "confirmed": True,
+        })
+
+    assert "2 matchées" in result
+    assert "EcoTaxa projet 14859" in result
+    assert "EcoTaxa projet 17498" not in result
+    merged = _isolated_store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    assert set(merged["obj_orig_id"].dropna()) == {
+        f"{_PROFILE}_0",
+        f"{_PROFILE}_1",
+    }
+    assert merged["obj_orig_id"].isna().any()
+
+
 # --------------------------------------------------------------------------- #
 # 4. Workflow 3 — full remote: real query_ecotaxa → real enrich_remote
 # --------------------------------------------------------------------------- #

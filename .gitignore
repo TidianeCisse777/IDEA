@@ -110,6 +110,8 @@ docs/_build/
 !/docs/biodiversity_graph_test_plan.md
 # Tracked documentation subfolders (see docs/README.md for the map)
 !/docs/deploy/
+!/docs/e2e/
+!/docs/e2e/**
 !/docs/features/
 !/docs/mcp/
 
@@ -187,6 +189,7 @@ cython_debug/
 *.csv
 !tests/fixtures/source_enrichment_stations.csv
 *.png
+!/docs/e2e/**/*.png
 
 /static/
 UVP_metrics_for_MCA/
@@ -231,6 +234,9 @@ data/**
 data/geo/sources/**
 !data/geo/sources/
 !data/geo/sources/README.md
+
+# Runtime graph output remains local (and persistent through Docker's data volume)
+data/graphs/
 
 # Ignore outputs
 outputs

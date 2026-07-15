@@ -1,13 +1,21 @@
 """LangChain tools for EcoPart."""
 from __future__ import annotations
 
+import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 from langchain_core.tools import tool
 
 from core.ecopart_client import EcopartClient, EcopartExportError
+from core.ecotaxa_ecopart_join import (
+    audit_ecotaxa_ecopart_dataframe,
+    depth_bin_5m,
+)
+from core.environment_resolver import build_enrichment_provenance
+from tools.source_renderer import render_sources, source_urls
 from tools.dataset_registry import (
     ECOPART,
     ECOTAXA,
@@ -39,10 +47,76 @@ def _format_ecopart_export_error(
     return f"Export EcoPart échoué{scope_text}{task_note} — {exc.message}"
 
 
-def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
-    """Run the (sample_id, depth_bin) join from the session-resolved EcoTaxa/EcoPart."""
-    session_et = _store.get(f"{thread_id}:ecotaxa")
+def _ecotaxa_session_for_project(
+    thread_id: str,
+    project_id: int | None,
+) -> dict | None:
+    """Resolve the EcoTaxa dataset requested by project, not just the latest alias."""
+    latest = _store.get(f"{thread_id}:ecotaxa")
     if project_id is None:
+        return latest
+
+    requested = int(project_id)
+    if latest is not None:
+        latest_project = (latest.get("meta") or {}).get("project_id")
+        if latest_project is not None and int(latest_project) == requested:
+            return latest
+
+    candidates: list[dict] = []
+    prefix = f"{thread_id}:dataset:df_ecotaxa_"
+    for key in _store.keys(prefix):
+        session = _store.get(key)
+        if session is None:
+            continue
+        candidate_project = (session.get("meta") or {}).get("project_id")
+        if candidate_project is not None and int(candidate_project) == requested:
+            candidates.append(session)
+
+    if not candidates:
+        return None
+
+    # Prefer the canonical full-project variable when both a full export and a
+    # scoped bulk export exist. Otherwise the sole/latest named dataset is safe.
+    canonical = f"df_ecotaxa_{requested}"
+    for session in candidates:
+        if (session.get("meta") or {}).get("variable_name") == canonical:
+            return session
+    return candidates[-1]
+
+
+def _session_for_variable(thread_id: str, variable_name: str | None) -> dict | None:
+    """Resolve one explicitly named dataset from the session registry."""
+    if variable_name is None:
+        return None
+    return _store.get(f"{thread_id}:dataset:{variable_name}")
+
+
+def _perform_enrichment(
+    thread_id: str,
+    project_id: int | None,
+    *,
+    ecotaxa_session: dict | None = None,
+    ecotaxa_variable: str | None = None,
+    ecopart_variable: str | None = None,
+) -> str:
+    """Run the (sample_id, depth_bin) join from the session-resolved EcoTaxa/EcoPart."""
+    if project_id is not None and ecopart_variable is not None:
+        return (
+            "Sélecteurs EcoPart incompatibles — utilise soit `project_id`, soit "
+            "`ecopart_variable`, jamais les deux."
+        )
+
+    explicit_ecotaxa = _session_for_variable(thread_id, ecotaxa_variable)
+    if ecotaxa_variable is not None and explicit_ecotaxa is None:
+        return f"Variable EcoTaxa introuvable : `{ecotaxa_variable}`."
+    explicit_ecopart = _session_for_variable(thread_id, ecopart_variable)
+    if ecopart_variable is not None and explicit_ecopart is None:
+        return f"Variable EcoPart introuvable : `{ecopart_variable}`."
+
+    session_et = ecotaxa_session or explicit_ecotaxa or _store.get(f"{thread_id}:ecotaxa")
+    if ecopart_variable is not None:
+        session_ep = explicit_ecopart
+    elif project_id is None:
         session_ep = _store.get(f"{thread_id}:ecopart")
     else:
         variable_name = dataset_variable_name("ecopart", project_id)
@@ -70,6 +144,10 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
         return "Colonne 'Profile' absente du dataset EcoPart — relance `query_ecopart`."
     if "Depth [m]" not in df_ep.columns:
         return "Colonne 'Depth [m]' absente du dataset EcoPart — relance `query_ecopart`."
+    ecopart_variables = [
+        str(column) for column in df_ep.columns
+        if column not in {"Profile", "Depth [m]"}
+    ]
 
     # Candidate join keys, compared on real overlap with EcoPart profiles rather
     # than on the first row only — a single non-matching first row must not pick
@@ -127,7 +205,7 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
         )
 
     depth_numeric = pd.to_numeric(df_et[depth_col], errors="coerce")
-    df_et["_join_depth_bin"] = (depth_numeric // 5) * 5 + 2.5
+    df_et["_join_depth_bin"] = depth_bin_5m(depth_numeric)
 
     df_ep = df_ep.rename(columns={"Profile": "_join_sample_id", "Depth [m]": "_join_depth_bin"})
     # Match the stringified EcoTaxa key so an int/str dtype mismatch never silently
@@ -143,9 +221,50 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
     df_ep = df_ep.drop_duplicates(subset=["_join_sample_id", "_join_depth_bin"])
 
     merged = df_et.merge(df_ep, on=["_join_sample_id", "_join_depth_bin"], how="left")
+    if "sample_id" not in merged.columns:
+        merged["sample_id"] = merged["_join_sample_id"]
 
     sentinel = next((c for c in merged.columns if c.startswith("ecopart_")), None)
     n_matched = int(merged[sentinel].notna().sum()) if sentinel else 0
+
+    # Preserve sampled EcoPart bins that contain no EcoTaxa object. They become
+    # explicit zero-object rows so the canonical sample-depth table can retain
+    # true sampled zeros instead of silently dropping those bins.
+    object_keys = df_et[["_join_sample_id", "_join_depth_bin"]].drop_duplicates()
+    matched_profiles = set(best_series.dropna())
+    missing_bins = df_ep.loc[
+        df_ep["_join_sample_id"].isin(matched_profiles)
+    ].merge(
+        object_keys,
+        on=["_join_sample_id", "_join_depth_bin"],
+        how="left",
+        indicator=True,
+    )
+    missing_bins = missing_bins.loc[missing_bins["_merge"] == "left_only"].drop(
+        columns="_merge"
+    )
+    n_zero_object_bins = int(len(missing_bins))
+    if n_zero_object_bins:
+        if "sample_id" in df_et.columns:
+            sample_map = df_et[["_join_sample_id", "sample_id"]].drop_duplicates()
+            ambiguous = sample_map.groupby("_join_sample_id")["sample_id"].nunique()
+            if (ambiguous > 1).any():
+                return (
+                    "Bins EcoPart sans objet non conservés — plusieurs `sample_id` "
+                    "correspondent à une même clé de profil."
+                )
+            missing_bins = missing_bins.merge(
+                sample_map, on="_join_sample_id", how="left"
+            )
+        else:
+            missing_bins["sample_id"] = missing_bins["_join_sample_id"]
+
+        missing_bins = missing_bins.reset_index(drop=True)
+        zero_rows = merged.iloc[:0].copy().reindex(range(n_zero_object_bins))
+        for column in missing_bins.columns:
+            if column in zero_rows.columns:
+                zero_rows[column] = missing_bins[column].values
+        merged = pd.concat([merged, zero_rows], ignore_index=True, sort=False)
 
     # Keep the 5 m bin used for the join as a first-class `depth_bin` column — the
     # m5/m6 density templates (skill uvp_ecotaxa) group by (sample_id, depth_bin,
@@ -161,6 +280,54 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
         if selected_project_id is not None
         else dataset_variable_name("ecotaxa_ecopart")
     )
+    dataset_id = (
+        f"ecopart:{selected_project_id}"
+        if selected_project_id is not None
+        else "ecopart:session"
+    )
+    dataset_url = (
+        f"https://ecopart.obs-vlfr.fr/prj/{selected_project_id}"
+        if selected_project_id is not None
+        else "https://ecopart.obs-vlfr.fr/searchsample"
+    )
+    n_unmatched = len(df_et) - n_matched
+    provenance = build_enrichment_provenance(
+        source="EcoTaxa + EcoPart",
+        dataset_id=dataset_id,
+        dataset_url=dataset_url,
+        completed_at=datetime.now(timezone.utc),
+        parameters={
+            "join_type": "left",
+            "depth_bin_width_m": 5.0,
+            "depth_bin_center_offset_m": 2.5,
+            "duplicate_policy": "first_by_sample_depth",
+            "sampled_zero_object_bins": n_zero_object_bins,
+        },
+        resolved_schema={
+            "columns": {
+                "sample": best_key,
+                "depth": depth_col,
+                "ecopart_sample": "Profile",
+                "ecopart_depth": "Depth [m]",
+            },
+            "resolution": {
+                "sample": "maximum_overlap",
+                "depth": "documented_alias_priority",
+                "ecopart_sample": "required",
+                "ecopart_depth": "required",
+            },
+        },
+        variables=ecopart_variables,
+        coverage={
+            "total_rows": len(df_et),
+            "matched_rows": n_matched,
+            "match_rate": n_matched / len(df_et) if len(df_et) else 0.0,
+            "status_counts": {
+                "matched": n_matched,
+                "unmatched": n_unmatched,
+            },
+        },
+    )
     store_dataset(
         _store,
         thread_id,
@@ -171,33 +338,30 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
             "ecopart_project_id": selected_project_id,
             "n_rows": len(merged),
             "n_matched": n_matched,
+            "n_zero_object_bins": n_zero_object_bins,
             "depth_col_used": depth_col,
+            "provenance": provenance,
         },
         latest_alias=ECOTAXA_ECOPART,
     )
     project_note = (
         f" avec EcoPart {selected_project_id}" if selected_project_id is not None else ""
     )
-    source_lines = ["\nSources :"]
-    session_et = _store.get(f"{thread_id}:ecotaxa")
-    ecotaxa_pid = None
-    if session_et:
-        ecotaxa_pid = (session_et.get("meta") or {}).get("project_id")
-    if ecotaxa_pid is not None:
-        source_lines.append(
-            f"- EcoTaxa projet {ecotaxa_pid} : "
-            f"https://ecotaxa.obs-vlfr.fr/prj/{ecotaxa_pid}"
-        )
-    if selected_project_id is not None:
-        source_lines.append(
-            f"- EcoPart projet {selected_project_id} : "
-            f"https://ecopart.obs-vlfr.fr/prj/{selected_project_id}"
-        )
-    sources_block = "\n".join(source_lines) if len(source_lines) > 1 else ""
+    et_source_meta = dict((session_et or {}).get("meta") or {})
+    ep_source_meta = dict((session_ep or {}).get("meta") or {})
+    sources_block = "\nSources :\n" + render_sources(
+        {"sources": [et_source_meta, ep_source_meta]}
+    )
+    proven_ep_urls = source_urls(ep_source_meta)
+    canonical_source_line = (
+        f"\nSource : {proven_ep_urls[0]}" if proven_ep_urls else ""
+    )
 
     return (
         f"Enrichissement terminé{project_note} — {len(merged)} lignes "
-        f"({n_matched} matchées sur un bin EcoPart), {len(merged.columns)} colonnes.\n"
+        f"({n_matched} matchées sur un bin EcoPart ; "
+        f"{n_zero_object_bins} bin EcoPart sans objet conservé), "
+        f"{len(merged.columns)} colonnes.\n"
         f"Clé de jointure : (sample_id, depth_bin) calculé depuis `{depth_col}`. "
         f"Bin conservé dans la colonne `depth_bin` (centre du bin 5 m).\n"
         f"Colonnes EcoPart préfixées `ecopart_` — `ecopart_Sampled volume [L]` est le volume "
@@ -206,7 +370,9 @@ def _perform_enrichment(thread_id: str, project_id: int | None) -> str:
         f"sum(objets)/sum(volume) global — voir skill `uvp_ecotaxa`.\n"
         f"Données disponibles dans `{joined_variable_name}` et `df_ecotaxa_ecopart` — "
         f"appelle run_pandas directement pour analyser."
-        f"{sources_block}"
+        f"{sources_block}{canonical_source_line}\n"
+        "Provenance : "
+        + json.dumps(provenance, ensure_ascii=False, sort_keys=True)
     )
 
 
@@ -507,9 +673,61 @@ def make_ecopart_tools(thread_id: str) -> list:
             return f"Erreur EcoPart : {exc}"
 
     @tool
-    def join_ecotaxa_ecopart(project_id: int | None = None) -> str:
-        """Enrichit EcoTaxa avec EcoPart par (sample_id, depth_bin) — chaque objet récupère le Sampled volume et les variables EcoPart de son bin de 5 m. Exige que EcoTaxa et EcoPart soient déjà chargés en session."""
-        return _perform_enrichment(thread_id, project_id)
+    def join_ecotaxa_ecopart(
+        project_id: int | None = None,
+        ecotaxa_variable: str | None = None,
+        ecopart_variable: str | None = None,
+    ) -> str:
+        """Enrichit localement EcoTaxa avec EcoPart par (sample_id, depth_bin).
+
+        Les deux datasets doivent déjà être chargés. Pour deux fichiers locaux,
+        passe leurs variables persistées dans ``ecotaxa_variable`` et
+        ``ecopart_variable`` et omets ``project_id``. Utilise ``project_id``
+        seulement pour sélectionner un projet EcoPart numérique déjà chargé.
+        """
+        return _perform_enrichment(
+            thread_id,
+            project_id,
+            ecotaxa_variable=ecotaxa_variable,
+            ecopart_variable=ecopart_variable,
+        )
+
+    @tool
+    def audit_ecotaxa_ecopart_join(
+        source_variable: str = "df_ecotaxa_ecopart",
+    ) -> str:
+        """Contrôle une jointure EcoTaxa–EcoPart persistée sans la reconstruire.
+
+        Utilise cet outil après ``join_ecotaxa_ecopart`` pour vérifier la colonne
+        de profondeur officielle, les identifiants objet, les volumes, les clés
+        sample–bin et la distance au centre des bins de 5 m.
+        """
+        session = _session_for_variable(thread_id, source_variable)
+        if session is None and source_variable == "df_ecotaxa_ecopart":
+            session = _store.get(f"{thread_id}:ecotaxa_ecopart")
+        if session is None:
+            return f"Variable de jointure introuvable : `{source_variable}`."
+
+        audit = audit_ecotaxa_ecopart_dataframe(
+            session["df"], session.get("meta") or {}
+        )
+        verdict = "VALIDÉ" if audit["verdict"] == "validated" else "REFUSÉ"
+        anomalies = ", ".join(audit["anomalies"]) or "aucune"
+        return (
+            f"Verdict : {verdict}\n"
+            f"Variable contrôlée : `{source_variable}`\n"
+            f"Colonne de profondeur : `{audit['depth_column']}`\n"
+            f"Lignes : {audit['n_rows']} ; appariées : {audit['n_matched']}\n"
+            f"Clés sample–bin : {audit['n_sample_depth_bins']}\n"
+            f"Doublons object_id : {audit['duplicate_object_ids']}\n"
+            f"Bins échantillonnés sans objet : {audit['sampled_zero_object_bins']}\n"
+            f"Volumes manquants : {audit['missing_volume_rows']} ; "
+            f"non positifs : {audit['non_positive_volume_rows']} ; "
+            f"bins contradictoires : {audit['conflicting_volume_bins']}\n"
+            f"Objets hors bin 5 m : {audit['objects_outside_5m_bin']} ; "
+            f"écart maximal au centre : {audit['max_depth_distance_m']} m\n"
+            f"Anomalies : {anomalies}"
+        )
 
     @tool
     def enrich_ecotaxa_with_ecopart_remote(
@@ -532,7 +750,7 @@ def make_ecopart_tools(thread_id: str) -> list:
         jointure, sans rien télécharger. Pour lancer réellement le téléchargement
         et la jointure, rappeler avec `confirmed=True`.
         """
-        session_et = _store.get(f"{thread_id}:ecotaxa")
+        session_et = _ecotaxa_session_for_project(thread_id, ecotaxa_project_id)
         if session_et is None:
             if not confirmed:
                 if ecotaxa_project_id is None:
@@ -561,7 +779,10 @@ def make_ecopart_tools(thread_id: str) -> list:
                         f"Le projet EcoTaxa {ecotaxa_project_id} n'a pas pu être chargé "
                         f"automatiquement : {exc}"
                     )
-                session_et = _store.get(f"{thread_id}:ecotaxa")
+                session_et = _ecotaxa_session_for_project(
+                    thread_id,
+                    ecotaxa_project_id,
+                )
             if session_et is None:
                 return "Données EcoTaxa manquantes — charge d'abord un fichier UVP (`load_file`) ou `query_ecotaxa`."
 
@@ -655,7 +876,11 @@ def make_ecopart_tools(thread_id: str) -> list:
         if ecopart_project_id is not None:
             _store.set(f"{thread_id}:ecopart:{ecopart_project_id}", df_ep, meta)
 
-        join_result = _perform_enrichment(thread_id, ecopart_project_id)
+        join_result = _perform_enrichment(
+            thread_id,
+            ecopart_project_id,
+            ecotaxa_session=session_et,
+        )
         download_url = f"http://localhost:8000/downloads/{output_path.name}"
         scope = (
             f"projet EcoTaxa {ecotaxa_project_id}"
@@ -712,6 +937,7 @@ def make_ecopart_tools(thread_id: str) -> list:
         preview_ecopart_sample,
         query_ecopart,
         join_ecotaxa_ecopart,
+        audit_ecotaxa_ecopart_join,
         enrich_ecotaxa_with_ecopart_remote,
         find_ecopart_project_for_ecotaxa,
     ]

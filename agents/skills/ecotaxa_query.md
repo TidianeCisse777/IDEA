@@ -1,5 +1,15 @@
 # Skill: ecotaxa_query
 
+## Activation precondition
+
+Apply this skill only when the current user request explicitly names EcoTaxa
+and the active session does not forbid EcoTaxa, or immediately after a
+successful EcoTaxa extraction that was explicitly authorized in the current
+source scope. Do not load or apply this skill for generic requests about
+samples, projects, stations, positions, zones, maps, counts, or analyses. A
+loaded file remains the default source unless the user explicitly requests
+EcoTaxa.
+
 You just called `query_ecotaxa` and EcoTaxa data is now loaded in the session.
 This skill provides the rules for interpreting the result and guiding the user.
 
@@ -114,3 +124,9 @@ enrichment, or metrics derived from it, as a success.
 - If the project has >100,000 objects, the export can take 1-2 minutes — warn the user.
 - If `taxon` is specified but returns 0 rows: check the exact spelling of the taxon name (case-sensitive in EcoTaxa).
 - Without valid credentials (`ECOTAXA_TOKEN` or `ECOTAXA_USERNAME`/`ECOTAXA_PASSWORD`), the tool returns an error — ask the user to check their `.env`.
+
+## Runtime routing contract
+
+- Only if `query_ecotaxa` succeeds, call `load_skill("ecotaxa_query")`. Do not call `load_skill("ecotaxa_query")` after an error.
+- Do not call `query_ecotaxa` for preview-only requests such as "présente-moi"; reserve it for explicit "charge" or "exporte" requests.
+- Preserve EcoTaxa source links and do not remove links from copied EcoTaxa tables.

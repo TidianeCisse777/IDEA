@@ -100,3 +100,9 @@ Produce a traceable join table with an explicit match rule, stable keys, and qua
 - Do not mix exact depth with surface layer without saying so.
 - Do not drop raw columns.
 - Do not interpret the join biologically.
+
+## Runtime routing contract
+
+- When chaining enrichments on the same EcoTaxa-derived table, pass `source_variable` as the exact variable produced by the previous step. Do not rely on the bare active `df`, which can silently enrich the wrong table. Confirm the reported "Table enrichie".
+- Load with `load_skill("environmental_join")` for non-standard Amundsen CTD or Bio-ORACLE joins.
+- Standard OGSL enrichment uses `enrich_with_ogsl`, including `spatial_tolerance_km`, `time_tolerance_hours`, `ogsl_te90_degC`, and `ogsl_match_status` traceability.

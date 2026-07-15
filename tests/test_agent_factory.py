@@ -5,6 +5,29 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+def _routing_contract(*skill_names: str) -> str:
+    """System invariants plus procedures owned by the selected skills."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    parts = [COPEPOD_SYSTEM_PROMPT]
+    parts.extend(
+        (Path("agents/skills") / name).read_text(encoding="utf-8")
+        for name in skill_names
+    )
+    return "\n".join(parts).lower()
+
+
+def _routing_contract_raw(*skill_names: str) -> str:
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    parts = [COPEPOD_SYSTEM_PROMPT]
+    parts.extend(
+        (Path("agents/skills") / name).read_text(encoding="utf-8")
+        for name in skill_names
+    )
+    return "\n".join(parts)
+
+
 # --- Comportement 0 : _make_tracer inclut user_id ---
 
 def test_make_tracer_uses_email_as_tag_when_provided(monkeypatch):
@@ -175,7 +198,8 @@ def test_system_prompt_anti_hallucination():
     assert "general reasoning" in prompt or "raisonnement général" in prompt
     assert "project-specific facts" in prompt or "faits spécifiques" in prompt
     assert "lookup_marine_taxonomy" in COPEPOD_SYSTEM_PROMPT
-    assert "not limited to ecotaxa" in prompt
+    assert "taxonomy knowledge for living organisms" in prompt
+    assert "never rename, synthesize, transcribe, or hardcode values" in prompt
     assert "combien de x dans le projet y" in prompt
     assert "preserve the definition source" in prompt
     assert "wikipedia article url" in prompt
@@ -246,7 +270,9 @@ def test_context_middleware_injects_memories_into_system_prompt():
     assert "préfère les graphiques en violet" in seen["system"]
     assert "BASE" in seen["system"]
     audit = agent_module.get_context_audit("t-mem")
-    assert audit["approx_tokens_after_memory"] == audit["approx_tokens_model_request"]
+    assert audit["approx_tokens_memory_and_capsule"] > 0
+    assert audit["approx_tokens_model_request"] == audit["total_estimated"]
+    assert audit["approx_tokens_model_request"] <= audit["max_context_tokens"]
 
 
 def test_context_middleware_injects_memories_on_async_path():
@@ -288,6 +314,118 @@ def test_context_middleware_no_memories_leaves_system_prompt_untouched():
     )
 
     assert seen["system"] == "BASE"
+
+
+def test_context_middleware_injects_active_dataset_capsule(monkeypatch, tmp_path):
+    import pandas as pd
+    from langchain.agents import create_agent
+    from langchain_core.messages import HumanMessage
+    from langgraph.store.memory import InMemoryStore
+
+    import agent as agent_module
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    session_store = SessionStore(tmp_path)
+    store_dataset(
+        session_store,
+        "capsule-thread",
+        pd.DataFrame({"sample_id": ["hc_01_030924"], "object_date": ["2024-09-03"]}),
+        variable_name="df_file_ecotaxa_hawkechannel_30jan",
+        meta={"source": "file:/data/hawke.tsv", "n_rows": 137128, "n_cols": 201},
+        latest_alias="ecotaxa",
+    )
+    monkeypatch.setattr("tools.session_store.default_store", session_store)
+
+    model, seen = _spy_model()
+    graph = create_agent(
+        model,
+        [],
+        system_prompt="BASE",
+        middleware=[agent_module._ContextMiddleware(thread_id="capsule-thread")],
+        store=InMemoryStore(),
+    )
+    graph.invoke(
+        {"messages": [HumanMessage(content="Donne le contexte de ces données")]},
+        {"configurable": {"thread_id": "capsule-thread"}},
+    )
+
+    assert "ACTIVE DATASET STATE" in seen["system"]
+    assert "df_file_ecotaxa_hawkechannel_30jan" in seen["system"]
+    assert "137128" in seen["system"]
+
+
+def test_system_prompt_forbids_ungrounded_project_and_sample_ids():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "ungrounded identifier" in prompt
+    assert "active dataset state" in prompt
+    assert "project_id" in prompt
+    assert "sample_id" in prompt
+    assert "do not call a remote ecotaxa tool" in prompt
+
+
+def test_context_middleware_blocks_ungrounded_ecotaxa_tool_call(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="blocked-thread")
+    request = SimpleNamespace(
+        tool_call={
+            "name": "summarize_ecotaxa_sample_deployment",
+            "args": {"sample_id": 42000002},
+            "id": "call-stale",
+        },
+        state={
+            "messages": [
+                HumanMessage(content="Ancien sample 42000002"),
+                AIMessage(content="Noté"),
+                HumanMessage(content="Contexte de ces données locales"),
+            ]
+        },
+    )
+    called = False
+
+    def handler(_request):
+        nonlocal called
+        called = True
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert called is False
+    assert result.status == "error"
+    assert "non fondé" in result.content
+
+
+def test_context_middleware_allows_currently_grounded_ecotaxa_tool_call(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="allowed-thread")
+    request = SimpleNamespace(
+        tool_call={
+            "name": "summarize_ecotaxa_sample_deployment",
+            "args": {"sample_id": 42000002},
+            "id": "call-explicit",
+        },
+        state={"messages": [HumanMessage(content="Résume le sample 42000002")]},
+    )
+
+    result = middleware.wrap_tool_call(
+        request,
+        lambda req: ToolMessage(content="ok", tool_call_id=req.tool_call["id"]),
+    )
+
+    assert result.content == "ok"
 
 
 def test_context_middleware_trims_the_request_seen_by_model_without_mutating_checkpoint(monkeypatch):
@@ -345,16 +483,16 @@ def test_system_prompt_is_grouped_by_routing_domain():
     headings = [
         "## Identity",
         "## Operating Model",
+        "## Source Selection Gateway",
         "## Authorized Data Sources",
         "## Routing Priority",
         "## Session Rules",
+        "## Tool Result Truth",
         "## Context and Session State",
         "## Knowledge Base vs Data Requests",
         "## Files and DataFrames",
         "## Geographic Zones",
-        "## EcoTaxa",
-        "## EcoPart",
-        "## Environmental Enrichment",
+        "## External Source Procedures",
         "## SQL Workspace",
         "## Graphs and Visual Outputs",
         "## Deliverables",
@@ -517,7 +655,7 @@ def test_system_prompt_routes_named_zone_map_requests():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "first geography/source-boundary tool must be `get_zone_info" in prompt
+    assert "resolve every named iho/meow/neolab zone with `get_zone_info" in prompt
     assert "carte" in prompt
     assert "load_skill(\"graph_planner\")" in prompt
     assert "load_skill(\"graph_writer\")" in prompt
@@ -590,15 +728,14 @@ def test_system_prompt_mentions_supported_sql_backends():
 
 
 def test_system_prompt_routes_ecotaxa_project_discovery():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    assert "list_ecotaxa_projects" in COPEPOD_SYSTEM_PROMPT
+    contract = _routing_contract("ecotaxa_navigation.md")
+    assert "list_ecotaxa_projects" in contract
 
 
 def test_system_prompt_loads_ecotaxa_skill_only_after_success():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_query.md")
     assert "only if `query_ecotaxa` succeeds" in prompt
     assert "do not call `load_skill(\"ecotaxa_query\")` after an error" in prompt
 
@@ -606,7 +743,7 @@ def test_system_prompt_loads_ecotaxa_skill_only_after_success():
 def test_system_prompt_routes_ecotaxa_list_preview_and_export_separately():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md", "ecotaxa_query.md")
     assert "`list_ecotaxa_projects`" in prompt
     assert "`preview_ecotaxa_project`" in prompt
     assert "présente-moi" in prompt
@@ -618,7 +755,7 @@ def test_system_prompt_routes_ecotaxa_list_preview_and_export_separately():
 def test_system_prompt_routes_ecotaxa_enrichment_with_ecopart_to_remote_when_missing_loaded_ecopart():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_query.md", "ecopart_query.md")
     assert "enrich_ecotaxa_with_ecopart_remote" in prompt
     assert "no ecopart file/project is already loaded in session" in prompt
     assert "even if `df_ecotaxa` is already loaded" in prompt
@@ -630,7 +767,7 @@ def test_system_prompt_routes_ecotaxa_enrichment_with_ecopart_to_remote_when_mis
 def test_system_prompt_requires_reporting_ecopart_join_match_coverage():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecopart_query.md")
     # The agent must report match coverage and warn on weak/empty joins.
     assert "report join coverage" in prompt
     assert "matchées sur un bin ecopart" in prompt
@@ -642,7 +779,7 @@ def test_system_prompt_requires_reporting_ecopart_join_match_coverage():
 def test_system_prompt_requires_source_variable_when_chaining_enrichments():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecopart_query.md", "environmental_join.md")
     assert "chaining enrichments on the same ecotaxa-derived table" in prompt
     assert "exact variable produced by the previous step" in prompt
     assert "do not rely on the bare active `df`" in prompt
@@ -668,7 +805,7 @@ def test_ecopart_query_skill_prefers_remote_enrichment_when_ecotaxa_is_already_l
 def test_ecotaxa_navigation_distinguishes_loki_instrument_from_project():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md")
     skill = Path("agents/skills/ecotaxa_navigation.md").read_text(
         encoding="utf-8"
     ).lower()
@@ -688,7 +825,8 @@ def test_system_prompt_prioritizes_read_only_source_tools_over_generic_pandas():
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "## routing priority" in prompt
-    assert "prefer the most specific read-only source tool" in prompt
+    assert "within the selected source, prefer the most specific read-only tool" in prompt
+    assert "never use specificity to bypass the source selection gateway" in prompt
     assert "generic `run_pandas`, graph planning, or export/download tools" in prompt
     assert "ecotaxa read-only requests" in prompt
     assert "heavy exports/downloads" in prompt
@@ -698,14 +836,13 @@ def test_system_prompt_prioritizes_read_only_source_tools_over_generic_pandas():
 def test_system_prompt_routes_ecotaxa_stats_tables_to_project_summary():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "ecotaxa read-only routes beat dataframe/graph/export routes" in prompt
+    prompt = _routing_contract("ecotaxa_navigation.md")
+    assert "authorized ecotaxa read-only routes beat dataframe/graph/export routes" in prompt
     assert 'load_skill("ecotaxa_navigation")` first' in prompt
-    assert "tableau de stats des projets 17498 et 2331" in prompt
-    assert "summarize_ecotaxa_projects(project_ids=[17498, 2331])" in prompt
-    assert "résume le projet 17498 avant export" in prompt
-    assert "summarize_ecotaxa_project(project_id=17498)" in prompt
-    assert "prépare l'export de ces samples mais ne lance rien" in prompt
+    assert "source selection gateway has explicitly authorized ecotaxa" in prompt
+    assert "summarize_ecotaxa_projects" in prompt
+    assert "summarize_ecotaxa_project" in prompt
+    assert "ecotaxa dry-run export planning" in prompt
     assert "confirmed=false" in prompt
     assert "do not call `run_pandas`" in prompt
     assert "do not call `query_ecotaxa`" in prompt
@@ -714,7 +851,7 @@ def test_system_prompt_routes_ecotaxa_stats_tables_to_project_summary():
 def test_system_prompt_separates_ecotaxa_summary_from_preview():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md")
     assert "project preview / object sample" in prompt
     assert "do not use `preview_ecotaxa_project` for project summaries" in prompt
     assert "stats tables" in prompt
@@ -725,7 +862,7 @@ def test_system_prompt_separates_ecotaxa_summary_from_preview():
 def test_system_prompt_loads_ecotaxa_navigation_before_zone_lookup():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md")
     assert "for ecotaxa navigation requests with a named zone" in prompt
     assert '(1) `load_skill("ecotaxa_navigation")`' in prompt
     assert "(2) `get_zone_info(zone_name=...)`" in prompt
@@ -735,7 +872,7 @@ def test_system_prompt_loads_ecotaxa_navigation_before_zone_lookup():
 def test_system_prompt_handles_multiple_named_ecotaxa_zones_separately():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md")
     assert "multiple named zones" in prompt
     assert "baie de baffin et baie d'ungava" in prompt
     assert "do not merge names into one fake zone" in prompt
@@ -746,7 +883,7 @@ def test_system_prompt_handles_multiple_named_ecotaxa_zones_separately():
 def test_system_prompt_preserves_ecotaxa_source_links():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md", "ecotaxa_query.md")
     assert "ecotaxa source links" in prompt
     assert "https://ecotaxa.obs-vlfr.fr/prj/{project_id}" in prompt
     assert "samples={sample_id}" in prompt
@@ -756,9 +893,9 @@ def test_system_prompt_preserves_ecotaxa_source_links():
 def test_system_prompt_loads_ecotaxa_navigation_before_column_inspection():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "distribution de depth_min projet 17498" in prompt
-    assert 'inspect_ecotaxa_column(project_id=17498, column_name="depth_min")' in prompt
+    prompt = _routing_contract("ecotaxa_navigation.md")
+    assert "distribution, range, statistics, or distinct values of one column" in prompt
+    assert "call `inspect_ecotaxa_column` with `project_id`" in prompt
     assert "first call `load_skill(\"ecotaxa_navigation\")`" in prompt
     assert "do not call `inspect_ecotaxa_project_schema` before or after" in prompt
     assert "`obj_depth` must stay `obj_depth`" in prompt
@@ -767,7 +904,7 @@ def test_system_prompt_loads_ecotaxa_navigation_before_column_inspection():
 def test_system_prompt_routes_ecotaxa_export_planning_to_dry_run_tool():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md")
     assert "ecotaxa dry-run export planning" in prompt
     assert "prépare l'export" in prompt
     assert "mais ne lance rien" in prompt
@@ -778,7 +915,7 @@ def test_system_prompt_routes_ecotaxa_export_planning_to_dry_run_tool():
 def test_system_prompt_handles_export_failed_rights_without_relaunching_export():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md", "ecotaxa_query.md")
     assert "previous `export_failed` / rights failure" in prompt
     assert "verify access without relaunching export" in prompt
     assert "preview_ecotaxa_project(project_id=...)" in prompt
@@ -789,7 +926,7 @@ def test_system_prompt_handles_export_failed_rights_without_relaunching_export()
 def test_system_prompt_handles_missing_ecotaxa_project_cache_read_only():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md")
     assert "absent from the ecotaxa cache" in prompt
     assert "summarize_ecotaxa_project" in prompt
     assert "cache-missing message" in prompt
@@ -799,7 +936,7 @@ def test_system_prompt_handles_missing_ecotaxa_project_cache_read_only():
 def test_system_prompt_handles_sample_taxon_exact_vs_approximation():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md")
     assert "no-export approximation" in prompt
     assert "summarize_ecotaxa_samples(sample_ids=[...])" in prompt
     assert "exact per-sample counts for one taxon" in prompt
@@ -809,7 +946,7 @@ def test_system_prompt_handles_sample_taxon_exact_vs_approximation():
 def test_system_prompt_routes_current_ecotaxa_sample_followups_without_kb():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("ecotaxa_navigation.md")
     assert "current-result follow-ups" in prompt
     assert "ambiguous cache/context wording" in prompt
     assert "samples présents" in prompt
@@ -889,7 +1026,8 @@ def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
     ).lower()
 
     assert 'load_skill("ecotaxa_navigation")' in prompt
-    assert "count_ecotaxa_taxa" in prompt
+    assert "count_ecotaxa_taxa" not in prompt
+    assert "count_ecotaxa_taxa" in skill
     assert "25828" not in prompt
     assert "copepoda<multicrustacea" not in prompt
 
@@ -902,7 +1040,7 @@ def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
 def test_system_prompt_routes_bio_oracle_list_preview_query_and_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("bio_oracle_query.md")
     assert "list_bio_oracle_datasets" in prompt
     assert "preview_bio_oracle_point" in prompt
     assert "query_bio_oracle" in prompt
@@ -910,10 +1048,82 @@ def test_system_prompt_routes_bio_oracle_list_preview_query_and_enrichment():
     assert "only if `query_bio_oracle` succeeds" in prompt
 
 
+def test_system_prompt_requires_shared_hierarchy_resolver_for_loaded_copepod_data():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = _routing_contract("uvp_ecotaxa.md")
+
+    assert "all copepoda filtering on a loaded dataframe" in prompt
+    assert "copepod_hierarchy_mask" in prompt
+    assert "do not reimplement" in prompt
+    assert "object_annotation_hierarchy" in prompt
+    assert "do not copy or rename another column" in prompt
+    assert "`hierarchy` is not an accepted substitute" in prompt
+
+
+def test_system_prompt_requires_canonical_sample_depth_for_uvp_analyses():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = _routing_contract("uvp_ecotaxa.md")
+
+    assert "build_canonical_sample_depth" in prompt
+    assert "one row per (`sample_id`, `depth_bin`)" in prompt
+    assert "tables, correlations, and graph datasets" in prompt
+    assert "do not independently rebuild" in prompt
+
+
+def test_system_prompt_routes_two_local_ecotaxa_ecopart_files_by_variable():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = _routing_contract_raw("ecopart_query.md")
+    assert "ecotaxa_variable" in prompt
+    assert "ecopart_variable" in prompt
+    assert "project_id=None" in prompt
+    assert "ignore any numeric EcoPart project from earlier turns" in prompt
+
+
+def test_system_prompt_routes_join_control_to_persisted_audit_tool():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = _routing_contract("ecopart_query.md")
+    assert "audit_ecotaxa_ecopart_join" in prompt
+    assert "never reconstruct the join for an audit" in prompt
+
+
+def test_system_prompt_respects_run_pandas_persistence_contract():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "Persistence: persisted=false" in prompt
+    assert "do not claim that it was saved" in prompt
+    assert "Persistence: persisted=true" in prompt
+
+
+def test_system_prompt_requires_zero_inclusive_correlations_and_explicit_profile_metrics():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = _routing_contract("uvp_ecotaxa.md")
+
+    assert "prepare_environment_correlation" in prompt
+    assert "includes sampled zero-abundance bins by default" in prompt
+    assert "presence_only=true" in prompt
+    assert "explicit presence-only" in prompt
+    assert "generic abundance requests never produce m5 or m6" in prompt
+    assert "m5/m6 are explicit-only" in prompt
+    assert "surface + bottom" in prompt
+    assert "compute the requested coefficient from `analysis_df`" in prompt
+    assert "do not look for coefficients in the preparer's attrs" in prompt
+    assert "compute_m5" in prompt
+    assert "never hand-write the m5 aggregation" in prompt
+    assert "missing surface coverage" in prompt
+    assert "compute_m5(df_canonical_sample_depth, sample_id=<requested sample>)" in prompt
+    assert "do not pre-filter the canonical dataframe" in prompt
+
+
 def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("bio_oracle_query.md")
     assert "les mêmes stations" in prompt
     assert "top n stations" in prompt
     assert "scenarios" in prompt
@@ -926,7 +1136,7 @@ def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():
 def test_system_prompt_routes_bio_oracle_year_specific_requests_to_target_year():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("bio_oracle_query.md")
     assert "target_year=2050" in prompt
     assert "en 2050" in prompt
     assert "do not reuse a previously computed" in prompt
@@ -971,7 +1181,7 @@ def test_bio_oracle_skill_documents_coupling_tool_capabilities():
 def test_system_prompt_routes_amundsen_preview_and_query():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("amundsen_ctd_query.md")
     assert "amundsen12713" in prompt
     assert "list_amundsen_datasets" in prompt
     assert "preview_amundsen_profile" in prompt
@@ -985,7 +1195,7 @@ def test_system_prompt_routes_amundsen_preview_and_query():
 def test_system_prompt_routes_ogsl_enrichment_to_enrich_with_ogsl():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("environmental_join.md", "neolabs_abundance_analysis.md")
     assert "enrich_with_ogsl" in prompt
     assert "spatial_tolerance_km" in prompt
     assert "time_tolerance_hours" in prompt
@@ -996,7 +1206,7 @@ def test_system_prompt_routes_ogsl_enrichment_to_enrich_with_ogsl():
 def test_system_prompt_loads_environmental_join_skill_for_ctd_and_bio_oracle_joins():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("environmental_join.md")
     assert 'load_skill("environmental_join")' in prompt
     assert "amundsen ct" in prompt
     assert "bio-oracle" in prompt
@@ -1005,7 +1215,7 @@ def test_system_prompt_loads_environmental_join_skill_for_ctd_and_bio_oracle_joi
 def test_system_prompt_routes_copepod_micro_hydrodynamics_to_dedicated_skill():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("copepod_hydrodynamic_micro_zoom.md")
     assert 'load_skill("copepod_hydrodynamic_micro_zoom")' in prompt
     assert "front thermique" in prompt
     assert "panache" in prompt
@@ -1042,7 +1252,7 @@ def test_copepod_hydrodynamic_micro_zoom_skill_is_copepod_centered():
 def test_system_prompt_routes_neolabs_abundance_analysis_to_dedicated_skill():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("neolabs_abundance_analysis.md")
     assert 'load_skill("neolabs_abundance_analysis")' in prompt
     assert "neolabs" in prompt
     assert "sample_id + analysis_id" in prompt
@@ -1054,8 +1264,8 @@ def test_system_prompt_routes_neolabs_abundance_analysis_to_dedicated_skill():
 def test_system_prompt_neolabs_graphs_still_require_graph_writer():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "neolabs_abundance_analysis is not a replacement for graph_planner or graph_writer" in prompt
+    prompt = _routing_contract("neolabs_abundance_analysis.md", "graph_planner.md", "graph_writer.md")
+    assert "not a replacement for `graph_planner` or `graph_writer`" in prompt
     assert 'then call `load_skill("graph_planner")`' in prompt
     assert 'then call `load_skill("graph_writer")`' in prompt
     assert "the very next execution call must be `run_graph`" in prompt
@@ -1081,3 +1291,38 @@ def test_neolabs_skill_routes_visual_outputs_through_graph_writer():
     assert 'load_skill("graph_planner")' in skill
     assert 'load_skill("graph_writer")' in skill
     assert "very next execution call must be `run_graph`" in skill
+
+
+def test_system_prompt_requires_executable_graph_contracts():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "graph_contract" in COPEPOD_SYSTEM_PROMPT
+    assert "only the depth y-axis" in COPEPOD_SYSTEM_PROMPT
+    assert "independent axes" in COPEPOD_SYSTEM_PROMPT
+    assert "zero_abundance" in COPEPOD_SYSTEM_PROMPT
+    assert "abundance_size_legend" in COPEPOD_SYSTEM_PROMPT
+    assert "environment_color_legend" in COPEPOD_SYSTEM_PROMPT
+
+
+def test_graph_writer_defines_all_executable_contract_families():
+    skill = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    for kind in (
+        "generic",
+        "vertical_profile",
+        "environment_relationships",
+        "temperature_salinity",
+        "abundance_environment_map",
+    ):
+        assert f'"kind": "{kind}"' in skill
+    for field in (
+        '"axes"',
+        '"inverted_axes"',
+        '"mappings"',
+        '"zero_policy"',
+        '"source_variables"',
+    ):
+        assert field in skill
+    assert 'set_gid("zero_abundance")' in skill
+    assert 'set_gid("abundance_size_legend")' in skill
+    assert 'set_gid("environment_color_legend")' in skill

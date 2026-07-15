@@ -1,0 +1,6 @@
+sample_id	depth_bin	object_annotation_hierarchy	ecopart_Sampled volume [L]	sample_stationid	amundsen_temperature
+RA18	212.5	Animalia>Arthropoda>Copepoda>Calanoida	100.0	RA18	-1.2
+RA18	212.5	Animalia>Cnidaria	100.00000001	RA18	-1.2
+RA18	217.5	Animalia>Cnidaria	80.0	RA18	-1.1
+RA02	512.5	Animalia>Arthropoda>Copepoda>Cyclopoida	95.0	RA02	-0.8
+RA02	512.5	Animalia>Cnidaria	95.00000001	RA02	-0.8

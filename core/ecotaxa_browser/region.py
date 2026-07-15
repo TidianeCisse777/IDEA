@@ -20,6 +20,7 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 
 from core.ecotaxa_browser.cache.repo import (
+    aggregate_samples_filtered,
     cache_counts,
     init_schema,
     is_sync_running,
@@ -247,48 +248,65 @@ def samples_in_region(
     if bbox_tuple is None and polygon is not None:
         bbox_tuple = _bbox_from_polygon(polygon)
 
+    filters = dict(
+        bbox=bbox_tuple,
+        date_range=date_tuple,
+        instrument=instrument,
+        project_ids=project_ids,
+        depth_max_lt=depth_max_lt,
+        depth_max_gte=depth_max_gte,
+        depth_min_lt=depth_min_lt,
+        depth_min_gte=depth_min_gte,
+        month=month_value,
+    )
+
     conn = _open_cache()
     try:
         _ensure_cache_ready(conn)
         sync_in_progress = _sync_in_progress(conn)
-        bbox_repo = bbox_tuple if bbox_tuple is None else (
-            bbox_tuple[0], bbox_tuple[1], bbox_tuple[2], bbox_tuple[3]
-        )
-        rows = list(query_samples_filtered(
-            conn,
-            bbox=bbox_repo,
-            date_range=date_tuple,
-            instrument=instrument,
-            project_ids=project_ids,
-            depth_max_lt=depth_max_lt,
-            depth_max_gte=depth_max_gte,
-            depth_min_lt=depth_min_lt,
-            depth_min_gte=depth_min_gte,
-            month=month_value,
-        ))
+
+        if polygon is not None:
+            # Precise path: the in-polygon test is a Python (shapely) filter,
+            # so we must materialize every candidate row and aggregate over
+            # the polygon-filtered set — no SQL shortcut available.
+            rows = [
+                r for r in query_samples_filtered(conn, **filters)
+                if r["lat_avg"] is not None and r["lon_avg"] is not None
+                and polygon.contains(Point(r["lon_avg"], r["lat_avg"]))
+            ]
+            total = len(rows)
+            samples = [_row_to_sample(row) for row in rows[:_SAMPLE_CAP]]
+            summary = _build_summary(rows)
+        else:
+            # Fast path: count + summary come from SQL aggregates; only the
+            # capped page of rows is fetched, so cost no longer scales with
+            # the number of matching samples.
+            agg = aggregate_samples_filtered(conn, **filters)
+            total = agg["total"]
+            page = query_samples_filtered(conn, limit=_SAMPLE_CAP, **filters)
+            samples = [_row_to_sample(row) for row in page]
+            summary = _summary_from_aggregate(agg)
     finally:
         conn.close()
-
-    if polygon is not None:
-        rows = [
-            r for r in rows
-            if r["lat_avg"] is not None and r["lon_avg"] is not None
-            and polygon.contains(Point(r["lon_avg"], r["lat_avg"]))
-        ]
-
-    total = len(rows)
-    truncated = total > _SAMPLE_CAP
-    selected = rows[:_SAMPLE_CAP]
-    samples = [_row_to_sample(row) for row in selected]
-    summary = _build_summary(rows)
 
     return {
         "samples": samples,
         "total_matching": total,
-        "truncated": truncated,
+        "truncated": total > _SAMPLE_CAP,
         "summary": summary,
         "partial": sync_in_progress,
         "sync_in_progress": sync_in_progress,
+    }
+
+
+def _summary_from_aggregate(agg: dict) -> dict:
+    """Shape a repo aggregate into the region summary contract."""
+    return {
+        "project_breakdown": {
+            str(pid): count for pid, count in agg["project_breakdown"]
+        },
+        "date_range_seen": {"min": agg["date_min"], "max": agg["date_max"]},
+        "lat_lon_centroid": agg["centroid"],
     }
 
 

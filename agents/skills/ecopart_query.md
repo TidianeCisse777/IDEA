@@ -1,5 +1,13 @@
 # Skill: ecopart_query
 
+## Activation precondition
+
+Apply this skill only when the current user request explicitly names EcoPart
+and the active session does not forbid EcoPart. Do not load or apply this skill
+for generic requests about samples, projects, stations, positions, zones,
+maps, counts, environmental variables, or analyses. A loaded file remains the
+default source unless the user explicitly requests EcoPart.
+
 You just called `query_ecopart` and EcoPart data is now loaded in the session.
 This skill provides the rules for interpreting the result and guiding the user.
 
@@ -91,3 +99,10 @@ If the loaded EcoTaxa export already exposes `sample_id`, `object_depth_min`, `o
 - EcoPart has no REST API — the client uses a cookie session. If the export fails with an HTTP error, check that `ECOTAXA_USERNAME`/`ECOTAXA_PASSWORD` are set in `.env`.
 - If `start_export` returns an empty link list, the project is not accessible with the configured account.
 - The export can take 30-60 seconds for a large project — warn the user.
+
+## Runtime routing contract
+
+- If no EcoPart file/project is already loaded in session, use `enrich_ecotaxa_with_ecopart_remote` even if `df_ecotaxa` is already loaded. Do not detour through `query_ecotaxa`; use no args by default. This is a heavy operation.
+- Report join coverage: state how many rows are "matchées sur un bin EcoPart", whether the data represent the same campaign or a different campaign, and the depth range actually covered. This is not scientific interpretation.
+- For two local files pass the explicit `ecotaxa_variable` and `ecopart_variable` with `project_id=None`; ignore any numeric EcoPart project from earlier turns.
+- For persisted join control call `audit_ecotaxa_ecopart_join`; never reconstruct the join for an audit.

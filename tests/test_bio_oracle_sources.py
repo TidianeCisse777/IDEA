@@ -1046,6 +1046,55 @@ def test_enrich_with_bio_oracle_deduplicates_points_to_minimize_http_calls():
     assert enriched["bio_oracle_temperature_ssp5_8_5"].tolist() == [60.5, 60.5, 62.0]
 
 
+def test_enrich_with_bio_oracle_collapses_dispersed_points_to_one_region_tile():
+    """Points dispersés sur >6 tuiles 5° → 1 seule tuile région (stride grossier),
+    pas des dizaines d'appels HTTP."""
+    import numpy as np
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-region"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+
+    # 40 stations étalées sur ~30° lon × ~20° lat => >6 tuiles 5° en mode fin.
+    rng = np.random.default_rng(0)
+    lats = rng.uniform(60, 80, 40)
+    lons = rng.uniform(-130, -60, 40)
+    _store.set(thread_id, pd.DataFrame({"latitude": lats, "longitude": lons}),
+               {"source": "file:dispersed.tsv"})
+
+    calls = {"n": 0, "strides": []}
+
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, stride=1):
+        calls["n"] += 1
+        calls["strides"].append(stride)
+        # grille couvrant toute l'emprise, une valeur = latitude (déterministe)
+        grid_lat = np.arange(tile["lat_min"], tile["lat_max"], 1.0)
+        grid_lon = np.arange(tile["lon_min"], tile["lon_max"], 1.0)
+        rows = [{"time": "2050-01-01T00:00:00Z", "latitude": float(la),
+                 "longitude": float(lo), "value": float(la)}
+                for la in grid_lat for lo in grid_lon]
+        d = pd.DataFrame(rows)
+        d.attrs["dataset_id"] = "thetao_ssp585_2020_2100_depthsurf"
+        return d
+
+    with patch("tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox):
+        enrich = next(t for t in make_bio_oracle_tools(thread_id)
+                      if t.name == "enrich_with_bio_oracle")
+        enrich.invoke({"variables": ["temperature"], "scenarios": ["SSP5-8.5"], "target_year": 2050})
+
+    # UNE tuile région (1 variable × 1 scénario), pas ~45.
+    assert calls["n"] == 1, f"attendu 1 fetch région, obtenu {calls['n']}"
+    assert calls["strides"] == [4], "la tuile région doit utiliser le stride grossier"
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert enriched["bio_oracle_match_status"].eq("matched").all()
+
+
 def test_enrich_with_bio_oracle_snaps_to_grid_and_requires_confirmation_when_too_large():
     """Gros fichier : dédup sur grille Bio-ORACLE puis garde-fou sur le nombre d'appels."""
     import pandas as pd

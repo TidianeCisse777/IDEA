@@ -31,9 +31,16 @@ from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
 from core.ecotaxa_browser.taxonomy import search_taxa
 from core.ecotaxa_browser.cache.repo import (
+    audit_ecotaxa_coverage,
     cache_progress,
     init_schema,
     open_connection,
+    query_samples_filtered,
+)
+from core.geo import audit_zone_coverage, load_registry
+
+_ZONES_REGISTRY_PATH = (
+    Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
 )
 from tools.ecotaxa_client import EcotaxaClient, EcotaxaExportError
 from tools.dataset_registry import ECOTAXA, dataset_variable_name, store_dataset
@@ -660,6 +667,211 @@ def make_source_tools(thread_id: str) -> list:
             "`find_ecotaxa_samples_in_region(project_ids=[...], date_range=..., zone_name=...)` "
             "avec les project_ids de la ligne voulue.",
         ])
+        return "\n".join(lines)
+
+    @tool
+    def audit_ecotaxa_availability() -> str:
+        """Audit de couverture des données EcoTaxa indexées (lecture seule).
+
+        À utiliser pour les questions d'audit de disponibilité : quels projets
+        ont **peu de samples**, quelles **périodes** sont couvertes ou manquantes,
+        quels **samples** sont les plus pauvres en objets. Répond aux demandes du
+        type « audit des zones/projets avec peu de samples », « quelles années
+        couvre-t-on », « les samples avec le moins d'images ».
+
+        Ne lance aucun export : tout vient du cache local. Renvoie les projets
+        classés du plus pauvre au plus riche en samples, la distribution
+        temporelle par année, et les samples les plus pauvres en objets. Ne
+        fournit PAS les comptages validé/prédit par taxon (voir les tools de
+        comptage taxonomique pour cela).
+        """
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            audit = audit_ecotaxa_coverage(conn)
+            conn.close()
+        except Exception as exc:
+            return f"Erreur lors de la lecture du cache EcoTaxa : {exc}"
+
+        if not audit["per_project"]:
+            return "Aucun sample indexé dans le cache local."
+
+        def _bbox(box: dict) -> str:
+            if box.get("south") is None:
+                return "—"
+            return (
+                f"{_format_number(box['south'])}/{_format_number(box['west'])}/"
+                f"{_format_number(box['north'])}/{_format_number(box['east'])}"
+            )
+
+        lines = [
+            "# Audit de disponibilité EcoTaxa (cache local)",
+            "",
+            f"Total : {audit['total_samples']} samples, "
+            f"{audit['total_projects']} projets.",
+            "",
+            "## Projets classés du plus pauvre au plus riche en samples",
+            "",
+            "| project_id | n_samples | période | instrument | bbox (S/W/N/E) |",
+            "|---:|---:|---|---|---|",
+        ]
+        lines.extend(
+            f"| {p['project_id']} | {p['n_samples']} | "
+            f"{p['date_min'] or '—'} → {p['date_max'] or '—'} | "
+            f"{', '.join(p['instruments']) or '—'} | {_bbox(p['bbox'])} |"
+            for p in audit["per_project"]
+        )
+        lines += [
+            "",
+            "## Couverture temporelle",
+            "",
+            "| année | n_samples | n_projets |",
+            "|---|---:|---:|",
+        ]
+        lines.extend(
+            f"| {y['year']} | {y['n_samples']} | {y['n_projects']} |"
+            for y in audit["per_year"]
+        )
+        lines += [
+            "",
+            "## Samples les plus pauvres en objets",
+            "",
+            "| sample_id | project_id | label | n_objects |",
+            "|---:|---:|---|---:|",
+        ]
+        lines.extend(
+            f"| {s['sample_id']} | {s['project_id']} | "
+            f"{s['original_id'] or '—'} | {s['object_count']} |"
+            for s in audit["sparsest_samples"]
+        )
+        lines.append("")
+        lines.append(
+            "Note : les comptages d'objets par projet sont plafonnés à la synchro ; "
+            "le compte par sample est fiable. Les comptages validé/prédit par "
+            "taxon ne sont pas inclus ici."
+        )
+        return "\n".join(lines)
+
+    @tool
+    def audit_ecotaxa_spatial_coverage() -> str:
+        """Audit spatial de la couverture par zone nommée (lecture seule).
+
+        À utiliser pour les questions d'audit spatial : « quelles zones sont
+        couvertes / peu couvertes », « où sont les trous géographiques », « audit
+        de couverture par zone ». Projette les samples indexés du cache sur les
+        zones nommées (IHO / MEOW / composites NeoLab) et renvoie :
+        - les zones couvertes, classées par nombre de samples ;
+        - les lacunes : zones voisines des données mais sans aucun sample ;
+        - les samples hors de toute zone connue.
+
+        Ne lance aucun export. Les comptages viennent du cache local. Les zones
+        composites (Arctique, Nunavik) chevauchent des zones plus fines, donc un
+        sample peut compter dans plusieurs zones.
+        """
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            rows = list(query_samples_filtered(conn))
+            conn.close()
+        except Exception as exc:
+            return f"Erreur lors de la lecture du cache EcoTaxa : {exc}"
+
+        points = [
+            {"latitude": r["lat_avg"], "longitude": r["lon_avg"]}
+            for r in rows
+            if r["lat_avg"] is not None and r["lon_avg"] is not None
+        ]
+        if not points:
+            return "Aucun sample géolocalisé dans le cache local."
+
+        import pandas as pd
+
+        registry = load_registry(_ZONES_REGISTRY_PATH)
+        audit = audit_zone_coverage(pd.DataFrame(points), registry)
+
+        lines = [
+            "# Audit spatial EcoTaxa par zone nommée (cache local)",
+            "",
+            f"{audit['n_points']} samples géolocalisés — "
+            f"{len(audit['covered'])} zone(s) couverte(s), "
+            f"{audit['n_unmatched']} sample(s) hors zone connue.",
+            "",
+            "## Zones couvertes (classées par nombre de samples)",
+            "",
+            "| zone | samples | source |",
+            "|---|---:|---|",
+        ]
+        lines.extend(
+            f"| {z['canonical']} | {z['n_samples']} | {z['source']} |"
+            for z in audit["covered"]
+        )
+        lines += [
+            "",
+            "## Lacunes : zones voisines sans aucun sample",
+            "",
+        ]
+        if audit["gaps"]:
+            lines.append("| zone | source |")
+            lines.append("|---|---|")
+            lines.extend(
+                f"| {z['canonical']} | {z['source']} |" for z in audit["gaps"]
+            )
+        else:
+            lines.append("Aucune lacune pertinente : les zones voisines des "
+                         "données sont toutes couvertes.")
+        lines.append("")
+        lines.append(
+            "Note : zones composites (Arctique, Nunavik) incluses — un sample "
+            "peut compter dans plusieurs zones."
+        )
+        return "\n".join(lines)
+
+    @tool
+    def list_ecotaxa_project_samples(project_id: int) -> str:
+        """Liste les samples d'un projet EcoTaxa avec leur `sample_id` numérique.
+
+        À utiliser pour résoudre le `sample_id` numérique EcoTaxa (ex.
+        `17498000023`) à partir du label / `original_id` d'un sample (ex.
+        `am_leg4_RA76_1`). Les autres outils de présentation montrent le label,
+        mais l'export et l'enrichissement exigent le numéro : cet outil fait le
+        pont, sans deviner ni inventer d'identifiant.
+
+        Renvoie un tableau : `sample_id` numérique, label (`original_id`),
+        station, latitude, longitude, profondeur max. Lecture seule, depuis le
+        cache local EcoTaxa.
+        """
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            rows = list(query_samples_filtered(conn, project_ids=[int(project_id)]))
+            conn.close()
+        except Exception as exc:
+            return f"Erreur lors de la lecture du cache EcoTaxa : {exc}"
+
+        if not rows:
+            return (
+                f"Aucun sample dans le cache local pour le projet {project_id}. "
+                "Le projet n'a peut-être pas encore été synchronisé."
+            )
+
+        rows.sort(key=lambda row: (row["original_id"] or "", row["sample_id"]))
+        lines = [
+            f"# Samples du projet EcoTaxa {project_id}",
+            "",
+            "| sample_id | label | station | latitude | longitude | profondeur max |",
+            "|---:|---|---|---:|---:|---:|",
+        ]
+        lines.extend(
+            f"| {row['sample_id']} | {row['original_id'] or '—'} | "
+            f"{row['station_id'] or '—'} | {_format_number(row['lat_avg'])} | "
+            f"{_format_number(row['lon_avg'])} | {_format_number(row['depth_max'])} |"
+            for row in rows
+        )
+        lines.append("")
+        lines.append(f"Source EcoTaxa : {_ecotaxa_project_url(project_id)}")
         return "\n".join(lines)
 
     @tool
@@ -2190,6 +2402,9 @@ def make_source_tools(thread_id: str) -> list:
         compare_ecotaxa_projects,
         list_ecotaxa_projects,
         list_ecotaxa_campaigns,
+        list_ecotaxa_project_samples,
+        audit_ecotaxa_availability,
+        audit_ecotaxa_spatial_coverage,
         preview_ecotaxa_project,
         query_ecotaxa,
         query_ecotaxa_sample,

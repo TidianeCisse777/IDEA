@@ -1,5 +1,7 @@
 """TDD — tools/amundsen_sources.py."""
 
+import json
+
 import pytest
 
 from tools.session_store import SessionStore
@@ -377,6 +379,51 @@ def test_enrich_with_amundsen_ctd_matches_by_lat_lon_time():
     assert enriched["amundsen_psal_psu"].tolist() == [31.4]
     assert enriched["amundsen_station"].tolist() == ["BRK-15"]
     assert enriched["amundsen_dataset_id"].tolist() == ["amundsen12713"]
+    metadata = _store.get(keys[0])["meta"]
+    provenance = metadata["provenance"]
+    assert provenance["source"] == "Amundsen Science CTD"
+    assert provenance["dataset_id"] == "amundsen12713"
+    assert provenance["dataset_url"].endswith("/amundsen12713.html")
+    assert provenance["resolved_columns"]["columns"]["time"] == "object_date"
+    assert provenance["coverage"] == {
+        "total_rows": 1,
+        "matched_rows": 1,
+        "match_rate": 1.0,
+        "status_counts": {"matched": 1},
+    }
+    assert "Source : https://" in result
+    assert "Provenance :" in result
+    assert json.dumps(provenance, ensure_ascii=False, sort_keys=True) in result
+
+
+def test_enrich_with_amundsen_ctd_refuses_absent_override_before_fetch():
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-bad-time-override"
+    _store.set(
+        thread_id,
+        pd.DataFrame({
+            "latitude": [74.1],
+            "longitude": [-80.2],
+            "object_date": ["2018-08-01"],
+        }),
+        {"source": "file:test.tsv"},
+    )
+
+    with patch("tools.amundsen_sources._fetch_amundsen_bbox") as fetch:
+        enrich = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({"time_column": "sampledatetime"})
+
+    fetch.assert_not_called()
+    assert "sampledatetime" in result
+    assert "absent" in result.lower()
 
 
 def test_enrich_with_amundsen_ctd_matches_each_row_to_its_nearest_profile():
@@ -1048,16 +1095,13 @@ def test_enrich_with_amundsen_ctd_filters_candidates_outside_time_tolerance():
 
 def test_system_prompt_prefers_enrich_with_amundsen_ctd_for_latlon_files():
     """Le routage doit guider le LLM vers le nouveau tool lat/lon/time."""
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+    from pathlib import Path
 
-    prompt = COPEPOD_SYSTEM_PROMPT
+    prompt = Path("agents/skills/amundsen_ctd_query.md").read_text()
     assert "enrich_with_amundsen_ctd" in prompt
     lowered = prompt.lower()
     assert "latitude" in lowered and "longitude" in lowered
-    new_idx = prompt.find("enrich_with_amundsen_ctd")
-    old_idx = prompt.find("enrich_loaded_table_with_amundsen_ctd")
-    assert new_idx != -1
-    assert new_idx < old_idx or old_idx == -1
+    assert "safer path for large neolabs/ecotaxa files" in lowered
 
 
 def test_enrich_with_amundsen_ctd_exposes_distance_and_time_delta_columns():

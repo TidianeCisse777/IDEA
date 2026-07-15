@@ -118,3 +118,9 @@ Without velocity fields, wind, or repeated transects, call this a possible signa
 - Do not fabricate `uo` / `vo`, current speed, river discharge, or front location.
 - Do not treat "Labrador Current", "front", "plume", "eddy", or "upwelling" as a stable `zone_name`.
 - Do not claim causality from a single sample. Use "compatible with", "suggests", or "indeterminate".
+
+## Runtime routing contract
+
+- Fronts, plumes/panaches, upwelling and local currents are not fixed geographic zones.
+- For explicit file/dataset loading requests, call `load_file` first; the next tool call must be `load_skill("copepod_hydrodynamic_micro_zoom")` before `query_copepod_knowledge_base`, analysis, graphing, or scientific claims. This micro-hydrodynamic file-analysis exception uses `load_file` → `load_skill("copepod_hydrodynamic_micro_zoom")`; the route is file-analysis first, not knowledge-base first.
+- For EcoTaxa browser/data requests that mention these structures, load this skill, then load the source-specific skill. This is the EcoTaxa read-only skill-loading order for mechanism-aware requests.

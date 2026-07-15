@@ -21,6 +21,11 @@ from core.environment_resolver.coords import (
 from core.environment_resolver.geo import haversine_km
 from core.environment_resolver.matcher import CtdMatch, match_ctd_rows
 from core.environment_resolver.source import resolve_source_dataframe
+from core.environment_resolver.schema import (
+    ResolvedEnvironmentSchema,
+    resolve_environment_schema,
+)
+from core.environment_resolver.provenance import build_enrichment_provenance
 
 __all__ = [
     "CoordsValidation",
@@ -36,4 +41,7 @@ __all__ = [
     "match_ctd_rows",
     "parse_source_coords",
     "resolve_source_dataframe",
+    "ResolvedEnvironmentSchema",
+    "resolve_environment_schema",
+    "build_enrichment_provenance",
 ]

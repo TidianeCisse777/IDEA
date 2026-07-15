@@ -9,6 +9,8 @@ On vérifie :
 import asyncio
 import json
 import pytest
+
+from core.runtime_paths import graphs_dir
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -758,3 +760,7 @@ async def test_stream_deduplicates_run_graph_image_when_final_repeats_it():
 
     assert full.count(image) == 1
     assert "Carte des stations." in full
+def test_graph_endpoint_uses_shared_graphs_directory():
+    from serve import GRAPHS_DIR
+
+    assert GRAPHS_DIR == graphs_dir()

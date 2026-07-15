@@ -7,8 +7,26 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.data_tools import make_tools, _patch_cartopy_gridliner_polygon, _uvp_skill_hint
+from tools.data_tools import (
+    _GRAPHS_DIR,
+    make_tools,
+    _patch_cartopy_gridliner_polygon,
+    _uvp_skill_hint,
+)
+from core.runtime_paths import graphs_dir
 from tools.session_store import SessionStore, default_store as _store
+
+
+_GENERIC_GRAPH_CONTRACT_CODE = """
+graph_contract = {
+    'kind': 'generic',
+    'axes': [{'axis_index': 0, 'x': 'x', 'y': 'y'}],
+    'inverted_axes': [],
+    'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': [],
+}
+"""
 
 
 @pytest.fixture
@@ -37,6 +55,10 @@ def clear_sessions(monkeypatch):
     monkeypatch.setattr("tools.data_tools.default_store", store)
     monkeypatch.setattr(sys.modules[__name__], "_store", store)
     yield
+
+
+def test_run_graph_uses_shared_graphs_directory():
+    assert _GRAPHS_DIR == graphs_dir()
 
 
 # --- Comportement 1 : load_file_tool ---
@@ -174,6 +196,170 @@ def test_run_pandas_dataframe_returns_markdown(tsv_path):
     result = run_pandas.invoke({"code": "result = df.head(2)"})
     assert "profile_id" in result
     assert "lignes" in result
+    assert "Persistence: persisted=false; variable=null" in result
+    assert "résultat éphémère" in result
+
+
+def test_run_pandas_dataframe_returns_analysis_attrs(tsv_path):
+    tools = make_tools("thread-dataframe-attrs")
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    result = run_pandas.invoke(
+        {
+            "code": (
+                "result = df.head(2).copy(); "
+                "result.attrs = {'pearson': -0.6417, 'n_retained': 3, "
+                "'n_zero_abundance': 1}"
+            )
+        }
+    )
+
+    assert "Attributs d'analyse" in result
+    assert '"pearson": -0.6417' in result
+    assert '"n_retained": 3' in result
+    assert '"n_zero_abundance": 1' in result
+
+
+def test_run_pandas_persists_canonical_sample_depth_result_for_later_calls(tsv_path):
+    thread_id = "thread-canonical-sample-depth"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    first = run_pandas.invoke(
+        {
+            "code": (
+                "result = pd.DataFrame({"
+                "'sample_id': ['RA18'], 'depth_bin': [212.5], "
+                "'copepod_count': [1], 'sampled_volume_L': [100.0], "
+                "'abundance_ind_L': [0.01], 'abundance_ind_m3': [10.0], "
+                "'canonical_method_version': ['copepod-sample-depth-v1']})"
+            )
+        }
+    )
+    second = run_pandas.invoke(
+        {"code": "result = int(df_canonical_sample_depth['copepod_count'].sum())"}
+    )
+
+    stored = _store.get(
+        f"{thread_id}:dataset:df_canonical_sample_depth"
+    )
+    assert stored is not None
+    assert stored["df"]["copepod_count"].tolist() == [1]
+    assert "Variable persistante : `df_canonical_sample_depth`" in first
+    assert (
+        "Persistence: persisted=true; variable=df_canonical_sample_depth" in first
+    )
+    assert second == "1"
+
+
+def test_run_pandas_arbitrary_dataframe_is_absent_from_next_call(tsv_path):
+    thread_id = "thread-ephemeral-analysis-result"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    first = run_pandas.invoke({
+        "code": "temporary_summary = df.head(1).copy(); result = temporary_summary"
+    })
+    second = run_pandas.invoke({"code": "result = len(temporary_summary)"})
+
+    assert "persisted=false" in first
+    assert "NameError" in second
+    assert "temporary_summary" in second
+
+
+def test_run_pandas_reports_persisted_canonical_zero_count(tsv_path):
+    thread_id = "thread-canonical-zero-count"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    output = run_pandas.invoke({
+        "code": (
+            "result = pd.DataFrame({"
+            "'sample_id': ['A', 'A'], 'depth_bin': [2.5, 7.5], "
+            "'copepod_count': [1, 0], 'sampled_volume_L': [10.0, 10.0], "
+            "'abundance_ind_L': [0.1, 0.0], "
+            "'abundance_ind_m3': [100.0, 0.0], "
+            "'canonical_method_version': ['copepod-sample-depth-v1'] * 2})"
+        )
+    })
+
+    stored = _store.get(
+        f"{thread_id}:dataset:df_canonical_sample_depth"
+    )
+    assert "n_zero_abundance=1" in output
+    assert stored["meta"]["n_zero_abundance"] == 1
+
+
+def test_run_pandas_keyerror_points_to_variable_holding_the_column(tsv_path):
+    """A KeyError on a column absent from the active df must name the persisted
+    df_* variables that DO carry it — so the agent retargets instead of
+    concluding the column is missing."""
+    thread_id = "thread-keyerror-hint"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    # Persist an enriched table that carries the environmental column.
+    _store.set(
+        f"{thread_id}:dataset:df_ctd_enriched",
+        pd.DataFrame({"object_id": [1], "amundsen_te90_degC": [-1.5]}),
+        {"variable_name": "df_ctd_enriched"},
+    )
+
+    out = run_pandas.invoke(
+        {"code": "result = df['amundsen_te90_degC'].mean()"}
+    )
+
+    assert "Erreur" in out
+    assert "df_ctd_enriched" in out
+    assert "amundsen_te90_degC" in out
+
+
+def test_run_pandas_persists_canonical_intermediate_carrying_env(tsv_path):
+    """A canonical table built as an intermediate (result is something else)
+    must still be persisted, with its environmental columns retained."""
+    thread_id = "thread-canonical-intermediate"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    first = run_pandas.invoke(
+        {
+            "code": (
+                "canonical = pd.DataFrame({"
+                "'sample_id': ['RA25', 'RA25'], 'depth_bin': [12.5, 17.5], "
+                "'copepod_count': [1, 3], 'sampled_volume_L': [70.4, 64.0], "
+                "'abundance_ind_L': [0.0142, 0.0469], "
+                "'abundance_ind_m3': [14.2, 46.9], "
+                "'amundsen_te90_degC': [-1.5, -1.4], "
+                "'canonical_method_version': ['copepod-sample-depth-v1', "
+                "'copepod-sample-depth-v1']})\n"
+                "result = canonical[['abundance_ind_L']].corrwith("
+                "canonical['amundsen_te90_degC'])"
+            )
+        }
+    )
+
+    stored = _store.get(f"{thread_id}:dataset:df_canonical_sample_depth")
+    assert stored is not None
+    assert "amundsen_te90_degC" in stored["df"].columns
+    assert "df_canonical_sample_depth" in first
+
+    # La table canonique enrichie est réutilisable au tour suivant.
+    second = run_pandas.invoke(
+        {"code": "result = 'amundsen_te90_degC' in df_canonical_sample_depth.columns"}
+    )
+    assert second == "True"
 
 
 def test_run_pandas_exposes_multiple_ecopart_projects():
@@ -334,7 +520,7 @@ graph_explanation = (
 )
 """
 
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
     assert "/graphs/" in result
     assert "Lecture rapide" in result
     assert "courbe en ligne" in result
@@ -351,7 +537,7 @@ def test_run_graph_works_without_loaded_file_for_standalone_map():
         "ax.text(0.5, 0.5, 'Mer du Labrador', ha='center', va='center')\n"
         "ax.set_xlim(0, 1); ax.set_ylim(0, 1)\n"
     )
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
     assert "/graphs/" in result
     assert "No file loaded" not in result
 
@@ -374,6 +560,54 @@ def test_run_graph_requires_graph_writer_after_loaded_analysis_skill(tmp_path):
     assert "/graphs/" not in result
 
 
+def test_run_graph_blocks_missing_graph_contract(tmp_path):
+    thread_id = "thread-missing-graph-contract"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({"x": [1, 2], "y": [3, 4]}),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+
+    result = run_graph.invoke({
+        "code": "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])",
+    })
+
+    assert result == "graph contract blocked: graph_contract is missing"
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is True
+    assert "/graphs/" not in result
+
+
+def test_run_graph_renders_compliant_vertical_profile_contract(tmp_path):
+    thread_id = "thread-valid-vertical-contract"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({"depth_m": [5, 10], "abundance_ind_L": [0.0, 1.2]}),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+fig, ax = plt.subplots()
+ax.plot(df['abundance_ind_L'], df['depth_m'])
+ax.invert_yaxis()
+graph_contract = {
+    'kind': 'vertical_profile',
+    'axes': [{'axis_index': 0, 'x': 'abundance_ind_L', 'y': 'depth_m'}],
+    'inverted_axes': [{'axis_index': 0, 'axis': 'y'}],
+    'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['abundance_ind_L', 'depth_m'],
+}
+"""
+
+    result = run_graph.invoke({"code": code})
+
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
+
+
 def test_run_graph_blocks_unreadable_oversized_figures(tmp_path):
     thread_id = "thread-oversized-graph"
     store = SessionStore(tmp_path / "sessions")
@@ -382,7 +616,10 @@ def test_run_graph_blocks_unreadable_oversized_figures(tmp_path):
 
     run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
     result = run_graph.invoke({
-        "code": "fig, ax = plt.subplots(figsize=(10, 22)); ax.plot(df['x'], df['y'])",
+        "code": (
+            "fig, ax = plt.subplots(figsize=(10, 22)); ax.plot(df['x'], df['y'])"
+            + _GENERIC_GRAPH_CONTRACT_CODE
+        ),
     })
 
     assert "Graph quality blocked" in result
@@ -403,7 +640,7 @@ for i in range(25):
     ax.plot([1, 2], [i, i + 1], label=f"group-{i}")
 ax.legend()
 """
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
     assert "Graph quality blocked" in result
     assert "legend entries" in result
@@ -420,10 +657,11 @@ def test_run_graph_blocks_too_many_visible_tick_labels(tmp_path):
     code = """
 fig, ax = plt.subplots(figsize=(10, 8))
 ax.imshow([[0, 1], [1, 0]])
+ax.invert_yaxis()
 ax.set_yticks(range(80))
 ax.set_yticklabels([f"station-{i}" for i in range(80)])
 """
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
     assert "Graph quality blocked" in result
     assert "tick labels" in result
@@ -440,13 +678,14 @@ def test_run_graph_blocks_overlong_tick_labels(tmp_path):
     code = """
 fig, ax = plt.subplots(figsize=(10, 8))
 ax.imshow([[0, 1], [1, 0]])
+ax.invert_yaxis()
 ax.set_xticks(range(12))
 ax.set_xticklabels([
     "Animalia | Arthropoda | Copepoda | Calanoida | Calanidae | Calanus hyperboreus"
     for _ in range(12)
 ], rotation=45)
 """
-    result = run_graph.invoke({"code": code})
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
     assert "Graph quality blocked" in result
     assert "tick labels are too long" in result
@@ -504,6 +743,7 @@ def test_run_graph_exposes_multiple_ecopart_projects():
         "code": (
             "fig, ax = plt.subplots()\n"
             "ax.bar(['105', '42'], [len(df_ecopart_105), len(df_ecopart_42)])"
+            + _GENERIC_GRAPH_CONTRACT_CODE
         )
     })
 
@@ -542,6 +782,70 @@ def test_uvp_hint_none_for_generic_file():
     cols = ["station", "depth", "temperature", "salinity"]
     hint = _uvp_skill_hint(cols)
     assert hint == ""
+
+
+def _neolabs_tsv(tmp_path):
+    p = tmp_path / "neolabs.tsv"
+    pd.DataFrame({
+        "SAMPLE_ID": [1, 1, 2],
+        "STATION_NAME": ["A", "A", "A"],
+        "TAXON_ID": ["Calanus", "Oithona", "Calanus"],
+        "CLASS": ["Copepoda", "Copepoda", "Copepoda"],
+        "Total abundance (ind./m3 depth vol)": [10.0, 5.0, 20.0],
+        "latitude": [60.0, 60.0, 60.0],
+        "longitude": [-65.0, -65.0, -65.0],
+    }).to_csv(p, sep="\t", index=False)
+    return str(p)
+
+
+def test_run_pandas_blocks_handrolled_neolabs_copepod_density(tmp_path):
+    thread_id = "thread-neolabs-guard"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": _neolabs_tsv(tmp_path)})
+
+    out = run_pandas.invoke({
+        "code": (
+            "cop = df[df['CLASS'] == 'Copepoda']\n"
+            "result = cop.groupby('STATION_NAME')"
+            "['Total abundance (ind./m3 depth vol)'].sum()"
+        )
+    })
+
+    assert "bloqué" in out
+    assert "neolabs_copepod_density" in out
+
+
+def test_run_pandas_allows_neolabs_contract_call(tmp_path):
+    thread_id = "thread-neolabs-contract"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": _neolabs_tsv(tmp_path)})
+
+    out = run_pandas.invoke({
+        "code": (
+            "from core.neolabs_abundance import neolabs_copepod_density\n"
+            "result = neolabs_copepod_density(df)"
+        )
+    })
+
+    assert "bloqué" not in out
+    # station A : sample1=15, sample2=20 -> moyenne 17.5
+    assert "17.5" in out
+
+
+def test_hint_neolabs_taxonomy_routes_to_contract():
+    """Fichier NeoLabs taxonomy → hint skill + contrat neolabs_copepod_density."""
+    cols = [
+        "SAMPLE_ID", "STATION_NAME", "TAXON_ID", "CLASS",
+        "Total abundance (ind./m3 depth vol)", "latitude", "longitude",
+    ]
+    hint = _uvp_skill_hint(cols)
+    assert "neolabs_abundance_analysis" in hint
+    assert "neolabs_copepod_density" in hint
+    assert "moyenne tous-taxons" in hint
 
 
 def test_uvp_hint_taxa_db_intermediate_does_not_trigger():

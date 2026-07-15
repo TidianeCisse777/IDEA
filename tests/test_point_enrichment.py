@@ -52,6 +52,11 @@ class FakeMatcher:
         )
 
 
+class TimeMatcher(FakeMatcher):
+    def required_coords(self) -> RequiredCoords:
+        return RequiredCoords(lat=True, lon=True, time=True)
+
+
 def _store_with(df: pd.DataFrame, thread_id="thr-pe") -> SessionStore:
     store = SessionStore()
     store.set(thread_id, df, {"variable_name": "df_file_test"})
@@ -113,3 +118,42 @@ def test_shell_empty_coords_uses_label():
     out = run_point_enrichment(store, "thr-pe", matcher=FakeMatcher())
     assert out.enriched is None
     assert "Fake Source" in out.error
+
+
+def test_shell_resolves_time_once_with_documented_priority():
+    source = pd.DataFrame({
+        "latitude": [74.1],
+        "longitude": [-80.2],
+        "sampledatetime": ["2018-08-02"],
+        "object_date": ["2018-08-01"],
+    })
+    matcher = TimeMatcher()
+
+    out = run_point_enrichment(_store_with(source), "thr-pe", matcher=matcher)
+
+    assert out.error is None
+    assert out.resolved_schema is not None
+    assert out.resolved_schema.time_column == "object_date"
+    assert matcher.seen is not None
+    assert matcher.seen.time_col == "object_date"
+
+
+def test_shell_refuses_absent_explicit_override_before_matching():
+    source = pd.DataFrame({
+        "latitude": [74.1],
+        "longitude": [-80.2],
+        "object_date": ["2018-08-01"],
+    })
+    matcher = TimeMatcher()
+
+    out = run_point_enrichment(
+        _store_with(source),
+        "thr-pe",
+        matcher=matcher,
+        time_column="sampledatetime",
+    )
+
+    assert out.enriched is None
+    assert "sampledatetime" in out.error
+    assert "absent" in out.error.lower()
+    assert matcher.seen is None

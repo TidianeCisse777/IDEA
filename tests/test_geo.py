@@ -6,10 +6,57 @@ import pandas as pd
 import pytest
 from shapely.geometry import Point, Polygon
 
-from core.geo import cut_polygon_at_cap_line, filter_by_zone, load_registry, points_inside, resolve_zone
+from core.geo import (
+    Registry,
+    Zone,
+    audit_zone_coverage,
+    cut_polygon_at_cap_line,
+    filter_by_zone,
+    load_registry,
+    points_inside,
+    resolve_zone,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "geo" / "zones_registry_minimal.geojson"
+
+
+def _square(lon0, lat0, lon1, lat1):
+    return Polygon([(lon0, lat0), (lon1, lat0), (lon1, lat1), (lon0, lat1)])
+
+
+def test_audit_zone_coverage_ranks_covered_and_flags_relevant_gaps():
+    registry = Registry(zones=(
+        Zone(canonical="Zone A", source="test", polygon=_square(-70, 60, -60, 70), aliases=()),
+        Zone(canonical="Zone B", source="test", polygon=_square(-90, 60, -80, 70), aliases=()),
+        # Voisine (bbox recoupe l'emprise -85..-63 / 65..67) mais sans point -> lacune.
+        Zone(canonical="Zone C gap", source="test", polygon=_square(-80, 64, -72, 68), aliases=()),
+        # Loin de toute donnée -> pas une lacune pertinente.
+        Zone(canonical="Zone D far", source="test", polygon=_square(10, 30, 20, 40), aliases=()),
+    ))
+    df = pd.DataFrame({
+        "latitude": [65.0, 66.0, 67.0, 65.0],
+        "longitude": [-65.0, -64.0, -63.0, -85.0],  # 3 dans A, 1 dans B
+    })
+
+    audit = audit_zone_coverage(df, registry)
+
+    covered = {z["canonical"]: z["n_samples"] for z in audit["covered"]}
+    assert covered == {"Zone A": 3, "Zone B": 1}
+    assert audit["covered"][0]["canonical"] == "Zone A"  # trié desc
+
+    gap_names = {z["canonical"] for z in audit["gaps"]}
+    assert "Zone C gap" in gap_names       # voisine, vide -> lacune
+    assert "Zone D far" not in gap_names   # lointaine -> pas une lacune
+    assert audit["n_points"] == 4
+
+
+def test_audit_zone_coverage_handles_empty_frame():
+    registry = Registry(zones=(
+        Zone(canonical="Zone A", source="test", polygon=_square(-70, 60, -60, 70), aliases=()),
+    ))
+    audit = audit_zone_coverage(pd.DataFrame({"latitude": [], "longitude": []}), registry)
+    assert audit["covered"] == [] and audit["gaps"] == [] and audit["n_points"] == 0
 
 
 def test_resolve_zone_returns_canonical_name_source_and_polygon_for_ungava():

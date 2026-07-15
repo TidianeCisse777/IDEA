@@ -144,6 +144,7 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
         zone_name: str,
         lat_col: str = "latitude",
         lon_col: str = "longitude",
+        source_variable: str | None = None,
     ) -> dict:
         """Filtre le DataFrame chargé pour ne garder que les lignes dont
         (lat, lon) tombent **strictement dans le polygone IHO** de la zone.
@@ -162,6 +163,9 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
         lat_col, lon_col : str
             Noms des colonnes lat/lon dans le df. Défaut : 'latitude'
             / 'longitude' (convention NeoLab EcoTaxa/Amundsen).
+        source_variable : str, optional
+            Variable persistante à filtrer. Permet de repartir du fichier
+            original après qu'un filtre précédent est devenu le df actif.
 
         Returns
         -------
@@ -173,7 +177,15 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
         if not session or session.get("df") is None:
             return "Aucun fichier chargé. Utilise load_file d'abord."
 
-        df = session["df"]
+        source_session = session
+        if source_variable:
+            source_session = _store.get(f"{thread_id}:dataset:{source_variable}")
+            if not source_session or source_session.get("df") is None:
+                raise KeyError(
+                    f"Variable source inconnue : {source_variable}. "
+                    "Utilise le nom exact retourné par load_file ou un tool précédent."
+                )
+        df = source_session["df"]
 
         canonical = _match_canonical(zone_name)
         if canonical is None:
@@ -194,7 +206,8 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
             df, canonical, lat_col=lat_col, lon_col=lon_col, registry=_registry(),
         )
 
-        source_meta = (session.get("meta") or {}).get("source", "df")
+        source_details = source_session.get("meta") or {}
+        source_meta = source_details.get("source", "df")
         source_stem = source_meta.split(":", 1)[-1]
         variable_name = dataset_variable_name(
             "in", canonical, source_stem,
@@ -220,6 +233,7 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
             "n_out": int(len(df) - len(kept)),
             "lat_col": lat_col,
             "lon_col": lon_col,
+            "source_variable": source_details.get("variable_name") or source_variable,
         }
 
     return [filter_dataframe_by_zone]

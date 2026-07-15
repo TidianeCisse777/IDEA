@@ -114,3 +114,47 @@ def test_neolabs_abundance_skill_documents_standard_analysis_workflow():
     assert "nmds" in text
     assert "pcoa" in text
     assert "rda" in text
+
+
+def test_uvp_skill_requires_strict_hierarchy_resolver():
+    content = Path("agents/skills/uvp_ecotaxa.md").read_text(encoding="utf-8")
+
+    assert "from core.copepod_taxonomy import copepod_hierarchy_mask" in content
+    assert "copepod_keywords" not in content
+    assert "cop_cats =" not in content
+    assert "Do not copy or rename an alternate column" in content
+    assert "`hierarchy` is not an accepted substitute" in content
+
+
+def test_uvp_skill_requires_canonical_sample_depth_builder_for_downstream_views():
+    content = Path("agents/skills/uvp_ecotaxa.md").read_text(encoding="utf-8")
+
+    assert (
+        "from core.copepod_sample_depth import build_canonical_sample_depth"
+        in content
+    )
+    assert "canonical_bins = build_canonical_sample_depth(" in content
+    assert "tables, correlations, and graph datasets" in content
+    assert "reuse the same `canonical_bins`" in content
+
+
+def test_uvp_skill_requires_zero_inclusive_environment_contract_and_explicit_m5():
+    content = Path("agents/skills/uvp_ecotaxa.md").read_text(encoding="utf-8")
+
+    assert (
+        "from core.copepod_abundance_analysis import prepare_environment_correlation"
+        in content
+    )
+    assert "presence_only=False" in content
+    assert "report `n_retained` and `n_zero_abundance`" in content
+    assert "Generic abundance requests never produce m5 or m6" in content
+    assert "m5/m6 are explicit-only" in content
+    assert "compute the requested coefficient from `analysis_df` after preparation" in content
+    assert "The preparer does not store coefficients in `attrs`" in content
+    assert "from core.copepod_abundance_analysis import compute_m5" in content
+    assert "Never hand-write the m5 aggregation" in content
+    assert "refuses missing 0–50 m coverage" in content
+    assert "compute_m5(df_canonical_sample_depth, sample_id=requested_sample_id)" in content
+    assert "Do not pre-filter the dataframe before this call" in content
+    assert "default to **m5" not in content
+    assert "canonically map to m5" not in content

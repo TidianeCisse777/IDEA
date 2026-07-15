@@ -126,6 +126,52 @@ def test_upsert_sample_inserts_and_then_updates(conn):
     assert rows[0]["free_fields_json"] == '{"stationid": "station-b", "profileid": "001b"}'
 
 
+def test_audit_ecotaxa_coverage_ranks_projects_and_years(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        audit_ecotaxa_coverage,
+        init_schema,
+        upsert_sample,
+    )
+
+    init_schema(conn)
+    # Projet 42 : 1 sample (le plus rare), 2015.
+    upsert_sample(
+        conn, sample_id=1, project_id=42, lat_avg=67.0, lon_avg=-63.0,
+        date_min="2015-04-19", date_max="2015-04-19", object_count=50,
+        instrument="UVP5", last_synced="ts",
+    )
+    # Projet 17498 : 3 samples, 2024.
+    for sid, oc in ((10, 5000), (11, 300), (12, 120)):
+        upsert_sample(
+            conn, sample_id=sid, project_id=17498, lat_avg=80.0, lon_avg=-70.0,
+            date_min="2024-09-10", date_max="2024-09-10", object_count=oc,
+            instrument="UVP6", last_synced="ts",
+        )
+
+    audit = audit_ecotaxa_coverage(conn)
+
+    # Projets classés par n_samples croissant : le plus pauvre d'abord.
+    per_project = audit["per_project"]
+    assert per_project[0]["project_id"] == 42
+    assert per_project[0]["n_samples"] == 1
+    assert per_project[-1]["project_id"] == 17498
+    assert per_project[-1]["n_samples"] == 3
+
+    # Distribution temporelle par année.
+    per_year = {row["year"]: row for row in audit["per_year"]}
+    assert per_year["2015"]["n_samples"] == 1
+    assert per_year["2024"]["n_samples"] == 3
+    assert per_year["2024"]["n_projects"] == 1
+
+    # Samples les plus pauvres en objets (fiable au niveau sample).
+    sparsest = audit["sparsest_samples"]
+    assert sparsest[0]["sample_id"] == 1  # object_count 50
+    assert sparsest[0]["object_count"] == 50
+
+    assert audit["total_samples"] == 4
+    assert audit["total_projects"] == 2
+
+
 def test_query_samples_in_bbox_returns_inclusive_borders(conn):
     from core.ecotaxa_browser.cache.repo import init_schema, query_samples_in_bbox, upsert_sample
 
@@ -457,3 +503,199 @@ def test_cache_counts_returns_indexed_sizes(conn):
     assert counts["samples_indexed"] == 3
     assert counts["projects_indexed"] == 2  # distinct project_id in samples_cache
     assert counts["schemas_indexed"] == 1
+
+
+def _seed_rows(conn, rows):
+    from core.ecotaxa_browser.cache.repo import upsert_sample
+
+    for row in rows:
+        upsert_sample(
+            conn,
+            sample_id=row["sample_id"],
+            project_id=row.get("project_id", 42),
+            lat_avg=row.get("lat_avg", 70.0),
+            lon_avg=row.get("lon_avg", -64.0),
+            date_min=row.get("date_min", "2018-08-01"),
+            date_max=row.get("date_max", "2018-08-10"),
+            object_count=row.get("object_count", 10),
+            instrument=row.get("instrument", "UVP5"),
+            last_synced="ts",
+        )
+
+
+def test_query_samples_filtered_respects_limit(conn):
+    from core.ecotaxa_browser.cache.repo import init_schema, query_samples_filtered
+
+    init_schema(conn)
+    _seed_rows(conn, [{"sample_id": i} for i in range(1, 11)])
+
+    unlimited = list(query_samples_filtered(conn))
+    limited = list(query_samples_filtered(conn, limit=3))
+
+    assert len(unlimited) == 10
+    assert len(limited) == 3
+
+
+def test_aggregate_samples_filtered_returns_total_breakdown_dates_centroid(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        aggregate_samples_filtered,
+        init_schema,
+    )
+
+    init_schema(conn)
+    _seed_rows(conn, [
+        {"sample_id": 1, "project_id": 42, "lat_avg": 60.0, "lon_avg": -80.0,
+         "date_min": "2018-01-01", "date_max": "2018-01-10"},
+        {"sample_id": 2, "project_id": 42, "lat_avg": 62.0, "lon_avg": -82.0,
+         "date_min": "2019-05-01", "date_max": "2019-05-10"},
+        {"sample_id": 3, "project_id": 99, "lat_avg": 64.0, "lon_avg": -84.0,
+         "date_min": "2017-03-01", "date_max": "2020-06-30"},
+    ])
+
+    agg = aggregate_samples_filtered(conn)
+
+    assert agg["total"] == 3
+    # ordered by count desc: project 42 (2) before project 99 (1)
+    assert agg["project_breakdown"] == [(42, 2), (99, 1)]
+    assert agg["date_min"] == "2017-03-01"
+    assert agg["date_max"] == "2020-06-30"
+    # centroid is the mean of the three lat/lon pairs
+    assert agg["centroid"] == (62.0, -82.0)
+
+
+def test_aggregate_samples_filtered_honours_filters(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        aggregate_samples_filtered,
+        init_schema,
+    )
+
+    init_schema(conn)
+    _seed_rows(conn, [
+        {"sample_id": 1, "project_id": 42, "lat_avg": 70.0, "lon_avg": -64.0,
+         "instrument": "UVP6"},
+        {"sample_id": 2, "project_id": 42, "lat_avg": 70.0, "lon_avg": -64.0,
+         "instrument": "UVP5"},
+    ])
+
+    agg = aggregate_samples_filtered(conn, instrument="UVP6")
+
+    assert agg["total"] == 1
+    assert agg["project_breakdown"] == [(42, 1)]
+
+
+def test_aggregate_samples_filtered_empty_returns_none_centroid(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        aggregate_samples_filtered,
+        init_schema,
+    )
+
+    init_schema(conn)
+
+    agg = aggregate_samples_filtered(conn)
+
+    assert agg["total"] == 0
+    assert agg["project_breakdown"] == []
+    assert agg["centroid"] is None
+    assert agg["date_min"] is None
+
+
+def test_open_connection_sets_busy_timeout(tmp_path):
+    from core.ecotaxa_browser.cache.repo import open_connection
+
+    db = tmp_path / "cache.sqlite"
+    connection = open_connection(str(db))
+    try:
+        timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout == 5000
+    finally:
+        connection.close()
+
+
+def _secondary_index_names(conn):
+    return {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND name LIKE 'idx_samples_%'"
+        )
+    }
+
+
+def test_init_schema_creates_the_declared_secondary_indexes(conn):
+    from core.ecotaxa_browser.cache.repo import _SECONDARY_INDEXES, init_schema
+
+    init_schema(conn)
+    assert _secondary_index_names(conn) == set(_SECONDARY_INDEXES)
+
+
+def test_drop_and_create_secondary_indexes_round_trip(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        _SECONDARY_INDEXES,
+        create_secondary_indexes,
+        drop_secondary_indexes,
+        init_schema,
+    )
+
+    init_schema(conn)
+    drop_secondary_indexes(conn)
+    assert _secondary_index_names(conn) == set()
+    create_secondary_indexes(conn)
+    assert _secondary_index_names(conn) == set(_SECONDARY_INDEXES)
+
+
+def test_is_samples_cache_empty(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        init_schema,
+        is_samples_cache_empty,
+        upsert_sample,
+    )
+
+    init_schema(conn)
+    assert is_samples_cache_empty(conn) is True
+    upsert_sample(
+        conn, sample_id=1, project_id=42, lat_avg=70.0, lon_avg=-64.0,
+        date_min="2018-08-01", date_max="2018-08-01", object_count=10,
+        instrument="UVP5", last_synced="ts",
+    )
+    assert is_samples_cache_empty(conn) is False
+
+
+def test_deferred_secondary_indexes_drops_then_rebuilds(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        _SECONDARY_INDEXES,
+        deferred_secondary_indexes,
+        init_schema,
+        query_samples_in_bbox,
+        upsert_sample,
+    )
+
+    init_schema(conn)
+    with deferred_secondary_indexes(conn):
+        # Indexes are gone during the bulk load.
+        assert _secondary_index_names(conn) == set()
+        upsert_sample(
+            conn, sample_id=1, project_id=42, lat_avg=70.0, lon_avg=-64.0,
+            date_min="2018-08-01", date_max="2018-08-01", object_count=10,
+            instrument="UVP5", last_synced="ts",
+        )
+    # Rebuilt on exit, and reads through the index still return the row.
+    assert _secondary_index_names(conn) == set(_SECONDARY_INDEXES)
+    rows = list(query_samples_in_bbox(
+        conn, lat_min=60.0, lat_max=75.0, lon_min=-70.0, lon_max=-60.0,
+    ))
+    assert [r["sample_id"] for r in rows] == [1]
+
+
+def test_deferred_secondary_indexes_rebuilds_even_on_error(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        _SECONDARY_INDEXES,
+        deferred_secondary_indexes,
+        init_schema,
+    )
+
+    init_schema(conn)
+    with pytest.raises(RuntimeError):
+        with deferred_secondary_indexes(conn):
+            raise RuntimeError("load blew up mid-sync")
+    # A crash mid-load must not leave the cache permanently index-less.
+    assert _secondary_index_names(conn) == set(_SECONDARY_INDEXES)

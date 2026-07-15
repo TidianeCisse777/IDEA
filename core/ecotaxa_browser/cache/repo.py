@@ -8,7 +8,19 @@ extension required, bbox math is plain numeric SQL.
 from __future__ import annotations
 
 import sqlite3
-from typing import Iterable, Sequence
+from contextlib import contextmanager
+from typing import Iterable, Iterator, Sequence
+
+# Single source of truth for the samples_cache secondary indexes: name -> the
+# indexed column expression. init_schema builds them, and the deferred-index
+# bulk-load path drops and rebuilds exactly this set — keep them here so the two
+# can never drift.
+_SECONDARY_INDEXES = {
+    "idx_samples_project": "samples_cache(project_id)",
+    "idx_samples_bbox": "samples_cache(lat_avg, lon_avg)",
+    "idx_samples_date": "samples_cache(date_min, date_max)",
+    "idx_samples_depth_max": "samples_cache(depth_max)",
+}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples_cache (
@@ -28,13 +40,6 @@ CREATE TABLE IF NOT EXISTS samples_cache (
     instrument TEXT,
     last_synced TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_samples_project
-    ON samples_cache(project_id);
-CREATE INDEX IF NOT EXISTS idx_samples_bbox
-    ON samples_cache(lat_avg, lon_avg);
-CREATE INDEX IF NOT EXISTS idx_samples_date
-    ON samples_cache(date_min, date_max);
 
 CREATE TABLE IF NOT EXISTS project_schemas_cache (
     project_id INTEGER PRIMARY KEY,
@@ -71,11 +76,45 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "samples_cache", "station_id", "TEXT")
     _ensure_column(conn, "samples_cache", "profile_id", "TEXT")
     _ensure_column(conn, "samples_cache", "free_fields_json", "TEXT")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_samples_depth_max "
-        "ON samples_cache(depth_max)"
-    )
+    create_secondary_indexes(conn)
     conn.commit()
+
+
+def create_secondary_indexes(conn: sqlite3.Connection) -> None:
+    """Create the samples_cache secondary indexes (idempotent)."""
+    for name, target in _SECONDARY_INDEXES.items():
+        conn.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+    conn.commit()
+
+
+def drop_secondary_indexes(conn: sqlite3.Connection) -> None:
+    """Drop the samples_cache secondary indexes (idempotent)."""
+    for name in _SECONDARY_INDEXES:
+        conn.execute(f"DROP INDEX IF EXISTS {name}")
+    conn.commit()
+
+
+def is_samples_cache_empty(conn: sqlite3.Connection) -> bool:
+    """True when no sample rows are cached — i.e. a first-fill sync."""
+    return conn.execute("SELECT 1 FROM samples_cache LIMIT 1").fetchone() is None
+
+
+@contextmanager
+def deferred_secondary_indexes(conn: sqlite3.Connection) -> Iterator[None]:
+    """Drop the secondary indexes for a bulk first-fill, rebuild on exit.
+
+    Building each index once at the end (a single sorted pass) is far cheaper
+    than maintaining it incrementally across a large load — ~5x faster to fill
+    a multi-million-row cache from scratch. Only safe when no reader depends on
+    the indexes meanwhile, so this is for an *empty-cache* first fill, not an
+    incremental refresh of a populated cache. The indexes are rebuilt even if
+    the body raises, so a crash mid-sync never leaves the cache index-less.
+    """
+    drop_secondary_indexes(conn)
+    try:
+        yield
+    finally:
+        create_secondary_indexes(conn)
 
 
 def _ensure_column(
@@ -165,35 +204,41 @@ def replace_project_samples(
     try:
         conn.execute("BEGIN")
         conn.execute("DELETE FROM samples_cache WHERE project_id = ?", (project_id,))
-        for sample in samples:
-            conn.execute(
-                """
-                INSERT INTO samples_cache (
-                    sample_id, project_id, lat_avg, lon_avg,
-                    date_min, date_max, depth_min, depth_max,
-                    original_id, station_id, profile_id, free_fields_json,
-                    object_count, instrument, last_synced
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    int(sample["sample_id"]),
-                    project_id,
-                    sample.get("lat_avg"),
-                    sample.get("lon_avg"),
-                    sample.get("date_min"),
-                    sample.get("date_max"),
-                    sample.get("depth_min"),
-                    sample.get("depth_max"),
-                    sample.get("original_id"),
-                    sample.get("station_id"),
-                    sample.get("profile_id"),
-                    sample.get("free_fields_json"),
-                    int(sample.get("object_count") or 0),
-                    sample.get("instrument"),
-                    last_synced,
-                ),
+        # Build every row tuple up front (raises on bad payload before any
+        # insert, keeping the transaction atomic) then bulk-insert in one
+        # executemany — far faster than a per-row execute loop at scale.
+        rows = [
+            (
+                int(sample["sample_id"]),
+                project_id,
+                sample.get("lat_avg"),
+                sample.get("lon_avg"),
+                sample.get("date_min"),
+                sample.get("date_max"),
+                sample.get("depth_min"),
+                sample.get("depth_max"),
+                sample.get("original_id"),
+                sample.get("station_id"),
+                sample.get("profile_id"),
+                sample.get("free_fields_json"),
+                int(sample.get("object_count") or 0),
+                sample.get("instrument"),
+                last_synced,
             )
+            for sample in samples
+        ]
+        conn.executemany(
+            """
+            INSERT INTO samples_cache (
+                sample_id, project_id, lat_avg, lon_avg,
+                date_min, date_max, depth_min, depth_max,
+                original_id, station_id, profile_id, free_fields_json,
+                object_count, instrument, last_synced
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
         conn.commit()
     except Exception:
         conn.rollback()
@@ -292,8 +337,7 @@ def query_samples_in_date_range(
     )
 
 
-def query_samples_filtered(
-    conn: sqlite3.Connection,
+def _build_sample_filter(
     *,
     bbox: tuple[float, float, float, float] | None = None,
     date_range: tuple[str, str] | None = None,
@@ -304,7 +348,12 @@ def query_samples_filtered(
     depth_min_lt: float | None = None,
     depth_min_gte: float | None = None,
     month: int | None = None,
-) -> Iterable[sqlite3.Row]:
+) -> tuple[str, list]:
+    """Build the shared WHERE clause + params for sample-level filters.
+
+    Returns ``("WHERE ...", params)`` or ``("", [])`` when no filter applies,
+    so it can be spliced into both row-fetch and aggregate queries.
+    """
     clauses: list[str] = []
     params: list = []
     if bbox is not None:
@@ -343,7 +392,96 @@ def query_samples_filtered(
         clauses.append(f"project_id IN ({placeholders})")
         params.extend(project_ids)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    return conn.execute(f"SELECT * FROM samples_cache {where}", params)
+    return where, params
+
+
+def query_samples_filtered(
+    conn: sqlite3.Connection,
+    *,
+    bbox: tuple[float, float, float, float] | None = None,
+    date_range: tuple[str, str] | None = None,
+    instrument: str | None = None,
+    project_ids: Sequence[int] | None = None,
+    depth_max_lt: float | None = None,
+    depth_max_gte: float | None = None,
+    depth_min_lt: float | None = None,
+    depth_min_gte: float | None = None,
+    month: int | None = None,
+    limit: int | None = None,
+) -> Iterable[sqlite3.Row]:
+    where, params = _build_sample_filter(
+        bbox=bbox, date_range=date_range, instrument=instrument,
+        project_ids=project_ids, depth_max_lt=depth_max_lt,
+        depth_max_gte=depth_max_gte, depth_min_lt=depth_min_lt,
+        depth_min_gte=depth_min_gte, month=month,
+    )
+    sql = f"SELECT * FROM samples_cache {where}"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = [*params, int(limit)]
+    return conn.execute(sql, params)
+
+
+def aggregate_samples_filtered(
+    conn: sqlite3.Connection,
+    *,
+    bbox: tuple[float, float, float, float] | None = None,
+    date_range: tuple[str, str] | None = None,
+    instrument: str | None = None,
+    project_ids: Sequence[int] | None = None,
+    depth_max_lt: float | None = None,
+    depth_max_gte: float | None = None,
+    depth_min_lt: float | None = None,
+    depth_min_gte: float | None = None,
+    month: int | None = None,
+) -> dict:
+    """Aggregate the filtered sample set in SQL (no row materialization).
+
+    Returns total count, per-project breakdown (ordered by count desc),
+    the date envelope, and the lat/lon centroid — everything the region
+    summary needs — computed by SQLite instead of a Python pass over every
+    matching row. NULL lat/lon are ignored by AVG, matching the old
+    Python mean-over-non-null behaviour.
+    """
+    where, params = _build_sample_filter(
+        bbox=bbox, date_range=date_range, instrument=instrument,
+        project_ids=project_ids, depth_max_lt=depth_max_lt,
+        depth_max_gte=depth_max_gte, depth_min_lt=depth_min_lt,
+        depth_min_gte=depth_min_gte, month=month,
+    )
+    agg = conn.execute(
+        f"""
+        SELECT
+            COUNT(*) AS total,
+            MIN(date_min) AS date_min,
+            MAX(date_max) AS date_max,
+            AVG(lat_avg) AS lat_c,
+            AVG(lon_avg) AS lon_c
+        FROM samples_cache {where}
+        """,
+        params,
+    ).fetchone()
+    breakdown_rows = conn.execute(
+        f"""
+        SELECT project_id, COUNT(*) AS n
+        FROM samples_cache {where}
+        GROUP BY project_id
+        ORDER BY n DESC, project_id ASC
+        """,
+        params,
+    ).fetchall()
+
+    lat_c, lon_c = agg["lat_c"], agg["lon_c"]
+    centroid = (lat_c, lon_c) if lat_c is not None and lon_c is not None else None
+    return {
+        "total": int(agg["total"]),
+        "date_min": agg["date_min"],
+        "date_max": agg["date_max"],
+        "centroid": centroid,
+        "project_breakdown": [
+            (int(r["project_id"]), int(r["n"])) for r in breakdown_rows
+        ],
+    }
 
 
 def query_project_envelopes(
@@ -415,6 +553,110 @@ def query_project_envelopes(
         out[pid]["instruments"] = sorted(names)
 
     return out
+
+
+def audit_ecotaxa_coverage(
+    conn: sqlite3.Connection,
+    *,
+    sparsest_limit: int = 10,
+) -> dict:
+    """Availability audit over the cached samples — what is thin, what is missing.
+
+    Returns, entirely from the local cache (no network):
+        - ``per_project`` : one row per project ordered by ``n_samples`` ASC
+          (sparsest coverage first), with sample count, cached-object total,
+          date envelope, instruments and bbox.
+        - ``per_year`` : sample and project counts per calendar year.
+        - ``sparsest_samples`` : the samples carrying the fewest objects (object
+          counts are reliable per sample; the project-level total is sync-capped).
+        - ``total_samples`` / ``total_projects``.
+    """
+    project_rows = conn.execute(
+        """
+        SELECT
+            project_id,
+            COUNT(*) AS n_samples,
+            SUM(object_count) AS n_objects_cached,
+            MIN(date_min) AS date_min,
+            MAX(date_max) AS date_max,
+            MIN(lat_avg) AS south, MAX(lat_avg) AS north,
+            MIN(lon_avg) AS west,  MAX(lon_avg) AS east
+        FROM samples_cache
+        GROUP BY project_id
+        ORDER BY n_samples ASC, project_id ASC
+        """
+    ).fetchall()
+
+    instruments_acc: dict[int, set[str]] = {}
+    for row in conn.execute(
+        "SELECT DISTINCT project_id, instrument FROM samples_cache "
+        "WHERE instrument IS NOT NULL AND instrument != ''"
+    ):
+        instruments_acc.setdefault(int(row["project_id"]), set()).add(
+            str(row["instrument"])
+        )
+
+    per_project = [
+        {
+            "project_id": int(row["project_id"]),
+            "n_samples": int(row["n_samples"]),
+            "n_objects_cached": int(row["n_objects_cached"] or 0),
+            "date_min": row["date_min"],
+            "date_max": row["date_max"],
+            "instruments": sorted(instruments_acc.get(int(row["project_id"]), set())),
+            "bbox": {
+                "south": row["south"], "west": row["west"],
+                "north": row["north"], "east": row["east"],
+            },
+        }
+        for row in project_rows
+    ]
+
+    per_year = [
+        {
+            "year": row["year"],
+            "n_samples": int(row["n_samples"]),
+            "n_projects": int(row["n_projects"]),
+        }
+        for row in conn.execute(
+            """
+            SELECT
+                strftime('%Y', date_min) AS year,
+                COUNT(*) AS n_samples,
+                COUNT(DISTINCT project_id) AS n_projects
+            FROM samples_cache
+            WHERE date_min IS NOT NULL
+            GROUP BY year
+            ORDER BY year ASC
+            """
+        ).fetchall()
+    ]
+
+    sparsest_samples = [
+        {
+            "sample_id": int(row["sample_id"]),
+            "project_id": int(row["project_id"]),
+            "original_id": row["original_id"],
+            "object_count": int(row["object_count"] or 0),
+        }
+        for row in conn.execute(
+            """
+            SELECT sample_id, project_id, original_id, object_count
+            FROM samples_cache
+            ORDER BY object_count ASC, sample_id ASC
+            LIMIT ?
+            """,
+            (int(sparsest_limit),),
+        ).fetchall()
+    ]
+
+    return {
+        "per_project": per_project,
+        "per_year": per_year,
+        "sparsest_samples": sparsest_samples,
+        "total_samples": sum(p["n_samples"] for p in per_project),
+        "total_projects": len(per_project),
+    }
 
 
 def lookup_sample_projects(
@@ -531,4 +773,11 @@ def cache_counts(conn: sqlite3.Connection) -> dict:
 def open_connection(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    # busy_timeout makes a reader wait out the brief write-lock window of a
+    # sync's per-project transaction instead of raising "database is locked".
+    # (Rollback journal is kept on purpose: WAL grows unbounded during a full
+    # sync because continuous readers starve the passive checkpoint — see
+    # docs/mcp note. A concurrent-read benchmark shows this timeout alone
+    # yields zero lock errors at 500k+ rows.)
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn

@@ -1,5 +1,13 @@
 # Skill: bio_oracle_query
 
+## Activation precondition
+
+Apply this skill only when the current user request explicitly names Bio-ORACLE
+and the active session does not forbid Bio-ORACLE. Do not load or apply this skill
+for generic requests about samples, projects, stations, positions, zones,
+temperature, environment, maps, scenarios, or analyses. A loaded file remains
+the default source unless the user explicitly requests Bio-ORACLE.
+
 Bio-ORACLE data is now loaded or being requested. Follow the workflow below.
 
 ---
@@ -136,3 +144,9 @@ Step 3 — call load_skill("graph_planner") then run_graph for a map coloured by
 - Bio-ORACLE resolution ~5 arc-minutes (~9 km) — one value per zone centre, not per station.
 - Interpretation of ecological impact belongs to the researcher.
 - `depth_layer="surface"` is the default for sea surface temperature comparison with CTD surface observations.
+
+## Runtime routing contract
+
+- Route discovery to `list_bio_oracle_datasets`, point preview to `preview_bio_oracle_point`, full retrieval to `query_bio_oracle`, and loaded-table coupling to `enrich_with_bio_oracle`. Only if `query_bio_oracle` succeeds should this skill be loaded.
+- For "les mêmes stations" or top N stations and multiple `scenarios`, never create empty placeholder columns. Do not use `query_bio_oracle_zones` for this case; a download link alone is not an answer. Reuse the persisted `df_bio_oracle_enriched_*` result.
+- For `target_year=2050` / "en 2050", do not reuse a previously computed SSP value unless its `time_*` proves the requested year; re-query Bio-ORACLE. Baseline is historical. Verify the requested year on `time_ssp*`, not on `time_baseline`.

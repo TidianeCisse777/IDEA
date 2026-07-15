@@ -1,5 +1,7 @@
 """TDD — tools/ecopart_sources.py."""
 
+import json
+
 import pytest
 
 from tools.session_store import SessionStore
@@ -33,6 +35,44 @@ def test_make_ecopart_tools_exposes_expected_tools():
     assert "list_ecopart_samples" in tool_names
     assert "preview_ecopart_sample" in tool_names
     assert "query_ecopart" in tool_names
+    assert "audit_ecotaxa_ecopart_join" in tool_names
+
+
+def test_audit_ecotaxa_ecopart_join_reads_persisted_join(_isolated_store):
+    import pandas as pd
+
+    from tools.ecopart_sources import make_ecopart_tools
+
+    thread_id = "thread-audit-persisted-join"
+    joined = pd.DataFrame({
+        "sample_id": ["hc_02", "hc_02"],
+        "object_id": ["o1", "o2"],
+        "object_depth_min": [12.5, 17.5],
+        "depth_bin": [12.5, 17.5],
+        "ecopart_Sampled volume [L]": [29.7, 37.8],
+    })
+    meta = {
+        "variable_name": "df_ecotaxa_ecopart",
+        "depth_col_used": "object_depth_min",
+        "n_rows": 2,
+        "n_matched": 2,
+    }
+    _isolated_store.set(f"{thread_id}:ecotaxa_ecopart", joined, meta)
+    _isolated_store.set(
+        f"{thread_id}:dataset:df_ecotaxa_ecopart", joined, meta
+    )
+    audit_tool = next(
+        tool
+        for tool in make_ecopart_tools(thread_id)
+        if tool.name == "audit_ecotaxa_ecopart_join"
+    )
+
+    result = audit_tool.invoke({})
+
+    assert "VALIDÉ" in result
+    assert "object_depth_min" in result
+    assert "Doublons object_id : 0" in result
+    assert "Variable contrôlée : `df_ecotaxa_ecopart`" in result
 
 
 def test_list_ecopart_samples_returns_markdown_table():
@@ -366,9 +406,9 @@ def test_enrich_remote_auto_loads_ecotaxa_when_project_named_but_not_in_session(
     from tools.session_store import default_store as _store
 
     _store._store.clear()  # NO EcoTaxa preloaded
-    # get() falls back to on-disk sessions, so also purge this thread's disk state.
-    for key in ("thread-autoload", "thread-autoload:ecotaxa"):
-        _store.clear(key)
+    # get() and project resolution fall back to named on-disk datasets, so purge
+    # the whole conversation family to model a genuinely empty session.
+    _store.clear_conversation("thread-autoload")
 
     mock_et = MagicMock()
     mock_et.start_export.return_value = "job-1"
@@ -741,7 +781,7 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
         "object_major": [12.5, 8.3, 5.0],
         "taxon": ["Calanus", "Calanus", "Oithona"],
     })
-    # Two bins per profile; only the matching bins should be picked up.
+    # Two bins per profile; sampled bins without objects must remain explicit.
     df_ecopart = pd.DataFrame({
         "Profile": ["ips_007", "ips_007", "ips_008", "ips_008"],
         "Depth [m]": [2.5, 7.5, 7.5, 12.5],
@@ -749,7 +789,11 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
         "temperature": [-1.1, -1.2, -0.8, -0.9],
     })
     _store.set("thread-join:ecotaxa", df_ecotaxa, {"source": "ecotaxa:1165"})
-    _store.set("thread-join:ecopart", df_ecopart, {"source": "ecopart:105"})
+    _store.set(
+        "thread-join:ecopart",
+        df_ecopart,
+        {"source": "ecopart:105", "project_id": 105},
+    )
 
     tools = make_ecopart_tools("thread-join")
     join_tool = next(t for t in tools if t.name == "join_ecotaxa_ecopart")
@@ -764,7 +808,7 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert "_join_depth_bin" not in merged.columns
     # The 5 m bin used for the join is kept as a first-class column for m5/m6 grouping.
     assert "depth_bin" in merged.columns
-    assert len(merged) == 3
+    assert len(merged) == 4
 
     by_obj = merged.set_index("obj_orig_id")
     assert by_obj.loc["ips_007_1", "ecopart_Sampled volume [L]"] == 100.0
@@ -776,9 +820,206 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert by_obj.loc["ips_007_1", "depth_bin"] == 2.5
     assert by_obj.loc["ips_007_2", "depth_bin"] == 7.5
     assert by_obj.loc["ips_008_1", "depth_bin"] == 12.5
-    assert "3 lignes" in result
+    zero_bin = merged.loc[merged["obj_orig_id"].isna()].iloc[0]
+    assert zero_bin["sample_id"] == "ips_008"
+    assert zero_bin["depth_bin"] == 7.5
+    assert zero_bin["ecopart_Sampled volume [L]"] == 90.0
+    assert "4 lignes" in result
     assert "3 matchées" in result
+    assert "1 bin EcoPart sans objet conservé" in result
     assert "depth_bin" in result
+    joined_session = _store.get("thread-join:ecotaxa_ecopart")
+    provenance = joined_session["meta"]["provenance"]
+    assert provenance["source"] == "EcoTaxa + EcoPart"
+    assert provenance["dataset_id"] == "ecopart:105"
+    assert provenance["dataset_url"] == "https://ecopart.obs-vlfr.fr/prj/105"
+    assert provenance["resolved_columns"]["columns"] == {
+        "sample": "obj_orig_id",
+        "depth": "object_depth_min",
+        "ecopart_sample": "Profile",
+        "ecopart_depth": "Depth [m]",
+    }
+    assert provenance["coverage"] == {
+        "total_rows": 3,
+        "matched_rows": 3,
+        "match_rate": 1.0,
+        "status_counts": {"matched": 3, "unmatched": 0},
+    }
+    assert "Source : https://ecopart.obs-vlfr.fr/prj/105" in result
+    assert "Provenance :" in result
+    assert json.dumps(provenance, ensure_ascii=False, sort_keys=True) in result
+
+
+def test_join_ecotaxa_ecopart_preserves_sampled_bins_without_objects():
+    import pandas as pd
+
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-zero-object-bin"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "sample_id": ["hc_02"],
+            "object_id": ["o1"],
+            "object_depth_min": [12.5],
+            "object_annotation_hierarchy": ["Biota>Animalia>Copepoda"],
+        }),
+        {"source": "file:ecotaxa.tsv"},
+    )
+    _store.set(
+        f"{thread_id}:ecopart",
+        pd.DataFrame({
+            "Profile": ["hc_02", "hc_02"],
+            "Depth [m]": [12.5, 17.5],
+            "Sampled volume [L]": [29.7, 37.8],
+        }),
+        {"source": "file:ecopart.tsv"},
+    )
+    join_tool = next(
+        tool
+        for tool in make_ecopart_tools(thread_id)
+        if tool.name == "join_ecotaxa_ecopart"
+    )
+
+    result = join_tool.invoke({})
+
+    merged = _store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    assert len(merged) == 2
+    zero_bin = merged.loc[merged["depth_bin"] == 17.5].iloc[0]
+    assert pd.isna(zero_bin["object_id"])
+    assert zero_bin["sample_id"] == "hc_02"
+    assert zero_bin["ecopart_Sampled volume [L]"] == 37.8
+    assert "1 bin EcoPart sans objet conservé" in result
+
+
+def test_join_ecotaxa_ecopart_resolves_explicit_local_file_variables():
+    """Two local files must be joinable by their persisted dataset variables.
+
+    A numeric project mentioned earlier in the conversation must not force the
+    local workflow through the remote project registry.
+    """
+    import pandas as pd
+
+    from tools.dataset_registry import store_dataset
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-local-file-variables"
+    ecotaxa_variable = "df_file_ecotaxa_hawkechannel_30jan"
+    ecopart_variable = "df_file_ecopart_hawkechannel_30jan"
+
+    store_dataset(
+        _store,
+        thread_id,
+        pd.DataFrame({
+            "sample_id": ["hc_02_030924"],
+            "object_depth_min": [12.5],
+            "object_id": ["object-1"],
+        }),
+        variable_name=ecotaxa_variable,
+        meta={"source": "file:ecotaxa_hawkechannel_30jan.tsv"},
+        latest_alias="ecotaxa",
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        pd.DataFrame({
+            "Profile": ["hc_02_030924"],
+            "Depth [m]": [12.5],
+            "Sampled volume [L]": [29.7],
+        }),
+        variable_name=ecopart_variable,
+        meta={"source": "file:ecopart_hawkechannel_30jan.tsv"},
+        latest_alias="ecopart",
+    )
+    # Simulate later loads changing the unstable latest aliases. The explicit
+    # variables above must remain authoritative for this requested join.
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "sample_id": ["other_cruise"],
+            "object_depth_min": [12.5],
+            "object_id": ["other-object"],
+        }),
+        {"source": "file:other_ecotaxa.tsv"},
+    )
+    _store.set(
+        f"{thread_id}:ecopart",
+        pd.DataFrame({
+            "Profile": ["unrelated_profile"],
+            "Depth [m]": [12.5],
+            "Sampled volume [L]": [99.0],
+        }),
+        {"source": "file:other_ecopart.tsv"},
+    )
+
+    join_tool = next(
+        tool
+        for tool in make_ecopart_tools(thread_id)
+        if tool.name == "join_ecotaxa_ecopart"
+    )
+    result = join_tool.invoke({
+        "ecotaxa_variable": ecotaxa_variable,
+        "ecopart_variable": ecopart_variable,
+    })
+
+    assert "1 matchées" in result
+    joined = _store.get(f"{thread_id}:ecotaxa_ecopart")
+    assert joined is not None
+    assert joined["df"]["ecopart_Sampled volume [L]"].tolist() == [29.7]
+    assert "ecotaxa_hawkechannel_30jan.tsv" in result
+    assert "ecopart_hawkechannel_30jan.tsv" in result
+    assert "/prj/42" not in result
+    assert "/prj/1004" not in result
+
+
+def test_join_ecotaxa_ecopart_refuses_missing_explicit_variable(_isolated_store):
+    import pandas as pd
+
+    from tools.ecopart_sources import make_ecopart_tools
+
+    thread_id = "thread-missing-local-variable"
+    _isolated_store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({"sample_id": ["latest"], "object_depth_min": [2.5]}),
+        {"source": "file:latest.tsv"},
+    )
+    _isolated_store.set(
+        f"{thread_id}:ecopart",
+        pd.DataFrame({
+            "Profile": ["latest"],
+            "Depth [m]": [2.5],
+            "Sampled volume [L]": [10.0],
+        }),
+        {"source": "file:latest.tsv"},
+    )
+    join_tool = next(
+        tool
+        for tool in make_ecopart_tools(thread_id)
+        if tool.name == "join_ecotaxa_ecopart"
+    )
+
+    result = join_tool.invoke({"ecotaxa_variable": "df_file_missing"})
+
+    assert "Variable EcoTaxa introuvable : `df_file_missing`" in result
+
+
+def test_join_ecotaxa_ecopart_refuses_project_id_with_explicit_ecopart_variable():
+    from tools.ecopart_sources import make_ecopart_tools
+
+    join_tool = next(
+        tool
+        for tool in make_ecopart_tools("thread-conflicting-local-selector")
+        if tool.name == "join_ecotaxa_ecopart"
+    )
+
+    result = join_tool.invoke({
+        "project_id": 1004,
+        "ecopart_variable": "df_file_ecopart_hawkechannel_30jan",
+    })
+
+    assert "Sélecteurs EcoPart incompatibles" in result
 
 
 def test_join_ecotaxa_ecopart_picks_key_by_overlap_not_first_row():

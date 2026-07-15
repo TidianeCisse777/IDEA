@@ -181,7 +181,13 @@ Adjust column names to the actual file after inspection.
 
 3. Abundance:
    - total zooplankton abundance in `ind./m3`
-   - copepod abundance filtered from `ZOOPLANKTON_CATEGORY`
+   - **copepod density — use the deterministic contract, do NOT hand-roll.**
+     Import and call `neolabs_copepod_density` from `core.neolabs_abundance`: it
+     filters `CLASS == 'Copepoda'`, sums `Total abundance (ind./m3 depth vol)`
+     per `SAMPLE_ID`, then averages per station. NEVER average `Total abundance`
+     over raw taxon-level rows (only ~half of the ~199 taxa are copepods, so a
+     row-mean mixes non-copepods, stages and depth strata and is wrong), and
+     never count rows as stations.
    - top taxa by summed abundance
    - abundance by station, year, month, depth interval
 
@@ -275,3 +281,8 @@ Ask only if the file lacks an essential column and no equivalent can be inferred
 - no date/station/lat/lon for coverage analysis
 
 Otherwise inspect the file and proceed with the closest valid workflow.
+
+## Runtime routing contract
+
+- Load with `load_skill("neolabs_abundance_analysis")` for NeoLabs abundance tables keyed by `sample_id + analysis_id`, including ordination, NMDS, and RDA.
+- `neolabs_abundance_analysis` is not a replacement for `graph_planner` or `graph_writer`. Then call `load_skill("graph_planner")`, then call `load_skill("graph_writer")`; the very next execution call must be `run_graph`.

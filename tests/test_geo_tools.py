@@ -248,3 +248,35 @@ def test_filter_dataframe_by_zone_does_not_mutate_original_df(session_store):
     original = session_store.get(f"{thread}:dataset:df_loki_2024")
     assert original is not None
     assert len(original["df"]) == 2  # original unchanged
+
+
+def test_filter_dataframe_by_zone_can_rebase_on_named_source_variable(session_store):
+    """A second zone request must be able to use the original file, not the
+    previously filtered active subset."""
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    df = pd.DataFrame({
+        "station_id": ["BAF", "LAB"],
+        "latitude": [74.0, 55.0],
+        "longitude": [-68.0, -55.0],
+    })
+    thread = "thread-filter-rebase"
+    _load_df_into_session(
+        session_store, thread, df, variable_name="df_file_original"
+    )
+    fn = next(
+        tool for tool in make_geo_tools(thread, store=session_store)
+        if tool.name == "filter_dataframe_by_zone"
+    )
+    fn.invoke({"zone_name": "Baie de Baffin"})
+
+    out = fn.invoke({
+        "zone_name": "Mer du Labrador",
+        "source_variable": "df_file_original",
+    })
+
+    assert out["n_in"] == 1
+    kept = session_store.get(f"{thread}:dataset:{out['variable_name']}")["df"]
+    assert kept["station_id"].tolist() == ["LAB"]
+    assert out["source_variable"] == "df_file_original"

@@ -1,14 +1,19 @@
 """Tools LangChain pour l'analyse de données — slice 2."""
 import io
+import json
 import uuid
 from pathlib import Path
 from typing import Any
 
-_GRAPHS_DIR = Path("/tmp/copepod_graphs")
-_GRAPHS_DIR.mkdir(exist_ok=True)
-
 import pandas as pd
 from langchain_core.tools import tool
+
+from core.cartography import configure_offline_cartopy
+from core.graph_contracts import normalize_graph_contract, validate_graph_contract
+from core.runtime_paths import graphs_dir
+
+
+_GRAPHS_DIR = graphs_dir()
 
 
 def _patch_cartopy_gridliner_polygon() -> None:
@@ -165,10 +170,26 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
         and "sample_id" in col_set
         and not is_ecopart
     )
+    # NeoLabs taxonomy net file : signal exclusif (abondance ind./m³ depth vol +
+    # taxon-level rows + classe taxonomique). Sans ce hint, l'agent tombait sur un
+    # run_pandas libre et faisait une moyenne tous-taxons fausse.
+    is_neolabs = (
+        "Total abundance (ind./m3 depth vol)" in col_set
+        and "TAXON_ID" in col_set
+        and ("CLASS" in col_set or "ZOOPLANKTON_CATEGORY" in col_set)
+    )
     if is_ecopart:
         return (
             "→ Fichier EcoPart UVP détecté. "
             "Charge le skill `uvp_ecopart` pour les méthodes de calcul (m1-m3)."
+        )
+    if is_neolabs:
+        return (
+            "→ Fichier NeoLabs taxonomy détecté. Charge le skill "
+            "`neolabs_abundance_analysis`. Pour une densité de copépodes, utilise le "
+            "contrat déterministe `neolabs_copepod_density` de `core.neolabs_abundance` "
+            "(filtre CLASS==Copepoda, somme par sample, moyenne par station) — ne fais "
+            "PAS une moyenne tous-taxons sur les lignes brutes."
         )
     if is_ecotaxa_uvp_raw:
         return (
@@ -237,6 +258,132 @@ def _dataframe_vars(
     return local_vars
 
 
+_CANONICAL_COLUMNS = frozenset(
+    {
+        "sample_id",
+        "depth_bin",
+        "copepod_count",
+        "sampled_volume_L",
+        "abundance_ind_L",
+        "abundance_ind_m3",
+        "canonical_method_version",
+    }
+)
+
+
+def _is_canonical_sample_depth(value: Any) -> bool:
+    """True if `value` is a canonical sample-depth DataFrame (v1)."""
+    return (
+        isinstance(value, pd.DataFrame)
+        and _CANONICAL_COLUMNS.issubset(value.columns)
+        and len(value) > 0
+        and value["canonical_method_version"].eq("copepod-sample-depth-v1").all()
+    )
+
+
+def _column_location_hint(error: Exception, local_vars: dict[str, Any]) -> str:
+    """When a column is missing from the active df, name the df_* variables that
+    do carry it — so the agent retargets instead of concluding it is absent."""
+    if not isinstance(error, KeyError):
+        return ""
+    missing = str(error.args[0]) if error.args else ""
+    if not missing:
+        return ""
+    holders = sorted(
+        name
+        for name, value in local_vars.items()
+        if name.startswith("df_")
+        and isinstance(value, pd.DataFrame)
+        and missing in value.columns
+    )
+    if not holders:
+        return ""
+    return (
+        f"\nLa colonne `{missing}` est absente de la table active `df` mais "
+        f"présente dans : {', '.join(holders)}. Cible la variable explicite."
+    )
+
+
+def _is_neolabs_columns(columns) -> bool:
+    """True si les colonnes trahissent une table NeoLabs taxonomy."""
+    cols = set(columns)
+    return (
+        "Total abundance (ind./m3 depth vol)" in cols
+        and "TAXON_ID" in cols
+        and ("CLASS" in cols or "ZOOPLANKTON_CATEGORY" in cols)
+    )
+
+
+def _neolabs_copepod_guard(code: str, local_vars: dict[str, Any]) -> str | None:
+    """Bloque une densité de copépodes NeoLabs calculée à la main.
+
+    Force le passage par le contrat déterministe `neolabs_copepod_density` : sinon
+    l'agent somme les samples ou brasse les taxons et produit une densité fausse.
+    Ne se déclenche que si (a) un DataFrame NeoLabs est chargé, (b) le code filtre
+    les copépodes ET agrège l'abondance par groupby, (c) sans appeler le contrat.
+    """
+    if "neolabs_copepod_density" in code:
+        return None
+    has_neolabs = any(
+        isinstance(value, pd.DataFrame) and _is_neolabs_columns(value.columns)
+        for value in local_vars.values()
+    )
+    if not has_neolabs:
+        return None
+    lowered = code.lower()
+    filters_copepods = "copepoda" in lowered
+    aggregates_abundance = "total abundance" in lowered and "groupby" in lowered
+    if filters_copepods and aggregates_abundance:
+        return (
+            "run_pandas bloqué : densité de copépodes NeoLabs calculée à la main. "
+            "Utilise le contrat déterministe (filtre CLASS==Copepoda, somme par "
+            "SAMPLE_ID, puis moyenne par station) — ne somme PAS les samples et ne "
+            "compte PAS les lignes comme des stations :\n"
+            "from core.neolabs_abundance import neolabs_copepod_density\n"
+            "result = neolabs_copepod_density(df_file_...)"
+        )
+    return None
+
+
+def _persist_canonical_sample_depth(
+    store: SessionStore,
+    thread_id: str,
+    local_vars: dict[str, Any],
+    result: Any,
+) -> str:
+    """Persist the widest canonical sample-depth table built in this call.
+
+    Scans `result` and every intermediate DataFrame in `local_vars`, so a
+    canonical table carrying extra columns (e.g. environmental variables) is kept
+    for later turns even when `result` is a correlation or another object.
+    Returns a reuse note, or an empty string when no canonical table was built.
+    """
+    candidates = [result, *local_vars.values()]
+    canonical = [df for df in candidates if _is_canonical_sample_depth(df)]
+    if not canonical:
+        return ""
+    # Widest table wins: it carries the most columns (env variables included).
+    widest = max(canonical, key=lambda df: df.shape[1])
+    n_zero_abundance = int(widest["copepod_count"].eq(0).sum())
+    store_dataset(
+        store,
+        thread_id,
+        widest,
+        variable_name="df_canonical_sample_depth",
+        meta={
+            "source": "analysis:canonical-sample-depth",
+            "method_version": "copepod-sample-depth-v1",
+            "n_rows": int(len(widest)),
+            "n_zero_abundance": n_zero_abundance,
+        },
+    )
+    return (
+        "\nVariable persistante : `df_canonical_sample_depth` — réutiliser "
+        "cette table sans reconstruire les bins. "
+        f"n_rows={len(widest)} ; n_zero_abundance={n_zero_abundance}."
+    )
+
+
 def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     """Crée les tools data pour un thread donné.
 
@@ -286,7 +433,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
         elif source_alias == "ecopart":
             route_note = (
-                "\nRoute de jointure : `join_ecotaxa_ecopart` si EcoTaxa est déjà chargé."
+                "\nRoute de jointure locale : `join_ecotaxa_ecopart` sans "
+                "`project_id` si EcoTaxa est déjà chargé ; passe les variables "
+                "de fichiers explicites si plusieurs datasets sont présents."
             )
 
         enc_note = f" (encodage : {meta['encoding']})" if meta.get("encoding") else ""
@@ -322,7 +471,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
         IMPORTANT: each call to run_pandas is isolated — variables computed in a
         previous call (e.g. `station_stats`, `delta_df`) are NOT available in the
-        next call. Always recompute or include all required logic in a single call.
+        next call. Exception: a canonical sample-depth DataFrame assigned to
+        `result` is persisted automatically as `df_canonical_sample_depth` and
+        MUST be reused by later tables, correlations, and graphs. Every DataFrame
+        output states `Persistence: persisted=true|false`; never describe an
+        ephemeral (`false`) result as saved.
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
@@ -335,6 +488,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
 
         df = session["df"]
+        local_vars: dict[str, Any] = {}
 
         try:
             import matplotlib
@@ -344,6 +498,12 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
             local_vars = _dataframe_vars(_store, thread_id, df)
             local_vars["plt"] = plt
+            injected_keys = set(local_vars) | {"__builtins__"}
+
+            guard = _neolabs_copepod_guard(code, local_vars)
+            if guard:
+                return guard
+
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
@@ -354,18 +514,61 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 )
 
             result = local_vars.get("result")
+
+            # Persist any canonical sample-depth table built in this call — even
+            # when it is only an intermediate and `result` is something else
+            # (e.g. correlations). Keep the widest one, so environmental columns
+            # carried onto the canonical table survive for later turns.
+            new_vars = {
+                key: value
+                for key, value in local_vars.items()
+                if key not in injected_keys
+            }
+            canonical_note = _persist_canonical_sample_depth(
+                _store, thread_id, new_vars, result
+            )
+
             if result is None:
+                if canonical_note:
+                    return "Code exécuté." + canonical_note
                 return "Code exécuté (aucune variable `result` assignée)."
             if isinstance(result, pd.DataFrame):
                 n_rows, n_cols = result.shape
                 preview = result.head(20).to_markdown(index=False)
                 suffix = " (aperçu 20 premières)" if n_rows > 20 else ""
-                return f"{n_rows} lignes × {n_cols} colonnes{suffix}\n\n{preview}"
-            return str(result)
+                persistence_note = canonical_note
+                persistence_contract = (
+                    "\nPersistence: persisted=true; "
+                    "variable=df_canonical_sample_depth"
+                    if canonical_note
+                    else "\nPersistence: persisted=false; variable=null — "
+                    "résultat éphémère à cet appel"
+                )
+                attrs_note = ""
+                if result.attrs:
+                    attrs_note = (
+                        "\nAttributs d'analyse : "
+                        + json.dumps(
+                            result.attrs,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            default=str,
+                        )
+                    )
+                return (
+                    f"{n_rows} lignes × {n_cols} colonnes{suffix}"
+                    f"{persistence_note}{persistence_contract}{attrs_note}"
+                    f"\n\n{preview}"
+                )
+            return str(result) + canonical_note
 
         except Exception as e:
             cols_info = df.dtypes.to_string()
-            return f"Erreur : {type(e).__name__}: {e}\n\nColonnes disponibles :\n{cols_info}"
+            hint = _column_location_hint(e, local_vars)
+            return (
+                f"Erreur : {type(e).__name__}: {e}{hint}"
+                f"\n\nColonnes disponibles :\n{cols_info}"
+            )
 
     @tool
     def run_graph(code: str) -> str:
@@ -398,6 +601,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             plt.close("all")
+            configure_offline_cartopy()
             _patch_cartopy_gridliner_polygon()
 
             if df is not None:
@@ -408,6 +612,15 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
+                graph_contract = local_vars.get("graph_contract")
+                for fig_num in plt.get_fignums():
+                    figure = plt.figure(fig_num)
+                    graph_contract = normalize_graph_contract(graph_contract, figure)
+                    contract_issue = validate_graph_contract(graph_contract, figure)
+                    if contract_issue:
+                        plt.close("all")
+                        _mark_graph_quality_blocked(_store, thread_id)
+                        return contract_issue
                 quality_issue = _graph_quality_issue(plt)
                 if quality_issue:
                     plt.close("all")

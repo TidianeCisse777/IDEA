@@ -40,23 +40,113 @@ Name the derived column with the new unit (`*_ind_per_m3`,
 `neolabs_abundance_analysis` for the full conversion table and net-volume
 formulas (`DEPTH_CALC_VOL` vs `FLOWMETER_CALC_VOL`).
 
+## Mandatory taxonomic selection — hierarchy only
+
+Every Copepoda selection MUST use `object_annotation_hierarchy` through
+`copepod_hierarchy_mask`. Never construct a keyword regex or a manual list of
+descendant names. If the hierarchy column is missing, let the helper refuse the
+calculation and explain that a new EcoTaxa export containing
+`object_annotation_hierarchy` is required.
+
+Do not copy or rename an alternate column to bypass this requirement, even on a
+temporary dataframe. In particular, `hierarchy` is not an accepted substitute
+for `object_annotation_hierarchy`. Do not pass an alternate column name to the
+helper. A legacy intermediate table lacking the exact required column must be
+refused and re-exported with the EcoTaxa hierarchy field.
+
+## Mandatory canonical sample–depth table
+
+For an object-level UVP table already joined with EcoPart, build the bin table
+exactly once with the shared constructor:
+
+```python
+from core.copepod_sample_depth import build_canonical_sample_depth
+
+volume_col = (
+    "ecopart_Sampled volume [L]"
+    if "ecopart_Sampled volume [L]" in df.columns
+    else "sampled_volume"
+)
+canonical_bins = build_canonical_sample_depth(
+    df,
+    volume_column=volume_col,
+)
+result = canonical_bins  # persists as df_canonical_sample_depth
+```
+
+The result has one row per (`sample_id`, `depth_bin`), includes sampled zero
+bins, and exposes `copepod_count`, `sampled_volume_L`, `abundance_ind_L`, and
+`abundance_ind_m3`. All downstream tables, correlations, and graph datasets
+MUST reuse the same `canonical_bins`. Do not rebuild the copepod mask or bins
+independently in a later code block, and never add sampled volume to the group
+key. If metadata or environmental columns are needed downstream, pass their
+names through `stable_columns=(...)` when building the table.
+
+Because analysis calls are isolated, the first call MUST return
+`result = canonical_bins`. The analysis tool then persists it as
+`df_canonical_sample_depth`. Every later analysis or graph MUST read
+`df_canonical_sample_depth` directly and MUST NOT call the constructor again.
+
 ---
 
-## 🛑 READ THIS FIRST — abondance / densité copépodes ≠ sum/sum
+## 🛑 READ THIS FIRST — elementary abundance is the default
 
-When the user asks **"top stations abondantes copépodes" / "densité
-copépodes" / "abondance copépodes" / "ranking samples" / "profils
-verticaux"** on a UVP EcoTaxa file (raw or intermediate), you **MUST** use
-the **m5 formula** below. m5 = `(mean_density_surface_0_50 +
-mean_density_bottom_50) / 2`, computed per `sample_id`, with per-bin density
-first.
+Generic abundance requests never produce m5 or m6. For **"densité
+copépodes" / "abondance copépodes" / "profils verticaux" / environmental
+relationships**, use `abundance_ind_L` or `abundance_ind_m3` from
+`df_canonical_sample_depth`. These are the only elementary abundance columns.
+Do not create ambiguous aliases such as `abundance`, `density`, or `cop_dens`.
+
+For an environmental relationship or correlation, use the shared preparer:
+
+```python
+from core.copepod_abundance_analysis import prepare_environment_correlation
+
+analysis_df = prepare_environment_correlation(
+    df_canonical_sample_depth,
+    ("amundsen_temperature",),
+    abundance_column="abundance_ind_L",
+    presence_only=False,
+)
+result = analysis_df
+```
+
+Default `presence_only=False` includes every sampled zero-abundance bin. Use
+`presence_only=True` only when the user explicitly asks for presence-only,
+positive bins, or non-zero values. You must report `n_retained` and `n_zero_abundance`
+from `analysis_df.attrs` with the statistical result.
+
+The preparer does not store coefficients in `attrs`. If the user requests a
+Pearson, Spearman, or other named statistic, compute the requested coefficient from `analysis_df` after preparation,
+in the same analysis call. Return the
+coefficient together with `n_retained` and `n_zero_abundance`; do not look for a
+coefficient or p-value in the attrs.
+
+## m5/m6 are explicit-only
+
+m5 or m6 may be computed only if the user writes `m5`/`m6`, or clearly asks
+for the surface + bottom metric using the first and last 50 m. A generic
+station ranking or abundance request is not sufficient.
+
+For m5, always import the shared contract:
+
+```python
+from core.copepod_abundance_analysis import compute_m5
+
+requested_sample_id = "<sample named by the user>"
+result = compute_m5(df_canonical_sample_depth, sample_id=requested_sample_id)
+```
+
+Never hand-write the m5 aggregation. `compute_m5` includes zero-abundance bins
+and refuses missing 0–50 m coverage instead of inventing a surface value.
+Do not pre-filter the dataframe before this call and do not omit `sample_id`.
 
 ### Answer template — always state the method explicitly
 
 Whenever you compute a copepod density / abundance / ranking on a UVP file,
 **start your answer with a one-line method note** before the table. Examples:
 
-- Default m5:
+- Explicit m5:
   `Méthode : m5 (Vilgrain & Bourgouin 2026) = (densité moyenne surface 0-50 m + densité moyenne fond max-50 m) / 2, par sample, en ind./L.`
 - User override (global sum/sum):
   `Méthode : densité moyenne globale sur tout le profil = somme(objets) / somme(volumes), par sample, en ind./L. (Override demandé par l'utilisateur — non m5.)`
@@ -82,43 +172,17 @@ station_stats['density'] = station_stats['cop_objects'] / station_stats['sampled
 
 This shape (`sum(objects) / sum(volume)` over the whole profile) gives a
 different metric — global volume-weighted density — and produces a different
-top-N. The user said "abondance" or "densité", both of which canonically map
-to m5 in the NeoLab UVP context.
+top-N. Do not substitute it for either elementary per-bin abundance or an
+explicitly requested profile metric.
 
 **REQUIRED — the m5 template for an intermediate `taxa_db` (sampled_volume
 already joined):**
 
-```python
-import pandas as pd
+Use `compute_m5(df_canonical_sample_depth, sample_id=...)` after the canonical
+table has been built and persisted. Do not rebuild it for m5.
 
-cop_cats = ["Copepoda<Multicrustacea", "Calanoida", "Heterorhabdidae",
-            "Calanus", "Paraeuchaeta", "Metridia",
-            "female+eggs<Paraeuchaeta", "copepoda eggs"]
-
-cop = df[df["category"].isin(cop_cats)].copy()
-cop["ind_nb"] = 1
-
-cop_bins = (
-    cop.groupby(["sample_id", "depth_bin", "sampled_volume"], as_index=False)["ind_nb"].sum()
-       .rename(columns={"ind_nb": "tot_cop"})
-)
-cop_bins["cop_dens"] = cop_bins["tot_cop"] / cop_bins["sampled_volume"]
-
-def m5(grp):
-    max_d = grp["depth_bin"].max()
-    surf = grp.loc[grp["depth_bin"] <= 50, "cop_dens"].mean()
-    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "cop_dens"].mean()
-    return (surf + bot) / 2
-
-result = (
-    cop_bins.groupby("sample_id").apply(m5).reset_index(name="m5_cop_dens_ind_per_L")
-            .sort_values("m5_cop_dens_ind_per_L", ascending=False)
-)
-```
-
-If the user **explicitly says** "non, je veux la moyenne sur tout le profil"
-or "sans la méthode surface+fond", switch to the global sum/sum formula and
-state the change in your answer. Otherwise, default to m5 above.
+If the user **explicitly says** "je veux la moyenne sur tout le profil", that
+is a separate requested metric. State its exact formula; never label it m5.
 
 If the user joins station-level wording ("top 5 stations"), apply m5 at the
 sample level then map back to station; do not collapse to station before
@@ -154,19 +218,18 @@ projet par projet ; n'apparaît pas dans les tables intermédiaires).
 
 ```python
 import pandas as pd
+from core.copepod_taxonomy import copepod_hierarchy_mask
 
-cop_cats = ["Copepoda<Multicrustacea", "Calanoida", "Heterorhabdidae",
-            "Calanus", "Paraeuchaeta", "Metridia",
-            "female+eggs<Paraeuchaeta", "copepoda eggs"]
 ACQ_PIXEL_UM = 73  # UVP6 Hawke Channel; ask user if different
 
 # Join morpho avec taxa_db pour récupérer depth_bin + sampled_volume
 m = df_file_taxa_morpho_db.merge(
-    df_file_taxa_db[["sample_id", "object_id", "depth_bin", "sampled_volume"]],
+    df_file_taxa_db[["sample_id", "object_id", "depth_bin", "sampled_volume",
+                     "object_annotation_hierarchy"]],
     on=["sample_id", "object_id"], how="left",
 )
 
-cop = m[m["category"].isin(cop_cats)].copy()
+cop = m.loc[copepod_hierarchy_mask(m)].copy()
 cop["size_um"] = cop["object_major"] * ACQ_PIXEL_UM
 
 # ⚠ Filtre > 2000 µm AVANT le groupby
@@ -198,29 +261,18 @@ Two shapes are supported. Detect first, then route.
 
 | Shape | Signal columns | What to do |
 |---|---|---|
-| **Raw EcoTaxa export** | `fre_major` or `object_major` + `sample_id`, no `sampled_volume` | Call `join_ecotaxa_ecopart` to get `df_ecotaxa_ecopart` (5m-binned `sampled_volume` + all `ecopart_*` columns). Then apply the m5 template below to that joined table. **Never** hand-roll the merge in `run_pandas`. |
-| **Intermediate `taxa_db`** (from `scripts/uvp_metrics_pipeline.py`) | `sample_id` + `depth_bin` + `sampled_volume` + `category` (and no `LPM (...)` column) | `sampled_volume` and `depth_bin` are **already joined**. SKIP the EcoPart merge. Filter copepods → group by `(sample_id, depth_bin)` → divide by `sampled_volume` → apply the (surface+bottom)/2 formula directly. |
+| **Raw EcoTaxa export** | `fre_major` or `object_major` + `sample_id`, no `sampled_volume` | Call `join_ecotaxa_ecopart` to get `df_ecotaxa_ecopart` (5m-binned `sampled_volume` + all `ecopart_*` columns). Then build the canonical sample-depth table. **Never** hand-roll the merge in `run_pandas`. |
+| **Intermediate `taxa_db`** (from `scripts/uvp_metrics_pipeline.py`) | `sample_id` + `depth_bin` + `sampled_volume` + `category` (and no `LPM (...)` column) | The file remains unusable for Copepoda unless it contains the exact `object_annotation_hierarchy` column. If present, build the canonical sample-depth table with `volume_column="sampled_volume"`. |
 | **Intermediate `taxa_morpho_db`** | `sample_id` + `object_major` + morphological columns, no `sampled_volume` | Join with `taxa_db` on `(sample_id, object_id)` to recover `depth_bin` + `sampled_volume`, then apply m6 formula. |
 
 ---
 
-## Default routing when the user wording is ambiguous
+## Default routing when the user wording is generic
 
-When the user asks for **"abondance copépodes" / "densité copépodes" / "top
-stations" / "profils verticaux" / "ranking des samples"** on a UVP EcoTaxa
-file or intermediate, and **does not specify the calculation method**,
-default to **m5 (Vilgrain & Bourgouin 2026)** = `(mean_surface_0_50 +
-mean_bottom_50) / 2`. This is the canonical NeoLab abundance metric for UVP
-deployments.
-
-**DO NOT** silently fall back to the naïve `sum(objects) / sum(sampled_volume)`
-over the whole profile — that produces a different metric (global
-volume-weighted density) and changes the ranking. The same "abondance" word
-can mean either thing; pick m5 by default and **say so in the answer**.
-
-If the user explicitly opposes m5 (e.g. "non, je veux la densité moyenne sur
-tout le profil", "non sans la méthode surface+fond"), switch to the global
-sum/sum formula and mention it in the answer.
+For **"abondance copépodes" / "densité copépodes" / "profils verticaux"**,
+use the elementary per-bin columns from `df_canonical_sample_depth`. For a
+sample/station summary, ask which aggregation is wanted rather than inventing
+one. Never infer m5, m6, or global sum/sum from generic wording.
 
 If the user gives a metric name you do not recognise (anything other than
 m1-m6 from the Vilgrain template), ask **one short clarifying question**
@@ -280,66 +332,17 @@ Before running the m5 template, call `join_ecotaxa_ecopart` to obtain the joined
 ### Full m5 template (starting from `df_ecotaxa_ecopart`)
 
 ```python
-import pandas as pd
-import numpy as np
+from core.copepod_abundance_analysis import compute_m5
 
-df = df_ecotaxa_ecopart  # joined table from join_ecotaxa_ecopart
-
-# ── 1. Identify columns based on file schema ───────────────────────────────
-category_col  = "txo_display_name" if "txo_display_name" in df.columns else "object_annotation_category"
-volume_col    = "ecopart_Sampled volume [L]"
-
-# ── 2. Filter copepods (predicted or validated) ───────────────────────────
-copepod_keywords = ["Copepoda", "Calanoida", "Calanus", "Metridia",
-                    "Paraeuchaeta", "Heterorhabdidae"]
-df_cop = df[df[category_col].str.contains("|".join(copepod_keywords), na=False, case=False)].copy()
-
-# ── 3. Density per bin ─────────────────────────────────────────────────────
-df_cop["count"] = 1
-cop_bins = df_cop.groupby(["sample_id", "depth_bin", volume_col])["count"].sum().reset_index()
-cop_bins["cop_dens"] = cop_bins["count"] / cop_bins[volume_col]
-
-# ── 6. m5: mean surface (0-50m) + bottom (last 50m) ──────────────────────
-def m5_per_sample(grp):
-    max_depth = grp["depth_bin"].max()
-    surface   = grp[grp["depth_bin"] <= 50]["cop_dens"].mean()
-    bottom    = grp[grp["depth_bin"] >= (max_depth - 50)]["cop_dens"].mean()
-    return (surface + bottom) / 2
-
-result = cop_bins.groupby("sample_id").apply(m5_per_sample).reset_index()
-result.columns = ["sample_id", "m5_cop_dens_ind_per_L"]
+result = compute_m5(df_canonical_sample_depth, sample_id=requested_sample_id)
 ```
 
 ### m5 template for intermediate `taxa_db` (sampled_volume already joined)
 
 ```python
-import pandas as pd
+from core.copepod_abundance_analysis import compute_m5
 
-cop_cats = ["Copepoda<Multicrustacea", "Calanoida", "Heterorhabdidae",
-            "Calanus", "Paraeuchaeta", "Metridia",
-            "female+eggs<Paraeuchaeta", "copepoda eggs"]
-
-cop = df[df["category"].isin(cop_cats)].copy()
-cop["ind_nb"] = 1
-
-# density per bin (sample_id × depth_bin) — sampled_volume already joined upstream
-cop_bins = (
-    cop.groupby(["sample_id", "depth_bin", "sampled_volume"], as_index=False)["ind_nb"].sum()
-       .rename(columns={"ind_nb": "tot_cop"})
-)
-cop_bins["cop_dens"] = cop_bins["tot_cop"] / cop_bins["sampled_volume"]
-
-def m5(grp):
-    max_d = grp["depth_bin"].max()
-    surf = grp.loc[grp["depth_bin"] <= 50, "cop_dens"].mean()
-    bot  = grp.loc[grp["depth_bin"] >= (max_d - 50), "cop_dens"].mean()
-    return (surf + bot) / 2
-
-result = (
-    cop_bins.groupby("sample_id").apply(m5).reset_index()
-            .rename(columns={0: "m5_cop_dens_ind_per_L"})
-            .sort_values("m5_cop_dens_ind_per_L", ascending=False)
-)
+result = compute_m5(df_canonical_sample_depth, sample_id=requested_sample_id)
 ```
 
 ---
@@ -390,6 +393,14 @@ m4 quantifies the morphological diversity of particles via 5 clusters (dark, elo
 ## Interpretation rules
 
 - `fre_*` = LOKI/UVP6 export; `object_*` = UVP5/ZooScan export → same logic, different column names
+
+## Runtime routing contract
+
+- All Copepoda filtering on a loaded DataFrame must use `copepod_hierarchy_mask`; do not reimplement it. Resolve `object_annotation_hierarchy`; do not copy or rename another column, and `hierarchy` is not an accepted substitute.
+- Build `df_canonical_sample_depth` with `build_canonical_sample_depth`, one row per (`sample_id`, `depth_bin`). Tables, correlations, and graph datasets use it directly; do not independently rebuild it.
+- `prepare_environment_correlation` includes sampled zero-abundance bins by default. `presence_only=True` is explicit presence-only. Generic abundance requests never produce M5 or M6; M5/M6 are explicit-only and require surface + bottom coverage.
+- Compute the requested coefficient from `analysis_df`; do not look for coefficients in the preparer's attrs.
+- Use `compute_m5`; never hand-write the M5 aggregation. Report missing surface coverage. Call `compute_m5(df_canonical_sample_depth, sample_id=<requested sample>)`; do not pre-filter the canonical DataFrame.
 - `acq_pixel` is in **µm/pixel** in recent UVP exports — always verify the unit
 - One profile = one `sample_id` = one UVP cast
 - Concentrations are in **ind/L**, not ind/m³ (unlike raw EcoTaxa counts)

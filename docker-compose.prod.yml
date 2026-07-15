@@ -45,6 +45,7 @@ services:
       - SESSION_STORE_DATABASE_URL=postgresql+psycopg://copepod:${POSTGRES_PASSWORD}@postgres:5432/copepod_sessions
       - SERVE_BASE_URL=${SERVE_BASE_URL:-https://${PROD_DOMAIN}}
       - DATABASE_URL=${DATABASE_URL:-}
+      - GRAPHS_DIR=/app/data/graphs
     command: uvicorn serve:app --host 0.0.0.0 --port 8000
     volumes:
       - copepod_data:/app/data

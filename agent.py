@@ -2,6 +2,7 @@
 import os
 import sys
 import uuid
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -54,6 +55,7 @@ def _load_system_prompt() -> str:
 _SYSTEM_PROMPT = _load_system_prompt()
 
 _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "40000"))
+_CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 _context_audit_by_thread: dict[str, dict] = {}
@@ -77,6 +79,47 @@ def clear_context_audit(thread_id: str | None = None) -> None:
 def _approx_tokens(messages) -> int:
     """Fast, stable token estimate used by trimming and its audit."""
     return count_tokens_approximately(messages)
+
+
+def compute_history_budget(
+    *,
+    max_input_tokens: int,
+    system_tokens: int,
+    tool_tokens: int,
+    memory_tokens: int,
+    reserve_tokens: int = 2000,
+) -> int:
+    """Return the history share after all fixed request costs are reserved."""
+    maximum = max(1, int(max_input_tokens))
+    available = (
+        maximum
+        - int(system_tokens)
+        - int(tool_tokens)
+        - int(memory_tokens)
+        - int(reserve_tokens)
+    )
+    return min(maximum, max(1000, available))
+
+
+def _tool_schema_tokens(tools) -> int:
+    """Estimate the model-input cost of declared tool names, docs and schemas."""
+    payload = []
+    for item in tools or []:
+        if isinstance(item, dict):
+            payload.append(item)
+            continue
+        schema = getattr(item, "args_schema", None)
+        if schema is not None and hasattr(schema, "model_json_schema"):
+            schema = schema.model_json_schema()
+        payload.append({
+            "name": getattr(item, "name", ""),
+            "description": getattr(item, "description", ""),
+            "parameters": schema or {},
+        })
+    if not payload:
+        return 0
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return _approx_tokens([SystemMessage(content=serialized)])
 
 
 def _truncate_tool_results(messages):
@@ -113,11 +156,11 @@ def _truncate_tool_results(messages):
     return output, metrics
 
 
-def _trim_request_messages(messages):
+def _trim_request_messages(messages, *, max_tokens: int | None = None):
     """Keep a recent, valid conversation suffix for one model request."""
     trimmed = trim_messages(
         messages,
-        max_tokens=_MAX_CONTEXT_TOKENS,
+        max_tokens=max_tokens or _MAX_CONTEXT_TOKENS,
         strategy="last",
         token_counter=_approx_tokens,
         start_on="human",
@@ -188,14 +231,40 @@ class _ContextMiddleware(AgentMiddleware):
             original_messages
         )
         truncated_tokens = _approx_tokens(truncated_messages)
-        trimmed_messages = _trim_request_messages(truncated_messages)
-        final_tokens = _approx_tokens(trimmed_messages)
 
         block, metrics = _build_memory_block(memories)
+        from tools.session_context import build_dataset_state_capsule
+        from tools.session_store import default_store as session_store
+
+        dataset_block = build_dataset_state_capsule(session_store, self.thread_id)
         system_message = request.system_message
         base = system_message.content if system_message is not None else ""
+        injected_context = block + dataset_block
+        base_system_tokens = (
+            _approx_tokens([SystemMessage(content=base)]) if base else 0
+        )
+        memory_tokens = (
+            _approx_tokens([SystemMessage(content=injected_context)])
+            if injected_context
+            else 0
+        )
+        tool_schema_tokens = _tool_schema_tokens(request.tools)
+        history_budget = compute_history_budget(
+            max_input_tokens=_MAX_CONTEXT_TOKENS,
+            system_tokens=base_system_tokens,
+            tool_tokens=tool_schema_tokens,
+            memory_tokens=memory_tokens,
+            reserve_tokens=_CONTEXT_RESERVE_TOKENS,
+        )
+        trimmed_messages = _trim_request_messages(
+            truncated_messages,
+            max_tokens=history_budget,
+        )
+        final_tokens = _approx_tokens(trimmed_messages)
         prepared_system_message = (
-            SystemMessage(content=base + block) if block else system_message
+            SystemMessage(content=base + injected_context)
+            if injected_context
+            else system_message
         )
         system_tokens = (
             _approx_tokens([prepared_system_message])
@@ -215,10 +284,20 @@ class _ContextMiddleware(AgentMiddleware):
             ),
             "approx_tokens_before": original_tokens,
             "approx_tokens_after_tool_truncation": truncated_tokens,
-                "approx_tokens_after_memory": system_tokens + truncated_tokens,
+            "approx_tokens_after_memory": system_tokens + truncated_tokens,
             "approx_tokens_after_trim": final_tokens,
             "approx_tokens_system_message": system_tokens,
-            "approx_tokens_model_request": system_tokens + final_tokens,
+            "approx_tokens_base_system": base_system_tokens,
+            "approx_tokens_memory_and_capsule": memory_tokens,
+            "approx_tokens_tool_schemas": tool_schema_tokens,
+            "history_budget_tokens": history_budget,
+            "context_reserve_tokens": _CONTEXT_RESERVE_TOKENS,
+            "approx_tokens_model_request": (
+                base_system_tokens + memory_tokens + tool_schema_tokens + final_tokens
+            ),
+            "total_estimated": (
+                base_system_tokens + memory_tokens + tool_schema_tokens + final_tokens
+            ),
             "approx_tokens_saved_by_tool_truncation": max(
                 0, original_tokens - truncated_tokens
             ),
@@ -231,11 +310,83 @@ class _ContextMiddleware(AgentMiddleware):
             ),
             **truncate_metrics,
             **metrics,
+            "dataset_capsule_injected": bool(dataset_block),
+            "dataset_capsule_chars": len(dataset_block),
         }
-        return request.override(
-            messages=trimmed_messages,
-            system_message=prepared_system_message,
+        # Source-scope gate: when a file is loaded and the turn carries no
+        # explicit EcoTaxa signal, hide the EcoTaxa/EcoPart source tools so the
+        # model cannot drift off the file (see docs/e2e/cartes-samples-labrador-2026).
+        try:
+            from tools.source_scope import filter_tools_for_scope, is_file_scoped_turn
+
+            file_scoped = is_file_scoped_turn(
+                session_store, self.thread_id, original_messages
+            )
+            scoped_tools = filter_tools_for_scope(list(request.tools), file_scoped)
+            return request.override(
+                messages=trimmed_messages,
+                system_message=prepared_system_message,
+                tools=scoped_tools,
+            )
+        except TypeError:
+            # request.override may not accept tools on this build; the
+            # wrap_tool_call guard still enforces the scope hard.
+            return request.override(
+                messages=trimmed_messages,
+                system_message=prepared_system_message,
+            )
+
+    def _source_scope_rejection(self, request) -> str | None:
+        from tools.session_store import default_store as session_store
+        from tools.source_scope import (
+            FILE_SCOPE_REDIRECT,
+            is_ecotaxa_scoped_tool,
+            is_ecotaxa_skill_load,
+            is_file_scoped_turn,
         )
+
+        tool_call = request.tool_call
+        name = str(tool_call.get("name") or "")
+        args = dict(tool_call.get("args") or {})
+        if not (is_ecotaxa_scoped_tool(name) or is_ecotaxa_skill_load(name, args)):
+            return None
+        messages = request.state.get("messages") or []
+        if is_file_scoped_turn(session_store, self.thread_id, messages):
+            return FILE_SCOPE_REDIRECT
+        return None
+
+    def _tool_identifier_rejection(self, request) -> str | None:
+        from tools.session_context import reject_ungrounded_ecotaxa_identifiers
+        from tools.session_store import default_store as session_store
+
+        tool_call = request.tool_call
+        return reject_ungrounded_ecotaxa_identifiers(
+            session_store,
+            self.thread_id,
+            request.state.get("messages") or [],
+            str(tool_call.get("name") or ""),
+            dict(tool_call.get("args") or {}),
+        )
+
+    def wrap_tool_call(self, request, handler):
+        rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
+        if rejection:
+            return ToolMessage(
+                content=rejection,
+                tool_call_id=request.tool_call["id"],
+                status="error",
+            )
+        return handler(request)
+
+    async def awrap_tool_call(self, request, handler):
+        rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
+        if rejection:
+            return ToolMessage(
+                content=rejection,
+                tool_call_id=request.tool_call["id"],
+                status="error",
+            )
+        return await handler(request)
 
     def wrap_model_call(self, request, handler):
         store = getattr(request.runtime, "store", None)

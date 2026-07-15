@@ -23,9 +23,15 @@ def test_env_example_exposes_required_user_secrets_with_placeholders():
     # présent mais vide dans le fichier partagé.
     assert "MCP_AUTH_TOKEN=\n" in env_example
 
-    # Aucun secret d'observabilité/tracing ne fuit dans le fichier partagé.
-    assert "LANGCHAIN" not in env_example
-    assert "LANGSMITH" not in env_example
+    # Le tracing LangSmith est requis sur chaque déploiement : les variables
+    # sont exposées, mais la clé reste un placeholder — la vraie clé est
+    # distribuée hors repo, jamais commitée.
+    assert "LANGCHAIN_TRACING_V2=true" in env_example
+    assert "LANGCHAIN_API_KEY=REPLACE_WITH_THE_LANGSMITH_KEY" in env_example
+    assert "LANGCHAIN_PROJECT=copepod-agent" in env_example
+
+    # Aucun autre secret d'observabilité ne fuit dans le fichier partagé.
+    assert "lsv2_" not in env_example  # format des vraies clés LangSmith
     assert "LANGFUSE" not in env_example
 
 
@@ -36,6 +42,7 @@ def test_start_script_generates_internal_mcp_token():
     assert "OPENAI_API_KEY" in required_block
     assert "ECOTAXA_USERNAME" in required_block
     assert "ECOTAXA_PASSWORD" in required_block
+    assert "LANGCHAIN_API_KEY" in required_block
     assert "MCP_AUTH_TOKEN" not in required_block
 
     assert "generate_mcp_token()" in script

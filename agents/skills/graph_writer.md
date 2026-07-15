@@ -2,6 +2,19 @@
 
 You must write correct and complete code to produce the planned output — either a matplotlib chart or a pandas table.
 
+## Execution truth
+
+- If the selected table has zero rows, stop: report the empty result and do not
+  write or execute graph code.
+- Never invent or reuse an artifact URL. Only relay the exact artifact returned
+  by a successful `run_graph` call in this turn.
+- If `run_graph` returns `Error`, `blocked`, or an exception, no image exists.
+  Correct the contract only when the tool result identifies a correctable
+  contract issue; otherwise surface the failure without a placeholder.
+- Use only values present in the explicitly selected source variable. Never
+  hardcode coordinates, identifiers, counts, or substitute columns from another
+  source.
+
 ## If the plan says Output: table
 
 Use this template with `run_pandas`:
@@ -65,6 +78,171 @@ plt.tight_layout()
 - After every filtering step that creates `plot_df`, validate that rows remain before plotting:
   `if plot_df.empty: raise ValueError("No rows remain after filtering; check identifier type normalization and filter criteria.")`
 - Before plotting numeric axes, coerce only the plotted measurement columns with `pd.to_numeric(..., errors="coerce")`, then drop missing values from all plotted columns. Validate again that `plot_df` is not empty after this drop.
+
+## Executable graph contract (mandatory)
+
+Every visual must define `graph_contract`. Rendering is blocked when it is
+missing or disagrees with the actual matplotlib axes/artists. Use exactly these
+fields: `"kind"`, `"axes"`, `"inverted_axes"`, `"mappings"`,
+`"zero_policy"`, and `"source_variables"`.
+
+For a visual outside the four specialised families:
+
+```python
+graph_contract = {
+    "kind": "generic",
+    "axes": [{"axis_index": 0, "x": "<x role>", "y": "<y role>"}],
+    "inverted_axes": [],
+    "mappings": {},
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["<actual plotted columns>"],
+}
+```
+
+### Vertical abundance profile
+
+Only the depth y-axis is inverted. Never invert the abundance x-axis.
+
+```python
+ax.plot(plot_df["abundance_ind_L"], plot_df["depth_m"])
+ax.invert_yaxis()
+graph_contract = {
+    "kind": "vertical_profile",
+    "axes": [{"axis_index": 0, "x": "abundance_ind_L", "y": "depth_m"}],
+    "inverted_axes": [{"axis_index": 0, "axis": "y"}],
+    "mappings": {},
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["abundance_ind_L", "depth_m"],
+}
+```
+
+### Independent environmental relationships
+
+Create separate subplots without `sharex` or `sharey`. All abundance axes stay
+normal.
+
+```python
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+graph_contract = {
+    "kind": "environment_relationships",
+    "axes": [
+        {"axis_index": 0, "x": "temperature", "y": "abundance_ind_L"},
+        {"axis_index": 1, "x": "salinity", "y": "abundance_ind_L"},
+        {"axis_index": 2, "x": "oxygen", "y": "abundance_ind_L"},
+    ],
+    "inverted_axes": [],
+    "mappings": {},
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["temperature", "salinity", "oxygen", "abundance_ind_L"],
+}
+```
+
+### Temperature–salinity sample–depth diagram
+
+The non-zero collection carries size and depth colour. Distinguish stations by
+shape or facet. Put sampled zeros in a separate hollow collection.
+
+```python
+ts_points = ax.scatter(x, y, s=sizes, c=depth, cmap="viridis")
+ts_points.set_gid("ts_points")
+station_shapes = ax.scatter([], [], marker="s")
+station_shapes.set_gid("station_shapes")
+zero_points = ax.scatter(zero_x, zero_y, facecolors="none", edgecolors="white")
+zero_points.set_gid("zero_abundance")
+graph_contract = {
+    "kind": "temperature_salinity",
+    "axes": [{"axis_index": 0, "x": "salinity", "y": "temperature"}],
+    "inverted_axes": [],
+    "mappings": {
+        "size": {"variable": "abundance_ind_L", "artist_gid": "ts_points"},
+        "color": {"variable": "depth_m", "artist_gid": "ts_points"},
+        "station": {"variable": "station", "artist_gid": "station_shapes"},
+    },
+    "zero_policy": {"mode": "hollow", "artist_gid": "zero_abundance"},
+    "source_variables": ["salinity", "temperature", "abundance_ind_L", "depth_m", "station"],
+}
+```
+
+### Choosing the map kind
+
+There are exactly two valid `graph_contract["kind"]` values for a map with data
+points. Never emit `kind: "map"` or `kind: "scatter"` for a geographic map — the
+contract validator rejects them and the user is told the map "is not supported".
+
+- **`station_map`** — sample positions, and any encoding that is **not**
+  measured abundance: number of samples per position, taxa richness
+  (`n_taxa`), counts, presence. `size`/`color` are optional and map to the
+  **real** variable name.
+- **`abundance_environment_map`** — only when `size` genuinely encodes
+  `abundance_ind_L` and `color` encodes an environmental variable.
+
+**Never rename a count or a richness to `abundance_ind_L` to satisfy the
+contract.** If the user asked for positions / number of samples / number of
+taxa, use `station_map` with that variable — inventing an abundance column is a
+data-integrity violation.
+
+### Station / position map (`station_map`)
+
+The data axis must be a Cartopy GeoAxes. Give the point collection a stable gid.
+`size` and `color` are optional; when you show a colour or size legend, give it a
+gid and point its mapping at the **same variable** as the encoding it explains.
+A position mapping with `x` / `y` keys is invalid. It must use exactly
+`{"variable": "longitude_latitude", "artist_gid": "<point gid>"}`.
+
+```python
+map_points = ax.scatter(lon, lat, s=sizes, c=values,
+                        transform=ccrs.PlateCarree())
+map_points.set_gid("map_points")
+# optional — only if you actually encode a variable by colour:
+color_legend = fig.colorbar(map_points, ax=ax)
+color_legend.ax.set_gid("station_color_legend")
+graph_contract = {
+    "kind": "station_map",
+    "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+    "inverted_axes": [],
+    "mappings": {
+        "position": {"variable": "longitude_latitude", "artist_gid": "map_points"},
+        # include size/color ONLY if you encode them, with the real variable:
+        "color": {"variable": "n_taxa", "artist_gid": "map_points"},
+        "color_legend": {"variable": "n_taxa", "artist_gid": "station_color_legend"},
+    },
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["longitude", "latitude", "sample_id", "n_taxa"],
+}
+```
+
+For a plain positions map, keep only the `position` mapping and drop
+`size`/`color`/legends entirely.
+
+### Abundance–environment map
+
+The data axis must be a Cartopy GeoAxes. Give the point collection and both
+distinct legend artists stable gids.
+
+```python
+map_points = ax.scatter(lon, lat, s=sizes, c=environment,
+                        transform=ccrs.PlateCarree())
+map_points.set_gid("map_points")
+size_legend = ax.legend(handles=size_handles, title="Abondance (ind./L)")
+size_legend.set_gid("abundance_size_legend")
+ax.add_artist(size_legend)
+environment_legend = fig.colorbar(map_points, ax=ax)
+environment_legend.ax.set_gid("environment_color_legend")
+graph_contract = {
+    "kind": "abundance_environment_map",
+    "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+    "inverted_axes": [],
+    "mappings": {
+        "position": {"variable": "longitude_latitude", "artist_gid": "map_points"},
+        "size": {"variable": "abundance_ind_L", "artist_gid": "map_points"},
+        "color": {"variable": "<environment column>", "artist_gid": "map_points"},
+        "size_legend": {"variable": "abundance_ind_L", "artist_gid": "abundance_size_legend"},
+        "color_legend": {"variable": "<environment column>", "artist_gid": "environment_color_legend"},
+    },
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["longitude", "latitude", "abundance_ind_L", "<environment column>"],
+}
+```
 
 ## Geographic maps
 
