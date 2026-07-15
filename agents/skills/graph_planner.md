@@ -2,6 +2,17 @@
 
 You must plan a graph before writing any code.
 
+## Execution truth
+
+- If the selected table has zero rows, stop: report the empty result and do not
+  plan or execute a graph.
+- Never invent or reuse an artifact URL. Only the exact artifact returned by a
+  successful `run_graph` call may appear in the final answer.
+- A blocked contract, exception, or error is not a graph result. Surface the
+  failure and do not claim that a figure exists.
+- Plan only from the explicitly selected source variable. Never switch sources
+  or transcribe values to make a graph possible.
+
 ## Step 0 — Geographic dimension (FIRST CHECK)
 
 Before any other decision, check whether the question has a spatial component:

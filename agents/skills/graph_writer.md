@@ -2,6 +2,19 @@
 
 You must write correct and complete code to produce the planned output — either a matplotlib chart or a pandas table.
 
+## Execution truth
+
+- If the selected table has zero rows, stop: report the empty result and do not
+  write or execute graph code.
+- Never invent or reuse an artifact URL. Only relay the exact artifact returned
+  by a successful `run_graph` call in this turn.
+- If `run_graph` returns `Error`, `blocked`, or an exception, no image exists.
+  Correct the contract only when the tool result identifies a correctable
+  contract issue; otherwise surface the failure without a placeholder.
+- Use only values present in the explicitly selected source variable. Never
+  hardcode coordinates, identifiers, counts, or substitute columns from another
+  source.
+
 ## If the plan says Output: table
 
 Use this template with `run_pandas`:
@@ -173,6 +186,8 @@ data-integrity violation.
 The data axis must be a Cartopy GeoAxes. Give the point collection a stable gid.
 `size` and `color` are optional; when you show a colour or size legend, give it a
 gid and point its mapping at the **same variable** as the encoding it explains.
+A position mapping with `x` / `y` keys is invalid. It must use exactly
+`{"variable": "longitude_latitude", "artist_gid": "<point gid>"}`.
 
 ```python
 map_points = ax.scatter(lon, lat, s=sizes, c=values,

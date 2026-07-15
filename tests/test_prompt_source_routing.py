@@ -1,5 +1,7 @@
 """Static contracts for source routing and tool-result truth in the prompt."""
 
+from pathlib import Path
+
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
 
@@ -28,3 +30,30 @@ def test_explicit_lock_requires_explicit_release():
         "persists across turns until the user explicitly releases it"
         in COPEPOD_SYSTEM_PROMPT
     )
+
+
+def test_failed_tools_cannot_be_reported_as_success():
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "## Tool Result Truth" in prompt
+    assert "Error, blocked, exception, or an empty result is not success" in prompt
+    assert "Never announce an image, file, or URL unless" in prompt
+
+
+def test_empty_results_stop_before_graphing():
+    assert (
+        "When a filter returns zero rows, stop before graph planning"
+        in COPEPOD_SYSTEM_PROMPT
+    )
+
+
+def test_graph_skills_forbid_invented_artifacts_and_empty_renders():
+    for filename in ("graph_planner.md", "graph_writer.md"):
+        text = (Path("agents/skills") / filename).read_text()
+        assert "Never invent or reuse an artifact URL" in text
+        assert "zero rows" in text
+
+
+def test_graph_writer_has_exact_station_position_mapping():
+    text = Path("agents/skills/graph_writer.md").read_text()
+    assert '"position": {"variable": "longitude_latitude"' in text
+    assert "A position mapping with `x` / `y` keys is invalid" in text
