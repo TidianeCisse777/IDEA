@@ -773,7 +773,8 @@ def test_system_prompt_prioritizes_read_only_source_tools_over_generic_pandas():
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "## routing priority" in prompt
-    assert "prefer the most specific read-only source tool" in prompt
+    assert "within the selected source, prefer the most specific read-only tool" in prompt
+    assert "never use specificity to bypass the source selection gateway" in prompt
     assert "generic `run_pandas`, graph planning, or export/download tools" in prompt
     assert "ecotaxa read-only requests" in prompt
     assert "heavy exports/downloads" in prompt
@@ -784,13 +785,12 @@ def test_system_prompt_routes_ecotaxa_stats_tables_to_project_summary():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "ecotaxa read-only routes beat dataframe/graph/export routes" in prompt
+    assert "authorized ecotaxa read-only routes beat dataframe/graph/export routes" in prompt
     assert 'load_skill("ecotaxa_navigation")` first' in prompt
-    assert "tableau de stats des projets 17498 et 2331" in prompt
-    assert "summarize_ecotaxa_projects(project_ids=[17498, 2331])" in prompt
-    assert "résume le projet 17498 avant export" in prompt
-    assert "summarize_ecotaxa_project(project_id=17498)" in prompt
-    assert "prépare l'export de ces samples mais ne lance rien" in prompt
+    assert "source selection gateway has explicitly authorized ecotaxa" in prompt
+    assert "summarize_ecotaxa_projects" in prompt
+    assert "summarize_ecotaxa_project" in prompt
+    assert "ecotaxa dry-run export planning" in prompt
     assert "confirmed=false" in prompt
     assert "do not call `run_pandas`" in prompt
     assert "do not call `query_ecotaxa`" in prompt
@@ -842,8 +842,8 @@ def test_system_prompt_loads_ecotaxa_navigation_before_column_inspection():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "distribution de depth_min projet 17498" in prompt
-    assert 'inspect_ecotaxa_column(project_id=17498, column_name="depth_min")' in prompt
+    assert "distribution, range, statistics, or distinct values of one column" in prompt
+    assert "call `inspect_ecotaxa_column` with `project_id`" in prompt
     assert "first call `load_skill(\"ecotaxa_navigation\")`" in prompt
     assert "do not call `inspect_ecotaxa_project_schema` before or after" in prompt
     assert "`obj_depth` must stay `obj_depth`" in prompt
