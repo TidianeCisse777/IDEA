@@ -126,6 +126,52 @@ def test_upsert_sample_inserts_and_then_updates(conn):
     assert rows[0]["free_fields_json"] == '{"stationid": "station-b", "profileid": "001b"}'
 
 
+def test_audit_ecotaxa_coverage_ranks_projects_and_years(conn):
+    from core.ecotaxa_browser.cache.repo import (
+        audit_ecotaxa_coverage,
+        init_schema,
+        upsert_sample,
+    )
+
+    init_schema(conn)
+    # Projet 42 : 1 sample (le plus rare), 2015.
+    upsert_sample(
+        conn, sample_id=1, project_id=42, lat_avg=67.0, lon_avg=-63.0,
+        date_min="2015-04-19", date_max="2015-04-19", object_count=50,
+        instrument="UVP5", last_synced="ts",
+    )
+    # Projet 17498 : 3 samples, 2024.
+    for sid, oc in ((10, 5000), (11, 300), (12, 120)):
+        upsert_sample(
+            conn, sample_id=sid, project_id=17498, lat_avg=80.0, lon_avg=-70.0,
+            date_min="2024-09-10", date_max="2024-09-10", object_count=oc,
+            instrument="UVP6", last_synced="ts",
+        )
+
+    audit = audit_ecotaxa_coverage(conn)
+
+    # Projets classés par n_samples croissant : le plus pauvre d'abord.
+    per_project = audit["per_project"]
+    assert per_project[0]["project_id"] == 42
+    assert per_project[0]["n_samples"] == 1
+    assert per_project[-1]["project_id"] == 17498
+    assert per_project[-1]["n_samples"] == 3
+
+    # Distribution temporelle par année.
+    per_year = {row["year"]: row for row in audit["per_year"]}
+    assert per_year["2015"]["n_samples"] == 1
+    assert per_year["2024"]["n_samples"] == 3
+    assert per_year["2024"]["n_projects"] == 1
+
+    # Samples les plus pauvres en objets (fiable au niveau sample).
+    sparsest = audit["sparsest_samples"]
+    assert sparsest[0]["sample_id"] == 1  # object_count 50
+    assert sparsest[0]["object_count"] == 50
+
+    assert audit["total_samples"] == 4
+    assert audit["total_projects"] == 2
+
+
 def test_query_samples_in_bbox_returns_inclusive_borders(conn):
     from core.ecotaxa_browser.cache.repo import init_schema, query_samples_in_bbox, upsert_sample
 

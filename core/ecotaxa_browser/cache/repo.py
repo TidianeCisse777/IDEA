@@ -555,6 +555,110 @@ def query_project_envelopes(
     return out
 
 
+def audit_ecotaxa_coverage(
+    conn: sqlite3.Connection,
+    *,
+    sparsest_limit: int = 10,
+) -> dict:
+    """Availability audit over the cached samples — what is thin, what is missing.
+
+    Returns, entirely from the local cache (no network):
+        - ``per_project`` : one row per project ordered by ``n_samples`` ASC
+          (sparsest coverage first), with sample count, cached-object total,
+          date envelope, instruments and bbox.
+        - ``per_year`` : sample and project counts per calendar year.
+        - ``sparsest_samples`` : the samples carrying the fewest objects (object
+          counts are reliable per sample; the project-level total is sync-capped).
+        - ``total_samples`` / ``total_projects``.
+    """
+    project_rows = conn.execute(
+        """
+        SELECT
+            project_id,
+            COUNT(*) AS n_samples,
+            SUM(object_count) AS n_objects_cached,
+            MIN(date_min) AS date_min,
+            MAX(date_max) AS date_max,
+            MIN(lat_avg) AS south, MAX(lat_avg) AS north,
+            MIN(lon_avg) AS west,  MAX(lon_avg) AS east
+        FROM samples_cache
+        GROUP BY project_id
+        ORDER BY n_samples ASC, project_id ASC
+        """
+    ).fetchall()
+
+    instruments_acc: dict[int, set[str]] = {}
+    for row in conn.execute(
+        "SELECT DISTINCT project_id, instrument FROM samples_cache "
+        "WHERE instrument IS NOT NULL AND instrument != ''"
+    ):
+        instruments_acc.setdefault(int(row["project_id"]), set()).add(
+            str(row["instrument"])
+        )
+
+    per_project = [
+        {
+            "project_id": int(row["project_id"]),
+            "n_samples": int(row["n_samples"]),
+            "n_objects_cached": int(row["n_objects_cached"] or 0),
+            "date_min": row["date_min"],
+            "date_max": row["date_max"],
+            "instruments": sorted(instruments_acc.get(int(row["project_id"]), set())),
+            "bbox": {
+                "south": row["south"], "west": row["west"],
+                "north": row["north"], "east": row["east"],
+            },
+        }
+        for row in project_rows
+    ]
+
+    per_year = [
+        {
+            "year": row["year"],
+            "n_samples": int(row["n_samples"]),
+            "n_projects": int(row["n_projects"]),
+        }
+        for row in conn.execute(
+            """
+            SELECT
+                strftime('%Y', date_min) AS year,
+                COUNT(*) AS n_samples,
+                COUNT(DISTINCT project_id) AS n_projects
+            FROM samples_cache
+            WHERE date_min IS NOT NULL
+            GROUP BY year
+            ORDER BY year ASC
+            """
+        ).fetchall()
+    ]
+
+    sparsest_samples = [
+        {
+            "sample_id": int(row["sample_id"]),
+            "project_id": int(row["project_id"]),
+            "original_id": row["original_id"],
+            "object_count": int(row["object_count"] or 0),
+        }
+        for row in conn.execute(
+            """
+            SELECT sample_id, project_id, original_id, object_count
+            FROM samples_cache
+            ORDER BY object_count ASC, sample_id ASC
+            LIMIT ?
+            """,
+            (int(sparsest_limit),),
+        ).fetchall()
+    ]
+
+    return {
+        "per_project": per_project,
+        "per_year": per_year,
+        "sparsest_samples": sparsest_samples,
+        "total_samples": sum(p["n_samples"] for p in per_project),
+        "total_projects": len(per_project),
+    }
+
+
 def lookup_sample_projects(
     conn: sqlite3.Connection,
     sample_ids: Sequence[int],

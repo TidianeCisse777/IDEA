@@ -81,3 +81,25 @@ scientifique d'un merge UVP5 × UVP6 (hors périmètre d'interprétation).
 
 **Statut : validé.** La distinction validé / prédit est explicite : seul 17498
 expose du Calanus **validé** exploitable ; les deux autres n'ont que du prédit.
+
+## 5. Nouvel outil d'audit : couverture classée (correctif D-AU1/D-AU2)
+
+Les tours 1–4 ont montré que l'agent savait répondre au cas par cas mais pas à la
+**famille** de questions d'audit (« classe les projets avec peu de samples »,
+« quelles périodes », « les samples avec le moins d'objets »). Ajout du tool
+`audit_ecotaxa_availability` (lecture seule du cache) + règles de routage.
+
+**Input**
+
+> Fais-moi l'audit des projets avec le moins de samples, indique quelles années sont couvertes, et donne les samples avec le moins d'objets. Sans lancer d'export.
+
+**Output**
+
+- Projets classés du plus pauvre au plus riche : 14622 (2), 14859 (3), 14853 (4),
+  14844 (5), 42 (19) — dont 14853, absent de la vue manuelle du §1.
+- Années couvertes : 2015 (21 samples, 2 projets), 2024 (76 samples, 4 projets).
+- Samples les plus pauvres : `am_leg4_RA27_2` et `am_leg4_RA41_1` (7 objets), …
+
+**Statut : validé.** L'audit de couverture est désormais un tool direct. Pour le
+classement validé/prédit par taxon, l'agent route vers `count_ecotaxa_taxa`
+(règle de system prompt). D-AU1 et D-AU2 adressés.

@@ -31,6 +31,7 @@ from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
 from core.ecotaxa_browser.taxonomy import search_taxa
 from core.ecotaxa_browser.cache.repo import (
+    audit_ecotaxa_coverage,
     cache_progress,
     init_schema,
     open_connection,
@@ -661,6 +662,90 @@ def make_source_tools(thread_id: str) -> list:
             "`find_ecotaxa_samples_in_region(project_ids=[...], date_range=..., zone_name=...)` "
             "avec les project_ids de la ligne voulue.",
         ])
+        return "\n".join(lines)
+
+    @tool
+    def audit_ecotaxa_availability() -> str:
+        """Audit de couverture des données EcoTaxa indexées (lecture seule).
+
+        À utiliser pour les questions d'audit de disponibilité : quels projets
+        ont **peu de samples**, quelles **périodes** sont couvertes ou manquantes,
+        quels **samples** sont les plus pauvres en objets. Répond aux demandes du
+        type « audit des zones/projets avec peu de samples », « quelles années
+        couvre-t-on », « les samples avec le moins d'images ».
+
+        Ne lance aucun export : tout vient du cache local. Renvoie les projets
+        classés du plus pauvre au plus riche en samples, la distribution
+        temporelle par année, et les samples les plus pauvres en objets. Ne
+        fournit PAS les comptages validé/prédit par taxon (voir les tools de
+        comptage taxonomique pour cela).
+        """
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            audit = audit_ecotaxa_coverage(conn)
+            conn.close()
+        except Exception as exc:
+            return f"Erreur lors de la lecture du cache EcoTaxa : {exc}"
+
+        if not audit["per_project"]:
+            return "Aucun sample indexé dans le cache local."
+
+        def _bbox(box: dict) -> str:
+            if box.get("south") is None:
+                return "—"
+            return (
+                f"{_format_number(box['south'])}/{_format_number(box['west'])}/"
+                f"{_format_number(box['north'])}/{_format_number(box['east'])}"
+            )
+
+        lines = [
+            "# Audit de disponibilité EcoTaxa (cache local)",
+            "",
+            f"Total : {audit['total_samples']} samples, "
+            f"{audit['total_projects']} projets.",
+            "",
+            "## Projets classés du plus pauvre au plus riche en samples",
+            "",
+            "| project_id | n_samples | période | instrument | bbox (S/W/N/E) |",
+            "|---:|---:|---|---|---|",
+        ]
+        lines.extend(
+            f"| {p['project_id']} | {p['n_samples']} | "
+            f"{p['date_min'] or '—'} → {p['date_max'] or '—'} | "
+            f"{', '.join(p['instruments']) or '—'} | {_bbox(p['bbox'])} |"
+            for p in audit["per_project"]
+        )
+        lines += [
+            "",
+            "## Couverture temporelle",
+            "",
+            "| année | n_samples | n_projets |",
+            "|---|---:|---:|",
+        ]
+        lines.extend(
+            f"| {y['year']} | {y['n_samples']} | {y['n_projects']} |"
+            for y in audit["per_year"]
+        )
+        lines += [
+            "",
+            "## Samples les plus pauvres en objets",
+            "",
+            "| sample_id | project_id | label | n_objects |",
+            "|---:|---:|---|---:|",
+        ]
+        lines.extend(
+            f"| {s['sample_id']} | {s['project_id']} | "
+            f"{s['original_id'] or '—'} | {s['object_count']} |"
+            for s in audit["sparsest_samples"]
+        )
+        lines.append("")
+        lines.append(
+            "Note : les comptages d'objets par projet sont plafonnés à la synchro ; "
+            "le compte par sample est fiable. Les comptages validé/prédit par "
+            "taxon ne sont pas inclus ici."
+        )
         return "\n".join(lines)
 
     @tool
@@ -2238,6 +2323,7 @@ def make_source_tools(thread_id: str) -> list:
         list_ecotaxa_projects,
         list_ecotaxa_campaigns,
         list_ecotaxa_project_samples,
+        audit_ecotaxa_availability,
         preview_ecotaxa_project,
         query_ecotaxa,
         query_ecotaxa_sample,
