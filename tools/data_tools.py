@@ -1,4 +1,5 @@
 """Tools LangChain pour l'analyse de données — slice 2."""
+import contextlib
 import io
 import json
 import uuid
@@ -36,11 +37,27 @@ def _patch_cartopy_gridliner_polygon() -> None:
     _orig_sgeom = _gridliner.sgeom
     _orig_polygon = _orig_sgeom.Polygon
 
+    def _finite_closed_ring(coordinates):
+        arr = np.asarray(coordinates)
+        if arr.ndim != 2 or arr.shape[0] < 3:
+            return None
+        finite = arr[np.isfinite(arr).all(axis=1)]
+        if finite.shape[0] < 3:
+            return None
+        if not np.array_equal(finite[0], finite[-1]):
+            finite = np.vstack([finite, finite[0:1]])
+        return finite
+
     def _safe_polygon(shell=None, holes=None):
         try:
-            arr = np.asarray(shell)
-            if arr.ndim == 2 and arr.shape[0] >= 2 and not np.allclose(arr[0], arr[-1]):
-                shell = np.vstack([arr, arr[0:1]])
+            shell = _finite_closed_ring(shell)
+            if shell is None:
+                return _orig_polygon()
+            if holes is not None:
+                holes = [
+                    ring for hole in holes
+                    if (ring := _finite_closed_ring(hole)) is not None
+                ]
         except Exception:
             pass
         return _orig_polygon(shell, holes)
@@ -53,6 +70,41 @@ def _patch_cartopy_gridliner_polygon() -> None:
 
     _gridliner.sgeom = _SGeomShim()
     _gridliner._idea_polygon_patched = True
+
+
+def _graph_savefig_kwargs(plt) -> dict:
+    """Avoid Matplotlib 3.11 tight-bbox failures on Cartopy GeoAxes."""
+    has_geoaxes = any(
+        axis.__class__.__module__.startswith("cartopy.")
+        for figure_number in plt.get_fignums()
+        for axis in plt.figure(figure_number).axes
+    )
+    return {"format": "png"} if has_geoaxes else {
+        "format": "png",
+        "bbox_inches": "tight",
+    }
+
+
+@contextlib.contextmanager
+def _cartopy_safe_tight_layout(plt):
+    """Ignore model-generated tight_layout calls only when GeoAxes exist."""
+    original = plt.tight_layout
+
+    def safe_tight_layout(*args, **kwargs):
+        has_geoaxes = any(
+            axis.__class__.__module__.startswith("cartopy.")
+            for figure_number in plt.get_fignums()
+            for axis in plt.figure(figure_number).axes
+        )
+        if has_geoaxes:
+            return None
+        return original(*args, **kwargs)
+
+    plt.tight_layout = safe_tight_layout
+    try:
+        yield
+    finally:
+        plt.tight_layout = original
 
 from tools.file_loader import load_file as _load_file
 from tools.dataset_registry import (
@@ -609,7 +661,8 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             else:
                 local_vars = {"pd": pd}
             local_vars["plt"] = plt
-            exec(code, local_vars)  # noqa: S102
+            with _cartopy_safe_tight_layout(plt):
+                exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
                 graph_contract = local_vars.get("graph_contract")
@@ -627,7 +680,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     _mark_graph_quality_blocked(_store, thread_id)
                     return quality_issue
                 buf = io.BytesIO()
-                plt.savefig(buf, format="png", bbox_inches="tight")
+                plt.savefig(buf, **_graph_savefig_kwargs(plt))
                 buf.seek(0)
                 plt.close("all")
                 graph_id = uuid.uuid4().hex[:12]

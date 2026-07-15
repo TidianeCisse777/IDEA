@@ -15,6 +15,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
+from core.llm_config import chat_openai_connection_kwargs
+
 
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
@@ -41,6 +43,7 @@ def _generate_alternative_queries(question: str) -> list[str]:
         llm = ChatOpenAI(
             model=os.getenv("LLM_MODEL", "openai/gpt-4.1-mini"),
             temperature=_env_float("LLM_RAG_TEMPERATURE", 0.3),
+            **chat_openai_connection_kwargs(),
         )
         chain = prompt | llm | StrOutputParser()
         output = chain.invoke({"question": question})

@@ -11,6 +11,8 @@ from tools.data_tools import (
     _GRAPHS_DIR,
     make_tools,
     _patch_cartopy_gridliner_polygon,
+    _graph_savefig_kwargs,
+    _cartopy_safe_tight_layout,
     _uvp_skill_hint,
 )
 from core.runtime_paths import graphs_dir
@@ -718,6 +720,100 @@ def test_cartopy_gridliner_polygon_patch_closes_open_ring():
     poly = gridliner.sgeom.Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
 
     assert poly.exterior.is_ring
+
+
+def test_cartopy_gridliner_polygon_patch_removes_non_finite_vertices():
+    gridliner = pytest.importorskip("cartopy.mpl.gridliner")
+
+    _patch_cartopy_gridliner_polygon()
+    poly = gridliner.sgeom.Polygon(
+        [(0, 0), (1, 0), (float("nan"), float("nan")), (1, 1), (0, 1)]
+    )
+
+    assert poly.exterior.is_ring
+    assert all(
+        pd.notna(value)
+        for coordinate in poly.exterior.coords
+        for value in coordinate
+    )
+
+
+def test_cartopy_gridliner_polygon_patch_turns_all_nan_ring_into_empty_polygon():
+    gridliner = pytest.importorskip("cartopy.mpl.gridliner")
+
+    _patch_cartopy_gridliner_polygon()
+    poly = gridliner.sgeom.Polygon(
+        [(float("nan"), float("nan"))] * 4
+    )
+
+    assert poly.is_empty
+
+
+def test_cartopy_graphs_skip_tight_bbox_but_regular_graphs_keep_it():
+    ccrs = pytest.importorskip("cartopy.crs")
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+    plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    assert _graph_savefig_kwargs(plt) == {"format": "png"}
+
+    plt.close("all")
+    plt.subplots()
+    assert _graph_savefig_kwargs(plt) == {
+        "format": "png",
+        "bbox_inches": "tight",
+    }
+    plt.close("all")
+
+
+def test_cartopy_safe_tight_layout_skips_geoaxes_but_keeps_regular_axes(monkeypatch):
+    ccrs = pytest.importorskip("cartopy.crs")
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+    geo_figure, _ = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    monkeypatch.setattr(
+        geo_figure,
+        "tight_layout",
+        lambda *args, **kwargs: pytest.fail("tight_layout called for Cartopy"),
+    )
+    with _cartopy_safe_tight_layout(plt):
+        plt.tight_layout()
+
+    plt.close("all")
+    regular_figure, _ = plt.subplots()
+    called = []
+    monkeypatch.setattr(
+        regular_figure,
+        "tight_layout",
+        lambda *args, **kwargs: called.append(True),
+    )
+    with _cartopy_safe_tight_layout(plt):
+        plt.tight_layout()
+
+    assert called == [True]
+    plt.close("all")
+
+
+def test_run_graph_skips_model_tight_layout_for_cartopy():
+    pytest.importorskip("cartopy.crs")
+    thread_id = "thread-cartopy-safe-tight-layout"
+    _store.clear(thread_id)
+    run_graph = next(t for t in make_tools(thread_id) if t.name == "run_graph")
+    code = """
+import cartopy.crs as ccrs
+fig, ax = plt.subplots(subplot_kw={'projection': ccrs.PlateCarree()})
+fig.tight_layout = lambda *args, **kwargs: (_ for _ in ()).throw(
+    ValueError('Cartopy tight_layout must be skipped')
+)
+ax.scatter([-60], [55], transform=ccrs.PlateCarree())
+plt.tight_layout()
+"""
+
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
+
+    assert result.startswith("![graph](")
+    assert "/graphs/" in result
 
 
 def test_run_graph_exposes_multiple_ecopart_projects():

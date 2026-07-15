@@ -194,3 +194,35 @@ chargé et n'utiliserai aucun outil, skill ou méthode EcoTaxa. »
   halluciné un lien après deux contrats bloqués et que les tours Labrador n'ont créé
   aucune image. L'état devrait distinguer explicitement un artefact graphique validé
   d'une simple tentative de rendu.
+
+---
+
+## Rejeu après remodelage prompt/skills — `c3` / `c4`
+
+- ✅ Prompt central réduit de `~92 000` à `24 063` caractères. Les procédures
+  EcoTaxa, EcoPart, Amundsen CTD, Bio-ORACLE, OGSL et UVP vivent désormais dans
+  leurs skills propriétaires et ne sont chargées qu'après sélection explicite de
+  source.
+- ✅ `982` tests passaient après la migration prompt/skills; après les correctifs
+  cartographie/rebase, la suite complète passe à `985 passed, 20 skipped`.
+- ✅ Le driver E2E ne recompte plus tout l'historique à chaque tour et conserve les
+  arguments exacts des tools dans `conversation.md`.
+- ✅ `c3` confirme zéro appel EcoTaxa/EcoPart sur tout le scénario fichier, y compris
+  après le verrou « TSV uniquement ».
+- ✅ Les échecs de rendu sont désormais rapportés honnêtement : aucune image ou URL
+  n'est inventée après un résultat `graph contract blocked`.
+- ✅ Le moteur normalise de façon déterministe le contrat `station_map` vers le vrai
+  scatter matplotlib (`position=longitude_latitude`, gid réel), sans renommer une
+  richesse ou un compte en abondance.
+- ✅ `c4` produit au premier essai une vraie carte Baffin depuis le TSV, avec côte et
+  taille des points par nombre d'échantillons. Artefact vérifié :
+  `data/graphs/49df719738b7.png`.
+- ✅ `filter_dataframe_by_zone` accepte maintenant `source_variable`; une seconde zone
+  peut repartir explicitement du fichier original au lieu du sous-ensemble actif.
+  Le test de régression Baffin → Labrador vérifie ce rebase.
+- ✅ Le prompt interdit désormais de répondre à une question sur le nom du fichier
+  avec un alias interne `df_*`.
+- ⏳ Le rejeu `c4` a été interrompu pendant le tour Labrador après plus de deux minutes
+  sans réponse du fournisseur LLM. La pile était en attente de headers HTTP; aucune
+  erreur locale de filtre ou de graphe n'était active. Le tour Baffin, lui, était
+  déjà validé avec image réelle.

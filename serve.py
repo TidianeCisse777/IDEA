@@ -23,6 +23,7 @@ from openai import RateLimitError
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel
 
+from core.llm_config import chat_openai_connection_kwargs
 from core.runtime_paths import graphs_dir
 
 load_dotenv()
@@ -229,7 +230,11 @@ async def lifespan(app: FastAPI):
                 await pg_store.setup()
                 _agent_module._store = pg_store
                 from langchain_openai import ChatOpenAI as _ChatOpenAI
-                _mem_llm = _ChatOpenAI(model=os.getenv("LLM_MODEL", "gpt-4o-mini"), max_retries=1)
+                _mem_llm = _ChatOpenAI(
+                    model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+                    max_retries=1,
+                    **chat_openai_connection_kwargs(),
+                )
                 _agent_module._memory_manager = create_memory_store_manager(
                     _mem_llm,
                     store=pg_store,

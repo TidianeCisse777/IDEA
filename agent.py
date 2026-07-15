@@ -23,6 +23,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+from core.llm_config import chat_openai_connection_kwargs
 from tools.tool_catalog import build_tool_catalog
 
 load_dotenv()
@@ -515,6 +516,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         model=os.getenv("LLM_MODEL", "gpt-5.4-mini"),
         max_retries=2,
         max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "16000")),
+        **chat_openai_connection_kwargs(),
     )
     catalog = build_tool_catalog(thread_id)
 
