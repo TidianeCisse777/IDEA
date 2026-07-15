@@ -236,9 +236,18 @@ station exploitable et une profondeur cohérente : les tables intermédiaires
 (canonique du §8) ne sont pas persistées comme variables réutilisables entre
 tours.
 
-**Statut : non retenu.** Défaut de workflow : intermédiaires non persistés +
-absence de colonne station/profondeur propre dans la table active. Les deux
-contrats invoqués ont correctement bloqué les raccourcis incorrects.
+**Statut : non retenu (première passe).** Défaut de workflow : intermédiaires non
+persistés + absence de colonne station/profondeur propre dans la table active.
+Les deux contrats invoqués ont correctement bloqué les raccourcis incorrects.
+
+**Rejoué après correctif (D-B2).** `run_pandas` persiste maintenant la table
+canonique la plus large, colonnes env. incluses : `df_canonical_sample_depth`
+conserve `amundsen_psal_psu` et `amundsen_te90_degC`. À partir d'elle, le
+diagramme température–salinité a été produit et a **passé le contrat
+`temperature_salinity`** (X salinité, Y température, taille = ind./L, couleur =
+profondeur, stations distinguées, cercles vides pour les zéros).
+
+**Statut final : validé.** Voir `figures/ba77f9dda90a.png`.
 
 ## 11. Clôture PDF — bloquée par le manifeste
 
@@ -258,10 +267,16 @@ différente du manifeste de traçabilité :
    auto-injecté a réintroduit des DOI** EcoTaxa/EcoPart, aussitôt rejetés comme
    non déclarés → refus.
 
-**Statut : non retenu / bloqué.** Défaut réel : tension interne du manifeste du
-livrable — il exige/auto-injecte des DOI d'un côté et les rejette de l'autre
-selon le registre de sources. Contrairement à Baffin (projet 14859 sans DOI
-enregistré, PDF finalement produit), les projets 17498 / EcoPart 1100 ont des
-DOI au registre, ce qui déclenche la contradiction. À corriger côté
-`deliverable_tool` / manifeste.
+**Statut : non retenu / bloqué (première passe).** Défaut réel : tension interne
+du manifeste du livrable — l'allow-list n'extrayait que `url`/`urls` et ignorait
+les DOI présents dans la `citation`, que le rendu affichait pourtant → auto-rejet.
+
+**Rejoué après correctif (P1).** L'allow-list couvre désormais le champ `doi`
+déclaré et les URLs présentes dans la `citation` d'une source déclarée ; le
+garde-fou reste strict pour tout lien non déclaré. Avec un `study_context`
+complet et les sources déclarées (citation APA + DOI), le PDF a été généré :
+**7 pages, 55 902 octets**, deux figures validées.
+
+**Statut final : livré.** Voir
+`rapport_abondances_copepodes_archipel_arctique_2024.pdf`.
 

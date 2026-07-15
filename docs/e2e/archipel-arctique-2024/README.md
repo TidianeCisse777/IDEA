@@ -21,7 +21,9 @@ EcoTaxa 17498 (leg4), distinct de Baffin (leg3, projet 14859).
 
 - [Conversation et validations](conversation.md)
 - [Défauts observés et priorités](DEFECTS_AND_PRIORITIES.md)
+- [Rapport PDF final](rapport_abondances_copepodes_archipel_arctique_2024.pdf) (7 pages)
 - [Profil vertical + relations environnementales](figures/8fb539cd78ca.png)
+- [Diagramme température–salinité](figures/ba77f9dda90a.png)
 
 ## Résultat final
 
@@ -60,10 +62,8 @@ l'export. Règle de routage ajoutée au system prompt. Tests :
 
 - Les corrélations sont descriptives et ne constituent pas des tests
   inférentiels.
-- Le diagramme température–salinité n'a pas été produit : les intermédiaires
-  canoniques ne sont pas persistés entre tours et la table active n'expose pas
-  de colonne station/profondeur propre (voir §10).
-- Le rapport PDF n'a pas pu être généré : le manifeste du livrable auto-injecte
-  des DOI qu'il rejette ensuite (voir §11 et DEFECTS).
+- Le diagramme température–salinité et le PDF ont d'abord échoué (voir §10–§11),
+  puis ont été **produits après correctifs** (persistance canonique + allow-list
+  DOI du livrable). Les deux défauts sont corrigés et testés.
 - Les cartes à bulles par strate (température, salinité) du scénario Baffin
   n'ont pas été reproduites ici.
