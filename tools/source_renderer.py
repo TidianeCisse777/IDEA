@@ -12,6 +12,7 @@ _BASE_URLS = {
     "ecotaxa": "https://ecotaxa.obs-vlfr.fr/prj/{project_id}",
     "ecopart": "https://ecopart.obs-vlfr.fr/prj/{project_id}",
 }
+_SOURCE_LABELS = {"ecotaxa": "EcoTaxa", "ecopart": "EcoPart"}
 
 
 def _source_kind(meta: dict[str, Any]) -> str | None:
@@ -70,9 +71,17 @@ def _render_one(meta: dict[str, Any]) -> str:
         suffix = f" (encodage : {encoding})" if encoding else ""
         return f"Fichier local : `{path}`{suffix}"
 
+    kind = _source_kind(meta)
+    project_id = meta.get("project_id")
+    proven_project_label = (
+        f"{_SOURCE_LABELS[kind]} projet {int(project_id)}"
+        if kind and project_id is not None and str(project_id).isdigit()
+        else None
+    )
     label = str(
         meta.get("citation")
         or meta.get("name")
+        or proven_project_label
         or meta.get("dataset_id")
         or source
         or "Source structurée"

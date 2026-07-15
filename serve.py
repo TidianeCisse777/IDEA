@@ -1081,29 +1081,6 @@ async def chat_completions(
     x_openwebui_user_role: str | None = Header(default=None, alias="X-OpenWebUI-User-Role"),
 ):
     user_id = x_openwebui_user_id if isinstance(x_openwebui_user_id, str) else "anonymous"
-
-    # [DEBUG-f1a2] dump raw body — trouve où OpenWebUI met les infos fichier
-    try:
-        raw_body = await request.body()
-        import json as _json
-        body_obj = _json.loads(raw_body)
-        last_msg = next((m for m in reversed(body_obj.get("messages", [])) if m.get("role") == "user"), {})
-        logger.info(
-            "[DEBUG-f1a2] RAW BODY keys=%s | last_user_content=%s | top_files=%s | meta=%s",
-            list(body_obj.keys()),
-            repr(str(last_msg.get("content", ""))[:300]),
-            body_obj.get("files"),
-            repr(str(body_obj.get("metadata", {}))[:300]),
-        )
-    except Exception as _e:
-        logger.info("[DEBUG-f1a2] raw body parse error: %s", _e)
-
-    # Log all headers to diagnose missing chat_id
-    owui_headers = {k: v for k, v in request.headers.items() if "openwebui" in k.lower() or "chat" in k.lower() or "session" in k.lower()}
-    logger.info(
-        "completions_request headers=%s body_chat_id=%s body_session=%s body_meta=%s",
-        owui_headers, req.chat_id, req.session_id, req.metadata,
-    )
     openwebui_message_id = _openwebui_message_id(req, x_openwebui_message_id)
     tid = _thread_id(
         req.messages,
@@ -1119,6 +1096,15 @@ async def chat_completions(
         metadata=req.metadata,
         user_id=user_id,
     )
+    logger.info(
+        "completions_request thread=%s stream=%s has_chat_id=%s "
+        "has_session_id=%s message_count=%s",
+        tid,
+        req.stream,
+        bool(x_openwebui_chat_id or req.chat_id),
+        bool(req.session_id),
+        len(req.messages),
+    )
 
     last_user = next((m for m in reversed(req.messages) if m.role == "user"), None)
 
@@ -1128,7 +1114,11 @@ async def chat_completions(
     raw_last_user_text = last_user.text() if last_user else ""
     if _is_internal_prompt(raw_last_user_text):
         original_query = (req.metadata or {}).get("user_prompt", "")
-        logger.info("thread=%s RAG template detected, restored user_prompt=%r", tid, original_query[:120])
+        logger.info(
+            "thread=%s RAG template detected restored_prompt_chars=%s",
+            tid,
+            len(original_query),
+        )
         if last_user and original_query:
             last_user = Message(role="user", content=original_query)
         elif not original_query:

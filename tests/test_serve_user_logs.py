@@ -1,6 +1,17 @@
 """TDD — user_id dans les logs de conversation locaux."""
 
+import inspect
 import json
+
+
+def test_chat_route_does_not_log_raw_user_message_or_debug_marker():
+    import serve
+
+    source = inspect.getsource(serve.chat_completions)
+
+    assert "[DEBUG-f1a2]" not in source
+    assert "last_user_content=%s" not in source
+    assert "await request.body()" not in source
 
 
 def test_log_turn_includes_user_id(tmp_path, monkeypatch):
