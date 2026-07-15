@@ -95,6 +95,18 @@ if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>
   exit 1
 fi
 
+# The compose file bind-mounts the clone into the container (.:/app): the code
+# that runs is THIS checkout, not the published image. Warn when it lags main.
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if git fetch --quiet origin main 2>/dev/null; then
+    BEHIND_COUNT="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)"
+    if [ "$BEHIND_COUNT" -gt 0 ]; then
+      echo "[start] WARNING: this clone is ${BEHIND_COUNT} commit(s) behind origin/main."
+      echo "[start] The agent runs YOUR local code — run 'git pull' to get the latest version."
+    fi
+  fi
+fi
+
 if [ "$AGENT_MODE" = "local" ]; then
   export OPENWEBUI_AGENT_BASE_URL="http://host.docker.internal:8000/v1"
   SERVICES=(postgres mcp-ecotaxa open-webui)
