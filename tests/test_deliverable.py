@@ -249,6 +249,80 @@ def test_reference_section_is_rebuilt_only_from_manifest_sources():
     assert "https://ecotaxa.obs-vlfr.fr/prj/17498" in rebuilt
 
 
+def test_manifest_source_urls_include_declared_doi():
+    from tools.deliverable_tool import _manifest_source_urls
+
+    manifest = _manifest()
+    manifest["sources"][0]["doi"] = "10.1234/ecotaxa.17498"
+
+    urls = _manifest_source_urls(manifest)
+
+    # Le DOI est autorisé sous ses deux formes usuelles.
+    assert "https://doi.org/10.1234/ecotaxa.17498" in urls
+    assert "10.1234/ecotaxa.17498" in urls
+
+
+def test_manifest_source_urls_harvest_urls_embedded_in_citation():
+    from tools.deliverable_tool import _manifest_source_urls
+
+    manifest = _manifest()
+    manifest["sources"][0]["citation"] = (
+        "Picheral et al. (2017). EcoTaxa. https://doi.org/10.5555/ecopart"
+    )
+
+    urls = _manifest_source_urls(manifest)
+
+    assert "https://doi.org/10.5555/ecopart" in urls
+
+
+def test_export_deliverable_accepts_reference_doi_declared_in_manifest(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("DOWNLOADS_DIR", str(tmp_path))
+    from tools.deliverable_tool import export_deliverable
+
+    manifest = _manifest()
+    manifest["sources"][0]["doi"] = "10.1234/ecotaxa.17498"
+
+    result = export_deliverable.invoke({
+        "content": (
+            "# Rapport\n\n"
+            "## 6. Références\n\n"
+            "EcoTaxa. https://ecotaxa.obs-vlfr.fr/prj/17498 "
+            "https://doi.org/10.1234/ecotaxa.17498"
+        ),
+        "filename": "rapport_doi_ok",
+        "traceability_manifest": manifest,
+    })
+
+    assert "Livrable refusé" not in result
+    assert list(tmp_path.glob("rapport_doi_ok.*"))
+
+
+def test_export_deliverable_still_rejects_undeclared_doi(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("DOWNLOADS_DIR", str(tmp_path))
+    from tools.deliverable_tool import export_deliverable
+
+    result = export_deliverable.invoke({
+        "content": (
+            "# Rapport\n\n"
+            "## 6. Références\n\n"
+            "EcoTaxa. https://ecotaxa.obs-vlfr.fr/prj/17498 "
+            "https://doi.org/10.9999/non-declare"
+        ),
+        "filename": "rapport_doi_ko",
+        "traceability_manifest": _manifest(),
+    })
+
+    assert "Livrable refusé" in result
+    assert "https://doi.org/10.9999/non-declare" in result
+    assert not list(tmp_path.iterdir())
+
+
 def test_export_deliverable_rejects_missing_required_study_context(
     tmp_path,
     monkeypatch,

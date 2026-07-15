@@ -241,6 +241,70 @@ def test_run_pandas_persists_canonical_sample_depth_result_for_later_calls(tsv_p
     assert second == "1"
 
 
+def test_run_pandas_keyerror_points_to_variable_holding_the_column(tsv_path):
+    """A KeyError on a column absent from the active df must name the persisted
+    df_* variables that DO carry it — so the agent retargets instead of
+    concluding the column is missing."""
+    thread_id = "thread-keyerror-hint"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    # Persist an enriched table that carries the environmental column.
+    _store.set(
+        f"{thread_id}:dataset:df_ctd_enriched",
+        pd.DataFrame({"object_id": [1], "amundsen_te90_degC": [-1.5]}),
+        {"variable_name": "df_ctd_enriched"},
+    )
+
+    out = run_pandas.invoke(
+        {"code": "result = df['amundsen_te90_degC'].mean()"}
+    )
+
+    assert "Erreur" in out
+    assert "df_ctd_enriched" in out
+    assert "amundsen_te90_degC" in out
+
+
+def test_run_pandas_persists_canonical_intermediate_carrying_env(tsv_path):
+    """A canonical table built as an intermediate (result is something else)
+    must still be persisted, with its environmental columns retained."""
+    thread_id = "thread-canonical-intermediate"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    first = run_pandas.invoke(
+        {
+            "code": (
+                "canonical = pd.DataFrame({"
+                "'sample_id': ['RA25', 'RA25'], 'depth_bin': [12.5, 17.5], "
+                "'copepod_count': [1, 3], 'sampled_volume_L': [70.4, 64.0], "
+                "'abundance_ind_L': [0.0142, 0.0469], "
+                "'abundance_ind_m3': [14.2, 46.9], "
+                "'amundsen_te90_degC': [-1.5, -1.4], "
+                "'canonical_method_version': ['copepod-sample-depth-v1', "
+                "'copepod-sample-depth-v1']})\n"
+                "result = canonical[['abundance_ind_L']].corrwith("
+                "canonical['amundsen_te90_degC'])"
+            )
+        }
+    )
+
+    stored = _store.get(f"{thread_id}:dataset:df_canonical_sample_depth")
+    assert stored is not None
+    assert "amundsen_te90_degC" in stored["df"].columns
+    assert "df_canonical_sample_depth" in first
+
+    # La table canonique enrichie est réutilisable au tour suivant.
+    second = run_pandas.invoke(
+        {"code": "result = 'amundsen_te90_degC' in df_canonical_sample_depth.columns"}
+    )
+    assert second == "True"
+
+
 def test_run_pandas_exposes_multiple_ecopart_projects():
     thread_id = "thread-run-pandas-multiple-ecopart"
     keys = [

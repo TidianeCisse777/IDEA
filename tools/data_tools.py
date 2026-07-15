@@ -240,6 +240,88 @@ def _dataframe_vars(
     return local_vars
 
 
+_CANONICAL_COLUMNS = frozenset(
+    {
+        "sample_id",
+        "depth_bin",
+        "copepod_count",
+        "sampled_volume_L",
+        "abundance_ind_L",
+        "abundance_ind_m3",
+        "canonical_method_version",
+    }
+)
+
+
+def _is_canonical_sample_depth(value: Any) -> bool:
+    """True if `value` is a canonical sample-depth DataFrame (v1)."""
+    return (
+        isinstance(value, pd.DataFrame)
+        and _CANONICAL_COLUMNS.issubset(value.columns)
+        and len(value) > 0
+        and value["canonical_method_version"].eq("copepod-sample-depth-v1").all()
+    )
+
+
+def _column_location_hint(error: Exception, local_vars: dict[str, Any]) -> str:
+    """When a column is missing from the active df, name the df_* variables that
+    do carry it — so the agent retargets instead of concluding it is absent."""
+    if not isinstance(error, KeyError):
+        return ""
+    missing = str(error.args[0]) if error.args else ""
+    if not missing:
+        return ""
+    holders = sorted(
+        name
+        for name, value in local_vars.items()
+        if name.startswith("df_")
+        and isinstance(value, pd.DataFrame)
+        and missing in value.columns
+    )
+    if not holders:
+        return ""
+    return (
+        f"\nLa colonne `{missing}` est absente de la table active `df` mais "
+        f"présente dans : {', '.join(holders)}. Cible la variable explicite."
+    )
+
+
+def _persist_canonical_sample_depth(
+    store: SessionStore,
+    thread_id: str,
+    local_vars: dict[str, Any],
+    result: Any,
+) -> str:
+    """Persist the widest canonical sample-depth table built in this call.
+
+    Scans `result` and every intermediate DataFrame in `local_vars`, so a
+    canonical table carrying extra columns (e.g. environmental variables) is kept
+    for later turns even when `result` is a correlation or another object.
+    Returns a reuse note, or an empty string when no canonical table was built.
+    """
+    candidates = [result, *local_vars.values()]
+    canonical = [df for df in candidates if _is_canonical_sample_depth(df)]
+    if not canonical:
+        return ""
+    # Widest table wins: it carries the most columns (env variables included).
+    widest = max(canonical, key=lambda df: df.shape[1])
+    store_dataset(
+        store,
+        thread_id,
+        widest,
+        variable_name="df_canonical_sample_depth",
+        meta={
+            "source": "analysis:canonical-sample-depth",
+            "method_version": "copepod-sample-depth-v1",
+            "n_rows": int(len(widest)),
+        },
+    )
+    return (
+        "\nVariable persistante : `df_canonical_sample_depth` — réutiliser "
+        "cette table sans reconstruire les bins."
+    )
+
+
 def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     """Crée les tools data pour un thread donné.
 
@@ -340,6 +422,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
 
         df = session["df"]
+        local_vars: dict[str, Any] = {}
 
         try:
             import matplotlib
@@ -349,6 +432,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
             local_vars = _dataframe_vars(_store, thread_id, df)
             local_vars["plt"] = plt
+            injected_keys = set(local_vars) | {"__builtins__"}
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
@@ -359,41 +443,29 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 )
 
             result = local_vars.get("result")
+
+            # Persist any canonical sample-depth table built in this call — even
+            # when it is only an intermediate and `result` is something else
+            # (e.g. correlations). Keep the widest one, so environmental columns
+            # carried onto the canonical table survive for later turns.
+            new_vars = {
+                key: value
+                for key, value in local_vars.items()
+                if key not in injected_keys
+            }
+            canonical_note = _persist_canonical_sample_depth(
+                _store, thread_id, new_vars, result
+            )
+
             if result is None:
+                if canonical_note:
+                    return "Code exécuté." + canonical_note
                 return "Code exécuté (aucune variable `result` assignée)."
             if isinstance(result, pd.DataFrame):
                 n_rows, n_cols = result.shape
                 preview = result.head(20).to_markdown(index=False)
                 suffix = " (aperçu 20 premières)" if n_rows > 20 else ""
-                persistence_note = ""
-                canonical_columns = {
-                    "sample_id",
-                    "depth_bin",
-                    "copepod_count",
-                    "sampled_volume_L",
-                    "abundance_ind_L",
-                    "abundance_ind_m3",
-                    "canonical_method_version",
-                }
-                if canonical_columns.issubset(result.columns) and result[
-                    "canonical_method_version"
-                ].eq("copepod-sample-depth-v1").all():
-                    variable_name = "df_canonical_sample_depth"
-                    store_dataset(
-                        _store,
-                        thread_id,
-                        result,
-                        variable_name=variable_name,
-                        meta={
-                            "source": "analysis:canonical-sample-depth",
-                            "method_version": "copepod-sample-depth-v1",
-                            "n_rows": n_rows,
-                        },
-                    )
-                    persistence_note = (
-                        f"\nVariable persistante : `{variable_name}` — réutiliser "
-                        "cette table sans reconstruire les bins."
-                    )
+                persistence_note = canonical_note
                 attrs_note = ""
                 if result.attrs:
                     attrs_note = (
@@ -409,11 +481,15 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     f"{n_rows} lignes × {n_cols} colonnes{suffix}{persistence_note}{attrs_note}"
                     f"\n\n{preview}"
                 )
-            return str(result)
+            return str(result) + canonical_note
 
         except Exception as e:
             cols_info = df.dtypes.to_string()
-            return f"Erreur : {type(e).__name__}: {e}\n\nColonnes disponibles :\n{cols_info}"
+            hint = _column_location_hint(e, local_vars)
+            return (
+                f"Erreur : {type(e).__name__}: {e}{hint}"
+                f"\n\nColonnes disponibles :\n{cols_info}"
+            )
 
     @tool
     def run_graph(code: str) -> str:

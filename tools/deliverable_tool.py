@@ -121,7 +121,26 @@ def _reference_urls(markdown: str) -> set[str]:
     }
 
 
+def _normalize_doi(value: str) -> set[str]:
+    """Return the accepted forms of a declared DOI (bare id + doi.org URL)."""
+    raw = value.strip().rstrip("/")
+    if not raw:
+        return set()
+    bare = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", raw, flags=re.IGNORECASE)
+    forms = {raw}
+    if bare:
+        forms.add(bare)
+        forms.add(f"https://doi.org/{bare}")
+    return forms
+
+
 def _manifest_source_urls(manifest: dict[str, Any]) -> set[str]:
+    """URLs a report may legitimately cite: only those a declared source carries.
+
+    Covers `url`, `urls`, a declared `doi`/`dois`, and any http(s) URL embedded in
+    the free-text `citation`/`name` of a declared source. Anything not declared as
+    a used source stays out — irrelevant links are still rejected downstream.
+    """
     urls: set[str] = set()
     for source in manifest.get("sources", []):
         if not isinstance(source, dict):
@@ -132,6 +151,15 @@ def _manifest_source_urls(manifest: dict[str, Any]) -> set[str]:
         for item in source.get("urls", []):
             if isinstance(item, str) and item.strip():
                 urls.add(item.strip().rstrip("/"))
+        dois = [source.get("doi"), *source.get("dois", [])]
+        for doi in dois:
+            if isinstance(doi, str) and doi.strip():
+                urls.update(form.rstrip("/") for form in _normalize_doi(doi))
+        for field in ("citation", "name"):
+            text = source.get(field)
+            if isinstance(text, str):
+                for embedded in re.findall(r"https?://[^\s<>\]]+", text):
+                    urls.add(embedded.rstrip(".,;)").rstrip("/"))
     return urls
 
 

@@ -71,6 +71,11 @@ Pass a dictionary with two lists:
 - Use descriptive user-facing operation titles; do not expose internal tool names.
 - Every URL written in the References section must occur in `sources`. The exporter
   rebuilds the final bibliography exclusively from this list and rejects undeclared URLs.
+- **DOIs.** Never invent a DOI, and never add one for a source you did not actually
+  use. When an APA template below carries a DOI, that same DOI is allowed ONLY if
+  the full citation (DOI included) is copied verbatim into that source's `citation`
+  field — or the DOI is set in a `doi` field on the source. A DOI that is not
+  attached to a declared, used source is an irrelevant link and will be rejected.
 
 ---
 

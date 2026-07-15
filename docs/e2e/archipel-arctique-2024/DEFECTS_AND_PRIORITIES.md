@@ -15,34 +15,42 @@ l'outillage et le workflow autour d'eux.
 - **Correctif** : nouveau tool `list_ecotaxa_project_samples` + règle de routage
   system prompt + tests TDD. **Résolu et vérifié en réel** (§3).
 
-### D-A2 · Manifeste du livrable PDF contradictoire (À CORRIGER)
-- **Symptôme** : PDF impossible à générer ; le bloc de références auto-injecté
-  ajoute des DOI EcoTaxa/EcoPart que la validation du manifeste rejette ensuite
-  comme non déclarés.
-- **Cause probable** : `deliverable_tool` / manifeste — l'auto-injection de DOI
-  depuis le registre de sources entre en conflit avec la déclaration URL-only.
-  Dépend des données : projets avec DOI enregistré (17498, EcoPart 1100)
-  déclenchent la contradiction ; Baffin (14859, sans DOI) passait.
-- **Priorité** : réconcilier l'auto-injection et la validation dans le manifeste.
+### D-A2 · Manifeste du livrable PDF contradictoire (CORRIGÉ)
+- **Symptôme** : PDF impossible à générer ; des DOI EcoTaxa/EcoPart présents dans
+  les références étaient rejetés comme non déclarés.
+- **Cause** : `_manifest_source_urls` (l'allow-list) n'extrayait que `url`/`urls`
+  et ignorait le champ libre `citation` et un éventuel `doi` — alors que le rendu
+  des références, lui, émet les URLs de la citation. Le contrat se contredisait.
+- **Correctif** : l'allow-list couvre désormais le champ `doi`/`dois` (formes
+  bare + doi.org) et les URLs présentes dans `citation`/`name` d'une source
+  **déclarée**. Le garde-fou reste strict : tout lien non rattaché à une source
+  déclarée est toujours rejeté (on ne veut pas de lien non pertinent). Le skill
+  `deliverable_writer` interdit explicitement d'inventer un DOI. Tests :
+  `tests/test_deliverable.py` (+4).
 
 ## P2 — Majeurs
 
-### D-B1 · Sélection implicite du mauvais dataframe (`df` nu)
+### D-B1 · Sélection implicite du mauvais dataframe (`df` nu) (ATTÉNUÉ)
 - **Symptôme** : audit initial sur la table EcoPart (216 col) au lieu de la
   finale Amundsen (226 col) ; température/salinité « non trouvées » (§6).
   Récidive au §8 (corrélations sur une table sans colonnes env.).
 - **Cause** : l'agent retombe sur `df` nu / une table intermédiaire au lieu de
   la variable de session explicite, malgré la règle du system prompt.
-- **Priorité** : renforcer le routage vers les variables `df_*` explicites, ou
-  faire échouer plus tôt quand la colonne visée est absente.
+- **Correctif** : `run_pandas` transforme désormais une `KeyError` de colonne
+  absente en indice actionnable — il nomme les variables `df_*` persistées qui
+  **contiennent** la colonne visée, pour que l'agent recible au lieu de conclure
+  « colonne absente ». Le routage reste piloté par le system prompt ; ce
+  correctif rend l'erreur auto-corrigeable. Test : `tests/test_data_tools.py`.
 
-### D-B2 · Intermédiaires canoniques non persistés
+### D-B2 · Intermédiaires canoniques non persistés (CORRIGÉ)
 - **Symptôme** : la table canonique portant abondance + env (bâtie au §8) ne
   peut pas être réutilisée au §10 ; l'agent doit tout reconstruire.
-- **Cause** : les tables dérivées calculées via `run_pandas` ne sont pas
-  systématiquement stockées comme variables de session réutilisables.
-- **Priorité** : persister les tables canoniques nommées pour réutilisation
-  inter-tours.
+- **Cause** : `run_pandas` ne persistait `df_canonical_sample_depth` que si le
+  `result` final était la table canonique ; un intermédiaire (avec `result` =
+  corrélations) était perdu.
+- **Correctif** : `run_pandas` scanne aussi les variables intermédiaires et
+  persiste la table canonique la **plus large** (colonnes env. conservées), même
+  quand `result` est autre chose. Test : `tests/test_data_tools.py`.
 
 ## P3 — Mineurs / à noter
 
