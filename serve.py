@@ -18,7 +18,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Header, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from openai import RateLimitError
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel
 
@@ -53,6 +54,30 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("copepod.serve")
+
+
+def _retry_after_seconds(exc: RateLimitError) -> int:
+    raw = exc.response.headers.get("retry-after") if exc.response is not None else None
+    try:
+        return max(1, min(int(float(raw)), 60))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _provider_rate_limit_payload(exc: RateLimitError) -> dict:
+    return {
+        "error": {"code": "provider_rate_limit", "retryable": True},
+        "retry_after": _retry_after_seconds(exc),
+    }
+
+
+def _provider_rate_limit_response(exc: RateLimitError) -> JSONResponse:
+    retry_after = _retry_after_seconds(exc)
+    return JSONResponse(
+        status_code=429,
+        headers={"Retry-After": str(retry_after)},
+        content={"error": {"code": "provider_rate_limit", "retryable": True}},
+    )
 
 
 def _normalize_postgres_dsn_for_langgraph(dsn: str) -> str:
@@ -961,6 +986,18 @@ async def _stream_agent_sse(
                                     completion_id,
                                     _format_tool_result_details(tool_name, tool_content, tool_args),
                                 ))
+        except RateLimitError as exc:
+            retry_after = _retry_after_seconds(exc)
+            logger.warning(
+                "provider_rate_limit thread=%s retry_after=%s",
+                thread_id,
+                retry_after,
+            )
+            await chunk_queue.put(
+                "data: "
+                + json.dumps(_provider_rate_limit_payload(exc), ensure_ascii=False)
+                + "\n\n"
+            )
         except Exception as exc:
             logger.error("stream_error thread=%s err=%s", thread_id, exc)
             await chunk_queue.put(_make_sse_chunk(completion_id, f"\n\n[Erreur : {exc}]"))
@@ -1182,7 +1219,15 @@ async def chat_completions(
             media_type="text/event-stream",
         )
 
-    result = await agent.ainvoke(messages, config=config)
+    try:
+        result = await agent.ainvoke(messages, config=config)
+    except RateLimitError as exc:
+        logger.warning(
+            "provider_rate_limit thread=%s retry_after=%s",
+            tid,
+            _retry_after_seconds(exc),
+        )
+        return _provider_rate_limit_response(exc)
 
     # Capture run_id for feedback
     run_id = result.get("__run_id") or default_run_store.get(tid)
