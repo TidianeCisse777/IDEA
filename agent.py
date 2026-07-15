@@ -2,6 +2,7 @@
 import os
 import sys
 import uuid
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -65,6 +66,7 @@ def _load_system_prompt() -> str:
 _SYSTEM_PROMPT = _load_system_prompt()
 
 _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "40000"))
+_CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 _context_audit_by_thread: dict[str, dict] = {}
@@ -88,6 +90,47 @@ def clear_context_audit(thread_id: str | None = None) -> None:
 def _approx_tokens(messages) -> int:
     """Fast, stable token estimate used by trimming and its audit."""
     return count_tokens_approximately(messages)
+
+
+def compute_history_budget(
+    *,
+    max_input_tokens: int,
+    system_tokens: int,
+    tool_tokens: int,
+    memory_tokens: int,
+    reserve_tokens: int = 2000,
+) -> int:
+    """Return the history share after all fixed request costs are reserved."""
+    maximum = max(1, int(max_input_tokens))
+    available = (
+        maximum
+        - int(system_tokens)
+        - int(tool_tokens)
+        - int(memory_tokens)
+        - int(reserve_tokens)
+    )
+    return min(maximum, max(1000, available))
+
+
+def _tool_schema_tokens(tools) -> int:
+    """Estimate the model-input cost of declared tool names, docs and schemas."""
+    payload = []
+    for item in tools or []:
+        if isinstance(item, dict):
+            payload.append(item)
+            continue
+        schema = getattr(item, "args_schema", None)
+        if schema is not None and hasattr(schema, "model_json_schema"):
+            schema = schema.model_json_schema()
+        payload.append({
+            "name": getattr(item, "name", ""),
+            "description": getattr(item, "description", ""),
+            "parameters": schema or {},
+        })
+    if not payload:
+        return 0
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return _approx_tokens([SystemMessage(content=serialized)])
 
 
 def _truncate_tool_results(messages):
@@ -124,11 +167,11 @@ def _truncate_tool_results(messages):
     return output, metrics
 
 
-def _trim_request_messages(messages):
+def _trim_request_messages(messages, *, max_tokens: int | None = None):
     """Keep a recent, valid conversation suffix for one model request."""
     trimmed = trim_messages(
         messages,
-        max_tokens=_MAX_CONTEXT_TOKENS,
+        max_tokens=max_tokens or _MAX_CONTEXT_TOKENS,
         strategy="last",
         token_counter=_approx_tokens,
         start_on="human",
@@ -199,8 +242,6 @@ class _ContextMiddleware(AgentMiddleware):
             original_messages
         )
         truncated_tokens = _approx_tokens(truncated_messages)
-        trimmed_messages = _trim_request_messages(truncated_messages)
-        final_tokens = _approx_tokens(trimmed_messages)
 
         block, metrics = _build_memory_block(memories)
         from tools.session_context import build_dataset_state_capsule
@@ -210,6 +251,27 @@ class _ContextMiddleware(AgentMiddleware):
         system_message = request.system_message
         base = system_message.content if system_message is not None else ""
         injected_context = block + dataset_block
+        base_system_tokens = (
+            _approx_tokens([SystemMessage(content=base)]) if base else 0
+        )
+        memory_tokens = (
+            _approx_tokens([SystemMessage(content=injected_context)])
+            if injected_context
+            else 0
+        )
+        tool_schema_tokens = _tool_schema_tokens(request.tools)
+        history_budget = compute_history_budget(
+            max_input_tokens=_MAX_CONTEXT_TOKENS,
+            system_tokens=base_system_tokens,
+            tool_tokens=tool_schema_tokens,
+            memory_tokens=memory_tokens,
+            reserve_tokens=_CONTEXT_RESERVE_TOKENS,
+        )
+        trimmed_messages = _trim_request_messages(
+            truncated_messages,
+            max_tokens=history_budget,
+        )
+        final_tokens = _approx_tokens(trimmed_messages)
         prepared_system_message = (
             SystemMessage(content=base + injected_context)
             if injected_context
@@ -233,10 +295,20 @@ class _ContextMiddleware(AgentMiddleware):
             ),
             "approx_tokens_before": original_tokens,
             "approx_tokens_after_tool_truncation": truncated_tokens,
-                "approx_tokens_after_memory": system_tokens + truncated_tokens,
+            "approx_tokens_after_memory": system_tokens + truncated_tokens,
             "approx_tokens_after_trim": final_tokens,
             "approx_tokens_system_message": system_tokens,
-            "approx_tokens_model_request": system_tokens + final_tokens,
+            "approx_tokens_base_system": base_system_tokens,
+            "approx_tokens_memory_and_capsule": memory_tokens,
+            "approx_tokens_tool_schemas": tool_schema_tokens,
+            "history_budget_tokens": history_budget,
+            "context_reserve_tokens": _CONTEXT_RESERVE_TOKENS,
+            "approx_tokens_model_request": (
+                base_system_tokens + memory_tokens + tool_schema_tokens + final_tokens
+            ),
+            "total_estimated": (
+                base_system_tokens + memory_tokens + tool_schema_tokens + final_tokens
+            ),
             "approx_tokens_saved_by_tool_truncation": max(
                 0, original_tokens - truncated_tokens
             ),
