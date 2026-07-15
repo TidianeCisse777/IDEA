@@ -923,6 +923,15 @@ def test_system_prompt_routes_join_control_to_persisted_audit_tool():
     assert "never reconstruct the join for an audit" in prompt
 
 
+def test_system_prompt_respects_run_pandas_persistence_contract():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "Persistence: persisted=false" in prompt
+    assert "do not claim that it was saved" in prompt
+    assert "Persistence: persisted=true" in prompt
+
+
 def test_system_prompt_requires_zero_inclusive_correlations_and_explicit_profile_metrics():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

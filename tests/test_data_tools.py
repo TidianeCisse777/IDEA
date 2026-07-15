@@ -186,6 +186,8 @@ def test_run_pandas_dataframe_returns_markdown(tsv_path):
     result = run_pandas.invoke({"code": "result = df.head(2)"})
     assert "profile_id" in result
     assert "lignes" in result
+    assert "Persistence: persisted=false; variable=null" in result
+    assert "résultat éphémère" in result
 
 
 def test_run_pandas_dataframe_returns_analysis_attrs(tsv_path):
@@ -238,7 +240,52 @@ def test_run_pandas_persists_canonical_sample_depth_result_for_later_calls(tsv_p
     assert stored is not None
     assert stored["df"]["copepod_count"].tolist() == [1]
     assert "Variable persistante : `df_canonical_sample_depth`" in first
+    assert (
+        "Persistence: persisted=true; variable=df_canonical_sample_depth" in first
+    )
     assert second == "1"
+
+
+def test_run_pandas_arbitrary_dataframe_is_absent_from_next_call(tsv_path):
+    thread_id = "thread-ephemeral-analysis-result"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    first = run_pandas.invoke({
+        "code": "temporary_summary = df.head(1).copy(); result = temporary_summary"
+    })
+    second = run_pandas.invoke({"code": "result = len(temporary_summary)"})
+
+    assert "persisted=false" in first
+    assert "NameError" in second
+    assert "temporary_summary" in second
+
+
+def test_run_pandas_reports_persisted_canonical_zero_count(tsv_path):
+    thread_id = "thread-canonical-zero-count"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    output = run_pandas.invoke({
+        "code": (
+            "result = pd.DataFrame({"
+            "'sample_id': ['A', 'A'], 'depth_bin': [2.5, 7.5], "
+            "'copepod_count': [1, 0], 'sampled_volume_L': [10.0, 10.0], "
+            "'abundance_ind_L': [0.1, 0.0], "
+            "'abundance_ind_m3': [100.0, 0.0], "
+            "'canonical_method_version': ['copepod-sample-depth-v1'] * 2})"
+        )
+    })
+
+    stored = _store.get(
+        f"{thread_id}:dataset:df_canonical_sample_depth"
+    )
+    assert "n_zero_abundance=1" in output
+    assert stored["meta"]["n_zero_abundance"] == 1
 
 
 def test_run_pandas_keyerror_points_to_variable_holding_the_column(tsv_path):

@@ -193,3 +193,23 @@
 - Trace : un seul appel `audit_ecotaxa_ecopart_join`, aucun `run_pandas`.
 - Limite restante : les URLs projet 42/1004 ajoutées par le modèle restent à
   corriger dans C4/C6.
+
+## Campagne de correction — C3
+
+- Statut : corrigé et validé le 2026-07-15.
+- Une table pandas ordinaire annonce désormais
+  `Persistence: persisted=false; variable=null` et est effectivement absente au
+  tour suivant.
+- Une table canonique annonce
+  `Persistence: persisted=true; variable=df_canonical_sample_depth` et est
+  réutilisable au tour suivant.
+- Premier contrôle avant exposition du compteur : le modèle avait annoncé à
+  tort 1 018 bins zéro. Cause confirmée : le tool ne fournissait pas ce nombre
+  et laissait le modèle l'estimer depuis le contexte pollué.
+- Correctif complémentaire : calcul et stockage automatiques de
+  `n_zero_abundance` lors de la persistance canonique.
+- Rejeu curl corrigé : `n_rows=1946`, `n_zero_abundance=143`.
+- Registre : table `1946 × 7`, métadonnée `n_zero_abundance=143`, comptage direct
+  `copepod_count == 0` égal à 143.
+- Trace `019f6645-6397-7b81-ab7c-797967ffa5f9` : uniquement le constructeur
+  canonique officiel via `run_pandas`.

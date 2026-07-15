@@ -151,6 +151,22 @@ n'indique toutefois pas explicitement qu'un DataFrame non canonique est
 - Réponse agent : interdiction d'affirmer « enregistrée » si le tool retourne
   `persisted=false`.
 
+### Correction C3 validée — 2026-07-15
+
+- Toute sortie DataFrame de `run_pandas` expose désormais
+  `Persistence: persisted=true|false; variable=<name|null>`.
+- Un DataFrame arbitraire est explicitement éphémère et reste absent à l'appel
+  suivant ; seule la table canonique complète est persistée sous
+  `df_canonical_sample_depth`.
+- La persistance canonique expose aussi `n_rows` et `n_zero_abundance`, calculés
+  par le tool et stockés dans les métadonnées de session. Le modèle n'a donc
+  plus à estimer le nombre de zéros depuis son historique.
+- Validation Hawke Channel : `n_rows=1946`, `n_zero_abundance=143`, dimensions
+  `1946 × 7`, avec les mêmes valeurs dans la réponse et le registre.
+- Trace LangSmith `019f6645-6397-7b81-ab7c-797967ffa5f9` : un seul appel
+  `run_pandas`, utilisant `build_canonical_sample_depth`, sans source distante
+  ni autre analyse.
+
 ## D04 — Contamination de contexte et identifiant inventé
 
 **Priorité : P0 — mauvaise source et mauvais dataset.**

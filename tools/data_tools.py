@@ -305,6 +305,7 @@ def _persist_canonical_sample_depth(
         return ""
     # Widest table wins: it carries the most columns (env variables included).
     widest = max(canonical, key=lambda df: df.shape[1])
+    n_zero_abundance = int(widest["copepod_count"].eq(0).sum())
     store_dataset(
         store,
         thread_id,
@@ -314,11 +315,13 @@ def _persist_canonical_sample_depth(
             "source": "analysis:canonical-sample-depth",
             "method_version": "copepod-sample-depth-v1",
             "n_rows": int(len(widest)),
+            "n_zero_abundance": n_zero_abundance,
         },
     )
     return (
         "\nVariable persistante : `df_canonical_sample_depth` — réutiliser "
-        "cette table sans reconstruire les bins."
+        "cette table sans reconstruire les bins. "
+        f"n_rows={len(widest)} ; n_zero_abundance={n_zero_abundance}."
     )
 
 
@@ -411,7 +414,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         previous call (e.g. `station_stats`, `delta_df`) are NOT available in the
         next call. Exception: a canonical sample-depth DataFrame assigned to
         `result` is persisted automatically as `df_canonical_sample_depth` and
-        MUST be reused by later tables, correlations, and graphs.
+        MUST be reused by later tables, correlations, and graphs. Every DataFrame
+        output states `Persistence: persisted=true|false`; never describe an
+        ephemeral (`false`) result as saved.
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
@@ -468,6 +473,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 preview = result.head(20).to_markdown(index=False)
                 suffix = " (aperçu 20 premières)" if n_rows > 20 else ""
                 persistence_note = canonical_note
+                persistence_contract = (
+                    "\nPersistence: persisted=true; "
+                    "variable=df_canonical_sample_depth"
+                    if canonical_note
+                    else "\nPersistence: persisted=false; variable=null — "
+                    "résultat éphémère à cet appel"
+                )
                 attrs_note = ""
                 if result.attrs:
                     attrs_note = (
@@ -480,7 +492,8 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         )
                     )
                 return (
-                    f"{n_rows} lignes × {n_cols} colonnes{suffix}{persistence_note}{attrs_note}"
+                    f"{n_rows} lignes × {n_cols} colonnes{suffix}"
+                    f"{persistence_note}{persistence_contract}{attrs_note}"
                     f"\n\n{preview}"
                 )
             return str(result) + canonical_note
