@@ -85,11 +85,28 @@ def build_dataset_state_capsule(store: SessionStore, thread_id: str) -> str:
     if meta.get("sample_id") is not None:
         fields.append(f"sample_id={_clean(meta['sample_id'], limit=80)}")
 
+    # When the active df is a derived subset, surface the loaded file as the
+    # canonical source so a new geographic/zone request re-anchors on the full
+    # file instead of a subset of a different zone (docs/e2e/cartes-samples-labrador-2026).
+    anchor_note = ""
+    loaded = store.get(f"{thread_id}:loaded_file")
+    if loaded and loaded.get("df") is not None:
+        loaded_variable = _clean((loaded.get("meta") or {}).get("variable_name") or "")
+        if loaded_variable and loaded_variable != variable:
+            anchor_note = (
+                f"\nCANONICAL SOURCE: loaded_file={loaded_variable}. The active "
+                f"dataset above is a derived subset. For a new zone/geographic "
+                f"filter, start from {loaded_variable} (or call "
+                f"filter_dataframe_by_zone without source_variable), never from "
+                f"a subset of another zone."
+            )
+
     capsule = (
         "\n\n## ACTIVE DATASET STATE (authoritative, current turn)\n"
         "- " + "; ".join(fields) + "\n"
         "Identifiers absent from this capsule and the current user message are "
         "ungrounded; do not infer them from older conversation turns."
+        + anchor_note
     )
     return capsule[:_MAX_CAPSULE_CHARS]
 

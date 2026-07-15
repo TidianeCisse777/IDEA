@@ -62,6 +62,13 @@ def dataset_variable_name(source: str, *parts: object) -> str:
     return f"df_{'_'.join(tokens)}"
 
 
+# Stable session key that always points at the file the user loaded via
+# load_file, even after a derived subset (e.g. filter_dataframe_by_zone) has
+# overwritten the *active* df. Lets geographic filtering and the dataset capsule
+# re-anchor on the canonical source instead of the last derived subset.
+LOADED_FILE_KEY = "loaded_file"
+
+
 def store_dataset(
     store: SessionStore,
     thread_id: str,
@@ -70,13 +77,33 @@ def store_dataset(
     variable_name: str,
     meta: dict,
     latest_alias: str | None = None,
+    is_loaded_file: bool = False,
 ) -> None:
-    """Persist a stable dataset and refresh current/latest aliases."""
+    """Persist a stable dataset and refresh current/latest aliases.
+
+    ``is_loaded_file=True`` (set by load_file) also pins the dataset under the
+    stable ``{thread_id}:loaded_file`` key so it stays reachable as the
+    canonical source after later subsets take over the active slot.
+    """
     dataset_meta = {**meta, "variable_name": variable_name}
     store.set(thread_id, dataframe, dataset_meta)
     if latest_alias:
         store.set(f"{thread_id}:{latest_alias}", dataframe, dataset_meta)
     store.set(f"{thread_id}:dataset:{variable_name}", dataframe, dataset_meta)
+    if is_loaded_file:
+        store.set(f"{thread_id}:{LOADED_FILE_KEY}", dataframe, dataset_meta)
+
+
+def loaded_file_dataset(store: SessionStore, thread_id: str) -> dict | None:
+    """Return the canonical loaded-file session entry, or None if absent.
+
+    The entry mirrors what ``store.get`` returns elsewhere: a mapping with
+    ``df`` and ``meta`` keys.
+    """
+    entry = store.get(f"{thread_id}:{LOADED_FILE_KEY}")
+    if entry and entry.get("df") is not None:
+        return entry
+    return None
 
 
 # Column prefixes added by each enrichment tool. Used to surface, in an enrich

@@ -19,7 +19,11 @@ from langchain_core.tools import tool
 from shapely.geometry.base import BaseGeometry
 
 from core.geo import Registry, filter_by_zone as _core_filter_by_zone, load_registry, resolve_zone
-from tools.dataset_registry import dataset_variable_name, store_dataset
+from tools.dataset_registry import (
+    dataset_variable_name,
+    loaded_file_dataset,
+    store_dataset,
+)
 from tools.session_store import SessionStore, default_store
 
 
@@ -164,20 +168,25 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
             Noms des colonnes lat/lon dans le df. Défaut : 'latitude'
             / 'longitude' (convention NeoLab EcoTaxa/Amundsen).
         source_variable : str, optional
-            Variable persistante à filtrer. Permet de repartir du fichier
-            original après qu'un filtre précédent est devenu le df actif.
+            Variable persistante à filtrer. Par défaut, le filtre repart du
+            **fichier chargé** (load_file), pas du dernier sous-ensemble actif :
+            filtrer une zone à l'intérieur d'un sous-ensemble d'une AUTRE zone
+            donnerait 0 ligne. Passe ce paramètre pour filtrer explicitement un
+            sous-ensemble précédent.
 
         Returns
         -------
         dict : {zone_canonical, variable_name, n_in, n_out, lat_col, lon_col}
             ``variable_name`` est le nom du df filtré dans la session
-            (accessible via run_pandas / run_graph).
+            (accessible via run_pandas / run_graph). ``rebased_on`` indique le
+            nom de la variable réellement filtrée quand le défaut a re-ancré sur
+            le fichier chargé plutôt que sur le df actif.
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
             return "Aucun fichier chargé. Utilise load_file d'abord."
 
-        source_session = session
+        rebased_from: str | None = None
         if source_variable:
             source_session = _store.get(f"{thread_id}:dataset:{source_variable}")
             if not source_session or source_session.get("df") is None:
@@ -185,6 +194,25 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
                     f"Variable source inconnue : {source_variable}. "
                     "Utilise le nom exact retourné par load_file ou un tool précédent."
                 )
+        else:
+            source_session = session
+
+        # A zone filter must start from the loaded file, never from a subset of
+        # another zone (see docs/e2e/cartes-samples-labrador-2026). If the
+        # resolved source — whether the active df or an explicitly passed
+        # subset — is itself a zone-derived subset, re-anchor on the canonical
+        # loaded file. Filtering a zone from the full file is always at least as
+        # correct as filtering it from a subset of a different zone: a subset
+        # can only drop rows the file has, producing the false "0 in N" the
+        # agent kept reporting.
+        resolved_meta = source_session.get("meta") or {}
+        resolved_var = resolved_meta.get("variable_name")
+        if str(resolved_meta.get("source", "")).startswith("filter_by_zone:"):
+            loaded = loaded_file_dataset(_store, thread_id)
+            loaded_var = ((loaded or {}).get("meta") or {}).get("variable_name")
+            if loaded and loaded_var and loaded_var != resolved_var:
+                rebased_from = resolved_var
+                source_session = loaded
         df = source_session["df"]
 
         canonical = _match_canonical(zone_name)
@@ -226,7 +254,7 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
             latest_alias=variable_name,
         )
 
-        return {
+        result = {
             "zone_canonical": canonical,
             "variable_name": variable_name,
             "n_in": int(len(kept)),
@@ -235,5 +263,14 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
             "lon_col": lon_col,
             "source_variable": source_details.get("variable_name") or source_variable,
         }
+        if rebased_from is not None:
+            result["rebased_on"] = source_details.get("variable_name")
+            result["note"] = (
+                f"Filtre re-ancré sur le fichier chargé "
+                f"`{result['source_variable']}` au lieu du sous-ensemble de zone "
+                f"`{rebased_from}` : un filtre de zone repart toujours du fichier "
+                f"de travail, jamais d'un sous-ensemble d'une autre zone."
+            )
+        return result
 
     return [filter_dataframe_by_zone]

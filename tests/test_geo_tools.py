@@ -110,13 +110,15 @@ def session_store(tmp_path):
 
 
 def _load_df_into_session(store, thread_id, df, *, variable_name="df_test"):
-    """Mimic what load_file does: register df as the latest session df."""
+    """Mimic what load_file does: register df as the latest session df and pin
+    it as the canonical loaded file."""
     from tools.dataset_registry import store_dataset
     store_dataset(
         store, thread_id, df,
         variable_name=variable_name,
         meta={"source": "file:test.csv", "columns": []},
         latest_alias=variable_name,
+        is_loaded_file=True,
     )
 
 
@@ -280,3 +282,71 @@ def test_filter_dataframe_by_zone_can_rebase_on_named_source_variable(session_st
     kept = session_store.get(f"{thread}:dataset:{out['variable_name']}")["df"]
     assert kept["station_id"].tolist() == ["LAB"]
     assert out["source_variable"] == "df_file_original"
+
+
+def test_filter_dataframe_by_zone_defaults_to_loaded_file_not_active_subset(session_store):
+    """Régression cartes-samples-labrador-2026 : après un filtre Baffin devenu
+    le df actif, une demande Labrador SANS source_variable doit repartir du
+    fichier chargé, pas du sous-ensemble Baffin (zones disjointes → 0)."""
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    df = pd.DataFrame({
+        "station_id": ["BAF", "LAB"],
+        "latitude": [74.0, 55.0],
+        "longitude": [-68.0, -55.0],
+    })
+    thread = "thread-filter-default-anchor"
+    _load_df_into_session(
+        session_store, thread, df, variable_name="df_file_original"
+    )
+    fn = next(
+        tool for tool in make_geo_tools(thread, store=session_store)
+        if tool.name == "filter_dataframe_by_zone"
+    )
+    # Premier filtre : Baffin devient le df actif.
+    baffin = fn.invoke({"zone_name": "Baie de Baffin"})
+    assert baffin["n_in"] == 1
+
+    # Second filtre Labrador sans source_variable : doit re-ancrer sur le fichier.
+    out = fn.invoke({"zone_name": "Mer du Labrador"})
+
+    assert out["n_in"] == 1  # LAB retrouvé — pas 0 depuis le sous-ensemble Baffin
+    kept = session_store.get(f"{thread}:dataset:{out['variable_name']}")["df"]
+    assert kept["station_id"].tolist() == ["LAB"]
+    assert out["source_variable"] == "df_file_original"
+    assert out.get("rebased_on") == "df_file_original"
+    assert "note" in out  # le rebasage est signalé au modèle
+
+
+def test_filter_dataframe_by_zone_reanchors_even_when_subset_passed_explicitly(session_store):
+    """Curl 5 : l'agent passe EXPLICITEMENT le sous-ensemble Baffin comme
+    source_variable pour un filtre Labrador. Le tool doit ignorer ce mauvais
+    choix et re-ancrer sur le fichier chargé (un filtre de zone repart du
+    fichier, jamais d'un sous-ensemble d'une autre zone)."""
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    df = pd.DataFrame({
+        "station_id": ["BAF", "LAB"],
+        "latitude": [74.0, 55.0],
+        "longitude": [-68.0, -55.0],
+    })
+    thread = "thread-filter-explicit-subset"
+    _load_df_into_session(session_store, thread, df, variable_name="df_file_original")
+    fn = next(
+        tool for tool in make_geo_tools(thread, store=session_store)
+        if tool.name == "filter_dataframe_by_zone"
+    )
+    baffin = fn.invoke({"zone_name": "Baie de Baffin"})
+    baffin_var = baffin["variable_name"]
+
+    # L'erreur exacte de l'agent : source explicite = sous-ensemble Baffin.
+    out = fn.invoke({
+        "zone_name": "Mer du Labrador",
+        "source_variable": baffin_var,
+    })
+
+    assert out["n_in"] == 1  # re-ancré sur le fichier → LAB retrouvé, pas 0
+    assert out["source_variable"] == "df_file_original"
+    assert out.get("rebased_on") == "df_file_original"

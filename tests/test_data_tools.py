@@ -74,6 +74,21 @@ def test_load_file_tool_stores_df(tsv_path):
     assert _store.get("thread-1")["df"].shape == (3, 3)
 
 
+def test_load_file_tool_pins_canonical_loaded_file_anchor(tsv_path):
+    """load_file doit épingler le fichier sous {thread}:loaded_file pour qu'il
+    reste l'ancre canonique après qu'un sous-ensemble a pris le slot actif."""
+    from tools.dataset_registry import loaded_file_dataset
+
+    tools = make_tools("thread-anchor")
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    load_file_tool.invoke({"path": tsv_path})
+
+    anchor = loaded_file_dataset(_store, "thread-anchor")
+    assert anchor is not None
+    assert anchor["df"].shape == (3, 3)
+    assert anchor["meta"]["source"].startswith("file:")
+
+
 def test_load_file_tool_returns_summary(tsv_path):
     tools = make_tools("thread-1")
     load_file_tool = next(t for t in tools if t.name == "load_file")

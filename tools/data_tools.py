@@ -472,6 +472,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             variable_name=variable_name,
             meta={**meta, "source": f"file:{meta['path']}"},
             latest_alias=source_alias,
+            is_loaded_file=True,
         )
         cols = ", ".join(col_names)
 

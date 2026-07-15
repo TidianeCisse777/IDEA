@@ -132,3 +132,61 @@ def test_current_turn_discovery_result_grounds_remote_project_id(tmp_path):
     )
 
     assert rejection is None
+
+
+def test_capsule_surfaces_loaded_file_when_active_is_derived_subset(tmp_path):
+    """Régression cartes-samples-labrador-2026 : quand un sous-ensemble dérivé
+    est le df actif, la capsule doit nommer le fichier chargé comme source
+    canonique pour que le modèle y reparte au lieu du sous-ensemble."""
+    from tools.dataset_registry import LOADED_FILE_KEY
+
+    store = SessionStore(tmp_path)
+    thread_id = "labrador-context"
+
+    loaded = pd.DataFrame({
+        "sample_id": ["s1", "s2"],
+        "latitude": [74.0, 55.0],
+        "longitude": [-68.0, -55.0],
+    })
+    store_dataset(
+        store, thread_id, loaded,
+        variable_name="df_file_neolabs_taxonomy",
+        meta={"source": "file:/data/neolabs.tsv", "n_rows": 2, "n_cols": 3},
+        latest_alias="df_file_neolabs_taxonomy",
+        is_loaded_file=True,
+    )
+    # Un filtre Baffin devient le df actif (écrase le slot actif).
+    subset = loaded.iloc[[0]]
+    store_dataset(
+        store, thread_id, subset,
+        variable_name="df_in_baie_de_baffin_neolabs",
+        meta={"source": "filter_by_zone:Baie de Baffin", "n_rows": 1},
+        latest_alias="df_in_baie_de_baffin_neolabs",
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "variable=df_in_baie_de_baffin_neolabs" in capsule  # actif = dérivé
+    assert "loaded_file=df_file_neolabs_taxonomy" in capsule    # ancre canonique
+    assert "derived subset" in capsule
+    assert len(capsule) <= 2000
+
+
+def test_capsule_omits_loaded_file_note_when_active_is_the_file(tmp_path):
+    """Pas d'ancre redondante quand le df actif EST le fichier chargé."""
+    store = SessionStore(tmp_path)
+    thread_id = "plain-file-context"
+
+    loaded = pd.DataFrame({"sample_id": ["s1"], "latitude": [74.0], "longitude": [-68.0]})
+    store_dataset(
+        store, thread_id, loaded,
+        variable_name="df_file_neolabs",
+        meta={"source": "file:/data/neolabs.tsv", "n_rows": 1, "n_cols": 3},
+        latest_alias="df_file_neolabs",
+        is_loaded_file=True,
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "loaded_file=" not in capsule
+    assert "CANONICAL SOURCE" not in capsule
