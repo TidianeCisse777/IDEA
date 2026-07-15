@@ -968,6 +968,10 @@ def test_join_ecotaxa_ecopart_resolves_explicit_local_file_variables():
     joined = _store.get(f"{thread_id}:ecotaxa_ecopart")
     assert joined is not None
     assert joined["df"]["ecopart_Sampled volume [L]"].tolist() == [29.7]
+    assert "ecotaxa_hawkechannel_30jan.tsv" in result
+    assert "ecopart_hawkechannel_30jan.tsv" in result
+    assert "/prj/42" not in result
+    assert "/prj/1004" not in result
 
 
 def test_join_ecotaxa_ecopart_refuses_missing_explicit_variable(_isolated_store):

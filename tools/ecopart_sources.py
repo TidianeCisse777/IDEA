@@ -15,6 +15,7 @@ from core.ecotaxa_ecopart_join import (
     depth_bin_5m,
 )
 from core.environment_resolver import build_enrichment_provenance
+from tools.source_renderer import render_sources, source_urls
 from tools.dataset_registry import (
     ECOPART,
     ECOTAXA,
@@ -346,21 +347,15 @@ def _perform_enrichment(
     project_note = (
         f" avec EcoPart {selected_project_id}" if selected_project_id is not None else ""
     )
-    source_lines = ["\nSources :"]
-    ecotaxa_pid = None
-    if session_et:
-        ecotaxa_pid = (session_et.get("meta") or {}).get("project_id")
-    if ecotaxa_pid is not None:
-        source_lines.append(
-            f"- EcoTaxa projet {ecotaxa_pid} : "
-            f"https://ecotaxa.obs-vlfr.fr/prj/{ecotaxa_pid}"
-        )
-    if selected_project_id is not None:
-        source_lines.append(
-            f"- EcoPart projet {selected_project_id} : "
-            f"https://ecopart.obs-vlfr.fr/prj/{selected_project_id}"
-        )
-    sources_block = "\n".join(source_lines) if len(source_lines) > 1 else ""
+    et_source_meta = dict((session_et or {}).get("meta") or {})
+    ep_source_meta = dict((session_ep or {}).get("meta") or {})
+    sources_block = "\nSources :\n" + render_sources(
+        {"sources": [et_source_meta, ep_source_meta]}
+    )
+    proven_ep_urls = source_urls(ep_source_meta)
+    canonical_source_line = (
+        f"\nSource : {proven_ep_urls[0]}" if proven_ep_urls else ""
+    )
 
     return (
         f"Enrichissement terminé{project_note} — {len(merged)} lignes "
@@ -375,8 +370,7 @@ def _perform_enrichment(
         f"sum(objets)/sum(volume) global — voir skill `uvp_ecotaxa`.\n"
         f"Données disponibles dans `{joined_variable_name}` et `df_ecotaxa_ecopart` — "
         f"appelle run_pandas directement pour analyser."
-        f"{sources_block}\n"
-        f"Source : {dataset_url}\n"
+        f"{sources_block}{canonical_source_line}\n"
         "Provenance : "
         + json.dumps(provenance, ensure_ascii=False, sort_keys=True)
     )

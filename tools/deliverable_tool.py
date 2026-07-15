@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import tool
+from tools.source_renderer import render_sources, source_urls
 
 def _downloads_dir() -> Path:
     return Path(os.getenv("DOWNLOADS_DIR", "/tmp/copepod_downloads"))
@@ -145,12 +146,7 @@ def _manifest_source_urls(manifest: dict[str, Any]) -> set[str]:
     for source in manifest.get("sources", []):
         if not isinstance(source, dict):
             continue
-        value = source.get("url")
-        if isinstance(value, str) and value.strip():
-            urls.add(value.strip().rstrip("/"))
-        for item in source.get("urls", []):
-            if isinstance(item, str) and item.strip():
-                urls.add(item.strip().rstrip("/"))
+        urls.update(source_urls(source))
         dois = [source.get("doi"), *source.get("dois", [])]
         for doi in dois:
             if isinstance(doi, str) and doi.strip():
@@ -289,18 +285,7 @@ def _render_manifest_references(manifest: dict[str, Any]) -> str:
     for source in manifest.get("sources", []):
         if not isinstance(source, dict):
             continue
-        name = str(source.get("name") or "Source non nommée").strip()
-        citation = str(source.get("citation") or name).strip()
-        urls: list[str] = []
-        if isinstance(source.get("url"), str) and source["url"].strip():
-            urls.append(source["url"].strip())
-        urls.extend(
-            url.strip()
-            for url in source.get("urls", [])
-            if isinstance(url, str) and url.strip()
-        )
-        suffix = " ".join(dict.fromkeys(urls))
-        entries.append(f"- {citation}" + (f" {suffix}" if suffix else ""))
+        entries.append(f"- {render_sources(source)}")
     if not entries:
         return "## 6. Références\n\nAucune source externe utilisée."
     return "## 6. Références\n\n" + "\n".join(entries)

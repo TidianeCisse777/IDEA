@@ -21,6 +21,8 @@ def _manifest():
         "sources": [
             {
                 "name": "EcoTaxa — projet 17498",
+                "source": "ecotaxa:17498",
+                "project_id": 17498,
                 "url": "https://ecotaxa.obs-vlfr.fr/prj/17498",
                 "citation": "Picheral, M., Colin, S., & Irisson, J.-O. (2017). EcoTaxa.",
             }
@@ -247,6 +249,22 @@ def test_reference_section_is_rebuilt_only_from_manifest_sources():
     assert "Bio-ORACLE" not in rebuilt
     assert "Picheral, M., Colin, S., & Irisson, J.-O. (2017). EcoTaxa." in rebuilt
     assert "https://ecotaxa.obs-vlfr.fr/prj/17498" in rebuilt
+
+
+def test_reference_section_drops_unproven_project_url():
+    from tools.deliverable_tool import _replace_reference_section
+
+    manifest = _manifest()
+    manifest["sources"] = [{
+        "name": "Fichier Hawke",
+        "source": "file:/app/hawke.tsv",
+        "url": "https://ecopart.obs-vlfr.fr/prj/42",
+    }]
+
+    rebuilt = _replace_reference_section("# Rapport", manifest)
+
+    assert "/app/hawke.tsv" in rebuilt
+    assert "/prj/42" not in rebuilt
 
 
 def test_manifest_source_urls_include_declared_doi():
