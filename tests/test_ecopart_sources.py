@@ -807,6 +807,131 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert json.dumps(provenance, ensure_ascii=False, sort_keys=True) in result
 
 
+def test_join_ecotaxa_ecopart_resolves_explicit_local_file_variables():
+    """Two local files must be joinable by their persisted dataset variables.
+
+    A numeric project mentioned earlier in the conversation must not force the
+    local workflow through the remote project registry.
+    """
+    import pandas as pd
+
+    from tools.dataset_registry import store_dataset
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-local-file-variables"
+    ecotaxa_variable = "df_file_ecotaxa_hawkechannel_30jan"
+    ecopart_variable = "df_file_ecopart_hawkechannel_30jan"
+
+    store_dataset(
+        _store,
+        thread_id,
+        pd.DataFrame({
+            "sample_id": ["hc_02_030924"],
+            "object_depth_min": [12.5],
+            "object_id": ["object-1"],
+        }),
+        variable_name=ecotaxa_variable,
+        meta={"source": "file:ecotaxa_hawkechannel_30jan.tsv"},
+        latest_alias="ecotaxa",
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        pd.DataFrame({
+            "Profile": ["hc_02_030924"],
+            "Depth [m]": [12.5],
+            "Sampled volume [L]": [29.7],
+        }),
+        variable_name=ecopart_variable,
+        meta={"source": "file:ecopart_hawkechannel_30jan.tsv"},
+        latest_alias="ecopart",
+    )
+    # Simulate later loads changing the unstable latest aliases. The explicit
+    # variables above must remain authoritative for this requested join.
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "sample_id": ["other_cruise"],
+            "object_depth_min": [12.5],
+            "object_id": ["other-object"],
+        }),
+        {"source": "file:other_ecotaxa.tsv"},
+    )
+    _store.set(
+        f"{thread_id}:ecopart",
+        pd.DataFrame({
+            "Profile": ["unrelated_profile"],
+            "Depth [m]": [12.5],
+            "Sampled volume [L]": [99.0],
+        }),
+        {"source": "file:other_ecopart.tsv"},
+    )
+
+    join_tool = next(
+        tool
+        for tool in make_ecopart_tools(thread_id)
+        if tool.name == "join_ecotaxa_ecopart"
+    )
+    result = join_tool.invoke({
+        "ecotaxa_variable": ecotaxa_variable,
+        "ecopart_variable": ecopart_variable,
+    })
+
+    assert "1 matchées" in result
+    joined = _store.get(f"{thread_id}:ecotaxa_ecopart")
+    assert joined is not None
+    assert joined["df"]["ecopart_Sampled volume [L]"].tolist() == [29.7]
+
+
+def test_join_ecotaxa_ecopart_refuses_missing_explicit_variable(_isolated_store):
+    import pandas as pd
+
+    from tools.ecopart_sources import make_ecopart_tools
+
+    thread_id = "thread-missing-local-variable"
+    _isolated_store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({"sample_id": ["latest"], "object_depth_min": [2.5]}),
+        {"source": "file:latest.tsv"},
+    )
+    _isolated_store.set(
+        f"{thread_id}:ecopart",
+        pd.DataFrame({
+            "Profile": ["latest"],
+            "Depth [m]": [2.5],
+            "Sampled volume [L]": [10.0],
+        }),
+        {"source": "file:latest.tsv"},
+    )
+    join_tool = next(
+        tool
+        for tool in make_ecopart_tools(thread_id)
+        if tool.name == "join_ecotaxa_ecopart"
+    )
+
+    result = join_tool.invoke({"ecotaxa_variable": "df_file_missing"})
+
+    assert "Variable EcoTaxa introuvable : `df_file_missing`" in result
+
+
+def test_join_ecotaxa_ecopart_refuses_project_id_with_explicit_ecopart_variable():
+    from tools.ecopart_sources import make_ecopart_tools
+
+    join_tool = next(
+        tool
+        for tool in make_ecopart_tools("thread-conflicting-local-selector")
+        if tool.name == "join_ecotaxa_ecopart"
+    )
+
+    result = join_tool.invoke({
+        "project_id": 1004,
+        "ecopart_variable": "df_file_ecopart_hawkechannel_30jan",
+    })
+
+    assert "Sélecteurs EcoPart incompatibles" in result
+
+
 def test_join_ecotaxa_ecopart_picks_key_by_overlap_not_first_row():
     """Key selection must use real overlap, not the first row.
 

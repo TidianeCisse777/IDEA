@@ -79,15 +79,39 @@ def _ecotaxa_session_for_project(
     return candidates[-1]
 
 
+def _session_for_variable(thread_id: str, variable_name: str | None) -> dict | None:
+    """Resolve one explicitly named dataset from the session registry."""
+    if variable_name is None:
+        return None
+    return _store.get(f"{thread_id}:dataset:{variable_name}")
+
+
 def _perform_enrichment(
     thread_id: str,
     project_id: int | None,
     *,
     ecotaxa_session: dict | None = None,
+    ecotaxa_variable: str | None = None,
+    ecopart_variable: str | None = None,
 ) -> str:
     """Run the (sample_id, depth_bin) join from the session-resolved EcoTaxa/EcoPart."""
-    session_et = ecotaxa_session or _store.get(f"{thread_id}:ecotaxa")
-    if project_id is None:
+    if project_id is not None and ecopart_variable is not None:
+        return (
+            "Sélecteurs EcoPart incompatibles — utilise soit `project_id`, soit "
+            "`ecopart_variable`, jamais les deux."
+        )
+
+    explicit_ecotaxa = _session_for_variable(thread_id, ecotaxa_variable)
+    if ecotaxa_variable is not None and explicit_ecotaxa is None:
+        return f"Variable EcoTaxa introuvable : `{ecotaxa_variable}`."
+    explicit_ecopart = _session_for_variable(thread_id, ecopart_variable)
+    if ecopart_variable is not None and explicit_ecopart is None:
+        return f"Variable EcoPart introuvable : `{ecopart_variable}`."
+
+    session_et = ecotaxa_session or explicit_ecotaxa or _store.get(f"{thread_id}:ecotaxa")
+    if ecopart_variable is not None:
+        session_ep = explicit_ecopart
+    elif project_id is None:
         session_ep = _store.get(f"{thread_id}:ecopart")
     else:
         variable_name = dataset_variable_name("ecopart", project_id)
@@ -603,9 +627,24 @@ def make_ecopart_tools(thread_id: str) -> list:
             return f"Erreur EcoPart : {exc}"
 
     @tool
-    def join_ecotaxa_ecopart(project_id: int | None = None) -> str:
-        """Enrichit EcoTaxa avec EcoPart par (sample_id, depth_bin) — chaque objet récupère le Sampled volume et les variables EcoPart de son bin de 5 m. Exige que EcoTaxa et EcoPart soient déjà chargés en session."""
-        return _perform_enrichment(thread_id, project_id)
+    def join_ecotaxa_ecopart(
+        project_id: int | None = None,
+        ecotaxa_variable: str | None = None,
+        ecopart_variable: str | None = None,
+    ) -> str:
+        """Enrichit localement EcoTaxa avec EcoPart par (sample_id, depth_bin).
+
+        Les deux datasets doivent déjà être chargés. Pour deux fichiers locaux,
+        passe leurs variables persistées dans ``ecotaxa_variable`` et
+        ``ecopart_variable`` et omets ``project_id``. Utilise ``project_id``
+        seulement pour sélectionner un projet EcoPart numérique déjà chargé.
+        """
+        return _perform_enrichment(
+            thread_id,
+            project_id,
+            ecotaxa_variable=ecotaxa_variable,
+            ecopart_variable=ecopart_variable,
+        )
 
     @tool
     def enrich_ecotaxa_with_ecopart_remote(

@@ -371,7 +371,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
         elif source_alias == "ecopart":
             route_note = (
-                "\nRoute de jointure : `join_ecotaxa_ecopart` si EcoTaxa est déjà chargé."
+                "\nRoute de jointure locale : `join_ecotaxa_ecopart` sans "
+                "`project_id` si EcoTaxa est déjà chargé ; passe les variables "
+                "de fichiers explicites si plusieurs datasets sont présents."
             )
 
         enc_note = f" (encodage : {meta['encoding']})" if meta.get("encoding") else ""

@@ -905,6 +905,16 @@ def test_system_prompt_requires_canonical_sample_depth_for_uvp_analyses():
     assert "do not independently rebuild" in prompt
 
 
+def test_system_prompt_routes_two_local_ecotaxa_ecopart_files_by_variable():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT
+    assert "ecotaxa_variable" in prompt
+    assert "ecopart_variable" in prompt
+    assert "project_id=None" in prompt
+    assert "ignore any numeric EcoPart project from earlier turns" in prompt
+
+
 def test_system_prompt_requires_zero_inclusive_correlations_and_explicit_profile_metrics():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
