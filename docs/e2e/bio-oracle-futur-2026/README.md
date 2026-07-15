@@ -27,12 +27,19 @@ UC-B1 (carte).
 | 5 | Carte de priorisation (zones nommées) | `figures/58fdbc42c2ba.png` |
 | 6 | **Correction** — abondance de l'agent fausse ; carte refaite (script déterministe) | `figures/carte_corrigee_copepodes_2050.png` |
 
-## Résultat
+## Résultat (après correction — voir DEFECTS)
 
-D'ici 2050 (SSP5-8.5), les 4 grappes passent du négatif au voisinage / au-dessus
-de 0 °C en surface. La grappe **(68,77 N / -80,84 W)** cumule la plus forte
-abondance de copépodes (162 ind./m³) et le plus fort réchauffement projeté
-(+1,23 °C) — priorité d'expédition la plus nette.
+D'ici 2050 (SSP5-8.5), la surface de l'Arctique canadien se réchauffe de **+0,6
+à +1,5 °C** selon la zone, franchissant le seuil de gel. En croisant avec la
+densité copépode **corrigée** (contrat `neolabs_copepod_density`), les priorités
+d'expédition ressortent : **Mer des Tchouktches** (15 439 ind/m³, +1,26 °C) et
+**Hudson Complex** (3 968 ind/m³, +1,23 °C) cumulent forte abondance et fort
+réchauffement.
+
+> Note : la première passe reposait sur une abondance **fausse** (162 ind/m³ pour
+> Hudson Complex) calculée à la main par l'agent. Voir
+> [DEFECTS_AND_PRIORITIES.md](DEFECTS_AND_PRIORITIES.md) pour le diagnostic et la
+> correction (contrat déterministe + garde-fou `run_pandas`).
 
 ## Choix méthodologique clé
 
