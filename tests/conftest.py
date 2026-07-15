@@ -15,6 +15,11 @@ os.environ["SESSION_STORE_DATABASE_URL"] = ""
 os.environ.setdefault("SESSION_STORE_DIR", tempfile.mkdtemp(prefix="session_store_test_"))
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGCHAIN_API_KEY"] = ""
+# Idem pour le workspace SQL : sans ça, load_dotenv (déclenché à l'import de
+# tools.tool_catalog) réinjecte le DATABASE_URL de démo du .env et fait entrer
+# les 3 tools SQL optionnels dans un catalogue censé être sans-SQL. Blanc =
+# non configuré ; les tests qui veulent le SQL posent DATABASE_URL via setenv.
+os.environ["DATABASE_URL"] = ""
 
 
 @pytest.fixture(autouse=True)

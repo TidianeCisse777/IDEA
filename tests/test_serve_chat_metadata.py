@@ -6,6 +6,61 @@ import pytest
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("metadata", "accept_language", "expected"),
+    [
+        ({"locale": "en-CA"}, "fr-CA", "en"),
+        (None, "en-US,en;q=0.9", "en"),
+        (None, "de-DE", "fr"),
+    ],
+)
+async def test_chat_completions_passes_user_language_to_stream(
+    monkeypatch,
+    metadata,
+    accept_language,
+    expected,
+):
+    import serve as serve_module
+
+    mock_agent = MagicMock()
+    mock_agent.aget_state = AsyncMock(
+        return_value=MagicMock(values={"messages": []})
+    )
+    captured = {}
+
+    async def empty_stream():
+        if False:
+            yield ""
+
+    def fake_stream(*args, **kwargs):
+        captured["language"] = kwargs["language"]
+        return empty_stream()
+
+    monkeypatch.setattr(
+        serve_module,
+        "make_agent",
+        lambda thread_id, user_id="anonymous": mock_agent,
+    )
+    monkeypatch.setattr(serve_module, "_stream_agent_sse", fake_stream)
+    request = MagicMock()
+    request.headers = {"accept-language": accept_language}
+    req = serve_module.ChatRequest(
+        messages=[serve_module.Message(role="user", content="Hello")],
+        stream=True,
+        metadata=metadata,
+    )
+
+    await serve_module.chat_completions(
+        req,
+        request,
+        x_openwebui_chat_id=None,
+        x_openwebui_message_id=None,
+    )
+
+    assert captured["language"] == expected
+
+
+@pytest.mark.asyncio
 async def test_chat_completions_resumes_persisted_dataframe_after_restart(
     monkeypatch, tmp_path
 ):

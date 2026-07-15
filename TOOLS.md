@@ -1,11 +1,11 @@
 # TOOLS.md — Inventaire des tools exposés au LLM · IDEA
 
 > Catalogue technique des tools déclarés à la construction de l'agent
-> (`agent.py` → `create_react_agent`). Pour les use cases voir [`SPEC.md`](SPEC.md),
+> (`tools/tool_catalog.py` → `agent.py` → `create_agent`). Pour les use cases voir [`SPEC.md`](SPEC.md),
 > pour le câblage voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
 >
-> **~53 tools** au total (les 3 tools SQL ne sont ajoutés que si `DATABASE_URL`
-> est résolvable). Les règles de routage — quand appeler quel tool — vivent dans
+> **55 tools obligatoires, 58 avec SQL** (les 3 tools SQL ne sont ajoutés que si
+> `DATABASE_URL` est résolvable). Les règles de routage — quand appeler quel tool — vivent dans
 > `agents/copepod_system_prompt.py`, jamais dans le code Python.
 
 Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
@@ -23,7 +23,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 2. EcoTaxa — `tools/copepod_sources.py` (24)
+## 2. EcoTaxa — `tools/copepod_sources.py` (25)
 
 ### Catalogue & recherche
 | Tool | Rôle | Coûteux ? |
@@ -88,25 +88,27 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 4. Amundsen CTD — `tools/amundsen_sources.py` (5)
+## 4. Amundsen CTD — `tools/amundsen_sources.py` (6)
 
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `list_amundsen_datasets` | Datasets CTD disponibles (`amundsen12713`) | non |
 | `preview_amundsen_profile` | Aperçu profil station/cast | non |
+| `find_amundsen_data_for_table` | Vérifie la couverture CTD disponible pour la table active sans lancer l'enrichissement | non |
 | `enrich_with_amundsen_ctd` | Enrichit la table par lat/lon/temps (auto-détecte colonnes, batch ERDDAP, `zone_name`/`date_range`/`source_variable`) → `amundsen_*` | cond. |
 | `enrich_loaded_table_with_amundsen_ctd` | Variante legacy quand la table source est explicite | cond. |
 | `query_amundsen_ctd` | Download complet du dataset CTD | **oui** |
 
 ---
 
-## 5. Bio-ORACLE — `tools/bio_oracle_sources.py` (6)
+## 5. Bio-ORACLE — `tools/bio_oracle_sources.py` (7)
 
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `list_bio_oracle_datasets` | Variables & scénarios disponibles | non |
 | `preview_bio_oracle_point` | Valeur d'une variable en un point (`target_year`) | non |
 | `query_bio_oracle_zones` | Valeurs par zone(s) nommée(s) (var + scénario + `target_year`) | non |
+| `find_bio_oracle_data_for_table` | Vérifie la couverture Bio-ORACLE disponible pour la table active sans lancer l'enrichissement | non |
 | `couple_zooplankton_bio_oracle` | Couple des lignes zooplancton ↔ variables par lat/lon | cond. (>10 lignes) |
 | `enrich_with_bio_oracle` | Enrichit la table : 1 colonne par (variable × scénario) + traçabilité `_dataset_id`/`_time`/`match_status` | cond. (>10 lignes multi-var) |
 | `query_bio_oracle` | Extraction sur région / scénario | **oui** |
@@ -171,13 +173,14 @@ Backends : SQLite, PostgreSQL, MySQL, MariaDB (protocole MySQL).
 | Famille | Module | Nb |
 |---|---|---|
 | Données & analyse | `data_tools.py` | 3 |
-| EcoTaxa | `copepod_sources.py` | 22 |
+| EcoTaxa | `copepod_sources.py` | 25 |
 | EcoPart | `ecopart_sources.py` | 6 |
-| Amundsen CTD | `amundsen_sources.py` | 5 |
-| Bio-ORACLE | `bio_oracle_sources.py` | 6 |
+| Amundsen CTD | `amundsen_sources.py` | 6 |
+| Bio-ORACLE | `bio_oracle_sources.py` | 7 |
 | OGSL | `ogsl_sources.py` | 2 |
 | Workspace SQL (conditionnel) | `sql_workspace.py` | 3 |
 | Géographie | `geo_tools.py` | 2 |
 | Savoir & taxonomie | `rag_tool.py`, `taxonomy_tool.py` | 2 |
 | Skills & livrables | `skill_tool.py`, `deliverable_tool.py` | 2 |
-| **Total** | | **~53** |
+| **Total obligatoire** | | **55** |
+| **Total avec SQL** | | **58** |
