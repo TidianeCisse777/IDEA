@@ -213,3 +213,19 @@
   `copepod_count == 0` égal à 143.
 - Trace `019f6645-6397-7b81-ab7c-797967ffa5f9` : uniquement le constructeur
   canonique officiel via `run_pandas`.
+
+## Campagne de correction — C4
+
+- Statut : corrigé et validé le 2026-07-15.
+- État injecté à chaque requête : dataset actif
+  `df_file_ecotaxa_hawkechannel_30jan`, source locale, dimensions et colonnes
+  d'identité, sans valeurs de lignes ni ancien projet.
+- Protection déterministe : les identifiants EcoTaxa provenant uniquement de
+  tours anciens sont refusés avant l'exécution du tool.
+- Les identifiants restent autorisés lorsqu'ils sont explicitement donnés par
+  l'utilisateur, présents dans les métadonnées actives ou découverts par un tool
+  pendant le même tour.
+- Rejeu curl pollué par le projet 42/sample 42000002 : réponse fondée sur Hawke
+  Channel, 137 128 lignes, 30 stations, période 2024-09-03–2024-09-12.
+- Audit de trace : seulement `run_pandas` sur la variable locale exacte ; aucun
+  appel `summarize_ecotaxa_sample_deployment` et aucun ID ancien.

@@ -203,10 +203,17 @@ class _ContextMiddleware(AgentMiddleware):
         final_tokens = _approx_tokens(trimmed_messages)
 
         block, metrics = _build_memory_block(memories)
+        from tools.session_context import build_dataset_state_capsule
+        from tools.session_store import default_store as session_store
+
+        dataset_block = build_dataset_state_capsule(session_store, self.thread_id)
         system_message = request.system_message
         base = system_message.content if system_message is not None else ""
+        injected_context = block + dataset_block
         prepared_system_message = (
-            SystemMessage(content=base + block) if block else system_message
+            SystemMessage(content=base + injected_context)
+            if injected_context
+            else system_message
         )
         system_tokens = (
             _approx_tokens([prepared_system_message])
@@ -242,11 +249,46 @@ class _ContextMiddleware(AgentMiddleware):
             ),
             **truncate_metrics,
             **metrics,
+            "dataset_capsule_injected": bool(dataset_block),
+            "dataset_capsule_chars": len(dataset_block),
         }
         return request.override(
             messages=trimmed_messages,
             system_message=prepared_system_message,
         )
+
+    def _tool_identifier_rejection(self, request) -> str | None:
+        from tools.session_context import reject_ungrounded_ecotaxa_identifiers
+        from tools.session_store import default_store as session_store
+
+        tool_call = request.tool_call
+        return reject_ungrounded_ecotaxa_identifiers(
+            session_store,
+            self.thread_id,
+            request.state.get("messages") or [],
+            str(tool_call.get("name") or ""),
+            dict(tool_call.get("args") or {}),
+        )
+
+    def wrap_tool_call(self, request, handler):
+        rejection = self._tool_identifier_rejection(request)
+        if rejection:
+            return ToolMessage(
+                content=rejection,
+                tool_call_id=request.tool_call["id"],
+                status="error",
+            )
+        return handler(request)
+
+    async def awrap_tool_call(self, request, handler):
+        rejection = self._tool_identifier_rejection(request)
+        if rejection:
+            return ToolMessage(
+                content=rejection,
+                tool_call_id=request.tool_call["id"],
+                status="error",
+            )
+        return await handler(request)
 
     def wrap_model_call(self, request, handler):
         store = getattr(request.runtime, "store", None)

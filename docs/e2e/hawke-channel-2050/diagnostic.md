@@ -207,6 +207,23 @@ question ni dans le fichier.
 4. Ajouter un test multi-tour où un ancien projet 42 précède le chargement Hawke
    Channel ; la question « contexte de ces données » doit rester locale.
 
+### Correction C4 validée — 2026-07-15
+
+- Une capsule `ACTIVE DATASET STATE` de moins de 2 000 caractères est reconstruite
+  depuis le registre et injectée après le trimming dans chaque requête modèle.
+- La capsule expose uniquement le dataset actif : variable, source, dimensions,
+  alias et colonnes d'identité. Elle ne contient aucune valeur ligne à ligne et
+  exclut les projets distants devenus obsolètes.
+- Un verrou middleware refuse désormais tout `project_id` ou `sample_id` EcoTaxa
+  absent du message utilisateur courant, des métadonnées du dataset actif et des
+  résultats d'outils du tour courant. Un ancien tour seul ne peut plus fonder un ID.
+- Rejeu contaminé : projet 42 et sample 42000002 au premier tour, puis chargement
+  Hawke Channel et demande naturelle de contexte. Résultat local : 137 128 lignes,
+  septembre 2024, 30 stations, profondeur objet 5,44–579,64 m.
+- Trace LangSmith `019f664f-7356-7ef2-a993-5d504d5dd118` : un seul appel
+  `run_pandas` sur `df_file_ecotaxa_hawkechannel_30jan`; aucun outil EcoTaxa
+  distant et aucun identifiant 42/42000002.
+
 ## D05 — HTTP 429 exposé comme HTTP 500
 
 **Priorité : P1 — fiabilité E2E et reprise automatique.**

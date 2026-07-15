@@ -261,6 +261,118 @@ def test_context_middleware_no_memories_leaves_system_prompt_untouched():
     assert seen["system"] == "BASE"
 
 
+def test_context_middleware_injects_active_dataset_capsule(monkeypatch, tmp_path):
+    import pandas as pd
+    from langchain.agents import create_agent
+    from langchain_core.messages import HumanMessage
+    from langgraph.store.memory import InMemoryStore
+
+    import agent as agent_module
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    session_store = SessionStore(tmp_path)
+    store_dataset(
+        session_store,
+        "capsule-thread",
+        pd.DataFrame({"sample_id": ["hc_01_030924"], "object_date": ["2024-09-03"]}),
+        variable_name="df_file_ecotaxa_hawkechannel_30jan",
+        meta={"source": "file:/data/hawke.tsv", "n_rows": 137128, "n_cols": 201},
+        latest_alias="ecotaxa",
+    )
+    monkeypatch.setattr("tools.session_store.default_store", session_store)
+
+    model, seen = _spy_model()
+    graph = create_agent(
+        model,
+        [],
+        system_prompt="BASE",
+        middleware=[agent_module._ContextMiddleware(thread_id="capsule-thread")],
+        store=InMemoryStore(),
+    )
+    graph.invoke(
+        {"messages": [HumanMessage(content="Donne le contexte de ces données")]},
+        {"configurable": {"thread_id": "capsule-thread"}},
+    )
+
+    assert "ACTIVE DATASET STATE" in seen["system"]
+    assert "df_file_ecotaxa_hawkechannel_30jan" in seen["system"]
+    assert "137128" in seen["system"]
+
+
+def test_system_prompt_forbids_ungrounded_project_and_sample_ids():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "ungrounded identifier" in prompt
+    assert "active dataset state" in prompt
+    assert "project_id" in prompt
+    assert "sample_id" in prompt
+    assert "do not call a remote ecotaxa tool" in prompt
+
+
+def test_context_middleware_blocks_ungrounded_ecotaxa_tool_call(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="blocked-thread")
+    request = SimpleNamespace(
+        tool_call={
+            "name": "summarize_ecotaxa_sample_deployment",
+            "args": {"sample_id": 42000002},
+            "id": "call-stale",
+        },
+        state={
+            "messages": [
+                HumanMessage(content="Ancien sample 42000002"),
+                AIMessage(content="Noté"),
+                HumanMessage(content="Contexte de ces données locales"),
+            ]
+        },
+    )
+    called = False
+
+    def handler(_request):
+        nonlocal called
+        called = True
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert called is False
+    assert result.status == "error"
+    assert "non fondé" in result.content
+
+
+def test_context_middleware_allows_currently_grounded_ecotaxa_tool_call(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="allowed-thread")
+    request = SimpleNamespace(
+        tool_call={
+            "name": "summarize_ecotaxa_sample_deployment",
+            "args": {"sample_id": 42000002},
+            "id": "call-explicit",
+        },
+        state={"messages": [HumanMessage(content="Résume le sample 42000002")]},
+    )
+
+    result = middleware.wrap_tool_call(
+        request,
+        lambda req: ToolMessage(content="ok", tool_call_id=req.tool_call["id"]),
+    )
+
+    assert result.content == "ok"
+
+
 def test_context_middleware_trims_the_request_seen_by_model_without_mutating_checkpoint(monkeypatch):
     from langchain.agents import create_agent
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
