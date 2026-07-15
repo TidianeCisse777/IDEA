@@ -182,6 +182,9 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "summarize_ecotaxa_project": _source("EcoTaxa · résumé du projet", "EcoTaxa · project summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_projects": _source("EcoTaxa · résumé des projets", "EcoTaxa · projects summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "export_ecotaxa_samples": _source("EcoTaxa · export des samples", "EcoTaxa · samples export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True),
+    "list_ecotaxa_project_samples": _source("EcoTaxa · samples du projet", "EcoTaxa · project samples", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "audit_ecotaxa_availability": _source("EcoTaxa · audit de disponibilité", "EcoTaxa · availability audit", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "audit_ecotaxa_spatial_coverage": _source("EcoTaxa · audit de couverture spatiale", "EcoTaxa · spatial coverage audit", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     # Bio-ORACLE.
     "list_bio_oracle_datasets": _source("Bio-ORACLE · jeux de données", "Bio-ORACLE · datasets", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
     "preview_bio_oracle_point": _source("Bio-ORACLE · aperçu ponctuel", "Bio-ORACLE · point preview", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
@@ -207,6 +210,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "join_ecotaxa_ecopart": _source("EcoTaxa/EcoPart · jumelage", "EcoTaxa/EcoPart · join", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     "enrich_ecotaxa_with_ecopart_remote": _source("EcoTaxa/EcoPart · enrichissement distant", "EcoTaxa/EcoPart · remote enrichment", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr", slow=True, progress_fr="Préparation du jumelage EcoTaxa/EcoPart", progress_en="Preparing EcoTaxa/EcoPart join", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     "find_ecopart_project_for_ecotaxa": _source("EcoPart · projet correspondant", "EcoPart · matching project", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
+    "audit_ecotaxa_ecopart_join": _source("EcoTaxa/EcoPart · audit de jumelage", "EcoTaxa/EcoPart · join audit", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     # Geography and core services.
     "filter_dataframe_by_zone": _presentation("Filtrage géographique", "Geographic filtering", "geography"),
     "get_zone_info": _presentation("Information géographique", "Geographic information", "geography"),

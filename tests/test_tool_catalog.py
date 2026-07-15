@@ -122,12 +122,12 @@ def test_presentation_builder_rejects_one_sided_progress_translation():
 
 
 def test_build_tool_catalog_has_exact_mandatory_tool_count(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")  # "" présent = non configuré, résiste à load_dotenv
 
     catalog = build_tool_catalog("catalog-no-sql")
 
-    assert len(catalog.tools) == 55
-    assert len(catalog.names) == 55
+    assert len(catalog.tools) == 59
+    assert len(catalog.names) == 59
     assert {tool.name for tool in catalog.tools} == catalog.names
     assert all(catalog.presentation(name) for name in catalog.names)
 
@@ -143,8 +143,8 @@ def test_build_tool_catalog_adds_exactly_three_optional_sql_tools(tmp_path, monk
 
     catalog = build_tool_catalog("catalog-with-sql")
 
-    assert len(catalog.tools) == 58
-    assert len(catalog.names) == 58
+    assert len(catalog.tools) == 62
+    assert len(catalog.names) == 62
     assert {
         "list_sql_tables",
         "preview_sql_table",
@@ -173,7 +173,7 @@ def test_build_tool_catalog_propagates_unexpected_sql_construction_error(monkeyp
 
 
 def test_build_tool_catalog_rejects_duplicate_runtime_names(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")  # "" présent = non configuré, résiste à load_dotenv
     monkeypatch.setattr(
         tool_catalog,
         "make_geo_tools",
@@ -200,7 +200,7 @@ FORMERLY_OMITTED_SOURCE_RESULTS = {
 
 
 def test_all_data_source_tools_have_explicit_visibility_decisions(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")  # "" présent = non configuré, résiste à load_dotenv
     catalog = build_tool_catalog("catalog-source-decisions")
     source_metadata = [
         catalog.presentation(name)
@@ -209,13 +209,13 @@ def test_all_data_source_tools_have_explicit_visibility_decisions(monkeypatch):
         in {"ecotaxa", "ecopart", "amundsen", "bio_oracle", "ogsl"}
     ]
 
-    assert len(source_metadata) == 46
+    assert len(source_metadata) == 50
     assert all(item.source_label is not None for item in source_metadata)
     assert all(catalog.presentation(name).source_result for name in FORMERLY_OMITTED_SOURCE_RESULTS)
 
 
 def test_every_catalog_label_is_bilingual_and_hides_runtime_name(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")  # "" présent = non configuré, résiste à load_dotenv
     catalog = build_tool_catalog("catalog-labels")
 
     for name in catalog.names:
@@ -227,7 +227,7 @@ def test_every_catalog_label_is_bilingual_and_hides_runtime_name(monkeypatch):
 
 
 def test_catalog_presentation_mappings_are_immutable(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")  # "" présent = non configuré, résiste à load_dotenv
     catalog = build_tool_catalog("catalog-immutable")
 
     with pytest.raises(TypeError):

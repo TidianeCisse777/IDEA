@@ -48,7 +48,7 @@ def test_conservative_tool_schema_budget(monkeypatch):
 
 
 def test_complete_catalog_inventory_and_schema_budget(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")  # "" présent = non configuré, résiste à load_dotenv
     monkeypatch.delenv("SESSION_STORE_DATABASE_URL", raising=False)
 
     from tools.tool_catalog import build_tool_catalog
@@ -61,11 +61,11 @@ def test_complete_catalog_inventory_and_schema_budget(monkeypatch):
         tool.name: _schema_tokens(tool) for tool in catalog.tools
     }
 
-    assert len(catalog.tools) == len(catalog.names) == 55
+    assert len(catalog.tools) == len(catalog.names) == 59
     assert family_counts == {
         "data": 3,
-        "ecotaxa": 25,
-        "ecopart": 6,
+        "ecotaxa": 28,
+        "ecopart": 7,
         "amundsen": 6,
         "bio_oracle": 7,
         "ogsl": 2,
@@ -73,7 +73,9 @@ def test_complete_catalog_inventory_and_schema_budget(monkeypatch):
         "core": 4,
     }
     assert max(schema_tokens.values()) <= 1_600
-    assert sum(schema_tokens.values()) <= 26_000
+    # Plafond relevé de 26_000 pour absorber les 4 tools EcoTaxa/EcoPart
+    # ajoutés sur main (audit_* + list_ecotaxa_project_samples), déjà en prod.
+    assert sum(schema_tokens.values()) <= 27_000
 
 
 def test_complete_catalog_with_sql_stays_within_schema_budget(
@@ -95,7 +97,7 @@ def test_complete_catalog_with_sql_stays_within_schema_budget(
         tool.name: _schema_tokens(tool) for tool in catalog.tools
     }
 
-    assert len(catalog.tools) == len(catalog.names) == 58
+    assert len(catalog.tools) == len(catalog.names) == 62
     assert sum(
         catalog.presentation(name).family == "sql" for name in catalog.names
     ) == 3
