@@ -104,6 +104,7 @@ serve.py                  FastAPI : /v1/chat/completions (SSE), /v1/models, /gra
 docker-compose.yml        copepod-agent + open-webui + watchtower
 scripts/dev/push_prompt.py
 scripts/dev/push_skills.py
+scripts/dev/prune_data.py
 studio.py                 LangGraph Studio entry
 
 agents/
@@ -147,6 +148,7 @@ scripts/                  Outils CLI ponctuels
 - **Rebuilt RAG** : `python core/copepod_rag/build_index.py` après modification de `core/copepod_rag/docs/*.md`.
 - **Push prompt** : `python scripts/dev/push_prompt.py` pour synchroniser le system prompt vers LangSmith Hub (consommé par `agent.py` en prod, fallback local sinon).
 - **Push skills** : `python scripts/dev/push_skills.py` pour synchroniser `agents/skills/*.md` vers LangSmith Hub.
+- **Rétention des données** : `python scripts/dev/prune_data.py --apply` — purge `data/session_store/` (> 30 j) et archive `data/checkpoints.sqlite` (> 500 Mo) vers `data/archive/`. Arrêter `copepod_agent` avant d'archiver les checkpoints. Les scripts e2e créent des milliers de sessions : pointer `SESSION_STORE_DIR` vers un dossier jetable pour les runs de test.
 
 ---
 
