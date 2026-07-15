@@ -19,7 +19,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 |---|---|---|
 | `load_file` | Charge CSV/TSV/Excel/JSON/Parquet, inspecte colonnes/types/manquants/plages, détecte les exports UVP EcoTaxa/EcoPart (hint `load_skill`) | non |
 | `run_pandas` | Exécute du pandas contrôlé sur les DataFrames de session ; source de toute valeur numérique | non |
-| `run_graph` | Exécute du code matplotlib et héberge le PNG (`/graphs/{file}`) | non |
+| `run_graph` | Exécute du code matplotlib/Cartopy, utilise les fonds Natural Earth 110m embarqués hors ligne et héberge le PNG persistant (`/graphs/{file}`) | non |
 
 ---
 

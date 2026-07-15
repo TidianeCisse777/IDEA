@@ -5,13 +5,15 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-_GRAPHS_DIR = Path("/tmp/copepod_graphs")
-_GRAPHS_DIR.mkdir(exist_ok=True)
-
 import pandas as pd
 from langchain_core.tools import tool
 
+from core.cartography import configure_offline_cartopy
 from core.graph_contracts import validate_graph_contract
+from core.runtime_paths import graphs_dir
+
+
+_GRAPHS_DIR = graphs_dir()
 
 
 def _patch_cartopy_gridliner_polygon() -> None:
@@ -599,6 +601,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             plt.close("all")
+            configure_offline_cartopy()
             _patch_cartopy_gridliner_polygon()
 
             if df is not None:

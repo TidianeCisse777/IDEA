@@ -235,6 +235,9 @@ data/geo/sources/**
 !data/geo/sources/
 !data/geo/sources/README.md
 
+# Runtime graph output remains local (and persistent through Docker's data volume)
+data/graphs/
+
 # Ignore outputs
 outputs
 

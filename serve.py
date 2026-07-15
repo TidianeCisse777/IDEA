@@ -23,6 +23,8 @@ from openai import RateLimitError
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel
 
+from core.runtime_paths import graphs_dir
+
 load_dotenv()
 
 from agent import (
@@ -286,8 +288,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GRAPHS_DIR = Path("/tmp/copepod_graphs")
-GRAPHS_DIR.mkdir(exist_ok=True)
+GRAPHS_DIR = graphs_dir()
 
 def _extract_and_host_images(text: str) -> str:
     """Remplace les data URIs base64 par des URLs hébergées sur /graphs/."""

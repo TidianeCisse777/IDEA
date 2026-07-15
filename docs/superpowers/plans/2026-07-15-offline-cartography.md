@@ -23,10 +23,9 @@
 
 **Files:**
 - Create: `core/cartography.py`
-- Create: `data/cartopy/README.md`
-- Create: `data/cartopy/shapefiles/natural_earth/{physical,cultural}/ne_110m_*`
+- Create: `assets/cartopy/README.md`
+- Create: `assets/cartopy/shapefiles/natural_earth/{physical,cultural}/ne_110m_*`
 - Modify: `.gitignore`
-- Modify: `.dockerignore`
 - Modify: `Dockerfile`
 - Create: `tests/test_cartography.py`
 
@@ -38,7 +37,7 @@
 - [ ] Implement an exact manifest for required extensions and a clear `CartographyAssetsError` on missing files.
 - [ ] Configure `cartopy.config["pre_existing_data_dir"]` to the vendored root.
 - [ ] Add regression tests for successful validation, missing-file diagnostics, and real rendering while every Cartopy downloader is blocked.
-- [ ] Include the asset tree in Git and Docker while preserving the existing exclusions for session data and IHO sources.
+- [ ] Include the asset tree in Git and Docker outside `/app/data`, while preserving the existing exclusions for session data and IHO sources.
 - [ ] Add a Docker build-time command that validates the baked assets.
 
 ### Task 2: Centralize and persist graph output

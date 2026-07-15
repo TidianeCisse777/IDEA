@@ -50,6 +50,27 @@ flowchart LR
 Seuls `copepod-agent` et `mcp-ecotaxa` sont auto-updatés (label Watchtower).
 Postgres et Open WebUI ne le sont **pas** (protection des chats / de la base).
 
+### 2.1.1 Cartes disponibles dès l'installation
+
+Un clone du projet suivi de `pip install -r requirements.txt`, comme l'image
+Docker `copepod-agent`, contient les quatre fonds Natural Earth 110m nécessaires
+aux cartes IDEA : terre, océan, côtes et frontières nationales. Leur taille
+totale est inférieure à 1 Mo. La première carte fonctionne sans téléchargement
+Cartopy et sans dépendre d'un cache utilisateur préexistant.
+
+Cela n'embarque pas toutes les données :
+
+- le shapefile IHO source d'environ 142 Mo reste exclu, car le registre compilé
+  `data/geo/zones_registry.geojson` suffit à l'exécution ;
+- les données EcoTaxa, EcoPart, Amundsen, OGSL et Bio-ORACLE restent interrogées
+  uniquement à la demande selon leurs règles de confirmation ;
+- seuls les quatre fonds à la résolution effectivement utilisée (`110m`) sont
+  versionnés sous `assets/cartopy/`, hors du volume `/app/data` afin qu'une mise
+  à jour Docker ne masque jamais les fonds déjà intégrés à l'image.
+
+Les PNG produits sont écrits dans `data/graphs`. En Docker, ce chemin se trouve
+dans le volume `copepod_data` et survit donc au remplacement du conteneur.
+
 ### 2.2 Partage réel à date
 
 - **Démo / testeurs** : mode B (Cloudflare Tunnel depuis le Mac local). URL

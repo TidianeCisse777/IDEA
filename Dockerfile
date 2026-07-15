@@ -26,6 +26,9 @@ ENV GIT_SHA=$GIT_SHA
 
 COPY . .
 
+# Fail the image build if the offline Natural Earth bundle is incomplete.
+RUN python -c "from core.cartography import configure_offline_cartopy; configure_offline_cartopy()"
+
 # Bake the copepod RAG index (chroma_db) into the image so a fresh clone
 # never has to build it. The `.dockerignore` intentionally does NOT skip
 # `core/copepod_rag/chroma_db`, and docker-compose keeps this path on a

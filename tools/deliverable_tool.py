@@ -9,12 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import tool
+from core.runtime_paths import graphs_dir
 from tools.source_renderer import render_sources, source_urls
 
 def _downloads_dir() -> Path:
     return Path(os.getenv("DOWNLOADS_DIR", "/tmp/copepod_downloads"))
 
-_GRAPHS_DIR = Path("/tmp/copepod_graphs")
+_GRAPHS_DIR = graphs_dir()
 
 _CSS = """
 @import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap');

@@ -35,14 +35,14 @@ réellement consommés :
 - `physical/ne_110m_coastline.*` ;
 - `cultural/ne_110m_admin_0_boundary_lines_land.*`.
 
-Ils résident sous `data/cartopy/shapefiles/natural_earth/` selon l'arborescence
+Ils résident sous `assets/cartopy/shapefiles/natural_earth/` selon l'arborescence
 attendue nativement par Cartopy. Les fichiers nécessaires au fonctionnement de
 chaque shapefile (`.shp`, `.shx`, `.dbf`, `.prj` et, lorsqu'il existe, `.cpg`)
 sont inclus. Aucun autre niveau de résolution et aucun fond non utilisé n'est
 embarqué.
 
 Natural Earth place ces données dans le domaine public. Un fichier de provenance
-dans `data/cartopy/` documente la source, la version, les couches incluses et la
+dans `assets/cartopy/` documente la source, la version, les couches incluses et la
 date d'acquisition.
 
 ## Architecture
@@ -79,10 +79,10 @@ et remplacements de conteneur. Aucun nouveau volume n'est requis.
 
 ### Distribution
 
-`.gitignore` autorise uniquement `data/cartopy/**` et les fichiers compilés déjà
-nécessaires sous `data/geo/`; les données de session et les PNG restent ignorés.
-`.dockerignore` inclut `data/cartopy/**` dans le contexte de construction sans
-réintroduire le shapefile IHO source ni le reste de `data/`.
+Les fonds résident sous `assets/cartopy/**`, qui est versionné et inclus dans le
+contexte Docker hors du volume `/app/data`. Les données de session et les PNG
+restent ignorés. `.dockerignore` continue d'exclure le shapefile IHO source et le
+reste de `data/`.
 
 Le Dockerfile exécute un contrôle de disponibilité des quatre couches pendant la
 construction. Une image incomplète échoue donc au build plutôt que lors de la

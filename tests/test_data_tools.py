@@ -7,7 +7,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tools.data_tools import make_tools, _patch_cartopy_gridliner_polygon, _uvp_skill_hint
+from tools.data_tools import (
+    _GRAPHS_DIR,
+    make_tools,
+    _patch_cartopy_gridliner_polygon,
+    _uvp_skill_hint,
+)
+from core.runtime_paths import graphs_dir
 from tools.session_store import SessionStore, default_store as _store
 
 
@@ -49,6 +55,10 @@ def clear_sessions(monkeypatch):
     monkeypatch.setattr("tools.data_tools.default_store", store)
     monkeypatch.setattr(sys.modules[__name__], "_store", store)
     yield
+
+
+def test_run_graph_uses_shared_graphs_directory():
+    assert _GRAPHS_DIR == graphs_dir()
 
 
 # --- Comportement 1 : load_file_tool ---

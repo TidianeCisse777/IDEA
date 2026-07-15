@@ -7,6 +7,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+def test_deliverable_uses_shared_graphs_directory():
+    from core.runtime_paths import graphs_dir
+    from tools.deliverable_tool import _GRAPHS_DIR
+
+    assert _GRAPHS_DIR == graphs_dir()
+
+
 def _manifest():
     return {
         "study_context": {
