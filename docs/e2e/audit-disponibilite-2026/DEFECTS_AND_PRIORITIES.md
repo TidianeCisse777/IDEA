@@ -29,6 +29,14 @@ inventée, trous correctement signalés. Deux défauts mineurs de qualité/outil
 - **Correctif** : `audit_ecotaxa_availability` fournit la distribution temporelle
   par année (n samples, n projets), indépendante de toute zone.
 
+### D-AU5 · Audit spatial par zone nommée (CORRIGÉ)
+- **Symptôme** : impossible de dire quelles zones nommées sont couvertes / où
+  sont les trous géographiques ; l'audit restait au niveau projet.
+- **Correctif** : nouveau tool `audit_ecotaxa_spatial_coverage` (cœur
+  `core.geo.audit_zone_coverage`) — point-in-polygon des samples du cache sur les
+  zones du registre, zones couvertes classées + lacunes voisines. Tests :
+  `tests/test_geo.py` + `tests/test_audit_ecotaxa_spatial_coverage.py`.
+
 ### D-AU4 · Classement validé/prédit par taxon (réseau)
 - **Note** : « les projets avec le moins de copépodes validés / le moins d'images
   prédites » n'est pas dans le cache (comptages V/P/D = `taxa_stats`, réseau).

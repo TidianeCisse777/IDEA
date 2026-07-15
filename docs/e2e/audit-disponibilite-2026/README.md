@@ -19,6 +19,8 @@ read-only. Couvre les use cases **UC-D** (exploration) + UC-I (zone nommée).
 | 2 | Qu'est-ce qui n'est PAS là ? (Golfe du Saint-Laurent, hors 2015/2024) | UC-D2/I | 0 sample dans le GSL (démontré par requête) ; listing temporel global manquant |
 | 3 | Peut-on combiner deux projets ? (schémas 42 vs 17498) | UC-D4 | 102 colonnes communes, 0 conflit, fusionnables au niveau schéma |
 | 4 | Où sont les copépodes ? (Calanus, UVP6 2024) | UC-D3 | Seul 17498 expose du Calanus validé (1 624) ; 14844/14859 en prédit seulement |
+| 5 | Audit de couverture classé (peu de samples, périodes, samples pauvres) | UC-D | Nouveau tool `audit_ecotaxa_availability` |
+| 6 | Audit spatial par zone nommée (couverture + trous) | UC-D/I | Nouveau tool `audit_ecotaxa_spatial_coverage` |
 
 ## Artefacts
 

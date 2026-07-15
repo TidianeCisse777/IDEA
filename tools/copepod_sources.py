@@ -37,6 +37,11 @@ from core.ecotaxa_browser.cache.repo import (
     open_connection,
     query_samples_filtered,
 )
+from core.geo import audit_zone_coverage, load_registry
+
+_ZONES_REGISTRY_PATH = (
+    Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
+)
 from tools.ecotaxa_client import EcotaxaClient, EcotaxaExportError
 from tools.dataset_registry import ECOTAXA, dataset_variable_name, store_dataset
 from tools.public_url import download_url
@@ -745,6 +750,81 @@ def make_source_tools(thread_id: str) -> list:
             "Note : les comptages d'objets par projet sont plafonnés à la synchro ; "
             "le compte par sample est fiable. Les comptages validé/prédit par "
             "taxon ne sont pas inclus ici."
+        )
+        return "\n".join(lines)
+
+    @tool
+    def audit_ecotaxa_spatial_coverage() -> str:
+        """Audit spatial de la couverture par zone nommée (lecture seule).
+
+        À utiliser pour les questions d'audit spatial : « quelles zones sont
+        couvertes / peu couvertes », « où sont les trous géographiques », « audit
+        de couverture par zone ». Projette les samples indexés du cache sur les
+        zones nommées (IHO / MEOW / composites NeoLab) et renvoie :
+        - les zones couvertes, classées par nombre de samples ;
+        - les lacunes : zones voisines des données mais sans aucun sample ;
+        - les samples hors de toute zone connue.
+
+        Ne lance aucun export. Les comptages viennent du cache local. Les zones
+        composites (Arctique, Nunavik) chevauchent des zones plus fines, donc un
+        sample peut compter dans plusieurs zones.
+        """
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            rows = list(query_samples_filtered(conn))
+            conn.close()
+        except Exception as exc:
+            return f"Erreur lors de la lecture du cache EcoTaxa : {exc}"
+
+        points = [
+            {"latitude": r["lat_avg"], "longitude": r["lon_avg"]}
+            for r in rows
+            if r["lat_avg"] is not None and r["lon_avg"] is not None
+        ]
+        if not points:
+            return "Aucun sample géolocalisé dans le cache local."
+
+        import pandas as pd
+
+        registry = load_registry(_ZONES_REGISTRY_PATH)
+        audit = audit_zone_coverage(pd.DataFrame(points), registry)
+
+        lines = [
+            "# Audit spatial EcoTaxa par zone nommée (cache local)",
+            "",
+            f"{audit['n_points']} samples géolocalisés — "
+            f"{len(audit['covered'])} zone(s) couverte(s), "
+            f"{audit['n_unmatched']} sample(s) hors zone connue.",
+            "",
+            "## Zones couvertes (classées par nombre de samples)",
+            "",
+            "| zone | samples | source |",
+            "|---|---:|---|",
+        ]
+        lines.extend(
+            f"| {z['canonical']} | {z['n_samples']} | {z['source']} |"
+            for z in audit["covered"]
+        )
+        lines += [
+            "",
+            "## Lacunes : zones voisines sans aucun sample",
+            "",
+        ]
+        if audit["gaps"]:
+            lines.append("| zone | source |")
+            lines.append("|---|---|")
+            lines.extend(
+                f"| {z['canonical']} | {z['source']} |" for z in audit["gaps"]
+            )
+        else:
+            lines.append("Aucune lacune pertinente : les zones voisines des "
+                         "données sont toutes couvertes.")
+        lines.append("")
+        lines.append(
+            "Note : zones composites (Arctique, Nunavik) incluses — un sample "
+            "peut compter dans plusieurs zones."
         )
         return "\n".join(lines)
 
@@ -2324,6 +2404,7 @@ def make_source_tools(thread_id: str) -> list:
         list_ecotaxa_campaigns,
         list_ecotaxa_project_samples,
         audit_ecotaxa_availability,
+        audit_ecotaxa_spatial_coverage,
         preview_ecotaxa_project,
         query_ecotaxa,
         query_ecotaxa_sample,

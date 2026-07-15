@@ -92,6 +92,67 @@ def points_inside(
     return df.loc[mask]
 
 
+def audit_zone_coverage(
+    df: pd.DataFrame,
+    registry: Registry,
+    *,
+    lat_col: str = "latitude",
+    lon_col: str = "longitude",
+) -> dict:
+    """Audit spatial : combien de points tombent dans chaque zone nommée.
+
+    Retourne :
+        - ``covered`` : zones contenant au moins un point, triées par compte
+          décroissant (canonical, source, n_samples).
+        - ``gaps`` : zones à zéro point dont la bbox recoupe l'emprise des points
+          — c.-à-d. des trous spatiaux *pertinents* (une zone voisine des données
+          mais non couverte), pas les zones lointaines trivialement vides.
+        - ``n_unmatched`` : points hors de toute zone du registry.
+        - ``n_points`` : total des points audités.
+
+    Les zones composites (Arctique, Nunavik) chevauchent des zones plus fines :
+    un même point peut être compté dans plusieurs zones. C'est voulu pour un
+    audit de couverture — chaque zone est évaluée indépendamment.
+    """
+    n_points = len(df)
+    if n_points == 0:
+        return {"covered": [], "gaps": [], "n_unmatched": 0, "n_points": 0}
+
+    lons = df[lon_col].to_numpy()
+    lats = df[lat_col].to_numpy()
+    env_minx, env_maxx = float(lons.min()), float(lons.max())
+    env_miny, env_maxy = float(lats.min()), float(lats.max())
+
+    covered: list[dict] = []
+    gaps: list[dict] = []
+    matched_any = None
+    for zone in registry.zones:
+        mask = contains_xy(zone.polygon, lons, lats)
+        matched_any = mask if matched_any is None else (matched_any | mask)
+        n = int(mask.sum())
+        if n > 0:
+            covered.append(
+                {"canonical": zone.canonical, "source": zone.source, "n_samples": n}
+            )
+            continue
+        zminx, zminy, zmaxx, zmaxy = zone.polygon.bounds
+        overlaps = not (
+            zmaxx < env_minx or zminx > env_maxx
+            or zmaxy < env_miny or zminy > env_maxy
+        )
+        if overlaps:
+            gaps.append({"canonical": zone.canonical, "source": zone.source})
+
+    covered.sort(key=lambda z: (-z["n_samples"], z["canonical"]))
+    gaps.sort(key=lambda z: z["canonical"])
+    return {
+        "covered": covered,
+        "gaps": gaps,
+        "n_unmatched": int((~matched_any).sum()) if matched_any is not None else n_points,
+        "n_points": n_points,
+    }
+
+
 def cut_polygon_at_cap_line(
     polygon: BaseGeometry,
     *,

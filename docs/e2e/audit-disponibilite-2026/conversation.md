@@ -103,3 +103,27 @@ Les tours 1–4 ont montré que l'agent savait répondre au cas par cas mais pas
 **Statut : validé.** L'audit de couverture est désormais un tool direct. Pour le
 classement validé/prédit par taxon, l'agent route vers `count_ecotaxa_taxa`
 (règle de system prompt). D-AU1 et D-AU2 adressés.
+
+## 6. Audit spatial par zone nommée (nouveau tool)
+
+Axe jugé crucial : cartographier la couverture sur les zones nommées et
+identifier les trous géographiques. Ajout du tool `audit_ecotaxa_spatial_coverage`
+(cœur `core.geo.audit_zone_coverage`) : point-in-polygon des samples du cache sur
+les 65 zones du registre (IHO / MEOW / composites NeoLab).
+
+**Input**
+
+> Fais-moi un audit spatial de la couverture par zone nommée : quelles zones sont couvertes et combien de samples, et où sont les trous géographiques ?
+
+**Output**
+
+Zones couvertes (classées) : Baie de Baffin (62), MEOW Baffin Bay–Davis Strait
+(40), Détroit de Davis (26), MEOW North Greenland (24), MEOW High Arctic
+Archipelago (22), MEOW Lancaster Sound (9), MEOW West Greenland Shelf (2).
+
+Trous (zones voisines sans sample) : Hudson Complex, Northern Labrador, Mer de
+Lincoln, Mer des Tchouktches, Beaufort, Chukchi, Arctique (composite). 97 samples
+géolocalisés, 0 hors zone.
+
+**Statut : validé.** L'audit spatial répond directement à « quelles zones sont
+couvertes / où sont les trous ». Défaut D-AU5 (audit spatial manquant) corrigé.
