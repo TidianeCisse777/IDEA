@@ -25,6 +25,7 @@ UC-B1 (carte).
 | 3 | Agrégation spatiale (surface homogène) | 125 stations → 4 grappes (7,5 s) |
 | 4 | Couplage baseline vs SSP5-8.5 2050 | Δ +1,10 à +1,23 °C par grappe (30 s) |
 | 5 | Carte de priorisation (zones nommées) | `figures/58fdbc42c2ba.png` |
+| 6 | **Correction** — abondance de l'agent fausse ; carte refaite (script déterministe) | `figures/carte_corrigee_copepodes_2050.png` |
 
 ## Résultat
 

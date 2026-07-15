@@ -774,6 +774,70 @@ def test_uvp_hint_none_for_generic_file():
     assert hint == ""
 
 
+def _neolabs_tsv(tmp_path):
+    p = tmp_path / "neolabs.tsv"
+    pd.DataFrame({
+        "SAMPLE_ID": [1, 1, 2],
+        "STATION_NAME": ["A", "A", "A"],
+        "TAXON_ID": ["Calanus", "Oithona", "Calanus"],
+        "CLASS": ["Copepoda", "Copepoda", "Copepoda"],
+        "Total abundance (ind./m3 depth vol)": [10.0, 5.0, 20.0],
+        "latitude": [60.0, 60.0, 60.0],
+        "longitude": [-65.0, -65.0, -65.0],
+    }).to_csv(p, sep="\t", index=False)
+    return str(p)
+
+
+def test_run_pandas_blocks_handrolled_neolabs_copepod_density(tmp_path):
+    thread_id = "thread-neolabs-guard"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": _neolabs_tsv(tmp_path)})
+
+    out = run_pandas.invoke({
+        "code": (
+            "cop = df[df['CLASS'] == 'Copepoda']\n"
+            "result = cop.groupby('STATION_NAME')"
+            "['Total abundance (ind./m3 depth vol)'].sum()"
+        )
+    })
+
+    assert "bloqué" in out
+    assert "neolabs_copepod_density" in out
+
+
+def test_run_pandas_allows_neolabs_contract_call(tmp_path):
+    thread_id = "thread-neolabs-contract"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": _neolabs_tsv(tmp_path)})
+
+    out = run_pandas.invoke({
+        "code": (
+            "from core.neolabs_abundance import neolabs_copepod_density\n"
+            "result = neolabs_copepod_density(df)"
+        )
+    })
+
+    assert "bloqué" not in out
+    # station A : sample1=15, sample2=20 -> moyenne 17.5
+    assert "17.5" in out
+
+
+def test_hint_neolabs_taxonomy_routes_to_contract():
+    """Fichier NeoLabs taxonomy → hint skill + contrat neolabs_copepod_density."""
+    cols = [
+        "SAMPLE_ID", "STATION_NAME", "TAXON_ID", "CLASS",
+        "Total abundance (ind./m3 depth vol)", "latitude", "longitude",
+    ]
+    hint = _uvp_skill_hint(cols)
+    assert "neolabs_abundance_analysis" in hint
+    assert "neolabs_copepod_density" in hint
+    assert "moyenne tous-taxons" in hint
+
+
 def test_uvp_hint_taxa_db_intermediate_does_not_trigger():
     """taxa_db.csv intermédiaire (sortie de scripts/uvp_metrics_pipeline.py)
     a sample_id + depth_bin + sampled_volume + category mais PAS object_major.

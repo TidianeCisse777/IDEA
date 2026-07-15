@@ -76,6 +76,12 @@ def _canonical_tile_for(latitude: float, longitude: float, tile_degrees: float =
     )
 
 
+# Region mode: when a point set would need more than this many fine 5° tiles,
+# fetch ONE bounding tile at a coarse stride instead (one download beats dozens).
+_REGION_TILE_BUDGET = 6
+_REGION_STRIDE = 4
+
+
 def _fetch_bio_oracle_bbox(
     *,
     variable: str,
@@ -83,23 +89,31 @@ def _fetch_bio_oracle_bbox(
     depth_layer: str,
     target_year: int | None,
     tile: dict,
+    stride: int = 1,
 ) -> pd.DataFrame:
     """Fetch all Bio-ORACLE grid points within a canonical tile (one HTTP call).
 
     Returns a DataFrame with columns: time, latitude, longitude, value, plus
     `dataset_id` available via `df.attrs['dataset_id']`. Cached on disk under
-    the canonical (tile × variable × scenario × depth × year) key so future
-    enrichments touching the same tile cost ~milliseconds.
+    the canonical (tile × variable × scenario × depth × year × stride) key so
+    future enrichments touching the same tile cost ~milliseconds.
+
+    `stride` is the ERDDAP grid subsampling step (1 = full ~0.05° resolution).
+    A coarser stride (e.g. 4 ≈ 0.2°) is used for wide "region" tiles covering
+    many dispersed points, where one coarse download beats dozens of fine ones —
+    fine for smooth fields such as climatological temperature.
     """
     var = _resolve_var(variable)
     scen = _resolve_scenario(scenario)
     depth = _resolve_depth(depth_layer)
+    stride = max(1, int(stride))
     cache_key = {
         "tile": tile,
         "variable": var,
         "scenario": scen,
         "depth_layer": depth,
         "target_year": target_year,
+        "stride": stride,
     }
     cached = cache_get("bio_oracle_bbox", cache_key)
     if cached is not None:
@@ -112,8 +126,8 @@ def _fetch_bio_oracle_bbox(
     url = (
         f"{griddap_url}.csv?{query_var}"
         f"[({time_sel})]"
-        f"[({tile['lat_min']:.4f}):1:({tile['lat_max']:.4f})]"
-        f"[({tile['lon_min']:.4f}):1:({tile['lon_max']:.4f})]"
+        f"[({tile['lat_min']:.4f}):{stride}:({tile['lat_max']:.4f})]"
+        f"[({tile['lon_min']:.4f}):{stride}:({tile['lon_max']:.4f})]"
     )
     response = requests.get(url, timeout=120)
     response.raise_for_status()
@@ -308,24 +322,57 @@ class BioOracleMatcher:
             for scenario in self.scenarios
         }
 
-        tile_jobs: dict[tuple, dict] = {}
-        point_to_tile_key: dict[tuple, tuple] = {}
+        from collections import defaultdict
+
+        # Group query points per (variable, scenario, layer, year) to decide,
+        # per group, between many fine 5° tiles or one coarse region tile.
+        by_layer: dict[tuple, list[tuple]] = defaultdict(list)
         for key in unique_query_keys:
             lat_f, lon_f, variable, scenario, layer, year = key
-            tile = _canonical_tile_for(lat_f, lon_f)
-            tile_key = (
-                tile["lat_min"], tile["lat_max"],
-                tile["lon_min"], tile["lon_max"],
-                variable, scenario, layer, year,
-            )
-            point_to_tile_key[key] = tile_key
-            tile_jobs.setdefault(tile_key, {
-                "tile": tile,
-                "variable": variable,
-                "scenario": scenario,
-                "depth_layer": layer,
-                "target_year": year,
-            })
+            by_layer[(variable, scenario, layer, year)].append(key)
+
+        tile_jobs: dict[tuple, dict] = {}
+        point_to_tile_key: dict[tuple, tuple] = {}
+        for (variable, scenario, layer, year), keys in by_layer.items():
+            fine = {key: _canonical_tile_for(key[0], key[1]) for key in keys}
+            distinct_fine = {
+                (t["lat_min"], t["lat_max"], t["lon_min"], t["lon_max"])
+                for t in fine.values()
+            }
+            if len(distinct_fine) > _REGION_TILE_BUDGET:
+                # Region mode: one coarse bounding tile for the whole group.
+                lats = [key[0] for key in keys]
+                lons = [key[1] for key in keys]
+                pad = 1.0
+                tile = {
+                    "lat_min": min(lats) - pad, "lat_max": max(lats) + pad,
+                    "lon_min": min(lons) - pad, "lon_max": max(lons) + pad,
+                }
+                tile_key = (
+                    tile["lat_min"], tile["lat_max"], tile["lon_min"], tile["lon_max"],
+                    variable, scenario, layer, year, _REGION_STRIDE,
+                )
+                tile_jobs.setdefault(tile_key, {
+                    "tile": tile, "variable": variable, "scenario": scenario,
+                    "depth_layer": layer, "target_year": year, "stride": _REGION_STRIDE,
+                })
+                for key in keys:
+                    point_to_tile_key[key] = tile_key
+            else:
+                for key in keys:
+                    tile = fine[key]
+                    tile_key = (
+                        tile["lat_min"], tile["lat_max"],
+                        tile["lon_min"], tile["lon_max"],
+                        variable, scenario, layer, year, 1,
+                    )
+                    point_to_tile_key[key] = tile_key
+                    # Fine mode: omit `stride` (defaults to 1) so the payload stays
+                    # backward-compatible with callers/mocks predating the stride arg.
+                    tile_jobs.setdefault(tile_key, {
+                        "tile": tile, "variable": variable, "scenario": scenario,
+                        "depth_layer": layer, "target_year": year,
+                    })
 
         def _fetch_tile(args: tuple) -> tuple[tuple, pd.DataFrame | None]:
             tile_key, payload = args

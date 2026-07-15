@@ -168,10 +168,26 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
         and "sample_id" in col_set
         and not is_ecopart
     )
+    # NeoLabs taxonomy net file : signal exclusif (abondance ind./m³ depth vol +
+    # taxon-level rows + classe taxonomique). Sans ce hint, l'agent tombait sur un
+    # run_pandas libre et faisait une moyenne tous-taxons fausse.
+    is_neolabs = (
+        "Total abundance (ind./m3 depth vol)" in col_set
+        and "TAXON_ID" in col_set
+        and ("CLASS" in col_set or "ZOOPLANKTON_CATEGORY" in col_set)
+    )
     if is_ecopart:
         return (
             "→ Fichier EcoPart UVP détecté. "
             "Charge le skill `uvp_ecopart` pour les méthodes de calcul (m1-m3)."
+        )
+    if is_neolabs:
+        return (
+            "→ Fichier NeoLabs taxonomy détecté. Charge le skill "
+            "`neolabs_abundance_analysis`. Pour une densité de copépodes, utilise le "
+            "contrat déterministe `neolabs_copepod_density` de `core.neolabs_abundance` "
+            "(filtre CLASS==Copepoda, somme par sample, moyenne par station) — ne fais "
+            "PAS une moyenne tous-taxons sur les lignes brutes."
         )
     if is_ecotaxa_uvp_raw:
         return (
@@ -284,6 +300,47 @@ def _column_location_hint(error: Exception, local_vars: dict[str, Any]) -> str:
         f"\nLa colonne `{missing}` est absente de la table active `df` mais "
         f"présente dans : {', '.join(holders)}. Cible la variable explicite."
     )
+
+
+def _is_neolabs_columns(columns) -> bool:
+    """True si les colonnes trahissent une table NeoLabs taxonomy."""
+    cols = set(columns)
+    return (
+        "Total abundance (ind./m3 depth vol)" in cols
+        and "TAXON_ID" in cols
+        and ("CLASS" in cols or "ZOOPLANKTON_CATEGORY" in cols)
+    )
+
+
+def _neolabs_copepod_guard(code: str, local_vars: dict[str, Any]) -> str | None:
+    """Bloque une densité de copépodes NeoLabs calculée à la main.
+
+    Force le passage par le contrat déterministe `neolabs_copepod_density` : sinon
+    l'agent somme les samples ou brasse les taxons et produit une densité fausse.
+    Ne se déclenche que si (a) un DataFrame NeoLabs est chargé, (b) le code filtre
+    les copépodes ET agrège l'abondance par groupby, (c) sans appeler le contrat.
+    """
+    if "neolabs_copepod_density" in code:
+        return None
+    has_neolabs = any(
+        isinstance(value, pd.DataFrame) and _is_neolabs_columns(value.columns)
+        for value in local_vars.values()
+    )
+    if not has_neolabs:
+        return None
+    lowered = code.lower()
+    filters_copepods = "copepoda" in lowered
+    aggregates_abundance = "total abundance" in lowered and "groupby" in lowered
+    if filters_copepods and aggregates_abundance:
+        return (
+            "run_pandas bloqué : densité de copépodes NeoLabs calculée à la main. "
+            "Utilise le contrat déterministe (filtre CLASS==Copepoda, somme par "
+            "SAMPLE_ID, puis moyenne par station) — ne somme PAS les samples et ne "
+            "compte PAS les lignes comme des stations :\n"
+            "from core.neolabs_abundance import neolabs_copepod_density\n"
+            "result = neolabs_copepod_density(df_file_...)"
+        )
+    return None
 
 
 def _persist_canonical_sample_depth(
@@ -440,6 +497,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             local_vars = _dataframe_vars(_store, thread_id, df)
             local_vars["plt"] = plt
             injected_keys = set(local_vars) | {"__builtins__"}
+
+            guard = _neolabs_copepod_guard(code, local_vars)
+            if guard:
+                return guard
+
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():

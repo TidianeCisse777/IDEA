@@ -98,8 +98,78 @@ la 2ᵉ est passée. Lecture : la grappe (68,77 N / -80,84 W) cumule la plus for
 abondance (162 ind./m³) et le plus fort réchauffement (+1,23 °C) → priorité.
 
 **Statut : validé.** Voir `figures/74f5bcad37a2.png` (version initiale) puis
-`figures/58fdbc42c2ba.png` (**version finale, zones nommées** : Lancaster Sound,
-Hudson Complex, Queen Maud E, Queen Maud W).
+`figures/58fdbc42c2ba.png` (zones nommées).
+
+## 6. Correction — le calcul d'abondance de l'agent était faux
+
+Vérification (reconstruction déterministe sur le fichier) : la carte des §3–§5
+reposait sur une abondance **erronée**. L'agent avait fait la **moyenne de
+`Total abundance` sur toutes les lignes** d'une cellule grille — donc en brassant
+les **199 taxons** (dont 50 % non copépodes), tous stades/tailles, sur un
+groupement qui n'a sorti que 4 cellules, en présentant des **comptages de lignes
+comme des « n_stations »**.
+
+**Écart mesuré** : pour Hudson Complex, agent (faux) = 162,78 ind/m³ ; correct
+= **3 968 ind/m³** (24× plus).
+
+### Calcul correct (déterministe, `scripts/dev/map_copepod_warming_corrected.py`)
+1. **Filtre `CLASS == 'Copepoda'`** (3 570 lignes, 125 stations, 246 samples).
+2. Densité copépode **par sample** = somme des taxons copépodes.
+3. **Par station** = moyenne des samples (on trace les stations réelles, en mer).
+4. Réchauffement **par zone** (surface homogène) interrogé via le tool
+   `query_bio_oracle` à une station représentative de chaque zone — thread frais
+   par appel pour éviter tout dataframe périmé (bug d'alignement observé sinon :
+   deltas négatifs impossibles).
+
+### Densité copépode correcte + réchauffement 2050 par zone
+| zone | n_stations | densité ind/m³ | Δ 2050 °C |
+|---|---:|---:|---:|
+| Mer des Tchouktches | 1 | 15 439 | +1,26 |
+| Hudson Complex | 1 | 3 968 | +1,23 |
+| Baie d'Ungava | 3 | 1 292 | +1,40 |
+| Baie d'Hudson | 22 | 1 043 | +1,23 |
+| Beaufort–Queen Maud | 17 | 1 036 | +1,13 |
+| Arctique | 9 | 730 | +0,98 |
+| Lancaster Sound | 12 | 636 | +0,97 |
+| Détroit d'Hudson | 10 | 505 | +1,15 |
+| Mer de Beaufort | 12 | 435 | +0,92 |
+| Détroit de Davis | 18 | 342 | +0,87 |
+| Baie de Baffin | 19 | 233 | +0,58 |
+
+**Statut : corrigé et vérifié.** Carte finale **corrigée** :
+`figures/carte_corrigee_copepodes_2050.png` (125 stations, taille = densité
+copépode juste, couleur = réchauffement **par station**, étiquettes de zone
+lisibles — halo noir).
+
+### Coloriage par station (champ lisse) + enrichissement rapide
+Le coloriage par zone créait des sauts de couleur artificiels entre stations
+voisines de zones différentes. Passé au **delta Bio-ORACLE par station** → champ
+lisse. Enrichir 125 points via le multi-enricher touchait ~30-40 tuiles 5°
+(≈ 80 requêtes, plusieurs minutes) ; remplacé par **1 grande tuile par scénario**
+échantillonnée à ~0,2° (2 requêtes) + lookup local → **~9 s** pour 125 stations.
+Étiquettes de police corrigées (halo noir, blanc forcé sur barre/légende/titre).
+
+### Prévention durable (diagnostic + fix)
+
+Diagnostic : l'erreur venait d'un **garde-fou advisory** (skill + prompt) sans
+**contrat déterministe**, et de l'absence d'auto-détection du format NeoLab au
+`load_file`. Correctifs :
+
+1. **Contrat déterministe** `core/neolabs_abundance.py::neolabs_copepod_density`
+   (filtre `CLASS == 'Copepoda'`, somme par `SAMPLE_ID`, moyenne par station,
+   version de méthode) — équivalent NeoLab de `copepod_sample_depth`.
+2. **Auto-détection** du format NeoLab dans `load_file` → hint vers le contrat.
+3. **Règle de routage** system prompt : interdit le `run_pandas` fait main.
+4. **Garde-fou `run_pandas`** : bloque toute agrégation copépode NeoLab faite à la
+   main (filtre Copepoda + groupby `Total abundance` sans le contrat) et renvoie
+   vers `neolabs_copepod_density`. C'est l'enforcement réel — le prompt seul ne
+   tenait pas (un premier test live a montré l'agent faire une **somme par
+   station** = 20 007 ind/m³ pour la station 24, au lieu de la moyenne par sample
+   = 2 001 ind/m³).
+
+Enrichissement Bio-ORACLE rendu rapide côté tool aussi : `enrich_with_bio_oracle`
+bascule en **mode région** (1 tuile grossière au-delà de 6 tuiles fines) →
+**5,9 s / 2 requêtes** pour 125 stations dispersées (vs ~90 requêtes).
 
 ---
 

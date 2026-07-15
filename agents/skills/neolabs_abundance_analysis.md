@@ -181,7 +181,13 @@ Adjust column names to the actual file after inspection.
 
 3. Abundance:
    - total zooplankton abundance in `ind./m3`
-   - copepod abundance filtered from `ZOOPLANKTON_CATEGORY`
+   - **copepod density — use the deterministic contract, do NOT hand-roll.**
+     Import and call `neolabs_copepod_density` from `core.neolabs_abundance`: it
+     filters `CLASS == 'Copepoda'`, sums `Total abundance (ind./m3 depth vol)`
+     per `SAMPLE_ID`, then averages per station. NEVER average `Total abundance`
+     over raw taxon-level rows (only ~half of the ~199 taxa are copepods, so a
+     row-mean mixes non-copepods, stages and depth strata and is wrong), and
+     never count rows as stations.
    - top taxa by summed abundance
    - abundance by station, year, month, depth interval
 
