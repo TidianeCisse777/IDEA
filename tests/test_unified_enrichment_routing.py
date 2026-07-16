@@ -86,7 +86,9 @@ def test_explicit_enrichment_exposes_only_named_canonical_tool_despite_pollution
     assert exposed_enrichments == {canonical_tool}
     assert not any(group.startswith("ecotaxa_") for group in exposure.active_groups)
     assert exposure.policy_overflow is False
-    assert len(exposure.tool_names) == 7
+    # file_analysis actif (fichier chargé) → run_pandas + split_dataframe_by_zone.
+    assert "split_dataframe_by_zone" in exposure.tool_names
+    assert len(exposure.tool_names) == 8
 
 
 def test_system_prompt_defines_one_explicit_enrichment_contract_for_all_sources():

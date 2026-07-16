@@ -751,6 +751,108 @@ def test_get_ecotaxa_sample_handles_browser_error():
     assert "999" in result
 
 
+# --- Object-level read (browse content without export) ----------------------
+
+
+def test_source_tools_include_object_read_tools():
+    from tools.copepod_sources import make_source_tools
+
+    names = {t.name for t in make_source_tools("thread-objects")}
+    assert "list_ecotaxa_sample_objects" in names
+    assert "get_ecotaxa_object" in names
+
+
+def test_object_read_tools_require_skill_load_in_description():
+    from tools.copepod_sources import make_source_tools
+
+    by_name = {t.name: t for t in make_source_tools("thread-objects-desc")}
+    for name in ("list_ecotaxa_sample_objects", "get_ecotaxa_object"):
+        assert 'load_skill("ecotaxa_navigation")' in by_name[name].description
+
+
+def test_get_ecotaxa_object_renders_full_context():
+    fake = {
+        "object": {
+            "object_id": 1749800000001, "original_id": "o1", "acquisition_id": 4,
+            "sample_id": 17498000001, "project_id": 17498, "taxon_id": 25828,
+            "classification_status": "V", "date": "2024-09-21",
+            "depth_min": 5.0, "depth_max": 120.0,
+            "latitude": 67.48, "longitude": -63.79,
+            "free_fields": {"area": 1234, "major": 45.6},
+        },
+        "acquisition": {"acquisition_id": 4, "instrument": "uvp6",
+                        "free_fields": {"pixel": 0.147}},
+        "sample": {"sample_id": 17498000001, "original_id": "st12",
+                   "latitude": 67.48, "longitude": -63.79},
+        "project": {"project_id": 17498},
+    }
+    with patch("tools.copepod_sources.core_get_object", return_value=fake):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-get-object")
+        fn = next(t for t in tools if t.name == "get_ecotaxa_object")
+        result = fn.invoke({"object_id": 1749800000001})
+
+    assert "1749800000001" in result
+    assert "st12" in result           # sample context
+    assert "uvp6" in result           # acquisition context
+    assert "area" in result           # object free fields
+    assert "120" in result            # depth
+
+
+def test_get_ecotaxa_object_error_steers_to_list_when_sample_id_passed():
+    from core.ecotaxa_browser.errors import EcoTaxaBrowserError
+
+    def _raise(object_id):
+        raise EcoTaxaBrowserError("OBJECT_NOT_FOUND", "object not accessible")
+
+    with patch("tools.copepod_sources.core_get_object", side_effect=_raise):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-get-object-error")
+        fn = next(t for t in tools if t.name == "get_ecotaxa_object")
+        result = fn.invoke({"object_id": 17498000001})
+    assert "OBJECT_NOT_FOUND" in result
+    # the error steers the model to the list tool if a sample_id was passed.
+    assert "list_ecotaxa_sample_objects" in result
+
+
+def test_list_ecotaxa_sample_objects_renders_rows_without_export():
+    fake_objects = [
+        {"object_id": 42000002001, "original_id": "o1", "acquisition_id": 4,
+         "sample_id": 42000002, "project_id": 42, "taxon_id": 25828,
+         "taxon": "Copepoda", "classification_status": "V",
+         "date": "2015-05-22", "depth_min": 5.0, "depth_max": 120.0},
+        {"object_id": 42000002002, "original_id": "o2", "acquisition_id": 4,
+         "sample_id": 42000002, "project_id": 42, "taxon_id": 11111,
+         "taxon": "Calanus", "classification_status": "P",
+         "date": "2015-05-22", "depth_min": 5.0, "depth_max": 120.0},
+    ]
+    with patch("tools.copepod_sources.core_list_sample_objects", return_value=fake_objects) as mocked:
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-list-objects")
+        fn = next(t for t in tools if t.name == "list_ecotaxa_sample_objects")
+        result = fn.invoke({"sample_id": 42000002})
+
+    # object-level rows are rendered directly — no export job triggered.
+    assert "42000002001" in result
+    assert "Copepoda" in result and "Calanus" in result
+    assert "V" in result and "P" in result
+    assert "120" in result
+    # the sample_id was forwarded to the paginated object query.
+    assert mocked.call_args.kwargs.get("sample_id", None) == 42000002 or \
+        mocked.call_args.args[0] == 42000002
+
+
+def test_list_ecotaxa_sample_objects_empty_page():
+    with patch("tools.copepod_sources.core_list_sample_objects", return_value=[]):
+        from tools.copepod_sources import make_source_tools
+        tools = make_source_tools("thread-list-objects-empty")
+        fn = next(t for t in tools if t.name == "list_ecotaxa_sample_objects")
+        result = fn.invoke({"sample_id": 42000002, "page": 9})
+    assert "aucun" in result.lower()
+
+
+
+
 def test_count_ecotaxa_taxa_shows_resolved_taxon_id_and_u_count():
     fake = {
         "project_ids_resolved": [14853],

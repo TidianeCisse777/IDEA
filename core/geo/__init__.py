@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+import numpy as np
 import pandas as pd
 from shapely import contains_xy
 from shapely.geometry import Polygon, shape
@@ -151,6 +152,110 @@ def audit_zone_coverage(
         "n_unmatched": int((~matched_any).sum()) if matched_any is not None else n_points,
         "n_points": n_points,
     }
+
+
+OUTSIDE_ZONE_LABEL = "Hors zone référencée"
+MISSING_COORDS_LABEL = "Sans coordonnées"
+
+
+def zone_family(zone: Zone) -> str:
+    """Classe une zone du registry en famille de découpage.
+
+    - ``"iho"``       : mer / baie / détroit physique (IHO Marine Regions v3,
+      y compris les coupes NeoLab qui héritent d'un polygone IHO).
+    - ``"meow"``      : écorégion marine (MEOW Spalding et al. 2007).
+    - ``"composite"`` : union / approximation NeoLab (Nunavik, Arctique,
+      Hawke Channel) — chevauche les zones fines, hors partition par défaut.
+
+    Sert à choisir un jeu de zones *non chevauchantes* pour l'assignation :
+    les familles IHO se tuilent proprement, MEOW forme un autre tuilage, mais
+    mélanger IHO + composite + MEOW ferait matcher un même point dans plusieurs
+    zones. ``assign_zones`` filtre donc par famille.
+    """
+    source = zone.source.lower()
+    if zone.canonical.startswith("MEOW:") or source.startswith("meow"):
+        return "meow"
+    if source.startswith("iho"):
+        return "iho"
+    return "composite"
+
+
+def assign_zones(
+    df: pd.DataFrame,
+    registry: Registry,
+    *,
+    lat_col: str = "latitude",
+    lon_col: str = "longitude",
+    family: str = "iho",
+    outside_label: str = OUTSIDE_ZONE_LABEL,
+    missing_label: str = MISSING_COORDS_LABEL,
+) -> pd.Series:
+    """Assigne à chaque ligne la zone (unique) dans laquelle son point tombe.
+
+    Contrairement à :func:`audit_zone_coverage` — qui compte chaque zone
+    indépendamment et laisse les zones composites se chevaucher — cette fonction
+    produit une **partition** : exactement un label par ligne. Base du découpage
+    automatique par mers / baies / détroits d'un fichier chargé.
+
+    Politique :
+    - ``family`` restreint le jeu de zones candidates (voir :func:`zone_family`).
+      ``"auto"`` par défaut = cascade IHO physique PUIS MEOW pour les points hors
+      des polygones IHO (couverture maximale : nom de mer/baie/détroit quand il
+      existe, sinon écorégion). ``"iho"`` = seulement mers/baies/détroits ;
+      ``"meow"`` = seulement écorégions ; ``"composite"`` = unions NeoLab ;
+      ``"all"`` = toutes les zones confondues.
+    - Chevauchement dans une famille : la zone du **plus petit polygone** (la plus
+      spécifique) l'emporte, de façon déterministe.
+    - Point hors de toute zone candidate → ``outside_label`` (jamais un
+      identifiant de station : une station n'est pas une zone géographique).
+    - Latitude ou longitude manquante → ``missing_label``.
+
+    Retourne une ``pd.Series`` alignée sur ``df.index`` (index préservé pour les
+    jointures aval). Vectorisé via ``shapely.contains_xy`` pour rester rapide sur
+    les gros DataFrames EcoTaxa / Bio-ORACLE.
+    """
+    labels = pd.Series(outside_label, index=df.index, dtype=object)
+    if len(df) == 0:
+        return labels
+
+    lons = pd.to_numeric(df[lon_col], errors="coerce").to_numpy(dtype=float)
+    lats = pd.to_numeric(df[lat_col], errors="coerce").to_numpy(dtype=float)
+    missing = np.isnan(lons) | np.isnan(lats)
+    # contains_xy n'accepte pas les NaN : on remplace par un point loin de toute
+    # zone (aucun match), puis on écrase avec missing_label à la fin.
+    safe_lons = np.where(missing, 1e9, lons)
+    safe_lats = np.where(missing, 1e9, lats)
+
+    # Une passe = un tuilage cohérent. En 'auto', on enchaîne IHO puis MEOW :
+    # MEOW ne comble QUE les lignes encore hors zone après IHO (les noms
+    # physiques priment, les écorégions rattrapent la couverture côtière/hauturière).
+    if family == "auto":
+        passes = ["iho", "meow"]
+    elif family == "all":
+        passes = ["all"]
+    else:
+        passes = [family]
+
+    for pass_family in passes:
+        if pass_family == "all":
+            candidates = list(registry.zones)
+        else:
+            candidates = [z for z in registry.zones if zone_family(z) == pass_family]
+        # Seules les lignes encore non assignées (et non manquantes) sont
+        # candidates pour cette passe.
+        still_open = (labels == outside_label).to_numpy() & ~missing
+        if not still_open.any():
+            break
+        # Trier par aire décroissante : les plus petits polygones (plus spécifiques)
+        # sont appliqués en dernier et écrasent les plus grands sur les points communs.
+        for zone in sorted(candidates, key=lambda z: z.polygon.area, reverse=True):
+            mask = contains_xy(zone.polygon, safe_lons, safe_lats) & still_open
+            if mask.any():
+                labels.loc[df.index[mask]] = zone.canonical
+
+    if missing.any():
+        labels.loc[df.index[missing]] = missing_label
+    return labels
 
 
 def cut_polygon_at_cap_line(

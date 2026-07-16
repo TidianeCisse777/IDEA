@@ -97,6 +97,79 @@ def test_load_file_tool_returns_summary(tsv_path):
     assert "profile_id" in result
 
 
+def test_run_pandas_marks_truncated_dataframe_preview():
+    """Le modèle ne doit pas compléter une table au-delà des lignes visibles."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-pandas-truncated-preview"
+    df = pd.DataFrame({"row_id": range(25), "value": range(25)})
+    store_dataset(
+        _store,
+        thread_id,
+        df,
+        variable_name="df_file_preview",
+        meta={"source": "file:test.csv", "n_rows": 25, "n_cols": 2},
+        latest_alias="df_file_preview",
+        is_loaded_file=True,
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "result = df.copy()"})
+
+    assert "25 lignes × 2 colonnes" in result
+    assert "aperçu des 20 premières lignes seulement" in result
+    assert "Ne complète pas les lignes absentes" in result
+
+
+def test_run_pandas_returns_explicit_printed_control_output():
+    """Les tableaux préparés par print ne doivent pas disparaître du tool."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-pandas-printed-control"
+    df = pd.DataFrame({"row_id": [1, 2], "value": [10, 20]})
+    store_dataset(
+        _store,
+        thread_id,
+        df,
+        variable_name="df_file_control",
+        meta={"source": "file:test.csv", "n_rows": 2, "n_cols": 2},
+        latest_alias="df_file_control",
+        is_loaded_file=True,
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({
+        "code": "print('CONTROL_ROWS'); print(df.to_markdown(index=False)); result = df",
+    })
+
+    assert "Sortie contrôlée du code :" in result
+    assert "CONTROL_ROWS" in result
+    assert "|        1 |      10 |" in result
+
+
+def test_run_pandas_returns_printed_output_without_result_assignment():
+    """Une pré-vérification imprimée reste exploitable sans DataFrame result."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-pandas-printed-only"
+    df = pd.DataFrame({"row_id": [1]})
+    store_dataset(
+        _store,
+        thread_id,
+        df,
+        variable_name="df_file_printed_only",
+        meta={"source": "file:test.csv", "n_rows": 1, "n_cols": 1},
+        latest_alias="df_file_printed_only",
+        is_loaded_file=True,
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "print('coverage_rows=1')"})
+
+    assert "coverage_rows=1" in result
+    assert "aucune variable `result` assignée" in result
+
+
 def test_load_file_success_replaces_external_source_affinity(tsv_path):
     from tools.source_scope import (
         SourceAffinity,
@@ -623,12 +696,17 @@ def test_run_graph_requires_graph_writer_after_loaded_analysis_skill(tmp_path):
 
     run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
     result = run_graph.invoke({
-        "code": "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])",
+        "code": (
+            "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])"
+            + _GENERIC_GRAPH_CONTRACT_CODE
+        ),
     })
 
-    assert "load_skill(\"graph_writer\")" in result
-    assert "before run_graph" in result
-    assert "/graphs/" not in result
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["loaded_skills"] == [
+        "neolabs_abundance_analysis",
+        "graph_writer",
+    ]
 
 
 def test_run_graph_blocks_missing_graph_contract(tmp_path):
@@ -645,7 +723,9 @@ def test_run_graph_blocks_missing_graph_contract(tmp_path):
         "code": "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])",
     })
 
-    assert result == "graph contract blocked: graph_contract is missing"
+    assert "graph contract blocked: graph_contract is missing" in result
+    assert "Retry exactly once" in result
+    assert "same active dataframe" in result
     assert store.get(thread_id)["meta"]["graph_quality_blocked"] is True
     assert "/graphs/" not in result
 

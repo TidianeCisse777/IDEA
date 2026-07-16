@@ -40,6 +40,14 @@ def test_graph_skills_must_run_in_separate_sequential_tool_batches():
     assert "wait for the planner result" in prompt
 
 
+def test_each_new_visual_turn_restarts_planner_even_after_previous_graph():
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "follow-up edit to an existing graph" in prompt
+    assert "may reuse the loaded graph workflow" in prompt
+    assert "must continue to `run_graph`" in prompt
+    assert "do not stop after tabular preparation" in prompt
+
+
 def test_graph_planner_uses_semantics_instead_of_closed_keyword_list():
     planner = Path("agents/skills/graph_planner.md").read_text(
         encoding="utf-8"
@@ -55,3 +63,17 @@ def test_graph_writer_is_visual_only():
     ).lower()
     assert "produce the planned visual output" in writer
     assert "## if the plan says output: table" not in writer
+
+
+def test_graph_contract_blocks_require_one_same_dataset_retry():
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "retry exactly once" in prompt
+    assert "same active dataframe" in prompt
+    assert "do not answer with a table" in prompt
+
+
+def test_graph_writer_requires_retry_after_correctable_block():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8").lower()
+    assert "retry exactly once" in writer
+    assert "same active dataframe" in writer
+    assert "graph_contract is missing" in writer

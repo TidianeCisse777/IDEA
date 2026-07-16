@@ -11,7 +11,7 @@ Utilisateurs : professeurs et étudiants. Réponses en français par défaut.
 |---|---|
 | `CONTEXT.md` | Identité métier de l'agent, périmètre, ce qu'il fait / ne fait pas, sources, skills, RAG |
 | `ARCHITECTURE.md` | Comment `agent.py`, `serve.py`, les tools, le RAG, OpenWebUI sont câblés |
-| `TOOLS.md` | Inventaire des 59 tools (62 avec SQL optionnel) exposés au LLM, par catégorie |
+| `TOOLS.md` | Inventaire des 62 tools (65 avec SQL optionnel) exposés au LLM, par catégorie |
 | `SPEC.md` | Spécification figée : use cases classés (UC-A…UC-J), capacités, contraintes dures |
 | `PARTAGE.md` | Partage & déploiement : état actuel et cible |
 | `SEQUENCES.md` | Diagrammes de séquence par use case |
@@ -114,7 +114,7 @@ agents/
   (copepod_prompt.py déprécié → archivé dans docs/legacy/copepod_prompt_DEPRECATED.py)
   skills/                   15 skills Markdown manifestés
 
-tools/                    59 tools @tool LangChain (62 avec SQL optionnel — voir TOOLS.md)
+tools/                    62 tools @tool LangChain (65 avec SQL optionnel — voir TOOLS.md)
 
 core/
   copepod_rag/            ChromaDB + 11 docs RAG

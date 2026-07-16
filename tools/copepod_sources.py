@@ -26,6 +26,10 @@ from core.ecotaxa_browser.project_summary import summarize_projects
 from core.ecotaxa_browser.sample_summary import summarize_samples
 from core.ecotaxa_browser.deployment_summary import summarize_sample_deployment
 from core.ecotaxa_browser.samples import get_sample as core_get_sample
+from core.ecotaxa_browser.objects import (
+    list_sample_objects as core_list_sample_objects,
+    get_object as core_get_object,
+)
 from core.ecotaxa_browser.schema import get_project_schema
 from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
@@ -1947,7 +1951,7 @@ def make_source_tools(thread_id: str) -> list:
         secteur », « par zone », ou « groupe les samples du projet X par
         région ». Le tool lit uniquement le cache local, teste chaque sample
         contre le registry NeoLab/IHO, et rend un récap compact :
-        region -> sample_ids, avec buckets explicites `Hors zones IHO` et
+        region -> sample_ids, avec buckets explicites `Hors zone référencée` et
         `Sans coordonnées`.
         """
         try:
@@ -2203,6 +2207,200 @@ def make_source_tools(thread_id: str) -> list:
             provenance={
                 "project_id": int(sample["project_id"]),
                 "sample_id": int(sample["sample_id"]),
+            },
+        )
+
+    @tool(response_format="content_and_artifact")
+    def list_ecotaxa_sample_objects(
+        sample_id: int,
+        taxon_id: int | None = None,
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> str:
+        """Liste les objets contenus DANS un sample EcoTaxa, à partir de son
+        `sample_id`, en lecture seule et SANS export.
+
+        Quand l'utiliser : c'est LE point d'entrée pour explorer le contenu d'un
+        sample. Réponds avec ce tool à « montre / liste les objets du sample X »,
+        « quels objets / taxons dans le sample X », « feuillette le contenu du
+        sample X », « qu'y a-t-il dans le sample X ». Il prend un `sample_id`
+        (11 chiffres, ex. 17498000001) et renvoie PLUSIEURS objets. Utilise-le
+        avant tout export pour décider si le sample vaut un téléchargement.
+
+        Ne pas confondre avec `get_ecotaxa_object`, qui ne montre qu'UN objet à
+        partir d'un `object_id` déjà connu — pas d'un sample.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
+        Requête objet paginée légère (`object_set/query`) — aucun job d'export,
+        aucune image.
+
+        Args:
+            sample_id: ID du sample EcoTaxa (ex. 42000002).
+            taxon_id: filtre optionnel par `taxon_id` EcoTaxa (résous d'abord un
+                nom avec `search_ecotaxa_taxa`).
+            status: filtre optionnel — "V" (validé), "P" (prédit), "D" (douteux).
+            page: numéro de page (défaut 1).
+            page_size: objets par page (défaut 50, plafonné à 200).
+
+        Renvoie un tableau : object_id, taxon, statut, date, depth_min/max.
+        Pour le détail complet d'un objet, enchaîner sur `get_ecotaxa_object`.
+        """
+        page = max(1, int(page))
+        page_size = max(1, min(int(page_size), 200))
+        try:
+            objects = core_list_sample_objects(
+                sample_id=int(sample_id),
+                taxon=taxon_id,
+                status=status,
+                page=page,
+                page_size=page_size,
+            )
+        except EcoTaxaBrowserError as exc:
+            return _eco_error(
+                f"Erreur EcoTaxa ({exc.code}) : {exc}",
+                provenance={"sample_id": int(sample_id)},
+            )
+        except Exception as exc:
+            return _eco_error(
+                f"Erreur lors de la lecture des objets du sample {sample_id} : {exc}",
+                retryable=True,
+                provenance={"sample_id": int(sample_id)},
+            )
+
+        if not objects:
+            return _eco_empty(
+                f"Aucun objet pour le sample {sample_id} "
+                f"(page {page}, filtres taxon_id={taxon_id}, status={status}).",
+                provenance={"sample_id": int(sample_id)},
+            )
+
+        def _fmt(value) -> str:
+            if value is None:
+                return "—"
+            if isinstance(value, float):
+                return f"{value:.1f}".rstrip("0").rstrip(".")
+            return str(value)
+
+        lines = [
+            f"# Objets du sample {sample_id} — page {page} ({len(objects)} objets, lecture seule)",
+            "",
+            "| object_id | taxon | statut | date | depth_min | depth_max |",
+            "|---:|---|---|---|---:|---:|",
+        ]
+        for obj in objects:
+            taxon = obj.get("taxon") or obj.get("taxon_id") or "—"
+            lines.append(
+                f"| {obj.get('object_id')} | {taxon} | "
+                f"{obj.get('classification_status') or '—'} | "
+                f"{obj.get('date') or '—'} | {_fmt(obj.get('depth_min'))} | "
+                f"{_fmt(obj.get('depth_max'))} |"
+            )
+        lines.append("")
+        lines.append(
+            f"Page suivante : page={page + 1}. Détail d'un objet : "
+            "`get_ecotaxa_object(object_id=...)`. Export complet : "
+            "`query_ecotaxa_sample`."
+        )
+        return _eco_success(
+            "\n".join(lines),
+            provenance={"sample_id": int(sample_id)},
+            metrics={"objects": len(objects), "page": page},
+        )
+
+    @tool(response_format="content_and_artifact")
+    def get_ecotaxa_object(object_id: int) -> str:
+        """Fiche détaillée d'UN objet EcoTaxa déjà identifié (un `object_id`).
+
+        Quand l'utiliser : uniquement en second temps, après
+        `list_ecotaxa_sample_objects`, pour zoomer sur UN objet précis dont tu
+        as l'`object_id` exact (13 chiffres, ex. 1749800000001) et vouloir son
+        contexte complet — acquisition, instrument, free fields, lat/lon.
+
+        Quand NE PAS l'utiliser : pour « montre / liste les objets du sample X »,
+        « quels objets dans le sample X », « le contenu du sample X ». Ces
+        demandes partent d'un `sample_id` (11 chiffres) et renvoient PLUSIEURS
+        objets → c'est `list_ecotaxa_sample_objects(sample_id=...)`. Ne jamais
+        passer un `sample_id` à ce tool-ci.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
+        Lecture seule, aucun export, aucune image.
+
+        Args:
+            object_id: ID d'un OBJET EcoTaxa (ex. 1749800000001), jamais un
+                sample_id.
+        """
+        try:
+            payload = core_get_object(int(object_id))
+        except EcoTaxaBrowserError as exc:
+            return _eco_error(
+                f"Erreur EcoTaxa ({exc.code}) : {exc}. Si `{object_id}` est un "
+                "sample_id et non un object_id, utilise "
+                "`list_ecotaxa_sample_objects(sample_id=...)`.",
+                provenance={"object_id": int(object_id)},
+            )
+        except Exception as exc:
+            return _eco_error(
+                f"Erreur lors de l'accès à l'objet {object_id} : {exc}",
+                retryable=True,
+                provenance={"object_id": int(object_id)},
+            )
+
+        obj = payload.get("object") or {}
+        sample = payload.get("sample") or {}
+        acquisition = payload.get("acquisition") or {}
+        project = payload.get("project") or {}
+
+        def _fmt(value) -> str:
+            if value is None:
+                return "—"
+            if isinstance(value, float):
+                return f"{value:.3f}".rstrip("0").rstrip(".")
+            return str(value)
+
+        lines = [
+            f"# Objet EcoTaxa {obj.get('object_id')} "
+            f"(sample {sample.get('sample_id')}, projet {project.get('project_id')})",
+            "",
+            "| Champ | Valeur |",
+            "|---|---|",
+            f"| object_id | {obj.get('object_id')} |",
+            f"| original_id | {obj.get('original_id') or '—'} |",
+            f"| taxon_id | {_fmt(obj.get('taxon_id'))} |",
+            f"| statut | {obj.get('classification_status') or '—'} |",
+            f"| date | {obj.get('date') or '—'} |",
+            f"| depth_min | {_fmt(obj.get('depth_min'))} |",
+            f"| depth_max | {_fmt(obj.get('depth_max'))} |",
+            f"| latitude | {_fmt(obj.get('latitude'))} |",
+            f"| longitude | {_fmt(obj.get('longitude'))} |",
+            "",
+            "## Contexte",
+            "",
+            "| Niveau | Champ | Valeur |",
+            "|---|---|---|",
+            f"| sample | original_id | {sample.get('original_id') or '—'} |",
+            f"| acquisition | acquisition_id | {_fmt(acquisition.get('acquisition_id'))} |",
+            f"| acquisition | instrument | {acquisition.get('instrument') or '—'} |",
+        ]
+
+        obj_free = obj.get("free_fields") or {}
+        if obj_free:
+            lines.extend(["", "## Free fields objet", "", "| Champ | Valeur |", "|---|---|"])
+            for key in sorted(obj_free):
+                lines.append(f"| {key} | {obj_free[key]} |")
+
+        return _eco_success(
+            "\n".join(lines),
+            provenance={
+                "object_id": int(object_id),
+                "sample_id": sample.get("sample_id"),
+                "project_id": project.get("project_id"),
             },
         )
 
@@ -2673,6 +2871,8 @@ def make_source_tools(thread_id: str) -> list:
         rank_ecotaxa_samples_by_region,
         find_ecotaxa_observations,
         get_ecotaxa_sample,
+        list_ecotaxa_sample_objects,
+        get_ecotaxa_object,
         summarize_ecotaxa_sample_deployment,
         inspect_ecotaxa_project_schema,
         inspect_ecotaxa_column,

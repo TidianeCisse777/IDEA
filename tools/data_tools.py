@@ -1,4 +1,5 @@
 """Tools LangChain pour l'analyse de données — slice 2."""
+import ast
 import contextlib
 import io
 import json
@@ -370,6 +371,35 @@ def _is_join_code(code: str) -> bool:
     return bool(_JOIN_CODE_PATTERN.search(code or ""))
 
 
+def _result_is_direct_join(code: str) -> bool:
+    """Return whether ``result`` itself is assigned from a join operation.
+
+    Analytical merges (for example, joining yearly denominators onto a control
+    table) must not silently replace the active source dataset. A direct
+    ``result = left.merge(right, ...)`` remains a genuine join workflow.
+    AST inspection keeps this distinction semantic instead of matching domain
+    words or variable names.
+    """
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "result" for target in node.targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call):
+            if isinstance(value.func, ast.Attribute) and value.func.attr in {"merge", "join", "concat"}:
+                return True
+            if isinstance(value.func, ast.Attribute) and value.func.attr == "merge":
+                return True
+            if isinstance(value.func, ast.Name) and value.func.id in {"merge", "concat"}:
+                return True
+    return False
+
+
 def _is_neolabs_columns(columns) -> bool:
     """True si les colonnes trahissent une table NeoLabs taxonomy."""
     cols = set(columns)
@@ -610,7 +640,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - `df_ogsl_enriched`: dernière table enrichie avec OGSL
         - `df_sql`       : dernière copie SQL matérialisée
 
-        Assigne le résultat à la variable `result`.
+        Assigne le résultat à la variable `result`. Les sorties `print(...)`
+        exécutées dans le même appel sont également capturées et renvoyées,
+        afin qu'un tableau de contrôle préparé explicitement ne soit pas perdu.
         Pour une jointure : result = df_ecotaxa.merge(df_ctd, on='station_id', how='left')
 
         IMPORTANT: each call to run_pandas is isolated — variables computed in a
@@ -651,7 +683,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 return blocked(guard, method="controlled pandas execution")
 
             apply_restricted_builtins(local_vars)
-            exec(code, local_vars)  # noqa: S102
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exec(code, local_vars)  # noqa: S102
+            printed_output = stdout.getvalue().strip()
 
             if plt.get_fignums():
                 plt.close("all")
@@ -675,40 +710,64 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 _store, thread_id, new_vars, result
             )
 
+            # A join workflow may keep the joined DataFrame in a named
+            # intermediate (`joined`, `merged`, or `result_df`) while assigning
+            # a compact summary dict to `result`. Persist that named table too;
+            # otherwise the next turn cannot reuse the active joined file.
+            join_variable = None
+            join_frame = None
+            if not canonical_note and _is_join_code(code):
+                preferred_join = next(
+                    (
+                        new_vars[name]
+                        for name in ("joined", "merged", "result_df")
+                        if isinstance(new_vars.get(name), pd.DataFrame)
+                    ),
+                    None,
+                )
+                if isinstance(result, pd.DataFrame) and (
+                    _result_is_direct_join(code) or preferred_join is not None
+                ):
+                    join_frame = result
+                else:
+                    join_frame = preferred_join
+                if join_frame is not None:
+                    join_variable = dataset_variable_name(
+                        "join", uuid.uuid4().hex[:12]
+                    )
+                    store_dataset(
+                        _store,
+                        thread_id,
+                        join_frame,
+                        variable_name=join_variable,
+                        meta={
+                            "source": "analysis:join",
+                            "n_rows": int(join_frame.shape[0]),
+                            "n_cols": int(join_frame.shape[1]),
+                        },
+                        latest_alias=join_variable,
+                    )
+
             if result is None:
+                printed_note = (
+                    "\n\nSortie contrôlée du code :\n" + printed_output
+                    if printed_output else ""
+                )
                 if canonical_note:
                     return success(
-                        "Code exécuté." + canonical_note,
+                        "Code exécuté." + canonical_note + printed_note,
                         data_ref="df_canonical_sample_depth",
                         persisted=True,
                         method="controlled pandas execution",
                     )
                 return success(
-                    "Code exécuté (aucune variable `result` assignée).",
+                    "Code exécuté (aucune variable `result` assignée)." + printed_note,
                     method="controlled pandas execution",
                 )
             if isinstance(result, pd.DataFrame):
                 n_rows, n_cols = result.shape
                 preview = result.head(20).to_markdown(index=False)
                 suffix = " (aperçu 20 premières)" if n_rows > 20 else ""
-
-                # A join/merge/concat result is a durable new table the user will
-                # reuse — persist it under its own name so later turns can target
-                # it, instead of forcing a re-join. Canonical sample-depth tables
-                # already have their own persistence path above.
-                join_variable = None
-                if not canonical_note and _is_join_code(code):
-                    join_variable = dataset_variable_name("join", uuid.uuid4().hex[:12])
-                    store_dataset(
-                        _store, thread_id, result,
-                        variable_name=join_variable,
-                        meta={
-                            "source": "analysis:join",
-                            "n_rows": int(n_rows),
-                            "n_cols": int(n_cols),
-                        },
-                        latest_alias=join_variable,
-                    )
 
                 persisted_variable = (
                     "df_canonical_sample_depth" if canonical_note else join_variable
@@ -744,6 +803,15 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     f"{canonical_note}{join_note}{persistence_contract}{attrs_note}"
                     f"\n\n{preview}"
                 )
+                if printed_output:
+                    summary += "\n\nSortie contrôlée du code :\n" + printed_output
+                if n_rows > 20:
+                    summary += (
+                        "\n\nAttention : ce tableau est un aperçu des 20 premières "
+                        "lignes seulement. Ne complète pas les lignes absentes ; "
+                        "utilise un nouveau run_pandas ciblé pour obtenir une autre "
+                        "page ou un agrégat vérifiable."
+                    )
                 return success(
                     summary,
                     data_ref=persisted_variable,
@@ -751,10 +819,21 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     method="controlled pandas execution",
                     metrics={"rows": int(n_rows), "columns": int(n_cols)},
                 )
+            persistence_note = ""
+            if join_variable:
+                persistence_note = (
+                    f"\nVariable persistante : `{join_variable}` — table jointe "
+                    "réutilisable dans les prochains tours."
+                    f"\nPersistence: persisted=true; variable={join_variable}"
+                )
             return success(
-                str(result) + canonical_note,
-                data_ref="df_canonical_sample_depth" if canonical_note else None,
-                persisted=bool(canonical_note),
+                str(result) + canonical_note + persistence_note,
+                data_ref=(
+                    "df_canonical_sample_depth"
+                    if canonical_note
+                    else join_variable
+                ),
+                persisted=bool(canonical_note or join_variable),
                 method="controlled pandas execution",
             )
 
@@ -789,10 +868,14 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         df = session.get("df") if session else None
         loaded_skills = ((session or {}).get("meta") or {}).get("loaded_skills") or []
         if "graph_writer" not in loaded_skills:
-            return blocked(
-                'Graph workflow blocked: call load_skill("graph_writer") before run_graph. '
-                "Loaded analysis/planning skills are not executable graph templates; graph_writer provides the required template."
-            )
+            # Recover the common model-routing slip locally. The model already
+            # supplied executable graph code; activating the reviewed writer
+            # skill lets the render attempt continue instead of ending the
+            # whole user turn on a recoverable sequencing error.
+            from tools.skill_tool import _record_loaded_skill
+
+            _record_loaded_skill(_store, thread_id, "graph_writer")
+            loaded_skills = [*loaded_skills, "graph_writer"]
 
         try:
             import matplotlib
@@ -820,12 +903,22 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     if contract_issue:
                         plt.close("all")
                         _mark_graph_quality_blocked(_store, thread_id)
-                        return blocked(str(contract_issue), method="graph contract validation")
+                        return blocked(
+                            f"{contract_issue} Retry exactly once: revise the graph code using this diagnostic, "
+                            "reuse the same active dataframe, and call run_graph again. Do not answer with a table.",
+                            retryable=True,
+                            method="graph contract validation",
+                        )
                 quality_issue = _graph_quality_issue(plt)
                 if quality_issue:
                     plt.close("all")
                     _mark_graph_quality_blocked(_store, thread_id)
-                    return blocked(str(quality_issue), method="graph quality validation")
+                    return blocked(
+                            f"{quality_issue} Retry exactly once: revise the graph code using this diagnostic, "
+                            "reuse the same active dataframe, and call run_graph again. Do not answer with a table.",
+                            retryable=True,
+                            method="graph quality validation",
+                        )
                 buf = io.BytesIO()
                 plt.savefig(buf, **_graph_savefig_kwargs(plt))
                 buf.seek(0)

@@ -78,6 +78,7 @@ def store_dataset(
     meta: dict,
     latest_alias: str | None = None,
     is_loaded_file: bool = False,
+    set_active: bool = True,
 ) -> None:
     """Persist a stable dataset and refresh current/latest aliases.
 
@@ -86,7 +87,8 @@ def store_dataset(
     canonical source after later subsets take over the active slot.
     """
     dataset_meta = {**meta, "variable_name": variable_name}
-    store.set(thread_id, dataframe, dataset_meta)
+    if set_active:
+        store.set(thread_id, dataframe, dataset_meta)
     if latest_alias:
         store.set(f"{thread_id}:{latest_alias}", dataframe, dataset_meta)
     store.set(f"{thread_id}:dataset:{variable_name}", dataframe, dataset_meta)

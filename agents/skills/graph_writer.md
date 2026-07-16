@@ -2,11 +2,10 @@
 name: graph_writer
 version: 1.0.0
 triggers:
-  - A successful graph plan must be rendered in the current turn
+  - A visual request or follow-up visual edit must be rendered when its selected table is non-empty
 forbidden_when:
-  - No successful graph_planner activation exists in the current turn
+  - The selected table is empty or no visual output was requested
 requires:
-  - "success:graph_planner"
   - "intent:visual"
 next_tool: run_graph
 max_tokens: 10500
@@ -21,14 +20,22 @@ You must write correct and complete code to produce the planned visual output.
 
 - If the selected table has zero rows, stop: report the empty result and do not
   write or execute graph code.
-- Never invent or reuse an artifact URL. Only relay the exact artifact returned
-  by a successful `run_graph` call in this turn.
-- If `run_graph` returns `Error`, `blocked`, or an exception, no image exists.
-  Correct the contract only when the tool result identifies a correctable
-  contract issue; otherwise surface the failure without a placeholder.
+  - Never invent or reuse an artifact URL. Only relay the exact artifact returned
+  by a successful `run_graph` call for the current request.
+- If `run_graph` returns a correctable graph-contract or graph-quality block,
+  no image exists yet: revise the code using the exact diagnostic and retry exactly once
+  with the same active dataframe. This includes
+  `graph_contract is missing` and an axis/artist mismatch. Do not answer with a
+  table or claim a graph exists before that retry. If the retry is blocked too,
+  stop and surface the final diagnostic without looping. For unrelated data,
+  source, authorization, or column errors, surface the failure directly.
 - Use only values present in the explicitly selected source variable. Never
   hardcode coordinates, identifiers, counts, or substitute columns from another
   source.
+- A new request naming a different zone is a new graph request, not an edit of
+  the last figure: resolve/filter the named zone from the loaded source and
+  render the new figure. Do not refuse because the previous figure used another
+  zone.
 
 ## Visual output
 
@@ -180,6 +187,11 @@ The data axis must be a Cartopy GeoAxes. Give the point collection a stable gid.
 gid and point its mapping at the **same variable** as the encoding it explains.
 A position mapping with `x` / `y` keys is invalid. It must use exactly
 `{"variable": "longitude_latitude", "artist_gid": "<point gid>"}`.
+
+For categorical year or marker legends, set the legend artist gid to exactly
+`station_color_legend` and include a matching `color_legend` mapping, even when
+the legend is made with `ax.legend(...)` rather than a colourbar. Do not use a
+different gid such as `year_marker_legend`.
 
 ```python
 map_points = ax.scatter(lon, lat, s=sizes, c=values,

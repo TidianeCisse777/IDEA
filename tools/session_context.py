@@ -177,6 +177,13 @@ def build_dataset_state_capsule(
             for role, column in environment_columns.items()
         ),
     ]
+    active_join_note = ""
+    if source == "analysis:join":
+        active_join_note = (
+            "\nACTIVE PERSISTED JOIN: this joined table is the active file for "
+            "follow-up analysis. Reuse its exact variable name; do not reload "
+            "or rejoin the source files unless explicitly requested."
+        )
     if meta.get("project_id") is not None:
         fields.append(f"project_id={_clean(meta['project_id'], limit=40)}")
     if meta.get("sample_id") is not None:
@@ -239,7 +246,8 @@ def build_dataset_state_capsule(
     capsule = (
         "\n\n## ACTIVE DATASET STATE (authoritative, current turn)\n"
         "- " + "; ".join(fields) + "\n"
-        "Canonical environmental enrichment validates these detected aliases "
+        + active_join_note
+        + "Canonical environmental enrichment validates these detected aliases "
         "itself; direct station/cast identifiers are not required.\n"
         "Identifiers absent from this capsule and the current user message are "
         "ungrounded; do not infer them from older conversation turns."

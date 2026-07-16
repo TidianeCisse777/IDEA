@@ -248,7 +248,7 @@ def test_classifier_exception_fails_closed():
     assert validate_tool_artifact(result.artifact).status == "blocked"
 
 
-def test_writer_requires_current_turn_planner():
+def test_writer_can_be_loaded_without_repeating_current_turn_planner():
     import agent as agent_module
 
     middleware = agent_module._ContextMiddleware(
@@ -261,11 +261,10 @@ def test_writer_requires_current_turn_planner():
         [HumanMessage(content="carte")],
     )
     result = middleware.wrap_tool_call(request, _successful_handler)
-    assert validate_tool_artifact(result.artifact).status == "blocked"
-    assert "planner" in result.content.lower()
+    assert validate_tool_artifact(result.artifact).status == "success"
 
 
-def test_old_turn_skills_do_not_authorize_render():
+def test_old_turn_graph_skills_still_respect_tool_exposure():
     import agent as agent_module
 
     content, artifact = success("ok")
@@ -296,7 +295,7 @@ def test_old_turn_skills_do_not_authorize_render():
     result = middleware.wrap_tool_call(request, _successful_handler)
 
     assert validate_tool_artifact(result.artifact).status == "blocked"
-    assert "current turn" in result.content.lower()
+    assert "action unavailable" in result.content.lower()
 
 
 @pytest.mark.asyncio

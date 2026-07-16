@@ -34,6 +34,14 @@ _SQL_COPY_PATTERN = re.compile(
     r"\b(?:copie\w*|copy|export\w*|analyse\w*|analy[sz]\w*)\b",
     re.IGNORECASE,
 )
+# A negated export ("sans l'exporter", "ne pas exporter", "without exporting")
+# must NOT trigger the export intent — otherwise object-browse requests that
+# explicitly refuse export get routed to the heavy export path.
+_EXPORT_NEGATION = re.compile(
+    r"\b(?:sans|pas|non|jamais|without|no)\b[^.]{0,25}?"
+    r"\b(?:export\w*|t[eé]l[eé]charg\w*|download\w*)\b",
+    re.IGNORECASE,
+)
 _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] = (
     (
         "ecotaxa_export",
@@ -46,6 +54,16 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
         "ecotaxa_schema",
         re.compile(
             r"\b(?:sch[eé]ma|schema|colonne\w*|column\w*|type\w*|compatib\w*)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        # Object browsing is a drill-down (read sample content without export);
+        # placed before ecotaxa_samples because "objets du sample" also contains
+        # "sample". `export` still wins over both (heavy path).
+        "ecotaxa_objects",
+        re.compile(
+            r"\b(?:objet\w*|object\w*)\b",
             re.IGNORECASE,
         ),
     ),
@@ -67,7 +85,8 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
     (
         "ecotaxa_taxonomy",
         re.compile(
-            r"\b(?:taxon\w*|taxa|taxonomi\w*|esp[eè]ce\w*|species|compte\w*)\b",
+            r"\b(?:taxon\w*|taxa|taxonomi\w*|esp[eè]ce\w*|species|"
+            r"compte\w*|combien|how\s+many)\b",
             re.IGNORECASE,
         ),
     ),
@@ -86,6 +105,7 @@ _GROUP_ORDER: tuple[ToolExposureGroup, ...] = (
     "sql_workspace",
     "ecotaxa_discovery",
     "ecotaxa_samples",
+    "ecotaxa_objects",
     "ecotaxa_geo_time",
     "ecotaxa_taxonomy",
     "ecotaxa_schema",
@@ -105,6 +125,7 @@ class TurnSignals:
     successful_tools_this_turn: tuple[str, ...]
     successful_skills_this_turn: tuple[str, ...]
     ecotaxa_intents: tuple[ToolExposureGroup, ...]
+    previous_visual_artifact: bool
 
 
 @dataclass(frozen=True)
@@ -125,13 +146,21 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
 
     text = latest_user_text(messages)
     calls = successful_calls_in_current_turn(messages)
+    previous_visual_artifact = any(
+        "![" in str(getattr(message, "content", ""))
+        and "/graphs/" in str(getattr(message, "content", ""))
+        for message in messages
+    )
     skills = tuple(
         str(call.args.get("skill_name") or "")
         for call in calls
         if call.name == "load_skill"
     )
+    export_negated = bool(_EXPORT_NEGATION.search(text))
     ecotaxa_intents = tuple(
-        group for group, pattern in _ECOTAXA_INTENT_PATTERNS if pattern.search(text)
+        group for group, pattern in _ECOTAXA_INTENT_PATTERNS
+        if pattern.search(text)
+        and not (group == "ecotaxa_export" and export_negated)
     )[:1]
     return TurnSignals(
         latest_user_text=text,
@@ -141,6 +170,7 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         successful_tools_this_turn=tuple(call.name for call in calls),
         successful_skills_this_turn=skills,
         ecotaxa_intents=ecotaxa_intents,
+        previous_visual_artifact=previous_visual_artifact,
     )
 
 
@@ -188,9 +218,15 @@ def decide_tool_exposure(
         reasons.append("taxonomy requested")
 
     skills = signals.successful_skills_this_turn
-    if len(skills) >= 2 and skills[-2:] == ("graph_planner", "graph_writer"):
+    if turn_context.output_intent == "visual":
+        groups.append("visualization")
+        reasons.append("semantic visual output requested")
+    elif len(skills) >= 2 and skills[-2:] == ("graph_planner", "graph_writer"):
         groups.append("visualization")
         reasons.append("graph planner and writer succeeded this turn")
+    elif signals.previous_visual_artifact:
+        groups.append("visualization")
+        reasons.append("previous visual artifact available for follow-up")
     if skills and skills[-1] == "deliverable_writer":
         groups.append("deliverable")
         reasons.append("deliverable writer succeeded this turn")

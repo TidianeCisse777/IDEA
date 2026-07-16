@@ -339,6 +339,24 @@ def test_capsule_lists_all_loaded_files_by_name(tmp_path):
     assert "df_file_temperatures_b" in capsule
 
 
+def test_capsule_identifies_persisted_join_as_active_file(tmp_path):
+    store = SessionStore(tmp_path)
+    thread_id = "thread-active-join-capsule"
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({"sample_id": ["S1"], "latitude": [60.0]}),
+        variable_name="df_join_abundance_sample",
+        meta={"source": "analysis:join", "n_rows": 1, "n_cols": 2},
+        latest_alias="df_join_abundance_sample",
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "ACTIVE PERSISTED JOIN" in capsule
+    assert "df_join_abundance_sample" in capsule
+
+
 def test_capsule_no_loaded_files_block_for_single_file(tmp_path):
     store = SessionStore(tmp_path)
     thread_id = "single-file-context"

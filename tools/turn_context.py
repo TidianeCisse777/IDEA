@@ -13,6 +13,7 @@ into the system message by the middleware.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from tools.session_context import (
     _live_zone_subsets,
@@ -35,6 +36,7 @@ class TurnContext:
     primary_source: str | None
     explicit_sources: tuple[str, ...]
     capsule: str
+    output_intent: Literal["visual", "non_visual", "ambiguous"] = "ambiguous"
 
 
 def build_turn_context(
@@ -51,7 +53,7 @@ def build_turn_context(
     """
     active = store.get(thread_id)
     has_active = bool(active and active.get("df") is not None)
-    meta = (active or {}).get("meta") or {} if has_active else {}
+    meta = (active or {}).get("meta") or {}
     active_variable = meta.get("variable_name") if has_active else None
     active_source = meta.get("source") if has_active else None
 
@@ -68,6 +70,9 @@ def build_turn_context(
         authorized, primary, explicit = (), None, ()
 
     capsule = build_dataset_state_capsule(store, thread_id, messages)
+    output_intent = meta.get("output_intent_decision", {}).get("intent", "ambiguous")
+    if output_intent not in {"visual", "non_visual", "ambiguous"}:
+        output_intent = "ambiguous"
 
     return TurnContext(
         thread_id=thread_id,
@@ -79,4 +84,5 @@ def build_turn_context(
         primary_source=primary,
         explicit_sources=explicit,
         capsule=capsule,
+        output_intent=output_intent,
     )

@@ -51,10 +51,10 @@ def test_sql_tools_return_structured_success_empty_and_error(tmp_path, monkeypat
     assert validate_tool_artifact(failed.artifact).status == "blocked"
 
 
-def test_all_62_policies_are_structured_and_catalog_rejects_legacy(monkeypatch):
+def test_all_63_policies_are_structured_and_catalog_rejects_legacy(monkeypatch):
     import tools.tool_catalog as catalog_module
 
-    assert len(catalog_module.TOOL_POLICIES) == 62
+    assert len(catalog_module.TOOL_POLICIES) == 65
     assert {policy.result_schema for policy in catalog_module.TOOL_POLICIES.values()} == {
         "tool_result_v1"
     }

@@ -74,19 +74,17 @@ def test_successful_calls_use_only_current_turn_success_artifacts():
     ]
 
 
-def test_writer_requires_successful_planner_in_current_turn():
+def test_writer_does_not_require_successful_planner_in_current_turn():
     messages = [HumanMessage(content="fais une carte")]
 
     rejection = graph_workflow_rejection(
         "load_skill", {"skill_name": "graph_writer"}, messages
     )
 
-    assert rejection is not None
-    assert "planner" in rejection.lower()
-    assert "new tool call" in rejection.lower()
+    assert rejection is None
 
 
-def test_run_graph_requires_writer_as_last_successful_call():
+def test_run_graph_does_not_require_writer_as_last_successful_call():
     messages = [HumanMessage(content="fais une carte")]
     messages += _completed_call(
         "load_skill", {"skill_name": "graph_planner"}, "planner"
@@ -98,9 +96,7 @@ def test_run_graph_requires_writer_as_last_successful_call():
     assert graph_workflow_rejection("run_graph", {"code": "pass"}, messages) is None
 
     messages += _completed_call("run_pandas", {"code": "result = 1"}, "pandas")
-    rejection = graph_workflow_rejection("run_graph", {"code": "pass"}, messages)
-    assert rejection is not None
-    assert "immediately" in rejection.lower()
+    assert graph_workflow_rejection("run_graph", {"code": "pass"}, messages) is None
 
 
 class _StructuredRunnable:

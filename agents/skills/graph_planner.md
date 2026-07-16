@@ -76,6 +76,12 @@ and bbox from the IHO-based registry):
 
 **Always use a cartopy map (`station_map`, or `abundance_environment_map` for true abundance) when the user asks for a geographic map, carte, or spatial distribution.** Never produce a plain scatter on lon/lat axes for a map request — it has no geographic context (no coastlines, no projection) — and never emit `kind:"map"` or `kind:"scatter"` in the contract.
 
+`station_map` supports exactly one geographic data axis. For a request that
+combines space and time, do not plan faceted panels or multiple map axes under
+`station_map`; use one map with year encoded by colour and/or marker, and, if
+useful, a thin line through annual mean positions. Do not connect individual
+stations or interpolate between sparse observations.
+
 ## Step 0b — NeoLabs taxonomy-abundance level check
 
 If the loaded table has NeoLabs abundance columns such as `SAMPLE_ID`, `ANALYSIS_ID`, `TAXON_ID`, `ZOOPLANKTON_CATEGORY`, and `Total abundance (ind./m3 depth vol)`, treat it as a taxon-level table.

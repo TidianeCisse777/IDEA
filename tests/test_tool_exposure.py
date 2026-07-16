@@ -21,7 +21,7 @@ def _source_decision(*sources: str) -> SourceDecision:
     )
 
 
-def _turn(*, file_loaded: bool, sources: tuple[str, ...] = ()) -> TurnContext:
+def _turn(*, file_loaded: bool, sources: tuple[str, ...] = (), output_intent: str = "ambiguous") -> TurnContext:
     return TurnContext(
         thread_id="tool-exposure",
         file_loaded=file_loaded,
@@ -32,6 +32,7 @@ def _turn(*, file_loaded: bool, sources: tuple[str, ...] = ()) -> TurnContext:
         primary_source=sources[0] if sources else None,
         explicit_sources=tuple(source for source in sources if source != "file"),
         capsule="",
+        output_intent=output_intent,
     )
 
 
@@ -109,6 +110,33 @@ def test_loaded_file_adds_pandas_but_not_graph_rendering():
     assert "run_graph" not in decision.tool_names
 
 
+def test_explicit_visual_intent_exposes_graph_workflow_before_graph_skills():
+    # The fixture carries the semantic decision that the runtime computes
+    # before the first model call; no graph skill has been loaded yet.
+    visual_context = _turn(
+        file_loaded=True,
+        sources=("file",),
+        output_intent="visual",
+    )
+    indirect_request = (
+        "Montre-moi où sont les stations et comment elles se répartissent au fil des années."
+    )
+    from tools.tool_catalog import TOOL_POLICIES
+    from tools.tool_exposure import decide_tool_exposure
+
+    decision = decide_tool_exposure(
+        tuple(TOOL_POLICIES),
+        TOOL_POLICIES,
+        visual_context,
+        _source_decision("file"),
+        [HumanMessage(content=indirect_request)],
+    )
+
+    assert "run_graph" in decision.tool_names
+    assert "visualization" in decision.active_groups
+    assert "semantic visual output requested" in decision.reasons
+
+
 def test_graph_and_deliverable_execution_unlock_from_successful_current_turn_skills():
     graph_messages = _successful_skill_messages(
         "Fais une carte", "graph_planner", "graph_writer"
@@ -181,7 +209,9 @@ def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
     assert "enrich_with_amundsen_ctd" in decision.tool_names
     assert "enrich_ecotaxa_with_ecopart_remote" not in decision.tool_names
     assert not any(group.startswith("ecotaxa_") for group in decision.active_groups)
-    assert len(decision.tool_names) == 7
+    # file_analysis actif (fichier chargé) → run_pandas + split_dataframe_by_zone.
+    assert "split_dataframe_by_zone" in decision.tool_names
+    assert len(decision.tool_names) == 8
 
 
 @pytest.mark.parametrize(
@@ -214,6 +244,8 @@ def test_enrichment_without_loaded_file_keeps_canonical_tool_hidden():
     [
         ("Explore EcoTaxa", "ecotaxa_discovery", "find_ecotaxa_projects"),
         ("Liste les samples EcoTaxa du projet", "ecotaxa_samples", "get_ecotaxa_sample"),
+        ("Montre les objets du sample EcoTaxa 14853000001", "ecotaxa_objects", "list_ecotaxa_sample_objects"),
+        ("Montre les objets du sample 14853000001 sans l'exporter", "ecotaxa_objects", "list_ecotaxa_sample_objects"),
         ("Trouve les samples EcoTaxa au Labrador en 2020", "ecotaxa_geo_time", "find_ecotaxa_samples_in_region"),
         ("Compte les taxons EcoTaxa", "ecotaxa_taxonomy", "count_ecotaxa_taxa"),
         ("Inspecte le schéma du projet EcoTaxa", "ecotaxa_schema", "inspect_ecotaxa_project_schema"),

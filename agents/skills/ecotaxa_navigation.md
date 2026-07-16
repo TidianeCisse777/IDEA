@@ -109,7 +109,12 @@ General ambiguity rules:
   nearby one.
 - When the only plausible routes are a read-only summary and a full
   export, choose the read-only summary unless the user explicitly says
-  "exporte", "charge", "download", or "récupère les objets".
+  "exporte", "charge", or "download".
+- To look at a sample's objects (content), use the read-only
+  `list_ecotaxa_sample_objects(sample_id=...)`, NOT an export. Only route to
+  `query_ecotaxa_sample` / `export_ecotaxa_samples` when the user explicitly
+  asks to export / download / charger the sample. "Montre / feuillette les
+  objets ... sans l'exporter" is always the read-only object list.
 - When a question names multiple zones, repeat the zone flow for each
   zone: `get_zone_info(zone_name=...)` then the matching EcoTaxa browser
   tool with the same date/instrument filters. Do not concatenate zones
@@ -534,7 +539,7 @@ tools so you can branch without thinking.
 | Tool | When |
 |---|---|
 | `find_ecotaxa_samples_in_region(zone_name=..., date_range=..., project_ids=...)` | **Step 1 of the pipeline.** Default for "samples en zone X entre A et B", possibly narrowed by project. |
-| `group_ecotaxa_project_samples_by_region(project_id=...)` | "groupe les samples du projet X par mer / secteur / zone / région" — returns `region -> sample_ids` plus `Hors zones IHO` and `Sans coordonnées`. |
+| `group_ecotaxa_project_samples_by_region(project_id=...)` | "groupe les samples du projet X par mer / secteur / zone / région" — returns `region -> sample_ids` plus `Hors zone référencée` and `Sans coordonnées`. |
 | `rank_ecotaxa_samples_by_region(include_empty=False, sort_by="sample_count", sort_order="asc")` | "quelles mers/zones ont le moins d'échantillons ?", "classe toutes les zones du moins au plus échantillonné" — global cache ranking by region/sea with `date_min`/`date_max`. Use `sort_order="desc"` for "le plus échantillonné", "décroissant", "top zones", or "du plus au moins". Use `sort_by="date_min", sort_order="asc"` for "ancienneté", "plus anciennement échantillonné", or "premières zones échantillonnées"; use `sort_by="date_max", sort_order="desc"` for "plus récemment échantillonné". Do NOT guess one zone and do NOT use `run_pandas`. Use `include_empty=True` only for explicit zero-sample / sampling-gap requests. |
 | `find_ecotaxa_observations(taxon=..., zone_name=..., date_range=..., month=..., depth_max_lt=..., depth_max_gte=..., depth_min_lt=..., depth_min_gte=..., project_ids=...)` | "samples **avec Calanus** en Baie de Baffin", including month/depth filters — taxon-centric. Returns samples whose project has the taxon attested. PREFER this over `find_ecotaxa_samples_in_region` whenever the user names a taxon — drop in for step 1. |
 
@@ -553,6 +558,8 @@ tools so you can branch without thinking.
 |---|---|
 | `get_ecotaxa_sample(sample_id=...)` | "métadonnées du sample / station / volume filtré" — identifiers, lat/lon, original_id, all free fields. No taxa info. |
 | `summarize_ecotaxa_sample(sample_id=...)` / `summarize_ecotaxa_samples(sample_ids=[...])` | **Step 2 of the pipeline.** V/P/D/U counts + top taxa per sample. Use for scanning before export. |
+| `list_ecotaxa_sample_objects(sample_id=...)` | "montre / liste les objets du sample X", "quels objets / taxons dans le sample X", "feuillette le contenu du sample X" — paginated object rows (object_id, taxon, statut, date, depth) **read-only, NO export**. Prefer this over `query_ecotaxa_sample` when the user only wants to look at the content. |
+| `get_ecotaxa_object(object_id=...)` | "détaille l'objet 1749800000001" — full context of ONE object already identified by `list_ecotaxa_sample_objects`. Takes an `object_id` (not a sample_id). |
 
 ### Count / aggregate taxa
 

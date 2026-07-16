@@ -59,10 +59,11 @@ def _load_system_prompt() -> str:
 
 _SYSTEM_PROMPT = _load_system_prompt()
 
-_MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "40000"))
+_MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "100000"))
 _CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
+_KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "3"))
 _context_audit_by_thread: dict[str, dict] = {}
 _harness_trace_by_thread: dict[str, dict] = {}
 _harness_trace_lock = threading.Lock()
@@ -277,6 +278,56 @@ def _approx_tokens(messages) -> int:
     return count_tokens_approximately(messages)
 
 
+def _compact_old_tool_results(messages, *, keep_turns: int = _KEEP_FULL_TOOL_TURNS):
+    """Replace stale tool payloads while preserving recent conversational turns."""
+    human_indexes = [
+        index for index, message in enumerate(messages)
+        if isinstance(message, HumanMessage)
+    ]
+    keep_turns = max(1, int(keep_turns))
+    # `cutoff` is the index of the first message in the "keep full" window; tool
+    # results BEFORE it are compacted. With few turns (≤ keep_turns) nothing is
+    # old yet, so cutoff must be 0 — compact nothing. Using len(messages) here
+    # would instead compact every tool result, including the CURRENT turn's,
+    # leaving the model only a 240-char prefix and making it hallucinate the rest.
+    cutoff = (
+        human_indexes[-keep_turns]
+        if len(human_indexes) > keep_turns
+        else 0
+    )
+    output = []
+    metrics = {
+        "old_tool_messages_compacted": 0,
+        "old_tool_result_chars_before": 0,
+        "old_tool_result_chars_after": 0,
+        "old_tool_result_chars_saved": 0,
+    }
+    for index, message in enumerate(messages):
+        if (
+            index < cutoff
+            and isinstance(message, ToolMessage)
+            and isinstance(message.content, str)
+            and message.name != "load_skill"
+            and len(message.content) > 320
+        ):
+            snippet = " ".join(message.content.split())[:240]
+            compact = (
+                f"[Ancien résultat compacté — tool={message.name or 'unknown'}; "
+                f"résumé: {snippet}]"
+            )
+            metrics["old_tool_messages_compacted"] += 1
+            metrics["old_tool_result_chars_before"] += len(message.content)
+            metrics["old_tool_result_chars_after"] += len(compact)
+            output.append(message.model_copy(update={"content": compact}))
+        else:
+            output.append(message)
+    metrics["old_tool_result_chars_saved"] = (
+        metrics["old_tool_result_chars_before"]
+        - metrics["old_tool_result_chars_after"]
+    )
+    return output, metrics
+
+
 def compute_history_budget(
     *,
     max_input_tokens: int,
@@ -447,21 +498,34 @@ class _ContextMiddleware(AgentMiddleware):
         except Exception:
             pass
 
+        # Resolve output format before exposing tools.  A visual request must
+        # expose the graph workflow on its first model call; waiting for a
+        # graph skill to be loaded first makes the workflow impossible.
+        output_intent = self._output_intent_decision(original_messages)
+
         original_tokens = _approx_tokens(original_messages)
-        truncated_messages, truncate_metrics = _truncate_tool_results(
+        compacted_messages, compact_metrics = _compact_old_tool_results(
             original_messages
+        )
+        truncated_messages, truncate_metrics = _truncate_tool_results(
+            compacted_messages
         )
         truncated_tokens = _approx_tokens(truncated_messages)
 
         block, metrics = _build_memory_block(memories)
         from tools.session_store import default_store as session_store
         from tools.turn_context import build_turn_context
+        from dataclasses import replace
 
         # Rebuild the typed turn state once; the model-facing capsule (active
         # dataset, live zone subsets, authorized source scope) is its projection.
         turn_ctx = build_turn_context(
             session_store, self.thread_id, original_messages, persist_source=False
         )
+        # Keep the decision local to this model request as well as persisted in
+        # session metadata. This avoids a race with a store reload and makes
+        # first-call visual exposure independent of an active dataframe.
+        turn_ctx = replace(turn_ctx, output_intent=output_intent.intent)
         dataset_block = turn_ctx.capsule
         system_message = request.system_message
         base = system_message.content if system_message is not None else ""
@@ -541,6 +605,7 @@ class _ContextMiddleware(AgentMiddleware):
             "user_id": self.user_id,
             "messages_before": len(original_messages),
             "messages_after_tool_truncation": len(truncated_messages),
+            "messages_after_old_tool_compaction": len(compacted_messages),
             "messages_after_trim": len(trimmed_messages),
             "messages_trimmed": max(
                 0, len(truncated_messages) - len(trimmed_messages)
@@ -578,12 +643,15 @@ class _ContextMiddleware(AgentMiddleware):
                 final_tokens > _MAX_CONTEXT_TOKENS
             ),
             **truncate_metrics,
+            **compact_metrics,
             **metrics,
             "dataset_capsule_injected": bool(dataset_block),
             "dataset_capsule_chars": len(dataset_block),
             "turn_active_variable": turn_ctx.active_variable,
             "turn_authorized_sources": list(turn_ctx.authorized_sources),
             "turn_derived_subsets": len(turn_ctx.derived_zone_subsets),
+            "turn_output_intent": output_intent.intent,
+            "turn_output_intent_confidence": output_intent.confidence,
             "tools_before_policy": [
                 getattr(item, "name", "") for item in original_tools
             ],
@@ -688,6 +756,7 @@ class _ContextMiddleware(AgentMiddleware):
         from tools.tool_catalog import TOOL_POLICIES
         from tools.tool_exposure import decide_tool_exposure
         from tools.turn_context import build_turn_context
+        from dataclasses import replace
 
         messages = list(request.state.get("messages") or [])
         source_decision = source_decision_for_turn(
@@ -701,6 +770,10 @@ class _ContextMiddleware(AgentMiddleware):
             self.thread_id,
             messages,
             persist_source=False,
+        )
+        turn_ctx = replace(
+            turn_ctx,
+            output_intent=self._output_intent_decision(messages).intent,
         )
         available_names = self.catalog_names or tuple(TOOL_POLICIES)
         decision = decide_tool_exposure(

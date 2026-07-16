@@ -199,6 +199,24 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
 
 # --- Comportement 3 : prompt anti-hallucination ---
 
+def test_system_prompt_documents_zone_split_and_meow_fallback():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    # Découpage par mers/baies/détroits d'un fichier chargé.
+    assert "split_dataframe_by_zone" in prompt
+    # Bascule écorégionale quand la couverture IHO est faible.
+    assert "coverage_suggestion" in prompt
+    assert "meow" in prompt
+
+
+def test_system_prompt_forbids_fabricating_grouped_rows():
+    """Garde-fou D3 : restituer fidèlement les catégories/valeurs d'un tool,
+    sans inventer, renommer, fusionner ni dupliquer de ligne."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "never invent, rename, merge, or duplicate" in prompt
+
+
 def test_system_prompt_anti_hallucination():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
@@ -250,6 +268,68 @@ def test_context_preparation_records_tool_truncation_metrics(monkeypatch):
     assert metrics["tool_messages_seen"] == 1
     assert metrics["tool_messages_truncated"] == 1
     assert metrics["tool_result_chars_saved"] > 0
+
+
+def test_context_preparation_compacts_only_old_tool_results():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    import agent as agent_module
+
+    old_content = "old pandas payload " * 80
+    recent_content = "recent graph payload " * 80
+    messages = [
+        HumanMessage(content="tour 1"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=old_content, name="run_pandas", tool_call_id="t1"),
+        HumanMessage(content="tour 2"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=recent_content, name="run_graph", tool_call_id="t2"),
+        HumanMessage(content="tour 3"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=recent_content, name="run_graph", tool_call_id="t3"),
+        HumanMessage(content="tour 4"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=recent_content, name="run_graph", tool_call_id="t4"),
+    ]
+
+    compacted, metrics = agent_module._compact_old_tool_results(
+        messages, keep_turns=3
+    )
+
+    assert compacted[2].content.startswith("[Ancien résultat compacté")
+    assert compacted[5].content == recent_content
+    assert compacted[8].content == recent_content
+    assert compacted[11].content == recent_content
+    assert metrics["old_tool_messages_compacted"] == 1
+    assert metrics["old_tool_result_chars_saved"] > 0
+
+
+def test_context_preparation_keeps_current_turn_tool_result_full():
+    """Régression : en conversation courte (≤ keep_turns tours), le résultat du
+    tour COURANT ne doit jamais être compacté — sinon le modèle ne voit qu'un
+    préfixe tronqué et invente la suite (hallucination de tableau observée)."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    import agent as agent_module
+
+    current_content = "# Découpage par zone\n" + ("| Baie de Baffin | 20 |\n" * 40)
+    messages = [
+        HumanMessage(content="Charge le fichier"),
+        AIMessage(content="chargé"),
+        ToolMessage(content="Fichier chargé " * 60, name="load_file", tool_call_id="t1"),
+        HumanMessage(content="Découpe par mer, baie et détroit"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=current_content, name="split_dataframe_by_zone", tool_call_id="t2"),
+    ]
+
+    compacted, metrics = agent_module._compact_old_tool_results(
+        messages, keep_turns=3
+    )
+
+    # 2 tours ≤ keep_turns=3 → aucun résultat compacté, le tableau reste intact.
+    assert compacted[5].content == current_content
+    assert compacted[2].content.startswith("Fichier chargé")
+    assert metrics["old_tool_messages_compacted"] == 0
 
 
 def test_context_preparation_preserves_manifest_budgeted_skill_results(monkeypatch):

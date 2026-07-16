@@ -60,6 +60,7 @@ ToolExposureGroup: TypeAlias = Literal[
     "sql_workspace",
     "ecotaxa_discovery",
     "ecotaxa_samples",
+    "ecotaxa_objects",
     "ecotaxa_geo_time",
     "ecotaxa_taxonomy",
     "ecotaxa_schema",
@@ -229,6 +230,8 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "rank_ecotaxa_samples_by_region": _source("EcoTaxa · classement par zone", "EcoTaxa · regional ranking", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "find_ecotaxa_observations": _source("EcoTaxa · recherche d’observations", "EcoTaxa · observation search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "get_ecotaxa_sample": _source("EcoTaxa · métadonnées du sample", "EcoTaxa · sample metadata", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "list_ecotaxa_sample_objects": _source("EcoTaxa · objets du sample", "EcoTaxa · sample objects", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "get_ecotaxa_object": _source("EcoTaxa · détail d'un objet", "EcoTaxa · object detail", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_sample_deployment": _source("EcoTaxa · déploiement du sample", "EcoTaxa · sample deployment", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "inspect_ecotaxa_project_schema": _source("EcoTaxa · schéma du projet", "EcoTaxa · project schema", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "inspect_ecotaxa_column": _source("EcoTaxa · inspection de colonne", "EcoTaxa · column inspection", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
@@ -277,6 +280,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "audit_ecotaxa_ecopart_join": _source("EcoTaxa/EcoPart · audit de jumelage", "EcoTaxa/EcoPart · join audit", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     # Geography and core services.
     "filter_dataframe_by_zone": _presentation("Filtrage géographique", "Geographic filtering", "geography"),
+    "split_dataframe_by_zone": _presentation("Découpage géographique", "Geographic split", "geography"),
     "get_zone_info": _presentation("Information géographique", "Geographic information", "geography"),
     "query_copepod_knowledge_base": _presentation("Recherche documentaire", "Knowledge-base search", "core"),
     "lookup_marine_taxonomy": _presentation("Recherche taxonomique", "Taxonomy lookup", "core"),
@@ -335,6 +339,8 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "find_ecotaxa_projects_in_region": "remote_read",
     "get_ecotaxa_cache_status": "remote_read",
     "get_ecotaxa_sample": "remote_read",
+    "list_ecotaxa_sample_objects": "remote_read",
+    "get_ecotaxa_object": "remote_read",
     "group_ecotaxa_project_samples_by_region": "remote_read",
     "inspect_ecotaxa_column": "remote_read",
     "inspect_ecotaxa_project_schema": "remote_read",
@@ -385,6 +391,7 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     # Geography and core services.
     "get_zone_info": "local_read",
     "filter_dataframe_by_zone": "local_session",
+    "split_dataframe_by_zone": "local_session",
     "query_copepod_knowledge_base": "local_read",
     "lookup_marine_taxonomy": "remote_read",
     "load_skill": "skill_session",
@@ -423,6 +430,10 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "run_graph": "visualization",
     "get_zone_info": "geography",
     "filter_dataframe_by_zone": "geography",
+    # Le découpage annote le DataFrame chargé : c'est une capacité d'analyse de
+    # fichier, exposée seulement quand un fichier est chargé. La garder hors du
+    # groupe permanent "geography" préserve le budget d'outils EcoTaxa.
+    "split_dataframe_by_zone": "file_analysis",
     "lookup_marine_taxonomy": "taxonomy",
     "export_deliverable": "deliverable",
     # Canonical enrichment-only external paths.
@@ -439,6 +450,8 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # EcoTaxa samples.
     "list_ecotaxa_project_samples": "ecotaxa_samples",
     "get_ecotaxa_sample": "ecotaxa_samples",
+    "list_ecotaxa_sample_objects": "ecotaxa_objects",
+    "get_ecotaxa_object": "ecotaxa_objects",
     "summarize_ecotaxa_sample": "ecotaxa_samples",
     "summarize_ecotaxa_samples": "ecotaxa_samples",
     "summarize_ecotaxa_sample_deployment": "ecotaxa_samples",

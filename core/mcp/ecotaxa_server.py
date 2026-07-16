@@ -542,7 +542,7 @@ def create_mcp() -> FastMCP:
 
         Returns ``groups`` as ``region_name -> [sample_id, ...]`` plus a
         compact ``markdown_summary`` for LLM display. Includes explicit
-        ``Hors zones IHO`` and ``Sans coordonnées`` buckets. Reads the local
+        ``Hors zone référencée`` and ``Sans coordonnées`` buckets. Reads the local
         cache only.
         """
         try:

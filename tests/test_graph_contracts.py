@@ -118,6 +118,37 @@ def _add_map_artists(ax, *, include_color_legend=True):
         color_legend.set_gid("environment_color_legend")
 
 
+def test_station_map_normalizes_omitted_color_legend_mapping():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    points = ax.scatter(
+        [-80.2], [74.1], s=[40], c=[2014], transform=ccrs.PlateCarree()
+    )
+    points.set_gid("map_points")
+    ax.legend(["2014"], title="Année de déploiement")
+    contract = {
+        "kind": "station_map",
+        "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+        "inverted_axes": [],
+        "mappings": {
+            "position": {
+                "variable": "longitude_latitude",
+                "artist_gid": "map_points",
+            },
+            "color": {"variable": "deployment_year", "artist_gid": "map_points"},
+        },
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": ["longitude", "latitude", "deployment_year"],
+    }
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["mappings"]["color_legend"] == {
+        "variable": "deployment_year",
+        "artist_gid": "station_color_legend",
+    }
+    assert validate_graph_contract(normalized, fig) is None
+
+
 def _station_map_contract(mappings=None):
     return {
         "kind": "station_map",
