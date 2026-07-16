@@ -1,7 +1,7 @@
 # Dynamic Tool Filtering Design — étape 6
 
 **Date :** 16 juillet 2026  
-**Statut :** validé, prêt pour planification  
+**Statut :** révision géographique validée, prête pour planification
 **Portée :** réduire à au plus 15 les tools présentés au modèle à chaque appel, sans second modèle, sans embeddings et sans supprimer de tool du catalogue runtime.
 
 ## Problème
@@ -22,6 +22,12 @@ La conséquence la plus importante est EcoTaxa : une mention explicite peut rend
 Le moteur produit une allowlist ordonnée et expliquée. `_ContextMiddleware` applique cette allowlist avec `request.override(tools=...)`. Le même moteur est réutilisé dans `wrap_tool_call` et `awrap_tool_call` pour bloquer fail-closed un appel absent de l'allowlist courante.
 
 Le mécanisme est réévalué à chaque itération ReAct. Un résultat réussi peut donc débloquer l'étape suivante sans exposer toute la chaîne dès le début.
+
+### Révision géographique du 16 juillet 2026
+
+Le routage géographique constitue une exception explicite au filtrage lexical. Le moteur ne tente plus de reconnaître les mots « zone », « baie », « Hudson », ni aucun nom ou type de région. Les deux tools géographiques génériques restent visibles à chaque appel modèle. Le modèle principal comprend sémantiquement l'intention et choisit de les appeler ou non; aucun classifieur supplémentaire n'est introduit.
+
+Lorsqu'EcoTaxa est autorisé, son groupe `ecotaxa_geo_time` reste également visible. Les enrichissements EcoPart, Amundsen, Bio-ORACLE et OGSL partent d'un fichier actif et bénéficient donc directement du filtre géographique générique. SQL peut résoudre une zone immédiatement; le filtrage tabulaire devient exécutable après copie des données dans le workspace.
 
 ## Alignement avec les pratiques des autres frameworks
 
@@ -90,14 +96,13 @@ class TurnSignals:
     enrichment_requested: bool
     requested_enrichment_sources: tuple[str, ...]
     ecotaxa_intents: tuple[str, ...]
-    geography_requested: bool
     taxonomy_requested: bool
     deliverable_requested: bool
     successful_tools_this_turn: tuple[str, ...]
     successful_skills_this_turn: tuple[str, ...]
 ```
 
-`TurnSignals` est calculé localement. Les signaux lexicaux ne donnent jamais une autorisation de source : ils choisissent seulement un sous-toolset à l'intérieur de la `SourceDecision` déjà autorisée. Un identifiant, un nom de projet ou le mot « échantillon » ne sélectionne jamais EcoTaxa.
+`TurnSignals` est calculé localement. Les signaux lexicaux ne donnent jamais une autorisation de source : ils choisissent seulement un sous-toolset à l'intérieur de la `SourceDecision` déjà autorisée. Un identifiant, un nom de projet ou le mot « échantillon » ne sélectionne jamais EcoTaxa. Aucun signal lexical géographique n'existe : `_GEOGRAPHY_PATTERN` est supprimé.
 
 ## Politique d'exposition
 
@@ -111,11 +116,12 @@ Trois tools restent visibles à chaque appel :
 
 Le noyau fournit les trois portes d'entrée : données utilisateur, procédure spécialisée et connaissance métier.
 
+Les deux capacités géographiques `get_zone_info` et `filter_dataframe_by_zone` sont ajoutées systématiquement à ce noyau d'exposition. `get_zone_info` fonctionne sans dataset; `filter_dataframe_by_zone` reste visible mais retourne `blocked` si aucune table n'est active. Cette visibilité permanente délègue l'interprétation de l'intention au modèle principal sans ajouter d'appel modèle.
+
 ### Données locales
 
 - `run_pandas` devient visible lorsqu'un dataset actif existe.
-- `filter_dataframe_by_zone` devient visible lorsqu'un dataset actif existe et que le tour demande une zone.
-- `get_zone_info` devient visible pour une demande géographique ou comme dépendance de `filter_dataframe_by_zone`.
+- `filter_dataframe_by_zone` et `get_zone_info` restent visibles à chaque appel, indépendamment des mots employés par l'utilisateur.
 - `lookup_marine_taxonomy` devient visible pour une demande taxonomique.
 - `export_deliverable` devient visible seulement après le chargement réussi de `deliverable_writer` dans le tour courant.
 - `run_graph` devient visible seulement après les chargements réussis de `graph_planner`, puis `graph_writer`, dans le tour courant. La garde 4B.1 reste la défense d'exécution.
@@ -164,11 +170,14 @@ EcoTaxa reste une source riche. Ses 28 tools sont répartis en sept groupes :
 
 EcoTaxa doit être autorisé par `SourceDecision` avant tout choix de groupe. Ensuite :
 
-- une intention explicite sélectionne un ou plusieurs groupes;
-- sans intention reconnue, seul le groupe Découverte est exposé;
+- le groupe Zone/période est toujours exposé dès qu'EcoTaxa est autorisé;
+- une intention explicite sélectionne au plus un autre groupe EcoTaxa;
+- sans autre intention reconnue, le groupe Découverte accompagne Zone/période;
 - le groupe Export apparaît seulement pour « exporte », « télécharge », « charge les données », ou lors d'un suivi d'export après une sélection EcoTaxa réussie;
-- au plus deux groupes EcoTaxa peuvent être actifs au même appel;
+- au plus deux groupes EcoTaxa peuvent être actifs au même appel, dont Zone/période toujours présent;
 - les dépendances nécessaires sont ajoutées explicitement, jamais par élargissement à toute la famille.
+
+Le maximum EcoTaxa reste exactement 15 : noyau permanent (3) + géographie générique (2) + Zone/période (5) + un autre groupe (5 au maximum).
 
 Une demande multifonction qui nécessiterait plus de deux groupes doit être traitée par étapes ReAct : le résultat du premier groupe débloque le groupe suivant au prochain appel modèle.
 
@@ -190,7 +199,7 @@ catalogue runtime complet
 → disponibilité de configuration (SQL, sources)
 → SourceDecision existante
 → TurnContext
-→ TurnSignals du tour courant
+→ TurnSignals non géographiques du tour courant
 → groupes d'exposition actifs
 → fermeture des dépendances obligatoires
 → validation du plafond de 15
@@ -262,6 +271,8 @@ Aucun accès réseau, aucun appel modèle et aucun embedding n'est effectué pou
 - un tool masqué par la source ne peut pas être réintroduit;
 - un overflow déclenche le fallback minimal;
 - les chemins sync et async sont identiques.
+- les deux tools géographiques génériques sont visibles pour toute formulation, avec ou sans nom de zone;
+- le texte « baie d'Hudson » et un texte sans aucun terme géographique produisent la même disponibilité géographique;
 
 ### Contrats d'enrichissement
 
@@ -276,8 +287,8 @@ Pour chacune des quatre sources :
 ### Contrats EcoTaxa
 
 - EcoTaxa non autorisé → zéro tool EcoTaxa;
-- mention EcoTaxa sans intention reconnue → noyau + Découverte;
-- une intention de taxonomie, schéma, zone/période, audit, samples ou export sélectionne le groupe attendu;
+- mention EcoTaxa sans intention reconnue → noyau + Zone/période + Découverte;
+- une intention de taxonomie, schéma, audit, samples ou export sélectionne le groupe attendu en plus de Zone/période;
 - un suivi fondé sur l'affinité EcoTaxa conserve la bonne famille;
 - un identifiant nu n'active jamais EcoTaxa;
 - une sélection/extraction réussie débloque la prochaine étape sans exposer les 28 tools;
@@ -300,6 +311,7 @@ Pour chacune des quatre sources :
 6. Un tool non visible est bloqué avant exécution.
 7. Les tokens de schémas avant/après sont mesurés pour chaque appel.
 8. Les trois scénarios offline ne régressent pas; le benchmark live N ≥ 5 confirme qu'aucun tool nécessaire n'est masqué.
+9. Aucun regex, liste de noms de zones, registre lexical ou appel de classification ne décide de la visibilité géographique.
 
 ## Hors portée
 
