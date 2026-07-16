@@ -202,7 +202,7 @@ Le middleware construit le `TurnContext` une fois par tour et enregistre ses cha
 
 ### Étape 6 — Filtrage dynamique des tools *(≤ 15/tour)*
 
-**État : implémentation déterministe terminée le 16 juillet 2026; campagne live N ≥ 5 encore à exécuter explicitement.** Le catalogue complet reste enregistré auprès de LangGraph, mais `tools/tool_exposure.py` calcule avant chaque appel modèle une allowlist ordonnée à partir du `TurnContext`, de la `SourceDecision`, de l'intention textuelle et des succès du tour courant. Les quatre familles EcoPart, Amundsen, Bio-ORACLE et OGSL n'exposent que leur enrichissement canonique, uniquement lorsqu'un fichier est actif et que la demande d'enrichissement nomme la source. Les 18 routes legacy correspondantes restent enregistrées pour compatibilité mais sont invisibles et bloquées à l'exécution. EcoTaxa est réparti en sept groupes d'intention. Le replay offline mesure 3 à 10 tools par appel et un coût fixe maximal de 9 356 tokens; le contrat des 40 % est devenu vert.
+**État : implémentation déterministe terminée le 16 juillet 2026; campagne live N ≥ 5 encore à exécuter explicitement.** Le catalogue complet reste enregistré auprès de LangGraph, mais `tools/tool_exposure.py` calcule avant chaque appel modèle une allowlist ordonnée à partir du `TurnContext`, de la `SourceDecision`, des intentions non géographiques et des succès du tour courant. Les capacités géographiques génériques restent toujours visibles et EcoTaxa conserve toujours son groupe zone/période : le modèle principal comprend l'intention sans regex ni classifieur supplémentaire. Les quatre familles EcoPart, Amundsen, Bio-ORACLE et OGSL n'exposent que leur enrichissement canonique, uniquement lorsqu'un fichier est actif et que la demande d'enrichissement nomme la source. Les 18 routes legacy correspondantes restent enregistrées pour compatibilité mais sont invisibles et bloquées à l'exécution. Le replay offline mesure 5 à 15 tools par appel et un coût fixe maximal de 12 384 tokens; le contrat des 40 % reste vert.
 
 **Goal :** réduire le budget fixe et la compétition entre tools proches. Plus gros levier — et le plus risqué (change ce que le modèle voit).
 
@@ -210,7 +210,7 @@ Le middleware construit le `TurnContext` une fois par tour et enregistre ses cha
 
 **Test gate :**
 - [x] Tools exposés/appel modèle ≤ 15 (télémétrie `tool_exposure_alert` à 12) sur tous les scénarios offline.
-- [x] Tokens fixes (prompt + schémas) < 40 % de `MAX_CONTEXT_TOKENS` : maximum offline 9 356 / 16 000.
+- [x] Tokens fixes (prompt + schémas) < 40 % de `MAX_CONTEXT_TOKENS` : maximum offline 12 384 / 16 000.
 - [ ] **Aucune régression** de trajectoire sur `SC-LAB` / `SC-ENRICH` / `SC-ECOTAXA`, N ≥ 5 (un tool nécessaire jamais masqué à tort).
 
 ---
@@ -317,7 +317,7 @@ Le remodelage est réussi quand :
 | 3 — Décision de source | ✅ terminé | offline : 12 tours, 100 % | offline : 13 tours, 100 %; smoke réel 3/3 | ✅ |
 | 4 — Contradictions de routage | 🟡 en cours | — | 4A/4B/4B.1/4C fermées; smoke OGSL réel 2/2 | 🟡 4A.1 ouvert |
 | 5 — TurnContext + carte d'état | ✅ terminé | capsule = df actif seul | TurnContext typé; dérivés+zone et périmètre de source dans la capsule; réel `authorized=file`, ~300 tokens | ✅ |
-| 6 — Filtrage dynamique | 🟡 campagne live à faire | 59/62 tools envoyés au modèle; 33 290 tokens fixes au contrat initial | offline : 3–10 tools/appel, max 9 356 tokens fixes; garde runtime symétrique | 🟡 N ≥ 5 live |
+| 6 — Filtrage dynamique | 🟡 campagne live à faire | 59/62 tools envoyés au modèle; 33 290 tokens fixes au contrat initial | offline : 5–15 tools/appel, max 12 384 tokens fixes; géographie toujours visible; garde runtime symétrique | 🟡 N ≥ 5 live |
 | 7 — Confirmations | ⬜ à faire | — | — | ⬜ |
 | 8 — Skills versionnés | 🟡 en cours | Hub sert un skill non listé | allowlist fail-closed avant Hub; contrat vert; happy path réel OK | 🟡 versionnement/frontmatter restants |
 | 9 — Isolation code | 🟡 en cours | exec avec builtins complets (secrets/réseau/FS) | namespace restreint : imports allowlistés, secrets bloqués; escapes verts, smoke réel OK | 🟡 worker processus/quotas restants |

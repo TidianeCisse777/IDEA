@@ -16,7 +16,8 @@
 ### Exposition dynamique
 
 - Noyau permanent : `load_file`, `load_skill`, `query_copepod_knowledge_base`.
-- Après chargement d'un fichier, les outils d'analyse locale deviennent visibles selon la demande; géographie, taxonomie, graphe et livrable suivent leurs intentions/préconditions.
+- Les capacités géographiques `get_zone_info` et `filter_dataframe_by_zone` sont toujours visibles : le modèle principal comprend l'intention sans regex ni second modèle. Après chargement d'un fichier, `run_pandas` devient visible; taxonomie, graphe et livrable suivent leurs intentions/préconditions.
+- Dès qu'EcoTaxa est autorisé, son groupe zone/période reste visible avec au plus un autre groupe d'intention, pour un total maximal de 15 tools.
 - EcoTaxa active au plus deux de ses sept groupes : découverte, samples, géo/temps, taxonomie, schéma, audit, export.
 - EcoPart, Amundsen, Bio-ORACLE et OGSL sont limités aux enrichissements canoniques `enrich_ecotaxa_with_ecopart_remote`, `enrich_with_amundsen_ctd`, `enrich_with_bio_oracle` et `enrich_with_ogsl`. Ils ne deviennent visibles que pour une demande explicite d'enrichissement d'un fichier avec la source nommée.
 - Les 18 autres tools de ces quatre familles restent enregistrés pour compatibilité, mais appartiennent au groupe `hidden_legacy` : ils ne sont jamais présentés au modèle et sont bloqués avant exécution.

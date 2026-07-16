@@ -123,10 +123,13 @@ flowchart LR
 - **Présentation dynamique au modèle** : le catalogue complet reste enregistré
   auprès de LangGraph, puis `tools/tool_exposure.py` produit une allowlist
   déterministe de **15 tools maximum par appel modèle** à partir du
-  `TurnContext`, de la `SourceDecision`, de l'intention du dernier message et
+  `TurnContext`, de la `SourceDecision`, des intentions non géographiques et
   des tools/skills réussis dans le tour. Le noyau permanent contient
-  `load_file`, `load_skill` et le RAG. EcoTaxa est découpé en sept groupes
-  d'intention; EcoPart, Amundsen, Bio-ORACLE et OGSL n'exposent que leur route
+  `load_file`, `load_skill` et le RAG. Les deux capacités géographiques sont
+  toujours visibles : le modèle principal choisit sémantiquement de les utiliser,
+  sans regex ni classifieur additionnel. EcoTaxa conserve toujours son groupe
+  zone/période et au plus un autre groupe d'intention; EcoPart, Amundsen,
+  Bio-ORACLE et OGSL n'exposent que leur route
   d'enrichissement canonique lorsqu'un fichier actif doit explicitement être
   enrichi avec la source nommée. Les routes legacy masquées restent dans le
   catalogue pour compatibilité, mais la garde pré-tool applique la même
@@ -146,7 +149,8 @@ Raisonnement → appel de tool → observation → raisonnement, jusqu'à la ré
 finale. Le modèle choisit le tool à l'intérieur de l'allowlist calculée pour
 l'appel courant. `tools/source_scope.py` calcule une `SourceDecision`
 persistante et filtre d'abord les familles externes; `tools/tool_exposure.py`
-réduit ensuite le choix selon l'intention. Les deux décisions sont rejouées
+réduit ensuite le choix selon le contexte et les intentions non géographiques,
+tout en conservant les capacités géographiques. Les deux décisions sont rejouées
 avant exécution afin de bloquer fail-closed un appel hors source ou masqué. Le
 bloc prompt de sélection des sources reste généré depuis la même politique.
 

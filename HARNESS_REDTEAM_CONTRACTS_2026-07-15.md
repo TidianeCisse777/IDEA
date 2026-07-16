@@ -13,7 +13,7 @@ Ces contrats décrivent le comportement attendu du futur harness. Ils restent vo
 | Toute opération lourde possède une confirmation exécutable | **Fondation 2A terminée** : risque et confirmation sont déclarés pour les 62 tools ; l'autorisation liée aux arguments reste non exécutable | Étape 7 — `ApprovalGrant` |
 | `run_graph` est fail-closed sans workflow graphique du tour | **Résolu en 4B.1** : garde d'intention typée, ToolResults du tour courant et précondition writer dans `run_graph` | Étape 4B.1 — contrat devenu vert |
 | Le Hub ne peut pas introduire un skill absent localement | **Résolu en étape 8** : `load_skill` valide l'allowlist locale avant tout accès Hub ; le contrat rouge devient vert et le happy path graphique reste validé sur l'agent réel | Étape 8 — contrat devenu vert |
-| Le coût fixe reste sous 40 % du contexte | **Résolu en étape 6** : 3 à 10 tools/appel sur le replay offline, maximum 9 356 tokens fixes pour un plafond de 16 000; contrat devenu vert | Étape 6 — filtrage dynamique |
+| Le coût fixe reste sous 40 % du contexte | **Résolu en étape 6** : 5 à 15 tools/appel sur le replay offline avec géographie toujours visible, maximum 12 384 tokens fixes pour un plafond de 16 000; contrat vert | Étape 6 — filtrage dynamique |
 | La documentation correspond au catalogue runtime | **Résolu en 2A.1** : inventaire généré, trois entrées ajoutées, totaux 59/62 et contrôle `--check` | Étape 2A.1 — contrat devenu vert |
 | Le code exécuté n'atteint ni secrets ni réseau | **Premier tranchant résolu en étape 9** : namespace restreint (`tools/code_sandbox.py`), escapes secret/socket/subprocess/`open` verts ; egress bibliothèque et quotas restent pour le worker processus | Étape 9 — isolation processus complète |
 

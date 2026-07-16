@@ -1,15 +1,15 @@
 {
   "external_dependencies": [],
-  "generated_at": "2026-07-16T14:52:47.346830+00:00",
+  "generated_at": "2026-07-16T15:22:17.363887+00:00",
   "lane": "offline",
   "metrics": {
     "cost_usd": null,
-    "fixed_tokens": 9356,
+    "fixed_tokens": 12384,
     "input_tokens": 0,
     "level_1_pass_rate": 1.0,
     "level_2_pass_rate": 1.0,
-    "max_tools_exposed_per_model_call": 10,
-    "mean_tools_exposed_per_turn": 5.461538461538462,
+    "max_tools_exposed_per_model_call": 15,
+    "mean_tools_exposed_per_turn": 7.846153846153846,
     "mean_tools_per_turn": 1.1538461538461537,
     "output_tokens": 0,
     "sc_lab_good_file_rate": 1.0,
@@ -57,21 +57,23 @@
       "turns": [
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 507,
+            "approx_tokens_tool_schemas_after": 1243,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 17516,
-            "fixed_tokens": 7226,
+            "approx_tokens_tool_schemas_saved": 16780,
+            "fixed_tokens": 7962,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
             "tool_exposure_alert": false,
-            "tool_exposure_count": 3,
+            "tool_exposure_count": 5,
             "tool_exposure_groups": [
-              "core"
+              "core",
+              "geography"
             ],
             "tool_exposure_reasons": [
-              "permanent core"
+              "permanent core",
+              "permanent geographic capabilities"
             ],
-            "tool_schema_tokens": 507
+            "tool_schema_tokens": 1243
           },
           "dataset_after": {
             "source": "file",
@@ -123,13 +125,17 @@
             [
               "load_file",
               "load_skill",
-              "query_copepod_knowledge_base"
+              "query_copepod_knowledge_base",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
             ]
           ],
           "tools_exposed": [
             "load_file",
             "load_skill",
-            "query_copepod_knowledge_base"
+            "query_copepod_knowledge_base",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
           ],
           "usage": {
             "cost_usd": null,
@@ -149,13 +155,13 @@
             "tool_exposure_count": 6,
             "tool_exposure_groups": [
               "core",
-              "file_analysis",
-              "geography"
+              "geography",
+              "file_analysis"
             ],
             "tool_exposure_reasons": [
               "permanent core",
-              "active dataset",
-              "geography requested"
+              "permanent geographic capabilities",
+              "active dataset"
             ],
             "tool_schema_tokens": 1674
           },
@@ -281,14 +287,14 @@
             "tool_exposure_count": 7,
             "tool_exposure_groups": [
               "core",
-              "file_analysis",
               "geography",
+              "file_analysis",
               "taxonomy"
             ],
             "tool_exposure_reasons": [
               "permanent core",
+              "permanent geographic capabilities",
               "active dataset",
-              "geography requested",
               "taxonomy requested"
             ],
             "tool_schema_tokens": 1860
@@ -407,23 +413,25 @@
         },
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 937,
+            "approx_tokens_tool_schemas_after": 1674,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 17086,
-            "fixed_tokens": 7656,
+            "approx_tokens_tool_schemas_saved": 16349,
+            "fixed_tokens": 8393,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
             "tool_exposure_alert": false,
-            "tool_exposure_count": 4,
+            "tool_exposure_count": 6,
             "tool_exposure_groups": [
               "core",
+              "geography",
               "file_analysis"
             ],
             "tool_exposure_reasons": [
               "permanent core",
+              "permanent geographic capabilities",
               "active dataset"
             ],
-            "tool_schema_tokens": 937
+            "tool_schema_tokens": 1674
           },
           "dataset_after": {
             "source": "filter_by_zone:Mer du Labrador",
@@ -453,14 +461,18 @@
               "load_file",
               "load_skill",
               "query_copepod_knowledge_base",
-              "run_pandas"
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
             ]
           ],
           "tools_exposed": [
             "load_file",
             "load_skill",
             "query_copepod_knowledge_base",
-            "run_pandas"
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
           ],
           "usage": {
             "cost_usd": null,
@@ -480,13 +492,13 @@
             "tool_exposure_count": 6,
             "tool_exposure_groups": [
               "core",
-              "file_analysis",
-              "geography"
+              "geography",
+              "file_analysis"
             ],
             "tool_exposure_reasons": [
               "permanent core",
-              "active dataset",
-              "geography requested"
+              "permanent geographic capabilities",
+              "active dataset"
             ],
             "tool_schema_tokens": 1674
           },
@@ -562,23 +574,25 @@
         },
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 937,
+            "approx_tokens_tool_schemas_after": 1674,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 17086,
-            "fixed_tokens": 7656,
+            "approx_tokens_tool_schemas_saved": 16349,
+            "fixed_tokens": 8393,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
             "tool_exposure_alert": false,
-            "tool_exposure_count": 4,
+            "tool_exposure_count": 6,
             "tool_exposure_groups": [
               "core",
+              "geography",
               "file_analysis"
             ],
             "tool_exposure_reasons": [
               "permanent core",
+              "permanent geographic capabilities",
               "active dataset"
             ],
-            "tool_schema_tokens": 937
+            "tool_schema_tokens": 1674
           },
           "dataset_after": {
             "source": "filter_by_zone:Mer du Labrador",
@@ -608,14 +622,18 @@
               "load_file",
               "load_skill",
               "query_copepod_knowledge_base",
-              "run_pandas"
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
             ]
           ],
           "tools_exposed": [
             "load_file",
             "load_skill",
             "query_copepod_knowledge_base",
-            "run_pandas"
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
           ],
           "usage": {
             "cost_usd": null,
@@ -625,23 +643,25 @@
         },
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 937,
+            "approx_tokens_tool_schemas_after": 1674,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 17086,
-            "fixed_tokens": 7656,
+            "approx_tokens_tool_schemas_saved": 16349,
+            "fixed_tokens": 8393,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
             "tool_exposure_alert": false,
-            "tool_exposure_count": 4,
+            "tool_exposure_count": 6,
             "tool_exposure_groups": [
               "core",
+              "geography",
               "file_analysis"
             ],
             "tool_exposure_reasons": [
               "permanent core",
+              "permanent geographic capabilities",
               "active dataset"
             ],
-            "tool_schema_tokens": 937
+            "tool_schema_tokens": 1674
           },
           "dataset_after": {
             "source": "filter_by_zone:Mer du Labrador",
@@ -695,14 +715,18 @@
               "load_file",
               "load_skill",
               "query_copepod_knowledge_base",
-              "run_pandas"
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
             ]
           ],
           "tools_exposed": [
             "load_file",
             "load_skill",
             "query_copepod_knowledge_base",
-            "run_pandas"
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
           ],
           "usage": {
             "cost_usd": null,
@@ -718,21 +742,23 @@
       "turns": [
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 507,
+            "approx_tokens_tool_schemas_after": 1243,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 17516,
-            "fixed_tokens": 7226,
+            "approx_tokens_tool_schemas_saved": 16780,
+            "fixed_tokens": 7962,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
             "tool_exposure_alert": false,
-            "tool_exposure_count": 3,
+            "tool_exposure_count": 5,
             "tool_exposure_groups": [
-              "core"
+              "core",
+              "geography"
             ],
             "tool_exposure_reasons": [
-              "permanent core"
+              "permanent core",
+              "permanent geographic capabilities"
             ],
-            "tool_schema_tokens": 507
+            "tool_schema_tokens": 1243
           },
           "dataset_after": {
             "source": "file",
@@ -784,13 +810,17 @@
             [
               "load_file",
               "load_skill",
-              "query_copepod_knowledge_base"
+              "query_copepod_knowledge_base",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
             ]
           ],
           "tools_exposed": [
             "load_file",
             "load_skill",
-            "query_copepod_knowledge_base"
+            "query_copepod_knowledge_base",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
           ],
           "usage": {
             "cost_usd": null,
@@ -800,25 +830,27 @@
         },
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 1556,
+            "approx_tokens_tool_schemas_after": 2293,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 16467,
-            "fixed_tokens": 8275,
+            "approx_tokens_tool_schemas_saved": 15730,
+            "fixed_tokens": 9012,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
             "tool_exposure_alert": false,
-            "tool_exposure_count": 5,
+            "tool_exposure_count": 7,
             "tool_exposure_groups": [
               "core",
+              "geography",
               "file_analysis",
               "enrichment_amundsen"
             ],
             "tool_exposure_reasons": [
               "permanent core",
+              "permanent geographic capabilities",
               "active dataset",
               "explicit amundsen enrichment"
             ],
-            "tool_schema_tokens": 1556
+            "tool_schema_tokens": 2293
           },
           "dataset_after": {
             "source": "amundsen_enrichment",
@@ -870,6 +902,8 @@
               "load_skill",
               "query_copepod_knowledge_base",
               "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
               "enrich_with_amundsen_ctd"
             ]
           ],
@@ -878,6 +912,8 @@
             "load_skill",
             "query_copepod_knowledge_base",
             "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
             "enrich_with_amundsen_ctd"
           ],
           "usage": {
@@ -888,25 +924,27 @@
         },
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 1420,
+            "approx_tokens_tool_schemas_after": 2156,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 16603,
-            "fixed_tokens": 8139,
+            "approx_tokens_tool_schemas_saved": 15867,
+            "fixed_tokens": 8875,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
             "tool_exposure_alert": false,
-            "tool_exposure_count": 5,
+            "tool_exposure_count": 7,
             "tool_exposure_groups": [
               "core",
+              "geography",
               "file_analysis",
               "enrichment_bio_oracle"
             ],
             "tool_exposure_reasons": [
               "permanent core",
+              "permanent geographic capabilities",
               "active dataset",
               "explicit bio_oracle enrichment"
             ],
-            "tool_schema_tokens": 1420
+            "tool_schema_tokens": 2156
           },
           "dataset_after": {
             "source": "bio_oracle_coupling",
@@ -960,6 +998,8 @@
               "load_skill",
               "query_copepod_knowledge_base",
               "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
               "enrich_with_bio_oracle"
             ]
           ],
@@ -968,6 +1008,8 @@
             "load_skill",
             "query_copepod_knowledge_base",
             "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
             "enrich_with_bio_oracle"
           ],
           "usage": {
@@ -984,23 +1026,26 @@
       "turns": [
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 1630,
+            "approx_tokens_tool_schemas_after": 5621,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 16393,
-            "fixed_tokens": 8349,
+            "approx_tokens_tool_schemas_saved": 12402,
+            "fixed_tokens": 12340,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
-            "tool_exposure_alert": false,
-            "tool_exposure_count": 8,
+            "tool_exposure_alert": true,
+            "tool_exposure_count": 15,
             "tool_exposure_groups": [
               "core",
+              "geography",
+              "ecotaxa_geo_time",
               "ecotaxa_discovery"
             ],
             "tool_exposure_reasons": [
               "permanent core",
+              "permanent geographic capabilities",
               "authorized EcoTaxa intent"
             ],
-            "tool_schema_tokens": 1630
+            "tool_schema_tokens": 5621
           },
           "dataset_after": {
             "source": "ecotaxa_catalog",
@@ -1053,22 +1098,36 @@
               "load_file",
               "load_skill",
               "query_copepod_knowledge_base",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
               "find_ecotaxa_projects",
               "get_ecotaxa_cache_status",
               "list_ecotaxa_campaigns",
               "list_ecotaxa_projects",
-              "preview_ecotaxa_project"
+              "preview_ecotaxa_project",
+              "find_ecotaxa_projects_in_region",
+              "find_ecotaxa_samples_in_region",
+              "group_ecotaxa_project_samples_by_region",
+              "group_ecotaxa_samples_by_year",
+              "rank_ecotaxa_samples_by_region"
             ]
           ],
           "tools_exposed": [
             "load_file",
             "load_skill",
             "query_copepod_knowledge_base",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
             "find_ecotaxa_projects",
             "get_ecotaxa_cache_status",
             "list_ecotaxa_campaigns",
             "list_ecotaxa_projects",
-            "preview_ecotaxa_project"
+            "preview_ecotaxa_project",
+            "find_ecotaxa_projects_in_region",
+            "find_ecotaxa_samples_in_region",
+            "group_ecotaxa_project_samples_by_region",
+            "group_ecotaxa_samples_by_year",
+            "rank_ecotaxa_samples_by_region"
           ],
           "usage": {
             "cost_usd": null,
@@ -1078,23 +1137,26 @@
         },
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 1674,
+            "approx_tokens_tool_schemas_after": 5665,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 16349,
-            "fixed_tokens": 8393,
+            "approx_tokens_tool_schemas_saved": 12358,
+            "fixed_tokens": 12384,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
-            "tool_exposure_alert": false,
-            "tool_exposure_count": 6,
+            "tool_exposure_alert": true,
+            "tool_exposure_count": 13,
             "tool_exposure_groups": [
               "core",
+              "geography",
+              "ecotaxa_geo_time",
               "ecotaxa_export"
             ],
             "tool_exposure_reasons": [
               "permanent core",
+              "permanent geographic capabilities",
               "authorized EcoTaxa intent"
             ],
-            "tool_schema_tokens": 1674
+            "tool_schema_tokens": 5665
           },
           "dataset_after": {
             "source": "ecotaxa_preview",
@@ -1147,6 +1209,13 @@
               "load_file",
               "load_skill",
               "query_copepod_knowledge_base",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
+              "find_ecotaxa_projects_in_region",
+              "find_ecotaxa_samples_in_region",
+              "group_ecotaxa_project_samples_by_region",
+              "group_ecotaxa_samples_by_year",
+              "rank_ecotaxa_samples_by_region",
               "export_ecotaxa_samples",
               "query_ecotaxa",
               "query_ecotaxa_sample"
@@ -1156,6 +1225,13 @@
             "load_file",
             "load_skill",
             "query_copepod_knowledge_base",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
+            "find_ecotaxa_projects_in_region",
+            "find_ecotaxa_samples_in_region",
+            "group_ecotaxa_project_samples_by_region",
+            "group_ecotaxa_samples_by_year",
+            "rank_ecotaxa_samples_by_region",
             "export_ecotaxa_samples",
             "query_ecotaxa",
             "query_ecotaxa_sample"
@@ -1168,24 +1244,26 @@
         },
         {
           "context": {
-            "approx_tokens_tool_schemas_after": 2637,
+            "approx_tokens_tool_schemas_after": 5665,
             "approx_tokens_tool_schemas_before": 18023,
-            "approx_tokens_tool_schemas_saved": 15386,
-            "fixed_tokens": 9356,
+            "approx_tokens_tool_schemas_saved": 12358,
+            "fixed_tokens": 12384,
             "policy_overflow": false,
             "system_prompt_tokens": 6719,
-            "tool_exposure_alert": false,
-            "tool_exposure_count": 10,
+            "tool_exposure_alert": true,
+            "tool_exposure_count": 13,
             "tool_exposure_groups": [
               "core",
-              "ecotaxa_export",
-              "ecotaxa_audit"
+              "geography",
+              "ecotaxa_geo_time",
+              "ecotaxa_export"
             ],
             "tool_exposure_reasons": [
               "permanent core",
+              "permanent geographic capabilities",
               "authorized EcoTaxa intent"
             ],
-            "tool_schema_tokens": 2637
+            "tool_schema_tokens": 5665
           },
           "dataset_after": {
             "source": "ecotaxa_summary",
@@ -1238,10 +1316,13 @@
               "load_file",
               "load_skill",
               "query_copepod_knowledge_base",
-              "audit_ecotaxa_availability",
-              "audit_ecotaxa_spatial_coverage",
-              "summarize_ecotaxa_project",
-              "summarize_ecotaxa_projects",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
+              "find_ecotaxa_projects_in_region",
+              "find_ecotaxa_samples_in_region",
+              "group_ecotaxa_project_samples_by_region",
+              "group_ecotaxa_samples_by_year",
+              "rank_ecotaxa_samples_by_region",
               "export_ecotaxa_samples",
               "query_ecotaxa",
               "query_ecotaxa_sample"
@@ -1251,10 +1332,13 @@
             "load_file",
             "load_skill",
             "query_copepod_knowledge_base",
-            "audit_ecotaxa_availability",
-            "audit_ecotaxa_spatial_coverage",
-            "summarize_ecotaxa_project",
-            "summarize_ecotaxa_projects",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
+            "find_ecotaxa_projects_in_region",
+            "find_ecotaxa_samples_in_region",
+            "group_ecotaxa_project_samples_by_region",
+            "group_ecotaxa_samples_by_year",
+            "rank_ecotaxa_samples_by_region",
             "export_ecotaxa_samples",
             "query_ecotaxa",
             "query_ecotaxa_sample"

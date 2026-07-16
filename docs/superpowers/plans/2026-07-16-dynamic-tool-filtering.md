@@ -309,7 +309,7 @@ Après les gates déterministes et uniquement avec commande explicite : rejouer 
 - Consumes: `decide_tool_exposure(...)` et les groupes existants `geography` / `ecotaxa_geo_time`.
 - Produces: une allowlist où `geography` est toujours actif et où EcoTaxa ajoute toujours `ecotaxa_geo_time`, sans `_GEOGRAPHY_PATTERN` ni `TurnSignals.geography_requested`.
 
-- [ ] **Step 1: Write the failing Hudson and source-matrix tests**
+- [x] **Step 1: Write the failing Hudson and source-matrix tests**
 
 ```python
 def test_geography_tools_are_always_visible_without_lexical_detection():
@@ -325,27 +325,27 @@ def test_ecotaxa_always_includes_geo_time_with_at_most_one_other_group():
     assert len(decision.tool_names) <= 15
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Command: `pytest tests/test_tool_exposure.py -q`
 
 Expected: FAIL because neutral/Hudson text does not expose `geography` and EcoTaxa audit omits `ecotaxa_geo_time`.
 
-- [ ] **Step 3: Implement the minimal policy change**
+- [x] **Step 3: Implement the minimal policy change**
 
 Delete `_GEOGRAPHY_PATTERN` and `TurnSignals.geography_requested`. Initialize groups with `['core', 'geography']`. For EcoTaxa, select the first non-geographic intent or discovery, then prepend `ecotaxa_geo_time`. Update overflow fallback to preserve `geography` and, for EcoTaxa, `ecotaxa_geo_time` plus discovery when the combination fits.
 
-- [ ] **Step 4: Run GREEN and the middleware regression**
+- [x] **Step 4: Run GREEN and the middleware regression**
 
 Run: `pytest tests/test_tool_exposure.py tests/test_tool_exposure_middleware.py tests/test_agent_factory.py -q`
 Expected: PASS; every decision remains at 15 tools maximum.
 
-- [ ] **Step 5: Validate the real Hudson curl once**
+- [x] **Step 5: Validate the real Hudson curl once**
 
 Run the existing `curl-neolabs-2014-2020` request for Hudson, then query `/debug/context-audit`.
 Expected: `geography` in `tool_exposure_groups`, `get_zone_info` and `filter_dataframe_by_zone` in `tools_exposed`, no overflow.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add tools/tool_exposure.py tests/test_tool_exposure.py docs/superpowers/plans/2026-07-16-dynamic-tool-filtering.md

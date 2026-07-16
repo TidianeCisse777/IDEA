@@ -70,16 +70,36 @@ def _successful_skill_messages(text: str, *skills: str):
     return messages
 
 
-def test_no_state_exposes_only_the_permanent_core():
+def test_no_state_exposes_permanent_core_and_geographic_capabilities():
     decision = _decision("Bonjour")
 
-    assert decision.tool_names == (
+    assert decision.tool_names[:3] == (
         "load_file",
         "load_skill",
         "query_copepod_knowledge_base",
     )
-    assert decision.active_groups == ("core",)
+    assert set(decision.tool_names[3:]) == {
+        "filter_dataframe_by_zone",
+        "get_zone_info",
+    }
+    assert decision.active_groups == ("core", "geography")
     assert decision.policy_overflow is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Baie d’Hudson",
+        "Fais la même chose pour le secteur scientifique alpha",
+        "Bonjour",
+    ],
+)
+def test_geographic_capabilities_do_not_depend_on_lexical_detection(text):
+    decision = _decision(text)
+
+    assert "get_zone_info" in decision.tool_names
+    assert "filter_dataframe_by_zone" in decision.tool_names
+    assert "geography" in decision.active_groups
 
 
 def test_loaded_file_adds_pandas_but_not_graph_rendering():
@@ -177,6 +197,15 @@ def test_ecotaxa_selects_only_the_requested_subtoolset(text, expected_group, exp
 
     assert expected_group in decision.active_groups
     assert expected_tool in decision.tool_names
+    assert len(decision.tool_names) <= 15
+
+
+def test_ecotaxa_always_includes_geo_time_with_at_most_one_other_group():
+    decision = _decision("Audite le projet EcoTaxa", sources=("ecotaxa",))
+
+    assert "ecotaxa_geo_time" in decision.active_groups
+    assert "ecotaxa_audit" in decision.active_groups
+    assert "find_ecotaxa_samples_in_region" in decision.tool_names
     assert len(decision.tool_names) <= 15
 
 

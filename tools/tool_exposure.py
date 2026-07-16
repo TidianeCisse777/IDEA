@@ -26,11 +26,6 @@ _ENRICHMENT_PATTERN = re.compile(
     r"\b(?:enrich\w*|enrichis\w*|enrichir|enrichment|coupl\w*|compl[eè]te\w*)\b",
     re.IGNORECASE,
 )
-_GEOGRAPHY_PATTERN = re.compile(
-    r"\b(?:zone|r[eé]gion|spatial\w*|g[eé]ograph\w*|latitude|longitude|bbox|"
-    r"labrador|baffin|arctique|arctic)\b",
-    re.IGNORECASE,
-)
 _TAXONOMY_PATTERN = re.compile(
     r"\b(?:taxon\w*|taxa|taxonomi\w*|esp[eè]ce\w*|species)\b",
     re.IGNORECASE,
@@ -55,6 +50,13 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
         ),
     ),
     (
+        "ecotaxa_samples",
+        re.compile(
+            r"\b(?:sample\w*|[eé]chantillon\w*|d[eé]ploiement\w*|deployment\w*)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "ecotaxa_audit",
         re.compile(
             r"\b(?:audit\w*|couverture|coverage|disponibilit[eé]|availability|"
@@ -66,21 +68,6 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
         "ecotaxa_taxonomy",
         re.compile(
             r"\b(?:taxon\w*|taxa|taxonomi\w*|esp[eè]ce\w*|species|compte\w*)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "ecotaxa_geo_time",
-        re.compile(
-            r"\b(?:zone|r[eé]gion|spatial\w*|ann[eé]e\w*|year\w*|p[eé]riode\w*|"
-            r"date\w*|station\w*|labrador|baffin|arctique|arctic)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "ecotaxa_samples",
-        re.compile(
-            r"\b(?:sample\w*|[eé]chantillon\w*|d[eé]ploiement\w*|deployment\w*)\b",
             re.IGNORECASE,
         ),
     ),
@@ -113,7 +100,6 @@ class TurnSignals:
 
     latest_user_text: str
     enrichment_requested: bool
-    geography_requested: bool
     taxonomy_requested: bool
     sql_copy_requested: bool
     successful_tools_this_turn: tuple[str, ...]
@@ -146,11 +132,10 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
     )
     ecotaxa_intents = tuple(
         group for group, pattern in _ECOTAXA_INTENT_PATTERNS if pattern.search(text)
-    )[:2]
+    )[:1]
     return TurnSignals(
         latest_user_text=text,
         enrichment_requested=bool(_ENRICHMENT_PATTERN.search(text)),
-        geography_requested=bool(_GEOGRAPHY_PATTERN.search(text)),
         taxonomy_requested=bool(_TAXONOMY_PATTERN.search(text)),
         sql_copy_requested=bool(_SQL_COPY_PATTERN.search(text)),
         successful_tools_this_turn=tuple(call.name for call in calls),
@@ -192,15 +177,12 @@ def decide_tool_exposure(
 
     names = tuple(dict.fromkeys(str(name) for name in available_names if name in policies))
     signals = build_turn_signals(messages)
-    groups: list[ToolExposureGroup] = ["core"]
-    reasons = ["permanent core"]
+    groups: list[ToolExposureGroup] = ["core", "geography"]
+    reasons = ["permanent core", "permanent geographic capabilities"]
 
     if turn_context.file_loaded:
         groups.append("file_analysis")
         reasons.append("active dataset")
-    if signals.geography_requested:
-        groups.append("geography")
-        reasons.append("geography requested")
     if signals.taxonomy_requested and "ecotaxa" not in source_decision.authorized_sources:
         groups.append("taxonomy")
         reasons.append("taxonomy requested")
@@ -227,7 +209,10 @@ def decide_tool_exposure(
         )
 
     if "ecotaxa" in authorized:
-        ecotaxa_groups = signals.ecotaxa_intents or ("ecotaxa_discovery",)
+        ecotaxa_groups = (
+            "ecotaxa_geo_time",
+            *(signals.ecotaxa_intents or ("ecotaxa_discovery",)),
+        )
         groups.extend(ecotaxa_groups)
         reasons.append("authorized EcoTaxa intent")
 
