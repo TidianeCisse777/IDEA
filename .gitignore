@@ -278,3 +278,4 @@ local_scripts/
 .worktrees/
 core/copepod_rag/chroma_db/
 !langgraph.json
+!docs/superpowers/plans/2026-07-15-numeric-evidence-routing.md
