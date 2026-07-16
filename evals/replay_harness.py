@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Literal
 
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from tools.tool_result import success, validate_tool_artifact
 
@@ -70,9 +70,11 @@ class ToolExposureCapture(BaseCallbackHandler):
 
     def __init__(self) -> None:
         self.names: list[str] = []
+        self.calls: list[list[str]] = []
 
     def reset(self) -> None:
         self.names = []
+        self.calls = []
 
     def on_chat_model_start(self, serialized, messages, **kwargs) -> None:  # noqa: ANN001
         invocation = kwargs.get("invocation_params") or {}
@@ -86,7 +88,9 @@ class ToolExposureCapture(BaseCallbackHandler):
             name = name or item.get("name")
             if name:
                 discovered.append(str(name))
-        self.names = list(dict.fromkeys((*self.names, *discovered)))
+        current = list(dict.fromkeys(discovered))
+        self.calls.append(current)
+        self.names = list(dict.fromkeys((*self.names, *current)))
 
 
 def load_reference_scenarios(path: Path = REFERENCE_PATH) -> dict[str, Scenario]:
@@ -261,24 +265,75 @@ def _fixed_request_snapshot() -> dict[str, Any]:
     system_tokens = _approx_tokens([SystemMessage(content=_SYSTEM_PROMPT)])
     schema_tokens = _tool_schema_tokens(catalog.tools)
     return {
-        "tools_exposed": sorted(catalog.names),
+        "catalog_tools": sorted(catalog.names),
+        "tools_by_name": {tool.name: tool for tool in catalog.tools},
         "system_prompt_tokens": system_tokens,
         "tool_schema_tokens": schema_tokens,
         "fixed_tokens": system_tokens + schema_tokens,
     }
 
 
-def _turn_record(turn: ScenarioTurn, fixed: dict[str, Any]) -> dict[str, Any]:
+def _turn_record(
+    turn: ScenarioTurn,
+    fixed: dict[str, Any],
+    *,
+    file_loaded: bool,
+) -> dict[str, Any]:
+    from agent import _tool_schema_tokens
+    from tools.source_scope import SourceDecision
+    from tools.tool_catalog import TOOL_POLICIES
+    from tools.tool_exposure import decide_tool_exposure
+    from tools.turn_context import TurnContext
+
     observation = copy.deepcopy(turn.offline)
     calls = [
         _offline_tool_call(call)
         for call in observation.get("tool_calls", [])
     ]
     dataset_after = observation.get("dataset_after")
+    expected = turn.expected_source
+    authorized = (
+        ("file",)
+        if expected == "file"
+        else (("file", expected) if file_loaded else (expected,))
+    )
+    source_decision = SourceDecision(
+        primary_source="file" if file_loaded else expected,
+        authorized_sources=authorized,
+        explicit_sources=tuple(source for source in authorized if source != "file"),
+        evidence="explicit_name" if expected != "file" else "loaded_file_default",
+        needs_clarification=False,
+        reason="deterministic offline reference",
+    )
+    turn_context = TurnContext(
+        thread_id="offline-reference",
+        file_loaded=file_loaded,
+        active_variable="df_file_reference" if file_loaded else None,
+        active_source="file:offline-reference" if file_loaded else None,
+        derived_zone_subsets=(),
+        authorized_sources=authorized,
+        primary_source=source_decision.primary_source,
+        explicit_sources=source_decision.explicit_sources,
+        capsule="",
+    )
+    exposure = decide_tool_exposure(
+        tuple(fixed["catalog_tools"]),
+        TOOL_POLICIES,
+        turn_context,
+        source_decision,
+        [HumanMessage(content=turn.prompt)],
+    )
+    exposed_tools = [
+        fixed["tools_by_name"][name]
+        for name in exposure.tool_names
+        if name in fixed["tools_by_name"]
+    ]
+    schema_tokens_after = _tool_schema_tokens(exposed_tools)
     return {
         "name": turn.name,
         "prompt": turn.prompt,
-        "tools_exposed": list(fixed["tools_exposed"]),
+        "tools_exposed": list(exposure.tool_names),
+        "tool_exposure_calls": [list(exposure.tool_names)],
         "tool_calls": calls,
         "dataset_after": dataset_after,
         "refused": str(observation.get("final_answer", "")).lower().startswith("refus"),
@@ -286,8 +341,18 @@ def _turn_record(turn: ScenarioTurn, fixed: dict[str, Any]) -> dict[str, Any]:
         "usage": {"input_tokens": 0, "output_tokens": 0, "cost_usd": None},
         "context": {
             "system_prompt_tokens": fixed["system_prompt_tokens"],
-            "tool_schema_tokens": fixed["tool_schema_tokens"],
-            "fixed_tokens": fixed["fixed_tokens"],
+            "tool_schema_tokens": schema_tokens_after,
+            "fixed_tokens": fixed["system_prompt_tokens"] + schema_tokens_after,
+            "tool_exposure_count": len(exposure.tool_names),
+            "tool_exposure_alert": len(exposure.tool_names) >= 12,
+            "tool_exposure_groups": list(exposure.active_groups),
+            "tool_exposure_reasons": list(exposure.reasons),
+            "policy_overflow": exposure.policy_overflow,
+            "approx_tokens_tool_schemas_before": fixed["tool_schema_tokens"],
+            "approx_tokens_tool_schemas_after": schema_tokens_after,
+            "approx_tokens_tool_schemas_saved": max(
+                0, fixed["tool_schema_tokens"] - schema_tokens_after
+            ),
         },
         "grade": grade_turn(
             expected_source=turn.expected_source,
@@ -322,6 +387,11 @@ def _aggregate_metrics(runs: list[dict[str, Any]]) -> dict[str, Any]:
         for turn in turns
         if turn.get("usage", {}).get("cost_usd") is not None
     ]
+    exposure_calls = [
+        call
+        for turn in turns
+        for call in turn.get("tool_exposure_calls", [])
+    ]
     return {
         "scenario_runs": len(runs),
         "turns": len(turns),
@@ -330,7 +400,14 @@ def _aggregate_metrics(runs: list[dict[str, Any]]) -> dict[str, Any]:
         "sc_lab_good_file_rate": len(lab_good) / max(1, len(lab_expected)),
         "mean_tools_per_turn": sum(len(t["tool_calls"]) for t in turns) / count,
         "mean_tools_exposed_per_turn": sum(len(t["tools_exposed"]) for t in turns) / count,
-        "fixed_tokens": turns[0].get("context", {}).get("fixed_tokens", 0) if turns else 0,
+        "max_tools_exposed_per_model_call": max(
+            (len(call) for call in exposure_calls),
+            default=0,
+        ),
+        "fixed_tokens": max(
+            (turn.get("context", {}).get("fixed_tokens", 0) for turn in turns),
+            default=0,
+        ),
         "input_tokens": sum(int(turn.get("usage", {}).get("input_tokens", 0) or 0) for turn in turns),
         "output_tokens": sum(int(turn.get("usage", {}).get("output_tokens", 0) or 0) for turn in turns),
         "cost_usd": sum(costs) if costs else None,
@@ -368,10 +445,20 @@ def build_offline_report(*, runs: int = 1) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
     for scenario in scenarios.values():
         for run_index in range(runs):
+            file_loaded = False
+            turn_records = []
+            for turn in scenario.turns:
+                turn_records.append(
+                    _turn_record(turn, fixed, file_loaded=file_loaded)
+                )
+                file_loaded = file_loaded or any(
+                    call.get("name") == "load_file"
+                    for call in turn.offline.get("tool_calls", [])
+                )
             records.append({
                 "scenario_id": scenario.id,
                 "run_id": f"offline-{scenario.id.lower()}-{run_index + 1}",
-                "turns": [_turn_record(turn, fixed) for turn in scenario.turns],
+                "turns": turn_records,
             })
     return {
         "schema_version": "1.0",
@@ -380,9 +467,10 @@ def build_offline_report(*, runs: int = 1) -> dict[str, Any]:
         "model": "scripted-reference",
         "external_dependencies": [],
         "runtime_configuration": {
-            "tool_count": len(fixed["tools_exposed"]),
-            "sql_tools_exposed": any(name.startswith(("list_sql", "preview_sql", "copy_sql")) for name in fixed["tools_exposed"]),
-            "observations": "scripted fixtures; prompt and tool schemas measured from current code",
+            "tool_count": len(fixed["catalog_tools"]),
+            "max_tools_per_model_call": 15,
+            "sql_tools_exposed": False,
+            "observations": "scripted fixtures; dynamic per-turn tool policy and schemas measured from current code",
         },
         "run_count_per_scenario": runs,
         "scenarios": records,
@@ -400,6 +488,7 @@ def _live_turn_record(turn: ScenarioTurn, observation: dict[str, Any]) -> dict[s
         "name": turn.name,
         "prompt": turn.prompt,
         "tools_exposed": tools_exposed,
+        "tool_exposure_calls": list(observation.get("tool_exposure_calls") or []),
         "tool_exposure_capture_complete": bool(observation.get("tool_exposure_capture_complete", True)),
         "tool_calls": calls,
         "dataset_after": dataset_after,
@@ -469,6 +558,7 @@ def build_live_report(
             "external_dependencies": dependencies,
             "runtime_configuration": {
                 "tool_count": len(exposed),
+                "max_tools_per_model_call": 15,
                 "sql_tools_exposed": any(name.startswith(("list_sql", "preview_sql", "copy_sql")) for name in exposed),
                 "observations": "real model trajectory; source adapters listed as external dependencies",
             },
@@ -648,9 +738,24 @@ class LangGraphLiveExecutor:
                 + audit.get("approx_tokens_tool_schemas", 0)
             ),
             "approx_tokens_model_request": audit.get("approx_tokens_model_request", 0),
+            "tool_exposure_count": audit.get("tool_exposure_count", 0),
+            "tool_exposure_alert": bool(audit.get("tool_exposure_alert", False)),
+            "tool_exposure_groups": list(audit.get("tool_exposure_groups") or []),
+            "tool_exposure_reasons": list(audit.get("tool_exposure_reasons") or []),
+            "policy_overflow": bool(audit.get("policy_overflow", False)),
+            "approx_tokens_tool_schemas_before": audit.get(
+                "approx_tokens_tool_schemas_before", 0
+            ),
+            "approx_tokens_tool_schemas_after": audit.get(
+                "approx_tokens_tool_schemas_after", 0
+            ),
+            "approx_tokens_tool_schemas_saved": audit.get(
+                "approx_tokens_tool_schemas_saved", 0
+            ),
         }
         return {
             "tools_exposed": exposed,
+            "tool_exposure_calls": list(capture.calls),
             "tool_exposure_capture_complete": bool(capture.names),
             "tool_calls": calls,
             "dataset_after": self._dataset_snapshot(run_context["thread_id"], calls),

@@ -88,7 +88,7 @@
           "expected_dataset_source_family": "amundsen",
           "expect_file_use": false,
           "forbidden_tools": ["query_ecotaxa", "query_ecopart", "query_bio_oracle"],
-          "offline": {"tool_calls": [{"name": "enrich_loaded_table_with_amundsen_ctd", "arguments": {}}], "dataset_after": {"source": "amundsen_enrichment", "variable_name": "amundsen_enriched_df"}, "final_answer": "Enrichissement Amundsen terminé."}
+          "offline": {"tool_calls": [{"name": "enrich_with_amundsen_ctd", "arguments": {}}], "dataset_after": {"source": "amundsen_enrichment", "variable_name": "amundsen_enriched_df"}, "final_answer": "Enrichissement Amundsen terminé."}
         },
         {
           "name": "bio_oracle_enrichment",
@@ -97,7 +97,7 @@
           "expected_dataset_source_family": "bio_oracle",
           "expect_file_use": false,
           "forbidden_tools": ["query_ecotaxa", "query_ecopart", "query_amundsen_ctd"],
-          "offline": {"tool_calls": [{"name": "couple_zooplankton_bio_oracle", "arguments": {"scenario": "baseline"}}], "dataset_after": {"source": "bio_oracle_coupling", "variable_name": "bio_oracle_enriched_df"}, "final_answer": "Enrichissement Bio-ORACLE terminé."}
+          "offline": {"tool_calls": [{"name": "enrich_with_bio_oracle", "arguments": {"scenario": "baseline"}}], "dataset_after": {"source": "bio_oracle_coupling", "variable_name": "bio_oracle_enriched_df"}, "final_answer": "Enrichissement Bio-ORACLE terminé."}
         }
       ]
     },

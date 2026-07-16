@@ -5,10 +5,21 @@
 > pour le câblage voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
 >
 > **59 tools obligatoires, 62 avec SQL** (les 3 tools SQL ne sont ajoutés que si
-> `DATABASE_URL` est résolvable). Les règles de routage — quand appeler quel tool — vivent dans
-> `agents/copepod_system_prompt.py`, jamais dans le code Python.
+> `DATABASE_URL` est résolvable). Ce total est le catalogue enregistré; le modèle
+> voit une allowlist déterministe de **15 tools maximum par appel**, calculée par
+> `tools/tool_exposure.py` sous l'autorité de `tools/source_scope.py`. Le prompt
+> conserve les principes de routage métier; l'autorisation et la visibilité sont
+> exécutables en Python.
 > Les 62 tools ont des entrées Pydantic strictes et renvoient un artefact `ToolResult`
 > structuré (`success`, `empty`, `blocked`, `error` ou `cancelled`) en plus du texte visible.
+
+### Exposition dynamique
+
+- Noyau permanent : `load_file`, `load_skill`, `query_copepod_knowledge_base`.
+- Après chargement d'un fichier, les outils d'analyse locale deviennent visibles selon la demande; géographie, taxonomie, graphe et livrable suivent leurs intentions/préconditions.
+- EcoTaxa active au plus deux de ses sept groupes : découverte, samples, géo/temps, taxonomie, schéma, audit, export.
+- EcoPart, Amundsen, Bio-ORACLE et OGSL sont limités aux enrichissements canoniques `enrich_ecotaxa_with_ecopart_remote`, `enrich_with_amundsen_ctd`, `enrich_with_bio_oracle` et `enrich_with_ogsl`. Ils ne deviennent visibles que pour une demande explicite d'enrichissement d'un fichier avec la source nommée.
+- Les 18 autres tools de ces quatre familles restent enregistrés pour compatibilité, mais appartiennent au groupe `hidden_legacy` : ils ne sont jamais présentés au modèle et sont bloqués avant exécution.
 
 <!-- TOOL-INVENTORY:START -->
 Inventaire généré : **59 tools obligatoires**, **62 avec SQL**.

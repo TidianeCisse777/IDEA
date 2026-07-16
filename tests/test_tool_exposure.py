@@ -168,6 +168,7 @@ def test_enrichment_without_loaded_file_keeps_canonical_tool_hidden():
         ("Compte les taxons EcoTaxa", "ecotaxa_taxonomy", "count_ecotaxa_taxa"),
         ("Inspecte le schéma du projet EcoTaxa", "ecotaxa_schema", "inspect_ecotaxa_project_schema"),
         ("Audite la couverture EcoTaxa", "ecotaxa_audit", "audit_ecotaxa_spatial_coverage"),
+        ("Résume maintenant le projet 17498", "ecotaxa_audit", "summarize_ecotaxa_project"),
         ("Exporte les données EcoTaxa", "ecotaxa_export", "query_ecotaxa"),
     ],
 )

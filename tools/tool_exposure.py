@@ -57,7 +57,8 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
     (
         "ecotaxa_audit",
         re.compile(
-            r"\b(?:audit\w*|couverture|coverage|disponibilit[eé]|availability|synth[eè]se\w*)\b",
+            r"\b(?:audit\w*|couverture|coverage|disponibilit[eé]|availability|"
+            r"synth[eè]se\w*|r[eé]sum\w*|summar\w*)\b",
             re.IGNORECASE,
         ),
     ),

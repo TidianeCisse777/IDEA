@@ -44,6 +44,55 @@ def test_report_computes_file_routing_and_tool_density():
     assert metrics["fixed_tokens"] > 0
 
 
+def test_offline_replay_records_dynamic_tool_policy_under_the_per_call_cap():
+    from evals.replay_harness import build_offline_report
+
+    report = build_offline_report(runs=1)
+    turns = [
+        turn
+        for scenario in report["scenarios"]
+        for turn in scenario["turns"]
+    ]
+
+    assert turns
+    assert all(len(turn["tools_exposed"]) <= 15 for turn in turns)
+    assert all(turn["context"]["tool_exposure_count"] <= 15 for turn in turns)
+    assert all("tool_exposure_alert" in turn["context"] for turn in turns)
+    assert all("tool_exposure_groups" in turn["context"] for turn in turns)
+    assert all("policy_overflow" in turn["context"] for turn in turns)
+    assert all(
+        turn["context"]["approx_tokens_tool_schemas_after"]
+        <= turn["context"]["approx_tokens_tool_schemas_before"]
+        for turn in turns
+    )
+
+
+def test_tool_exposure_capture_preserves_each_model_call():
+    from evals.replay_harness import ToolExposureCapture
+
+    capture = ToolExposureCapture()
+    capture.on_chat_model_start(
+        {},
+        [[]],
+        invocation_params={
+            "tools": [{"type": "function", "function": {"name": "load_file"}}]
+        },
+    )
+    capture.on_chat_model_start(
+        {},
+        [[]],
+        invocation_params={
+            "tools": [
+                {"type": "function", "function": {"name": "run_pandas"}},
+                {"type": "function", "function": {"name": "run_graph"}},
+            ]
+        },
+    )
+
+    assert capture.calls == [["load_file"], ["run_pandas", "run_graph"]]
+    assert capture.names == ["load_file", "run_pandas", "run_graph"]
+
+
 def test_level_1_and_2_graders_flag_forbidden_tool_and_wrong_source():
     from evals.replay_harness import grade_turn
 
@@ -133,6 +182,10 @@ def test_live_report_uses_injected_executor_and_keeps_five_runs():
         def run_turn(self, run_context, turn):
             observation = dict(turn.offline)
             observation["tools_exposed"] = ["load_file", "run_pandas"]
+            observation["tool_exposure_calls"] = [
+                ["load_file"],
+                ["load_file", "run_pandas"],
+            ]
             observation["usage"] = {"input_tokens": 10, "output_tokens": 2, "cost_usd": 0.001}
             observation["context"] = {"fixed_tokens": 123}
             return observation
@@ -150,6 +203,7 @@ def test_live_report_uses_injected_executor_and_keeps_five_runs():
     assert report["metrics"]["input_tokens"] == 650
     assert report["metrics"]["output_tokens"] == 130
     assert report["metrics"]["cost_usd"] == pytest.approx(0.065)
+    assert report["metrics"]["max_tools_exposed_per_model_call"] == 2
 
 
 def test_tool_schema_capture_reads_openai_function_specs():

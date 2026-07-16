@@ -386,6 +386,7 @@ class _ContextMiddleware(AgentMiddleware):
             ],
             "tools_exposed": list(exposure_decision.tool_names),
             "tool_exposure_count": len(exposure_decision.tool_names),
+            "tool_exposure_alert": len(exposure_decision.tool_names) >= 12,
             "tool_exposure_groups": list(exposure_decision.active_groups),
             "tool_exposure_reasons": list(exposure_decision.reasons),
             "tools_dropped": list(exposure_decision.dropped_tool_names),

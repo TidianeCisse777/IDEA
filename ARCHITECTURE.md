@@ -94,7 +94,7 @@ flowchart LR
     subgraph Agent["create_agent"]
         HOOK["_ContextMiddleware<br/>prepare model request : trim + audit<br/>inject memory"]
         MODEL["LLM<br/>ChatOpenAI"]
-        TOOLS["Tools node<br/>55 tools (+3 SQL optionnels)"]
+        TOOLS["Tools node<br/>59 tools (+3 SQL optionnels)"]
         HOOK --> MODEL
         MODEL -->|tool call| TOOLS
         TOOLS -->|observation| MODEL
@@ -120,23 +120,35 @@ flowchart LR
   `DATABASE_URL` est résolvable, valide les noms uniques et fournit les libellés
   utilisateur français/anglais. Les noms internes et les schémas LangChain ne
   changent pas.
+- **Présentation dynamique au modèle** : le catalogue complet reste enregistré
+  auprès de LangGraph, puis `tools/tool_exposure.py` produit une allowlist
+  déterministe de **15 tools maximum par appel modèle** à partir du
+  `TurnContext`, de la `SourceDecision`, de l'intention du dernier message et
+  des tools/skills réussis dans le tour. Le noyau permanent contient
+  `load_file`, `load_skill` et le RAG. EcoTaxa est découpé en sept groupes
+  d'intention; EcoPart, Amundsen, Bio-ORACLE et OGSL n'exposent que leur route
+  d'enrichissement canonique lorsqu'un fichier actif doit explicitement être
+  enrichi avec la source nommée. Les routes legacy masquées restent dans le
+  catalogue pour compatibilité, mais la garde pré-tool applique la même
+  décision et les bloque fail-closed.
 - **`_ContextMiddleware`** (agent construit via `create_agent`, LangChain 1.x) :
-  - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 40000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`.
+  - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : filtrage de source, allowlist dynamique des tools, troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 40000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`. Le budget des schémas est recalculé après filtrage.
   - Le trim utilise `request.override(messages=...)` : il borne le contexte du modèle sans supprimer l'historique complet conservé dans le checkpoint LangGraph.
   - Les mêmes wrappers injectent le bloc mémoire long terme (`store.search` / `asearch` sur `(user_id, "memories")`) dans le system prompt. Les deux variantes existent car `serve.py` invoque en async avec un store async.
   - Ils reconstruisent aussi un `TurnContext` typé (`tools/turn_context.py`) en début de tour et injectent sa projection — la **carte d'état de session** (`build_dataset_state_capsule`) : dataset actif, roster `LOADED FILES` (tous les fichiers chargés par nom), `DERIVED ZONE SUBSETS` (variable↔zone), et `ACTIVE SOURCE SCOPE` (sources autorisées). L'agent lit son état au lieu de le ré-inférer de l'historique.
-  - L'audit `/debug/context-audit` décrit la requête préparée, avec les tokens du system prompt, le total modèle, les champs `TurnContext` (variable active, sources autorisées, nb de dérivés) et un indicateur explicite lorsque le dernier tour complet dépasse à lui seul la limite.
+  - L'audit `/debug/context-audit` décrit la requête préparée, avec les tokens du system prompt, le total modèle, les champs `TurnContext` (variable active, sources autorisées, nb de dérivés), les groupes/noms de tools exposés, les schémas économisés, l'alerte à 12 et un indicateur explicite lorsque le dernier tour complet dépasse à lui seul la limite.
   - `wrap_tool_call` / `awrap_tool_call` appliquent aussi la garde graphique. Elle n'appelle le classifieur structuré qu'à la première tentative graphique du tour, partage la décision par un verrou single-flight sync/async, puis autorise uniquement une intention `visual`. La progression planner → writer → rendu est reconstruite depuis les ToolMessages `success` postérieurs au dernier message humain; les anciennes activations et les lots parallèles ne donnent aucune autorisation.
 - **Checkpointer** : `AsyncSqliteSaver` sur `CHECKPOINTS_DB` (`data/checkpoints.sqlite`), clé par `thread_id`. Fallback `MemorySaver` selon le contexte.
 - **Store** : mémoire long terme (`InMemoryStore` ou store persistant).
 
 ### Boucle ReAct
 Raisonnement → appel de tool → observation → raisonnement, jusqu'à la réponse
-finale. Le modèle choisit le tool à l'intérieur de l'allowlist décrite par le
-system prompt. `tools/source_scope.py` calcule une `SourceDecision` persistante,
-filtre les familles externes avant le modèle et bloque fail-closed tout appel
-hors source avant exécution. Le bloc prompt correspondant est généré depuis
-cette politique.
+finale. Le modèle choisit le tool à l'intérieur de l'allowlist calculée pour
+l'appel courant. `tools/source_scope.py` calcule une `SourceDecision`
+persistante et filtre d'abord les familles externes; `tools/tool_exposure.py`
+réduit ensuite le choix selon l'intention. Les deux décisions sont rejouées
+avant exécution afin de bloquer fail-closed un appel hors source ou masqué. Le
+bloc prompt de sélection des sources reste généré depuis la même politique.
 
 ---
 
@@ -148,7 +160,8 @@ dont la **docstring** est lue par le LLM pour décider quand l'appeler.
 
 | Module | Famille | Détail SPEC |
 |---|---|---|
-| `tool_catalog.py` | Composition, validation et présentation bilingue des 55/58 tools | §3, §4 |
+| `tool_catalog.py` | Composition, validation, groupes d'exposition et présentation bilingue des 59/62 tools | §3, §4 |
+| `tool_exposure.py` | Allowlist déterministe par appel modèle (maximum 15) | §3 |
 | `data_tools.py` | Fichier & analyse & graphe | §4.1 |
 | `copepod_sources.py` | EcoTaxa (read-only + export) | §4.2 |
 | `ecopart_sources.py` | EcoPart + join/enrichissement | §4.3 |

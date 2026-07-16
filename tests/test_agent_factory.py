@@ -552,6 +552,7 @@ def test_context_middleware_filters_model_tools_from_same_source_decision(
     ]
     assert audit["tools_exposed"] == ["find_ecotaxa_projects"]
     assert audit["tool_exposure_count"] == 1
+    assert audit["tool_exposure_alert"] is False
     assert audit["tool_exposure_groups"] == ["core", "ecotaxa_discovery"]
     assert audit["approx_tokens_tool_schemas_after"] < audit[
         "approx_tokens_tool_schemas_before"
