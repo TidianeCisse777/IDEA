@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, TypeAlias, get_args
 
 from langchain_core.tools import BaseTool
 
@@ -45,6 +45,28 @@ ToolSource = Literal[
     "skill",
     "deliverable",
 ]
+ToolExposureGroup: TypeAlias = Literal[
+    "core",
+    "file_analysis",
+    "visualization",
+    "geography",
+    "taxonomy",
+    "deliverable",
+    "enrichment_ecopart",
+    "enrichment_amundsen",
+    "enrichment_bio_oracle",
+    "enrichment_ogsl",
+    "sql_workspace",
+    "ecotaxa_discovery",
+    "ecotaxa_samples",
+    "ecotaxa_geo_time",
+    "ecotaxa_taxonomy",
+    "ecotaxa_schema",
+    "ecotaxa_audit",
+    "ecotaxa_export",
+    "hidden_legacy",
+]
+TOOL_EXPOSURE_GROUPS = frozenset(get_args(ToolExposureGroup))
 
 
 @dataclass(frozen=True)
@@ -88,6 +110,7 @@ class ToolPolicy:
     required_skill: str | None
     allowed_workflows: tuple[str, ...]
     max_calls_per_turn: int
+    exposure_group: ToolExposureGroup
     result_schema: ToolResultSchema = "tool_result_v1"
 
 
@@ -390,6 +413,82 @@ _CORE_SOURCE_BY_NAME: Mapping[str, ToolSource] = MappingProxyType({
     "export_deliverable": "deliverable",
 })
 
+_EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
+    # Permanent core and state-gated local tools.
+    "load_file": "core",
+    "load_skill": "core",
+    "query_copepod_knowledge_base": "core",
+    "run_pandas": "file_analysis",
+    "run_graph": "visualization",
+    "get_zone_info": "geography",
+    "filter_dataframe_by_zone": "geography",
+    "lookup_marine_taxonomy": "taxonomy",
+    "export_deliverable": "deliverable",
+    # Canonical enrichment-only external paths.
+    "enrich_ecotaxa_with_ecopart_remote": "enrichment_ecopart",
+    "enrich_with_amundsen_ctd": "enrichment_amundsen",
+    "enrich_with_bio_oracle": "enrichment_bio_oracle",
+    "enrich_with_ogsl": "enrichment_ogsl",
+    # EcoTaxa discovery.
+    "list_ecotaxa_projects": "ecotaxa_discovery",
+    "find_ecotaxa_projects": "ecotaxa_discovery",
+    "list_ecotaxa_campaigns": "ecotaxa_discovery",
+    "preview_ecotaxa_project": "ecotaxa_discovery",
+    "get_ecotaxa_cache_status": "ecotaxa_discovery",
+    # EcoTaxa samples.
+    "list_ecotaxa_project_samples": "ecotaxa_samples",
+    "get_ecotaxa_sample": "ecotaxa_samples",
+    "summarize_ecotaxa_sample": "ecotaxa_samples",
+    "summarize_ecotaxa_samples": "ecotaxa_samples",
+    "summarize_ecotaxa_sample_deployment": "ecotaxa_samples",
+    # EcoTaxa geography and time.
+    "find_ecotaxa_samples_in_region": "ecotaxa_geo_time",
+    "group_ecotaxa_samples_by_year": "ecotaxa_geo_time",
+    "find_ecotaxa_projects_in_region": "ecotaxa_geo_time",
+    "group_ecotaxa_project_samples_by_region": "ecotaxa_geo_time",
+    "rank_ecotaxa_samples_by_region": "ecotaxa_geo_time",
+    # EcoTaxa taxonomy.
+    "search_ecotaxa_taxa": "ecotaxa_taxonomy",
+    "count_ecotaxa_taxa": "ecotaxa_taxonomy",
+    "find_ecotaxa_observations": "ecotaxa_taxonomy",
+    # EcoTaxa schema.
+    "inspect_ecotaxa_project_schema": "ecotaxa_schema",
+    "inspect_ecotaxa_column": "ecotaxa_schema",
+    "compare_ecotaxa_projects": "ecotaxa_schema",
+    # EcoTaxa audit.
+    "audit_ecotaxa_availability": "ecotaxa_audit",
+    "audit_ecotaxa_spatial_coverage": "ecotaxa_audit",
+    "summarize_ecotaxa_project": "ecotaxa_audit",
+    "summarize_ecotaxa_projects": "ecotaxa_audit",
+    # EcoTaxa exports.
+    "query_ecotaxa": "ecotaxa_export",
+    "query_ecotaxa_sample": "ecotaxa_export",
+    "export_ecotaxa_samples": "ecotaxa_export",
+    # Optional SQL workspace.
+    "list_sql_tables": "sql_workspace",
+    "preview_sql_table": "sql_workspace",
+    "copy_sql_query_to_workspace": "sql_workspace",
+    # Registered for compatibility, never advertised by step 6.
+    "list_ecopart_samples": "hidden_legacy",
+    "preview_ecopart_sample": "hidden_legacy",
+    "find_ecopart_project_for_ecotaxa": "hidden_legacy",
+    "query_ecopart": "hidden_legacy",
+    "join_ecotaxa_ecopart": "hidden_legacy",
+    "audit_ecotaxa_ecopart_join": "hidden_legacy",
+    "list_amundsen_datasets": "hidden_legacy",
+    "preview_amundsen_profile": "hidden_legacy",
+    "find_amundsen_data_for_table": "hidden_legacy",
+    "enrich_loaded_table_with_amundsen_ctd": "hidden_legacy",
+    "query_amundsen_ctd": "hidden_legacy",
+    "list_bio_oracle_datasets": "hidden_legacy",
+    "preview_bio_oracle_point": "hidden_legacy",
+    "query_bio_oracle_zones": "hidden_legacy",
+    "find_bio_oracle_data_for_table": "hidden_legacy",
+    "couple_zooplankton_bio_oracle": "hidden_legacy",
+    "query_bio_oracle": "hidden_legacy",
+    "query_ogsl": "hidden_legacy",
+})
+
 _REQUIRED_SKILL_BY_FAMILY: Mapping[str, str] = MappingProxyType({
     "ecotaxa": "ecotaxa_navigation",
     "ecopart": "ecopart_query",
@@ -426,6 +525,7 @@ def _build_policy(name: str, profile_name: str) -> ToolPolicy:
         required_skill=required_skill,
         allowed_workflows=workflows,
         max_calls_per_turn=profile.max_calls_per_turn,
+        exposure_group=_EXPOSURE_GROUP_BY_NAME[name],
         result_schema="tool_result_v1",
     )
 
@@ -548,6 +648,17 @@ def validate_catalog(
         raise ValueError(
             f"Tool catalog orphan policy: {', '.join(orphaned_policies)}"
         )
+    exposure_names = set(_EXPOSURE_GROUP_BY_NAME)
+    missing_exposure = sorted((names | optional) - exposure_names)
+    orphaned_exposure = sorted(exposure_names - names - optional)
+    if missing_exposure:
+        raise ValueError(
+            f"Tool catalog missing exposure group: {', '.join(missing_exposure)}"
+        )
+    if orphaned_exposure:
+        raise ValueError(
+            f"Tool catalog orphan exposure group: {', '.join(orphaned_exposure)}"
+        )
 
     policy_issues = []
     local_skills = {path.stem for path in SKILLS_DIR.glob("*.md")}
@@ -563,6 +674,8 @@ def validate_catalog(
             issues.append("confirmation_without_high_risk")
         if policy.max_calls_per_turn < 1:
             issues.append("max_calls_per_turn")
+        if policy.exposure_group not in TOOL_EXPOSURE_GROUPS:
+            issues.append("exposure_group")
         if policy.result_schema != "tool_result_v1":
             issues.append("legacy result schema")
         if not policy.allowed_workflows:
