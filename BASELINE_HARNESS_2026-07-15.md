@@ -216,3 +216,32 @@ Modèle `openai/gpt-5.4-mini`, tracing désactivé, store/checkpointer isolés e
 | 3 | « Représente maintenant ces stations sur une carte » | planner → writer → rendu | succès; image produite |
 
 La première fixture testée, `ecotaxa_sample_50.tsv`, contenait zéro latitude/longitude non nulle. Le rendu a échoué correctement avec une table spatiale vide; aucun graphique fictif n'a été annoncé. Après diagnostic local, le scénario a été corrigé avec la fixture spatiale valide ci-dessus. Aucun replay live N ≥ 5 n'a été lancé.
+
+## Mesure de clôture de l'étape 4B.1 — garde exécutable
+
+La baseline offline a été régénérée une fois après le correctif final de concurrence.
+
+| Métrique offline | 4B sémantique | 4B.1 exécutable |
+|---|---:|---:|
+| Invariants niveau 1 | 100 % | 100 % |
+| Trajectoires niveau 2 | 100 % | 100 % |
+| `SC-LAB` — bon fichier | 100 % | 100 % |
+| Tools exposés par tour | 62 | 62 |
+| Tools appelés par tour | 1,15 | 1,15 |
+| Tokens du system prompt | 6 695 | 6 719 |
+| Tokens des schémas | 18 004 | 18 004 |
+| Tokens fixes | 24 699 | 24 723 |
+
+Le surcoût fixe de 24 tokens rend explicite l'interdiction de demander planner et writer dans le même lot. La contrainte forte reste dans le middleware : empreinte stable du tour, classification structurée `visual|non_visual|ambiguous`, cache single-flight sync/async et validation des ToolResults du tour courant. Gate ciblé final : `29 passed`; régression agent/data/prompt : `184 passed`; gate complet final : `1153 passed, 20 skipped, 3 xfailed`.
+
+### Smoke agent réel adversarial tableau → carte
+
+Modèle `openai/gpt-5.4-mini`, tracing désactivé, store fichier isolé et catalogue limité aux quatre tools locaux utiles.
+
+| Tour | Décision / compteur | Appels graphiques | Résultat |
+|---|---|---|---|
+| chargement | aucune classification | aucun | fichier 15 × 10 chargé |
+| tableau adversarial | `non_visual/high`, 1 | planner tenté puis `blocked` | tableau de 15 stations rendu |
+| carte | `visual/high`, 1 | planner `success` → writer `success` → rendu `success` | PNG produit |
+
+Le tour carte contient un `run_pandas` intermédiaire entre planner et writer pour sélectionner les coordonnées; le contrat exige seulement que le writer précède immédiatement le rendu. Au tour tableau, l'agent a repris les lignes exposées par `load_file` sans appeler pandas; cette observation relève du contrat numérique 4A, pas de la garde graphique 4B.1, et n'a pas provoqué de replay du modèle.

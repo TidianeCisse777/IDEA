@@ -19,7 +19,7 @@ Le garde est hybride et à la demande :
 3. cette décision est calculée au maximum une fois pour le tour, persistée pour audit, puis réutilisée;
 4. le middleware applique la décision et l'automate du tour avant d'exécuter le tool.
 
-Aucun appel de classification n'est effectué lorsqu'aucune route graphique n'est tentée.
+Aucun appel de classification n'est effectué lorsqu'aucune route graphique n'est tentée. Les appels concurrents d'un même tour partagent un single-flight sync/async : l'empreinte ignore les IDs de messages attribués tardivement par le runtime et le classifieur n'est invoqué qu'une fois.
 
 ## Modèle de décision
 
@@ -62,6 +62,8 @@ OutputIntentDecision.visual
 ```
 
 Un planner ou writer chargé dans un ancien tour ne satisfait pas ce contrat. `run_graph` reçoit aussi une correction de défense en profondeur : une liste globale vide n'autorise plus son exécution directe.
+
+Planner et writer ne peuvent pas appartenir au même lot de tool calls : le writer ne voit alors pas encore le ToolResult du planner et est bloqué avec une instruction de relance dans un nouvel appel séquentiel.
 
 ## Intégration sync et async
 

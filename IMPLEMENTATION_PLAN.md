@@ -150,7 +150,7 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 **Goal :** éliminer les instructions incompatibles que l'agent reçoit aujourd'hui (audit P0 §4.2, P1.8), qui le font hésiter.
 
-**État : 4A terminé le 15 juillet et 4B terminé le 16 juillet 2026.** La règle numérique est maintenant canonique et injectée une seule fois : valeur fournie par un tool spécialisé → reprise directe; nouvelle valeur dérivée d'une table → pandas; valeur absente → inconnue, jamais inventée. Le routage graphique dépend désormais de l'intention de sortie, pas d'une liste fermée de mots : les sorties non visuelles évitent les skills graphiques et les représentations visuelles implicites les exécutent jusqu'au rendu. Les procédures de sources/OGSL (4C) restent ouvertes.
+**État : 4A terminé le 15 juillet, 4B et sa garde exécutable 4B.1 terminées le 16 juillet 2026.** La règle numérique est maintenant canonique et injectée une seule fois : valeur fournie par un tool spécialisé → reprise directe; nouvelle valeur dérivée d'une table → pandas; valeur absente → inconnue, jamais inventée. Le routage graphique reste sémantique, mais le harness classifie l'artefact demandé au premier appel graphique, mémorise une décision typée par tour et bloque fail-closed les sorties non visuelles ou ambiguës. La séquence planner → writer → rendu est vérifiée sur les ToolResults réussis du tour courant. Les procédures de sources/OGSL (4C) restent ouvertes.
 
 **Changement :**
 - Remplacer « toute valeur numérique exige pandas » par « toute valeur **dérivée** ou non fournie par un tool spécialisé exige une exécution contrôlée » — un `count_ecotaxa_taxa` se consomme directement.
@@ -165,6 +165,7 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 - [x] 4B — Une demande numérique simple ne charge plus les skills graphiques; les appels réels capturés contiennent uniquement pandas.
 - [x] 4A — Pas de régression offline sur les 3 scénarios : niveaux 1 et 2 à 100 %.
 - [x] 4B — Pas de régression offline sur les 3 scénarios : niveaux 1 et 2 à 100 %; suite complète verte.
+- [x] 4B.1 — Classification structurée à la demande, une seule fois par tour même si les appels sont parallèles; tentative adversariale tabulaire bloquée et carte rendue par l'agent réel.
 
 ---
 
@@ -219,11 +220,11 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 - Allowlist locale validée **avant** tout accès Hub ; enveloppe `name`/`source`/`environment`/`version`/`hash`/`content` ; fallback Hub→local visible en observabilité.
 - Frontmatter commun imposé : `name`, `version`, `triggers`, `forbidden_when`, `requires`, `next_tool`, `max_tokens` — préconditions dans les métadonnées exécutables, pas en prose.
 - Découper les skills > 3 000 tokens (`ecotaxa_navigation` ~8.5k, `graph_writer` ~10k) ou justifier.
-- `loaded_skills: list[str]` remplacé par événements horodatés/`turn_id` ; automate `planner → writer → run_graph` imposé en code, fail-closed.
+- La partie graphique de l'automate est déjà imposée en 4B.1 depuis les ToolResults du tour courant. L'étape 8 conserve la normalisation générale des événements de skills et leur versionnement.
 
 **Test gate :**
 - [ ] Skill hors allowlist locale jamais chargé depuis le Hub (test rouge de l'étape 1 vert).
-- [ ] `run_graph` impossible hors séquence du tour courant.
+- [x] `run_graph` impossible hors séquence du tour courant (résolu en 4B.1).
 - [ ] Chaque skill a le frontmatter commun ; aucun skill > 3 000 tokens sans exemption documentée.
 
 ---

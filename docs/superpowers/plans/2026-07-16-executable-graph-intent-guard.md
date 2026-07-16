@@ -28,7 +28,7 @@
 **Interfaces:**
 - Produces: `OutputIntentDecision`, `OpenAIOutputIntentClassifier`, `turn_fingerprint(messages)`, `successful_calls_in_current_turn(messages)`, `graph_attempt(name, args)`, `graph_workflow_rejection(name, args, messages)`.
 
-- [ ] **Step 1: Write failing pure-contract tests**
+- [x] **Step 1: Write failing pure-contract tests**
 
 Test stable/distinct fingerprints, graph-attempt detection, successful ToolResult reconstruction, ignored failed/old-turn calls, and workflow rejection. Use real `HumanMessage`, `AIMessage`, `ToolMessage` plus `tools.tool_result.success`/`blocked` artifacts.
 
@@ -43,11 +43,11 @@ def test_run_graph_requires_current_turn_planner_and_writer():
     assert "planner" in graph_workflow_rejection("run_graph", {}, [HumanMessage(content="carte")])
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run `pytest -q tests/test_output_intent.py`. Expected: import failure because `tools.output_intent` does not exist.
 
-- [ ] **Step 3: Implement the pure model and classifier adapter**
+- [x] **Step 3: Implement the pure model and classifier adapter**
 
 Implement strict Pydantic literals, SHA-256 fingerprint, text-only recent transcript, structural prior-image flag, and sync/async structured classification. The classifier system instruction must say:
 
@@ -61,7 +61,7 @@ Return ambiguous when the artifact cannot be determined safely.
 
 Catch every classifier exception and return `OutputIntentDecision(intent="ambiguous", confidence="low", reason="classifier unavailable", turn_fingerprint=turn_fingerprint(messages))`.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run `pytest -q tests/test_output_intent.py`, then:
 
@@ -82,7 +82,7 @@ git commit -m "feat: add typed graph output intent"
 - Consumes: Task 1 classifier and workflow helpers.
 - Produces: `_ContextMiddleware(output_intent_classifier: OutputIntentClassifier | None = None)` with one-decision-per-turn cache and structured blocking.
 
-- [ ] **Step 1: Write failing middleware tests**
+- [x] **Step 1: Write failing middleware tests**
 
 Use this fake classifier and request shape, then cover sync/async blocking and cache reuse:
 
@@ -138,7 +138,7 @@ Define `graph_skill_request`, `successful_handler` and `async_successful_handler
 
 Remove only the `xfail` from `test_run_graph_is_fail_closed_when_no_graph_skill_was_loaded`; keep its assertion.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -148,7 +148,7 @@ pytest -q tests/test_output_intent_middleware.py tests/harness_redteam/test_poli
 
 Expected: middleware accepts no classifier/cache yet and direct `run_graph` still XPASS/fails the desired assertion.
 
-- [ ] **Step 3: Implement minimal sync/async enforcement**
+- [x] **Step 3: Implement minimal sync/async enforcement**
 
 In `_ContextMiddleware`, apply source and identifier guards first. For a graph attempt, obtain/cache the typed decision by fingerprint; persist this audit object in session metadata. Block non-visual/ambiguous attempts with:
 
@@ -162,7 +162,7 @@ content, artifact = blocked(
 
 For `visual`, call `graph_workflow_rejection` before writer/render. In `make_agent`, construct `OpenAIOutputIntentClassifier(llm)` from the same configured base model and inject it into middleware. In `run_graph`, change the legacy condition to `if "graph_writer" not in loaded_skills:`.
 
-- [ ] **Step 4: Verify GREEN, regression and commit**
+- [x] **Step 4: Verify GREEN, regression and commit**
 
 Run:
 
@@ -194,7 +194,7 @@ git commit -m "feat: enforce graph intent in middleware"
 - Consumes: executable guard from Task 2.
 - Produces: agent evidence and aligned architecture documentation.
 
-- [ ] **Step 1: Run complete suite and offline baseline once each**
+- [x] **Step 1: Run complete suite and offline baseline once each**
 
 ```bash
 pytest -q
@@ -203,7 +203,7 @@ python -m evals.replay_harness --lane offline --runs 1 --output evals/baseline_o
 
 Do not repeat either command when it passes. Record pass/skip/xfail and prompt/schema/fixed-token metrics.
 
-- [ ] **Step 2: Run one real-agent smoke**
+- [x] **Step 2: Run one real-agent smoke**
 
 Use an isolated session, `openai/gpt-5.4-mini`, tracing disabled and `data/demo/zooplankton_demo_stations.tsv`. Capture tools, decisions, classifier-call count, statuses and responses for:
 
@@ -215,11 +215,11 @@ Use an isolated session, `openai/gpt-5.4-mini`, tracing disabled and `data/demo/
 
 Required evidence: turn 2 decision `non_visual`, graph attempt blocked if made, tabular result succeeds; turn 3 decision `visual`, one classifier call for the turn, planner→writer→run_graph succeeds.
 
-- [ ] **Step 3: Align docs and close 4B.1**
+- [x] **Step 3: Align docs and close 4B.1**
 
 Document that prompt routing remains semantic while authorization is executable; mark the direct-run red-team debt resolved; leave dynamic tool hiding (step 6) and OGSL (4C) open. Mark all plan checkboxes complete.
 
-- [ ] **Step 4: Verify and commit docs**
+- [x] **Step 4: Verify and commit docs**
 
 Run `git diff --check`, assert baseline level 1/2 equals `1.0`, confirm clean intended scope, then:
 
