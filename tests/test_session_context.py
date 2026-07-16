@@ -190,3 +190,61 @@ def test_capsule_omits_loaded_file_note_when_active_is_the_file(tmp_path):
 
     assert "loaded_file=" not in capsule
     assert "CANONICAL SOURCE" not in capsule
+
+
+def test_capsule_lists_live_zone_subsets_with_their_zone(tmp_path):
+    """The capsule must name each live derived zone subset with its zone.
+
+    Otherwise the agent re-infers from history which df_in_* variable maps to
+    which zone and picks the wrong one (docs/e2e/cartes-samples-labrador-2026).
+    """
+    store = SessionStore(tmp_path)
+    thread_id = "labrador-context"
+
+    base = pd.DataFrame({
+        "station": [1, 2, 3],
+        "latitude": [60.0, 61.0, 62.0],
+        "longitude": [-60.0, -61.0, -62.0],
+    })
+    store_dataset(
+        store, thread_id, base,
+        variable_name="df_file_stations",
+        meta={"source": "file:/d/stations.tsv", "path": "/d/stations.tsv", "n_rows": 3, "n_cols": 3},
+        is_loaded_file=True,
+    )
+    store_dataset(
+        store, thread_id, base.iloc[:2],
+        variable_name="df_in_labrador_sea_stations",
+        meta={"source": "filter_by_zone:labrador-sea", "zone_canonical": "labrador-sea", "n_rows": 2},
+        latest_alias="df_in_labrador_sea_stations",
+    )
+    store_dataset(
+        store, thread_id, base.iloc[2:],
+        variable_name="df_in_baffin_bay_stations",
+        meta={"source": "filter_by_zone:baffin-bay", "zone_canonical": "baffin-bay", "n_rows": 1},
+        latest_alias="df_in_baffin_bay_stations",
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "df_in_labrador_sea_stations" in capsule
+    assert "labrador-sea" in capsule
+    assert "df_in_baffin_bay_stations" in capsule
+    assert "baffin-bay" in capsule
+
+
+def test_capsule_derived_block_absent_without_zone_subsets(tmp_path):
+    """No derived block noise when only a plain loaded file exists."""
+    store = SessionStore(tmp_path)
+    thread_id = "plain-context"
+    loaded = pd.DataFrame({"sample_id": ["s1"], "latitude": [74.0], "longitude": [-68.0]})
+    store_dataset(
+        store, thread_id, loaded,
+        variable_name="df_file_only",
+        meta={"source": "file:/data/only.tsv", "n_rows": 1, "n_cols": 3},
+        is_loaded_file=True,
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "DERIVED ZONE SUBSETS" not in capsule

@@ -50,6 +50,30 @@ def _present_columns(columns: Iterable[object]) -> list[str]:
     return [column for column in _IDENTITY_COLUMNS if column in available]
 
 
+_MAX_DERIVED_SUBSETS = 12
+
+
+def _live_zone_subsets(store: SessionStore, thread_id: str) -> list[tuple[str, str, str]]:
+    """Return (variable, zone, rows) for every live zone-derived subset.
+
+    A zone subset carries `zone_canonical` in its registry metadata (produced by
+    `filter_dataframe_by_zone`). Surfacing them lets the model read which
+    variable maps to which zone instead of re-inferring it from the transcript.
+    """
+    found: list[tuple[str, str, str]] = []
+    for key in store.keys(prefix=f"{thread_id}:dataset:"):
+        entry = store.get(key)
+        meta = (entry or {}).get("meta") or {}
+        zone = meta.get("zone_canonical")
+        if not zone:
+            continue
+        variable = _clean(meta.get("variable_name") or key.rsplit(":", 1)[-1], limit=80)
+        rows = meta.get("n_rows")
+        rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
+        found.append((variable, _clean(zone, limit=60), rows_text))
+    return sorted(set(found))
+
+
 def build_dataset_state_capsule(store: SessionStore, thread_id: str) -> str:
     """Describe only the active dataset using registry metadata, never row values.
 
@@ -101,12 +125,31 @@ def build_dataset_state_capsule(store: SessionStore, thread_id: str) -> str:
                 f"a subset of another zone."
             )
 
+    derived_block = ""
+    subsets = _live_zone_subsets(store, thread_id)
+    if subsets:
+        listed = subsets[:_MAX_DERIVED_SUBSETS]
+        lines = "\n".join(
+            f"- {variable}: zone={zone}, rows={rows}" for variable, zone, rows in listed
+        )
+        more = (
+            f"\n- (+{len(subsets) - len(listed)} more)"
+            if len(subsets) > len(listed)
+            else ""
+        )
+        derived_block = (
+            "\nDERIVED ZONE SUBSETS (reusable by exact variable name — pick the "
+            "one whose zone matches the request; do not recompute a subset that "
+            "already exists):\n" + lines + more
+        )
+
     capsule = (
         "\n\n## ACTIVE DATASET STATE (authoritative, current turn)\n"
         "- " + "; ".join(fields) + "\n"
         "Identifiers absent from this capsule and the current user message are "
         "ungrounded; do not infer them from older conversation turns."
         + anchor_note
+        + derived_block
     )
     return capsule[:_MAX_CAPSULE_CHARS]
 
