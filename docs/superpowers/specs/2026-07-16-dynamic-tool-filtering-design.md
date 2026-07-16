@@ -1,7 +1,7 @@
 # Dynamic Tool Filtering Design — étape 6
 
 **Date :** 16 juillet 2026  
-**Statut :** révision géographique validée, prête pour planification
+**Statut :** implémenté et validé le 16 juillet 2026
 **Portée :** réduire à au plus 15 les tools présentés au modèle à chaque appel, sans second modèle, sans embeddings et sans supprimer de tool du catalogue runtime.
 
 ## Problème
