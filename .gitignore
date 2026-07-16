@@ -126,6 +126,7 @@ docs/_build/
 !/docs/superpowers/specs/2026-07-15-source-policy-design.md
 !/docs/superpowers/specs/2026-07-15-numeric-evidence-routing-design.md
 !/docs/superpowers/specs/2026-07-16-semantic-graph-routing-design.md
+!/docs/superpowers/specs/2026-07-16-executable-graph-intent-guard-design.md
 
 # Claude Code / assistant session transcripts accidentally dumped in the repo
 *local-command-caveat*.txt
