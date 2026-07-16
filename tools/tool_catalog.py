@@ -410,7 +410,8 @@ _STRUCTURED_RESULT_TOOL_NAMES = frozenset({
 }) | frozenset(
     name
     for name in _TOOL_PROFILE_BY_NAME
-    if TOOL_PRESENTATION[name].family == "ecotaxa"
+    if TOOL_PRESENTATION[name].family
+    in {"ecotaxa", "ecopart", "amundsen", "bio_oracle", "ogsl"}
 )
 
 

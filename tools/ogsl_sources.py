@@ -24,9 +24,21 @@ from tools.public_url import download_url
 from tools.ctd_matcher import CtdProfileMatcher
 from tools.point_enrichment import format_method_block, run_point_enrichment
 from tools.session_store import default_store as _store
+from tools.tool_result import blocked, empty, error, success
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
+
+
+def _ogsl_result(factory, summary: str, **fields):
+    provenance = {"source": "ogsl", **dict(fields.pop("provenance", {}))}
+    return factory(summary, provenance=provenance, **fields)
+
+
+def _ogsl_success(summary: str, **fields): return _ogsl_result(success, summary, **fields)
+def _ogsl_empty(summary: str, **fields): return _ogsl_result(empty, summary, **fields)
+def _ogsl_blocked(summary: str, **fields): return _ogsl_result(blocked, summary, **fields)
+def _ogsl_error(summary: str, **fields): return _ogsl_result(error, summary, **fields)
 
 _OGSL_TABLEDAP_URL = (
     f"https://erddap.ogsl.ca/erddap/tabledap/{OGSL_DATASET_ID}.csvp"
@@ -144,7 +156,7 @@ def _fetch_ogsl_bbox(
 def make_ogsl_tools(thread_id: str) -> list:
     """Create LangChain OGSL tools for one thread."""
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def query_ogsl(
         station_column: str,
         time_column: str,
@@ -165,7 +177,7 @@ def make_ogsl_tools(thread_id: str) -> list:
             session = _store.get(thread_id)
             source = session.get("df") if session else None
             if not isinstance(source, pd.DataFrame) or source.empty:
-                return "No active table is available for OGSL station lookup."
+                return _ogsl_blocked("No active table is available for OGSL station lookup.")
             required_columns = [station_column, time_column]
             if depth_column:
                 required_columns.append(depth_column)
@@ -173,7 +185,7 @@ def make_ogsl_tools(thread_id: str) -> list:
                 column for column in required_columns if column not in source.columns
             ]
             if missing_columns:
-                return (
+                return _ogsl_blocked(
                     "Columns not found in the active table: "
                     + ", ".join(missing_columns)
                 )
@@ -195,9 +207,9 @@ def make_ogsl_tools(thread_id: str) -> list:
                 tolerance_hours=time_tolerance_hours,
             )
             if not station_windows:
-                return f"No station IDs found in column: {station_column}"
+                return _ogsl_empty(f"No station IDs found in column: {station_column}")
             if len(station_windows) > 10 and not confirmed:
-                return (
+                return _ogsl_blocked(
                     f"Confirmation required: {len(station_windows)} unique stations "
                     "will trigger the same number of OGSL requests. Ask the user "
                     "for confirmation, then call again with confirmed=true."
@@ -279,7 +291,7 @@ def make_ogsl_tools(thread_id: str) -> list:
                 "\nNote: depth_column was empty in the source table and was ignored."
                 if depth_ignored else ""
             )
-            return (
+            summary = (
                 f"OGSL loaded - {result['row_count']} raw rows from "
                 f"{len(station_windows)} station requests.\n"
                 f"Raw data: `{raw_variable_name}` and `df_ogsl`.\n"
@@ -289,10 +301,26 @@ def make_ogsl_tools(thread_id: str) -> list:
                 f"Raw download: {download_url(raw_output_path.name)}\n"
                 f"Enriched download: {download_url(enriched_output_path.name)}"
             )
+            return _ogsl_success(
+                summary,
+                data_ref=enriched_variable_name,
+                artifact_refs=(
+                    download_url(raw_output_path.name),
+                    download_url(enriched_output_path.name),
+                ),
+                provenance={"dataset_id": result["dataset_id"]},
+                persisted=True,
+                method="OGSL station-time enrichment",
+                metrics={
+                    "raw_rows": int(result["row_count"]),
+                    "rows": len(enriched),
+                    "stations": len(station_windows),
+                },
+            )
         except Exception as exc:
-            return f"Error while accessing OGSL: {exc}"
+            return _ogsl_error(f"Error while accessing OGSL: {exc}", retryable=True)
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def enrich_with_ogsl(
         latitude_column: str | None = None,
         longitude_column: str | None = None,
@@ -352,7 +380,7 @@ def make_ogsl_tools(thread_id: str) -> list:
             date_range=date_range,
         )
         if outcome.error:
-            return outcome.error
+            return _ogsl_blocked(outcome.error)
 
         enriched = outcome.enriched
         n = outcome.n_rows
@@ -451,11 +479,15 @@ def make_ogsl_tools(thread_id: str) -> list:
                 f"- Note : {n_no_value} ligne(s) avec profil trouvé mais "
                 "valeurs CTD manquantes à l'origine."
             )
-        return (
+        return _ogsl_success(
             f"Enrichissement OGSL — {n} ligne(s), {n_matched} {plural}.\n"
             f"{outcome.source_note}\n"
             f"Données disponibles dans `{variable_name}`.\n\n"
-            + "\n".join(method_lines)
+            + "\n".join(method_lines),
+            data_ref=variable_name,
+            persisted=True,
+            method="OGSL spatiotemporal nearest-neighbor enrichment",
+            metrics={"rows": n, "matched": n_matched, "unique_points": n_unique},
         )
 
     return [query_ogsl, enrich_with_ogsl]

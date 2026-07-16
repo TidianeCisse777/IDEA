@@ -25,9 +25,21 @@ from tools.dataset_registry import (
 )
 from tools.ecotaxa_client import EcotaxaClient
 from tools.session_store import default_store as _store
+from tools.tool_result import blocked, empty, error, success, validate_tool_artifact
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
+
+
+def _ep_result(factory, summary: str, **fields):
+    provenance = {"source": "ecopart", **dict(fields.pop("provenance", {}))}
+    return factory(summary, provenance=provenance, **fields)
+
+
+def _ep_success(summary: str, **fields): return _ep_result(success, summary, **fields)
+def _ep_empty(summary: str, **fields): return _ep_result(empty, summary, **fields)
+def _ep_blocked(summary: str, **fields): return _ep_result(blocked, summary, **fields)
+def _ep_error(summary: str, **fields): return _ep_result(error, summary, **fields)
 
 
 def _format_ecopart_export_error(
@@ -35,7 +47,7 @@ def _format_ecopart_export_error(
     *,
     project_id: int | None = None,
     ecotaxa_project_id: int | None = None,
-) -> str:
+) -> tuple:
     """Render an EcopartExportError as a clean French message for the LLM."""
     scope = []
     if project_id is not None:
@@ -101,17 +113,17 @@ def _perform_enrichment(
 ) -> str:
     """Run the (sample_id, depth_bin) join from the session-resolved EcoTaxa/EcoPart."""
     if project_id is not None and ecopart_variable is not None:
-        return (
+        return _ep_blocked(
             "Sélecteurs EcoPart incompatibles — utilise soit `project_id`, soit "
             "`ecopart_variable`, jamais les deux."
         )
 
     explicit_ecotaxa = _session_for_variable(thread_id, ecotaxa_variable)
     if ecotaxa_variable is not None and explicit_ecotaxa is None:
-        return f"Variable EcoTaxa introuvable : `{ecotaxa_variable}`."
+        return _ep_blocked(f"Variable EcoTaxa introuvable : `{ecotaxa_variable}`.")
     explicit_ecopart = _session_for_variable(thread_id, ecopart_variable)
     if ecopart_variable is not None and explicit_ecopart is None:
-        return f"Variable EcoPart introuvable : `{ecopart_variable}`."
+        return _ep_blocked(f"Variable EcoPart introuvable : `{ecopart_variable}`.")
 
     session_et = ecotaxa_session or explicit_ecotaxa or _store.get(f"{thread_id}:ecotaxa")
     if ecopart_variable is not None:
@@ -134,16 +146,16 @@ def _perform_enrichment(
         else:
             missing.append(f"EcoPart (`query_ecopart(project_id={project_id})`)")
     if missing:
-        return f"Données manquantes — charge d'abord : {' et '.join(missing)}."
+        return _ep_blocked(f"Données manquantes — charge d'abord : {' et '.join(missing)}.")
 
     df_et = session_et["df"].copy()
     df_ep = session_ep["df"].copy()
     selected_project_id = project_id or session_ep.get("meta", {}).get("project_id")
 
     if "Profile" not in df_ep.columns:
-        return "Colonne 'Profile' absente du dataset EcoPart — relance `query_ecopart`."
+        return _ep_blocked("Colonne 'Profile' absente du dataset EcoPart — relance `query_ecopart`.")
     if "Depth [m]" not in df_ep.columns:
-        return "Colonne 'Depth [m]' absente du dataset EcoPart — relance `query_ecopart`."
+        return _ep_blocked("Colonne 'Depth [m]' absente du dataset EcoPart — relance `query_ecopart`.")
     ecopart_variables = [
         str(column) for column in df_ep.columns
         if column not in {"Profile", "Depth [m]"}
@@ -171,7 +183,7 @@ def _perform_enrichment(
 
     if not candidates:
         available = ", ".join(df_et.columns[:20].tolist())
-        return f"Colonne de jointure introuvable dans EcoTaxa. Colonnes disponibles : {available}"
+        return _ep_blocked(f"Colonne de jointure introuvable dans EcoTaxa. Colonnes disponibles : {available}")
 
     best_key, best_series, best_overlap = None, None, -1
     for name, series in candidates:
@@ -182,7 +194,7 @@ def _perform_enrichment(
     if best_overlap == 0:
         sample_et = ", ".join(sorted({str(v) for v in best_series.dropna().unique()})[:5])
         sample_ep = ", ".join(sorted({str(v) for v in profile_values})[:5])
-        return (
+        return _ep_empty(
             "Aucune correspondance entre les identifiants EcoTaxa et les profils EcoPart "
             f"(clé EcoTaxa essayée : `{best_key}`). "
             f"{len(profile_values)} profil(s) EcoPart vs {best_series.nunique()} clé(s) EcoTaxa. "
@@ -198,7 +210,7 @@ def _perform_enrichment(
     )
     if depth_col is None:
         available = ", ".join(df_et.columns[:20].tolist())
-        return (
+        return _ep_blocked(
             "Colonne de profondeur introuvable dans EcoTaxa "
             "(essayé : object_depth_min, obj_depth_min, depth_min, depth). "
             f"Colonnes disponibles : {available}"
@@ -249,7 +261,7 @@ def _perform_enrichment(
             sample_map = df_et[["_join_sample_id", "sample_id"]].drop_duplicates()
             ambiguous = sample_map.groupby("_join_sample_id")["sample_id"].nunique()
             if (ambiguous > 1).any():
-                return (
+                return _ep_blocked(
                     "Bins EcoPart sans objet non conservés — plusieurs `sample_id` "
                     "correspondent à une même clé de profil."
                 )
@@ -357,7 +369,7 @@ def _perform_enrichment(
         f"\nSource : {proven_ep_urls[0]}" if proven_ep_urls else ""
     )
 
-    return (
+    return _ep_success(
         f"Enrichissement terminé{project_note} — {len(merged)} lignes "
         f"({n_matched} matchées sur un bin EcoPart ; "
         f"{n_zero_object_bins} bin EcoPart sans objet conservé), "
@@ -372,7 +384,15 @@ def _perform_enrichment(
         f"appelle run_pandas directement pour analyser."
         f"{sources_block}{canonical_source_line}\n"
         "Provenance : "
-        + json.dumps(provenance, ensure_ascii=False, sort_keys=True)
+        + json.dumps(provenance, ensure_ascii=False, sort_keys=True),
+        data_ref=joined_variable_name,
+        persisted=True,
+        method="EcoTaxa-EcoPart sample-depth join",
+        metrics={
+            "rows": len(merged),
+            "matched": n_matched,
+            "sampled_zero_object_bins": n_zero_object_bins,
+        },
     )
 
 
@@ -602,7 +622,7 @@ def _lookup_ecopart_project_for_ecotaxa(
 def make_ecopart_tools(thread_id: str) -> list:
     """Create LangChain EcoPart tools for one thread."""
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def list_ecopart_samples(project_id: int) -> str:
         """Liste les échantillons EcoPart disponibles pour un projet."""
         try:
@@ -610,12 +630,16 @@ def make_ecopart_tools(thread_id: str) -> list:
             client.login()
             samples = client.list_samples(project_id)
         except Exception as exc:
-            return f"Erreur EcoPart : {exc}"
+            return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
         if not samples:
-            return "Aucun échantillon EcoPart trouvé."
-        return pd.DataFrame(samples).to_markdown(index=False)
+            return _ep_empty("Aucun échantillon EcoPart trouvé.")
+        return _ep_success(
+            pd.DataFrame(samples).to_markdown(index=False),
+            provenance={"project_id": int(project_id)},
+            metrics={"samples": len(samples)},
+        )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def preview_ecopart_sample(sample_id: int) -> str:
         """Prévisualise un échantillon EcoPart (popover texte)."""
         try:
@@ -623,12 +647,13 @@ def make_ecopart_tools(thread_id: str) -> list:
             client.login()
             preview = client.preview_sample(sample_id)
         except Exception as exc:
-            return f"Erreur EcoPart : {exc}"
+            return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
         if not preview["accessible"]:
-            return f"Échantillon {sample_id} non accessible."
-        return preview["text"] or f"Échantillon {sample_id} — aucun texte disponible."
+            return _ep_blocked(f"Échantillon {sample_id} non accessible.")
+        summary = preview["text"] or f"Échantillon {sample_id} — aucun texte disponible."
+        return _ep_success(summary, provenance={"sample_id": int(sample_id)})
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def query_ecopart(
         project_id: int,
         ctd_vars: list[str] | None = None,
@@ -660,19 +685,32 @@ def make_ecopart_tools(thread_id: str) -> list:
             # Keep the pre-registry project key readable by existing sessions/tools.
             _store.set(f"{thread_id}:ecopart:{project_id}", df, meta)
             download_url = f"http://localhost:8000/downloads/{output_path.name}"
-            return (
+            summary = (
                 f"EcoPart chargé — {len(df)} lignes.\n"
                 f"Données disponibles dans `{variable_name}` "
                 f"et `df_ecopart` (dernier projet chargé).\n"
                 f"Appelle run_pandas directement pour analyser.\n"
                 f"Télécharger : {download_url}"
             )
+            return _ep_success(
+                summary,
+                data_ref=variable_name,
+                artifact_refs=(download_url,),
+                provenance={"project_id": int(project_id)},
+                persisted=True,
+                method="EcoPart export",
+                metrics={"rows": len(df)},
+            )
         except EcopartExportError as exc:
-            return _format_ecopart_export_error(exc, project_id=project_id)
+            return _ep_error(
+                _format_ecopart_export_error(exc, project_id=project_id),
+                provenance={"project_id": int(project_id)},
+                retryable=True,
+            )
         except Exception as exc:
-            return f"Erreur EcoPart : {exc}"
+            return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def join_ecotaxa_ecopart(
         project_id: int | None = None,
         ecotaxa_variable: str | None = None,
@@ -692,7 +730,7 @@ def make_ecopart_tools(thread_id: str) -> list:
             ecopart_variable=ecopart_variable,
         )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def audit_ecotaxa_ecopart_join(
         source_variable: str = "df_ecotaxa_ecopart",
     ) -> str:
@@ -706,14 +744,14 @@ def make_ecopart_tools(thread_id: str) -> list:
         if session is None and source_variable == "df_ecotaxa_ecopart":
             session = _store.get(f"{thread_id}:ecotaxa_ecopart")
         if session is None:
-            return f"Variable de jointure introuvable : `{source_variable}`."
+            return _ep_blocked(f"Variable de jointure introuvable : `{source_variable}`.")
 
         audit = audit_ecotaxa_ecopart_dataframe(
             session["df"], session.get("meta") or {}
         )
         verdict = "VALIDÉ" if audit["verdict"] == "validated" else "REFUSÉ"
         anomalies = ", ".join(audit["anomalies"]) or "aucune"
-        return (
+        summary = (
             f"Verdict : {verdict}\n"
             f"Variable contrôlée : `{source_variable}`\n"
             f"Colonne de profondeur : `{audit['depth_column']}`\n"
@@ -728,8 +766,16 @@ def make_ecopart_tools(thread_id: str) -> list:
             f"écart maximal au centre : {audit['max_depth_distance_m']} m\n"
             f"Anomalies : {anomalies}"
         )
+        factory = _ep_success if audit["verdict"] == "validated" else _ep_blocked
+        return factory(
+            summary,
+            data_ref=source_variable,
+            persisted=True,
+            method="EcoTaxa-EcoPart join audit",
+            metrics={"rows": int(audit["n_rows"]), "matched": int(audit["n_matched"])},
+        )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def enrich_ecotaxa_with_ecopart_remote(
         ecotaxa_project_id: int | None = None,
         ecopart_project_id: int | None = None,
@@ -754,11 +800,11 @@ def make_ecopart_tools(thread_id: str) -> list:
         if session_et is None:
             if not confirmed:
                 if ecotaxa_project_id is None:
-                    return (
+                    return _ep_blocked(
                         "Données EcoTaxa manquantes — charge d'abord un fichier UVP "
                         "(`load_file`) ou `query_ecotaxa`."
                     )
-                return (
+                return _ep_blocked(
                     "Plan d'enrichissement EcoPart (dry-run) — projet EcoTaxa "
                     f"{ecotaxa_project_id}.\n"
                     f"Le projet EcoTaxa {ecotaxa_project_id} sera exporté après "
@@ -775,16 +821,17 @@ def make_ecopart_tools(thread_id: str) -> list:
                 try:
                     _ensure_ecotaxa_project_loaded(thread_id, int(ecotaxa_project_id))
                 except Exception as exc:
-                    return (
+                    return _ep_error(
                         f"Le projet EcoTaxa {ecotaxa_project_id} n'a pas pu être chargé "
-                        f"automatiquement : {exc}"
+                        f"automatiquement : {exc}",
+                        retryable=True,
                     )
                 session_et = _ecotaxa_session_for_project(
                     thread_id,
                     ecotaxa_project_id,
                 )
             if session_et is None:
-                return "Données EcoTaxa manquantes — charge d'abord un fichier UVP (`load_file`) ou `query_ecotaxa`."
+                return _ep_blocked("Données EcoTaxa manquantes — charge d'abord un fichier UVP (`load_file`) ou `query_ecotaxa`.")
 
         if ecotaxa_project_id is None and ecopart_project_id is None:
             ecotaxa_project_id = session_et.get("meta", {}).get("project_id")
@@ -793,7 +840,7 @@ def make_ecopart_tools(thread_id: str) -> list:
             client = EcopartClient()
             client.login()
         except Exception as exc:
-            return f"Erreur EcoPart : {exc}"
+            return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
 
         resolution_note = ""
         if ecotaxa_project_id is None and ecopart_project_id is None:
@@ -801,7 +848,7 @@ def make_ecopart_tools(thread_id: str) -> list:
             # the preview and the actual enrichment always agree on the project.
             result = _lookup_ecopart_project_for_ecotaxa(session_et["df"])
             if "error" in result:
-                return (
+                return _ep_blocked(
                     f"Résolution EcoPart automatique impossible — {result['error']} "
                     "Fournis `ecotaxa_project_id` ou `ecopart_project_id`."
                 )
@@ -823,7 +870,7 @@ def make_ecopart_tools(thread_id: str) -> list:
                 else "(résolu au lancement)"
             )
             prefix = f"{resolution_note}\n" if resolution_note else ""
-            return (
+            return _ep_blocked(
                 f"{prefix}Plan d'enrichissement EcoPart (dry-run) — {scope} → "
                 f"EcoPart {ep_target}.\n"
                 "Opération lourde : téléchargement de l'EcoPart puis jointure sur "
@@ -839,16 +886,19 @@ def make_ecopart_tools(thread_id: str) -> list:
             )
             df_ep = client.download_tsv(links)
         except EcopartExportError as exc:
-            return _format_ecopart_export_error(
-                exc,
-                project_id=ecopart_project_id,
-                ecotaxa_project_id=ecotaxa_project_id,
+            return _ep_error(
+                _format_ecopart_export_error(
+                    exc,
+                    project_id=ecopart_project_id,
+                    ecotaxa_project_id=ecotaxa_project_id,
+                ),
+                retryable=True,
             )
         except Exception as exc:
-            return f"Erreur EcoPart : {exc}"
+            return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
 
         if df_ep.empty:
-            return (
+            return _ep_empty(
                 f"Aucun sample EcoPart trouvé pour le projet EcoTaxa {ecotaxa_project_id} "
                 f"— vérifie l'ID ou utilise `ecopart_project_id` directement."
             )
@@ -888,12 +938,29 @@ def make_ecopart_tools(thread_id: str) -> list:
             else f"projet EcoPart {ecopart_project_id}"
         )
         prefix = f"{resolution_note}\n" if resolution_note else ""
-        return (
+        join_artifact = validate_tool_artifact(join_result[1])
+        summary = (
             f"{prefix}EcoPart téléchargé pour {scope} — {len(df_ep)} lignes "
-            f"(`{variable_name}`, télécharger : {download_url}).\n\n{join_result}"
+            f"(`{variable_name}`, télécharger : {download_url}).\n\n{join_result[0]}"
+        )
+        if join_artifact.status != "success":
+            factory = {
+                "empty": _ep_empty,
+                "blocked": _ep_blocked,
+                "error": _ep_error,
+                "cancelled": _ep_blocked,
+            }[join_artifact.status]
+            return factory(summary, retryable=join_artifact.retryable)
+        return _ep_success(
+            summary,
+            data_ref=join_artifact.data_ref,
+            artifact_refs=(download_url,),
+            persisted=True,
+            method="EcoPart export and EcoTaxa-EcoPart join",
+            metrics={"ecopart_rows": len(df_ep), **dict(join_artifact.metrics)},
         )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def find_ecopart_project_for_ecotaxa() -> str:
         """Vérifie si un projet EcoPart correspond à l'EcoTaxa en session, sans télécharger.
 
@@ -909,27 +976,28 @@ def make_ecopart_tools(thread_id: str) -> list:
         """
         session_et = _store.get(f"{thread_id}:ecotaxa")
         if session_et is None:
-            return (
+            return _ep_blocked(
                 "Aucun fichier EcoTaxa en session — charge d'abord un fichier "
                 "UVP (`load_file`) ou lance `query_ecotaxa`."
             )
         df_et = session_et.get("df")
         if df_et is None or getattr(df_et, "empty", True):
-            return "Le dataset EcoTaxa en session est vide."
+            return _ep_empty("Le dataset EcoTaxa en session est vide.")
         known_pid = session_et.get("meta", {}).get("project_id")
         result = _lookup_ecopart_project_for_ecotaxa(df_et, known_ecotaxa_pid=known_pid)
         if "error" in result:
-            return f"Aucun projet EcoPart associé trouvé — {result['error']}"
+            return _ep_empty(f"Aucun projet EcoPart associé trouvé — {result['error']}")
         pid = result["project_id"]
         name = result.get("project_name") or "?"
         how = result.get("resolution", "?")
-        return (
+        return _ep_success(
             f"Projet EcoPart associé trouvé : **{pid}**"
             f"{f' (« {name} »)' if name and name != '?' else ''}.\n"
             f"Résolution : {how}. "
             "Aucun export n'a été lancé — c'est juste un lookup. "
             "Pour enrichir, utiliser `enrich_ecotaxa_with_ecopart_remote`.\n\n"
-            f"Source EcoPart : https://ecopart.obs-vlfr.fr/prj/{pid}"
+            f"Source EcoPart : https://ecopart.obs-vlfr.fr/prj/{pid}",
+            provenance={"project_id": int(pid)},
         )
 
     return [

@@ -12,6 +12,7 @@ from urllib.parse import quote
 import pandas as pd
 import requests
 from langchain_core.tools import tool
+from tools.tool_result import blocked, empty, error, success
 
 from core.canonical_grid import canonicalize_amundsen_query
 from core.erddap_cache import cache_get, cache_set
@@ -48,6 +49,17 @@ _AMUNDSEN_TABLEDAP_URL = (
 _AMUNDSEN_DATASET_URL = (
     f"https://erddap.amundsenscience.com/erddap/tabledap/{_AMUNDSEN_DATASET_ID}.html"
 )
+
+
+def _am_result(factory, summary: str, **fields):
+    provenance = {"source": "amundsen", **dict(fields.pop("provenance", {}))}
+    return factory(summary, provenance=provenance, **fields)
+
+
+def _am_success(summary: str, **fields): return _am_result(success, summary, **fields)
+def _am_empty(summary: str, **fields): return _am_result(empty, summary, **fields)
+def _am_blocked(summary: str, **fields): return _am_result(blocked, summary, **fields)
+def _am_error(summary: str, **fields): return _am_result(error, summary, **fields)
 _AMUNDSEN_CORE_COLUMNS = ("time", "latitude", "longitude", "station", "cast_number", "PRES")
 _AMUNDSEN_TIME_MIN = pd.Timestamp("2014-07-15T08:20:04Z")
 _AMUNDSEN_TIME_MAX = pd.Timestamp("2024-10-01T02:03:25Z")
@@ -272,30 +284,36 @@ def make_amundsen_tools(thread_id: str) -> list:
         nearest_index = (depth_values - float(target_depth)).abs().idxmin()
         return ctd.loc[nearest_index]
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def list_amundsen_datasets() -> str:
         """Liste les datasets CTD Amundsen disponibles dans ERDDAP."""
         try:
             datasets = _list_amundsen_datasets()
         except Exception as exc:
-            return f"Erreur lors de l'accès à Amundsen : {exc}"
+            return _am_error(f"Erreur lors de l'accès à Amundsen : {exc}", retryable=True)
         if not datasets:
-            return "Aucun dataset Amundsen trouvé."
-        return _format_table(datasets, ["dataset_id", "title", "griddap"])
+            return _am_empty("Aucun dataset Amundsen trouvé.")
+        return _am_success(
+            _format_table(datasets, ["dataset_id", "title", "griddap"]),
+            metrics={"datasets": len(datasets)},
+        )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def preview_amundsen_profile(station: str | None = None, cast_number: int | None = None) -> str:
         """Prévisualise un profil CTD Amundsen avec des alias de jointure."""
         try:
             preview = _preview_amundsen_profile({"station": station, "cast_number": cast_number})
             rows = preview["rows"]
             if not rows:
-                return "Aucun profil Amundsen trouvé."
-            return _format_table(rows[:10], ["time", "station", "cast_number", "Pres", "Temp", "Sal", "profile_id", "station_id", "cast_id"])
+                return _am_empty("Aucun profil Amundsen trouvé.")
+            return _am_success(
+                _format_table(rows[:10], ["time", "station", "cast_number", "Pres", "Temp", "Sal", "profile_id", "station_id", "cast_id"]),
+                metrics={"rows": len(rows)},
+            )
         except Exception as exc:
-            return f"Erreur lors de l'accès à Amundsen : {exc}"
+            return _am_error(f"Erreur lors de l'accès à Amundsen : {exc}", retryable=True)
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def query_amundsen_ctd(station: str | None = None, cast_number: int | None = None) -> str:
         """Extrait un profil CTD Amundsen complet et écrit un TSV téléchargeable."""
         try:
@@ -323,16 +341,25 @@ def make_amundsen_tools(thread_id: str) -> list:
                 },
                 latest_alias=CTD,
             )
-            return (
+            summary = (
                 f"Amundsen CTD chargé — {result['row_count']} lignes.\n"
                 f"Données disponibles dans `{variable_name}` et `df_ctd`.\n"
                 f"Appelle run_pandas directement pour analyser.\n"
                 f"Télécharger : {result['download_url']}"
             )
+            return _am_success(
+                summary,
+                data_ref=variable_name,
+                artifact_refs=(result["download_url"],),
+                provenance={"dataset_id": result["dataset_id"]},
+                persisted=True,
+                method="Amundsen ERDDAP query",
+                metrics={"rows": int(result["row_count"])},
+            )
         except Exception as exc:
-            return f"Erreur lors de l'accès à Amundsen : {exc}"
+            return _am_error(f"Erreur lors de l'accès à Amundsen : {exc}", retryable=True)
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def enrich_loaded_table_with_amundsen_ctd(
         station_column: str | None = None,
         cast_column: str | None = None,
@@ -358,7 +385,7 @@ def make_amundsen_tools(thread_id: str) -> list:
         try:
             source = _source_dataframe()
             if source is None:
-                return "Aucune table chargée à enrichir."
+                return _am_blocked("Aucune table chargée à enrichir.")
 
             requested_columns = {
                 "station_column": station_column,
@@ -375,7 +402,7 @@ def make_amundsen_tools(thread_id: str) -> list:
                 if column and column not in source.columns
             ]
             if missing_requested:
-                return (
+                return _am_blocked(
                     "Colonnes demandées absentes de la table chargée : "
                     + ", ".join(f"{name}={requested_columns[name]!r}" for name in missing_requested)
                 )
@@ -437,12 +464,19 @@ def make_amundsen_tools(thread_id: str) -> list:
                     latest_alias=CTD_ENRICHED,
                 )
                 preview = dataframe.head(20).to_markdown(index=False)
-                return (
+                summary = (
                     "Enrichissement Amundsen impossible avec les métadonnées actuelles : "
                     "station/cast ou latitude/longitude/temps manquants.\n"
                     f"Données diagnostiques disponibles dans `{variable_name}`.\n"
                     f"Aperçu :\n\n{preview}\n\n"
                     f"Télécharger : {download_url(output_path.name)}"
+                )
+                return _am_blocked(
+                    summary,
+                    data_ref=variable_name,
+                    artifact_refs=(download_url(output_path.name),),
+                    persisted=True,
+                    metrics={"rows": len(dataframe), "matched": 0},
                 )
 
             cache: dict[tuple[str, str], pd.DataFrame] = {}
@@ -523,17 +557,30 @@ def make_amundsen_tools(thread_id: str) -> list:
                 latest_alias=CTD_ENRICHED,
             )
             preview = dataframe.head(20).to_markdown(index=False)
-            return (
+            summary = (
                 f"Enrichissement Amundsen terminé — {len(dataframe)} lignes, "
                 f"{int((dataframe['ctd_match_status'] == 'matched').sum())} matchées.\n"
                 f"Données disponibles dans `{variable_name}` et `df_ctd_enriched`.\n"
                 f"Aperçu :\n\n{preview}\n\n"
                 f"Télécharger : {download_url(output_path.name)}"
             )
+            return _am_success(
+                summary,
+                data_ref=variable_name,
+                artifact_refs=(download_url(output_path.name),),
+                persisted=True,
+                method="Amundsen station-cast enrichment",
+                metrics={
+                    "rows": len(dataframe),
+                    "matched": int((dataframe["ctd_match_status"] == "matched").sum()),
+                },
+            )
         except Exception as exc:
-            return f"Erreur lors de l'enrichissement Amundsen : {exc}"
+            return _am_error(
+                f"Erreur lors de l'enrichissement Amundsen : {exc}", retryable=True
+            )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def find_amundsen_data_for_table(
         source_variable: str | None = None,
         latitude_column: str | None = None,
@@ -555,8 +602,8 @@ def make_amundsen_tools(thread_id: str) -> list:
         source = resolve_source_dataframe(_store, thread_id, source_variable)
         if source is None:
             if source_variable:
-                return f"Variable source introuvable en session : `{source_variable}`."
-            return (
+                return _am_blocked(f"Variable source introuvable en session : `{source_variable}`.")
+            return _am_blocked(
                 "Aucune table chargée. Charge d'abord un fichier avec des colonnes "
                 "latitude/longitude/date (`load_file`)."
             )
@@ -570,7 +617,7 @@ def make_amundsen_tools(thread_id: str) -> list:
             if value is None
         ]
         if missing:
-            return (
+            return _am_blocked(
                 "Vérification Amundsen impossible : colonnes manquantes dans la table "
                 f"chargée — {', '.join(missing)}. Préciser via `latitude_column`, "
                 "`longitude_column`, `time_column`."
@@ -578,7 +625,7 @@ def make_amundsen_tools(thread_id: str) -> list:
 
         coords = parse_source_coords(source, lat_col=lat_col, lon_col=lon_col, time_col=time_col)
         if coords.empty_groups:
-            return (
+            return _am_blocked(
                 "Vérification Amundsen impossible : colonnes "
                 f"{', '.join(coords.empty_groups)} entièrement vides — aucune coordonnée "
                 "exploitable dans la table."
@@ -590,7 +637,7 @@ def make_amundsen_tools(thread_id: str) -> list:
         try:
             ctd = _fetch_amundsen_bbox(bbox=bbox, time_window=time_window, variables=["TE90"])
         except Exception as exc:
-            return f"Erreur lors de l'accès à Amundsen : {exc}"
+            return _am_error(f"Erreur lors de l'accès à Amundsen : {exc}", retryable=True)
 
         env = (
             f"lat {bbox['lat_min']:.2f}→{bbox['lat_max']:.2f}, "
@@ -598,21 +645,22 @@ def make_amundsen_tools(thread_id: str) -> list:
             f"{time_window['start'][:10]} → {time_window['end'][:10]}"
         )
         if len(ctd) == 0:
-            return (
+            return _am_empty(
                 f"Aucune donnée CTD Amundsen dans l'emprise de la table ({env}). "
                 "Rien à enrichir depuis Amundsen pour ce fichier."
             )
         station_col = next((c for c in ("station", "cast_number") if c in ctd.columns), None)
         n_profiles = int(ctd[station_col].nunique()) if station_col else 0
         profiles_txt = f"{n_profiles} profil(s)/station(s), " if n_profiles else ""
-        return (
+        return _am_success(
             f"Données Amundsen disponibles : {profiles_txt}{len(ctd)} ligne(s) CTD dans "
             f"l'emprise de la table ({env}). Enrichissement possible — lancer "
             "`enrich_with_amundsen_ctd` pour matcher chaque ligne à son profil CTD le "
-            "plus proche (lat/lon/temps)."
+            "plus proche (lat/lon/temps).",
+            metrics={"rows": len(ctd), "profiles": n_profiles},
         )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def enrich_with_amundsen_ctd(
         source_variable: str | None = None,
         latitude_column: str | None = None,
@@ -676,7 +724,7 @@ def make_amundsen_tools(thread_id: str) -> list:
             date_range=date_range,
         )
         if outcome.error:
-            return outcome.error
+            return _am_blocked(outcome.error)
 
         enriched = outcome.enriched
         n = outcome.n_rows
@@ -838,7 +886,7 @@ def make_amundsen_tools(thread_id: str) -> list:
                 "valeurs CTD manquantes à l'origine."
             )
 
-        return (
+        summary = (
             f"Enrichissement Amundsen — {n} ligne(s), {n_matched} {plural}.\n"
             f"{outcome.source_note}\n"
             f"Données disponibles dans `{variable_name}`.\n"
@@ -847,6 +895,14 @@ def make_amundsen_tools(thread_id: str) -> list:
             + f"\n\nSource : {_AMUNDSEN_DATASET_URL}\n"
             + "Provenance : "
             + json.dumps(provenance, ensure_ascii=False, sort_keys=True)
+        )
+        return _am_success(
+            summary,
+            data_ref=variable_name,
+            artifact_refs=(download_url(output_path.name),),
+            persisted=True,
+            method="Amundsen spatiotemporal nearest-neighbor enrichment",
+            metrics={"rows": n, "matched": n_matched, "unique_points": n_unique},
         )
 
 

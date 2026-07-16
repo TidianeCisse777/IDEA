@@ -48,6 +48,18 @@ from tools.point_enrichment import (
     run_point_enrichment,
 )
 from tools.session_store import default_store as _store
+from tools.tool_result import blocked, empty, error, success
+
+
+def _bio_result(factory, summary: str, **fields):
+    provenance = {"source": "bio_oracle", **dict(fields.pop("provenance", {}))}
+    return factory(summary, provenance=provenance, **fields)
+
+
+def _bio_success(summary: str, **fields): return _bio_result(success, summary, **fields)
+def _bio_empty(summary: str, **fields): return _bio_result(empty, summary, **fields)
+def _bio_blocked(summary: str, **fields): return _bio_result(blocked, summary, **fields)
+def _bio_error(summary: str, **fields): return _bio_result(error, summary, **fields)
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
@@ -476,18 +488,21 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         variable_name, dataframe = (file_candidates or candidates)[0]
         return dataframe, variable_name
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def list_bio_oracle_datasets() -> str:
         """Liste les datasets Bio-ORACLE disponibles dans ERDDAP."""
         try:
             datasets = _list_bio_oracle_datasets()
         except Exception as exc:
-            return f"Erreur lors de l'accès à Bio-ORACLE : {exc}"
+            return _bio_error(f"Erreur lors de l'accès à Bio-ORACLE : {exc}", retryable=True)
         if not datasets:
-            return "Aucun dataset Bio-ORACLE trouvé."
-        return _format_table(datasets, ["dataset_id", "title", "griddap"])
+            return _bio_empty("Aucun dataset Bio-ORACLE trouvé.")
+        return _bio_success(
+            _format_table(datasets, ["dataset_id", "title", "griddap"]),
+            metrics={"datasets": len(datasets)},
+        )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def preview_bio_oracle_point(
         latitude: float,
         longitude: float,
@@ -508,11 +523,18 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     "target_year": target_year,
                 }
             )
-            return _format_table(preview["rows"], ["time", "latitude", "longitude", variable])
+            rows = preview["rows"]
+            if not rows:
+                return _bio_empty("Aucune valeur Bio-ORACLE pour ce point.")
+            return _bio_success(
+                _format_table(rows, ["time", "latitude", "longitude", variable]),
+                provenance={"dataset_id": preview.get("dataset_id")},
+                metrics={"rows": len(rows)},
+            )
         except Exception as exc:
-            return f"Erreur lors de l'accès à Bio-ORACLE : {exc}"
+            return _bio_error(f"Erreur lors de l'accès à Bio-ORACLE : {exc}", retryable=True)
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def query_bio_oracle(
         latitude: float | list[float],
         longitude: float | list[float],
@@ -536,18 +558,18 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             lat_is_list = isinstance(latitude, list)
             lon_is_list = isinstance(longitude, list)
             if lat_is_list != lon_is_list:
-                return (
+                return _bio_blocked(
                     "latitude et longitude doivent être tous deux des nombres "
                     "ou tous deux des listes."
                 )
             if lat_is_list:
                 if len(latitude) != len(longitude):
-                    return (
+                    return _bio_blocked(
                         f"latitude ({len(latitude)}) et longitude "
                         f"({len(longitude)}) doivent avoir la même longueur."
                     )
                 if not latitude:
-                    return "Liste de points vide."
+                    return _bio_blocked("Liste de points vide.")
                 lat_list = [float(value) for value in latitude]
                 lon_list = [float(value) for value in longitude]
             else:
@@ -606,11 +628,20 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 per_point_dataset_ids.append(result["dataset_id"])
 
             if not multi:
-                return (
+                summary = (
                     f"Bio-ORACLE chargé — {last_result['row_count']} lignes.\n"
                     f"Données disponibles dans `{per_point_names[0]}` et `df_bio_oracle`.\n"
                     f"Appelle run_pandas directement pour analyser.\n"
                     f"Télécharger : {last_result['download_url']}"
+                )
+                return _bio_success(
+                    summary,
+                    data_ref=per_point_names[0],
+                    artifact_refs=(last_result["download_url"],),
+                    provenance={"dataset_id": last_result["dataset_id"]},
+                    persisted=True,
+                    method="Bio-ORACLE point query",
+                    metrics={"rows": int(last_result["row_count"]), "points": 1},
                 )
 
             merged = pd.concat(per_point_frames, ignore_index=True)
@@ -641,17 +672,26 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 },
                 latest_alias=BIO_ORACLE,
             )
-            return (
+            summary = (
                 f"Bio-ORACLE chargé — {len(merged)} lignes pour {len(lat_list)} points.\n"
                 f"Données disponibles dans `{merged_name}` et `df_bio_oracle`.\n"
                 f"Datasets par point : {', '.join(per_point_names)}.\n"
                 f"Appelle run_pandas directement pour analyser.\n"
                 f"Télécharger : {download_url(merged_path.name)}"
             )
+            return _bio_success(
+                summary,
+                data_ref=merged_name,
+                artifact_refs=(download_url(merged_path.name),),
+                provenance={"dataset_ids": per_point_dataset_ids},
+                persisted=True,
+                method="Bio-ORACLE multipoint query",
+                metrics={"rows": len(merged), "points": len(lat_list)},
+            )
         except Exception as exc:
-            return f"Erreur lors de l'accès à Bio-ORACLE : {exc}"
+            return _bio_error(f"Erreur lors de l'accès à Bio-ORACLE : {exc}", retryable=True)
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def couple_zooplankton_bio_oracle(
         latitude_column: str,
         longitude_column: str,
@@ -680,14 +720,14 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 longitude_column,
             )
             if not isinstance(source, pd.DataFrame) or source.empty:
-                return "Aucune table chargée à coupler."
+                return _bio_blocked("Aucune table chargée à coupler.")
             missing_columns = [
                 column
                 for column in (latitude_column, longitude_column)
                 if column not in source.columns
             ]
             if missing_columns:
-                return (
+                return _bio_blocked(
                     "Colonnes absentes de la table chargée : "
                     + ", ".join(missing_columns)
                 )
@@ -696,11 +736,11 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 [variable] if variable else []
             )
             if not variable_values:
-                return "Aucune variable Bio-ORACLE fournie (`variable` ou `variables`)."
+                return _bio_blocked("Aucune variable Bio-ORACLE fournie (`variable` ou `variables`).")
 
             scenario_values = list(scenarios or [scenario])
             if not scenario_values:
-                return "Aucun scénario Bio-ORACLE fourni."
+                return _bio_blocked("Aucun scénario Bio-ORACLE fourni.")
 
             # Garde-fou : un scénario SSP* est décennal (2020, 2030, ..., 2090).
             # Sans target_year explicite, ERDDAP renvoie la dernière décennie
@@ -713,7 +753,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     if str(s).lower().replace("-", "").replace(".", "").startswith("ssp")
                 ]
                 if ssp_scenarios:
-                    return (
+                    return _bio_blocked(
                         "TARGET_YEAR_REQUIRED: les datasets Bio-ORACLE SSP "
                         f"({', '.join(ssp_scenarios)}) sont décennaux. "
                         "Choisis une décennie cible parmi : "
@@ -726,7 +766,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
 
             if station_column or top_n_stations is not None:
                 if not station_column:
-                    return "`station_column` est requis avec `top_n_stations`."
+                    return _bio_blocked("`station_column` est requis avec `top_n_stations`.")
                 missing_station_columns = [
                     column
                     for column in (station_column, latitude_column, longitude_column)
@@ -735,7 +775,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 if sample_column and sample_column not in source.columns:
                     missing_station_columns.append(sample_column)
                 if missing_station_columns:
-                    return (
+                    return _bio_blocked(
                         "Colonnes absentes de la table source : "
                         + ", ".join(missing_station_columns)
                     )
@@ -890,17 +930,25 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 if fallback_name
                 else ""
             )
-            return (
+            summary = (
                 f"Couplage Bio-ORACLE chargé — {len(dataframe)} lignes.\n"
                 f"{source_note}"
                 f"Données disponibles dans `{variable_name}`.\n"
                 f"Aperçu (20 premières lignes) :\n\n{preview_md}\n\n"
                 f"Télécharger : {download_url(output_path.name)}"
             )
+            return _bio_success(
+                summary,
+                data_ref=variable_name,
+                artifact_refs=(download_url(output_path.name),),
+                persisted=True,
+                method="Bio-ORACLE row/station coupling",
+                metrics={"rows": len(dataframe), "queries": len(cache)},
+            )
         except Exception as exc:
-            return f"Erreur lors du couplage Bio-ORACLE : {exc}"
+            return _bio_error(f"Erreur lors du couplage Bio-ORACLE : {exc}", retryable=True)
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def query_bio_oracle_zones(
         zones: list[str],
         variable: str,
@@ -979,7 +1027,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 errors.append(f"{zone_name}: {exc}")
 
         if not rows_out:
-            return "Aucune valeur extraite. Erreurs : " + "; ".join(errors)
+            return _bio_empty("Aucune valeur extraite. Erreurs : " + "; ".join(errors))
 
         df_out = pd.DataFrame(rows_out)
         variable_name = dataset_variable_name(
@@ -1000,9 +1048,14 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         )
         if errors:
             out += "\n\nAvertissements : " + "; ".join(errors)
-        return per_station_warning + out
+        return _bio_success(
+            per_station_warning + out,
+            data_ref=variable_name,
+            persisted=True,
+            metrics={"zones": len(rows_out), "errors": len(errors)},
+        )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def find_bio_oracle_data_for_table(
         source_variable: str | None = None,
         latitude_column: str | None = None,
@@ -1026,8 +1079,8 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         source = resolve_source_dataframe(_store, thread_id, source_variable)
         if source is None:
             if source_variable:
-                return f"Variable source introuvable en session : `{source_variable}`."
-            return (
+                return _bio_blocked(f"Variable source introuvable en session : `{source_variable}`.")
+            return _bio_blocked(
                 "Aucune table chargée. Charge d'abord un fichier avec des colonnes "
                 "latitude/longitude (`load_file`)."
             )
@@ -1039,7 +1092,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             if value is None
         ]
         if missing:
-            return (
+            return _bio_blocked(
                 "Vérification Bio-ORACLE impossible : colonnes manquantes dans la table "
                 f"chargée — {', '.join(missing)}. Préciser via `latitude_column`, "
                 "`longitude_column`."
@@ -1047,7 +1100,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
 
         coords = source[[lat_col, lon_col]].apply(pd.to_numeric, errors="coerce").dropna()
         if coords.empty:
-            return (
+            return _bio_blocked(
                 "Vérification Bio-ORACLE impossible : latitude/longitude entièrement "
                 "vides ou non numériques — aucune coordonnée exploitable."
             )
@@ -1068,7 +1121,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     target_year=None,
                 )
             except Exception as exc:
-                return f"Erreur lors de l'accès à Bio-ORACLE : {exc}"
+                return _bio_error(f"Erreur lors de l'accès à Bio-ORACLE : {exc}", retryable=True)
             probed.append(point.get("value"))
 
         n_cov = sum(1 for v in probed if v is not None)
@@ -1076,21 +1129,22 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         lon_min, lon_max = float(coords[lon_col].min()), float(coords[lon_col].max())
         env = f"lat {lat_min:.2f}→{lat_max:.2f}, lon {lon_min:.2f}→{lon_max:.2f}"
         if n_cov == 0:
-            return (
+            return _bio_empty(
                 f"Aucune couverture Bio-ORACLE aux points testés de la table ({env}). "
                 "Les points sont probablement à terre ou en bord de grille — vérifie "
                 "que les coordonnées sont bien en mer."
             )
         example = next((v for v in probed if v is not None), None)
         example_txt = f" (ex. {variable} = {example})" if example is not None else ""
-        return (
+        return _bio_success(
             f"Bio-ORACLE couvre cette zone : {n_cov}/{len(probed)} point(s) testé(s) ont "
             f"une valeur{example_txt}, emprise {env}. Enrichissement possible — lancer "
             "`enrich_with_bio_oracle` (variables + scénarios voulus) pour ajouter une "
-            "colonne par (variable × scénario) sur chaque ligne."
+            "colonne par (variable × scénario) sur chaque ligne.",
+            metrics={"points_probed": len(probed), "covered": n_cov},
         )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def enrich_with_bio_oracle(
         variables: list[str] | None = None,
         scenarios: list[str] | None = None,
@@ -1143,7 +1197,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             date_range=date_range,
         )
         if outcome.error:
-            return outcome.error
+            return _bio_blocked(outcome.error)
 
         enriched = outcome.enriched
         variable_name = dataset_variable_name(
@@ -1189,12 +1243,16 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 f"- Note : {n_no_value} ligne(s) sans valeur — point hors "
                 "couverture de la grille Bio-ORACLE (souvent terre ou bord)."
             )
-        return (
+        return _bio_success(
             f"Enrichissement Bio-ORACLE — {len(enriched)} ligne(s), "
             f"{n_matched} matchée(s).\n"
             f"{outcome.source_note}\n"
             f"Données disponibles dans `{variable_name}`.\n\n"
-            + "\n".join(method_lines)
+            + "\n".join(method_lines),
+            data_ref=variable_name,
+            persisted=True,
+            method="Bio-ORACLE gridded point enrichment",
+            metrics={"rows": len(enriched), "matched": n_matched},
         )
 
     return [list_bio_oracle_datasets, preview_bio_oracle_point, query_bio_oracle,
