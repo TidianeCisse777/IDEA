@@ -450,6 +450,52 @@ def _persist_canonical_sample_depth(
     )
 
 
+def _reuse_loaded_file(
+    store: SessionStore,
+    thread_id: str,
+    variable_name: str,
+    cached: dict,
+    requested_path: str,
+):
+    """Return the already-loaded file as the active dataset, without re-reading.
+
+    Used when `load_file` is called for a path whose DataFrame is already in the
+    session: reuse avoids duplicate I/O and survives an upload path that has
+    since expired.
+    """
+    meta = dict(cached.get("meta") or {})
+    df = cached["df"]
+    col_names = list(df.columns)
+    resolved_path = meta.get("path", requested_path)
+    source_alias = _source_alias_for_loaded_file(str(resolved_path), col_names)
+    store_dataset(
+        store,
+        thread_id,
+        df,
+        variable_name=variable_name,
+        meta=meta,
+        latest_alias=source_alias,
+        is_loaded_file=True,
+    )
+    from tools.source_scope import activate_file_source  # noqa: PLC0415
+
+    activate_file_source(store, thread_id, origin_user_text=str(resolved_path))
+    n_rows = meta.get("n_rows", len(df))
+    n_cols = meta.get("n_cols", len(col_names))
+    alias_note = f"\nAlias de session : `{source_alias}`" if source_alias else ""
+    return success(
+        "Fichier déjà chargé en session — réutilisé sans relecture.\n"
+        f"{n_rows} lignes × {n_cols} colonnes\n"
+        f"Variable persistante : `{variable_name}`\n"
+        f"Colonnes : {', '.join(map(str, col_names))}"
+        f"{alias_note}",
+        data_ref=variable_name,
+        provenance={"source": "file", "path": str(resolved_path)},
+        persisted=True,
+        method="file loader (session cache)",
+    )
+
+
 def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     """Crée les tools data pour un thread donné.
 
@@ -471,6 +517,18 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - Essaie une variante du chemin si le fichier est dans /tmp/webui_uploads/.
         - Ne signale l'erreur à l'utilisateur qu'après avoir épuisé ces options.
         """
+        variable_name = dataset_variable_name("file", Path(path).stem)
+
+        # Idempotent: a file already loaded in this session is reused instead of
+        # being re-read. Avoids wasted I/O across turns and, crucially, avoids
+        # failing when an upload path has since expired while the DataFrame is
+        # still in session.
+        cached = _store.get(f"{thread_id}:dataset:{variable_name}")
+        if cached is not None and cached.get("df") is not None:
+            return _reuse_loaded_file(
+                _store, thread_id, variable_name, cached, path
+            )
+
         try:
             df, meta = _load_file(path)
         except (FileNotFoundError, ValueError) as e:
@@ -481,7 +539,6 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 method="file loader",
             )
 
-        variable_name = dataset_variable_name("file", Path(path).stem)
         col_names = [c["name"] for c in meta["columns"]]
         source_alias = _source_alias_for_loaded_file(meta["path"], col_names)
         store_dataset(
