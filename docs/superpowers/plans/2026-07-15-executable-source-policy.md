@@ -138,9 +138,9 @@ assert first.authorized_sources == second.authorized_sources == ("ecotaxa",)
 - Adds: un troisième tour à `SC-ECOTAXA` sans répétition du nom EcoTaxa.
 - Produces: baseline offline régénérée une fois et preuve du smoke agent.
 
-- [ ] **RED 6:** ajouter le tour « résume maintenant le projet 17498 » et un test séquentiel qui exige l'affinité héritée.
-- [ ] **Verify RED 6:** `pytest -q tests/test_replay_harness.py tests/test_source_affinity.py`; attendu : fixture/attente non satisfaite avant adaptation.
-- [ ] **GREEN 6:** adapter la fixture offline avec un résultat structuré et intégrer la décision dans la vérification de continuité sans appel modèle.
+- [x] **RED 6:** ajouter le tour « résume maintenant le projet 17498 » et un test séquentiel qui exige l'affinité héritée.
+- [x] **Verify RED 6:** `pytest -q tests/test_replay_harness.py tests/test_source_affinity.py`; attendu : fixture/attente non satisfaite avant adaptation.
+- [x] **GREEN 6:** adapter la fixture offline avec un résultat structuré et intégrer la décision dans la vérification de continuité sans appel modèle.
 - [ ] **Targeted gate once:** `pytest -q tests/test_source_scope.py tests/test_source_affinity.py tests/test_source_policy_tools.py tests/test_source_prompt_contract.py tests/test_agent_factory.py tests/test_data_tools.py tests/test_session_context.py tests/test_replay_harness.py tests/harness_redteam/`.
 - [ ] **Full gate once:** `pytest -q tests/`.
 - [ ] **Offline baseline once:** `python -m evals.replay_harness --lane offline --runs 1 --output evals/baseline_offline_2026-07-15.json`.

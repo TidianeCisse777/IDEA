@@ -120,6 +120,14 @@
           "expect_file_use": false,
           "forbidden_tools": ["query_ecopart", "query_amundsen_ctd", "query_bio_oracle"],
           "offline": {"tool_calls": [{"name": "preview_ecotaxa_project", "arguments": {"project_id": 17498}}], "dataset_after": {"source": "ecotaxa_preview", "variable_name": null}, "final_answer": "Prévisualisation EcoTaxa terminée."}
+        },
+        {
+          "name": "inherited_source_summary",
+          "prompt": "Résume maintenant le projet 17498 sans téléchargement complet.",
+          "expected_source": "ecotaxa",
+          "expect_file_use": false,
+          "forbidden_tools": ["query_ecopart", "query_amundsen_ctd", "query_bio_oracle"],
+          "offline": {"tool_calls": [{"name": "summarize_ecotaxa_project", "arguments": {"project_id": 17498}}], "dataset_after": {"source": "ecotaxa_summary", "variable_name": null}, "final_answer": "Résumé du projet présenté depuis la source active."}
         }
       ]
     }

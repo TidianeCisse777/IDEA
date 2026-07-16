@@ -16,6 +16,8 @@ def test_reference_scenarios_are_fixed_and_complete():
 
     assert set(scenarios) == {"SC-LAB", "SC-ENRICH", "SC-ECOTAXA"}
     assert len(scenarios["SC-LAB"].turns) == 7
+    assert len(scenarios["SC-ECOTAXA"].turns) == 3
+    assert "ecotaxa" not in scenarios["SC-ECOTAXA"].turns[-1].prompt.lower()
     assert all(turn.name and turn.prompt for scenario in scenarios.values() for turn in scenario.turns)
 
 
@@ -145,9 +147,9 @@ def test_live_report_uses_injected_executor_and_keeps_five_runs():
     assert report["run_count_per_scenario"] == 5
     assert len(report["scenarios"]) == 15
     assert report["model"] == "fake-live-model"
-    assert report["metrics"]["input_tokens"] == 600
-    assert report["metrics"]["output_tokens"] == 120
-    assert report["metrics"]["cost_usd"] == pytest.approx(0.06)
+    assert report["metrics"]["input_tokens"] == 650
+    assert report["metrics"]["output_tokens"] == 130
+    assert report["metrics"]["cost_usd"] == pytest.approx(0.065)
 
 
 def test_tool_schema_capture_reads_openai_function_specs():
