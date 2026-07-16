@@ -174,7 +174,16 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 ### Étape 5 — `TurnContext` + carte d'état de session
 
-**État : terminé le 16 juillet 2026.** Un `TurnContext` typé (`tools/turn_context.py`) est reconstruit en début de tour et regroupe l'état persistant lu depuis le store : dataset chargé/actif, sous-ensembles de zone vivants (variable+zone+lignes), et périmètre de source autorisé. La capsule d'état (`build_dataset_state_capsule`) est sa **projection** destinée au modèle : elle énumère les sous-ensembles de zone (l'agent lit quelle variable `df_in_*` correspond à quelle zone au lieu de la ré-inférer — cause racine cartes-samples-labrador) et affiche `ACTIVE SOURCE SCOPE` (sources autorisées du tour), rendant la décision/`source_lock` de source **lisible comme état** et non plus seulement appliquée en silence. Le middleware construit le `TurnContext` une fois par tour et enregistre ses champs dans l'audit de contexte. Le portage stateful du `source_lock` était déjà largement couvert par l'affinité de source (qui retire une source exclue de l'état actif) ; il est désormais aussi **visible** dans la carte d'état.
+**État : terminé le 16 juillet 2026** (une robustesse de rechargement multi-fichiers reste en suivi ouvert). Un `TurnContext` typé (`tools/turn_context.py`) est reconstruit en début de tour et regroupe l'état persistant lu depuis le store : dataset chargé/actif, sous-ensembles de zone vivants (variable+zone+lignes), et périmètre de source autorisé. La capsule d'état (`build_dataset_state_capsule`) est sa **projection** destinée au modèle :
+- elle énumère les sous-ensembles de zone (l'agent lit quelle variable `df_in_*` correspond à quelle zone au lieu de la ré-inférer — cause racine cartes-samples-labrador) ;
+- elle liste **tous les fichiers chargés** (`LOADED FILES` : variable, chemin, lignes) dès qu'il y en a plusieurs, pour que l'agent cible le bon `df_file_*` par son nom sans deviner ni recharger ;
+- elle affiche `ACTIVE SOURCE SCOPE` (sources autorisées du tour), rendant la décision/`source_lock` de source **lisible comme état** et non plus seulement appliquée en silence.
+
+Le middleware construit le `TurnContext` une fois par tour et enregistre ses champs dans l'audit de contexte. Le portage stateful du `source_lock` était déjà largement couvert par l'affinité de source (qui retire une source exclue de l'état actif) ; il est désormais aussi **visible** dans la carte d'état.
+
+**Workflow multi-fichiers (validé sur l'agent réel le 16 juillet 2026).** Chaque `load_file` crée une variable `df_file_<stem>` distincte ; l'agent cible le bon fichier par son nom, et une **jointure crée un nouveau df persistant** : un `merge`/`join`/`concat` dans `run_pandas` est stocké comme dataset `df_join_*` (`persisted=true`, réutilisable au tour suivant), tandis qu'une agrégation simple reste éphémère (`_is_join_code` dans `tools/data_tools.py`). Smoke réel : deux fichiers joints → `df_join_*` → réutilisé au tour suivant (« 3 lignes »).
+
+**Suivi ouvert — rechargement multi-fichiers :** malgré l'instruction « ne recharge pas » de la capsule, l'agent tend encore à rappeler `load_file` à chaque tour. Bénin en local, mais **risque en prod** : recharger un chemin d'upload expiré (`/tmp/webui_uploads/…`) échouerait alors que le df est déjà en session. Correctif proposé, non fait : rendre `load_file` idempotent (retourner la variable existante quand le même chemin est déjà chargé, et le df existant si le chemin n'est plus lisible).
 
 **Goal :** l'agent **lit** son état au lieu de le ré-inférer depuis l'historique. Cœur du problème « l'agent se perd entre fichier/EcoTaxa/dérivé ».
 
@@ -187,6 +196,7 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 - [x] `SC-LAB` : la carte des dérivés+zone et le périmètre de source sont injectés; smoke réel multi-zone → la carte demandée part du bon sous-ensemble (Baffin) et `authorized_sources=['file']` observé dans l'audit. Le suivi N ≥ 5 formel reste une mesure de campagne, non un blocage de correction.
 - [x] `SC-ENRICH` : **aucune régression** — capsule/`TurnContext` en lecture seule; suites `turn_context`/`session_context`/`run_pandas`/`geo`/`agent_factory`/red-team vertes (127 tests) et les chemins d'enrichissement partent toujours de la bonne table.
 - [x] La carte d'état reste sous son budget : capsule ~1 126 caractères (~300 tokens) mesurée sur l'agent réel, plafond 2 000 caractères, roster borné à 12 entrées.
+- [x] Multi-fichiers : `LOADED FILES` nomme chaque fichier chargé; smoke réel → l'agent joint les bons `df_file_*` par nom et la jointure crée un `df_join_*` persistant réutilisé au tour suivant. Tests `test_run_pandas_join_persistence.py` + capsule verts.
 
 ---
 

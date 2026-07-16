@@ -32,7 +32,9 @@ serve.py — FastAPI (port 8000)
 agent.py — LangChain create_agent (ex-create_react_agent, déprécié en LangGraph 1.0)
     │ system prompt copépodes (hub: copepod-system-prompt, fallback local)
     │ checkpointer AsyncSqliteSaver (data/checkpoints.sqlite)
-    │ _ContextMiddleware : trim actual model request + audit + inject long-term memory
+    │ _ContextMiddleware : trim model request + audit + inject long-term memory
+    │                     + inject session state map (TurnContext: loaded files, zone subsets, source scope)
+    │                     + guards (source scope, ungrounded ids, graph intent) + restricted code namespace
     │
     ├── tools/data_tools.py         → load_file, run_pandas, run_graph
     ├── tools/rag_tool.py           → query_copepod_knowledge_base

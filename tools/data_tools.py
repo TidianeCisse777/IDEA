@@ -558,11 +558,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
         IMPORTANT: each call to run_pandas is isolated — variables computed in a
         previous call (e.g. `station_stats`, `delta_df`) are NOT available in the
-        next call. Exception: a canonical sample-depth DataFrame assigned to
-        `result` is persisted automatically as `df_canonical_sample_depth` and
-        MUST be reused by later tables, correlations, and graphs. Every DataFrame
-        output states `Persistence: persisted=true|false`; never describe an
-        ephemeral (`false`) result as saved.
+        next call. Exceptions persisted automatically and reusable by their exact
+        name in later turns:
+        - a canonical sample-depth DataFrame → `df_canonical_sample_depth`;
+        - a join/merge/concat result → a new `df_join_*` table (reuse it instead
+          of re-joining the source files).
+        Every DataFrame output states `Persistence: persisted=true|false`; never
+        describe an ephemeral (`false`) result as saved.
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
