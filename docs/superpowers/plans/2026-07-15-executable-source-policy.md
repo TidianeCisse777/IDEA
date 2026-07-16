@@ -82,11 +82,11 @@ assert first.authorized_sources == second.authorized_sources == ("ecotaxa",)
 - Produces: `source_for_tool_call(name, args, policies)`, `filter_tools_for_decision(tools, decision, policies)`, `source_rejection_for_call(decision, name, args, policies)`.
 - Consumes: `TOOL_POLICIES` ou un mapping injecté dans les tests.
 
-- [ ] **RED 3:** construire des faux tools de chaque source et vérifier qu'une décision EcoTaxa conserve les tools communs et EcoTaxa, mais retire EcoPart, Amundsen, Bio-ORACLE, OGSL et SQL. Tester aussi les skills source (`ecotaxa_navigation`, `ecopart_query`, `amundsen_ctd_query`, `bio_oracle_query`).
-- [ ] **Verify RED 3:** `pytest -q tests/test_source_policy_tools.py`; attendu : fonctions absentes.
-- [ ] **GREEN 3:** classifier depuis `ToolPolicy.source`; traiter `load_skill` via une table source→skills limitée aux skills source. Les sources de politique `file`, `geography`, `knowledge`, `taxonomy`, `skill` générique et `deliverable` restent communes.
-- [ ] **Verify GREEN 3:** même commande puis `pytest -q tests/test_tool_policy_registry.py tests/test_tool_catalog.py`; attendu : verts.
-- [ ] **Commit:** `feat: enforce source policy on tool catalog`.
+- [x] **RED 3:** construire des faux tools de chaque source et vérifier qu'une décision EcoTaxa conserve les tools communs et EcoTaxa, mais retire EcoPart, Amundsen, Bio-ORACLE, OGSL et SQL. Tester aussi les skills source (`ecotaxa_navigation`, `ecopart_query`, `amundsen_ctd_query`, `bio_oracle_query`).
+- [x] **Verify RED 3:** `pytest -q tests/test_source_policy_tools.py`; attendu : fonctions absentes.
+- [x] **GREEN 3:** classifier depuis `ToolPolicy.source`; traiter `load_skill` via une table source→skills limitée aux skills source. Les sources de politique `file`, `geography`, `knowledge`, `taxonomy`, `skill` générique et `deliverable` restent communes.
+- [x] **Verify GREEN 3:** même commande puis `pytest -q tests/test_tool_policy_registry.py tests/test_tool_catalog.py`; attendu : verts.
+- [x] **Commit:** `feat: enforce source policy on tool catalog`.
 
 ### Task 4: Middleware unique et chargement de fichier
 

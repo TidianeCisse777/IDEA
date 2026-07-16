@@ -103,6 +103,31 @@ _SWITCH_SIGNAL = re.compile(
 # Skills that drive the remote EcoTaxa navigation/query flows.
 _ECOTAXA_SKILLS = {"ecotaxa_navigation", "ecotaxa_query"}
 _SOURCE_AFFINITY_SUFFIX = "source_affinity"
+_EXTERNAL_SOURCES = frozenset({
+    "ecotaxa",
+    "ecopart",
+    "amundsen",
+    "bio_oracle",
+    "ogsl",
+    "sql",
+})
+_SOURCE_SKILLS: dict[str, SourceName] = {
+    "ecotaxa_navigation": "ecotaxa",
+    "ecotaxa_query": "ecotaxa",
+    "ecopart_query": "ecopart",
+    "amundsen_ctd_query": "amundsen",
+    "bio_oracle_query": "bio_oracle",
+    "sql_workspace_query": "sql",
+}
+_SOURCE_LABELS: dict[SourceName, str] = {
+    "file": "fichier",
+    "ecotaxa": "EcoTaxa",
+    "ecopart": "EcoPart",
+    "amundsen": "Amundsen CTD",
+    "bio_oracle": "Bio-ORACLE",
+    "ogsl": "OGSL",
+    "sql": "SQL",
+}
 
 
 def _source_mentions(text: str | None) -> tuple[tuple[SourceName, ...], tuple[SourceName, ...]]:
@@ -327,6 +352,62 @@ def source_decision_for_turn(
             except Exception:
                 pass
     return decision
+
+
+def source_for_tool_call(
+    name: str | None,
+    args: dict | None,
+    policies: Any,
+) -> SourceName | None:
+    """Classify an external-source tool call from the catalog policy."""
+    normalized_name = str(name or "")
+    if normalized_name == "load_skill":
+        skill_name = str((args or {}).get("skill_name", "")).strip().lower()
+        return _SOURCE_SKILLS.get(skill_name)
+    policy = policies.get(normalized_name) if policies is not None else None
+    source = getattr(policy, "source", None)
+    if source in _EXTERNAL_SOURCES:
+        return cast(SourceName, source)
+    return None
+
+
+def filter_tools_for_decision(
+    tools: list,
+    decision: SourceDecision,
+    policies: Any,
+) -> list:
+    """Hide tools belonging to external sources not authorized this turn."""
+    authorized = set(decision.authorized_sources)
+    return [
+        item
+        for item in tools
+        if (
+            (source := source_for_tool_call(getattr(item, "name", ""), {}, policies))
+            is None
+            or source in authorized
+        )
+    ]
+
+
+def source_rejection_for_call(
+    decision: SourceDecision,
+    name: str | None,
+    args: dict | None,
+    policies: Any,
+) -> str | None:
+    """Return a clinical refusal for an unauthorized external source call."""
+    source = source_for_tool_call(name, args, policies)
+    if source is None or source in decision.authorized_sources:
+        return None
+    label = _SOURCE_LABELS[source]
+    active = ", ".join(
+        _SOURCE_LABELS[item] for item in decision.authorized_sources
+    ) or "aucune"
+    return (
+        f"Source bloquée : {label} n'est pas autorisée pour ce tour. "
+        f"Source active : {active}. L'utilisateur doit nommer {label} "
+        "explicitement avant sa première utilisation."
+    )
 
 
 def ecotaxa_signal(text: str | None) -> bool:
