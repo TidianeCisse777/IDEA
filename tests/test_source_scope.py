@@ -121,6 +121,43 @@ def test_comparison_combines_active_and_new_source():
     assert decision.authorized_sources == ("ecotaxa", "ecopart")
 
 
+def test_explicit_enrichment_replaces_stale_external_affinity_but_keeps_file():
+    from tools.source_scope import SourceAffinity, decide_source
+
+    affinity = SourceAffinity(
+        active_sources=("file", "ecotaxa", "ecopart"),
+        evidence="explicit_name",
+        origin_user_text="Exporte le sample EcoTaxa avec EcoPart",
+        updated_at="2026-07-15T12:00:00+00:00",
+    )
+    decision = decide_source(
+        "Enrichis le sample avec Amundsen.",
+        affinity=affinity,
+        file_loaded=True,
+    )
+
+    assert decision.authorized_sources == ("file", "amundsen")
+    assert decision.explicit_sources == ("amundsen",)
+
+
+def test_explicit_multi_source_enrichment_keeps_only_named_sources_and_file():
+    from tools.source_scope import SourceAffinity, decide_source
+
+    affinity = SourceAffinity(
+        active_sources=("file", "ecotaxa", "ecopart"),
+        evidence="explicit_name",
+        origin_user_text="Exporte le sample EcoTaxa avec EcoPart",
+        updated_at="2026-07-15T12:00:00+00:00",
+    )
+    decision = decide_source(
+        "Enrichis le fichier avec Amundsen et Bio-ORACLE.",
+        affinity=affinity,
+        file_loaded=True,
+    )
+
+    assert decision.authorized_sources == ("file", "amundsen", "bio_oracle")
+
+
 def test_explicit_switch_replaces_active_source():
     from tools.source_scope import SourceAffinity, decide_source
 

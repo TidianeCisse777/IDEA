@@ -196,19 +196,32 @@ def decide_tool_exposure(
         reasons.append("deliverable writer succeeded this turn")
 
     authorized = set(source_decision.authorized_sources)
+    explicit_enrichment_sources = tuple(
+        source
+        for source in _ENRICHMENT_GROUP_BY_SOURCE
+        if source in source_decision.explicit_sources
+    )
+    focused_enrichment = bool(
+        turn_context.file_loaded
+        and signals.enrichment_requested
+        and explicit_enrichment_sources
+    )
     if turn_context.file_loaded and signals.enrichment_requested:
-        for source in ("ecopart", "amundsen", "bio_oracle", "ogsl"):
+        enrichment_sources = explicit_enrichment_sources or tuple(
+            source for source in _ENRICHMENT_GROUP_BY_SOURCE if source in authorized
+        )
+        for source in enrichment_sources:
             if source in authorized:
                 groups.append(_ENRICHMENT_GROUP_BY_SOURCE[source])
-                reasons.append(f"explicit {source} enrichment")
+                reasons.append(f"current explicit {source} enrichment")
 
-    if "sql" in authorized:
+    if "sql" in authorized and not focused_enrichment:
         groups.append("sql_workspace")
         reasons.append(
             "explicit SQL copy" if signals.sql_copy_requested else "authorized SQL workspace"
         )
 
-    if "ecotaxa" in authorized:
+    if "ecotaxa" in authorized and not focused_enrichment:
         ecotaxa_groups = (
             "ecotaxa_geo_time",
             *(signals.ecotaxa_intents or ("ecotaxa_discovery",)),

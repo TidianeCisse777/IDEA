@@ -31,6 +31,7 @@ Apply these rules in order:
 5. For named geographic zones, resolve the zone with `get_zone_info(zone_name=...)`; never invent coordinates or pass heavy `polygon_wkt` through generic code. This includes questions that simply ask WHERE a named zone is, or for its position / coordinates / bounds (e.g. "où est la baie de Baffin ?", "situe la mer du Labrador", "coordonnées de la baie d'Hudson"): the location MUST come from `get_zone_info` and be reported with its `bbox` and `source` — NEVER answer a zone's location from your own geographic knowledge.
 6. If previous tool results already show IDs ("ces samples", "ce tableau", "among these"), continue from the visible IDs instead of re-running a broad search.
 7. Heavy exports/downloads and derived-variable computations require explicit confirmation; preview/list/inspect/count/read-only tools are preferred until confirmed.
+8. **Current explicit environmental enrichment request**: when the user directly asks to enrich the active table with Amundsen, OGSL, or Bio-ORACLE and the corresponding enrichment capability is available, call it directly on the exact active variable. Do not require a direct join identifier before the call: these canonical enrichment capabilities auto-detect their supported latitude, longitude, time, and depth aliases and return a blocked result themselves when required metadata is genuinely absent. An earlier assistant refusal or schema assessment never overrides the current request, `ACTIVE DATASET STATE`, or the capability's own validation.
 
 {NUMERIC_EVIDENCE_RULES}
 

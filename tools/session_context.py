@@ -7,10 +7,17 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
+from core.environment_resolver.column_detection import (
+    DEFAULT_DEPTH_CANDIDATES,
+    DEFAULT_LAT_CANDIDATES,
+    DEFAULT_LON_CANDIDATES,
+    DEFAULT_TIME_CANDIDATES,
+    detect_column,
+)
 from tools.session_store import SessionStore
 
 _MAX_CAPSULE_CHARS = 2000
-_IDENTITY_COLUMNS = (
+_IDENTITY_COLUMNS = tuple(dict.fromkeys((
     "project_id",
     "sample_id",
     "profile_id",
@@ -24,7 +31,11 @@ _IDENTITY_COLUMNS = (
     "depth",
     "object_depth_min",
     "object_depth_max",
-)
+    *DEFAULT_LAT_CANDIDATES,
+    *DEFAULT_LON_CANDIDATES,
+    *DEFAULT_TIME_CANDIDATES,
+    *DEFAULT_DEPTH_CANDIDATES,
+)))
 _IDENTIFIER_ARGUMENTS = {"project_id", "project_ids", "sample_id", "sample_ids"}
 
 
@@ -146,6 +157,12 @@ def build_dataset_state_capsule(
     columns = int(meta.get("n_cols", physical_columns))
     aliases = _matching_aliases(store, thread_id, variable)
     identity_columns = _present_columns(dataframe.columns)
+    environment_columns = {
+        "latitude": detect_column(dataframe.columns, DEFAULT_LAT_CANDIDATES),
+        "longitude": detect_column(dataframe.columns, DEFAULT_LON_CANDIDATES),
+        "time": detect_column(dataframe.columns, DEFAULT_TIME_CANDIDATES),
+        "depth": detect_column(dataframe.columns, DEFAULT_DEPTH_CANDIDATES),
+    }
 
     fields = [
         f"variable={variable}",
@@ -154,6 +171,10 @@ def build_dataset_state_capsule(
         "aliases=" + (",".join(aliases) if aliases else "none"),
         "identity_columns=" + (
             ",".join(identity_columns) if identity_columns else "none"
+        ),
+        "environment_columns=" + ",".join(
+            f"{role}:{column or 'none'}"
+            for role, column in environment_columns.items()
         ),
     ]
     if meta.get("project_id") is not None:
@@ -218,6 +239,8 @@ def build_dataset_state_capsule(
     capsule = (
         "\n\n## ACTIVE DATASET STATE (authoritative, current turn)\n"
         "- " + "; ".join(fields) + "\n"
+        "Canonical environmental enrichment validates these detected aliases "
+        "itself; direct station/cast identifiers are not required.\n"
         "Identifiers absent from this capsule and the current user message are "
         "ungrounded; do not infer them from older conversation turns."
         + scope_line

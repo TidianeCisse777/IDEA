@@ -214,6 +214,15 @@ def test_system_prompt_mentions_sources():
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_system_prompt_prioritizes_current_explicit_environmental_enrichment():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "current explicit environmental enrichment request" in prompt
+    assert "do not require a direct join identifier" in prompt
+    assert "earlier assistant refusal" in prompt
+
+
 def test_context_preparation_records_tool_truncation_metrics(monkeypatch):
     from langchain_core.messages import HumanMessage, ToolMessage
 

@@ -91,8 +91,8 @@ _NEGATION_BEFORE_SOURCE = re.compile(
     re.IGNORECASE,
 )
 _COMBINE_SIGNAL = re.compile(
-    r"\b(?:compare|comparer|croise|croiser|combine|combiner|enrichis|enrichir)\b"
-    r"|\b(?:compare|combine|enrich)\s+with\b",
+    r"\b(?:compare|comparer|croise|croiser|combine|combiner)\b"
+    r"|\b(?:compare|combine)\s+with\b",
     re.IGNORECASE,
 )
 _SWITCH_SIGNAL = re.compile(
@@ -142,7 +142,7 @@ Apply this gateway before every domain, graph, or source-specific rule.
 - Generic words are never external-source signals: sample, échantillon, station, zone, project, temperature, environment, map, where, and their variants do not authorize an online source.
 - On first use, an external source must be named explicitly. Selectable external sources are: {external_labels}.
 - Once explicitly selected, that source remains active on following turns. The user does not need to repeat its name for grounded follow-ups.
-- The active source changes only when the user asks to name another source, explicitly combines sources, or a newly loaded file becomes the active source.
+- The active source changes when the user names another source, explicitly compares or combines sources, or a newly loaded file becomes the active source. An enrichment request naming one or more sources replaces stale external affinities with those named sources; a loaded file remains primary.
 - A project number alone is not an EcoTaxa signal. With no active source owning it, ask which source owns it.
 - With no loaded file, no active affinity, and no explicitly named source, ask the user to provide a file or choose a source. Do not select an online source yourself.
 - If a file is loaded and an external source is explicitly requested, keep the file primary and use that source only for the requested secondary operation. Never replace or relabel the file as external-source data.

@@ -154,6 +154,36 @@ def test_explicit_enrichment_exposes_one_canonical_source_tool(source, text, exp
     assert source_tools == [expected]
 
 
+def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
+    from tools.tool_catalog import TOOL_POLICIES
+    from tools.tool_exposure import decide_tool_exposure
+
+    source_decision = SourceDecision(
+        primary_source="file",
+        authorized_sources=("file", "ecotaxa", "ecopart", "amundsen"),
+        explicit_sources=("amundsen",),
+        evidence="explicit_name",
+        needs_clarification=False,
+        reason="stale affinity fixture",
+    )
+    decision = decide_tool_exposure(
+        tuple(TOOL_POLICIES),
+        TOOL_POLICIES,
+        _turn(
+            file_loaded=True,
+            sources=source_decision.authorized_sources,
+        ),
+        source_decision,
+        [HumanMessage(content="Enrichis le sample avec Amundsen.")],
+    )
+
+    assert decision.policy_overflow is False
+    assert "enrich_with_amundsen_ctd" in decision.tool_names
+    assert "enrich_ecotaxa_with_ecopart_remote" not in decision.tool_names
+    assert not any(group.startswith("ecotaxa_") for group in decision.active_groups)
+    assert len(decision.tool_names) == 7
+
+
 @pytest.mark.parametrize(
     ("source", "text", "canonical"),
     [

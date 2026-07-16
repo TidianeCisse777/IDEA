@@ -76,6 +76,34 @@ def test_capsule_is_deterministic_and_contains_no_row_values(tmp_path):
     assert "ACTIVE DATASET STATE" in first
 
 
+def test_capsule_surfaces_environment_columns_recognized_by_enrichment(tmp_path):
+    store = SessionStore(tmp_path)
+    thread_id = "ecotaxa-enrichment-context"
+    frame = pd.DataFrame({
+        "sample_id": ["17498000002"],
+        "object_lat": [68.1],
+        "object_lon": [-64.2],
+        "object_date": ["2024-09-21"],
+        "object_depth_min": [10.0],
+    })
+    store_dataset(
+        store,
+        thread_id,
+        frame,
+        variable_name="df_ecotaxa_sample",
+        meta={"source": "ecotaxa:17498", "n_rows": 1, "n_cols": 5},
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "object_lat" in capsule
+    assert "object_lon" in capsule
+    assert "object_date" in capsule
+    assert "object_depth_min" in capsule
+    assert "environment_columns=latitude:object_lat,longitude:object_lon" in capsule
+    assert "direct station/cast identifiers are not required" in capsule
+
+
 def test_old_turn_cannot_ground_remote_ecotaxa_sample_id(tmp_path):
     store = SessionStore(tmp_path)
     messages = [
