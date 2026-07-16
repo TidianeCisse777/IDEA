@@ -13,6 +13,7 @@ from core.cartography import configure_offline_cartopy
 from core.graph_contracts import normalize_graph_contract, validate_graph_contract
 from core.runtime_paths import graphs_dir
 from tools.tool_result import blocked, empty, error, success
+from tools.code_sandbox import apply_restricted_builtins
 
 
 _GRAPHS_DIR = graphs_dir()
@@ -578,6 +579,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             if guard:
                 return blocked(guard, method="controlled pandas execution")
 
+            apply_restricted_builtins(local_vars)
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
@@ -705,6 +707,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             else:
                 local_vars = {"pd": pd}
             local_vars["plt"] = plt
+            apply_restricted_builtins(local_vars)
             with _cartopy_safe_tight_layout(plt):
                 exec(code, local_vars)  # noqa: S102
 
