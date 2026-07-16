@@ -7,6 +7,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 from tools.session_store import SessionStore, default_store
+from tools.tool_result import blocked, success
 
 try:
     from langsmith import Client as _LangSmithClient
@@ -70,19 +71,38 @@ def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = N
         f"For visualization tasks, call graph_planner first, then graph_writer."
     )
 
-    @tool(description=description)
+    @tool(description=description, response_format="content_and_artifact")
     def load_skill(skill_name: str) -> str:
         """Load a skill by name. Pulls from LangSmith Context Hub, falls back to local file."""
         content = _pull_from_hub(skill_name)
         if content:
             _record_loaded_skill(_store, thread_id, skill_name)
-            return content
+            return success(
+                content,
+                provenance={"source": "LangSmith Context Hub", "skill": skill_name},
+                persisted=bool(thread_id),
+                method="skill loader",
+            )
 
         current_skills = _discover_skills()
         if skill_name not in current_skills:
             available = ", ".join(current_skills.keys()) or "none"
-            return f"Skill '{skill_name}' not found. Available: {available}"
+            return blocked(
+                f"Skill '{skill_name}' not found. Available: {available}",
+                provenance={"source": "local skill allowlist", "skill": skill_name},
+                method="skill loader",
+            )
         _record_loaded_skill(_store, thread_id, skill_name)
-        return current_skills[skill_name].read_text(encoding="utf-8")
+        content = current_skills[skill_name].read_text(encoding="utf-8")
+        return success(
+            content,
+            provenance={
+                "source": "local skill file",
+                "skill": skill_name,
+                "path": str(current_skills[skill_name]),
+            },
+            persisted=bool(thread_id),
+            method="skill loader",
+        )
 
     return load_skill

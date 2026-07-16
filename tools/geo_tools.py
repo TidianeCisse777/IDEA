@@ -25,6 +25,7 @@ from tools.dataset_registry import (
     store_dataset,
 )
 from tools.session_store import SessionStore, default_store
+from tools.tool_result import blocked, success
 
 
 _REGISTRY_PATH = Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
@@ -76,7 +77,7 @@ def _pandas_filter(bbox: dict[str, float]) -> str:
     )
 
 
-@tool
+@tool(response_format="content_and_artifact")
 def get_zone_info(zone_name: str) -> dict:
     """Resolve a named NeoLab zone to canonical name, bbox, aliases and filter.
 
@@ -94,10 +95,15 @@ def get_zone_info(zone_name: str) -> dict:
     """
     canonical = _match_canonical(zone_name)
     if canonical is None:
-        return {
+        payload = {
             "error": f"Zone '{zone_name}' not recognised.",
             "available_zones": [z.canonical for z in _registry().zones],
         }
+        return blocked(
+            payload["error"],
+            content=payload,
+            provenance={"source": "NeoLab zone registry"},
+        )
 
     zone = resolve_zone(canonical, registry=_registry())
     polygon = zone["polygon"]
@@ -119,7 +125,7 @@ def get_zone_info(zone_name: str) -> dict:
         if len(full_wkt) > 160 else ""
     )
 
-    return {
+    payload = {
         "canonical": canonical,
         "source": zone["source"],
         "bbox": bbox,
@@ -131,6 +137,13 @@ def get_zone_info(zone_name: str) -> dict:
             "to the downstream tool — do NOT copy the polygon_wkt through the LLM."
         ),
     }
+    return success(
+        f"Zone résolue : {canonical}.",
+        content=payload,
+        provenance={"source": str(zone["source"]), "zone": canonical},
+        method="polygon registry lookup",
+        metrics={"bbox": bbox},
+    )
 
 
 def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list:
@@ -143,7 +156,7 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
     """
     _store = store or default_store
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def filter_dataframe_by_zone(
         zone_name: str,
         lat_col: str = "latitude",
@@ -184,13 +197,13 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
-            return "Aucun fichier chargé. Utilise load_file d'abord."
+            return blocked("Aucun fichier chargé. Utilise load_file d'abord.")
 
         rebased_from: str | None = None
         if source_variable:
             source_session = _store.get(f"{thread_id}:dataset:{source_variable}")
             if not source_session or source_session.get("df") is None:
-                raise KeyError(
+                return blocked(
                     f"Variable source inconnue : {source_variable}. "
                     "Utilise le nom exact retourné par load_file ou un tool précédent."
                 )
@@ -217,14 +230,14 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
 
         canonical = _match_canonical(zone_name)
         if canonical is None:
-            raise ValueError(
+            return blocked(
                 f"Zone '{zone_name}' inconnue du registry. "
                 f"Zones disponibles : {[z.canonical for z in _registry().zones]}"
             )
 
         missing = [c for c in (lat_col, lon_col) if c not in df.columns]
         if missing:
-            raise KeyError(
+            return blocked(
                 f"Colonnes absentes du DataFrame : {missing}. "
                 f"Colonnes disponibles : {list(df.columns)}. "
                 "Passe lat_col / lon_col explicites."
@@ -271,6 +284,14 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
                 f"`{rebased_from}` : un filtre de zone repart toujours du fichier "
                 f"de travail, jamais d'un sous-ensemble d'une autre zone."
             )
-        return result
+        return success(
+            f"{len(kept)} lignes conservées dans `{variable_name}` pour {canonical}.",
+            content=result,
+            data_ref=variable_name,
+            provenance={"source": str(source_meta), "zone": canonical},
+            persisted=True,
+            method="polygon point-in-polygon filter",
+            metrics={"rows_in": int(len(kept)), "rows_out": int(len(df) - len(kept))},
+        )
 
     return [filter_dataframe_by_zone]

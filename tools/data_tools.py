@@ -12,6 +12,7 @@ from langchain_core.tools import tool
 from core.cartography import configure_offline_cartopy
 from core.graph_contracts import normalize_graph_contract, validate_graph_contract
 from core.runtime_paths import graphs_dir
+from tools.tool_result import blocked, empty, error, success
 
 
 _GRAPHS_DIR = graphs_dir()
@@ -445,7 +446,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     """
     _store = store or default_store
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def load_file(path: str) -> str:
         """Charge un fichier de données (CSV, TSV, Excel, JSON, Parquet) pour l'analyser.
 
@@ -460,7 +461,12 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         try:
             df, meta = _load_file(path)
         except (FileNotFoundError, ValueError) as e:
-            return f"Erreur : {e}"
+            return error(
+                f"Erreur : {e}",
+                provenance={"source": "file", "path": path},
+                retryable=True,
+                method="file loader",
+            )
 
         variable_name = dataset_variable_name("file", Path(path).stem)
         col_names = [c["name"] for c in meta["columns"]]
@@ -492,7 +498,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
 
         enc_note = f" (encodage : {meta['encoding']})" if meta.get("encoding") else ""
-        return (
+        summary = (
             f"Fichier chargé : {meta['path']}{enc_note}\n"
             f"{meta['n_rows']} lignes × {meta['n_cols']} colonnes\n"
             f"Variable persistante : `{variable_name}`\n"
@@ -501,8 +507,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             f"{route_note}"
             + (f"\n\n{hint}" if hint else "")
         )
+        return success(
+            summary,
+            data_ref=variable_name,
+            provenance={"source": "file", "path": str(meta["path"])},
+            persisted=True,
+            method="file loader",
+            metrics={"rows": int(meta["n_rows"]), "columns": int(meta["n_cols"])},
+        )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def run_pandas(code: str) -> str:
         """Exécute du code Python/pandas sur le(s) DataFrame(s) chargés.
 
@@ -532,10 +546,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
-            return "Aucun fichier chargé. Utilise load_file d'abord."
+            return blocked("Aucun fichier chargé. Utilise load_file d'abord.")
         meta = session.get("meta") or {}
         if graph_recovery_pending(meta):
-            return (
+            return blocked(
                 "Graph quality recovery: the previous graph was blocked for readability. "
                 "Do not answer with a table; revise the matplotlib code and call run_graph again."
             )
@@ -555,13 +569,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
             guard = _neolabs_copepod_guard(code, local_vars)
             if guard:
-                return guard
+                return blocked(guard, method="controlled pandas execution")
 
             exec(code, local_vars)  # noqa: S102
 
             if plt.get_fignums():
                 plt.close("all")
-                return (
+                return blocked(
                     "Error: run_pandas produced a matplotlib figure. "
                     "Use run_graph instead to execute visualization code."
                 )
@@ -583,8 +597,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
             if result is None:
                 if canonical_note:
-                    return "Code exécuté." + canonical_note
-                return "Code exécuté (aucune variable `result` assignée)."
+                    return success(
+                        "Code exécuté." + canonical_note,
+                        data_ref="df_canonical_sample_depth",
+                        persisted=True,
+                        method="controlled pandas execution",
+                    )
+                return success(
+                    "Code exécuté (aucune variable `result` assignée).",
+                    method="controlled pandas execution",
+                )
             if isinstance(result, pd.DataFrame):
                 n_rows, n_cols = result.shape
                 preview = result.head(20).to_markdown(index=False)
@@ -608,22 +630,36 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                             default=str,
                         )
                     )
-                return (
+                summary = (
                     f"{n_rows} lignes × {n_cols} colonnes{suffix}"
                     f"{persistence_note}{persistence_contract}{attrs_note}"
                     f"\n\n{preview}"
                 )
-            return str(result) + canonical_note
+                return success(
+                    summary,
+                    data_ref="df_canonical_sample_depth" if canonical_note else None,
+                    persisted=bool(canonical_note),
+                    method="controlled pandas execution",
+                    metrics={"rows": int(n_rows), "columns": int(n_cols)},
+                )
+            return success(
+                str(result) + canonical_note,
+                data_ref="df_canonical_sample_depth" if canonical_note else None,
+                persisted=bool(canonical_note),
+                method="controlled pandas execution",
+            )
 
         except Exception as e:
             cols_info = df.dtypes.to_string()
             hint = _column_location_hint(e, local_vars)
-            return (
+            return error(
                 f"Erreur : {type(e).__name__}: {e}{hint}"
-                f"\n\nColonnes disponibles :\n{cols_info}"
+                f"\n\nColonnes disponibles :\n{cols_info}",
+                retryable=True,
+                method="controlled pandas execution",
             )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def run_graph(code: str) -> str:
         """Execute matplotlib code on the loaded file and return the graph image.
 
@@ -644,7 +680,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         df = session.get("df") if session else None
         loaded_skills = ((session or {}).get("meta") or {}).get("loaded_skills") or []
         if loaded_skills and "graph_writer" not in loaded_skills:
-            return (
+            return blocked(
                 'Graph workflow blocked: call load_skill("graph_writer") before run_graph. '
                 "Loaded analysis/planning skills are not executable graph templates; graph_writer provides the required template."
             )
@@ -674,12 +710,12 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     if contract_issue:
                         plt.close("all")
                         _mark_graph_quality_blocked(_store, thread_id)
-                        return contract_issue
+                        return blocked(str(contract_issue), method="graph contract validation")
                 quality_issue = _graph_quality_issue(plt)
                 if quality_issue:
                     plt.close("all")
                     _mark_graph_quality_blocked(_store, thread_id)
-                    return quality_issue
+                    return blocked(str(quality_issue), method="graph quality validation")
                 buf = io.BytesIO()
                 plt.savefig(buf, **_graph_savefig_kwargs(plt))
                 buf.seek(0)
@@ -693,10 +729,25 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     explanation = graph_explanation.strip()
                     if not explanation.lower().startswith("lecture rapide"):
                         explanation = f"Lecture rapide:\n{explanation}"
-                    return f"{image_markdown}\n\n{explanation}"
-                return image_markdown
+                    summary = f"{image_markdown}\n\n{explanation}"
+                    return success(
+                        summary,
+                        artifact_refs=(graph_url(f"{graph_id}.png"),),
+                        persisted=True,
+                        method="controlled matplotlib execution",
+                    )
+                return success(
+                    image_markdown,
+                    artifact_refs=(graph_url(f"{graph_id}.png"),),
+                    persisted=True,
+                    method="controlled matplotlib execution",
+                )
 
-            return "Code executed but no figure was produced. Make sure your matplotlib code creates a figure."
+            return empty(
+                "Code executed but no figure was produced. Make sure your matplotlib code creates a figure.",
+                retryable=True,
+                method="controlled matplotlib execution",
+            )
 
         except Exception as e:
             # Only surface the columns hint when a loaded dataframe is actually
@@ -704,10 +755,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             # no file, and appending "(no file loaded)" wrongly suggests the
             # error is a missing file rather than a plotting bug.
             if df is not None:
-                return (
+                return error(
                     f"Error: {type(e).__name__}: {e}\n\n"
-                    f"Available columns:\n{df.dtypes.to_string()}"
+                    f"Available columns:\n{df.dtypes.to_string()}",
+                    retryable=True,
+                    method="controlled matplotlib execution",
                 )
-            return f"Error: {type(e).__name__}: {e}"
+            return error(
+                f"Error: {type(e).__name__}: {e}",
+                retryable=True,
+                method="controlled matplotlib execution",
+            )
 
     return [load_file, run_pandas, run_graph]

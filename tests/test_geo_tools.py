@@ -180,9 +180,8 @@ def test_filter_dataframe_by_zone_defaults_lat_lon_column_names(session_store):
     assert out["n_out"] == 1
 
 
-def test_filter_dataframe_by_zone_raises_on_unknown_zone(session_store):
-    """Erreur transparente : zone inconnue → exception remontée à LangGraph,
-    pas un faux résultat 'aucun point' (cf. feedback_tool_errors_must_raise)."""
+def test_filter_dataframe_by_zone_blocks_on_unknown_zone(session_store):
+    """Zone inconnue → précondition bloquée, jamais faux résultat vide."""
     import pandas as pd
     from tools.geo_tools import make_geo_tools
 
@@ -192,9 +191,8 @@ def test_filter_dataframe_by_zone_raises_on_unknown_zone(session_store):
 
     tools = make_geo_tools(thread, store=session_store)
     fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
-    with pytest.raises(Exception) as exc_info:
-        fn.invoke({"zone_name": "Mer de Nulle Part"})
-    assert "Mer de Nulle Part" in str(exc_info.value)
+    result = fn.invoke({"zone_name": "Mer de Nulle Part"})
+    assert "Mer de Nulle Part" in result
 
 
 def test_filter_dataframe_by_zone_errors_when_no_df_loaded(session_store):
@@ -212,7 +210,7 @@ def test_filter_dataframe_by_zone_errors_when_no_df_loaded(session_store):
         pytest.fail("filter_dataframe_by_zone should not return success when no df is loaded")
 
 
-def test_filter_dataframe_by_zone_errors_when_lat_lon_columns_missing(session_store):
+def test_filter_dataframe_by_zone_blocks_when_lat_lon_columns_missing(session_store):
     """Si lat/lon ne sont pas dans le df, on doit échouer explicitement
     (le LLM doit pouvoir corriger en passant les bons noms de colonnes)."""
     import pandas as pd
@@ -224,10 +222,8 @@ def test_filter_dataframe_by_zone_errors_when_lat_lon_columns_missing(session_st
 
     tools = make_geo_tools(thread, store=session_store)
     fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
-    with pytest.raises(Exception) as exc_info:
-        # default latitude/longitude don't exist in this df
-        fn.invoke({"zone_name": "Baie de Baffin"})
-    msg = str(exc_info.value).lower()
+    # default latitude/longitude don't exist in this df
+    msg = fn.invoke({"zone_name": "Baie de Baffin"}).lower()
     assert "latitude" in msg or "longitude" in msg or "colonne" in msg or "column" in msg
 
 

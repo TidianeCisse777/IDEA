@@ -11,6 +11,7 @@ from typing import Any
 from langchain_core.tools import tool
 from core.runtime_paths import graphs_dir
 from tools.source_renderer import render_sources, source_urls
+from tools.tool_result import blocked, error, success
 
 def _downloads_dir() -> Path:
     return Path(os.getenv("DOWNLOADS_DIR", "/tmp/copepod_downloads"))
@@ -347,7 +348,7 @@ def _markdown_to_html(md: str, title: str) -> str:
 </html>"""
 
 
-@tool
+@tool(response_format="content_and_artifact")
 def export_deliverable(
     content: str,
     filename: str = "rapport",
@@ -373,13 +374,13 @@ def export_deliverable(
     manifest = traceability_manifest or {"sources": [], "operations": []}
     missing_context = _missing_study_context_fields(manifest)
     if missing_context:
-        return (
+        return blocked(
             "Livrable refusé — contexte d'étude incomplet : "
             + ", ".join(missing_context)
         )
     undeclared_urls = _validate_reference_sources(content, manifest)
     if undeclared_urls:
-        return (
+        return blocked(
             "Livrable refusé — source(s) absente(s) du manifeste de traçabilité : "
             + ", ".join(undeclared_urls)
         )
@@ -410,7 +411,28 @@ def export_deliverable(
         from weasyprint import HTML
         HTML(string=html, base_url=str(downloads)).write_pdf(str(pdf_path))
     except (ImportError, OSError):
-        return _write_html_fallback(downloads, safe, html)
+        summary = _write_html_fallback(downloads, safe, html)
+        return success(
+            summary,
+            artifact_refs=(f"/downloads/{safe}.html",),
+            provenance={"source": "conversation traceability manifest"},
+            persisted=True,
+            method="HTML fallback export",
+        )
+    except Exception as exc:
+        return error(
+            f"Livrable non généré : {type(exc).__name__}: {exc}",
+            retryable=True,
+            provenance={"source": "conversation traceability manifest"},
+            method="WeasyPrint PDF export",
+        )
 
     base = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
-    return f"PDF généré : {base}/downloads/{safe}.pdf"
+    url = f"{base}/downloads/{safe}.pdf"
+    return success(
+        f"PDF généré : {url}",
+        artifact_refs=(url,),
+        provenance={"source": "conversation traceability manifest"},
+        persisted=True,
+        method="WeasyPrint PDF export",
+    )

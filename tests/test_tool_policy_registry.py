@@ -15,7 +15,7 @@ def test_policy_registry_has_exact_presentation_parity():
     for name, policy in TOOL_POLICIES.items():
         assert policy.family == TOOL_PRESENTATION[name].family
         assert policy.max_calls_per_turn >= 1
-        assert policy.result_schema == "legacy_text"
+        assert policy.result_schema in ("legacy_text", "tool_result_v1")
 
 
 def test_catalog_exposes_immutable_policy_lookup(monkeypatch):

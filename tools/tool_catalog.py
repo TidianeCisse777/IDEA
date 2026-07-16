@@ -397,6 +397,18 @@ _REQUIRED_SKILL_BY_FAMILY: Mapping[str, str] = MappingProxyType({
     "bio_oracle": "bio_oracle_query",
 })
 
+_STRUCTURED_RESULT_TOOL_NAMES = frozenset({
+    "load_file",
+    "run_pandas",
+    "run_graph",
+    "get_zone_info",
+    "filter_dataframe_by_zone",
+    "query_copepod_knowledge_base",
+    "lookup_marine_taxonomy",
+    "load_skill",
+    "export_deliverable",
+})
+
 
 def _build_policy(name: str, profile_name: str) -> ToolPolicy:
     presentation = TOOL_PRESENTATION[name]
@@ -427,6 +439,11 @@ def _build_policy(name: str, profile_name: str) -> ToolPolicy:
         required_skill=required_skill,
         allowed_workflows=workflows,
         max_calls_per_turn=profile.max_calls_per_turn,
+        result_schema=(
+            "tool_result_v1"
+            if name in _STRUCTURED_RESULT_TOOL_NAMES
+            else "legacy_text"
+        ),
     )
 
 

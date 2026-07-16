@@ -10,7 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 ToolStatus: TypeAlias = Literal["success", "empty", "blocked", "error", "cancelled"]
 ToolResultSchema: TypeAlias = Literal["legacy_text", "tool_result_v1"]
 ToolArtifact: TypeAlias = dict[str, Any]
-ToolOutput: TypeAlias = tuple[str, ToolArtifact]
+ToolOutput: TypeAlias = tuple[Any, ToolArtifact]
+_DEFAULT_CONTENT = object()
 
 
 class ToolResult(BaseModel):
@@ -40,8 +41,16 @@ class ToolResult(BaseModel):
         return self.summary, self.model_dump(mode="json")
 
 
-def _result(status: ToolStatus, summary: str, **fields: Any) -> ToolOutput:
-    return ToolResult(status=status, summary=summary, **fields).as_tool_output()
+def _result(
+    status: ToolStatus,
+    summary: str,
+    *,
+    content: Any = _DEFAULT_CONTENT,
+    **fields: Any,
+) -> ToolOutput:
+    result = ToolResult(status=status, summary=summary, **fields)
+    visible = summary if content is _DEFAULT_CONTENT else content
+    return visible, result.model_dump(mode="json")
 
 
 def success(summary: str, **fields: Any) -> ToolOutput:
