@@ -174,6 +174,8 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 ### Étape 5 — `TurnContext` + carte d'état de session
 
+**État : premier tranchant « carte des dérivés » terminé le 16 juillet 2026 ; le `TurnContext` typé complet et le portage du `source_lock` en état restent à faire.** La capsule d'état (`build_dataset_state_capsule`) énumère désormais les **sous-ensembles de zone vivants** (variable, zone, lignes) en plus du dataset actif et de l'ancre `loaded_file` : l'agent lit quelle variable `df_in_*` correspond à quelle zone au lieu de la ré-inférer depuis l'historique (cause racine cartes-samples-labrador). Le portage de la restriction/`source_lock` explicite en état reste ouvert — noter toutefois que l'affinité de source retire déjà une source exclue de l'état actif, donc la faiblesse P1 est partiellement couverte par ce mécanisme existant.
+
 **Goal :** l'agent **lit** son état au lieu de le ré-inférer depuis l'historique. Cœur du problème « l'agent se perd entre fichier/EcoTaxa/dérivé ».
 
 **Changement :**
@@ -182,9 +184,9 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 - `source_lock` réellement porté en état (aujourd'hui seulement en prose — faiblesse P1 de l'audit).
 
 **Test gate :**
-- [ ] `SC-LAB` tours 4-7 : « part du bon df » ≥ baseline + amélioration mesurable ; `source_lock` TSV-only respecté sur N ≥ 5 essais.
-- [ ] `SC-ENRICH` : **aucune régression** (les enrichissements Amundsen/Bio-ORACLE partent toujours de la bonne table).
-- [ ] La carte d'état reste sous son budget (≤ 1 000 tokens cible).
+- [~] `SC-LAB` : la carte des dérivés+zone est injectée; smoke réel multi-zone → la carte demandée part du bon sous-ensemble de zone (Baffin) sans confusion. Le suivi N ≥ 5 et la couverture tours 4-7 restent à mesurer.
+- [x] `SC-ENRICH` : **aucune régression** — la capsule est une lecture seule; les suites `run_pandas`/`geo`/`agent_factory` restent vertes et les chemins d'enrichissement partent toujours de la bonne table.
+- [x] La carte d'état reste sous son budget : capsule plafonnée à 2 000 caractères (≤ ~1 000 tokens), roster borné à 12 entrées.
 
 ---
 
@@ -302,7 +304,7 @@ Le remodelage est réussi quand :
 | 2 — Registre + `ToolResult` | ✅ terminé | offline : 33 654 tokens fixes | offline : 24 392; trajectoires 100 % | ✅ |
 | 3 — Décision de source | ✅ terminé | offline : 12 tours, 100 % | offline : 13 tours, 100 %; smoke réel 3/3 | ✅ |
 | 4 — Contradictions de routage | 🟡 en cours | — | 4A/4B/4B.1/4C fermées; smoke OGSL réel 2/2 | 🟡 4A.1 ouvert |
-| 5 — TurnContext + carte d'état | ⬜ à faire | — | — | ⬜ |
+| 5 — TurnContext + carte d'état | 🟡 en cours | capsule = df actif seul | dérivés de zone (variable+zone) dans la capsule; smoke réel bon sous-ensemble | 🟡 TurnContext typé/source_lock restants |
 | 6 — Filtrage dynamique | ⬜ à faire | — | — | ⬜ |
 | 7 — Confirmations | ⬜ à faire | — | — | ⬜ |
 | 8 — Skills versionnés | 🟡 en cours | Hub sert un skill non listé | allowlist fail-closed avant Hub; contrat vert; happy path réel OK | 🟡 versionnement/frontmatter restants |
