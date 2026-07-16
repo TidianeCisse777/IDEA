@@ -52,10 +52,6 @@ def test_run_graph_is_fail_closed_when_no_graph_skill_was_loaded(tmp_path):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Étape 8: vérifier l'allowlist locale avant tout accès au Hub",
-)
 def test_hub_cannot_load_a_skill_absent_from_local_allowlist(tmp_path):
     from tools.session_store import SessionStore
 

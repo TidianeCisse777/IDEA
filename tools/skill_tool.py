@@ -73,7 +73,24 @@ def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = N
 
     @tool(description=description, response_format="content_and_artifact")
     def load_skill(skill_name: str) -> str:
-        """Load a skill by name. Pulls from LangSmith Context Hub, falls back to local file."""
+        """Load a skill by name from the local allowlist.
+
+        Fail-closed: only a skill present in the local skills directory can be
+        loaded. The LangSmith Context Hub may serve a newer version of an
+        already-allowlisted skill, but can never introduce a skill name absent
+        from the local allowlist.
+        """
+        current_skills = _discover_skills()
+        if skill_name not in current_skills:
+            available = ", ".join(current_skills.keys()) or "none"
+            return blocked(
+                f"Skill '{skill_name}' not found. Available: {available}",
+                provenance={"source": "local skill allowlist", "skill": skill_name},
+                method="skill loader",
+            )
+
+        # Allowlisted: prefer the Hub version, fall back to the local file. The
+        # effective source stays visible in provenance for observability.
         content = _pull_from_hub(skill_name)
         if content:
             _record_loaded_skill(_store, thread_id, skill_name)
@@ -84,14 +101,6 @@ def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = N
                 method="skill loader",
             )
 
-        current_skills = _discover_skills()
-        if skill_name not in current_skills:
-            available = ", ".join(current_skills.keys()) or "none"
-            return blocked(
-                f"Skill '{skill_name}' not found. Available: {available}",
-                provenance={"source": "local skill allowlist", "skill": skill_name},
-                method="skill loader",
-            )
         _record_loaded_skill(_store, thread_id, skill_name)
         content = current_skills[skill_name].read_text(encoding="utf-8")
         return success(
