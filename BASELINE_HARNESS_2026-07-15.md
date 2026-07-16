@@ -150,3 +150,15 @@ Smoke agent réel unique, modèle `openai/gpt-5.4-mini`, tracing désactivé et 
 | 3 | chargement d'un fichier local | 3 | `file` |
 
 Le téléchargement lourd `query_ecotaxa` était absent des trois tours. Les appels observés étaient `load_skill` + prévisualisation au tour 1, résumé read-only au tour 2 et chargement local au tour 3. Gate complet final : `1118 passed, 20 skipped, 5 xfailed`. Aucun benchmark live N ≥ 5 ni replay OpenRouter en boucle n'a été lancé.
+
+### Smoke multi-source fichier + EcoTaxa
+
+Un second smoke réel unique a validé la coexistence des deux sources avec le même modèle et les mêmes protections :
+
+| Tour | Demande | Sources autorisées | Tools visibles | Appels observés |
+|---|---|---|---:|---|
+| 1 | charger `data/demo/ecotaxa_sample_50.tsv` | `file` | 3 | chargement local |
+| 2 | comparer le fichier au projet EcoTaxa 17498 | `file`, `ecotaxa` | 25 | skill EcoTaxa, résumé read-only, analyse locale |
+| 3 | continuer sans répéter les sources | `file`, `ecotaxa` | 25 | aucun nouvel appel |
+
+Le fichier est resté la source principale aux tours 2 et 3. L'affinité multi-source a survécu au suivi, les tools EcoTaxa étaient invisibles avant leur mention explicite et `query_ecotaxa` est resté absent du catalogue sûr. Le store était isolé, le tracing désactivé et aucun fichier du dépôt n'a été modifié par le smoke.
