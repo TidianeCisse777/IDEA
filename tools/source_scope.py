@@ -15,8 +15,9 @@ requests (scenario turns 3 & 5) despite an explicit override rule.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from typing import Any, Literal, TypeAlias, cast
 
 SourceName: TypeAlias = Literal[
     "file",
@@ -101,6 +102,7 @@ _SWITCH_SIGNAL = re.compile(
 
 # Skills that drive the remote EcoTaxa navigation/query flows.
 _ECOTAXA_SKILLS = {"ecotaxa_navigation", "ecotaxa_query"}
+_SOURCE_AFFINITY_SUFFIX = "source_affinity"
 
 
 def _source_mentions(text: str | None) -> tuple[tuple[SourceName, ...], tuple[SourceName, ...]]:
@@ -182,6 +184,149 @@ def decide_source(
             else "Aucune source explicite, active ou fichier chargé."
         ),
     )
+
+
+def source_affinity_key(thread_id: str) -> str:
+    """Return the dedicated metadata key for one conversation affinity."""
+    return f"{thread_id}:{_SOURCE_AFFINITY_SUFFIX}"
+
+
+def read_source_affinity(store: Any, thread_id: str) -> SourceAffinity | None:
+    """Load a validated affinity; corrupt or unknown values fail closed."""
+    try:
+        entry = store.get(source_affinity_key(thread_id))
+        raw = ((entry or {}).get("meta") or {}).get("source_affinity")
+        if not isinstance(raw, dict):
+            return None
+        sources = raw.get("active_sources")
+        if not isinstance(sources, (list, tuple)) or not sources:
+            return None
+        if any(source not in _SOURCE_ORDER for source in sources):
+            return None
+        evidence = raw.get("evidence")
+        if evidence not in ("explicit_name", "file_loaded"):
+            return None
+        origin = raw.get("origin_user_text")
+        updated_at = raw.get("updated_at")
+        if not isinstance(origin, str) or not isinstance(updated_at, str):
+            return None
+        return SourceAffinity(
+            active_sources=cast(tuple[SourceName, ...], tuple(sources)),
+            evidence=cast(Literal["explicit_name", "file_loaded"], evidence),
+            origin_user_text=origin,
+            updated_at=updated_at,
+        )
+    except Exception:
+        return None
+
+
+def write_source_affinity(
+    store: Any,
+    thread_id: str,
+    affinity: SourceAffinity,
+) -> SourceAffinity:
+    """Persist one validated source selection without touching dataset state."""
+    if not affinity.active_sources or any(
+        source not in _SOURCE_ORDER for source in affinity.active_sources
+    ):
+        raise ValueError("SourceAffinity contains an unsupported source")
+    store.set(
+        source_affinity_key(thread_id),
+        None,
+        {"source_affinity": asdict(affinity)},
+    )
+    return affinity
+
+
+def _new_affinity(
+    sources: tuple[SourceName, ...],
+    evidence: Literal["explicit_name", "file_loaded"],
+    origin_user_text: str,
+) -> SourceAffinity:
+    cleaned = " ".join(str(origin_user_text).split())[:240]
+    return SourceAffinity(
+        active_sources=sources,
+        evidence=evidence,
+        origin_user_text=cleaned,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _persist_if_changed(
+    store: Any,
+    thread_id: str,
+    candidate: SourceAffinity,
+) -> SourceAffinity:
+    current = read_source_affinity(store, thread_id)
+    if current and (
+        current.active_sources == candidate.active_sources
+        and current.evidence == candidate.evidence
+        and current.origin_user_text == candidate.origin_user_text
+    ):
+        return current
+    return write_source_affinity(store, thread_id, candidate)
+
+
+def activate_file_source(
+    store: Any,
+    thread_id: str,
+    *,
+    origin_user_text: str = "file loaded",
+) -> SourceAffinity:
+    """Make a successfully loaded file the new conversation source."""
+    return _persist_if_changed(
+        store,
+        thread_id,
+        _new_affinity(("file",), "file_loaded", origin_user_text),
+    )
+
+
+def _canonical_file_is_loaded(store: Any, thread_id: str) -> bool:
+    try:
+        loaded = store.get(f"{thread_id}:loaded_file")
+        if loaded and loaded.get("df") is not None:
+            return True
+    except Exception:
+        return False
+    return is_file_loaded(store, thread_id)
+
+
+def source_decision_for_turn(
+    store: Any,
+    thread_id: str,
+    messages: list | None,
+    *,
+    persist: bool = True,
+) -> SourceDecision:
+    """Build and optionally persist the decision for the latest user turn."""
+    text = latest_user_text(messages)
+    affinity = read_source_affinity(store, thread_id)
+    decision = decide_source(
+        text,
+        affinity,
+        file_loaded=_canonical_file_is_loaded(store, thread_id),
+    )
+    if not persist:
+        return decision
+
+    explicit, excluded = _source_mentions(text)
+    if explicit or excluded:
+        if decision.authorized_sources:
+            _persist_if_changed(
+                store,
+                thread_id,
+                _new_affinity(
+                    decision.authorized_sources,
+                    "explicit_name",
+                    text,
+                ),
+            )
+        elif affinity is not None:
+            try:
+                store.clear(source_affinity_key(thread_id))
+            except Exception:
+                pass
+    return decision
 
 
 def ecotaxa_signal(text: str | None) -> bool:

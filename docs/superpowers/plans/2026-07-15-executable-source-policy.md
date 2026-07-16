@@ -59,7 +59,7 @@ def test_explicit_ecotaxa_establishes_source():
 - Produces: `source_affinity_key(thread_id)`, `read_source_affinity(store, thread_id)`, `write_source_affinity(store, thread_id, affinity)`, `activate_file_source(store, thread_id)`, `source_decision_for_turn(store, thread_id, messages, persist=True)`.
 - Persists: `store.set(f"{thread_id}:source_affinity", None, {"source_affinity": ...})`.
 
-- [ ] **RED 2:** tester deux tours successifs, la survie après recréation d'un `SessionStore`, la bascule `EcoTaxa → EcoPart`, la combinaison comparative, l'écrasement par fichier et l'affinité corrompue.
+- [x] **RED 2:** tester deux tours successifs, la survie après recréation d'un `SessionStore`, la bascule `EcoTaxa → EcoPart`, la combinaison comparative, l'écrasement par fichier et l'affinité corrompue.
 
 ```python
 first = source_decision_for_turn(store, "t", [HumanMessage(content="Explore EcoTaxa")])
@@ -67,10 +67,10 @@ second = source_decision_for_turn(store, "t", [HumanMessage(content="montre le p
 assert first.authorized_sources == second.authorized_sources == ("ecotaxa",)
 ```
 
-- [ ] **Verify RED 2:** `pytest -q tests/test_source_affinity.py`; attendu : helpers absents.
-- [ ] **GREEN 2:** implémenter la sérialisation validée, une écriture idempotente et la lecture fail-closed. `origin_user_text` est nettoyé et borné à 240 caractères; `updated_at` est ISO UTC.
-- [ ] **Verify GREEN 2:** même commande; attendu : tous verts.
-- [ ] **Commit:** `feat: persist source affinity across turns`.
+- [x] **Verify RED 2:** `pytest -q tests/test_source_affinity.py`; attendu : helpers absents.
+- [x] **GREEN 2:** implémenter la sérialisation validée, une écriture idempotente et la lecture fail-closed. `origin_user_text` est nettoyé et borné à 240 caractères; `updated_at` est ISO UTC.
+- [x] **Verify GREEN 2:** même commande; attendu : tous verts.
+- [x] **Commit:** `feat: persist source affinity across turns`.
 
 ### Task 3: Classification et allowlist depuis `ToolPolicy`
 
