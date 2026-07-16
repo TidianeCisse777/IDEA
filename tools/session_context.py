@@ -74,12 +74,41 @@ def _live_zone_subsets(store: SessionStore, thread_id: str) -> list[tuple[str, s
     return sorted(set(found))
 
 
-def build_dataset_state_capsule(store: SessionStore, thread_id: str) -> str:
+def _source_scope_line(store: SessionStore, thread_id: str, messages: object) -> str:
+    """Render the authorized source scope for this turn as readable state.
+
+    Makes the executable source decision (explicit source / persisted restriction)
+    visible to the model instead of being enforced silently, so the agent reads
+    which sources are active this turn rather than re-deriving them.
+    """
+    if not messages:
+        return ""
+    try:
+        from tools.source_scope import source_decision_for_turn  # noqa: PLC0415
+
+        decision = source_decision_for_turn(
+            store, thread_id, list(messages), persist=False
+        )
+    except Exception:
+        return ""
+    authorized = ",".join(decision.authorized_sources) or "none"
+    primary = decision.primary_source or "none"
+    return (
+        f"\nACTIVE SOURCE SCOPE: authorized={authorized}; primary={primary}. "
+        "Only these sources are usable this turn; naming a new external source "
+        "switches scope, a loaded file resets it to the file."
+    )
+
+
+def build_dataset_state_capsule(
+    store: SessionStore, thread_id: str, messages: object = None
+) -> str:
     """Describe only the active dataset using registry metadata, never row values.
 
     Older registered datasets remain reusable by explicit variable name, but are
     intentionally excluded here so stale project/sample identifiers cannot be
-    mistaken for the current conversational subject.
+    mistaken for the current conversational subject. When `messages` is given,
+    the authorized source scope for the turn is appended as readable state.
     """
     active = store.get(thread_id)
     if not active or active.get("df") is None:
@@ -143,11 +172,14 @@ def build_dataset_state_capsule(store: SessionStore, thread_id: str) -> str:
             "already exists):\n" + lines + more
         )
 
+    scope_line = _source_scope_line(store, thread_id, messages)
+
     capsule = (
         "\n\n## ACTIVE DATASET STATE (authoritative, current turn)\n"
         "- " + "; ".join(fields) + "\n"
         "Identifiers absent from this capsule and the current user message are "
         "ungrounded; do not infer them from older conversation turns."
+        + scope_line
         + anchor_note
         + derived_block
     )

@@ -248,3 +248,39 @@ def test_capsule_derived_block_absent_without_zone_subsets(tmp_path):
     capsule = build_dataset_state_capsule(store, thread_id)
 
     assert "DERIVED ZONE SUBSETS" not in capsule
+
+
+def test_capsule_shows_active_source_scope_when_messages_given(tmp_path):
+    """The capsule surfaces the authorized source scope as readable state."""
+    store = SessionStore(tmp_path)
+    thread_id = "scope-context"
+    frame = pd.DataFrame({"station": [1], "latitude": [60.0], "longitude": [-60.0]})
+    store_dataset(
+        store, thread_id, frame,
+        variable_name="df_file_scope",
+        meta={"source": "file:/d/s.tsv", "n_rows": 1, "n_cols": 3},
+        is_loaded_file=True,
+    )
+    from tools.source_scope import activate_file_source
+
+    activate_file_source(store, thread_id, origin_user_text="/d/s.tsv")
+
+    msgs = [{"role": "user", "content": "carte des stations"}]
+    capsule = build_dataset_state_capsule(store, thread_id, msgs)
+
+    assert "ACTIVE SOURCE SCOPE" in capsule
+    assert "authorized=file" in capsule
+
+
+def test_capsule_omits_source_scope_without_messages(tmp_path):
+    store = SessionStore(tmp_path)
+    thread_id = "noscope-context"
+    frame = pd.DataFrame({"station": [1], "latitude": [60.0], "longitude": [-60.0]})
+    store_dataset(
+        store, thread_id, frame,
+        variable_name="df_file_noscope",
+        meta={"source": "file:/d/s.tsv", "n_rows": 1, "n_cols": 3},
+        is_loaded_file=True,
+    )
+    capsule = build_dataset_state_capsule(store, thread_id)
+    assert "ACTIVE SOURCE SCOPE" not in capsule

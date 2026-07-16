@@ -246,10 +246,15 @@ class _ContextMiddleware(AgentMiddleware):
         truncated_tokens = _approx_tokens(truncated_messages)
 
         block, metrics = _build_memory_block(memories)
-        from tools.session_context import build_dataset_state_capsule
         from tools.session_store import default_store as session_store
+        from tools.turn_context import build_turn_context
 
-        dataset_block = build_dataset_state_capsule(session_store, self.thread_id)
+        # Rebuild the typed turn state once; the model-facing capsule (active
+        # dataset, live zone subsets, authorized source scope) is its projection.
+        turn_ctx = build_turn_context(
+            session_store, self.thread_id, original_messages, persist_source=False
+        )
+        dataset_block = turn_ctx.capsule
         system_message = request.system_message
         base = system_message.content if system_message is not None else ""
         injected_context = block + dataset_block
@@ -325,6 +330,9 @@ class _ContextMiddleware(AgentMiddleware):
             **metrics,
             "dataset_capsule_injected": bool(dataset_block),
             "dataset_capsule_chars": len(dataset_block),
+            "turn_active_variable": turn_ctx.active_variable,
+            "turn_authorized_sources": list(turn_ctx.authorized_sources),
+            "turn_derived_subsets": len(turn_ctx.derived_zone_subsets),
         }
         # Source policy: one deterministic decision filters every external
         # family before the model and is reused by the tool-call guard.
