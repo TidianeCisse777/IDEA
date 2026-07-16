@@ -1,7 +1,7 @@
 # Semantic Graph Routing Design — étape 4B
 
 **Date :** 16 juillet 2026
-**Statut :** approuvé en conversation, en attente de revue du document
+**Statut :** approuvé et implémenté le 16 juillet 2026
 **Portée :** corriger la contradiction qui charge les skills graphiques pour toute analyse. Les procédures OGSL et autres sources restent dans la tranche 4C.
 
 ## Objectif
@@ -80,6 +80,17 @@ Le rapport du smoke capture les tools visibles, les appels, leurs arguments, les
 4. Le smoke agent réel valide les deux frontières.
 5. La suite ciblée et la suite complète ne régressent pas.
 6. La baseline offline conserve 100 % aux niveaux 1 et 2 et mesure le nouveau coût fixe.
+
+## Preuves de clôture
+
+- Cycle rouge : 8 échecs sur les contradictions visées, 16 contrats graphiques voisins déjà verts.
+- Contrat canonique : `6 passed`.
+- Régressions graphiques : `124 passed`.
+- Suite complète : `1129 passed, 20 skipped, 4 xfailed`.
+- Baseline offline : niveaux 1 et 2 à 100 %, `24 699` tokens fixes (`6 695` prompt + `18 004` schémas).
+- Smoke agent réel, `openai/gpt-5.4-mini`, tracing désactivé et store isolé : la demande tabulaire avec « Montre » a appelé uniquement pandas; la demande de carte a chargé `graph_planner`, puis `graph_writer`, puis exécuté `run_graph` avec statut `success`.
+
+La première fixture envisagée (`ecotaxa_sample_50.tsv`) avait zéro coordonnée spatiale non nulle. Le premier rendu a donc échoué correctement sans fabriquer de carte. Après diagnostic local, le smoke de validation a utilisé `zooplankton_demo_stations.tsv`, dont les 15 lignes portent des coordonnées valides.
 
 ## Hors portée
 

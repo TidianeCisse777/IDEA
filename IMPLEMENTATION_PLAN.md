@@ -150,7 +150,7 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 **Goal :** éliminer les instructions incompatibles que l'agent reçoit aujourd'hui (audit P0 §4.2, P1.8), qui le font hésiter.
 
-**État : 4A terminé le 15 juillet 2026.** La règle numérique est maintenant canonique et injectée une seule fois : valeur fournie par un tool spécialisé → reprise directe; nouvelle valeur dérivée d'une table → pandas; valeur absente → inconnue, jamais inventée. Les tranches graphiques (4B) et procédures de sources/OGSL (4C) restent ouvertes.
+**État : 4A terminé le 15 juillet et 4B terminé le 16 juillet 2026.** La règle numérique est maintenant canonique et injectée une seule fois : valeur fournie par un tool spécialisé → reprise directe; nouvelle valeur dérivée d'une table → pandas; valeur absente → inconnue, jamais inventée. Le routage graphique dépend désormais de l'intention de sortie, pas d'une liste fermée de mots : les sorties non visuelles évitent les skills graphiques et les représentations visuelles implicites les exécutent jusqu'au rendu. Les procédures de sources/OGSL (4C) restent ouvertes.
 
 **Changement :**
 - Remplacer « toute valeur numérique exige pandas » par « toute valeur **dérivée** ou non fournie par un tool spécialisé exige une exécution contrôlée » — un `count_ecotaxa_taxa` se consomme directement.
@@ -160,9 +160,11 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 **Test gate :**
 - [x] 4A — Le test rouge « pandas vs tools spécialisés » devient vert; smoke EcoTaxa spécialisé sans pandas validé.
+- [x] 4B — Smoke agent réel : « Montre le nombre… » reste tabulaire sans skill graphique; la demande de carte charge planner/writer puis produit la figure.
 - [ ] 4C — Le test rouge OGSL devient vert.
-- [ ] `SC-LAB` : une demande numérique simple ne déclenche plus le chargement des ~12k tokens de skills graphiques (mesuré).
+- [x] 4B — Une demande numérique simple ne charge plus les skills graphiques; les appels réels capturés contiennent uniquement pandas.
 - [x] 4A — Pas de régression offline sur les 3 scénarios : niveaux 1 et 2 à 100 %.
+- [x] 4B — Pas de régression offline sur les 3 scénarios : niveaux 1 et 2 à 100 %; suite complète verte.
 
 ---
 

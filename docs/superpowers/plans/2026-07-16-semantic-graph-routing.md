@@ -1,5 +1,7 @@
 # Semantic Graph Routing Implementation Plan
 
+**Status:** completed on 2026-07-16.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Route graph skills from the requested output intent, so non-visual analysis avoids them while implied visual outputs still execute a figure.
@@ -32,7 +34,7 @@
 - Produces: `GRAPH_OUTPUT_ROUTING_RULES: str`, a canonical block injected exactly once.
 - Preserves: `load_skill("graph_planner") → load_skill("graph_writer") → run_graph` for visual output.
 
-- [ ] **Step 1: Write the failing routing tests**
+- [x] **Step 1: Write the failing routing tests**
 
 Create tests with these exact behavioral assertions:
 
@@ -83,7 +85,7 @@ def test_graph_writer_is_visual_only():
 
 Update the two old factory tests so they assert semantic intent and strict execution order instead of requiring `trace`, `affiche`, or `montre` as lexical triggers.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -93,7 +95,7 @@ pytest -q tests/test_graph_output_routing_prompt.py tests/test_agent_factory.py 
 
 Expected: failures for the missing canonical module, the old absolute rule, the planner's closed word list, and the writer's table branch.
 
-- [ ] **Step 3: Implement the minimal canonical contract**
+- [x] **Step 3: Implement the minimal canonical contract**
 
 Create `GRAPH_OUTPUT_ROUTING_RULES` with this content:
 
@@ -111,11 +113,11 @@ Inject it once after routing priority and remove the duplicate absolute graph-lo
 
 In `graph_planner.md`, replace the lexical decision step with the same semantic distinction. In `graph_writer.md`, change the introduction to visual-only and remove the table-output section; do not alter graph templates.
 
-- [ ] **Step 4: Run the focused tests and verify GREEN**
+- [x] **Step 4: Run the focused tests and verify GREEN**
 
 Run the same focused pytest command. Expected: all selected tests pass.
 
-- [ ] **Step 5: Run graph contract regressions once**
+- [x] **Step 5: Run graph contract regressions once**
 
 Run:
 
@@ -125,7 +127,7 @@ pytest -q tests/test_agent_factory.py tests/test_graph_contracts.py tests/test_e
 
 Expected: all pass; existing graph execution contracts remain intact.
 
-- [ ] **Step 6: Commit the behavior change**
+- [x] **Step 6: Commit the behavior change**
 
 ```bash
 git add agents/graph_output_routing_rules.py agents/copepod_system_prompt.py agents/skills/graph_planner.md agents/skills/graph_writer.md tests/test_graph_output_routing_prompt.py tests/test_agent_factory.py
@@ -146,7 +148,7 @@ git commit -m "feat: route graph skills by output intent"
 - Consumes: canonical graph-output contract from Task 1.
 - Produces: recorded deterministic and real-agent evidence for the 4B gate.
 
-- [ ] **Step 1: Run the complete suite once**
+- [x] **Step 1: Run the complete suite once**
 
 Run:
 
@@ -156,7 +158,7 @@ pytest -q
 
 Expected: no failures; do not rerun when it passes.
 
-- [ ] **Step 2: Regenerate the offline baseline once**
+- [x] **Step 2: Regenerate the offline baseline once**
 
 Run:
 
@@ -166,15 +168,15 @@ python -m evals.replay_harness --lane offline --runs 1 --output evals/baseline_o
 
 Expected: level 1 and level 2 remain `1.0`. Record prompt, schema, and fixed-token counts.
 
-- [ ] **Step 3: Run one isolated real-agent smoke with both boundaries**
+- [x] **Step 3: Run one isolated real-agent smoke with both boundaries**
 
-Use one isolated agent session with `openai/gpt-5.4-mini`, tracing disabled, `data/demo/ecotaxa_sample_50.tsv`, and only these safe tools visible: `load_file`, `run_pandas`, `load_skill`, `run_graph`.
+Use one isolated agent session with `openai/gpt-5.4-mini`, tracing disabled, `data/demo/zooplankton_demo_stations.tsv`, and only these safe tools visible: `load_file`, `run_pandas`, `load_skill`, `run_graph`.
 
 Execute these turns once:
 
 ```text
-1. Charge data/demo/ecotaxa_sample_50.tsv.
-2. Montre le nombre d'objets par station, classé du plus grand au plus petit.
+1. Charge data/demo/zooplankton_demo_stations.tsv.
+2. Montre le nombre d'observations par station, classé du plus grand au plus petit.
 3. Représente maintenant ces stations sur une carte.
 ```
 
@@ -191,11 +193,11 @@ assert run_graph_status == "success"
 
 If the smoke fails, diagnose the captured trajectory before any new model call. Do not automatically rerun it.
 
-- [ ] **Step 4: Update the evidence documents**
+- [x] **Step 4: Update the evidence documents**
 
 Mark 4B implemented, record the exact targeted/full-suite/baseline/smoke results, and leave 4C open. In the plan, mark every completed checkbox. Do not claim the remaining fail-closed graph automate from step 8 is solved.
 
-- [ ] **Step 5: Verify and commit documentation**
+- [x] **Step 5: Verify and commit documentation**
 
 Run:
 

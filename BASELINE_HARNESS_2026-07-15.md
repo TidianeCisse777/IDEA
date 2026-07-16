@@ -187,3 +187,32 @@ Smoke agent réel unique, modèle `openai/gpt-5.4-mini`, tracing désactivé et 
 | skill, résumé EcoTaxa spécialisé, pandas | skill → résumé du projet 17498 | `64` | non appelé | aucun |
 
 Le résultat spécialisé contenait bien une valeur numérique et son statut structuré était `success`; le smoke est donc concluant. Aucun replay live N ≥ 5 ni second smoke n'a été lancé.
+
+## Mesure de clôture de l'étape 4B
+
+La baseline offline a été régénérée une seule fois après le passage rouge/vert du routage graphique sémantique.
+
+| Métrique offline | Après étape 4A | Après étape 4B |
+|---|---:|---:|
+| Invariants niveau 1 | 100 % | 100 % |
+| Trajectoires niveau 2 | 100 % | 100 % |
+| `SC-LAB` — bon fichier | 100 % | 100 % |
+| Tools exposés par tour | 62 | 62 |
+| Tools appelés par tour | 1,15 | 1,15 |
+| Tokens du system prompt | 6 583 | 6 695 |
+| Tokens des schémas | 18 004 | 18 004 |
+| Tokens fixes | 24 587 | 24 699 |
+
+Le contrat sémantique ajoute 112 tokens fixes. Il retire cependant le chargement à la demande des longs skills graphiques sur une analyse non visuelle; ce coût dynamique n'apparaît pas dans la mesure fixe du prompt. Gate canonique : `6 passed`. Régressions graphiques : `124 passed`. Gate complet exécuté une fois : `1129 passed, 20 skipped, 4 xfailed`.
+
+### Smoke agent réel tableau → carte
+
+Modèle `openai/gpt-5.4-mini`, tracing désactivé, store/checkpointer isolés et catalogue limité à quatre tools sûrs : chargement local, pandas, chargement de skill et rendu graphique.
+
+| Tour | Intention | Appels observés | Statut |
+|---|---|---|---|
+| 1 | charger `zooplankton_demo_stations.tsv` | chargement local | succès |
+| 2 | « Montre le nombre d'observations par station » | pandas uniquement | succès; aucun skill graphique |
+| 3 | « Représente maintenant ces stations sur une carte » | planner → writer → rendu | succès; image produite |
+
+La première fixture testée, `ecotaxa_sample_50.tsv`, contenait zéro latitude/longitude non nulle. Le rendu a échoué correctement avec une table spatiale vide; aucun graphique fictif n'a été annoncé. Après diagnostic local, le scénario a été corrigé avec la fixture spatiale valide ci-dessus. Aucun replay live N ≥ 5 n'a été lancé.
