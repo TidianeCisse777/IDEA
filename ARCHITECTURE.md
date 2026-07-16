@@ -236,7 +236,7 @@ Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`
 | `MCP_AUTH_TOKEN` | Bearer du MCP EcoTaxa | requis pour MCP |
 | `ECOTAXA_USERNAME` / `ECOTAXA_PASSWORD` | Credentials EcoTaxa/EcoPart | requis pour sources |
 | `OPENWEBUI_URL` | Backend Open WebUI (feedback polling) | `http://open-webui:8080` |
-| `LANGCHAIN_TRACING_V2` / `LANGSMITH_API_KEY` | Tracing + hub pull du prompt | optionnel |
+| `LANGCHAIN_TRACING_V2` / `LANGSMITH_API_KEY` | Tracing + pull Hub des skills (system prompt lu localement) | optionnel |
 | `LANGFUSE_*` | Langfuse self-hosted | optionnel |
 
 `.env` porte les credentials — jamais commité, jamais affiché.

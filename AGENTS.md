@@ -11,7 +11,7 @@ Utilisateurs : professeurs et étudiants. Réponses en français par défaut.
 |---|---|
 | `CONTEXT.md` | Identité métier de l'agent, périmètre, ce qu'il fait / ne fait pas, sources, skills, RAG |
 | `ARCHITECTURE.md` | Comment `agent.py`, `serve.py`, les tools, le RAG, OpenWebUI sont câblés |
-| `TOOLS.md` | Inventaire des ~53 tools exposés au LLM, par catégorie |
+| `TOOLS.md` | Inventaire des 59 tools (62 avec SQL optionnel) exposés au LLM, par catégorie |
 | `agents/copepod_system_prompt.py` | System prompt complet (choix des tools, périmètre, sécurité) |
 | `tools/source_scope.py` | Décision de source exécutable, affinité persistante et bloc Gateway généré |
 | `assistant-copepodes-specs/` | Repo des specs métier (PRD V1.2, 14 UC, 29 contraintes, glossaire) |
@@ -27,8 +27,8 @@ Open WebUI (port 3000)
 serve.py — FastAPI (port 8000)
     │ SSE streaming, feedback polling, image hosting, downloads
     ▼
-agent.py — LangGraph create_react_agent
-    │ system prompt copépodes (hub: copepod-system-prompt, fallback local)
+agent.py — LangChain create_agent (ex-create_react_agent)
+    │ system prompt copépodes (source locale : agents/copepod_system_prompt.py)
     │ checkpointer AsyncSqliteSaver (data/checkpoints.sqlite)
     │ pre_model_hook : truncate tool results + trim history (40k tokens)
     │
@@ -79,7 +79,7 @@ python serve.py                          # serveur FastAPI seul
 |---|---|
 | `OPENAI_API_KEY` | Provider LLM |
 | `LLM_MODEL` | ex. `openai/gpt-5.4-mini`, `Codex-sonnet-4-6` |
-| `LANGSMITH_API_KEY` | Tracing + hub pull du system prompt |
+| `LANGSMITH_API_KEY` | Tracing + pull Hub des skills (le system prompt est lu localement) |
 | `LANGCHAIN_TRACING_V2` | `true` pour activer LangSmith |
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |
 | `MAX_CONTEXT_TOKENS` | Défaut 40000 — au-delà, trim_messages |
@@ -105,11 +105,11 @@ scripts/dev/push_skills.py
 studio.py                 LangGraph Studio entry
 
 agents/
-  copepod_system_prompt.py  System prompt complet (anglais, ~64 lignes)
-  copepod_prompt.py         (déprécié — référence historique uniquement)
+  copepod_system_prompt.py  System prompt complet (anglais, ~187 lignes)
   skills/                   14 skills Markdown
+  (copepod_prompt.py déprécié → archivé dans docs/legacy/copepod_prompt_DEPRECATED.py)
 
-tools/                    ~53 tools @tool LangChain (voir TOOLS.md)
+tools/                    59 tools @tool LangChain (62 avec SQL optionnel — voir TOOLS.md)
 
 core/
   copepod_rag/            ChromaDB + 11 docs RAG
@@ -117,7 +117,7 @@ core/
   instruction_renderer/   Composition des system prompts
   mcp/                    MCP integrations (si actives)
 
-tests/                    pytest (~30 modules, 42 tests verts au dernier merge main)
+tests/                    pytest (~104 modules)
 evals/                    Évaluations LangSmith (copepod graph happy path…)
 SPEC.md ARCHITECTURE.md TOOLS.md PARTAGE.md SEQUENCES.md   Docs de référence figées (racine)
 docs/                     Notes internes / test maps (gitignored sauf exceptions)
@@ -173,7 +173,7 @@ pytest tests/test_copepod_rag_advanced.py  # RAG
 pytest tests/test_serve_streaming.py       # SSE / OpenWebUI
 ```
 
-42 tests verts au merge du refactor multi-agent sur `main`. Voir `assistant-copepodes-specs/` pour la liste des scénarios comportementaux (`TEST_SCENARIOS.md`).
+Suite pytest verte au dernier merge sur `main` (~104 modules de test). Voir `assistant-copepodes-specs/` pour la liste des scénarios comportementaux (`TEST_SCENARIOS.md`).
 
 ---
 

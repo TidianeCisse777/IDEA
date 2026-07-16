@@ -265,13 +265,15 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 ### Étape 11 — Nettoyage legacy & documentation
 
+**État : terminé le 16 juillet 2026.** `agents/copepod_prompt.py` (sans consommateur) est archivé hors du package actif dans `docs/legacy/copepod_prompt_DEPRECATED.py` avec bannière de dépréciation. Les blocs `copepod_mode_*` n'existaient plus qu'en bytecode orphelin (`.pyc`), supprimés ; aucune source `.py` « mode » active ne subsiste. Le commentaire `serve.py` et les entrées `LANGSMITH_API_KEY` d'`AGENTS.md`/`CLAUDE.md`/`ARCHITECTURE.md` reflètent désormais un prompt lu localement et un pull Hub réservé aux skills. Les inventaires périmés (`~53 tools`, `create_react_agent`, `42 tests`, `~64 lignes`) sont corrigés en 59/62 tools, `create_agent`, ~104 modules de test et ~187 lignes de prompt dans `AGENTS.md`/`CLAUDE.md`/`SPEC.md`. `scripts/dev/push_prompt.py` porte une dépréciation explicite (aucun consommateur runtime).
+
 **Goal :** supprimer les pièges qui font modifier au mauvais endroit (audit P2, §8).
 
 **Changement :** archiver `agents/copepod_prompt.py` hors du package actif ; retirer/renommer `core/instruction_renderer/blocks/copepod_mode_*` (le vocabulaire de « mode » contredit la règle « pas de mode ») ; corriger `AGENTS.md`/`CLAUDE.md`/`CONTEXT.md`/`ARCHITECTURE.md`/`SPEC.md`/`README.md` + commentaire `serve.py` (chemin Hub inexistant) ; déprécier explicitement `scripts/dev/push_prompt.py` tant qu'aucun consommateur runtime, ou rétablir un chemin de lecture versionné et testé.
 
 **Test gate :**
-- [ ] Grep « mode analyse/plan » et « pull Hub » ne renvoie plus de source active trompeuse.
-- [ ] Inventaires (59/62) cohérents partout ; test de parité doc de l'étape 2 vert.
+- [x] Grep « mode analyse/plan » et « pull Hub » ne renvoie plus de source active trompeuse (docs datés d'audit exclus, ce sont des instantanés).
+- [x] Inventaires (59/62) cohérents partout ; test de parité doc de l'étape 2 vert ; `agent.py`/`serve.py` importent toujours et un tour agent réel passe après le nettoyage.
 
 ---
 
@@ -306,4 +308,4 @@ Le remodelage est réussi quand :
 | 8 — Skills versionnés | 🟡 en cours | Hub sert un skill non listé | allowlist fail-closed avant Hub; contrat vert; happy path réel OK | 🟡 versionnement/frontmatter restants |
 | 9 — Isolation code | 🟡 en cours | exec avec builtins complets (secrets/réseau/FS) | namespace restreint : imports allowlistés, secrets bloqués; escapes verts, smoke réel OK | 🟡 worker processus/quotas restants |
 | 10 — Réduction prompt | ⬜ à faire | — | — | ⬜ |
-| 11 — Nettoyage legacy | ⬜ à faire | — | — | ⬜ |
+| 11 — Nettoyage legacy | ✅ terminé | docs périmées (53 tools, react_agent, pull Hub) | prompt legacy archivé; inventaires 59/62; parité doc verte | ✅ |

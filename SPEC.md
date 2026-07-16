@@ -141,9 +141,10 @@ Regroupement des usages réels de l'agent, du plus stable au plus expérimental.
 
 ## 4. Inventaire complet des capacités (tools exposés au LLM)
 
-L'agent expose **~53 tools** répartis en 12 familles. Ils sont tous déclarés à
-la construction dans `agent.py` (`create_react_agent`). Les tools SQL ne sont
-ajoutés que si `DATABASE_URL` est résolvable.
+L'agent expose **59 tools** (62 avec les tools SQL optionnels) répartis en 12
+familles. Ils sont tous déclarés à la construction dans `agent.py`
+(`create_agent`, ex-`create_react_agent`). Les tools SQL ne sont ajoutés que si
+`DATABASE_URL` est résolvable.
 
 > Note : CLAUDE.md et d'anciens docs mentionnent « 23 tools » — chiffre obsolète.
 > Le compte réel ci-dessous fait foi.

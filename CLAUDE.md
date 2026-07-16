@@ -11,7 +11,7 @@ Utilisateurs : professeurs et étudiants. Réponses en français par défaut.
 |---|---|
 | `CONTEXT.md` | Identité métier de l'agent, périmètre, ce qu'il fait / ne fait pas, sources, skills, RAG |
 | `ARCHITECTURE.md` | Comment `agent.py`, `serve.py`, les tools, le RAG, OpenWebUI sont câblés |
-| `TOOLS.md` | Inventaire des ~53 tools exposés au LLM, par catégorie |
+| `TOOLS.md` | Inventaire des 59 tools (62 avec SQL optionnel) exposés au LLM, par catégorie |
 | `SPEC.md` | Spécification figée : use cases classés (UC-A…UC-J), capacités, contraintes dures |
 | `PARTAGE.md` | Partage & déploiement : état actuel et cible |
 | `SEQUENCES.md` | Diagrammes de séquence par use case |
@@ -81,7 +81,7 @@ python serve.py                          # serveur FastAPI seul
 |---|---|
 | `OPENAI_API_KEY` | Provider LLM |
 | `LLM_MODEL` | ex. `openai/gpt-5.4-mini`, `claude-sonnet-4-6` |
-| `LANGSMITH_API_KEY` | Tracing + hub pull du system prompt |
+| `LANGSMITH_API_KEY` | Tracing + pull Hub des skills (le system prompt est lu localement) |
 | `LANGCHAIN_TRACING_V2` | `true` pour activer LangSmith |
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |
 | `MAX_CONTEXT_TOKENS` | Défaut 40000 — au-delà, trim_messages |
@@ -108,11 +108,11 @@ scripts/dev/prune_data.py
 studio.py                 LangGraph Studio entry
 
 agents/
-  copepod_system_prompt.py  System prompt complet (anglais, ~64 lignes)
-  copepod_prompt.py         (déprécié — référence historique uniquement)
+  copepod_system_prompt.py  System prompt complet (anglais, ~187 lignes)
+  (copepod_prompt.py déprécié → archivé dans docs/legacy/copepod_prompt_DEPRECATED.py)
   skills/                   14 skills Markdown
 
-tools/                    ~53 tools @tool LangChain (voir TOOLS.md)
+tools/                    59 tools @tool LangChain (62 avec SQL optionnel — voir TOOLS.md)
 
 core/
   copepod_rag/            ChromaDB + 11 docs RAG
