@@ -73,7 +73,6 @@ def turn_fingerprint(messages: list[Any]) -> str:
         payload = json.dumps(
             {
                 "index": index,
-                "id": str(getattr(message, "id", "") or ""),
                 "text": _message_text(message),
             },
             ensure_ascii=False,
@@ -235,7 +234,11 @@ def graph_workflow_rejection(
 
     if name == "load_skill" and args.get("skill_name") == "graph_writer":
         if not graph_skills or graph_skills[-1] != "graph_planner":
-            return "Graph workflow blocked: graph planner must succeed in the current turn before graph writer."
+            return (
+                "Graph workflow blocked: graph planner must succeed in the current "
+                "turn before graph writer. Wait for the planner result, then retry "
+                "graph writer in a new tool call; never batch planner and writer."
+            )
         return None
 
     if name == "run_graph":

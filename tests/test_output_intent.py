@@ -33,6 +33,13 @@ def test_turn_fingerprint_is_stable_and_changes_on_next_human_turn():
     assert turn_fingerprint(first) != turn_fingerprint(second)
 
 
+def test_turn_fingerprint_ignores_runtime_message_id_assignment():
+    before_runtime = [HumanMessage(content="une carte", id=None)]
+    after_runtime = [HumanMessage(content="une carte", id="runtime-assigned-id")]
+
+    assert turn_fingerprint(before_runtime) == turn_fingerprint(after_runtime)
+
+
 @pytest.mark.parametrize(
     ("name", "args", "expected"),
     [
@@ -76,6 +83,7 @@ def test_writer_requires_successful_planner_in_current_turn():
 
     assert rejection is not None
     assert "planner" in rejection.lower()
+    assert "new tool call" in rejection.lower()
 
 
 def test_run_graph_requires_writer_as_last_successful_call():

@@ -1,6 +1,8 @@
 """Agent factory + CLI copépodes (slices 4-5)."""
+import asyncio
 import os
 import sys
+import threading
 import uuid
 import json
 from datetime import datetime, timezone
@@ -222,6 +224,8 @@ class _ContextMiddleware(AgentMiddleware):
         self.output_intent_classifier = output_intent_classifier
         self._output_intent_cache = {}
         self._output_intent_classifier_calls = {}
+        self._output_intent_sync_lock = threading.Lock()
+        self._output_intent_async_lock = asyncio.Lock()
 
     def _prepare_request(self, request, memories):
         original_messages = list(request.messages)
@@ -434,25 +438,29 @@ class _ContextMiddleware(AgentMiddleware):
         cached = self._output_intent_cache.get(fingerprint)
         if cached is not None:
             return cached
-        try:
-            if self.output_intent_classifier is None:
-                raise RuntimeError("output intent classifier unavailable")
-            decision = self.output_intent_classifier.classify(messages)
-            if decision.turn_fingerprint != fingerprint:
-                raise ValueError("classifier returned a mismatched turn fingerprint")
-        except Exception:
-            decision = OutputIntentDecision(
-                intent="ambiguous",
-                confidence="low",
-                reason="classifier unavailable",
-                turn_fingerprint=fingerprint,
+        with self._output_intent_sync_lock:
+            cached = self._output_intent_cache.get(fingerprint)
+            if cached is not None:
+                return cached
+            try:
+                if self.output_intent_classifier is None:
+                    raise RuntimeError("output intent classifier unavailable")
+                decision = self.output_intent_classifier.classify(messages)
+                if decision.turn_fingerprint != fingerprint:
+                    raise ValueError("classifier returned a mismatched turn fingerprint")
+            except Exception:
+                decision = OutputIntentDecision(
+                    intent="ambiguous",
+                    confidence="low",
+                    reason="classifier unavailable",
+                    turn_fingerprint=fingerprint,
+                )
+            self._output_intent_classifier_calls[fingerprint] = (
+                self._output_intent_classifier_calls.get(fingerprint, 0) + 1
             )
-        self._output_intent_classifier_calls[fingerprint] = (
-            self._output_intent_classifier_calls.get(fingerprint, 0) + 1
-        )
-        self._output_intent_cache[fingerprint] = decision
-        self._persist_output_intent(decision)
-        return decision
+            self._output_intent_cache[fingerprint] = decision
+            self._persist_output_intent(decision)
+            return decision
 
     async def _aoutput_intent_decision(self, messages):
         from tools.output_intent import OutputIntentDecision, turn_fingerprint
@@ -461,25 +469,29 @@ class _ContextMiddleware(AgentMiddleware):
         cached = self._output_intent_cache.get(fingerprint)
         if cached is not None:
             return cached
-        try:
-            if self.output_intent_classifier is None:
-                raise RuntimeError("output intent classifier unavailable")
-            decision = await self.output_intent_classifier.aclassify(messages)
-            if decision.turn_fingerprint != fingerprint:
-                raise ValueError("classifier returned a mismatched turn fingerprint")
-        except Exception:
-            decision = OutputIntentDecision(
-                intent="ambiguous",
-                confidence="low",
-                reason="classifier unavailable",
-                turn_fingerprint=fingerprint,
+        async with self._output_intent_async_lock:
+            cached = self._output_intent_cache.get(fingerprint)
+            if cached is not None:
+                return cached
+            try:
+                if self.output_intent_classifier is None:
+                    raise RuntimeError("output intent classifier unavailable")
+                decision = await self.output_intent_classifier.aclassify(messages)
+                if decision.turn_fingerprint != fingerprint:
+                    raise ValueError("classifier returned a mismatched turn fingerprint")
+            except Exception:
+                decision = OutputIntentDecision(
+                    intent="ambiguous",
+                    confidence="low",
+                    reason="classifier unavailable",
+                    turn_fingerprint=fingerprint,
+                )
+            self._output_intent_classifier_calls[fingerprint] = (
+                self._output_intent_classifier_calls.get(fingerprint, 0) + 1
             )
-        self._output_intent_classifier_calls[fingerprint] = (
-            self._output_intent_classifier_calls.get(fingerprint, 0) + 1
-        )
-        self._output_intent_cache[fingerprint] = decision
-        self._persist_output_intent(decision)
-        return decision
+            self._output_intent_cache[fingerprint] = decision
+            self._persist_output_intent(decision)
+            return decision
 
     @staticmethod
     def _decision_rejection(decision) -> str | None:

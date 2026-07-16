@@ -12,6 +12,8 @@ You must plan a graph before writing any code.
   failure and do not claim that a figure exists.
 - Plan only from the explicitly selected source variable. Never switch sources
   or transcribe values to make a graph possible.
+- Planner and writer are sequential tool steps. Never request this skill and
+  `graph_writer` in the same tool-call batch; wait for this result first.
 
 ## Step 0 — Geographic dimension (FIRST CHECK)
 

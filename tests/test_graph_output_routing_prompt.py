@@ -34,6 +34,12 @@ def test_non_visual_outputs_skip_both_graph_skills():
     assert "do not load `graph_planner` or `graph_writer`" in prompt
 
 
+def test_graph_skills_must_run_in_separate_sequential_tool_batches():
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "never request planner and writer in the same tool-call batch" in prompt
+    assert "wait for the planner result" in prompt
+
+
 def test_graph_planner_uses_semantics_instead_of_closed_keyword_list():
     planner = Path("agents/skills/graph_planner.md").read_text(
         encoding="utf-8"

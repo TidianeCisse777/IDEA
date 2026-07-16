@@ -1,5 +1,8 @@
 """Garde exécutable d'intention graphique dans le middleware agent."""
 
+import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +31,45 @@ class FakeClassifier:
 
     async def aclassify(self, messages):
         return self.classify(messages)
+
+
+class BlockingClassifier(FakeClassifier):
+    def __init__(self):
+        super().__init__(intent="visual")
+        self.entered = threading.Event()
+        self.second_entered = threading.Event()
+        self.release = threading.Event()
+
+    def classify(self, messages):
+        self.calls += 1
+        self.entered.set()
+        if self.calls > 1:
+            self.second_entered.set()
+        self.release.wait(timeout=2)
+        return OutputIntentDecision(
+            intent="visual",
+            confidence="high",
+            reason="fixture",
+            turn_fingerprint=turn_fingerprint(messages),
+        )
+
+
+class AsyncBlockingClassifier(FakeClassifier):
+    def __init__(self):
+        super().__init__(intent="visual")
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def aclassify(self, messages):
+        self.calls += 1
+        self.entered.set()
+        await self.release.wait()
+        return OutputIntentDecision(
+            intent="visual",
+            confidence="high",
+            reason="fixture",
+            turn_fingerprint=turn_fingerprint(messages),
+        )
 
 
 def _request(name, args, call_id, messages):
@@ -116,6 +158,63 @@ def test_one_decision_is_reused_for_planner_writer_and_render(monkeypatch, tmp_p
     assert validate_tool_artifact(planner_result.artifact).status == "success"
     assert validate_tool_artifact(writer_result.artifact).status == "success"
     assert validate_tool_artifact(render_result.artifact).status == "success"
+    assert classifier.calls == 1
+
+
+def test_parallel_graph_attempts_share_one_sync_classification(monkeypatch, tmp_path):
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    classifier = BlockingClassifier()
+    middleware = agent_module._ContextMiddleware(
+        thread_id="sync-single-flight", output_intent_classifier=classifier
+    )
+    messages = [HumanMessage(content="Fais une carte")]
+    requests = [
+        _request("load_skill", {"skill_name": "graph_planner"}, "planner-1", messages),
+        _request("load_skill", {"skill_name": "graph_planner"}, "planner-2", messages),
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(middleware.wrap_tool_call, requests[0], _successful_handler)
+        assert classifier.entered.wait(timeout=1)
+        second = executor.submit(middleware.wrap_tool_call, requests[1], _successful_handler)
+        classifier.second_entered.wait(timeout=0.2)
+        classifier.release.set()
+        first.result(timeout=2)
+        second.result(timeout=2)
+
+    assert classifier.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_parallel_graph_attempts_share_one_async_classification(monkeypatch, tmp_path):
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    classifier = AsyncBlockingClassifier()
+    middleware = agent_module._ContextMiddleware(
+        thread_id="async-single-flight", output_intent_classifier=classifier
+    )
+    messages = [HumanMessage(content="Fais une carte")]
+    requests = [
+        _request("load_skill", {"skill_name": "graph_planner"}, "planner-1", messages),
+        _request("load_skill", {"skill_name": "graph_planner"}, "planner-2", messages),
+    ]
+
+    first = asyncio.create_task(
+        middleware.awrap_tool_call(requests[0], _async_successful_handler)
+    )
+    await classifier.entered.wait()
+    second = asyncio.create_task(
+        middleware.awrap_tool_call(requests[1], _async_successful_handler)
+    )
+    await asyncio.sleep(0)
+    classifier.release.set()
+    await asyncio.gather(first, second)
+
     assert classifier.calls == 1
 
 
