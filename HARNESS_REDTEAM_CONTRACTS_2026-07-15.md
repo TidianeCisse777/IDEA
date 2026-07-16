@@ -31,4 +31,4 @@ Chaque correction doit suivre la séquence suivante :
 3. vérifier le contrat puis comparer la baseline offline/live ;
 4. conserver le changement seulement sans régression des scénarios de référence.
 
-La branche 4A « nombre spécialisé → reprise directe » et l'étape graphique 4B.1 sont fermées. La branche « nouvelle agrégation de table → pandas » reste ouverte sous 4A.1 après le smoke réel. La tranche 4C porte toujours sur les procédures OGSL et autres sources.
+La branche 4A « nombre spécialisé → reprise directe » et l'étape graphique 4B.1 sont fermées. La branche « nouvelle agrégation de table → pandas » reste ouverte sous 4A.1 après le smoke réel. La tranche 4C (contradiction OGSL de `environmental_join.md`) est fermée le 16 juillet 2026 : un contrat rouge (`test_ogsl_enrichment_has_a_single_deterministic_rule`) interdit de déclarer deux outils « standard », et le smoke réel `scripts/dev/ogsl_routing_smoke.py` valide 2/2 le choix par clé de jointure (station/temps → `query_ogsl`, lat/lon → `enrich_with_ogsl`).
