@@ -295,7 +295,7 @@ Le remodelage est réussi quand :
 | 1 — Tests rouges | ✅ terminé | 7 dettes reproduites | 6 contrats futurs `xfail`, inventaire résolu | ✅ |
 | 2 — Registre + `ToolResult` | ✅ terminé | offline : 33 654 tokens fixes | offline : 24 392; trajectoires 100 % | ✅ |
 | 3 — Décision de source | ✅ terminé | offline : 12 tours, 100 % | offline : 13 tours, 100 %; smoke réel 3/3 | ✅ |
-| 4 — Contradictions de routage | ⬜ à faire | — | — | ⬜ |
+| 4 — Contradictions de routage | 🟡 en cours | — | 4A/4B/4B.1/4C fermées; smoke OGSL réel 2/2 | 🟡 4A.1 ouvert |
 | 5 — TurnContext + carte d'état | ⬜ à faire | — | — | ⬜ |
 | 6 — Filtrage dynamique | ⬜ à faire | — | — | ⬜ |
 | 7 — Confirmations | ⬜ à faire | — | — | ⬜ |
