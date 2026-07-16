@@ -119,6 +119,9 @@ docs/_build/
 !/docs/superpowers/plans/
 /docs/superpowers/plans/*
 !/docs/superpowers/plans/2026-07-15-harness-step-0-replay.md
+!/docs/superpowers/specs/
+/docs/superpowers/specs/*
+!/docs/superpowers/specs/2026-07-15-source-policy-design.md
 
 # Claude Code / assistant session transcripts accidentally dumped in the repo
 *local-command-caveat*.txt
