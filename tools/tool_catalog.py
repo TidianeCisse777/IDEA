@@ -26,6 +26,7 @@ from tools.rag_tool import make_rag_tool
 from tools.skill_tool import SKILLS_DIR, make_skill_tool
 from tools.sql_workspace import SQLWorkspaceNotConfiguredError, make_sql_tools
 from tools.taxonomy_tool import make_taxonomy_tool
+from tools.tool_input import apply_strict_tool_schema
 
 Language = Literal["fr", "en"]
 ToolRisk = Literal["low", "medium", "high"]
@@ -485,6 +486,7 @@ def validate_catalog(
     tool_names: Collection[str],
     *,
     optional_names: Collection[str] = (),
+    runtime_tools: Collection[BaseTool] = (),
 ) -> None:
     """Fail fast when runtime tools and declared presentation facts drift."""
 
@@ -573,6 +575,17 @@ def validate_catalog(
             "Tool catalog invalid policy: " + "; ".join(policy_issues)
         )
 
+    schema_issues = []
+    for item in runtime_tools:
+        schema = getattr(item, "args_schema", None)
+        config = getattr(schema, "model_config", {})
+        if config.get("strict") is not True or config.get("extra") != "forbid":
+            schema_issues.append(item.name)
+    if schema_issues:
+        raise ValueError(
+            "Tool catalog non-strict args schema: " + ", ".join(sorted(schema_issues))
+        )
+
 
 def build_tool_catalog(thread_id: str) -> ToolCatalog:
     """Build the exact thread-scoped runtime tools and validate presentation."""
@@ -597,6 +610,8 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
     except SQLWorkspaceNotConfiguredError:
         sql_available = False
 
+    tools = [apply_strict_tool_schema(item) for item in tools]
+
     name_counts = Counter(tool.name for tool in tools)
     duplicates = sorted(name for name, count in name_counts.items() if count > 1)
     if duplicates:
@@ -607,6 +622,7 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
     validate_catalog(
         names,
         optional_names=() if sql_available else OPTIONAL_SQL_TOOL_NAMES,
+        runtime_tools=tools,
     )
     return ToolCatalog(
         tools=tuple(tools),

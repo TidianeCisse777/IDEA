@@ -603,7 +603,7 @@ def make_ecopart_tools(thread_id: str) -> list:
     """Create LangChain EcoPart tools for one thread."""
 
     @tool
-    def list_ecopart_samples(project_id: int = 105) -> str:
+    def list_ecopart_samples(project_id: int) -> str:
         """Liste les échantillons EcoPart disponibles pour un projet."""
         try:
             client = EcopartClient()
@@ -630,7 +630,7 @@ def make_ecopart_tools(thread_id: str) -> list:
 
     @tool
     def query_ecopart(
-        project_id: int = 105,
+        project_id: int,
         ctd_vars: list[str] | None = None,
         gpr_vars: list[str] | None = None,
     ) -> str:
