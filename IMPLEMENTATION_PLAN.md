@@ -238,14 +238,16 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 **Goal :** `run_pandas`/`run_graph` exécutés sans surface d'action excessive (OWASP moindre privilège).
 
+**État : premier tranchant « moindre privilège namespace » terminé le 16 juillet 2026 ; l'isolation processus complète reste à faire.** `run_pandas`/`run_graph` exécutent désormais le code du modèle dans un espace de noms restreint (`tools/code_sandbox.py`) : allowlist d'imports (libs scientifiques + quatre contrats d'analyse `core.*` sans credentials) et retrait de `open`/`eval`/`exec`/`compile`/`input`/`breakpoint`. `core.llm_config` et les clients de sources restent inatteignables — le code ne peut plus lire `os.environ`, ouvrir un socket, lancer un subprocess ni ouvrir un fichier via `import`/`open`. Restent ouverts pour compléter l'étape : l'egress niveau bibliothèque (`pd.read_csv(url)`), les échappatoires d'introspection, les quotas CPU/mémoire/temps et le FS lecture seule — tout cela exige le worker processus jetable.
+
 **Priorité :** cette faiblesse reste **P0 sécurité** dès l'audit. Son numéro indique seulement l'ordre de dépendances du chantier principal ; tout déploiement exposé doit la traiter ou désactiver ces tools avant d'attendre l'étape 9.
 
 **Changement :** worker jetable, FS lecture seule sauf répertoire d'artefacts, **aucun secret**, réseau coupé par défaut, quotas CPU/mémoire/temps/sortie, imports explicitement autorisés, datasets par références contrôlées, validation des artefacts, destruction après appel.
 
 **Test gate :**
-- [ ] Tests d'évasion (accès secret, réseau, FS hors artefacts) rouges deviennent verts.
-- [ ] Pas de credentials ni réseau accessibles depuis le code exécuté ; quotas appliqués.
-- [ ] Pas de régression fonctionnelle sur les graphes/analyses des 3 scénarios.
+- [x] Tests d'évasion secret/réseau/subprocess/`open` rouges deviennent verts (`tests/harness_redteam/test_code_isolation_contracts.py`).
+- [~] Pas de credentials accessibles depuis le code exécuté (secrets bloqués via l'allowlist d'imports) ; **quotas et coupure réseau bibliothèque restants** (worker processus).
+- [x] Pas de régression fonctionnelle sur les analyses/graphes : suites `run_pandas`/`run_graph` vertes et smoke agent réel (pandas groupby + carte cartopy) sous namespace restreint.
 
 ---
 
@@ -302,6 +304,6 @@ Le remodelage est réussi quand :
 | 6 — Filtrage dynamique | ⬜ à faire | — | — | ⬜ |
 | 7 — Confirmations | ⬜ à faire | — | — | ⬜ |
 | 8 — Skills versionnés | 🟡 en cours | Hub sert un skill non listé | allowlist fail-closed avant Hub; contrat vert; happy path réel OK | 🟡 versionnement/frontmatter restants |
-| 9 — Isolation code | ⬜ à faire | — | — | ⬜ |
+| 9 — Isolation code | 🟡 en cours | exec avec builtins complets (secrets/réseau/FS) | namespace restreint : imports allowlistés, secrets bloqués; escapes verts, smoke réel OK | 🟡 worker processus/quotas restants |
 | 10 — Réduction prompt | ⬜ à faire | — | — | ⬜ |
 | 11 — Nettoyage legacy | ⬜ à faire | — | — | ⬜ |
