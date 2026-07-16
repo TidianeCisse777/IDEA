@@ -407,7 +407,11 @@ _STRUCTURED_RESULT_TOOL_NAMES = frozenset({
     "lookup_marine_taxonomy",
     "load_skill",
     "export_deliverable",
-})
+}) | frozenset(
+    name
+    for name in _TOOL_PROFILE_BY_NAME
+    if TOOL_PRESENTATION[name].family == "ecotaxa"
+)
 
 
 def _build_policy(name: str, profile_name: str) -> ToolPolicy:
