@@ -16,14 +16,18 @@ You are about to perform a join between zooplankton and an environmental source.
 | EcoTaxa + EcoPart (by `(sample_id, depth_bin)`) | `join_ecotaxa_ecopart` (EcoPart in session) or `enrich_ecotaxa_with_ecopart_remote` (EcoPart not loaded) — do **not** use this skill |
 | EcoTaxa + CTD Amundsen | `run_pandas` using patterns below |
 | EcoTaxa + Bio-ORACLE | `run_pandas` using patterns below |
-| Standard loaded-table + OGSL enrichment | `query_ogsl` — do **not** use this skill |
-| Non-standard EcoTaxa + OGSL join | `run_pandas` using patterns below |
+| Loaded table with a station/mission id + sampling time + OGSL | `query_ogsl` — do **not** use this skill |
+| Loaded table with latitude/longitude (no reliable station id) + OGSL | `enrich_with_ogsl` — do **not** use this skill |
+| Non-standard OGSL join not covered by either tool | `run_pandas` using patterns below |
 | Any other environmental join | `run_pandas` using patterns below |
 
 > **`join_ecotaxa_ecopart` is exclusively for EcoTaxa ↔ EcoPart pairs.**
-> Standard OGSL enrichment is handled inside `query_ogsl`. Use this skill only
-> when the requested OGSL relation cannot be represented by its standard
-> station/time/depth matching contract.
+> **One deterministic OGSL rule, chosen by the join key the loaded table
+> carries:** `query_ogsl` when the table has a station/mission identifier and a
+> sampling time (station/time/depth matching); `enrich_with_ogsl` when the table
+> only has latitude/longitude coordinates (spatial nearest-neighbour matching).
+> Both are dedicated tools — use this skill only when the requested OGSL relation
+> cannot be represented by either standard contract.
 
 ---
 
@@ -105,4 +109,4 @@ Produce a traceable join table with an explicit match rule, stable keys, and qua
 
 - When chaining enrichments on the same EcoTaxa-derived table, pass `source_variable` as the exact variable produced by the previous step. Do not rely on the bare active `df`, which can silently enrich the wrong table. Confirm the reported "Table enrichie".
 - Load with `load_skill("environmental_join")` for non-standard Amundsen CTD or Bio-ORACLE joins.
-- Standard OGSL enrichment uses `enrich_with_ogsl`, including `spatial_tolerance_km`, `time_tolerance_hours`, `ogsl_te90_degC`, and `ogsl_match_status` traceability.
+- OGSL enrichment uses a dedicated tool selected by the loaded table's join key: `query_ogsl` for station/time/depth matching, `enrich_with_ogsl` for latitude/longitude spatial matching (`spatial_tolerance_km`, `time_tolerance_hours`, `ogsl_te90_degC`, `ogsl_match_status` traceability). Do not treat one as the sole standard.
