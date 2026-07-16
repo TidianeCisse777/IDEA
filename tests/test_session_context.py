@@ -284,3 +284,41 @@ def test_capsule_omits_source_scope_without_messages(tmp_path):
     )
     capsule = build_dataset_state_capsule(store, thread_id)
     assert "ACTIVE SOURCE SCOPE" not in capsule
+
+
+def test_capsule_lists_all_loaded_files_by_name(tmp_path):
+    """A multi-file session must name every loaded file so the agent targets the
+    right df without reloading."""
+    store = SessionStore(tmp_path)
+    thread_id = "multifile-context"
+    store_dataset(
+        store, thread_id, pd.DataFrame({"station": ["S1"], "latitude": [60.0]}),
+        variable_name="df_file_stations_a",
+        meta={"source": "file:/d/stations_a.csv", "path": "/d/stations_a.csv", "n_rows": 3, "n_cols": 2},
+        is_loaded_file=True,
+    )
+    store_dataset(
+        store, thread_id, pd.DataFrame({"station": ["S1"], "temperature": [3.1]}),
+        variable_name="df_file_temperatures_b",
+        meta={"source": "file:/d/temperatures_b.csv", "path": "/d/temperatures_b.csv", "n_rows": 3, "n_cols": 2},
+        is_loaded_file=True,
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "LOADED FILES" in capsule
+    assert "df_file_stations_a" in capsule
+    assert "df_file_temperatures_b" in capsule
+
+
+def test_capsule_no_loaded_files_block_for_single_file(tmp_path):
+    store = SessionStore(tmp_path)
+    thread_id = "single-file-context"
+    store_dataset(
+        store, thread_id, pd.DataFrame({"station": ["S1"]}),
+        variable_name="df_file_solo",
+        meta={"source": "file:/d/solo.csv", "path": "/d/solo.csv", "n_rows": 1, "n_cols": 1},
+        is_loaded_file=True,
+    )
+    capsule = build_dataset_state_capsule(store, thread_id)
+    assert "LOADED FILES" not in capsule

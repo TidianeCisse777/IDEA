@@ -51,6 +51,29 @@ def _present_columns(columns: Iterable[object]) -> list[str]:
 
 
 _MAX_DERIVED_SUBSETS = 12
+_MAX_LOADED_FILES = 12
+
+
+def _loaded_files(store: SessionStore, thread_id: str) -> list[tuple[str, str, str]]:
+    """Return (variable, path, rows) for every loaded file in the session.
+
+    Each `load_file` registers a distinct `df_file_*` variable. Surfacing the
+    whole roster lets the agent target the right file by name across a
+    multi-file session instead of reloading it or guessing from the transcript.
+    """
+    found: list[tuple[str, str, str]] = []
+    for key in store.keys(prefix=f"{thread_id}:dataset:"):
+        entry = store.get(key)
+        meta = (entry or {}).get("meta") or {}
+        source = str(meta.get("source") or "")
+        if not source.startswith("file:"):
+            continue
+        variable = _clean(meta.get("variable_name") or key.rsplit(":", 1)[-1], limit=80)
+        path = _clean(meta.get("path") or source[len("file:"):], limit=120)
+        rows = meta.get("n_rows")
+        rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
+        found.append((variable, path, rows_text))
+    return sorted(set(found))
 
 
 def _live_zone_subsets(store: SessionStore, thread_id: str) -> list[tuple[str, str, str]]:
@@ -174,12 +197,31 @@ def build_dataset_state_capsule(
 
     scope_line = _source_scope_line(store, thread_id, messages)
 
+    loaded_files_block = ""
+    files = _loaded_files(store, thread_id)
+    if len(files) > 1:
+        listed = files[:_MAX_LOADED_FILES]
+        lines = "\n".join(
+            f"- {variable}: path={path}, rows={rows}" for variable, path, rows in listed
+        )
+        more = (
+            f"\n- (+{len(files) - len(listed)} more)"
+            if len(files) > len(listed)
+            else ""
+        )
+        loaded_files_block = (
+            "\nLOADED FILES (each reusable by its exact variable name — target the "
+            "right file by name; do not reload a file already listed here):\n"
+            + lines + more
+        )
+
     capsule = (
         "\n\n## ACTIVE DATASET STATE (authoritative, current turn)\n"
         "- " + "; ".join(fields) + "\n"
         "Identifiers absent from this capsule and the current user message are "
         "ungrounded; do not infer them from older conversation turns."
         + scope_line
+        + loaded_files_block
         + anchor_note
         + derived_block
     )
