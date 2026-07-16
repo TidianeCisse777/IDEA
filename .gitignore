@@ -121,6 +121,7 @@ docs/_build/
 !/docs/superpowers/plans/2026-07-15-harness-step-0-replay.md
 !/docs/superpowers/plans/2026-07-15-executable-source-policy.md
 !/docs/superpowers/plans/2026-07-16-semantic-graph-routing.md
+!/docs/superpowers/plans/2026-07-16-executable-graph-intent-guard.md
 !/docs/superpowers/specs/
 /docs/superpowers/specs/*
 !/docs/superpowers/specs/2026-07-15-source-policy-design.md
