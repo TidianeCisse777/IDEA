@@ -559,7 +559,8 @@ def test_run_pandas_no_file_loaded():
 # --- Comportement 5 : run_graph ajoute une lecture rapide ---
 
 def test_run_graph_includes_quick_reading(tmp_path):
-    tools = make_tools("thread-graph")
+    thread_id = "thread-graph"
+    tools = make_tools(thread_id)
     load_file_tool = next(t for t in tools if t.name == "load_file")
     run_graph = next(t for t in tools if t.name == "run_graph")
 
@@ -570,6 +571,7 @@ def test_run_graph_includes_quick_reading(tmp_path):
     p = tmp_path / "graph.tsv"
     df.to_csv(p, sep="\t", index=False)
     load_file_tool.invoke({"path": str(p)})
+    _store.update_meta(thread_id, {"loaded_skills": ["graph_writer"]})
 
     code = """
 import matplotlib
@@ -598,6 +600,7 @@ def test_run_graph_works_without_loaded_file_for_standalone_map():
     """Carte d'une zone nommée : pas de df nécessaire, run_graph doit exécuter."""
     thread_id = "thread-standalone-graph"
     _store.clear(thread_id)
+    _store.set(thread_id, None, {"loaded_skills": ["graph_writer"]})
 
     run_graph = next(t for t in make_tools(thread_id) if t.name == "run_graph")
     code = (
@@ -865,6 +868,7 @@ def test_run_graph_skips_model_tight_layout_for_cartopy():
     pytest.importorskip("cartopy.crs")
     thread_id = "thread-cartopy-safe-tight-layout"
     _store.clear(thread_id)
+    _store.set(thread_id, None, {"loaded_skills": ["graph_writer"]})
     run_graph = next(t for t in make_tools(thread_id) if t.name == "run_graph")
     code = """
 import cartopy.crs as ccrs
@@ -899,6 +903,7 @@ def test_run_graph_exposes_multiple_ecopart_projects():
     _store.set(f"{thread_id}:ecopart", df_42, {"source": "ecopart:42"})
     _store.set(f"{thread_id}:ecopart:105", df_105, {"source": "ecopart:105"})
     _store.set(f"{thread_id}:ecopart:42", df_42, {"source": "ecopart:42"})
+    _store.update_meta(thread_id, {"loaded_skills": ["graph_writer"]})
 
     run_graph = next(t for t in make_tools(thread_id) if t.name == "run_graph")
     result = run_graph.invoke({
