@@ -2,9 +2,9 @@
 
 Principle (see docs/e2e/cartes-samples-labrador-2026): if a file is loaded, every
 "samples / échantillons / positions / stations / zone / analyse / carte" request
-operates on that file. EcoTaxa/EcoPart routes are reachable only when the user
-emits an **explicit EcoTaxa/EcoPart signal** (names the source, a project id, the
-cache…), or when no file is loaded.
+operates on that file. External routes are reachable when the user names a
+source explicitly for its first use, then remain reachable through the
+persisted source affinity until an explicit switch or a successful file load.
 
 Generic words like "samples", "échantillons", "zone", "positions" are NOT signals
 — a loaded file has samples too. This gate is enforced in code because prompt
@@ -492,12 +492,19 @@ def is_file_loaded(store: Any, thread_id: str) -> bool:
 def is_file_scoped_turn(store: Any, thread_id: str, messages: list | None) -> bool:
     """True when the turn must stay on the loaded file (hide EcoTaxa routes).
 
-    A file is loaded AND the latest user message carries no explicit EcoTaxa
-    signal → the request is about the file.
+    Compatibility facade backed by the same decision as the runtime middleware.
     """
     if not is_file_loaded(store, thread_id):
         return False
-    return not ecotaxa_signal(latest_user_text(messages))
+    decision = source_decision_for_turn(
+        store,
+        thread_id,
+        messages,
+        persist=False,
+    )
+    return not bool(
+        {"ecotaxa", "ecopart"}.intersection(decision.authorized_sources)
+    )
 
 
 def filter_tools_for_scope(tools: list, file_scoped: bool) -> list:
@@ -508,9 +515,9 @@ def filter_tools_for_scope(tools: list, file_scoped: bool) -> list:
 
 
 FILE_SCOPE_REDIRECT = (
-    "Périmètre fichier : un fichier est chargé et la demande ne mentionne pas "
-    "EcoTaxa/EcoPart. Reste sur le fichier — utilise `filter_dataframe_by_zone` "
+    "Périmètre fichier : un fichier est chargé et aucune affinité EcoTaxa/EcoPart "
+    "n'est active. Reste sur le fichier — utilise `filter_dataframe_by_zone` "
     "pour une zone nommée, puis `run_pandas` / `run_graph` sur le DataFrame "
-    "chargé. Pour passer sur EcoTaxa, l'utilisateur doit nommer explicitement "
-    "EcoTaxa, un projet, ou le cache."
+    "chargé. Pour une première utilisation externe, l'utilisateur doit nommer "
+    "explicitement EcoTaxa ou EcoPart."
 )

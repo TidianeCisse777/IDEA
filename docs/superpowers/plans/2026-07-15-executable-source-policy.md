@@ -141,9 +141,9 @@ assert first.authorized_sources == second.authorized_sources == ("ecotaxa",)
 - [x] **RED 6:** ajouter le tour « résume maintenant le projet 17498 » et un test séquentiel qui exige l'affinité héritée.
 - [x] **Verify RED 6:** `pytest -q tests/test_replay_harness.py tests/test_source_affinity.py`; attendu : fixture/attente non satisfaite avant adaptation.
 - [x] **GREEN 6:** adapter la fixture offline avec un résultat structuré et intégrer la décision dans la vérification de continuité sans appel modèle.
-- [ ] **Targeted gate once:** `pytest -q tests/test_source_scope.py tests/test_source_affinity.py tests/test_source_policy_tools.py tests/test_source_prompt_contract.py tests/test_agent_factory.py tests/test_data_tools.py tests/test_session_context.py tests/test_replay_harness.py tests/harness_redteam/`.
-- [ ] **Full gate once:** `pytest -q tests/`.
-- [ ] **Offline baseline once:** `python -m evals.replay_harness --lane offline --runs 1 --output evals/baseline_offline_2026-07-15.json`.
-- [ ] **Controlled agent smoke once:** dans un store isolé et tracing désactivé, exécuter au maximum trois tours : activation explicite EcoTaxa, suivi sans répétition, puis chargement fichier/bascule. Interdire tout tool lourd et consigner tools visibles/appelés. Si aucun provider n'est configuré, utiliser le modèle fake LangChain et documenter cette limite au lieu d'inventer un résultat live.
-- [ ] **Docs:** noter taux de trajectoire, tools visibles, tokens fixes, type de smoke (réel/fake), skips et limites. Marquer l'étape 3 terminée seulement si tous les gates déterministes sont verts.
-- [ ] **Commit:** `docs: close executable source policy gate`.
+- [x] **Targeted gate once:** `pytest -q tests/test_source_scope.py tests/test_source_affinity.py tests/test_source_policy_tools.py tests/test_source_prompt_contract.py tests/test_agent_factory.py tests/test_data_tools.py tests/test_session_context.py tests/test_replay_harness.py tests/harness_redteam/`.
+- [x] **Full gate once:** `pytest -q tests/`.
+- [x] **Offline baseline once:** `python -m evals.replay_harness --lane offline --runs 1 --output evals/baseline_offline_2026-07-15.json`.
+- [x] **Controlled agent smoke once:** dans un store isolé et tracing désactivé, exécuter au maximum trois tours : activation explicite EcoTaxa, suivi sans répétition, puis chargement fichier/bascule. Interdire tout tool lourd et consigner tools visibles/appelés. Si aucun provider n'est configuré, utiliser le modèle fake LangChain et documenter cette limite au lieu d'inventer un résultat live.
+- [x] **Docs:** noter taux de trajectoire, tools visibles, tokens fixes, type de smoke (réel/fake), skips et limites. Marquer l'étape 3 terminée seulement si tous les gates déterministes sont verts.
+- [x] **Commit:** `docs: close executable source policy gate`.

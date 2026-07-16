@@ -42,7 +42,7 @@ flowchart TB
 ```
 
 **Points structurants :**
-- Un **seul agent ReAct**. Pas de « mode ». Le comportement vient du system prompt.
+- Un **seul agent ReAct**. Pas de « mode ». Le modèle suit le system prompt; les autorisations critiques, dont la source, sont appliquées par le control plane Python.
 - Le code est monté en volume (`.:/app`) avec `uvicorn --reload` en dev : hot-reload, pas de rebuild.
 - L'agent IDEA n'appelle **pas** le MCP EcoTaxa via HTTP : il réutilise les mêmes fonctions Python (`core/ecotaxa_browser/`) via les wrappers LangChain de `tools/copepod_sources.py`. Le service `mcp-ecotaxa` HTTP sert surtout aux agents externes et au cache partagé.
 
@@ -130,8 +130,11 @@ flowchart LR
 
 ### Boucle ReAct
 Raisonnement → appel de tool → observation → raisonnement, jusqu'à la réponse
-finale. Le routage entre tools n'est **jamais** codé en Python : il est piloté
-par les règles du system prompt (`agents/copepod_system_prompt.py`).
+finale. Le modèle choisit le tool à l'intérieur de l'allowlist décrite par le
+system prompt. `tools/source_scope.py` calcule une `SourceDecision` persistante,
+filtre les familles externes avant le modèle et bloque fail-closed tout appel
+hors source avant exécution. Le bloc prompt correspondant est généré depuis
+cette politique.
 
 ---
 
@@ -258,10 +261,10 @@ Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`
 | # | Décision | Raison |
 |---|---|---|
 | A1 | Un seul agent ReAct, pas de modes | Simplicité de raisonnement ; le comportement vient du prompt, pas d'états à gérer |
-| A2 | Routage dans le system prompt, jamais en Python | Itération rapide sans redéploiement de code ; testable via evals |
+| A2 | Choix du tool expliqué dans le prompt; autorisation de source en Python | Le modèle garde la souplesse de navigation, mais une source non sélectionnée reste inexécutable |
 | A3 | RAG (savoir) ≠ Skills (geste) | Séparer recherche vectorielle et chargement en bloc de procédures |
 | A4 | MCP EcoTaxa comme cache read-only séparé | Découverte géo/temps rapide sans re-frapper EcoTaxa ; réutilisable par agents externes |
 | A5 | Agent IDEA appelle le cœur Python, pas le MCP HTTP | Moins de latence, pas de dépendance réseau interne |
-| A6 | Sources en ligne seulement sur demande explicite + confirmation coûteuse | Éviter exports involontaires (CT-AG-06) |
+| A6 | Source en ligne nommée à la première utilisation, puis affinité persistante; confirmation séparée pour le coûteux | Éviter les bascules involontaires sans imposer de répéter le nom à chaque suivi |
 | A7 | Session state réparti (checkpoints + session store + store) | Séparer historique de conversation, DataFrames, et mémoire long terme |
 | A8 | Images multi-arch sur GHCR + Watchtower | Déploiement provider-agnostic, mise à jour continue |

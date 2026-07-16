@@ -127,3 +127,26 @@ python -m evals.replay_harness --lane offline --runs 1 --output evals/baseline_o
 La trajectoire déterministe reste identique et les appels offline portent désormais un résultat structuré validable. La baisse de 9 262 tokens fixes (−27,5 %) vient de la représentation actuelle du prompt et des schémas; elle ne constitue pas encore le filtrage dynamique prévu à l'étape 6. Aucun benchmark live ni appel OpenRouter n'a été relancé pour clôturer l'étape 2.
 
 Gate de code : `1089 passed, 20 skipped, 6 xfailed` sur `pytest -q tests/`. Les skips sont les intégrations opt-in EcoTaxa/PostgreSQL; les six `xfail` sont les contrats red-team appartenant aux étapes suivantes.
+
+## Mesure de clôture de l'étape 3
+
+Le scénario `SC-ECOTAXA` comporte désormais un troisième tour qui ne répète pas le nom EcoTaxa. La baseline offline a été régénérée une fois après les gates.
+
+| Métrique offline | Après étape 2 | Après étape 3 |
+|---|---:|---:|
+| Invariants niveau 1 | 100 % | 100 % |
+| Trajectoires niveau 2 | 100 % | 100 % |
+| `SC-LAB` — bon fichier | 100 % | 100 % |
+| Tours | 12 | 13 |
+| Tools appelés par tour | 1,17 | 1,15 |
+| Tokens fixes | 24 392 | 24 477 |
+
+Smoke agent réel unique, modèle `openai/gpt-5.4-mini`, tracing désactivé et catalogue limité aux opérations sûres :
+
+| Tour | Demande | Tools visibles | Affinité après tour |
+|---|---|---:|---|
+| 1 | EcoTaxa explicitement nommé | 25 | `ecotaxa` |
+| 2 | suivi sans répéter EcoTaxa | 25 | `ecotaxa` |
+| 3 | chargement d'un fichier local | 3 | `file` |
+
+Le téléchargement lourd `query_ecotaxa` était absent des trois tours. Les appels observés étaient `load_skill` + prévisualisation au tour 1, résumé read-only au tour 2 et chargement local au tour 3. Gate complet final : `1118 passed, 20 skipped, 5 xfailed`. Aucun benchmark live N ≥ 5 ni replay OpenRouter en boucle n'a été lancé.

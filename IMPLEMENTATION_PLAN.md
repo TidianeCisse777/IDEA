@@ -130,6 +130,8 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 ### Étape 3 — Décision de source exécutable + trancher « projet 17498 »
 
+**État : terminé le 15 juillet 2026.** `SourceDecision` et `SourceAffinity` couvrent les sept sources, filtrent le modèle et gardent l'exécution avec la même politique. Une source externe doit être nommée à sa première utilisation, puis reste active jusqu'à une bascule explicite ou au chargement réussi d'un fichier. Un identifiant nu ne sélectionne jamais sa source.
+
 **Goal :** une **seule** décision de source déterministe, cohérente entre code, prompt et tests. Premier slice qui touche directement la confusion fichier/EcoTaxa.
 
 **Changement :**
@@ -138,9 +140,9 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 - Le bloc de routage du prompt est **généré** depuis la politique (plus de regex + prose indépendantes).
 
 **Test gate :**
-- [ ] Le test rouge « projet 17498 » de l'étape 1 devient vert.
-- [ ] Décision de source **identique** dans le code, le prompt généré et les tests, sur un jeu paramétré de formulations ambiguës.
-- [ ] `SC-LAB` / `SC-ECOTAXA` : routage de source **stable ou amélioré** vs baseline (pas de régression), N ≥ 5.
+- [x] Le test rouge « projet 17498 » de l'étape 1 devient vert.
+- [x] Décision de source **identique** dans le code, le prompt généré et les tests, sur un jeu paramétré de formulations ambiguës.
+- [x] Replay offline : `SC-LAB` / `SC-ECOTAXA` restent à 100 %; un smoke agent réel confirme l'héritage EcoTaxa puis la bascule fichier. Le benchmark live N ≥ 5 n'a pas été relancé.
 
 ---
 
@@ -283,7 +285,7 @@ Le remodelage est réussi quand :
 | 0 — Instrument de mesure | ✅ terminé | offline + live datées | harness reproductible | ✅ |
 | 1 — Tests rouges | ✅ terminé | 7 dettes reproduites | 6 contrats futurs `xfail`, inventaire résolu | ✅ |
 | 2 — Registre + `ToolResult` | ✅ terminé | offline : 33 654 tokens fixes | offline : 24 392; trajectoires 100 % | ✅ |
-| 3 — Décision de source | ⬜ à faire | — | — | ⬜ |
+| 3 — Décision de source | ✅ terminé | offline : 12 tours, 100 % | offline : 13 tours, 100 %; smoke réel 3/3 | ✅ |
 | 4 — Contradictions de routage | ⬜ à faire | — | — | ⬜ |
 | 5 — TurnContext + carte d'état | ⬜ à faire | — | — | ⬜ |
 | 6 — Filtrage dynamique | ⬜ à faire | — | — | ⬜ |

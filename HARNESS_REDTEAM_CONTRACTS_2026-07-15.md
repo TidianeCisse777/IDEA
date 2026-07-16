@@ -7,7 +7,7 @@ Ces contrats décrivent le comportement attendu du futur harness. Ils restent vo
 
 | Contrat | Preuve actuelle | Correction prévue |
 |---|---|---|
-| Un `project_id` nu n'autorise pas EcoTaxa | `ecotaxa_signal("projet 17498")` retourne `True`, contrairement au prompt | Étape 3 — `SourcePolicy` unique |
+| Un `project_id` nu n'autorise pas EcoTaxa | **Résolu en étape 3** : décision structurée, affinité persistante et garde pré-tool commun | Étape 3 — contrat devenu vert |
 | Un résultat numérique d'un tool spécialisé ne force pas `run_pandas` | le prompt contient encore « always call run_pandas … any numeric value » | Étape 4 — règle limitée aux valeurs dérivées |
 | Toute opération lourde possède une confirmation exécutable | **Fondation 2A terminée** : risque et confirmation sont déclarés pour les 62 tools ; l'autorisation liée aux arguments reste non exécutable | Étape 7 — `ApprovalGrant` |
 | `run_graph` est fail-closed sans workflow graphique du tour | avec `loaded_skills=[]`, `run_graph("pass")` exécute le code | Étape 8 — automate lié au `turn_id` |
@@ -30,4 +30,4 @@ Chaque correction doit suivre la séquence suivante :
 3. vérifier le contrat puis comparer la baseline offline/live ;
 4. conserver le changement seulement sans régression des scénarios de référence.
 
-L'étape 2 est fermée : politiques, entrées strictes et résultats structurés sont exécutables. La prochaine tranche est l'étape 3 : unifier la décision de source et trancher le cas « projet 17498 ».
+L'étape 3 est fermée : un ID nu ne choisit plus EcoTaxa, tandis qu'une première mention explicite établit une affinité réutilisable. La prochaine tranche est l'étape 4 : retirer les contradictions restantes du routage numérique, graphique et des procédures de sources.

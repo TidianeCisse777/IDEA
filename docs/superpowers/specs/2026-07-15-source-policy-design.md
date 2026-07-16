@@ -1,7 +1,7 @@
 # Source Policy Design — étape 3
 
 **Date :** 15 juillet 2026
-**Statut :** approuvé par l'utilisateur le 15 juillet 2026
+**Statut :** implémenté et vérifié le 15 juillet 2026
 **Portée :** décision de source exécutable et affinité persistante; aucun filtrage dynamique par workflow, aucune confirmation et aucun `source_lock` persistant dans cette étape.
 
 ## Objectif

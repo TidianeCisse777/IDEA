@@ -194,6 +194,30 @@ def test_file_loaded_with_ecotaxa_signal_is_not_scoped():
     assert is_file_scoped_turn(_FakeStore(has_df=True), "t", msgs) is False
 
 
+def test_file_loaded_with_inherited_ecotaxa_affinity_is_not_file_scoped(tmp_path):
+    import pandas as pd
+
+    from tools.session_store import SessionStore
+    from tools.source_scope import SourceAffinity, write_source_affinity
+
+    store = SessionStore(tmp_path)
+    store.set("t", pd.DataFrame({"sample_id": [1]}), {"source": "file:data.tsv"})
+    write_source_affinity(
+        store,
+        "t",
+        SourceAffinity(
+            active_sources=("ecotaxa",),
+            evidence="explicit_name",
+            origin_user_text="Explore EcoTaxa",
+            updated_at="2026-07-15T12:00:00+00:00",
+        ),
+    )
+
+    msgs = [{"role": "user", "content": "continue avec le projet 17498"}]
+
+    assert is_file_scoped_turn(store, "t", msgs) is False
+
+
 def test_no_file_is_never_scoped():
     msgs = [{"role": "user", "content": "carte des positions des échantillons"}]
     assert is_file_scoped_turn(_FakeStore(has_df=False), "t", msgs) is False

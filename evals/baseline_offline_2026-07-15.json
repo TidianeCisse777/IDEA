@@ -1,19 +1,19 @@
 {
   "external_dependencies": [],
-  "generated_at": "2026-07-16T02:46:28.206287+00:00",
+  "generated_at": "2026-07-16T03:31:33.139828+00:00",
   "lane": "offline",
   "metrics": {
     "cost_usd": null,
-    "fixed_tokens": 24392,
+    "fixed_tokens": 24477,
     "input_tokens": 0,
     "level_1_pass_rate": 1.0,
     "level_2_pass_rate": 1.0,
     "mean_tools_exposed_per_turn": 62.0,
-    "mean_tools_per_turn": 1.1666666666666667,
+    "mean_tools_per_turn": 1.1538461538461537,
     "output_tokens": 0,
     "sc_lab_good_file_rate": 1.0,
     "scenario_runs": 3,
-    "turns": 12
+    "turns": 13
   },
   "model": "scripted-reference",
   "rubric": {
@@ -55,8 +55,8 @@
       "turns": [
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -177,8 +177,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -339,8 +339,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -501,8 +501,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -600,8 +600,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -722,8 +722,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -821,8 +821,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -950,8 +950,8 @@
       "turns": [
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1072,8 +1072,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1192,8 +1192,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1320,8 +1320,8 @@
       "turns": [
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1442,8 +1442,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24392,
-            "system_prompt_tokens": 6388,
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1488,6 +1488,128 @@
                 "retryable": false,
                 "status": "success",
                 "summary": "Résultat scripté offline : preview_ecotaxa_project."
+              },
+              "status": "success"
+            }
+          ],
+          "tools_exposed": [
+            "audit_ecotaxa_availability",
+            "audit_ecotaxa_ecopart_join",
+            "audit_ecotaxa_spatial_coverage",
+            "compare_ecotaxa_projects",
+            "copy_sql_query_to_workspace",
+            "count_ecotaxa_taxa",
+            "couple_zooplankton_bio_oracle",
+            "enrich_ecotaxa_with_ecopart_remote",
+            "enrich_loaded_table_with_amundsen_ctd",
+            "enrich_with_amundsen_ctd",
+            "enrich_with_bio_oracle",
+            "enrich_with_ogsl",
+            "export_deliverable",
+            "export_ecotaxa_samples",
+            "filter_dataframe_by_zone",
+            "find_amundsen_data_for_table",
+            "find_bio_oracle_data_for_table",
+            "find_ecopart_project_for_ecotaxa",
+            "find_ecotaxa_observations",
+            "find_ecotaxa_projects",
+            "find_ecotaxa_projects_in_region",
+            "find_ecotaxa_samples_in_region",
+            "get_ecotaxa_cache_status",
+            "get_ecotaxa_sample",
+            "get_zone_info",
+            "group_ecotaxa_project_samples_by_region",
+            "group_ecotaxa_samples_by_year",
+            "inspect_ecotaxa_column",
+            "inspect_ecotaxa_project_schema",
+            "join_ecotaxa_ecopart",
+            "list_amundsen_datasets",
+            "list_bio_oracle_datasets",
+            "list_ecopart_samples",
+            "list_ecotaxa_campaigns",
+            "list_ecotaxa_project_samples",
+            "list_ecotaxa_projects",
+            "list_sql_tables",
+            "load_file",
+            "load_skill",
+            "lookup_marine_taxonomy",
+            "preview_amundsen_profile",
+            "preview_bio_oracle_point",
+            "preview_ecopart_sample",
+            "preview_ecotaxa_project",
+            "preview_sql_table",
+            "query_amundsen_ctd",
+            "query_bio_oracle",
+            "query_bio_oracle_zones",
+            "query_copepod_knowledge_base",
+            "query_ecopart",
+            "query_ecotaxa",
+            "query_ecotaxa_sample",
+            "query_ogsl",
+            "rank_ecotaxa_samples_by_region",
+            "run_graph",
+            "run_pandas",
+            "search_ecotaxa_taxa",
+            "summarize_ecotaxa_project",
+            "summarize_ecotaxa_projects",
+            "summarize_ecotaxa_sample",
+            "summarize_ecotaxa_sample_deployment",
+            "summarize_ecotaxa_samples"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "fixed_tokens": 24477,
+            "system_prompt_tokens": 6473,
+            "tool_schema_tokens": 18004
+          },
+          "dataset_after": {
+            "source": "ecotaxa_summary",
+            "variable_name": null
+          },
+          "expects_file_use": false,
+          "file_used": false,
+          "final_answer": "Résumé du projet présenté depuis la source active.",
+          "grade": {
+            "actual_source": "ecotaxa",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": null,
+            "expected_source": "ecotaxa",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "ecotaxa"
+            ]
+          },
+          "name": "inherited_source_summary",
+          "prompt": "Résume maintenant le projet 17498 sans téléchargement complet.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "project_id": 17498
+              },
+              "name": "summarize_ecotaxa_project",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : summarize_ecotaxa_project."
               },
               "status": "success"
             }
