@@ -123,6 +123,7 @@ docs/_build/
 !/docs/superpowers/specs/
 /docs/superpowers/specs/*
 !/docs/superpowers/specs/2026-07-15-source-policy-design.md
+!/docs/superpowers/specs/2026-07-15-numeric-evidence-routing-design.md
 
 # Claude Code / assistant session transcripts accidentally dumped in the repo
 *local-command-caveat*.txt
