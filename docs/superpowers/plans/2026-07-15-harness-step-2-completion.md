@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.13, Pydantic 2, LangChain `BaseTool`/`ToolMessage`, pytest, replay offline déterministe.
 
+**État final (15 juillet 2026) : terminé.** Tasks 1 à 7 implémentées et commitées par tranche. Task 8 validée par les scans de contrats, la suite complète et une seule régénération offline; aucun benchmark live n'a été lancé.
+
 ## Global Constraints
 
 - Aucun changement de liste ou de routage des tools pendant l'étape 2.
@@ -20,7 +22,7 @@
 
 ---
 
-### Task 1: Schémas d'entrée stricts (2A.2)
+### Task 1: Schémas d'entrée stricts (2A.2) — terminé
 
 **Files:**
 - Create: `tools/tool_input.py`
@@ -40,7 +42,7 @@
 - [ ] Exécuter une seule fois les tests ciblés `test_tool_input_contracts.py`, `test_tool_catalog.py` et `test_tool_schema_budget.py`.
 - [ ] Commit : `feat: enforce strict tool input schemas`.
 
-### Task 2: Contrat commun `ToolResult`
+### Task 2: Contrat commun `ToolResult` — terminé
 
 **Files:**
 - Create: `tools/tool_result.py`
@@ -59,7 +61,7 @@
 - [ ] Exécuter `pytest -q tests/test_tool_result_contract.py tests/test_tool_policy_registry.py`.
 - [ ] Commit : `feat: add structured tool result contract`.
 
-### Task 3: Familles locales et core
+### Task 3: Familles locales et core — terminé
 
 **Files:**
 - Modify: `tools/data_tools.py`
@@ -83,7 +85,7 @@
 - [ ] Exécuter les nouveaux contrats et les modules de tests métier touchés une seule fois.
 - [ ] Commit : `feat: migrate local tools to ToolResult`.
 
-### Task 4: Famille EcoTaxa
+### Task 4: Famille EcoTaxa — terminé
 
 **Files:**
 - Modify: `tools/copepod_sources.py`
@@ -101,7 +103,7 @@
 - [ ] Exécuter les contrats EcoTaxa et les tests EcoTaxa existants une fois.
 - [ ] Commit : `feat: migrate ecotaxa tools to ToolResult`.
 
-### Task 5: Sources EcoPart, Amundsen, Bio-ORACLE et OGSL
+### Task 5: Sources EcoPart, Amundsen, Bio-ORACLE et OGSL — terminé
 
 **Files:**
 - Modify: `tools/ecopart_sources.py`
@@ -122,7 +124,7 @@
 - [ ] Exécuter les tests métier des quatre modules une fois après la migration complète.
 - [ ] Commit : `feat: migrate remote source tools to ToolResult`.
 
-### Task 6: SQL optionnel et fermeture fail-closed de 2B
+### Task 6: SQL optionnel et fermeture fail-closed de 2B — terminé
 
 **Files:**
 - Modify: `tools/sql_workspace.py`
@@ -140,7 +142,7 @@
 - [ ] Exécuter les contrats du catalogue et SQL une fois.
 - [ ] Commit : `feat: enforce ToolResult for every tool`.
 
-### Task 7: Replay et observabilité structurés
+### Task 7: Replay et observabilité structurés — terminé
 
 **Files:**
 - Modify: `evals/replay_harness.py`
@@ -159,7 +161,7 @@
 - [ ] Exécuter `pytest -q tests/test_replay_harness.py tests/test_tool_result_contract.py`.
 - [ ] Commit : `feat: capture structured tool results in replay`.
 
-### Task 8: Gates, documentation et baseline offline
+### Task 8: Gates, documentation et baseline offline — terminé
 
 **Files:**
 - Modify: `IMPLEMENTATION_PLAN.md`

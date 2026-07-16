@@ -1,0 +1,127 @@
+{
+  "schema_version": "1.0",
+  "scenarios": [
+    {
+      "id": "SC-LAB",
+      "description": "Conversation fichier TSV seulement, Baffin puis Labrador.",
+      "turns": [
+        {
+          "name": "upload",
+          "prompt": "Charge le fichier data/demo/neolabs_taxonomy_2014_2020.tsv.",
+          "expected_source": "file",
+          "expected_dataset_source_family": "file",
+          "expect_file_use": true,
+          "forbidden_tools": ["query_ecotaxa", "find_ecotaxa_samples_in_region", "query_ecopart"],
+          "offline": {"tool_calls": [{"name": "load_file", "arguments": {"path": "data/demo/neolabs_taxonomy_2014_2020.tsv"}}], "dataset_after": {"source": "file", "variable_name": "df"}, "final_answer": "Fichier chargé."}
+        },
+        {
+          "name": "baffin_positions",
+          "prompt": "Je veux une carte avec les positions de tous les échantillons situés dans la Baie de Baffin. Utilise une légende qui change la taille du point selon le nombre d'échantillons prélevés à la même position.",
+          "expected_source": "file",
+          "expected_dataset_source_contains": "Baie de Baffin",
+          "expect_file_use": true,
+          "forbidden_tools": ["query_ecotaxa", "find_ecotaxa_samples_in_region", "query_ecopart"],
+          "offline": {"tool_calls": [{"name": "get_zone_info", "arguments": {"zone_name": "Baie de Baffin"}}, {"name": "filter_dataframe_by_zone", "arguments": {"zone_name": "Baie de Baffin"}}, {"name": "run_graph", "arguments": {"kind": "station_map"}}], "dataset_after": {"source": "filter_by_zone:Baie de Baffin", "variable_name": "baffin_df"}, "final_answer": "Carte produite depuis le fichier."}
+        },
+        {
+          "name": "labrador_color_taxa",
+          "prompt": "Je veux une carte des positions des échantillons situés dans la mer du Labrador, avec une légende de couleur indiquant le nombre de taxons identifiés pour chaque échantillon.",
+          "expected_source": "file",
+          "expected_dataset_source_contains": "Mer du Labrador",
+          "expect_file_use": true,
+          "forbidden_tools": ["query_ecotaxa", "find_ecotaxa_samples_in_region", "query_ecopart"],
+          "offline": {"tool_calls": [{"name": "get_zone_info", "arguments": {"zone_name": "Mer du Labrador"}}, {"name": "filter_dataframe_by_zone", "arguments": {"zone_name": "Mer du Labrador"}}, {"name": "run_graph", "arguments": {"kind": "station_map"}}], "dataset_after": {"source": "filter_by_zone:Mer du Labrador", "variable_name": "labrador_df"}, "final_answer": "Le fichier contient 0 ligne dans cette zone; aucune carte trompeuse n'est produite."}
+        },
+        {
+          "name": "tsv_only_directive",
+          "prompt": "Utilise seulement le fichier .tsv que je t'ai fourni. N'utilise en aucun cas les skills ou méthodes pour EcoTaxa. As-tu compris ?",
+          "expected_source": "file",
+          "expect_file_use": false,
+          "forbidden_tools": ["query_ecotaxa", "find_ecotaxa_samples_in_region", "query_ecopart"],
+          "offline": {"tool_calls": [], "dataset_after": {"source": "filter_by_zone:Mer du Labrador", "variable_name": "labrador_df"}, "final_answer": "Restriction au TSV confirmée."}
+        },
+        {
+          "name": "labrador_positions_tsv",
+          "prompt": "Parfait. Je veux une carte avec les positions des échantillons situés dans la mer du Labrador.",
+          "expected_source": "file",
+          "expected_dataset_source_contains": "Mer du Labrador",
+          "expect_file_use": true,
+          "forbidden_tools": ["query_ecotaxa", "find_ecotaxa_samples_in_region", "query_ecopart"],
+          "offline": {"tool_calls": [{"name": "filter_dataframe_by_zone", "arguments": {"zone_name": "Mer du Labrador"}}], "dataset_after": {"source": "filter_by_zone:Mer du Labrador", "variable_name": "labrador_df"}, "final_answer": "Aucune ligne du TSV dans la zone."}
+        },
+        {
+          "name": "file_name",
+          "prompt": "Quel est le nom du fichier que je t'ai donné ?",
+          "expected_source": "file",
+          "expect_file_use": false,
+          "forbidden_tools": ["query_ecotaxa", "find_ecotaxa_samples_in_region", "query_ecopart"],
+          "offline": {"tool_calls": [], "dataset_after": {"source": "filter_by_zone:Mer du Labrador", "variable_name": "labrador_df"}, "final_answer": "neolabs_taxonomy_2014_2020.tsv"}
+        },
+        {
+          "name": "add_coast",
+          "prompt": "Ajoute la côte à cette carte.",
+          "expected_source": "file",
+          "expected_dataset_source_contains": "Mer du Labrador",
+          "expect_file_use": true,
+          "forbidden_tools": ["query_ecotaxa", "find_ecotaxa_samples_in_region", "query_ecopart"],
+          "offline": {"tool_calls": [{"name": "run_graph", "arguments": {"kind": "station_map", "coast": true}}], "dataset_after": {"source": "filter_by_zone:Mer du Labrador", "variable_name": "labrador_df"}, "final_answer": "Aucune carte ajoutée car la sélection est vide."}
+        }
+      ]
+    },
+    {
+      "id": "SC-ENRICH",
+      "description": "Enrichissements explicites d'un fichier avec Amundsen et Bio-ORACLE.",
+      "turns": [
+        {
+          "name": "load_environment_file",
+          "prompt": "Charge le fichier tests/fixtures/d07_amundsen_schema.tsv.",
+          "expected_source": "file",
+          "expected_dataset_source_family": "file",
+          "expect_file_use": true,
+          "forbidden_tools": ["query_ecotaxa", "query_ecopart"],
+          "offline": {"tool_calls": [{"name": "load_file", "arguments": {"path": "tests/fixtures/d07_amundsen_schema.tsv"}}], "dataset_after": {"source": "file", "variable_name": "df"}, "final_answer": "Fichier chargé."}
+        },
+        {
+          "name": "amundsen_enrichment",
+          "prompt": "Enrichis explicitement ce fichier avec Amundsen CTD et rapporte la couverture, sans interprétation biologique.",
+          "expected_source": "amundsen",
+          "expected_dataset_source_family": "amundsen",
+          "expect_file_use": false,
+          "forbidden_tools": ["query_ecotaxa", "query_ecopart", "query_bio_oracle"],
+          "offline": {"tool_calls": [{"name": "enrich_loaded_table_with_amundsen_ctd", "arguments": {}}], "dataset_after": {"source": "amundsen_enrichment", "variable_name": "amundsen_enriched_df"}, "final_answer": "Enrichissement Amundsen terminé."}
+        },
+        {
+          "name": "bio_oracle_enrichment",
+          "prompt": "Enrichis maintenant explicitement la table avec Bio-ORACLE baseline en utilisant les coordonnées de chaque ligne.",
+          "expected_source": "bio_oracle",
+          "expected_dataset_source_family": "bio_oracle",
+          "expect_file_use": false,
+          "forbidden_tools": ["query_ecotaxa", "query_ecopart", "query_amundsen_ctd"],
+          "offline": {"tool_calls": [{"name": "couple_zooplankton_bio_oracle", "arguments": {"scenario": "baseline"}}], "dataset_after": {"source": "bio_oracle_coupling", "variable_name": "bio_oracle_enriched_df"}, "final_answer": "Enrichissement Bio-ORACLE terminé."}
+        }
+      ]
+    },
+    {
+      "id": "SC-ECOTAXA",
+      "description": "Routage EcoTaxa explicite avec identifiant fondé dans le tour.",
+      "turns": [
+        {
+          "name": "find_project",
+          "prompt": "Dans EcoTaxa, trouve le projet 17498 et présente uniquement ses métadonnées disponibles.",
+          "expected_source": "ecotaxa",
+          "expect_file_use": false,
+          "forbidden_tools": ["query_ecopart", "query_amundsen_ctd", "query_bio_oracle"],
+          "offline": {"tool_calls": [{"name": "find_ecotaxa_projects", "arguments": {"title_filter": "17498"}}], "dataset_after": {"source": "ecotaxa_catalog", "variable_name": null}, "final_answer": "Métadonnées EcoTaxa présentées."}
+        },
+        {
+          "name": "preview_project",
+          "prompt": "Prévisualise le projet EcoTaxa 17498 sans téléchargement complet.",
+          "expected_source": "ecotaxa",
+          "expect_file_use": false,
+          "forbidden_tools": ["query_ecopart", "query_amundsen_ctd", "query_bio_oracle"],
+          "offline": {"tool_calls": [{"name": "preview_ecotaxa_project", "arguments": {"project_id": 17498}}], "dataset_after": {"source": "ecotaxa_preview", "variable_name": null}, "final_answer": "Prévisualisation EcoTaxa terminée."}
+        }
+      ]
+    }
+  ]
+}

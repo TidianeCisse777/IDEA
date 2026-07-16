@@ -114,6 +114,11 @@ docs/_build/
 !/docs/e2e/**
 !/docs/features/
 !/docs/mcp/
+!/docs/superpowers/
+/docs/superpowers/*
+!/docs/superpowers/plans/
+/docs/superpowers/plans/*
+!/docs/superpowers/plans/2026-07-15-harness-step-0-replay.md
 
 # Claude Code / assistant session transcripts accidentally dumped in the repo
 *local-command-caveat*.txt
@@ -186,6 +191,9 @@ cython_debug/
 *.json
 !package.json
 !package-lock.json
+!/evals/scenarios/harness_reference.json
+!/evals/baseline_offline_*.json
+!/evals/baseline_live_*.json
 *.csv
 !tests/fixtures/source_enrichment_stations.csv
 *.png

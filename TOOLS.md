@@ -7,6 +7,8 @@
 > **59 tools obligatoires, 62 avec SQL** (les 3 tools SQL ne sont ajoutés que si
 > `DATABASE_URL` est résolvable). Les règles de routage — quand appeler quel tool — vivent dans
 > `agents/copepod_system_prompt.py`, jamais dans le code Python.
+> Les 62 tools ont des entrées Pydantic strictes et renvoient un artefact `ToolResult`
+> structuré (`success`, `empty`, `blocked`, `error` ou `cancelled`) en plus du texte visible.
 
 <!-- TOOL-INVENTORY:START -->
 Inventaire généré : **59 tools obligatoires**, **62 avec SQL**.

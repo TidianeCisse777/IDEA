@@ -29,7 +29,10 @@ Séquences figées, rejouées à l'identique pour mesurer chaque étape. À comp
 | `SC-ENRICH` | enrichissement Amundsen + Bio-ORACLE sur fichier chargé | non-régression des chemins critiques d'enrichissement |
 | `SC-ECOTAXA` | requête EcoTaxa explicite (projet nommé) | le routage source autorisé fonctionne toujours |
 
-Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
+Chaque scénario est évalué dans deux pistes complémentaires :
+
+- **Piste A — replay offline déterministe (CI)** : modèle scripté, adaptateurs de sources simulés, réseau et tracing coupés. Elle vérifie les invariants, la forme des trajectoires et les régressions exactes. Un seul passage suffit pour les assertions déterministes ; plusieurs passages peuvent confirmer l'absence de fuite d'état.
+- **Piste B — benchmark live** : modèle réel et intégrations explicitement sélectionnées. Chaque scénario est rejoué **N ≥ 5 fois** pour mesurer la variance, la qualité de routage, les tokens, le coût et la latence. Cette piste est séparée de la CI et produit un rapport daté.
 
 ---
 
@@ -50,26 +53,32 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 
 ### Étape 0 — Instrument de mesure *(aucun changement runtime)*
 
+**État : terminé le 15 juillet 2026.** Résultats et limites : [`BASELINE_HARNESS_2026-07-15.md`](BASELINE_HARNESS_2026-07-15.md).
+
 **Goal :** disposer d'un harnais de rejeu reproductible et d'une **baseline chiffrée** du comportement actuel. Prérequis absolu : « mesurer à chaque étape » est impossible sans lui.
 
 **Livrables :**
-- `evals/replay_harness.py` : rejoue un scénario (thread + store isolés, `SESSION_STORE_DIR` jetable, `user_id` unique) et capture par tour → tools exposés au modèle, tools appelés + args, **source/df réellement utilisée**, refus, réponse finale, tokens/coût.
+- `evals/replay_harness.py` : moteur commun qui rejoue un scénario (thread + store isolés, `SESSION_STORE_DIR` jetable, `user_id` unique) et capture par tour → tools exposés au modèle, tools appelés + args, **source/df réellement utilisée**, refus, réponse finale, tokens/coût.
 - Scénarios `SC-LAB`, `SC-ENRICH`, `SC-ECOTAXA` figés en fixtures.
-- `evals/baseline_YYYY-MM-DD.json` : métriques actuelles sur N ≥ 5 essais/scénario.
+- Piste A : runner offline déterministe et rapport de référence versionné, sans dépendance à une API, une source externe ou LangSmith.
+- Piste B : `evals/baseline_YYYY-MM-DD.json`, produit par une commande live explicite sur N ≥ 5 essais/scénario ; le rapport distingue modèle, versions, sources simulées/réelles et conditions d'exécution.
 - Les **trois niveaux d'évaluation** cadrés dès le départ (best-practices §6), même si seul le niveau 1-2 est instrumenté maintenant :
   - **Niveau 1 — invariants déterministes** : tool non visible non exécutable, source verrouillée non contournable, identifiant ancien rejeté, résultat error/empty jamais présenté comme success.
   - **Niveau 2 — trajectoire** : tools visibles au départ, appels + args, décisions de politique, transitions, nombre de tours/appels, tokens/coût, état final.
   - **Niveau 3 — qualité scientifique & UX** : exactitude des tableaux/métriques, traçabilité des sources, absence d'interprétation non demandée, ton clinique, concision (grader LLM + calibration humaine périodique).
 
 **Test gate :**
-- [ ] Le rejeu d'un scénario régénère un rapport de trajectoire structuré identique en forme, run-à-run.
-- [ ] Baseline produite : pour `SC-LAB`, taux « part du bon fichier » chiffré ; tokens fixes mesurés ; tools moyens/tour mesurés.
-- [ ] Isolation vérifiée : aucun écrit dans le store de prod, aucune trace LangSmith de test.
-- [ ] Les graders de niveau 1 et 2 tournent sur les 3 scénarios ; le niveau 3 est cadré (rubric) même si calibré plus tard.
+- [x] Le replay offline d'un scénario régénère un rapport de trajectoire structuré identique en forme et en contenu normalisé, run-à-run.
+- [x] Baseline offline produite : pour `SC-LAB`, taux « part du bon fichier » chiffré ; tokens fixes mesurés ; tools moyens/tour mesurés.
+- [x] La commande du benchmark live impose N ≥ 5, n'est jamais lancée implicitement par la CI et annote clairement les dépendances externes utilisées.
+- [x] Isolation vérifiée : aucun écrit dans le store de prod, aucune trace LangSmith de test.
+- [x] Les graders de niveau 1 et 2 tournent sur les 3 scénarios ; le niveau 3 est cadré (rubric) même si calibré plus tard.
 
 ---
 
 ### Étape 1 — Tests rouges qui exposent les failles *(aucune correction)*
+
+**État : contrats capturés le 15 juillet 2026.** Les 7 échecs diagnostiques et leur propriétaire sont documentés dans [`HARNESS_REDTEAM_CONTRACTS_2026-07-15.md`](HARNESS_REDTEAM_CONTRACTS_2026-07-15.md). La vérification en mode `--runxfail` confirme les raisons d'échec ; l'exécution CI normale n'a pas été répétée à la demande de l'utilisateur.
 
 **Goal :** rendre la dette connue **exécutable et rouge**, versionnée, avant de toucher au runtime (Phase 0 du best-practices).
 
@@ -83,25 +92,39 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 - parité inventaire : catalogue runtime (59/62) vs `TOOLS.md`/`ARCHITECTURE.md`/`AGENTS.md`.
 
 **Test gate :**
-- [ ] Chaque test échoue **pour la bonne raison** (message qui pointe la faille réelle).
-- [ ] Marqués `xfail(strict=True)` avec référence à l'étape qui les rendra verts — CI reste vert.
+- [x] Chaque test échoue **pour la bonne raison** (message qui pointe la faille réelle).
+- [x] Marqués `xfail(strict=True)` avec référence à l'étape qui les rendra verts. La validation CI normale reste à constater lors du prochain passage contrôlé.
 
 ---
 
-### Étape 2 — Fondation : registre déclaratif unique + `ToolResult` commun
+### Étape 2A — Fondation : registre déclaratif unique
 
-**Goal :** poser la **source de vérité unique** des tools et l'**enveloppe de résultat structurée**, sur lesquelles reposent toutes les étapes suivantes (Phase 1 du best-practices). Sans `ToolResult`, l'instrument de l'étape 0 doit parser des chaînes comme « Erreur » — exactement le fragile que l'audit dénonce.
+**État : terminé le 15 juillet 2026.** Les 62 tools possèdent une politique immuable validée et un schéma Pydantic strict (`strict=True`, `extra="forbid"`). Les défauts EcoPart `project_id=105` ont été supprimés. `ToolCatalog.policy()` reste la source de vérité et l'inventaire de `TOOLS.md` est généré. Les confirmations sont déclarées mais ne deviennent exécutables qu'à l'étape 7.
+
+**Goal :** poser la **source de vérité unique** des tools sur laquelle reposent les politiques suivantes, sans cumuler ce refactor avec une migration de tous les retours.
 
 **Changement :**
 - `ToolPolicy` par tool (**extension de `tool_catalog.py`**, pas un registre concurrent) : `family`, `source`, `risk`, `read_only`, `mutates_session`, `remote_io`, `expensive`, `reversible`, `requires_confirmation`, `required_skill`, `allowed_workflows`, `max_calls_per_turn`, `result_schema`. Schémas d'entrée **Pydantic stricts** (pas d'argument ambigu, pas de défaut dangereux — ex. plus de `project_id=105` implicite).
 - Le registre **génère** : métadonnées runtime, table de présentation UI, sections de `TOOLS.md`, matrice de confirmation, tests de parité, filtres de tools. Le prompt ne recopie plus cette matrice.
-- `ToolResult` commun (`status` ∈ success/empty/blocked/error/cancelled, `summary`, `data_ref`, `artifact_refs`, `provenance`, `persisted`, `retryable`, `method`, `metrics`). Adopté **sans changer les routes** d'abord.
 
 **Test gate :**
-- [ ] Test de parité registre ↔ catalogue runtime vert ; `TOOLS.md` généré, 0 divergence (le test rouge inventaire de l'étape 1 devient vert).
-- [ ] Chaque tool retourne un `ToolResult` ; l'instrument de l'étape 0 lit `status` au lieu de parser du texte.
-- [ ] Aucun tool n'a de défaut dangereux (schémas stricts validés au démarrage).
-- [ ] Baseline inchangée (refactor sans régression de comportement).
+- [x] Test de parité registre ↔ catalogue runtime vert ; `TOOLS.md` généré, 0 divergence (le test rouge inventaire de l'étape 1 devient vert).
+- [x] Aucun tool n'a de défaut dangereux (schémas stricts validés au démarrage).
+- [x] Baseline offline stable (refactor sans régression de trajectoire).
+
+### Étape 2B — Migration progressive vers `ToolResult`
+
+**État : terminé le 15 juillet 2026.** Les 62 tools utilisent le contrat LangChain `content_and_artifact`; leur artefact porte un `ToolResult` validé et le replay lit exclusivement ce statut structuré. Aucun adaptateur de résultat legacy ne subsiste.
+
+**Goal :** remplacer les retours textuels ambigus par une enveloppe structurée, famille par famille, sans migration « big bang ».
+
+**Changement :** `ToolResult` commun (`status` ∈ success/empty/blocked/error/cancelled, `summary`, `data_ref`, `artifact_refs`, `provenance`, `persisted`, `retryable`, `method`, `metrics`). Migration séquentielle par famille de tools, avec adaptateur temporaire explicite pour les tools non encore migrés. Ordre recommandé : fichier/dataframe → sources distantes → graphes/livrables → SQL/RAG/skills.
+
+**Test gate :**
+- [x] Chaque famille migrée possède ses tests de contrat et conserve sa trajectoire de référence avant de passer à la suivante.
+- [x] Chaque tool retourne un `ToolResult` et l'instrument de l'étape 0 lit `status` sans parser « Erreur »/« Aucun résultat ».
+- [x] Aucun adaptateur temporaire : aucun retour legacy ne traverse le runtime.
+- [x] Baseline offline stable après la migration complète.
 
 ---
 
@@ -171,11 +194,12 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 
 **Goal :** rendre CT-AG-06 réelle : aucune opération lourde sans approbation liée à l'action.
 
-**Changement :** `ToolGuardMiddleware` comme **point de validation central fail-closed** (tool connu ? visible ? source compatible ? args valides ? identifiants fondés ? budget ? étape de workflow ? confirmation valide ?). `ApprovalGrant` lié à `tool_name` + `canonical_args_hash` + expiration, via `HumanInTheLoop`/interrupt LangGraph. Le champ `requires_confirmation` du registre (étape 2) pilote le déclenchement.
+**Changement :** `ToolGuardMiddleware` comme **point de validation central fail-closed** (tool connu ? visible ? source compatible ? args valides ? identifiants fondés ? budget ? étape de workflow ? confirmation valide ?). `ApprovalGrant` lié à `tool_name` + `canonical_args_hash` + expiration, via `HumanInTheLoop`/interrupt LangGraph. Le champ `requires_confirmation` du registre (étape 2A) pilote le déclenchement. Le protocole d'interruption/reprise est propagé jusqu'à FastAPI SSE et Open WebUI : événement d'approbation structuré, reprise idempotente du même thread, reconnexion sans double exécution et statut final observable.
 
 **Test gate :**
 - [ ] Aucun tool lourd exécutable sans grant exact (tests rouges confirmation de l'étape 1 verts).
 - [ ] approve / edit / reject / reprise / expiration testés ; modifier un argument invalide le grant.
+- [ ] Pause/reprise/reconnexion SSE testées de bout en bout ; une reprise répétée n'exécute jamais l'opération deux fois.
 - [ ] Une métadonnée absente provoque un refus explicite (fail-closed).
 
 ---
@@ -197,9 +221,11 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 
 ---
 
-### Étape 9 — Isolation du code libre *(axe sécurité)*
+### Étape 9 — Isolation du code libre *(P0 sécurité, ordonnancement technique après les fondations)*
 
 **Goal :** `run_pandas`/`run_graph` exécutés sans surface d'action excessive (OWASP moindre privilège).
+
+**Priorité :** cette faiblesse reste **P0 sécurité** dès l'audit. Son numéro indique seulement l'ordre de dépendances du chantier principal ; tout déploiement exposé doit la traiter ou désactiver ces tools avant d'attendre l'étape 9.
 
 **Changement :** worker jetable, FS lecture seule sauf répertoire d'artefacts, **aucun secret**, réseau coupé par défaut, quotas CPU/mémoire/temps/sortie, imports explicitement autorisés, datasets par références contrôlées, validation des artefacts, destruction après appel.
 
@@ -254,9 +280,9 @@ Le remodelage est réussi quand :
 
 | Étape | Statut | Baseline | Après | Gate |
 |---|---|---|---|---|
-| 0 — Instrument de mesure | ⬜ à faire | — | — | ⬜ |
-| 1 — Tests rouges | ⬜ à faire | — | — | ⬜ |
-| 2 — Registre + `ToolResult` | ⬜ à faire | — | — | ⬜ |
+| 0 — Instrument de mesure | ✅ terminé | offline + live datées | harness reproductible | ✅ |
+| 1 — Tests rouges | ✅ terminé | 7 dettes reproduites | 6 contrats futurs `xfail`, inventaire résolu | ✅ |
+| 2 — Registre + `ToolResult` | ✅ terminé | offline : 33 654 tokens fixes | offline : 24 392; trajectoires 100 % | ✅ |
 | 3 — Décision de source | ⬜ à faire | — | — | ⬜ |
 | 4 — Contradictions de routage | ⬜ à faire | — | — | ⬜ |
 | 5 — TurnContext + carte d'état | ⬜ à faire | — | — | ⬜ |
