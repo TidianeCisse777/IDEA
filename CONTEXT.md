@@ -47,7 +47,7 @@ Le system prompt (`agents/copepod_system_prompt.py`, plus `langchain hub` en pro
 
 La production graphique impose toujours la séquence : `load_skill("graph_planner")` → `load_skill("graph_writer")` → `run_graph` (visuel) ou `run_pandas` (tableau). Le choix reste sémantique, mais une garde exécutable classifie l'artefact au premier appel graphique et bloque les intentions non visuelles ou ambiguës. Planner et writer doivent réussir séquentiellement dans le tour courant; leur exécution en lot parallèle est refusée. Cette planification mécanique remplace l'ancien concept d'« étape de planification graphique » qui était un état de session — le plan est affiché dans un bloc `<details>`, pas validé par un dialogue.
 
-**Confirmation utilisateur explicite avant opération coûteuse (CT-AG-06)** — le prompt impose un « oui / go / lance / confirme » avant : `query_ecotaxa` / `query_ecopart` / `query_amundsen_ctd` complets, `query_bio_oracle` sur une région, `couple_zooplankton_bio_oracle` > 10 lignes, `copy_sql_query_to_workspace` sans `LIMIT`, `export_deliverable`, tout calcul de variable dérivée et toute jointure non standard. Les opérations légères (load_file, list/preview, run_pandas sur données déjà chargées, run_graph après plan) restent immédiates.
+**Confirmation utilisateur explicite avant opération coûteuse (CT-AG-06)** — le prompt impose un « oui / go / lance / confirme » avant : `query_ecotaxa` / `query_ecopart` / `query_amundsen_ctd` complets, l'enrichissement EcoPart distant, `query_bio_oracle` sur une région, `enrich_with_bio_oracle` au-delà de 10 lignes avec plusieurs variables × scénarios, `copy_sql_query_to_workspace` sans `LIMIT`, `export_deliverable`, tout calcul de variable dérivée et toute jointure non standard. Les opérations légères (load_file, list/preview, run_pandas sur données déjà chargées, run_graph après plan) restent immédiates.
 
 ---
 
@@ -56,7 +56,7 @@ La production graphique impose toujours la séquence : `load_skill("graph_planne
 - **RAG** (`query_copepod_knowledge_base`) — recherche vectorielle sur 11 documents (`core/copepod_rag/docs/`). Sert au savoir : colonnes, méthodes, taxonomie, sources.
 - **Skill** (`load_skill(name)`) — chargement en bloc d'un document Markdown. Sert au geste : comment lancer une extraction EcoTaxa, comment écrire un graphique matplotlib, comment compiler un livrable.
 
-Les 14 skills disponibles sont dans `agents/skills/` :
+Les 15 skills disponibles sont dans `agents/skills/` :
 
 | Skill | Rôle |
 |---|---|
@@ -67,6 +67,7 @@ Les 14 skills disponibles sont dans `agents/skills/` :
 | `ecopart_query` | Règles d'extraction EcoPart. |
 | `amundsen_ctd_query` | Règles d'extraction Amundsen CTD via ERDDAP. |
 | `bio_oracle_query` | Règles d'extraction Bio-ORACLE par scénario / couche. |
+| `ogsl_query` | Enrichissement canonique OGSL CTD par lat/lon/temps/profondeur. |
 | `environmental_join` | Stratégie de jointure biologique ↔ environnemental. |
 | `neolabs_abundance_analysis` | Abondance / diversité / ordination des fichiers NeoLabs. |
 | `copepod_hydrodynamic_micro_zoom` | Garde-fous d'interprétation micro-hydrodynamique (fronts, panaches…). |

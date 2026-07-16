@@ -494,6 +494,7 @@ _REQUIRED_SKILL_BY_FAMILY: Mapping[str, str] = MappingProxyType({
     "ecopart": "ecopart_query",
     "amundsen": "amundsen_ctd_query",
     "bio_oracle": "bio_oracle_query",
+    "ogsl": "ogsl_query",
 })
 
 def _build_policy(name: str, profile_name: str) -> ToolPolicy:

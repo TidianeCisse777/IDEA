@@ -97,6 +97,9 @@ def test_source_for_tool_call_uses_policy_and_source_skills():
         "load_skill", {"skill_name": "bio_oracle_query"}, policies
     ) == "bio_oracle"
     assert source_for_tool_call(
+        "load_skill", {"skill_name": "ogsl_query"}, policies
+    ) == "ogsl"
+    assert source_for_tool_call(
         "load_skill", {"skill_name": "sql_workspace_query"}, policies
     ) == "sql"
     assert source_for_tool_call(

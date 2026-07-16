@@ -39,12 +39,13 @@ agent.py — LangChain create_agent (ex-create_react_agent)
     ├── tools/ecopart_sources.py    → list/preview/query EcoPart + join
     ├── tools/amundsen_sources.py   → list/preview/query Amundsen CTD
     ├── tools/bio_oracle_sources.py → list/preview/query Bio-ORACLE + coupling
+    ├── tools/ogsl_sources.py       → query/enrichissement OGSL CTD
     ├── tools/sql_workspace.py      → list/preview/copy SQL (read-only)
     └── tools/deliverable_tool.py   → export_deliverable (PDF via WeasyPrint)
 
 core/copepod_rag/    ChromaDB (11 docs RAG)
 core/ecotaxa_client/ core/ecopart_client/ core/amundsen_ctd_client/ core/bio_oracle_client/
-agents/skills/       14 skills Markdown chargeables à la demande
+agents/skills/       15 skills Markdown chargeables à la demande
 ```
 
 Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction, puis les familles de sources externes sont filtrées par `SourceDecision` avant chaque appel modèle. Il n'y a pas de « mode » de session.
@@ -106,7 +107,7 @@ studio.py                 LangGraph Studio entry
 
 agents/
   copepod_system_prompt.py  System prompt complet (anglais, ~187 lignes)
-  skills/                   14 skills Markdown
+  skills/                   15 skills Markdown
   (copepod_prompt.py déprécié → archivé dans docs/legacy/copepod_prompt_DEPRECATED.py)
 
 tools/                    59 tools @tool LangChain (62 avec SQL optionnel — voir TOOLS.md)

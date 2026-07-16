@@ -214,11 +214,11 @@ def test_system_prompt_mentions_sources():
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
 
 
-def test_system_prompt_prioritizes_current_explicit_environmental_enrichment():
+def test_system_prompt_prioritizes_current_explicit_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "current explicit environmental enrichment request" in prompt
+    assert "current explicit enrichment request" in prompt
     assert "do not require a direct join identifier" in prompt
     assert "earlier assistant refusal" in prompt
 
@@ -899,25 +899,26 @@ def test_system_prompt_routes_ecotaxa_list_preview_and_export_separately():
 def test_system_prompt_routes_ecotaxa_enrichment_with_ecopart_to_remote_when_missing_loaded_ecopart():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = _routing_contract("ecotaxa_query.md", "ecopart_query.md")
+    prompt = " ".join(
+        _routing_contract("ecotaxa_query.md", "ecopart_query.md").split()
+    )
     assert "enrich_ecotaxa_with_ecopart_remote" in prompt
-    assert "no ecopart file/project is already loaded in session" in prompt
-    assert "even if `df_ecotaxa` is already loaded" in prompt
-    assert "detour through `query_ecotaxa`" in prompt
-    assert "no args by default" in prompt
-    assert "heavy operation" in prompt
+    assert "only canonical remote enrichment path" in prompt
+    assert "do not detour through source discovery" in prompt
+    assert "confirmed=false" in prompt
+    assert "confirmed=true" in prompt
 
 
 def test_system_prompt_requires_reporting_ecopart_join_match_coverage():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = _routing_contract("ecopart_query.md")
+    prompt = " ".join(_routing_contract("ecopart_query.md").split())
     # The agent must report match coverage and warn on weak/empty joins.
-    assert "report join coverage" in prompt
-    assert "matchées sur un bin ecopart" in prompt
-    assert "same campaign" in prompt or "different campaign" in prompt
+    assert "always report match coverage" in prompt
+    assert "rows matched on an ecopart bin" in prompt
     assert "depth range actually covered" in prompt
-    assert "not scientific interpretation" in prompt
+    assert "did not really take" in prompt
+    assert "do not add scientific or biological interpretation" in prompt
 
 
 def test_system_prompt_requires_source_variable_when_chaining_enrichments():
@@ -939,11 +940,16 @@ def test_enrichment_skills_require_reporting_match_coverage():
 
 
 def test_ecopart_query_skill_prefers_remote_enrichment_when_ecotaxa_is_already_loaded():
-    skill = Path("agents/skills/ecopart_query.md").read_text(encoding="utf-8").lower()
+    skill = " ".join(
+        Path("agents/skills/ecopart_query.md")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
 
-    assert "do **not** call `query_ecotaxa` again" in skill
-    assert "use `enrich_ecotaxa_with_ecopart_remote` as the default route" in skill
-    assert "only call `query_ecotaxa(project_id=...`" in skill or "only call `query_ecotaxa(project_id=...)" in skill
+    assert "call `enrich_ecotaxa_with_ecopart_remote` directly" in skill
+    assert "query_ecotaxa" not in skill
+    assert "fresh ecotaxa export" in skill
 
 
 def test_ecotaxa_navigation_distinguishes_loki_instrument_from_project():
@@ -1181,15 +1187,13 @@ def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
     assert "copépodes" in skill
 
 
-def test_system_prompt_routes_bio_oracle_list_preview_query_and_enrichment():
+def test_system_prompt_routes_bio_oracle_loaded_table_to_canonical_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("bio_oracle_query.md")
-    assert "list_bio_oracle_datasets" in prompt
-    assert "preview_bio_oracle_point" in prompt
-    assert "query_bio_oracle" in prompt
     assert "enrich_with_bio_oracle" in prompt
-    assert "only if `query_bio_oracle` succeeds" in prompt
+    assert "only canonical loaded-table enrichment path" in prompt
+    assert "couple_zooplankton_bio_oracle" not in prompt
 
 
 def test_system_prompt_requires_shared_hierarchy_resolver_for_loaded_copepod_data():
@@ -1216,22 +1220,21 @@ def test_system_prompt_requires_canonical_sample_depth_for_uvp_analyses():
     assert "do not independently rebuild" in prompt
 
 
-def test_system_prompt_routes_two_local_ecotaxa_ecopart_files_by_variable():
+def test_system_prompt_routes_ecopart_to_exact_active_table():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract_raw("ecopart_query.md")
-    assert "ecotaxa_variable" in prompt
-    assert "ecopart_variable" in prompt
-    assert "project_id=None" in prompt
-    assert "ignore any numeric EcoPart project from earlier turns" in prompt
+    assert "active sample, file, or table" in prompt
+    assert "grounded ecotaxa project metadata" in prompt.lower()
+    assert "earlier turns" not in prompt.lower() or "another source from earlier turns" in prompt.lower()
 
 
-def test_system_prompt_routes_join_control_to_persisted_audit_tool():
+def test_system_prompt_keeps_hidden_ecopart_audit_route_out_of_skill():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecopart_query.md")
-    assert "audit_ecotaxa_ecopart_join" in prompt
-    assert "never reconstruct the join for an audit" in prompt
+    assert "audit_ecotaxa_ecopart_join" not in prompt
+    assert "enrich_ecotaxa_with_ecopart_remote" in prompt
 
 
 def test_system_prompt_respects_run_pandas_persistence_contract():
@@ -1269,12 +1272,10 @@ def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():
 
     prompt = _routing_contract("bio_oracle_query.md")
     assert "les mêmes stations" in prompt
-    assert "top n stations" in prompt
-    assert "scenarios" in prompt
-    assert "never create empty placeholder columns" in prompt
-    assert "do not use `query_bio_oracle_zones` for this case" in prompt
-    assert "a download link alone is not an answer" in prompt
-    assert "df_bio_oracle_enriched_*" in prompt
+    assert "enrich the source rows first" in prompt
+    assert "enrich_with_bio_oracle" in prompt
+    assert "preserves every source row" in prompt
+    assert "placeholder" in prompt
 
 
 def test_system_prompt_routes_bio_oracle_year_specific_requests_to_target_year():
@@ -1282,23 +1283,19 @@ def test_system_prompt_routes_bio_oracle_year_specific_requests_to_target_year()
 
     prompt = _routing_contract("bio_oracle_query.md")
     assert "target_year=2050" in prompt
-    assert "en 2050" in prompt
-    assert "do not reuse a previously computed" in prompt
-    assert "time_*" in prompt
-    assert "re-query bio-oracle" in prompt
+    assert "future year or horizon" in prompt
+    assert "never reuse an older ssp value" in prompt
     assert "baseline is historical" in prompt
-    assert "verify the requested year on `time_ssp*`" in prompt
-    assert "not on `time_baseline`" in prompt
+    assert "persisted time metadata" in prompt
 
 
-def test_bio_oracle_skill_routes_per_station_followups_to_coupling():
+def test_bio_oracle_skill_routes_per_station_followups_to_canonical_enrichment():
     skill = Path("agents/skills/bio_oracle_query.md").read_text(encoding="utf-8").lower()
 
-    assert "never use `query_bio_oracle_zones` for a per-station request" in skill
+    assert "enrich_with_bio_oracle" in skill
     assert "les mêmes stations" in skill
-    assert "top_n_stations" in skill
-    assert "scenarios=[\"baseline\", \"ssp1-2.6\", \"ssp5-8.5\"]" in skill
-    assert "do not create placeholder columns with `pd.na`" in skill
+    assert "enrich the source rows first" in skill
+    assert "couple_zooplankton_bio_oracle" not in skill
 
 
 def test_bio_oracle_skill_requires_target_year_for_year_specific_requests():
@@ -1306,34 +1303,27 @@ def test_bio_oracle_skill_requires_target_year_for_year_specific_requests():
 
     assert "target_year" in skill
     assert "2050" in skill
-    assert "does not prove whether" in skill
-    assert "dataset's last time slice" in skill
     assert "baseline is historical" in skill
-    assert "verify year-specific requests on `time_ssp*`" in skill
+    assert "persisted time metadata" in skill
 
 
-def test_bio_oracle_skill_documents_coupling_tool_capabilities():
+def test_bio_oracle_skill_documents_canonical_enrichment_capabilities():
     skill = Path("agents/skills/bio_oracle_query.md").read_text(encoding="utf-8").lower()
 
-    assert "`couple_zooplankton_bio_oracle` can:" in skill
-    assert "enrich each source row" in skill
-    assert "build a station table internally" in skill
-    assert "compare multiple bio-oracle scenarios" in skill
-    assert "return traceability columns" in skill
+    assert "`enrich_with_bio_oracle` directly" in skill
+    assert "auto-detects supported" in skill
+    assert "preserves every source row" in skill
+    assert "multiple variables × scenarios" in skill
 
 
-def test_system_prompt_routes_amundsen_preview_and_query():
+def test_system_prompt_routes_amundsen_to_canonical_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = _routing_contract("amundsen_ctd_query.md")
-    assert "amundsen12713" in prompt
-    assert "list_amundsen_datasets" in prompt
-    assert "preview_amundsen_profile" in prompt
-    assert "query_amundsen_ctd" in prompt
-    assert "enrich_loaded_table_with_amundsen_ctd" in prompt
-    assert "récupère ça avec amundsen science" in prompt
-    assert "missing_sample_metadata" in prompt
-    assert "do not use `query_amundsen_ctd` for a whole loaded file" in prompt
+    prompt = " ".join(_routing_contract("amundsen_ctd_query.md").split())
+    assert "enrich_with_amundsen_ctd" in prompt
+    assert "only canonical loaded-table enrichment path" in prompt
+    assert "enrich_loaded_table_with_amundsen_ctd" not in prompt
+    assert "do not require station/cast identifiers" in prompt
 
 
 def test_system_prompt_routes_ogsl_enrichment_to_enrich_with_ogsl():

@@ -13,6 +13,7 @@ import pytest
         ("ecopart_query.md", "EcoPart"),
         ("amundsen_ctd_query.md", "Amundsen CTD"),
         ("bio_oracle_query.md", "Bio-ORACLE"),
+        ("ogsl_query.md", "OGSL"),
     ],
 )
 def test_external_skill_requires_explicit_source(filename, source):

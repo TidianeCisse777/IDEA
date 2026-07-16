@@ -117,6 +117,7 @@ _SOURCE_SKILLS: dict[str, SourceName] = {
     "ecopart_query": "ecopart",
     "amundsen_ctd_query": "amundsen",
     "bio_oracle_query": "bio_oracle",
+    "ogsl_query": "ogsl",
     "sql_workspace_query": "sql",
 }
 _SOURCE_LABELS: dict[SourceName, str] = {
