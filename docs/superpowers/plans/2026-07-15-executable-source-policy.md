@@ -119,11 +119,11 @@ assert first.authorized_sources == second.authorized_sources == ("ecotaxa",)
 - Produces: `render_source_selection_gateway() -> str`, `SOURCE_SELECTION_GATEWAY`.
 - Consumes: constantes de noms et règles publiques de `tools/source_scope.py`.
 
-- [ ] **RED 5:** retirer `xfail` du contrat « projet 17498 » et tester que le prompt contient l'héritage d'une source déjà activée, la bascule par fichier et la clarification d'un ID nu.
-- [ ] **Verify RED 5:** `pytest -q tests/harness_redteam/test_source_and_prompt_contracts.py tests/test_source_prompt_contract.py`; attendu : prompt non aligné.
-- [ ] **GREEN 5:** remplacer uniquement le bloc `Source Selection Gateway` statique par `{SOURCE_SELECTION_GATEWAY}` dans un f-string. Ne pas dupliquer les règles dans deux fichiers.
-- [ ] **Verify GREEN 5:** même commande; attendu : contrat étape 3 vert et contrat étape 4 toujours `xfail`.
-- [ ] **Commit:** `feat: generate source gateway from policy`.
+- [x] **RED 5:** retirer `xfail` du contrat « projet 17498 » et tester que le prompt contient l'héritage d'une source déjà activée, la bascule par fichier et la clarification d'un ID nu.
+- [x] **Verify RED 5:** `pytest -q tests/harness_redteam/test_source_and_prompt_contracts.py tests/test_source_prompt_contract.py`; attendu : prompt non aligné.
+- [x] **GREEN 5:** remplacer uniquement le bloc `Source Selection Gateway` statique par `{SOURCE_SELECTION_GATEWAY}` dans un f-string. Ne pas dupliquer les règles dans deux fichiers.
+- [x] **Verify GREEN 5:** même commande; attendu : contrat étape 3 vert et contrat étape 4 toujours `xfail`.
+- [x] **Commit:** `feat: generate source gateway from policy`.
 
 ### Task 6: Replay, gates et smoke test agent
 
