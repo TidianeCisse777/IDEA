@@ -1,10 +1,10 @@
 {
   "external_dependencies": [],
-  "generated_at": "2026-07-16T03:31:33.139828+00:00",
+  "generated_at": "2026-07-16T03:55:59.435918+00:00",
   "lane": "offline",
   "metrics": {
     "cost_usd": null,
-    "fixed_tokens": 24477,
+    "fixed_tokens": 24587,
     "input_tokens": 0,
     "level_1_pass_rate": 1.0,
     "level_2_pass_rate": 1.0,
@@ -55,8 +55,8 @@
       "turns": [
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -177,8 +177,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -339,8 +339,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -501,8 +501,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -600,8 +600,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -722,8 +722,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -821,8 +821,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -950,8 +950,8 @@
       "turns": [
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1072,8 +1072,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1192,8 +1192,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1320,8 +1320,8 @@
       "turns": [
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1442,8 +1442,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {
@@ -1564,8 +1564,8 @@
         },
         {
           "context": {
-            "fixed_tokens": 24477,
-            "system_prompt_tokens": 6473,
+            "fixed_tokens": 24587,
+            "system_prompt_tokens": 6583,
             "tool_schema_tokens": 18004
           },
           "dataset_after": {

@@ -1,5 +1,7 @@
 # Numeric Evidence Routing Implementation Plan
 
+**Status:** completed on 2026-07-15.
+
 > **For Codex:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task by task.
 
 **Goal:** Replace the contradictory “pandas for every number” rule with a deterministic three-way numeric-evidence contract, then prove that an EcoTaxa specialized count is consumed without pandas.

@@ -1,7 +1,7 @@
 # Numeric Evidence Routing Design — étape 4A
 
 **Date :** 15 juillet 2026
-**Statut :** approuvé en conversation, en attente de revue du document
+**Statut :** approuvé et implémenté le 15 juillet 2026
 **Portée :** corriger uniquement la contradiction « tout nombre exige pandas ». Les déclencheurs graphiques et les procédures OGSL/autres sources appartiennent aux tranches 4B et 4C.
 
 ## Objectif
@@ -71,6 +71,13 @@ Si le tool spécialisé échoue ou ne renvoie pas la valeur demandée, le smoke 
 4. La suite complète reste verte avec un `xfail` de moins.
 5. Le smoke réel ne déclenche pas pandas pour recopier un nombre spécialisé.
 6. La baseline offline conserve 100 % aux niveaux 1 et 2.
+
+## Preuves de clôture
+
+- Contrats ciblés : `126 passed`.
+- Suite complète : `1123 passed, 20 skipped, 4 xfailed`.
+- Baseline offline : niveaux 1 et 2 à 100 %, `24 587` tokens fixes (`6 583` prompt + `18 004` schémas).
+- Smoke agent réel unique, `openai/gpt-5.4-mini`, tracing désactivé et store isolé : appels `load_skill` puis `summarize_ecotaxa_project`; réponse `64`; aucun appel `run_pandas`; aucun tool lourd visible.
 
 ## Hors portée
 

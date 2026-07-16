@@ -162,3 +162,28 @@ Un second smoke réel unique a validé la coexistence des deux sources avec le m
 | 3 | continuer sans répéter les sources | `file`, `ecotaxa` | 25 | aucun nouvel appel |
 
 Le fichier est resté la source principale aux tours 2 et 3. L'affinité multi-source a survécu au suivi, les tools EcoTaxa étaient invisibles avant leur mention explicite et `query_ecotaxa` est resté absent du catalogue sûr. Le store était isolé, le tracing désactivé et aucun fichier du dépôt n'a été modifié par le smoke.
+
+## Mesure de clôture de l'étape 4A
+
+La baseline offline a été régénérée une seule fois après le passage rouge/vert du contrat numérique.
+
+| Métrique offline | Après étape 3 | Après étape 4A |
+|---|---:|---:|
+| Invariants niveau 1 | 100 % | 100 % |
+| Trajectoires niveau 2 | 100 % | 100 % |
+| `SC-LAB` — bon fichier | 100 % | 100 % |
+| Tools exposés par tour | 62 | 62 |
+| Tools appelés par tour | 1,15 | 1,15 |
+| Tokens du system prompt | 6 473 | 6 583 |
+| Tokens des schémas | 18 004 | 18 004 |
+| Tokens fixes | 24 477 | 24 587 |
+
+Le nouveau contrat coûte 110 tokens fixes. Il ne modifie ni le catalogue ni les trajectoires offline. Gate ciblé : `126 passed`. Gate complet exécuté une fois : `1123 passed, 20 skipped, 4 xfailed`.
+
+Smoke agent réel unique, modèle `openai/gpt-5.4-mini`, tracing désactivé et store isolé :
+
+| Tools visibles | Appels observés | Réponse | pandas | Tools lourds visibles |
+|---|---|---:|---|---|
+| skill, résumé EcoTaxa spécialisé, pandas | skill → résumé du projet 17498 | `64` | non appelé | aucun |
+
+Le résultat spécialisé contenait bien une valeur numérique et son statut structuré était `success`; le smoke est donc concluant. Aucun replay live N ≥ 5 ni second smoke n'a été lancé.

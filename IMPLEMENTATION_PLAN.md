@@ -150,6 +150,8 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 **Goal :** éliminer les instructions incompatibles que l'agent reçoit aujourd'hui (audit P0 §4.2, P1.8), qui le font hésiter.
 
+**État : 4A terminé le 15 juillet 2026.** La règle numérique est maintenant canonique et injectée une seule fois : valeur fournie par un tool spécialisé → reprise directe; nouvelle valeur dérivée d'une table → pandas; valeur absente → inconnue, jamais inventée. Les tranches graphiques (4B) et procédures de sources/OGSL (4C) restent ouvertes.
+
 **Changement :**
 - Remplacer « toute valeur numérique exige pandas » par « toute valeur **dérivée** ou non fournie par un tool spécialisé exige une exécution contrôlée » — un `count_ecotaxa_taxa` se consomme directement.
 - Limiter le workflow `graph_planner` + `graph_writer` aux demandes **visuelles** (pas une table ou un calcul sans figure).
@@ -157,9 +159,10 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 - Une seule règle « extraction puis skill » ou « skill puis extraction » par source.
 
 **Test gate :**
-- [ ] Les tests rouges « pandas vs tools spécialisés » et OGSL de l'étape 1 deviennent verts.
+- [x] 4A — Le test rouge « pandas vs tools spécialisés » devient vert; smoke EcoTaxa spécialisé sans pandas validé.
+- [ ] 4C — Le test rouge OGSL devient vert.
 - [ ] `SC-LAB` : une demande numérique simple ne déclenche plus le chargement des ~12k tokens de skills graphiques (mesuré).
-- [ ] Pas de régression de routage sur les 3 scénarios.
+- [x] 4A — Pas de régression offline sur les 3 scénarios : niveaux 1 et 2 à 100 %.
 
 ---
 
