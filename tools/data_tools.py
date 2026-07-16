@@ -480,6 +480,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             latest_alias=source_alias,
             is_loaded_file=True,
         )
+        from tools.source_scope import activate_file_source  # noqa: PLC0415
+
+        activate_file_source(
+            _store,
+            thread_id,
+            origin_user_text=str(meta["path"]),
+        )
         cols = ", ".join(col_names)
 
         hint = _uvp_skill_hint(col_names)

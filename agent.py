@@ -314,16 +314,25 @@ class _ContextMiddleware(AgentMiddleware):
             "dataset_capsule_injected": bool(dataset_block),
             "dataset_capsule_chars": len(dataset_block),
         }
-        # Source-scope gate: when a file is loaded and the turn carries no
-        # explicit EcoTaxa signal, hide the EcoTaxa/EcoPart source tools so the
-        # model cannot drift off the file (see docs/e2e/cartes-samples-labrador-2026).
+        # Source policy: one deterministic decision filters every external
+        # family before the model and is reused by the tool-call guard.
         try:
-            from tools.source_scope import filter_tools_for_scope, is_file_scoped_turn
-
-            file_scoped = is_file_scoped_turn(
-                session_store, self.thread_id, original_messages
+            from tools.source_scope import (
+                filter_tools_for_decision,
+                source_decision_for_turn,
             )
-            scoped_tools = filter_tools_for_scope(list(request.tools), file_scoped)
+            from tools.tool_catalog import TOOL_POLICIES
+
+            source_decision = source_decision_for_turn(
+                session_store,
+                self.thread_id,
+                original_messages,
+            )
+            scoped_tools = filter_tools_for_decision(
+                list(request.tools),
+                source_decision,
+                TOOL_POLICIES,
+            )
             return request.override(
                 messages=trimmed_messages,
                 system_message=prepared_system_message,
@@ -340,21 +349,42 @@ class _ContextMiddleware(AgentMiddleware):
     def _source_scope_rejection(self, request) -> str | None:
         from tools.session_store import default_store as session_store
         from tools.source_scope import (
-            FILE_SCOPE_REDIRECT,
-            is_ecotaxa_scoped_tool,
-            is_ecotaxa_skill_load,
-            is_file_scoped_turn,
+            source_decision_for_turn,
+            source_rejection_for_call,
         )
+        from tools.tool_catalog import TOOL_POLICIES
 
         tool_call = request.tool_call
         name = str(tool_call.get("name") or "")
         args = dict(tool_call.get("args") or {})
-        if not (is_ecotaxa_scoped_tool(name) or is_ecotaxa_skill_load(name, args)):
-            return None
         messages = request.state.get("messages") or []
-        if is_file_scoped_turn(session_store, self.thread_id, messages):
-            return FILE_SCOPE_REDIRECT
-        return None
+        decision = source_decision_for_turn(
+            session_store,
+            self.thread_id,
+            messages,
+        )
+        return source_rejection_for_call(
+            decision,
+            name,
+            args,
+            TOOL_POLICIES,
+        )
+
+    @staticmethod
+    def _blocked_tool_message(request, rejection: str) -> ToolMessage:
+        from tools.tool_result import blocked
+
+        content, artifact = blocked(
+            rejection,
+            provenance={"source": "source_policy"},
+            method="deterministic source guard",
+        )
+        return ToolMessage(
+            content=content,
+            artifact=artifact,
+            tool_call_id=request.tool_call["id"],
+            status="error",
+        )
 
     def _tool_identifier_rejection(self, request) -> str | None:
         from tools.session_context import reject_ungrounded_ecotaxa_identifiers
@@ -372,21 +402,13 @@ class _ContextMiddleware(AgentMiddleware):
     def wrap_tool_call(self, request, handler):
         rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
-            return ToolMessage(
-                content=rejection,
-                tool_call_id=request.tool_call["id"],
-                status="error",
-            )
+            return self._blocked_tool_message(request, rejection)
         return handler(request)
 
     async def awrap_tool_call(self, request, handler):
         rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
-            return ToolMessage(
-                content=rejection,
-                tool_call_id=request.tool_call["id"],
-                status="error",
-            )
+            return self._blocked_tool_message(request, rejection)
         return await handler(request)
 
     def wrap_model_call(self, request, handler):

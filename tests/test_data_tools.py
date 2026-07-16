@@ -97,6 +97,57 @@ def test_load_file_tool_returns_summary(tsv_path):
     assert "profile_id" in result
 
 
+def test_load_file_success_replaces_external_source_affinity(tsv_path):
+    from tools.source_scope import (
+        SourceAffinity,
+        read_source_affinity,
+        write_source_affinity,
+    )
+
+    write_source_affinity(
+        _store,
+        "thread-file-affinity",
+        SourceAffinity(
+            active_sources=("ecotaxa",),
+            evidence="explicit_name",
+            origin_user_text="Explore EcoTaxa",
+            updated_at="2026-07-15T12:00:00+00:00",
+        ),
+    )
+
+    load_file_tool = next(
+        tool for tool in make_tools("thread-file-affinity") if tool.name == "load_file"
+    )
+    load_file_tool.invoke({"path": tsv_path})
+
+    assert read_source_affinity(_store, "thread-file-affinity").active_sources == (
+        "file",
+    )
+
+
+def test_load_file_failure_preserves_external_source_affinity(tmp_path):
+    from tools.source_scope import (
+        SourceAffinity,
+        read_source_affinity,
+        write_source_affinity,
+    )
+
+    original = SourceAffinity(
+        active_sources=("ecotaxa",),
+        evidence="explicit_name",
+        origin_user_text="Explore EcoTaxa",
+        updated_at="2026-07-15T12:00:00+00:00",
+    )
+    write_source_affinity(_store, "thread-file-failure", original)
+    load_file_tool = next(
+        tool for tool in make_tools("thread-file-failure") if tool.name == "load_file"
+    )
+
+    load_file_tool.invoke({"path": str(tmp_path / "missing.tsv")})
+
+    assert read_source_affinity(_store, "thread-file-failure") == original
+
+
 def test_load_file_preserves_distinct_files_with_named_variables(tmp_path):
     first = tmp_path / "stations 2024.tsv"
     second = tmp_path / "profiles.tsv"

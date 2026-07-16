@@ -101,11 +101,11 @@ assert first.authorized_sources == second.authorized_sources == ("ecotaxa",)
 - `load_file()` appelle `activate_file_source()` uniquement après `store_dataset()` réussi.
 - Un refus middleware utilise `ToolResult(status="blocked")` dans `ToolMessage.artifact` et `ToolMessage.status="error"` pour LangChain.
 
-- [ ] **RED 4:** tester que le middleware masque toutes les sources externes non autorisées, conserve l'affinité EcoTaxa au second tour, bloque un appel Bio-ORACLE fabriqué et autorise le même appel après mention explicite. Tester qu'un `load_file` réussi remplace l'affinité EcoTaxa, mais qu'un échec ne la modifie pas.
-- [ ] **Verify RED 4:** `pytest -q tests/test_agent_factory.py tests/test_data_tools.py -k 'source or affinity'`; attendu : nouveaux tests rouges.
-- [ ] **GREEN 4:** remplacer `_source_scope_rejection()` et le filtre ad hoc par la décision commune. Conserver les façades historiques pour les tests existants, sans second parseur dans `agent.py`.
-- [ ] **Verify GREEN 4:** même commande, puis `pytest -q tests/test_agent_factory.py tests/test_data_tools.py tests/test_session_context.py`; attendu : verts.
-- [ ] **Commit:** `feat: apply source decision in agent middleware`.
+- [x] **RED 4:** tester que le middleware masque toutes les sources externes non autorisées, conserve l'affinité EcoTaxa au second tour, bloque un appel Bio-ORACLE fabriqué et autorise le même appel après mention explicite. Tester qu'un `load_file` réussi remplace l'affinité EcoTaxa, mais qu'un échec ne la modifie pas.
+- [x] **Verify RED 4:** `pytest -q tests/test_agent_factory.py tests/test_data_tools.py -k 'source or affinity'`; attendu : nouveaux tests rouges.
+- [x] **GREEN 4:** remplacer `_source_scope_rejection()` et le filtre ad hoc par la décision commune. Conserver les façades historiques pour les tests existants, sans second parseur dans `agent.py`.
+- [x] **Verify GREEN 4:** même commande, puis `pytest -q tests/test_agent_factory.py tests/test_data_tools.py tests/test_session_context.py`; attendu : verts.
+- [x] **Commit:** `feat: apply source decision in agent middleware`.
 
 ### Task 5: Prompt généré et contrat red-team fermé
 

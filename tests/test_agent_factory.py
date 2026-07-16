@@ -385,7 +385,7 @@ def test_context_middleware_blocks_ungrounded_ecotaxa_tool_call(monkeypatch, tmp
             "messages": [
                 HumanMessage(content="Ancien sample 42000002"),
                 AIMessage(content="Noté"),
-                HumanMessage(content="Contexte de ces données locales"),
+                HumanMessage(content="Dans EcoTaxa, donne le contexte courant"),
             ]
         },
     )
@@ -417,7 +417,11 @@ def test_context_middleware_allows_currently_grounded_ecotaxa_tool_call(monkeypa
             "args": {"sample_id": 42000002},
             "id": "call-explicit",
         },
-        state={"messages": [HumanMessage(content="Résume le sample 42000002")]},
+        state={
+            "messages": [
+                HumanMessage(content="Dans EcoTaxa, résume le sample 42000002")
+            ]
+        },
     )
 
     result = middleware.wrap_tool_call(
@@ -426,6 +430,119 @@ def test_context_middleware_allows_currently_grounded_ecotaxa_tool_call(monkeypa
     )
 
     assert result.content == "ok"
+
+
+def test_context_middleware_blocks_bare_project_id_without_source_affinity(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    from langchain_core.messages import HumanMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+    from tools.tool_result import validate_tool_artifact
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="bare-project-thread")
+    request = SimpleNamespace(
+        tool_call={
+            "name": "summarize_ecotaxa_project",
+            "args": {"project_id": 17498},
+            "id": "call-bare",
+        },
+        state={"messages": [HumanMessage(content="Résume le projet 17498")]},
+    )
+    called = False
+
+    def handler(_request):
+        nonlocal called
+        called = True
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert called is False
+    assert result.status == "error"
+    assert validate_tool_artifact(result.artifact).status == "blocked"
+    assert "EcoTaxa" in result.content
+
+
+def test_context_middleware_inherits_ecotaxa_then_blocks_other_source(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    store = SessionStore(tmp_path)
+    monkeypatch.setattr("tools.session_store.default_store", store)
+    middleware = agent_module._ContextMiddleware(thread_id="affinity-thread")
+
+    explicit = SimpleNamespace(
+        tool_call={"name": "find_ecotaxa_projects", "args": {}, "id": "call-eco"},
+        state={"messages": [HumanMessage(content="Explore EcoTaxa")]},
+    )
+    allowed = middleware.wrap_tool_call(
+        explicit,
+        lambda req: ToolMessage(content="ok", tool_call_id=req.tool_call["id"]),
+    )
+    assert allowed.content == "ok"
+
+    inherited = SimpleNamespace(
+        tool_call={"name": "query_bio_oracle", "args": {}, "id": "call-bio"},
+        state={"messages": [HumanMessage(content="continue l'exploration")]},
+    )
+    blocked = middleware.wrap_tool_call(
+        inherited,
+        lambda req: ToolMessage(content="wrong", tool_call_id=req.tool_call["id"]),
+    )
+
+    assert blocked.status == "error"
+    assert "Bio-ORACLE" in blocked.content
+
+
+def test_context_middleware_filters_model_tools_from_same_source_decision(
+    monkeypatch, tmp_path
+):
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.tools import tool
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    @tool
+    def run_pandas(code: str) -> str:
+        """Common local executor."""
+        return code
+
+    @tool
+    def find_ecotaxa_projects() -> str:
+        """EcoTaxa discovery."""
+        return "ok"
+
+    @tool
+    def query_bio_oracle() -> str:
+        """Bio-ORACLE query."""
+        return "ok"
+
+    class Request:
+        messages = [HumanMessage(content="Explore EcoTaxa")]
+        tools = [run_pandas, find_ecotaxa_projects, query_bio_oracle]
+        system_message = SystemMessage(content="BASE")
+
+        def override(self, **kwargs):
+            return kwargs
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="model-filter-thread")
+
+    prepared = middleware._prepare_request(Request(), memories=[])
+
+    assert [item.name for item in prepared["tools"]] == [
+        "run_pandas",
+        "find_ecotaxa_projects",
+    ]
 
 
 def test_context_middleware_trims_the_request_seen_by_model_without_mutating_checkpoint(monkeypatch):
