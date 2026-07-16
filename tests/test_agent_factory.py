@@ -539,9 +539,22 @@ def test_context_middleware_filters_model_tools_from_same_source_decision(
 
     prepared = middleware._prepare_request(Request(), memories=[])
 
-    assert [item.name for item in prepared["tools"]] == [
+    assert [item.name for item in prepared["tools"]] == ["find_ecotaxa_projects"]
+    audit = agent_module.get_context_audit("model-filter-thread")
+    assert audit["tools_before_policy"] == [
         "run_pandas",
         "find_ecotaxa_projects",
+        "query_bio_oracle",
+    ]
+    assert audit["tools_after_source_scope"] == [
+        "run_pandas",
+        "find_ecotaxa_projects",
+    ]
+    assert audit["tools_exposed"] == ["find_ecotaxa_projects"]
+    assert audit["tool_exposure_count"] == 1
+    assert audit["tool_exposure_groups"] == ["core", "ecotaxa_discovery"]
+    assert audit["approx_tokens_tool_schemas_after"] < audit[
+        "approx_tokens_tool_schemas_before"
     ]
 
 

@@ -266,7 +266,44 @@ class _ContextMiddleware(AgentMiddleware):
             if injected_context
             else 0
         )
-        tool_schema_tokens = _tool_schema_tokens(request.tools)
+        # Apply the deterministic source and exposure policies before pricing
+        # tool schemas or assigning the remaining history budget.
+        from tools.source_scope import (
+            filter_tools_for_decision,
+            source_decision_for_turn,
+        )
+        from tools.tool_catalog import TOOL_POLICIES
+        from tools.tool_exposure import decide_tool_exposure
+
+        original_tools = list(request.tools)
+        source_decision = source_decision_for_turn(
+            session_store,
+            self.thread_id,
+            original_messages,
+        )
+        scoped_tools = filter_tools_for_decision(
+            original_tools,
+            source_decision,
+            TOOL_POLICIES,
+        )
+        exposure_decision = decide_tool_exposure(
+            [getattr(item, "name", "") for item in scoped_tools],
+            TOOL_POLICIES,
+            turn_ctx,
+            source_decision,
+            original_messages,
+        )
+        scoped_by_name = {
+            getattr(item, "name", ""): item for item in scoped_tools
+        }
+        exposed_tools = [
+            scoped_by_name[name]
+            for name in exposure_decision.tool_names
+            if name in scoped_by_name
+        ]
+        tool_schema_tokens_before = _tool_schema_tokens(original_tools)
+        tool_schema_tokens_after_source = _tool_schema_tokens(scoped_tools)
+        tool_schema_tokens = _tool_schema_tokens(exposed_tools)
         history_budget = compute_history_budget(
             max_input_tokens=_MAX_CONTEXT_TOKENS,
             system_tokens=base_system_tokens,
@@ -308,6 +345,12 @@ class _ContextMiddleware(AgentMiddleware):
             "approx_tokens_base_system": base_system_tokens,
             "approx_tokens_memory_and_capsule": memory_tokens,
             "approx_tokens_tool_schemas": tool_schema_tokens,
+            "approx_tokens_tool_schemas_before": tool_schema_tokens_before,
+            "approx_tokens_tool_schemas_after_source": tool_schema_tokens_after_source,
+            "approx_tokens_tool_schemas_after": tool_schema_tokens,
+            "approx_tokens_tool_schemas_saved": max(
+                0, tool_schema_tokens_before - tool_schema_tokens
+            ),
             "history_budget_tokens": history_budget,
             "context_reserve_tokens": _CONTEXT_RESERVE_TOKENS,
             "approx_tokens_model_request": (
@@ -333,34 +376,35 @@ class _ContextMiddleware(AgentMiddleware):
             "turn_active_variable": turn_ctx.active_variable,
             "turn_authorized_sources": list(turn_ctx.authorized_sources),
             "turn_derived_subsets": len(turn_ctx.derived_zone_subsets),
+            "tools_before_policy": [
+                getattr(item, "name", "") for item in original_tools
+            ],
+            "tools_after_source_scope": [
+                getattr(item, "name", "") for item in scoped_tools
+            ],
+            "tools_exposed": list(exposure_decision.tool_names),
+            "tool_exposure_count": len(exposure_decision.tool_names),
+            "tool_exposure_groups": list(exposure_decision.active_groups),
+            "tool_exposure_reasons": list(exposure_decision.reasons),
+            "tools_dropped": list(exposure_decision.dropped_tool_names),
+            "policy_overflow": exposure_decision.policy_overflow,
         }
-        # Source policy: one deterministic decision filters every external
-        # family before the model and is reused by the tool-call guard.
         try:
-            from tools.source_scope import (
-                filter_tools_for_decision,
-                source_decision_for_turn,
-            )
-            from tools.tool_catalog import TOOL_POLICIES
-
-            source_decision = source_decision_for_turn(
-                session_store,
-                self.thread_id,
-                original_messages,
-            )
-            scoped_tools = filter_tools_for_decision(
-                list(request.tools),
-                source_decision,
-                TOOL_POLICIES,
-            )
-            return request.override(
+            prepared = request.override(
                 messages=trimmed_messages,
                 system_message=prepared_system_message,
-                tools=scoped_tools,
+                tools=exposed_tools,
             )
+            _context_audit_by_thread[self.thread_id][
+                "tool_filter_override_supported"
+            ] = True
+            return prepared
         except TypeError:
             # request.override may not accept tools on this build; the
             # wrap_tool_call guard still enforces the scope hard.
+            _context_audit_by_thread[self.thread_id][
+                "tool_filter_override_supported"
+            ] = False
             return request.override(
                 messages=trimmed_messages,
                 system_message=prepared_system_message,
