@@ -108,7 +108,7 @@ flowchart LR
 ```
 
 ### Construction (`agent.py`)
-- **System prompt** : `COPEPOD_SYSTEM_PROMPT` local, ou pull depuis LangSmith Hub (`copepod-system-prompt`) en prod avec fallback local.
+- **System prompt** : `COPEPOD_SYSTEM_PROMPT` local et compact (cible ≤ 3 500 tokens). Le runtime ne tire pas le prompt depuis le Hub.
 - **LLM** : `ChatOpenAI(model=LLM_MODEL)`, `max_tokens=LLM_MAX_OUTPUT_TOKENS` (défaut 16000), `max_retries=2`.
 - **Assemblage des tools** :
   ```python
@@ -134,6 +134,7 @@ flowchart LR
   enrichi avec la source nommée. Les routes legacy masquées restent dans le
   catalogue pour compatibilité, mais la garde pré-tool applique la même
   décision et les bloque fail-closed.
+- **Skills manifestés** : `tools/skill_manifest.py` valide les 15 manifests et leurs budgets. `load_skill` n'accepte une copie Hub que si son hash correspond au fichier local revu; version, environnement, hash et source sont renvoyés dans la provenance. Les résultats de skills utilisent leur plafond déclaré au lieu de la troncature générique à 8 000 caractères.
 - **`_ContextMiddleware`** (agent construit via `create_agent`, LangChain 1.x) :
   - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : filtrage de source, allowlist dynamique des tools, troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 40000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`. Le budget des schémas est recalculé après filtrage.
   - Le trim utilise `request.override(messages=...)` : il borne le contexte du modèle sans supprimer l'historique complet conservé dans le checkpoint LangGraph.
@@ -270,7 +271,7 @@ Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`
 | `studio.py` | Entrée LangGraph Studio |
 | `langgraph.json` | Config LangGraph |
 | `start.sh` | Orchestration Docker (Postgres + MCP + agent + Open WebUI) |
-| `scripts/dev/push_prompt.py` | Sync system prompt → LangSmith Hub |
+| `scripts/dev/push_prompt.py` | Legacy : copie le prompt vers le Hub, sans consommateur runtime |
 | `scripts/dev/push_skills.py` | Sync skills → LangSmith Hub |
 
 ---

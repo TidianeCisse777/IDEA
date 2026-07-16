@@ -1,7 +1,8 @@
 """Validated construction and user-facing metadata for LangChain tools.
 
 This module is the composition seam shared by the agent runtime and the SSE
-presentation layer. LLM routing remains exclusively in the system prompt.
+presentation layer. Routing is shared by executable source/exposure policies,
+tool metadata, and the compact model-facing prompt kernel.
 """
 
 from __future__ import annotations

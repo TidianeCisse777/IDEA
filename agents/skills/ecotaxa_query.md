@@ -1,3 +1,17 @@
+---
+name: ecotaxa_query
+version: 1.0.0
+triggers:
+  - Successful explicitly authorized EcoTaxa extraction requiring object-level interpretation
+forbidden_when:
+  - EcoTaxa extraction failed or EcoTaxa is not authorized
+requires:
+  - "source:ecotaxa"
+  - "success:query_ecotaxa"
+next_tool: run_pandas
+max_tokens: 1700
+---
+
 # Skill: ecotaxa_query
 
 ## Activation precondition

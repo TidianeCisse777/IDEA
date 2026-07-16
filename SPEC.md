@@ -247,7 +247,7 @@ mais franchissent la porte de confirmation au-delà des seuils CT-AG-06
 
 ---
 
-## 5. Skills chargeables (`agents/skills/`, 14 fichiers)
+## 5. Skills chargeables (`agents/skills/`, 15 fichiers)
 
 Un **skill** est un document Markdown chargé en bloc via `load_skill(name)`. Il
 porte le **geste** (comment faire), tandis que le RAG porte le **savoir**.

@@ -1,12 +1,27 @@
+---
+name: ecotaxa_navigation
+version: 1.0.0
+triggers:
+  - Explicit EcoTaxa discovery, navigation, read-only inspection, or export planning intent
+forbidden_when:
+  - EcoTaxa is not authorized by the source decision
+requires:
+  - "source:ecotaxa"
+next_tool: null
+max_tokens: 9000
+size_exemption: The read-only EcoTaxa decision tree is kept atomic so the model can choose one route without loading a second navigation fragment; runtime delivery is budget-aware and tested end to end.
+---
+
 # Skill: ecotaxa_navigation
 
 ## Activation precondition
 
-Apply this skill only when the current user request explicitly names EcoTaxa
+Apply this skill only when the Source Selection Gateway authorizes EcoTaxa,
+either by an explicit current request or an inherited active-source follow-up,
 and the active session does not forbid EcoTaxa. Do not load or apply this skill
 for generic requests about samples, projects, stations, positions, zones,
 maps, counts, or analyses. A loaded file remains the default source unless the
-user explicitly requests EcoTaxa.
+gateway authorizes EcoTaxa.
 
 After activation, use this skill to **explore** or **export** EcoTaxa samples
 by zone, time, project, or any combination — typically the path **zone+time →

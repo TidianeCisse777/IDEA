@@ -1,5 +1,15 @@
 ---
 name: neolabs_abundance_analysis
+version: 1.0.0
+triggers:
+  - Loaded NeoLabs abundance table requires ecological metrics or ordination
+forbidden_when:
+  - No NeoLabs abundance table is loaded
+requires:
+  - "dataset:neolabs_abundance"
+next_tool: run_pandas
+max_tokens: 3400
+size_exemption: The sample-level aggregation, diversity, environmental matching, and ordination rules share one required sample_df contract; the small overage avoids divergent analytical bases.
 description: Standard ecological analysis workflow for NeoLabs taxonomy abundance tables enriched with Amundsen CTD. Use when the user asks to analyse NeoLabs abundance, zooplankton abundance, copepod abundance, diversity, anomalies, seasonality, CTD relationships, PCA, PCoA, NMDS, RDA, or community-environment ordination.
 ---
 
@@ -7,24 +17,32 @@ description: Standard ecological analysis workflow for NeoLabs taxonomy abundanc
 
 Use this skill for NeoLabs taxonomy abundance files, especially tables like `neolabs_taxonomy_abundance_amundsen_ctd.tsv`.
 
-## ⚠️ STEP 1 — MANDATORY ENV PRE-STEP (executes BEFORE any analysis tool)
+## Step 1 — Optional, source-authorized environmental enrichment
 
-**Trigger** : the user request mentions a CTD quantity (température, salinité, oxygène, pH, nitrate, chlorophylle, density, environmental, CTD) **AND** the loaded files do NOT already contain `amundsen_*` / `ogsl_*` / `bio_oracle_*` columns.
+Environmental vocabulary alone never authorizes an online source. Run an
+enrichment only when the Source Selection Gateway authorizes a source and the
+user requests that source's environmental data. If no source is authorized and
+the loaded file lacks the requested environmental columns, report that limit or
+ask which source to use; do not choose Amundsen, Bio-ORACLE, or OGSL yourself.
 
-When this trigger fires, you MUST run the following tool calls in this exact order BEFORE any taxon-level analysis. Skipping ANY of these steps is a bug — the analysis will end with NaN / NA / no_match on every row.
+When enrichment is explicitly requested, call only the named source's canonical
+loaded-table enrichment on the exact active variable. Do not run discovery or
+raw retrieval first. Continue the taxon-level analysis only from the exact
+persisted enriched variable returned by a successful result.
 
-### Sub-step 1a + 1b + 1c — single enrich call with zone_name + date_range (RECOMMENDED)
+### Canonical source routes
 
-Each enrich tool now accepts `zone_name` and `date_range` directly. ONE tool call applies the filter and the enrich deterministically — no manual chaining, no LLM variance risk.
+Use exactly one of these routes according to the authorized source:
 
 ```
-enrich_with_amundsen_ctd(zone_name="Baie de Baffin", date_range=["2018-01-01", "2020-12-31"])
-# and / or
-enrich_with_bio_oracle(zone_name="Baie de Baffin", date_range=["2018-01-01", "2020-12-31"], variables=["temperature", "salinity"])
-enrich_with_ogsl(zone_name="Golfe du Saint-Laurent", date_range=["2020-06-01", "2020-09-30"])
+enrich_with_amundsen_ctd(source_variable="<exact active variable>")
+enrich_with_bio_oracle(source_variable="<exact active variable>", variables=[...])
+enrich_with_ogsl(source_variable="<exact active variable>")
 ```
 
-The legacy two-step chain (`filter_dataframe_by_zone` then enrich with `source_variable="df_in_<zone>_<source>"`) is still supported when the user explicitly wants to inspect the filtered subset between the two steps. Prefer the single-call form by default.
+Pass `zone_name` or `date_range` only when the user actually requested that
+scope. Never copy illustrative zone names, dates, variables, or identifiers into
+a real call.
 
 ### Sub-step 1d — join abundance via run_pandas
 
@@ -36,9 +54,8 @@ Each taxon row now has env columns; THEN continue with the standard workflow bel
 
 ### When to skip this whole pre-step
 
-Skip only when:
-- The user's request has NO env/CTD vocabulary (pure biology: top taxa, diversity, abundance only), OR
-- The loaded file already contains the env columns (e.g. `neolabs_taxonomy_abundance_amundsen_ctd.tsv` deliverable).
+Skip when the request is biological only, the file already contains the needed
+environmental columns, or no environmental source is authorized.
 
 ## Core rule
 

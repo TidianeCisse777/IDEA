@@ -38,9 +38,9 @@ Ce document définit l'identité métier de l'agent qui tourne dans ce repo et l
 
 ## Pilotage : un seul agent, pas de modes
 
-L'agent est un **LangGraph ReAct unique**. Tous les outils sont déclarés à la construction et restent disponibles en permanence. Il n'y a pas d'état de session « mode » à activer ou désactiver.
+L'agent est un **LangGraph ReAct unique**. Tous les outils sont déclarés à la construction, mais une allowlist dynamique en expose au plus 15 par appel modèle selon l'intention, la source autorisée et l'état du tour. Il n'y a pas d'état de session « mode » à activer ou désactiver.
 
-Le system prompt (`agents/copepod_system_prompt.py`, plus `langchain hub` en prod via `copepod-system-prompt`) distingue deux usages opérationnels :
+Le system prompt compact est lu localement depuis `agents/copepod_system_prompt.py`. Les procédures détaillées sont chargées à la demande depuis des skills manifestés; le Hub ne sert qu'une copie dont le hash correspond à la version locale revue.
 
 1. **File analysis** — quand l'utilisateur travaille un fichier chargé : `load_file`, `run_pandas`.
 2. **Knowledge base** — quand l'utilisateur pose une question sur colonnes, méthodes, taxonomie : `query_copepod_knowledge_base` d'abord, jamais de réponse de mémoire.
@@ -54,7 +54,7 @@ La production graphique impose toujours la séquence : `load_skill("graph_planne
 ## Skills et RAG : deux registres distincts
 
 - **RAG** (`query_copepod_knowledge_base`) — recherche vectorielle sur 11 documents (`core/copepod_rag/docs/`). Sert au savoir : colonnes, méthodes, taxonomie, sources.
-- **Skill** (`load_skill(name)`) — chargement en bloc d'un document Markdown. Sert au geste : comment lancer une extraction EcoTaxa, comment écrire un graphique matplotlib, comment compiler un livrable.
+- **Skill** (`load_skill(name)`) — chargement d'un document Markdown validé et budgeté. Chaque manifest déclare nom, version, déclencheurs, interdictions, préconditions, prochaine capacité et plafond de tokens; la provenance expose source, environnement et SHA-256.
 
 Les 15 skills disponibles sont dans `agents/skills/` :
 

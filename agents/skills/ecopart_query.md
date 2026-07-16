@@ -1,8 +1,22 @@
+---
+name: ecopart_query
+version: 1.0.0
+triggers:
+  - Explicit EcoPart query or loaded-table enrichment intent
+forbidden_when:
+  - EcoPart is not authorized by the source decision
+requires:
+  - "source:ecopart"
+next_tool: null
+max_tokens: 700
+---
+
 # Skill: ecopart_query
 
 ## Activation precondition
 
-Apply this skill only when the current user request explicitly names EcoPart
+Apply this skill only when the Source Selection Gateway authorizes EcoPart,
+either by an explicit current request or an inherited active-source follow-up,
 and the active session does not forbid EcoPart. Do not load or apply this skill
 for generic requests about samples, projects, stations, positions, zones, maps,
 counts, environmental variables, or analyses. A loaded EcoTaxa-derived table

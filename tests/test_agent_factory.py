@@ -28,6 +28,15 @@ def _routing_contract_raw(*skill_names: str) -> str:
     return "\n".join(parts)
 
 
+def test_permanent_system_prompt_stays_within_step_10_budget():
+    from langchain_core.messages import SystemMessage
+
+    from agent import _approx_tokens
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert _approx_tokens([SystemMessage(content=COPEPOD_SYSTEM_PROMPT)]) <= 3_500
+
+
 # --- Comportement 0 : _make_tracer inclut user_id ---
 
 def test_make_tracer_uses_email_as_tag_when_provided(monkeypatch):
@@ -241,6 +250,44 @@ def test_context_preparation_records_tool_truncation_metrics(monkeypatch):
     assert metrics["tool_messages_seen"] == 1
     assert metrics["tool_messages_truncated"] == 1
     assert metrics["tool_result_chars_saved"] > 0
+
+
+def test_context_preparation_preserves_manifest_budgeted_skill_results(monkeypatch):
+    from langchain_core.messages import ToolMessage
+
+    import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "_MAX_TOOL_RESULT_CHARS", 20)
+    content = "skill-body:" + "x" * 120
+    artifact = {
+        "status": "success",
+        "summary": content,
+        "data_ref": None,
+        "artifact_refs": [],
+        "provenance": {
+            "source": "local skill file",
+            "skill": "graph_writer",
+            "max_tokens": 100,
+        },
+        "persisted": True,
+        "retryable": False,
+        "method": "skill loader",
+        "metrics": {},
+    }
+
+    messages, metrics = agent_module._truncate_tool_results(
+        [
+            ToolMessage(
+                content=content,
+                artifact=artifact,
+                name="load_skill",
+                tool_call_id="skill-1",
+            )
+        ]
+    )
+
+    assert messages[0].content == content
+    assert metrics["tool_messages_truncated"] == 0
 
 
 def _spy_model():
@@ -626,23 +673,15 @@ def test_system_prompt_is_grouped_by_routing_domain():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     headings = [
-        "## Identity",
-        "## Operating Model",
+        "## Identity and Scope",
         "## Source Selection Gateway",
-        "## Authorized Data Sources",
         "## Routing Priority",
-        "## Session Rules",
-        "## Tool Result Truth",
-        "## Context and Session State",
-        "## Knowledge Base vs Data Requests",
-        "## Files and DataFrames",
-        "## Geographic Zones",
-        "## External Source Procedures",
-        "## SQL Workspace",
-        "## Graphs and Visual Outputs",
-        "## Deliverables",
-        "## Response Format and Tone",
-        "## Confirmation Gates",
+        "## Numeric Evidence Rules",
+        "## Graph Output Routing Rules",
+        "## Tool Result Truth and Session State",
+        "## Execution and Output Contracts",
+        "## Confirmation Boundary",
+        "## Response Contract and Tone",
         "## Citations and Security",
     ]
 
@@ -673,12 +712,12 @@ def test_system_prompt_forbids_bare_df_for_multi_source_graphs():
 def test_system_prompt_forbids_plan_only_visual_answers():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = _routing_contract("graph_planner.md", "graph_writer.md")
     assert "vertical profile" in prompt
     assert "requested output intent" in prompt
     assert "do not stop after planning" in prompt
-    assert "only contains `<details><summary>output plan</summary>" in prompt
-    assert "run_graph` image markdown" in prompt
+    assert "never answer the user with only this `<details>` block" in prompt
+    assert "exact image markdown emitted by `run_graph`" in prompt
 
 
 def test_graph_planner_treats_profiles_as_semantically_visual():
@@ -819,9 +858,7 @@ def test_graph_rules_preserve_identifier_types_and_validate_non_empty_plot_df():
 
 
 def test_system_prompt_routes_sql_workspace_queries():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "database_url" in prompt
     assert "read-only" in prompt
     assert "preview_sql_table" in prompt
@@ -830,9 +867,7 @@ def test_system_prompt_routes_sql_workspace_queries():
 
 
 def test_system_prompt_routes_sql_workspace_joins_from_foreign_keys():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "join" in prompt
     assert "foreign key" in prompt or "foreign keys" in prompt
     assert "list_sql_tables" in prompt
@@ -842,9 +877,7 @@ def test_system_prompt_routes_sql_workspace_joins_from_foreign_keys():
 
 
 def test_system_prompt_sql_join_planning_uses_columns_cardinality_and_retry():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "column" in prompt
     assert "cardinality" in prompt or "row count" in prompt
     assert "preview_sql_table" in prompt
@@ -853,18 +886,14 @@ def test_system_prompt_sql_join_planning_uses_columns_cardinality_and_retry():
 
 
 def test_system_prompt_sql_copy_requires_limit_and_mentions_row_cap():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "copy_sql_query_to_workspace" in prompt
     assert "explicit `limit`" in prompt
     assert "row cap" in prompt
 
 
 def test_system_prompt_mentions_supported_sql_backends():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "sqlite" in prompt
     assert "postgresql" in prompt
     assert "mysql" in prompt
@@ -978,8 +1007,8 @@ def test_system_prompt_prioritizes_read_only_source_tools_over_generic_pandas():
     assert "within the selected source, prefer the most specific read-only tool" in prompt
     assert "never use specificity to bypass the source selection gateway" in prompt
     assert "generic `run_pandas`, graph planning, or export/download tools" in prompt
-    assert "ecotaxa read-only requests" in prompt
-    assert "heavy exports/downloads" in prompt
+    assert "specific read-only tool" in prompt
+    assert "full remote downloads/exports" in prompt
     assert "explicit confirmation" in prompt
 
 

@@ -1,3 +1,16 @@
+---
+name: sql_workspace_query
+version: 1.0.0
+triggers:
+  - Explicit read-only SQL workspace discovery, preview, copy, or join planning intent
+forbidden_when:
+  - SQL is not authorized or the workspace connection is unavailable
+requires:
+  - "source:sql"
+next_tool: null
+max_tokens: 1000
+---
+
 # Skill: sql_workspace_query
 
 You are working with the read-only SQL workspace.

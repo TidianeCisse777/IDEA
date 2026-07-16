@@ -1,3 +1,16 @@
+---
+name: graph_planner
+version: 1.0.0
+triggers:
+  - User intent clearly requests or implies a visual representation
+forbidden_when:
+  - Requested output is numeric, tabular, textual, or genuinely non-visual
+requires:
+  - "intent:visual"
+next_tool: graph_writer
+max_tokens: 2900
+---
+
 # Skill: graph_planner
 
 You must plan a graph before writing any code.

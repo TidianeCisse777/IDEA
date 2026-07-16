@@ -1,3 +1,18 @@
+---
+name: graph_writer
+version: 1.0.0
+triggers:
+  - A successful graph plan must be rendered in the current turn
+forbidden_when:
+  - No successful graph_planner activation exists in the current turn
+requires:
+  - "success:graph_planner"
+  - "intent:visual"
+next_tool: run_graph
+max_tokens: 10500
+size_exemption: The writer owns one executable graph-contract vocabulary shared by runtime validation across all chart families; its full body is delivered with a manifest-governed cap instead of the generic tool truncation.
+---
+
 # Skill: graph_writer
 
 You must write correct and complete code to produce the planned visual output.

@@ -57,7 +57,20 @@ def test_hub_cannot_load_a_skill_absent_from_local_allowlist(tmp_path):
 
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
-    (skills_dir / "graph_writer.md").write_text("# allowed", encoding="utf-8")
+    (skills_dir / "graph_writer.md").write_text(
+        """---
+name: graph_writer
+version: 1.0.0
+triggers: [visual output]
+forbidden_when: [no visual intent]
+requires: []
+next_tool: run_graph
+max_tokens: 100
+---
+# allowed
+""",
+        encoding="utf-8",
+    )
     store = SessionStore(tmp_path / "sessions")
 
     with patch("tools.skill_tool.SKILLS_DIR", skills_dir), patch(

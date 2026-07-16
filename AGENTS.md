@@ -106,7 +106,7 @@ scripts/dev/push_skills.py
 studio.py                 LangGraph Studio entry
 
 agents/
-  copepod_system_prompt.py  System prompt complet (anglais, ~187 lignes)
+  copepod_system_prompt.py  Kernel permanent compact (anglais, ≤ 3 500 tokens)
   skills/                   15 skills Markdown
   (copepod_prompt.py déprécié → archivé dans docs/legacy/copepod_prompt_DEPRECATED.py)
 
@@ -144,7 +144,7 @@ scripts/                  Outils CLI ponctuels
 - **Ton clinique (CT-AG-26)** : pas de « je / moi / en tant qu'IA » dans les réponses LLM ; format Résultat / Source / Méthode / Limite / Prochaine action. Si tu modifies un skill, garde la même règle.
 - **Incertitude visible (CT-AG-27)** : si tu ajoutes un type de graphique dans `graph_writer.md`, applique la palette confirmed/exploratory/uncertain et le stamp de confiance.
 - **Rebuilt RAG** : `python core/copepod_rag/build_index.py` après modification de `core/copepod_rag/docs/*.md`.
-- **Push prompt** : `python scripts/dev/push_prompt.py` pour synchroniser le system prompt vers LangSmith Hub (consommé par `agent.py` en prod, fallback local sinon).
+- **Prompt local** : `agent.py` consomme exclusivement `agents/copepod_system_prompt.py`; `scripts/dev/push_prompt.py` est legacy et n'alimente pas le runtime.
 - **Push skills** : `python scripts/dev/push_skills.py` pour synchroniser `agents/skills/*.md` vers LangSmith Hub.
 
 ---

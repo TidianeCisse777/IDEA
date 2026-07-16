@@ -1,8 +1,10 @@
 """Agent factory + CLI copépodes (slices 4-5)."""
 import asyncio
+import copy
 import os
 import sys
 import threading
+import time
 import uuid
 import json
 from datetime import datetime, timezone
@@ -62,6 +64,8 @@ _CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 _context_audit_by_thread: dict[str, dict] = {}
+_harness_trace_by_thread: dict[str, dict] = {}
+_harness_trace_lock = threading.Lock()
 
 
 def get_context_audit(thread_id: str | None = None) -> dict:
@@ -77,6 +81,195 @@ def clear_context_audit(thread_id: str | None = None) -> None:
         _context_audit_by_thread.pop(thread_id, None)
     else:
         _context_audit_by_thread.clear()
+
+
+def get_harness_trace(thread_id: str | None = None) -> dict:
+    """Return the current turn trace used by one-by-one curl diagnostics."""
+
+    with _harness_trace_lock:
+        if thread_id:
+            return copy.deepcopy(_harness_trace_by_thread.get(thread_id, {}))
+        return copy.deepcopy(_harness_trace_by_thread)
+
+
+def clear_harness_trace(thread_id: str | None = None) -> None:
+    """Clear curl-harness traces without touching conversation state."""
+
+    with _harness_trace_lock:
+        if thread_id:
+            _harness_trace_by_thread.pop(thread_id, None)
+        else:
+            _harness_trace_by_thread.clear()
+
+
+def record_harness_usage(thread_id: str, usage: dict) -> None:
+    """Attach provider-reported usage once the HTTP/SSE turn completes."""
+
+    with _harness_trace_lock:
+        trace = _harness_trace_by_thread.get(thread_id)
+        if trace is not None:
+            model_usage = [
+                call.get("provider_usage") or {}
+                for call in trace.get("model_calls", [])
+            ]
+            cumulative = {
+                "prompt_tokens": sum(int(item.get("input_tokens", 0) or 0) for item in model_usage),
+                "completion_tokens": sum(int(item.get("output_tokens", 0) or 0) for item in model_usage),
+                "cached_tokens": sum(int(item.get("cached_tokens", 0) or 0) for item in model_usage),
+            }
+            cumulative["total_tokens"] = (
+                cumulative["prompt_tokens"] + cumulative["completion_tokens"]
+            )
+            trace["usage"] = {
+                "cumulative_model_calls": cumulative,
+                "final_response_call": copy.deepcopy(usage),
+            }
+            trace["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _begin_harness_turn(thread_id: str, messages: list) -> None:
+    if not (messages and isinstance(messages[-1], HumanMessage)):
+        return
+    content = messages[-1].content
+    with _harness_trace_lock:
+        _harness_trace_by_thread[thread_id] = {
+            "thread_id": thread_id,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "user_message": str(content),
+            "model_calls": [],
+            "tool_calls": [],
+            "usage": {},
+        }
+
+
+def _append_harness_model_call(thread_id: str, audit: dict) -> None:
+    with _harness_trace_lock:
+        trace = _harness_trace_by_thread.get(thread_id)
+        if trace is None:
+            return
+        calls = trace["model_calls"]
+        calls.append({
+            "index": len(calls) + 1,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "approx_tokens_model_request": audit.get("approx_tokens_model_request", 0),
+            "approx_tokens_base_system": audit.get("approx_tokens_base_system", 0),
+            "approx_tokens_tool_schemas": audit.get("approx_tokens_tool_schemas", 0),
+            "approx_tokens_history": audit.get("approx_tokens_after_trim", 0),
+            "approx_tokens_memory_and_capsule": audit.get("approx_tokens_memory_and_capsule", 0),
+            "tool_messages_seen": audit.get("tool_messages_seen", 0),
+            "tool_messages_truncated": audit.get("tool_messages_truncated", 0),
+            "tools_exposed": list(audit.get("tools_exposed") or []),
+            "tool_exposure_groups": list(audit.get("tool_exposure_groups") or []),
+            "authorized_sources": list(audit.get("turn_authorized_sources") or []),
+            "active_variable": audit.get("turn_active_variable"),
+            "policy_overflow": bool(audit.get("policy_overflow", False)),
+            "_started_epoch": time.time(),
+        })
+
+
+def _finish_harness_model_call(thread_id: str, result) -> None:
+    with _harness_trace_lock:
+        trace = _harness_trace_by_thread.get(thread_id)
+        if trace is None or not trace.get("model_calls"):
+            return
+        call = next(
+            (
+                item
+                for item in reversed(trace["model_calls"])
+                if "provider_usage" not in item
+            ),
+            None,
+        )
+        if call is None:
+            return
+        started = float(call.pop("_started_epoch", time.time()))
+        usage = getattr(result, "usage_metadata", None) or {}
+        response = getattr(result, "response_metadata", None) or {}
+        cached = (
+            response.get("token_usage", {})
+            .get("prompt_tokens_details", {})
+            .get("cached_tokens", 0)
+            or usage.get("input_token_details", {}).get("cache_read", 0)
+        )
+        call["provider_usage"] = {
+            "input_tokens": int(usage.get("input_tokens", 0) or 0),
+            "output_tokens": int(usage.get("output_tokens", 0) or 0),
+            "cached_tokens": int(cached or 0),
+        }
+        call["duration_seconds"] = round(max(0.0, time.time() - started), 3)
+
+
+def _safe_trace_args(value):
+    """Redact secret-bearing fields and bound debug payload size."""
+
+    if isinstance(value, dict):
+        safe = {}
+        for key, item in value.items():
+            normalized = str(key).lower()
+            if any(marker in normalized for marker in ("password", "token", "secret", "api_key", "database_url")):
+                safe[str(key)] = "[REDACTED]"
+            else:
+                safe[str(key)] = _safe_trace_args(item)
+        return safe
+    if isinstance(value, (list, tuple)):
+        return [_safe_trace_args(item) for item in value[:50]]
+    if isinstance(value, str) and len(value) > 2_000:
+        return value[:2_000] + f"… [{len(value)} chars]"
+    return value
+
+
+def _start_harness_tool_call(thread_id: str, tool_call: dict) -> int | None:
+    with _harness_trace_lock:
+        trace = _harness_trace_by_thread.get(thread_id)
+        if trace is None:
+            return None
+        calls = trace["tool_calls"]
+        trace_id = len(calls) + 1
+        calls.append({
+            "index": trace_id,
+            "tool_call_id": str(tool_call.get("id") or ""),
+            "name": str(tool_call.get("name") or ""),
+            "arguments": _safe_trace_args(dict(tool_call.get("args") or {})),
+            "status": "running",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "_started_epoch": time.time(),
+        })
+        return trace_id
+
+
+def _finish_harness_tool_call(
+    thread_id: str,
+    trace_id: int | None,
+    result=None,
+    *,
+    blocked_by: str | None = None,
+    error_text: str | None = None,
+) -> None:
+    if trace_id is None:
+        return
+    with _harness_trace_lock:
+        trace = _harness_trace_by_thread.get(thread_id)
+        if trace is None or trace_id > len(trace["tool_calls"]):
+            return
+        entry = trace["tool_calls"][trace_id - 1]
+        started = float(entry.pop("_started_epoch", time.time()))
+        entry["duration_seconds"] = round(max(0.0, time.time() - started), 3)
+        entry["completed_at"] = datetime.now(timezone.utc).isoformat()
+        if error_text:
+            entry.update({"status": "exception", "error": error_text[:1_000]})
+            return
+
+        artifact = getattr(result, "artifact", None)
+        artifact = artifact if isinstance(artifact, dict) else {}
+        entry["status"] = str(artifact.get("status") or getattr(result, "status", None) or "completed")
+        entry["blocked_by"] = blocked_by
+        entry["persisted"] = bool(artifact.get("persisted", False))
+        entry["data_ref"] = artifact.get("data_ref")
+        entry["artifact_refs"] = list(artifact.get("artifact_refs") or [])
+        entry["provenance"] = _safe_trace_args(dict(artifact.get("provenance") or {}))
+        entry["metrics"] = _safe_trace_args(dict(artifact.get("metrics") or {}))
+        content = str(getattr(result, "content", "") or "")
+        entry["result_preview"] = content[:500]
 
 
 def _approx_tokens(messages) -> int:
@@ -126,7 +319,7 @@ def _tool_schema_tokens(tools) -> int:
 
 
 def _truncate_tool_results(messages):
-    """Return request-local ToolMessage copies capped to the configured size."""
+    """Cap generic results while preserving validated, budgeted skill bodies."""
     output = []
     metrics = {
         "tool_messages_seen": 0,
@@ -140,9 +333,21 @@ def _truncate_tool_results(messages):
         if isinstance(message, ToolMessage) and isinstance(message.content, str):
             metrics["tool_messages_seen"] += 1
             metrics["tool_result_chars_before"] += len(message.content)
-            if len(message.content) > _MAX_TOOL_RESULT_CHARS:
+            limit = _MAX_TOOL_RESULT_CHARS
+            artifact = message.artifact if isinstance(message.artifact, dict) else {}
+            provenance = artifact.get("provenance")
+            if (
+                message.name == "load_skill"
+                and artifact.get("status") == "success"
+                and artifact.get("method") == "skill loader"
+                and isinstance(provenance, dict)
+                and isinstance(provenance.get("max_tokens"), int)
+            ):
+                declared_tokens = min(12_000, max(1, provenance["max_tokens"]))
+                limit = max(limit, declared_tokens * 4)
+            if len(message.content) > limit:
                 content = (
-                    message.content[:_MAX_TOOL_RESULT_CHARS]
+                    message.content[:limit]
                     + f"\n[…tronqué — {len(message.content):,} chars total]"
                 )
                 metrics["tool_messages_truncated"] += 1
@@ -231,6 +436,7 @@ class _ContextMiddleware(AgentMiddleware):
 
     def _prepare_request(self, request, memories):
         original_messages = list(request.messages)
+        _begin_harness_turn(self.thread_id, original_messages)
         try:
             from tools.data_tools import reset_graph_block_on_new_turn
             from tools.session_store import default_store as session_store
@@ -329,7 +535,7 @@ class _ContextMiddleware(AgentMiddleware):
             else 0
         )
 
-        _context_audit_by_thread[self.thread_id] = {
+        audit_entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "thread_id": self.thread_id,
             "user_id": self.user_id,
@@ -392,6 +598,8 @@ class _ContextMiddleware(AgentMiddleware):
             "tools_dropped": list(exposure_decision.dropped_tool_names),
             "policy_overflow": exposure_decision.policy_overflow,
         }
+        _context_audit_by_thread[self.thread_id] = audit_entry
+        _append_harness_model_call(self.thread_id, audit_entry)
         try:
             prepared = request.override(
                 messages=trimmed_messages,
@@ -631,48 +839,74 @@ class _ContextMiddleware(AgentMiddleware):
         )
 
     def wrap_tool_call(self, request, handler):
+        trace_id = _start_harness_tool_call(self.thread_id, request.tool_call)
         rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
-            return self._blocked_tool_message(request, rejection)
+            result = self._blocked_tool_message(request, rejection)
+            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="source_policy")
+            return result
         rejection = self._tool_exposure_rejection(request)
         if rejection:
-            return self._blocked_tool_message(
+            result = self._blocked_tool_message(
                 request,
                 rejection,
                 provenance_source="tool_exposure_policy",
                 method="deterministic tool exposure guard",
             )
+            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="tool_exposure_policy")
+            return result
         rejection = self._output_intent_rejection(request)
         if rejection:
-            return self._blocked_tool_message(
+            result = self._blocked_tool_message(
                 request,
                 rejection,
                 provenance_source="output_intent_guard",
                 method="typed output intent guard",
             )
-        return handler(request)
+            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="output_intent_guard")
+            return result
+        try:
+            result = handler(request)
+        except Exception as exc:
+            _finish_harness_tool_call(self.thread_id, trace_id, error_text=str(exc))
+            raise
+        _finish_harness_tool_call(self.thread_id, trace_id, result)
+        return result
 
     async def awrap_tool_call(self, request, handler):
+        trace_id = _start_harness_tool_call(self.thread_id, request.tool_call)
         rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
-            return self._blocked_tool_message(request, rejection)
+            result = self._blocked_tool_message(request, rejection)
+            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="source_policy")
+            return result
         rejection = self._tool_exposure_rejection(request)
         if rejection:
-            return self._blocked_tool_message(
+            result = self._blocked_tool_message(
                 request,
                 rejection,
                 provenance_source="tool_exposure_policy",
                 method="deterministic tool exposure guard",
             )
+            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="tool_exposure_policy")
+            return result
         rejection = await self._aoutput_intent_rejection(request)
         if rejection:
-            return self._blocked_tool_message(
+            result = self._blocked_tool_message(
                 request,
                 rejection,
                 provenance_source="output_intent_guard",
                 method="typed output intent guard",
             )
-        return await handler(request)
+            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="output_intent_guard")
+            return result
+        try:
+            result = await handler(request)
+        except Exception as exc:
+            _finish_harness_tool_call(self.thread_id, trace_id, error_text=str(exc))
+            raise
+        _finish_harness_tool_call(self.thread_id, trace_id, result)
+        return result
 
     def wrap_model_call(self, request, handler):
         store = getattr(request.runtime, "store", None)

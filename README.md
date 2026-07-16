@@ -20,7 +20,7 @@ et notes détaillées sont sous [`docs/`](docs/README.md)**. Les notes internes
 | Doc | Contenu |
 |---|---|
 | [`CONTEXT.md`](CONTEXT.md) | Identité métier de l'agent : périmètre, ce qu'il fait / ne fait pas, sources. |
-| [`SPEC.md`](SPEC.md) | Spécification figée : use cases (UC-A…UC-J), inventaire des ~54 tools, skills, RAG, contraintes dures. |
+| [`SPEC.md`](SPEC.md) | Spécification figée : use cases (UC-A…UC-J), inventaire des 59 tools (62 avec SQL), skills, RAG, contraintes dures. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Câblage logiciel : serve.py / agent.py / tools / RAG / MCP / Open WebUI, config, ADR. |
 | [`TOOLS.md`](TOOLS.md) | Référence tool par tool, par catégorie. |
 | [`SEQUENCES.md`](SEQUENCES.md) | Diagrammes de séquence par use case (S0…S9). |

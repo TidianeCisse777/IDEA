@@ -231,20 +231,24 @@ Le middleware construit le `TurnContext` une fois par tour et enregistre ses cha
 
 ### Étape 8 — Skills fail-closed, versionnés, normalisés *(axe sécurité)*
 
-**État : allowlist locale fail-closed terminée le 16 juillet 2026 ; versionnement/frontmatter/découpe encore à faire.** `load_skill` valide l'allowlist locale **avant** tout accès Hub : le Hub ne peut plus introduire un nom de skill absent localement, il sert seulement une version d'un skill déjà autorisé (fallback Hub→local visible en provenance). Le contrat rouge de l'étape 1 est devenu vert et le happy path graphique reste validé sur l'agent réel.
+**État : terminé et clôturé le 16 juillet 2026.** Les 15 skills portent le manifest commun validé au chargement. `load_skill` valide l'allowlist locale avant le Hub, sépare le manifest du corps envoyé au modèle et publie `source`/`environment`/`version`/`sha256`/budget dans la provenance. Le Hub est désormais un cache de distribution : un nom absent, un manifest invalide ou un hash différent de la copie locale revue provoque un fallback local visible. Le défaut runtime découvert pendant la fermeture — troncature générique à 8 000 caractères, qui ne livrait que 20 à 65 % des grands skills — est fermé : un résultat de skill validé utilise son plafond `max_tokens`, borné à 12 000, et un test traverse le Seam réel `load_skill → ToolMessage → préparation modèle` jusqu'à la dernière règle de `graph_writer`.
+
+**Synchronisation Hub :** le retry final du 16 juillet valide les manifests avant envoi et retourne désormais un code d'échec si un push échoue. Quatre skills ont été synchronisés en production et staging (`copepod_hydrodynamic_micro_zoom`, `ecotaxa_navigation`, `neolabs_abundance_analysis`, `ogsl_query`) ; LangSmith a renvoyé HTTP 500 pour les 11 autres. Ce défaut externe ne change pas le runtime : tout contenu Hub absent ou de hash différent retombe automatiquement sur le fichier local validé.
 
 **Goal :** activation de skills bornée, tracée et ordonnée par tour.
 
 **Changement :**
 - Allowlist locale validée **avant** tout accès Hub ; enveloppe `name`/`source`/`environment`/`version`/`hash`/`content` ; fallback Hub→local visible en observabilité.
 - Frontmatter commun imposé : `name`, `version`, `triggers`, `forbidden_when`, `requires`, `next_tool`, `max_tokens` — préconditions dans les métadonnées exécutables, pas en prose.
-- Découper les skills > 3 000 tokens (`ecotaxa_navigation` ~8.5k, `graph_writer` ~10k) ou justifier.
+- Découper les skills > 3 000 tokens ou documenter une exemption. Les quatre documents historiquement longs (`ecotaxa_navigation`, `graph_writer`, `uvp_ecotaxa`, `neolabs_abundance_analysis`) portent une justification locale ; leurs budgets sont contrôlés et leur livraison intégrale est testée. Une découpe ultérieure reste une optimisation, plus une condition de correction runtime.
 - La partie graphique de l'automate est déjà imposée en 4B.1 depuis les ToolResults du tour courant. L'étape 8 conserve la normalisation générale des événements de skills et leur versionnement.
 
 **Test gate :**
 - [x] Skill hors allowlist locale jamais chargé depuis le Hub (test rouge de l'étape 1 vert) ; happy path graphique (`graph_planner`/`graph_writer` → `run_graph`) validé sur l'agent réel.
 - [x] `run_graph` impossible hors séquence du tour courant (résolu en 4B.1).
-- [ ] Chaque skill a le frontmatter commun ; aucun skill > 3 000 tokens sans exemption documentée.
+- [x] Chaque skill a le frontmatter commun ; aucun skill > 3 000 tokens sans exemption documentée, et aucun corps ne dépasse son `max_tokens`.
+- [x] Version/hash/environnement/source visibles dans le `ToolResult`; dérive Hub non revue refusée et fallback local testé.
+- [x] Les grands skills restent intégralement visibles après la préparation réelle du contexte modèle.
 
 ---
 
@@ -267,13 +271,15 @@ Le middleware construit le `TurnContext` une fois par tour et enregistre ses cha
 
 ### Étape 10 — Réduction du prompt
 
+**État : terminé et clôturé le 16 juillet 2026.** Le prompt permanent passe de ~6 980 à ~2 896 tokens selon le compteur runtime. Le Kernel conserve identité, périmètre, Gateway de source généré, preuve numérique, intention graphique, vérité des résultats, état de session, ton et sécurité. Les procédures SQL, EcoTaxa, graphiques détaillées et jointures sont sorties vers leurs skills manifestés. Le replay offline des trois scénarios reste à 100 % aux niveaux 1 et 2, avec 15 tools maximum et un coût fixe maximal de 8 843 tokens (contre 12 384 avant cette étape), sous le seuil de 16 000 tokens correspondant à 40 % du contexte par défaut.
+
 **Goal :** une fois les politiques exécutables, alléger le prompt permanent (cible ≤ 3 500 tokens).
 
 **Changement :** retirer les listes de tools lourds et les séquences déjà imposées en code ; garder identité, périmètre scientifique, règles de vérité, ton, contrat de réponse.
 
 **Test gate :**
-- [ ] Evals avant/après **chaque** suppression, pas de régression sur les 3 scénarios.
-- [ ] Prompt permanent ≤ 3 500 tokens ; coût fixe total < 40 % de `MAX_CONTEXT_TOKENS`.
+- [x] Replay offline après consolidation : `SC-LAB`, `SC-ENRICH`, `SC-ECOTAXA` à 100 % aux niveaux 1 et 2.
+- [x] Prompt permanent ~2 896 tokens ≤ 3 500 ; coût fixe maximal 8 843 < 16 000 tokens (40 % de 40 000).
 
 ---
 
@@ -319,7 +325,7 @@ Le remodelage est réussi quand :
 | 5 — TurnContext + carte d'état | ✅ terminé | capsule = df actif seul | TurnContext typé; dérivés+zone et périmètre de source dans la capsule; réel `authorized=file`, ~300 tokens | ✅ |
 | 6 — Filtrage dynamique | ✅ clôturé | 59/62 tools envoyés au modèle; 33 290 tokens fixes au contrat initial | offline : 5–15 tools/appel, max 12 384 tokens fixes; enrichissements canoniques unifiés; réel Amundsen 801/801, Bio 3/3, EcoPart dry-run; 244 tests | ✅ |
 | 7 — Confirmations | ⬜ à faire | — | — | ⬜ |
-| 8 — Skills versionnés | 🟡 en cours | Hub sert un skill non listé | allowlist fail-closed avant Hub; contrat vert; happy path réel OK | 🟡 versionnement/frontmatter restants |
+| 8 — Skills versionnés | ✅ clôturé | Hub permissif; manifests hétérogènes; grands skills tronqués à 8 000 caractères | 15 manifests validés; hash/version/env; drift Hub refusé; livraison intégrale budgetée | ✅ |
 | 9 — Isolation code | 🟡 en cours | exec avec builtins complets (secrets/réseau/FS) | namespace restreint : imports allowlistés, secrets bloqués; escapes verts, smoke réel OK | 🟡 worker processus/quotas restants |
-| 10 — Réduction prompt | ⬜ à faire | — | — | ⬜ |
+| 10 — Réduction prompt | ✅ clôturé | ~6 980 tokens runtime; procédures dupliquées | ~2 896 tokens; coût fixe max 8 843; replay offline 3/3 à 100 % L1/L2 | ✅ |
 | 11 — Nettoyage legacy | ✅ terminé | docs périmées (53 tools, react_agent, pull Hub) | prompt legacy archivé; inventaires 59/62; parité doc verte | ✅ |

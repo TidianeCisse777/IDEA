@@ -30,7 +30,7 @@ serve.py — FastAPI (port 8000)
     │ SSE streaming, feedback polling, image hosting, downloads
     ▼
 agent.py — LangChain create_agent (ex-create_react_agent, déprécié en LangGraph 1.0)
-    │ system prompt copépodes (hub: copepod-system-prompt, fallback local)
+    │ system prompt copépodes (source locale : agents/copepod_system_prompt.py)
     │ checkpointer AsyncSqliteSaver (data/checkpoints.sqlite)
     │ _ContextMiddleware : trim model request + audit + inject long-term memory
     │                     + inject session state map (TurnContext: loaded files, zone subsets, source scope)
@@ -48,10 +48,10 @@ agent.py — LangChain create_agent (ex-create_react_agent, déprécié en LangG
 
 core/copepod_rag/    ChromaDB (11 docs RAG)
 core/ecotaxa_client/ core/ecopart_client/ core/amundsen_ctd_client/ core/bio_oracle_client/
-agents/skills/       11 skills Markdown chargeables à la demande
+agents/skills/       15 skills Markdown manifestés et chargeables à la demande
 ```
 
-Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction. Il n'y a pas de « mode » de session — le comportement est piloté par le system prompt.
+Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction, puis au plus 15 sont exposés par appel modèle. Il n'y a pas de « mode » de session.
 
 ---
 
@@ -110,9 +110,9 @@ scripts/dev/prune_data.py
 studio.py                 LangGraph Studio entry
 
 agents/
-  copepod_system_prompt.py  System prompt complet (anglais, ~187 lignes)
+  copepod_system_prompt.py  Kernel permanent compact (anglais, ≤ 3 500 tokens)
   (copepod_prompt.py déprécié → archivé dans docs/legacy/copepod_prompt_DEPRECATED.py)
-  skills/                   14 skills Markdown
+  skills/                   15 skills Markdown manifestés
 
 tools/                    59 tools @tool LangChain (62 avec SQL optionnel — voir TOOLS.md)
 
@@ -139,7 +139,7 @@ scripts/                  Outils CLI ponctuels
 - **Pas de mode**. Si tu te poses la question « est-ce que je suis dans le bon mode », c'est non — il n'y a qu'un agent. Le comportement vient du system prompt.
 - **TDD** pour chaque tool : test d'abord, implémentation après. Fixtures dans `tests/`.
 - **Docstring claire** sur chaque `@tool` : le LLM la lit pour décider quand l'appeler.
-- **Routage des tools** : toute nouvelle règle de routage va dans `agents/copepod_system_prompt.py`, jamais dans le code Python.
+- **Routage des tools** : les autorisations et l'exposition se modifient dans les politiques Python; le prompt compact ne conserve que les invariants destinés au modèle.
 - **Pas d'interprétation** scientifique ou biologique des résultats, ni par l'agent, ni par les docstrings de tools.
 - **Pas de valeur inventée** : tout chiffre vient de `run_pandas`, d'un tool, ou du RAG.
 - **Pas de credentials** dans le code, les logs, les docstrings, les commits.
@@ -148,7 +148,7 @@ scripts/                  Outils CLI ponctuels
 - **Ton clinique (CT-AG-26)** : pas de « je / moi / en tant qu'IA » dans les réponses LLM ; format Résultat / Source / Méthode / Limite / Prochaine action. Si tu modifies un skill, garde la même règle.
 - **Incertitude visible (CT-AG-27)** : si tu ajoutes un type de graphique dans `graph_writer.md`, applique la palette confirmed/exploratory/uncertain et le stamp de confiance.
 - **Rebuilt RAG** : `python core/copepod_rag/build_index.py` après modification de `core/copepod_rag/docs/*.md`.
-- **Push prompt** : `python scripts/dev/push_prompt.py` pour synchroniser le system prompt vers LangSmith Hub (consommé par `agent.py` en prod, fallback local sinon).
+- **Prompt local** : `agent.py` consomme exclusivement `agents/copepod_system_prompt.py`; `scripts/dev/push_prompt.py` est legacy.
 - **Push skills** : `python scripts/dev/push_skills.py` pour synchroniser `agents/skills/*.md` vers LangSmith Hub.
 - **Rétention des données** : `python scripts/dev/prune_data.py --apply` — purge `data/session_store/` (> 30 j) et archive `data/checkpoints.sqlite` (> 500 Mo) vers `data/archive/`. Arrêter `copepod_agent` avant d'archiver les checkpoints. Les scripts e2e créent des milliers de sessions : pointer `SESSION_STORE_DIR` vers un dossier jetable pour les runs de test.
 

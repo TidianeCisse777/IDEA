@@ -1,8 +1,22 @@
+---
+name: amundsen_ctd_query
+version: 1.0.0
+triggers:
+  - Explicit Amundsen CTD query or loaded-table enrichment intent
+forbidden_when:
+  - Amundsen is not authorized by the source decision
+requires:
+  - "source:amundsen"
+next_tool: null
+max_tokens: 700
+---
+
 # Skill: amundsen_ctd_query
 
 ## Activation precondition
 
-Apply this skill only when the current user request explicitly names Amundsen CTD
+Apply this skill only when the Source Selection Gateway authorizes Amundsen CTD,
+either by an explicit current request or an inherited active-source follow-up,
 and the active session does not forbid Amundsen CTD. Do not load or apply this
 skill for generic requests about samples, projects, stations, positions, zones,
 temperature, salinity, environment, maps, or analyses. A loaded table remains
