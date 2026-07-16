@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
-
 def test_bare_project_id_does_not_authorize_ecotaxa():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
     from tools.source_scope import ecotaxa_signal
@@ -16,10 +13,6 @@ def test_bare_project_id_does_not_authorize_ecotaxa():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Étape 4: réserver run_pandas aux valeurs dérivées ou non fournies par un tool",
-)
 def test_specialized_numeric_tool_results_do_not_require_run_pandas():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

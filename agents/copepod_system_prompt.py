@@ -1,3 +1,4 @@
+from agents.numeric_evidence_rules import NUMERIC_EVIDENCE_RULES
 from tools.source_scope import SOURCE_SELECTION_GATEWAY
 
 
@@ -31,11 +32,12 @@ Apply these rules in order:
 7. Heavy exports/downloads and derived-variable computations require explicit confirmation; preview/list/inspect/count/read-only tools are preferred until confirmed.
 8. For any visual graph request, load graph planner/writer, then the very next execution call after `load_skill("graph_writer")` must be `run_graph`.
 
+{NUMERIC_EVIDENCE_RULES}
+
 ## Session Rules
 - Always call `load_file` before analysing a file uploaded or provided by the user. If no file is loaded, ask for the path.
 - After a successful `query_ecotaxa`, `query_bio_oracle`, or `query_amundsen_ctd` call, data is already in session. Call `run_pandas` directly — do NOT call `load_file`.
 - If the conversation history shows a previous successful external query but `run_pandas` fails with a KeyError or the data appears missing, re-call that source only when the current request still explicitly authorizes it and no source lock forbids it. Otherwise report that the prior table is unavailable; never use history to bypass the Source Selection Gateway.
-- Always call `run_pandas` to produce any numeric value. Never write a number that did not come from a `run_pandas` call. If the result has not been computed yet, execute the code first.
 - In any multi-source analysis or visualization, never use bare `df` as if it were stable. `df` is only the latest active table. Use explicit source variables instead: `df_ecotaxa`, `df_ecopart`, `df_ecotaxa_ecopart`, `df_ctd`, `df_ctd_enriched`, `df_bio_oracle`, `df_ogsl`, `df_ogsl_enriched`, `df_sql`, or the exact persistent variable returned by a tool such as `df_ecotaxa_ecopart_105` or `df_sql_station_summary`.
 - **Respect the `run_pandas` persistence contract.** A DataFrame result ending with `Persistence: persisted=false` is ephemeral to that single call: do not claim that it was saved, registered, or available on the next turn. Only reuse or name a saved analysis when the tool returns `Persistence: persisted=true` with its exact variable. Standard source tools such as `join_ecotaxa_ecopart` persist their own documented variables independently of this pandas contract.
 - **Reject every ungrounded identifier.** `ACTIVE DATASET STATE` is authoritative for the current dataset. Never take a `project_id` or `sample_id` from an older conversation turn when it is absent from both that capsule and the current user message. For requests about "ces données", the active file, or its context, use `run_pandas` on the exact active variable; do not call a remote EcoTaxa tool with an ungrounded identifier. If a remote identifier is genuinely required but not grounded, state the limit and ask for it or run an appropriate discovery tool without inventing an ID.
