@@ -397,24 +397,6 @@ _REQUIRED_SKILL_BY_FAMILY: Mapping[str, str] = MappingProxyType({
     "bio_oracle": "bio_oracle_query",
 })
 
-_STRUCTURED_RESULT_TOOL_NAMES = frozenset({
-    "load_file",
-    "run_pandas",
-    "run_graph",
-    "get_zone_info",
-    "filter_dataframe_by_zone",
-    "query_copepod_knowledge_base",
-    "lookup_marine_taxonomy",
-    "load_skill",
-    "export_deliverable",
-}) | frozenset(
-    name
-    for name in _TOOL_PROFILE_BY_NAME
-    if TOOL_PRESENTATION[name].family
-    in {"ecotaxa", "ecopart", "amundsen", "bio_oracle", "ogsl"}
-)
-
-
 def _build_policy(name: str, profile_name: str) -> ToolPolicy:
     presentation = TOOL_PRESENTATION[name]
     profile = _POLICY_PROFILES[profile_name]
@@ -444,11 +426,7 @@ def _build_policy(name: str, profile_name: str) -> ToolPolicy:
         required_skill=required_skill,
         allowed_workflows=workflows,
         max_calls_per_turn=profile.max_calls_per_turn,
-        result_schema=(
-            "tool_result_v1"
-            if name in _STRUCTURED_RESULT_TOOL_NAMES
-            else "legacy_text"
-        ),
+        result_schema="tool_result_v1",
     )
 
 
@@ -585,8 +563,8 @@ def validate_catalog(
             issues.append("confirmation_without_high_risk")
         if policy.max_calls_per_turn < 1:
             issues.append("max_calls_per_turn")
-        if policy.result_schema not in ("legacy_text", "tool_result_v1"):
-            issues.append("result_schema")
+        if policy.result_schema != "tool_result_v1":
+            issues.append("legacy result schema")
         if not policy.allowed_workflows:
             issues.append("allowed_workflows")
         if policy.required_skill and policy.required_skill not in local_skills:
@@ -607,6 +585,17 @@ def validate_catalog(
     if schema_issues:
         raise ValueError(
             "Tool catalog non-strict args schema: " + ", ".join(sorted(schema_issues))
+        )
+
+    result_format_issues = sorted(
+        item.name
+        for item in runtime_tools
+        if getattr(item, "response_format", None) != "content_and_artifact"
+    )
+    if result_format_issues:
+        raise ValueError(
+            "Tool catalog non-structured result format: "
+            + ", ".join(result_format_issues)
         )
 
 
