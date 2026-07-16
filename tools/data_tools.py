@@ -686,7 +686,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         session = _store.get(thread_id)
         df = session.get("df") if session else None
         loaded_skills = ((session or {}).get("meta") or {}).get("loaded_skills") or []
-        if loaded_skills and "graph_writer" not in loaded_skills:
+        if "graph_writer" not in loaded_skills:
             return blocked(
                 'Graph workflow blocked: call load_skill("graph_writer") before run_graph. '
                 "Loaded analysis/planning skills are not executable graph templates; graph_writer provides the required template."

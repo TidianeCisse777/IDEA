@@ -210,10 +210,18 @@ def _build_memory_block(memories) -> tuple[str, dict]:
 class _ContextMiddleware(AgentMiddleware):
     """Prepare the exact request seen by the model without mutating checkpoints."""
 
-    def __init__(self, user_id: str = "anonymous", thread_id: str = "unknown"):
+    def __init__(
+        self,
+        user_id: str = "anonymous",
+        thread_id: str = "unknown",
+        output_intent_classifier=None,
+    ):
         super().__init__()
         self.user_id = user_id
         self.thread_id = thread_id
+        self.output_intent_classifier = output_intent_classifier
+        self._output_intent_cache = {}
+        self._output_intent_classifier_calls = {}
 
     def _prepare_request(self, request, memories):
         original_messages = list(request.messages)
@@ -371,13 +379,19 @@ class _ContextMiddleware(AgentMiddleware):
         )
 
     @staticmethod
-    def _blocked_tool_message(request, rejection: str) -> ToolMessage:
+    def _blocked_tool_message(
+        request,
+        rejection: str,
+        *,
+        provenance_source: str = "source_policy",
+        method: str = "deterministic source guard",
+    ) -> ToolMessage:
         from tools.tool_result import blocked
 
         content, artifact = blocked(
             rejection,
-            provenance={"source": "source_policy"},
-            method="deterministic source guard",
+            provenance={"source": provenance_source},
+            method=method,
         )
         return ToolMessage(
             content=content,
@@ -399,16 +413,143 @@ class _ContextMiddleware(AgentMiddleware):
             dict(tool_call.get("args") or {}),
         )
 
+    def _persist_output_intent(self, decision) -> None:
+        from tools.session_store import default_store as session_store
+
+        fingerprint = decision.turn_fingerprint
+        session_store.update_meta(
+            self.thread_id,
+            {
+                "output_intent_decision": decision.model_dump(mode="json"),
+                "output_intent_classifier_calls": self._output_intent_classifier_calls.get(
+                    fingerprint, 0
+                ),
+            },
+        )
+
+    def _output_intent_decision(self, messages):
+        from tools.output_intent import OutputIntentDecision, turn_fingerprint
+
+        fingerprint = turn_fingerprint(messages)
+        cached = self._output_intent_cache.get(fingerprint)
+        if cached is not None:
+            return cached
+        try:
+            if self.output_intent_classifier is None:
+                raise RuntimeError("output intent classifier unavailable")
+            decision = self.output_intent_classifier.classify(messages)
+            if decision.turn_fingerprint != fingerprint:
+                raise ValueError("classifier returned a mismatched turn fingerprint")
+        except Exception:
+            decision = OutputIntentDecision(
+                intent="ambiguous",
+                confidence="low",
+                reason="classifier unavailable",
+                turn_fingerprint=fingerprint,
+            )
+        self._output_intent_classifier_calls[fingerprint] = (
+            self._output_intent_classifier_calls.get(fingerprint, 0) + 1
+        )
+        self._output_intent_cache[fingerprint] = decision
+        self._persist_output_intent(decision)
+        return decision
+
+    async def _aoutput_intent_decision(self, messages):
+        from tools.output_intent import OutputIntentDecision, turn_fingerprint
+
+        fingerprint = turn_fingerprint(messages)
+        cached = self._output_intent_cache.get(fingerprint)
+        if cached is not None:
+            return cached
+        try:
+            if self.output_intent_classifier is None:
+                raise RuntimeError("output intent classifier unavailable")
+            decision = await self.output_intent_classifier.aclassify(messages)
+            if decision.turn_fingerprint != fingerprint:
+                raise ValueError("classifier returned a mismatched turn fingerprint")
+        except Exception:
+            decision = OutputIntentDecision(
+                intent="ambiguous",
+                confidence="low",
+                reason="classifier unavailable",
+                turn_fingerprint=fingerprint,
+            )
+        self._output_intent_classifier_calls[fingerprint] = (
+            self._output_intent_classifier_calls.get(fingerprint, 0) + 1
+        )
+        self._output_intent_cache[fingerprint] = decision
+        self._persist_output_intent(decision)
+        return decision
+
+    @staticmethod
+    def _decision_rejection(decision) -> str | None:
+        if decision.intent == "visual":
+            return None
+        if decision.intent == "non_visual":
+            return (
+                "Graph workflow blocked: the requested output is non-visual. "
+                "Return the requested number, calculation, ranking, summary, "
+                "coordinates, or table without graph skills."
+            )
+        return (
+            "Graph workflow blocked: the requested output format is ambiguous. "
+            "Clarify whether a visual figure is required before using graph skills."
+        )
+
+    def _output_intent_rejection(self, request) -> str | None:
+        from tools.output_intent import graph_attempt, graph_workflow_rejection
+
+        tool_call = request.tool_call
+        name = str(tool_call.get("name") or "")
+        args = dict(tool_call.get("args") or {})
+        if not graph_attempt(name, args):
+            return None
+        messages = list(request.state.get("messages") or [])
+        decision = self._output_intent_decision(messages)
+        return self._decision_rejection(decision) or graph_workflow_rejection(
+            name, args, messages
+        )
+
+    async def _aoutput_intent_rejection(self, request) -> str | None:
+        from tools.output_intent import graph_attempt, graph_workflow_rejection
+
+        tool_call = request.tool_call
+        name = str(tool_call.get("name") or "")
+        args = dict(tool_call.get("args") or {})
+        if not graph_attempt(name, args):
+            return None
+        messages = list(request.state.get("messages") or [])
+        decision = await self._aoutput_intent_decision(messages)
+        return self._decision_rejection(decision) or graph_workflow_rejection(
+            name, args, messages
+        )
+
     def wrap_tool_call(self, request, handler):
         rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
             return self._blocked_tool_message(request, rejection)
+        rejection = self._output_intent_rejection(request)
+        if rejection:
+            return self._blocked_tool_message(
+                request,
+                rejection,
+                provenance_source="output_intent_guard",
+                method="typed output intent guard",
+            )
         return handler(request)
 
     async def awrap_tool_call(self, request, handler):
         rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
             return self._blocked_tool_message(request, rejection)
+        rejection = await self._aoutput_intent_rejection(request)
+        if rejection:
+            return self._blocked_tool_message(
+                request,
+                rejection,
+                provenance_source="output_intent_guard",
+                method="typed output intent guard",
+            )
         return await handler(request)
 
     def wrap_model_call(self, request, handler):
@@ -541,12 +682,21 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         **chat_openai_connection_kwargs(),
     )
     catalog = build_tool_catalog(thread_id)
+    from tools.output_intent import OpenAIOutputIntentClassifier
+
+    output_intent_classifier = OpenAIOutputIntentClassifier(llm)
 
     return create_agent(
         llm,
         list(catalog.tools),
         system_prompt=_SYSTEM_PROMPT,
-        middleware=[_ContextMiddleware(user_id=user_id, thread_id=thread_id)],
+        middleware=[
+            _ContextMiddleware(
+                user_id=user_id,
+                thread_id=thread_id,
+                output_intent_classifier=output_intent_classifier,
+            )
+        ],
         checkpointer=_checkpointer,
         store=_store,
     )

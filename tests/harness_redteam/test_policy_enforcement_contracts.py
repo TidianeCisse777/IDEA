@@ -36,10 +36,6 @@ def test_every_heavy_tool_has_an_executable_confirmation_argument(monkeypatch):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Étape 8: automate planner → writer → run_graph lié au turn_id",
-)
 def test_run_graph_is_fail_closed_when_no_graph_skill_was_loaded(tmp_path):
     from tools.data_tools import make_tools
     from tools.session_store import SessionStore
