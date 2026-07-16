@@ -23,11 +23,26 @@ from tools.ecopart_sources import make_ecopart_tools
 from tools.geo_tools import get_zone_info, make_geo_tools
 from tools.ogsl_sources import make_ogsl_tools
 from tools.rag_tool import make_rag_tool
-from tools.skill_tool import make_skill_tool
+from tools.skill_tool import SKILLS_DIR, make_skill_tool
 from tools.sql_workspace import SQLWorkspaceNotConfiguredError, make_sql_tools
 from tools.taxonomy_tool import make_taxonomy_tool
 
 Language = Literal["fr", "en"]
+ToolRisk = Literal["low", "medium", "high"]
+ToolSource = Literal[
+    "file",
+    "ecotaxa",
+    "ecopart",
+    "amundsen",
+    "bio_oracle",
+    "ogsl",
+    "sql",
+    "geography",
+    "knowledge",
+    "taxonomy",
+    "skill",
+    "deliverable",
+]
 
 
 @dataclass(frozen=True)
@@ -56,15 +71,38 @@ class ToolPresentation:
 
 
 @dataclass(frozen=True)
+class ToolPolicy:
+    """Executable control-plane facts for one stable tool name."""
+
+    family: str
+    source: ToolSource
+    risk: ToolRisk
+    read_only: bool
+    mutates_session: bool
+    remote_io: bool
+    expensive: bool
+    reversible: bool
+    requires_confirmation: bool
+    required_skill: str | None
+    allowed_workflows: tuple[str, ...]
+    max_calls_per_turn: int
+    result_schema: str = "legacy_text"
+
+
+@dataclass(frozen=True)
 class ToolCatalog:
     """Immutable runtime tools with validated presentation lookup."""
 
     tools: tuple[BaseTool, ...]
     names: frozenset[str]
     presentations: Mapping[str, ToolPresentation]
+    policies: Mapping[str, ToolPolicy]
 
     def presentation(self, name: str) -> ToolPresentation | None:
         return self.presentations.get(name)
+
+    def policy(self, name: str) -> ToolPolicy | None:
+        return self.policies.get(name)
 
 
 def _text(fr: str, en: str) -> LocalizedText:
@@ -229,6 +267,173 @@ OPTIONAL_SQL_TOOL_NAMES = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class _PolicyProfile:
+    risk: ToolRisk
+    read_only: bool
+    mutates_session: bool
+    remote_io: bool
+    expensive: bool
+    reversible: bool
+    requires_confirmation: bool
+    max_calls_per_turn: int
+
+
+_POLICY_PROFILES: Mapping[str, _PolicyProfile] = MappingProxyType({
+    "local_read": _PolicyProfile("low", True, False, False, False, True, False, 3),
+    "local_session": _PolicyProfile("medium", False, True, False, False, True, False, 3),
+    "local_artifact": _PolicyProfile("medium", False, True, False, True, True, False, 2),
+    "local_heavy": _PolicyProfile("high", False, True, False, True, True, True, 1),
+    "skill_session": _PolicyProfile("medium", False, True, True, False, True, False, 3),
+    "remote_read": _PolicyProfile("low", True, False, True, False, True, False, 3),
+    "remote_session": _PolicyProfile("medium", False, True, True, False, True, False, 2),
+    "remote_heavy": _PolicyProfile("high", False, True, True, True, True, True, 1),
+    "local_source_read": _PolicyProfile("low", True, False, False, False, True, False, 3),
+    "local_source_session": _PolicyProfile("medium", False, True, False, False, True, False, 2),
+})
+
+
+# Every stable name is deliberately classified. There is no default profile:
+# adding a presentation/runtime tool without adding it here fails validation.
+_TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
+    # Local data/code execution.
+    "load_file": "local_session",
+    "run_pandas": "local_session",
+    "run_graph": "local_artifact",
+    # EcoTaxa read-only/cache navigation.
+    "audit_ecotaxa_availability": "remote_read",
+    "audit_ecotaxa_spatial_coverage": "remote_read",
+    "compare_ecotaxa_projects": "remote_read",
+    "count_ecotaxa_taxa": "remote_read",
+    "find_ecotaxa_projects": "remote_read",
+    "find_ecotaxa_projects_in_region": "remote_read",
+    "get_ecotaxa_cache_status": "remote_read",
+    "get_ecotaxa_sample": "remote_read",
+    "group_ecotaxa_project_samples_by_region": "remote_read",
+    "inspect_ecotaxa_column": "remote_read",
+    "inspect_ecotaxa_project_schema": "remote_read",
+    "list_ecotaxa_campaigns": "remote_read",
+    "list_ecotaxa_project_samples": "remote_read",
+    "list_ecotaxa_projects": "remote_read",
+    "preview_ecotaxa_project": "remote_read",
+    "rank_ecotaxa_samples_by_region": "remote_read",
+    "search_ecotaxa_taxa": "remote_read",
+    "summarize_ecotaxa_project": "remote_read",
+    "summarize_ecotaxa_projects": "remote_read",
+    "summarize_ecotaxa_sample": "remote_read",
+    "summarize_ecotaxa_sample_deployment": "remote_read",
+    "summarize_ecotaxa_samples": "remote_read",
+    # EcoTaxa selection/session and heavy extraction.
+    "find_ecotaxa_observations": "remote_session",
+    "find_ecotaxa_samples_in_region": "remote_session",
+    "group_ecotaxa_samples_by_year": "remote_session",
+    "export_ecotaxa_samples": "remote_heavy",
+    "query_ecotaxa": "remote_heavy",
+    "query_ecotaxa_sample": "remote_heavy",
+    # Bio-ORACLE.
+    "find_bio_oracle_data_for_table": "remote_read",
+    "list_bio_oracle_datasets": "remote_read",
+    "preview_bio_oracle_point": "remote_read",
+    "query_bio_oracle_zones": "remote_session",
+    "couple_zooplankton_bio_oracle": "remote_heavy",
+    "enrich_with_bio_oracle": "remote_heavy",
+    "query_bio_oracle": "remote_heavy",
+    # Amundsen CTD.
+    "find_amundsen_data_for_table": "remote_read",
+    "list_amundsen_datasets": "remote_read",
+    "preview_amundsen_profile": "remote_read",
+    "enrich_loaded_table_with_amundsen_ctd": "remote_heavy",
+    "enrich_with_amundsen_ctd": "remote_heavy",
+    "query_amundsen_ctd": "remote_heavy",
+    # OGSL.
+    "enrich_with_ogsl": "remote_heavy",
+    "query_ogsl": "remote_heavy",
+    # EcoPart. Local join/audit are explicitly distinguished from remote I/O.
+    "find_ecopart_project_for_ecotaxa": "remote_read",
+    "list_ecopart_samples": "remote_read",
+    "preview_ecopart_sample": "remote_read",
+    "audit_ecotaxa_ecopart_join": "local_source_read",
+    "join_ecotaxa_ecopart": "local_source_session",
+    "enrich_ecotaxa_with_ecopart_remote": "remote_heavy",
+    "query_ecopart": "remote_heavy",
+    # Geography and core services.
+    "get_zone_info": "local_read",
+    "filter_dataframe_by_zone": "local_session",
+    "query_copepod_knowledge_base": "local_read",
+    "lookup_marine_taxonomy": "remote_read",
+    "load_skill": "skill_session",
+    "export_deliverable": "local_heavy",
+    # Optional SQL workspace.
+    "list_sql_tables": "remote_read",
+    "preview_sql_table": "remote_read",
+    "copy_sql_query_to_workspace": "remote_heavy",
+})
+
+
+_SOURCE_BY_FAMILY: Mapping[str, ToolSource] = MappingProxyType({
+    "data": "file",
+    "ecotaxa": "ecotaxa",
+    "ecopart": "ecopart",
+    "amundsen": "amundsen",
+    "bio_oracle": "bio_oracle",
+    "ogsl": "ogsl",
+    "sql": "sql",
+    "geography": "geography",
+})
+
+_CORE_SOURCE_BY_NAME: Mapping[str, ToolSource] = MappingProxyType({
+    "query_copepod_knowledge_base": "knowledge",
+    "lookup_marine_taxonomy": "taxonomy",
+    "load_skill": "skill",
+    "export_deliverable": "deliverable",
+})
+
+_REQUIRED_SKILL_BY_FAMILY: Mapping[str, str] = MappingProxyType({
+    "ecotaxa": "ecotaxa_navigation",
+    "ecopart": "ecopart_query",
+    "amundsen": "amundsen_ctd_query",
+    "bio_oracle": "bio_oracle_query",
+})
+
+
+def _build_policy(name: str, profile_name: str) -> ToolPolicy:
+    presentation = TOOL_PRESENTATION[name]
+    profile = _POLICY_PROFILES[profile_name]
+    source = _CORE_SOURCE_BY_NAME.get(name) or _SOURCE_BY_FAMILY[presentation.family]
+    required_skill = _REQUIRED_SKILL_BY_FAMILY.get(presentation.family)
+    if name == "run_graph":
+        required_skill = "graph_writer"
+    elif name == "export_deliverable":
+        required_skill = "deliverable_writer"
+    workflows = (
+        ("visualization",)
+        if name == "run_graph"
+        else ("deliverable",)
+        if name == "export_deliverable"
+        else (presentation.family,)
+    )
+    return ToolPolicy(
+        family=presentation.family,
+        source=source,
+        risk=profile.risk,
+        read_only=profile.read_only,
+        mutates_session=profile.mutates_session,
+        remote_io=profile.remote_io,
+        expensive=profile.expensive,
+        reversible=profile.reversible,
+        requires_confirmation=profile.requires_confirmation,
+        required_skill=required_skill,
+        allowed_workflows=workflows,
+        max_calls_per_turn=profile.max_calls_per_turn,
+    )
+
+
+TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType({
+    name: _build_policy(name, profile_name)
+    for name, profile_name in _TOOL_PROFILE_BY_NAME.items()
+})
+
+
 def _normalize_supported_language(value: object) -> Language | None:
     if not isinstance(value, str):
         return None
@@ -331,6 +536,43 @@ def validate_catalog(
             "Tool catalog incomplete presentation: " + ", ".join(incomplete)
         )
 
+    policy_names = set(TOOL_POLICIES)
+    missing_policies = sorted(names - policy_names)
+    if missing_policies:
+        raise ValueError(f"Tool catalog missing policy: {', '.join(missing_policies)}")
+    orphaned_policies = sorted(policy_names - names - optional)
+    if orphaned_policies:
+        raise ValueError(
+            f"Tool catalog orphan policy: {', '.join(orphaned_policies)}"
+        )
+
+    policy_issues = []
+    local_skills = {path.stem for path in SKILLS_DIR.glob("*.md")}
+    for name in sorted(names | optional):
+        presentation = TOOL_PRESENTATION[name]
+        policy = TOOL_POLICIES[name]
+        issues = []
+        if policy.family != presentation.family:
+            issues.append("family")
+        if policy.read_only and policy.mutates_session:
+            issues.append("read_only+mutates_session")
+        if policy.requires_confirmation and policy.risk != "high":
+            issues.append("confirmation_without_high_risk")
+        if policy.max_calls_per_turn < 1:
+            issues.append("max_calls_per_turn")
+        if policy.result_schema != "legacy_text":
+            issues.append("result_schema")
+        if not policy.allowed_workflows:
+            issues.append("allowed_workflows")
+        if policy.required_skill and policy.required_skill not in local_skills:
+            issues.append(f"unknown_skill={policy.required_skill}")
+        if issues:
+            policy_issues.append(f"{name} ({', '.join(issues)})")
+    if policy_issues:
+        raise ValueError(
+            "Tool catalog invalid policy: " + "; ".join(policy_issues)
+        )
+
 
 def build_tool_catalog(thread_id: str) -> ToolCatalog:
     """Build the exact thread-scoped runtime tools and validate presentation."""
@@ -371,5 +613,8 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
         names=names,
         presentations=MappingProxyType(
             {name: TOOL_PRESENTATION[name] for name in names}
+        ),
+        policies=MappingProxyType(
+            {name: TOOL_POLICIES[name] for name in names}
         ),
     )

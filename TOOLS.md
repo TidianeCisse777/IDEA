@@ -4,9 +4,78 @@
 > (`tools/tool_catalog.py` → `agent.py` → `create_agent`). Pour les use cases voir [`SPEC.md`](SPEC.md),
 > pour le câblage voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
 >
-> **55 tools obligatoires, 58 avec SQL** (les 3 tools SQL ne sont ajoutés que si
+> **59 tools obligatoires, 62 avec SQL** (les 3 tools SQL ne sont ajoutés que si
 > `DATABASE_URL` est résolvable). Les règles de routage — quand appeler quel tool — vivent dans
 > `agents/copepod_system_prompt.py`, jamais dans le code Python.
+
+<!-- TOOL-INVENTORY:START -->
+Inventaire généré : **59 tools obligatoires**, **62 avec SQL**.
+
+| Tool | Famille | Source | Risque | Confirmation | Optionnel | I/O distant | État de session |
+|---|---|---|---|---|---|---|---|
+| `audit_ecotaxa_availability` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `audit_ecotaxa_ecopart_join` | ecopart | ecopart | low | non | non | non | non |
+| `audit_ecotaxa_spatial_coverage` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `compare_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `copy_sql_query_to_workspace` | sql | sql | high | oui | oui | oui | oui |
+| `count_ecotaxa_taxa` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `couple_zooplankton_bio_oracle` | bio_oracle | bio_oracle | high | oui | non | oui | oui |
+| `enrich_ecotaxa_with_ecopart_remote` | ecopart | ecopart | high | oui | non | oui | oui |
+| `enrich_loaded_table_with_amundsen_ctd` | amundsen | amundsen | high | oui | non | oui | oui |
+| `enrich_with_amundsen_ctd` | amundsen | amundsen | high | oui | non | oui | oui |
+| `enrich_with_bio_oracle` | bio_oracle | bio_oracle | high | oui | non | oui | oui |
+| `enrich_with_ogsl` | ogsl | ogsl | high | oui | non | oui | oui |
+| `export_deliverable` | core | deliverable | high | oui | non | non | oui |
+| `export_ecotaxa_samples` | ecotaxa | ecotaxa | high | oui | non | oui | oui |
+| `filter_dataframe_by_zone` | geography | geography | medium | non | non | non | oui |
+| `find_amundsen_data_for_table` | amundsen | amundsen | low | non | non | oui | non |
+| `find_bio_oracle_data_for_table` | bio_oracle | bio_oracle | low | non | non | oui | non |
+| `find_ecopart_project_for_ecotaxa` | ecopart | ecopart | low | non | non | oui | non |
+| `find_ecotaxa_observations` | ecotaxa | ecotaxa | medium | non | non | oui | oui |
+| `find_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `find_ecotaxa_projects_in_region` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `find_ecotaxa_samples_in_region` | ecotaxa | ecotaxa | medium | non | non | oui | oui |
+| `get_ecotaxa_cache_status` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `get_ecotaxa_sample` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `get_zone_info` | geography | geography | low | non | non | non | non |
+| `group_ecotaxa_project_samples_by_region` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `group_ecotaxa_samples_by_year` | ecotaxa | ecotaxa | medium | non | non | oui | oui |
+| `inspect_ecotaxa_column` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `inspect_ecotaxa_project_schema` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `join_ecotaxa_ecopart` | ecopart | ecopart | medium | non | non | non | oui |
+| `list_amundsen_datasets` | amundsen | amundsen | low | non | non | oui | non |
+| `list_bio_oracle_datasets` | bio_oracle | bio_oracle | low | non | non | oui | non |
+| `list_ecopart_samples` | ecopart | ecopart | low | non | non | oui | non |
+| `list_ecotaxa_campaigns` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `list_ecotaxa_project_samples` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `list_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `list_sql_tables` | sql | sql | low | non | oui | oui | non |
+| `load_file` | data | file | medium | non | non | non | oui |
+| `load_skill` | core | skill | medium | non | non | oui | oui |
+| `lookup_marine_taxonomy` | core | taxonomy | low | non | non | oui | non |
+| `preview_amundsen_profile` | amundsen | amundsen | low | non | non | oui | non |
+| `preview_bio_oracle_point` | bio_oracle | bio_oracle | low | non | non | oui | non |
+| `preview_ecopart_sample` | ecopart | ecopart | low | non | non | oui | non |
+| `preview_ecotaxa_project` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `preview_sql_table` | sql | sql | low | non | oui | oui | non |
+| `query_amundsen_ctd` | amundsen | amundsen | high | oui | non | oui | oui |
+| `query_bio_oracle` | bio_oracle | bio_oracle | high | oui | non | oui | oui |
+| `query_bio_oracle_zones` | bio_oracle | bio_oracle | medium | non | non | oui | oui |
+| `query_copepod_knowledge_base` | core | knowledge | low | non | non | non | non |
+| `query_ecopart` | ecopart | ecopart | high | oui | non | oui | oui |
+| `query_ecotaxa` | ecotaxa | ecotaxa | high | oui | non | oui | oui |
+| `query_ecotaxa_sample` | ecotaxa | ecotaxa | high | oui | non | oui | oui |
+| `query_ogsl` | ogsl | ogsl | high | oui | non | oui | oui |
+| `rank_ecotaxa_samples_by_region` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `run_graph` | data | file | medium | non | non | non | oui |
+| `run_pandas` | data | file | medium | non | non | non | oui |
+| `search_ecotaxa_taxa` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `summarize_ecotaxa_project` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `summarize_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `summarize_ecotaxa_sample` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `summarize_ecotaxa_sample_deployment` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `summarize_ecotaxa_samples` | ecotaxa | ecotaxa | low | non | non | oui | non |
+<!-- TOOL-INVENTORY:END -->
 
 Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 (export/download/compute lourd) ; *cond.* = coûteux au-delà d'un seuil.
@@ -23,12 +92,13 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 2. EcoTaxa — `tools/copepod_sources.py` (25)
+## 2. EcoTaxa — `tools/copepod_sources.py` (28)
 
 ### Catalogue & recherche
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `list_ecotaxa_projects` | Liste les projets accessibles | non |
+| `list_ecotaxa_project_samples` | Liste les samples d'un projet avec leurs identifiants et libellés | non |
 | `find_ecotaxa_projects` | Cherche des projets par `title` / `instrument` | non |
 | `list_ecotaxa_campaigns` | Groupe les projets par campagne / leg (`query` facultatif) | non |
 | `preview_ecotaxa_project` | Aperçu d'objets d'un projet | non |
@@ -64,6 +134,8 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 | `summarize_ecotaxa_sample` / `summarize_ecotaxa_samples` | Résumé(s) sample (`selection_name="latest"` possible) | non |
 | `summarize_ecotaxa_sample_deployment` | Position, dates, profondeurs, acquisition, free fields | non |
 | `get_ecotaxa_cache_status` | État du cache MCP (samples/projets indexés, dernier sync) | non |
+| `audit_ecotaxa_availability` | Audite la disponibilité taxonomique par projet dans le cache | non |
+| `audit_ecotaxa_spatial_coverage` | Audite la couverture spatiale des projets/samples du cache | non |
 
 ### Export (opérations confirmées)
 | Tool | Rôle | Coûteux ? |
@@ -173,8 +245,8 @@ Backends : SQLite, PostgreSQL, MySQL, MariaDB (protocole MySQL).
 | Famille | Module | Nb |
 |---|---|---|
 | Données & analyse | `data_tools.py` | 3 |
-| EcoTaxa | `copepod_sources.py` | 25 |
-| EcoPart | `ecopart_sources.py` | 6 |
+| EcoTaxa | `copepod_sources.py` | 28 |
+| EcoPart | `ecopart_sources.py` | 7 |
 | Amundsen CTD | `amundsen_sources.py` | 6 |
 | Bio-ORACLE | `bio_oracle_sources.py` | 7 |
 | OGSL | `ogsl_sources.py` | 2 |
@@ -182,5 +254,5 @@ Backends : SQLite, PostgreSQL, MySQL, MariaDB (protocole MySQL).
 | Géographie | `geo_tools.py` | 2 |
 | Savoir & taxonomie | `rag_tool.py`, `taxonomy_tool.py` | 2 |
 | Skills & livrables | `skill_tool.py`, `deliverable_tool.py` | 2 |
-| **Total obligatoire** | | **55** |
-| **Total avec SQL** | | **58** |
+| **Total obligatoire** | | **59** |
+| **Total avec SQL** | | **62** |
