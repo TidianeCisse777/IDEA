@@ -91,9 +91,10 @@ For ordination requests (`PCA`, `PCoA`, `NMDS`, `RDA`, `CCA`, `ordination`):
 1. Identify the relevant columns in the loaded file
 2. Check the geographic dimension (step 0)
 3. Check whether NeoLabs taxon-level data requires a rebuilt `sample_df` (step 0b)
-4. Decide the output type based on the user's prompt:
-   - If the prompt explicitly mentions "graphique", "graphe", "carte", "visualise", "plot", "chart", "map", "trace", "tracer", "affiche", "montre", "profil vertical", "profil verticale", "vertical profile", or asks to produce a profile, map, chart, graph, plot, or figure → **visual output** (use run_graph after graph_writer)
-   - Otherwise → **table output** (use run_pandas to return a markdown table)
+4. Decide from the requested output intent, not from a closed list of words:
+   - A request for or clear implication of a visual representation of the data is a **visual output**. This includes a map or a plotted profil vertical even when the user does not explicitly say "graph".
+   - A number, calculation, ranking, summary, coordinates, or table is **non-visual** unless the user also asks for a graphical representation. General presentation verbs such as "show", "display", or "present" do not make it visual by themselves.
+   - If the format is genuinely ambiguous, prefer the minimal non-visual answer and do not load this skill. Ask only when the format would materially change the requested result.
 5. If visual output: choose the graph type:
    - **map**: spatial distribution of stations or observations
    - **sampling gap map**: stations coloured by coverage status (present / sparse / absent) per zone — use when the user asks about undersampled zones, lacunes, missing coverage, or where to sample next. Color: green = ≥ 10 obs, orange = 1–9 obs, red = 0 obs.

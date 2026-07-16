@@ -646,21 +646,19 @@ def test_system_prompt_forbids_plan_only_visual_answers():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "profil vertical" in prompt
-    assert "trace" in prompt
-    assert "affiche" in prompt
+    assert "vertical profile" in prompt
+    assert "requested output intent" in prompt
     assert "do not stop after planning" in prompt
     assert "only contains `<details><summary>output plan</summary>" in prompt
     assert "run_graph` image markdown" in prompt
 
 
-def test_graph_planner_treats_french_profile_requests_as_visual():
+def test_graph_planner_treats_profiles_as_semantically_visual():
     planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8").lower()
 
     assert "profil vertical" in planner
-    assert "profil verticale" in planner
-    assert "trace" in planner
-    assert "affiche" in planner
+    assert "requested output intent" in planner
+    assert "not from a closed list of words" in planner
     assert "never answer the user with only this `<details>` block" in planner
     assert 'never call `run_graph` immediately after `load_skill("graph_planner")`' in planner
     assert 'first call `load_skill("graph_writer")`' in planner
@@ -773,7 +771,8 @@ def test_system_prompt_routes_named_zone_map_requests():
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "resolve every named iho/meow/neolab zone with `get_zone_info" in prompt
-    assert "carte" in prompt
+    assert "requested output intent" in prompt
+    assert "a map, plotted vertical profile" in prompt
     assert "load_skill(\"graph_planner\")" in prompt
     assert "load_skill(\"graph_writer\")" in prompt
     assert "very next tool call must be `run_graph`" in prompt

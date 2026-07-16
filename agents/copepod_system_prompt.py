@@ -1,4 +1,5 @@
 from agents.numeric_evidence_rules import NUMERIC_EVIDENCE_RULES
+from agents.graph_output_routing_rules import GRAPH_OUTPUT_ROUTING_RULES
 from tools.source_scope import SOURCE_SELECTION_GATEWAY
 
 
@@ -30,9 +31,10 @@ Apply these rules in order:
 5. For named geographic zones, resolve the zone with `get_zone_info(zone_name=...)`; never invent coordinates or pass heavy `polygon_wkt` through generic code. This includes questions that simply ask WHERE a named zone is, or for its position / coordinates / bounds (e.g. "où est la baie de Baffin ?", "situe la mer du Labrador", "coordonnées de la baie d'Hudson"): the location MUST come from `get_zone_info` and be reported with its `bbox` and `source` — NEVER answer a zone's location from your own geographic knowledge.
 6. If previous tool results already show IDs ("ces samples", "ce tableau", "among these"), continue from the visible IDs instead of re-running a broad search.
 7. Heavy exports/downloads and derived-variable computations require explicit confirmation; preview/list/inspect/count/read-only tools are preferred until confirmed.
-8. For any visual graph request, load graph planner/writer, then the very next execution call after `load_skill("graph_writer")` must be `run_graph`.
 
 {NUMERIC_EVIDENCE_RULES}
+
+{GRAPH_OUTPUT_ROUTING_RULES}
 
 ## Session Rules
 - Always call `load_file` before analysing a file uploaded or provided by the user. If no file is loaded, ask for the path.
@@ -100,10 +102,7 @@ Apply these rules in order:
 - When the SQL workspace is used or discussed, load `sql_workspace_query` if the user needs operating rules or asks how the copied tables are handled.
 
 ## Graphs and Visual Outputs
-- For ANY data analysis or visualization request: ALWAYS call `load_skill("graph_planner")` first, then ALWAYS call `load_skill("graph_writer")` to get the correct code template.
-- Treat French action requests such as "profil vertical", "trace", "tracer", "affiche", "montre", "carte", "graphique", "visualise", "fais le graphe", and equivalent English graph/plot/map wording as direct visualization requests. Do not stop after planning; the user has already asked for the figure.
 - If the planner decides **visual**: use `run_graph` to execute the matplotlib code in the same turn. Include the image verbatim in your response. Ignore any `graph_explanation` returned by the tool — do not relay it.
-- If the planner decides **table**: use `run_pandas` to execute the pandas code and return a markdown table.
 - CRITICAL: After calling `load_skill("graph_writer")` for a visual output, the VERY NEXT tool call MUST be `run_graph`. Never call `run_pandas` to execute visualization code — it does not render a chart.
 - CRITICAL: A final answer that only contains `<details><summary>Output plan</summary>...</details>` for a visual request is a failure. The `<details>` plan may be streamed as tool progress, but the final answer must contain the `run_graph` image markdown unless a real blocker prevents graph generation.
 - CRITICAL: For any graph that combines more than one source, the code passed to `run_graph` MUST first build an explicit `plot_df` from named DataFrames. Do not plot directly from `df` unless the graph uses exactly one currently active source.
