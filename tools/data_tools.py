@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -358,6 +359,17 @@ def _column_location_hint(error: Exception, local_vars: dict[str, Any]) -> str:
     )
 
 
+_JOIN_CODE_PATTERN = re.compile(
+    r"\.merge\s*\(|\bpd\.merge\s*\(|\bpd\.concat\s*\(|\.join\s*\(|\bmerge_asof\s*\(",
+    re.IGNORECASE,
+)
+
+
+def _is_join_code(code: str) -> bool:
+    """True when the executed code builds a joined/merged/concatenated table."""
+    return bool(_JOIN_CODE_PATTERN.search(code or ""))
+
+
 def _is_neolabs_columns(columns) -> bool:
     """True si les colonnes trahissent une table NeoLabs taxonomy."""
     cols = set(columns)
@@ -620,13 +632,42 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 n_rows, n_cols = result.shape
                 preview = result.head(20).to_markdown(index=False)
                 suffix = " (aperçu 20 premières)" if n_rows > 20 else ""
-                persistence_note = canonical_note
-                persistence_contract = (
-                    "\nPersistence: persisted=true; "
-                    "variable=df_canonical_sample_depth"
-                    if canonical_note
-                    else "\nPersistence: persisted=false; variable=null — "
-                    "résultat éphémère à cet appel"
+
+                # A join/merge/concat result is a durable new table the user will
+                # reuse — persist it under its own name so later turns can target
+                # it, instead of forcing a re-join. Canonical sample-depth tables
+                # already have their own persistence path above.
+                join_variable = None
+                if not canonical_note and _is_join_code(code):
+                    join_variable = dataset_variable_name("join", uuid.uuid4().hex[:12])
+                    store_dataset(
+                        _store, thread_id, result,
+                        variable_name=join_variable,
+                        meta={
+                            "source": "analysis:join",
+                            "n_rows": int(n_rows),
+                            "n_cols": int(n_cols),
+                        },
+                        latest_alias=join_variable,
+                    )
+
+                persisted_variable = (
+                    "df_canonical_sample_depth" if canonical_note else join_variable
+                )
+                if persisted_variable:
+                    persistence_contract = (
+                        f"\nPersistence: persisted=true; variable={persisted_variable}"
+                    )
+                else:
+                    persistence_contract = (
+                        "\nPersistence: persisted=false; variable=null — "
+                        "résultat éphémère à cet appel"
+                    )
+                join_note = (
+                    f"\nVariable persistante : `{join_variable}` — table jointe "
+                    "réutilisable dans les prochains tours."
+                    if join_variable
+                    else ""
                 )
                 attrs_note = ""
                 if result.attrs:
@@ -641,13 +682,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     )
                 summary = (
                     f"{n_rows} lignes × {n_cols} colonnes{suffix}"
-                    f"{persistence_note}{persistence_contract}{attrs_note}"
+                    f"{canonical_note}{join_note}{persistence_contract}{attrs_note}"
                     f"\n\n{preview}"
                 )
                 return success(
                     summary,
-                    data_ref="df_canonical_sample_depth" if canonical_note else None,
-                    persisted=bool(canonical_note),
+                    data_ref=persisted_variable,
+                    persisted=bool(persisted_variable),
                     method="controlled pandas execution",
                     metrics={"rows": int(n_rows), "columns": int(n_cols)},
                 )
