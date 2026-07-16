@@ -1,7 +1,7 @@
 # Source Policy Design — étape 3
 
 **Date :** 15 juillet 2026
-**Statut :** design approuvé en conversation, en attente de revue du document
+**Statut :** approuvé par l'utilisateur le 15 juillet 2026
 **Portée :** décision de source exécutable et affinité persistante; aucun filtrage dynamique par workflow, aucune confirmation et aucun `source_lock` persistant dans cette étape.
 
 ## Objectif
@@ -20,7 +20,7 @@ Le vocabulaire canonique est fermé :
 - `ogsl`
 - `sql`
 
-Les tools communs — géographie, RAG, taxonomie, skills, graphiques et livrables — ne constituent pas des sources sélectionnables. Leur disponibilité continue d'être régie par leurs politiques propres et par les étapes ultérieures du harness.
+Les tools communs — chargement/analyse locale, géographie, RAG, taxonomie, skills, graphiques et livrables — ne constituent pas des sources externes à filtrer. En particulier, l'exécution pandas reste disponible sur un dataset téléchargé depuis une source externe. Leur disponibilité continue d'être régie par leurs politiques propres et par les étapes ultérieures du harness.
 
 ## Modèle de décision
 
