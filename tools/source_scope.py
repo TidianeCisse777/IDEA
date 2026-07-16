@@ -15,20 +15,87 @@ requests (scenario turns 3 & 5) despite an explicit override rule.
 from __future__ import annotations
 
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal, TypeAlias
 
-# An *explicit* reference to the EcoTaxa / EcoPart sources or their identifiers.
-# Deliberately narrow: only unblock EcoTaxa routing when the user actually points
-# at the source, never on generic sampling vocabulary.
-_ECOTAXA_SIGNAL = re.compile(
-    r"eco\s*taxa"                       # ecotaxa / eco taxa
-    r"|eco\s*part"                      # ecopart / eco part
-    r"|\bproje?t\s+n?[°o]?\s*\d{3,6}\b"  # "projet 17498", "project 42"
-    r"|\bprojects?\s+\d{3,6}\b"
-    r"|\bprj[ /]?\d{3,6}\b"             # prj/17498
-    r"|obs-vlfr"                         # the EcoTaxa/EcoPart host
-    r"|\bcache\s+(ecotaxa|copépode|copepode)\b"
-    r"|\ble\s+cache\b|\bthe\s+cache\b",  # "le cache", "the cache" (EcoTaxa cache)
+SourceName: TypeAlias = Literal[
+    "file",
+    "ecotaxa",
+    "ecopart",
+    "amundsen",
+    "bio_oracle",
+    "ogsl",
+    "sql",
+]
+SourceEvidence: TypeAlias = Literal[
+    "explicit_name",
+    "file_loaded",
+    "inherited_affinity",
+    "loaded_file_default",
+    "none",
+]
+
+
+@dataclass(frozen=True)
+class SourceAffinity:
+    """Persisted user selection reused by later turns."""
+
+    active_sources: tuple[SourceName, ...]
+    evidence: Literal["explicit_name", "file_loaded"]
+    origin_user_text: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class SourceDecision:
+    """Executable source authorization for one user turn."""
+
+    primary_source: SourceName | None
+    authorized_sources: tuple[SourceName, ...]
+    explicit_sources: tuple[SourceName, ...]
+    evidence: SourceEvidence
+    needs_clarification: bool
+    reason: str
+
+
+_SOURCE_ORDER: tuple[SourceName, ...] = (
+    "file",
+    "ecotaxa",
+    "ecopart",
+    "amundsen",
+    "bio_oracle",
+    "ogsl",
+    "sql",
+)
+_SOURCE_PATTERNS: dict[SourceName, re.Pattern[str]] = {
+    "file": re.compile(
+        r"\b(?:fichier|file|tsv|csv|excel|json|parquet)\b",
+        re.IGNORECASE,
+    ),
+    "ecotaxa": re.compile(
+        r"\beco[\s-]*taxa\b|ecotaxa\.obs-vlfr\.fr",
+        re.IGNORECASE,
+    ),
+    "ecopart": re.compile(
+        r"\beco[\s-]*part\b|ecopart\.obs-vlfr\.fr",
+        re.IGNORECASE,
+    ),
+    "amundsen": re.compile(r"\bamundsen(?:\s+ctd)?\b", re.IGNORECASE),
+    "bio_oracle": re.compile(r"\bbio[\s-]*oracle\b", re.IGNORECASE),
+    "ogsl": re.compile(r"\bogsl\b", re.IGNORECASE),
+    "sql": re.compile(r"\bsql\b|\b(?:workspace|espace)\s+sql\b", re.IGNORECASE),
+}
+_NEGATION_BEFORE_SOURCE = re.compile(
+    r"(?:sans|without|except|sauf|n['’]?utilise\s+pas|ne\s+pas\s+utiliser|do\s+not\s+use)\s*$",
+    re.IGNORECASE,
+)
+_COMBINE_SIGNAL = re.compile(
+    r"\b(?:compare|comparer|croise|croiser|combine|combiner|enrichis|enrichir)\b"
+    r"|\b(?:compare|combine|enrich)\s+with\b",
+    re.IGNORECASE,
+)
+_SWITCH_SIGNAL = re.compile(
+    r"\b(?:passe\s+[àa]|switch\s+to|uniquement|only|utilise\s+plut[oô]t)\b",
     re.IGNORECASE,
 )
 
@@ -36,9 +103,90 @@ _ECOTAXA_SIGNAL = re.compile(
 _ECOTAXA_SKILLS = {"ecotaxa_navigation", "ecotaxa_query"}
 
 
+def _source_mentions(text: str | None) -> tuple[tuple[SourceName, ...], tuple[SourceName, ...]]:
+    normalized = text or ""
+    explicit: list[SourceName] = []
+    excluded: list[SourceName] = []
+    for source in _SOURCE_ORDER:
+        matches = list(_SOURCE_PATTERNS[source].finditer(normalized))
+        if not matches:
+            continue
+        positive = False
+        negative = False
+        for match in matches:
+            prefix = normalized[max(0, match.start() - 40):match.start()]
+            if _NEGATION_BEFORE_SOURCE.search(prefix):
+                negative = True
+            else:
+                positive = True
+        if positive:
+            explicit.append(source)
+        if negative:
+            excluded.append(source)
+    return tuple(explicit), tuple(excluded)
+
+
+def parse_explicit_sources(text: str | None) -> tuple[SourceName, ...]:
+    """Return only positively and explicitly named sources."""
+    explicit, _ = _source_mentions(text)
+    return explicit
+
+
+def _ordered_unique(values: list[SourceName]) -> tuple[SourceName, ...]:
+    return tuple(dict.fromkeys(values))
+
+
+def decide_source(
+    text: str | None,
+    affinity: SourceAffinity | None,
+    file_loaded: bool,
+) -> SourceDecision:
+    """Compute one deterministic source decision without reading session state."""
+    normalized = text or ""
+    explicit, excluded = _source_mentions(normalized)
+    inherited = [
+        source
+        for source in (affinity.active_sources if affinity else ())
+        if source not in excluded
+    ]
+
+    if explicit:
+        if _COMBINE_SIGNAL.search(normalized) and not _SWITCH_SIGNAL.search(normalized):
+            selected = _ordered_unique([*inherited, *explicit])
+        else:
+            selected = explicit
+        evidence: SourceEvidence = "explicit_name"
+    elif inherited:
+        selected = tuple(inherited)
+        evidence = "inherited_affinity"
+    elif file_loaded:
+        selected = ("file",)
+        evidence = "loaded_file_default"
+    else:
+        selected = ()
+        evidence = "none"
+
+    if file_loaded and selected and "file" not in selected:
+        selected = ("file", *selected)
+    selected = tuple(source for source in selected if source not in excluded)
+    primary = "file" if "file" in selected else (selected[0] if selected else None)
+    return SourceDecision(
+        primary_source=primary,
+        authorized_sources=selected,
+        explicit_sources=explicit,
+        evidence=evidence,
+        needs_clarification=not selected,
+        reason=(
+            "Source autorisée par la sélection explicite ou son affinité."
+            if selected
+            else "Aucune source explicite, active ou fichier chargé."
+        ),
+    )
+
+
 def ecotaxa_signal(text: str | None) -> bool:
-    """True if the text explicitly references the EcoTaxa/EcoPart sources."""
-    return bool(text) and bool(_ECOTAXA_SIGNAL.search(text))
+    """Compatibility facade for an explicit EcoTaxa/EcoPart source name."""
+    return bool({"ecotaxa", "ecopart"}.intersection(parse_explicit_sources(text)))
 
 
 def is_ecotaxa_scoped_tool(name: str | None) -> bool:

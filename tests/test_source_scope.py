@@ -42,13 +42,120 @@ def test_generic_sampling_words_are_not_ecotaxa_signals(text):
 
 @pytest.mark.parametrize("text", [
     "samples EcoTaxa en mer de Baffin",
-    "résume le projet 17498 avant export",
     "enrichis avec EcoPart",
     "regarde dans le cache EcoTaxa",
     "https://ecotaxa.obs-vlfr.fr/prj/17498",
 ])
 def test_explicit_ecotaxa_references_are_signals(text):
     assert ecotaxa_signal(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "résume le projet 17498 avant export",
+    "show project 17498",
+    "inspecte prj/17498",
+])
+def test_bare_project_ids_are_not_source_signals(text):
+    assert ecotaxa_signal(text) is False
+
+
+def test_bare_project_id_never_selects_ecotaxa():
+    from tools.source_scope import decide_source
+
+    decision = decide_source(
+        "résume le projet 17498",
+        affinity=None,
+        file_loaded=False,
+    )
+
+    assert decision.authorized_sources == ()
+    assert decision.needs_clarification is True
+
+
+def test_explicit_ecotaxa_establishes_source():
+    from tools.source_scope import decide_source
+
+    decision = decide_source(
+        "dans EcoTaxa, résume le projet 17498",
+        affinity=None,
+        file_loaded=False,
+    )
+
+    assert decision.primary_source == "ecotaxa"
+    assert decision.explicit_sources == ("ecotaxa",)
+
+
+def test_active_ecotaxa_is_inherited_without_repeating_source_name():
+    from tools.source_scope import SourceAffinity, decide_source
+
+    decision = decide_source(
+        "montre les samples du projet 17498",
+        affinity=SourceAffinity(
+            active_sources=("ecotaxa",),
+            evidence="explicit_name",
+            origin_user_text="Explore EcoTaxa",
+            updated_at="2026-07-15T12:00:00+00:00",
+        ),
+        file_loaded=False,
+    )
+
+    assert decision.authorized_sources == ("ecotaxa",)
+    assert decision.evidence == "inherited_affinity"
+
+
+def test_comparison_combines_active_and_new_source():
+    from tools.source_scope import SourceAffinity, decide_source
+
+    affinity = SourceAffinity(
+        active_sources=("ecotaxa",),
+        evidence="explicit_name",
+        origin_user_text="Explore EcoTaxa",
+        updated_at="2026-07-15T12:00:00+00:00",
+    )
+    decision = decide_source(
+        "compare avec EcoPart",
+        affinity=affinity,
+        file_loaded=False,
+    )
+
+    assert decision.authorized_sources == ("ecotaxa", "ecopart")
+
+
+def test_explicit_switch_replaces_active_source():
+    from tools.source_scope import SourceAffinity, decide_source
+
+    affinity = SourceAffinity(
+        active_sources=("ecotaxa",),
+        evidence="explicit_name",
+        origin_user_text="Explore EcoTaxa",
+        updated_at="2026-07-15T12:00:00+00:00",
+    )
+    decision = decide_source(
+        "passe à EcoPart",
+        affinity=affinity,
+        file_loaded=False,
+    )
+
+    assert decision.authorized_sources == ("ecopart",)
+
+
+def test_exclusion_never_activates_named_source():
+    from tools.source_scope import SourceAffinity, decide_source
+
+    affinity = SourceAffinity(
+        active_sources=("ecotaxa",),
+        evidence="explicit_name",
+        origin_user_text="Explore EcoTaxa",
+        updated_at="2026-07-15T12:00:00+00:00",
+    )
+    decision = decide_source(
+        "sans EcoTaxa, utilise mon fichier",
+        affinity=affinity,
+        file_loaded=True,
+    )
+
+    assert decision.primary_source == "file"
+    assert "ecotaxa" not in decision.authorized_sources
 
 
 # --- tool / skill classification ---------------------------------------------

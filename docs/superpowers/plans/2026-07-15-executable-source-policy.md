@@ -30,7 +30,7 @@
 - Produces: `SourceName`, `SourceEvidence`, `SourceAffinity`, `SourceDecision`, `parse_explicit_sources(text)`, `decide_source(text, affinity, file_loaded)`.
 - Consumes: uniquement du texte et des valeurs immuables; aucune lecture du store.
 
-- [ ] **RED 1:** remplacer l'ancien cas positif « résume le projet 17498 » par une assertion négative et ajouter une matrice couvrant noms explicites, IDs nus, exclusions, bascule et combinaison.
+- [x] **RED 1:** remplacer l'ancien cas positif « résume le projet 17498 » par une assertion négative et ajouter une matrice couvrant noms explicites, IDs nus, exclusions, bascule et combinaison.
 
 ```python
 def test_bare_project_id_never_selects_ecotaxa():
@@ -44,10 +44,10 @@ def test_explicit_ecotaxa_establishes_source():
     assert decision.explicit_sources == ("ecotaxa",)
 ```
 
-- [ ] **Verify RED 1:** `pytest -q tests/test_source_scope.py tests/harness_redteam/test_source_and_prompt_contracts.py`; attendu : échec sur l'ID nu et imports absents.
-- [ ] **GREEN 1:** implémenter les dataclasses gelées, les alias exacts des sept sources, la détection d'exclusion et les modes `replace`/`combine`/`file`/`inherit`. Garder `ecotaxa_signal()` comme façade qui ne retourne vrai que sur une mention EcoTaxa/EcoPart explicite.
-- [ ] **Verify GREEN 1:** même commande; attendu : contrats source verts, seul le contrat étape 4 reste `xfail`.
-- [ ] **Commit:** `feat: add deterministic source decision`.
+- [x] **Verify RED 1:** `pytest -q tests/test_source_scope.py tests/harness_redteam/test_source_and_prompt_contracts.py`; attendu : échec sur l'ID nu et imports absents.
+- [x] **GREEN 1:** implémenter les dataclasses gelées, les alias exacts des sept sources, la détection d'exclusion et les modes `replace`/`combine`/`file`/`inherit`. Garder `ecotaxa_signal()` comme façade qui ne retourne vrai que sur une mention EcoTaxa/EcoPart explicite.
+- [x] **Verify GREEN 1:** même commande; attendu : contrats source verts, seul le contrat étape 4 reste `xfail`.
+- [x] **Commit:** `feat: add deterministic source decision`.
 
 ### Task 2: Affinité persistante
 

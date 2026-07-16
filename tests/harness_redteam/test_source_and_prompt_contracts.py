@@ -5,10 +5,6 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Étape 3: aligner SourcePolicy, prompt et source_scope sur les IDs nus",
-)
 def test_bare_project_id_does_not_authorize_ecotaxa():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
     from tools.source_scope import ecotaxa_signal
