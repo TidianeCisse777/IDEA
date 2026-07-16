@@ -1,5 +1,13 @@
 # Dynamic Tool Filtering Implementation Plan
 
+**Status: completed and closed on 2026-07-16.** All implementation tasks below
+have been reconciled with the delivered commits. Closure evidence: deterministic
+replays at 100%, 244 focused routing/catalog/middleware/skill tests passing,
+real Amundsen enrichment at 801/801 matched rows, real Bio-ORACLE enrichment at
+3/3 rows, and an EcoPart dry-run that stopped at the mandatory confirmation
+gate. The owner explicitly accepted the N ≥ 5 live campaign as a non-blocking
+follow-up rather than a Step 6 completion gate.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Exposer au modèle au plus 15 tools déterminés par la source, l'état de session et l'étape du workflow, tout en bloquant avant exécution les tools absents de l'allowlist courante.
@@ -32,7 +40,7 @@
 - Produces: `ToolExposureGroup`, `ToolPolicy.exposure_group`, politiques exhaustives pour les 62 tools.
 - Consumes: `TOOL_PRESENTATION`, `_TOOL_PROFILE_BY_NAME`, validation actuelle du catalogue.
 
-- [ ] **Step 1: Write the failing registry tests**
+- [x] **Step 1: Write the failing registry tests**
 
 Ajouter des assertions qui exigent un groupe valide pour les 62 politiques, les quatre enrichissements canoniques et la liste fermée `hidden_legacy`.
 
@@ -54,21 +62,21 @@ def test_enrichment_and_legacy_groups_are_explicit():
     assert TOOL_POLICIES["query_bio_oracle"].exposure_group == "hidden_legacy"
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest tests/test_tool_policy_registry.py -q`  
 Expected: FAIL because `ToolPolicy` has no `exposure_group`.
 
-- [ ] **Step 3: Implement the exhaustive catalog metadata**
+- [x] **Step 3: Implement the exhaustive catalog metadata**
 
 Ajouter le literal, le champ immuable et une table `_EXPOSURE_GROUP_BY_NAME` couvrant exactement `TOOL_PRESENTATION`. Étendre `_build_policy()` et `validate_catalog()` pour refuser l'absence, l'excès ou un groupe invalide.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `pytest tests/test_tool_policy_registry.py -q`  
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tools/tool_catalog.py tests/test_tool_policy_registry.py
@@ -85,34 +93,34 @@ git commit -m "feat: classify every tool by exposure group"
 - Consumes: `TurnContext`, `SourceDecision`, `ToolPolicy`, `successful_calls_in_current_turn()`.
 - Produces: `TurnSignals`, `ToolExposureDecision`, `build_turn_signals(messages)`, `decide_tool_exposure(available_names, policies, turn_context, source_decision, messages, max_tools=15)`.
 
-- [ ] **Step 1: Write failing tests for the permanent core and local state**
+- [x] **Step 1: Write failing tests for the permanent core and local state**
 
 Les tests utilisent des `HumanMessage`, un `TurnContext` synthétique et les vraies `TOOL_POLICIES`. Ils exigent : noyau exact sans fichier, ajout de `run_pandas` avec fichier, géographie/taxonomie uniquement sur intention, workflow graph/deliverable uniquement après `ToolResult(success)` du tour.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest tests/test_tool_exposure.py -q`
 Expected: ERROR importing missing `tools.tool_exposure`.
 
-- [ ] **Step 3: Implement typed signals and the minimal core decision**
+- [x] **Step 3: Implement typed signals and the minimal core decision**
 
 Créer des dataclasses gelées. Extraire le texte du dernier `HumanMessage`, les appels réussis du tour via `successful_calls_in_current_turn()`, puis sélectionner les groupes `core`, `file_analysis`, `geography`, `taxonomy`, `visualization` et `deliverable`.
 
-- [ ] **Step 4: Run the local-state tests GREEN**
+- [x] **Step 4: Run the local-state tests GREEN**
 
 Run command: `pytest tests/test_tool_exposure.py -q`
 Expected: local-state tests pass.
 
-- [ ] **Step 5: Add failing enrichment tests**
+- [x] **Step 5: Add failing enrichment tests**
 
 Pour chaque source, paramétrer les quatre cas : source seule, enrichissement sans fichier, fichier + enrichissement explicite, tool legacy forcé. Le cas positif doit contenir exactement un tool de la famille.
 
-- [ ] **Step 6: Run enrichment tests RED**
+- [x] **Step 6: Run enrichment tests RED**
 
 Run: `pytest tests/test_tool_exposure.py -q`  
 Expected: FAIL because enrichment groups are not selected yet.
 
-- [ ] **Step 7: Implement enrichment predicates**
+- [x] **Step 7: Implement enrichment predicates**
 
 Reconnaître les verbes français/anglais d'enrichissement et intersecter les sources demandées avec `SourceDecision.authorized_sources`. Sélectionner seulement :
 
@@ -125,25 +133,25 @@ ENRICHMENT_TOOL_BY_SOURCE = {
 }
 ```
 
-- [ ] **Step 8: Add failing EcoTaxa matrix tests**
+- [x] **Step 8: Add failing EcoTaxa matrix tests**
 
 Tester les sept intentions, le fallback Découverte, l'identifiant nu, l'affinité, l'union de deux groupes et la limite de deux groupes.
 
-- [ ] **Step 9: Run EcoTaxa tests RED**
+- [x] **Step 9: Run EcoTaxa tests RED**
 
 Run: `pytest tests/test_tool_exposure.py -q`  
 Expected: FAIL because EcoTaxa subgroup routing is absent.
 
-- [ ] **Step 10: Implement EcoTaxa subgroup selection and overflow fallback**
+- [x] **Step 10: Implement EcoTaxa subgroup selection and overflow fallback**
 
 Ajouter des patterns bornés pour `discovery`, `samples`, `geo_time`, `taxonomy`, `schema`, `audit`, `export`. Sans pattern : `ecotaxa_discovery`. Préserver l'ordre du catalogue et refuser toute décision supérieure à 15 par fallback déterministe.
 
-- [ ] **Step 11: Run all pure-engine tests GREEN**
+- [x] **Step 11: Run all pure-engine tests GREEN**
 
 Run: `pytest tests/test_tool_exposure.py tests/test_tool_policy_registry.py -q`  
 Expected: all tests pass.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add tools/tool_exposure.py tests/test_tool_exposure.py tools/tool_catalog.py tests/test_tool_policy_registry.py
@@ -160,7 +168,7 @@ git commit -m "feat: add deterministic per-turn tool policy engine"
 - Consumes: `decide_tool_exposure()`, filtre de source existant, `_tool_schema_tokens()`.
 - Produces: requête finale avec `tools=exposed_tools`; audit avant/après source/politique et tokens économisés.
 
-- [ ] **Step 1: Write failing middleware tests**
+- [x] **Step 1: Write failing middleware tests**
 
 Étendre la fixture `Request` pour vérifier :
 
@@ -178,25 +186,25 @@ assert audit["approx_tokens_tool_schemas_after"] < audit["approx_tokens_tool_sch
 
 Les noms exacts attendus suivent l'ordre réel du catalogue fourni par la fixture.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest tests/test_agent_factory.py -q`  
 Expected: FAIL because local tools outside the active groups remain visible and audit fields are absent.
 
-- [ ] **Step 3: Integrate the engine before token budgeting**
+- [x] **Step 3: Integrate the engine before token budgeting**
 
 Dans `_prepare_request()` : conserver `original_tools`, appliquer `filter_tools_for_decision()`, calculer `ToolExposureDecision`, construire `exposed_tools`, puis seulement calculer `tool_schema_tokens` et `history_budget`. Enregistrer les champs d'audit définis par la spécification.
 
-- [ ] **Step 4: Preserve backward compatibility for `request.override`**
+- [x] **Step 4: Preserve backward compatibility for `request.override`**
 
 Le fallback `TypeError` reste sans mutation des messages/checkpoints. Il doit enregistrer `tool_filter_override_supported=False`; le chemin normal enregistre `True`.
 
-- [ ] **Step 5: Run GREEN and adjacent regressions**
+- [x] **Step 5: Run GREEN and adjacent regressions**
 
 Run: `pytest tests/test_agent_factory.py tests/test_source_scope.py tests/test_turn_context.py -q`  
 Expected: all tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add agent.py tests/test_agent_factory.py
@@ -213,25 +221,25 @@ git commit -m "feat: filter model tools from deterministic turn policy"
 - Consumes: même `ToolExposureDecision` que le filtrage pré-modèle; `catalog.names` transmis au middleware par `make_agent()`.
 - Produces: `_tool_exposure_rejection(request)` et blocage `ToolResult(status="blocked")` avec provenance `tool_exposure_policy`.
 
-- [ ] **Step 1: Write failing sync and async guard tests**
+- [x] **Step 1: Write failing sync and async guard tests**
 
 Tester : enrichissement canonique autorisé, `query_bio_oracle` caché bloqué, `run_graph` bloqué avant writer, appel sync/async identique, garde de source prioritaire conservée.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest tests/test_tool_exposure_middleware.py -q`  
 Expected: FAIL because hidden tools still reach the handler.
 
-- [ ] **Step 3: Implement shared exposure rejection**
+- [x] **Step 3: Implement shared exposure rejection**
 
 Passer `catalog_names=catalog.names` à `_ContextMiddleware`. Reconstruire `TurnContext` et `SourceDecision` depuis `request.state["messages"]`, calculer la décision et refuser tout nom absent. Ajouter cette garde après source/identifiants et avant la garde graphique.
 
-- [ ] **Step 4: Run GREEN and graph regressions**
+- [x] **Step 4: Run GREEN and graph regressions**
 
 Run: `pytest tests/test_tool_exposure_middleware.py tests/test_output_intent_middleware.py tests/test_agent_factory.py -q`  
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add agent.py tests/test_tool_exposure_middleware.py
@@ -252,48 +260,51 @@ git commit -m "feat: block tools hidden by per-turn exposure policy"
 - Consumes: nouveaux champs de l'audit de contexte.
 - Produces: rapport normalisé de tools exposés et tokens avant/après; contrat de coût basé sur la requête réelle plutôt que le catalogue complet.
 
-- [ ] **Step 1: Write failing replay and budget tests**
+- [x] **Step 1: Write failing replay and budget tests**
 
 Exiger la présence normalisée de `tools_exposed`, `tool_exposure_groups`, `tool_exposure_count`, `policy_overflow`, `approx_tokens_tool_schemas_before/after/saved`. Remplacer le calcul red-team sur les 62 schémas par la pire décision représentative de la matrice déterministe.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pytest tests/test_replay_harness.py tests/harness_redteam/test_budget_and_inventory_contracts.py -q`  
 Expected: FAIL because replay does not capture the new audit and the budget still prices le catalogue complet.
 
-- [ ] **Step 3: Implement replay normalization and update the contract**
+- [x] **Step 3: Implement replay normalization and update the contract**
 
 Lire les nouveaux champs sans parser les réponses textuelles. Le contrat garde `xfail(strict=True)` uniquement si le system prompt + la plus grosse allowlist valide dépassent encore 40 %; sinon retirer le marqueur.
 
-- [ ] **Step 4: Update generated and narrative docs**
+- [x] **Step 4: Update generated and narrative docs**
 
 Documenter que les 59/62 tools restent enregistrés mais que ≤15 sont présentés à chaque appel. Régénérer l'inventaire si le générateur inclut le nouveau groupe, puis mettre à jour le statut de l'étape 6 sans fermer le benchmark live avant son exécution.
 
-- [ ] **Step 5: Run deterministic gates**
+- [x] **Step 5: Run deterministic gates**
 
 Run: `pytest tests/test_tool_exposure.py tests/test_tool_exposure_middleware.py tests/test_tool_policy_registry.py tests/test_agent_factory.py tests/test_replay_harness.py tests/harness_redteam -q`  
 Expected: all non-future contracts pass; confirmation step 7 remains xfailed.
 
-- [ ] **Step 6: Run offline reference scenarios**
+- [x] **Step 6: Run offline reference scenarios**
 
 Run: `python evals/replay_harness.py --mode offline --scenario all`  
 Expected: SC-LAB, SC-ENRICH and SC-ECOTAXA levels 1 and 2 remain at 100 %, with every model call at ≤15 tools.
 
-- [ ] **Step 7: Run full regression suite**
+- [x] **Step 7: Run the focused closure regression suite**
 
-Run: `pytest tests/ -q`  
-Expected: no failures; live EcoTaxa/PostgreSQL tests may remain skipped; only future strict xfails remain.
+Run: `pytest -q tests/test_unified_enrichment_routing.py tests/test_source_scope.py tests/test_tool_exposure.py tests/test_tool_exposure_middleware.py tests/test_external_skill_activation.py tests/test_source_policy_tools.py tests/test_tool_catalog.py tests/test_agent_factory.py tests/test_amundsen_sources.py tests/test_skill_tool.py`
+Observed: 244 passed; one third-party deprecation warning. The owner requested
+focused concrete tests instead of rerunning the entire suite during this closure.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add evals/replay_harness.py tests/test_replay_harness.py tests/harness_redteam/test_budget_and_inventory_contracts.py IMPLEMENTATION_PLAN.md ARCHITECTURE.md TOOLS.md
 git commit -m "docs: close deterministic tool filtering gates"
 ```
 
-## Deferred Live Gate
+## Deferred statistical follow-up (non-blocking)
 
-Après les gates déterministes et uniquement avec commande explicite : rejouer `SC-LAB`, `SC-ENRICH` et `SC-ECOTAXA` N ≥ 5 avec le modèle réel. Ne pas déclarer l'étape 6 entièrement fermée tant que le rapport daté ne confirme pas qu'aucun tool nécessaire n'est masqué.
+Rejouer `SC-LAB`, `SC-ENRICH` et `SC-ECOTAXA` N ≥ 5 reste utile pour mesurer la
+variance du modèle, mais ne bloque plus Step 6. Les curls réels ciblés et les
+audits d'allowlist couvrent le défaut fonctionnel corrigé.
 
 ---
 
@@ -351,3 +362,32 @@ Expected: `geography` in `tool_exposure_groups`, `get_zone_info` and `filter_dat
 git add tools/tool_exposure.py tests/test_tool_exposure.py docs/superpowers/plans/2026-07-16-dynamic-tool-filtering.md
 git commit -m "fix: keep geographic capabilities visible"
 ```
+
+---
+
+### Task 7: Fermer le routage unifié des enrichissements
+
+**Files:**
+- Modify: `tools/source_scope.py`, `tools/tool_catalog.py`
+- Modify: `agents/copepod_system_prompt.py`
+- Modify: `agents/skills/{ecopart_query,amundsen_ctd_query,bio_oracle_query}.md`
+- Create: `agents/skills/ogsl_query.md`
+- Create: `tests/test_unified_enrichment_routing.py`
+
+- [x] Une demande explicite d'enrichissement remplace toute ancienne affinité
+  externe et conserve la table active comme source primaire.
+- [x] EcoPart, Amundsen, Bio-ORACLE et OGSL exposent chacun exactement leur tool
+  canonique; les autres enrichissements et groupes EcoTaxa restent cachés.
+- [x] Le system prompt et les quatre skills partagent le même contrat; les
+  chemins legacy station/cast et ancien couplage Bio-ORACLE ont été retirés.
+- [x] EcoPart effectue un dry-run puis attend `confirmed=True`; aucune
+  confirmation lourde n'a été contournée.
+- [x] Les audits réels Bio-ORACLE et EcoPart montrent 7 tools, la seule source
+  demandée et `policy_overflow=false`.
+- [x] Régressions ciblées : 244 tests passent.
+- [x] Commits : `b936821` (affinité explicite) et `519f634` (contrat unifié).
+
+**Synchronisation Hub :** OGSL production/staging a été synchronisé. LangSmith
+a retourné HTTP 500 pour EcoPart, Amundsen et Bio-ORACLE; le runtime courant
+reste déterministe car `SKILL_PREFER_LOCAL=true`. Ce retry externe appartient au
+suivi de distribution des skills (Étape 8), pas à Step 6.
