@@ -91,7 +91,7 @@ Les tests utilisent des `HumanMessage`, un `TurnContext` synthétique et les vra
 
 - [ ] **Step 2: Run RED**
 
-Run: `pytest tests/test_tool_exposure.py -q`  
+Run: `pytest tests/test_tool_exposure.py -q`
 Expected: ERROR importing missing `tools.tool_exposure`.
 
 - [ ] **Step 3: Implement typed signals and the minimal core decision**
@@ -100,7 +100,7 @@ Créer des dataclasses gelées. Extraire le texte du dernier `HumanMessage`, les
 
 - [ ] **Step 4: Run the local-state tests GREEN**
 
-Run: `pytest tests/test_tool_exposure.py -q`  
+Run command: `pytest tests/test_tool_exposure.py -q`
 Expected: local-state tests pass.
 
 - [ ] **Step 5: Add failing enrichment tests**
@@ -294,3 +294,60 @@ git commit -m "docs: close deterministic tool filtering gates"
 ## Deferred Live Gate
 
 Après les gates déterministes et uniquement avec commande explicite : rejouer `SC-LAB`, `SC-ENRICH` et `SC-ECOTAXA` N ≥ 5 avec le modèle réel. Ne pas déclarer l'étape 6 entièrement fermée tant que le rapport daté ne confirme pas qu'aucun tool nécessaire n'est masqué.
+
+---
+
+## Correctif géographique — capacités toujours visibles
+
+### Task 6: Supprimer la pré-détection géographique lexicale
+
+**Files:**
+- Modify: `tools/tool_exposure.py`
+- Modify: `tests/test_tool_exposure.py`
+
+**Interfaces:**
+- Consumes: `decide_tool_exposure(...)` et les groupes existants `geography` / `ecotaxa_geo_time`.
+- Produces: une allowlist où `geography` est toujours actif et où EcoTaxa ajoute toujours `ecotaxa_geo_time`, sans `_GEOGRAPHY_PATTERN` ni `TurnSignals.geography_requested`.
+
+- [ ] **Step 1: Write the failing Hudson and source-matrix tests**
+
+```python
+def test_geography_tools_are_always_visible_without_lexical_detection():
+    for text in ("Bonjour", "Baie d’Hudson", "secteur scientifique alpha"):
+        decision = _decision(text)
+        assert "get_zone_info" in decision.tool_names
+        assert "filter_dataframe_by_zone" in decision.tool_names
+
+def test_ecotaxa_always_includes_geo_time_with_at_most_one_other_group():
+    decision = _decision("Audite le projet EcoTaxa", sources=("ecotaxa",))
+    assert "ecotaxa_geo_time" in decision.active_groups
+    assert "ecotaxa_audit" in decision.active_groups
+    assert len(decision.tool_names) <= 15
+```
+
+- [ ] **Step 2: Run RED**
+
+Command: `pytest tests/test_tool_exposure.py -q`
+
+Expected: FAIL because neutral/Hudson text does not expose `geography` and EcoTaxa audit omits `ecotaxa_geo_time`.
+
+- [ ] **Step 3: Implement the minimal policy change**
+
+Delete `_GEOGRAPHY_PATTERN` and `TurnSignals.geography_requested`. Initialize groups with `['core', 'geography']`. For EcoTaxa, select the first non-geographic intent or discovery, then prepend `ecotaxa_geo_time`. Update overflow fallback to preserve `geography` and, for EcoTaxa, `ecotaxa_geo_time` plus discovery when the combination fits.
+
+- [ ] **Step 4: Run GREEN and the middleware regression**
+
+Run: `pytest tests/test_tool_exposure.py tests/test_tool_exposure_middleware.py tests/test_agent_factory.py -q`
+Expected: PASS; every decision remains at 15 tools maximum.
+
+- [ ] **Step 5: Validate the real Hudson curl once**
+
+Run the existing `curl-neolabs-2014-2020` request for Hudson, then query `/debug/context-audit`.
+Expected: `geography` in `tool_exposure_groups`, `get_zone_info` and `filter_dataframe_by_zone` in `tools_exposed`, no overflow.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tools/tool_exposure.py tests/test_tool_exposure.py docs/superpowers/plans/2026-07-16-dynamic-tool-filtering.md
+git commit -m "fix: keep geographic capabilities visible"
+```
