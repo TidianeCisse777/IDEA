@@ -217,11 +217,13 @@ class _ContextMiddleware(AgentMiddleware):
         user_id: str = "anonymous",
         thread_id: str = "unknown",
         output_intent_classifier=None,
+        catalog_names=None,
     ):
         super().__init__()
         self.user_id = user_id
         self.thread_id = thread_id
         self.output_intent_classifier = output_intent_classifier
+        self.catalog_names = tuple(catalog_names or ())
         self._output_intent_cache = {}
         self._output_intent_classifier_calls = {}
         self._output_intent_sync_lock = threading.Lock()
@@ -469,6 +471,45 @@ class _ContextMiddleware(AgentMiddleware):
             dict(tool_call.get("args") or {}),
         )
 
+    def _tool_exposure_rejection(self, request) -> str | None:
+        """Reject a tool absent from the deterministic allowlist for this turn."""
+
+        from tools.session_store import default_store as session_store
+        from tools.source_scope import source_decision_for_turn
+        from tools.tool_catalog import TOOL_POLICIES
+        from tools.tool_exposure import decide_tool_exposure
+        from tools.turn_context import build_turn_context
+
+        messages = list(request.state.get("messages") or [])
+        source_decision = source_decision_for_turn(
+            session_store,
+            self.thread_id,
+            messages,
+            persist=False,
+        )
+        turn_ctx = build_turn_context(
+            session_store,
+            self.thread_id,
+            messages,
+            persist_source=False,
+        )
+        available_names = self.catalog_names or tuple(TOOL_POLICIES)
+        decision = decide_tool_exposure(
+            available_names,
+            TOOL_POLICIES,
+            turn_ctx,
+            source_decision,
+            messages,
+        )
+        name = str(request.tool_call.get("name") or "")
+        if name in decision.tool_names:
+            return None
+        return (
+            "Action unavailable in the current turn of the workflow. "
+            "Continue with the visible actions or request the missing "
+            "information before retrying."
+        )
+
     def _persist_output_intent(self, decision) -> None:
         from tools.session_store import default_store as session_store
 
@@ -592,6 +633,14 @@ class _ContextMiddleware(AgentMiddleware):
         rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
             return self._blocked_tool_message(request, rejection)
+        rejection = self._tool_exposure_rejection(request)
+        if rejection:
+            return self._blocked_tool_message(
+                request,
+                rejection,
+                provenance_source="tool_exposure_policy",
+                method="deterministic tool exposure guard",
+            )
         rejection = self._output_intent_rejection(request)
         if rejection:
             return self._blocked_tool_message(
@@ -606,6 +655,14 @@ class _ContextMiddleware(AgentMiddleware):
         rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
         if rejection:
             return self._blocked_tool_message(request, rejection)
+        rejection = self._tool_exposure_rejection(request)
+        if rejection:
+            return self._blocked_tool_message(
+                request,
+                rejection,
+                provenance_source="tool_exposure_policy",
+                method="deterministic tool exposure guard",
+            )
         rejection = await self._aoutput_intent_rejection(request)
         if rejection:
             return self._blocked_tool_message(
@@ -759,6 +816,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
                 user_id=user_id,
                 thread_id=thread_id,
                 output_intent_classifier=output_intent_classifier,
+                catalog_names=catalog.names,
             )
         ],
         checkpointer=_checkpointer,
