@@ -23,6 +23,7 @@ DEFAULT_TIME_CANDIDATES: tuple[str, ...] = (
     "sampledatetime",
     "time",
     "date",
+    "sample_date",
     "sampling_date",
     "deployment_datetime_start",
     "yyyy-mm-dd hh:mm",
