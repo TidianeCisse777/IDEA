@@ -217,6 +217,8 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 ### Étape 8 — Skills fail-closed, versionnés, normalisés *(axe sécurité)*
 
+**État : allowlist locale fail-closed terminée le 16 juillet 2026 ; versionnement/frontmatter/découpe encore à faire.** `load_skill` valide l'allowlist locale **avant** tout accès Hub : le Hub ne peut plus introduire un nom de skill absent localement, il sert seulement une version d'un skill déjà autorisé (fallback Hub→local visible en provenance). Le contrat rouge de l'étape 1 est devenu vert et le happy path graphique reste validé sur l'agent réel.
+
 **Goal :** activation de skills bornée, tracée et ordonnée par tour.
 
 **Changement :**
@@ -226,7 +228,7 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 - La partie graphique de l'automate est déjà imposée en 4B.1 depuis les ToolResults du tour courant. L'étape 8 conserve la normalisation générale des événements de skills et leur versionnement.
 
 **Test gate :**
-- [ ] Skill hors allowlist locale jamais chargé depuis le Hub (test rouge de l'étape 1 vert).
+- [x] Skill hors allowlist locale jamais chargé depuis le Hub (test rouge de l'étape 1 vert) ; happy path graphique (`graph_planner`/`graph_writer` → `run_graph`) validé sur l'agent réel.
 - [x] `run_graph` impossible hors séquence du tour courant (résolu en 4B.1).
 - [ ] Chaque skill a le frontmatter commun ; aucun skill > 3 000 tokens sans exemption documentée.
 
@@ -299,7 +301,7 @@ Le remodelage est réussi quand :
 | 5 — TurnContext + carte d'état | ⬜ à faire | — | — | ⬜ |
 | 6 — Filtrage dynamique | ⬜ à faire | — | — | ⬜ |
 | 7 — Confirmations | ⬜ à faire | — | — | ⬜ |
-| 8 — Skills versionnés | ⬜ à faire | — | — | ⬜ |
+| 8 — Skills versionnés | 🟡 en cours | Hub sert un skill non listé | allowlist fail-closed avant Hub; contrat vert; happy path réel OK | 🟡 versionnement/frontmatter restants |
 | 9 — Isolation code | ⬜ à faire | — | — | ⬜ |
 | 10 — Réduction prompt | ⬜ à faire | — | — | ⬜ |
 | 11 — Nettoyage legacy | ⬜ à faire | — | — | ⬜ |
