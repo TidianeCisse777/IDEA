@@ -88,7 +88,7 @@ class ToolPolicy:
     required_skill: str | None
     allowed_workflows: tuple[str, ...]
     max_calls_per_turn: int
-    result_schema: ToolResultSchema = "legacy_text"
+    result_schema: ToolResultSchema = "tool_result_v1"
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,7 @@ from typing import Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 ToolStatus: TypeAlias = Literal["success", "empty", "blocked", "error", "cancelled"]
-ToolResultSchema: TypeAlias = Literal["legacy_text", "tool_result_v1"]
+ToolResultSchema: TypeAlias = Literal["tool_result_v1"]
 ToolArtifact: TypeAlias = dict[str, Any]
 ToolOutput: TypeAlias = tuple[Any, ToolArtifact]
 _DEFAULT_CONTENT = object()
