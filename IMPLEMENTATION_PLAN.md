@@ -150,7 +150,7 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 **Goal :** éliminer les instructions incompatibles que l'agent reçoit aujourd'hui (audit P0 §4.2, P1.8), qui le font hésiter.
 
-**État : 4A terminé le 15 juillet, 4B et sa garde exécutable 4B.1 terminées le 16 juillet 2026.** La règle numérique est maintenant canonique et injectée une seule fois : valeur fournie par un tool spécialisé → reprise directe; nouvelle valeur dérivée d'une table → pandas; valeur absente → inconnue, jamais inventée. Le routage graphique reste sémantique, mais le harness classifie l'artefact demandé au premier appel graphique, mémorise une décision typée par tour et bloque fail-closed les sorties non visuelles ou ambiguës. La séquence planner → writer → rendu est vérifiée sur les ToolResults réussis du tour courant. Les procédures de sources/OGSL (4C) restent ouvertes.
+**État : contrat 4A écrit, mais enforcement fichier incomplet; 4B et sa garde exécutable 4B.1 terminées le 16 juillet 2026.** La règle numérique canonique est injectée une seule fois : valeur fournie par un tool spécialisé → reprise directe; nouvelle valeur dérivée d'une table → pandas; valeur absente → inconnue, jamais inventée. Le smoke EcoTaxa spécialisé valide la première branche, mais le smoke combiné tableau→carte a montré que l'agent peut encore calculer une agrégation simple depuis les lignes de `load_file` sans appeler pandas. Cette dette devient 4A.1. Le routage graphique reste sémantique, mais le harness classifie l'artefact demandé au premier appel graphique, mémorise une décision typée par tour et bloque fail-closed les sorties non visuelles ou ambiguës. La séquence planner → writer → rendu est vérifiée sur les ToolResults réussis du tour courant. Les procédures de sources/OGSL (4C) restent ouvertes.
 
 **Changement :**
 - Remplacer « toute valeur numérique exige pandas » par « toute valeur **dérivée** ou non fournie par un tool spécialisé exige une exécution contrôlée » — un `count_ecotaxa_taxa` se consomme directement.
@@ -160,12 +160,15 @@ Chaque scénario est évalué dans deux pistes complémentaires :
 
 **Test gate :**
 - [x] 4A — Le test rouge « pandas vs tools spécialisés » devient vert; smoke EcoTaxa spécialisé sans pandas validé.
-- [x] 4B — Smoke agent réel : « Montre le nombre… » reste tabulaire sans skill graphique; la demande de carte charge planner/writer puis produit la figure.
+- [ ] 4A.1 — Une nouvelle agrégation dérivée des lignes d'un fichier doit obligatoirement passer par `run_pandas` ou un tool spécialisé; le smoke réel actuel termine `exit 1` sur cette assertion.
+- [x] 4B — Dans ce même smoke réel, « Donne un tableau… » voit sa tentative graphique bloquée; la demande de carte charge planner/writer puis produit la figure.
 - [ ] 4C — Le test rouge OGSL devient vert.
 - [x] 4B — Une demande numérique simple ne charge plus les skills graphiques; les appels réels capturés contiennent uniquement pandas.
 - [x] 4A — Pas de régression offline sur les 3 scénarios : niveaux 1 et 2 à 100 %.
 - [x] 4B — Pas de régression offline sur les 3 scénarios : niveaux 1 et 2 à 100 %; suite complète verte.
 - [x] 4B.1 — Classification structurée à la demande, une seule fois par tour même si les appels sont parallèles; tentative adversariale tabulaire bloquée et carte rendue par l'agent réel.
+
+**Verdict du smoke combiné :** preuves 4B.1 vertes, campagne globale non verte. Le processus a terminé sur `AssertionError` parce qu'aucun `run_pandas` n'a été observé au tour tableau. Ne pas utiliser cette campagne comme preuve de clôture 4A tant que 4A.1 n'est pas corrigée en TDD puis retestée sur l'agent.
 
 ---
 

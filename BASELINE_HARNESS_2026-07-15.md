@@ -234,7 +234,7 @@ La baseline offline a été régénérée une fois après le correctif final de 
 
 Le surcoût fixe de 24 tokens rend explicite l'interdiction de demander planner et writer dans le même lot. La contrainte forte reste dans le middleware : empreinte stable du tour, classification structurée `visual|non_visual|ambiguous`, cache single-flight sync/async et validation des ToolResults du tour courant. Gate ciblé final : `29 passed`; régression agent/data/prompt : `184 passed`; gate complet final : `1153 passed, 20 skipped, 3 xfailed`.
 
-### Smoke agent réel adversarial tableau → carte
+### Smoke agent réel adversarial tableau → carte — résultat partiel (`exit 1`)
 
 Modèle `openai/gpt-5.4-mini`, tracing désactivé, store fichier isolé et catalogue limité aux quatre tools locaux utiles.
 
@@ -244,4 +244,6 @@ Modèle `openai/gpt-5.4-mini`, tracing désactivé, store fichier isolé et cata
 | tableau adversarial | `non_visual/high`, 1 | planner tenté puis `blocked` | tableau de 15 stations rendu |
 | carte | `visual/high`, 1 | planner `success` → writer `success` → rendu `success` | PNG produit |
 
-Le tour carte contient un `run_pandas` intermédiaire entre planner et writer pour sélectionner les coordonnées; le contrat exige seulement que le writer précède immédiatement le rendu. Au tour tableau, l'agent a repris les lignes exposées par `load_file` sans appeler pandas; cette observation relève du contrat numérique 4A, pas de la garde graphique 4B.1, et n'a pas provoqué de replay du modèle.
+Le tour carte contient un `run_pandas` intermédiaire entre planner et writer pour sélectionner les coordonnées; le contrat exige seulement que le writer précède immédiatement le rendu. Les assertions graphiques 4B.1 sont satisfaites.
+
+La campagne globale a néanmoins terminé avec `AssertionError` et un code non nul. L'assertion en échec était l'exigence d'un appel `run_pandas: success` au tour tableau. L'agent a repris les lignes exposées par `load_file` et produit lui-même le comptage. Il s'agit d'une violation comportementale de la branche 4A « nouvelle agrégation sur une table → pandas ». Elle est désormais suivie comme dette 4A.1. Aucun replay du modèle n'a été effectué, et cette campagne ne doit pas être décrite comme entièrement verte.

@@ -215,9 +215,13 @@ Use an isolated session, `openai/gpt-5.4-mini`, tracing disabled and `data/demo/
 
 Required evidence: turn 2 decision `non_visual`, graph attempt blocked if made, tabular result succeeds; turn 3 decision `visual`, one classifier call for the turn, planner→writer→run_graph succeeds.
 
-- [x] **Step 3: Align docs and close 4B.1**
+**Résultat :** l'exécution a fourni toutes les preuves graphiques requises, mais le script global a terminé avec un code non nul. Son assertion additionnelle exigeant `run_pandas` pour l'agrégation du tableau a échoué : l'agent a produit le comptage depuis les lignes de `load_file`. L'étape est cochée parce que la campagne a bien été exécutée, pas parce que toutes ses assertions sont vertes. Le défaut numérique est reporté explicitement en 4A.1.
+
+- [x] **Step 3: Align docs and close the graphical 4B.1 scope**
 
 Document that prompt routing remains semantic while authorization is executable; mark the direct-run red-team debt resolved; leave dynamic tool hiding (step 6) and OGSL (4C) open. Mark all plan checkboxes complete.
+
+La clôture porte sur la garde graphique. Elle ne doit jamais être reformulée comme un smoke combiné entièrement vert tant que 4A.1 n'impose pas les nouvelles agrégations tabulaires par une exécution contrôlée.
 
 - [x] **Step 4: Verify and commit docs**
 
