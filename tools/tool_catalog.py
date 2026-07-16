@@ -27,6 +27,7 @@ from tools.skill_tool import SKILLS_DIR, make_skill_tool
 from tools.sql_workspace import SQLWorkspaceNotConfiguredError, make_sql_tools
 from tools.taxonomy_tool import make_taxonomy_tool
 from tools.tool_input import apply_strict_tool_schema
+from tools.tool_result import ToolResultSchema
 
 Language = Literal["fr", "en"]
 ToolRisk = Literal["low", "medium", "high"]
@@ -87,7 +88,7 @@ class ToolPolicy:
     required_skill: str | None
     allowed_workflows: tuple[str, ...]
     max_calls_per_turn: int
-    result_schema: str = "legacy_text"
+    result_schema: ToolResultSchema = "legacy_text"
 
 
 @dataclass(frozen=True)
@@ -562,7 +563,7 @@ def validate_catalog(
             issues.append("confirmation_without_high_risk")
         if policy.max_calls_per_turn < 1:
             issues.append("max_calls_per_turn")
-        if policy.result_schema != "legacy_text":
+        if policy.result_schema not in ("legacy_text", "tool_result_v1"):
             issues.append("result_schema")
         if not policy.allowed_workflows:
             issues.append("allowed_workflows")
