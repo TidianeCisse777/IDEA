@@ -1,44 +1,43 @@
+---
+name: graph_writer
+version: 1.0.0
+triggers:
+  - A visual request or follow-up visual edit must be rendered when its selected table is non-empty
+forbidden_when:
+  - The selected table is empty or no visual output was requested
+requires:
+  - "intent:visual"
+next_tool: run_graph
+max_tokens: 10500
+size_exemption: The writer owns one executable graph-contract vocabulary shared by runtime validation across all chart families; its full body is delivered with a manifest-governed cap instead of the generic tool truncation.
+---
+
 # Skill: graph_writer
 
-You must write correct and complete code to produce the planned output — either a matplotlib chart or a pandas table.
+You must write correct and complete code to produce the planned visual output.
 
 ## Execution truth
 
 - If the selected table has zero rows, stop: report the empty result and do not
   write or execute graph code.
-- Never invent or reuse an artifact URL. Only relay the exact artifact returned
-  by a successful `run_graph` call in this turn.
-- If `run_graph` returns `Error`, `blocked`, or an exception, no image exists.
-  Correct the contract only when the tool result identifies a correctable
-  contract issue; otherwise surface the failure without a placeholder.
+  - Never invent or reuse an artifact URL. Only relay the exact artifact returned
+  by a successful `run_graph` call for the current request.
+- If `run_graph` returns a correctable graph-contract or graph-quality block,
+  no image exists yet: revise the code using the exact diagnostic and retry exactly once
+  with the same active dataframe. This includes
+  `graph_contract is missing` and an axis/artist mismatch. Do not answer with a
+  table or claim a graph exists before that retry. If the retry is blocked too,
+  stop and surface the final diagnostic without looping. For unrelated data,
+  source, authorization, or column errors, surface the failure directly.
 - Use only values present in the explicitly selected source variable. Never
   hardcode coordinates, identifiers, counts, or substitute columns from another
   source.
+- A new request naming a different zone is a new graph request, not an edit of
+  the last figure: resolve/filter the named zone from the loaded source and
+  render the new figure. Do not refuse because the previous figure used another
+  zone.
 
-## If the plan says Output: table
-
-Use this template with `run_pandas`:
-
-```python
-result = (
-    df
-    .groupby("<group_column>")["<value_column>"]
-    .agg("<sum | mean | count>")
-    .sort_values(ascending=False)
-    .reset_index()
-    .rename(columns={"<value_column>": "<label>"})
-)
-```
-
-Rules:
-- Always assign to `result`
-- Always sort for readability
-- Use `.reset_index()` so the table has clean columns
-- Never call `plt.show()` or produce a figure — `run_pandas` returns a markdown table automatically
-
----
-
-## If the plan says Output: visual
+## Visual output
 
 You must write correct and complete matplotlib code.
 
@@ -78,6 +77,34 @@ plt.tight_layout()
 - After every filtering step that creates `plot_df`, validate that rows remain before plotting:
   `if plot_df.empty: raise ValueError("No rows remain after filtering; check identifier type normalization and filter criteria.")`
 - Before plotting numeric axes, coerce only the plotted measurement columns with `pd.to_numeric(..., errors="coerce")`, then drop missing values from all plotted columns. Validate again that `plot_df` is not empty after this drop.
+
+## Clarté et information visuelle (priorité)
+
+Un graphe doit se lire d'un coup d'œil : le lecteur saisit l'information sans
+effort. La clarté prime sur l'esthétique.
+
+- **Titre porteur de sens** : décrit ce que montre la figure et sur quoi
+  (variable, zone, période), pas juste « Graphique ».
+- **Axes avec unités** : `xlabel`/`ylabel` nomment la variable ET son unité —
+  `Profondeur (m)`, `Abondance (ind./m³)`, `Température (°C)`.
+- **Couleur = information, pas décoration** : n'encode par la couleur qu'une
+  variable réelle (zone, taxon, statut, valeur) ; sinon une seule couleur.
+  Échelle continue perceptuellement uniforme (`viridis`) pour une valeur.
+- **Labels lisibles** : jamais de chevauchement — rotation (`rotation=45`),
+  troncature des noms longs (taxon terminal, ≤ 35 car.), et pas plus de ~50
+  ticks visibles par axe (sinon agrège ou espace les ticks).
+- **Légende maîtrisée** : au-delà de ~8–12 séries, ne pas empiler une légende
+  illisible — étiquetage direct des éléments clés, top N + « Autres », échelle
+  de couleur continue, ou note (`Legend omitted: 83 stations`).
+- **Densité de points (overplotting)** : quand les points se superposent
+  (scatter, carte à nombreuses stations), rends la distribution visible —
+  transparence (`alpha=0.3–0.6`), marqueurs plus petits, ou agrégation
+  (`hexbin`, densité 2D, comptes par cellule). Jamais un amas opaque où le signal
+  disparaît.
+- **Mettre en avant le signal** : trie les catégories par valeur, ordonne
+  temps/profondeur logiquement, retire le superflu (grilles lourdes, bordures).
+- **Comparabilité** : échelles cohérentes entre panneaux ; ne tronque pas un axe
+  numérique sans le signaler.
 
 ## Executable graph contract (mandatory)
 
@@ -189,6 +216,11 @@ gid and point its mapping at the **same variable** as the encoding it explains.
 A position mapping with `x` / `y` keys is invalid. It must use exactly
 `{"variable": "longitude_latitude", "artist_gid": "<point gid>"}`.
 
+For categorical year or marker legends, set the legend artist gid to exactly
+`station_color_legend` and include a matching `color_legend` mapping, even when
+the legend is made with `ax.legend(...)` rather than a colourbar. Do not use a
+different gid such as `year_marker_legend`.
+
 ```python
 map_points = ax.scatter(lon, lat, s=sizes, c=values,
                         transform=ccrs.PlateCarree())
@@ -213,6 +245,15 @@ graph_contract = {
 
 For a plain positions map, keep only the `position` mapping and drop
 `size`/`color`/legends entirely.
+
+For a sample map, `run_graph` provides `zone_polygons`, a mapping of canonical
+names to local Shapely geometries from the IHO/NeoLab/MEOW registry. Draw each
+Use Cartopy `ShapelyFeature` with the DataFrame's `zone` values. Never use bare `df`.
+
+Use `kind: "station_map"`, one Cartopy GeoAxes, longitude/latitude roles, a
+point artist gid, a `position` mapping with `longitude_latitude`,
+`zero_policy: include`, and actual `source_variables`. Retry once on a missing
+contract.
 
 ### Abundance–environment map
 
@@ -248,12 +289,16 @@ graph_contract = {
 
 **Always use cartopy** for any map/geo scatter request — never use plain `plt.scatter` on lon/lat axes.
 Cartopy produces real geographic projections with coastlines, ocean fill, and graticules.
+For multi-zone sample maps, prefer `ccrs.PlateCarree()`; it is the stable
+renderer for polygon contours and sample points in this environment.
 
 ### Standalone named-zone map
 
-Use this when the user asks to show a named zone itself, e.g. "montre-moi sur
-une carte la baie d'Hudson", and no loaded DataFrame is needed. Use the `bbox`
-returned by `get_zone_info(zone_name=...)`; do not reference `df`.
+Use this only when the user asks to show the zone boundary itself and no sample
+data is requested. For a map of samples in one or more named zones, the agent
+must first query/persist the sample rows (including latitude/longitude), then
+plot the exact named DataFrame; do not use this standalone template or bare `df`.
+For a boundary-only map, use the `bbox` returned by `get_zone_info(zone_name=...)`.
 
 For a standalone zone map, use `ccrs.PlateCarree()` and put lon/lat labels via
 `set_xticks`/`set_yticks` + the cartopy formatters. Do **not** use
@@ -352,69 +397,6 @@ sc = ax.scatter(
 
 ax.set_title("<titre>", fontsize=13, color='white')
 plt.tight_layout()
-```
-
----
-
-### Sampling gap map template
-
-Use when the plan says Type: sampling gap map. One point per station, coloured by coverage status.
-
-```python
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-import numpy as np
-
-plt.style.use("dark_background")
-plt.rcParams.update({{"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a"}})
-
-# --- prepare data ---
-# station_coverage must have columns: latitude, longitude, n_obs
-# (compute with run_pandas before calling run_graph)
-map_df = station_coverage.dropna(subset=['latitude', 'longitude'])
-map_df = map_df.copy()
-map_df['color'] = map_df['n_obs'].apply(
-    lambda n: '#2ecc71' if n >= 10 else ('#f39c12' if n >= 1 else '#e74c3c')
-)
-
-central_lon = float(map_df['longitude'].mean())
-proj = ccrs.LambertConformal(central_longitude=central_lon, central_latitude=float(map_df['latitude'].mean()))
-fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={{"projection": proj}})
-
-margin = 3
-ax.set_extent([
-    map_df['longitude'].min() - margin, map_df['longitude'].max() + margin,
-    map_df['latitude'].min() - margin,  map_df['latitude'].max() + margin,
-], crs=ccrs.PlateCarree())
-
-ax.add_feature(cfeature.LAND,      facecolor='#2d2d2d', zorder=1)
-ax.add_feature(cfeature.OCEAN,     facecolor='#1a3a5c', zorder=0)
-ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#aaaaaa', zorder=2)
-gl = ax.gridlines(draw_labels=True, linewidth=0.4, color='gray', alpha=0.4, linestyle='--')
-gl.top_labels = False; gl.right_labels = False
-
-for _, row in map_df.iterrows():
-    ax.scatter(row['longitude'], row['latitude'],
-               color=row['color'], s=60, alpha=0.9,
-               transform=ccrs.PlateCarree(), zorder=3)
-
-# Legend
-from matplotlib.lines import Line2D
-legend_elements = [
-    Line2D([0],[0], marker='o', color='w', markerfacecolor='#2ecc71', markersize=8, label='≥ 10 obs'),
-    Line2D([0],[0], marker='o', color='w', markerfacecolor='#f39c12', markersize=8, label='1–9 obs (sparse)'),
-    Line2D([0],[0], marker='o', color='w', markerfacecolor='#e74c3c', markersize=8, label='0 obs (absent)'),
-]
-ax.legend(handles=legend_elements, loc='lower left', fontsize=8,
-          facecolor='#2d2d2d', edgecolor='#666', labelcolor='white')
-
-ax.set_title("<titre>", fontsize=13, color='white')
-plt.tight_layout()
-
-graph_explanation = "Carte des lacunes d'échantillonnage par station. Axes : longitude × latitude. Couleur : nombre d'observations par station (vert ≥10, orange 1–9, rouge 0). Source : run_pandas sur station_coverage."
 ```
 
 ---
@@ -708,201 +690,6 @@ ax.set_ylabel("Taxon")
 plt.tight_layout()
 
 graph_explanation = "Heatmap de composition taxonomique. Axes : groupe x taxon. Couleur : log1p abondance. Source : fichier charge. Confidence: <confidence>."
-```
-
-### Rarefaction curve template
-
-Use for rarefaction requests. This template estimates expected richness by
-subsampling individuals from a non-negative taxon count/abundance vector per
-group. If the source is normalized abundance rather than integer counts, state
-that the curve is exploratory.
-
-```python
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-
-plt.style.use("dark_background")
-plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
-                     "grid.alpha": 0.25, "axes.edgecolor": "#444"})
-
-group_col = "<station/zone/month column>"
-taxon_col = "<taxon column>"
-value_col = "<count or abundance column>"
-plot_df = df[[group_col, taxon_col, value_col]].copy()
-plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
-plot_df = plot_df.dropna(subset=[group_col, taxon_col, value_col])
-plot_df = plot_df[plot_df[value_col] > 0]
-if plot_df.empty:
-    raise ValueError("No positive count-like values remain for rarefaction.")
-
-def rarefy_counts(counts, sample_sizes):
-    counts = np.asarray(counts, dtype=float)
-    counts = counts[counts > 0]
-    total = counts.sum()
-    richness = []
-    for n in sample_sizes:
-        if n <= 0 or total <= 0:
-            richness.append(0.0)
-            continue
-        # Hurlbert-style expectation: sum probability each taxon appears.
-        p_absent = np.exp(np.log1p(-counts / total) * n)
-        richness.append(float(np.sum(1 - p_absent)))
-    return np.asarray(richness)
-
-group_totals = plot_df.groupby(group_col)[value_col].sum().sort_values(ascending=False)
-groups_to_plot = group_totals.head(8).index
-fig, ax = plt.subplots(figsize=(10, 6))
-for label, sub in plot_df[plot_df[group_col].isin(groups_to_plot)].groupby(group_col):
-    counts = sub.groupby(taxon_col)[value_col].sum().values
-    total = int(max(1, np.floor(counts.sum())))
-    sample_sizes = np.linspace(1, total, num=min(40, total), dtype=int)
-    sample_sizes = np.unique(sample_sizes)
-    richness = rarefy_counts(counts, sample_sizes)
-    ax.plot(sample_sizes, richness, marker="o", linewidth=1.5, label=str(label))
-    if len(richness) > 2:
-        ax.fill_between(sample_sizes, richness * 0.95, richness * 1.05, alpha=0.12)
-
-ax.set_title("<descriptive title>")
-ax.set_xlabel("Sample size / effort")
-ax.set_ylabel("Expected taxon richness")
-ax.grid(True, alpha=0.25)
-if len(groups_to_plot) <= 8:
-    ax.legend(frameon=False, fontsize=8)
-plt.tight_layout()
-
-graph_explanation = "Courbe de rarefaction. Axes : effort x richesse attendue. Source : fichier charge. Confidence: <confidence>."
-```
-
-### Species accumulation curve template
-
-Use for species accumulation across samples/sites. This permutation-based
-template is deterministic through `np.random.default_rng(0)`.
-
-```python
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-
-plt.style.use("dark_background")
-plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
-                     "grid.alpha": 0.25, "axes.edgecolor": "#444"})
-
-sample_col = "<sample/station column>"
-taxon_col = "<taxon column>"
-value_col = "<abundance column>"
-plot_df = df[[sample_col, taxon_col, value_col]].copy()
-plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
-plot_df = plot_df.dropna(subset=[sample_col, taxon_col, value_col])
-plot_df = plot_df[plot_df[value_col] > 0]
-if plot_df.empty:
-    raise ValueError("No positive taxon records remain for species accumulation.")
-
-presence = (
-    plot_df.assign(present=plot_df[value_col] > 0)
-    .pivot_table(index=sample_col, columns=taxon_col, values="present", aggfunc="max", fill_value=False)
-    .astype(bool)
-)
-samples = presence.index.to_numpy()
-rng = np.random.default_rng(0)
-curves = []
-for _ in range(100):
-    order = rng.permutation(samples)
-    seen = set()
-    cumulative = []
-    for sample in order:
-        seen.update(presence.columns[presence.loc[sample].to_numpy()])
-        cumulative.append(len(seen))
-    curves.append(cumulative)
-curves = np.asarray(curves, dtype=float)
-x = np.arange(1, curves.shape[1] + 1)
-mean_curve = curves.mean(axis=0)
-lower = np.percentile(curves, 5, axis=0)
-upper = np.percentile(curves, 95, axis=0)
-
-fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(x, mean_curve, color="#eeeeee", linewidth=2)
-ax.fill_between(x, lower, upper, color="#7f9ec0", alpha=0.25)
-ax.set_title("<descriptive title>")
-ax.set_xlabel("Number of samples")
-ax.set_ylabel("Cumulative observed taxa")
-ax.grid(True, alpha=0.25)
-plt.tight_layout()
-
-graph_explanation = "Courbe d'accumulation d'especes. Axes : nombre d'echantillons x taxons cumules. Source : fichier charge. Confidence: <confidence>."
-```
-
-### NMDS / PCoA ordination template
-
-Use for exploratory NMDS or PCoA of taxonomic composition. Bray-Curtis is the
-default dissimilarity for community composition. Do not describe causality.
-
-```python
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-from scipy.spatial.distance import pdist, squareform, braycurtis
-from sklearn.manifold import MDS
-
-plt.style.use("dark_background")
-plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
-                     "grid.alpha": 0.25, "axes.edgecolor": "#444"})
-
-sample_col = "<sample column>"
-taxon_col = "<taxon column>"
-value_col = "<abundance column>"
-color_col = "<optional metadata column>"  # or None
-plot_df = df[[sample_col, taxon_col, value_col] + ([] if color_col is None else [color_col])].copy()
-plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
-plot_df = plot_df.dropna(subset=[sample_col, taxon_col, value_col])
-plot_df = plot_df[plot_df[value_col] > 0]
-if plot_df.empty:
-    raise ValueError("No positive abundance records remain for ordination.")
-
-taxon_matrix = plot_df.pivot_table(index=sample_col, columns=taxon_col, values=value_col, aggfunc="sum", fill_value=0)
-taxon_matrix = taxon_matrix.loc[taxon_matrix.sum(axis=1) > 0]
-taxon_matrix = np.sqrt(taxon_matrix.div(taxon_matrix.sum(axis=1), axis=0).fillna(0))
-dist = squareform(pdist(taxon_matrix.values, metric="braycurtis"))
-
-# NMDS coordinates. For PCoA, replace this block with eigendecomposition of a centered distance matrix.
-ordination = MDS(n_components=2, metric=False, dissimilarity="precomputed", random_state=0, normalized_stress="auto")
-coords = ordination.fit_transform(dist)
-scores = pd.DataFrame(coords, index=taxon_matrix.index, columns=["NMDS1", "NMDS2"])
-if color_col is not None:
-    meta = plot_df.drop_duplicates(sample_col).set_index(sample_col)[color_col]
-    scores[color_col] = meta.reindex(scores.index)
-
-fig, ax = plt.subplots(figsize=(9, 7))
-if color_col is None:
-    ax.scatter(scores["NMDS1"], scores["NMDS2"], color="#eeeeee", s=50, alpha=0.9)
-else:
-    n_groups = scores[color_col].nunique(dropna=False)
-    if n_groups <= 15:
-        for label, sub in scores.groupby(color_col, dropna=False):
-            ax.scatter(sub["NMDS1"], sub["NMDS2"], s=50, alpha=0.9, label=str(label))
-        ax.legend(frameon=False, fontsize=8)
-    else:
-        ax.scatter(scores["NMDS1"], scores["NMDS2"], color="#eeeeee", s=42, alpha=0.75)
-        ax.text(
-            0.01, 0.99, f"Legend omitted: {n_groups} {color_col} levels",
-            transform=ax.transAxes, ha="left", va="top",
-            fontsize=8, color="#cccccc",
-        )
-ax.axhline(0, color="#666666", linewidth=0.8)
-ax.axvline(0, color="#666666", linewidth=0.8)
-ax.set_title("<descriptive title>")
-ax.set_xlabel("NMDS1")
-ax.set_ylabel("NMDS2")
-ax.grid(True, alpha=0.2)
-plt.tight_layout()
-
-graph_explanation = "Ordination NMDS exploratoire sur dissimilarite Bray-Curtis. Axes : NMDS1 x NMDS2. Source : fichier charge. Confidence: <confidence>."
 ```
 
 ### Rank-abundance template

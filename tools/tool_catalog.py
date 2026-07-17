@@ -1,7 +1,8 @@
 """Validated construction and user-facing metadata for LangChain tools.
 
 This module is the composition seam shared by the agent runtime and the SSE
-presentation layer. LLM routing remains exclusively in the system prompt.
+presentation layer. Routing is shared by executable source/exposure policies,
+tool metadata, and the compact model-facing prompt kernel.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from collections import Counter
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, TypeAlias, get_args
 
 from langchain_core.tools import BaseTool
 
@@ -23,11 +24,51 @@ from tools.ecopart_sources import make_ecopart_tools
 from tools.geo_tools import get_zone_info, make_geo_tools
 from tools.ogsl_sources import make_ogsl_tools
 from tools.rag_tool import make_rag_tool
-from tools.skill_tool import make_skill_tool
+from tools.skill_tool import SKILLS_DIR, make_skill_tool
 from tools.sql_workspace import SQLWorkspaceNotConfiguredError, make_sql_tools
 from tools.taxonomy_tool import make_taxonomy_tool
+from tools.tool_input import apply_strict_tool_schema
+from tools.tool_result import ToolResultSchema
 
 Language = Literal["fr", "en"]
+ToolRisk = Literal["low", "medium", "high"]
+ToolSource = Literal[
+    "file",
+    "ecotaxa",
+    "ecopart",
+    "amundsen",
+    "bio_oracle",
+    "ogsl",
+    "sql",
+    "geography",
+    "knowledge",
+    "taxonomy",
+    "skill",
+    "deliverable",
+]
+ToolExposureGroup: TypeAlias = Literal[
+    "core",
+    "file_analysis",
+    "visualization",
+    "geography",
+    "taxonomy",
+    "deliverable",
+    "enrichment_ecopart",
+    "enrichment_amundsen",
+    "enrichment_bio_oracle",
+    "enrichment_ogsl",
+    "sql_workspace",
+    "ecotaxa_discovery",
+    "ecotaxa_samples",
+    "ecotaxa_objects",
+    "ecotaxa_geo_time",
+    "ecotaxa_taxonomy",
+    "ecotaxa_schema",
+    "ecotaxa_audit",
+    "ecotaxa_export",
+    "hidden_legacy",
+]
+TOOL_EXPOSURE_GROUPS = frozenset(get_args(ToolExposureGroup))
 
 
 @dataclass(frozen=True)
@@ -56,15 +97,39 @@ class ToolPresentation:
 
 
 @dataclass(frozen=True)
+class ToolPolicy:
+    """Executable control-plane facts for one stable tool name."""
+
+    family: str
+    source: ToolSource
+    risk: ToolRisk
+    read_only: bool
+    mutates_session: bool
+    remote_io: bool
+    expensive: bool
+    reversible: bool
+    requires_confirmation: bool
+    required_skill: str | None
+    allowed_workflows: tuple[str, ...]
+    max_calls_per_turn: int
+    exposure_group: ToolExposureGroup
+    result_schema: ToolResultSchema = "tool_result_v1"
+
+
+@dataclass(frozen=True)
 class ToolCatalog:
     """Immutable runtime tools with validated presentation lookup."""
 
     tools: tuple[BaseTool, ...]
     names: frozenset[str]
     presentations: Mapping[str, ToolPresentation]
+    policies: Mapping[str, ToolPolicy]
 
     def presentation(self, name: str) -> ToolPresentation | None:
         return self.presentations.get(name)
+
+    def policy(self, name: str) -> ToolPolicy | None:
+        return self.policies.get(name)
 
 
 def _text(fr: str, en: str) -> LocalizedText:
@@ -159,18 +224,21 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     # EcoTaxa.
     "find_ecotaxa_projects": _source("EcoTaxa · recherche de projets", "EcoTaxa · project search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "find_ecotaxa_samples_in_region": _source("EcoTaxa · samples par zone / période", "EcoTaxa · samples by region / period", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "combine_ecotaxa_selections": _source("EcoTaxa · combiner les sélections zonées", "EcoTaxa · combine zoned selections", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "group_ecotaxa_samples_by_year": _source("EcoTaxa · samples par année", "EcoTaxa · samples by year", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "find_ecotaxa_projects_in_region": _source("EcoTaxa · projets par zone", "EcoTaxa · projects by region", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "group_ecotaxa_project_samples_by_region": _source("EcoTaxa · répartition régionale", "EcoTaxa · regional distribution", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "rank_ecotaxa_samples_by_region": _source("EcoTaxa · classement par zone", "EcoTaxa · regional ranking", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "find_ecotaxa_observations": _source("EcoTaxa · recherche d’observations", "EcoTaxa · observation search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "get_ecotaxa_sample": _source("EcoTaxa · métadonnées du sample", "EcoTaxa · sample metadata", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "list_ecotaxa_sample_objects": _source("EcoTaxa · objets du sample", "EcoTaxa · sample objects", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "get_ecotaxa_object": _source("EcoTaxa · détail d'un objet", "EcoTaxa · object detail", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_sample_deployment": _source("EcoTaxa · déploiement du sample", "EcoTaxa · sample deployment", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "inspect_ecotaxa_project_schema": _source("EcoTaxa · schéma du projet", "EcoTaxa · project schema", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "inspect_ecotaxa_column": _source("EcoTaxa · inspection de colonne", "EcoTaxa · column inspection", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "count_ecotaxa_taxa": _source("EcoTaxa · comptage des taxons", "EcoTaxa · taxon counts", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "search_ecotaxa_taxa": _source("EcoTaxa · recherche de taxons", "EcoTaxa · taxon search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "get_ecotaxa_cache_status": _source("EcoTaxa · état du cache", "EcoTaxa · cache status", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "describe_ecotaxa_project_coverage": _source("EcoTaxa · couverture du projet (réseau vs cache)", "EcoTaxa · project coverage (network vs cache)", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "compare_ecotaxa_projects": _source("EcoTaxa · comparaison de projets", "EcoTaxa · project comparison", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "list_ecotaxa_projects": _source("EcoTaxa · projets accessibles", "EcoTaxa · accessible projects", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "list_ecotaxa_campaigns": _source("EcoTaxa · campagnes", "EcoTaxa · campaigns", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
@@ -182,9 +250,11 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "summarize_ecotaxa_project": _source("EcoTaxa · résumé du projet", "EcoTaxa · project summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_projects": _source("EcoTaxa · résumé des projets", "EcoTaxa · projects summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "export_ecotaxa_samples": _source("EcoTaxa · export des samples", "EcoTaxa · samples export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True),
-    "list_ecotaxa_project_samples": _source("EcoTaxa · samples du projet", "EcoTaxa · project samples", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "audit_ecotaxa_availability": _source("EcoTaxa · audit de disponibilité", "EcoTaxa · availability audit", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "resolve_ecotaxa_sample": _source("EcoTaxa · résolution de sample", "EcoTaxa · sample resolver", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "audit_ecotaxa_spatial_coverage": _source("EcoTaxa · audit de couverture spatiale", "EcoTaxa · spatial coverage audit", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "list_ecotaxa_cache_tables": _source("EcoTaxa · tables du cache", "EcoTaxa · cache tables", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "describe_ecotaxa_cache_table": _source("EcoTaxa · schéma d'une table cache", "EcoTaxa · cache table schema", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "query_ecotaxa_cache": _source("EcoTaxa · SQL cache", "EcoTaxa · SQL cache", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     # Bio-ORACLE.
     "list_bio_oracle_datasets": _source("Bio-ORACLE · jeux de données", "Bio-ORACLE · datasets", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
     "preview_bio_oracle_point": _source("Bio-ORACLE · aperçu ponctuel", "Bio-ORACLE · point preview", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
@@ -213,6 +283,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "audit_ecotaxa_ecopart_join": _source("EcoTaxa/EcoPart · audit de jumelage", "EcoTaxa/EcoPart · join audit", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     # Geography and core services.
     "filter_dataframe_by_zone": _presentation("Filtrage géographique", "Geographic filtering", "geography"),
+    "split_dataframe_by_zone": _presentation("Découpage géographique", "Geographic split", "geography"),
     "get_zone_info": _presentation("Information géographique", "Geographic information", "geography"),
     "query_copepod_knowledge_base": _presentation("Recherche documentaire", "Knowledge-base search", "core"),
     "lookup_marine_taxonomy": _presentation("Recherche taxonomique", "Taxonomy lookup", "core"),
@@ -227,6 +298,267 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
 OPTIONAL_SQL_TOOL_NAMES = frozenset(
     {"list_sql_tables", "preview_sql_table", "copy_sql_query_to_workspace"}
 )
+
+
+@dataclass(frozen=True)
+class _PolicyProfile:
+    risk: ToolRisk
+    read_only: bool
+    mutates_session: bool
+    remote_io: bool
+    expensive: bool
+    reversible: bool
+    requires_confirmation: bool
+    max_calls_per_turn: int
+
+
+_POLICY_PROFILES: Mapping[str, _PolicyProfile] = MappingProxyType({
+    "local_read": _PolicyProfile("low", True, False, False, False, True, False, 3),
+    "local_session": _PolicyProfile("medium", False, True, False, False, True, False, 3),
+    "local_artifact": _PolicyProfile("medium", False, True, False, True, True, False, 2),
+    "local_heavy": _PolicyProfile("high", False, True, False, True, True, True, 1),
+    "skill_session": _PolicyProfile("medium", False, True, True, False, True, False, 3),
+    "remote_read": _PolicyProfile("low", True, False, True, False, True, False, 3),
+    "remote_session": _PolicyProfile("medium", False, True, True, False, True, False, 2),
+    "remote_heavy": _PolicyProfile("high", False, True, True, True, True, True, 1),
+    "local_source_read": _PolicyProfile("low", True, False, False, False, True, False, 3),
+    "local_source_session": _PolicyProfile("medium", False, True, False, False, True, False, 2),
+})
+
+
+# Every stable name is deliberately classified. There is no default profile:
+# adding a presentation/runtime tool without adding it here fails validation.
+_TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
+    # Local data/code execution.
+    "load_file": "local_session",
+    "run_pandas": "local_session",
+    "run_graph": "local_artifact",
+    # EcoTaxa read-only/cache navigation.
+    "audit_ecotaxa_spatial_coverage": "remote_read",
+    "list_ecotaxa_cache_tables": "local_source_read",
+    "describe_ecotaxa_cache_table": "local_source_read",
+    "query_ecotaxa_cache": "local_source_read",
+    "compare_ecotaxa_projects": "remote_read",
+    "count_ecotaxa_taxa": "remote_read",
+    "describe_ecotaxa_project_coverage": "remote_read",
+    "find_ecotaxa_projects": "remote_read",
+    "find_ecotaxa_projects_in_region": "remote_read",
+    "get_ecotaxa_sample": "remote_read",
+    "list_ecotaxa_sample_objects": "remote_read",
+    "get_ecotaxa_object": "remote_read",
+    "group_ecotaxa_project_samples_by_region": "remote_read",
+    "inspect_ecotaxa_column": "remote_read",
+    "inspect_ecotaxa_project_schema": "remote_read",
+    "list_ecotaxa_campaigns": "remote_read",
+    "resolve_ecotaxa_sample": "remote_read",
+    "list_ecotaxa_projects": "remote_read",
+    "preview_ecotaxa_project": "remote_read",
+    "rank_ecotaxa_samples_by_region": "remote_read",
+    "search_ecotaxa_taxa": "remote_read",
+    "summarize_ecotaxa_project": "remote_read",
+    "summarize_ecotaxa_projects": "remote_read",
+    "summarize_ecotaxa_sample": "remote_read",
+    "summarize_ecotaxa_sample_deployment": "remote_read",
+    "summarize_ecotaxa_samples": "remote_read",
+    # EcoTaxa selection/session and heavy extraction.
+    "find_ecotaxa_observations": "remote_session",
+    "find_ecotaxa_samples_in_region": "remote_session",
+    "combine_ecotaxa_selections": "remote_session",
+    "group_ecotaxa_samples_by_year": "remote_session",
+    "export_ecotaxa_samples": "remote_heavy",
+    "query_ecotaxa": "remote_heavy",
+    "query_ecotaxa_sample": "remote_heavy",
+    # Bio-ORACLE.
+    "find_bio_oracle_data_for_table": "remote_read",
+    "list_bio_oracle_datasets": "remote_read",
+    "preview_bio_oracle_point": "remote_read",
+    "query_bio_oracle_zones": "remote_session",
+    "couple_zooplankton_bio_oracle": "remote_heavy",
+    "enrich_with_bio_oracle": "remote_heavy",
+    "query_bio_oracle": "remote_heavy",
+    # Amundsen CTD.
+    "find_amundsen_data_for_table": "remote_read",
+    "list_amundsen_datasets": "remote_read",
+    "preview_amundsen_profile": "remote_read",
+    "enrich_loaded_table_with_amundsen_ctd": "remote_heavy",
+    "enrich_with_amundsen_ctd": "remote_heavy",
+    "query_amundsen_ctd": "remote_heavy",
+    # OGSL.
+    "enrich_with_ogsl": "remote_heavy",
+    "query_ogsl": "remote_heavy",
+    # EcoPart. Local join/audit are explicitly distinguished from remote I/O.
+    "find_ecopart_project_for_ecotaxa": "remote_read",
+    "list_ecopart_samples": "remote_read",
+    "preview_ecopart_sample": "remote_read",
+    "audit_ecotaxa_ecopart_join": "local_source_read",
+    "join_ecotaxa_ecopart": "local_source_session",
+    "enrich_ecotaxa_with_ecopart_remote": "remote_heavy",
+    "query_ecopart": "remote_heavy",
+    # Geography and core services.
+    "get_zone_info": "local_read",
+    "filter_dataframe_by_zone": "local_session",
+    "split_dataframe_by_zone": "local_session",
+    "query_copepod_knowledge_base": "local_read",
+    "lookup_marine_taxonomy": "remote_read",
+    "load_skill": "skill_session",
+    "export_deliverable": "local_heavy",
+    # Optional SQL workspace.
+    "list_sql_tables": "remote_read",
+    "preview_sql_table": "remote_read",
+    "copy_sql_query_to_workspace": "remote_heavy",
+})
+
+
+_SOURCE_BY_FAMILY: Mapping[str, ToolSource] = MappingProxyType({
+    "data": "file",
+    "ecotaxa": "ecotaxa",
+    "ecopart": "ecopart",
+    "amundsen": "amundsen",
+    "bio_oracle": "bio_oracle",
+    "ogsl": "ogsl",
+    "sql": "sql",
+    "geography": "geography",
+})
+
+_CORE_SOURCE_BY_NAME: Mapping[str, ToolSource] = MappingProxyType({
+    "query_copepod_knowledge_base": "knowledge",
+    "lookup_marine_taxonomy": "taxonomy",
+    "load_skill": "skill",
+    "export_deliverable": "deliverable",
+})
+
+_EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
+    # Permanent core and state-gated local tools.
+    "load_file": "core",
+    "load_skill": "core",
+    "query_copepod_knowledge_base": "core",
+    "run_pandas": "file_analysis",
+    "run_graph": "visualization",
+    "get_zone_info": "geography",
+    "filter_dataframe_by_zone": "geography",
+    # Le découpage annote le DataFrame chargé : c'est une capacité d'analyse de
+    # fichier, exposée seulement quand un fichier est chargé. La garder hors du
+    # groupe permanent "geography" préserve le budget d'outils EcoTaxa.
+    "split_dataframe_by_zone": "file_analysis",
+    "lookup_marine_taxonomy": "taxonomy",
+    "export_deliverable": "deliverable",
+    # Canonical enrichment-only external paths.
+    "enrich_ecotaxa_with_ecopart_remote": "enrichment_ecopart",
+    "enrich_with_amundsen_ctd": "enrichment_amundsen",
+    "enrich_with_bio_oracle": "enrichment_bio_oracle",
+    "enrich_with_ogsl": "enrichment_ogsl",
+    # EcoTaxa discovery.
+    "list_ecotaxa_projects": "ecotaxa_discovery",
+    "find_ecotaxa_projects": "ecotaxa_discovery",
+    "list_ecotaxa_campaigns": "ecotaxa_discovery",
+    "preview_ecotaxa_project": "ecotaxa_discovery",
+    "list_ecotaxa_cache_tables": "ecotaxa_discovery",
+    "describe_ecotaxa_cache_table": "ecotaxa_discovery",
+    "describe_ecotaxa_project_coverage": "ecotaxa_audit",
+    # Cross-project reference resolution is part of EcoTaxa discovery and stays
+    # visible in the deterministic overflow fallback used by the agent.
+    "resolve_ecotaxa_sample": "ecotaxa_discovery",
+    "get_ecotaxa_sample": "ecotaxa_samples",
+    "list_ecotaxa_sample_objects": "ecotaxa_objects",
+    "get_ecotaxa_object": "ecotaxa_objects",
+    "summarize_ecotaxa_sample": "ecotaxa_samples",
+    "summarize_ecotaxa_samples": "ecotaxa_samples",
+    "summarize_ecotaxa_sample_deployment": "ecotaxa_samples",
+    # EcoTaxa geography and time.
+    "find_ecotaxa_samples_in_region": "ecotaxa_geo_time",
+    "combine_ecotaxa_selections": "ecotaxa_geo_time",
+    "group_ecotaxa_samples_by_year": "ecotaxa_geo_time",
+    "find_ecotaxa_projects_in_region": "ecotaxa_geo_time",
+    "group_ecotaxa_project_samples_by_region": "ecotaxa_geo_time",
+    "rank_ecotaxa_samples_by_region": "ecotaxa_geo_time",
+    # EcoTaxa taxonomy.
+    "search_ecotaxa_taxa": "ecotaxa_taxonomy",
+    "count_ecotaxa_taxa": "ecotaxa_taxonomy",
+    "find_ecotaxa_observations": "ecotaxa_taxonomy",
+    # EcoTaxa schema.
+    "inspect_ecotaxa_project_schema": "ecotaxa_schema",
+    "inspect_ecotaxa_column": "ecotaxa_schema",
+    "compare_ecotaxa_projects": "ecotaxa_schema",
+    # EcoTaxa audit.
+    "audit_ecotaxa_spatial_coverage": "ecotaxa_audit",
+    "query_ecotaxa_cache": "ecotaxa_discovery",
+    "summarize_ecotaxa_project": "ecotaxa_audit",
+    "summarize_ecotaxa_projects": "ecotaxa_audit",
+    # EcoTaxa exports.
+    "query_ecotaxa": "ecotaxa_export",
+    "query_ecotaxa_sample": "ecotaxa_export",
+    "export_ecotaxa_samples": "ecotaxa_export",
+    # Optional SQL workspace.
+    "list_sql_tables": "sql_workspace",
+    "preview_sql_table": "sql_workspace",
+    "copy_sql_query_to_workspace": "sql_workspace",
+    # Registered for compatibility, never advertised by step 6.
+    "list_ecopart_samples": "hidden_legacy",
+    "preview_ecopart_sample": "hidden_legacy",
+    "find_ecopart_project_for_ecotaxa": "hidden_legacy",
+    "query_ecopart": "hidden_legacy",
+    "join_ecotaxa_ecopart": "hidden_legacy",
+    "audit_ecotaxa_ecopart_join": "hidden_legacy",
+    "list_amundsen_datasets": "hidden_legacy",
+    "preview_amundsen_profile": "hidden_legacy",
+    "find_amundsen_data_for_table": "hidden_legacy",
+    "enrich_loaded_table_with_amundsen_ctd": "hidden_legacy",
+    "query_amundsen_ctd": "hidden_legacy",
+    "list_bio_oracle_datasets": "hidden_legacy",
+    "preview_bio_oracle_point": "hidden_legacy",
+    "query_bio_oracle_zones": "hidden_legacy",
+    "find_bio_oracle_data_for_table": "hidden_legacy",
+    "couple_zooplankton_bio_oracle": "hidden_legacy",
+    "query_bio_oracle": "hidden_legacy",
+    "query_ogsl": "hidden_legacy",
+})
+
+_REQUIRED_SKILL_BY_FAMILY: Mapping[str, str] = MappingProxyType({
+    "ecotaxa": "ecotaxa_navigation",
+    "ecopart": "ecopart_query",
+    "amundsen": "amundsen_ctd_query",
+    "bio_oracle": "bio_oracle_query",
+    "ogsl": "ogsl_query",
+})
+
+def _build_policy(name: str, profile_name: str) -> ToolPolicy:
+    presentation = TOOL_PRESENTATION[name]
+    profile = _POLICY_PROFILES[profile_name]
+    source = _CORE_SOURCE_BY_NAME.get(name) or _SOURCE_BY_FAMILY[presentation.family]
+    required_skill = _REQUIRED_SKILL_BY_FAMILY.get(presentation.family)
+    if name == "run_graph":
+        required_skill = "graph_writer"
+    elif name == "export_deliverable":
+        required_skill = "deliverable_writer"
+    workflows = (
+        ("visualization",)
+        if name == "run_graph"
+        else ("deliverable",)
+        if name == "export_deliverable"
+        else (presentation.family,)
+    )
+    return ToolPolicy(
+        family=presentation.family,
+        source=source,
+        risk=profile.risk,
+        read_only=profile.read_only,
+        mutates_session=profile.mutates_session,
+        remote_io=profile.remote_io,
+        expensive=profile.expensive,
+        reversible=profile.reversible,
+        requires_confirmation=profile.requires_confirmation,
+        required_skill=required_skill,
+        allowed_workflows=workflows,
+        max_calls_per_turn=profile.max_calls_per_turn,
+        exposure_group=_EXPOSURE_GROUP_BY_NAME[name],
+        result_schema="tool_result_v1",
+    )
+
+
+TOOL_POLICIES: Mapping[str, ToolPolicy] = MappingProxyType({
+    name: _build_policy(name, profile_name)
+    for name, profile_name in _TOOL_PROFILE_BY_NAME.items()
+})
 
 
 def _normalize_supported_language(value: object) -> Language | None:
@@ -280,6 +612,7 @@ def validate_catalog(
     tool_names: Collection[str],
     *,
     optional_names: Collection[str] = (),
+    runtime_tools: Collection[BaseTool] = (),
 ) -> None:
     """Fail fast when runtime tools and declared presentation facts drift."""
 
@@ -331,6 +664,78 @@ def validate_catalog(
             "Tool catalog incomplete presentation: " + ", ".join(incomplete)
         )
 
+    policy_names = set(TOOL_POLICIES)
+    missing_policies = sorted(names - policy_names)
+    if missing_policies:
+        raise ValueError(f"Tool catalog missing policy: {', '.join(missing_policies)}")
+    orphaned_policies = sorted(policy_names - names - optional)
+    if orphaned_policies:
+        raise ValueError(
+            f"Tool catalog orphan policy: {', '.join(orphaned_policies)}"
+        )
+    exposure_names = set(_EXPOSURE_GROUP_BY_NAME)
+    missing_exposure = sorted((names | optional) - exposure_names)
+    orphaned_exposure = sorted(exposure_names - names - optional)
+    if missing_exposure:
+        raise ValueError(
+            f"Tool catalog missing exposure group: {', '.join(missing_exposure)}"
+        )
+    if orphaned_exposure:
+        raise ValueError(
+            f"Tool catalog orphan exposure group: {', '.join(orphaned_exposure)}"
+        )
+
+    policy_issues = []
+    local_skills = {path.stem for path in SKILLS_DIR.glob("*.md")}
+    for name in sorted(names | optional):
+        presentation = TOOL_PRESENTATION[name]
+        policy = TOOL_POLICIES[name]
+        issues = []
+        if policy.family != presentation.family:
+            issues.append("family")
+        if policy.read_only and policy.mutates_session:
+            issues.append("read_only+mutates_session")
+        if policy.requires_confirmation and policy.risk != "high":
+            issues.append("confirmation_without_high_risk")
+        if policy.max_calls_per_turn < 1:
+            issues.append("max_calls_per_turn")
+        if policy.exposure_group not in TOOL_EXPOSURE_GROUPS:
+            issues.append("exposure_group")
+        if policy.result_schema != "tool_result_v1":
+            issues.append("legacy result schema")
+        if not policy.allowed_workflows:
+            issues.append("allowed_workflows")
+        if policy.required_skill and policy.required_skill not in local_skills:
+            issues.append(f"unknown_skill={policy.required_skill}")
+        if issues:
+            policy_issues.append(f"{name} ({', '.join(issues)})")
+    if policy_issues:
+        raise ValueError(
+            "Tool catalog invalid policy: " + "; ".join(policy_issues)
+        )
+
+    schema_issues = []
+    for item in runtime_tools:
+        schema = getattr(item, "args_schema", None)
+        config = getattr(schema, "model_config", {})
+        if config.get("strict") is not True or config.get("extra") != "forbid":
+            schema_issues.append(item.name)
+    if schema_issues:
+        raise ValueError(
+            "Tool catalog non-strict args schema: " + ", ".join(sorted(schema_issues))
+        )
+
+    result_format_issues = sorted(
+        item.name
+        for item in runtime_tools
+        if getattr(item, "response_format", None) != "content_and_artifact"
+    )
+    if result_format_issues:
+        raise ValueError(
+            "Tool catalog non-structured result format: "
+            + ", ".join(result_format_issues)
+        )
+
 
 def build_tool_catalog(thread_id: str) -> ToolCatalog:
     """Build the exact thread-scoped runtime tools and validate presentation."""
@@ -355,6 +760,8 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
     except SQLWorkspaceNotConfiguredError:
         sql_available = False
 
+    tools = [apply_strict_tool_schema(item) for item in tools]
+
     name_counts = Counter(tool.name for tool in tools)
     duplicates = sorted(name for name, count in name_counts.items() if count > 1)
     if duplicates:
@@ -365,11 +772,15 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
     validate_catalog(
         names,
         optional_names=() if sql_available else OPTIONAL_SQL_TOOL_NAMES,
+        runtime_tools=tools,
     )
     return ToolCatalog(
         tools=tuple(tools),
         names=names,
         presentations=MappingProxyType(
             {name: TOOL_PRESENTATION[name] for name in names}
+        ),
+        policies=MappingProxyType(
+            {name: TOOL_POLICIES[name] for name in names}
         ),
     )

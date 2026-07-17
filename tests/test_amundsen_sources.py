@@ -1099,9 +1099,10 @@ def test_system_prompt_prefers_enrich_with_amundsen_ctd_for_latlon_files():
 
     prompt = Path("agents/skills/amundsen_ctd_query.md").read_text()
     assert "enrich_with_amundsen_ctd" in prompt
-    lowered = prompt.lower()
+    lowered = " ".join(prompt.lower().split())
     assert "latitude" in lowered and "longitude" in lowered
-    assert "safer path for large neolabs/ecotaxa files" in lowered
+    assert "only canonical loaded-table enrichment path" in lowered
+    assert "station/cast identifiers" in lowered
 
 
 def test_enrich_with_amundsen_ctd_exposes_distance_and_time_delta_columns():

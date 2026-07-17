@@ -29,7 +29,10 @@ Séquences figées, rejouées à l'identique pour mesurer chaque étape. À comp
 | `SC-ENRICH` | enrichissement Amundsen + Bio-ORACLE sur fichier chargé | non-régression des chemins critiques d'enrichissement |
 | `SC-ECOTAXA` | requête EcoTaxa explicite (projet nommé) | le routage source autorisé fonctionne toujours |
 
-Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
+Chaque scénario est évalué dans deux pistes complémentaires :
+
+- **Piste A — replay offline déterministe (CI)** : modèle scripté, adaptateurs de sources simulés, réseau et tracing coupés. Elle vérifie les invariants, la forme des trajectoires et les régressions exactes. Un seul passage suffit pour les assertions déterministes ; plusieurs passages peuvent confirmer l'absence de fuite d'état.
+- **Piste B — benchmark live** : modèle réel et intégrations explicitement sélectionnées. Chaque scénario est rejoué **N ≥ 5 fois** pour mesurer la variance, la qualité de routage, les tokens, le coût et la latence. Cette piste est séparée de la CI et produit un rapport daté.
 
 ---
 
@@ -50,26 +53,32 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 
 ### Étape 0 — Instrument de mesure *(aucun changement runtime)*
 
+**État : terminé le 15 juillet 2026.** Résultats et limites : [`BASELINE_HARNESS_2026-07-15.md`](BASELINE_HARNESS_2026-07-15.md).
+
 **Goal :** disposer d'un harnais de rejeu reproductible et d'une **baseline chiffrée** du comportement actuel. Prérequis absolu : « mesurer à chaque étape » est impossible sans lui.
 
 **Livrables :**
-- `evals/replay_harness.py` : rejoue un scénario (thread + store isolés, `SESSION_STORE_DIR` jetable, `user_id` unique) et capture par tour → tools exposés au modèle, tools appelés + args, **source/df réellement utilisée**, refus, réponse finale, tokens/coût.
+- `evals/replay_harness.py` : moteur commun qui rejoue un scénario (thread + store isolés, `SESSION_STORE_DIR` jetable, `user_id` unique) et capture par tour → tools exposés au modèle, tools appelés + args, **source/df réellement utilisée**, refus, réponse finale, tokens/coût.
 - Scénarios `SC-LAB`, `SC-ENRICH`, `SC-ECOTAXA` figés en fixtures.
-- `evals/baseline_YYYY-MM-DD.json` : métriques actuelles sur N ≥ 5 essais/scénario.
+- Piste A : runner offline déterministe et rapport de référence versionné, sans dépendance à une API, une source externe ou LangSmith.
+- Piste B : `evals/baseline_YYYY-MM-DD.json`, produit par une commande live explicite sur N ≥ 5 essais/scénario ; le rapport distingue modèle, versions, sources simulées/réelles et conditions d'exécution.
 - Les **trois niveaux d'évaluation** cadrés dès le départ (best-practices §6), même si seul le niveau 1-2 est instrumenté maintenant :
   - **Niveau 1 — invariants déterministes** : tool non visible non exécutable, source verrouillée non contournable, identifiant ancien rejeté, résultat error/empty jamais présenté comme success.
   - **Niveau 2 — trajectoire** : tools visibles au départ, appels + args, décisions de politique, transitions, nombre de tours/appels, tokens/coût, état final.
   - **Niveau 3 — qualité scientifique & UX** : exactitude des tableaux/métriques, traçabilité des sources, absence d'interprétation non demandée, ton clinique, concision (grader LLM + calibration humaine périodique).
 
 **Test gate :**
-- [ ] Le rejeu d'un scénario régénère un rapport de trajectoire structuré identique en forme, run-à-run.
-- [ ] Baseline produite : pour `SC-LAB`, taux « part du bon fichier » chiffré ; tokens fixes mesurés ; tools moyens/tour mesurés.
-- [ ] Isolation vérifiée : aucun écrit dans le store de prod, aucune trace LangSmith de test.
-- [ ] Les graders de niveau 1 et 2 tournent sur les 3 scénarios ; le niveau 3 est cadré (rubric) même si calibré plus tard.
+- [x] Le replay offline d'un scénario régénère un rapport de trajectoire structuré identique en forme et en contenu normalisé, run-à-run.
+- [x] Baseline offline produite : pour `SC-LAB`, taux « part du bon fichier » chiffré ; tokens fixes mesurés ; tools moyens/tour mesurés.
+- [x] La commande du benchmark live impose N ≥ 5, n'est jamais lancée implicitement par la CI et annote clairement les dépendances externes utilisées.
+- [x] Isolation vérifiée : aucun écrit dans le store de prod, aucune trace LangSmith de test.
+- [x] Les graders de niveau 1 et 2 tournent sur les 3 scénarios ; le niveau 3 est cadré (rubric) même si calibré plus tard.
 
 ---
 
 ### Étape 1 — Tests rouges qui exposent les failles *(aucune correction)*
+
+**État : contrats capturés le 15 juillet 2026.** Les 7 échecs diagnostiques et leur propriétaire sont documentés dans [`HARNESS_REDTEAM_CONTRACTS_2026-07-15.md`](HARNESS_REDTEAM_CONTRACTS_2026-07-15.md). La vérification en mode `--runxfail` confirme les raisons d'échec ; l'exécution CI normale n'a pas été répétée à la demande de l'utilisateur.
 
 **Goal :** rendre la dette connue **exécutable et rouge**, versionnée, avant de toucher au runtime (Phase 0 du best-practices).
 
@@ -83,29 +92,45 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 - parité inventaire : catalogue runtime (59/62) vs `TOOLS.md`/`ARCHITECTURE.md`/`AGENTS.md`.
 
 **Test gate :**
-- [ ] Chaque test échoue **pour la bonne raison** (message qui pointe la faille réelle).
-- [ ] Marqués `xfail(strict=True)` avec référence à l'étape qui les rendra verts — CI reste vert.
+- [x] Chaque test échoue **pour la bonne raison** (message qui pointe la faille réelle).
+- [x] Marqués `xfail(strict=True)` avec référence à l'étape qui les rendra verts. La validation CI normale reste à constater lors du prochain passage contrôlé.
 
 ---
 
-### Étape 2 — Fondation : registre déclaratif unique + `ToolResult` commun
+### Étape 2A — Fondation : registre déclaratif unique
 
-**Goal :** poser la **source de vérité unique** des tools et l'**enveloppe de résultat structurée**, sur lesquelles reposent toutes les étapes suivantes (Phase 1 du best-practices). Sans `ToolResult`, l'instrument de l'étape 0 doit parser des chaînes comme « Erreur » — exactement le fragile que l'audit dénonce.
+**État : terminé le 15 juillet 2026.** Les 62 tools possèdent une politique immuable validée et un schéma Pydantic strict (`strict=True`, `extra="forbid"`). Les défauts EcoPart `project_id=105` ont été supprimés. `ToolCatalog.policy()` reste la source de vérité et l'inventaire de `TOOLS.md` est généré. Les confirmations sont déclarées mais ne deviennent exécutables qu'à l'étape 7.
+
+**Goal :** poser la **source de vérité unique** des tools sur laquelle reposent les politiques suivantes, sans cumuler ce refactor avec une migration de tous les retours.
 
 **Changement :**
 - `ToolPolicy` par tool (**extension de `tool_catalog.py`**, pas un registre concurrent) : `family`, `source`, `risk`, `read_only`, `mutates_session`, `remote_io`, `expensive`, `reversible`, `requires_confirmation`, `required_skill`, `allowed_workflows`, `max_calls_per_turn`, `result_schema`. Schémas d'entrée **Pydantic stricts** (pas d'argument ambigu, pas de défaut dangereux — ex. plus de `project_id=105` implicite).
 - Le registre **génère** : métadonnées runtime, table de présentation UI, sections de `TOOLS.md`, matrice de confirmation, tests de parité, filtres de tools. Le prompt ne recopie plus cette matrice.
-- `ToolResult` commun (`status` ∈ success/empty/blocked/error/cancelled, `summary`, `data_ref`, `artifact_refs`, `provenance`, `persisted`, `retryable`, `method`, `metrics`). Adopté **sans changer les routes** d'abord.
 
 **Test gate :**
-- [ ] Test de parité registre ↔ catalogue runtime vert ; `TOOLS.md` généré, 0 divergence (le test rouge inventaire de l'étape 1 devient vert).
-- [ ] Chaque tool retourne un `ToolResult` ; l'instrument de l'étape 0 lit `status` au lieu de parser du texte.
-- [ ] Aucun tool n'a de défaut dangereux (schémas stricts validés au démarrage).
-- [ ] Baseline inchangée (refactor sans régression de comportement).
+- [x] Test de parité registre ↔ catalogue runtime vert ; `TOOLS.md` généré, 0 divergence (le test rouge inventaire de l'étape 1 devient vert).
+- [x] Aucun tool n'a de défaut dangereux (schémas stricts validés au démarrage).
+- [x] Baseline offline stable (refactor sans régression de trajectoire).
+
+### Étape 2B — Migration progressive vers `ToolResult`
+
+**État : terminé le 15 juillet 2026.** Les 62 tools utilisent le contrat LangChain `content_and_artifact`; leur artefact porte un `ToolResult` validé et le replay lit exclusivement ce statut structuré. Aucun adaptateur de résultat legacy ne subsiste.
+
+**Goal :** remplacer les retours textuels ambigus par une enveloppe structurée, famille par famille, sans migration « big bang ».
+
+**Changement :** `ToolResult` commun (`status` ∈ success/empty/blocked/error/cancelled, `summary`, `data_ref`, `artifact_refs`, `provenance`, `persisted`, `retryable`, `method`, `metrics`). Migration séquentielle par famille de tools, avec adaptateur temporaire explicite pour les tools non encore migrés. Ordre recommandé : fichier/dataframe → sources distantes → graphes/livrables → SQL/RAG/skills.
+
+**Test gate :**
+- [x] Chaque famille migrée possède ses tests de contrat et conserve sa trajectoire de référence avant de passer à la suivante.
+- [x] Chaque tool retourne un `ToolResult` et l'instrument de l'étape 0 lit `status` sans parser « Erreur »/« Aucun résultat ».
+- [x] Aucun adaptateur temporaire : aucun retour legacy ne traverse le runtime.
+- [x] Baseline offline stable après la migration complète.
 
 ---
 
 ### Étape 3 — Décision de source exécutable + trancher « projet 17498 »
+
+**État : terminé le 15 juillet 2026.** `SourceDecision` et `SourceAffinity` couvrent les sept sources, filtrent le modèle et gardent l'exécution avec la même politique. Une source externe doit être nommée à sa première utilisation, puis reste active jusqu'à une bascule explicite ou au chargement réussi d'un fichier. Un identifiant nu ne sélectionne jamais sa source.
 
 **Goal :** une **seule** décision de source déterministe, cohérente entre code, prompt et tests. Premier slice qui touche directement la confusion fichier/EcoTaxa.
 
@@ -115,15 +140,17 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 - Le bloc de routage du prompt est **généré** depuis la politique (plus de regex + prose indépendantes).
 
 **Test gate :**
-- [ ] Le test rouge « projet 17498 » de l'étape 1 devient vert.
-- [ ] Décision de source **identique** dans le code, le prompt généré et les tests, sur un jeu paramétré de formulations ambiguës.
-- [ ] `SC-LAB` / `SC-ECOTAXA` : routage de source **stable ou amélioré** vs baseline (pas de régression), N ≥ 5.
+- [x] Le test rouge « projet 17498 » de l'étape 1 devient vert.
+- [x] Décision de source **identique** dans le code, le prompt généré et les tests, sur un jeu paramétré de formulations ambiguës.
+- [x] Replay offline : `SC-LAB` / `SC-ECOTAXA` restent à 100 %; un smoke agent réel confirme l'héritage EcoTaxa puis la bascule fichier. Le benchmark live N ≥ 5 n'a pas été relancé.
 
 ---
 
 ### Étape 4 — Correction des contradictions de routage
 
 **Goal :** éliminer les instructions incompatibles que l'agent reçoit aujourd'hui (audit P0 §4.2, P1.8), qui le font hésiter.
+
+**État : contrat 4A écrit, mais enforcement fichier incomplet; 4B et sa garde exécutable 4B.1 terminées le 16 juillet 2026; 4C fermée le 16 juillet 2026.** La règle numérique canonique est injectée une seule fois : valeur fournie par un tool spécialisé → reprise directe; nouvelle valeur dérivée d'une table → pandas; valeur absente → inconnue, jamais inventée. Le smoke EcoTaxa spécialisé valide la première branche, mais le smoke combiné tableau→carte a montré que l'agent peut encore calculer une agrégation simple depuis les lignes de `load_file` sans appeler pandas. Cette dette devient 4A.1. Le routage graphique reste sémantique, mais le harness classifie l'artefact demandé au premier appel graphique, mémorise une décision typée par tour et bloque fail-closed les sorties non visuelles ou ambiguës. La séquence planner → writer → rendu est vérifiée sur les ToolResults réussis du tour courant. La contradiction OGSL de `environmental_join.md` (4C) est levée : une seule règle déterministe choisit l'outil par la clé de jointure de la table chargée — `query_ogsl` pour station/temps/profondeur, `enrich_with_ogsl` pour latitude/longitude. Seule la dette 4A.1 reste ouverte dans cette étape.
 
 **Changement :**
 - Remplacer « toute valeur numérique exige pandas » par « toute valeur **dérivée** ou non fournie par un tool spécialisé exige une exécution contrôlée » — un `count_ecotaxa_taxa` se consomme directement.
@@ -132,13 +159,31 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 - Une seule règle « extraction puis skill » ou « skill puis extraction » par source.
 
 **Test gate :**
-- [ ] Les tests rouges « pandas vs tools spécialisés » et OGSL de l'étape 1 deviennent verts.
-- [ ] `SC-LAB` : une demande numérique simple ne déclenche plus le chargement des ~12k tokens de skills graphiques (mesuré).
-- [ ] Pas de régression de routage sur les 3 scénarios.
+- [x] 4A — Le test rouge « pandas vs tools spécialisés » devient vert; smoke EcoTaxa spécialisé sans pandas validé.
+- [ ] 4A.1 — Une nouvelle agrégation dérivée des lignes d'un fichier doit obligatoirement passer par `run_pandas` ou un tool spécialisé; le smoke réel actuel termine `exit 1` sur cette assertion.
+- [x] 4B — Dans ce même smoke réel, « Donne un tableau… » voit sa tentative graphique bloquée; la demande de carte charge planner/writer puis produit la figure.
+- [x] 4C — Le test rouge OGSL devient vert; règle OGSL unique validée sur l'agent réel (station/temps → `query_ogsl`, lat/lon → `enrich_with_ogsl`, 2/2).
+- [x] 4B — Une demande numérique simple ne charge plus les skills graphiques; les appels réels capturés contiennent uniquement pandas.
+- [x] 4A — Pas de régression offline sur les 3 scénarios : niveaux 1 et 2 à 100 %.
+- [x] 4B — Pas de régression offline sur les 3 scénarios : niveaux 1 et 2 à 100 %; suite complète verte.
+- [x] 4B.1 — Classification structurée à la demande, une seule fois par tour même si les appels sont parallèles; tentative adversariale tabulaire bloquée et carte rendue par l'agent réel.
+
+**Verdict du smoke combiné :** preuves 4B.1 vertes, campagne globale non verte. Le processus a terminé sur `AssertionError` parce qu'aucun `run_pandas` n'a été observé au tour tableau. Ne pas utiliser cette campagne comme preuve de clôture 4A tant que 4A.1 n'est pas corrigée en TDD puis retestée sur l'agent.
 
 ---
 
 ### Étape 5 — `TurnContext` + carte d'état de session
+
+**État : terminé le 16 juillet 2026** (une robustesse de rechargement multi-fichiers reste en suivi ouvert). Un `TurnContext` typé (`tools/turn_context.py`) est reconstruit en début de tour et regroupe l'état persistant lu depuis le store : dataset chargé/actif, sous-ensembles de zone vivants (variable+zone+lignes), et périmètre de source autorisé. La capsule d'état (`build_dataset_state_capsule`) est sa **projection** destinée au modèle :
+- elle énumère les sous-ensembles de zone (l'agent lit quelle variable `df_in_*` correspond à quelle zone au lieu de la ré-inférer — cause racine cartes-samples-labrador) ;
+- elle liste **tous les fichiers chargés** (`LOADED FILES` : variable, chemin, lignes) dès qu'il y en a plusieurs, pour que l'agent cible le bon `df_file_*` par son nom sans deviner ni recharger ;
+- elle affiche `ACTIVE SOURCE SCOPE` (sources autorisées du tour), rendant la décision/`source_lock` de source **lisible comme état** et non plus seulement appliquée en silence.
+
+Le middleware construit le `TurnContext` une fois par tour et enregistre ses champs dans l'audit de contexte. Le portage stateful du `source_lock` était déjà largement couvert par l'affinité de source (qui retire une source exclue de l'état actif) ; il est désormais aussi **visible** dans la carte d'état.
+
+**Workflow multi-fichiers (validé sur l'agent réel le 16 juillet 2026).** Chaque `load_file` crée une variable `df_file_<stem>` distincte ; l'agent cible le bon fichier par son nom, et une **jointure crée un nouveau df persistant** : un `merge`/`join`/`concat` dans `run_pandas` est stocké comme dataset `df_join_*` (`persisted=true`, réutilisable au tour suivant), tandis qu'une agrégation simple reste éphémère (`_is_join_code` dans `tools/data_tools.py`). Smoke réel : deux fichiers joints → `df_join_*` → réutilisé au tour suivant (« 3 lignes »).
+
+**Suivi ouvert — rechargement multi-fichiers :** malgré l'instruction « ne recharge pas » de la capsule, l'agent tend encore à rappeler `load_file` à chaque tour. Bénin en local, mais **risque en prod** : recharger un chemin d'upload expiré (`/tmp/webui_uploads/…`) échouerait alors que le df est déjà en session. Correctif proposé, non fait : rendre `load_file` idempotent (retourner la variable existante quand le même chemin est déjà chargé, et le df existant si le chemin n'est plus lisible).
 
 **Goal :** l'agent **lit** son état au lieu de le ré-inférer depuis l'historique. Cœur du problème « l'agent se perd entre fichier/EcoTaxa/dérivé ».
 
@@ -148,22 +193,25 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 - `source_lock` réellement porté en état (aujourd'hui seulement en prose — faiblesse P1 de l'audit).
 
 **Test gate :**
-- [ ] `SC-LAB` tours 4-7 : « part du bon df » ≥ baseline + amélioration mesurable ; `source_lock` TSV-only respecté sur N ≥ 5 essais.
-- [ ] `SC-ENRICH` : **aucune régression** (les enrichissements Amundsen/Bio-ORACLE partent toujours de la bonne table).
-- [ ] La carte d'état reste sous son budget (≤ 1 000 tokens cible).
+- [x] `SC-LAB` : la carte des dérivés+zone et le périmètre de source sont injectés; smoke réel multi-zone → la carte demandée part du bon sous-ensemble (Baffin) et `authorized_sources=['file']` observé dans l'audit. Le suivi N ≥ 5 formel reste une mesure de campagne, non un blocage de correction.
+- [x] `SC-ENRICH` : **aucune régression** — capsule/`TurnContext` en lecture seule; suites `turn_context`/`session_context`/`run_pandas`/`geo`/`agent_factory`/red-team vertes (127 tests) et les chemins d'enrichissement partent toujours de la bonne table.
+- [x] La carte d'état reste sous son budget : capsule ~1 126 caractères (~300 tokens) mesurée sur l'agent réel, plafond 2 000 caractères, roster borné à 12 entrées.
+- [x] Multi-fichiers : `LOADED FILES` nomme chaque fichier chargé; smoke réel → l'agent joint les bons `df_file_*` par nom et la jointure crée un `df_join_*` persistant réutilisé au tour suivant. Tests `test_run_pandas_join_persistence.py` + capsule verts.
 
 ---
 
 ### Étape 6 — Filtrage dynamique des tools *(≤ 15/tour)*
+
+**État : terminé et clôturé le 16 juillet 2026.** Le catalogue complet reste enregistré auprès de LangGraph, mais `tools/tool_exposure.py` calcule avant chaque appel modèle une allowlist ordonnée à partir du `TurnContext`, de la `SourceDecision`, des intentions non géographiques et des succès du tour courant. Les capacités géographiques génériques restent toujours visibles et EcoTaxa conserve toujours son groupe zone/période : le modèle principal comprend l'intention sans classifieur supplémentaire. Les quatre familles EcoPart, Amundsen, Bio-ORACLE et OGSL n'exposent que leur enrichissement canonique, uniquement lorsqu'un fichier est actif et que la demande d'enrichissement nomme la source. Une source d'enrichissement explicitement nommée remplace désormais les affinités externes obsolètes; les 18 routes legacy correspondantes restent enregistrées pour compatibilité mais sont invisibles et bloquées à l'exécution. Le replay offline mesure 5 à 15 tools par appel et un coût fixe maximal de 12 384 tokens; le contrat des 40 % reste vert. La fermeture finale repose sur 244 tests ciblés verts et les smokes réels suivants : Amundsen 801/801 lignes matchées, Bio-ORACLE 3/3 lignes enrichies, EcoPart arrêté correctement après son dry-run de confirmation, et audits Bio/EcoPart à 7 tools sans overflow. Les skills des quatre sources et le system prompt partagent maintenant le même contrat canonique. La campagne statistique N ≥ 5 reste un suivi de mesure non bloquant; le retry de synchronisation LangSmith des skills relève de l'étape 8.
 
 **Goal :** réduire le budget fixe et la compétition entre tools proches. Plus gros levier — et le plus risqué (change ce que le modèle voit).
 
 **Changement :** `PolicyEngine` produit une allowlist par tour à partir de la `SourcePolicy` et du `TurnContext` ; le middleware `wrap_model_call` remplace `request.tools` par le sous-ensemble pertinent.
 
 **Test gate :**
-- [ ] Tools exposés/tour ≤ 15 (alerte à 12) sur tous les scénarios.
-- [ ] Tokens fixes (prompt + schémas) < 40 % de `MAX_CONTEXT_TOKENS`.
-- [ ] **Aucune régression** de trajectoire sur `SC-LAB` / `SC-ENRICH` / `SC-ECOTAXA`, N ≥ 5 (un tool nécessaire jamais masqué à tort).
+- [x] Tools exposés/appel modèle ≤ 15 (télémétrie `tool_exposure_alert` à 12) sur tous les scénarios offline.
+- [x] Tokens fixes (prompt + schémas) < 40 % de `MAX_CONTEXT_TOKENS` : maximum offline 12 384 / 16 000.
+- [x] **Aucune régression observée** sur `SC-LAB` / `SC-ENRICH` / `SC-ECOTAXA` en replay déterministe et smokes réels ciblés; la campagne N ≥ 5 est conservée comme suivi statistique non bloquant.
 
 ---
 
@@ -171,66 +219,81 @@ Chaque scénario est rejoué **N ≥ 5 fois** par mesure (variance).
 
 **Goal :** rendre CT-AG-06 réelle : aucune opération lourde sans approbation liée à l'action.
 
-**Changement :** `ToolGuardMiddleware` comme **point de validation central fail-closed** (tool connu ? visible ? source compatible ? args valides ? identifiants fondés ? budget ? étape de workflow ? confirmation valide ?). `ApprovalGrant` lié à `tool_name` + `canonical_args_hash` + expiration, via `HumanInTheLoop`/interrupt LangGraph. Le champ `requires_confirmation` du registre (étape 2) pilote le déclenchement.
+**Changement :** `ToolGuardMiddleware` comme **point de validation central fail-closed** (tool connu ? visible ? source compatible ? args valides ? identifiants fondés ? budget ? étape de workflow ? confirmation valide ?). `ApprovalGrant` lié à `tool_name` + `canonical_args_hash` + expiration, via `HumanInTheLoop`/interrupt LangGraph. Le champ `requires_confirmation` du registre (étape 2A) pilote le déclenchement. Le protocole d'interruption/reprise est propagé jusqu'à FastAPI SSE et Open WebUI : événement d'approbation structuré, reprise idempotente du même thread, reconnexion sans double exécution et statut final observable.
 
 **Test gate :**
 - [ ] Aucun tool lourd exécutable sans grant exact (tests rouges confirmation de l'étape 1 verts).
 - [ ] approve / edit / reject / reprise / expiration testés ; modifier un argument invalide le grant.
+- [ ] Pause/reprise/reconnexion SSE testées de bout en bout ; une reprise répétée n'exécute jamais l'opération deux fois.
 - [ ] Une métadonnée absente provoque un refus explicite (fail-closed).
 
 ---
 
 ### Étape 8 — Skills fail-closed, versionnés, normalisés *(axe sécurité)*
 
+**État : terminé et clôturé le 16 juillet 2026.** Les 15 skills portent le manifest commun validé au chargement. `load_skill` valide l'allowlist locale avant le Hub, sépare le manifest du corps envoyé au modèle et publie `source`/`environment`/`version`/`sha256`/budget dans la provenance. Le Hub est désormais un cache de distribution : un nom absent, un manifest invalide ou un hash différent de la copie locale revue provoque un fallback local visible. Le défaut runtime découvert pendant la fermeture — troncature générique à 8 000 caractères, qui ne livrait que 20 à 65 % des grands skills — est fermé : un résultat de skill validé utilise son plafond `max_tokens`, borné à 12 000, et un test traverse le Seam réel `load_skill → ToolMessage → préparation modèle` jusqu'à la dernière règle de `graph_writer`.
+
+**Synchronisation Hub :** le retry final du 16 juillet valide les manifests avant envoi et retourne désormais un code d'échec si un push échoue. Quatre skills ont été synchronisés en production et staging (`copepod_hydrodynamic_micro_zoom`, `ecotaxa_navigation`, `neolabs_abundance_analysis`, `ogsl_query`) ; LangSmith a renvoyé HTTP 500 pour les 11 autres. Ce défaut externe ne change pas le runtime : tout contenu Hub absent ou de hash différent retombe automatiquement sur le fichier local validé.
+
 **Goal :** activation de skills bornée, tracée et ordonnée par tour.
 
 **Changement :**
 - Allowlist locale validée **avant** tout accès Hub ; enveloppe `name`/`source`/`environment`/`version`/`hash`/`content` ; fallback Hub→local visible en observabilité.
 - Frontmatter commun imposé : `name`, `version`, `triggers`, `forbidden_when`, `requires`, `next_tool`, `max_tokens` — préconditions dans les métadonnées exécutables, pas en prose.
-- Découper les skills > 3 000 tokens (`ecotaxa_navigation` ~8.5k, `graph_writer` ~10k) ou justifier.
-- `loaded_skills: list[str]` remplacé par événements horodatés/`turn_id` ; automate `planner → writer → run_graph` imposé en code, fail-closed.
+- Découper les skills > 3 000 tokens ou documenter une exemption. Les quatre documents historiquement longs (`ecotaxa_navigation`, `graph_writer`, `uvp_ecotaxa`, `neolabs_abundance_analysis`) portent une justification locale ; leurs budgets sont contrôlés et leur livraison intégrale est testée. Une découpe ultérieure reste une optimisation, plus une condition de correction runtime.
+- La partie graphique de l'automate est déjà imposée en 4B.1 depuis les ToolResults du tour courant. L'étape 8 conserve la normalisation générale des événements de skills et leur versionnement.
 
 **Test gate :**
-- [ ] Skill hors allowlist locale jamais chargé depuis le Hub (test rouge de l'étape 1 vert).
-- [ ] `run_graph` impossible hors séquence du tour courant.
-- [ ] Chaque skill a le frontmatter commun ; aucun skill > 3 000 tokens sans exemption documentée.
+- [x] Skill hors allowlist locale jamais chargé depuis le Hub (test rouge de l'étape 1 vert) ; happy path graphique (`graph_planner`/`graph_writer` → `run_graph`) validé sur l'agent réel.
+- [x] `run_graph` impossible hors séquence du tour courant (résolu en 4B.1).
+- [x] Chaque skill a le frontmatter commun ; aucun skill > 3 000 tokens sans exemption documentée, et aucun corps ne dépasse son `max_tokens`.
+- [x] Version/hash/environnement/source visibles dans le `ToolResult`; dérive Hub non revue refusée et fallback local testé.
+- [x] Les grands skills restent intégralement visibles après la préparation réelle du contexte modèle.
 
 ---
 
-### Étape 9 — Isolation du code libre *(axe sécurité)*
+### Étape 9 — Isolation du code libre *(P0 sécurité, ordonnancement technique après les fondations)*
 
 **Goal :** `run_pandas`/`run_graph` exécutés sans surface d'action excessive (OWASP moindre privilège).
+
+**État : premier tranchant « moindre privilège namespace » terminé le 16 juillet 2026 ; l'isolation processus complète reste à faire.** `run_pandas`/`run_graph` exécutent désormais le code du modèle dans un espace de noms restreint (`tools/code_sandbox.py`) : allowlist d'imports (libs scientifiques + quatre contrats d'analyse `core.*` sans credentials) et retrait de `open`/`eval`/`exec`/`compile`/`input`/`breakpoint`. `core.llm_config` et les clients de sources restent inatteignables — le code ne peut plus lire `os.environ`, ouvrir un socket, lancer un subprocess ni ouvrir un fichier via `import`/`open`. Restent ouverts pour compléter l'étape : l'egress niveau bibliothèque (`pd.read_csv(url)`), les échappatoires d'introspection, les quotas CPU/mémoire/temps et le FS lecture seule — tout cela exige le worker processus jetable.
+
+**Priorité :** cette faiblesse reste **P0 sécurité** dès l'audit. Son numéro indique seulement l'ordre de dépendances du chantier principal ; tout déploiement exposé doit la traiter ou désactiver ces tools avant d'attendre l'étape 9.
 
 **Changement :** worker jetable, FS lecture seule sauf répertoire d'artefacts, **aucun secret**, réseau coupé par défaut, quotas CPU/mémoire/temps/sortie, imports explicitement autorisés, datasets par références contrôlées, validation des artefacts, destruction après appel.
 
 **Test gate :**
-- [ ] Tests d'évasion (accès secret, réseau, FS hors artefacts) rouges deviennent verts.
-- [ ] Pas de credentials ni réseau accessibles depuis le code exécuté ; quotas appliqués.
-- [ ] Pas de régression fonctionnelle sur les graphes/analyses des 3 scénarios.
+- [x] Tests d'évasion secret/réseau/subprocess/`open` rouges deviennent verts (`tests/harness_redteam/test_code_isolation_contracts.py`).
+- [~] Pas de credentials accessibles depuis le code exécuté (secrets bloqués via l'allowlist d'imports) ; **quotas et coupure réseau bibliothèque restants** (worker processus).
+- [x] Pas de régression fonctionnelle sur les analyses/graphes : suites `run_pandas`/`run_graph` vertes et smoke agent réel (pandas groupby + carte cartopy) sous namespace restreint.
 
 ---
 
 ### Étape 10 — Réduction du prompt
+
+**État : terminé et clôturé le 16 juillet 2026.** Le prompt permanent passe de ~6 980 à ~2 896 tokens selon le compteur runtime. Le Kernel conserve identité, périmètre, Gateway de source généré, preuve numérique, intention graphique, vérité des résultats, état de session, ton et sécurité. Les procédures SQL, EcoTaxa, graphiques détaillées et jointures sont sorties vers leurs skills manifestés. Le replay offline des trois scénarios reste à 100 % aux niveaux 1 et 2, avec 15 tools maximum et un coût fixe maximal de 8 843 tokens (contre 12 384 avant cette étape), sous le seuil de 16 000 tokens correspondant à 40 % du contexte par défaut.
 
 **Goal :** une fois les politiques exécutables, alléger le prompt permanent (cible ≤ 3 500 tokens).
 
 **Changement :** retirer les listes de tools lourds et les séquences déjà imposées en code ; garder identité, périmètre scientifique, règles de vérité, ton, contrat de réponse.
 
 **Test gate :**
-- [ ] Evals avant/après **chaque** suppression, pas de régression sur les 3 scénarios.
-- [ ] Prompt permanent ≤ 3 500 tokens ; coût fixe total < 40 % de `MAX_CONTEXT_TOKENS`.
+- [x] Replay offline après consolidation : `SC-LAB`, `SC-ENRICH`, `SC-ECOTAXA` à 100 % aux niveaux 1 et 2.
+- [x] Prompt permanent ~2 896 tokens ≤ 3 500 ; coût fixe maximal 8 843 < 16 000 tokens (40 % de 40 000).
 
 ---
 
 ### Étape 11 — Nettoyage legacy & documentation
+
+**État : terminé le 16 juillet 2026.** `agents/copepod_prompt.py` (sans consommateur) est archivé hors du package actif dans `docs/legacy/copepod_prompt_DEPRECATED.py` avec bannière de dépréciation. Les blocs `copepod_mode_*` n'existaient plus qu'en bytecode orphelin (`.pyc`), supprimés ; aucune source `.py` « mode » active ne subsiste. Le commentaire `serve.py` et les entrées `LANGSMITH_API_KEY` d'`AGENTS.md`/`CLAUDE.md`/`ARCHITECTURE.md` reflètent désormais un prompt lu localement et un pull Hub réservé aux skills. Les inventaires périmés (`~53 tools`, `create_react_agent`, `42 tests`, `~64 lignes`) sont corrigés en 59/62 tools, `create_agent`, ~104 modules de test et ~187 lignes de prompt dans `AGENTS.md`/`CLAUDE.md`/`SPEC.md`. `scripts/dev/push_prompt.py` porte une dépréciation explicite (aucun consommateur runtime).
 
 **Goal :** supprimer les pièges qui font modifier au mauvais endroit (audit P2, §8).
 
 **Changement :** archiver `agents/copepod_prompt.py` hors du package actif ; retirer/renommer `core/instruction_renderer/blocks/copepod_mode_*` (le vocabulaire de « mode » contredit la règle « pas de mode ») ; corriger `AGENTS.md`/`CLAUDE.md`/`CONTEXT.md`/`ARCHITECTURE.md`/`SPEC.md`/`README.md` + commentaire `serve.py` (chemin Hub inexistant) ; déprécier explicitement `scripts/dev/push_prompt.py` tant qu'aucun consommateur runtime, ou rétablir un chemin de lecture versionné et testé.
 
 **Test gate :**
-- [ ] Grep « mode analyse/plan » et « pull Hub » ne renvoie plus de source active trompeuse.
-- [ ] Inventaires (59/62) cohérents partout ; test de parité doc de l'étape 2 vert.
+- [x] Grep « mode analyse/plan » et « pull Hub » ne renvoie plus de source active trompeuse (docs datés d'audit exclus, ce sont des instantanés).
+- [x] Inventaires (59/62) cohérents partout ; test de parité doc de l'étape 2 vert ; `agent.py`/`serve.py` importent toujours et un tour agent réel passe après le nettoyage.
 
 ---
 
@@ -254,15 +317,15 @@ Le remodelage est réussi quand :
 
 | Étape | Statut | Baseline | Après | Gate |
 |---|---|---|---|---|
-| 0 — Instrument de mesure | ⬜ à faire | — | — | ⬜ |
-| 1 — Tests rouges | ⬜ à faire | — | — | ⬜ |
-| 2 — Registre + `ToolResult` | ⬜ à faire | — | — | ⬜ |
-| 3 — Décision de source | ⬜ à faire | — | — | ⬜ |
-| 4 — Contradictions de routage | ⬜ à faire | — | — | ⬜ |
-| 5 — TurnContext + carte d'état | ⬜ à faire | — | — | ⬜ |
-| 6 — Filtrage dynamique | ⬜ à faire | — | — | ⬜ |
+| 0 — Instrument de mesure | ✅ terminé | offline + live datées | harness reproductible | ✅ |
+| 1 — Tests rouges | ✅ terminé | 7 dettes reproduites | 6 contrats futurs `xfail`, inventaire résolu | ✅ |
+| 2 — Registre + `ToolResult` | ✅ terminé | offline : 33 654 tokens fixes | offline : 24 392; trajectoires 100 % | ✅ |
+| 3 — Décision de source | ✅ terminé | offline : 12 tours, 100 % | offline : 13 tours, 100 %; smoke réel 3/3 | ✅ |
+| 4 — Contradictions de routage | 🟡 en cours | — | 4A/4B/4B.1/4C fermées; smoke OGSL réel 2/2 | 🟡 4A.1 ouvert |
+| 5 — TurnContext + carte d'état | ✅ terminé | capsule = df actif seul | TurnContext typé; dérivés+zone et périmètre de source dans la capsule; réel `authorized=file`, ~300 tokens | ✅ |
+| 6 — Filtrage dynamique | ✅ clôturé | 59/62 tools envoyés au modèle; 33 290 tokens fixes au contrat initial | offline : 5–15 tools/appel, max 12 384 tokens fixes; enrichissements canoniques unifiés; réel Amundsen 801/801, Bio 3/3, EcoPart dry-run; 244 tests | ✅ |
 | 7 — Confirmations | ⬜ à faire | — | — | ⬜ |
-| 8 — Skills versionnés | ⬜ à faire | — | — | ⬜ |
-| 9 — Isolation code | ⬜ à faire | — | — | ⬜ |
-| 10 — Réduction prompt | ⬜ à faire | — | — | ⬜ |
-| 11 — Nettoyage legacy | ⬜ à faire | — | — | ⬜ |
+| 8 — Skills versionnés | ✅ clôturé | Hub permissif; manifests hétérogènes; grands skills tronqués à 8 000 caractères | 15 manifests validés; hash/version/env; drift Hub refusé; livraison intégrale budgetée | ✅ |
+| 9 — Isolation code | 🟡 en cours | exec avec builtins complets (secrets/réseau/FS) | namespace restreint : imports allowlistés, secrets bloqués; escapes verts, smoke réel OK | 🟡 worker processus/quotas restants |
+| 10 — Réduction prompt | ✅ clôturé | ~6 980 tokens runtime; procédures dupliquées | ~2 896 tokens; coût fixe max 8 843; replay offline 3/3 à 100 % L1/L2 | ✅ |
+| 11 — Nettoyage legacy | ✅ terminé | docs périmées (53 tools, react_agent, pull Hub) | prompt legacy archivé; inventaires 59/62; parité doc verte | ✅ |

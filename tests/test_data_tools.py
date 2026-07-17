@@ -97,6 +97,164 @@ def test_load_file_tool_returns_summary(tsv_path):
     assert "profile_id" in result
 
 
+def test_run_pandas_marks_truncated_dataframe_preview():
+    """Le modèle ne doit pas compléter une table au-delà des lignes visibles."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-pandas-truncated-preview"
+    df = pd.DataFrame({"row_id": range(25), "value": range(25)})
+    store_dataset(
+        _store,
+        thread_id,
+        df,
+        variable_name="df_file_preview",
+        meta={"source": "file:test.csv", "n_rows": 25, "n_cols": 2},
+        latest_alias="df_file_preview",
+        is_loaded_file=True,
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "result = df.copy()"})
+
+    assert "25 lignes × 2 colonnes" in result
+    assert "aperçu des 20 premières lignes seulement" in result
+    assert "Ne complète pas les lignes absentes" in result
+
+
+def test_run_pandas_exposes_loaded_file_after_ecotaxa_result():
+    """Le sandbox garde le fichier de référence quand le df actif devient EcoTaxa."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-pandas-cross-source"
+    file_df = pd.DataFrame({"sample_id": ["A", "B"]})
+    cache_df = pd.DataFrame({"sample_id": ["A", "C"]})
+    store_dataset(
+        _store,
+        thread_id,
+        file_df,
+        variable_name="df_file_reference",
+        meta={"source": "file:test.tsv", "n_rows": 2, "n_cols": 1},
+        latest_alias="df_file_reference",
+        is_loaded_file=True,
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        cache_df,
+        variable_name="df_ecotaxa_cache_query",
+        meta={"source": "ecotaxa_cache", "n_rows": 2, "n_cols": 1},
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({
+        "code": "result = loaded_file.merge(df_ecotaxa_cache_query, on='sample_id', how='left', indicator=True)",
+    })
+
+    assert "A" in result
+    assert "B" in result
+    assert "_merge" in result
+
+
+def test_run_pandas_returns_explicit_printed_control_output():
+    """Les tableaux préparés par print ne doivent pas disparaître du tool."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-pandas-printed-control"
+    df = pd.DataFrame({"row_id": [1, 2], "value": [10, 20]})
+    store_dataset(
+        _store,
+        thread_id,
+        df,
+        variable_name="df_file_control",
+        meta={"source": "file:test.csv", "n_rows": 2, "n_cols": 2},
+        latest_alias="df_file_control",
+        is_loaded_file=True,
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({
+        "code": "print('CONTROL_ROWS'); print(df.to_markdown(index=False)); result = df",
+    })
+
+    assert "Sortie contrôlée du code :" in result
+    assert "CONTROL_ROWS" in result
+    assert "|        1 |      10 |" in result
+
+
+def test_run_pandas_returns_printed_output_without_result_assignment():
+    """Une pré-vérification imprimée reste exploitable sans DataFrame result."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-pandas-printed-only"
+    df = pd.DataFrame({"row_id": [1]})
+    store_dataset(
+        _store,
+        thread_id,
+        df,
+        variable_name="df_file_printed_only",
+        meta={"source": "file:test.csv", "n_rows": 1, "n_cols": 1},
+        latest_alias="df_file_printed_only",
+        is_loaded_file=True,
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({"code": "print('coverage_rows=1')"})
+
+    assert "coverage_rows=1" in result
+    assert "aucune variable `result` assignée" in result
+
+
+def test_load_file_success_replaces_external_source_affinity(tsv_path):
+    from tools.source_scope import (
+        SourceAffinity,
+        read_source_affinity,
+        write_source_affinity,
+    )
+
+    write_source_affinity(
+        _store,
+        "thread-file-affinity",
+        SourceAffinity(
+            active_sources=("ecotaxa",),
+            evidence="explicit_name",
+            origin_user_text="Explore EcoTaxa",
+            updated_at="2026-07-15T12:00:00+00:00",
+        ),
+    )
+
+    load_file_tool = next(
+        tool for tool in make_tools("thread-file-affinity") if tool.name == "load_file"
+    )
+    load_file_tool.invoke({"path": tsv_path})
+
+    assert read_source_affinity(_store, "thread-file-affinity").active_sources == (
+        "file",
+    )
+
+
+def test_load_file_failure_preserves_external_source_affinity(tmp_path):
+    from tools.source_scope import (
+        SourceAffinity,
+        read_source_affinity,
+        write_source_affinity,
+    )
+
+    original = SourceAffinity(
+        active_sources=("ecotaxa",),
+        evidence="explicit_name",
+        origin_user_text="Explore EcoTaxa",
+        updated_at="2026-07-15T12:00:00+00:00",
+    )
+    write_source_affinity(_store, "thread-file-failure", original)
+    load_file_tool = next(
+        tool for tool in make_tools("thread-file-failure") if tool.name == "load_file"
+    )
+
+    load_file_tool.invoke({"path": str(tmp_path / "missing.tsv")})
+
+    assert read_source_affinity(_store, "thread-file-failure") == original
+
+
 def test_load_file_preserves_distinct_files_with_named_variables(tmp_path):
     first = tmp_path / "stations 2024.tsv"
     second = tmp_path / "profiles.tsv"
@@ -508,7 +666,8 @@ def test_run_pandas_no_file_loaded():
 # --- Comportement 5 : run_graph ajoute une lecture rapide ---
 
 def test_run_graph_includes_quick_reading(tmp_path):
-    tools = make_tools("thread-graph")
+    thread_id = "thread-graph"
+    tools = make_tools(thread_id)
     load_file_tool = next(t for t in tools if t.name == "load_file")
     run_graph = next(t for t in tools if t.name == "run_graph")
 
@@ -519,6 +678,7 @@ def test_run_graph_includes_quick_reading(tmp_path):
     p = tmp_path / "graph.tsv"
     df.to_csv(p, sep="\t", index=False)
     load_file_tool.invoke({"path": str(p)})
+    _store.update_meta(thread_id, {"loaded_skills": ["graph_writer"]})
 
     code = """
 import matplotlib
@@ -547,6 +707,7 @@ def test_run_graph_works_without_loaded_file_for_standalone_map():
     """Carte d'une zone nommée : pas de df nécessaire, run_graph doit exécuter."""
     thread_id = "thread-standalone-graph"
     _store.clear(thread_id)
+    _store.set(thread_id, None, {"loaded_skills": ["graph_writer"]})
 
     run_graph = next(t for t in make_tools(thread_id) if t.name == "run_graph")
     code = (
@@ -569,12 +730,17 @@ def test_run_graph_requires_graph_writer_after_loaded_analysis_skill(tmp_path):
 
     run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
     result = run_graph.invoke({
-        "code": "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])",
+        "code": (
+            "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])"
+            + _GENERIC_GRAPH_CONTRACT_CODE
+        ),
     })
 
-    assert "load_skill(\"graph_writer\")" in result
-    assert "before run_graph" in result
-    assert "/graphs/" not in result
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["loaded_skills"] == [
+        "neolabs_abundance_analysis",
+        "graph_writer",
+    ]
 
 
 def test_run_graph_blocks_missing_graph_contract(tmp_path):
@@ -591,7 +757,9 @@ def test_run_graph_blocks_missing_graph_contract(tmp_path):
         "code": "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])",
     })
 
-    assert result == "graph contract blocked: graph_contract is missing"
+    assert "graph contract blocked: graph_contract is missing" in result
+    assert "Retry exactly once" in result
+    assert "same active dataframe" in result
     assert store.get(thread_id)["meta"]["graph_quality_blocked"] is True
     assert "/graphs/" not in result
 
@@ -662,6 +830,49 @@ ax.legend()
     assert "Graph quality blocked" in result
     assert "legend entries" in result
     assert "/graphs/" not in result
+
+
+def test_run_graph_blocks_dense_opaque_scatter(tmp_path):
+    """Overplotting guard: a scatter with many fully opaque points hides the
+    distribution and must be blocked (conservative threshold)."""
+    thread_id = "thread-overplot-graph"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    store.set(thread_id, df, {"loaded_skills": ["graph_writer"]})
+
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+import numpy as np
+fig, ax = plt.subplots(figsize=(8, 6))
+rng = np.random.default_rng(0)
+ax.scatter(rng.random(2500), rng.random(2500))
+"""
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
+
+    assert "Graph quality blocked" in result
+    assert "alpha" in result.lower() or "transparence" in result.lower()
+    assert "/graphs/" not in result
+
+
+def test_run_graph_allows_dense_scatter_with_transparency(tmp_path):
+    """The same dense scatter renders once transparency makes the density
+    readable — the guard is conservative, not a blanket point-count cap."""
+    thread_id = "thread-overplot-ok-graph"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    store.set(thread_id, df, {"loaded_skills": ["graph_writer"]})
+
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+import numpy as np
+fig, ax = plt.subplots(figsize=(8, 6))
+rng = np.random.default_rng(0)
+ax.scatter(rng.random(2500), rng.random(2500), alpha=0.4, s=6)
+"""
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
+
+    assert "Graph quality blocked" not in result
+    assert "/graphs/" in result
 
 
 def test_run_graph_blocks_too_many_visible_tick_labels(tmp_path):
@@ -814,6 +1025,7 @@ def test_run_graph_skips_model_tight_layout_for_cartopy():
     pytest.importorskip("cartopy.crs")
     thread_id = "thread-cartopy-safe-tight-layout"
     _store.clear(thread_id)
+    _store.set(thread_id, None, {"loaded_skills": ["graph_writer"]})
     run_graph = next(t for t in make_tools(thread_id) if t.name == "run_graph")
     code = """
 import cartopy.crs as ccrs
@@ -848,6 +1060,7 @@ def test_run_graph_exposes_multiple_ecopart_projects():
     _store.set(f"{thread_id}:ecopart", df_42, {"source": "ecopart:42"})
     _store.set(f"{thread_id}:ecopart:105", df_105, {"source": "ecopart:105"})
     _store.set(f"{thread_id}:ecopart:42", df_42, {"source": "ecopart:42"})
+    _store.update_meta(thread_id, {"loaded_skills": ["graph_writer"]})
 
     run_graph = next(t for t in make_tools(thread_id) if t.name == "run_graph")
     result = run_graph.invoke({

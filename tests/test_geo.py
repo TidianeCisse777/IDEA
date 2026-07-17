@@ -9,12 +9,14 @@ from shapely.geometry import Point, Polygon
 from core.geo import (
     Registry,
     Zone,
+    assign_zones,
     audit_zone_coverage,
     cut_polygon_at_cap_line,
     filter_by_zone,
     load_registry,
     points_inside,
     resolve_zone,
+    zone_family,
 )
 
 
@@ -166,6 +168,85 @@ def test_cut_polygon_at_cap_line_handles_diagonal_cut():
     assert south.area + north.area == pytest.approx(100.0, rel=1e-6)
     assert south.contains(Point(5, 1.0))
     assert north.contains(Point(5, 9.0))
+
+
+# --- assign_zones : découpage station -> zone la plus spécifique -------------
+
+
+def _iho(name, poly):
+    return Zone(canonical=name, source="IHO Marine Regions v3", polygon=poly, aliases=())
+
+
+def test_zone_family_classifies_iho_composite_and_meow():
+    iho = Zone(canonical="Baie X", source="IHO Marine Regions v3", polygon=_square(0, 0, 1, 1), aliases=())
+    composite = Zone(canonical="Nunavik", source="NeoLab composite — union", polygon=_square(0, 0, 1, 1), aliases=())
+    approx = Zone(canonical="Hawke Channel", source="NeoLab approximation — bbox", polygon=_square(0, 0, 1, 1), aliases=())
+    meow = Zone(canonical="MEOW: Northern Labrador", source="MEOW v1 — Spalding et al. 2007", polygon=_square(0, 0, 1, 1), aliases=())
+
+    assert zone_family(iho) == "iho"
+    assert zone_family(composite) == "composite"
+    assert zone_family(approx) == "composite"
+    assert zone_family(meow) == "meow"
+
+
+def test_assign_zones_labels_each_point_with_its_zone():
+    registry = Registry(zones=(
+        _iho("Baie A", _square(-70, 60, -60, 70)),
+        _iho("Baie B", _square(-90, 60, -80, 70)),
+    ))
+    df = pd.DataFrame({
+        "latitude":  [65.0,  66.0,  65.0],
+        "longitude": [-65.0, -64.0, -85.0],  # A, A, B
+    })
+
+    labels = assign_zones(df, registry)
+
+    assert list(labels) == ["Baie A", "Baie A", "Baie B"]
+    assert labels.index.tolist() == df.index.tolist()  # index préservé pour jointure
+
+
+def test_assign_zones_prefers_the_smallest_matching_polygon():
+    """Zones qui se chevauchent : la plus spécifique (plus petite aire) gagne."""
+    registry = Registry(zones=(
+        _iho("Grande mer", _square(-90, 50, -50, 80)),      # englobe tout
+        _iho("Petit détroit", _square(-70, 60, -65, 65)),   # inclus dans la grande
+    ))
+    df = pd.DataFrame({"latitude": [62.0, 78.0], "longitude": [-67.0, -55.0]})
+
+    labels = assign_zones(df, registry)
+
+    assert list(labels) == ["Petit détroit", "Grande mer"]
+
+
+def test_assign_zones_uses_explicit_buckets_for_outside_and_missing():
+    registry = Registry(zones=(_iho("Baie A", _square(-70, 60, -60, 70)),))
+    df = pd.DataFrame({
+        "latitude":  [65.0,   10.0,       None],
+        "longitude": [-65.0,  100.0,      -65.0],  # dans A, hors zone, sans coord
+    })
+
+    labels = assign_zones(df, registry)
+
+    assert labels.tolist() == ["Baie A", "Hors zone référencée", "Sans coordonnées"]
+
+
+def test_assign_zones_family_filter_excludes_meow_and_composite_by_default():
+    registry = Registry(zones=(
+        Zone(canonical="MEOW: Ecoregion", source="MEOW v1", polygon=_square(-90, 50, -50, 80), aliases=()),
+        _iho("Baie A", _square(-70, 60, -60, 70)),
+    ))
+    df = pd.DataFrame({"latitude": [65.0], "longitude": [-65.0]})
+
+    # défaut family="iho" : ignore l'écorégion MEOW qui chevauche
+    assert assign_zones(df, registry).tolist() == ["Baie A"]
+    # family="meow" : bascule sur le découpage écologique
+    assert assign_zones(df, registry, family="meow").tolist() == ["MEOW: Ecoregion"]
+
+
+def test_assign_zones_empty_frame_returns_empty_series():
+    registry = Registry(zones=(_iho("Baie A", _square(-70, 60, -60, 70)),))
+    labels = assign_zones(pd.DataFrame({"latitude": [], "longitude": []}), registry)
+    assert labels.tolist() == []
 
 
 # Registry de prod — produit par python -m core.geo.build_registry à partir de

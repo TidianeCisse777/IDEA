@@ -1,3 +1,17 @@
+---
+name: uvp_ecotaxa
+version: 1.0.0
+triggers:
+  - Loaded file is detected as a UVP EcoTaxa export
+forbidden_when:
+  - Loaded data is not an EcoTaxa export
+requires:
+  - "dataset:uvp_ecotaxa"
+next_tool: run_pandas
+max_tokens: 5000
+size_exemption: The taxonomy, canonical depth-bin, zero-abundance, and M5/M6 contracts operate on the same dataframe and must remain jointly visible to avoid incompatible intermediate tables.
+---
+
 # Skill: uvp_ecotaxa
 
 You just loaded a **UVP EcoTaxa file** (columns `fre_*` or `object_*` + `sample_id`),

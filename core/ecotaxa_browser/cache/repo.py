@@ -7,6 +7,7 @@ extension required, bbox math is plain numeric SQL.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from typing import Iterable, Iterator, Sequence
@@ -422,6 +423,54 @@ def query_samples_filtered(
     return conn.execute(sql, params)
 
 
+def resolve_samples(
+    conn: sqlite3.Connection,
+    *,
+    reference: str,
+    project_id: int | None = None,
+) -> list[sqlite3.Row]:
+    """Resolve one sample reference across the local EcoTaxa cache.
+
+    Exact, case-insensitive matches are checked against the numeric sample ID,
+    label, station, profile, and scalar free-field values. The caller decides
+    how to render zero or multiple matches; this function never picks one.
+    """
+    normalized = " ".join(str(reference).strip().split()).casefold()
+    if not normalized:
+        return []
+
+    rows = list(
+        query_samples_filtered(
+            conn,
+            project_ids=[int(project_id)] if project_id is not None else None,
+        )
+    )
+    matches: list[sqlite3.Row] = []
+    for row in rows:
+        candidates = {
+            str(row["sample_id"]),
+            row["original_id"],
+            row["station_id"],
+            row["profile_id"],
+        }
+        try:
+            free_fields = json.loads(row["free_fields_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            free_fields = {}
+        if isinstance(free_fields, dict):
+            candidates.update(
+                value for value in free_fields.values()
+                if isinstance(value, (str, int, float))
+            )
+        if any(
+            " ".join(str(candidate).strip().split()).casefold() == normalized
+            for candidate in candidates
+            if candidate is not None
+        ):
+            matches.append(row)
+    return matches
+
+
 def aggregate_samples_filtered(
     conn: sqlite3.Connection,
     *,
@@ -754,6 +803,42 @@ def cache_progress(conn: sqlite3.Connection) -> dict:
         "samples_synced": samples_synced,
         "projects_total_estimated": None,
         "last_sync": last_sync,
+    }
+
+
+def project_cache_coverage(conn: sqlite3.Connection, project_id: int) -> dict:
+    """Return what the local cache knows about one project (read-only).
+
+    Lets a caller separate a *real* absence from a project that simply has
+    not been indexed yet: the region/time/taxon browsers only read this cache,
+    so an un-synced project looks empty even when it exists on EcoTaxa.
+
+    Keys: ``project_id``, ``in_schema_cache`` (the project schema snapshot is
+    present), ``n_samples_cached``, ``date_min`` / ``date_max`` (cached temporal
+    envelope for the project, or ``None``), and ``last_sync`` (latest sync run
+    payload or ``None``).
+    """
+    pid = int(project_id)
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, MIN(date_min) AS date_min, MAX(date_max) AS date_max "
+        "FROM samples_cache WHERE project_id = ?",
+        (pid,),
+    ).fetchone()
+    n_samples = int(row["n"]) if row is not None else 0
+    in_schema = (
+        conn.execute(
+            "SELECT 1 FROM project_schemas_cache WHERE project_id = ? LIMIT 1",
+            (pid,),
+        ).fetchone()
+        is not None
+    )
+    return {
+        "project_id": pid,
+        "in_schema_cache": in_schema,
+        "n_samples_cached": n_samples,
+        "date_min": row["date_min"] if row is not None else None,
+        "date_max": row["date_max"] if row is not None else None,
+        "last_sync": latest_sync_status(conn),
     }
 
 

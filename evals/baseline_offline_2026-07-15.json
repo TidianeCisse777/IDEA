@@ -1,0 +1,1356 @@
+{
+  "external_dependencies": [],
+  "generated_at": "2026-07-16T15:22:17.363887+00:00",
+  "lane": "offline",
+  "metrics": {
+    "cost_usd": null,
+    "fixed_tokens": 12384,
+    "input_tokens": 0,
+    "level_1_pass_rate": 1.0,
+    "level_2_pass_rate": 1.0,
+    "max_tools_exposed_per_model_call": 15,
+    "mean_tools_exposed_per_turn": 7.846153846153846,
+    "mean_tools_per_turn": 1.1538461538461537,
+    "output_tokens": 0,
+    "sc_lab_good_file_rate": 1.0,
+    "scenario_runs": 3,
+    "turns": 13
+  },
+  "model": "scripted-reference",
+  "rubric": {
+    "level_1": {
+      "automated": true,
+      "criteria": [
+        "aucun tool interdit exécuté",
+        "aucune dépendance externe en offline"
+      ]
+    },
+    "level_2": {
+      "automated": true,
+      "criteria": [
+        "source attendue utilisée",
+        "trajectoire et densité de tools capturées"
+      ]
+    },
+    "level_3": {
+      "automated": false,
+      "calibration": "grader LLM avec revue humaine périodique; à implémenter après l'étape 0",
+      "criteria": [
+        "exactitude scientifique des tableaux et métriques",
+        "provenance complète",
+        "absence d'interprétation non demandée",
+        "ton clinique et concision"
+      ]
+    }
+  },
+  "run_count_per_scenario": 1,
+  "runtime_configuration": {
+    "max_tools_per_model_call": 15,
+    "observations": "scripted fixtures; dynamic per-turn tool policy and schemas measured from current code",
+    "sql_tools_exposed": false,
+    "tool_count": 62
+  },
+  "scenarios": [
+    {
+      "run_id": "offline-sc-lab-1",
+      "scenario_id": "SC-LAB",
+      "turns": [
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 1243,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 16780,
+            "fixed_tokens": 7962,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 5,
+            "tool_exposure_groups": [
+              "core",
+              "geography"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities"
+            ],
+            "tool_schema_tokens": 1243
+          },
+          "dataset_after": {
+            "source": "file",
+            "variable_name": "df"
+          },
+          "expects_file_use": true,
+          "file_used": true,
+          "final_answer": "Fichier chargé.",
+          "grade": {
+            "actual_source": "file",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": "file",
+            "expected_source": "file",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "file"
+            ]
+          },
+          "name": "upload",
+          "prompt": "Charge le fichier data/demo/neolabs_taxonomy_2014_2020.tsv.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "path": "data/demo/neolabs_taxonomy_2014_2020.tsv"
+              },
+              "name": "load_file",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : load_file."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 1674,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 16349,
+            "fixed_tokens": 8393,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 6,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "file_analysis"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "active dataset"
+            ],
+            "tool_schema_tokens": 1674
+          },
+          "dataset_after": {
+            "source": "filter_by_zone:Baie de Baffin",
+            "variable_name": "baffin_df"
+          },
+          "expects_file_use": true,
+          "file_used": true,
+          "final_answer": "Carte produite depuis le fichier.",
+          "grade": {
+            "actual_source": "file",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": "Baie de Baffin",
+            "expected_dataset_source_family": null,
+            "expected_source": "file",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "file"
+            ]
+          },
+          "name": "baffin_positions",
+          "prompt": "Je veux une carte avec les positions de tous les échantillons situés dans la Baie de Baffin. Utilise une légende qui change la taille du point selon le nombre d'échantillons prélevés à la même position.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "zone_name": "Baie de Baffin"
+              },
+              "name": "get_zone_info",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : get_zone_info."
+              },
+              "status": "success"
+            },
+            {
+              "arguments": {
+                "zone_name": "Baie de Baffin"
+              },
+              "name": "filter_dataframe_by_zone",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : filter_dataframe_by_zone."
+              },
+              "status": "success"
+            },
+            {
+              "arguments": {
+                "kind": "station_map"
+              },
+              "name": "run_graph",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : run_graph."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 1860,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 16163,
+            "fixed_tokens": 8579,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 7,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "file_analysis",
+              "taxonomy"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "active dataset",
+              "taxonomy requested"
+            ],
+            "tool_schema_tokens": 1860
+          },
+          "dataset_after": {
+            "source": "filter_by_zone:Mer du Labrador",
+            "variable_name": "labrador_df"
+          },
+          "expects_file_use": true,
+          "file_used": true,
+          "final_answer": "Le fichier contient 0 ligne dans cette zone; aucune carte trompeuse n'est produite.",
+          "grade": {
+            "actual_source": "file",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": "Mer du Labrador",
+            "expected_dataset_source_family": null,
+            "expected_source": "file",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "file"
+            ]
+          },
+          "name": "labrador_color_taxa",
+          "prompt": "Je veux une carte des positions des échantillons situés dans la mer du Labrador, avec une légende de couleur indiquant le nombre de taxons identifiés pour chaque échantillon.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "zone_name": "Mer du Labrador"
+              },
+              "name": "get_zone_info",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : get_zone_info."
+              },
+              "status": "success"
+            },
+            {
+              "arguments": {
+                "zone_name": "Mer du Labrador"
+              },
+              "name": "filter_dataframe_by_zone",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : filter_dataframe_by_zone."
+              },
+              "status": "success"
+            },
+            {
+              "arguments": {
+                "kind": "station_map"
+              },
+              "name": "run_graph",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : run_graph."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
+              "lookup_marine_taxonomy"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
+            "lookup_marine_taxonomy"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 1674,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 16349,
+            "fixed_tokens": 8393,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 6,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "file_analysis"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "active dataset"
+            ],
+            "tool_schema_tokens": 1674
+          },
+          "dataset_after": {
+            "source": "filter_by_zone:Mer du Labrador",
+            "variable_name": "labrador_df"
+          },
+          "expects_file_use": false,
+          "file_used": false,
+          "final_answer": "Restriction au TSV confirmée.",
+          "grade": {
+            "actual_source": "file",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": null,
+            "expected_source": "file",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": []
+          },
+          "name": "tsv_only_directive",
+          "prompt": "Utilise seulement le fichier .tsv que je t'ai fourni. N'utilise en aucun cas les skills ou méthodes pour EcoTaxa. As-tu compris ?",
+          "refused": false,
+          "tool_calls": [],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 1674,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 16349,
+            "fixed_tokens": 8393,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 6,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "file_analysis"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "active dataset"
+            ],
+            "tool_schema_tokens": 1674
+          },
+          "dataset_after": {
+            "source": "filter_by_zone:Mer du Labrador",
+            "variable_name": "labrador_df"
+          },
+          "expects_file_use": true,
+          "file_used": true,
+          "final_answer": "Aucune ligne du TSV dans la zone.",
+          "grade": {
+            "actual_source": "file",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": "Mer du Labrador",
+            "expected_dataset_source_family": null,
+            "expected_source": "file",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "file"
+            ]
+          },
+          "name": "labrador_positions_tsv",
+          "prompt": "Parfait. Je veux une carte avec les positions des échantillons situés dans la mer du Labrador.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "zone_name": "Mer du Labrador"
+              },
+              "name": "filter_dataframe_by_zone",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : filter_dataframe_by_zone."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 1674,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 16349,
+            "fixed_tokens": 8393,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 6,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "file_analysis"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "active dataset"
+            ],
+            "tool_schema_tokens": 1674
+          },
+          "dataset_after": {
+            "source": "filter_by_zone:Mer du Labrador",
+            "variable_name": "labrador_df"
+          },
+          "expects_file_use": false,
+          "file_used": false,
+          "final_answer": "neolabs_taxonomy_2014_2020.tsv",
+          "grade": {
+            "actual_source": "file",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": null,
+            "expected_source": "file",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": []
+          },
+          "name": "file_name",
+          "prompt": "Quel est le nom du fichier que je t'ai donné ?",
+          "refused": false,
+          "tool_calls": [],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 1674,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 16349,
+            "fixed_tokens": 8393,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 6,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "file_analysis"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "active dataset"
+            ],
+            "tool_schema_tokens": 1674
+          },
+          "dataset_after": {
+            "source": "filter_by_zone:Mer du Labrador",
+            "variable_name": "labrador_df"
+          },
+          "expects_file_use": true,
+          "file_used": true,
+          "final_answer": "Aucune carte ajoutée car la sélection est vide.",
+          "grade": {
+            "actual_source": "file",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": "Mer du Labrador",
+            "expected_dataset_source_family": null,
+            "expected_source": "file",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "file"
+            ]
+          },
+          "name": "add_coast",
+          "prompt": "Ajoute la côte à cette carte.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "coast": true,
+                "kind": "station_map"
+              },
+              "name": "run_graph",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : run_graph."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "run_id": "offline-sc-enrich-1",
+      "scenario_id": "SC-ENRICH",
+      "turns": [
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 1243,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 16780,
+            "fixed_tokens": 7962,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 5,
+            "tool_exposure_groups": [
+              "core",
+              "geography"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities"
+            ],
+            "tool_schema_tokens": 1243
+          },
+          "dataset_after": {
+            "source": "file",
+            "variable_name": "df"
+          },
+          "expects_file_use": true,
+          "file_used": true,
+          "final_answer": "Fichier chargé.",
+          "grade": {
+            "actual_source": "file",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": "file",
+            "expected_source": "file",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "file"
+            ]
+          },
+          "name": "load_environment_file",
+          "prompt": "Charge le fichier tests/fixtures/d07_amundsen_schema.tsv.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "path": "tests/fixtures/d07_amundsen_schema.tsv"
+              },
+              "name": "load_file",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : load_file."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "filter_dataframe_by_zone",
+              "get_zone_info"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "filter_dataframe_by_zone",
+            "get_zone_info"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 2293,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 15730,
+            "fixed_tokens": 9012,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 7,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "file_analysis",
+              "enrichment_amundsen"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "active dataset",
+              "explicit amundsen enrichment"
+            ],
+            "tool_schema_tokens": 2293
+          },
+          "dataset_after": {
+            "source": "amundsen_enrichment",
+            "variable_name": "amundsen_enriched_df"
+          },
+          "expects_file_use": false,
+          "file_used": false,
+          "final_answer": "Enrichissement Amundsen terminé.",
+          "grade": {
+            "actual_source": "amundsen",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": "amundsen",
+            "expected_source": "amundsen",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "amundsen"
+            ]
+          },
+          "name": "amundsen_enrichment",
+          "prompt": "Enrichis explicitement ce fichier avec Amundsen CTD et rapporte la couverture, sans interprétation biologique.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {},
+              "name": "enrich_with_amundsen_ctd",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : enrich_with_amundsen_ctd."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
+              "enrich_with_amundsen_ctd"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
+            "enrich_with_amundsen_ctd"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 2156,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 15867,
+            "fixed_tokens": 8875,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": false,
+            "tool_exposure_count": 7,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "file_analysis",
+              "enrichment_bio_oracle"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "active dataset",
+              "explicit bio_oracle enrichment"
+            ],
+            "tool_schema_tokens": 2156
+          },
+          "dataset_after": {
+            "source": "bio_oracle_coupling",
+            "variable_name": "bio_oracle_enriched_df"
+          },
+          "expects_file_use": false,
+          "file_used": false,
+          "final_answer": "Enrichissement Bio-ORACLE terminé.",
+          "grade": {
+            "actual_source": "bio_oracle",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": "bio_oracle",
+            "expected_source": "bio_oracle",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "bio_oracle"
+            ]
+          },
+          "name": "bio_oracle_enrichment",
+          "prompt": "Enrichis maintenant explicitement la table avec Bio-ORACLE baseline en utilisant les coordonnées de chaque ligne.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "scenario": "baseline"
+              },
+              "name": "enrich_with_bio_oracle",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : enrich_with_bio_oracle."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "run_pandas",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
+              "enrich_with_bio_oracle"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "run_pandas",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
+            "enrich_with_bio_oracle"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "run_id": "offline-sc-ecotaxa-1",
+      "scenario_id": "SC-ECOTAXA",
+      "turns": [
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 5621,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 12402,
+            "fixed_tokens": 12340,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": true,
+            "tool_exposure_count": 15,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "ecotaxa_geo_time",
+              "ecotaxa_discovery"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "authorized EcoTaxa intent"
+            ],
+            "tool_schema_tokens": 5621
+          },
+          "dataset_after": {
+            "source": "ecotaxa_catalog",
+            "variable_name": null
+          },
+          "expects_file_use": false,
+          "file_used": false,
+          "final_answer": "Métadonnées EcoTaxa présentées.",
+          "grade": {
+            "actual_source": "ecotaxa",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": null,
+            "expected_source": "ecotaxa",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "ecotaxa"
+            ]
+          },
+          "name": "find_project",
+          "prompt": "Dans EcoTaxa, trouve le projet 17498 et présente uniquement ses métadonnées disponibles.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "title_filter": "17498"
+              },
+              "name": "find_ecotaxa_projects",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : find_ecotaxa_projects."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
+              "find_ecotaxa_projects",
+              "get_ecotaxa_cache_status",
+              "list_ecotaxa_campaigns",
+              "list_ecotaxa_projects",
+              "preview_ecotaxa_project",
+              "find_ecotaxa_projects_in_region",
+              "find_ecotaxa_samples_in_region",
+              "group_ecotaxa_project_samples_by_region",
+              "group_ecotaxa_samples_by_year",
+              "rank_ecotaxa_samples_by_region"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
+            "find_ecotaxa_projects",
+            "get_ecotaxa_cache_status",
+            "list_ecotaxa_campaigns",
+            "list_ecotaxa_projects",
+            "preview_ecotaxa_project",
+            "find_ecotaxa_projects_in_region",
+            "find_ecotaxa_samples_in_region",
+            "group_ecotaxa_project_samples_by_region",
+            "group_ecotaxa_samples_by_year",
+            "rank_ecotaxa_samples_by_region"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 5665,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 12358,
+            "fixed_tokens": 12384,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": true,
+            "tool_exposure_count": 13,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "ecotaxa_geo_time",
+              "ecotaxa_export"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "authorized EcoTaxa intent"
+            ],
+            "tool_schema_tokens": 5665
+          },
+          "dataset_after": {
+            "source": "ecotaxa_preview",
+            "variable_name": null
+          },
+          "expects_file_use": false,
+          "file_used": false,
+          "final_answer": "Prévisualisation EcoTaxa terminée.",
+          "grade": {
+            "actual_source": "ecotaxa",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": null,
+            "expected_source": "ecotaxa",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "ecotaxa"
+            ]
+          },
+          "name": "preview_project",
+          "prompt": "Prévisualise le projet EcoTaxa 17498 sans téléchargement complet.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "project_id": 17498
+              },
+              "name": "preview_ecotaxa_project",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : preview_ecotaxa_project."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
+              "find_ecotaxa_projects_in_region",
+              "find_ecotaxa_samples_in_region",
+              "group_ecotaxa_project_samples_by_region",
+              "group_ecotaxa_samples_by_year",
+              "rank_ecotaxa_samples_by_region",
+              "export_ecotaxa_samples",
+              "query_ecotaxa",
+              "query_ecotaxa_sample"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
+            "find_ecotaxa_projects_in_region",
+            "find_ecotaxa_samples_in_region",
+            "group_ecotaxa_project_samples_by_region",
+            "group_ecotaxa_samples_by_year",
+            "rank_ecotaxa_samples_by_region",
+            "export_ecotaxa_samples",
+            "query_ecotaxa",
+            "query_ecotaxa_sample"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        {
+          "context": {
+            "approx_tokens_tool_schemas_after": 5665,
+            "approx_tokens_tool_schemas_before": 18023,
+            "approx_tokens_tool_schemas_saved": 12358,
+            "fixed_tokens": 12384,
+            "policy_overflow": false,
+            "system_prompt_tokens": 6719,
+            "tool_exposure_alert": true,
+            "tool_exposure_count": 13,
+            "tool_exposure_groups": [
+              "core",
+              "geography",
+              "ecotaxa_geo_time",
+              "ecotaxa_export"
+            ],
+            "tool_exposure_reasons": [
+              "permanent core",
+              "permanent geographic capabilities",
+              "authorized EcoTaxa intent"
+            ],
+            "tool_schema_tokens": 5665
+          },
+          "dataset_after": {
+            "source": "ecotaxa_summary",
+            "variable_name": null
+          },
+          "expects_file_use": false,
+          "file_used": false,
+          "final_answer": "Résumé du projet présenté depuis la source active.",
+          "grade": {
+            "actual_source": "ecotaxa",
+            "dataset_matches": true,
+            "expected_dataset_source_contains": null,
+            "expected_dataset_source_family": null,
+            "expected_source": "ecotaxa",
+            "forbidden_tools_called": [],
+            "level_1_passed": true,
+            "level_2_passed": true,
+            "source_matches": true,
+            "tool_sources": [
+              "ecotaxa"
+            ]
+          },
+          "name": "inherited_source_summary",
+          "prompt": "Résume maintenant le projet 17498 sans téléchargement complet.",
+          "refused": false,
+          "tool_calls": [
+            {
+              "arguments": {
+                "project_id": 17498
+              },
+              "name": "summarize_ecotaxa_project",
+              "result": {
+                "artifact_refs": [],
+                "data_ref": null,
+                "method": "deterministic replay fixture",
+                "metrics": {},
+                "persisted": false,
+                "provenance": {
+                  "source": "offline scripted fixture"
+                },
+                "retryable": false,
+                "status": "success",
+                "summary": "Résultat scripté offline : summarize_ecotaxa_project."
+              },
+              "status": "success"
+            }
+          ],
+          "tool_exposure_calls": [
+            [
+              "load_file",
+              "load_skill",
+              "query_copepod_knowledge_base",
+              "filter_dataframe_by_zone",
+              "get_zone_info",
+              "find_ecotaxa_projects_in_region",
+              "find_ecotaxa_samples_in_region",
+              "group_ecotaxa_project_samples_by_region",
+              "group_ecotaxa_samples_by_year",
+              "rank_ecotaxa_samples_by_region",
+              "export_ecotaxa_samples",
+              "query_ecotaxa",
+              "query_ecotaxa_sample"
+            ]
+          ],
+          "tools_exposed": [
+            "load_file",
+            "load_skill",
+            "query_copepod_knowledge_base",
+            "filter_dataframe_by_zone",
+            "get_zone_info",
+            "find_ecotaxa_projects_in_region",
+            "find_ecotaxa_samples_in_region",
+            "group_ecotaxa_project_samples_by_region",
+            "group_ecotaxa_samples_by_year",
+            "rank_ecotaxa_samples_by_region",
+            "export_ecotaxa_samples",
+            "query_ecotaxa",
+            "query_ecotaxa_sample"
+          ],
+          "usage": {
+            "cost_usd": null,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        }
+      ]
+    }
+  ],
+  "schema_version": "1.0"
+}

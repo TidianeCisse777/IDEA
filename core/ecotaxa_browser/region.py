@@ -34,8 +34,43 @@ _SAMPLE_CAP = 500
 _BBOX_KEYS = {"south", "west", "north", "east"}
 _DATE_KEYS = {"from", "to"}
 _SAMPLE_PROJECT_FACTOR = 1_000_000
-_OUTSIDE_IHO_REGION = "Hors zones IHO"
+_OUTSIDE_IHO_REGION = "Hors zone référencée"
 _MISSING_COORDINATES_REGION = "Sans coordonnées"
+
+
+def _assign_rows_to_zones(rows, registry):
+    """Assign cached sample rows to a single zone via the shared auto cascade.
+
+    Delegates to ``core.geo.assign_zones(family="auto")`` — IHO physical zones
+    first (mer/baie/détroit), MEOW ecoregions for points outside IHO — so the
+    EcoTaxa grouping matches the loaded-file workflow and no longer collapses
+    out-of-IHO points onto the coarse composite "Arctique" catch-all. Returns a
+    dict label -> list[rows], with every registry zone present (stable public
+    shape) plus the explicit outside/missing buckets.
+    """
+    import pandas as pd
+
+    from core.geo import assign_zones
+
+    groups = {zone.canonical: [] for zone in registry.zones}
+    groups[_OUTSIDE_IHO_REGION] = []
+    groups[_MISSING_COORDINATES_REGION] = []
+    rows = list(rows)
+    if not rows:
+        return groups
+
+    frame = pd.DataFrame({
+        "latitude": [row["lat_avg"] for row in rows],
+        "longitude": [row["lon_avg"] for row in rows],
+    })
+    labels = assign_zones(
+        frame, registry, family="auto",
+        outside_label=_OUTSIDE_IHO_REGION,
+        missing_label=_MISSING_COORDINATES_REGION,
+    )
+    for row, label in zip(rows, labels.tolist()):
+        groups.setdefault(label, []).append(row)
+    return groups
 
 
 def _cache_db_path() -> str:
@@ -605,7 +640,7 @@ def group_project_samples_by_region(project_id: int) -> dict:
 
     Reads only the local cache. All registry zones are present in ``groups``
     for a stable public shape, followed by two explicit buckets:
-    ``Hors zones IHO`` and ``Sans coordonnées``.
+    ``Hors zone référencée`` and ``Sans coordonnées``.
     """
     from core.geo import load_registry
 
@@ -614,11 +649,6 @@ def group_project_samples_by_region(project_id: int) -> dict:
         "ZONES_REGISTRY", "data/geo/zones_registry.geojson",
     )
     registry = load_registry(registry_path)
-    groups: dict[str, list[int]] = {
-        zone.canonical: [] for zone in registry.zones
-    }
-    groups[_OUTSIDE_IHO_REGION] = []
-    groups[_MISSING_COORDINATES_REGION] = []
 
     conn = _open_cache()
     try:
@@ -628,21 +658,12 @@ def group_project_samples_by_region(project_id: int) -> dict:
     finally:
         conn.close()
 
-    for row in sorted(rows, key=lambda sample: int(sample["sample_id"])):
-        sample_id = int(row["sample_id"])
-        lat = row["lat_avg"]
-        lon = row["lon_avg"]
-        if lat is None or lon is None:
-            groups[_MISSING_COORDINATES_REGION].append(sample_id)
-            continue
-
-        point = Point(lon, lat)
-        region_name = _OUTSIDE_IHO_REGION
-        for zone in registry.zones:
-            if zone.polygon.contains(point):
-                region_name = zone.canonical
-                break
-        groups[region_name].append(sample_id)
+    ordered = sorted(rows, key=lambda sample: int(sample["sample_id"]))
+    row_groups = _assign_rows_to_zones(ordered, registry)
+    groups: dict[str, list[int]] = {
+        label: [int(row["sample_id"]) for row in sample_rows]
+        for label, sample_rows in row_groups.items()
+    }
 
     return {
         "project_id": pid,
@@ -691,11 +712,6 @@ def rank_samples_by_region(
         "ZONES_REGISTRY", "data/geo/zones_registry.geojson",
     )
     registry = load_registry(registry_path)
-    groups: dict[str, list[sqlite3.Row]] = {
-        zone.canonical: [] for zone in registry.zones
-    }
-    groups[_OUTSIDE_IHO_REGION] = []
-    groups[_MISSING_COORDINATES_REGION] = []
 
     conn = _open_cache()
     try:
@@ -705,20 +721,7 @@ def rank_samples_by_region(
     finally:
         conn.close()
 
-    for row in rows:
-        lat = row["lat_avg"]
-        lon = row["lon_avg"]
-        if lat is None or lon is None:
-            groups[_MISSING_COORDINATES_REGION].append(row)
-            continue
-
-        point = Point(lon, lat)
-        region_name = _OUTSIDE_IHO_REGION
-        for zone in registry.zones:
-            if zone.polygon.contains(point):
-                region_name = zone.canonical
-                break
-        groups[region_name].append(row)
+    groups: dict[str, list[sqlite3.Row]] = _assign_rows_to_zones(rows, registry)
 
     region_rows = []
     for region_name, sample_rows in groups.items():

@@ -169,7 +169,11 @@ def test_sync_one_project_enriches_light_sample_metadata(conn):
     }
 
 
-def test_sync_drops_objects_without_lat_lon_silently(conn):
+def test_sync_indexes_objects_without_lat_lon(conn):
+    # Lever 3: coordinate-less objects are no longer dropped — they are indexed
+    # (counted, dated) so temporal/per-project exploration works. lat_avg only
+    # averages the geolocated objects; a sample with no geolocated object gets
+    # a NULL lat_avg but still counts.
     from core.ecotaxa_browser.cache.sync import sync_project
 
     objects = [
@@ -186,8 +190,32 @@ def test_sync_drops_objects_without_lat_lon_silently(conn):
 
     assert samples_synced == 1
     row = conn.execute("SELECT * FROM samples_cache WHERE sample_id=1").fetchone()
-    assert row["object_count"] == 1
-    assert row["lat_avg"] == pytest.approx(70.0)
+    assert row["object_count"] == 4  # all objects counted, not just geolocated
+    assert row["lat_avg"] == pytest.approx(70.0)  # only the one geolocated object
+
+
+def test_sync_indexes_fully_coordinateless_sample_with_null_latlon(conn):
+    # A sample whose every object lacks coordinates (e.g. old LOKI projects)
+    # is indexed by date with NULL lat/lon, instead of vanishing entirely.
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    objects = [
+        [None, None, "2013-08-15", "1", "Loki"],
+        [None, None, "2013-09-02", "1", "Loki"],
+    ]
+    client = _make_client(
+        projects=[{"projid": 2331, "title": "LOKI", "instrument": "Loki"}],
+        objects_by_project={2331: objects},
+    )
+    samples_synced = sync_project(conn, client, project_id=2331, last_synced="ts")
+
+    assert samples_synced == 1
+    row = conn.execute("SELECT * FROM samples_cache WHERE project_id=2331").fetchone()
+    assert row["object_count"] == 2
+    assert row["lat_avg"] is None
+    assert row["lon_avg"] is None
+    assert row["date_min"] == "2013-08-15"
+    assert row["date_max"] == "2013-09-02"
 
 
 def test_sync_paginates_until_exhausted(conn):
@@ -661,3 +689,54 @@ def test_run_full_sync_does_not_commit_samples_when_schema_snapshot_fails(conn):
     assert conn.execute(
         "SELECT COUNT(*) FROM samples_cache WHERE project_id=42"
     ).fetchone()[0] == 0
+
+
+def test_run_full_sync_covers_cache_known_project_absent_from_list_projects(conn):
+    # Lever 2: list_projects() is narrow/unstable. A project already known
+    # locally (schema cached) must stay in the sync even when the search omits it.
+    from core.ecotaxa_browser.cache.repo import upsert_project_schema
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    upsert_project_schema(
+        conn, project_id=2331, schema_json='{"title": "LOKI"}', last_synced="old"
+    )
+    client = _make_client(
+        projects=[{"projid": 42, "title": "A", "instrument": "UVP5"}],  # 2331 omitted
+        objects_by_project={
+            42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]],
+            2331: [[None, None, "2013-08-15", "7", "Loki"]],
+        },
+    )
+    result = run_full_sync(conn, client, now_iso="2026-06-15T03:00:00Z")
+
+    assert result["status"] == "ok"
+    assert result["projects_synced"] == 2  # 42 (listed) + 2331 (cache-known extra)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM samples_cache WHERE project_id=2331"
+    ).fetchone()[0] == 1
+
+
+def test_run_full_sync_soft_fails_on_unreachable_extra_project(conn):
+    # A previously-known project that now 404s must not fail the whole run.
+    from core.ecotaxa_browser.cache.repo import upsert_project_schema
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    upsert_project_schema(
+        conn, project_id=14853, schema_json='{"title": "gone"}', last_synced="old"
+    )
+    client = _make_client(
+        projects=[{"projid": 42, "title": "A", "instrument": "UVP5"}],
+        objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
+    )
+
+    def _get_project(pid):
+        if pid == 14853:
+            raise RuntimeError("404 Not Found")
+        return {"projid": pid, "title": f"Project {pid}", "instrument": "UVP5"}
+
+    client.get_project.side_effect = _get_project
+    result = run_full_sync(conn, client, now_iso="2026-06-15T03:00:00Z")
+
+    assert result["status"] == "partial"  # not "failed" — 42 synced fine
+    assert result["projects_synced"] == 1
+    assert "14853" in (result["error_message"] or "")

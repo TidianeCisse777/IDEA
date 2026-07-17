@@ -17,7 +17,7 @@ Ce document définit l'identité métier de l'agent qui tourne dans ce repo et l
 ## Ce que l'agent fait
 
 - Inspecte des fichiers locaux (CSV, TSV, Excel, JSON, Parquet) via `load_file`.
-- Interroge cinq sources en ligne sur demande explicite : **EcoTaxa**, **EcoPart**, **Amundsen CTD**, **OGSL**, **Bio-ORACLE**.
+- Interroge cinq sources en ligne après une première sélection explicite : **EcoTaxa**, **EcoPart**, **Amundsen CTD**, **OGSL**, **Bio-ORACLE**. La source sélectionnée reste active pour les suivis jusqu'à une bascule explicite ou au chargement d'un fichier.
 - Exécute des calculs pandas via `run_pandas`.
 - Produit des graphiques matplotlib via `run_graph` après planification (`graph_planner` + `graph_writer`).
 - Interroge un workspace SQL en lecture seule via `list_sql_tables`, `preview_sql_table`, `copy_sql_query_to_workspace`.
@@ -32,31 +32,31 @@ Ce document définit l'identité métier de l'agent qui tourne dans ce repo et l
 - Aucune valeur numérique inventée. Tout chiffre vient d'un `run_pandas`, d'un tool, ou du RAG.
 - Aucune modification des données brutes. Toute transformation crée une copie nommée.
 - Aucun credential affiché, logué, ou inclus dans un livrable.
-- Aucune requête en ligne déclenchée sans demande explicite de l'utilisateur (mot-clé : « charge », « exporte », nom de projet, etc.).
+- Aucune première requête en ligne sans nom de source explicite. Un nombre ou nom de projet seul ne choisit pas sa source; les suivis peuvent réutiliser l'affinité de source persistée.
 
 ---
 
 ## Pilotage : un seul agent, pas de modes
 
-L'agent est un **LangGraph ReAct unique**. Tous les outils sont déclarés à la construction et restent disponibles en permanence. Il n'y a pas d'état de session « mode » à activer ou désactiver.
+L'agent est un **LangGraph ReAct unique**. Tous les outils sont déclarés à la construction, mais une allowlist dynamique en expose au plus 15 par appel modèle selon l'intention, la source autorisée et l'état du tour. Il n'y a pas d'état de session « mode » à activer ou désactiver.
 
-Le system prompt (`agents/copepod_system_prompt.py`, plus `langchain hub` en prod via `copepod-system-prompt`) distingue deux usages opérationnels :
+Le system prompt compact est lu localement depuis `agents/copepod_system_prompt.py`. Les procédures détaillées sont chargées à la demande depuis des skills manifestés; le Hub ne sert qu'une copie dont le hash correspond à la version locale revue.
 
 1. **File analysis** — quand l'utilisateur travaille un fichier chargé : `load_file`, `run_pandas`.
 2. **Knowledge base** — quand l'utilisateur pose une question sur colonnes, méthodes, taxonomie : `query_copepod_knowledge_base` d'abord, jamais de réponse de mémoire.
 
-La production graphique impose toujours la séquence : `load_skill("graph_planner")` → `load_skill("graph_writer")` → `run_graph` (visuel) ou `run_pandas` (tableau). Cette planification mécanique remplace l'ancien concept d'« étape de planification graphique » qui était un état de session — le plan est affiché dans un bloc `<details>`, pas validé par un dialogue.
+La production graphique impose toujours la séquence : `load_skill("graph_planner")` → `load_skill("graph_writer")` → `run_graph` (visuel) ou `run_pandas` (tableau). Le choix reste sémantique, mais une garde exécutable classifie l'artefact au premier appel graphique et bloque les intentions non visuelles ou ambiguës. Planner et writer doivent réussir séquentiellement dans le tour courant; leur exécution en lot parallèle est refusée. Cette planification mécanique remplace l'ancien concept d'« étape de planification graphique » qui était un état de session — le plan est affiché dans un bloc `<details>`, pas validé par un dialogue.
 
-**Confirmation utilisateur explicite avant opération coûteuse (CT-AG-06)** — le prompt impose un « oui / go / lance / confirme » avant : `query_ecotaxa` / `query_ecopart` / `query_amundsen_ctd` complets, `query_bio_oracle` sur une région, `couple_zooplankton_bio_oracle` > 10 lignes, `copy_sql_query_to_workspace` sans `LIMIT`, `export_deliverable`, tout calcul de variable dérivée et toute jointure non standard. Les opérations légères (load_file, list/preview, run_pandas sur données déjà chargées, run_graph après plan) restent immédiates.
+**Confirmation utilisateur explicite avant opération coûteuse (CT-AG-06)** — le prompt impose un « oui / go / lance / confirme » avant : `query_ecotaxa` / `query_ecopart` / `query_amundsen_ctd` complets, l'enrichissement EcoPart distant, `query_bio_oracle` sur une région, `enrich_with_bio_oracle` au-delà de 10 lignes avec plusieurs variables × scénarios, `copy_sql_query_to_workspace` sans `LIMIT`, `export_deliverable`, tout calcul de variable dérivée et toute jointure non standard. Les opérations légères (load_file, list/preview, run_pandas sur données déjà chargées, run_graph après plan) restent immédiates.
 
 ---
 
 ## Skills et RAG : deux registres distincts
 
 - **RAG** (`query_copepod_knowledge_base`) — recherche vectorielle sur 11 documents (`core/copepod_rag/docs/`). Sert au savoir : colonnes, méthodes, taxonomie, sources.
-- **Skill** (`load_skill(name)`) — chargement en bloc d'un document Markdown. Sert au geste : comment lancer une extraction EcoTaxa, comment écrire un graphique matplotlib, comment compiler un livrable.
+- **Skill** (`load_skill(name)`) — chargement d'un document Markdown validé et budgeté. Chaque manifest déclare nom, version, déclencheurs, interdictions, préconditions, prochaine capacité et plafond de tokens; la provenance expose source, environnement et SHA-256.
 
-Les 14 skills disponibles sont dans `agents/skills/` :
+Les 15 skills disponibles sont dans `agents/skills/` :
 
 | Skill | Rôle |
 |---|---|
@@ -67,6 +67,7 @@ Les 14 skills disponibles sont dans `agents/skills/` :
 | `ecopart_query` | Règles d'extraction EcoPart. |
 | `amundsen_ctd_query` | Règles d'extraction Amundsen CTD via ERDDAP. |
 | `bio_oracle_query` | Règles d'extraction Bio-ORACLE par scénario / couche. |
+| `ogsl_query` | Enrichissement canonique OGSL CTD par lat/lon/temps/profondeur. |
 | `environmental_join` | Stratégie de jointure biologique ↔ environnemental. |
 | `neolabs_abundance_analysis` | Abondance / diversité / ordination des fichiers NeoLabs. |
 | `copepod_hydrodynamic_micro_zoom` | Garde-fous d'interprétation micro-hydrodynamique (fronts, panaches…). |
@@ -108,7 +109,7 @@ Le **`PointMatcher`** est l'adapter au seam : un par source (`AmundsenMatcher`, 
 - Toute valeur numérique vient d'un `run_pandas`, d'un tool ou du RAG. Sinon : « valeur inconnue ».
 - Toute production graphique passe par `graph_planner` puis `graph_writer`. Après `graph_writer`, le prochain tool **doit** être `run_graph` (jamais `run_pandas` pour exécuter du code de visualisation).
 - Toute question factuelle sur colonnes, méthodes, taxonomie : `query_copepod_knowledge_base` **avant** toute réponse.
-- Toute requête en ligne nécessite une demande utilisateur explicite (mot-clé ou nom de projet).
+- Toute première requête en ligne nécessite le nom explicite de la source; les tours suivants héritent de cette affinité jusqu'à une bascule ou un fichier chargé.
 - Tout livrable passe par `deliverable_writer` + `export_deliverable`, jamais une rédaction libre.
 - Les noms d'outils internes (`run_pandas`, `load_file`, …) ne sont jamais exposés à l'utilisateur.
 - **Ton clinique (CT-AG-26)** : pas de « je / moi / en tant qu'IA », pas de politesse décorative, pas de phrases d'ouverture conversationnelles. Pour les **résultats analytiques** (graphique, calcul, jointure, livrable) : structurer autour de Résultat / Source / Méthode / Limite / Prochaine action. Pour les **questions courtes** (un chiffre, un nom de colonne, oui/non, clarification) : répondre directement, sans imposer la structure.

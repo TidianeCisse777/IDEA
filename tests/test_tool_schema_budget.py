@@ -61,15 +61,15 @@ def test_complete_catalog_inventory_and_schema_budget(monkeypatch):
         tool.name: _schema_tokens(tool) for tool in catalog.tools
     }
 
-    assert len(catalog.tools) == len(catalog.names) == 59
+    assert len(catalog.tools) == len(catalog.names) == 65
     assert family_counts == {
         "data": 3,
-        "ecotaxa": 28,
+        "ecotaxa": 33,
         "ecopart": 7,
         "amundsen": 6,
         "bio_oracle": 7,
         "ogsl": 2,
-        "geography": 2,
+        "geography": 3,
         "core": 4,
     }
     assert max(schema_tokens.values()) <= 1_600
@@ -97,7 +97,7 @@ def test_complete_catalog_with_sql_stays_within_schema_budget(
         tool.name: _schema_tokens(tool) for tool in catalog.tools
     }
 
-    assert len(catalog.tools) == len(catalog.names) == 62
+    assert len(catalog.tools) == len(catalog.names) == 68
     assert sum(
         catalog.presentation(name).family == "sql" for name in catalog.names
     ) == 3

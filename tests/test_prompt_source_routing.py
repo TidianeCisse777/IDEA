@@ -16,9 +16,18 @@ def test_generic_requests_default_to_loaded_file():
     assert "Generic words are never external-source signals" in COPEPOD_SYSTEM_PROMPT
 
 
-def test_external_sources_require_exact_name():
-    for source in ("EcoTaxa", "EcoPart", "Amundsen CTD", "Bio-ORACLE", "OGSL"):
-        assert f"name `{source}` explicitly" in COPEPOD_SYSTEM_PROMPT
+def test_external_sources_require_first_explicit_selection_then_persist():
+    for source in (
+        "EcoTaxa",
+        "EcoPart",
+        "Amundsen CTD",
+        "Bio-ORACLE",
+        "OGSL",
+        "SQL",
+    ):
+        assert source in COPEPOD_SYSTEM_PROMPT
+    assert "On first use, an external source must be named explicitly" in COPEPOD_SYSTEM_PROMPT
+    assert "remains active on following turns" in COPEPOD_SYSTEM_PROMPT
 
 
 def test_project_number_alone_is_not_ecotaxa():

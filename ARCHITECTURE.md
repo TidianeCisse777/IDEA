@@ -42,7 +42,7 @@ flowchart TB
 ```
 
 **Points structurants :**
-- Un **seul agent ReAct**. Pas de « mode ». Le comportement vient du system prompt.
+- Un **seul agent ReAct**. Pas de « mode ». Le modèle suit le system prompt; les autorisations critiques, dont la source, sont appliquées par le control plane Python.
 - Le code est monté en volume (`.:/app`) avec `uvicorn --reload` en dev : hot-reload, pas de rebuild.
 - L'agent IDEA n'appelle **pas** le MCP EcoTaxa via HTTP : il réutilise les mêmes fonctions Python (`core/ecotaxa_browser/`) via les wrappers LangChain de `tools/copepod_sources.py`. Le service `mcp-ecotaxa` HTTP sert surtout aux agents externes et au cache partagé.
 
@@ -94,7 +94,7 @@ flowchart LR
     subgraph Agent["create_agent"]
         HOOK["_ContextMiddleware<br/>prepare model request : trim + audit<br/>inject memory"]
         MODEL["LLM<br/>ChatOpenAI"]
-        TOOLS["Tools node<br/>55 tools (+3 SQL optionnels)"]
+        TOOLS["Tools node<br/>59 tools (+3 SQL optionnels)"]
         HOOK --> MODEL
         MODEL -->|tool call| TOOLS
         TOOLS -->|observation| MODEL
@@ -108,7 +108,7 @@ flowchart LR
 ```
 
 ### Construction (`agent.py`)
-- **System prompt** : `COPEPOD_SYSTEM_PROMPT` local, ou pull depuis LangSmith Hub (`copepod-system-prompt`) en prod avec fallback local.
+- **System prompt** : `COPEPOD_SYSTEM_PROMPT` local et compact (cible ≤ 3 500 tokens). Le runtime ne tire pas le prompt depuis le Hub.
 - **LLM** : `ChatOpenAI(model=LLM_MODEL)`, `max_tokens=LLM_MAX_OUTPUT_TOKENS` (défaut 16000), `max_retries=2`.
 - **Assemblage des tools** :
   ```python
@@ -120,18 +120,40 @@ flowchart LR
   `DATABASE_URL` est résolvable, valide les noms uniques et fournit les libellés
   utilisateur français/anglais. Les noms internes et les schémas LangChain ne
   changent pas.
+- **Présentation dynamique au modèle** : le catalogue complet reste enregistré
+  auprès de LangGraph, puis `tools/tool_exposure.py` produit une allowlist
+  déterministe de **15 tools maximum par appel modèle** à partir du
+  `TurnContext`, de la `SourceDecision`, des intentions non géographiques et
+  des tools/skills réussis dans le tour. Le noyau permanent contient
+  `load_file`, `load_skill` et le RAG. Les deux capacités géographiques sont
+  toujours visibles : le modèle principal choisit sémantiquement de les utiliser,
+  sans regex ni classifieur additionnel. EcoTaxa conserve toujours son groupe
+  zone/période et au plus un autre groupe d'intention; EcoPart, Amundsen,
+  Bio-ORACLE et OGSL n'exposent que leur route
+  d'enrichissement canonique lorsqu'un fichier actif doit explicitement être
+  enrichi avec la source nommée. Les routes legacy masquées restent dans le
+  catalogue pour compatibilité, mais la garde pré-tool applique la même
+  décision et les bloque fail-closed.
+- **Skills manifestés** : `tools/skill_manifest.py` valide les 15 manifests et leurs budgets. `load_skill` n'accepte une copie Hub que si son hash correspond au fichier local revu; version, environnement, hash et source sont renvoyés dans la provenance. Les résultats de skills utilisent leur plafond déclaré au lieu de la troncature générique à 8 000 caractères.
 - **`_ContextMiddleware`** (agent construit via `create_agent`, LangChain 1.x) :
-  - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 40000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`.
+  - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : filtrage de source, allowlist dynamique des tools, troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 40000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`. Le budget des schémas est recalculé après filtrage.
   - Le trim utilise `request.override(messages=...)` : il borne le contexte du modèle sans supprimer l'historique complet conservé dans le checkpoint LangGraph.
   - Les mêmes wrappers injectent le bloc mémoire long terme (`store.search` / `asearch` sur `(user_id, "memories")`) dans le system prompt. Les deux variantes existent car `serve.py` invoque en async avec un store async.
-  - L'audit `/debug/context-audit` décrit la requête préparée, avec les tokens du system prompt, le total modèle et un indicateur explicite lorsque le dernier tour complet dépasse à lui seul la limite.
+  - Ils reconstruisent aussi un `TurnContext` typé (`tools/turn_context.py`) en début de tour et injectent sa projection — la **carte d'état de session** (`build_dataset_state_capsule`) : dataset actif, roster `LOADED FILES` (tous les fichiers chargés par nom), `DERIVED ZONE SUBSETS` (variable↔zone), et `ACTIVE SOURCE SCOPE` (sources autorisées). L'agent lit son état au lieu de le ré-inférer de l'historique.
+  - L'audit `/debug/context-audit` décrit la requête préparée, avec les tokens du system prompt, le total modèle, les champs `TurnContext` (variable active, sources autorisées, nb de dérivés), les groupes/noms de tools exposés, les schémas économisés, l'alerte à 12 et un indicateur explicite lorsque le dernier tour complet dépasse à lui seul la limite.
+  - `wrap_tool_call` / `awrap_tool_call` appliquent aussi la garde graphique. Elle n'appelle le classifieur structuré qu'à la première tentative graphique du tour, partage la décision par un verrou single-flight sync/async, puis autorise uniquement une intention `visual`. La progression planner → writer → rendu est reconstruite depuis les ToolMessages `success` postérieurs au dernier message humain; les anciennes activations et les lots parallèles ne donnent aucune autorisation.
 - **Checkpointer** : `AsyncSqliteSaver` sur `CHECKPOINTS_DB` (`data/checkpoints.sqlite`), clé par `thread_id`. Fallback `MemorySaver` selon le contexte.
 - **Store** : mémoire long terme (`InMemoryStore` ou store persistant).
 
 ### Boucle ReAct
 Raisonnement → appel de tool → observation → raisonnement, jusqu'à la réponse
-finale. Le routage entre tools n'est **jamais** codé en Python : il est piloté
-par les règles du system prompt (`agents/copepod_system_prompt.py`).
+finale. Le modèle choisit le tool à l'intérieur de l'allowlist calculée pour
+l'appel courant. `tools/source_scope.py` calcule une `SourceDecision`
+persistante et filtre d'abord les familles externes; `tools/tool_exposure.py`
+réduit ensuite le choix selon le contexte et les intentions non géographiques,
+tout en conservant les capacités géographiques. Les deux décisions sont rejouées
+avant exécution afin de bloquer fail-closed un appel hors source ou masqué. Le
+bloc prompt de sélection des sources reste généré depuis la même politique.
 
 ---
 
@@ -143,7 +165,8 @@ dont la **docstring** est lue par le LLM pour décider quand l'appeler.
 
 | Module | Famille | Détail SPEC |
 |---|---|---|
-| `tool_catalog.py` | Composition, validation et présentation bilingue des 55/58 tools | §3, §4 |
+| `tool_catalog.py` | Composition, validation, groupes d'exposition et présentation bilingue des 59/62 tools | §3, §4 |
+| `tool_exposure.py` | Allowlist déterministe par appel modèle (maximum 15) | §3 |
 | `data_tools.py` | Fichier & analyse & graphe | §4.1 |
 | `copepod_sources.py` | EcoTaxa (read-only + export) | §4.2 |
 | `ecopart_sources.py` | EcoPart + join/enrichissement | §4.3 |
@@ -232,7 +255,7 @@ Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`
 | `MCP_AUTH_TOKEN` | Bearer du MCP EcoTaxa | requis pour MCP |
 | `ECOTAXA_USERNAME` / `ECOTAXA_PASSWORD` | Credentials EcoTaxa/EcoPart | requis pour sources |
 | `OPENWEBUI_URL` | Backend Open WebUI (feedback polling) | `http://open-webui:8080` |
-| `LANGCHAIN_TRACING_V2` / `LANGSMITH_API_KEY` | Tracing + hub pull du prompt | optionnel |
+| `LANGCHAIN_TRACING_V2` / `LANGSMITH_API_KEY` | Tracing + pull Hub des skills (system prompt lu localement) | optionnel |
 | `LANGFUSE_*` | Langfuse self-hosted | optionnel |
 
 `.env` porte les credentials — jamais commité, jamais affiché.
@@ -248,7 +271,7 @@ Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`
 | `studio.py` | Entrée LangGraph Studio |
 | `langgraph.json` | Config LangGraph |
 | `start.sh` | Orchestration Docker (Postgres + MCP + agent + Open WebUI) |
-| `scripts/dev/push_prompt.py` | Sync system prompt → LangSmith Hub |
+| `scripts/dev/push_prompt.py` | Legacy : copie le prompt vers le Hub, sans consommateur runtime |
 | `scripts/dev/push_skills.py` | Sync skills → LangSmith Hub |
 
 ---
@@ -258,10 +281,10 @@ Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`
 | # | Décision | Raison |
 |---|---|---|
 | A1 | Un seul agent ReAct, pas de modes | Simplicité de raisonnement ; le comportement vient du prompt, pas d'états à gérer |
-| A2 | Routage dans le system prompt, jamais en Python | Itération rapide sans redéploiement de code ; testable via evals |
+| A2 | Choix du tool expliqué dans le prompt; autorisation de source en Python | Le modèle garde la souplesse de navigation, mais une source non sélectionnée reste inexécutable |
 | A3 | RAG (savoir) ≠ Skills (geste) | Séparer recherche vectorielle et chargement en bloc de procédures |
 | A4 | MCP EcoTaxa comme cache read-only séparé | Découverte géo/temps rapide sans re-frapper EcoTaxa ; réutilisable par agents externes |
 | A5 | Agent IDEA appelle le cœur Python, pas le MCP HTTP | Moins de latence, pas de dépendance réseau interne |
-| A6 | Sources en ligne seulement sur demande explicite + confirmation coûteuse | Éviter exports involontaires (CT-AG-06) |
+| A6 | Source en ligne nommée à la première utilisation, puis affinité persistante; confirmation séparée pour le coûteux | Éviter les bascules involontaires sans imposer de répéter le nom à chaque suivi |
 | A7 | Session state réparti (checkpoints + session store + store) | Séparer historique de conversation, DataFrames, et mémoire long terme |
 | A8 | Images multi-arch sur GHCR + Watchtower | Déploiement provider-agnostic, mise à jour continue |

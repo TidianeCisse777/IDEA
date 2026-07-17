@@ -1,6 +1,15 @@
 ---
 name: copepod_hydrodynamic_micro_zoom
-description: Copepod-centric reasoning guide for micro-hydrodynamic mechanisms: thermal/salinity fronts, river plumes, estuarine stratification, upwellings, eddies, local currents, breakup, blooms, vertical migration, reproduction, diapause, larvae, feeding, and predation. Use when the user asks how fine-scale physical structures affect copepods.
+version: 1.0.0
+triggers:
+  - Copepod-focused question about fine-scale hydrodynamic mechanisms
+forbidden_when:
+  - The physical feature is only a named geographic zone with no copepod mechanism question
+requires:
+  - "scope:copepods"
+next_tool: null
+max_tokens: 1700
+description: "Copepod-centric reasoning guide for micro-hydrodynamic mechanisms: thermal/salinity fronts, river plumes, estuarine stratification, upwellings, eddies, local currents, breakup, blooms, vertical migration, reproduction, diapause, larvae, feeding, and predation. Use when the user asks how fine-scale physical structures affect copepods."
 ---
 
 # Skill: copepod_hydrodynamic_micro_zoom
@@ -108,8 +117,8 @@ Without velocity fields, wind, or repeated transects, call this a possible signa
 - Conceptual question without data: call `query_copepod_knowledge_base` after this skill if local domain facts are needed.
 - User asks for EcoTaxa samples/projects/observations: also load `ecotaxa_navigation` and use the read-only EcoTaxa tools.
 - Loaded table with coordinates/time/depth: use `run_pandas` to inspect available columns and compute evidence.
-- Need CTD context: use `enrich_with_amundsen_ctd` or `enrich_with_ogsl` when the table has lat/lon/time.
-- Broad environmental context: use `enrich_with_bio_oracle`, but say it is too coarse to locate a fine front.
+- Need CTD context: use the canonical enrichment only when the user explicitly names Amundsen or OGSL and the Source Selection Gateway authorizes it.
+- Broad environmental context: use Bio-ORACLE only when explicitly named and authorized; state that it is too coarse to locate a fine front.
 - Visual request: load `graph_planner` and `graph_writer`, then use `run_graph`.
 
 ## Forbidden

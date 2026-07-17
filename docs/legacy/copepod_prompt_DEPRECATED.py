@@ -1,3 +1,7 @@
+# DEPRECATED — historical reference only, not imported by any runtime code.
+# The active system prompt is `agents/copepod_system_prompt.py`
+# (COPEPOD_SYSTEM_PROMPT). This file was moved out of the `agents/` package on
+# 2026-07-16 (harness step 11) so it can no longer be imported by mistake.
 COPEPOD_SYSTEM_PROMPT = """
 Formatting re-enabled. Use Markdown when it improves readability.
 

@@ -34,6 +34,8 @@ from agent import (
     repair_invalid_tool_history,
     arepair_invalid_tool_history,
     get_context_audit,
+    get_harness_trace,
+    record_harness_usage,
 )
 from tools.openwebui_uploads import resolve_attached_files, resolve_request_files, resolve_chat_files
 from tools.public_url import graph_url, serve_base_url
@@ -153,6 +155,7 @@ def _request_callbacks(thread_id: str, message_id: str | None = None, chat_id: s
 
 def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict, user_id: str = "anonymous") -> None:
     context_audit = get_context_audit(thread_id)
+    record_harness_usage(thread_id, usage)
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "thread_id": thread_id,
@@ -423,6 +426,17 @@ def debug_context_audit(thread_id: str | None = None):
     return {
         "thread_id": thread_id,
         "audit": get_context_audit(thread_id),
+    }
+
+
+@app.get("/debug/harness-trace")
+def debug_harness_trace(thread_id: str | None = None):
+    """Expose the current curl turn: model calls, tools, skills, and tokens."""
+
+    return {
+        "thread_id": thread_id,
+        "trace": get_harness_trace(thread_id),
+        "latest_context": get_context_audit(thread_id),
     }
 
 
@@ -1478,9 +1492,10 @@ def debug_openwebui_feedback_tap():
 if __name__ == "__main__":
     port = int(os.getenv("SERVE_PORT", "8000"))
     # Hot-reload : reload=True requiert un import string ("serve:app") plutôt
-    # que l'objet app. Au reboot du worker, agent.py est ré-importé et le
-    # system prompt LangSmith Hub + skills sont re-pull (sinon ils restent
-    # figés jusqu'au prochain restart manuel).
+    # que l'objet app. Au reboot du worker, agent.py est ré-importé : le system
+    # prompt est relu localement (agents/copepod_system_prompt.py) et les skills
+    # sont re-pull depuis le Hub LangSmith (sinon ils restent figés jusqu'au
+    # prochain restart manuel).
     reload = os.getenv("SERVE_RELOAD", "1") not in ("0", "false", "False")
     if reload:
         uvicorn.run(

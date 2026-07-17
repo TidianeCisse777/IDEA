@@ -78,10 +78,30 @@ def test_group_project_samples_by_region_keeps_outside_and_missing_coordinate_bu
     with _with_cache(cache_db):
         result = group_project_samples_by_region(42)
 
-    assert result["groups"]["Hors zones IHO"] == [10]
+    assert result["groups"]["Hors zone référencée"] == [10]
     assert result["groups"]["Sans coordonnées"] == [11]
-    assert "| Hors zones IHO | 1 | 10 |" in result["markdown_summary"]
+    assert "| Hors zone référencée | 1 | 10 |" in result["markdown_summary"]
     assert "| Sans coordonnées | 1 | 11 |" in result["markdown_summary"]
+
+
+def test_group_project_samples_by_region_uses_meow_for_points_outside_iho(cache_db):
+    """Cascade partagée : un sample hors des polygones IHO mais dans une
+    écorégion MEOW est rattaché à cette écorégion, pas au bucket hors zone."""
+    from core.ecotaxa_browser.region import group_project_samples_by_region
+
+    _seed(cache_db, [
+        # (74.2N, -92.0W) : hors IHO, dans MEOW Lancaster Sound.
+        {"sample_id": 14853000009, "project_id": 14853, "lat": 74.2, "lon": -92.0},
+        # (73.5N, -65.0W) : Baie de Baffin (IHO) — priorité au nom physique.
+        {"sample_id": 14853000010, "project_id": 14853, "lat": 73.5, "lon": -65.0},
+    ])
+
+    with _with_cache(cache_db):
+        result = group_project_samples_by_region(14853)
+
+    assert result["groups"]["MEOW: Lancaster Sound"] == [14853000009]
+    assert result["groups"]["Baie de Baffin"] == [14853000010]
+    assert result["groups"]["Hors zone référencée"] == []
 
 
 def test_group_project_samples_by_region_returns_empty_groups_for_project_without_samples(cache_db):
@@ -117,7 +137,7 @@ def test_rank_samples_by_region_counts_all_cached_samples(cache_db):
     rows = result["regions"]
     assert [row["region"] for row in rows] == [
         "Baie d'Hudson",
-        "Hors zones IHO",
+        "Hors zone référencée",
         "Sans coordonnées",
         "Baie de Baffin",
     ]
@@ -297,7 +317,7 @@ def test_langchain_tool_renders_project_samples_grouped_by_region():
         "project_id": 42,
         "groups": {
             "Baie de Baffin": [42000001, 42000002],
-            "Hors zones IHO": [],
+            "Hors zone référencée": [],
             "Sans coordonnées": [42000003],
         },
         "total_samples": 3,
@@ -370,3 +390,44 @@ def test_langchain_tool_renders_ranked_samples_by_region():
     assert "EcoTaxa — samples par région" in result
     assert "Baie d'Hudson | 1 | 1 | 42000001" in result
     assert "Baie de Baffin | 2 | 1 | 42000002, 42000003" in result
+
+
+def test_region_selection_is_exposed_as_active_ecotaxa_table(tmp_path):
+    from tools.copepod_sources import make_source_tools
+    from tools.session_store import SessionStore
+
+    thread_id = "thread-selection-table"
+    store = SessionStore(tmp_path / "session")
+    result = {
+        "samples": [
+            {
+                "sample_id": 42000001,
+                "project_id": 42,
+                "lat": 72.1,
+                "lon": -68.2,
+                "date_min": "2024-08-14",
+                "date_max": "2024-08-14",
+                "depth_min": 0,
+                "depth_max": 100,
+                "instrument": "UVP6",
+                "station_id": "st-1",
+                "original_id": "sample-1",
+                "profile_id": None,
+            }
+        ],
+        "total_matching": 1,
+        "truncated": False,
+        "partial": False,
+    }
+    with patch("tools.copepod_sources._store", store), patch(
+        "tools.copepod_sources.samples_in_region", return_value=result
+    ):
+        tool = next(t for t in make_source_tools(thread_id)
+                    if t.name == "find_ecotaxa_samples_in_region")
+        tool.invoke({"zone_name": "Baie de Baffin"})
+
+    session = store.get(thread_id)
+    assert session["meta"]["source"] == "ecotaxa_selection"
+    assert list(session["df"]["sample_id"]) == [42000001]
+    assert list(session["df"]["latitude"]) == [72.1]
+    assert store.get(f"{thread_id}:ecotaxa")["df"].equals(session["df"])

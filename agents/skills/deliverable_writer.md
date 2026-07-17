@@ -1,5 +1,14 @@
 ---
 name: deliverable_writer
+version: 1.0.0
+triggers:
+  - User explicitly requests a report, scientific synthesis, or deliverable
+forbidden_when:
+  - User requests only an inline answer, table, or graph
+requires:
+  - "intent:deliverable"
+next_tool: export_deliverable
+max_tokens: 2000
 description: Guides the agent to compile a scientific PDF report from the current session — figures with titles, data sources, methods, limitations, and APA citations. Use when the user asks for a livrable, rapport, synthèse, or document scientifique.
 ---
 

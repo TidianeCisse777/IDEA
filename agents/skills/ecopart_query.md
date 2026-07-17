@@ -1,108 +1,61 @@
+---
+name: ecopart_query
+version: 1.0.0
+triggers:
+  - Explicit EcoPart query or loaded-table enrichment intent
+forbidden_when:
+  - EcoPart is not authorized by the source decision
+requires:
+  - "source:ecopart"
+next_tool: null
+max_tokens: 700
+---
+
 # Skill: ecopart_query
 
 ## Activation precondition
 
-Apply this skill only when the current user request explicitly names EcoPart
+Apply this skill only when the Source Selection Gateway authorizes EcoPart,
+either by an explicit current request or an inherited active-source follow-up,
 and the active session does not forbid EcoPart. Do not load or apply this skill
-for generic requests about samples, projects, stations, positions, zones,
-maps, counts, environmental variables, or analyses. A loaded file remains the
-default source unless the user explicitly requests EcoPart.
+for generic requests about samples, projects, stations, positions, zones, maps,
+counts, environmental variables, or analyses. A loaded EcoTaxa-derived table
+remains primary; EcoPart is only the requested enrichment source.
 
-You just called `query_ecopart` and EcoPart data is now loaded in the session.
-This skill provides the rules for interpreting the result and guiding the user.
+## Current explicit enrichment request
 
----
+When the user asks to enrich the active sample, file, or table with EcoPart,
+call `enrich_ecotaxa_with_ecopart_remote` directly. This is the only canonical
+remote enrichment path. Do not detour through source discovery, a fresh EcoTaxa
+export, a standalone EcoPart download, or a hand-written pandas join.
 
-## Choosing the right tool
+The canonical tool resolves the grounded EcoTaxa project metadata when
+available, finds the related EcoPart project, downloads it, and joins on the
+tool’s validated sample/profile and depth-bin logic. Let the tool diagnose
+missing grounded metadata or incompatible schemas.
 
-- To list available samples in a project: call `list_ecopart_samples`.
-- To preview a sample without loading everything: call `preview_ecopart_sample`.
-- To load, export or analyse the full project data: call `query_ecopart`.
-- Do not call `query_ecopart` for a simple preview request.
+## Mandatory dry-run and confirmation
 
----
+EcoPart enrichment is always a heavy operation:
 
-## Key parameters of `query_ecopart`
+1. First call the canonical enrichment with `confirmed=False` and otherwise
+   minimal arguments. It returns the resolved project and join plan without a
+   download.
+2. Report that plan and wait for explicit confirmation.
+3. After “oui”, “go”, “lance”, “confirme”, or “ok”, call the same canonical enrichment
+   with `confirmed=True` and the same grounded project parameters.
 
-| Parameter | Default | Notes |
-|---|---|---|
-| `project_id` | `105` | EcoPart Amundsen 2018 |
-| `ctd_vars` | `["depth", "datetime", "temperature", "practical_salinity"]` | CTD variables to export |
-| `gpr_vars` | `["cl6", "cl7", "cl8", "bv6", "bv7", "bv8"]` | UVP size classes (LPM) |
+Never skip the dry-run, and never interpret the user’s initial enrichment
+request as confirmation of the download.
 
-The defaults cover standard Amundsen usage — only change them if the user requests specific variables.
+## Result contract
 
----
-
-## Expected columns in the EcoPart TSV
-
-| Column | Content |
-|---|---|
-| `Profile` | Profile identifier (e.g. `ips_007`) — join key with EcoTaxa |
-| `Depth [m]` | Depth in metres |
-| `Sampled volume [L]` | Volume sampled by the UVP camera |
-| `temperature` | CTD temperature (°C) |
-| `practical_salinity` | Practical salinity (PSU) |
-| `cl6`…`cl8` | Concentration by size class (LPM, #/L) |
-| `bv6`…`bv8` | Biovolume by size class (mm³/L) |
-
----
-
-## After loading
-
-1. **Check columns**:
-   ```python
-   result = df.columns.tolist()
-   ```
-
-2. **Inspect available profiles**:
-   ```python
-   result = df["Profile"].unique().tolist()
-   ```
-
-3. **If LPM metrics requested** → load skill `uvp_ecopart` for m1-m3 calculation methods.
-
----
-
-## Download link
-
-The summary returned by `query_ecopart` contains a link `http://localhost:8000/downloads/<id>.tsv`.
-**Include this link in your response** — the user can click it to download the full file.
-
----
-
-## Combining EcoPart with EcoTaxa
-
-EcoPart provides **CTD + UVP particle profiles**; EcoTaxa provides **annotated taxonomy**.
-Use the dedicated tools — do **not** hand-roll the merge in `run_pandas`:
-
-1. If EcoTaxa is already in session from `load_file` or a prior export, do **not** call `query_ecotaxa` again.
-2. If an EcoPart project is already loaded in session, join locally with `join_ecotaxa_ecopart`.
-3. If EcoPart is not yet loaded, use `enrich_ecotaxa_with_ecopart_remote` as the default route (it auto-resolves the EcoPart project and joins).
-4. Only call `query_ecotaxa(project_id=...)` when the user explicitly asks to load or export a specific EcoTaxa project.
-
-**Join key (handled by the tool):** the join is on `(sample_id, depth_bin)`. The EcoTaxa side
-resolves to the profile identifier — raw `sample_id`, `sample_id`/`obj_orig_id` stripped of the
-`_NNN` object suffix (`ips_007_899` → `ips_007`), or a profile/station label — matched against the
-EcoPart `Profile` column; `depth_bin` is a 5 m bin computed from the object depth. The tool picks
-the EcoTaxa key with the best overlap against EcoPart profiles, so a single non-matching row never
-derails the join.
-
-If the loaded EcoTaxa export already exposes `sample_id`, `object_depth_min`, `object_lat`, or `object_lon`, the remote enrichment tool can use those columns directly; do not force a fresh EcoTaxa download.
-
-**Always report match coverage.** The join/enrich result states how many objects matched an EcoPart bin. Relay that count, and if it is 0 or low, warn the user that the enrichment did not really take — usually because the two datasets are different campaigns (no shared profiles) or the objects sit outside the depth range the EcoPart cast actually covered (shallower than its first bin → `NaN`). Never present a `NaN`-filled enrichment, or metrics derived from it, as a success.
-
----
-
-## Edge cases
-
-- EcoPart has no REST API — the client uses a cookie session. If the export fails with an HTTP error, check that `ECOTAXA_USERNAME`/`ECOTAXA_PASSWORD` are set in `.env`.
-- If `start_export` returns an empty link list, the project is not accessible with the configured account.
-- The export can take 30-60 seconds for a large project — warn the user.
-
-## Runtime routing contract
-
-- If no EcoPart file/project is already loaded in session, use `enrich_ecotaxa_with_ecopart_remote` even if `df_ecotaxa` is already loaded. Do not detour through `query_ecotaxa`; use no args by default. This is a heavy operation.
-- Report join coverage: state how many rows are "matchées sur un bin EcoPart", whether the data represent the same campaign or a different campaign, and the depth range actually covered. This is not scientific interpretation.
-- For two local files pass the explicit `ecotaxa_variable` and `ecopart_variable` with `project_id=None`; ignore any numeric EcoPart project from earlier turns.
-- For persisted join control call `audit_ecotaxa_ecopart_join`; never reconstruct the join for an audit.
+- Treat only a successful confirmed tool result as enrichment success.
+- Always report match coverage: total EcoTaxa rows, rows matched on an EcoPart
+  bin, unmatched/partial rows, and the depth range actually covered.
+- If coverage is zero or weak, report that the enrichment did not really take;
+  never present NaN-filled output or derived metrics as success.
+- Include the exact persisted variable and download link returned by the tool.
+- Do not substitute another campaign/source after an empty, blocked, or failed
+  result.
+- Do not add scientific or biological interpretation.

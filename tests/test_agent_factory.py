@@ -28,6 +28,15 @@ def _routing_contract_raw(*skill_names: str) -> str:
     return "\n".join(parts)
 
 
+def test_permanent_system_prompt_stays_within_step_10_budget():
+    from langchain_core.messages import SystemMessage
+
+    from agent import _approx_tokens
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert _approx_tokens([SystemMessage(content=COPEPOD_SYSTEM_PROMPT)]) <= 3_500
+
+
 # --- Comportement 0 : _make_tracer inclut user_id ---
 
 def test_make_tracer_uses_email_as_tag_when_provided(monkeypatch):
@@ -185,10 +194,30 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
     assert "query_ogsl" in tool_names
     assert "list_sql_tables" in tool_names
     assert "copy_sql_query_to_workspace" in tool_names
+    assert "resolve_ecotaxa_sample" in tool_names
+    assert "resolve_ecotaxa_sample" in descriptions
     assert 'load_skill("ecotaxa_navigation")' in descriptions["search_ecotaxa_taxa"]
 
 
 # --- Comportement 3 : prompt anti-hallucination ---
+
+def test_system_prompt_documents_zone_split_and_meow_fallback():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    # Découpage par mers/baies/détroits d'un fichier chargé.
+    assert "split_dataframe_by_zone" in prompt
+    # Bascule écorégionale quand la couverture IHO est faible.
+    assert "coverage_suggestion" in prompt
+    assert "meow" in prompt
+
+
+def test_system_prompt_forbids_fabricating_grouped_rows():
+    """Garde-fou D3 : restituer fidèlement les catégories/valeurs d'un tool,
+    sans inventer, renommer, fusionner ni dupliquer de ligne."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "never invent, rename, merge, or duplicate" in prompt
+
 
 def test_system_prompt_anti_hallucination():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
@@ -214,6 +243,15 @@ def test_system_prompt_mentions_sources():
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_system_prompt_prioritizes_current_explicit_enrichment():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "current explicit enrichment request" in prompt
+    assert "do not require a direct join identifier" in prompt
+    assert "earlier assistant refusal" in prompt
+
+
 def test_context_preparation_records_tool_truncation_metrics(monkeypatch):
     from langchain_core.messages import HumanMessage, ToolMessage
 
@@ -232,6 +270,176 @@ def test_context_preparation_records_tool_truncation_metrics(monkeypatch):
     assert metrics["tool_messages_seen"] == 1
     assert metrics["tool_messages_truncated"] == 1
     assert metrics["tool_result_chars_saved"] > 0
+
+
+def test_context_preparation_compacts_only_old_tool_results():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    import agent as agent_module
+
+    old_content = "old pandas payload " * 80
+    recent_content = "recent graph payload " * 80
+    messages = [
+        HumanMessage(content="tour 1"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=old_content, name="run_pandas", tool_call_id="t1"),
+        HumanMessage(content="tour 2"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=recent_content, name="run_graph", tool_call_id="t2"),
+        HumanMessage(content="tour 3"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=recent_content, name="run_graph", tool_call_id="t3"),
+        HumanMessage(content="tour 4"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=recent_content, name="run_graph", tool_call_id="t4"),
+    ]
+
+    compacted, metrics = agent_module._compact_old_tool_results(
+        messages, keep_turns=3
+    )
+
+    assert compacted[2].content.startswith("[Ancien résultat compacté")
+    assert compacted[5].content == recent_content
+    assert compacted[8].content == recent_content
+    assert compacted[11].content == recent_content
+    assert metrics["old_tool_messages_compacted"] == 1
+    assert metrics["old_tool_result_chars_saved"] > 0
+
+
+def test_context_preparation_keeps_current_turn_tool_result_full():
+    """Régression : en conversation courte (≤ keep_turns tours), le résultat du
+    tour COURANT ne doit jamais être compacté — sinon le modèle ne voit qu'un
+    préfixe tronqué et invente la suite (hallucination de tableau observée)."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    import agent as agent_module
+
+    current_content = "# Découpage par zone\n" + ("| Baie de Baffin | 20 |\n" * 40)
+    messages = [
+        HumanMessage(content="Charge le fichier"),
+        AIMessage(content="chargé"),
+        ToolMessage(content="Fichier chargé " * 60, name="load_file", tool_call_id="t1"),
+        HumanMessage(content="Découpe par mer, baie et détroit"),
+        AIMessage(content="prépare"),
+        ToolMessage(content=current_content, name="split_dataframe_by_zone", tool_call_id="t2"),
+    ]
+
+    compacted, metrics = agent_module._compact_old_tool_results(
+        messages, keep_turns=3
+    )
+
+    # 2 tours ≤ keep_turns=3 → aucun résultat compacté, le tableau reste intact.
+    assert compacted[5].content == current_content
+    assert compacted[2].content.startswith("Fichier chargé")
+    assert metrics["old_tool_messages_compacted"] == 0
+
+
+def _skill_load(skill: str, call_id: str, body_lines: int = 40):
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    body = f"# skill {skill}\n" + (f"procedure line for {skill}\n" * body_lines)
+    ai = AIMessage(content="", tool_calls=[{
+        "name": "load_skill", "args": {"skill_name": skill},
+        "id": call_id, "type": "tool_call",
+    }])
+    tool = ToolMessage(
+        content=body, name="load_skill", tool_call_id=call_id,
+        artifact={"status": "success", "method": "skill loader",
+                  "provenance": {"skill": skill}},
+    )
+    return ai, tool, body
+
+
+def test_context_preparation_dedupes_repeated_skill_loads():
+    """Un skill rechargé garde seulement sa DERNIÈRE occurrence pleine ; les
+    instances antérieures sont compactées (pas de copie en double en contexte)."""
+    from langchain_core.messages import HumanMessage
+    import agent as agent_module
+
+    ai1, tm1, body = _skill_load("graph_writer", "s1")
+    ai2, tm2, _ = _skill_load("graph_writer", "s2")
+    messages = [HumanMessage(content="t1"), ai1, tm1,
+                HumanMessage(content="t2"), ai2, tm2]
+
+    compacted, metrics = agent_module._compact_old_tool_results(messages, keep_turns=3)
+
+    assert "compacté" in compacted[2].content and "graph_writer" in compacted[2].content
+    assert compacted[5].content == body  # latest load kept full
+    assert metrics["old_tool_messages_compacted"] == 1
+
+
+def test_context_preparation_keeps_single_skill_load_full():
+    """Un skill chargé une seule fois et récent reste plein."""
+    from langchain_core.messages import HumanMessage
+    import agent as agent_module
+
+    ai, tm, body = _skill_load("ecotaxa_navigation", "s1")
+    messages = [HumanMessage(content="t1"), ai, tm]
+
+    compacted, metrics = agent_module._compact_old_tool_results(messages, keep_turns=3)
+
+    assert compacted[2].content == body
+    assert metrics["old_tool_messages_compacted"] == 0
+
+
+def test_context_preparation_compacts_stale_skill_outside_window():
+    """Un skill chargé dans un tour ancien (hors fenêtre récente) et non
+    rechargé est compacté — le modèle le recharge par tour au besoin."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    import agent as agent_module
+
+    ai, tm, _ = _skill_load("graph_writer", "s1")
+    messages = [HumanMessage(content="t1"), ai, tm]
+    # three later turns push the skill load outside keep_turns=1 window
+    for i in range(2, 5):
+        messages += [
+            HumanMessage(content=f"t{i}"),
+            AIMessage(content="ok"),
+            ToolMessage(content="x", name="run_pandas", tool_call_id=f"p{i}"),
+        ]
+
+    compacted, metrics = agent_module._compact_old_tool_results(messages, keep_turns=1)
+
+    assert "compacté" in compacted[2].content and "hors fenêtre" in compacted[2].content
+    assert metrics["old_tool_messages_compacted"] >= 1
+
+
+def test_context_preparation_preserves_manifest_budgeted_skill_results(monkeypatch):
+    from langchain_core.messages import ToolMessage
+
+    import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "_MAX_TOOL_RESULT_CHARS", 20)
+    content = "skill-body:" + "x" * 120
+    artifact = {
+        "status": "success",
+        "summary": content,
+        "data_ref": None,
+        "artifact_refs": [],
+        "provenance": {
+            "source": "local skill file",
+            "skill": "graph_writer",
+            "max_tokens": 100,
+        },
+        "persisted": True,
+        "retryable": False,
+        "method": "skill loader",
+        "metrics": {},
+    }
+
+    messages, metrics = agent_module._truncate_tool_results(
+        [
+            ToolMessage(
+                content=content,
+                artifact=artifact,
+                name="load_skill",
+                tool_call_id="skill-1",
+            )
+        ]
+    )
+
+    assert messages[0].content == content
+    assert metrics["tool_messages_truncated"] == 0
 
 
 def _spy_model():
@@ -385,7 +593,7 @@ def test_context_middleware_blocks_ungrounded_ecotaxa_tool_call(monkeypatch, tmp
             "messages": [
                 HumanMessage(content="Ancien sample 42000002"),
                 AIMessage(content="Noté"),
-                HumanMessage(content="Contexte de ces données locales"),
+                HumanMessage(content="Dans EcoTaxa, donne le contexte courant"),
             ]
         },
     )
@@ -417,7 +625,11 @@ def test_context_middleware_allows_currently_grounded_ecotaxa_tool_call(monkeypa
             "args": {"sample_id": 42000002},
             "id": "call-explicit",
         },
-        state={"messages": [HumanMessage(content="Résume le sample 42000002")]},
+        state={
+            "messages": [
+                HumanMessage(content="Dans EcoTaxa, résume le sample 42000002")
+            ]
+        },
     )
 
     result = middleware.wrap_tool_call(
@@ -426,6 +638,170 @@ def test_context_middleware_allows_currently_grounded_ecotaxa_tool_call(monkeypa
     )
 
     assert result.content == "ok"
+
+
+def test_context_middleware_exposes_cross_project_sample_resolver(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="resolve-thread")
+    request = SimpleNamespace(
+        tool_call={
+            "name": "resolve_ecotaxa_sample",
+            "args": {"reference": "RA76"},
+            "id": "call-resolve",
+        },
+        state={
+            "messages": [
+                HumanMessage(content="Dans EcoTaxa, résous la station RA76")
+            ]
+        },
+    )
+
+    result = middleware.wrap_tool_call(
+        request,
+        lambda req: ToolMessage(content="resolver-called", tool_call_id=req.tool_call["id"]),
+    )
+
+    assert result.content == "resolver-called"
+
+
+def test_context_middleware_blocks_bare_project_id_without_source_affinity(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    from langchain_core.messages import HumanMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+    from tools.tool_result import validate_tool_artifact
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="bare-project-thread")
+    request = SimpleNamespace(
+        tool_call={
+            "name": "summarize_ecotaxa_project",
+            "args": {"project_id": 17498},
+            "id": "call-bare",
+        },
+        state={"messages": [HumanMessage(content="Résume le projet 17498")]},
+    )
+    called = False
+
+    def handler(_request):
+        nonlocal called
+        called = True
+
+    result = middleware.wrap_tool_call(request, handler)
+
+    assert called is False
+    assert result.status == "error"
+    assert validate_tool_artifact(result.artifact).status == "blocked"
+    assert "EcoTaxa" in result.content
+
+
+def test_context_middleware_inherits_ecotaxa_then_blocks_other_source(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    store = SessionStore(tmp_path)
+    monkeypatch.setattr("tools.session_store.default_store", store)
+    middleware = agent_module._ContextMiddleware(thread_id="affinity-thread")
+
+    explicit = SimpleNamespace(
+        tool_call={"name": "find_ecotaxa_projects", "args": {}, "id": "call-eco"},
+        state={"messages": [HumanMessage(content="Explore EcoTaxa")]},
+    )
+    allowed = middleware.wrap_tool_call(
+        explicit,
+        lambda req: ToolMessage(content="ok", tool_call_id=req.tool_call["id"]),
+    )
+    assert allowed.content == "ok"
+
+    inherited = SimpleNamespace(
+        tool_call={"name": "query_bio_oracle", "args": {}, "id": "call-bio"},
+        state={"messages": [HumanMessage(content="continue l'exploration")]},
+    )
+    blocked = middleware.wrap_tool_call(
+        inherited,
+        lambda req: ToolMessage(content="wrong", tool_call_id=req.tool_call["id"]),
+    )
+
+    assert blocked.status == "error"
+    assert "Bio-ORACLE" in blocked.content
+
+
+def test_context_middleware_filters_model_tools_from_same_source_decision(
+    monkeypatch, tmp_path
+):
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.tools import tool
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    @tool
+    def run_pandas(code: str) -> str:
+        """Common local executor."""
+        return code
+
+    @tool
+    def find_ecotaxa_projects() -> str:
+        """EcoTaxa discovery."""
+        return "ok"
+
+    @tool
+    def query_bio_oracle() -> str:
+        """Bio-ORACLE query."""
+        return "ok"
+
+    class Request:
+        messages = [HumanMessage(content="Explore EcoTaxa")]
+        tools = [run_pandas, find_ecotaxa_projects, query_bio_oracle]
+        system_message = SystemMessage(content="BASE")
+
+        def override(self, **kwargs):
+            return kwargs
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="model-filter-thread")
+
+    prepared = middleware._prepare_request(Request(), memories=[])
+
+    assert [item.name for item in prepared["tools"]] == ["find_ecotaxa_projects"]
+    audit = agent_module.get_context_audit("model-filter-thread")
+    assert audit["tools_before_policy"] == [
+        "run_pandas",
+        "find_ecotaxa_projects",
+        "query_bio_oracle",
+    ]
+    assert audit["tools_after_source_scope"] == [
+        "run_pandas",
+        "find_ecotaxa_projects",
+    ]
+    assert audit["tools_exposed"] == ["find_ecotaxa_projects"]
+    assert audit["tool_exposure_count"] == 1
+    assert audit["tool_exposure_alert"] is False
+    assert audit["tool_exposure_groups"] == [
+        "core",
+        "geography",
+        "ecotaxa_geo_time",
+        "ecotaxa_discovery",
+    ]
+    assert audit["approx_tokens_tool_schemas_after"] < audit[
+        "approx_tokens_tool_schemas_before"
+    ]
 
 
 def test_context_middleware_trims_the_request_seen_by_model_without_mutating_checkpoint(monkeypatch):
@@ -481,23 +857,15 @@ def test_system_prompt_is_grouped_by_routing_domain():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     headings = [
-        "## Identity",
-        "## Operating Model",
+        "## Identity and Scope",
         "## Source Selection Gateway",
-        "## Authorized Data Sources",
         "## Routing Priority",
-        "## Session Rules",
-        "## Tool Result Truth",
-        "## Context and Session State",
-        "## Knowledge Base vs Data Requests",
-        "## Files and DataFrames",
-        "## Geographic Zones",
-        "## External Source Procedures",
-        "## SQL Workspace",
-        "## Graphs and Visual Outputs",
-        "## Deliverables",
-        "## Response Format and Tone",
-        "## Confirmation Gates",
+        "## Numeric Evidence Rules",
+        "## Graph Output Routing Rules",
+        "## Tool Result Truth and Session State",
+        "## Execution and Output Contracts",
+        "## Confirmation Boundary",
+        "## Response Contract and Tone",
         "## Citations and Security",
     ]
 
@@ -528,22 +896,20 @@ def test_system_prompt_forbids_bare_df_for_multi_source_graphs():
 def test_system_prompt_forbids_plan_only_visual_answers():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "profil vertical" in prompt
-    assert "trace" in prompt
-    assert "affiche" in prompt
+    prompt = _routing_contract("graph_planner.md", "graph_writer.md")
+    assert "vertical profile" in prompt
+    assert "requested output intent" in prompt
     assert "do not stop after planning" in prompt
-    assert "only contains `<details><summary>output plan</summary>" in prompt
-    assert "run_graph` image markdown" in prompt
+    assert "never answer the user with only this `<details>` block" in prompt
+    assert "exact image markdown emitted by `run_graph`" in prompt
 
 
-def test_graph_planner_treats_french_profile_requests_as_visual():
+def test_graph_planner_treats_profiles_as_semantically_visual():
     planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8").lower()
 
     assert "profil vertical" in planner
-    assert "profil verticale" in planner
-    assert "trace" in planner
-    assert "affiche" in planner
+    assert "requested output intent" in planner
+    assert "not from a closed list of words" in planner
     assert "never answer the user with only this `<details>` block" in planner
     assert 'never call `run_graph` immediately after `load_skill("graph_planner")`' in planner
     assert 'first call `load_skill("graph_writer")`' in planner
@@ -554,7 +920,8 @@ def test_graph_writer_supports_standalone_named_zone_maps():
 
     assert "standalone named-zone map" in writer
     assert "get_zone_info(zone_name=...)" in writer
-    assert "do not reference `df`" in writer
+    # The bare-df prohibition now lives once in the Mandatory rules block.
+    assert "never plot directly from bare `df`" in writer
     assert "bbox = {\"south\"" in writer
     assert "ccrs.lambertconformal" in writer
 
@@ -581,34 +948,32 @@ def test_biodiversity_graph_plan_is_frozen_in_docs():
 def test_graph_planner_lists_biodiversity_graph_types():
     planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8").lower()
 
+    # Ordination (NMDS/PCoA), rarefaction, species accumulation, and the
+    # sampling gap map were dropped from both planner and writer to shrink the
+    # skill; the planner only offers graph types the writer still templates.
     for expected in [
         "vertical profile",
         "taxonomic composition",
-        "rarefaction",
-        "species accumulation",
         "composition heatmap",
         "rank-abundance",
-        "nmds",
-        "pcoa",
     ]:
         assert expected in planner
+    for dropped in ["rarefaction", "species accumulation", "nmds", "pcoa", "sampling gap"]:
+        assert dropped not in planner
 
 
 def test_graph_writer_has_biodiversity_templates():
     writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8").lower()
 
+    # Niche templates (rarefaction, species accumulation, NMDS/PCoA, sampling
+    # gap map) were removed to shrink the skill; the common biodiversity
+    # templates remain the writer's recipe library.
     for expected in [
         "vertical profile template",
         "taxonomic composition stacked bar template",
         "taxonomic composition heatmap template",
-        "rarefaction curve template",
-        "species accumulation curve template",
-        "nmds / pcoa ordination template",
         "rank-abundance template",
         "ax.invert_yaxis()",
-        "braycurtis",
-        "mds(",
-        "fill_between",
     ]:
         assert expected in writer
 
@@ -626,7 +991,6 @@ def test_graph_writer_documents_readability_guards():
         "truncate labels longer than 35 characters",
         "do not replace it with `/graphs/graph.png`",
         "top_groups",
-        "groups_to_plot",
     ]:
         assert expected in writer
 
@@ -656,7 +1020,8 @@ def test_system_prompt_routes_named_zone_map_requests():
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "resolve every named iho/meow/neolab zone with `get_zone_info" in prompt
-    assert "carte" in prompt
+    assert "requested output intent" in prompt
+    assert "a map, plotted vertical profile" in prompt
     assert "load_skill(\"graph_planner\")" in prompt
     assert "load_skill(\"graph_writer\")" in prompt
     assert "very next tool call must be `run_graph`" in prompt
@@ -675,9 +1040,7 @@ def test_graph_rules_preserve_identifier_types_and_validate_non_empty_plot_df():
 
 
 def test_system_prompt_routes_sql_workspace_queries():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "database_url" in prompt
     assert "read-only" in prompt
     assert "preview_sql_table" in prompt
@@ -686,9 +1049,7 @@ def test_system_prompt_routes_sql_workspace_queries():
 
 
 def test_system_prompt_routes_sql_workspace_joins_from_foreign_keys():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "join" in prompt
     assert "foreign key" in prompt or "foreign keys" in prompt
     assert "list_sql_tables" in prompt
@@ -698,9 +1059,7 @@ def test_system_prompt_routes_sql_workspace_joins_from_foreign_keys():
 
 
 def test_system_prompt_sql_join_planning_uses_columns_cardinality_and_retry():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "column" in prompt
     assert "cardinality" in prompt or "row count" in prompt
     assert "preview_sql_table" in prompt
@@ -709,18 +1068,14 @@ def test_system_prompt_sql_join_planning_uses_columns_cardinality_and_retry():
 
 
 def test_system_prompt_sql_copy_requires_limit_and_mentions_row_cap():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "copy_sql_query_to_workspace" in prompt
     assert "explicit `limit`" in prompt
     assert "row cap" in prompt
 
 
 def test_system_prompt_mentions_supported_sql_backends():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    prompt = Path("agents/skills/sql_workspace_query.md").read_text().lower()
     assert "sqlite" in prompt
     assert "postgresql" in prompt
     assert "mysql" in prompt
@@ -755,25 +1110,26 @@ def test_system_prompt_routes_ecotaxa_list_preview_and_export_separately():
 def test_system_prompt_routes_ecotaxa_enrichment_with_ecopart_to_remote_when_missing_loaded_ecopart():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = _routing_contract("ecotaxa_query.md", "ecopart_query.md")
+    prompt = " ".join(
+        _routing_contract("ecotaxa_query.md", "ecopart_query.md").split()
+    )
     assert "enrich_ecotaxa_with_ecopart_remote" in prompt
-    assert "no ecopart file/project is already loaded in session" in prompt
-    assert "even if `df_ecotaxa` is already loaded" in prompt
-    assert "detour through `query_ecotaxa`" in prompt
-    assert "no args by default" in prompt
-    assert "heavy operation" in prompt
+    assert "only canonical remote enrichment path" in prompt
+    assert "do not detour through source discovery" in prompt
+    assert "confirmed=false" in prompt
+    assert "confirmed=true" in prompt
 
 
 def test_system_prompt_requires_reporting_ecopart_join_match_coverage():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = _routing_contract("ecopart_query.md")
+    prompt = " ".join(_routing_contract("ecopart_query.md").split())
     # The agent must report match coverage and warn on weak/empty joins.
-    assert "report join coverage" in prompt
-    assert "matchées sur un bin ecopart" in prompt
-    assert "same campaign" in prompt or "different campaign" in prompt
+    assert "always report match coverage" in prompt
+    assert "rows matched on an ecopart bin" in prompt
     assert "depth range actually covered" in prompt
-    assert "not scientific interpretation" in prompt
+    assert "did not really take" in prompt
+    assert "do not add scientific or biological interpretation" in prompt
 
 
 def test_system_prompt_requires_source_variable_when_chaining_enrichments():
@@ -795,11 +1151,16 @@ def test_enrichment_skills_require_reporting_match_coverage():
 
 
 def test_ecopart_query_skill_prefers_remote_enrichment_when_ecotaxa_is_already_loaded():
-    skill = Path("agents/skills/ecopart_query.md").read_text(encoding="utf-8").lower()
+    skill = " ".join(
+        Path("agents/skills/ecopart_query.md")
+        .read_text(encoding="utf-8")
+        .lower()
+        .split()
+    )
 
-    assert "do **not** call `query_ecotaxa` again" in skill
-    assert "use `enrich_ecotaxa_with_ecopart_remote` as the default route" in skill
-    assert "only call `query_ecotaxa(project_id=...`" in skill or "only call `query_ecotaxa(project_id=...)" in skill
+    assert "call `enrich_ecotaxa_with_ecopart_remote` directly" in skill
+    assert "query_ecotaxa" not in skill
+    assert "fresh ecotaxa export" in skill
 
 
 def test_ecotaxa_navigation_distinguishes_loki_instrument_from_project():
@@ -828,8 +1189,8 @@ def test_system_prompt_prioritizes_read_only_source_tools_over_generic_pandas():
     assert "within the selected source, prefer the most specific read-only tool" in prompt
     assert "never use specificity to bypass the source selection gateway" in prompt
     assert "generic `run_pandas`, graph planning, or export/download tools" in prompt
-    assert "ecotaxa read-only requests" in prompt
-    assert "heavy exports/downloads" in prompt
+    assert "specific read-only tool" in prompt
+    assert "full remote downloads/exports" in prompt
     assert "explicit confirmation" in prompt
 
 
@@ -1037,15 +1398,13 @@ def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
     assert "copépodes" in skill
 
 
-def test_system_prompt_routes_bio_oracle_list_preview_query_and_enrichment():
+def test_system_prompt_routes_bio_oracle_loaded_table_to_canonical_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("bio_oracle_query.md")
-    assert "list_bio_oracle_datasets" in prompt
-    assert "preview_bio_oracle_point" in prompt
-    assert "query_bio_oracle" in prompt
     assert "enrich_with_bio_oracle" in prompt
-    assert "only if `query_bio_oracle` succeeds" in prompt
+    assert "only canonical loaded-table enrichment path" in prompt
+    assert "couple_zooplankton_bio_oracle" not in prompt
 
 
 def test_system_prompt_requires_shared_hierarchy_resolver_for_loaded_copepod_data():
@@ -1072,22 +1431,21 @@ def test_system_prompt_requires_canonical_sample_depth_for_uvp_analyses():
     assert "do not independently rebuild" in prompt
 
 
-def test_system_prompt_routes_two_local_ecotaxa_ecopart_files_by_variable():
+def test_system_prompt_routes_ecopart_to_exact_active_table():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract_raw("ecopart_query.md")
-    assert "ecotaxa_variable" in prompt
-    assert "ecopart_variable" in prompt
-    assert "project_id=None" in prompt
-    assert "ignore any numeric EcoPart project from earlier turns" in prompt
+    assert "active sample, file, or table" in prompt
+    assert "grounded ecotaxa project metadata" in prompt.lower()
+    assert "earlier turns" not in prompt.lower() or "another source from earlier turns" in prompt.lower()
 
 
-def test_system_prompt_routes_join_control_to_persisted_audit_tool():
+def test_system_prompt_keeps_hidden_ecopart_audit_route_out_of_skill():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecopart_query.md")
-    assert "audit_ecotaxa_ecopart_join" in prompt
-    assert "never reconstruct the join for an audit" in prompt
+    assert "audit_ecotaxa_ecopart_join" not in prompt
+    assert "enrich_ecotaxa_with_ecopart_remote" in prompt
 
 
 def test_system_prompt_respects_run_pandas_persistence_contract():
@@ -1125,12 +1483,10 @@ def test_system_prompt_routes_bio_oracle_per_station_to_enrichment():
 
     prompt = _routing_contract("bio_oracle_query.md")
     assert "les mêmes stations" in prompt
-    assert "top n stations" in prompt
-    assert "scenarios" in prompt
-    assert "never create empty placeholder columns" in prompt
-    assert "do not use `query_bio_oracle_zones` for this case" in prompt
-    assert "a download link alone is not an answer" in prompt
-    assert "df_bio_oracle_enriched_*" in prompt
+    assert "enrich the source rows first" in prompt
+    assert "enrich_with_bio_oracle" in prompt
+    assert "preserves every source row" in prompt
+    assert "placeholder" in prompt
 
 
 def test_system_prompt_routes_bio_oracle_year_specific_requests_to_target_year():
@@ -1138,23 +1494,19 @@ def test_system_prompt_routes_bio_oracle_year_specific_requests_to_target_year()
 
     prompt = _routing_contract("bio_oracle_query.md")
     assert "target_year=2050" in prompt
-    assert "en 2050" in prompt
-    assert "do not reuse a previously computed" in prompt
-    assert "time_*" in prompt
-    assert "re-query bio-oracle" in prompt
+    assert "future year or horizon" in prompt
+    assert "never reuse an older ssp value" in prompt
     assert "baseline is historical" in prompt
-    assert "verify the requested year on `time_ssp*`" in prompt
-    assert "not on `time_baseline`" in prompt
+    assert "persisted time metadata" in prompt
 
 
-def test_bio_oracle_skill_routes_per_station_followups_to_coupling():
+def test_bio_oracle_skill_routes_per_station_followups_to_canonical_enrichment():
     skill = Path("agents/skills/bio_oracle_query.md").read_text(encoding="utf-8").lower()
 
-    assert "never use `query_bio_oracle_zones` for a per-station request" in skill
+    assert "enrich_with_bio_oracle" in skill
     assert "les mêmes stations" in skill
-    assert "top_n_stations" in skill
-    assert "scenarios=[\"baseline\", \"ssp1-2.6\", \"ssp5-8.5\"]" in skill
-    assert "do not create placeholder columns with `pd.na`" in skill
+    assert "enrich the source rows first" in skill
+    assert "couple_zooplankton_bio_oracle" not in skill
 
 
 def test_bio_oracle_skill_requires_target_year_for_year_specific_requests():
@@ -1162,34 +1514,27 @@ def test_bio_oracle_skill_requires_target_year_for_year_specific_requests():
 
     assert "target_year" in skill
     assert "2050" in skill
-    assert "does not prove whether" in skill
-    assert "dataset's last time slice" in skill
     assert "baseline is historical" in skill
-    assert "verify year-specific requests on `time_ssp*`" in skill
+    assert "persisted time metadata" in skill
 
 
-def test_bio_oracle_skill_documents_coupling_tool_capabilities():
+def test_bio_oracle_skill_documents_canonical_enrichment_capabilities():
     skill = Path("agents/skills/bio_oracle_query.md").read_text(encoding="utf-8").lower()
 
-    assert "`couple_zooplankton_bio_oracle` can:" in skill
-    assert "enrich each source row" in skill
-    assert "build a station table internally" in skill
-    assert "compare multiple bio-oracle scenarios" in skill
-    assert "return traceability columns" in skill
+    assert "`enrich_with_bio_oracle` directly" in skill
+    assert "auto-detects supported" in skill
+    assert "preserves every source row" in skill
+    assert "multiple variables × scenarios" in skill
 
 
-def test_system_prompt_routes_amundsen_preview_and_query():
+def test_system_prompt_routes_amundsen_to_canonical_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
-    prompt = _routing_contract("amundsen_ctd_query.md")
-    assert "amundsen12713" in prompt
-    assert "list_amundsen_datasets" in prompt
-    assert "preview_amundsen_profile" in prompt
-    assert "query_amundsen_ctd" in prompt
-    assert "enrich_loaded_table_with_amundsen_ctd" in prompt
-    assert "récupère ça avec amundsen science" in prompt
-    assert "missing_sample_metadata" in prompt
-    assert "do not use `query_amundsen_ctd` for a whole loaded file" in prompt
+    prompt = " ".join(_routing_contract("amundsen_ctd_query.md").split())
+    assert "enrich_with_amundsen_ctd" in prompt
+    assert "only canonical loaded-table enrichment path" in prompt
+    assert "enrich_loaded_table_with_amundsen_ctd" not in prompt
+    assert "do not require station/cast identifiers" in prompt
 
 
 def test_system_prompt_routes_ogsl_enrichment_to_enrich_with_ogsl():

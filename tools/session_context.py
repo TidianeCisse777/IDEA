@@ -7,10 +7,17 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
+from core.environment_resolver.column_detection import (
+    DEFAULT_DEPTH_CANDIDATES,
+    DEFAULT_LAT_CANDIDATES,
+    DEFAULT_LON_CANDIDATES,
+    DEFAULT_TIME_CANDIDATES,
+    detect_column,
+)
 from tools.session_store import SessionStore
 
 _MAX_CAPSULE_CHARS = 2000
-_IDENTITY_COLUMNS = (
+_IDENTITY_COLUMNS = tuple(dict.fromkeys((
     "project_id",
     "sample_id",
     "profile_id",
@@ -24,7 +31,11 @@ _IDENTITY_COLUMNS = (
     "depth",
     "object_depth_min",
     "object_depth_max",
-)
+    *DEFAULT_LAT_CANDIDATES,
+    *DEFAULT_LON_CANDIDATES,
+    *DEFAULT_TIME_CANDIDATES,
+    *DEFAULT_DEPTH_CANDIDATES,
+)))
 _IDENTIFIER_ARGUMENTS = {"project_id", "project_ids", "sample_id", "sample_ids"}
 
 
@@ -50,12 +61,126 @@ def _present_columns(columns: Iterable[object]) -> list[str]:
     return [column for column in _IDENTITY_COLUMNS if column in available]
 
 
-def build_dataset_state_capsule(store: SessionStore, thread_id: str) -> str:
+_MAX_DERIVED_SUBSETS = 12
+_MAX_LOADED_FILES = 12
+_MAX_WORKING_TABLES = 12
+# Meta keys that carry an external EcoTaxa identifier. A dataset carrying any of
+# them is a raw project/sample-keyed export and must stay hidden so its id is not
+# re-exposed as the current subject (see the module docstring).
+_STALE_ID_KEYS = ("project_id", "sample_id", "sample_ids")
+
+
+def _working_tables(
+    store: SessionStore, thread_id: str, *, active_variable: str
+) -> list[tuple[str, str, str]]:
+    """Return (variable, source, rows) for derived working tables.
+
+    These are results that are neither loaded files nor zone subsets — EcoTaxa
+    cache queries (`df_ecotaxa_cache_query`), joins, enrichment outputs. Surfacing
+    them by name — symmetric to :func:`_loaded_files` and
+    :func:`_live_zone_subsets` — keeps the most coherent table selectable across
+    sources once it is no longer the single active df. Datasets carrying an
+    external project/sample id (`_STALE_ID_KEYS`) are skipped so no stale
+    identifier is re-exposed.
+    """
+    found: list[tuple[str, str, str]] = []
+    for key in store.keys(prefix=f"{thread_id}:dataset:"):
+        entry = store.get(key)
+        meta = (entry or {}).get("meta") or {}
+        source = str(meta.get("source") or "")
+        if source.startswith("file:") or meta.get("zone_canonical"):
+            continue  # already surfaced by _loaded_files / _live_zone_subsets
+        if any(meta.get(id_key) is not None for id_key in _STALE_ID_KEYS):
+            continue  # raw project/sample-keyed export — keep hidden
+        variable = _clean(meta.get("variable_name") or key.rsplit(":", 1)[-1], limit=80)
+        if variable == active_variable:
+            continue  # already the headline active dataset
+        rows = meta.get("n_rows")
+        rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
+        found.append((variable, _clean(source or "derived", limit=60), rows_text))
+    return sorted(set(found))
+
+
+def _loaded_files(store: SessionStore, thread_id: str) -> list[tuple[str, str, str]]:
+    """Return (variable, path, rows) for every loaded file in the session.
+
+    Each `load_file` registers a distinct `df_file_*` variable. Surfacing the
+    whole roster lets the agent target the right file by name across a
+    multi-file session instead of reloading it or guessing from the transcript.
+    """
+    found: list[tuple[str, str, str]] = []
+    for key in store.keys(prefix=f"{thread_id}:dataset:"):
+        entry = store.get(key)
+        meta = (entry or {}).get("meta") or {}
+        source = str(meta.get("source") or "")
+        if not source.startswith("file:"):
+            continue
+        variable = _clean(meta.get("variable_name") or key.rsplit(":", 1)[-1], limit=80)
+        path = _clean(meta.get("path") or source[len("file:"):], limit=120)
+        rows = meta.get("n_rows")
+        rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
+        found.append((variable, path, rows_text))
+    return sorted(set(found))
+
+
+def _live_zone_subsets(store: SessionStore, thread_id: str) -> list[tuple[str, str, str]]:
+    """Return (variable, zone, rows) for every live zone-derived subset.
+
+    A zone subset carries `zone_canonical` in its registry metadata (produced by
+    `filter_dataframe_by_zone`). Surfacing them lets the model read which
+    variable maps to which zone instead of re-inferring it from the transcript.
+    """
+    found: list[tuple[str, str, str]] = []
+    for key in store.keys(prefix=f"{thread_id}:dataset:"):
+        entry = store.get(key)
+        meta = (entry or {}).get("meta") or {}
+        zone = meta.get("zone_canonical")
+        if not zone:
+            continue
+        variable = _clean(meta.get("variable_name") or key.rsplit(":", 1)[-1], limit=80)
+        rows = meta.get("n_rows")
+        rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
+        found.append((variable, _clean(zone, limit=60), rows_text))
+    return sorted(set(found))
+
+
+def _source_scope_line(store: SessionStore, thread_id: str, messages: object) -> str:
+    """Render the authorized source scope for this turn as readable state.
+
+    Makes the executable source decision (explicit source / persisted restriction)
+    visible to the model instead of being enforced silently, so the agent reads
+    which sources are active this turn rather than re-deriving them.
+    """
+    if not messages:
+        return ""
+    try:
+        from tools.source_scope import source_decision_for_turn  # noqa: PLC0415
+
+        decision = source_decision_for_turn(
+            store, thread_id, list(messages), persist=False
+        )
+    except Exception:
+        return ""
+    authorized = ",".join(decision.authorized_sources) or "none"
+    primary = decision.primary_source or "none"
+    return (
+        f"\nACTIVE SOURCE SCOPE: authorized={authorized}; primary={primary}. "
+        "Only these sources are usable this turn; naming a new external source "
+        "switches scope, a loaded file resets it to the file."
+    )
+
+
+def build_dataset_state_capsule(
+    store: SessionStore, thread_id: str, messages: object = None
+) -> str:
     """Describe only the active dataset using registry metadata, never row values.
 
-    Older registered datasets remain reusable by explicit variable name, but are
-    intentionally excluded here so stale project/sample identifiers cannot be
-    mistaken for the current conversational subject.
+    Id-free derived working tables (files, zone subsets, EcoTaxa cache queries,
+    joins) are surfaced as named menus so the most coherent table stays
+    selectable across sources. Datasets carrying an external project/sample id
+    are still excluded so stale identifiers cannot be mistaken for the current
+    conversational subject. When `messages` is given, the authorized source scope
+    for the turn is appended as readable state.
     """
     active = store.get(thread_id)
     if not active or active.get("df") is None:
@@ -70,6 +195,12 @@ def build_dataset_state_capsule(store: SessionStore, thread_id: str) -> str:
     columns = int(meta.get("n_cols", physical_columns))
     aliases = _matching_aliases(store, thread_id, variable)
     identity_columns = _present_columns(dataframe.columns)
+    environment_columns = {
+        "latitude": detect_column(dataframe.columns, DEFAULT_LAT_CANDIDATES),
+        "longitude": detect_column(dataframe.columns, DEFAULT_LON_CANDIDATES),
+        "time": detect_column(dataframe.columns, DEFAULT_TIME_CANDIDATES),
+        "depth": detect_column(dataframe.columns, DEFAULT_DEPTH_CANDIDATES),
+    }
 
     fields = [
         f"variable={variable}",
@@ -79,11 +210,48 @@ def build_dataset_state_capsule(store: SessionStore, thread_id: str) -> str:
         "identity_columns=" + (
             ",".join(identity_columns) if identity_columns else "none"
         ),
+        "environment_columns=" + ",".join(
+            f"{role}:{column or 'none'}"
+            for role, column in environment_columns.items()
+        ),
     ]
+    active_join_note = ""
+    if source == "analysis:join":
+        active_join_note = (
+            "\nACTIVE PERSISTED JOIN: this joined table is the active file for "
+            "follow-up analysis. Reuse its exact variable name; do not reload "
+            "or rejoin the source files unless explicitly requested."
+        )
     if meta.get("project_id") is not None:
         fields.append(f"project_id={_clean(meta['project_id'], limit=40)}")
     if meta.get("sample_id") is not None:
         fields.append(f"sample_id={_clean(meta['sample_id'], limit=80)}")
+
+    selection_block = ""
+    if meta.get("source") == "ecotaxa_selection" or meta.get("selection_name"):
+        selection_name = _clean(meta.get("selection_name") or "latest")
+        sample_ids = meta.get("sample_ids") or []
+        sample_id_text = ",".join(str(value) for value in sample_ids[:20])
+        if len(sample_ids) > 20:
+            sample_id_text += f",...(+{len(sample_ids) - 20})"
+        project_ids = meta.get("project_ids") or []
+        project_id_text = ",".join(str(value) for value in project_ids)
+        filters = meta.get("filters") or {}
+        filter_text = ", ".join(
+            f"{key}={_clean(value, limit=100)}"
+            for key, value in filters.items()
+        )
+        selection_block = (
+            "\nACTIVE ECOTAXA SELECTION (authoritative scope for follow-ups):\n"
+            f"- name={selection_name}\n"
+            f"- variable={variable}\n"
+            f"- samples={len(sample_ids) or rows}\n"
+            f"- sample_ids={sample_id_text or 'not listed'}\n"
+            f"- project_ids={project_id_text or 'not listed'}\n"
+            f"- filters={filter_text or 'not listed'}\n"
+            "- Reuse this selection for follow-up tables, SQL, pandas, and graphs; "
+            "do not ask for the geographic scope again."
+        )
 
     # When the active df is a derived subset, surface the loaded file as the
     # canonical source so a new geographic/zone request re-anchors on the full
@@ -101,12 +269,77 @@ def build_dataset_state_capsule(store: SessionStore, thread_id: str) -> str:
                 f"a subset of another zone."
             )
 
+    derived_block = ""
+    subsets = _live_zone_subsets(store, thread_id)
+    if subsets:
+        listed = subsets[:_MAX_DERIVED_SUBSETS]
+        lines = "\n".join(
+            f"- {variable}: zone={zone}, rows={rows}" for variable, zone, rows in listed
+        )
+        more = (
+            f"\n- (+{len(subsets) - len(listed)} more)"
+            if len(subsets) > len(listed)
+            else ""
+        )
+        derived_block = (
+            "\nDERIVED ZONE SUBSETS (reusable by exact variable name — pick the "
+            "one whose zone matches the request; do not recompute a subset that "
+            "already exists):\n" + lines + more
+        )
+
+    working_block = ""
+    tables = _working_tables(store, thread_id, active_variable=variable)
+    if tables:
+        listed = tables[:_MAX_WORKING_TABLES]
+        lines = "\n".join(
+            f"- {variable}: source={source}, rows={rows}"
+            for variable, source, rows in listed
+        )
+        more = (
+            f"\n- (+{len(tables) - len(listed)} more)"
+            if len(tables) > len(listed)
+            else ""
+        )
+        working_block = (
+            "\nWORKING TABLES (derived results reusable by exact variable name — "
+            "pick the one whose source/scope matches the request; do not recompute "
+            "a result that already exists):\n" + lines + more
+        )
+
+    scope_line = _source_scope_line(store, thread_id, messages)
+
+    loaded_files_block = ""
+    files = _loaded_files(store, thread_id)
+    if len(files) > 1:
+        listed = files[:_MAX_LOADED_FILES]
+        lines = "\n".join(
+            f"- {variable}: path={path}, rows={rows}" for variable, path, rows in listed
+        )
+        more = (
+            f"\n- (+{len(files) - len(listed)} more)"
+            if len(files) > len(listed)
+            else ""
+        )
+        loaded_files_block = (
+            "\nLOADED FILES (each reusable by its exact variable name — target the "
+            "right file by name; do not reload a file already listed here):\n"
+            + lines + more
+        )
+
     capsule = (
         "\n\n## ACTIVE DATASET STATE (authoritative, current turn)\n"
         "- " + "; ".join(fields) + "\n"
+        + active_join_note
+        + selection_block
+        + "Canonical environmental enrichment validates these detected aliases "
+        "itself; direct station/cast identifiers are not required.\n"
         "Identifiers absent from this capsule and the current user message are "
         "ungrounded; do not infer them from older conversation turns."
+        + scope_line
+        + working_block
+        + loaded_files_block
         + anchor_note
+        + derived_block
     )
     return capsule[:_MAX_CAPSULE_CHARS]
 

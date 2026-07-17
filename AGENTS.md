@@ -11,8 +11,9 @@ Utilisateurs : professeurs et étudiants. Réponses en français par défaut.
 |---|---|
 | `CONTEXT.md` | Identité métier de l'agent, périmètre, ce qu'il fait / ne fait pas, sources, skills, RAG |
 | `ARCHITECTURE.md` | Comment `agent.py`, `serve.py`, les tools, le RAG, OpenWebUI sont câblés |
-| `TOOLS.md` | Inventaire des ~53 tools exposés au LLM, par catégorie |
-| `agents/copepod_system_prompt.py` | System prompt complet (règles de routage des tools, périmètre, sécurité) |
+| `TOOLS.md` | Inventaire des 59 tools (62 avec SQL optionnel) exposés au LLM, par catégorie |
+| `agents/copepod_system_prompt.py` | System prompt complet (choix des tools, périmètre, sécurité) |
+| `tools/source_scope.py` | Décision de source exécutable, affinité persistante et bloc Gateway généré |
 | `assistant-copepodes-specs/` | Repo des specs métier (PRD V1.2, 14 UC, 29 contraintes, glossaire) |
 
 ---
@@ -26,8 +27,8 @@ Open WebUI (port 3000)
 serve.py — FastAPI (port 8000)
     │ SSE streaming, feedback polling, image hosting, downloads
     ▼
-agent.py — LangGraph create_react_agent
-    │ system prompt copépodes (hub: copepod-system-prompt, fallback local)
+agent.py — LangChain create_agent (ex-create_react_agent)
+    │ system prompt copépodes (source locale : agents/copepod_system_prompt.py)
     │ checkpointer AsyncSqliteSaver (data/checkpoints.sqlite)
     │ pre_model_hook : truncate tool results + trim history (40k tokens)
     │
@@ -38,15 +39,16 @@ agent.py — LangGraph create_react_agent
     ├── tools/ecopart_sources.py    → list/preview/query EcoPart + join
     ├── tools/amundsen_sources.py   → list/preview/query Amundsen CTD
     ├── tools/bio_oracle_sources.py → list/preview/query Bio-ORACLE + coupling
+    ├── tools/ogsl_sources.py       → query/enrichissement OGSL CTD
     ├── tools/sql_workspace.py      → list/preview/copy SQL (read-only)
     └── tools/deliverable_tool.py   → export_deliverable (PDF via WeasyPrint)
 
 core/copepod_rag/    ChromaDB (11 docs RAG)
 core/ecotaxa_client/ core/ecopart_client/ core/amundsen_ctd_client/ core/bio_oracle_client/
-agents/skills/       14 skills Markdown chargeables à la demande
+agents/skills/       15 skills Markdown chargeables à la demande
 ```
 
-Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction. Il n'y a pas de « mode » de session — le comportement est piloté par le system prompt.
+Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction, puis les familles de sources externes sont filtrées par `SourceDecision` avant chaque appel modèle. Il n'y a pas de « mode » de session.
 
 ---
 
@@ -78,10 +80,11 @@ python serve.py                          # serveur FastAPI seul
 |---|---|
 | `OPENAI_API_KEY` | Provider LLM |
 | `LLM_MODEL` | ex. `openai/gpt-5.4-mini`, `Codex-sonnet-4-6` |
-| `LANGSMITH_API_KEY` | Tracing + hub pull du system prompt |
+| `LANGSMITH_API_KEY` | Tracing + pull Hub des skills (le system prompt est lu localement) |
 | `LANGCHAIN_TRACING_V2` | `true` pour activer LangSmith |
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |
-| `MAX_CONTEXT_TOKENS` | Défaut 40000 — au-delà, trim_messages |
+| `MAX_CONTEXT_TOKENS` | Défaut 100000 — au-delà, trim_messages |
+| `KEEP_FULL_TOOL_TURNS` | Défaut 3 — anciens résultats de tools compactés au-delà de ces tours |
 | `MAX_TOOL_RESULT_CHARS` | Défaut 8000 — au-delà, troncature des résultats de tools |
 | `CHECKPOINTS_DB` | Chemin SQLite des checkpoints LangGraph (`data/checkpoints.sqlite`) |
 | `DATABASE_URL` | Workspace SQL lecture seule (SQLAlchemy) — optionnel |
@@ -104,11 +107,11 @@ scripts/dev/push_skills.py
 studio.py                 LangGraph Studio entry
 
 agents/
-  copepod_system_prompt.py  System prompt complet (anglais, ~64 lignes)
-  copepod_prompt.py         (déprécié — référence historique uniquement)
-  skills/                   14 skills Markdown
+  copepod_system_prompt.py  Kernel permanent compact (anglais, ≤ 3 500 tokens)
+  skills/                   15 skills Markdown
+  (copepod_prompt.py déprécié → archivé dans docs/legacy/copepod_prompt_DEPRECATED.py)
 
-tools/                    ~53 tools @tool LangChain (voir TOOLS.md)
+tools/                    59 tools @tool LangChain (62 avec SQL optionnel — voir TOOLS.md)
 
 core/
   copepod_rag/            ChromaDB + 11 docs RAG
@@ -116,7 +119,7 @@ core/
   instruction_renderer/   Composition des system prompts
   mcp/                    MCP integrations (si actives)
 
-tests/                    pytest (~30 modules, 42 tests verts au dernier merge main)
+tests/                    pytest (~104 modules)
 evals/                    Évaluations LangSmith (copepod graph happy path…)
 SPEC.md ARCHITECTURE.md TOOLS.md PARTAGE.md SEQUENCES.md   Docs de référence figées (racine)
 docs/                     Notes internes / test maps (gitignored sauf exceptions)
@@ -133,7 +136,7 @@ scripts/                  Outils CLI ponctuels
 - **Pas de mode**. Si tu te poses la question « est-ce que je suis dans le bon mode », c'est non — il n'y a qu'un agent. Le comportement vient du system prompt.
 - **TDD** pour chaque tool : test d'abord, implémentation après. Fixtures dans `tests/`.
 - **Docstring claire** sur chaque `@tool` : le LLM la lit pour décider quand l'appeler.
-- **Routage des tools** : toute nouvelle règle de routage va dans `agents/copepod_system_prompt.py`, jamais dans le code Python.
+- **Routage des tools** : le choix souple du tool se décrit dans le prompt. Toute règle d'autorisation de source modifie `tools/source_scope.py`; son bloc prompt doit être généré depuis la même politique, jamais recopié manuellement.
 - **Pas d'interprétation** scientifique ou biologique des résultats, ni par l'agent, ni par les docstrings de tools.
 - **Pas de valeur inventée** : tout chiffre vient de `run_pandas`, d'un tool, ou du RAG.
 - **Pas de credentials** dans le code, les logs, les docstrings, les commits.
@@ -142,7 +145,7 @@ scripts/                  Outils CLI ponctuels
 - **Ton clinique (CT-AG-26)** : pas de « je / moi / en tant qu'IA » dans les réponses LLM ; format Résultat / Source / Méthode / Limite / Prochaine action. Si tu modifies un skill, garde la même règle.
 - **Incertitude visible (CT-AG-27)** : si tu ajoutes un type de graphique dans `graph_writer.md`, applique la palette confirmed/exploratory/uncertain et le stamp de confiance.
 - **Rebuilt RAG** : `python core/copepod_rag/build_index.py` après modification de `core/copepod_rag/docs/*.md`.
-- **Push prompt** : `python scripts/dev/push_prompt.py` pour synchroniser le system prompt vers LangSmith Hub (consommé par `agent.py` en prod, fallback local sinon).
+- **Prompt local** : `agent.py` consomme exclusivement `agents/copepod_system_prompt.py`; `scripts/dev/push_prompt.py` est legacy et n'alimente pas le runtime.
 - **Push skills** : `python scripts/dev/push_skills.py` pour synchroniser `agents/skills/*.md` vers LangSmith Hub.
 
 ---
@@ -172,7 +175,7 @@ pytest tests/test_copepod_rag_advanced.py  # RAG
 pytest tests/test_serve_streaming.py       # SSE / OpenWebUI
 ```
 
-42 tests verts au merge du refactor multi-agent sur `main`. Voir `assistant-copepodes-specs/` pour la liste des scénarios comportementaux (`TEST_SCENARIOS.md`).
+Suite pytest verte au dernier merge sur `main` (~104 modules de test). Voir `assistant-copepodes-specs/` pour la liste des scénarios comportementaux (`TEST_SCENARIOS.md`).
 
 ---
 

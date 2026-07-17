@@ -1,3 +1,16 @@
+---
+name: uvp_ecopart
+version: 1.0.0
+triggers:
+  - Loaded file is detected as a UVP EcoPart export
+forbidden_when:
+  - Loaded data is not an EcoPart export
+requires:
+  - "dataset:uvp_ecopart"
+next_tool: run_pandas
+max_tokens: 1400
+---
+
 # Skill: uvp_ecopart
 
 You just loaded a **UVP EcoPart file** (columns `LPM (...)` + `Sampled volume [L]`).

@@ -180,9 +180,8 @@ def test_filter_dataframe_by_zone_defaults_lat_lon_column_names(session_store):
     assert out["n_out"] == 1
 
 
-def test_filter_dataframe_by_zone_raises_on_unknown_zone(session_store):
-    """Erreur transparente : zone inconnue → exception remontée à LangGraph,
-    pas un faux résultat 'aucun point' (cf. feedback_tool_errors_must_raise)."""
+def test_filter_dataframe_by_zone_blocks_on_unknown_zone(session_store):
+    """Zone inconnue → précondition bloquée, jamais faux résultat vide."""
     import pandas as pd
     from tools.geo_tools import make_geo_tools
 
@@ -192,9 +191,8 @@ def test_filter_dataframe_by_zone_raises_on_unknown_zone(session_store):
 
     tools = make_geo_tools(thread, store=session_store)
     fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
-    with pytest.raises(Exception) as exc_info:
-        fn.invoke({"zone_name": "Mer de Nulle Part"})
-    assert "Mer de Nulle Part" in str(exc_info.value)
+    result = fn.invoke({"zone_name": "Mer de Nulle Part"})
+    assert "Mer de Nulle Part" in result
 
 
 def test_filter_dataframe_by_zone_errors_when_no_df_loaded(session_store):
@@ -212,7 +210,7 @@ def test_filter_dataframe_by_zone_errors_when_no_df_loaded(session_store):
         pytest.fail("filter_dataframe_by_zone should not return success when no df is loaded")
 
 
-def test_filter_dataframe_by_zone_errors_when_lat_lon_columns_missing(session_store):
+def test_filter_dataframe_by_zone_blocks_when_lat_lon_columns_missing(session_store):
     """Si lat/lon ne sont pas dans le df, on doit échouer explicitement
     (le LLM doit pouvoir corriger en passant les bons noms de colonnes)."""
     import pandas as pd
@@ -224,10 +222,8 @@ def test_filter_dataframe_by_zone_errors_when_lat_lon_columns_missing(session_st
 
     tools = make_geo_tools(thread, store=session_store)
     fn = next(t for t in tools if t.name == "filter_dataframe_by_zone")
-    with pytest.raises(Exception) as exc_info:
-        # default latitude/longitude don't exist in this df
-        fn.invoke({"zone_name": "Baie de Baffin"})
-    msg = str(exc_info.value).lower()
+    # default latitude/longitude don't exist in this df
+    msg = fn.invoke({"zone_name": "Baie de Baffin"}).lower()
     assert "latitude" in msg or "longitude" in msg or "colonne" in msg or "column" in msg
 
 
@@ -250,6 +246,30 @@ def test_filter_dataframe_by_zone_does_not_mutate_original_df(session_store):
     original = session_store.get(f"{thread}:dataset:df_loki_2024")
     assert original is not None
     assert len(original["df"]) == 2  # original unchanged
+
+
+def test_filter_dataframe_by_zone_preserves_active_dataset(session_store):
+    """Un sous-ensemble de zone doit rester nommé sans remplacer le df actif."""
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    df = pd.DataFrame({
+        "latitude": [74.0, 55.0],
+        "longitude": [-68.0, -55.0],
+    })
+    thread = "thread-filter-active-preserved"
+    _load_df_into_session(session_store, thread, df, variable_name="df_join_source")
+
+    fn = next(
+        tool for tool in make_geo_tools(thread, store=session_store)
+        if tool.name == "filter_dataframe_by_zone"
+    )
+    out = fn.invoke({"zone_name": "Baie de Baffin"})
+
+    active = session_store.get(thread)
+    assert active["meta"]["variable_name"] == "df_join_source"
+    assert active["df"].equals(df)
+    assert session_store.get(f"{thread}:dataset:{out['variable_name']}") is not None
 
 
 def test_filter_dataframe_by_zone_can_rebase_on_named_source_variable(session_store):
@@ -285,9 +305,8 @@ def test_filter_dataframe_by_zone_can_rebase_on_named_source_variable(session_st
 
 
 def test_filter_dataframe_by_zone_defaults_to_loaded_file_not_active_subset(session_store):
-    """Régression cartes-samples-labrador-2026 : après un filtre Baffin devenu
-    le df actif, une demande Labrador SANS source_variable doit repartir du
-    fichier chargé, pas du sous-ensemble Baffin (zones disjointes → 0)."""
+    """Une demande de zone repart toujours du fichier chargé, pas d'un sous-
+    ensemble précédent (zones disjointes → 0), sans changer le df actif."""
     import pandas as pd
     from tools.geo_tools import make_geo_tools
 
@@ -304,7 +323,7 @@ def test_filter_dataframe_by_zone_defaults_to_loaded_file_not_active_subset(sess
         tool for tool in make_geo_tools(thread, store=session_store)
         if tool.name == "filter_dataframe_by_zone"
     )
-    # Premier filtre : Baffin devient le df actif.
+    # Premier filtre : Baffin reste un dérivé nommé, le fichier reste actif.
     baffin = fn.invoke({"zone_name": "Baie de Baffin"})
     assert baffin["n_in"] == 1
 
@@ -315,8 +334,8 @@ def test_filter_dataframe_by_zone_defaults_to_loaded_file_not_active_subset(sess
     kept = session_store.get(f"{thread}:dataset:{out['variable_name']}")["df"]
     assert kept["station_id"].tolist() == ["LAB"]
     assert out["source_variable"] == "df_file_original"
-    assert out.get("rebased_on") == "df_file_original"
-    assert "note" in out  # le rebasage est signalé au modèle
+    assert out.get("rebased_on") is None
+    assert session_store.get(thread)["meta"]["variable_name"] == "df_file_original"
 
 
 def test_filter_dataframe_by_zone_reanchors_even_when_subset_passed_explicitly(session_store):
@@ -350,3 +369,190 @@ def test_filter_dataframe_by_zone_reanchors_even_when_subset_passed_explicitly(s
     assert out["n_in"] == 1  # re-ancré sur le fichier → LAB retrouvé, pas 0
     assert out["source_variable"] == "df_file_original"
     assert out.get("rebased_on") == "df_file_original"
+
+
+# --- Slice 4 : split_dataframe_by_zone (découpage auto mers/baies/détroits) --
+
+
+def _split_tool(session_store, thread):
+    from tools.geo_tools import make_geo_tools
+    tools = make_geo_tools(thread, store=session_store)
+    return next(t for t in tools if t.name == "split_dataframe_by_zone")
+
+
+def _split(session_store, thread, **args):
+    """Invoke split_dataframe_by_zone as a ToolCall → (markdown, structured).
+
+    The visible content is a markdown table (so the model echoes it verbatim
+    instead of rebuilding it); the structured payload lives in the artifact.
+    """
+    tool = _split_tool(session_store, thread)
+    msg = tool.invoke({
+        "type": "tool_call", "name": tool.name, "args": args, "id": "call-1",
+    })
+    structured = (msg.artifact.get("metrics") or {}).get("structured", {})
+    return msg.content, structured
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_split_dataframe_by_zone_annotates_and_groups(session_store):
+    """Le df chargé est annoté d'une colonne `zone` (mers/baies/détroits IHO)
+    et regroupé — la capacité D4 « découpage automatique »."""
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "station_id": ["BAF1", "BAF2", "HUD1", "LAB1"],
+        "latitude":   [74.0,   75.0,   58.0,   55.0],
+        "longitude": [-68.0,  -73.0,  -85.0,  -55.0],
+    })
+    thread = "thread-split-basic"
+    _load_df_into_session(session_store, thread, df)
+
+    markdown, out = _split(session_store, thread)
+
+    assert out["zone_column"] == "zone"
+    assert out["family"] == "auto"  # défaut = cascade IHO + MEOW
+    groups = {g["zone"]: g["n_rows"] for g in out["groups"]}
+    # Ces 3 points tombent tous dans des zones IHO physiques : la passe MEOW
+    # ne les modifie pas.
+    assert groups == {"Baie de Baffin": 2, "Baie d'Hudson": 1, "Mer du Labrador": 1}
+    # La table markdown visible porte les zones telles quelles (restitution D3).
+    assert "| Baie de Baffin | 2 |" in markdown
+    assert "| Baie d'Hudson | 1 |" in markdown
+
+    sess = session_store.get(f"{thread}:dataset:{out['variable_name']}")
+    annotated = sess["df"]
+    assert "zone" in annotated.columns
+    assert annotated.loc[annotated["station_id"] == "HUD1", "zone"].item() == "Baie d'Hudson"
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_split_dataframe_by_zone_labels_outside_and_missing_explicitly(session_store):
+    """Un point hors de toute zone n'est jamais rattaché à une station : bucket
+    explicite. Coordonnées manquantes → bucket dédié (corrige D2)."""
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "station_id": ["BAF1", "FAR1", "NOCOORD"],
+        "latitude":   [74.0,   -40.0,  None],
+        "longitude": [-68.0,   10.0,   -68.0],
+    })
+    thread = "thread-split-buckets"
+    _load_df_into_session(session_store, thread, df)
+
+    markdown, out = _split(session_store, thread)
+
+    groups = {g["zone"]: g["n_rows"] for g in out["groups"]}
+    assert groups["Hors zone référencée"] == 1
+    assert groups["Sans coordonnées"] == 1
+    assert out["n_outside"] == 1
+    assert out["n_missing"] == 1
+    assert "Hors zone référencée" in markdown and "Sans coordonnées" in markdown
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_split_dataframe_by_zone_supports_meow_family(session_store):
+    """family='meow' bascule sur le découpage écologique Spalding."""
+    import pandas as pd
+
+    df = pd.DataFrame({"latitude": [74.0], "longitude": [-68.0]})
+    thread = "thread-split-meow"
+    _load_df_into_session(session_store, thread, df)
+
+    markdown, out = _split(session_store, thread, family="meow")
+
+    assert out["family"] == "meow"
+    assert out["groups"][0]["zone"] == "MEOW: West Greenland Shelf"
+    assert "MEOW: West Greenland Shelf" in markdown
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_split_dataframe_by_zone_blocks_unknown_family(session_store):
+    import pandas as pd
+
+    df = pd.DataFrame({"latitude": [74.0], "longitude": [-68.0]})
+    thread = "thread-split-badfamily"
+    _load_df_into_session(session_store, thread, df)
+
+    out = _split_tool(session_store, thread).invoke({"family": "banane"})
+
+    assert "banane" in out and "inconnue" in out.lower()
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_split_dataframe_by_zone_counts_distinct_stations(session_store):
+    """Avec station_col, chaque zone rapporte aussi le nombre de stations
+    distinctes — pour répondre 'combien de stations par mer'."""
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "STATION": ["S1", "S1", "S2", "S3"],  # BAF: 2 stations distinctes (S1,S2)
+        "latitude":   [74.0, 74.0, 75.0, 58.0],
+        "longitude": [-68.0, -68.0, -73.0, -85.0],
+    })
+    thread = "thread-split-stations"
+    _load_df_into_session(session_store, thread, df)
+
+    markdown, out = _split(session_store, thread, station_col="STATION")
+
+    groups = {g["zone"]: g for g in out["groups"]}
+    assert groups["Baie de Baffin"]["n_rows"] == 3
+    assert groups["Baie de Baffin"]["n_stations"] == 2
+    assert groups["Baie d'Hudson"]["n_stations"] == 1
+    assert "Stations" in markdown  # colonne stations présente dans la table
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_split_dataframe_by_zone_suggests_meow_when_iho_coverage_is_low(session_store):
+    """Quand une grande part des points tombe hors des polygones IHO, le tool
+    signale la couverture et suggère family='meow'/'composite'."""
+    import pandas as pd
+
+    # 1 point dans Baffin, 3 points loin de toute zone IHO → 75% hors zone.
+    df = pd.DataFrame({
+        "latitude":  [74.0,  -40.0, -41.0, -42.0],
+        "longitude": [-68.0, 10.0,  11.0,  12.0],
+    })
+    thread = "thread-split-lowcov"
+    _load_df_into_session(session_store, thread, df)
+
+    markdown, out = _split(session_store, thread, family="iho")
+
+    assert out["outside_ratio"] >= 0.5
+    assert "coverage_suggestion" in out
+    # family='iho' à faible couverture → proposer la cascade 'auto' (IHO + MEOW).
+    assert "family='auto'" in out["coverage_suggestion"]
+    assert "family='auto'" in markdown
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_split_dataframe_by_zone_no_suggestion_when_coverage_is_good(session_store):
+    """Couverture IHO satisfaisante → pas de suggestion parasite."""
+    import pandas as pd
+
+    df = pd.DataFrame({"latitude": [74.0, 75.0], "longitude": [-68.0, -73.0]})
+    thread = "thread-split-goodcov"
+    _load_df_into_session(session_store, thread, df)
+
+    markdown, out = _split(session_store, thread)
+
+    assert out["outside_ratio"] == 0.0
+    assert "coverage_suggestion" not in out
+    assert "family='meow'" not in markdown
+
+
+@pytest.mark.skipif(not PROD_REGISTRY.exists(), reason="registry not built")
+def test_split_dataframe_by_zone_meow_family_never_suggests_itself(session_store):
+    """Sur family='meow', pas de suggestion de rebascule (déjà écologique)."""
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "latitude":  [74.0,  -40.0, -41.0, -42.0],
+        "longitude": [-68.0, 10.0,  11.0,  12.0],
+    })
+    thread = "thread-split-meow-nocov"
+    _load_df_into_session(session_store, thread, df)
+
+    _, out = _split(session_store, thread, family="meow")
+
+    assert "coverage_suggestion" not in out

@@ -105,6 +105,27 @@ def normalize_graph_contract(contract: dict | None, figure: Any) -> dict | None:
             and _artist_by_gid(figure, mapping.get("artist_gid")) is None
         ):
             mapping["artist_gid"] = gid
+    color_mapping = mappings.get("color")
+    if isinstance(color_mapping, dict) and color_mapping.get("variable"):
+        color_legend = mappings.get("color_legend")
+        legend_gid = (
+            color_legend.get("artist_gid")
+            if isinstance(color_legend, dict) and color_legend.get("artist_gid")
+            else "station_color_legend"
+        )
+        if _artist_by_gid(figure, legend_gid) is None:
+            for axis in getattr(figure, "axes", []):
+                legend = getattr(axis, "get_legend", lambda: None)()
+                if legend is not None:
+                    legend.set_gid(legend_gid)
+                    break
+        if _artist_by_gid(figure, legend_gid) is not None and (
+            not isinstance(color_legend, dict) or not color_legend.get("variable")
+        ):
+            mappings["color_legend"] = {
+                "variable": color_mapping["variable"],
+                "artist_gid": legend_gid,
+            }
     return normalized
 
 

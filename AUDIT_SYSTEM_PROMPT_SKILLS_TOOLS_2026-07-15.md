@@ -5,6 +5,35 @@
 **Périmètre :** état du dépôt de travail au moment de l'audit  
 **Statut global :** **fonctionnel, bien testé, mais fragile sous charge de contexte et insuffisamment contraint par le code sur plusieurs règles critiques**
 
+> **Mise à jour d'implémentation — 16 juillet 2026, Steps 8 et 10.** Ce document
+> conserve les constats du snapshot du 15 juillet. Depuis cet audit : les 15
+> skills ont un manifest commun validé (`name`, `version`, `triggers`,
+> `forbidden_when`, `requires`, `next_tool`, `max_tokens`), le Hub est borné par
+> l'allowlist et le hash local revu, et la provenance expose source,
+> environnement, version et SHA-256. Le prompt permanent est passé d'environ
+> 6 980 à 2 896 tokens selon le compteur runtime. Le replay offline garde les
+> trois scénarios à 100 % aux niveaux 1 et 2, avec un coût fixe maximal de 8 843
+> tokens et 15 tools exposés au maximum.
+>
+> Un défaut supplémentaire a été trouvé puis corrigé pendant cette étape : le
+> plafond générique de 8 000 caractères tronquait les grands résultats de
+> `load_skill` (`graph_writer` n'était visible qu'à ~20 %). Les résultats de
+> skills manifestés utilisent désormais leur budget déclaré, borné à 12 000
+> tokens, et un test vérifie la vue réellement envoyée au modèle jusqu'à la fin
+> du document. Les procédures contradictoires de `environmental_join` et
+> `neolabs_abundance_analysis` ont aussi été alignées sur la sélection explicite
+> de source et les quatre enrichissements canoniques.
+>
+> Restent hors de cette fermeture : approbations exécutables de l'étape 7,
+> isolation processus complète de l'étape 9 et éventuelle découpe future des
+> grands skills déjà justifiés. Les mesures historiques ci-dessous ne doivent
+> donc pas être lues comme l'état courant.
+>
+> **État de distribution Hub au 16 juillet :** 4/15 skills synchronisés dans
+> les deux environnements; 11/15 refusés par LangSmith avec HTTP 500. Le script
+> valide maintenant les manifests avant envoi et sort en erreur sur échec. Le
+> runtime reste déterministe grâce au fallback local validé par hash.
+
 ## 1. Synthèse exécutive
 
 L'architecture possède de bons fondements : un point d'assemblage unique des tools, un system prompt structuré par domaines, des skills spécialisés chargés à la demande, des métadonnées de présentation validées et des tests nombreux. Le runtime réel est lisible : `agent.py` charge le prompt local, construit un catalogue de 59 tools obligatoires, puis injecte le contexte de session via un middleware.

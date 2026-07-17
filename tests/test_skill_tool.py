@@ -3,6 +3,24 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+
+def _skill_doc(name: str, body: str, *, version: str = "1.0.0", max_tokens: int = 500) -> str:
+    return f"""---
+name: {name}
+version: {version}
+triggers:
+  - matching user intent
+forbidden_when:
+  - source is not authorized
+requires: []
+next_tool: null
+max_tokens: {max_tokens}
+---
+{body}
+"""
+
 
 def test_hub_skill_name_maps_correctly():
     from tools.skill_tool import _hub_skill_name
@@ -13,24 +31,29 @@ def test_hub_skill_name_maps_correctly():
     assert _hub_skill_name("neolabs_abundance_analysis") == "copepod-neolabs-abundance-analysis"
 
 
-def test_load_skill_pulls_from_hub_when_api_key_set(monkeypatch):
+def test_load_skill_pulls_from_hub_when_api_key_set(monkeypatch, tmp_path):
     monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-key")
     monkeypatch.setenv("SKILL_ENV", "production")
     monkeypatch.delenv("SKILL_PREFER_LOCAL", raising=False)
 
     mock_skill = MagicMock()
-    mock_skill.files = {"SKILL.md": MagicMock(content="# Hub skill content")}
+    hub_content = _skill_doc("ecotaxa_query", "# Hub skill content")
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "ecotaxa_query.md").write_text(hub_content)
+    mock_skill.files = {"SKILL.md": MagicMock(content=hub_content)}
     mock_instance = MagicMock()
     mock_instance.pull_skill.return_value = mock_skill
     mock_class = MagicMock(return_value=mock_instance)
 
-    with patch("tools.skill_tool._LangSmithClient", mock_class):
+    with patch("tools.skill_tool._LangSmithClient", mock_class), \
+         patch("tools.skill_tool.SKILLS_DIR", skills_dir):
         from tools.skill_tool import make_skill_tool
         skill_tool = make_skill_tool()
         result = skill_tool.invoke({"skill_name": "ecotaxa_query"})
 
     mock_instance.pull_skill.assert_called_once_with("copepod-ecotaxa-query:production")
-    assert result == "# Hub skill content"
+    assert result.strip() == "# Hub skill content"
 
 
 def test_load_skill_falls_back_to_local_when_hub_fails(monkeypatch, tmp_path):
@@ -42,7 +65,9 @@ def test_load_skill_falls_back_to_local_when_hub_fails(monkeypatch, tmp_path):
 
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
-    (skills_dir / "ecotaxa_query.md").write_text("# Local skill content")
+    (skills_dir / "ecotaxa_query.md").write_text(
+        _skill_doc("ecotaxa_query", "# Local skill content")
+    )
 
     with patch("tools.skill_tool._LangSmithClient", mock_class), \
          patch("tools.skill_tool.SKILLS_DIR", skills_dir):
@@ -50,7 +75,7 @@ def test_load_skill_falls_back_to_local_when_hub_fails(monkeypatch, tmp_path):
         skill_tool = make_skill_tool()
         result = skill_tool.invoke({"skill_name": "ecotaxa_query"})
 
-    assert result == "# Local skill content"
+    assert result.strip() == "# Local skill content"
 
 
 def test_load_skill_skips_hub_when_no_api_key(monkeypatch, tmp_path):
@@ -59,7 +84,9 @@ def test_load_skill_skips_hub_when_no_api_key(monkeypatch, tmp_path):
 
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
-    (skills_dir / "graph_planner.md").write_text("# Local graph planner")
+    (skills_dir / "graph_planner.md").write_text(
+        _skill_doc("graph_planner", "# Local graph planner")
+    )
 
     mock_class = MagicMock()
 
@@ -70,7 +97,7 @@ def test_load_skill_skips_hub_when_no_api_key(monkeypatch, tmp_path):
         result = skill_tool.invoke({"skill_name": "graph_planner"})
 
     mock_class.assert_not_called()
-    assert result == "# Local graph planner"
+    assert result.strip() == "# Local graph planner"
 
 
 def test_load_skill_records_loaded_skills_in_session(monkeypatch, tmp_path):
@@ -82,7 +109,9 @@ def test_load_skill_records_loaded_skills_in_session(monkeypatch, tmp_path):
 
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
-    (skills_dir / "graph_writer.md").write_text("# Local graph writer")
+    (skills_dir / "graph_writer.md").write_text(
+        _skill_doc("graph_writer", "# Local graph writer")
+    )
     store = SessionStore(tmp_path / "sessions")
 
     with patch("tools.skill_tool.SKILLS_DIR", skills_dir):
@@ -92,9 +121,107 @@ def test_load_skill_records_loaded_skills_in_session(monkeypatch, tmp_path):
         result = skill_tool.invoke({"skill_name": "graph_writer"})
 
     session = store.get("thread-skills")
-    assert result == "# Local graph writer"
+    assert result.strip() == "# Local graph writer"
     assert session is not None
     assert session["meta"]["loaded_skills"] == ["graph_writer"]
+
+
+def test_every_local_skill_has_valid_common_manifest_and_budget():
+    from tools.skill_manifest import load_skill_document
+
+    for path in sorted(Path("agents/skills").glob("*.md")):
+        document = load_skill_document(path)
+        assert document.manifest.name == path.stem
+        assert document.estimated_tokens <= document.manifest.max_tokens
+        if document.estimated_tokens > 3_000:
+            assert document.manifest.size_exemption
+
+
+def test_manifest_rejects_missing_required_frontmatter(tmp_path):
+    from tools.skill_manifest import SkillManifestError, load_skill_document
+
+    path = tmp_path / "bad.md"
+    path.write_text("# No manifest")
+
+    with pytest.raises(SkillManifestError, match="frontmatter"):
+        load_skill_document(path)
+
+
+def test_hub_skill_with_unreviewed_hash_falls_back_to_local(monkeypatch, tmp_path):
+    monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-key")
+    monkeypatch.setenv("SKILL_ENV", "production")
+    monkeypatch.delenv("SKILL_PREFER_LOCAL", raising=False)
+
+    local_content = _skill_doc("ecotaxa_query", "# Reviewed local content")
+    hub_content = _skill_doc("ecotaxa_query", "# Drifted hub content")
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "ecotaxa_query.md").write_text(local_content)
+
+    mock_skill = MagicMock()
+    mock_skill.files = {"SKILL.md": MagicMock(content=hub_content)}
+    mock_instance = MagicMock()
+    mock_instance.pull_skill.return_value = mock_skill
+
+    with patch("tools.skill_tool._LangSmithClient", MagicMock(return_value=mock_instance)), \
+         patch("tools.skill_tool.SKILLS_DIR", skills_dir):
+        from tools.skill_tool import make_skill_tool
+
+        result = make_skill_tool().invoke({"skill_name": "ecotaxa_query"})
+
+    assert result.strip() == "# Reviewed local content"
+
+
+def test_skill_provenance_exposes_environment_version_and_hash(monkeypatch, tmp_path):
+    from tools.tool_result import validate_tool_artifact
+
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    monkeypatch.setenv("SKILL_ENV", "staging")
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "graph_writer.md").write_text(
+        _skill_doc("graph_writer", "# Writer", version="2.3.0")
+    )
+
+    with patch("tools.skill_tool.SKILLS_DIR", skills_dir):
+        from tools.skill_tool import make_skill_tool
+
+        message = make_skill_tool().invoke(
+            {
+                "type": "tool_call",
+                "id": "skill-1",
+                "name": "load_skill",
+                "args": {"skill_name": "graph_writer"},
+            }
+        )
+
+    provenance = validate_tool_artifact(message.artifact).provenance
+    assert provenance["skill"] == "graph_writer"
+    assert provenance["version"] == "2.3.0"
+    assert provenance["environment"] == "staging"
+    assert len(provenance["sha256"]) == 64
+
+
+def test_large_skill_is_fully_visible_after_model_context_preparation(monkeypatch):
+    import agent as agent_module
+    from tools.skill_tool import make_skill_tool
+
+    monkeypatch.setenv("SKILL_PREFER_LOCAL", "true")
+    message = make_skill_tool().invoke(
+        {
+            "type": "tool_call",
+            "id": "skill-large",
+            "name": "load_skill",
+            "args": {"skill_name": "graph_writer"},
+        }
+    )
+
+    prepared, metrics = agent_module._truncate_tool_results([message])
+
+    assert prepared[0].content == message.content
+    assert "Never produce a graph where exploratory and confirmed values" in prepared[0].content
+    assert metrics["tool_messages_truncated"] == 0
 
 
 def test_neolabs_abundance_skill_documents_standard_analysis_workflow():

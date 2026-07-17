@@ -1,7 +1,9 @@
 """Tools LangChain pour l'analyse de données — slice 2."""
+import ast
 import contextlib
 import io
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -10,8 +12,11 @@ import pandas as pd
 from langchain_core.tools import tool
 
 from core.cartography import configure_offline_cartopy
+from core.geo import load_registry
 from core.graph_contracts import normalize_graph_contract, validate_graph_contract
 from core.runtime_paths import graphs_dir
+from tools.tool_result import blocked, empty, error, success
+from tools.code_sandbox import apply_restricted_builtins
 
 
 _GRAPHS_DIR = graphs_dir()
@@ -110,6 +115,7 @@ from tools.file_loader import load_file as _load_file
 from tools.dataset_registry import (
     SOURCE_ALIASES,
     dataset_variable_name,
+    loaded_file_dataset,
     source_variable,
     store_dataset,
 )
@@ -123,6 +129,10 @@ from tools.session_store import SessionStore, default_store
 # succès d'un graphe (run_graph) et au début de chaque nouveau tour utilisateur
 # (pre_model_hook), sinon il coince une question chiffrée légitime au tour suivant.
 _GRAPH_QUALITY_BLOCKED_KEY = "graph_quality_blocked"
+# Conservative overplotting threshold: below this a scatter stays readable even
+# opaque; above it, opaque points hide the distribution and must use transparency
+# or aggregation. Set high to avoid catching legitimately dense station maps.
+_OVERPLOT_POINT_THRESHOLD = 1500
 
 
 def graph_recovery_pending(meta: dict[str, Any]) -> bool:
@@ -195,6 +205,29 @@ def _graph_quality_issue(plt: Any) -> str | None:
                     return (
                         f"Graph quality blocked: {len(long_labels)} {axis_name}-axis tick labels are too long. "
                         "Shorten labels to the terminal taxon/station name, wrap text, or truncate to 35 characters. "
+                        "Do not answer with a table; revise the matplotlib code and call run_graph again."
+                    )
+            # Overplotting guard (conservative): a scatter with a large number of
+            # fully opaque points renders an unreadable blob. Only block clearly
+            # egregious cases — a high point count AND no transparency — so a
+            # legitimately dense map with alpha is not caught.
+            from matplotlib.collections import PathCollection
+            for collection in ax.collections:
+                # Only scatter (PathCollection). hexbin/aggregations are
+                # PolyCollections — never block them, they ARE the fix.
+                if not isinstance(collection, PathCollection):
+                    continue
+                try:
+                    n_points = len(collection.get_offsets())
+                except (TypeError, ValueError):
+                    continue
+                alpha = collection.get_alpha()
+                opaque = alpha is None or alpha >= 0.95
+                if n_points > _OVERPLOT_POINT_THRESHOLD and opaque:
+                    return (
+                        f"Graph quality blocked: {n_points} overplotted points with no transparency "
+                        "hide the distribution. Add alpha (e.g. alpha=0.3-0.6), use smaller markers, "
+                        "or aggregate (hexbin / 2D density / per-cell counts). "
                         "Do not answer with a table; revise the matplotlib code and call run_graph again."
                     )
     return None
@@ -291,6 +324,14 @@ def _dataframe_vars(
 ) -> dict[str, Any]:
     """Build the DataFrame namespace shared by pandas and graph tools."""
     local_vars: dict[str, Any] = {"df": df, "pd": pd}
+    loaded = loaded_file_dataset(store, thread_id)
+    if loaded and loaded.get("df") is not None:
+        # Stable left-hand side for cross-source analysis. This does not
+        # replace the active ``df`` after a remote query.
+        local_vars["loaded_file"] = loaded["df"]
+        loaded_variable = (loaded.get("meta") or {}).get("variable_name")
+        if loaded_variable:
+            local_vars["loaded_file_variable"] = loaded_variable
     for alias in SOURCE_ALIASES:
         named = store.get(f"{thread_id}:{alias}")
         if named and named.get("df") is not None:
@@ -308,6 +349,56 @@ def _dataframe_vars(
         if project_id.isdigit() and named and named.get("df") is not None:
             local_vars.setdefault(f"df_ecopart_{project_id}", named["df"])
     return local_vars
+
+
+def _zone_geometry_vars() -> dict[str, Any]:
+    """Expose the registered zone geometries to graph code without serialising WKT.
+
+    Zone polygons are local, trusted registry data. Keeping them out of the
+    model-visible tool result avoids sending hundreds of KB of WKT through the
+    context while allowing ``run_graph`` to draw the exact registered outlines.
+    """
+    registry = load_registry(
+        Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
+    )
+    return {
+        "zone_polygons": {zone.canonical: zone.polygon for zone in registry.zones},
+        "zone_sources": {zone.canonical: zone.source for zone in registry.zones},
+    }
+
+
+def _infer_station_map_contract(figure: Any) -> dict[str, Any] | None:
+    """Infer the safe default contract for a point map when the model omitted it."""
+    axes = [
+        axis for axis in getattr(figure, "axes", [])
+        if axis.__class__.__module__.startswith("cartopy.")
+    ]
+    if len(axes) != 1:
+        return None
+    point_artist = next(
+        (
+            artist for artist in getattr(axes[0], "collections", [])
+            if getattr(artist, "get_offsets", None) is not None
+            and len(artist.get_offsets()) > 0
+        ),
+        None,
+    )
+    if point_artist is None:
+        return None
+    point_artist.set_gid("station_map_points")
+    return {
+        "kind": "station_map",
+        "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+        "inverted_axes": [],
+        "mappings": {
+            "position": {
+                "variable": "longitude_latitude",
+                "artist_gid": "station_map_points",
+            },
+        },
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": ["longitude", "latitude"],
+    }
 
 
 _CANONICAL_COLUMNS = frozenset(
@@ -354,6 +445,46 @@ def _column_location_hint(error: Exception, local_vars: dict[str, Any]) -> str:
         f"\nLa colonne `{missing}` est absente de la table active `df` mais "
         f"présente dans : {', '.join(holders)}. Cible la variable explicite."
     )
+
+
+_JOIN_CODE_PATTERN = re.compile(
+    r"\.merge\s*\(|\bpd\.merge\s*\(|\bpd\.concat\s*\(|\.join\s*\(|\bmerge_asof\s*\(",
+    re.IGNORECASE,
+)
+
+
+def _is_join_code(code: str) -> bool:
+    """True when the executed code builds a joined/merged/concatenated table."""
+    return bool(_JOIN_CODE_PATTERN.search(code or ""))
+
+
+def _result_is_direct_join(code: str) -> bool:
+    """Return whether ``result`` itself is assigned from a join operation.
+
+    Analytical merges (for example, joining yearly denominators onto a control
+    table) must not silently replace the active source dataset. A direct
+    ``result = left.merge(right, ...)`` remains a genuine join workflow.
+    AST inspection keeps this distinction semantic instead of matching domain
+    words or variable names.
+    """
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "result" for target in node.targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call):
+            if isinstance(value.func, ast.Attribute) and value.func.attr in {"merge", "join", "concat"}:
+                return True
+            if isinstance(value.func, ast.Attribute) and value.func.attr == "merge":
+                return True
+            if isinstance(value.func, ast.Name) and value.func.id in {"merge", "concat"}:
+                return True
+    return False
 
 
 def _is_neolabs_columns(columns) -> bool:
@@ -436,6 +567,52 @@ def _persist_canonical_sample_depth(
     )
 
 
+def _reuse_loaded_file(
+    store: SessionStore,
+    thread_id: str,
+    variable_name: str,
+    cached: dict,
+    requested_path: str,
+):
+    """Return the already-loaded file as the active dataset, without re-reading.
+
+    Used when `load_file` is called for a path whose DataFrame is already in the
+    session: reuse avoids duplicate I/O and survives an upload path that has
+    since expired.
+    """
+    meta = dict(cached.get("meta") or {})
+    df = cached["df"]
+    col_names = list(df.columns)
+    resolved_path = meta.get("path", requested_path)
+    source_alias = _source_alias_for_loaded_file(str(resolved_path), col_names)
+    store_dataset(
+        store,
+        thread_id,
+        df,
+        variable_name=variable_name,
+        meta=meta,
+        latest_alias=source_alias,
+        is_loaded_file=True,
+    )
+    from tools.source_scope import activate_file_source  # noqa: PLC0415
+
+    activate_file_source(store, thread_id, origin_user_text=str(resolved_path))
+    n_rows = meta.get("n_rows", len(df))
+    n_cols = meta.get("n_cols", len(col_names))
+    alias_note = f"\nAlias de session : `{source_alias}`" if source_alias else ""
+    return success(
+        "Fichier déjà chargé en session — réutilisé sans relecture.\n"
+        f"{n_rows} lignes × {n_cols} colonnes\n"
+        f"Variable persistante : `{variable_name}`\n"
+        f"Colonnes : {', '.join(map(str, col_names))}"
+        f"{alias_note}",
+        data_ref=variable_name,
+        provenance={"source": "file", "path": str(resolved_path)},
+        persisted=True,
+        method="file loader (session cache)",
+    )
+
+
 def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     """Crée les tools data pour un thread donné.
 
@@ -445,7 +622,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     """
     _store = store or default_store
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def load_file(path: str) -> str:
         """Charge un fichier de données (CSV, TSV, Excel, JSON, Parquet) pour l'analyser.
 
@@ -457,12 +634,28 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - Essaie une variante du chemin si le fichier est dans /tmp/webui_uploads/.
         - Ne signale l'erreur à l'utilisateur qu'après avoir épuisé ces options.
         """
+        variable_name = dataset_variable_name("file", Path(path).stem)
+
+        # Idempotent: a file already loaded in this session is reused instead of
+        # being re-read. Avoids wasted I/O across turns and, crucially, avoids
+        # failing when an upload path has since expired while the DataFrame is
+        # still in session.
+        cached = _store.get(f"{thread_id}:dataset:{variable_name}")
+        if cached is not None and cached.get("df") is not None:
+            return _reuse_loaded_file(
+                _store, thread_id, variable_name, cached, path
+            )
+
         try:
             df, meta = _load_file(path)
         except (FileNotFoundError, ValueError) as e:
-            return f"Erreur : {e}"
+            return error(
+                f"Erreur : {e}",
+                provenance={"source": "file", "path": path},
+                retryable=True,
+                method="file loader",
+            )
 
-        variable_name = dataset_variable_name("file", Path(path).stem)
         col_names = [c["name"] for c in meta["columns"]]
         source_alias = _source_alias_for_loaded_file(meta["path"], col_names)
         store_dataset(
@@ -473,6 +666,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             meta={**meta, "source": f"file:{meta['path']}"},
             latest_alias=source_alias,
             is_loaded_file=True,
+        )
+        from tools.source_scope import activate_file_source  # noqa: PLC0415
+
+        activate_file_source(
+            _store,
+            thread_id,
+            origin_user_text=str(meta["path"]),
         )
         cols = ", ".join(col_names)
 
@@ -492,7 +692,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
 
         enc_note = f" (encodage : {meta['encoding']})" if meta.get("encoding") else ""
-        return (
+        summary = (
             f"Fichier chargé : {meta['path']}{enc_note}\n"
             f"{meta['n_rows']} lignes × {meta['n_cols']} colonnes\n"
             f"Variable persistante : `{variable_name}`\n"
@@ -501,8 +701,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             f"{route_note}"
             + (f"\n\n{hint}" if hint else "")
         )
+        return success(
+            summary,
+            data_ref=variable_name,
+            provenance={"source": "file", "path": str(meta["path"])},
+            persisted=True,
+            method="file loader",
+            metrics={"rows": int(meta["n_rows"]), "columns": int(meta["n_cols"])},
+        )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def run_pandas(code: str) -> str:
         """Exécute du code Python/pandas sur le(s) DataFrame(s) chargés.
 
@@ -518,24 +726,35 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - `df_ogsl`      : dernier fichier OGSL chargé ou dérivé
         - `df_ogsl_enriched`: dernière table enrichie avec OGSL
         - `df_sql`       : dernière copie SQL matérialisée
+        - `loaded_file`  : fichier original chargé, immuable comme table de référence
+        - `df_file_*`    : fichiers chargés, y compris après une requête EcoTaxa
 
-        Assigne le résultat à la variable `result`.
+        Pour comparer un fichier et EcoTaxa, utilise `loaded_file` ou le
+        `df_file_*` correspondant comme table de gauche et
+        `df_ecotaxa_cache_query` comme table de droite. Le `df` actif peut être
+        le résultat EcoTaxa et ne remplace jamais `loaded_file`.
+
+        Assigne le résultat à la variable `result`. Les sorties `print(...)`
+        exécutées dans le même appel sont également capturées et renvoyées,
+        afin qu'un tableau de contrôle préparé explicitement ne soit pas perdu.
         Pour une jointure : result = df_ecotaxa.merge(df_ctd, on='station_id', how='left')
 
         IMPORTANT: each call to run_pandas is isolated — variables computed in a
         previous call (e.g. `station_stats`, `delta_df`) are NOT available in the
-        next call. Exception: a canonical sample-depth DataFrame assigned to
-        `result` is persisted automatically as `df_canonical_sample_depth` and
-        MUST be reused by later tables, correlations, and graphs. Every DataFrame
-        output states `Persistence: persisted=true|false`; never describe an
-        ephemeral (`false`) result as saved.
+        next call. Exceptions persisted automatically and reusable by their exact
+        name in later turns:
+        - a canonical sample-depth DataFrame → `df_canonical_sample_depth`;
+        - a join/merge/concat result → a new `df_join_*` table (reuse it instead
+          of re-joining the source files).
+        Every DataFrame output states `Persistence: persisted=true|false`; never
+        describe an ephemeral (`false`) result as saved.
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
-            return "Aucun fichier chargé. Utilise load_file d'abord."
+            return blocked("Aucun fichier chargé. Utilise load_file d'abord.")
         meta = session.get("meta") or {}
         if graph_recovery_pending(meta):
-            return (
+            return blocked(
                 "Graph quality recovery: the previous graph was blocked for readability. "
                 "Do not answer with a table; revise the matplotlib code and call run_graph again."
             )
@@ -544,6 +763,26 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         local_vars: dict[str, Any] = {}
 
         try:
+            code_lower = code.lower()
+            if (
+                "zone" in code_lower
+                and "bbox" in code_lower
+                and (
+                    "ax.plot" in code_lower
+                    or "rectangle" in code_lower
+                    or "mplpolygon" in code_lower
+                    or "add_patch" in code_lower
+                )
+                and ("sample" in code_lower or "plot_df" in code_lower)
+            ):
+                _mark_graph_quality_blocked(_store, thread_id)
+                return blocked(
+                    "named-zone sample maps must draw the exact `zone_polygons` "
+                    "geometries with Cartopy ShapelyFeature; do not draw bbox "
+                    "rectangles. Retry exactly once with the same active dataframe.",
+                    retryable=True,
+                    method="registered zone boundary validation",
+                )
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
@@ -555,13 +794,17 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
             guard = _neolabs_copepod_guard(code, local_vars)
             if guard:
-                return guard
+                return blocked(guard, method="controlled pandas execution")
 
-            exec(code, local_vars)  # noqa: S102
+            apply_restricted_builtins(local_vars)
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exec(code, local_vars)  # noqa: S102
+            printed_output = stdout.getvalue().strip()
 
             if plt.get_fignums():
                 plt.close("all")
-                return (
+                return blocked(
                     "Error: run_pandas produced a matplotlib figure. "
                     "Use run_graph instead to execute visualization code."
                 )
@@ -581,21 +824,82 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 _store, thread_id, new_vars, result
             )
 
+            # A join workflow may keep the joined DataFrame in a named
+            # intermediate (`joined`, `merged`, or `result_df`) while assigning
+            # a compact summary dict to `result`. Persist that named table too;
+            # otherwise the next turn cannot reuse the active joined file.
+            join_variable = None
+            join_frame = None
+            if not canonical_note and _is_join_code(code):
+                preferred_join = next(
+                    (
+                        new_vars[name]
+                        for name in ("joined", "merged", "result_df")
+                        if isinstance(new_vars.get(name), pd.DataFrame)
+                    ),
+                    None,
+                )
+                if isinstance(result, pd.DataFrame) and (
+                    _result_is_direct_join(code) or preferred_join is not None
+                ):
+                    join_frame = result
+                else:
+                    join_frame = preferred_join
+                if join_frame is not None:
+                    join_variable = dataset_variable_name(
+                        "join", uuid.uuid4().hex[:12]
+                    )
+                    store_dataset(
+                        _store,
+                        thread_id,
+                        join_frame,
+                        variable_name=join_variable,
+                        meta={
+                            "source": "analysis:join",
+                            "n_rows": int(join_frame.shape[0]),
+                            "n_cols": int(join_frame.shape[1]),
+                        },
+                        latest_alias=join_variable,
+                    )
+
             if result is None:
+                printed_note = (
+                    "\n\nSortie contrôlée du code :\n" + printed_output
+                    if printed_output else ""
+                )
                 if canonical_note:
-                    return "Code exécuté." + canonical_note
-                return "Code exécuté (aucune variable `result` assignée)."
+                    return success(
+                        "Code exécuté." + canonical_note + printed_note,
+                        data_ref="df_canonical_sample_depth",
+                        persisted=True,
+                        method="controlled pandas execution",
+                    )
+                return success(
+                    "Code exécuté (aucune variable `result` assignée)." + printed_note,
+                    method="controlled pandas execution",
+                )
             if isinstance(result, pd.DataFrame):
                 n_rows, n_cols = result.shape
                 preview = result.head(20).to_markdown(index=False)
                 suffix = " (aperçu 20 premières)" if n_rows > 20 else ""
-                persistence_note = canonical_note
-                persistence_contract = (
-                    "\nPersistence: persisted=true; "
-                    "variable=df_canonical_sample_depth"
-                    if canonical_note
-                    else "\nPersistence: persisted=false; variable=null — "
-                    "résultat éphémère à cet appel"
+
+                persisted_variable = (
+                    "df_canonical_sample_depth" if canonical_note else join_variable
+                )
+                if persisted_variable:
+                    persistence_contract = (
+                        f"\nPersistence: persisted=true; variable={persisted_variable}"
+                    )
+                else:
+                    persistence_contract = (
+                        "\nPersistence: persisted=false; variable=null — "
+                        "résultat éphémère à cet appel"
+                    )
+                join_note = (
+                    f"\nVariable persistante : `{join_variable}` — table jointe "
+                    "réutilisable dans les prochains tours."
+                    if join_variable
+                    else ""
                 )
                 attrs_note = ""
                 if result.attrs:
@@ -608,22 +912,56 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                             default=str,
                         )
                     )
-                return (
+                summary = (
                     f"{n_rows} lignes × {n_cols} colonnes{suffix}"
-                    f"{persistence_note}{persistence_contract}{attrs_note}"
+                    f"{canonical_note}{join_note}{persistence_contract}{attrs_note}"
                     f"\n\n{preview}"
                 )
-            return str(result) + canonical_note
+                if printed_output:
+                    summary += "\n\nSortie contrôlée du code :\n" + printed_output
+                if n_rows > 20:
+                    summary += (
+                        "\n\nAttention : ce tableau est un aperçu des 20 premières "
+                        "lignes seulement. Ne complète pas les lignes absentes ; "
+                        "utilise un nouveau run_pandas ciblé pour obtenir une autre "
+                        "page ou un agrégat vérifiable."
+                    )
+                return success(
+                    summary,
+                    data_ref=persisted_variable,
+                    persisted=bool(persisted_variable),
+                    method="controlled pandas execution",
+                    metrics={"rows": int(n_rows), "columns": int(n_cols)},
+                )
+            persistence_note = ""
+            if join_variable:
+                persistence_note = (
+                    f"\nVariable persistante : `{join_variable}` — table jointe "
+                    "réutilisable dans les prochains tours."
+                    f"\nPersistence: persisted=true; variable={join_variable}"
+                )
+            return success(
+                str(result) + canonical_note + persistence_note,
+                data_ref=(
+                    "df_canonical_sample_depth"
+                    if canonical_note
+                    else join_variable
+                ),
+                persisted=bool(canonical_note or join_variable),
+                method="controlled pandas execution",
+            )
 
         except Exception as e:
             cols_info = df.dtypes.to_string()
             hint = _column_location_hint(e, local_vars)
-            return (
+            return error(
                 f"Erreur : {type(e).__name__}: {e}{hint}"
-                f"\n\nColonnes disponibles :\n{cols_info}"
+                f"\n\nColonnes disponibles :\n{cols_info}",
+                retryable=True,
+                method="controlled pandas execution",
             )
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def run_graph(code: str) -> str:
         """Execute matplotlib code on the loaded file and return the graph image.
 
@@ -638,16 +976,22 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         Do NOT call plt.show() or plt.savefig().
 
         The return value is the graph image — include it verbatim in your response.
-        Standalone figures (e.g. cartopy zone maps) work without any loaded file.
+        Standalone figures work without a file only for boundary-only maps. A
+        map of samples must use an exact persisted named DataFrame; do not rely
+        on bare `df` when the request concerns a source selection.
         """
         session = _store.get(thread_id)
         df = session.get("df") if session else None
         loaded_skills = ((session or {}).get("meta") or {}).get("loaded_skills") or []
-        if loaded_skills and "graph_writer" not in loaded_skills:
-            return (
-                'Graph workflow blocked: call load_skill("graph_writer") before run_graph. '
-                "Loaded analysis/planning skills are not executable graph templates; graph_writer provides the required template."
-            )
+        if "graph_writer" not in loaded_skills:
+            # Recover the common model-routing slip locally. The model already
+            # supplied executable graph code; activating the reviewed writer
+            # skill lets the render attempt continue instead of ending the
+            # whole user turn on a recoverable sequencing error.
+            from tools.skill_tool import _record_loaded_skill
+
+            _record_loaded_skill(_store, thread_id, "graph_writer")
+            loaded_skills = [*loaded_skills, "graph_writer"]
 
         try:
             import matplotlib
@@ -661,7 +1005,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 local_vars = _dataframe_vars(_store, thread_id, df)
             else:
                 local_vars = {"pd": pd}
+            local_vars.update(_zone_geometry_vars())
             local_vars["plt"] = plt
+            apply_restricted_builtins(local_vars)
             with _cartopy_safe_tight_layout(plt):
                 exec(code, local_vars)  # noqa: S102
 
@@ -670,16 +1016,28 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 for fig_num in plt.get_fignums():
                     figure = plt.figure(fig_num)
                     graph_contract = normalize_graph_contract(graph_contract, figure)
+                    if graph_contract is None:
+                        graph_contract = _infer_station_map_contract(figure)
                     contract_issue = validate_graph_contract(graph_contract, figure)
                     if contract_issue:
                         plt.close("all")
                         _mark_graph_quality_blocked(_store, thread_id)
-                        return contract_issue
+                        return blocked(
+                            f"{contract_issue} Retry exactly once: revise the graph code using this diagnostic, "
+                            "reuse the same active dataframe, and call run_graph again. Do not answer with a table.",
+                            retryable=True,
+                            method="graph contract validation",
+                        )
                 quality_issue = _graph_quality_issue(plt)
                 if quality_issue:
                     plt.close("all")
                     _mark_graph_quality_blocked(_store, thread_id)
-                    return quality_issue
+                    return blocked(
+                            f"{quality_issue} Retry exactly once: revise the graph code using this diagnostic, "
+                            "reuse the same active dataframe, and call run_graph again. Do not answer with a table.",
+                            retryable=True,
+                            method="graph quality validation",
+                        )
                 buf = io.BytesIO()
                 plt.savefig(buf, **_graph_savefig_kwargs(plt))
                 buf.seek(0)
@@ -693,10 +1051,25 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     explanation = graph_explanation.strip()
                     if not explanation.lower().startswith("lecture rapide"):
                         explanation = f"Lecture rapide:\n{explanation}"
-                    return f"{image_markdown}\n\n{explanation}"
-                return image_markdown
+                    summary = f"{image_markdown}\n\n{explanation}"
+                    return success(
+                        summary,
+                        artifact_refs=(graph_url(f"{graph_id}.png"),),
+                        persisted=True,
+                        method="controlled matplotlib execution",
+                    )
+                return success(
+                    image_markdown,
+                    artifact_refs=(graph_url(f"{graph_id}.png"),),
+                    persisted=True,
+                    method="controlled matplotlib execution",
+                )
 
-            return "Code executed but no figure was produced. Make sure your matplotlib code creates a figure."
+            return empty(
+                "Code executed but no figure was produced. Make sure your matplotlib code creates a figure.",
+                retryable=True,
+                method="controlled matplotlib execution",
+            )
 
         except Exception as e:
             # Only surface the columns hint when a loaded dataframe is actually
@@ -704,10 +1077,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             # no file, and appending "(no file loaded)" wrongly suggests the
             # error is a missing file rather than a plotting bug.
             if df is not None:
-                return (
+                return error(
                     f"Error: {type(e).__name__}: {e}\n\n"
-                    f"Available columns:\n{df.dtypes.to_string()}"
+                    f"Available columns:\n{df.dtypes.to_string()}",
+                    retryable=True,
+                    method="controlled matplotlib execution",
                 )
-            return f"Error: {type(e).__name__}: {e}"
+            return error(
+                f"Error: {type(e).__name__}: {e}",
+                retryable=True,
+                method="controlled matplotlib execution",
+            )
 
     return [load_file, run_pandas, run_graph]

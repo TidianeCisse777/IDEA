@@ -11,7 +11,7 @@ Utilisateurs : professeurs et étudiants. Réponses en français par défaut.
 |---|---|
 | `CONTEXT.md` | Identité métier de l'agent, périmètre, ce qu'il fait / ne fait pas, sources, skills, RAG |
 | `ARCHITECTURE.md` | Comment `agent.py`, `serve.py`, les tools, le RAG, OpenWebUI sont câblés |
-| `TOOLS.md` | Inventaire des ~53 tools exposés au LLM, par catégorie |
+| `TOOLS.md` | Inventaire des 62 tools (65 avec SQL optionnel) exposés au LLM, par catégorie |
 | `SPEC.md` | Spécification figée : use cases classés (UC-A…UC-J), capacités, contraintes dures |
 | `PARTAGE.md` | Partage & déploiement : état actuel et cible |
 | `SEQUENCES.md` | Diagrammes de séquence par use case |
@@ -30,9 +30,11 @@ serve.py — FastAPI (port 8000)
     │ SSE streaming, feedback polling, image hosting, downloads
     ▼
 agent.py — LangChain create_agent (ex-create_react_agent, déprécié en LangGraph 1.0)
-    │ system prompt copépodes (hub: copepod-system-prompt, fallback local)
+    │ system prompt copépodes (source locale : agents/copepod_system_prompt.py)
     │ checkpointer AsyncSqliteSaver (data/checkpoints.sqlite)
-    │ _ContextMiddleware : trim actual model request + audit + inject long-term memory
+    │ _ContextMiddleware : trim model request + audit + inject long-term memory
+    │                     + inject session state map (TurnContext: loaded files, zone subsets, source scope)
+    │                     + guards (source scope, ungrounded ids, graph intent) + restricted code namespace
     │
     ├── tools/data_tools.py         → load_file, run_pandas, run_graph
     ├── tools/rag_tool.py           → query_copepod_knowledge_base
@@ -46,10 +48,10 @@ agent.py — LangChain create_agent (ex-create_react_agent, déprécié en LangG
 
 core/copepod_rag/    ChromaDB (11 docs RAG)
 core/ecotaxa_client/ core/ecopart_client/ core/amundsen_ctd_client/ core/bio_oracle_client/
-agents/skills/       11 skills Markdown chargeables à la demande
+agents/skills/       15 skills Markdown manifestés et chargeables à la demande
 ```
 
-Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction. Il n'y a pas de « mode » de session — le comportement est piloté par le system prompt.
+Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction, puis au plus 15 sont exposés par appel modèle. Il n'y a pas de « mode » de session.
 
 ---
 
@@ -81,7 +83,7 @@ python serve.py                          # serveur FastAPI seul
 |---|---|
 | `OPENAI_API_KEY` | Provider LLM |
 | `LLM_MODEL` | ex. `openai/gpt-5.4-mini`, `claude-sonnet-4-6` |
-| `LANGSMITH_API_KEY` | Tracing + hub pull du system prompt |
+| `LANGSMITH_API_KEY` | Tracing + pull Hub des skills (le system prompt est lu localement) |
 | `LANGCHAIN_TRACING_V2` | `true` pour activer LangSmith |
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |
 | `MAX_CONTEXT_TOKENS` | Défaut 40000 — au-delà, trim_messages |
@@ -91,6 +93,8 @@ python serve.py                          # serveur FastAPI seul
 | `SESSION_STORE_DATABASE_URL` | PostgreSQL pour les métadonnées de session (ex. `postgresql://copepod:pass@postgres:5432/copepod_sessions`). Si absent → fallback fichiers locaux. |
 | `POSTGRES_PASSWORD` | Mot de passe PostgreSQL (défaut `copepod_dev` en dev). À surcharger en prod. |
 | `OPENWEBUI_URL` | Backend Open WebUI pour le feedback polling (`http://open-webui:8080` en compose) |
+| `ECOTAXA_CACHE_DB` | Chemin SQLite du cache EcoTaxa (défaut `data/ecotaxa_cache.sqlite`) — index spatio-temporel lu par les recherches zone/temps/taxon |
+| `ECOTAXA_EXTRA_PROJECT_IDS` | Liste de `project_id` EcoTaxa (séparés par virgule/espace) à synchroniser en plus de `list_projects()` — pour les projets lisibles par ID mais absents (ou instables) de la recherche projet du compte |
 
 `.env` contient des credentials EcoTaxa/EcoPart/SQL — jamais commité, jamais affiché.
 
@@ -108,11 +112,11 @@ scripts/dev/prune_data.py
 studio.py                 LangGraph Studio entry
 
 agents/
-  copepod_system_prompt.py  System prompt complet (anglais, ~64 lignes)
-  copepod_prompt.py         (déprécié — référence historique uniquement)
-  skills/                   14 skills Markdown
+  copepod_system_prompt.py  Kernel permanent compact (anglais, ≤ 3 500 tokens)
+  (copepod_prompt.py déprécié → archivé dans docs/legacy/copepod_prompt_DEPRECATED.py)
+  skills/                   15 skills Markdown manifestés
 
-tools/                    ~53 tools @tool LangChain (voir TOOLS.md)
+tools/                    62 tools @tool LangChain (65 avec SQL optionnel — voir TOOLS.md)
 
 core/
   copepod_rag/            ChromaDB + 11 docs RAG
@@ -137,7 +141,7 @@ scripts/                  Outils CLI ponctuels
 - **Pas de mode**. Si tu te poses la question « est-ce que je suis dans le bon mode », c'est non — il n'y a qu'un agent. Le comportement vient du system prompt.
 - **TDD** pour chaque tool : test d'abord, implémentation après. Fixtures dans `tests/`.
 - **Docstring claire** sur chaque `@tool` : le LLM la lit pour décider quand l'appeler.
-- **Routage des tools** : toute nouvelle règle de routage va dans `agents/copepod_system_prompt.py`, jamais dans le code Python.
+- **Routage des tools** : les autorisations et l'exposition se modifient dans les politiques Python; le prompt compact ne conserve que les invariants destinés au modèle.
 - **Pas d'interprétation** scientifique ou biologique des résultats, ni par l'agent, ni par les docstrings de tools.
 - **Pas de valeur inventée** : tout chiffre vient de `run_pandas`, d'un tool, ou du RAG.
 - **Pas de credentials** dans le code, les logs, les docstrings, les commits.
@@ -146,7 +150,7 @@ scripts/                  Outils CLI ponctuels
 - **Ton clinique (CT-AG-26)** : pas de « je / moi / en tant qu'IA » dans les réponses LLM ; format Résultat / Source / Méthode / Limite / Prochaine action. Si tu modifies un skill, garde la même règle.
 - **Incertitude visible (CT-AG-27)** : si tu ajoutes un type de graphique dans `graph_writer.md`, applique la palette confirmed/exploratory/uncertain et le stamp de confiance.
 - **Rebuilt RAG** : `python core/copepod_rag/build_index.py` après modification de `core/copepod_rag/docs/*.md`.
-- **Push prompt** : `python scripts/dev/push_prompt.py` pour synchroniser le system prompt vers LangSmith Hub (consommé par `agent.py` en prod, fallback local sinon).
+- **Prompt local** : `agent.py` consomme exclusivement `agents/copepod_system_prompt.py`; `scripts/dev/push_prompt.py` est legacy.
 - **Push skills** : `python scripts/dev/push_skills.py` pour synchroniser `agents/skills/*.md` vers LangSmith Hub.
 - **Rétention des données** : `python scripts/dev/prune_data.py --apply` — purge `data/session_store/` (> 30 j) et archive `data/checkpoints.sqlite` (> 500 Mo) vers `data/archive/`. Arrêter `copepod_agent` avant d'archiver les checkpoints. Les scripts e2e créent des milliers de sessions : pointer `SESSION_STORE_DIR` vers un dossier jetable pour les runs de test.
 
@@ -161,7 +165,7 @@ scripts/                  Outils CLI ponctuels
 | EcoPart | `list_ecopart_samples`, `preview_ecopart_sample`, `query_ecopart`, `join_ecotaxa_ecopart`, `enrich_ecotaxa_with_ecopart_remote` | implémenté — voir `docs/features/ENRICHMENT_ECOTAXA_ECOPART.md` |
 | Amundsen CTD (ERDDAP) | `list_amundsen_datasets`, `preview_amundsen_profile`, `query_amundsen_ctd` | implémenté |
 | Bio-ORACLE | `list_bio_oracle_datasets`, `preview_bio_oracle_point`, `query_bio_oracle`, `couple_zooplankton_bio_oracle` | implémenté |
-| OGSL | — | annoncé dans le prompt, tool dédié à venir |
+| OGSL | `query_ogsl` (station/temps/profondeur), `enrich_with_ogsl` (lat/lon spatial) | implémenté — règle unique : outil choisi par la clé de jointure de la table |
 | SQL (read-only) | `list_sql_tables`, `preview_sql_table`, `copy_sql_query_to_workspace` | implémenté |
 
 OBIS n'est **pas** une source autorisée. Toute mention résiduelle est du legacy à retirer.

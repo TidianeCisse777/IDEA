@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, inspect, text
 from tools.public_url import download_url
 from tools.dataset_registry import SQL, dataset_variable_name, store_dataset
 from tools.session_store import default_store as _store
+from tools.tool_result import blocked, empty, error, success
 
 _SQL_DATABASE_URL_META_KEY = "sql_database_url"
 _FORBIDDEN_PREVIEW_CLAUSE_RE = re.compile(
@@ -551,16 +552,27 @@ def make_sql_tools(thread_id: str) -> list:
     workspace_root = Path(os.getenv("SQL_WORKSPACE_DIR", "data/sql_workspace"))
     workspace_root.mkdir(parents=True, exist_ok=True)
 
-    @tool
+    @tool(response_format="content_and_artifact")
     def list_sql_tables() -> str:
         """Cartographie les tables et vues visibles sur le serveur SQL en lecture seule."""
         try:
             overview = _database_overview(database_url)
         except Exception as exc:
-            return f"Erreur : {type(exc).__name__}: {exc}"
-        return _format_database_overview(overview)
+            return error(
+                f"Erreur : {type(exc).__name__}: {exc}",
+                retryable=True,
+                provenance={"source": "sql"},
+            )
+        summary = _format_database_overview(overview)
+        if not overview:
+            return empty(summary, provenance={"source": "sql"})
+        return success(
+            summary,
+            provenance={"source": "sql"},
+            metrics={"objects": len(overview)},
+        )
 
-    @tool("preview_sql_table")
+    @tool("preview_sql_table", response_format="content_and_artifact")
     def _preview_sql_table(
         table_name: str,
         limit: int = 10,
@@ -577,10 +589,18 @@ def make_sql_tools(thread_id: str) -> list:
                 order_by=order_by,
             )
         except Exception as exc:
-            return f"Erreur : {type(exc).__name__}: {exc}"
-        return preview
+            return blocked(
+                f"Erreur : {type(exc).__name__}: {exc}",
+                retryable=False,
+                provenance={"source": "sql", "table": table_name},
+            )
+        return success(
+            preview,
+            provenance={"source": "sql", "table": table_name},
+            method="read-only SQL preview",
+        )
 
-    @tool("copy_sql_query_to_workspace")
+    @tool("copy_sql_query_to_workspace", response_format="content_and_artifact")
     def _copy_sql_query_to_workspace(query: str, output_stem: str | None = None) -> str:
         """Exécute un SELECT read-only et écrit le résultat dans le workspace local."""
         try:
@@ -601,12 +621,24 @@ def make_sql_tools(thread_id: str) -> list:
                 meta={"source": "sql_workspace", "n_rows": len(dataframe), "path": str(output_path)},
                 latest_alias=SQL,
             )
-            return (
+            summary = (
                 f"Copie SQL créée — {len(dataframe)} lignes, {len(dataframe.columns)} colonnes.\n"
                 f"Données disponibles dans `{variable_name}` et `df_sql`.\n"
                 f"Télécharger : {download_url(output_path.name)}"
             )
+            return success(
+                summary,
+                data_ref=variable_name,
+                artifact_refs=(download_url(output_path.name),),
+                provenance={"source": "sql"},
+                persisted=True,
+                method="read-only SQL workspace copy",
+                metrics={"rows": len(dataframe), "columns": len(dataframe.columns)},
+            )
         except Exception as exc:
-            return f"Erreur : {type(exc).__name__}: {exc}"
+            return blocked(
+                f"Erreur : {type(exc).__name__}: {exc}",
+                provenance={"source": "sql"},
+            )
 
     return [list_sql_tables, _preview_sql_table, _copy_sql_query_to_workspace]

@@ -49,9 +49,17 @@ def test_default_candidates_cover_known_aliases():
     assert "object_lat" in DEFAULT_LAT_CANDIDATES
     assert "longitude" in DEFAULT_LON_CANDIDATES
     assert "object_date" in DEFAULT_TIME_CANDIDATES
+    assert "sample_date" in DEFAULT_TIME_CANDIDATES
     assert "deployment_datetime_start" in DEFAULT_TIME_CANDIDATES
     assert "object_depth_min" in DEFAULT_DEPTH_CANDIDATES
     assert "max_sample_depth" in DEFAULT_DEPTH_CANDIDATES
+
+
+def test_default_time_candidates_detect_e2e_sample_date_column():
+    assert detect_column(
+        ["station", "latitude", "longitude", "sample_date", "abundance"],
+        DEFAULT_TIME_CANDIDATES,
+    ) == "sample_date"
 
 
 # ---- geo ----------------------------------------------------------------
