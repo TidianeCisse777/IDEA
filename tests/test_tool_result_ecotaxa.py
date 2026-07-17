@@ -1,4 +1,4 @@
-"""ToolResult contracts for all 28 EcoTaxa tools."""
+"""ToolResult contracts for all EcoTaxa tools (family == "ecotaxa")."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def _call(item, call_id: str, **arguments) -> ToolMessage:
     return message
 
 
-def test_all_28_ecotaxa_tools_declare_structured_results(monkeypatch):
+def test_all_ecotaxa_tools_declare_structured_results(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "")
     from tools.tool_catalog import build_tool_catalog
 
@@ -32,7 +32,7 @@ def test_all_28_ecotaxa_tools_declare_structured_results(monkeypatch):
     }
     by_name = {item.name: item for item in catalog.tools}
 
-    assert len(names) == 28
+    assert len(names) == 33
     for name in names:
         assert by_name[name].response_format == "content_and_artifact", name
         assert catalog.policy(name).result_schema == "tool_result_v1", name

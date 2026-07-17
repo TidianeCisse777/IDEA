@@ -126,8 +126,8 @@ def test_build_tool_catalog_has_exact_mandatory_tool_count(monkeypatch):
 
     catalog = build_tool_catalog("catalog-no-sql")
 
-    assert len(catalog.tools) == 62
-    assert len(catalog.names) == 62
+    assert len(catalog.tools) == 65
+    assert len(catalog.names) == 65
     assert {tool.name for tool in catalog.tools} == catalog.names
     assert all(catalog.presentation(name) for name in catalog.names)
 
@@ -143,8 +143,8 @@ def test_build_tool_catalog_adds_exactly_three_optional_sql_tools(tmp_path, monk
 
     catalog = build_tool_catalog("catalog-with-sql")
 
-    assert len(catalog.tools) == 65
-    assert len(catalog.names) == 65
+    assert len(catalog.tools) == 68
+    assert len(catalog.names) == 68
     assert {
         "list_sql_tables",
         "preview_sql_table",
@@ -209,7 +209,7 @@ def test_all_data_source_tools_have_explicit_visibility_decisions(monkeypatch):
         in {"ecotaxa", "ecopart", "amundsen", "bio_oracle", "ogsl"}
     ]
 
-    assert len(source_metadata) == 52
+    assert len(source_metadata) == 55
     assert all(item.source_label is not None for item in source_metadata)
     assert all(catalog.presentation(name).source_result for name in FORMERLY_OMITTED_SOURCE_RESULTS)
 

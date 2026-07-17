@@ -63,6 +63,14 @@ def _get_tool(thread_id: str):
     )
 
 
+def _get_resolver(thread_id: str):
+    return next(
+        t
+        for t in make_source_tools(thread_id)
+        if t.name == "resolve_ecotaxa_sample"
+    )
+
+
 def test_lists_numeric_sample_ids_for_project(tmp_path, monkeypatch):
     cache = tmp_path / "ecotaxa_cache.sqlite"
     _seed_cache(str(cache))
@@ -89,3 +97,125 @@ def test_empty_project_reports_no_sample(tmp_path, monkeypatch):
 
     assert "99999" in out
     assert "aucun" in out.lower()
+
+
+def test_resolves_numeric_sample_id_across_projects(tmp_path, monkeypatch):
+    cache = tmp_path / "ecotaxa_cache.sqlite"
+    _seed_cache(str(cache))
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache))
+
+    out = _get_resolver("thread-resolve-id").invoke({"reference": "14859000001"})
+
+    assert "14859000001" in out
+    assert "14859" in out
+    assert "am_leg3_RA09_1" in out
+
+
+def test_resolves_label_without_project_id(tmp_path, monkeypatch):
+    cache = tmp_path / "ecotaxa_cache.sqlite"
+    _seed_cache(str(cache))
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache))
+
+    out = _get_resolver("thread-resolve-label").invoke(
+        {"reference": "AM_LEG4_RA76_1"}
+    )
+
+    assert "17498000023" in out
+    assert "| 17498000023 | 17498 |" in out
+
+
+def test_reports_ambiguous_station_instead_of_picking_one(tmp_path, monkeypatch):
+    cache = tmp_path / "ecotaxa_cache.sqlite"
+    _seed_cache(str(cache))
+    conn = open_connection(str(cache))
+    upsert_sample(
+        conn,
+        sample_id=14859000002,
+        project_id=14859,
+        lat_avg=82.4,
+        lon_avg=-60.8,
+        date_min="2024-08-23",
+        date_max="2024-08-23",
+        object_count=100,
+        instrument="UVP6",
+        last_synced="2026-07-14T00:00:00Z",
+        original_id="am_leg3_RA76_1",
+        station_id="RA76",
+    )
+    conn.close()
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache))
+
+    out = _get_resolver("thread-resolve-ambiguous").invoke({"reference": "RA76"})
+
+    assert "plusieurs" in out.lower() or "ambigu" in out.lower()
+    assert "17498000023" in out
+    assert "14859000002" in out
+
+
+def test_project_id_disambiguates_station(tmp_path, monkeypatch):
+    cache = tmp_path / "ecotaxa_cache.sqlite"
+    _seed_cache(str(cache))
+    conn = open_connection(str(cache))
+    upsert_sample(
+        conn,
+        sample_id=14859000002,
+        project_id=14859,
+        lat_avg=82.4,
+        lon_avg=-60.8,
+        date_min="2024-08-23",
+        date_max="2024-08-23",
+        object_count=100,
+        instrument="UVP6",
+        last_synced="2026-07-14T00:00:00Z",
+        original_id="am_leg3_RA76_1",
+        station_id="RA76",
+    )
+    conn.close()
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache))
+
+    out = _get_resolver("thread-resolve-project").invoke(
+        {"reference": "RA76", "project_id": 14859}
+    )
+
+    assert "14859000002" in out
+    assert "17498000023" not in out
+
+
+def test_reports_unknown_reference(tmp_path, monkeypatch):
+    cache = tmp_path / "ecotaxa_cache.sqlite"
+    _seed_cache(str(cache))
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache))
+
+    out = _get_resolver("thread-resolve-missing").invoke(
+        {"reference": "station-inconnue"}
+    )
+
+    assert "aucun" in out.lower() or "introuv" in out.lower()
+
+
+def test_resolves_scalar_free_field_reference(tmp_path, monkeypatch):
+    cache = tmp_path / "ecotaxa_cache.sqlite"
+    _seed_cache(str(cache))
+    conn = open_connection(str(cache))
+    upsert_sample(
+        conn,
+        sample_id=17498000062,
+        project_id=17498,
+        lat_avg=79.5,
+        lon_avg=-73.0,
+        date_min="2024-09-16",
+        date_max="2024-09-16",
+        object_count=10,
+        instrument="UVP6",
+        last_synced="2026-07-14T00:00:00Z",
+        original_id="am_leg4_RA41_2",
+        free_fields_json='{"deployment_id": "DEP-RA41-2024"}',
+    )
+    conn.close()
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache))
+
+    out = _get_resolver("thread-resolve-free-field").invoke(
+        {"reference": "dep-ra41-2024"}
+    )
+
+    assert "17498000062" in out

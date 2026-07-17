@@ -39,7 +39,9 @@ from core.ecotaxa_browser.cache.repo import (
     cache_progress,
     init_schema,
     open_connection,
+    project_cache_coverage,
     query_samples_filtered,
+    resolve_samples,
 )
 from core.geo import audit_zone_coverage, load_registry
 
@@ -78,6 +80,11 @@ def _eco_blocked(summary: str, **fields):
 
 def _eco_error(summary: str, **fields):
     return _ecotaxa_output(error, summary, **fields)
+
+
+def _fmt_coord(value) -> str:
+    """Format a latitude/longitude, tolerating NULL (coordinate-less samples)."""
+    return f"{value:.3f}" if isinstance(value, (int, float)) else "—"
 
 
 def _ecotaxa_project_url(project_id) -> str:
@@ -337,6 +344,8 @@ def make_source_tools(thread_id: str) -> list:
         samples: list[dict],
         filters: dict,
     ) -> None:
+        import pandas as pd
+
         sample_ids = [int(sample["sample_id"]) for sample in samples]
         project_ids = sorted({int(sample["project_id"]) for sample in samples})
         meta = {
@@ -349,6 +358,53 @@ def make_source_tools(thread_id: str) -> list:
         }
         _store.set(f"{thread_id}:selection:{name}", None, meta)
         _store.set(f"{thread_id}:ecotaxa_selection_latest", None, meta)
+
+        # Keep the exploration result usable by run_pandas/run_graph without
+        # starting an EcoTaxa export. Region searches already contain most
+        # fields; annual groupings only carry IDs, so complete them from cache.
+        cache_rows: dict[int, dict] = {}
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            cache_rows = {
+                int(row["sample_id"]): dict(row)
+                for row in query_samples_filtered(conn)
+            }
+            conn.close()
+        except Exception:
+            cache_rows = {}
+
+        table_rows = []
+        for sample in samples:
+            cached = cache_rows.get(int(sample["sample_id"]), {})
+            row = {**cached, **sample}
+            table_rows.append({
+                "sample_id": int(row["sample_id"]),
+                "project_id": int(row["project_id"]),
+                "latitude": row.get("latitude", row.get("lat", row.get("lat_avg"))),
+                "longitude": row.get("longitude", row.get("lon", row.get("lon_avg"))),
+                "station_id": row.get("station_id"),
+                "original_id": row.get("original_id"),
+                "profile_id": row.get("profile_id"),
+                "date_min": row.get("date_min"),
+                "date_max": row.get("date_max"),
+                "depth_min": row.get("depth_min"),
+                "depth_max": row.get("depth_max"),
+                "instrument": row.get("instrument"),
+                "object_count": row.get("object_count"),
+            })
+
+        if table_rows:
+            variable_name = dataset_variable_name("ecotaxa", "selection", name)
+            store_dataset(
+                _store,
+                thread_id,
+                pd.DataFrame(table_rows),
+                variable_name=variable_name,
+                latest_alias=ECOTAXA,
+                meta={**meta, "n_rows": len(table_rows), "source_scope": "local_cache"},
+            )
 
     def _load_sample_selection(selection_name: str | None) -> tuple[str | None, list[int]]:
         if not selection_name:
@@ -877,6 +933,11 @@ def make_source_tools(thread_id: str) -> list:
     def list_ecotaxa_project_samples(project_id: int) -> str:
         """Liste les samples d'un projet EcoTaxa avec leur `sample_id` numérique.
 
+        Ce tool exige un `project_id` explicitement connu. Pour un label,
+        station, profil ou `sample_id` sans projet, utiliser
+        `resolve_ecotaxa_sample(reference=..., project_id=None)` : ne jamais
+        déduire le projet à partir du préfixe d'un label.
+
         À utiliser pour résoudre le `sample_id` numérique EcoTaxa (ex.
         `17498000023`) à partir du label / `original_id` d'un sample (ex.
         `am_leg4_RA76_1`). Les autres outils de présentation montrent le label,
@@ -926,6 +987,74 @@ def make_source_tools(thread_id: str) -> list:
             "\n".join(lines),
             provenance={"project_id": int(project_id)},
             metrics={"samples": len(rows)},
+        )
+
+    @tool(response_format="content_and_artifact")
+    def resolve_ecotaxa_sample(
+        reference: str,
+        project_id: int | None = None,
+    ) -> str:
+        """Résout une référence de sample EcoTaxa dans tous les projets cachés.
+
+        `reference` peut être un `sample_id` numérique, un label/original_id,
+        une station, un profil ou une valeur de free field. La recherche est
+        locale, insensible à la casse et aux espaces, et ne choisit jamais
+        silencieusement un sample si plusieurs correspondances existent.
+        Passe `project_id` uniquement pour lever une ambiguïté entre projets.
+        Lecture seule ; ne synchronise pas EcoTaxa automatiquement.
+        """
+        if not str(reference or "").strip():
+            return _eco_blocked("Erreur : reference est vide.")
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            rows = resolve_samples(conn, reference=reference, project_id=project_id)
+            conn.close()
+        except Exception as exc:
+            return _eco_error(
+                f"Erreur lors de la résolution du sample EcoTaxa : {exc}",
+                retryable=True,
+                provenance={"reference": str(reference), "project_id": project_id},
+            )
+
+        rows.sort(key=lambda row: (int(row["project_id"]), int(row["sample_id"])))
+        if not rows:
+            scope = f" dans le projet {project_id}" if project_id is not None else ""
+            return _eco_empty(
+                f"Aucun sample EcoTaxa correspondant à `{reference}`{scope} "
+                "dans le cache local. Lancer `/admin/resync` si nécessaire.",
+                provenance={"reference": str(reference), "project_id": project_id},
+            )
+
+        ambiguous = len(rows) > 1
+        lines = [
+            (
+                f"# Correspondances EcoTaxa — `{reference}`\n\n"
+                f"Plusieurs correspondances ({len(rows)}) : préciser `project_id`."
+                if ambiguous
+                else f"# Sample EcoTaxa résolu — `{reference}`"
+            ),
+            "",
+            "| sample_id | project_id | label | station | profile | latitude | longitude | date_min | date_max | url |",
+            "|---:|---:|---|---|---|---:|---:|---|---|---|",
+        ]
+        lines.extend(
+            f"| {row['sample_id']} | {row['project_id']} | {row['original_id'] or '—'} | "
+            f"{row['station_id'] or '—'} | {row['profile_id'] or '—'} | "
+            f"{_format_number(row['lat_avg'])} | {_format_number(row['lon_avg'])} | "
+            f"{row['date_min'] or '—'} | {row['date_max'] or '—'} | "
+            f"{_ecotaxa_sample_url(row['project_id'], row['sample_id'])} |"
+            for row in rows
+        )
+        return _eco_success(
+            "\n".join(lines),
+            provenance={
+                "reference": str(reference),
+                "project_id": project_id,
+                "sample_ids": [int(row["sample_id"]) for row in rows],
+            },
+            metrics={"matches": len(rows), "ambiguous": ambiguous},
         )
 
     @tool(response_format="content_and_artifact")
@@ -1385,6 +1514,166 @@ def make_source_tools(thread_id: str) -> list:
         )
 
     @tool(response_format="content_and_artifact")
+    def describe_ecotaxa_project_coverage(project_id: int) -> str:
+        """Réconcilie la vérité RÉSEAU EcoTaxa et l'INDEX du cache local pour un projet.
+
+        À utiliser AVANT de conclure à une absence EcoTaxa quand un `project_id`
+        est connu. Les recherches par zone / période / taxon
+        (`find_ecotaxa_samples_in_region`, `find_ecotaxa_observations`,
+        `find_ecotaxa_projects_in_region`, `rank_ecotaxa_samples_by_region`,
+        `audit_ecotaxa_*`) ne lisent QUE le cache local : un projet accessible
+        sur EcoTaxa mais non encore synchronisé y apparaît vide. Sans cette
+        réconciliation, un projet non indexé est confondu avec une absence
+        scientifique réelle.
+
+        Compare le nombre de samples côté EcoTaxa (réseau, autorisé au compte)
+        au nombre de samples présents dans le cache local, et renvoie un verdict
+        explicite qui distingue une vraie absence d'un défaut d'indexation :
+        `indexe`, `partiel`, `non_indexe` (dans le périmètre du sync, resync
+        utile), `hors_perimetre_sync` (lisible par ID mais absent de la
+        recherche projet — resync ordinaire inefficace), `non_geolocalise`
+        (samples sans coordonnées, jamais indexable spatialement), `vide_source`
+        (vraie absence), `inaccessible`, ou `reseau_indisponible`. Lecture
+        seule, aucun export.
+        """
+        pid = int(project_id)
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            coverage = project_cache_coverage(conn, pid)
+            conn.close()
+        except Exception as exc:
+            return _eco_error(
+                f"Erreur lors de la lecture du cache EcoTaxa : {exc}", retryable=True
+            )
+
+        n_cached = int(coverage["n_samples_cached"])
+        last_sync = coverage["last_sync"] or {}
+        sync_line = (
+            f"{last_sync.get('status', '?')} — {last_sync.get('ended_at') or last_sync.get('started_at') or '?'}"
+            if last_sync
+            else "jamais synchronisé"
+        )
+
+        n_network: int | None = None
+        n_geoloc: int | None = None
+        in_sync_scope: bool | None = None
+        title: str | None = None
+        network_error: str | None = None
+        try:
+            client = EcotaxaClient()
+            client.login()
+            project = client.get_project(pid)
+            title = str(project.get("title") or project.get("name") or "").strip() or None
+            samples = client.list_samples(pid) or []
+            n_network = len(samples)
+            n_geoloc = sum(
+                1
+                for s in samples
+                if s.get("latitude") is not None and s.get("longitude") is not None
+            )
+            # The full sync only iterates projects returned by list_projects();
+            # a project readable by ID but absent from that search is out of the
+            # sync's reach, so a plain resync will never index it.
+            try:
+                syncable = {
+                    int(p.get("project_id") or p.get("projid"))
+                    for p in (client.list_projects() or [])
+                }
+                in_sync_scope = pid in syncable
+            except Exception:
+                in_sync_scope = None
+        except Exception as exc:  # réseau indisponible ou projet inaccessible
+            network_error = str(exc)
+
+        if network_error is not None:
+            if n_cached > 0:
+                verdict = "reseau_indisponible"
+                headline = (
+                    f"Réseau EcoTaxa indisponible ({network_error}). Le cache local "
+                    f"contient {n_cached} sample(s) pour le projet {pid} : l'exploration "
+                    "locale reste possible, mais la fraîcheur ne peut pas être confirmée."
+                )
+            else:
+                verdict = "inaccessible"
+                headline = (
+                    f"Projet {pid} inaccessible côté réseau ({network_error}) ET absent du "
+                    "cache local. Impossible d'affirmer qu'il existe ou qu'il est vide : "
+                    "ni le réseau ni le cache ne le connaissent."
+                )
+        elif n_network == 0:
+            verdict = "vide_source"
+            headline = (
+                f"Projet {pid} accessible sur EcoTaxa mais vide côté source (0 sample). "
+                "Absence réelle, pas un défaut de cache."
+            )
+        elif n_cached == 0 and in_sync_scope is False:
+            verdict = "hors_perimetre_sync"
+            headline = (
+                f"Projet {pid} lisible par identifiant ({n_network} sample(s) sur EcoTaxa) "
+                "mais absent de la recherche projet du compte : le sync du cache n'itère que "
+                "les projets renvoyés par cette recherche, donc un resync ordinaire ne "
+                "l'indexera pas. L'exploration locale (zone / période / taxon) ne le couvre "
+                "pas. Ne pas présenter ce projet comme une absence de données."
+            )
+        elif n_cached == 0 and n_geoloc == 0:
+            verdict = "non_geolocalise"
+            headline = (
+                f"Projet {pid} accessible sur EcoTaxa ({n_network} sample(s)) mais sans "
+                "aucune coordonnée au niveau sample : l'index spatial du cache restera vide "
+                "même après resync. Les recherches par zone ne le trouveront pas ; ce n'est "
+                "pas une absence de données mais une absence de géolocalisation."
+            )
+        elif n_cached == 0:
+            verdict = "non_indexe"
+            headline = (
+                f"Projet {pid} accessible sur EcoTaxa ({n_network} sample(s)) mais NON "
+                "indexé dans le cache local. Les recherches zone / période / taxon ne le "
+                "verront pas : un resync du cache est nécessaire avant de l'explorer. "
+                "Ne pas présenter ce projet comme une absence de données."
+            )
+        elif n_network is not None and n_cached < n_network:
+            verdict = "partiel"
+            headline = (
+                f"Projet {pid} indexé partiellement : {n_cached}/{n_network} sample(s) en "
+                "cache. L'exploration locale est incomplète ; un resync est recommandé."
+            )
+        else:
+            verdict = "indexe"
+            headline = (
+                f"Projet {pid} indexé et cohérent : {n_cached} sample(s) en cache "
+                f"(réseau : {n_network}). L'exploration locale est fiable."
+            )
+
+        lines = [
+            f"# Couverture EcoTaxa — projet {pid}"
+            + (f" · {title}" if title else ""),
+            "",
+            headline,
+            "",
+            "| dimension | valeur |",
+            "|---|---:|",
+            f"| samples côté EcoTaxa (réseau) | {n_network if n_network is not None else '—'} |",
+            f"| dont géolocalisés (niveau sample) | {n_geoloc if n_geoloc is not None else '—'} |",
+            f"| samples dans le cache local | {n_cached} |",
+            f"| dans le périmètre du sync | {'oui' if in_sync_scope else ('non' if in_sync_scope is False else '—')} |",
+            f"| schéma du projet en cache | {'oui' if coverage['in_schema_cache'] else 'non'} |",
+            f"| période en cache | {coverage['date_min'] or '—'} → {coverage['date_max'] or '—'} |",
+            f"| dernier sync du cache | {sync_line} |",
+            f"| {_ecotaxa_project_url(pid)} | |",
+        ]
+        return _eco_success(
+            "\n".join(lines),
+            provenance={"project_id": pid, "verdict": verdict},
+            metrics={
+                "n_samples_cached": n_cached,
+                "n_samples_network": int(n_network) if n_network is not None else -1,
+                "n_samples_geolocated": int(n_geoloc) if n_geoloc is not None else -1,
+            },
+        )
+
+    @tool(response_format="content_and_artifact")
     def inspect_ecotaxa_column(
         project_id: int,
         column_name: str,
@@ -1649,7 +1938,7 @@ def make_source_tools(thread_id: str) -> list:
             )
             lines.append(
                 f"| {s['sample_id']} | {s['project_id']} | {station_label} | "
-                f"{s['lat']:.3f} | {s['lon']:.3f} | "
+                f"{_fmt_coord(s.get('lat'))} | {_fmt_coord(s.get('lon'))} | "
                 f"{s['date_min']} | {s['date_max']} | "
                 f"{_format_number(s.get('depth_min'))} | "
                 f"{_format_number(s.get('depth_max'))} | "
@@ -2001,8 +2290,10 @@ def make_source_tools(thread_id: str) -> list:
 
         `include_empty=False` par défaut exclut les zones à 0 sample pour
         éviter de noyer la réponse dans les régions mondiales hors périmètre.
-        Passer `include_empty=True` seulement si l'utilisateur demande
-        explicitement les zones vides / lacunes d'échantillonnage.
+        Passer `include_empty=True` quand l'utilisateur demande explicitement
+        les zones **vides** / **lacunes** / **zones sans sample** /
+        **zones non échantillonnées** / **zones voisines vides** — c'est la
+        réponse canonique pour « montre les zones sans données EcoTaxa ».
         `sort_order="asc"` classe du moins au plus échantillonné. Utiliser
         `sort_order="desc"` pour "le plus échantillonné", "décroissant",
         "top zones", ou "du plus au moins".
@@ -2127,8 +2418,8 @@ def make_source_tools(thread_id: str) -> list:
         ]
         for s in result["samples"][:50]:
             lines.append(
-                f"| {s['sample_id']} | {s['project_id']} | {s['lat']:.3f} | "
-                f"{s['lon']:.3f} | {s['date_min']} | {s['date_max']} | "
+                f"| {s['sample_id']} | {s['project_id']} | {_fmt_coord(s.get('lat'))} | "
+                f"{_fmt_coord(s.get('lon'))} | {s['date_min']} | {s['date_max']} | "
                 f"{_format_number(s.get('depth_min'))} | "
                 f"{_format_number(s.get('depth_max'))} | "
                 f"{_ecotaxa_sample_url(s['project_id'], s['sample_id'])} |"
@@ -2506,23 +2797,24 @@ def make_source_tools(thread_id: str) -> list:
         `load_skill("ecotaxa_navigation")` first unless it has already been
         called in the same turn.
 
+        À utiliser IMPÉRATIVEMENT pour calculer les totaux V/P/D/U d'une
+        sélection EcoTaxa (ex. « donne les totaux validés/prédits »,
+        « quels taxons dans cette sélection »). NE PAS relancer une
+        recherche régionale pour obtenir ces totaux : la sélection mémorisée
+        par `find_ecotaxa_samples_in_region` couvre L'ENSEMBLE de la
+        sélection, pas uniquement les lignes affichées dans l'aperçu tronqué.
+
         Args:
             sample_ids: Liste explicite de sample_ids EcoTaxa.
             selection_name: Nom d'une sélection mémorisée par
                 `find_ecotaxa_samples_in_region`, ou `"latest"` / `"cette sélection"`.
 
-        Renvoie pour chaque `sample_id` un tableau markdown avec :
-        - V (validés), P (prédits), D (douteux), U (non classés) — counts
-          agrégés sur tous les taxa du sample
-        - `total` = V + P + D + U
-        - `projet`
-        - `top taxa` — premiers taxa observés (jusqu'à 5 noms)
+        Renvoie :
+        - Scope complet : N samples demandés vs N retournés par l'API
+        - Tableau par sample : V / P / D / U / total / top taxa
+        - Section agrégée par projet : totaux V/P/D/U pour chaque projet
 
-        Utiliser pour SCANNER une liste de samples (typiquement le résultat
-        de `find_ecotaxa_samples_in_region`) avant de décider lesquels valent
-        un export complet. Aucun download — appel léger sur l'endpoint
-        EcoTaxa `/sample_set/taxo_stats`.
-
+        Aucun download — appel léger sur l'endpoint EcoTaxa `/sample_set/taxo_stats`.
         Pour un seul sample, utilise plutôt `summarize_ecotaxa_sample`.
         """
         resolved_selection_name = None
@@ -2547,16 +2839,23 @@ def make_source_tools(thread_id: str) -> list:
                 "Aucune statistique retournée par EcoTaxa pour ces samples."
             )
 
+        n_requested = len(normalized)
+        n_returned = len(stats)
+
         lines = []
         if resolved_selection_name:
-            lines.extend([
-                f"Sélection : {resolved_selection_name}",
-                "",
-            ])
+            lines.append(f"Sélection : **{resolved_selection_name}**")
         lines.extend([
+            f"Scope : {n_requested} samples demandés → {n_returned} retournés par l'API"
+            + (" (subset — totaux ci-dessous portent sur l'ensemble)"
+               if n_returned < n_requested else ""),
+            "",
+            "## Détail par sample",
+            "",
             "| sample_id | projet | V | P | D | U | total | top taxa | url |",
             "|---:|---:|---:|---:|---:|---:|---:|---|---|",
         ])
+        project_totals: dict[int, dict] = {}
         for entry in stats:
             v = entry["nb_validated"]
             p = entry["nb_predicted"]
@@ -2569,10 +2868,35 @@ def make_source_tools(thread_id: str) -> list:
                 f"| {entry['sample_id']} | {entry['projid']} | {v} | {p} | {d} | {u} | {total} | {top} | "
                 f"{_ecotaxa_sample_url(entry['projid'], entry['sample_id'])} |"
             )
+            pid = int(entry["projid"])
+            pt = project_totals.setdefault(pid, {"V": 0, "P": 0, "D": 0, "U": 0})
+            pt["V"] += v
+            pt["P"] += p
+            pt["D"] += d
+            pt["U"] += u
+
+        lines.extend([
+            "",
+            "## Totaux par projet",
+            "",
+            "| projet | V | P | D | U | total |",
+            "|---:|---:|---:|---:|---:|---:|",
+        ])
+        grand = {"V": 0, "P": 0, "D": 0, "U": 0}
+        for pid in sorted(project_totals):
+            pt = project_totals[pid]
+            tot = pt["V"] + pt["P"] + pt["D"] + pt["U"]
+            lines.append(f"| {pid} | {pt['V']} | {pt['P']} | {pt['D']} | {pt['U']} | {tot} |")
+            for key in grand:
+                grand[key] += pt[key]
+        grand_total = sum(grand.values())
+        lines.append(
+            f"| **TOTAL** | **{grand['V']}** | **{grand['P']}** | **{grand['D']}** | **{grand['U']}** | **{grand_total}** |"
+        )
         return _eco_success(
             "\n".join(lines),
             provenance={"sample_ids": normalized},
-            metrics={"samples": len(stats)},
+            metrics={"samples": n_returned, "samples_requested": n_requested},
         )
 
     @tool(response_format="content_and_artifact")
@@ -2862,6 +3186,125 @@ def make_source_tools(thread_id: str) -> list:
             },
         )
 
+    @tool(response_format="content_and_artifact")
+    def query_ecotaxa_cache(sql: str) -> str:
+        """Exécute un SELECT libre sur le cache SQLite EcoTaxa local.
+
+        Routing requirement: before calling this tool in an agent turn, call
+        `load_skill("ecotaxa_navigation")` first unless it has already been
+        called in the same turn.
+
+        Utiliser quand aucun tool de haut niveau ne couvre exactement le
+        besoin d'exploration : station précise, tableau croisé, distribution
+        par date ou instrument, combinaison de filtres arbitraires. Ce tool
+        remplace les patterns qui nécessiteraient plusieurs appels successifs
+        ou un export pour faire un simple comptage.
+
+        Seuls les SELECT sont autorisés. Inclure un `LIMIT n` dans le SQL
+        pour contrôler la taille du résultat (plafonné à 1 000 lignes en
+        interne pour protéger le contexte). Pour des zones nommées, récupère
+        d'abord la bbox via `get_zone_info`, puis filtre sur
+        `lat_avg`/`lon_avg`.
+
+        ## Schéma — TABLE samples_cache
+        | colonne       | type    | contenu |
+        |---|---|---|
+        | sample_id     | INTEGER | identifiant numérique EcoTaxa |
+        | project_id    | INTEGER | identifiant du projet |
+        | lat_avg       | REAL    | latitude centre du sample |
+        | lon_avg       | REAL    | longitude centre du sample |
+        | date_min      | TEXT    | date début YYYY-MM-DD |
+        | date_max      | TEXT    | date fin YYYY-MM-DD |
+        | depth_min     | REAL    | profondeur minimale (m) |
+        | depth_max     | REAL    | profondeur maximale (m) |
+        | original_id   | TEXT    | label complet (ex. am_leg4_RA76_1) |
+        | station_id    | TEXT    | nom de station (ex. RA76, St-27) |
+        | profile_id    | TEXT    | identifiant de profil |
+        | object_count  | INTEGER | nombre d'objets imagés |
+        | instrument    | TEXT    | UVP6, UVP5SD, Loki, … |
+
+        ## Schéma — TABLE project_schemas_cache
+        | colonne     | type | contenu |
+        |---|---|---|
+        | project_id  | INTEGER | identifiant du projet |
+        | schema_json | TEXT    | JSON : title, instrument, levels… |
+
+        ## Exemples
+        ```sql
+        -- Samples par station (cross-project)
+        SELECT sample_id, project_id, original_id, station_id, date_min, depth_max
+        FROM samples_cache WHERE station_id LIKE '%RA76%' ORDER BY date_min
+
+        -- Distribution des instruments dans une bbox
+        SELECT instrument, COUNT(*) AS n_samples, COUNT(DISTINCT project_id) AS n_projets
+        FROM samples_cache
+        WHERE lat_avg BETWEEN 60 AND 80 AND lon_avg BETWEEN -80 AND -40
+        GROUP BY instrument ORDER BY n_samples DESC
+
+        -- Tableau croisé projet × année
+        SELECT project_id, substr(date_min,1,4) AS year, COUNT(*) AS n_samples
+        FROM samples_cache
+        WHERE lat_avg BETWEEN 60 AND 80 AND lon_avg BETWEEN -80 AND -40
+        GROUP BY project_id, year ORDER BY project_id, year
+
+        -- Distribution par date d'une sélection mémorisée (remplace les sample_ids)
+        SELECT date_min, COUNT(*) AS n_samples, COUNT(DISTINCT project_id) AS n_projets
+        FROM samples_cache WHERE sample_id IN (1, 2, 3)
+        GROUP BY date_min ORDER BY date_min
+        ```
+        """
+        sql_stripped = (sql or "").strip()
+        first_token = sql_stripped.split()[0].upper() if sql_stripped.split() else ""
+        if first_token != "SELECT":
+            return _eco_blocked(
+                "Seuls les SELECT sont autorisés sur le cache EcoTaxa. "
+                f"Requête rejetée (premier token : {first_token!r})."
+            )
+        if ";" in sql_stripped:
+            return _eco_blocked(
+                "Les requêtes avec `;` sont interdites (pas de chaînage). "
+                "Reformuler en une seule requête SELECT."
+            )
+
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            cur = conn.execute(sql_stripped)
+            columns = [desc[0] for desc in (cur.description or [])]
+            rows = cur.fetchmany(1001)
+            conn.close()
+        except Exception as exc:
+            return _eco_error(
+                f"Erreur lors de l'exécution SQL sur le cache EcoTaxa : {exc}",
+                retryable=False,
+            )
+
+        truncated = len(rows) > 1000
+        rows = rows[:1000]
+
+        if not rows:
+            return _eco_empty("La requête n'a retourné aucune ligne.")
+
+        if not columns:
+            return _eco_empty("La requête n'a retourné aucune colonne.")
+
+        header = "| " + " | ".join(columns) + " |"
+        separator = "|" + "|".join("---" for _ in columns) + "|"
+        data_lines = [
+            "| " + " | ".join(str(cell) if cell is not None else "—" for cell in row) + " |"
+            for row in rows
+        ]
+        note = (
+            "\n_(résultats tronqués à 1 000 lignes — ajouter un LIMIT dans le SQL pour affiner)_"
+            if truncated else ""
+        )
+        body = "\n".join([header, separator, *data_lines]) + note
+        return _eco_success(
+            body,
+            metrics={"rows": len(rows), "truncated": truncated},
+        )
+
     return [
         find_ecotaxa_projects,
         find_ecotaxa_samples_in_region,
@@ -2879,10 +3322,12 @@ def make_source_tools(thread_id: str) -> list:
         count_ecotaxa_taxa,
         search_ecotaxa_taxa,
         get_ecotaxa_cache_status,
+        describe_ecotaxa_project_coverage,
         compare_ecotaxa_projects,
         list_ecotaxa_projects,
         list_ecotaxa_campaigns,
         list_ecotaxa_project_samples,
+        resolve_ecotaxa_sample,
         audit_ecotaxa_availability,
         audit_ecotaxa_spatial_coverage,
         preview_ecotaxa_project,
@@ -2893,4 +3338,5 @@ def make_source_tools(thread_id: str) -> list:
         summarize_ecotaxa_project,
         summarize_ecotaxa_projects,
         export_ecotaxa_samples,
+        query_ecotaxa_cache,
     ]

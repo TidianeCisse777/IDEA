@@ -15,7 +15,7 @@ def test_policy_registry_has_exact_presentation_parity():
     )
 
     assert set(TOOL_POLICIES) == set(TOOL_PRESENTATION)
-    assert len(TOOL_POLICIES) == 65
+    assert len(TOOL_POLICIES) == 68
     for name, policy in TOOL_POLICIES.items():
         assert policy.family == TOOL_PRESENTATION[name].family
         assert policy.exposure_group in TOOL_EXPOSURE_GROUPS
@@ -135,8 +135,8 @@ def test_generated_inventory_is_deterministic_and_complete():
     second = render_tool_inventory(TOOL_POLICIES, OPTIONAL_SQL_TOOL_NAMES)
 
     assert first == second
-    assert "62 tools obligatoires" in first
-    assert "65 avec SQL" in first
+    assert "65 tools obligatoires" in first
+    assert "68 avec SQL" in first
     assert "| `audit_ecotaxa_availability` |" in first
     assert "| `list_ecotaxa_project_samples` |" in first
     assert "| `query_ecotaxa` | ecotaxa | ecotaxa | high | oui |" in first

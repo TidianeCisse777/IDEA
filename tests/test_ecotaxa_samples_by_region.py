@@ -390,3 +390,44 @@ def test_langchain_tool_renders_ranked_samples_by_region():
     assert "EcoTaxa — samples par région" in result
     assert "Baie d'Hudson | 1 | 1 | 42000001" in result
     assert "Baie de Baffin | 2 | 1 | 42000002, 42000003" in result
+
+
+def test_region_selection_is_exposed_as_active_ecotaxa_table(tmp_path):
+    from tools.copepod_sources import make_source_tools
+    from tools.session_store import SessionStore
+
+    thread_id = "thread-selection-table"
+    store = SessionStore(tmp_path / "session")
+    result = {
+        "samples": [
+            {
+                "sample_id": 42000001,
+                "project_id": 42,
+                "lat": 72.1,
+                "lon": -68.2,
+                "date_min": "2024-08-14",
+                "date_max": "2024-08-14",
+                "depth_min": 0,
+                "depth_max": 100,
+                "instrument": "UVP6",
+                "station_id": "st-1",
+                "original_id": "sample-1",
+                "profile_id": None,
+            }
+        ],
+        "total_matching": 1,
+        "truncated": False,
+        "partial": False,
+    }
+    with patch("tools.copepod_sources._store", store), patch(
+        "tools.copepod_sources.samples_in_region", return_value=result
+    ):
+        tool = next(t for t in make_source_tools(thread_id)
+                    if t.name == "find_ecotaxa_samples_in_region")
+        tool.invoke({"zone_name": "Baie de Baffin"})
+
+    session = store.get(thread_id)
+    assert session["meta"]["source"] == "ecotaxa_selection"
+    assert list(session["df"]["sample_id"]) == [42000001]
+    assert list(session["df"]["latitude"]) == [72.1]
+    assert store.get(f"{thread_id}:ecotaxa")["df"].equals(session["df"])

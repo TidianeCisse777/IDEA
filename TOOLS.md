@@ -4,7 +4,7 @@
 > (`tools/tool_catalog.py` → `agent.py` → `create_agent`). Pour les use cases voir [`SPEC.md`](SPEC.md),
 > pour le câblage voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
 >
-> **62 tools obligatoires, 65 avec SQL** (les 3 tools SQL ne sont ajoutés que si
+> **64 tools obligatoires, 67 avec SQL** (les 3 tools SQL ne sont ajoutés que si
 > `DATABASE_URL` est résolvable). Ce total est le catalogue enregistré; le modèle
 > voit une allowlist déterministe de **15 tools maximum par appel**, calculée par
 > `tools/tool_exposure.py` sous l'autorité de `tools/source_scope.py`. Le prompt
@@ -23,7 +23,7 @@
 - Les 18 autres tools de ces quatre familles restent enregistrés pour compatibilité, mais appartiennent au groupe `hidden_legacy` : ils ne sont jamais présentés au modèle et sont bloqués avant exécution.
 
 <!-- TOOL-INVENTORY:START -->
-Inventaire généré : **62 tools obligatoires**, **65 avec SQL**.
+Inventaire généré : **64 tools obligatoires**, **67 avec SQL**.
 
 | Tool | Famille | Source | Risque | Confirmation | Optionnel | I/O distant | État de session |
 |---|---|---|---|---|---|---|---|
@@ -34,6 +34,7 @@ Inventaire généré : **62 tools obligatoires**, **65 avec SQL**.
 | `copy_sql_query_to_workspace` | sql | sql | high | oui | oui | oui | oui |
 | `count_ecotaxa_taxa` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `couple_zooplankton_bio_oracle` | bio_oracle | bio_oracle | high | oui | non | oui | oui |
+| `describe_ecotaxa_project_coverage` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `enrich_ecotaxa_with_ecopart_remote` | ecopart | ecopart | high | oui | non | oui | oui |
 | `enrich_loaded_table_with_amundsen_ctd` | amundsen | amundsen | high | oui | non | oui | oui |
 | `enrich_with_amundsen_ctd` | amundsen | amundsen | high | oui | non | oui | oui |
@@ -83,6 +84,7 @@ Inventaire généré : **62 tools obligatoires**, **65 avec SQL**.
 | `query_ecotaxa_sample` | ecotaxa | ecotaxa | high | oui | non | oui | oui |
 | `query_ogsl` | ogsl | ogsl | high | oui | non | oui | oui |
 | `rank_ecotaxa_samples_by_region` | ecotaxa | ecotaxa | low | non | non | oui | non |
+| `resolve_ecotaxa_sample` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `run_graph` | data | file | medium | non | non | non | oui |
 | `run_pandas` | data | file | medium | non | non | non | oui |
 | `search_ecotaxa_taxa` | ecotaxa | ecotaxa | low | non | non | oui | non |
@@ -109,13 +111,14 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 2. EcoTaxa — `tools/copepod_sources.py` (30)
+## 2. EcoTaxa — `tools/copepod_sources.py` (31)
 
 ### Catalogue & recherche
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `list_ecotaxa_projects` | Liste les projets accessibles | non |
 | `list_ecotaxa_project_samples` | Liste les samples d'un projet avec leurs identifiants et libellés | non |
+| `resolve_ecotaxa_sample` | Résout une référence de sample (ID, label, station, profil) dans tous les projets du cache | non |
 | `find_ecotaxa_projects` | Cherche des projets par `title` / `instrument` | non |
 | `list_ecotaxa_campaigns` | Groupe les projets par campagne / leg (`query` facultatif) | non |
 | `preview_ecotaxa_project` | Aperçu d'objets d'un projet | non |
@@ -263,7 +266,7 @@ Backends : SQLite, PostgreSQL, MySQL, MariaDB (protocole MySQL).
 | Famille | Module | Nb |
 |---|---|---|
 | Données & analyse | `data_tools.py` | 3 |
-| EcoTaxa | `copepod_sources.py` | 30 |
+| EcoTaxa | `copepod_sources.py` | 31 |
 | EcoPart | `ecopart_sources.py` | 7 |
 | Amundsen CTD | `amundsen_sources.py` | 6 |
 | Bio-ORACLE | `bio_oracle_sources.py` | 7 |
@@ -272,5 +275,5 @@ Backends : SQLite, PostgreSQL, MySQL, MariaDB (protocole MySQL).
 | Géographie | `geo_tools.py` | 3 |
 | Savoir & taxonomie | `rag_tool.py`, `taxonomy_tool.py` | 2 |
 | Skills & livrables | `skill_tool.py`, `deliverable_tool.py` | 2 |
-| **Total obligatoire** | | **62** |
-| **Total avec SQL** | | **65** |
+| **Total obligatoire** | | **64** |
+| **Total avec SQL** | | **67** |

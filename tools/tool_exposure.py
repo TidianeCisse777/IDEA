@@ -91,6 +91,28 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
         ),
     ),
 )
+_ECOTAXA_GEO_TERMS = (
+    "zone", "région", "region", "baie", "bassin", "station", "carte",
+    "latitude", "longitude", "coordonnée", "coordonne", "géographique",
+    "geographique", "labrador", "baffin", "ungava", "hudson",
+)
+_GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
+    "ecotaxa_discovery": (
+        "list_ecotaxa_campaigns", "preview_ecotaxa_project",
+        "get_ecotaxa_cache_status", "resolve_ecotaxa_sample",
+        "find_ecotaxa_projects", "query_ecotaxa_cache",
+    ),
+    "ecotaxa_geo_time": (
+        "find_ecotaxa_samples_in_region", "group_ecotaxa_samples_by_year",
+        "find_ecotaxa_projects_in_region", "group_ecotaxa_project_samples_by_region",
+        "rank_ecotaxa_samples_by_region",
+    ),
+    "ecotaxa_samples": (
+        "list_ecotaxa_project_samples", "get_ecotaxa_sample",
+        "summarize_ecotaxa_samples", "summarize_ecotaxa_sample",
+        "summarize_ecotaxa_sample_deployment",
+    ),
+}
 _GROUP_ORDER: tuple[ToolExposureGroup, ...] = (
     "core",
     "file_analysis",
@@ -122,6 +144,7 @@ class TurnSignals:
     enrichment_requested: bool
     taxonomy_requested: bool
     sql_copy_requested: bool
+    geographic_requested: bool
     successful_tools_this_turn: tuple[str, ...]
     successful_skills_this_turn: tuple[str, ...]
     ecotaxa_intents: tuple[ToolExposureGroup, ...]
@@ -156,17 +179,22 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         for call in calls
         if call.name == "load_skill"
     )
-    export_negated = bool(_EXPORT_NEGATION.search(text))
+    normalized_text = text.casefold()
+    export_negated = bool(_EXPORT_NEGATION.search(text)) or any(
+        phrase in normalized_text
+        for phrase in ("aucun export", "aucune exportation", "no export")
+    )
     ecotaxa_intents = tuple(
         group for group, pattern in _ECOTAXA_INTENT_PATTERNS
         if pattern.search(text)
         and not (group == "ecotaxa_export" and export_negated)
-    )[:1]
+    )
     return TurnSignals(
         latest_user_text=text,
         enrichment_requested=bool(_ENRICHMENT_PATTERN.search(text)),
         taxonomy_requested=bool(_TAXONOMY_PATTERN.search(text)),
         sql_copy_requested=bool(_SQL_COPY_PATTERN.search(text)),
+        geographic_requested=any(term in normalized_text for term in _ECOTAXA_GEO_TERMS),
         successful_tools_this_turn=tuple(call.name for call in calls),
         successful_skills_this_turn=skills,
         ecotaxa_intents=ecotaxa_intents,
@@ -178,19 +206,24 @@ def _ordered_names(
     available_names: tuple[str, ...],
     policies: Mapping[str, ToolPolicy],
     active_groups: Collection[ToolExposureGroup],
+    group_limits: Mapping[ToolExposureGroup, int] | None = None,
 ) -> tuple[str, ...]:
     available = set(available_names)
     selected: list[str] = [name for name in _CORE_TOOL_NAMES if name in available]
     for group in _GROUP_ORDER:
         if group == "core" or group not in active_groups:
             continue
-        selected.extend(
-            name
-            for name in available_names
+        group_names = [
+            name for name in available_names
             if name not in selected
             and name in policies
             and policies[name].exposure_group == group
-        )
+        ]
+        priorities = _GROUP_PRIORITY_NAMES.get(group, ())
+        group_names.sort(key=lambda name: priorities.index(name) if name in priorities else len(priorities))
+        if group_limits and group in group_limits:
+            group_names = group_names[:group_limits[group]]
+        selected.extend(group_names)
     return tuple(selected)
 
 
@@ -258,10 +291,10 @@ def decide_tool_exposure(
         )
 
     if "ecotaxa" in authorized and not focused_enrichment:
-        ecotaxa_groups = (
-            "ecotaxa_geo_time",
-            *(signals.ecotaxa_intents or ("ecotaxa_discovery",)),
-        )
+        ecotaxa_groups = ["ecotaxa_discovery"]
+        if signals.geographic_requested:
+            ecotaxa_groups.append("ecotaxa_geo_time")
+        ecotaxa_groups.extend(signals.ecotaxa_intents)
         groups.extend(ecotaxa_groups)
         reasons.append("authorized EcoTaxa intent")
 
@@ -269,15 +302,37 @@ def decide_tool_exposure(
     selected = _ordered_names(names, policies, active_groups)
     overflow = len(selected) > max_tools
     if overflow:
-        fallback_groups: tuple[ToolExposureGroup, ...] = ("core",)
-        discovery_fallback = _ordered_names(
-            names, policies, ("core", "ecotaxa_discovery")
-        )
-        if "ecotaxa" in authorized and len(discovery_fallback) <= max_tools:
-            fallback_groups = ("core", "ecotaxa_discovery")
-            selected = discovery_fallback
+        if "visualization" in active_groups:
+            geo_visual_fallback = ("ecotaxa_geo_time",) if signals.geographic_requested else ()
+            fallback_groups = (
+                "core", "geography", "visualization", "ecotaxa_discovery",
+                *geo_visual_fallback,
+                *signals.ecotaxa_intents,
+            )
+        elif "ecotaxa" in authorized:
+            geo_fallback = ("ecotaxa_geo_time",) if signals.geographic_requested else ()
+            fallback_groups = tuple(
+                group for group in (
+                    "core", "geography", "ecotaxa_discovery",
+                    *geo_fallback,
+                    *signals.ecotaxa_intents,
+                )
+                if group in active_groups
+            )
         else:
-            selected = _ordered_names(names, policies, fallback_groups)
+            fallback_groups = ("core",)
+        fallback_limits: dict[ToolExposureGroup, int] = {
+            "ecotaxa_discovery": 3 if signals.ecotaxa_intents else 4,
+        }
+        if "ecotaxa_geo_time" in fallback_groups:
+            fallback_limits["ecotaxa_geo_time"] = 1
+        for intent in signals.ecotaxa_intents:
+            fallback_limits[intent] = 4
+        selected = _ordered_names(names, policies, fallback_groups, fallback_limits)
+        if len(selected) > max_tools and "ecotaxa" in authorized:
+            selected = tuple(selected[:max_tools])
+        if max_tools <= 4:
+            selected = _ordered_names(names, policies, ("core",))
         active_groups = fallback_groups
         reasons.append("policy overflow fallback")
 

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import sqlite3
 import threading
 import time
@@ -127,19 +129,25 @@ def _fetch_project_samples(
             lat, lon, objdate = row[0], row[1], row[2]
             obj_depth_min = _as_float(row[3]) if len(row) > 3 else None
             obj_depth_max = _as_float(row[4]) if len(row) > 4 else None
-            if lat is None or lon is None or sample_id is None:
+            # A sample_id is required to key the aggregate; coordinates are NOT.
+            # Projects that store position only at the sample level (or not at
+            # all — e.g. older LOKI projects) still get indexed by date/project
+            # with lat_avg/lon_avg left NULL, so temporal and per-project
+            # exploration works even when spatial (zone) queries cannot match.
+            if sample_id is None:
                 continue
             try:
                 sid = int(sample_id)
-                latf = float(lat)
-                lonf = float(lon)
             except (TypeError, ValueError):
                 continue
+            latf = _as_float(lat)
+            lonf = _as_float(lon)
             agg = aggregates.setdefault(
                 sid,
                 {
                     "lat_sum": 0.0,
                     "lon_sum": 0.0,
+                    "geo_count": 0,
                     "count": 0,
                     "date_min": objdate,
                     "date_max": objdate,
@@ -147,9 +155,11 @@ def _fetch_project_samples(
                     "depth_max": obj_depth_max,
                 },
             )
-            agg["lat_sum"] += latf
-            agg["lon_sum"] += lonf
             agg["count"] += 1
+            if latf is not None and lonf is not None:
+                agg["lat_sum"] += latf
+                agg["lon_sum"] += lonf
+                agg["geo_count"] += 1
             if objdate is not None:
                 if agg["date_min"] is None or objdate < agg["date_min"]:
                     agg["date_min"] = objdate
@@ -175,8 +185,8 @@ def _fetch_project_samples(
     samples = [
         {
             "sample_id": sid,
-            "lat_avg": agg["lat_sum"] / agg["count"],
-            "lon_avg": agg["lon_sum"] / agg["count"],
+            "lat_avg": (agg["lat_sum"] / agg["geo_count"]) if agg["geo_count"] else None,
+            "lon_avg": (agg["lon_sum"] / agg["geo_count"]) if agg["geo_count"] else None,
             "date_min": agg["date_min"],
             "date_max": agg["date_max"],
             "depth_min": agg["depth_min"],
@@ -320,6 +330,41 @@ def _project_signature(project_meta: dict) -> tuple | None:
     )
 
 
+def _parse_extra_project_ids(raw: str | None) -> set[int]:
+    """Parse the ECOTAXA_EXTRA_PROJECT_IDS allowlist (comma/space separated)."""
+    ids: set[int] = set()
+    for token in re.split(r"[,\s]+", (raw or "").strip()):
+        if not token:
+            continue
+        try:
+            ids.add(int(token))
+        except ValueError:
+            continue
+    return ids
+
+
+def _extra_syncable_project_ids(
+    conn: sqlite3.Connection,
+    listed_ids: set[int],
+) -> list[int]:
+    """Project IDs to sync beyond ``list_projects()``.
+
+    The EcoTaxa account's project search is both narrow (it omits projects that
+    are readable by ID) and unstable (its result set varies between calls), so a
+    project can silently drop out of the nightly sync. To keep coverage stable we
+    also sync every project already known locally (schema or samples cached) plus
+    an explicit ``ECOTAXA_EXTRA_PROJECT_IDS`` operator allowlist.
+    """
+    known: set[int] = set(_parse_extra_project_ids(os.getenv("ECOTAXA_EXTRA_PROJECT_IDS")))
+    for table in ("project_schemas_cache", "samples_cache"):
+        try:
+            for row in conn.execute(f"SELECT DISTINCT project_id FROM {table}"):
+                known.add(int(row[0]))
+        except sqlite3.Error:
+            continue
+    return sorted(known - listed_ids)
+
+
 def run_full_sync(
     conn: sqlite3.Connection,
     client: Any,
@@ -354,6 +399,21 @@ def run_full_sync(
     failures: list[str] = []
 
     pending: list[tuple[int, dict, tuple | None]] = []
+    seen_ids: set[int] = set()
+
+    def _consider(project_id: int, project_meta: dict) -> None:
+        nonlocal projects_skipped
+        seen_ids.add(project_id)
+        signature = _project_signature(project_meta)
+        if (
+            signature is not None
+            and not force
+            and get_project_signature(conn, project_id) == signature
+        ):
+            projects_skipped += 1
+            return
+        pending.append((project_id, project_meta, signature))
+
     for project_meta in projects:
         try:
             project_id = int(
@@ -362,15 +422,26 @@ def run_full_sync(
             )
         except (TypeError, ValueError):
             continue
-        signature = _project_signature(project_meta)
-        if (
-            signature is not None
-            and not force
-            and get_project_signature(conn, project_id) == signature
-        ):
-            projects_skipped += 1
+        _consider(project_id, project_meta)
+
+    # Extend beyond the (narrow, unstable) project search: keep already-known and
+    # operator-allowlisted projects in the sync even when list_projects() omits
+    # them. Their metadata comes from a direct get_project call.
+    extra_failures: list[str] = []
+    for extra_id in _extra_syncable_project_ids(conn, seen_ids):
+        try:
+            extra_meta = client.get_project(extra_id)
+        except Exception as exc:  # noqa: BLE001 — a known project we could not refresh
+            # Soft failure: a previously-known project may have been removed or
+            # made private. Record a note but never let it fail the whole run —
+            # the reachable projects are still valid.
+            extra_failures.append(f"{extra_id}: get_project {type(exc).__name__}: {exc}")
+            _LOGGER.warning("sync extra project %s get_project failed: %s", extra_id, exc)
             continue
-        pending.append((project_id, project_meta, signature))
+        if not isinstance(extra_meta, dict):
+            continue
+        extra_meta.setdefault("projid", extra_id)
+        _consider(extra_id, extra_meta)
 
     worker_state = threading.local()
 
@@ -455,8 +526,13 @@ def run_full_sync(
                 samples_synced += len(samples)
                 projects_synced += 1
 
-    status = "ok" if not failures else ("partial" if projects_synced > 0 else "failed")
-    error_message = "; ".join(failures) if failures else None
+    if failures:
+        status = "partial" if projects_synced > 0 else "failed"
+    else:
+        # Reachable projects all synced/skipped cleanly; a stale extra project
+        # downgrades to "partial" (with a note) but never to "failed".
+        status = "partial" if extra_failures else "ok"
+    error_message = "; ".join(failures + extra_failures) or None
 
     finish_sync_run(
         conn,

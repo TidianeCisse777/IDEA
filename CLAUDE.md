@@ -93,6 +93,8 @@ python serve.py                          # serveur FastAPI seul
 | `SESSION_STORE_DATABASE_URL` | PostgreSQL pour les métadonnées de session (ex. `postgresql://copepod:pass@postgres:5432/copepod_sessions`). Si absent → fallback fichiers locaux. |
 | `POSTGRES_PASSWORD` | Mot de passe PostgreSQL (défaut `copepod_dev` en dev). À surcharger en prod. |
 | `OPENWEBUI_URL` | Backend Open WebUI pour le feedback polling (`http://open-webui:8080` en compose) |
+| `ECOTAXA_CACHE_DB` | Chemin SQLite du cache EcoTaxa (défaut `data/ecotaxa_cache.sqlite`) — index spatio-temporel lu par les recherches zone/temps/taxon |
+| `ECOTAXA_EXTRA_PROJECT_IDS` | Liste de `project_id` EcoTaxa (séparés par virgule/espace) à synchroniser en plus de `list_projects()` — pour les projets lisibles par ID mais absents (ou instables) de la recherche projet du compte |
 
 `.env` contient des credentials EcoTaxa/EcoPart/SQL — jamais commité, jamais affiché.
 

@@ -36,7 +36,7 @@ def _turn(*, file_loaded: bool, sources: tuple[str, ...] = (), output_intent: st
     )
 
 
-def _decision(text: str, *, file_loaded: bool = False, sources: tuple[str, ...] = (), messages=None, max_tools: int = 15):
+def _decision(text: str, *, file_loaded: bool = False, sources: tuple[str, ...] = (), messages=None, max_tools: int = 15, output_intent: str = "ambiguous"):
     from tools.tool_catalog import TOOL_POLICIES
     from tools.tool_exposure import decide_tool_exposure
 
@@ -44,7 +44,7 @@ def _decision(text: str, *, file_loaded: bool = False, sources: tuple[str, ...] 
     return decide_tool_exposure(
         tuple(TOOL_POLICIES),
         TOOL_POLICIES,
-        _turn(file_loaded=file_loaded, sources=sources),
+        _turn(file_loaded=file_loaded, sources=sources, output_intent=output_intent),
         _source_decision(*sources),
         history,
         max_tools=max_tools,
@@ -244,6 +244,7 @@ def test_enrichment_without_loaded_file_keeps_canonical_tool_hidden():
     [
         ("Explore EcoTaxa", "ecotaxa_discovery", "find_ecotaxa_projects"),
         ("Liste les samples EcoTaxa du projet", "ecotaxa_samples", "get_ecotaxa_sample"),
+        ("Résous la station RA76 dans EcoTaxa", "ecotaxa_discovery", "resolve_ecotaxa_sample"),
         ("Montre les objets du sample EcoTaxa 14853000001", "ecotaxa_objects", "list_ecotaxa_sample_objects"),
         ("Montre les objets du sample 14853000001 sans l'exporter", "ecotaxa_objects", "list_ecotaxa_sample_objects"),
         ("Trouve les samples EcoTaxa au Labrador en 2020", "ecotaxa_geo_time", "find_ecotaxa_samples_in_region"),
@@ -262,13 +263,57 @@ def test_ecotaxa_selects_only_the_requested_subtoolset(text, expected_group, exp
     assert len(decision.tool_names) <= 15
 
 
-def test_ecotaxa_always_includes_geo_time_with_at_most_one_other_group():
+def test_ecotaxa_does_not_always_include_geo_time_for_a_project_audit():
     decision = _decision("Audite le projet EcoTaxa", sources=("ecotaxa",))
 
-    assert "ecotaxa_geo_time" in decision.active_groups
+    assert "ecotaxa_geo_time" not in decision.active_groups
     assert "ecotaxa_audit" in decision.active_groups
-    assert "find_ecotaxa_samples_in_region" in decision.tool_names
     assert len(decision.tool_names) <= 15
+
+
+def test_ecotaxa_exploration_keeps_discovery_and_multiple_intents():
+    decision = _decision(
+        "Montre le projet 1165 et ses samples de la campagne X",
+        sources=("ecotaxa",),
+    )
+
+    assert "ecotaxa_discovery" in decision.active_groups
+    assert "ecotaxa_samples" in decision.active_groups
+    assert "ecotaxa_geo_time" not in decision.active_groups
+    assert "preview_ecotaxa_project" in decision.tool_names
+    assert "list_ecotaxa_campaigns" in decision.tool_names
+    assert "list_ecotaxa_project_samples" in decision.tool_names
+
+
+def test_ecotaxa_does_not_expose_geo_time_for_non_geographic_exploration():
+    decision = _decision("Le cache EcoTaxa est-il à jour ?", sources=("ecotaxa",))
+
+    assert "ecotaxa_discovery" in decision.active_groups
+    assert "ecotaxa_geo_time" not in decision.active_groups
+    assert "get_ecotaxa_cache_status" in decision.tool_names
+
+
+def test_visual_overflow_keeps_graph_and_ecotaxa_discovery():
+    decision = _decision(
+        "Affiche les samples EcoTaxa de la Baie de Baffin sur une carte",
+        sources=("ecotaxa",),
+        output_intent="visual",
+    )
+
+    assert decision.policy_overflow is True
+    assert "run_graph" in decision.tool_names
+    assert "list_ecotaxa_campaigns" in decision.tool_names
+    assert "find_ecotaxa_samples_in_region" in decision.tool_names
+
+
+def test_negated_export_does_not_expose_ecotaxa_export_tools():
+    decision = _decision(
+        "Montre le projet 1165 et ses samples, ne fais aucun export",
+        sources=("ecotaxa",),
+    )
+
+    assert "ecotaxa_export" not in decision.active_groups
+    assert "query_ecotaxa" not in decision.tool_names
 
 
 def test_ecotaxa_is_never_enabled_by_a_bare_identifier():

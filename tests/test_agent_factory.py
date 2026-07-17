@@ -194,6 +194,8 @@ def test_agent_has_required_tools(tmp_path, monkeypatch):
     assert "query_ogsl" in tool_names
     assert "list_sql_tables" in tool_names
     assert "copy_sql_query_to_workspace" in tool_names
+    assert "resolve_ecotaxa_sample" in tool_names
+    assert "resolve_ecotaxa_sample" in descriptions
     assert 'load_skill("ecotaxa_navigation")' in descriptions["search_ecotaxa_taxa"]
 
 
@@ -566,6 +568,38 @@ def test_context_middleware_allows_currently_grounded_ecotaxa_tool_call(monkeypa
     )
 
     assert result.content == "ok"
+
+
+def test_context_middleware_exposes_cross_project_sample_resolver(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="resolve-thread")
+    request = SimpleNamespace(
+        tool_call={
+            "name": "resolve_ecotaxa_sample",
+            "args": {"reference": "RA76"},
+            "id": "call-resolve",
+        },
+        state={
+            "messages": [
+                HumanMessage(content="Dans EcoTaxa, résous la station RA76")
+            ]
+        },
+    )
+
+    result = middleware.wrap_tool_call(
+        request,
+        lambda req: ToolMessage(content="resolver-called", tool_call_id=req.tool_call["id"]),
+    )
+
+    assert result.content == "resolver-called"
 
 
 def test_context_middleware_blocks_bare_project_id_without_source_affinity(
