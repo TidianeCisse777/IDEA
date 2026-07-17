@@ -104,6 +104,40 @@ def test_capsule_surfaces_environment_columns_recognized_by_enrichment(tmp_path)
     assert "direct station/cast identifiers are not required" in capsule
 
 
+def test_capsule_surfaces_active_ecotaxa_selection_context(tmp_path):
+    store = SessionStore(tmp_path)
+    thread_id = "ecotaxa-selection-context"
+    frame = pd.DataFrame({
+        "sample_id": [101, 102, 103],
+        "station_id": ["S1", "S1", "S2"],
+        "profile_id": ["C1", "C2", "C3"],
+        "date_min": ["2024-01-01"] * 3,
+    })
+    store_dataset(
+        store,
+        thread_id,
+        frame,
+        variable_name="df_ecotaxa_selection_baie_de_baffin",
+        meta={
+            "source": "ecotaxa_selection",
+            "selection_name": "selection_baie_de_baffin",
+            "sample_ids": [101, 102, 103],
+            "project_ids": [10, 11],
+            "filters": {"zone_name": "Baie de Baffin"},
+            "n_rows": 3,
+            "n_cols": 4,
+        },
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "ACTIVE ECOTAXA SELECTION" in capsule
+    assert "selection_baie_de_baffin" in capsule
+    assert "sample_ids=101,102,103" in capsule
+    assert "zone_name=Baie de Baffin" in capsule
+    assert "df_ecotaxa_selection_baie_de_baffin" in capsule
+
+
 def test_old_turn_cannot_ground_remote_ecotaxa_sample_id(tmp_path):
     store = SessionStore(tmp_path)
     messages = [
@@ -368,3 +402,45 @@ def test_capsule_no_loaded_files_block_for_single_file(tmp_path):
     )
     capsule = build_dataset_state_capsule(store, thread_id)
     assert "LOADED FILES" not in capsule
+
+
+def test_capsule_surfaces_derived_working_tables_without_stale_ids(tmp_path):
+    """WORKING TABLES must list id-free derived results (ecotaxa cache queries,
+    joins) reusable by name — symmetric to LOADED FILES / DERIVED ZONE SUBSETS —
+    so the most coherent df stays selectable across sources, while raw exports
+    keyed to a project/sample id remain hidden (no stale-id re-exposure)."""
+    store = SessionStore(tmp_path)
+    thread_id = "working-tables"
+
+    # A neutral ecotaxa cache-query result (no project/sample id).
+    store_dataset(
+        store, thread_id,
+        pd.DataFrame({"instrument": ["UVP6"], "n": [65]}),
+        variable_name="df_ecotaxa_cache_query",
+        meta={"source": "ecotaxa_cache", "n_rows": 1},
+    )
+    # A raw ecotaxa export keyed to project 42 — must stay hidden.
+    store_dataset(
+        store, thread_id,
+        pd.DataFrame({"sample_id": [42000002]}),
+        variable_name="df_ecotaxa_42",
+        meta={"source": "ecotaxa:42", "project_id": 42, "n_rows": 1},
+    )
+    # Active df = a loaded file.
+    store_dataset(
+        store, thread_id,
+        pd.DataFrame({"latitude": [67.0], "longitude": [-63.0]}),
+        variable_name="df_file_neolabs",
+        meta={"source": "file:/d/neolabs.tsv", "path": "/d/neolabs.tsv", "n_rows": 1},
+        latest_alias="active",
+        is_loaded_file=True,
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "WORKING TABLES" in capsule
+    assert "df_ecotaxa_cache_query" in capsule
+    # the raw project-keyed export and its ids are never re-exposed
+    assert "df_ecotaxa_42" not in capsule
+    assert "project_id=42" not in capsule
+    assert "42000002" not in capsule

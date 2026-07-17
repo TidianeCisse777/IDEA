@@ -224,6 +224,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     # EcoTaxa.
     "find_ecotaxa_projects": _source("EcoTaxa · recherche de projets", "EcoTaxa · project search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "find_ecotaxa_samples_in_region": _source("EcoTaxa · samples par zone / période", "EcoTaxa · samples by region / period", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "combine_ecotaxa_selections": _source("EcoTaxa · combiner les sélections zonées", "EcoTaxa · combine zoned selections", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "group_ecotaxa_samples_by_year": _source("EcoTaxa · samples par année", "EcoTaxa · samples by year", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "find_ecotaxa_projects_in_region": _source("EcoTaxa · projets par zone", "EcoTaxa · projects by region", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "group_ecotaxa_project_samples_by_region": _source("EcoTaxa · répartition régionale", "EcoTaxa · regional distribution", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
@@ -237,7 +238,6 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "inspect_ecotaxa_column": _source("EcoTaxa · inspection de colonne", "EcoTaxa · column inspection", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "count_ecotaxa_taxa": _source("EcoTaxa · comptage des taxons", "EcoTaxa · taxon counts", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "search_ecotaxa_taxa": _source("EcoTaxa · recherche de taxons", "EcoTaxa · taxon search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "get_ecotaxa_cache_status": _source("EcoTaxa · état du cache", "EcoTaxa · cache status", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "describe_ecotaxa_project_coverage": _source("EcoTaxa · couverture du projet (réseau vs cache)", "EcoTaxa · project coverage (network vs cache)", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "compare_ecotaxa_projects": _source("EcoTaxa · comparaison de projets", "EcoTaxa · project comparison", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "list_ecotaxa_projects": _source("EcoTaxa · projets accessibles", "EcoTaxa · accessible projects", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
@@ -250,10 +250,10 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "summarize_ecotaxa_project": _source("EcoTaxa · résumé du projet", "EcoTaxa · project summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_projects": _source("EcoTaxa · résumé des projets", "EcoTaxa · projects summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "export_ecotaxa_samples": _source("EcoTaxa · export des samples", "EcoTaxa · samples export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True),
-    "list_ecotaxa_project_samples": _source("EcoTaxa · samples du projet", "EcoTaxa · project samples", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "resolve_ecotaxa_sample": _source("EcoTaxa · résolution de sample", "EcoTaxa · sample resolver", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "audit_ecotaxa_availability": _source("EcoTaxa · audit de disponibilité", "EcoTaxa · availability audit", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "audit_ecotaxa_spatial_coverage": _source("EcoTaxa · audit de couverture spatiale", "EcoTaxa · spatial coverage audit", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "list_ecotaxa_cache_tables": _source("EcoTaxa · tables du cache", "EcoTaxa · cache tables", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "describe_ecotaxa_cache_table": _source("EcoTaxa · schéma d'une table cache", "EcoTaxa · cache table schema", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "query_ecotaxa_cache": _source("EcoTaxa · SQL cache", "EcoTaxa · SQL cache", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     # Bio-ORACLE.
     "list_bio_oracle_datasets": _source("Bio-ORACLE · jeux de données", "Bio-ORACLE · datasets", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
@@ -334,15 +334,15 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "run_pandas": "local_session",
     "run_graph": "local_artifact",
     # EcoTaxa read-only/cache navigation.
-    "audit_ecotaxa_availability": "remote_read",
     "audit_ecotaxa_spatial_coverage": "remote_read",
+    "list_ecotaxa_cache_tables": "local_source_read",
+    "describe_ecotaxa_cache_table": "local_source_read",
     "query_ecotaxa_cache": "local_source_read",
     "compare_ecotaxa_projects": "remote_read",
     "count_ecotaxa_taxa": "remote_read",
     "describe_ecotaxa_project_coverage": "remote_read",
     "find_ecotaxa_projects": "remote_read",
     "find_ecotaxa_projects_in_region": "remote_read",
-    "get_ecotaxa_cache_status": "remote_read",
     "get_ecotaxa_sample": "remote_read",
     "list_ecotaxa_sample_objects": "remote_read",
     "get_ecotaxa_object": "remote_read",
@@ -350,7 +350,6 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "inspect_ecotaxa_column": "remote_read",
     "inspect_ecotaxa_project_schema": "remote_read",
     "list_ecotaxa_campaigns": "remote_read",
-    "list_ecotaxa_project_samples": "remote_read",
     "resolve_ecotaxa_sample": "remote_read",
     "list_ecotaxa_projects": "remote_read",
     "preview_ecotaxa_project": "remote_read",
@@ -364,6 +363,7 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     # EcoTaxa selection/session and heavy extraction.
     "find_ecotaxa_observations": "remote_session",
     "find_ecotaxa_samples_in_region": "remote_session",
+    "combine_ecotaxa_selections": "remote_session",
     "group_ecotaxa_samples_by_year": "remote_session",
     "export_ecotaxa_samples": "remote_heavy",
     "query_ecotaxa": "remote_heavy",
@@ -452,10 +452,9 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "find_ecotaxa_projects": "ecotaxa_discovery",
     "list_ecotaxa_campaigns": "ecotaxa_discovery",
     "preview_ecotaxa_project": "ecotaxa_discovery",
-    "get_ecotaxa_cache_status": "ecotaxa_discovery",
+    "list_ecotaxa_cache_tables": "ecotaxa_discovery",
+    "describe_ecotaxa_cache_table": "ecotaxa_discovery",
     "describe_ecotaxa_project_coverage": "ecotaxa_audit",
-    # EcoTaxa samples.
-    "list_ecotaxa_project_samples": "ecotaxa_samples",
     # Cross-project reference resolution is part of EcoTaxa discovery and stays
     # visible in the deterministic overflow fallback used by the agent.
     "resolve_ecotaxa_sample": "ecotaxa_discovery",
@@ -467,6 +466,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "summarize_ecotaxa_sample_deployment": "ecotaxa_samples",
     # EcoTaxa geography and time.
     "find_ecotaxa_samples_in_region": "ecotaxa_geo_time",
+    "combine_ecotaxa_selections": "ecotaxa_geo_time",
     "group_ecotaxa_samples_by_year": "ecotaxa_geo_time",
     "find_ecotaxa_projects_in_region": "ecotaxa_geo_time",
     "group_ecotaxa_project_samples_by_region": "ecotaxa_geo_time",
@@ -480,7 +480,6 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "inspect_ecotaxa_column": "ecotaxa_schema",
     "compare_ecotaxa_projects": "ecotaxa_schema",
     # EcoTaxa audit.
-    "audit_ecotaxa_availability": "ecotaxa_audit",
     "audit_ecotaxa_spatial_coverage": "ecotaxa_audit",
     "query_ecotaxa_cache": "ecotaxa_discovery",
     "summarize_ecotaxa_project": "ecotaxa_audit",

@@ -128,9 +128,11 @@ def test_every_capability_header_in_doc_is_mapped(capabilities_doc_text):
 
 
 def test_new_quickwin_tools_are_exposed(tool_names):
-    """Pin the QW1 + QW2 additions."""
+    """Pin the QW1 additions and SQL cache primitives."""
     assert "search_ecotaxa_taxa" in tool_names
-    assert "get_ecotaxa_cache_status" in tool_names
+    assert "list_ecotaxa_cache_tables" in tool_names
+    assert "describe_ecotaxa_cache_table" in tool_names
+    assert "query_ecotaxa_cache" in tool_names
 
 
 # ---- MCP parity: same capabilities exposed via the FastMCP façade ----
@@ -159,7 +161,9 @@ TOOL_TO_MCP_TOOL: dict[str, str] = {
     "summarize_ecotaxa_project": "summarize_project",
     "count_ecotaxa_taxa": "taxa_stats",
     "search_ecotaxa_taxa": "search_taxa",
-    "get_ecotaxa_cache_status": "cache_status",
+    "list_ecotaxa_cache_tables": "list_tables",
+    "describe_ecotaxa_cache_table": "describe_table",
+    "query_ecotaxa_cache": "read_query",
     # Exempted (export tools stay agent-only by design):
     # "query_ecotaxa", "query_ecotaxa_sample", "export_ecotaxa_samples"
 }

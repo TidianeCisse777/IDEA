@@ -975,6 +975,9 @@ def test_find_ecotaxa_samples_in_region_stores_named_selection(seeded_cache):
     })
 
     assert "Sélection mémorisée" in result
+    assert "Résumé de la sélection" in result
+    assert "lignes affichées" in result
+    assert "Tableau des samples" in result
     assert "selection_baie_de_baffin_uvp6" in result
     assert "Actions possibles" in result
     assert "résume cette sélection" in result
@@ -1825,3 +1828,74 @@ def test_add_year_column_handles_iso_dates():
     df = pd.DataFrame({"sample_id": [1, 2], "sample_date": ["2015-04-22", "2024-07-30"]})
     out = _add_year_column(df)
     assert out["year"].tolist() == [2015, 2024]
+
+
+def test_query_ecotaxa_cache_persists_select_as_dataframe(tmp_path, monkeypatch):
+    import sqlite3
+
+    import tools.copepod_sources as source_module
+    from core.ecotaxa_browser.cache.repo import init_schema
+    from tools.session_store import SessionStore
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO samples_cache "
+        "(sample_id, project_id, station_id, profile_id, date_min, date_max, last_synced) "
+        "VALUES (1, 10, 'ST-1', 'CAST-1', '2024-01-01', '2024-01-01', 'test')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = SessionStore(tmp_path / "sessions")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+    monkeypatch.setattr(source_module, "_store", store)
+
+    tool = next(
+        item for item in source_module.make_source_tools("sql-query-thread")
+        if item.name == "query_ecotaxa_cache"
+    )
+    result = tool.invoke({
+        "sql": "SELECT station_id, COUNT(*) AS n FROM samples_cache GROUP BY station_id"
+    })
+
+    session = store.get("sql-query-thread")
+    assert "lignes retournées" in result
+    assert "toutes les 1 lignes" in result
+    assert "station_id" in result
+    assert session["meta"]["variable_name"] == "df_ecotaxa_cache_query"
+    assert session["df"].to_dict("records") == [{"station_id": "ST-1", "n": 1}]
+
+
+def test_query_ecotaxa_cache_keeps_complete_agent_result(tmp_path, monkeypatch):
+    import sqlite3
+
+    import tools.copepod_sources as source_module
+    from core.ecotaxa_browser.cache.repo import init_schema
+    from tools.session_store import SessionStore
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    conn.executemany(
+        "INSERT INTO samples_cache "
+        "(sample_id, project_id, station_id, last_synced) VALUES (?, 10, 'ST-1', 'test')",
+        ((sample_id,) for sample_id in range(1, 1002)),
+    )
+    conn.commit()
+    conn.close()
+
+    store = SessionStore(tmp_path / "sessions")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+    monkeypatch.setattr(source_module, "_store", store)
+    tool = next(
+        item for item in source_module.make_source_tools("sql-full-thread")
+        if item.name == "query_ecotaxa_cache"
+    )
+
+    result = tool.invoke({"sql": "SELECT sample_id FROM samples_cache ORDER BY sample_id"})
+
+    session = store.get("sql-full-thread")
+    assert session["df"].shape == (1001, 1)
+    assert "aperçu de 50 lignes sur 1001" in result

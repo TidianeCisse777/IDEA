@@ -121,6 +121,40 @@ def test_run_pandas_marks_truncated_dataframe_preview():
     assert "Ne complète pas les lignes absentes" in result
 
 
+def test_run_pandas_exposes_loaded_file_after_ecotaxa_result():
+    """Le sandbox garde le fichier de référence quand le df actif devient EcoTaxa."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-pandas-cross-source"
+    file_df = pd.DataFrame({"sample_id": ["A", "B"]})
+    cache_df = pd.DataFrame({"sample_id": ["A", "C"]})
+    store_dataset(
+        _store,
+        thread_id,
+        file_df,
+        variable_name="df_file_reference",
+        meta={"source": "file:test.tsv", "n_rows": 2, "n_cols": 1},
+        latest_alias="df_file_reference",
+        is_loaded_file=True,
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        cache_df,
+        variable_name="df_ecotaxa_cache_query",
+        meta={"source": "ecotaxa_cache", "n_rows": 2, "n_cols": 1},
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke({
+        "code": "result = loaded_file.merge(df_ecotaxa_cache_query, on='sample_id', how='left', indicator=True)",
+    })
+
+    assert "A" in result
+    assert "B" in result
+    assert "_merge" in result
+
+
 def test_run_pandas_returns_explicit_printed_control_output():
     """Les tableaux préparés par print ne doivent pas disparaître du tool."""
     from tools.dataset_registry import store_dataset
@@ -796,6 +830,49 @@ ax.legend()
     assert "Graph quality blocked" in result
     assert "legend entries" in result
     assert "/graphs/" not in result
+
+
+def test_run_graph_blocks_dense_opaque_scatter(tmp_path):
+    """Overplotting guard: a scatter with many fully opaque points hides the
+    distribution and must be blocked (conservative threshold)."""
+    thread_id = "thread-overplot-graph"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    store.set(thread_id, df, {"loaded_skills": ["graph_writer"]})
+
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+import numpy as np
+fig, ax = plt.subplots(figsize=(8, 6))
+rng = np.random.default_rng(0)
+ax.scatter(rng.random(2500), rng.random(2500))
+"""
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
+
+    assert "Graph quality blocked" in result
+    assert "alpha" in result.lower() or "transparence" in result.lower()
+    assert "/graphs/" not in result
+
+
+def test_run_graph_allows_dense_scatter_with_transparency(tmp_path):
+    """The same dense scatter renders once transparency makes the density
+    readable — the guard is conservative, not a blanket point-count cap."""
+    thread_id = "thread-overplot-ok-graph"
+    store = SessionStore(tmp_path / "sessions")
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    store.set(thread_id, df, {"loaded_skills": ["graph_writer"]})
+
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+import numpy as np
+fig, ax = plt.subplots(figsize=(8, 6))
+rng = np.random.default_rng(0)
+ax.scatter(rng.random(2500), rng.random(2500), alpha=0.4, s=6)
+"""
+    result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
+
+    assert "Graph quality blocked" not in result
+    assert "/graphs/" in result
 
 
 def test_run_graph_blocks_too_many_visible_tick_labels(tmp_path):

@@ -143,6 +143,7 @@ Apply this gateway before every domain, graph, or source-specific rule.
 - Generic words are never external-source signals: sample, échantillon, station, zone, project, temperature, environment, map, where, and their variants do not authorize an online source.
 - On first use, an external source must be named explicitly. Selectable external sources are: {external_labels}.
 - Once explicitly selected, that source remains active on following turns. The user does not need to repeat its name for grounded follow-ups.
+- If a file is successfully loaded later, it becomes the sole source for implicit follow-ups; for example, "liste les stations et les casts" is answered from the loaded file, even if EcoTaxa was active before. The external source is available again only when explicitly named in the current turn.
 - The active source changes when the user names another source, explicitly compares or combines sources, or a newly loaded file becomes the active source. An enrichment request naming one or more sources replaces stale external affinities with those named sources; a loaded file remains primary.
 - A project number alone is not an EcoTaxa signal. With no active source owning it, ask which source owns it.
 - With no loaded file, no active affinity, and no explicitly named source, ask the user to provide a file or choose a source. Do not select an online source yourself.
@@ -218,8 +219,17 @@ def decide_source(
         selected = ()
         evidence = "none"
 
-    if file_loaded and selected and "file" not in selected:
-        selected = ("file", *selected)
+    if file_loaded:
+        if explicit:
+            # A source named in the current turn is an explicit secondary
+            # operation on the loaded file. Keep both sources available.
+            if "file" not in selected:
+                selected = ("file", *selected)
+        else:
+            # Loading a file is a source switch for implicit follow-ups. Do
+            # not let a stale external affinity keep EcoTaxa tools visible.
+            selected = ("file",)
+            evidence = "loaded_file_default"
     selected = tuple(source for source in selected if source not in excluded)
     primary = "file" if "file" in selected else (selected[0] if selected else None)
     return SourceDecision(
@@ -484,10 +494,20 @@ def latest_user_text(messages: list | None) -> str:
 
 def is_file_loaded(store: Any, thread_id: str) -> bool:
     try:
+        loaded_file = store.get(f"{thread_id}:loaded_file")
+        if loaded_file and loaded_file.get("df") is not None:
+            return True
         session = store.get(thread_id)
     except Exception:
         return False
-    return bool(session and session.get("df") is not None)
+    if not session or session.get("df") is None:
+        return False
+    source = (session.get("meta") or {}).get("source")
+    if source is None:
+        # Preserve the legacy contract for lightweight stores that only expose
+        # a dataframe and no provenance metadata.
+        return True
+    return str(source).startswith("file:")
 
 
 def is_file_scoped_turn(store: Any, thread_id: str, messages: list | None) -> bool:

@@ -87,7 +87,7 @@ stations or interpolate between sparse observations.
 If the loaded table has NeoLabs abundance columns such as `SAMPLE_ID`, `ANALYSIS_ID`, `TAXON_ID`, `ZOOPLANKTON_CATEGORY`, and `Total abundance (ind./m3 depth vol)`, treat it as a taxon-level table.
 
 Mandatory rule:
-- For temporal, spatial, station-level, CTD, diversity, anomaly, and ordination plots, first rebuild `sample_df` with one row per `SAMPLE_ID + ANALYSIS_ID`.
+- For temporal, spatial, station-level, CTD, diversity, and anomaly plots, first rebuild `sample_df` with one row per `SAMPLE_ID + ANALYSIS_ID`.
 - Do not plot raw taxon-level rows as independent samples for station/date/environment summaries.
 - Use `Total abundance (ind./m3 depth vol)` as the default abundance column and label the unit as `ind./m3`.
 - Use `ctd_match_status == "matched"` before plotting abundance against Amundsen CTD variables.
@@ -100,13 +100,6 @@ Recommended `sample_df` contents:
 - CTD QA: `ctd_match_status`, `ctd_distance_km`, `ctd_time_delta_min`, `ctd_depth_coverage_m`
 - environment: temperature, salinity, oxygen, fluorescence, nitrate from Amundsen interval means
 
-For ordination requests (`PCA`, `PCoA`, `NMDS`, `RDA`, `CCA`, `ordination`):
-- plan a taxon matrix (`sample x taxon`) plus an environmental `sample_df`
-- filter to positive-abundance samples
-- use Bray-Curtis for PCoA/NMDS taxonomic composition
-- standardize CTD variables for PCA/RDA
-- present the result as exploratory unless a formal model/test is included
-
 ## Required steps
 
 1. Identify the relevant columns in the loaded file
@@ -118,7 +111,6 @@ For ordination requests (`PCA`, `PCoA`, `NMDS`, `RDA`, `CCA`, `ordination`):
    - If the format is genuinely ambiguous, prefer the minimal non-visual answer and do not load this skill. Ask only when the format would materially change the requested result.
 5. If visual output: choose the graph type:
    - **map**: spatial distribution of stations or observations
-   - **sampling gap map**: stations coloured by coverage status (present / sparse / absent) per zone — use when the user asks about undersampled zones, lacunes, missing coverage, or where to sample next. Color: green = ≥ 10 obs, orange = 1–9 obs, red = 0 obs.
    - **climate delta map**: stations coloured by delta (Bio-ORACLE projected − CTD current) — use when the user asks about warming, SSP projections, or climate change impact by zone. Use a diverging colormap (coolwarm), centre at 0.
    - **geo scatter**: variable as a function of latitude or longitude
    - **bar by station**: comparison across named stations
@@ -129,12 +121,7 @@ For ordination requests (`PCA`, `PCoA`, `NMDS`, `RDA`, `CCA`, `ordination`):
    - **vertical profile**: abundance, biomass, temperature, salinity, oxygen, or fluorescence by depth. Put the measurement on X, depth on Y, and invert Y so deeper values are lower.
    - **taxonomic composition**: stacked bar chart of relative or absolute abundance by taxon across station, month, depth bin, sample, or zone.
    - **composition heatmap**: heatmap of log1p or relative abundance for dominant taxa across station, month, depth bin, sample, or zone.
-   - **rarefaction**: expected taxon richness as a function of sample size / sampling effort. Use only count-like non-negative taxon matrices.
-   - **species accumulation**: cumulative observed richness as sites/samples are added, preferably with permutation mean and interval if enough samples exist.
    - **rank-abundance**: taxa ordered by decreasing total or relative abundance.
-   - **NMDS**: exploratory Bray-Curtis ordination of taxonomic composition.
-   - **PCoA**: exploratory Bray-Curtis principal coordinates ordination of taxonomic composition.
-   - **PCA/RDA/CCA**: exploratory environment/community ordination when the request explicitly names the method or asks for community-environment structure.
 6. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
    - For station/sample/profile/cast/taxon filters, preserve identifiers as labels and normalize comparisons as text. Example: use `df["STATION_NAME"].astype(str).str.strip() == str(station).strip()`, never `int(station)` for filtering.
 7. Flag any missing values that could affect the output

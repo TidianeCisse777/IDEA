@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 import requests
+import pandas as pd
 from langchain_core.tools import tool
 
 from core.ecotaxa_browser.column_distribution import get_column_distribution
@@ -35,21 +36,25 @@ from core.ecotaxa_browser.search import search_projects
 from core.ecotaxa_browser.taxa_stats import taxa_stats
 from core.ecotaxa_browser.taxonomy import search_taxa
 from core.ecotaxa_browser.cache.repo import (
-    audit_ecotaxa_coverage,
-    cache_progress,
     init_schema,
     open_connection,
     project_cache_coverage,
     query_samples_filtered,
     resolve_samples,
 )
+from core.ecotaxa_browser.cache import sql_explorer as _sql_explorer
 from core.geo import audit_zone_coverage, load_registry
 
 _ZONES_REGISTRY_PATH = (
     Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
 )
 from tools.ecotaxa_client import EcotaxaClient, EcotaxaExportError
-from tools.dataset_registry import ECOTAXA, dataset_variable_name, store_dataset
+from tools.dataset_registry import (
+    ECOTAXA,
+    dataset_variable_name,
+    loaded_file_dataset,
+    store_dataset,
+)
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 from tools.data_tools import _uvp_skill_hint
@@ -290,6 +295,168 @@ def make_source_tools(thread_id: str) -> list:
             "une recherche, pas un export."
         )
 
+    @tool(response_format="content_and_artifact")
+    def compare_file_with_ecotaxa_cache() -> str:
+        """Compare le fichier chargé aux vraies clés du cache EcoTaxa.
+
+        Utiliser cet outil lorsqu'un fichier utilisateur doit être confronté à
+        EcoTaxa, y compris après une requête `query_ecotaxa_cache`. Le fichier
+        chargé est toujours la table de référence : l'outil le relit depuis son
+        ancre de session stable et ne dépend jamais du DataFrame actif.
+
+        L'outil inspecte les colonnes présentes, teste les correspondances
+        réellement disponibles (`sample_id`, `original_id`, `object_id`,
+        `profile_id`, `station_id`) et renvoie les lignes du fichier qui ont
+        ou n'ont pas de correspondance. Il ne fabrique pas de jointure cache↔cache.
+        """
+        loaded = loaded_file_dataset(_store, thread_id)
+        if not loaded or loaded.get("df") is None:
+            return _eco_blocked(
+                "Aucun fichier chargé dans cette conversation. Charge d'abord le fichier à comparer.",
+                retryable=False,
+            )
+
+        file_df = loaded["df"].copy()
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        conn = None
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            tables = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            cache_columns: dict[str, set[str]] = {}
+            for table in ("samples_cache", "objects_cache"):
+                if table in tables:
+                    cache_columns[table] = {
+                        str(row[1])
+                        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+                    }
+
+            candidates = (
+                ("sample_id", "samples_cache", "sample_id"),
+                ("sample_id", "samples_cache", "original_id"),
+                ("sample_id_internal", "samples_cache", "sample_id"),
+                ("sample_id_internal", "samples_cache", "original_id"),
+                ("object_id", "objects_cache", "object_id"),
+                ("object_id", "objects_cache", "original_id"),
+                ("sample_profileid", "samples_cache", "profile_id"),
+                ("sample_stationid", "samples_cache", "station_id"),
+            )
+            comparison_rows: list[dict[str, object]] = []
+            unmatched_examples: list[dict[str, object]] = []
+            matched_examples: list[dict[str, object]] = []
+
+            def _values(series: pd.Series) -> pd.Series:
+                values = series.dropna().astype(str).str.strip()
+                return values[values != ""]
+
+            for file_column, table, cache_column in candidates:
+                if file_column not in file_df.columns:
+                    continue
+                if cache_column not in cache_columns.get(table, set()):
+                    continue
+                cache_df = pd.read_sql_query(
+                    f"SELECT CAST({cache_column} AS TEXT) AS key_value "
+                    f"FROM {table} WHERE {cache_column} IS NOT NULL",
+                    conn,
+                )
+                file_values = _values(file_df[file_column])
+                cache_values = set(_values(cache_df["key_value"]))
+                matched_mask = file_df[file_column].astype("string").str.strip().isin(cache_values)
+                matched_rows = file_df.loc[matched_mask].copy()
+                unmatched_rows = file_df.loc[~matched_mask & file_df[file_column].notna()].copy()
+                comparison_rows.append(
+                    {
+                        "file_column": file_column,
+                        "cache_table": table,
+                        "cache_column": cache_column,
+                        "file_values_tested": int(file_values.nunique()),
+                        "cache_values_available": int(len(cache_values)),
+                        "matched_file_rows": int(len(matched_rows)),
+                        "unmatched_file_rows": int(len(unmatched_rows)),
+                    }
+                )
+                for _, row in matched_rows.head(3).iterrows():
+                    matched_examples.append(
+                        {
+                            "file_column": file_column,
+                            "cache_table": table,
+                            "cache_column": cache_column,
+                            "value": str(row[file_column]),
+                        }
+                    )
+                for _, row in unmatched_rows.head(3).iterrows():
+                    unmatched_examples.append(
+                        {
+                            "file_column": file_column,
+                            "cache_table": table,
+                            "cache_column": cache_column,
+                            "value": str(row[file_column]),
+                        }
+                    )
+        except Exception as exc:
+            return _eco_error(
+                f"Impossible de comparer le fichier au cache EcoTaxa : {exc}",
+                retryable=False,
+            )
+        finally:
+            if conn is not None:
+                conn.close()
+
+        if not comparison_rows:
+            return _eco_empty(
+                "Aucune colonne de clé compatible trouvée entre le fichier et le schéma du cache EcoTaxa. "
+                f"Colonnes du fichier : {', '.join(map(str, file_df.columns))}"
+            )
+
+        comparison = pd.DataFrame(comparison_rows)
+        variable_name = "df_file_ecotaxa_comparison"
+        store_dataset(
+            _store,
+            thread_id,
+            comparison,
+            variable_name=variable_name,
+            meta={
+                "source": "file_ecotaxa_comparison",
+                "file_variable": (loaded.get("meta") or {}).get("variable_name"),
+                "n_rows": len(comparison),
+                "n_cols": len(comparison.columns),
+            },
+            set_active=False,
+        )
+        best_row = comparison.sort_values(
+            ["matched_file_rows", "file_values_tested"],
+            ascending=[False, False],
+        ).iloc[0]
+        total_matches = int(best_row["matched_file_rows"])
+        total_unmatched = int(best_row["unmatched_file_rows"])
+        lines = [
+            "## Comparaison fichier → cache EcoTaxa",
+            f"Fichier de référence : `{(loaded.get('meta') or {}).get('variable_name', 'loaded_file')}`",
+            f"Lignes du fichier : {len(file_df)} ; colonnes inspectées : {len(file_df.columns)}",
+            f"Meilleure correspondance réelle : {total_matches} ligne(s) ; lignes sans correspondance sur cette clé : {total_unmatched}",
+            "",
+            comparison.to_markdown(index=False),
+        ]
+        if matched_examples:
+            lines += ["", "### Exemples correspondants", "", pd.DataFrame(matched_examples).to_markdown(index=False)]
+        if unmatched_examples:
+            lines += ["", "### Exemples sans correspondance", "", pd.DataFrame(unmatched_examples).to_markdown(index=False)]
+        return _eco_success(
+            "\n".join(lines),
+            data_ref=variable_name,
+            persisted=True,
+            metrics={
+                "file_rows": len(file_df),
+                "candidate_keys": len(comparison_rows),
+                "best_match_rows": total_matches,
+            },
+        )
+
     def _normalize_sample_ids(sample_ids) -> list[int]:
         if sample_ids is None:
             return []
@@ -422,6 +589,81 @@ def make_source_tools(thread_id: str) -> list:
         meta = session.get("meta") or {}
         resolved_name = str(meta.get("selection_name") or key)
         return resolved_name, _normalize_sample_ids(meta.get("sample_ids"))
+
+    @tool(response_format="content_and_artifact")
+    def combine_ecotaxa_selections(
+        selection_names: list[str],
+        zone_names: list[str] | None = None,
+    ) -> str:
+        """Combine plusieurs sélections EcoTaxa mémorisées en un DataFrame zoné.
+
+        À utiliser avant une carte ou un tableau multi-zones lorsque plusieurs
+        appels à `find_ecotaxa_samples_in_region` ont créé des sélections.
+        Chaque ligne conserve son sample_id et reçoit une colonne `zone`; les
+        doublons de sample_id sont supprimés. Le résultat complet est persisté
+        sous `df_ecotaxa_zoned`, directement utilisable par `run_pandas` et
+        `run_graph`. Les noms doivent être les noms exacts retournés par les
+        recherches (par exemple `selection_baie_de_baffin`).
+        """
+        names = [str(name).strip() for name in (selection_names or []) if str(name).strip()]
+        if not names:
+            return _eco_blocked("Indique au moins deux sélections EcoTaxa à combiner.")
+        frames: list[pd.DataFrame] = []
+        labels = zone_names or []
+        missing: list[str] = []
+        for index, name in enumerate(names):
+            selection = _store.get(f"{thread_id}:selection:{name}")
+            if not selection:
+                missing.append(name)
+                continue
+            meta = selection.get("meta") or {}
+            variable_name = dataset_variable_name("ecotaxa", "selection", name)
+            dataset = _store.get(f"{thread_id}:dataset:{variable_name}")
+            frame = (dataset or {}).get("df") if dataset else None
+            if not isinstance(frame, pd.DataFrame):
+                missing.append(name)
+                continue
+            zone = labels[index] if index < len(labels) else (meta.get("filters") or {}).get("zone_name")
+            if not zone:
+                zone = name.removeprefix("selection_").replace("_", " ")
+            copy = frame.copy()
+            copy["zone"] = str(zone)
+            frames.append(copy)
+        if missing:
+            return _eco_blocked(
+                "Sélections introuvables ou non persistées : " + ", ".join(missing)
+            )
+        combined = pd.concat(frames, ignore_index=True)
+        if "sample_id" in combined.columns:
+            combined = combined.drop_duplicates(subset=["sample_id"], keep="first")
+        store_dataset(
+            _store,
+            thread_id,
+            combined,
+            variable_name=dataset_variable_name("ecotaxa", "zoned"),
+            latest_alias=ECOTAXA,
+            meta={
+                "source": "ecotaxa_combined_selections",
+                "zone_column": "zone",
+                "selection_names": names,
+                "n_rows": int(len(combined)),
+            },
+        )
+        counts = combined["zone"].value_counts().to_dict()
+        lines = [
+            "# EcoTaxa — sélections combinées par zone",
+            f"DataFrame persistant : `df_ecotaxa_zoned` ({len(combined)} samples uniques)",
+            "",
+            "| Zone | Samples |",
+            "|---|---:|",
+        ]
+        lines.extend(f"| {zone} | {count} |" for zone, count in counts.items())
+        return _eco_success(
+            "\n".join(lines),
+            data_ref="df_ecotaxa_zoned",
+            persisted=True,
+            metrics={"rows": int(len(combined)), "zones": len(counts)},
+        )
 
     def _selection_actions(name: str, sample_count: int, project_count: int) -> list[str]:
         return [
@@ -759,98 +1001,6 @@ def make_source_tools(thread_id: str) -> list:
         return _eco_success("\n".join(lines), metrics={"campaigns": len(ordered)})
 
     @tool(response_format="content_and_artifact")
-    def audit_ecotaxa_availability() -> str:
-        """Audit de couverture des données EcoTaxa indexées (lecture seule).
-
-        À utiliser pour les questions d'audit de disponibilité : quels projets
-        ont **peu de samples**, quelles **périodes** sont couvertes ou manquantes,
-        quels **samples** sont les plus pauvres en objets. Répond aux demandes du
-        type « audit des zones/projets avec peu de samples », « quelles années
-        couvre-t-on », « les samples avec le moins d'images ».
-
-        Ne lance aucun export : tout vient du cache local. Renvoie les projets
-        classés du plus pauvre au plus riche en samples, la distribution
-        temporelle par année, et les samples les plus pauvres en objets. Ne
-        fournit PAS les comptages validé/prédit par taxon (voir les tools de
-        comptage taxonomique pour cela).
-        """
-        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
-        try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
-            audit = audit_ecotaxa_coverage(conn)
-            conn.close()
-        except Exception as exc:
-            return _eco_error(
-                f"Erreur lors de la lecture du cache EcoTaxa : {exc}", retryable=True
-            )
-
-        if not audit["per_project"]:
-            return _eco_empty("Aucun sample indexé dans le cache local.")
-
-        def _bbox(box: dict) -> str:
-            if box.get("south") is None:
-                return "—"
-            return (
-                f"{_format_number(box['south'])}/{_format_number(box['west'])}/"
-                f"{_format_number(box['north'])}/{_format_number(box['east'])}"
-            )
-
-        lines = [
-            "# Audit de disponibilité EcoTaxa (cache local)",
-            "",
-            f"Total : {audit['total_samples']} samples, "
-            f"{audit['total_projects']} projets.",
-            "",
-            "## Projets classés du plus pauvre au plus riche en samples",
-            "",
-            "| project_id | n_samples | période | instrument | bbox (S/W/N/E) |",
-            "|---:|---:|---|---|---|",
-        ]
-        lines.extend(
-            f"| {p['project_id']} | {p['n_samples']} | "
-            f"{p['date_min'] or '—'} → {p['date_max'] or '—'} | "
-            f"{', '.join(p['instruments']) or '—'} | {_bbox(p['bbox'])} |"
-            for p in audit["per_project"]
-        )
-        lines += [
-            "",
-            "## Couverture temporelle",
-            "",
-            "| année | n_samples | n_projets |",
-            "|---|---:|---:|",
-        ]
-        lines.extend(
-            f"| {y['year']} | {y['n_samples']} | {y['n_projects']} |"
-            for y in audit["per_year"]
-        )
-        lines += [
-            "",
-            "## Samples les plus pauvres en objets",
-            "",
-            "| sample_id | project_id | label | n_objects |",
-            "|---:|---:|---|---:|",
-        ]
-        lines.extend(
-            f"| {s['sample_id']} | {s['project_id']} | "
-            f"{s['original_id'] or '—'} | {s['object_count']} |"
-            for s in audit["sparsest_samples"]
-        )
-        lines.append("")
-        lines.append(
-            "Note : les comptages d'objets par projet sont plafonnés à la synchro ; "
-            "le compte par sample est fiable. Les comptages validé/prédit par "
-            "taxon ne sont pas inclus ici."
-        )
-        return _eco_success(
-            "\n".join(lines),
-            metrics={
-                "samples": int(audit["total_samples"]),
-                "projects": int(audit["total_projects"]),
-            },
-        )
-
-    @tool(response_format="content_and_artifact")
     def audit_ecotaxa_spatial_coverage() -> str:
         """Audit spatial de la couverture par zone nommée (lecture seule).
 
@@ -927,66 +1077,6 @@ def make_source_tools(thread_id: str) -> list:
         )
         return _eco_success(
             "\n".join(lines), metrics={"geolocated_samples": len(points)}
-        )
-
-    @tool(response_format="content_and_artifact")
-    def list_ecotaxa_project_samples(project_id: int) -> str:
-        """Liste les samples d'un projet EcoTaxa avec leur `sample_id` numérique.
-
-        Ce tool exige un `project_id` explicitement connu. Pour un label,
-        station, profil ou `sample_id` sans projet, utiliser
-        `resolve_ecotaxa_sample(reference=..., project_id=None)` : ne jamais
-        déduire le projet à partir du préfixe d'un label.
-
-        À utiliser pour résoudre le `sample_id` numérique EcoTaxa (ex.
-        `17498000023`) à partir du label / `original_id` d'un sample (ex.
-        `am_leg4_RA76_1`). Les autres outils de présentation montrent le label,
-        mais l'export et l'enrichissement exigent le numéro : cet outil fait le
-        pont, sans deviner ni inventer d'identifiant.
-
-        Renvoie un tableau : `sample_id` numérique, label (`original_id`),
-        station, latitude, longitude, profondeur max. Lecture seule, depuis le
-        cache local EcoTaxa.
-        """
-        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
-        try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
-            rows = list(query_samples_filtered(conn, project_ids=[int(project_id)]))
-            conn.close()
-        except Exception as exc:
-            return _eco_error(
-                f"Erreur lors de la lecture du cache EcoTaxa : {exc}",
-                retryable=True,
-                provenance={"project_id": int(project_id)},
-            )
-
-        if not rows:
-            return _eco_empty(
-                f"Aucun sample dans le cache local pour le projet {project_id}. "
-                "Le projet n'a peut-être pas encore été synchronisé.",
-                provenance={"project_id": int(project_id)},
-            )
-
-        rows.sort(key=lambda row: (row["original_id"] or "", row["sample_id"]))
-        lines = [
-            f"# Samples du projet EcoTaxa {project_id}",
-            "",
-            "| sample_id | label | station | latitude | longitude | profondeur max |",
-            "|---:|---|---|---:|---:|---:|",
-        ]
-        lines.extend(
-            f"| {row['sample_id']} | {row['original_id'] or '—'} | "
-            f"{row['station_id'] or '—'} | {_format_number(row['lat_avg'])} | "
-            f"{_format_number(row['lon_avg'])} | {_format_number(row['depth_max'])} |"
-            for row in rows
-        )
-        lines.append("")
-        lines.append(f"Source EcoTaxa : {_ecotaxa_project_url(project_id)}")
-        return _eco_success(
-            "\n".join(lines),
-            provenance={"project_id": int(project_id)},
-            metrics={"samples": len(rows)},
         )
 
     @tool(response_format="content_and_artifact")
@@ -1440,80 +1530,6 @@ def make_source_tools(thread_id: str) -> list:
         )
 
     @tool(response_format="content_and_artifact")
-    def get_ecotaxa_cache_status() -> str:
-        """Diagnostique l'état du cache local EcoTaxa.
-
-        Routing requirement: appeler ce tool quand une recherche cache retourne
-        `CACHE_EMPTY`, quand l'utilisateur demande « est-ce que le cache est à
-        jour », ou avant une exploration zone+temps si l'agent doute de la
-        fraîcheur des données.
-
-        Retourne :
-        - nombre de samples / projets / schémas indexés ;
-        - timestamp et statut du dernier sync (`success`, `running`, `failed`) ;
-        - fenêtres synchronisées (n samples, n projets) ;
-        - chemin du fichier SQLite utilisé.
-        """
-        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
-        try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
-            progress = cache_progress(conn)
-            last_sync = progress["last_sync"]
-            conn.close()
-        except Exception as exc:
-            return _eco_error(
-                f"Erreur lors de la lecture du cache EcoTaxa : {exc}", retryable=True
-            )
-
-        lines = [
-            f"**Cache EcoTaxa** — `{cache_db}`",
-            "",
-            "| métrique | valeur |",
-            "|---|---:|",
-            f"| samples indexés | {progress['samples_indexed']} |",
-            f"| projets indexés | {progress['projects_indexed']} |",
-            f"| schémas indexés | {progress['schemas_indexed']} |",
-            f"| sync en cours | {'oui' if progress['sync_running'] else 'non'} |",
-            f"| projets déjà synchronisés | {progress['projects_synced']} |",
-            f"| samples déjà synchronisés | {progress['samples_synced']} |",
-            "| total projets estimé | inconnu |",
-        ]
-        if last_sync is None:
-            lines.append("")
-            lines.append(
-                "Aucun sync enregistré (jamais synchronisé). "
-                "Lancer `POST /admin/resync` sur le MCP server pour amorcer le cache."
-            )
-        else:
-            lines.append("")
-            lines.append(
-                f"**Dernier sync** — `{last_sync.get('status', '?')}` "
-                f"démarré à `{last_sync.get('started_at', '?')}`"
-                + (
-                    f", terminé à `{last_sync.get('ended_at', '?')}`"
-                    if last_sync.get("ended_at")
-                    else ""
-                )
-                + f". Projets synchronisés : {last_sync.get('projects_synced', '—')}, "
-                f"samples : {last_sync.get('samples_synced', '—')}."
-            )
-            if progress["sync_running"]:
-                lines.append(
-                    "\nSync en cours : les recherches EcoTaxa peuvent retourner "
-                    "des résultats partiels (`partial=True`) jusqu'à la fin du run."
-                )
-            if last_sync.get("error_message"):
-                lines.append(f"\nErreur : {last_sync['error_message']}")
-        return _eco_success(
-            "\n".join(lines),
-            metrics={
-                "samples_indexed": int(progress["samples_indexed"]),
-                "projects_indexed": int(progress["projects_indexed"]),
-            },
-        )
-
-    @tool(response_format="content_and_artifact")
     def describe_ecotaxa_project_coverage(project_id: int) -> str:
         """Réconcilie la vérité RÉSEAU EcoTaxa et l'INDEX du cache local pour un projet.
 
@@ -1912,10 +1928,17 @@ def make_source_tools(thread_id: str) -> list:
         )
         project_count = len({int(sample["project_id"]) for sample in result["samples"]})
         lines = [
-            f"# {result['total_matching']} samples (cap {len(result['samples'])})"
-            + (" — tronqué" if result["truncated"] else "")
+            f"# Résultat EcoTaxa — {result['total_matching']} samples sélectionnés"
+            + (" — résultat tronqué par la source" if result["truncated"] else "")
             + (" — résultat partiel" if result.get("partial") else ""),
             f"Sélection mémorisée : `{selection_name}`",
+            "",
+            "## Résumé de la sélection",
+            "",
+            "| total sélectionné | lignes affichées | projets | statut |",
+            "|---:|---:|---:|---|",
+            f"| {len(result['samples'])} | {len(shown_samples)} | {project_count} | "
+            f"{'partiel' if result.get('partial') else 'complet'} |",
             f"Projets principaux : {_sample_project_counts(result['samples'])}",
             f"Instruments : {_compact_instruments(result['samples'])}",
             "sample_ids visibles : "
@@ -1924,6 +1947,13 @@ def make_source_tools(thread_id: str) -> list:
                 f", ... (+{len(result['samples']) - max_ids})"
                 if len(result["samples"]) > max_ids
                 else ""
+            ),
+            "",
+            (
+                f"## Tableau des samples — aperçu ({len(shown_samples)} sur "
+                f"{len(result['samples'])})"
+                if len(result["samples"]) > len(shown_samples)
+                else "## Tableau des samples"
             ),
             "",
             "| sample_id | projet | station | lat | lon | date_min | date_max | depth_min | depth_max | instrument | url |",
@@ -1948,8 +1978,9 @@ def make_source_tools(thread_id: str) -> list:
         if len(result["samples"]) > max_rows:
             lines.append("")
             lines.append(
-                f"({max_rows} premiers / {len(result['samples'])} affichés ; "
-                "définir ECOTAXA_SAMPLE_RESULT_ROWS pour élargir l'aperçu)"
+                f"Aperçu : {max_rows} premières lignes affichées sur "
+                f"{len(result['samples'])}. La sélection complète reste mémorisée "
+                "pour les questions suivantes, les tableaux et les graphes."
             )
         lines.extend([
             "",
@@ -3187,6 +3218,88 @@ def make_source_tools(thread_id: str) -> list:
         )
 
     @tool(response_format="content_and_artifact")
+    def list_ecotaxa_cache_tables() -> str:
+        """Liste les tables du cache SQLite EcoTaxa avec leur nombre de lignes.
+
+        Point d'entrée de l'exploration SQL : appeler en premier pour savoir
+        quelles tables sont disponibles. Retourne nom, nombre de lignes indexées
+        et description de chaque table.
+
+        Suivi naturel : `describe_ecotaxa_cache_table` pour le schéma exact,
+        puis `query_ecotaxa_cache` pour un SELECT libre.
+        """
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            tables = _sql_explorer.list_tables(conn)
+            conn.close()
+        except Exception as exc:
+            return _eco_error(f"Erreur lecture cache : {exc}", retryable=True)
+
+        lines = [
+            "## Tables du cache EcoTaxa",
+            "",
+            "| table | lignes | description |",
+            "|---|---:|---|",
+        ]
+        for t in tables:
+            count = t["rows"] if t["rows"] is not None else "—"
+            lines.append(f"| `{t['table']}` | {count} | {t['description']} |")
+        lines += [
+            "",
+            "Utiliser `describe_ecotaxa_cache_table` pour le schéma, "
+            "puis `query_ecotaxa_cache(sql=...)` pour un SELECT libre.",
+        ]
+        return _eco_success("\n".join(lines), metrics={"tables": len(tables)})
+
+    @tool(response_format="content_and_artifact")
+    def describe_ecotaxa_cache_table(table_name: str) -> str:
+        """Retourne le schéma complet (colonnes, types, index) d'une table du cache EcoTaxa.
+
+        À utiliser avant un SELECT précis pour vérifier les noms exacts de
+        colonnes et leurs types. `table_name` est l'un des noms retournés par
+        `list_ecotaxa_cache_tables`.
+
+        Paire naturelle avec `list_ecotaxa_cache_tables` et `query_ecotaxa_cache`.
+        """
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            result = _sql_explorer.describe_table(conn, table_name)
+            conn.close()
+        except Exception as exc:
+            return _eco_error(f"Erreur lecture cache : {exc}", retryable=True)
+
+        if not result.get("ok"):
+            return _eco_blocked(result.get("error", "Table inconnue."))
+
+        lines = [
+            f"## Table `{table_name}`",
+            "",
+            result["description"],
+            "",
+            "### Colonnes",
+            "",
+            "| # | colonne | type | not null | PK |",
+            "|---:|---|---|:---:|:---:|",
+        ]
+        for col in result["columns"]:
+            nn = "✓" if col["notnull"] else ""
+            pk = "✓" if col["pk"] else ""
+            lines.append(
+                f"| {col['cid']} | `{col['name']}` | {col['type']} | {nn} | {pk} |"
+            )
+        if result["indexes"]:
+            lines += ["", "### Index", "", "| nom | unique |", "|---|:---:|"]
+            for idx in result["indexes"]:
+                lines.append(f"| `{idx['name']}` | {'✓' if idx['unique'] else ''} |")
+        return _eco_success(
+            "\n".join(lines), metrics={"columns": len(result["columns"])}
+        )
+
+    @tool(response_format="content_and_artifact")
     def query_ecotaxa_cache(sql: str) -> str:
         """Exécute un SELECT libre sur le cache SQLite EcoTaxa local.
 
@@ -3194,40 +3307,64 @@ def make_source_tools(thread_id: str) -> list:
         `load_skill("ecotaxa_navigation")` first unless it has already been
         called in the same turn.
 
-        Utiliser quand aucun tool de haut niveau ne couvre exactement le
-        besoin d'exploration : station précise, tableau croisé, distribution
-        par date ou instrument, combinaison de filtres arbitraires. Ce tool
-        remplace les patterns qui nécessiteraient plusieurs appels successifs
-        ou un export pour faire un simple comptage.
+        Outil central d'exploration : écrire directement le SELECT voulu.
+        Remplace tout pattern nécessitant plusieurs appels ou un export pour
+        un comptage, regroupement ou filtrage arbitraire.
 
-        Seuls les SELECT sont autorisés. Inclure un `LIMIT n` dans le SQL
-        pour contrôler la taille du résultat (plafonné à 1 000 lignes en
-        interne pour protéger le contexte). Pour des zones nommées, récupère
-        d'abord la bbox via `get_zone_info`, puis filtre sur
-        `lat_avg`/`lon_avg`.
+        Explorer les objets : la table `objects_cache` (indexée dans les caches
+        enrichis) permet d'agréger les objets par taxon, statut, sample, date ou
+        profondeur en SQL — vérifie sa présence avec `describe_ecotaxa_cache_table`
+        avant, car elle est absente d'un cache non enrichi. Si elle est absente,
+        le cache ne connaît des objets que des agrégats (`samples_cache.object_count`,
+        `project_signatures_cache.pctvalidated`), et le détail objet par objet passe
+        par le chemin live `list_ecotaxa_sample_objects` / `get_ecotaxa_object`.
 
-        ## Schéma — TABLE samples_cache
-        | colonne       | type    | contenu |
+        Seuls les SELECT sont autorisés. Aucun LIMIT n'est ajouté par défaut :
+        le résultat complet est conservé dans `df_ecotaxa_cache_query`. Ajouter
+        un LIMIT uniquement si l'utilisateur demande explicitement un aperçu,
+        un top ou une pagination.
+
+        Zones nommées — règle stricte : pour une baie / mer / détroit / zone
+        nommée, tu DOIS d'abord appeler `get_zone_info(zone_name=...)` et
+        réutiliser sa `bbox` dans `WHERE lat_avg BETWEEN … AND lon_avg BETWEEN
+        …`. N'écris JAMAIS de bornes lat/lon littérales de mémoire : des
+        coordonnées inventées donnent des comptages faux ou vides. Sans nom de
+        zone (bbox numérique déjà fournie), filtre directement.
+
+        Utiliser `list_ecotaxa_cache_tables` pour découvrir les tables
+        et `describe_ecotaxa_cache_table` pour leur schéma exact.
+
+        ## Tables disponibles
+
+        **samples_cache** — index spatio-temporel principal
+        | colonne | type | contenu |
         |---|---|---|
-        | sample_id     | INTEGER | identifiant numérique EcoTaxa |
-        | project_id    | INTEGER | identifiant du projet |
-        | lat_avg       | REAL    | latitude centre du sample |
-        | lon_avg       | REAL    | longitude centre du sample |
-        | date_min      | TEXT    | date début YYYY-MM-DD |
-        | date_max      | TEXT    | date fin YYYY-MM-DD |
-        | depth_min     | REAL    | profondeur minimale (m) |
-        | depth_max     | REAL    | profondeur maximale (m) |
-        | original_id   | TEXT    | label complet (ex. am_leg4_RA76_1) |
-        | station_id    | TEXT    | nom de station (ex. RA76, St-27) |
-        | profile_id    | TEXT    | identifiant de profil |
-        | object_count  | INTEGER | nombre d'objets imagés |
-        | instrument    | TEXT    | UVP6, UVP5SD, Loki, … |
+        | sample_id | INTEGER PK | identifiant EcoTaxa |
+        | project_id | INTEGER | projet parent |
+        | lat_avg / lon_avg | REAL | centre du sample |
+        | date_min / date_max | TEXT | YYYY-MM-DD |
+        | depth_min / depth_max | REAL | profondeurs (m) |
+        | original_id | TEXT | label complet (ex. am_leg4_RA76_1) |
+        | station_id | TEXT | station (ex. RA76, St-27), jamais le cast |
+        | profile_id | TEXT | identifiant du cast/profil |
+        | object_count | INTEGER | objets imagés |
+        | instrument | TEXT | UVP6, UVP5SD, Loki, … |
 
-        ## Schéma — TABLE project_schemas_cache
-        | colonne     | type | contenu |
-        |---|---|---|
-        | project_id  | INTEGER | identifiant du projet |
-        | schema_json | TEXT    | JSON : title, instrument, levels… |
+        **objects_cache** — index objet optionnel pour les agrégations détaillées
+        | colonne | contenu |
+        |---|---|
+        | object_id / sample_id / project_id | identifiants objet et parent |
+        | taxon / classification_status | classification et statut d'annotation (`V` = validé) |
+        | date / depth | date et profondeur objet |
+
+        **project_schemas_cache** — schémas JSON des projets
+        | project_id PK | schema_json (title, instrument, levels, free fields) |
+
+        **project_signatures_cache** — stats de classification
+        | project_id PK | objcount | pctvalidated | pctclassified |
+
+        **sync_runs** — historique des synchronisations
+        | run_id PK | started_at | ended_at | status | projects_synced | samples_synced | error_message |
 
         ## Exemples
         ```sql
@@ -3235,44 +3372,38 @@ def make_source_tools(thread_id: str) -> list:
         SELECT sample_id, project_id, original_id, station_id, date_min, depth_max
         FROM samples_cache WHERE station_id LIKE '%RA76%' ORDER BY date_min
 
-        -- Distribution des instruments dans une bbox
-        SELECT instrument, COUNT(*) AS n_samples, COUNT(DISTINCT project_id) AS n_projets
+        -- Casts : toujours profile_id, jamais station_id
+        SELECT profile_id AS cast_id, COUNT(DISTINCT sample_id) AS n_samples
+        FROM samples_cache
+        WHERE profile_id IS NOT NULL AND TRIM(profile_id) <> ''
+        GROUP BY profile_id ORDER BY n_samples DESC, cast_id
+
+        -- Instruments dans une bbox
+        SELECT instrument, COUNT(*) AS n, COUNT(DISTINCT project_id) AS n_projets
         FROM samples_cache
         WHERE lat_avg BETWEEN 60 AND 80 AND lon_avg BETWEEN -80 AND -40
-        GROUP BY instrument ORDER BY n_samples DESC
+        GROUP BY instrument ORDER BY n DESC
 
         -- Tableau croisé projet × année
-        SELECT project_id, substr(date_min,1,4) AS year, COUNT(*) AS n_samples
-        FROM samples_cache
-        WHERE lat_avg BETWEEN 60 AND 80 AND lon_avg BETWEEN -80 AND -40
-        GROUP BY project_id, year ORDER BY project_id, year
+        SELECT project_id, substr(date_min,1,4) AS year, COUNT(*) AS n
+        FROM samples_cache GROUP BY project_id, year ORDER BY project_id, year
 
-        -- Distribution par date d'une sélection mémorisée (remplace les sample_ids)
-        SELECT date_min, COUNT(*) AS n_samples, COUNT(DISTINCT project_id) AS n_projets
-        FROM samples_cache WHERE sample_id IN (1, 2, 3)
-        GROUP BY date_min ORDER BY date_min
+        -- Statut du dernier sync
+        SELECT status, started_at, ended_at, samples_synced
+        FROM sync_runs ORDER BY run_id DESC LIMIT 1
+
+        -- Projets avec % validé
+        SELECT project_id, objcount, pctvalidated, pctclassified
+        FROM project_signatures_cache ORDER BY pctvalidated DESC
         ```
         """
-        sql_stripped = (sql or "").strip()
-        first_token = sql_stripped.split()[0].upper() if sql_stripped.split() else ""
-        if first_token != "SELECT":
-            return _eco_blocked(
-                "Seuls les SELECT sont autorisés sur le cache EcoTaxa. "
-                f"Requête rejetée (premier token : {first_token!r})."
-            )
-        if ";" in sql_stripped:
-            return _eco_blocked(
-                "Les requêtes avec `;` sont interdites (pas de chaînage). "
-                "Reformuler en une seule requête SELECT."
-            )
-
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
             conn = open_connection(cache_db)
             init_schema(conn)
-            cur = conn.execute(sql_stripped)
-            columns = [desc[0] for desc in (cur.description or [])]
-            rows = cur.fetchmany(1001)
+            # Keep the complete SELECT result in the persisted DataFrame. The
+            # response below may show a compact preview, but it is not data loss.
+            result = _sql_explorer.run_select(conn, sql, cap=None)
             conn.close()
         except Exception as exc:
             return _eco_error(
@@ -3280,34 +3411,74 @@ def make_source_tools(thread_id: str) -> list:
                 retryable=False,
             )
 
-        truncated = len(rows) > 1000
-        rows = rows[:1000]
+        if not result.get("ok"):
+            return _eco_blocked(result["error"])
+
+        rows = result["rows"]
+        columns = result["columns"]
+        truncated = result["truncated"]
 
         if not rows:
             return _eco_empty("La requête n'a retourné aucune ligne.")
 
-        if not columns:
-            return _eco_empty("La requête n'a retourné aucune colonne.")
+        dataframe = pd.DataFrame.from_records(rows, columns=columns)
+        variable_name = "df_ecotaxa_cache_query"
+        store_dataset(
+            _store,
+            thread_id,
+            dataframe,
+            variable_name=variable_name,
+            meta={
+                "source": "ecotaxa_cache",
+                "sql": sql,
+                "n_rows": len(dataframe),
+                "n_cols": len(dataframe.columns),
+                "truncated": truncated,
+            },
+        )
 
         header = "| " + " | ".join(columns) + " |"
         separator = "|" + "|".join("---" for _ in columns) + "|"
+        preview_rows = rows[:50]
         data_lines = [
-            "| " + " | ".join(str(cell) if cell is not None else "—" for cell in row) + " |"
-            for row in rows
+            "| " + " | ".join(
+                str(row[c]) if row[c] is not None else "—" for c in columns
+            ) + " |"
+            for row in preview_rows
         ]
         note = (
-            "\n_(résultats tronqués à 1 000 lignes — ajouter un LIMIT dans le SQL pour affiner)_"
-            if truncated else ""
+            f"\n_(aperçu de 50 lignes sur {len(rows)} ; résultat complet dans "
+            "`df_ecotaxa_cache_query`)_"
+            if len(rows) > len(preview_rows) else ""
         )
-        body = "\n".join([header, separator, *data_lines]) + note
+        if truncated:
+            note += "\n_(le plafond explicite du lecteur SQL a tronqué ce résultat)_"
+        displayed = len(preview_rows)
+        display_label = (
+            f"toutes les {displayed} lignes"
+            if displayed == len(rows)
+            else f"aperçu : {displayed} sur {len(rows)} lignes"
+        )
+        summary = [
+            "## Résultat SQL EcoTaxa",
+            "",
+            "| lignes retournées | colonnes | affichage |",
+            "|---:|---:|---|",
+            f"| {len(rows)} | {len(columns)} | {display_label} |",
+            "",
+        ]
+        body = "\n".join([*summary, header, separator, *data_lines]) + note
         return _eco_success(
             body,
+            data_ref=variable_name,
+            persisted=True,
             metrics={"rows": len(rows), "truncated": truncated},
         )
 
     return [
         find_ecotaxa_projects,
         find_ecotaxa_samples_in_region,
+        combine_ecotaxa_selections,
         group_ecotaxa_samples_by_year,
         find_ecotaxa_projects_in_region,
         group_ecotaxa_project_samples_by_region,
@@ -3321,14 +3492,11 @@ def make_source_tools(thread_id: str) -> list:
         inspect_ecotaxa_column,
         count_ecotaxa_taxa,
         search_ecotaxa_taxa,
-        get_ecotaxa_cache_status,
         describe_ecotaxa_project_coverage,
         compare_ecotaxa_projects,
         list_ecotaxa_projects,
         list_ecotaxa_campaigns,
-        list_ecotaxa_project_samples,
         resolve_ecotaxa_sample,
-        audit_ecotaxa_availability,
         audit_ecotaxa_spatial_coverage,
         preview_ecotaxa_project,
         query_ecotaxa,
@@ -3338,5 +3506,7 @@ def make_source_tools(thread_id: str) -> list:
         summarize_ecotaxa_project,
         summarize_ecotaxa_projects,
         export_ecotaxa_samples,
+        list_ecotaxa_cache_tables,
+        describe_ecotaxa_cache_table,
         query_ecotaxa_cache,
     ]

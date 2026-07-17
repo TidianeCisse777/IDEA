@@ -74,12 +74,13 @@ def _successful_skill_messages(text: str, *skills: str):
 def test_no_state_exposes_permanent_core_and_geographic_capabilities():
     decision = _decision("Bonjour")
 
-    assert decision.tool_names[:3] == (
+    assert decision.tool_names[:4] == (
         "load_file",
         "load_skill",
         "query_copepod_knowledge_base",
+        "run_pandas",
     )
-    assert set(decision.tool_names[3:]) == {
+    assert set(decision.tool_names[4:]) == {
         "filter_dataframe_by_zone",
         "get_zone_info",
     }
@@ -103,8 +104,8 @@ def test_geographic_capabilities_do_not_depend_on_lexical_detection(text):
     assert "geography" in decision.active_groups
 
 
-def test_loaded_file_adds_pandas_but_not_graph_rendering():
-    decision = _decision("Calcule la moyenne", file_loaded=True, sources=("file",))
+def test_run_pandas_is_permanent_sandbox_without_loaded_file():
+    decision = _decision("Bonjour")
 
     assert "run_pandas" in decision.tool_names
     assert "run_graph" not in decision.tool_names
@@ -304,6 +305,26 @@ def test_visual_overflow_keeps_graph_and_ecotaxa_discovery():
     assert "run_graph" in decision.tool_names
     assert "list_ecotaxa_campaigns" in decision.tool_names
     assert "find_ecotaxa_samples_in_region" in decision.tool_names
+
+
+def test_ecotaxa_overflow_keeps_central_cache_query():
+    decision = _decision(
+        "Explore les samples EcoTaxa par projet, station, date et instrument",
+        sources=("ecotaxa",),
+    )
+
+    assert decision.policy_overflow is True
+    assert "query_ecotaxa_cache" in decision.tool_names
+
+
+def test_global_region_ranking_keeps_spatial_ranker_during_overflow():
+    decision = _decision(
+        "Dans tout le cache EcoTaxa, classe les zones et écorégions par nombre de samples",
+        sources=("ecotaxa",),
+    )
+
+    assert decision.policy_overflow is True
+    assert "rank_ecotaxa_samples_by_region" in decision.tool_names
 
 
 def test_negated_export_does_not_expose_ecotaxa_export_tools():

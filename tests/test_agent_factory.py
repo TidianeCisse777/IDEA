@@ -334,6 +334,76 @@ def test_context_preparation_keeps_current_turn_tool_result_full():
     assert metrics["old_tool_messages_compacted"] == 0
 
 
+def _skill_load(skill: str, call_id: str, body_lines: int = 40):
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    body = f"# skill {skill}\n" + (f"procedure line for {skill}\n" * body_lines)
+    ai = AIMessage(content="", tool_calls=[{
+        "name": "load_skill", "args": {"skill_name": skill},
+        "id": call_id, "type": "tool_call",
+    }])
+    tool = ToolMessage(
+        content=body, name="load_skill", tool_call_id=call_id,
+        artifact={"status": "success", "method": "skill loader",
+                  "provenance": {"skill": skill}},
+    )
+    return ai, tool, body
+
+
+def test_context_preparation_dedupes_repeated_skill_loads():
+    """Un skill rechargé garde seulement sa DERNIÈRE occurrence pleine ; les
+    instances antérieures sont compactées (pas de copie en double en contexte)."""
+    from langchain_core.messages import HumanMessage
+    import agent as agent_module
+
+    ai1, tm1, body = _skill_load("graph_writer", "s1")
+    ai2, tm2, _ = _skill_load("graph_writer", "s2")
+    messages = [HumanMessage(content="t1"), ai1, tm1,
+                HumanMessage(content="t2"), ai2, tm2]
+
+    compacted, metrics = agent_module._compact_old_tool_results(messages, keep_turns=3)
+
+    assert "compacté" in compacted[2].content and "graph_writer" in compacted[2].content
+    assert compacted[5].content == body  # latest load kept full
+    assert metrics["old_tool_messages_compacted"] == 1
+
+
+def test_context_preparation_keeps_single_skill_load_full():
+    """Un skill chargé une seule fois et récent reste plein."""
+    from langchain_core.messages import HumanMessage
+    import agent as agent_module
+
+    ai, tm, body = _skill_load("ecotaxa_navigation", "s1")
+    messages = [HumanMessage(content="t1"), ai, tm]
+
+    compacted, metrics = agent_module._compact_old_tool_results(messages, keep_turns=3)
+
+    assert compacted[2].content == body
+    assert metrics["old_tool_messages_compacted"] == 0
+
+
+def test_context_preparation_compacts_stale_skill_outside_window():
+    """Un skill chargé dans un tour ancien (hors fenêtre récente) et non
+    rechargé est compacté — le modèle le recharge par tour au besoin."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    import agent as agent_module
+
+    ai, tm, _ = _skill_load("graph_writer", "s1")
+    messages = [HumanMessage(content="t1"), ai, tm]
+    # three later turns push the skill load outside keep_turns=1 window
+    for i in range(2, 5):
+        messages += [
+            HumanMessage(content=f"t{i}"),
+            AIMessage(content="ok"),
+            ToolMessage(content="x", name="run_pandas", tool_call_id=f"p{i}"),
+        ]
+
+    compacted, metrics = agent_module._compact_old_tool_results(messages, keep_turns=1)
+
+    assert "compacté" in compacted[2].content and "hors fenêtre" in compacted[2].content
+    assert metrics["old_tool_messages_compacted"] >= 1
+
+
 def test_context_preparation_preserves_manifest_budgeted_skill_results(monkeypatch):
     from langchain_core.messages import ToolMessage
 
@@ -850,7 +920,8 @@ def test_graph_writer_supports_standalone_named_zone_maps():
 
     assert "standalone named-zone map" in writer
     assert "get_zone_info(zone_name=...)" in writer
-    assert "do not reference `df`" in writer
+    # The bare-df prohibition now lives once in the Mandatory rules block.
+    assert "never plot directly from bare `df`" in writer
     assert "bbox = {\"south\"" in writer
     assert "ccrs.lambertconformal" in writer
 
@@ -877,34 +948,32 @@ def test_biodiversity_graph_plan_is_frozen_in_docs():
 def test_graph_planner_lists_biodiversity_graph_types():
     planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8").lower()
 
+    # Ordination (NMDS/PCoA), rarefaction, species accumulation, and the
+    # sampling gap map were dropped from both planner and writer to shrink the
+    # skill; the planner only offers graph types the writer still templates.
     for expected in [
         "vertical profile",
         "taxonomic composition",
-        "rarefaction",
-        "species accumulation",
         "composition heatmap",
         "rank-abundance",
-        "nmds",
-        "pcoa",
     ]:
         assert expected in planner
+    for dropped in ["rarefaction", "species accumulation", "nmds", "pcoa", "sampling gap"]:
+        assert dropped not in planner
 
 
 def test_graph_writer_has_biodiversity_templates():
     writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8").lower()
 
+    # Niche templates (rarefaction, species accumulation, NMDS/PCoA, sampling
+    # gap map) were removed to shrink the skill; the common biodiversity
+    # templates remain the writer's recipe library.
     for expected in [
         "vertical profile template",
         "taxonomic composition stacked bar template",
         "taxonomic composition heatmap template",
-        "rarefaction curve template",
-        "species accumulation curve template",
-        "nmds / pcoa ordination template",
         "rank-abundance template",
         "ax.invert_yaxis()",
-        "braycurtis",
-        "mds(",
-        "fill_between",
     ]:
         assert expected in writer
 
@@ -922,7 +991,6 @@ def test_graph_writer_documents_readability_guards():
         "truncate labels longer than 35 characters",
         "do not replace it with `/graphs/graph.png`",
         "top_groups",
-        "groups_to_plot",
     ]:
         assert expected in writer
 

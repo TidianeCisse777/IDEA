@@ -12,6 +12,7 @@ import pandas as pd
 from langchain_core.tools import tool
 
 from core.cartography import configure_offline_cartopy
+from core.geo import load_registry
 from core.graph_contracts import normalize_graph_contract, validate_graph_contract
 from core.runtime_paths import graphs_dir
 from tools.tool_result import blocked, empty, error, success
@@ -114,6 +115,7 @@ from tools.file_loader import load_file as _load_file
 from tools.dataset_registry import (
     SOURCE_ALIASES,
     dataset_variable_name,
+    loaded_file_dataset,
     source_variable,
     store_dataset,
 )
@@ -127,6 +129,10 @@ from tools.session_store import SessionStore, default_store
 # succès d'un graphe (run_graph) et au début de chaque nouveau tour utilisateur
 # (pre_model_hook), sinon il coince une question chiffrée légitime au tour suivant.
 _GRAPH_QUALITY_BLOCKED_KEY = "graph_quality_blocked"
+# Conservative overplotting threshold: below this a scatter stays readable even
+# opaque; above it, opaque points hide the distribution and must use transparency
+# or aggregation. Set high to avoid catching legitimately dense station maps.
+_OVERPLOT_POINT_THRESHOLD = 1500
 
 
 def graph_recovery_pending(meta: dict[str, Any]) -> bool:
@@ -199,6 +205,29 @@ def _graph_quality_issue(plt: Any) -> str | None:
                     return (
                         f"Graph quality blocked: {len(long_labels)} {axis_name}-axis tick labels are too long. "
                         "Shorten labels to the terminal taxon/station name, wrap text, or truncate to 35 characters. "
+                        "Do not answer with a table; revise the matplotlib code and call run_graph again."
+                    )
+            # Overplotting guard (conservative): a scatter with a large number of
+            # fully opaque points renders an unreadable blob. Only block clearly
+            # egregious cases — a high point count AND no transparency — so a
+            # legitimately dense map with alpha is not caught.
+            from matplotlib.collections import PathCollection
+            for collection in ax.collections:
+                # Only scatter (PathCollection). hexbin/aggregations are
+                # PolyCollections — never block them, they ARE the fix.
+                if not isinstance(collection, PathCollection):
+                    continue
+                try:
+                    n_points = len(collection.get_offsets())
+                except (TypeError, ValueError):
+                    continue
+                alpha = collection.get_alpha()
+                opaque = alpha is None or alpha >= 0.95
+                if n_points > _OVERPLOT_POINT_THRESHOLD and opaque:
+                    return (
+                        f"Graph quality blocked: {n_points} overplotted points with no transparency "
+                        "hide the distribution. Add alpha (e.g. alpha=0.3-0.6), use smaller markers, "
+                        "or aggregate (hexbin / 2D density / per-cell counts). "
                         "Do not answer with a table; revise the matplotlib code and call run_graph again."
                     )
     return None
@@ -295,6 +324,14 @@ def _dataframe_vars(
 ) -> dict[str, Any]:
     """Build the DataFrame namespace shared by pandas and graph tools."""
     local_vars: dict[str, Any] = {"df": df, "pd": pd}
+    loaded = loaded_file_dataset(store, thread_id)
+    if loaded and loaded.get("df") is not None:
+        # Stable left-hand side for cross-source analysis. This does not
+        # replace the active ``df`` after a remote query.
+        local_vars["loaded_file"] = loaded["df"]
+        loaded_variable = (loaded.get("meta") or {}).get("variable_name")
+        if loaded_variable:
+            local_vars["loaded_file_variable"] = loaded_variable
     for alias in SOURCE_ALIASES:
         named = store.get(f"{thread_id}:{alias}")
         if named and named.get("df") is not None:
@@ -312,6 +349,56 @@ def _dataframe_vars(
         if project_id.isdigit() and named and named.get("df") is not None:
             local_vars.setdefault(f"df_ecopart_{project_id}", named["df"])
     return local_vars
+
+
+def _zone_geometry_vars() -> dict[str, Any]:
+    """Expose the registered zone geometries to graph code without serialising WKT.
+
+    Zone polygons are local, trusted registry data. Keeping them out of the
+    model-visible tool result avoids sending hundreds of KB of WKT through the
+    context while allowing ``run_graph`` to draw the exact registered outlines.
+    """
+    registry = load_registry(
+        Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
+    )
+    return {
+        "zone_polygons": {zone.canonical: zone.polygon for zone in registry.zones},
+        "zone_sources": {zone.canonical: zone.source for zone in registry.zones},
+    }
+
+
+def _infer_station_map_contract(figure: Any) -> dict[str, Any] | None:
+    """Infer the safe default contract for a point map when the model omitted it."""
+    axes = [
+        axis for axis in getattr(figure, "axes", [])
+        if axis.__class__.__module__.startswith("cartopy.")
+    ]
+    if len(axes) != 1:
+        return None
+    point_artist = next(
+        (
+            artist for artist in getattr(axes[0], "collections", [])
+            if getattr(artist, "get_offsets", None) is not None
+            and len(artist.get_offsets()) > 0
+        ),
+        None,
+    )
+    if point_artist is None:
+        return None
+    point_artist.set_gid("station_map_points")
+    return {
+        "kind": "station_map",
+        "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+        "inverted_axes": [],
+        "mappings": {
+            "position": {
+                "variable": "longitude_latitude",
+                "artist_gid": "station_map_points",
+            },
+        },
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": ["longitude", "latitude"],
+    }
 
 
 _CANONICAL_COLUMNS = frozenset(
@@ -639,6 +726,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - `df_ogsl`      : dernier fichier OGSL chargé ou dérivé
         - `df_ogsl_enriched`: dernière table enrichie avec OGSL
         - `df_sql`       : dernière copie SQL matérialisée
+        - `loaded_file`  : fichier original chargé, immuable comme table de référence
+        - `df_file_*`    : fichiers chargés, y compris après une requête EcoTaxa
+
+        Pour comparer un fichier et EcoTaxa, utilise `loaded_file` ou le
+        `df_file_*` correspondant comme table de gauche et
+        `df_ecotaxa_cache_query` comme table de droite. Le `df` actif peut être
+        le résultat EcoTaxa et ne remplace jamais `loaded_file`.
 
         Assigne le résultat à la variable `result`. Les sorties `print(...)`
         exécutées dans le même appel sont également capturées et renvoyées,
@@ -669,6 +763,26 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         local_vars: dict[str, Any] = {}
 
         try:
+            code_lower = code.lower()
+            if (
+                "zone" in code_lower
+                and "bbox" in code_lower
+                and (
+                    "ax.plot" in code_lower
+                    or "rectangle" in code_lower
+                    or "mplpolygon" in code_lower
+                    or "add_patch" in code_lower
+                )
+                and ("sample" in code_lower or "plot_df" in code_lower)
+            ):
+                _mark_graph_quality_blocked(_store, thread_id)
+                return blocked(
+                    "named-zone sample maps must draw the exact `zone_polygons` "
+                    "geometries with Cartopy ShapelyFeature; do not draw bbox "
+                    "rectangles. Retry exactly once with the same active dataframe.",
+                    retryable=True,
+                    method="registered zone boundary validation",
+                )
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
@@ -862,7 +976,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         Do NOT call plt.show() or plt.savefig().
 
         The return value is the graph image — include it verbatim in your response.
-        Standalone figures (e.g. cartopy zone maps) work without any loaded file.
+        Standalone figures work without a file only for boundary-only maps. A
+        map of samples must use an exact persisted named DataFrame; do not rely
+        on bare `df` when the request concerns a source selection.
         """
         session = _store.get(thread_id)
         df = session.get("df") if session else None
@@ -889,6 +1005,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 local_vars = _dataframe_vars(_store, thread_id, df)
             else:
                 local_vars = {"pd": pd}
+            local_vars.update(_zone_geometry_vars())
             local_vars["plt"] = plt
             apply_restricted_builtins(local_vars)
             with _cartopy_safe_tight_layout(plt):
@@ -899,6 +1016,8 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 for fig_num in plt.get_fignums():
                     figure = plt.figure(fig_num)
                     graph_contract = normalize_graph_contract(graph_contract, figure)
+                    if graph_contract is None:
+                        graph_contract = _infer_station_map_contract(figure)
                     contract_issue = validate_graph_contract(graph_contract, figure)
                     if contract_issue:
                         plt.close("all")

@@ -15,6 +15,7 @@ _CORE_TOOL_NAMES = (
     "load_file",
     "load_skill",
     "query_copepod_knowledge_base",
+    "run_pandas",
 )
 _ENRICHMENT_GROUP_BY_SOURCE: dict[str, ToolExposureGroup] = {
     "ecopart": "enrichment_ecopart",
@@ -97,13 +98,18 @@ _ECOTAXA_GEO_TERMS = (
     "geographique", "labrador", "baffin", "ungava", "hudson",
 )
 _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
+    "file_analysis": (
+        "run_pandas", "split_dataframe_by_zone",
+    ),
     "ecotaxa_discovery": (
-        "list_ecotaxa_campaigns", "preview_ecotaxa_project",
+        "query_ecotaxa_cache", "list_ecotaxa_cache_tables",
+        "describe_ecotaxa_cache_table", "list_ecotaxa_campaigns", "preview_ecotaxa_project",
         "get_ecotaxa_cache_status", "resolve_ecotaxa_sample",
-        "find_ecotaxa_projects", "query_ecotaxa_cache",
+        "find_ecotaxa_projects",
     ),
     "ecotaxa_geo_time": (
-        "find_ecotaxa_samples_in_region", "group_ecotaxa_samples_by_year",
+        "find_ecotaxa_samples_in_region", "combine_ecotaxa_selections",
+        "group_ecotaxa_samples_by_year",
         "find_ecotaxa_projects_in_region", "group_ecotaxa_project_samples_by_region",
         "rank_ecotaxa_samples_by_region",
     ),
@@ -149,6 +155,9 @@ class TurnSignals:
     successful_skills_this_turn: tuple[str, ...]
     ecotaxa_intents: tuple[ToolExposureGroup, ...]
     previous_visual_artifact: bool
+    regional_ranking_requested: bool
+    multi_zone_requested: bool
+    cross_source_compare_requested: bool
 
 
 @dataclass(frozen=True)
@@ -180,6 +189,20 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         if call.name == "load_skill"
     )
     normalized_text = text.casefold()
+    regional_ranking_requested = (
+        "classe" in normalized_text
+        and ("zone" in normalized_text or "écorégion" in normalized_text or "ecoregion" in normalized_text)
+        and ("sample" in normalized_text or "échantillon" in normalized_text)
+        and ("nombre" in normalized_text or "moins" in normalized_text or "plus" in normalized_text)
+    )
+    multi_zone_requested = (
+        any(term in normalized_text for term in _ECOTAXA_GEO_TERMS)
+        and (" et " in normalized_text or "plusieurs" in normalized_text)
+    )
+    cross_source_compare_requested = (
+        "fichier" in normalized_text
+        and any(term in normalized_text for term in ("correspond", "compar", "match"))
+    )
     export_negated = bool(_EXPORT_NEGATION.search(text)) or any(
         phrase in normalized_text
         for phrase in ("aucun export", "aucune exportation", "no export")
@@ -199,6 +222,9 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         successful_skills_this_turn=skills,
         ecotaxa_intents=ecotaxa_intents,
         previous_visual_artifact=previous_visual_artifact,
+        regional_ranking_requested=regional_ranking_requested,
+        multi_zone_requested=multi_zone_requested,
+        cross_source_compare_requested=cross_source_compare_requested,
     )
 
 
@@ -297,6 +323,12 @@ def decide_tool_exposure(
         ecotaxa_groups.extend(signals.ecotaxa_intents)
         groups.extend(ecotaxa_groups)
         reasons.append("authorized EcoTaxa intent")
+    # Keep the dedicated comparison route visible from the wording itself. A
+    # file may be present in the session capsule even when the active source
+    # snapshot was replaced by a preceding EcoTaxa query.
+    if signals.cross_source_compare_requested:
+        groups.append("file_analysis")
+        reasons.append("cross-source file/EcoTaxa comparison")
 
     active_groups = tuple(dict.fromkeys(groups))
     selected = _ordered_names(names, policies, active_groups)
@@ -305,7 +337,9 @@ def decide_tool_exposure(
         if "visualization" in active_groups:
             geo_visual_fallback = ("ecotaxa_geo_time",) if signals.geographic_requested else ()
             fallback_groups = (
-                "core", "geography", "visualization", "ecotaxa_discovery",
+                "core",
+                "file_analysis" if signals.cross_source_compare_requested else "geography",
+                "geography", "visualization", "ecotaxa_discovery",
                 *geo_visual_fallback,
                 *signals.ecotaxa_intents,
             )
@@ -313,7 +347,8 @@ def decide_tool_exposure(
             geo_fallback = ("ecotaxa_geo_time",) if signals.geographic_requested else ()
             fallback_groups = tuple(
                 group for group in (
-                    "core", "geography", "ecotaxa_discovery",
+                    "core", "file_analysis" if signals.cross_source_compare_requested else "geography",
+                    "geography", "ecotaxa_discovery",
                     *geo_fallback,
                     *signals.ecotaxa_intents,
                 )
@@ -324,11 +359,27 @@ def decide_tool_exposure(
         fallback_limits: dict[ToolExposureGroup, int] = {
             "ecotaxa_discovery": 3 if signals.ecotaxa_intents else 4,
         }
+        if signals.cross_source_compare_requested:
+            fallback_limits["file_analysis"] = 2
         if "ecotaxa_geo_time" in fallback_groups:
-            fallback_limits["ecotaxa_geo_time"] = 1
+            fallback_limits["ecotaxa_geo_time"] = 2 if signals.multi_zone_requested else 1
         for intent in signals.ecotaxa_intents:
             fallback_limits[intent] = 4
         selected = _ordered_names(names, policies, fallback_groups, fallback_limits)
+        if signals.regional_ranking_requested:
+            ranker = "rank_ecotaxa_samples_by_region"
+            if ranker in names and ranker not in selected:
+                replacement = next(
+                    (
+                        name for name in selected
+                        if policies[name].exposure_group == "ecotaxa_geo_time"
+                    ),
+                    None,
+                )
+                if replacement is not None:
+                    selected = tuple(ranker if name == replacement else name for name in selected)
+                elif len(selected) < max_tools:
+                    selected = (*selected, ranker)
         if len(selected) > max_tools and "ecotaxa" in authorized:
             selected = tuple(selected[:max_tools])
         if max_tools <= 4:

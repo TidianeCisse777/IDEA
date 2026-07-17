@@ -26,6 +26,7 @@ from core.ecotaxa_browser.cache.repo import (
     latest_sync_status,
     open_connection,
 )
+from core.ecotaxa_browser.cache import sql_explorer as _sql_explorer
 from core.ecotaxa_browser.cache.sync import run_full_sync
 from core.ecotaxa_browser.objects import get_object, list_sample_objects
 from core.ecotaxa_browser.projects import get_project
@@ -685,6 +686,55 @@ def create_mcp() -> FastMCP:
         return await _run_sync(
             summarize_sample_deployment, sample_id=sample_id,
         )
+
+    @mcp.tool(name="list_tables")
+    async def list_tables_tool() -> list[dict]:
+        """List available tables in the local EcoTaxa SQLite cache with row counts.
+
+        Returns one entry per table: ``table``, ``rows``, ``description``.
+        Call first when starting a SQL exploration session to know what is
+        queryable. Pair with ``describe_table`` for column details and
+        ``read_query`` for free SELECT.
+        """
+        conn = _open_cache()
+        try:
+            return _sql_explorer.list_tables(conn)
+        finally:
+            conn.close()
+
+    @mcp.tool(name="describe_table")
+    async def describe_table_tool(table_name: str) -> dict:
+        """Return column definitions and indexes for one EcoTaxa cache table.
+
+        ``table_name`` must be one of the names returned by ``list_tables``.
+        Returns ``{ok, table, description, columns, indexes}``; on unknown
+        table returns ``{ok: false, error}``. Use before writing a precise
+        SELECT to verify exact column names and types.
+        """
+        conn = _open_cache()
+        try:
+            return _sql_explorer.describe_table(conn, table_name)
+        finally:
+            conn.close()
+
+    @mcp.tool(name="read_query")
+    async def read_query_tool(sql: str) -> dict:
+        """Execute a read-only SELECT against the local EcoTaxa SQLite cache.
+
+        Only SELECT statements are allowed — no INSERT, UPDATE, DELETE, or
+        statement chaining. Results are capped at 500 rows; add ``LIMIT n``
+        in the SQL to control output size. Returns
+        ``{ok, columns, rows, count, truncated}`` on success or
+        ``{ok: false, error}`` on validation / SQL error.
+
+        Use ``list_tables`` to discover tables and ``describe_table`` for
+        schema details before writing a query.
+        """
+        conn = _open_cache()
+        try:
+            return _sql_explorer.run_select(conn, sql)
+        finally:
+            conn.close()
 
     @mcp.tool(name="cache_status")
     async def cache_status_tool() -> dict:

@@ -295,6 +295,26 @@ def _compact_old_tool_results(messages, *, keep_turns: int = _KEEP_FULL_TOOL_TUR
         if len(human_indexes) > keep_turns
         else 0
     )
+    # A skill's full body is expensive and re-loaded per turn when needed
+    # (exposure gates on the current turn; the run_graph execution guard reads
+    # the session record, not this message). So keep only the LATEST load of each
+    # skill full: earlier duplicates are dead weight, and a load outside the
+    # recent window is stale. Both compact to a short reference.
+    def _skill_name(message) -> str | None:
+        artifact = message.artifact if isinstance(message.artifact, dict) else {}
+        provenance = artifact.get("provenance")
+        if isinstance(provenance, dict):
+            skill = provenance.get("skill")
+            return str(skill) if skill else None
+        return None
+
+    latest_skill_index: dict[str, int] = {}
+    for index, message in enumerate(messages):
+        if isinstance(message, ToolMessage) and message.name == "load_skill":
+            skill = _skill_name(message)
+            if skill:
+                latest_skill_index[skill] = index
+
     output = []
     metrics = {
         "old_tool_messages_compacted": 0,
@@ -302,22 +322,44 @@ def _compact_old_tool_results(messages, *, keep_turns: int = _KEEP_FULL_TOOL_TUR
         "old_tool_result_chars_after": 0,
         "old_tool_result_chars_saved": 0,
     }
+
+    def _record_compaction(before: int, compact: str) -> None:
+        metrics["old_tool_messages_compacted"] += 1
+        metrics["old_tool_result_chars_before"] += before
+        metrics["old_tool_result_chars_after"] += len(compact)
+
     for index, message in enumerate(messages):
-        if (
-            index < cutoff
-            and isinstance(message, ToolMessage)
+        if not (
+            isinstance(message, ToolMessage)
             and isinstance(message.content, str)
-            and message.name != "load_skill"
             and len(message.content) > 320
         ):
+            output.append(message)
+            continue
+
+        if message.name == "load_skill":
+            skill = _skill_name(message)
+            superseded = skill is not None and latest_skill_index.get(skill) != index
+            stale = index < cutoff
+            if superseded or stale:
+                reason = "déjà rechargé plus tard" if superseded else "hors fenêtre récente"
+                compact = (
+                    f"[Skill {skill or 'inconnu'} compacté — {reason} ; "
+                    "recharger avec load_skill si besoin]"
+                )
+                _record_compaction(len(message.content), compact)
+                output.append(message.model_copy(update={"content": compact}))
+            else:
+                output.append(message)
+            continue
+
+        if index < cutoff:
             snippet = " ".join(message.content.split())[:240]
             compact = (
                 f"[Ancien résultat compacté — tool={message.name or 'unknown'}; "
                 f"résumé: {snippet}]"
             )
-            metrics["old_tool_messages_compacted"] += 1
-            metrics["old_tool_result_chars_before"] += len(message.content)
-            metrics["old_tool_result_chars_after"] += len(compact)
+            _record_compaction(len(message.content), compact)
             output.append(message.model_copy(update={"content": compact}))
         else:
             output.append(message)

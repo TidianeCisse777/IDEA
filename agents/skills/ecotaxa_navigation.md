@@ -23,9 +23,46 @@ for generic requests about samples, projects, stations, positions, zones,
 maps, counts, or analyses. A loaded file remains the default source unless the
 gateway authorizes EcoTaxa.
 
-After activation, use this skill to **explore** or **export** EcoTaxa samples
-by zone, time, project, or any combination — typically the path **zone+time →
-drill into samples → export a selection**.
+After activation, use this skill to explore or export EcoTaxa samples by zone,
+time, project, or combination.
+
+## Central ad hoc exploration path
+
+For authorized counts, distributions, groupings, comparisons, or tables (dates,
+stations, casts, instruments, objects, taxa), use `query_ecotaxa_cache` with a
+read-only `SELECT`/`GROUP BY`, sans LIMIT implicite. Son résultat complet est
+persisté dans `df_ecotaxa_cache_query`; use specialized tools for geometry,
+identifier resolution, previews, object details, and exports.
+
+For a **global aggregation** (“taxons et objets validés”, “objets par sample”
+or date), use `query_ecotaxa_cache`, even if “objets” appears. Do not call
+`list_ecotaxa_sample_objects` / `get_ecotaxa_object` or reuse an old
+`sample_id`; those tools require one explicitly named sample/object.
+
+`samples_cache`: one row per sample. Casts = distinct `profile_id`, never
+`sample_id`. Validated objects = `objects_cache.classification_status = 'V'`;
+Join on `sample_id` when scoped.
+
+## Cross-source analysis in the generic sandbox
+
+After `query_ecotaxa_cache`, use `run_pandas` for comparisons, joins, filters,
+rankings, and derived tables. The sandbox exposes `loaded_file` as the stable
+left/reference table and the complete cache result. Inspect both column sets first,
+test real overlapping values, and persist the result as a new DataFrame. If the
+current EcoTaxa result has no sample/object key, run a new sample-level cache
+query before `run_pandas`; do not reuse an old project aggregation. Never use
+`df` as the immutable file because a cache query can replace it, never join the
+cache tables to simulate a file comparison, and never invent a key. Explain
+the result in ordinary language.
+
+Example:
+
+```sql
+SELECT date_min AS date, COUNT(*) AS n_samples
+FROM samples_cache
+GROUP BY date_min
+ORDER BY date
+```
 
 This skill bundles the 3-slice navigation flow so the rules don't bloat
 the always-on system prompt.
@@ -67,9 +104,6 @@ General ambiguity rules:
     `find_ecotaxa_projects_in_region`, `summarize_ecotaxa_samples`,
     `count_ecotaxa_taxa`, `query_ecotaxa`, or any other navigation tool
     either — you have no scope to give them.
-  - DO NOT load additional skills (`graph_planner`, `graph_writer`,
-    `ecotaxa_query`) as a stalling tactic. The answer is a question,
-    not a tool.
   - The clarifying question must propose 2–3 concrete options, e.g.:
     "Tu veux dire les samples de la table que je viens de t'envoyer,
     ceux d'un projet précis, ou ceux d'une zone donnée ?" Then end the
@@ -89,8 +123,9 @@ General ambiguity rules:
   returns empty/`CACHE_EMPTY`, or "does project X really have no data",
   needs `describe_ecotaxa_project_coverage(project_id=...)` first: only
   its `vide_source` verdict is a real absence; `non_indexe` / `partiel`
-  mean resync-required, not missing data. With no specific project, use
-  `get_ecotaxa_cache_status` to prove the cache is populated first.
+  mean resync-required, not missing data. With no specific project, run
+  `query_ecotaxa_cache` (`SELECT COUNT(*) FROM samples_cache`) to prove
+  the cache is populated first.
 - Project-level intents split into two symmetric routes — pick by the
   *shape* the user wants back, not by overall verbosity. Both routes are
   read-only and cheap; neither downloads objects.
@@ -333,26 +368,16 @@ applies for the broad "copépodes" wording — use it directly instead of
 
 ---
 
-## Cache diagnostics — `get_ecotaxa_cache_status`
+## Cache diagnostics — `query_ecotaxa_cache`
 
-The `find_ecotaxa_samples_in_region`, `find_ecotaxa_projects_in_region`
-and `find_ecotaxa_observations` tools all read the local SQLite cache
-(`data/ecotaxa_cache.sqlite`), refreshed by the nightly MCP sync at 3
-AM UTC. Call `get_ecotaxa_cache_status` whenever:
-
-- a region/observation tool returned `CACHE_EMPTY`;
-- the user asks "est-ce que le cache est à jour", "quand est-ce que ça
-  a été synchronisé", "combien de samples sont indexés", "is the cache
-  fresh";
-- you are about to chain several zone+time queries and want to verify
-  the cache is populated before committing to a long exploration.
-
-Output covers: samples indexed, projects indexed, schemas indexed, last
-sync timestamp, sync status (`success`, `running`, `failed`), error
-message when present. The tool is read-only — it cannot trigger a
-sync. When the cache is empty or stale, tell the user the operator
-must call `POST /admin/resync` on the MCP server
-(`http://mcp-ecotaxa:8001`) to populate or refresh the cache.
+The region/observation tools read the local SQLite cache
+(`data/ecotaxa_cache.sqlite`), refreshed by the nightly MCP sync. On
+`CACHE_EMPTY`, or "cache à jour / combien de samples indexés / when synced",
+check it with `query_ecotaxa_cache`: counts via `SELECT COUNT(*),
+COUNT(DISTINCT project_id) FROM samples_cache`; last sync via `SELECT status,
+ended_at FROM sync_runs ORDER BY run_id DESC LIMIT 1`. If empty/stale, the
+operator must `POST /admin/resync` on the MCP server — the read-only path
+cannot trigger a sync.
 
 ---
 
@@ -592,7 +617,7 @@ executing the resolution.
 
 | Tool | When |
 |---|---|
-| `get_ecotaxa_cache_status()` | "cache à jour", "combien de samples indexés", debug after a `CACHE_EMPTY` error. Reports counts + last sync status. Read-only — operator must call `POST /admin/resync` on the MCP server to refresh. |
+| `query_ecotaxa_cache(sql=...)` | "cache à jour", "combien de samples indexés", debug after a `CACHE_EMPTY` error. Counts via `SELECT COUNT(*) FROM samples_cache`; last sync via `SELECT status, ended_at FROM sync_runs ORDER BY run_id DESC LIMIT 1`. Read-only — operator must call `POST /admin/resync` on the MCP server to refresh. |
 | `describe_ecotaxa_project_coverage(project_id=...)` | "le projet X a-t-il vraiment aucune donnée / est-il indexé", or a **known project_id** returned empty from a cache-backed tool. Reconciles network sample count vs cache and returns a verdict; distinguishes a real absence (`vide_source`) from a not-yet-indexed project (`non_indexe` / `partiel`). Call BEFORE claiming an EcoTaxa project has no data. |
 
 ### Export (download into the session)
@@ -645,7 +670,7 @@ User wants to export…
 
 - Authorized EcoTaxa read-only routes beat DataFrame/graph/export routes, but only after the source selection gateway has explicitly authorized EcoTaxa. Call `load_skill("ecotaxa_navigation")` first; do not call `run_pandas` or `query_ecotaxa` for read-only navigation.
 - Project discovery uses `list_ecotaxa_projects`. A project preview / object sample uses `preview_ecotaxa_project`; do not use `preview_ecotaxa_project` for project summaries, stats tables, or scan-before-export. Use `summarize_ecotaxa_project` or `summarize_ecotaxa_projects`.
-- For EcoTaxa navigation requests with a named zone: (1) `load_skill("ecotaxa_navigation")`, (2) `get_zone_info(zone_name=...)`, then the first geography/source-boundary tool. With multiple named zones such as "Baie de Baffin et Baie d'Ungava", do not merge names into one fake zone: call `get_zone_info` once per zone, then query once per zone with the same date/instrument filters.
+- For EcoTaxa navigation requests with a named zone: (1) `load_skill("ecotaxa_navigation")`, (2) `get_zone_info(zone_name=...)`, then the first geography/source-boundary tool. With multiple named zones, resolve each bbox, then prefer one combined cache SELECT with an explicit `zone` CASE label before graphing; never plot only the last selection.
 - Preserve EcoTaxa source links exactly: `https://ecotaxa.obs-vlfr.fr/prj/{project_id}` and `?samples={sample_id}`. Do not remove links from copied EcoTaxa tables.
 - For the distribution, range, statistics, or distinct values of one column, first call `load_skill("ecotaxa_navigation")`, then call `inspect_ecotaxa_column` with `project_id`. Do not call `inspect_ecotaxa_project_schema` before or after; `obj_depth` must stay `obj_depth`.
 - EcoTaxa dry-run export planning includes "prépare l'export" / "mais ne lance rien": call `export_ecotaxa_samples(sample_ids=[...], confirmed=False)` and do not stop after loading the skill.
