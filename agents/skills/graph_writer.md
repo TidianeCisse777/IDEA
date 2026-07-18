@@ -255,6 +255,86 @@ point artist gid, a `position` mapping with `longitude_latitude`,
 `zero_policy: include`, and actual `source_variables`. Retry once on a missing
 contract.
 
+### Zone breakdown map (samples + polygon boundaries)
+
+Use this template when the user asks to show samples colored by zone **with** zone borders.
+`zone_polygons` is already in scope — do NOT call `get_zone_info()` inside `run_graph` code.
+
+```python
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from matplotlib.lines import Line2D
+from matplotlib.cm import get_cmap
+import pandas as pd
+
+plt.style.use("dark_background")
+plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a"})
+
+# Use the correct DataFrame variable (df_ecotaxa_cache_query, loaded_file, etc.)
+plot_df = df_ecotaxa_cache_query.copy()
+plot_df = plot_df.dropna(subset=["lat_avg", "lon_avg"])
+
+zones = plot_df["iho_zone"].fillna("Inconnu").unique().tolist()
+cmap = get_cmap("tab20", max(len(zones), 1))
+color_map = {z: cmap(i % cmap.N) for i, z in enumerate(zones)}
+
+fig = plt.figure(figsize=(16, 8))
+ax = plt.axes(projection=ccrs.Robinson())
+ax.set_global()
+ax.add_feature(cfeature.LAND, facecolor="#2b2b2b", zorder=1)
+ax.add_feature(cfeature.OCEAN, facecolor="#13324c", zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="#aaaaaa", zorder=2)
+ax.gridlines(linewidth=0.4, color="gray", alpha=0.25, linestyle="--")
+
+# Draw zone polygon boundaries — zone_polygons keys match iho_zone values exactly
+for zone_name in zones:
+    if zone_name in zone_polygons:
+        feat = cfeature.ShapelyFeature(
+            [zone_polygons[zone_name]], ccrs.PlateCarree(),
+            facecolor=(*color_map[zone_name][:3], 0.12),
+            edgecolor=color_map[zone_name], linewidth=1.2,
+        )
+        ax.add_feature(feat, zorder=3)
+
+# Plot actual sample points on top
+for zone_name, group in plot_df.groupby("iho_zone", sort=False):
+    pts = ax.scatter(
+        group["lon_avg"], group["lat_avg"],
+        s=14, color=color_map.get(zone_name, "white"), alpha=0.85,
+        transform=ccrs.PlateCarree(), zorder=4, label=zone_name,
+    )
+    pts.set_gid("map_points")
+
+# Legend — cap at 15 entries to avoid overflow
+legend_zones = zones[:15]
+handles = [Line2D([0], [0], marker="o", color="none",
+                  markerfacecolor=color_map[z], markersize=6, label=z)
+           for z in legend_zones]
+ax.legend(handles=handles, title="iho_zone", loc="lower left",
+          fontsize=7, title_fontsize=8, frameon=True, framealpha=0.85)
+
+ax.set_title("Samples EcoTaxa — découpage par zone IHO/MEOW", fontsize=14, color="white")
+ax.text(0.99, 0.01, f"{len(plot_df)} samples | Confidence: high",
+        transform=ax.transAxes, ha="right", va="bottom", fontsize=8,
+        color="#444444",
+        bbox=dict(boxstyle="round,pad=0.25", facecolor="white",
+                  edgecolor="#cccccc", alpha=0.8))
+
+graph_contract = {
+    "kind": "station_map",
+    "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+    "inverted_axes": [],
+    "mappings": {"position": {"variable": "lon_avg_lat_avg", "artist_gid": "map_points"}},
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["lat_avg", "lon_avg", "iho_zone"],
+}
+graph_explanation = "Carte monde des samples EcoTaxa colorés et découpés par zone iho_zone."
+plt.tight_layout()
+```
+
 ### Abundance–environment map
 
 The data axis must be a Cartopy GeoAxes. Give the point collection and both

@@ -58,13 +58,32 @@ Write read-only `SELECT` statements — no `INSERT`, `UPDATE`, `DELETE`.
 ### Zone queries — utiliser `iho_zone` directement
 
 Le cache a une colonne `iho_zone` pré-calculée par point-in-polygon (IHO puis MEOW).
-Utiliser `WHERE iho_zone = '...'` ou `GROUP BY iho_zone` directement — pas besoin de bbox.
+Toujours utiliser `LIKE` pour filtrer les zones — jamais `=` (les apostrophes et accents cassent silencieusement `=`).
 
 ```sql
-WHERE iho_zone = 'Baie de Baffin'
+WHERE iho_zone LIKE '%Baffin%'
+WHERE iho_zone LIKE '%Hudson%'
 WHERE iho_zone LIKE 'MEOW: %'
 GROUP BY iho_zone
 ```
+
+**Règle apostrophe/accent** : ne jamais écrire `WHERE iho_zone = 'Détroit d''Hudson'`. Toujours `LIKE '%Détroit%Hudson%'` ou `LIKE '%Hudson%'`.
+
+**Invariance linguistique** : l'utilisateur peut nommer les zones en français ou en anglais. Convertir avant la requête :
+
+| Ce que dit l'utilisateur | `LIKE` à utiliser |
+|---|---|
+| Hudson Strait / Détroit d'Hudson | `LIKE '%Hudson%'` + exclure `'%Baie%'` si besoin |
+| Hudson Bay / Baie d'Hudson | `LIKE '%Hudson%'` + `NOT LIKE '%Détroit%'` |
+| Baffin Bay / Baie de Baffin | `LIKE '%Baffin%'` |
+| Davis Strait / Détroit de Davis | `LIKE '%Davis%'` |
+| Labrador Sea / Mer du Labrador | `LIKE '%Labrador%'` |
+| Beaufort Sea / Mer de Beaufort | `LIKE '%Beaufort%'` |
+| Gulf of St. Lawrence / Golfe du Saint-Laurent | `LIKE '%Laurent%'` ou `LIKE '%Saint%Laurent%'` |
+| Lincoln Sea / Mer de Lincoln | `LIKE '%Lincoln%'` |
+| Arctic / Arctique | `LIKE '%Arctique%'` ou `LIKE '%Arctic%'` |
+
+**Règle d'ambiguïté obligatoire** : quand le LIKE ramène plusieurs zones distinctes (ex. `Baie d'Hudson` + `Détroit d'Hudson`), NE PAS choisir silencieusement. Afficher la liste des zones trouvées avec leur nombre de samples, puis s'arrêter et demander : "Ces deux zones correspondent — laquelle vous intéresse, ou les deux ?" Ne passer à l'analyse qu'après confirmation explicite.
 
 Ne plus utiliser `get_zone_info` + bbox pour les requêtes de zone — `iho_zone` est plus précis.
 `get_zone_info` reste utile pour afficher la description d'une zone à l'utilisateur.
@@ -126,6 +145,23 @@ WHERE project_id = 17498
 GROUP BY iho_zone
 ORDER BY n_samples DESC
 ```
+
+**Casts avec position (pour carte) — toujours inclure lat/lon :**
+```sql
+SELECT profile_id AS cast_id,
+       AVG(lat_avg) AS lat,
+       AVG(lon_avg) AS lon,
+       COUNT(DISTINCT sample_id) AS n_samples,
+       MIN(date_min) AS date_min,
+       MAX(date_max) AS date_max,
+       GROUP_CONCAT(DISTINCT instrument) AS instruments
+FROM samples_cache
+WHERE iho_zone LIKE '%Détroit%Hudson%'
+GROUP BY profile_id
+ORDER BY date_min
+```
+
+Règle : dès que l'utilisateur demande d'afficher des casts sur une carte, toujours inclure `AVG(lat_avg) AS lat` et `AVG(lon_avg) AS lon` dans le SELECT groupé par `profile_id`.
 
 **Depth filter — `depth_max`:**
 - `depth_max_gte=200` → `depth_max >= 200` ("descend en-dessous de 200 m")
