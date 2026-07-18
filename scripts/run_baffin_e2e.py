@@ -256,6 +256,10 @@ def main() -> int:
     parser.add_argument("--retry-delay", type=float, default=5.0)
     parser.add_argument("--from-turn", type=int, default=1)
     parser.add_argument("--to-turn", type=int, default=len(SCENARIO_TURNS))
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="Ignorer le transcript existant et forcer un nouveau thread (évite l'accumulation d'historique entre runs)",
+    )
     args = parser.parse_args()
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -263,6 +267,8 @@ def main() -> int:
     raw_dir = output_dir / "raw_sse"
     raw_dir.mkdir(parents=True, exist_ok=True)
     existing_chat_id, existing_records = load_existing_records(output_dir)
+    if args.fresh:
+        existing_chat_id, existing_records = None, []
     if args.chat_id and existing_chat_id and args.chat_id != existing_chat_id:
         parser.error("--chat-id ne correspond pas au transcript existant")
     chat_id = args.chat_id or existing_chat_id or str(uuid.uuid4())

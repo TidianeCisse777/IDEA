@@ -12,6 +12,26 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Iterable, Iterator, Sequence
 
+import pandas as pd
+
+from core.geo import assign_zones, load_registry
+
+_GEO_REGISTRY_PATH = "data/geo/zones_registry.geojson"
+_geo_registry_cache: object = None
+_geo_registry_loaded = False
+
+
+def _load_geo_registry():
+    global _geo_registry_cache, _geo_registry_loaded
+    if _geo_registry_loaded:
+        return _geo_registry_cache
+    try:
+        _geo_registry_cache = load_registry(_GEO_REGISTRY_PATH)
+    except Exception:
+        _geo_registry_cache = None
+    _geo_registry_loaded = True
+    return _geo_registry_cache
+
 # Single source of truth for the samples_cache secondary indexes: name -> the
 # indexed column expression. init_schema builds them, and the deferred-index
 # bulk-load path drops and rebuilds exactly this set — keep them here so the two
@@ -21,6 +41,7 @@ _SECONDARY_INDEXES = {
     "idx_samples_bbox": "samples_cache(lat_avg, lon_avg)",
     "idx_samples_date": "samples_cache(date_min, date_max)",
     "idx_samples_depth_max": "samples_cache(depth_max)",
+    "idx_samples_zone": "samples_cache(iho_zone)",
 }
 
 _SCHEMA = """
@@ -39,7 +60,8 @@ CREATE TABLE IF NOT EXISTS samples_cache (
     free_fields_json TEXT,
     object_count INTEGER,
     instrument TEXT,
-    last_synced TEXT NOT NULL
+    last_synced TEXT NOT NULL,
+    iho_zone TEXT
 );
 
 CREATE TABLE IF NOT EXISTS project_schemas_cache (
@@ -77,6 +99,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "samples_cache", "station_id", "TEXT")
     _ensure_column(conn, "samples_cache", "profile_id", "TEXT")
     _ensure_column(conn, "samples_cache", "free_fields_json", "TEXT")
+    _ensure_column(conn, "samples_cache", "iho_zone", "TEXT")
     create_secondary_indexes(conn)
     conn.commit()
 
@@ -134,6 +157,18 @@ def _ensure_column(
         )
 
 
+def _compute_iho_zone(lat: float | None, lon: float | None) -> str | None:
+    """Return the IHO/MEOW zone label for a single point, or None if no coords."""
+    if lat is None or lon is None:
+        return None
+    registry = _load_geo_registry()
+    if registry is None:
+        return None
+    df = pd.DataFrame({"lat": [lat], "lon": [lon]})
+    zones = assign_zones(df, registry, lat_col="lat", lon_col="lon", family="auto")
+    return zones.iloc[0]
+
+
 def upsert_sample(
     conn: sqlite3.Connection,
     *,
@@ -152,17 +187,20 @@ def upsert_sample(
     station_id: str | None = None,
     profile_id: str | None = None,
     free_fields_json: str | None = None,
+    iho_zone: str | None = None,
 ) -> None:
     """Insert or update a single sample row."""
+    if iho_zone is None:
+        iho_zone = _compute_iho_zone(lat_avg, lon_avg)
     conn.execute(
         """
         INSERT INTO samples_cache (
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
             original_id, station_id, profile_id, free_fields_json,
-            object_count, instrument, last_synced
+            object_count, instrument, last_synced, iho_zone
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(sample_id) DO UPDATE SET
             project_id = excluded.project_id,
             lat_avg = excluded.lat_avg,
@@ -177,13 +215,14 @@ def upsert_sample(
             free_fields_json = excluded.free_fields_json,
             object_count = excluded.object_count,
             instrument = excluded.instrument,
-            last_synced = excluded.last_synced
+            last_synced = excluded.last_synced,
+            iho_zone = excluded.iho_zone
         """,
         (
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
             original_id, station_id, profile_id, free_fields_json,
-            object_count, instrument, last_synced,
+            object_count, instrument, last_synced, iho_zone,
         ),
     )
     conn.commit()
@@ -205,9 +244,20 @@ def replace_project_samples(
     try:
         conn.execute("BEGIN")
         conn.execute("DELETE FROM samples_cache WHERE project_id = ?", (project_id,))
-        # Build every row tuple up front (raises on bad payload before any
-        # insert, keeping the transaction atomic) then bulk-insert in one
-        # executemany — far faster than a per-row execute loop at scale.
+
+        # Compute iho_zone in batch for all samples that have coordinates.
+        registry = _load_geo_registry()
+        lats = [s.get("lat_avg") for s in samples]
+        lons = [s.get("lon_avg") for s in samples]
+        if registry is not None and any(v is not None for v in lats):
+            geo_df = pd.DataFrame({"lat": lats, "lon": lons})
+            zone_series = assign_zones(
+                geo_df, registry, lat_col="lat", lon_col="lon", family="auto"
+            )
+            zone_values = zone_series.tolist()
+        else:
+            zone_values = [None] * len(samples)
+
         rows = [
             (
                 int(sample["sample_id"]),
@@ -225,8 +275,9 @@ def replace_project_samples(
                 int(sample.get("object_count") or 0),
                 sample.get("instrument"),
                 last_synced,
+                zone_values[i],
             )
-            for sample in samples
+            for i, sample in enumerate(samples)
         ]
         conn.executemany(
             """
@@ -234,9 +285,9 @@ def replace_project_samples(
                 sample_id, project_id, lat_avg, lon_avg,
                 date_min, date_max, depth_min, depth_max,
                 original_id, station_id, profile_id, free_fields_json,
-                object_count, instrument, last_synced
+                object_count, instrument, last_synced, iho_zone
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )

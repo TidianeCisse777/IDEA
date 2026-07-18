@@ -464,13 +464,13 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "summarize_ecotaxa_sample": "ecotaxa_samples",
     "summarize_ecotaxa_samples": "ecotaxa_samples",
     "summarize_ecotaxa_sample_deployment": "ecotaxa_samples",
-    # EcoTaxa geography and time.
-    "find_ecotaxa_samples_in_region": "ecotaxa_geo_time",
-    "combine_ecotaxa_selections": "ecotaxa_geo_time",
-    "group_ecotaxa_samples_by_year": "ecotaxa_geo_time",
-    "find_ecotaxa_projects_in_region": "ecotaxa_geo_time",
-    "group_ecotaxa_project_samples_by_region": "ecotaxa_geo_time",
-    "rank_ecotaxa_samples_by_region": "ecotaxa_geo_time",
+    # EcoTaxa geography and time — replaced by query_ecotaxa_cache SQL.
+    "find_ecotaxa_samples_in_region": "hidden_legacy",
+    "combine_ecotaxa_selections": "hidden_legacy",
+    "group_ecotaxa_samples_by_year": "hidden_legacy",
+    "find_ecotaxa_projects_in_region": "hidden_legacy",
+    "group_ecotaxa_project_samples_by_region": "hidden_legacy",
+    "rank_ecotaxa_samples_by_region": "hidden_legacy",
     # EcoTaxa taxonomy.
     "search_ecotaxa_taxa": "ecotaxa_taxonomy",
     "count_ecotaxa_taxa": "ecotaxa_taxonomy",
@@ -479,11 +479,11 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "inspect_ecotaxa_project_schema": "ecotaxa_schema",
     "inspect_ecotaxa_column": "ecotaxa_schema",
     "compare_ecotaxa_projects": "ecotaxa_schema",
-    # EcoTaxa audit.
-    "audit_ecotaxa_spatial_coverage": "ecotaxa_audit",
+    # EcoTaxa audit — cache-only tools replaced by query_ecotaxa_cache SQL.
+    "audit_ecotaxa_spatial_coverage": "hidden_legacy",
     "query_ecotaxa_cache": "ecotaxa_discovery",
-    "summarize_ecotaxa_project": "ecotaxa_audit",
-    "summarize_ecotaxa_projects": "ecotaxa_audit",
+    "summarize_ecotaxa_project": "hidden_legacy",
+    "summarize_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa exports.
     "query_ecotaxa": "ecotaxa_export",
     "query_ecotaxa_sample": "ecotaxa_export",

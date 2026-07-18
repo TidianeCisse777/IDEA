@@ -304,7 +304,7 @@ def test_visual_overflow_keeps_graph_and_ecotaxa_discovery():
     assert decision.policy_overflow is True
     assert "run_graph" in decision.tool_names
     assert "list_ecotaxa_campaigns" in decision.tool_names
-    assert "find_ecotaxa_samples_in_region" in decision.tool_names
+    assert "query_ecotaxa_cache" in decision.tool_names
 
 
 def test_ecotaxa_overflow_keeps_central_cache_query():
@@ -317,14 +317,15 @@ def test_ecotaxa_overflow_keeps_central_cache_query():
     assert "query_ecotaxa_cache" in decision.tool_names
 
 
-def test_global_region_ranking_keeps_spatial_ranker_during_overflow():
+def test_global_region_ranking_uses_cache_sql_during_overflow():
     decision = _decision(
         "Dans tout le cache EcoTaxa, classe les zones et écorégions par nombre de samples",
         sources=("ecotaxa",),
     )
 
     assert decision.policy_overflow is True
-    assert "rank_ecotaxa_samples_by_region" in decision.tool_names
+    assert "query_ecotaxa_cache" in decision.tool_names
+    assert "rank_ecotaxa_samples_by_region" not in decision.tool_names
 
 
 def test_negated_export_does_not_expose_ecotaxa_export_tools():
