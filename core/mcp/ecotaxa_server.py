@@ -20,6 +20,7 @@ from core.ecotaxa_browser.acquisitions import (
     list_project_acquisitions,
 )
 from core.ecotaxa_browser.cache.repo import (
+    backfill_iho_zones,
     cache_counts,
     cache_progress,
     init_schema,
@@ -124,6 +125,7 @@ def _cache_db_path() -> str:
 def _open_cache() -> sqlite3.Connection:
     conn = open_connection(_cache_db_path())
     init_schema(conn)
+    backfill_iho_zones(conn)
     return conn
 
 

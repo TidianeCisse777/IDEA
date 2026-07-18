@@ -211,9 +211,30 @@ async def _feedback_polling_loop() -> None:
 
 
 @asynccontextmanager
+def _backfill_ecotaxa_cache() -> None:
+    """Run iho_zone backfill once at startup for any pre-existing cache rows."""
+    try:
+        from core.ecotaxa_browser.cache.repo import (
+            backfill_iho_zones,
+            init_schema,
+            open_connection,
+        )
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        conn = open_connection(cache_db)
+        init_schema(conn)
+        updated = backfill_iho_zones(conn)
+        conn.close()
+        if updated:
+            logger.info("iho_zone backfill: %d samples updated", updated)
+    except Exception as e:
+        logger.warning("iho_zone backfill skipped: %s", e)
+
+
 async def lifespan(app: FastAPI):
     """Initialize checkpointer + long-term memory store + feedback polling."""
     import agent as _agent_module
+
+    await asyncio.get_event_loop().run_in_executor(None, _backfill_ecotaxa_cache)
 
     async def _start_polling():
         task = asyncio.create_task(_feedback_polling_loop())

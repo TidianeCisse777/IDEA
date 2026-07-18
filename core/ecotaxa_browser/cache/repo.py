@@ -123,6 +123,43 @@ def is_samples_cache_empty(conn: sqlite3.Connection) -> bool:
     return conn.execute("SELECT 1 FROM samples_cache LIMIT 1").fetchone() is None
 
 
+def backfill_iho_zones(conn: sqlite3.Connection, *, chunk_size: int = 5000) -> int:
+    """Assign iho_zone to existing samples that have coordinates but no zone.
+
+    Runs at startup after init_schema so that a real cache populated before
+    the iho_zone column was added gets filled without waiting for a full re-sync.
+    Processes rows in chunks to stay memory-friendly on large accounts.
+    Returns the total number of rows updated.
+    """
+    registry = _load_geo_registry()
+    if registry is None:
+        return 0
+
+    total_updated = 0
+    while True:
+        rows = conn.execute(
+            """
+            SELECT sample_id, lat_avg, lon_avg FROM samples_cache
+            WHERE iho_zone IS NULL AND lat_avg IS NOT NULL AND lon_avg IS NOT NULL
+            LIMIT ?
+            """,
+            (chunk_size,),
+        ).fetchall()
+        if not rows:
+            break
+
+        df = pd.DataFrame(rows, columns=["sample_id", "lat", "lon"])
+        zones = assign_zones(df, registry, lat_col="lat", lon_col="lon", family="auto")
+        updates = list(zip(zones.tolist(), df["sample_id"].tolist()))
+        conn.executemany(
+            "UPDATE samples_cache SET iho_zone = ? WHERE sample_id = ?", updates
+        )
+        conn.commit()
+        total_updated += len(rows)
+
+    return total_updated
+
+
 @contextmanager
 def deferred_secondary_indexes(conn: sqlite3.Connection) -> Iterator[None]:
     """Drop the secondary indexes for a bulk first-fill, rebuild on exit.
