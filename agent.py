@@ -63,7 +63,10 @@ _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "100000"))
 _CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
-_KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "3"))
+_KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "2"))
+# Second-pass budget: if total tool-result chars after first compaction exceeds
+# this, oldest eligible messages are compacted further (never the current turn).
+_MAX_TOTAL_TOOL_CHARS = int(os.getenv("MAX_TOTAL_TOOL_RESULT_CHARS", "40000"))
 _context_audit_by_thread: dict[str, dict] = {}
 _harness_trace_by_thread: dict[str, dict] = {}
 _harness_trace_lock = threading.Lock()
@@ -278,8 +281,20 @@ def _approx_tokens(messages) -> int:
     return count_tokens_approximately(messages)
 
 
-def _compact_old_tool_results(messages, *, keep_turns: int = _KEEP_FULL_TOOL_TURNS):
-    """Replace stale tool payloads while preserving recent conversational turns."""
+def _compact_old_tool_results(
+    messages,
+    *,
+    keep_turns: int = _KEEP_FULL_TOOL_TURNS,
+    max_total_chars: int | None = None,
+):
+    """Replace stale tool payloads while preserving recent conversational turns.
+
+    Two-pass strategy:
+    1. First pass: compact every tool result older than ``keep_turns`` human turns.
+    2. Second pass (when ``max_total_chars`` is set): if total tool-result chars
+       still exceeds the budget, compact the oldest eligible messages in the recent
+       window — never the current turn (messages after the last HumanMessage).
+    """
     human_indexes = [
         index for index, message in enumerate(messages)
         if isinstance(message, HumanMessage)
@@ -315,7 +330,7 @@ def _compact_old_tool_results(messages, *, keep_turns: int = _KEEP_FULL_TOOL_TUR
             if skill:
                 latest_skill_index[skill] = index
 
-    output = []
+    output: list = []
     metrics = {
         "old_tool_messages_compacted": 0,
         "old_tool_result_chars_before": 0,
@@ -328,6 +343,7 @@ def _compact_old_tool_results(messages, *, keep_turns: int = _KEEP_FULL_TOOL_TUR
         metrics["old_tool_result_chars_before"] += before
         metrics["old_tool_result_chars_after"] += len(compact)
 
+    # ── First pass: compact by turn-age ───────────────────────────────────────
     for index, message in enumerate(messages):
         if not (
             isinstance(message, ToolMessage)
@@ -363,6 +379,42 @@ def _compact_old_tool_results(messages, *, keep_turns: int = _KEEP_FULL_TOOL_TUR
             output.append(message.model_copy(update={"content": compact}))
         else:
             output.append(message)
+
+    # ── Second pass: total-chars budget ───────────────────────────────────────
+    # Applied even when keep_turns kept many messages full: if the aggregate
+    # size still exceeds the budget, compact oldest eligible messages from the
+    # recent window — but NEVER the current turn (after the last HumanMessage).
+    if max_total_chars is not None and max_total_chars > 0:
+        last_human_idx = max(
+            (i for i, m in enumerate(output) if isinstance(m, HumanMessage)),
+            default=len(output),
+        )
+        total_chars = sum(
+            len(m.content)
+            for m in output
+            if isinstance(m, ToolMessage) and isinstance(m.content, str)
+        )
+        if total_chars > max_total_chars:
+            for i in range(len(output)):
+                if total_chars <= max_total_chars:
+                    break
+                if i >= last_human_idx:
+                    break
+                m = output[i]
+                if not (isinstance(m, ToolMessage) and isinstance(m.content, str)):
+                    continue
+                if len(m.content) <= 320:
+                    continue  # Already compacted or inherently short
+                before = len(m.content)
+                snippet = " ".join(m.content.split())[:240]
+                compact = (
+                    f"[Résultat compacté (budget global) — tool={m.name or 'unknown'}; "
+                    f"résumé: {snippet}]"
+                )
+                output[i] = m.model_copy(update={"content": compact})
+                total_chars -= before - len(compact)
+                _record_compaction(before, compact)
+
     metrics["old_tool_result_chars_saved"] = (
         metrics["old_tool_result_chars_before"]
         - metrics["old_tool_result_chars_after"]
@@ -547,7 +599,8 @@ class _ContextMiddleware(AgentMiddleware):
 
         original_tokens = _approx_tokens(original_messages)
         compacted_messages, compact_metrics = _compact_old_tool_results(
-            original_messages
+            original_messages,
+            max_total_chars=_MAX_TOTAL_TOOL_CHARS,
         )
         truncated_messages, truncate_metrics = _truncate_tool_results(
             compacted_messages
@@ -686,6 +739,7 @@ class _ContextMiddleware(AgentMiddleware):
             ),
             **truncate_metrics,
             **compact_metrics,
+            "max_total_tool_result_chars": _MAX_TOTAL_TOOL_CHARS,
             **metrics,
             "dataset_capsule_injected": bool(dataset_block),
             "dataset_capsule_chars": len(dataset_block),

@@ -404,6 +404,95 @@ def test_context_preparation_compacts_stale_skill_outside_window():
     assert metrics["old_tool_messages_compacted"] >= 1
 
 
+def test_compact_second_pass_respects_total_chars_budget():
+    """Deuxième passe : si le total dépasse max_total_chars, les messages les plus
+    anciens du contexte récent sont compactés jusqu'à ce que le total rentre."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    import agent as agent_module
+
+    heavy = "résultat lourd " * 600  # ~9 000 chars par message
+
+    # 5 tours, chacun avec 1 tool call lourd → 5 × ~9k = ~45k chars
+    messages = []
+    for i in range(1, 6):
+        messages += [
+            HumanMessage(content=f"question {i}"),
+            AIMessage(content="ok"),
+            ToolMessage(content=heavy, name="run_pandas", tool_call_id=f"t{i}"),
+        ]
+
+    # keep_turns=5 → rien compacté en première passe (tous dans la fenêtre récente)
+    # max_total_chars=20000 → la seconde passe doit réduire le total
+    compacted, metrics = agent_module._compact_old_tool_results(
+        messages, keep_turns=5, max_total_chars=20000
+    )
+
+    total_after = sum(
+        len(m.content)
+        for m in compacted
+        if isinstance(m, ToolMessage) and isinstance(m.content, str)
+    )
+    assert total_after <= 20000, f"total={total_after} dépasse le budget 20000"
+    assert metrics["old_tool_messages_compacted"] >= 1
+
+
+def test_compact_second_pass_never_touches_current_turn():
+    """La deuxième passe ne doit jamais compacter le tour courant (messages après
+    le dernier HumanMessage), même si le budget total est dépassé."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    import agent as agent_module
+
+    heavy = "résultat courant critique " * 400  # ~9 600 chars
+
+    # Un seul tour : HumanMessage → AI → ToolMessage courant
+    messages = [
+        HumanMessage(content="question courante"),
+        AIMessage(content="ok"),
+        ToolMessage(content=heavy, name="run_pandas", tool_call_id="t1"),
+    ]
+
+    # Budget très bas (1 000) — mais le seul message est dans le tour courant,
+    # donc la deuxième passe ne doit rien compacter.
+    compacted, metrics = agent_module._compact_old_tool_results(
+        messages, keep_turns=2, max_total_chars=1000
+    )
+
+    assert compacted[2].content == heavy, "Le résultat du tour courant a été touché"
+    assert metrics["old_tool_messages_compacted"] == 0
+
+
+def test_compact_second_pass_skips_already_compacted():
+    """La deuxième passe ne re-compacte pas les messages déjà courts (<= 320 chars)."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    import agent as agent_module
+
+    short = "x" * 200  # déjà sous le seuil
+    heavy = "résultat " * 600
+
+    messages = [
+        HumanMessage(content="t1"),
+        AIMessage(content="ok"),
+        ToolMessage(content=short, name="run_pandas", tool_call_id="t1"),
+        HumanMessage(content="t2"),
+        AIMessage(content="ok"),
+        ToolMessage(content=heavy, name="run_pandas", tool_call_id="t2"),
+        HumanMessage(content="t3 courante"),
+    ]
+
+    compacted, metrics = agent_module._compact_old_tool_results(
+        messages, keep_turns=3, max_total_chars=1000
+    )
+
+    # Le message court ne doit pas être re-compacté
+    assert compacted[2].content == short
+    # Le message lourd (avant le dernier HumanMessage) doit être compacté
+    assert compacted[5].content != heavy
+    assert "budget global" in compacted[5].content
+
+
 def test_context_preparation_preserves_manifest_budgeted_skill_results(monkeypatch):
     from langchain_core.messages import ToolMessage
 
