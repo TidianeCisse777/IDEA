@@ -246,8 +246,6 @@ def test_enrichment_without_loaded_file_keeps_canonical_tool_hidden():
         ("Explore EcoTaxa", "ecotaxa_discovery", "find_ecotaxa_projects"),
         ("Liste les samples EcoTaxa du projet", "ecotaxa_samples", "get_ecotaxa_sample"),
         ("Résous la station RA76 dans EcoTaxa", "ecotaxa_discovery", "resolve_ecotaxa_sample"),
-        ("Montre les objets du sample EcoTaxa 14853000001", "ecotaxa_objects", "list_ecotaxa_sample_objects"),
-        ("Montre les objets du sample 14853000001 sans l'exporter", "ecotaxa_objects", "list_ecotaxa_sample_objects"),
         ("Trouve les samples EcoTaxa au Labrador en 2020", "ecotaxa_geo_time", "find_ecotaxa_samples_in_region"),
         ("Compte les taxons EcoTaxa", "ecotaxa_taxonomy", "count_ecotaxa_taxa"),
         ("Inspecte le schéma du projet EcoTaxa", "ecotaxa_schema", "inspect_ecotaxa_project_schema"),
@@ -262,6 +260,16 @@ def test_ecotaxa_selects_only_the_requested_subtoolset(text, expected_group, exp
     assert expected_group in decision.active_groups
     assert expected_tool in decision.tool_names
     assert len(decision.tool_names) <= 15
+
+
+def test_object_pagination_is_not_exposed_to_the_agent():
+    decision = _decision(
+        "Montre les objets du sample EcoTaxa 14853000001",
+        sources=("ecotaxa",),
+    )
+
+    assert "ecotaxa_objects" not in decision.active_groups
+    assert "list_ecotaxa_sample_objects" not in decision.tool_names
 
 
 def test_ecotaxa_does_not_always_include_geo_time_for_a_project_audit():
@@ -336,6 +344,18 @@ def test_negated_export_does_not_expose_ecotaxa_export_tools():
 
     assert "ecotaxa_export" not in decision.active_groups
     assert "query_ecotaxa" not in decision.tool_names
+
+
+def test_export_planning_without_download_exposes_ecotaxa_dry_run():
+    decision = _decision(
+        "Prépare l'export EcoTaxa de tous les objets des samples 14859000001 "
+        "et 17498000048, sans rien télécharger.",
+        sources=("ecotaxa",),
+    )
+
+    assert "ecotaxa_export" in decision.active_groups
+    assert "export_ecotaxa_samples" in decision.tool_names
+    assert "list_ecotaxa_sample_objects" not in decision.tool_names
 
 
 def test_ecotaxa_is_never_enabled_by_a_bare_identifier():

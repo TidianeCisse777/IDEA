@@ -43,6 +43,13 @@ _EXPORT_NEGATION = re.compile(
     r"\b(?:export\w*|t[eé]l[eé]charg\w*|download\w*)\b",
     re.IGNORECASE,
 )
+# "Prépare l'export ... sans télécharger" is a safe dry-run request, not a
+# refusal to export. It must keep the export tool visible so the agent can
+# call it with confirmed=False and return its plan.
+_EXPORT_PLANNING = re.compile(
+    r"\b(?:pr[eé]par\w*|plan\w*|dry[- ]?run)\b",
+    re.IGNORECASE,
+)
 _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] = (
     (
         "ecotaxa_export",
@@ -55,18 +62,6 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
         "ecotaxa_schema",
         re.compile(
             r"\b(?:sch[eé]ma|schema|colonne\w*|column\w*|type\w*|compatib\w*)\b",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        # Object browsing is a drill-down (read sample content without export);
-        # placed before ecotaxa_samples because "objets du sample" also contains
-        # "sample". `export` still wins over both (heavy path).
-        # Covers: objet(s), object(s), image(s), contenu, browse, drill, detail
-        # so that "état des images", "contenu du sample", "browse objects" all work.
-        "ecotaxa_objects",
-        re.compile(
-            r"\b(?:objet\w*|object\w*|image\w*|contenu\w*|browse\w*|drill\w*|d[eé]tail\w*)\b",
             re.IGNORECASE,
         ),
     ),
@@ -205,15 +200,25 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         "fichier" in normalized_text
         and any(term in normalized_text for term in ("correspond", "compar", "match"))
     )
-    export_negated = bool(_EXPORT_NEGATION.search(text)) or any(
-        phrase in normalized_text
-        for phrase in ("aucun export", "aucune exportation", "no export")
+    export_requested = bool(_ECOTAXA_INTENT_PATTERNS[0][1].search(text))
+    export_dry_run_requested = export_requested and bool(_EXPORT_PLANNING.search(text))
+    export_negated = not export_dry_run_requested and (
+        bool(_EXPORT_NEGATION.search(text))
+        or any(
+            phrase in normalized_text
+            for phrase in ("aucun export", "aucune exportation", "no export")
+        )
     )
     ecotaxa_intents = tuple(
         group for group, pattern in _ECOTAXA_INTENT_PATTERNS
         if pattern.search(text)
         and not (group == "ecotaxa_export" and export_negated)
     )
+    if "ecotaxa_export" in ecotaxa_intents:
+        # An export request takes precedence over page-by-page object browsing.
+        ecotaxa_intents = tuple(
+            group for group in ecotaxa_intents if group != "ecotaxa_objects"
+        )
     return TurnSignals(
         latest_user_text=text,
         enrichment_requested=bool(_ENRICHMENT_PATTERN.search(text)),
@@ -323,18 +328,6 @@ def decide_tool_exposure(
         if signals.geographic_requested:
             ecotaxa_groups.append("ecotaxa_geo_time")
         ecotaxa_groups.extend(signals.ecotaxa_intents)
-        # Drill-down: if a sample-level tool succeeded this turn, always expose objects.
-        # Covers "montre ça", "ok explore", "va plus loin" after finding a sample via cache.
-        _SAMPLE_LEVEL_TOOLS = frozenset({
-            "get_ecotaxa_sample", "summarize_ecotaxa_sample",
-            "summarize_ecotaxa_samples", "summarize_ecotaxa_sample_deployment",
-            "list_ecotaxa_project_samples", "resolve_ecotaxa_sample",
-        })
-        if (
-            "ecotaxa_objects" not in ecotaxa_groups
-            and _SAMPLE_LEVEL_TOOLS.intersection(signals.successful_tools_this_turn)
-        ):
-            ecotaxa_groups.append("ecotaxa_objects")
         groups.extend(ecotaxa_groups)
         reasons.append("authorized EcoTaxa intent")
     # Keep the dedicated comparison route visible from the wording itself. A

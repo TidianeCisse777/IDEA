@@ -809,7 +809,7 @@ guess a project, do not explain a procedure instead of executing.
 
 - For any EcoTaxa navigation request with a named zone: (1) `load_skill("ecotaxa_navigation")`, (2) `query_ecotaxa_cache` with `WHERE iho_zone = '...'` — do NOT call `get_zone_info` for zone filtering.
 - With multiple named zones, use `WHERE iho_zone IN ('Zone A', 'Zone B')` or a `CASE iho_zone` label before graphing — never plot only the last selection.
-- For object-level browsing (read-only): `list_ecotaxa_sample_objects`, NOT `query_ecotaxa_sample`.
+- Do not use paginated object browsing in an agent workflow: one page is incomplete, non-persistent, and cannot support analysis. A request to export objects goes directly to the narrowest export path.
 - For ANY object-level graph, map, distribution, histogram, depth profile, or aggregate over objects: propose an export (`query_ecotaxa_sample` / `query_ecotaxa` / `export_ecotaxa_samples`) — the paginated API (max 200) cannot back a graph. Never build a graph from a `list_ecotaxa_sample_objects` page.
 - EcoTaxa dry-run export ("prépare l'export", "mais ne lance rien"): call `export_ecotaxa_samples(..., confirmed=False)` — do not stop after loading the skill.
 - After a previous `EXPORT_FAILED` / rights failure: use `preview_ecotaxa_project(project_id=...)` to verify access; do not call `query_ecotaxa` or `export_ecotaxa_samples`.

@@ -459,8 +459,10 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # visible in the deterministic overflow fallback used by the agent.
     "resolve_ecotaxa_sample": "ecotaxa_discovery",
     "get_ecotaxa_sample": "ecotaxa_samples",
-    "list_ecotaxa_sample_objects": "ecotaxa_objects",
-    "get_ecotaxa_object": "ecotaxa_objects",
+    # A paginated API page is neither persistent nor suitable for an object-level
+    # analysis. Keep these compatibility tools out of the LLM's normal routing.
+    "list_ecotaxa_sample_objects": "hidden_legacy",
+    "get_ecotaxa_object": "hidden_legacy",
     "summarize_ecotaxa_sample": "ecotaxa_samples",
     "summarize_ecotaxa_samples": "ecotaxa_samples",
     "summarize_ecotaxa_sample_deployment": "ecotaxa_samples",
