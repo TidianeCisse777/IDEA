@@ -155,6 +155,42 @@ def test_run_pandas_exposes_loaded_file_after_ecotaxa_result():
     assert "_merge" in result
 
 
+def test_run_pandas_persists_join_with_readable_description():
+    """A persisted df_join_* must carry a human-readable `description` (operands +
+    key) so the state capsule can tell joins apart by what they are, not only by
+    an opaque hash name — parity with EcoTaxa selections."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-join-description"
+    store_dataset(
+        _store, thread_id, pd.DataFrame({"sample_id": ["A", "B"]}),
+        variable_name="df_file_net",
+        meta={"source": "file:net.tsv", "n_rows": 2, "n_cols": 1},
+        latest_alias="df_file_net", is_loaded_file=True,
+    )
+    store_dataset(
+        _store, thread_id, pd.DataFrame({"sample_id": ["A", "C"], "temp": [4.0, 5.0]}),
+        variable_name="df_ctd",
+        meta={"source": "ctd", "n_rows": 2, "n_cols": 2},
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    run_pandas.invoke({
+        "code": "result = df_file_net.merge(df_ctd, on='sample_id', how='left')",
+    })
+
+    joins = [
+        (_store.get(k) or {}).get("meta") or {}
+        for k in _store.keys(prefix=f"{thread_id}:dataset:")
+        if (((_store.get(k) or {}).get("meta") or {}).get("source") == "analysis:join")
+    ]
+    assert joins, "join was not persisted"
+    description = joins[0].get("description") or ""
+    assert "df_file_net" in description
+    assert "df_ctd" in description
+    assert "sample_id" in description
+
+
 def test_run_pandas_returns_explicit_printed_control_output():
     """Les tableaux préparés par print ne doivent pas disparaître du tool."""
     from tools.dataset_registry import store_dataset

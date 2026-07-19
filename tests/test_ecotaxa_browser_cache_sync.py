@@ -413,10 +413,16 @@ def test_run_full_sync_skips_project_when_signature_is_unchanged(conn):
             "pctclassified": 75.0,
         }
     ]
+    _enriched = lambda ids: [
+        {"sample_id": int(s), "nb_validated": 1, "nb_predicted": 0,
+         "nb_dubious": 0, "nb_unclassified": 0, "used_taxa": [25828]}
+        for s in ids
+    ]
     first_client = _make_client(
         projects=projects,
         objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
     )
+    first_client.sample_taxo_stats.side_effect = _enriched
     first = run_full_sync(conn, first_client, now_iso="2026-06-15T03:00:00Z")
     assert first["projects_synced"] == 1
     assert first["projects_skipped"] == 0
@@ -425,6 +431,7 @@ def test_run_full_sync_skips_project_when_signature_is_unchanged(conn):
         projects=projects,
         objects_by_project={42: [[71.0, -65.0, "2018-08-02", "2", "UVP5"]]},
     )
+    second_client.sample_taxo_stats.side_effect = _enriched
     second = run_full_sync(conn, second_client, now_iso="2026-06-16T03:00:00Z")
 
     assert second["status"] == "ok"
@@ -433,6 +440,56 @@ def test_run_full_sync_skips_project_when_signature_is_unchanged(conn):
     second_client.query_objects.assert_not_called()
     rows = list(conn.execute("SELECT sample_id FROM samples_cache WHERE project_id=42"))
     assert [row["sample_id"] for row in rows] == [1]
+
+
+def test_run_full_sync_resyncs_signature_unchanged_but_unenriched_project(conn):
+    """Self-heal: a project whose EcoTaxa signature is unchanged but whose local
+    rows never got taxo stats (whole-batch drop) must NOT be skipped — the next
+    sync re-fills it automatically, no manual force needed (regression: LOKI 2331
+    stayed all-NULL forever behind the signature skip)."""
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    projects = [
+        {
+            "projid": 42,
+            "title": "A",
+            "instrument": "UVP5",
+            "objcount": 1,
+            "pctvalidated": 50.0,
+            "pctclassified": 75.0,
+        }
+    ]
+    # First sync: taxo stats DROP (endpoint fails) → sample cached but unenriched.
+    first_client = _make_client(
+        projects=projects,
+        objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
+    )
+    first_client.sample_taxo_stats.side_effect = RuntimeError("414 URI Too Long")
+    run_full_sync(conn, first_client, now_iso="2026-06-15T03:00:00Z")
+    row = conn.execute(
+        "SELECT nb_validated FROM samples_cache WHERE project_id=42"
+    ).fetchone()
+    assert row["nb_validated"] is None  # dropped
+
+    # Second sync, SAME signature but taxo stats now succeed → must re-sync.
+    second_client = _make_client(
+        projects=projects,
+        objects_by_project={42: [[70.0, -64.0, "2018-08-01", "1", "UVP5"]]},
+    )
+    second_client.sample_taxo_stats.side_effect = lambda ids: [
+        {"sample_id": int(s), "nb_validated": 5, "nb_predicted": 0,
+         "nb_dubious": 0, "nb_unclassified": 0, "used_taxa": [25828]}
+        for s in ids
+    ]
+    second = run_full_sync(conn, second_client, now_iso="2026-06-16T03:00:00Z")
+
+    assert second["projects_synced"] == 1
+    assert second["projects_skipped"] == 0
+    row = conn.execute(
+        "SELECT nb_validated, used_taxa FROM samples_cache WHERE project_id=42"
+    ).fetchone()
+    assert row["nb_validated"] == 5           # auto-healed
+    assert json.loads(row["used_taxa"]) == [25828]
 
 
 def test_run_full_sync_does_not_skip_when_signature_fields_are_unavailable(conn):
@@ -978,3 +1035,66 @@ def test_sync_without_taxo_stats_degrades_gracefully(conn):
     assert row["object_count"] == 1        # from the object scan
     assert row["nb_validated"] is None
     assert row["used_taxa"] is None
+
+
+def test_sync_chunks_taxo_stats_for_large_projects(conn, monkeypatch):
+    """A large project must not lose its taxo stats: sample_taxo_stats is called
+    in bounded batches, so a per-request id-count limit (URL length / 414) never
+    silently drops the whole project's V/P/D/U + used_taxa (regression: LOKI 2331
+    with 2193 ids in one GET returned nothing)."""
+    from core.ecotaxa_browser.cache import sync as sync_mod
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    max_ids_per_call = 2
+    monkeypatch.setattr(sync_mod, "_TAXO_STATS_CHUNK", max_ids_per_call)
+
+    n = 5
+    samples = [
+        {
+            "sampleid": 2331000000 + i,
+            "projid": 2331,
+            "orig_id": f"loki_{i}",
+            "latitude": None,
+            "longitude": None,
+            "free_columns": {},
+        }
+        for i in range(1, n + 1)
+    ]
+    client = _make_client(
+        projects=[{"projid": 2331, "title": "LOKI", "instrument": "LOKI"}],
+        objects_by_project={2331: []},
+        samples_by_project={2331: samples},
+    )
+
+    calls = []
+
+    def _taxo(ids):
+        ids = list(ids)
+        calls.append(ids)
+        if len(ids) > max_ids_per_call:
+            raise RuntimeError("414 Request-URI Too Long")
+        return [
+            {
+                "sample_id": sid,
+                "nb_validated": 3,
+                "nb_predicted": 0,
+                "nb_dubious": 0,
+                "nb_unclassified": 0,
+                "used_taxa": [25828],
+            }
+            for sid in ids
+        ]
+
+    client.sample_taxo_stats.side_effect = _taxo
+
+    sync_project(conn, client, project_id=2331, last_synced="ts")
+
+    # every batch stayed within the per-request limit
+    assert calls and all(len(c) <= max_ids_per_call for c in calls)
+    # and every sample got its stats — none silently dropped
+    rows = conn.execute(
+        "SELECT nb_validated, used_taxa FROM samples_cache WHERE project_id=2331"
+    ).fetchall()
+    assert len(rows) == n
+    assert all(r["nb_validated"] == 3 for r in rows)
+    assert all(json.loads(r["used_taxa"]) == [25828] for r in rows)

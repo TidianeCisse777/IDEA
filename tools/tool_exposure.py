@@ -101,7 +101,7 @@ _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     "ecotaxa_discovery": (
         "query_ecotaxa_cache", "list_ecotaxa_cache_tables",
         "describe_ecotaxa_cache_table", "list_ecotaxa_campaigns", "preview_ecotaxa_project",
-        "get_ecotaxa_cache_status", "resolve_ecotaxa_sample",
+        "resolve_ecotaxa_sample",
         "find_ecotaxa_projects",
     ),
     "ecotaxa_geo_time": (

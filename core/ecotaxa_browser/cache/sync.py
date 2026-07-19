@@ -38,6 +38,7 @@ from core.ecotaxa_browser.cache.repo import (
     finish_sync_run,
     get_project_signature,
     is_samples_cache_empty,
+    project_is_fully_unenriched,
     replace_project_samples,
     start_sync_run,
     upsert_project_schema,
@@ -54,6 +55,10 @@ _DEFAULT_RATE_LIMIT_RPS = 5.0
 _DEFAULT_CONCURRENCY = 8
 _DEFAULT_RETRY_ATTEMPTS = 3
 _DEFAULT_RETRY_DELAY_SECONDS = 0.25
+# Max sample ids per sample_taxo_stats GET. The endpoint takes the ids in the
+# query string, so a whole large project (e.g. LOKI 2331, 2193 ids ≈ 26 KB URL)
+# in one call trips the server's URI-length limit and silently drops the batch.
+_TAXO_STATS_CHUNK = 150
 
 _TRANSIENT_EXCEPTIONS = (
     requests.RequestException,
@@ -271,39 +276,45 @@ def _fetch_project_taxo_stats(
 ) -> dict[int, dict]:
     """Per-sample V/P/D/U counts + taxa present, via ``sample_taxo_stats``.
 
-    One batched EcoTaxa call for the whole project — no object download, no
-    object-scan cap. Returns ``{}`` (graceful) when the client lacks the method
-    or the call fails, so the sync still succeeds on the scan-only path.
+    Batched EcoTaxa call — no object download, no object-scan cap. The ids are
+    chunked (``_TAXO_STATS_CHUNK``) because the endpoint carries them in the
+    query string: a whole large project in one GET trips the server URI-length
+    limit and drops the batch. A failing chunk is skipped (its samples stay
+    NULL) so one bad batch never voids the rest; the sync still succeeds on the
+    scan-only path when the method is absent.
     """
     if not sample_ids or not hasattr(client, "sample_taxo_stats"):
         return {}
-    try:
-        raw = _with_retries(lambda: client.sample_taxo_stats(sorted(sample_ids)))
-    except Exception:  # noqa: BLE001 — stats are an enrichment, never fatal
-        return {}
-    if not isinstance(raw, list):
-        return {}
+    ordered = sorted(sample_ids)
     stats: dict[int, dict] = {}
-    for row in raw:
-        if not isinstance(row, dict):
-            continue
+    for start in range(0, len(ordered), _TAXO_STATS_CHUNK):
+        chunk = ordered[start : start + _TAXO_STATS_CHUNK]
         try:
-            sid = int(row["sample_id"])
-        except (KeyError, TypeError, ValueError):
+            raw = _with_retries(lambda c=chunk: client.sample_taxo_stats(c))
+        except Exception:  # noqa: BLE001 — stats are an enrichment, never fatal
             continue
-        v = int(row.get("nb_validated") or 0)
-        p = int(row.get("nb_predicted") or 0)
-        d = int(row.get("nb_dubious") or 0)
-        u = int(row.get("nb_unclassified") or 0)
-        used = row.get("used_taxa") or []
-        stats[sid] = {
-            "object_count": v + p + d + u,
-            "nb_validated": v,
-            "nb_predicted": p,
-            "nb_dubious": d,
-            "nb_unclassified": u,
-            "used_taxa": json.dumps(used) if used else None,
-        }
+        if not isinstance(raw, list):
+            continue
+        for row in raw:
+            if not isinstance(row, dict):
+                continue
+            try:
+                sid = int(row["sample_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            v = int(row.get("nb_validated") or 0)
+            p = int(row.get("nb_predicted") or 0)
+            d = int(row.get("nb_dubious") or 0)
+            u = int(row.get("nb_unclassified") or 0)
+            used = row.get("used_taxa") or []
+            stats[sid] = {
+                "object_count": v + p + d + u,
+                "nb_validated": v,
+                "nb_predicted": p,
+                "nb_dubious": d,
+                "nb_unclassified": u,
+                "used_taxa": json.dumps(used) if used else None,
+            }
     return stats
 
 
@@ -548,6 +559,11 @@ def run_full_sync(
             signature is not None
             and not force
             and get_project_signature(conn, project_id) == signature
+            # Self-heal: never skip a project whose local rows never got their
+            # taxo stats (whole-batch drop, e.g. the pre-chunking 2193-id GET
+            # for 2331). An unchanged EcoTaxa signature does not mean the local
+            # cache is complete.
+            and not project_is_fully_unenriched(conn, project_id)
         ):
             projects_skipped += 1
             return

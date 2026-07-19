@@ -545,6 +545,82 @@ def _result_is_direct_join(code: str) -> bool:
     return False
 
 
+def _ast_operand_name(node: ast.AST) -> str | None:
+    """Best-effort readable name for a merge/join operand AST node."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return _ast_operand_name(node.func.value)
+    return None
+
+
+def _ast_literal(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, (ast.List, ast.Tuple)):
+        parts = [_ast_literal(elt) for elt in node.elts]
+        joined = ",".join(part for part in parts if part)
+        return joined or None
+    return None
+
+
+def _describe_join(code: str, frame: "pd.DataFrame") -> str:
+    """Readable description of a persisted join, for the dataset state capsule.
+
+    Extracts the operands, the join key (``on``/``left_on``) and ``how`` from the
+    merge/join/concat call so a persisted ``df_join_*`` reads as *what* it is
+    (parity with EcoTaxa selections) instead of only an opaque hash name.
+    Falls back to a shape summary when the call cannot be parsed.
+    """
+    left = right = key = how = None
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        tree = None
+    for node in ast.walk(tree) if tree else []:
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            if isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name)):
+                pass
+            else:
+                continue
+        func = node.func
+        attr = getattr(func, "attr", None) or getattr(func, "id", None)
+        if attr in {"merge", "join", "merge_asof"}:
+            left = _ast_operand_name(func.value) if isinstance(func, ast.Attribute) else None
+            if node.args:
+                right = _ast_operand_name(node.args[0])
+            for kw in node.keywords:
+                if kw.arg in {"on", "left_on"} and key is None:
+                    key = _ast_literal(kw.value)
+                elif kw.arg == "how":
+                    how = _ast_literal(kw.value)
+            break
+        if attr == "concat":
+            operands = node.args[0] if node.args else None
+            if isinstance(operands, (ast.List, ast.Tuple)):
+                names = [_ast_operand_name(elt) for elt in operands.elts]
+                joined = " + ".join(name for name in names if name)
+                left = joined or None
+            how = how or "concat"
+            break
+    rows, cols = frame.shape
+    if left and right:
+        head = f"Jointure {left} × {right}"
+    elif left:
+        head = f"Concat {left}" if how == "concat" else f"Jointure {left}"
+    else:
+        head = "Table jointe"
+    extras = []
+    if key:
+        extras.append(f"clé={key}")
+    if how and how != "concat":
+        extras.append(f"type={how}")
+    extras.append(f"{rows}×{cols}")
+    return head + " — " + ", ".join(extras)
+
+
 def _is_neolabs_columns(columns) -> bool:
     """True si les colonnes trahissent une table NeoLabs taxonomy."""
     cols = set(columns)
@@ -716,12 +792,17 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
         col_names = [c["name"] for c in meta["columns"]]
         source_alias = _source_alias_for_loaded_file(meta["path"], col_names)
+        preview_cols = ", ".join(col_names[:6]) + ("…" if len(col_names) > 6 else "")
+        file_description = (
+            f"{Path(meta['path']).name} — {df.shape[0]} lignes × {df.shape[1]} "
+            f"colonnes ({preview_cols})"
+        )
         store_dataset(
             _store,
             thread_id,
             df,
             variable_name=variable_name,
-            meta={**meta, "source": f"file:{meta['path']}"},
+            meta={**meta, "source": f"file:{meta['path']}", "description": file_description},
             latest_alias=source_alias,
             is_loaded_file=True,
         )
@@ -916,6 +997,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                             "source": "analysis:join",
                             "n_rows": int(join_frame.shape[0]),
                             "n_cols": int(join_frame.shape[1]),
+                            "description": _describe_join(code, join_frame),
                         },
                         latest_alias=join_variable,
                     )
