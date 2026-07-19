@@ -2875,7 +2875,7 @@ def make_source_tools(thread_id: str) -> list:
 
         lines = []
         if resolved_selection_name:
-            lines.append(f"Sélection : **{resolved_selection_name}**")
+            lines.append(f"Sélection : {resolved_selection_name}")
         lines.extend([
             f"Scope : {n_requested} samples demandés → {n_returned} retournés par l'API"
             + (" (subset — totaux ci-dessous portent sur l'ensemble)"

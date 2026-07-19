@@ -1935,6 +1935,15 @@ def test_query_ecotaxa_cache_memorizes_exportable_selection(tmp_path, monkeypatc
     assert latest is not None
     assert set(latest["meta"]["sample_ids"]) == {101, 102}
     assert set(latest["meta"]["project_ids"]) == {42, 99}
+    # Creating export metadata must not replace the exact result of the
+    # campaign: it remains the active DataFrame for a subsequent analysis.
+    active = _store.get(thread_id)
+    assert active is not None
+    assert active["meta"]["variable_name"] == "df_ecotaxa_cache_query"
+    assert active["df"].to_dict("records") == [
+        {"sample_id": 101},
+        {"sample_id": 102},
+    ]
     assert "latest" in out  # the response points the user to the export path
 
     # The export tool picks the selection up and plans both projects.
