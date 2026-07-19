@@ -36,7 +36,12 @@ services:
       - SERVE_BASE_URL=${SERVE_BASE_URL:-http://localhost:8000}
       - DATABASE_URL=${DATABASE_URL:-}
       - GRAPHS_DIR=/app/data/graphs
-      - ECOTAXA_CACHE_DB=/app/data/ecotaxa_cache_synthetic.sqlite
+      # Must match the file the mcp-ecotaxa service syncs (default
+      # data/ecotaxa_cache.sqlite). Pointing the agent at a different file
+      # (e.g. *_synthetic) breaks fresh clones: the MCP populates one file,
+      # the agent reads an empty one it creates at boot, and every EcoTaxa
+      # query returns "no data" even though the sync succeeded.
+      - ECOTAXA_CACHE_DB=/app/data/ecotaxa_cache.sqlite
     command: uvicorn serve:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
