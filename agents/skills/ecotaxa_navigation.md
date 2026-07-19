@@ -330,6 +330,13 @@ plan courant.
    objets n'ont pas été téléchargés, puis proposer une prévisualisation ou un
    résumé read-only ; ne fabriquer aucun résultat partiel.
 
+Après un export multi-projets réussi, la table active est la **table de campagne
+consolidée** : elle contient toutes les lignes objet exportées et la colonne
+`export_project_id`. Utiliser cette table pour l'analyse, le graphe ou
+l'enrichissement de toute la campagne ; ne jamais analyser par défaut le dernier
+projet traité. Les tables brutes par projet sont conservées séparément, seulement
+pour une question explicitement limitée à un projet.
+
 Les filtres suivent toujours le plan confirmé : `status="V"` signifie validés
 seulement, `status="P"` prédits seulement et `status=""` tous les statuts.
 `taxon` est optionnel ; les filtres de profondeur sont disponibles pour un export

@@ -1229,6 +1229,48 @@ def test_slice3_export_ecotaxa_samples_confirmed_runs_one_export_per_project(see
     assert "✅" in result or "succès" in result.lower() or "ok" in result.lower()
 
 
+def test_bulk_export_persists_a_consolidated_campaign_table_for_analysis(seeded_cache):
+    """A multi-project campaign becomes one durable active table for the
+    immediate analysis, while each raw project export stays available."""
+    project_14853 = pd.DataFrame({
+        "object_id": ["a", "b"],
+        "sample_id": [14853000001, 14853000002],
+    })
+    project_2331 = pd.DataFrame({
+        "object_id": ["c"],
+        "sample_id": [2331000001],
+    })
+    client = _make_fake_client(project_14853)
+    # The bulk tool processes project IDs in ascending order: 2331, then 14853.
+    client.download_tsv.side_effect = [project_2331, project_14853]
+    thread_id = "thread-bulk-campaign-analysis"
+
+    with patch("tools.copepod_sources.EcotaxaClient", return_value=client):
+        from tools.copepod_sources import make_source_tools
+
+        export = next(
+            tool for tool in make_source_tools(thread_id)
+            if tool.name == "export_ecotaxa_samples"
+        )
+        result = export.invoke({
+            "sample_ids": [14853000001, 14853000002, 2331000001],
+            "confirmed": True,
+        })
+
+    campaign = _store.get(f"{thread_id}:dataset:df_ecotaxa_campaign")
+    assert campaign is not None
+    assert campaign["df"].to_dict("records") == [
+        {"object_id": "c", "sample_id": 2331000001, "export_project_id": 2331},
+        {"object_id": "a", "sample_id": 14853000001, "export_project_id": 14853},
+        {"object_id": "b", "sample_id": 14853000002, "export_project_id": 14853},
+    ]
+    assert _store.get(thread_id)["df"].equals(campaign["df"])
+    assert _store.get(f"{thread_id}:ecotaxa")["df"].equals(campaign["df"])
+    assert _store.get(f"{thread_id}:dataset:df_ecotaxa_14853_bulk_14853000001_14853000002")["df"].equals(project_14853)
+    assert _store.get(f"{thread_id}:dataset:df_ecotaxa_2331_bulk_2331000001")["df"].equals(project_2331)
+    assert "df_ecotaxa_campaign" in result
+
+
 # ── SLICE 4 GATE ──────────────────────────────────────────────────────────────
 
 def test_project_summary_uses_project_taxo_stats_not_sample_rollup(seeded_cache):

@@ -3162,6 +3162,7 @@ def make_source_tools(thread_id: str) -> list:
         failures: list[str] = []
         artifact_refs: list[str] = []
         data_refs: list[str] = []
+        campaign_frames: list[pd.DataFrame] = []
         total_rows = 0
         for pid in sorted(groups):
             sids = groups[pid]
@@ -3183,6 +3184,14 @@ def make_source_tools(thread_id: str) -> list:
                 successes.append(f"### ✅ Projet {pid} ({len(sids)} samples)\n\n{summary}")
                 artifact_refs.append(artifact_url)
                 data_refs.append(variable_name)
+                raw_export = _store.get(f"{thread_id}:dataset:{variable_name}")
+                if raw_export is not None and isinstance(raw_export.get("df"), pd.DataFrame):
+                    campaign_frame = raw_export["df"].copy()
+                    # The raw TSV stays unchanged in its project-specific table.
+                    # The consolidated analysis table always carries the project
+                    # that supplied each object, even when the export schema omits it.
+                    campaign_frame["export_project_id"] = int(pid)
+                    campaign_frames.append(campaign_frame)
                 total_rows += row_count
             except Exception as exc:
                 failures.append(_format_export_failure(pid, exc))
@@ -3203,9 +3212,31 @@ def make_source_tools(thread_id: str) -> list:
                 method="EcoTaxa bulk export",
                 metrics={"projects_failed": len(failures)},
             )
+        campaign_variable = dataset_variable_name("ecotaxa", "campaign")
+        campaign_df = pd.concat(campaign_frames, ignore_index=True, sort=False)
+        store_dataset(
+            _store,
+            thread_id,
+            campaign_df,
+            variable_name=campaign_variable,
+            latest_alias=ECOTAXA,
+            meta={
+                "source": "ecotaxa_export_campaign",
+                "selection_name": resolved_selection_name,
+                "export_project_ids": sorted(groups),
+                "raw_export_variables": data_refs,
+                "n_rows": len(campaign_df),
+                "n_projects": len(campaign_frames),
+            },
+        )
+        summary += (
+            f"\n\nTable de campagne consolidée : `{campaign_variable}` "
+            f"({len(campaign_df)} lignes, {len(campaign_frames)} projets) — "
+            "table active pour l'analyse et les graphes."
+        )
         return _eco_success(
             summary,
-            data_ref=",".join(data_refs),
+            data_ref=campaign_variable,
             artifact_refs=tuple(artifact_refs),
             provenance={"sample_ids": normalized},
             persisted=True,
