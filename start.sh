@@ -113,8 +113,10 @@ if [ "$AGENT_MODE" = "local" ]; then
   echo "[start] Starting containers without copepod-agent..."
   echo "[start] Open WebUI will use the local agent at http://localhost:8000."
 else
-  SERVICES=(postgres mcp-ecotaxa copepod-agent open-webui)
-  echo "[start] Starting containers..."
+  # copepod-agent is started only AFTER the EcoTaxa cache preflight passes, so
+  # the agent never comes up on top of an empty or broken cache.
+  SERVICES=(postgres mcp-ecotaxa open-webui)
+  echo "[start] Starting containers (agent starts after the cache check)..."
 fi
 
 if [ "$BUILD_MODE" = "build" ]; then
@@ -137,6 +139,22 @@ until docker compose exec -T mcp-ecotaxa curl -sf http://localhost:8001/health >
   sleep 1
 done
 echo "[start] MCP EcoTaxa OK"
+
+# Cache preflight: gate the agent on a populated, readable EcoTaxa cache.
+# Runs inside the MCP container (has python3 + the bind-mounted script) so it
+# does not depend on a host python. A non-zero exit blocks startup entirely —
+# whoever runs ./start.sh gets a guaranteed-good cache or a clear failure.
+echo "[start] Checking EcoTaxa cache health..."
+if ! docker compose exec -T mcp-ecotaxa sh -c \
+     'curl -sf http://localhost:8001/health | python3 scripts/check_ecotaxa_cache.py'; then
+  echo "[start] EcoTaxa cache preflight FAILED — agent will NOT start."
+  echo "[start] Fix options:"
+  echo "[start]   - Trigger a sync: POST http://localhost:8001/admin/resync (with the MCP token)"
+  echo "[start]   - Verify ECOTAXA_USERNAME / ECOTAXA_PASSWORD in .env"
+  echo "[start]   - Confirm ECOTAXA_CACHE_DB points at a populated cache file"
+  echo "[start] Then run ./start.sh again."
+  exit 1
+fi
 
 if [ "$AGENT_MODE" = "local" ]; then
   LOCAL_AGENT_PID=""
@@ -164,6 +182,15 @@ if [ "$AGENT_MODE" = "local" ]; then
   done
   echo "[start] Local agent API OK"
 else
+  echo "[start] Cache OK — starting copepod-agent..."
+  if [ "$BUILD_MODE" = "build" ]; then
+    docker compose up -d copepod-agent
+  else
+    docker compose up -d --no-build copepod-agent || {
+      echo "[start] Docker image missing. Run once with ./start.sh --build, or pull the published images."
+      exit 1
+    }
+  fi
   echo "[start] Waiting for the agent API container..."
   until docker compose exec -T copepod-agent curl -sf http://localhost:8000/ >/dev/null 2>&1; do
     sleep 1

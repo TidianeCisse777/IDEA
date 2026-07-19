@@ -146,6 +146,20 @@ GROUP BY iho_zone
 ORDER BY n_samples DESC
 ```
 
+**Audit taxonomique depuis objects_cache — toujours qualifier les colonnes :**
+```sql
+SELECT s.profile_id AS cast_id,
+       o.classification_status,
+       o.taxon_name,
+       COUNT(*) AS n
+FROM objects_cache o
+JOIN samples_cache s ON o.sample_id = s.sample_id
+WHERE s.iho_zone LIKE '%Baffin%'
+GROUP BY s.profile_id, o.classification_status, o.taxon_name
+ORDER BY s.profile_id, n DESC
+```
+Toujours préfixer `o.sample_id` et `s.sample_id` dans les JOINs — la colonne existe dans les deux tables et SQLite lève une ambiguïté sans préfixe.
+
 **Casts avec position (pour carte) — toujours inclure lat/lon :**
 ```sql
 SELECT profile_id AS cast_id,
@@ -162,6 +176,12 @@ ORDER BY date_min
 ```
 
 Règle : dès que l'utilisateur demande d'afficher des casts sur une carte, toujours inclure `AVG(lat_avg) AS lat` et `AVG(lon_avg) AS lon` dans le SELECT groupé par `profile_id`.
+
+**Règle `profile_id` NULL** : avant tout `GROUP BY profile_id`, vérifier que la colonne est non-nulle :
+```sql
+SELECT COUNT(*) AS total, COUNT(profile_id) AS avec_profile_id FROM samples_cache WHERE iho_zone LIKE '...';
+```
+Si `avec_profile_id = 0`, ne pas grouper par cast — signaler à l'utilisateur que `profile_id` n'est pas renseigné dans ce cache et proposer de grouper par `sample_id` à la place. Ne jamais inventer de cast IDs.
 
 **Depth filter — `depth_max`:**
 - `depth_max_gte=200` → `depth_max >= 200` ("descend en-dessous de 200 m")
@@ -180,9 +200,203 @@ SELECT COUNT(*) AS n_samples, COUNT(DISTINCT project_id) AS n_projects FROM samp
 SELECT status, ended_at FROM sync_runs ORDER BY run_id DESC LIMIT 1;
 ```
 
+---
+
+## Fallback API réelle — projet absent du cache
+
+Si `query_ecotaxa_cache` retourne 0 lignes pour un `project_id` donné, **ne pas abandonner** : le projet existe mais n'est pas encore synchronisé dans le cache. Utiliser les tools API directement :
+
+| Besoin | Tool API (sans cache) |
+|---|---|
+| Stats V/P/D/U + nb objets d'un projet | `preview_ecotaxa_project(project_id)` |
+| Breakdown taxons V/P/D/U | `count_ecotaxa_taxa(project_ids=[...])` |
+| Stats V/P/D/U d'une liste de samples | `summarize_ecotaxa_samples(sample_ids=[...])` |
+| Détail d'un sample (lat/lon, dates) | `get_ecotaxa_sample(sample_id)` |
+| Objets d'un sample (lecture seule) | `list_ecotaxa_sample_objects(sample_id)` |
+| Télécharger un sample complet | `query_ecotaxa_sample(sample_id)` |
+
+**Règle de routage V/P/D/U :**
+- "état des images / stats du projet X" → `preview_ecotaxa_project(X)` directement, pas de cache
+- "combien de validés dans le projet X" → `count_ecotaxa_taxa(project_ids=[X])` ou `preview_ecotaxa_project(X)`
+- "état des images du sample Y" → `summarize_ecotaxa_samples(sample_ids=[Y])`
+- Ne jamais retourner 0/0/0/0 si le projet est connu — aller sur l'API.
+
 After `query_ecotaxa_cache`, use `run_pandas` for derived tables, joins,
 rankings, or cross-source comparisons. The result is available as
 `df_ecotaxa_cache_query`.
+
+---
+
+## Scénarios de navigation — arbre de décision complet
+
+Trois niveaux d'exploration. Chaque niveau s'appuie sur le précédent ; ne pas sauter de niveau.
+
+```
+NIVEAU 1 — Cache local (SQL, sans réseau)
+  query_ecotaxa_cache → sample_id, lat/lon, zone, date, instrument, object_count
+
+NIVEAU 2 — Stats API par sample (réseau léger, pas d'objets)
+  summarize_ecotaxa_samples(sample_ids=[...]) → V/P/D/U + top taxa par sample
+
+NIVEAU 3 — Objets individuels (réseau, téléchargement)
+  ├─ Browse read-only : list_ecotaxa_sample_objects(sample_id)
+  ├─ Download 1 sample : query_ecotaxa_sample(sample_id)
+  ├─ Download N samples, 1 projet : query_ecotaxa(project_id=X, sample_ids=[...])
+  └─ Download N samples, M projets : export_ecotaxa_samples(sample_ids=[...])
+```
+
+### Tableau de routage complet
+
+| # | Ce que dit l'utilisateur | Niveau | Tool(s) | Download ? |
+|---|---|---|---|---|
+| A | "quels samples dans Baie d'Hudson 2021" | 1 | `query_ecotaxa_cache` SQL | Non |
+| B | "nb images validées / prédites par sample" | 2 | `summarize_ecotaxa_samples(sample_ids=[...])` | Non |
+| C | "carte : positions des samples + nb prédits" | 1+2 | cache SQL → `summarize_ecotaxa_samples` → `run_pandas` join → `run_graph` | Non |
+| D | "browse les objets du sample 123" | 3 | `list_ecotaxa_sample_objects(sample_id=123)` | Non |
+| E | "télécharge / analyse le sample 123" | 3 | `query_ecotaxa_sample(sample_id=123)` → `load_file` | Oui (1 sample) |
+| F | "tous les objets des samples 123 et 456, même projet" | 3 | `query_ecotaxa(project_id=X, sample_ids=[123,456])` → `load_file` | Oui |
+| G | "tous les objets des samples 123 et 456, projets différents" | 3 | `export_ecotaxa_samples(sample_ids=[123,456])` → `load_file` | Oui (lourd) |
+| H | "filtre Calanus sur ces objets" | 3 | après E/F/G → `run_pandas` | — |
+| I | "carte taxons précis sur ces objets" | 3 | après E/F/G → `run_graph` | — |
+
+**Règle de sélection du tool niveau 3 (download) :**
+```
+1 sample                        → query_ecotaxa_sample(sample_id=S)
+N samples, 1 projet             → query_ecotaxa(project_id=X, sample_ids=[...])
+N samples, M projets différents → export_ecotaxa_samples(sample_ids=[...])
+Projet entier                   → query_ecotaxa(project_id=X)
+```
+
+### API lecture vs export — quand utiliser lequel
+
+Deux mécaniques distinctes pour accéder aux objets. Ne pas les confondre.
+
+| | API lecture (`list_ecotaxa_sample_objects`) | Export (`query_ecotaxa_sample` / `query_ecotaxa` / `export_ecotaxa_samples`) |
+|---|---|---|
+| Mécanique | requête paginée `object_set/query` | job EcoTaxa → TSV téléchargé → DataFrame |
+| Volume | 1 page (max 200 objets) | tous les objets du scope |
+| Persistance | rien, éphémère | `df_ecotaxa_*` réutilisable en session |
+| Coût | léger, pas de confirmation | lourd, **confirmation requise** |
+| Analysable ? | non (juste affichage) | oui — `run_pandas` / `run_graph` |
+
+**La question qui tranche : REGARDER ou CALCULER ?**
+- Feuilleter, vérifier « qu'y a-t-il dans ce sample ? », voir quelques objets d'un taxon avant de décider → **API lecture**.
+- Compter, agréger, filtrer sur l'ensemble, tracer un graphe/carte, sauvegarder → **export**.
+
+**Règle graphe/analyse — toujours proposer l'export.** Dès que la demande implique un
+graphe, une carte au grain objet, une distribution, un histogramme, un profil, ou tout
+calcul sur l'ensemble des objets : l'API paginée ne suffit pas (bornée à 200). Proposer
+l'export — jamais tenter de construire un graphe à partir d'une page API. Exemples qui
+exigent l'export : « histogramme de taille des objets », « profil de profondeur par
+taxon », « carte pondérée par abondance d'objets », « distribution des scores ».
+
+**Enchaînement type :** API d'abord pour explorer/décider (léger), puis proposer l'export
+si l'utilisateur veut analyser ou visualiser. L'export reste confirmé avant lancement.
+
+### Scénario C en détail — carte "nb taxons par sample" (sans download)
+
+```
+1. query_ecotaxa_cache(sql="""
+       SELECT sample_id, lat_avg AS lat, lon_avg AS lon,
+              date_min, instrument
+       FROM samples_cache
+       WHERE iho_zone LIKE '%Hudson%' AND date_min >= '2021-01-01'
+   """)
+   → df_ecotaxa_cache_query  [sample_id, lat, lon, date_min, instrument]
+
+2. summarize_ecotaxa_samples(sample_ids=[<ids issus de l'étape 1>])
+   → tableau [sample_id, V, P, D, U, total, top_taxa]
+
+3. run_pandas:
+   import pandas as pd
+   df = df_ecotaxa_cache_query.merge(df_stats, on="sample_id")
+   # df_stats = résultat parsé de summarize_ecotaxa_samples (table markdown → DataFrame)
+   df["n_predicted"] = df["P"] + df["V"]
+
+4. run_graph: scatter map lat/lon, taille/couleur = n_predicted, tooltip = top_taxa
+```
+
+`summarize_ecotaxa_samples` appelle `/sample_set/taxo_stats` — 1 seul appel réseau, aucun objet téléchargé.
+
+### Scénarios F/G — objets de plusieurs samples
+
+Toujours dry-run d'abord pour `export_ecotaxa_samples` :
+```python
+export_ecotaxa_samples(sample_ids=[123, 456], confirmed=False)  # affiche le plan
+# → montrer à l'utilisateur : projets impliqués, nb objets estimé
+export_ecotaxa_samples(sample_ids=[123, 456], confirmed=True)   # après "oui" explicite
+```
+Ne jamais sauter le dry-run, même si l'utilisateur dit "vas-y direct".
+
+Pour `query_ecotaxa` (même projet), pas de dry-run requis — le tool est idempotent.
+
+### Quand descendre au niveau 3 (objets)
+
+Descendre **uniquement** si l'utilisateur veut :
+- filtrer sur un taxon **précis** (pas juste voir le top taxa → niveau 2 suffit)
+- accéder aux **scores de classification** (`auto_score`, `rank`)
+- obtenir les **object_id** pour annotation ou export externe
+- faire une **analyse pandas/graphique sur les objets eux-mêmes** (profil de taille, abondance, etc.)
+
+Si le besoin est "nb de prédits / validés par sample" → niveau 2 suffit, ne pas exporter.
+
+---
+
+## Audit taxonomique
+
+Un audit taxonomique peut s'appliquer à n'importe quel ensemble de samples, quelle que soit leur origine (zone, date, instrument, projet, sélection manuelle). Deux niveaux de profondeur possibles :
+
+### Niveau léger — top taxa sans download
+
+`summarize_ecotaxa_samples(sample_ids=[...])` retourne par sample :
+- V / P / D / U (counts de classification)
+- top taxa : jusqu'à **5 taxa** (les plus abondants) — pas exhaustif
+
+Utilisable pour : "combien d'objets annotés ?", "quels grands groupes présents ?", "lesquels valent l'export ?"
+
+Agrégation possible ensuite dans `run_pandas` à n'importe quel niveau de grain :
+```python
+# par cast (profile_id)
+df = df_stats.merge(df_ecotaxa_cache_query[["sample_id","profile_id"]], on="sample_id")
+df.groupby("profile_id")[["V","P","D","U"]].sum()
+
+# par zone
+df = df_stats.merge(df_ecotaxa_cache_query[["sample_id","iho_zone"]], on="sample_id")
+df.groupby("iho_zone")[["V","P","D","U"]].sum()
+
+# par année
+df = df_stats.merge(df_ecotaxa_cache_query[["sample_id","date_min"]], on="sample_id")
+df["year"] = df["date_min"].str[:4]
+df.groupby("year")[["V","P","D","U"]].sum()
+```
+
+### Niveau complet — tous les taxa avec counts exacts (download requis)
+
+Quand l'utilisateur veut tous les taxa (pas juste le top 5), ou des counts exacts par taxon par sample/cast, il faut exporter les objets.
+
+Signaler la limite avant de proposer l'export :
+> "summarize_ecotaxa_samples donne les 5 taxa dominants par sample. Pour un audit complet avec tous les taxa, il faut télécharger les objets — voulez-vous lancer l'export ?"
+
+Après confirmation :
+```python
+# Après export → df_ecotaxa disponible dans run_pandas
+# Joindre le grain voulu depuis df_ecotaxa_cache_query
+df = df_ecotaxa.merge(
+    df_ecotaxa_cache_query[["sample_id", "profile_id", "iho_zone", "date_min"]],
+    on="sample_id", how="left"
+)
+
+# Audit par cast × taxon
+result = (
+    df.groupby(["profile_id", "object_annotation_category"])
+      .agg(n=("object_id", "count"),
+           pct_V=("object_annotation_status", lambda x: (x=="V").mean()*100))
+      .reset_index()
+      .sort_values(["profile_id", "n"], ascending=[True, False])
+)
+```
+
+Le même pattern fonctionne en remplaçant `profile_id` par `iho_zone`, `date_min`, `instrument`, ou tout autre niveau de grain disponible dans `df_ecotaxa_cache_query`.
 
 ---
 
@@ -190,20 +404,20 @@ rankings, or cross-source comparisons. The result is available as
 
 ```
 1. FIND (query_ecotaxa_cache SQL)
-   WHERE iho_zone = '...' → SELECT from samples_cache
-   Result: table of sample_id, project_id, lat, lon, dates, depth, instrument
+   WHERE iho_zone LIKE '...' → SELECT from samples_cache
+   Résultat : sample_id, project_id, lat/lon, dates, depth, instrument
 
-1b. PROJECT SCAN (optional, before drilling)
-    query_ecotaxa_cache GROUP BY project_id → n_samples, envelope, instruments
-    + count_ecotaxa_taxa(project_ids=[...], taxa=[...]) for V/P/D/U stats
+1b. PROJECT SCAN (optionnel, avant drill)
+    GROUP BY project_id → n_samples, enveloppe, instruments
+    + count_ecotaxa_taxa(project_ids=[...]) pour V/P/D/U niveau projet
 
-2. SAMPLE SCAN (optional, before export)
+2. SAMPLE SCAN (optionnel, avant export)
    summarize_ecotaxa_samples(sample_ids=[...])
-   → V/P/D/U + top taxa per sample — one API call, no download
+   → V/P/D/U + top taxa par sample — 1 appel API, aucun download
 
-3. EXPORT (confirmed)
-   export_ecotaxa_samples(sample_ids=[...], confirmed=False)  ← dry-run first
-   export_ecotaxa_samples(sample_ids=[...], confirmed=True)   ← after user ack
+3. EXPORT (confirmé — niveau 3 seulement)
+   export_ecotaxa_samples(sample_ids=[...], confirmed=False)  ← dry-run obligatoire
+   export_ecotaxa_samples(sample_ids=[...], confirmed=True)   ← après ack utilisateur
 ```
 
 ---
@@ -229,48 +443,176 @@ rankings, or cross-source comparisons. The result is available as
 
 ---
 
-## Step 2 — scan samples before exporting
+## Colonnes disponibles après un export d'objets
 
-`summarize_ecotaxa_samples(sample_ids=[...])` — one API call per batch.
+L'export retourne un TSV chargé en DataFrame (`df_ecotaxa_*`). Les colonnes sont structurées en 4 niveaux de préfixe.
 
-| Column | Meaning |
+### Colonnes fixes (toujours présentes)
+
+| Colonne | Contenu |
 |---|---|
-| `V` | validated objects |
-| `P` | predicted (model output, NOT human-validated) |
-| `D` | dubious |
-| `U` | unclassified |
-| `top taxa` | up to 5 taxon names per sample |
+| `object_id` | ID interne EcoTaxa de l'objet |
+| `object_lat`, `object_lon` | Position GPS de l'objet |
+| `object_depth_min`, `object_depth_max` | Profondeur (m) |
+| `object_date`, `object_time` | Horodatage de la capture |
+| `object_annotation_category` | Nom du taxon assigné (V ou P) |
+| `object_annotation_category_id` | ID EcoTaxa du taxon |
+| `object_annotation_status` | `V` validé / `P` prédit / `D` douteux / `U` non classifié |
+| `object_annotation_person_name` | Validateur (si V) |
+| `object_annotation_date` | Date de classification |
+| `sample_id` | ID du sample parent |
+| `sample_original_id` | Label de station / déploiement |
+| `acq_id` | ID d'acquisition |
 
-Use for "lequel vaut l'export ?", "qu'y a-t-il dedans ?", current-result
-ranking by `total`. Exact per-taxon counts per sample require an export.
+### Champs libres (variables par projet/instrument)
 
-A sample with only `P` and no `V` = model predictions never validated —
-flag to the user before they treat numbers as ground truth.
+| Préfixe | Exemples typiques (UVP) |
+|---|---|
+| `object_<champ>` | `object_esd`, `object_biovolume`, `object_area`, `object_major`, `object_minor` |
+| `sample_<champ>` | `sample_towtype`, `sample_net_opening`, `sample_ship` |
+| `acq_<champ>` | `acq_pixel`, `acq_sub` |
+| `process_<champ>` | `process_soft`, `process_version` |
+
+**Les champs libres dépendent du projet.** Avant un export inconnu, appeler `inspect_ecotaxa_project_schema(project_id=...)` pour voir les colonnes disponibles.
+
+### Positions géographiques dans un export
+
+`object_lat` et `object_lon` sont présents pour chaque objet, **mais pour les instruments verticaux (UVP, Loki), tous les objets d'un même cast partagent la même lat/lon** (position du navire au moment du déploiement). Il n'y a pas de variation horizontale entre objets du même cast.
+
+Conséquence directe sur les cartes :
+- **"1 point par objet sur une carte"** → inutile, tous les objets du même cast se superposent au même pixel.
+- **Carte correcte = 1 point par sample**, taille ou couleur = agrégat des objets (nb Calanus, abondance, etc.)
+
+**Chemin carte avec taxon précis après export :**
+```python
+# 1. Filtrer sur le taxon voulu
+df_cal = df[df["object_annotation_category"].str.contains("Calanus", na=False)]
+
+# 2. Agréger par sample_id
+agg = df_cal.groupby("sample_id").agg(
+    n_calanus=("object_id", "count"),
+    lat=("object_lat", "first"),      # même lat pour tout le sample
+    lon=("object_lon", "first"),
+).reset_index()
+
+# 3. run_graph : scatter lat/lon, size=n_calanus
+```
+
+Ce chemin donne la carte "nb Calanus par sample" avec taxon précis — l'équivalent du scénario C mais avec filtre taxon exact au lieu du top taxa.
+
+**Autres analyses pertinentes avec les positions :**
+```python
+# Profil de profondeur (axe Y inversé = on descend)
+df.groupby(pd.cut(df["object_depth_min"], bins=range(0, 1000, 50)))["object_id"].count()
+
+# Section latitudinale : lat vs profondeur, couleur = taxon
+# → utile sur une transect (plusieurs casts alignés)
+
+# Abondance par profondeur et par cast
+df.groupby(["sample_id", pd.cut(df["object_depth_min"], 10)])["object_id"].count()
+```
+
+### Colonne `year` ajoutée automatiquement
+
+Après chaque export, une colonne `year` (entier) est ajoutée si une colonne date est trouvée — permet directement `groupby("year")` sans parsing manuel.
 
 ---
 
-## Step 3 — export (multi-project safe)
+## Scan avant export — `summarize_ecotaxa_samples`
 
-`export_ecotaxa_samples(sample_ids=[...], confirmed=False)` — always
-dry-run first. Shows the project → sample_ids breakdown. Only call with
-`confirmed=True` after explicit user confirmation ("oui", "go", "lance").
+`summarize_ecotaxa_samples(sample_ids=[...])` — 1 appel API, aucun objet téléchargé.
 
-Never skip the dry-run even if the user says "exporte direct".
+| Colonne retournée | Signification |
+|---|---|
+| `V` | objets validés (vérité terrain) |
+| `P` | prédits par le modèle (PAS validés) |
+| `D` | douteux |
+| `U` | non classifiés |
+| `top taxa` | jusqu'à 5 taxons présents dans le sample |
 
-After a confirmed run, surface both ✅ successes (n_rows, download link,
-`df_ecotaxa_*` variable) and ❌ failures (EXPORT_FAILED + HTTP code).
+Utiliser pour "lequel vaut l'export ?", "qu'y a-t-il dedans ?", ranking par total.
+Un sample avec uniquement `P` et aucun `V` = prédictions modèle jamais validées — signaler à l'utilisateur avant toute analyse quantitative.
 
-**Export tool selection:**
+---
+
+## Export d'objets — sélection du tool
+
 ```
-├─ whole project          → query_ecotaxa(project_id=X)
-├─ one sample             → query_ecotaxa_sample(sample_id=S)
-├─ N samples, 1 project   → query_ecotaxa(project_id=X, sample_ids=[...])
-└─ N samples, M projects  → export_ecotaxa_samples(sample_ids=[...])
+1 sample                        → query_ecotaxa_sample(sample_id=S)
+N samples, 1 projet             → query_ecotaxa(project_id=X, sample_ids=[...])
+N samples, M projets différents → export_ecotaxa_samples(sample_ids=[...])
+Projet entier                   → query_ecotaxa(project_id=X)
 ```
 
-After `EXPORT_FAILED`: quote the server message, suggest
-`preview_ecotaxa_project(project_id=...)` to verify access. Do not fall
-back to a cache query as if the export had succeeded.
+`export_ecotaxa_samples` : toujours dry-run d'abord (`confirmed=False`), puis `confirmed=True` après "oui" explicite. Ne jamais sauter le dry-run.
+
+Après `EXPORT_FAILED` : citer le message serveur, proposer `preview_ecotaxa_project(project_id=...)` pour vérifier les droits. Ne pas retomber sur une requête cache.
+
+---
+
+## Session state — stocker, référencer, combiner les données
+
+### Ce qui est disponible dans `run_pandas` et `run_graph`
+
+Chaque dataset chargé pendant la session est injecté automatiquement dans le namespace de `run_pandas` et `run_graph` par son **nom de variable exact**. Ils sont tous disponibles simultanément — pas besoin de les recharger.
+
+| Variable | Produite par | Contenu |
+|---|---|---|
+| `df_ecotaxa_cache_query` | `query_ecotaxa_cache` | Résultat SQL cache (sample_id, lat, lon, zone, date…) |
+| `df_ecotaxa_sample_{id}` | `query_ecotaxa_sample(sample_id=id)` | Objets du sample `id` |
+| `df_ecotaxa_{project}_{ids_hash}` | `query_ecotaxa` / `export_ecotaxa_samples` | Objets d'un export batch |
+| `df_ecotaxa` | alias toujours mis à jour | Dernier export EcoTaxa actif |
+| `df_file_{nom}` | `load_file` | Fichier chargé par l'utilisateur |
+| `loaded_file` | `load_file` | Alias stable du dernier fichier chargé |
+
+La liste des variables actives est visible dans la capsule **WORKING TABLES** injectée à chaque tour — utiliser les noms exacts listés là.
+
+### Combiner plusieurs datasets dans run_pandas
+
+```python
+import pandas as pd
+
+# Combiner des objets de 2 samples téléchargés séparément
+df_all = pd.concat([df_ecotaxa_sample_123, df_ecotaxa_sample_456], ignore_index=True)
+
+# Joindre objets exportés + lat/lon depuis le cache
+# (df_ecotaxa_cache_query a lat_avg, lon_avg par sample_id)
+agg = df_all.groupby("sample_id").agg(
+    n_calanus=("object_id", "count"),
+).reset_index()
+df_map = agg.merge(df_ecotaxa_cache_query[["sample_id", "lat_avg", "lon_avg"]], on="sample_id")
+
+# Résultat: une ligne par sample avec lat/lon + comptage objets → prêt pour run_graph
+```
+
+### Workflow complet multi-samples avec taxon précis
+
+```
+Étape 1 — Cache SQL (pas de réseau)
+  query_ecotaxa_cache → df_ecotaxa_cache_query [sample_id, lat_avg, lon_avg, iho_zone, date_min]
+
+Étape 2 — Download objets (réseau)
+  query_ecotaxa_sample(123) → df_ecotaxa_sample_123 [object_id, object_lat, object_lon,
+                                                       object_depth_min, object_annotation_category,
+                                                       object_annotation_status, sample_id, …]
+  query_ecotaxa_sample(456) → df_ecotaxa_sample_456  (même schéma)
+
+Étape 3 — Combiner + filtrer dans run_pandas
+  df_all = pd.concat([df_ecotaxa_sample_123, df_ecotaxa_sample_456])
+  df_cal = df_all[df_all["object_annotation_category"].str.contains("Calanus", na=False)]
+  agg = df_cal.groupby("sample_id")["object_id"].count().reset_index(name="n_calanus")
+  df_map = agg.merge(df_ecotaxa_cache_query[["sample_id","lat_avg","lon_avg"]], on="sample_id")
+
+Étape 4 — Carte dans run_graph
+  scatter lat_avg/lon_avg, size=n_calanus, label=sample_id
+```
+
+### Règles de nommage et persistance
+
+- Les variables persistent toute la session (même après plusieurs tours).
+- Pour N samples du même projet : `query_ecotaxa(project_id=X, sample_ids=[...])` produit un seul df contenant tous les objets — plus efficace que N appels `query_ecotaxa_sample`.
+- Pour M projets différents : `export_ecotaxa_samples(sample_ids=[...])` regroupe tout dans un seul df au format commun.
+- Après un `run_pandas` qui produit un résultat (`result = ...`), ce résultat est affiché mais **non stocké** comme variable de session. Si l'utilisateur veut réutiliser ce résultat dans le tour suivant, le recalculer dans le même bloc ou demander un export.
 
 ---
 
@@ -322,15 +664,21 @@ guess a project, do not explain a procedure instead of executing.
 
 | User intent | Tool chain |
 |---|---|
-| "samples en Baie de Baffin 2024" | `query_ecotaxa_cache` WHERE iho_zone = 'Baie de Baffin' AND date_min >= '2024-01-01' |
-| "projets en Baie de Baffin 2024" | `query_ecotaxa_cache` WHERE iho_zone = 'Baie de Baffin' GROUP BY project_id |
-| "samples par année en Baie de Baffin" | `query_ecotaxa_cache` WHERE iho_zone = 'Baie de Baffin' GROUP BY strftime('%Y', date_min) |
+| "samples en Baie de Baffin 2024" | `query_ecotaxa_cache` WHERE iho_zone LIKE '%Baffin%' AND date_min >= '2024-01-01' |
+| "projets en Baie de Baffin 2024" | `query_ecotaxa_cache` WHERE iho_zone LIKE '%Baffin%' GROUP BY project_id |
+| "samples par année en Baie de Baffin" | `query_ecotaxa_cache` WHERE iho_zone LIKE '%Baffin%' GROUP BY strftime('%Y', date_min) |
 | "zones les moins échantillonnées" | `query_ecotaxa_cache` GROUP BY iho_zone ORDER BY COUNT(DISTINCT profile_id) ASC |
 | "groupe les samples du projet 17498 par zone" | `query_ecotaxa_cache` WHERE project_id = 17498 GROUP BY iho_zone |
-| "samples LOKI dans Baie de Baffin" | `query_ecotaxa_cache` WHERE iho_zone = 'Baie de Baffin' AND instrument = 'Loki' |
+| "samples LOKI dans Baie de Baffin" | `query_ecotaxa_cache` WHERE iho_zone LIKE '%Baffin%' AND instrument = 'Loki' |
+| "carte positions samples + nb prédits" | cache SQL → `summarize_ecotaxa_samples` → `run_pandas` join → `run_graph` (scénario C) |
 | "samples avec Calanus en mer du Labrador" | `find_ecotaxa_observations(taxon="Calanus", zone_name=...)` |
 | "combien de Calanus validés dans ces 3 projets" | `count_ecotaxa_taxa(project_ids=[...], taxa=["Calanus"])` |
-| "scan ces 20 samples avant export" | `summarize_ecotaxa_samples(sample_ids=[...])` |
+| "scan / état des images de ces samples" | `summarize_ecotaxa_samples(sample_ids=[...])` |
+| "browse les objets du sample 123" | `list_ecotaxa_sample_objects(sample_id=123)` (read-only, pas de download) |
+| "télécharge / analyse le sample 123" | `query_ecotaxa_sample(sample_id=123)` → `load_file` → `run_pandas` |
+| "tous les objets des samples 123 et 456 (même projet X)" | `query_ecotaxa(project_id=X, sample_ids=[123,456])` → `load_file` |
+| "tous les objets des samples 123 et 456 (projets diff)" | `export_ecotaxa_samples(sample_ids=[123,456], confirmed=False)` → confirmation → `load_file` |
+| "filtre Calanus sur ces objets" | après download → `run_pandas` |
 | "exporte cette sélection" | `export_ecotaxa_samples(sample_ids=[...], confirmed=False)` then user confirms |
 | "les colonnes de ce projet" | `inspect_ecotaxa_project_schema(project_id=...)` |
 | "ces 3 projets sont-ils compatibles" | `compare_ecotaxa_projects(project_ids=[...])` |
@@ -343,6 +691,7 @@ guess a project, do not explain a procedure instead of executing.
 - For any EcoTaxa navigation request with a named zone: (1) `load_skill("ecotaxa_navigation")`, (2) `query_ecotaxa_cache` with `WHERE iho_zone = '...'` — do NOT call `get_zone_info` for zone filtering.
 - With multiple named zones, use `WHERE iho_zone IN ('Zone A', 'Zone B')` or a `CASE iho_zone` label before graphing — never plot only the last selection.
 - For object-level browsing (read-only): `list_ecotaxa_sample_objects`, NOT `query_ecotaxa_sample`.
+- For ANY object-level graph, map, distribution, histogram, depth profile, or aggregate over objects: propose an export (`query_ecotaxa_sample` / `query_ecotaxa` / `export_ecotaxa_samples`) — the paginated API (max 200) cannot back a graph. Never build a graph from a `list_ecotaxa_sample_objects` page.
 - EcoTaxa dry-run export ("prépare l'export", "mais ne lance rien"): call `export_ecotaxa_samples(..., confirmed=False)` — do not stop after loading the skill.
 - After a previous `EXPORT_FAILED` / rights failure: use `preview_ecotaxa_project(project_id=...)` to verify access; do not call `query_ecotaxa` or `export_ecotaxa_samples`.
 - For distribution/stats on one column: `inspect_ecotaxa_column(project_id=..., column_name=...)`.

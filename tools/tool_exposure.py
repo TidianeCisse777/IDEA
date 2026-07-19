@@ -62,9 +62,11 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
         # Object browsing is a drill-down (read sample content without export);
         # placed before ecotaxa_samples because "objets du sample" also contains
         # "sample". `export` still wins over both (heavy path).
+        # Covers: objet(s), object(s), image(s), contenu, browse, drill, detail
+        # so that "état des images", "contenu du sample", "browse objects" all work.
         "ecotaxa_objects",
         re.compile(
-            r"\b(?:objet\w*|object\w*)\b",
+            r"\b(?:objet\w*|object\w*|image\w*|contenu\w*|browse\w*|drill\w*|d[eé]tail\w*)\b",
             re.IGNORECASE,
         ),
     ),
@@ -321,6 +323,18 @@ def decide_tool_exposure(
         if signals.geographic_requested:
             ecotaxa_groups.append("ecotaxa_geo_time")
         ecotaxa_groups.extend(signals.ecotaxa_intents)
+        # Drill-down: if a sample-level tool succeeded this turn, always expose objects.
+        # Covers "montre ça", "ok explore", "va plus loin" after finding a sample via cache.
+        _SAMPLE_LEVEL_TOOLS = frozenset({
+            "get_ecotaxa_sample", "summarize_ecotaxa_sample",
+            "summarize_ecotaxa_samples", "summarize_ecotaxa_sample_deployment",
+            "list_ecotaxa_project_samples", "resolve_ecotaxa_sample",
+        })
+        if (
+            "ecotaxa_objects" not in ecotaxa_groups
+            and _SAMPLE_LEVEL_TOOLS.intersection(signals.successful_tools_this_turn)
+        ):
+            ecotaxa_groups.append("ecotaxa_objects")
         groups.extend(ecotaxa_groups)
         reasons.append("authorized EcoTaxa intent")
     # Keep the dedicated comparison route visible from the wording itself. A

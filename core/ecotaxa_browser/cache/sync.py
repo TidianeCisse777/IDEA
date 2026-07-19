@@ -182,21 +182,42 @@ def _fetch_project_samples(
         if elapsed < min_interval:
             time.sleep(min_interval - elapsed)
 
-    samples = [
-        {
+    # Discover from the authoritative sample list, not only from objects: the
+    # object scan is capped (object_cap), so large projects would otherwise miss
+    # every sample beyond the first window. Union guarantees each sample is
+    # indexed even when it has no object in the scanned window.
+    _EMPTY_AGG = {
+        "lat_sum": 0.0, "lon_sum": 0.0, "geo_count": 0, "count": 0,
+        "date_min": None, "date_max": None, "depth_min": None, "depth_max": None,
+    }
+    all_sample_ids = set(aggregates) | set(sample_metadata)
+    samples = []
+    for sid in all_sample_ids:
+        agg = aggregates.get(sid, _EMPTY_AGG)
+        meta = dict(sample_metadata.get(sid, {}))
+        # Prefer the per-sample position (complete, cap-independent); fall back
+        # to the averaged object coordinates only when the sample carries none.
+        sample_lat = meta.pop("sample_lat", None)
+        sample_lon = meta.pop("sample_lon", None)
+        if sample_lat is not None and sample_lon is not None:
+            lat_avg, lon_avg = sample_lat, sample_lon
+        elif agg["geo_count"]:
+            lat_avg = agg["lat_sum"] / agg["geo_count"]
+            lon_avg = agg["lon_sum"] / agg["geo_count"]
+        else:
+            lat_avg, lon_avg = None, None
+        samples.append({
             "sample_id": sid,
-            "lat_avg": (agg["lat_sum"] / agg["geo_count"]) if agg["geo_count"] else None,
-            "lon_avg": (agg["lon_sum"] / agg["geo_count"]) if agg["geo_count"] else None,
+            "lat_avg": lat_avg,
+            "lon_avg": lon_avg,
             "date_min": agg["date_min"],
             "date_max": agg["date_max"],
             "depth_min": agg["depth_min"],
             "depth_max": agg["depth_max"],
             "object_count": agg["count"],
             "instrument": instrument,
-            **sample_metadata.get(sid, {}),
-        }
-        for sid, agg in aggregates.items()
-    ]
+            **meta,
+        })
     return samples, instrument
 
 
@@ -216,6 +237,12 @@ def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int,
             free_fields = {}
         metadata[sample_id] = {
             "original_id": _as_optional_str(sample.get("orig_id")),
+            # Authoritative per-sample position from list_samples. EcoTaxa
+            # returns latitude/longitude directly on every sample, complete and
+            # independent of the object-scan cap. Kept separate from the object
+            # aggregate so _fetch_project_samples can prefer it (see there).
+            "sample_lat": _as_float(sample.get("latitude")),
+            "sample_lon": _as_float(sample.get("longitude")),
             "station_id": _first_optional_str(
                 free_fields,
                 ("stationid", "station_id", "station", "sample_stationid"),
