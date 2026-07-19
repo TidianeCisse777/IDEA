@@ -320,6 +320,41 @@ def _backfill_ecotaxa_cache() -> None:
         logger.warning("iho_zone backfill skipped: %s", e)
 
 
+def _warm_up_graphing() -> None:
+    """Pay the cartopy/matplotlib cold-start once, at boot, off the request path.
+
+    The first map in a fresh process otherwise pays ~5 s: importing
+    cartopy/matplotlib/shapely and loading (or downloading) the NaturalEarth
+    coastline shapefile. Rendering itself is ~0.1 s once warm. We force that cost
+    here with a throwaway 1-point coastline render so the first user graph is
+    fast. Best-effort: a failure just means the first real graph pays the cost.
+    """
+    import time
+
+    started = time.perf_counter()
+    try:
+        from core.cartography import configure_offline_cartopy
+
+        configure_offline_cartopy()
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import cartopy.crs as ccrs
+
+        figure, axis = plt.subplots(
+            figsize=(2, 2), subplot_kw={"projection": ccrs.PlateCarree()}
+        )
+        axis.set_extent([-72, -58, 68, 80], crs=ccrs.PlateCarree())
+        axis.coastlines(resolution="110m", linewidth=0.5)  # forces shapefile load
+        axis.scatter([-65.0], [74.0], transform=ccrs.PlateCarree())
+        figure.canvas.draw()
+        plt.close(figure)
+        logger.info("graphing warm-up done in %.2fs", time.perf_counter() - started)
+    except Exception as e:
+        logger.warning("graphing warm-up skipped: %s", e)
+
+
 from contextlib import asynccontextmanager as _asynccontextmanager
 
 
@@ -365,6 +400,8 @@ async def lifespan(app: FastAPI):
     import agent as _agent_module
 
     await asyncio.get_event_loop().run_in_executor(None, _backfill_ecotaxa_cache)
+    # Warm cartopy/matplotlib off the request path so the first graph is fast.
+    asyncio.get_event_loop().run_in_executor(None, _warm_up_graphing)
 
     async def _start_polling():
         task = asyncio.create_task(_feedback_polling_loop())
