@@ -255,6 +255,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "list_ecotaxa_cache_tables": _source("EcoTaxa · tables du cache", "EcoTaxa · cache tables", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "describe_ecotaxa_cache_table": _source("EcoTaxa · schéma d'une table cache", "EcoTaxa · cache table schema", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "query_ecotaxa_cache": _source("EcoTaxa · SQL cache", "EcoTaxa · SQL cache", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "find_uvp_matches_for_net_table": _source("EcoTaxa · correspondances filet↔UVP", "EcoTaxa · net↔UVP matches", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     # Bio-ORACLE.
     "list_bio_oracle_datasets": _source("Bio-ORACLE · jeux de données", "Bio-ORACLE · datasets", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
     "preview_bio_oracle_point": _source("Bio-ORACLE · aperçu ponctuel", "Bio-ORACLE · point preview", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
@@ -338,6 +339,7 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "list_ecotaxa_cache_tables": "local_source_read",
     "describe_ecotaxa_cache_table": "local_source_read",
     "query_ecotaxa_cache": "local_source_read",
+    "find_uvp_matches_for_net_table": "local_source_read",
     "compare_ecotaxa_projects": "remote_read",
     "count_ecotaxa_taxa": "remote_read",
     "describe_ecotaxa_project_coverage": "remote_read",
@@ -484,6 +486,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # EcoTaxa audit — cache-only tools replaced by query_ecotaxa_cache SQL.
     "audit_ecotaxa_spatial_coverage": "hidden_legacy",
     "query_ecotaxa_cache": "ecotaxa_discovery",
+    "find_uvp_matches_for_net_table": "ecotaxa_discovery",
     "summarize_ecotaxa_project": "hidden_legacy",
     "summarize_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa exports.

@@ -41,6 +41,7 @@ Authorized data sources are user-loaded files, EcoTaxa, EcoPart, Amundsen CTD, B
 - After joining objects to samples, never use `COUNT(*)` for samples or sum sample-level `object_count` directly: use `COUNT(DISTINCT s.sample_id)` and pre-aggregate object metrics by `sample_id` before summing, otherwise the one-to-many join inflates counts.
 - For an explicit file/dataset loading request about copepod micro-hydrodynamics, call `load_file` first; the next tool call must be `load_skill("copepod_hydrodynamic_micro_zoom")` before `query_copepod_knowledge_base`, analysis, graphing, or scientific claims. Fronts (including front thermique), plumes, upwellings, currents, blooms, migration, reproduction, and predation are mechanisms, not fixed geographic zones.
 - For loaded NeoLabs abundance data, use `load_skill("neolabs_abundance_analysis")`; it does not replace visual planning/writing.
+- To compare net (NeoLabs) copepod abundance with UVP (EcoTaxa/EcoPart) abundance, first call `find_uvp_matches_for_net_table` (read-only correspondence, station-level; it exposes `time_gap_days` and flags `spatial_only` when net and UVP are different campaigns), then `load_skill("net_uvp_abundance_comparison")`. Never invent the net↔UVP join or compare ind./L against ind./m³ without aligning units.
 
 {NUMERIC_EVIDENCE_RULES}
 

@@ -457,6 +457,198 @@ def make_source_tools(thread_id: str) -> list:
             },
         )
 
+    @tool(response_format="content_and_artifact")
+    def find_uvp_matches_for_net_table(
+        latitude_column: str | None = None,
+        longitude_column: str | None = None,
+        time_column: str | None = None,
+        max_distance_km: float = 50.0,
+        max_time_gap_days: float | None = 60.0,
+    ) -> str:
+        """Vérifie quels samples UVP EcoTaxa correspondent au fichier de filet chargé, SANS enrichir.
+
+        À utiliser sur une question de DISPONIBILITÉ, avant toute comparaison
+        filet↔UVP — « est-ce qu'il existe des samples UVP dans EcoTaxa qui
+        correspondent à mes données de filet ? », « prends dans EcoTaxa les
+        samples qui correspondent à ce filet », « peut-on comparer l'abondance
+        filet et UVP sur ces stations ? ». Lecture seule : lit le fichier de
+        filet chargé (déploiements NeoLabs), calcule pour chaque déploiement le
+        sample UVP EcoTaxa le plus proche dans le cache (haversine < `max_distance_km`),
+        et expose l'écart temporel (`time_gap_days`). Le rapprochement est
+        SPATIAL (stations de monitoring revisitées) : si l'écart temporel dépasse
+        `max_time_gap_days`, le statut passe à `spatial_only` (même station,
+        campagnes d'années différentes) au lieu d'être masqué. Ne télécharge ni ne
+        calcule aucune abondance UVP. Persiste la table de correspondance
+        `df_net_uvp_matches`. Si des correspondances existent, router ensuite vers
+        `load_skill("net_uvp_abundance_comparison")` pour calculer et comparer les
+        deux abondances ; sinon dire clairement qu'aucun sample UVP ne recouvre la
+        zone du filet.
+        """
+        from core.net_uvp_comparison import match_net_to_uvp
+
+        loaded = loaded_file_dataset(_store, thread_id)
+        if not loaded or loaded.get("df") is None:
+            return _eco_blocked(
+                "Aucun fichier de filet chargé. Charge d'abord une table NeoLabs "
+                "(`load_file`) avec des colonnes latitude/longitude/date.",
+                retryable=False,
+            )
+        net_df = loaded["df"].copy()
+
+        def _detect(cols, candidates):
+            lower = {str(c).strip().lower(): c for c in cols}
+            for cand in candidates:
+                if cand in lower:
+                    return lower[cand]
+            return None
+
+        lat_col = latitude_column or _detect(net_df.columns, ("latitude", "lat", "lat_avg"))
+        lon_col = longitude_column or _detect(net_df.columns, ("longitude", "lon", "lon_avg", "long"))
+        time_col = time_column or _detect(
+            net_df.columns,
+            ("deployment_datetime_start", "deployment_date_start", "date", "datetime"),
+        )
+        if lat_col is None or lon_col is None:
+            return _eco_blocked(
+                "Vérification filet↔UVP impossible : colonnes latitude/longitude "
+                "introuvables dans le fichier chargé. Préciser via `latitude_column` "
+                "et `longitude_column`.",
+                retryable=False,
+            )
+
+        lat = pd.to_numeric(net_df[lat_col], errors="coerce")
+        lon = pd.to_numeric(net_df[lon_col], errors="coerce")
+        if lat.notna().sum() == 0 or lon.notna().sum() == 0:
+            return _eco_empty(
+                "Aucune coordonnée exploitable dans le fichier de filet — rien à "
+                "confronter au cache UVP EcoTaxa."
+            )
+        # Marge ≈ max_distance_km convertie en degrés (grossière, pour la bbox SQL).
+        margin = max(max_distance_km / 111.0, 0.2)
+        cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        conn = None
+        try:
+            conn = open_connection(cache_db)
+            init_schema(conn)
+            uvp_df = pd.read_sql_query(
+                "SELECT sample_id, project_id, instrument, lat_avg, lon_avg, "
+                "date_min, date_max, object_count FROM samples_cache "
+                "WHERE lat_avg BETWEEN ? AND ? AND lon_avg BETWEEN ? AND ? "
+                "AND instrument LIKE 'UVP%'",
+                conn,
+                params=(
+                    float(lat.min()) - margin,
+                    float(lat.max()) + margin,
+                    float(lon.min()) - margin,
+                    float(lon.max()) + margin,
+                ),
+            )
+        except Exception as exc:
+            return _eco_error(
+                f"Impossible d'interroger le cache EcoTaxa : {exc}", retryable=True
+            )
+        finally:
+            if conn is not None:
+                conn.close()
+
+        env = (
+            f"lat {float(lat.min()):.2f}→{float(lat.max()):.2f}, "
+            f"lon {float(lon.min()):.2f}→{float(lon.max()):.2f}"
+        )
+        if uvp_df.empty:
+            return _eco_empty(
+                f"Aucun sample UVP dans l'emprise du filet ({env}). Rien à comparer "
+                "côté UVP EcoTaxa pour ce fichier."
+            )
+
+        matches = match_net_to_uvp(
+            net_df,
+            uvp_df,
+            max_km=max_distance_km,
+            max_days=max_time_gap_days,
+            net_lat_col=lat_col,
+            net_lon_col=lon_col,
+            net_time_col=time_col,
+        )
+        if matches.empty:
+            return _eco_empty(
+                f"{len(uvp_df)} sample(s) UVP dans l'emprise ({env}) mais aucun à "
+                f"moins de {max_distance_km:g} km d'un déploiement filet. "
+                "Rapprochement spatial impossible à cette tolérance."
+            )
+
+        variable_name = "df_net_uvp_matches"
+        store_dataset(
+            _store,
+            thread_id,
+            matches,
+            variable_name=variable_name,
+            meta={
+                "source": "net_uvp_match",
+                "file_variable": (loaded.get("meta") or {}).get("variable_name"),
+                "n_rows": len(matches),
+                "n_cols": len(matches.columns),
+            },
+            set_active=False,
+        )
+
+        n_matched = int((matches["match_status"] == "matched").sum())
+        n_spatial = int((matches["match_status"] == "spatial_only").sum())
+        n_proj = int(matches["uvp_project_id"].nunique())
+        instruments = ", ".join(sorted(matches["uvp_instrument"].dropna().astype(str).unique()))
+        preview = (
+            matches.sort_values("distance_km")
+            .head(10)[
+                [
+                    "net_sample_id",
+                    "station",
+                    "uvp_sample_id",
+                    "uvp_project_id",
+                    "uvp_instrument",
+                    "distance_km",
+                    "time_gap_days",
+                    "match_status",
+                ]
+            ]
+        )
+        lines = [
+            "## Correspondances filet ↔ UVP (EcoTaxa)",
+            f"Emprise du filet : {env}",
+            f"Déploiements filet appariés à un sample UVP < {max_distance_km:g} km : "
+            f"{len(matches)} "
+            f"(sur {net_df[lat_col].notna().sum()} avec coordonnées).",
+            f"Projets UVP concernés : {n_proj} ; instruments : {instruments or '—'}.",
+            f"Statut temporel (tolérance {max_time_gap_days if max_time_gap_days is not None else '∞'} j) : "
+            f"{n_matched} `matched` (proximité spatiale ET temporelle), "
+            f"{n_spatial} `spatial_only` (même station, campagnes d'années différentes).",
+            "",
+            preview.to_markdown(index=False),
+        ]
+        if n_matched == 0 and n_spatial > 0:
+            lines += [
+                "",
+                "⚠ Aucune paire synchrone : la comparaison sera **station/zone** "
+                "(climatologique), pas cast-à-cast. L'écart temporel est dans "
+                "`time_gap_days`.",
+            ]
+        lines += [
+            "",
+            "Étape suivante : `load_skill(\"net_uvp_abundance_comparison\")` pour "
+            "calculer la densité de copépodes des deux côtés (filet en ind./m³, UVP "
+            "converti en ind./m³) et poser le delta par station.",
+        ]
+        return _eco_success(
+            "\n".join(lines),
+            data_ref=variable_name,
+            persisted=True,
+            metrics={
+                "matches": len(matches),
+                "matched": n_matched,
+                "spatial_only": n_spatial,
+                "uvp_projects": n_proj,
+            },
+        )
+
     def _normalize_sample_ids(sample_ids) -> list[int]:
         if sample_ids is None:
             return []
@@ -3663,4 +3855,5 @@ def make_source_tools(thread_id: str) -> list:
         list_ecotaxa_cache_tables,
         describe_ecotaxa_cache_table,
         query_ecotaxa_cache,
+        find_uvp_matches_for_net_table,
     ]
