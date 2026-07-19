@@ -801,3 +801,112 @@ def test_run_full_sync_single_project_uses_full_rate_budget(conn):
     # The old split throttled to 20/8 = 2.5 rps => ~1.6s + overhead (~2.0s).
     # Assert the fast path with margin for scheduling overhead.
     assert elapsed < 1.2
+
+
+def test_sync_derives_cast_from_orig_id_when_absent(conn):
+    """No station/profile free-column: derive the CAST (deployment) into
+    profile_id as the orig_id with its trailing "_<n>" sample index stripped, so
+    samples sharing a cast can be counted. station_id stays NULL — a cast is not
+    a station, and no station data exists here to invent one from."""
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    client = _make_client(
+        projects=[{"projid": 14844, "title": "AM", "instrument": "UVP6"}],
+        objects_by_project={14844: []},
+        samples_by_project={
+            14844: [
+                {  # two samples of the SAME cast (hopedalesaddle)
+                    "sampleid": 14844000001,
+                    "projid": 14844,
+                    "orig_id": "am_leg2_hopedalesaddle_1",
+                    "latitude": 55.0,
+                    "longitude": -55.0,
+                    "free_columns": {},
+                },
+                {
+                    "sampleid": 14844000002,
+                    "projid": 14844,
+                    "orig_id": "am_leg2_hopedalesaddle_2",
+                    "latitude": 55.01,
+                    "longitude": -55.01,
+                    "free_columns": {},
+                },
+                {  # single-sample cast, no trailing index
+                    "sampleid": 14844000003,
+                    "projid": 14844,
+                    "orig_id": "am_leg2_ramahshelf",
+                    "latitude": 58.0,
+                    "longitude": -63.0,
+                    "free_columns": {},
+                },
+            ],
+        },
+    )
+
+    sync_project(conn, client, project_id=14844, last_synced="ts")
+
+    rows = {
+        r["sample_id"]: r
+        for r in conn.execute(
+            "SELECT sample_id, station_id, profile_id FROM samples_cache "
+            "WHERE project_id=14844"
+        )
+    }
+    # Both samples resolve to the SAME cast -> countable as 2 samples / cast.
+    assert rows[14844000001]["profile_id"] == "am_leg2_hopedalesaddle"
+    assert rows[14844000002]["profile_id"] == "am_leg2_hopedalesaddle"
+    # A cast is not a station: no station fabricated.
+    assert rows[14844000001]["station_id"] is None
+    # Single-sample cast keeps the bare orig_id.
+    assert rows[14844000003]["profile_id"] == "am_leg2_ramahshelf"
+
+    # Samples per cast, the quantity the map encodes.
+    from collections import Counter
+    per_cast = Counter(r["profile_id"] for r in rows.values())
+    assert per_cast["am_leg2_hopedalesaddle"] == 2
+    assert per_cast["am_leg2_ramahshelf"] == 1
+
+
+def test_sync_orig_id_cast_fallback_never_overrides_native_profile(conn):
+    """A native profile/station free-column always wins over the orig_id
+    fallback; the fallback fills only a missing profile_id."""
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    client = _make_client(
+        projects=[{"projid": 77, "title": "P", "instrument": "UVP5"}],
+        objects_by_project={77: []},
+        samples_by_project={
+            77: [
+                {  # native station AND profile -> both kept verbatim
+                    "sampleid": 77000001,
+                    "projid": 77,
+                    "orig_id": "cruiseX_castA_3",
+                    "latitude": 60.0,
+                    "longitude": -50.0,
+                    "free_columns": {"stationid": "real-station", "profileid": "P7"},
+                },
+                {  # no free-columns -> cast derived from orig_id, station NULL
+                    "sampleid": 77000002,
+                    "projid": 77,
+                    "orig_id": "cruiseX_castB_2",
+                    "latitude": 61.0,
+                    "longitude": -51.0,
+                    "free_columns": {},
+                },
+            ],
+        },
+    )
+
+    sync_project(conn, client, project_id=77, last_synced="ts")
+
+    r1 = conn.execute(
+        "SELECT station_id, profile_id FROM samples_cache WHERE sample_id=77000001"
+    ).fetchone()
+    assert r1["station_id"] == "real-station"   # native kept
+    assert r1["profile_id"] == "P7"             # native kept, NOT derived
+
+    r2 = conn.execute(
+        "SELECT station_id, profile_id FROM samples_cache WHERE sample_id=77000002"
+    ).fetchone()
+    assert r2["profile_id"] == "cruiseX_castB"  # cast derived from orig_id
+    assert r2["station_id"] is None             # no station invented

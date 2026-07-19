@@ -263,22 +263,36 @@ def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int,
         free_fields = sample.get("free_columns") or {}
         if not isinstance(free_fields, dict):
             free_fields = {}
+        original_id = _as_optional_str(sample.get("orig_id"))
+        station_id = _first_optional_str(
+            free_fields,
+            ("stationid", "station_id", "station", "sample_stationid"),
+        )
+        profile_id = _first_optional_str(
+            free_fields,
+            ("profileid", "profile_id", "profile", "sample_profileid"),
+        )
+        # Cruise projects (e.g. Amundsen UVP6) often carry no station/profile
+        # free-column at all: EcoTaxa then encodes the cast (deployment) identity
+        # only in orig_id, where a trailing "_<n>" indexes the samples of one
+        # cast (e.g. "am_leg2_hopedalesaddle_1" and "_2" are two samples of the
+        # hopedalesaddle cast). Derive the cast into profile_id when absent —
+        # never overriding a native value. This lets samples be counted per cast.
+        # station_id is deliberately left to EcoTaxa's own field: a cast is NOT a
+        # station, and this project carries no separate station data, so no
+        # station is fabricated.
+        if original_id and profile_id is None:
+            profile_id = _cast_from_orig_id(original_id)
         metadata[sample_id] = {
-            "original_id": _as_optional_str(sample.get("orig_id")),
+            "original_id": original_id,
             # Authoritative per-sample position from list_samples. EcoTaxa
             # returns latitude/longitude directly on every sample, complete and
             # independent of the object-scan cap. Kept separate from the object
             # aggregate so _fetch_project_samples can prefer it (see there).
             "sample_lat": _as_float(sample.get("latitude")),
             "sample_lon": _as_float(sample.get("longitude")),
-            "station_id": _first_optional_str(
-                free_fields,
-                ("stationid", "station_id", "station", "sample_stationid"),
-            ),
-            "profile_id": _first_optional_str(
-                free_fields,
-                ("profileid", "profile_id", "profile", "sample_profileid"),
-            ),
+            "station_id": station_id,
+            "profile_id": profile_id,
             "free_fields_json": json.dumps(
                 free_fields,
                 ensure_ascii=False,
@@ -286,6 +300,18 @@ def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int,
             ),
         }
     return metadata
+
+
+_CAST_SUFFIX_RE = re.compile(r"_\d+$")
+
+
+def _cast_from_orig_id(orig_id: str) -> str:
+    """Cast (deployment) identity derived from a sample orig_id by dropping a
+    trailing ``_<n>`` sample index. Samples that share the base belong to the
+    same cast (e.g. ``..._1`` and ``..._2`` are two samples of one cast). Falls
+    back to orig_id itself when there is no such suffix (a single-sample cast).
+    A cast is NOT a station — station stays whatever EcoTaxa provides."""
+    return _CAST_SUFFIX_RE.sub("", orig_id) or orig_id
 
 
 def _first_optional_str(values: dict, keys: tuple[str, ...]) -> str | None:
