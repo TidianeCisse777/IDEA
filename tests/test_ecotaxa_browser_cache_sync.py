@@ -910,3 +910,71 @@ def test_sync_orig_id_cast_fallback_never_overrides_native_profile(conn):
     ).fetchone()
     assert r2["profile_id"] == "cruiseX_castB"  # cast derived from orig_id
     assert r2["station_id"] is None             # no station invented
+
+
+def test_sync_enriches_samples_with_taxo_stats(conn):
+    """sample_taxo_stats fills V/P/D/U + used_taxa and the true object_count,
+    overriding the capped object-scan count (0 here, empty scan)."""
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    client = _make_client(
+        projects=[{"projid": 14844, "title": "AM", "instrument": "UVP6"}],
+        objects_by_project={14844: []},  # empty scan → scan count would be 0
+        samples_by_project={
+            14844: [
+                {
+                    "sampleid": 14844000001,
+                    "projid": 14844,
+                    "orig_id": "am_leg2_x_1",
+                    "latitude": 55.0,
+                    "longitude": -55.0,
+                    "free_columns": {},
+                },
+            ],
+        },
+    )
+    client.sample_taxo_stats.side_effect = lambda ids: [
+        {
+            "sample_id": 14844000001,
+            "nb_validated": 413,
+            "nb_predicted": 7084,
+            "nb_dubious": 0,
+            "nb_unclassified": 0,
+            "used_taxa": [342, 25828],
+        },
+    ]
+
+    sync_project(conn, client, project_id=14844, last_synced="ts")
+
+    row = conn.execute(
+        "SELECT object_count, nb_validated, nb_predicted, nb_dubious, "
+        "nb_unclassified, used_taxa FROM samples_cache WHERE sample_id=14844000001"
+    ).fetchone()
+    assert row["object_count"] == 7497   # V+P+D+U, not the empty-scan 0
+    assert row["nb_validated"] == 413
+    assert row["nb_predicted"] == 7084
+    assert row["nb_dubious"] == 0
+    assert row["nb_unclassified"] == 0
+    assert json.loads(row["used_taxa"]) == [342, 25828]
+
+
+def test_sync_without_taxo_stats_degrades_gracefully(conn):
+    """When sample_taxo_stats fails, object_count falls back to the scan count
+    and the new stat columns stay NULL — the sync still succeeds."""
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    client = _make_client(
+        projects=[{"projid": 42, "title": "P", "instrument": "UVP5"}],
+        objects_by_project={42: [[70.0, -64.0, "2018-07-01", 0.0, 25.0, "42000001"]]},
+    )
+    client.sample_taxo_stats.side_effect = RuntimeError("stats endpoint down")
+
+    sync_project(conn, client, project_id=42, last_synced="ts")
+
+    row = conn.execute(
+        "SELECT object_count, nb_validated, used_taxa FROM samples_cache "
+        "WHERE sample_id=42000001"
+    ).fetchone()
+    assert row["object_count"] == 1        # from the object scan
+    assert row["nb_validated"] is None
+    assert row["used_taxa"] is None

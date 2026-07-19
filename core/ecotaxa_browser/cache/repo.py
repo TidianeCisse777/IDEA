@@ -59,6 +59,11 @@ CREATE TABLE IF NOT EXISTS samples_cache (
     profile_id TEXT,
     free_fields_json TEXT,
     object_count INTEGER,
+    nb_validated INTEGER,
+    nb_predicted INTEGER,
+    nb_dubious INTEGER,
+    nb_unclassified INTEGER,
+    used_taxa TEXT,
     instrument TEXT,
     last_synced TEXT NOT NULL,
     iho_zone TEXT
@@ -100,6 +105,13 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "samples_cache", "profile_id", "TEXT")
     _ensure_column(conn, "samples_cache", "free_fields_json", "TEXT")
     _ensure_column(conn, "samples_cache", "iho_zone", "TEXT")
+    # Sample-level classification stats (from sample_taxo_stats, no object
+    # download): counts per status + list of taxa present in the sample.
+    _ensure_column(conn, "samples_cache", "nb_validated", "INTEGER")
+    _ensure_column(conn, "samples_cache", "nb_predicted", "INTEGER")
+    _ensure_column(conn, "samples_cache", "nb_dubious", "INTEGER")
+    _ensure_column(conn, "samples_cache", "nb_unclassified", "INTEGER")
+    _ensure_column(conn, "samples_cache", "used_taxa", "TEXT")
     create_secondary_indexes(conn)
     conn.commit()
 
@@ -310,6 +322,11 @@ def replace_project_samples(
                 sample.get("profile_id"),
                 sample.get("free_fields_json"),
                 int(sample.get("object_count") or 0),
+                sample.get("nb_validated"),
+                sample.get("nb_predicted"),
+                sample.get("nb_dubious"),
+                sample.get("nb_unclassified"),
+                sample.get("used_taxa"),
                 sample.get("instrument"),
                 last_synced,
                 zone_values[i],
@@ -322,9 +339,10 @@ def replace_project_samples(
                 sample_id, project_id, lat_avg, lon_avg,
                 date_min, date_max, depth_min, depth_max,
                 original_id, station_id, profile_id, free_fields_json,
-                object_count, instrument, last_synced, iho_zone
+                object_count, nb_validated, nb_predicted, nb_dubious,
+                nb_unclassified, used_taxa, instrument, last_synced, iho_zone
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )

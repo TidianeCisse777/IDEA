@@ -24,8 +24,19 @@ samples, projects, stations, positions, zones, maps, counts, or analyses. A
 loaded file remains the default source unless the user explicitly requests
 EcoTaxa.
 
-You just called `query_ecotaxa` and EcoTaxa data is now loaded in the session.
-This skill provides the rules for interpreting the result and guiding the user.
+You just called `query_ecotaxa` and EcoTaxa **object-level** data is now loaded
+in the session. This skill provides the rules for interpreting the result and
+guiding the user.
+
+## Frontière avec `ecotaxa_navigation`
+
+Ce skill couvre les **objets** (organismes exportés en TSV : taxons, tailles,
+statuts V/P/D/U). Il n'a **rien à voir avec le cache**. Pour tout ce qui est au
+niveau **sample** — zones, casts (`profile_id`), positions, dates, comptage de
+samples — c'est `ecotaxa_navigation` + `query_ecotaxa_cache` (SQL local, sans
+download). Le cache **ne contient aucun objet** : ne jamais y chercher un taxon
+ou un statut. Chaîne type : cache pour trouver les `sample_id` → export ici pour
+analyser leurs objets.
 
 ---
 

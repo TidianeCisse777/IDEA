@@ -219,6 +219,13 @@ def _fetch_project_samples(
         "date_min": None, "date_max": None, "depth_min": None, "depth_max": None,
     }
     all_sample_ids = set(aggregates) | set(sample_metadata)
+    # Cheap, cap-free per-sample classification stats (no object download): the
+    # accurate object total (V+P+D+U) plus the taxa present in each sample. This
+    # replaces the capped object-scan count — which is 0 for samples beyond the
+    # 50k window in large projects — with EcoTaxa's authoritative sample totals.
+    taxo_stats = _fetch_project_taxo_stats(
+        client, project_id=project_id, sample_ids=all_sample_ids
+    )
     samples = []
     for sid in all_sample_ids:
         agg = aggregates.get(sid, _EMPTY_AGG)
@@ -234,7 +241,7 @@ def _fetch_project_samples(
             lon_avg = agg["lon_sum"] / agg["geo_count"]
         else:
             lat_avg, lon_avg = None, None
-        samples.append({
+        sample_row = {
             "sample_id": sid,
             "lat_avg": lat_avg,
             "lon_avg": lon_avg,
@@ -245,8 +252,59 @@ def _fetch_project_samples(
             "object_count": agg["count"],
             "instrument": instrument,
             **meta,
-        })
+        }
+        stat = taxo_stats.get(sid)
+        if stat is not None:
+            # Authoritative total overrides the capped-scan count.
+            sample_row["object_count"] = stat["object_count"]
+            sample_row["nb_validated"] = stat["nb_validated"]
+            sample_row["nb_predicted"] = stat["nb_predicted"]
+            sample_row["nb_dubious"] = stat["nb_dubious"]
+            sample_row["nb_unclassified"] = stat["nb_unclassified"]
+            sample_row["used_taxa"] = stat["used_taxa"]
+        samples.append(sample_row)
     return samples, instrument
+
+
+def _fetch_project_taxo_stats(
+    client: Any, *, project_id: int, sample_ids: set[int]
+) -> dict[int, dict]:
+    """Per-sample V/P/D/U counts + taxa present, via ``sample_taxo_stats``.
+
+    One batched EcoTaxa call for the whole project — no object download, no
+    object-scan cap. Returns ``{}`` (graceful) when the client lacks the method
+    or the call fails, so the sync still succeeds on the scan-only path.
+    """
+    if not sample_ids or not hasattr(client, "sample_taxo_stats"):
+        return {}
+    try:
+        raw = _with_retries(lambda: client.sample_taxo_stats(sorted(sample_ids)))
+    except Exception:  # noqa: BLE001 — stats are an enrichment, never fatal
+        return {}
+    if not isinstance(raw, list):
+        return {}
+    stats: dict[int, dict] = {}
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        try:
+            sid = int(row["sample_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        v = int(row.get("nb_validated") or 0)
+        p = int(row.get("nb_predicted") or 0)
+        d = int(row.get("nb_dubious") or 0)
+        u = int(row.get("nb_unclassified") or 0)
+        used = row.get("used_taxa") or []
+        stats[sid] = {
+            "object_count": v + p + d + u,
+            "nb_validated": v,
+            "nb_predicted": p,
+            "nb_dubious": d,
+            "nb_unclassified": u,
+            "used_taxa": json.dumps(used) if used else None,
+        }
+    return stats
 
 
 def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int, dict]:

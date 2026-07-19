@@ -24,6 +24,24 @@ the default source unless the gateway authorizes EcoTaxa.
 
 ---
 
+## Frontière avec `ecotaxa_query` — cache vs export
+
+Deux skills EcoTaxa, deux niveaux de données. Ne pas les confondre :
+
+| | `ecotaxa_navigation` (ce skill) | `ecotaxa_query` |
+|---|---|---|
+| Niveau | **Sample** (une ligne / sample) | **Objet** (un organisme / vignette) |
+| Source | Cache SQL local (`query_ecotaxa_cache`) | API/export EcoTaxa (`query_ecotaxa`, download TSV) |
+| Répond à | où / quand / quel cast / quel instrument / combien de samples | quels taxons / tailles / statuts V-P-D-U / scores |
+| Réseau | non (local) | oui (téléchargement, confirmation) |
+
+Règle : **rester dans ce skill** tant que la question est au niveau sample
+(zones, casts, positions, dates, comptages de samples). **Basculer sur
+`ecotaxa_query`** seulement quand il faut les **objets** (taxons précis, tailles,
+statuts). Le cache trouve les `sample_id` ; l'export analyse leurs objets.
+
+---
+
 ## Central exploration path — `query_ecotaxa_cache`
 
 **All zone / time / region / grouping / ranking queries go through
@@ -32,28 +50,48 @@ the default source unless the gateway authorizes EcoTaxa.
 The cache is a local SQLite database (`data/ecotaxa_cache.sqlite`).
 Write read-only `SELECT` statements — no `INSERT`, `UPDATE`, `DELETE`.
 
-### `samples_cache` schema
+**Le cache est SAMPLE-level, pas object-level.** Il ne contient QUE quatre
+tables : `samples_cache` (une ligne par sample), `project_schemas_cache`,
+`project_signatures_cache`, `sync_runs`. **Il n'y a PAS de table `objects_cache`
+ni d'objets individuels dans le cache** — pour les objets (taxons, statuts V/P/D/U,
+scores) il faut passer par l'API/export (voir plus bas). Ne jamais écrire une
+requête qui lit `objects_cache` : elle échoue, la table n'existe pas.
 
-| Column | Type | Notes |
+### `samples_cache` — ce qu'on sait vraiment d'un sample
+
+| Colonne | Type | Fiabilité / sens réel |
 |---|---|---|
-| `sample_id` | INTEGER PK | EcoTaxa sample ID |
-| `project_id` | INTEGER | Parent project |
-| `lat_avg` | REAL | Sample centroid latitude (WGS84) |
-| `lon_avg` | REAL | Sample centroid longitude (WGS84) |
-| `date_min` | TEXT | ISO date, earliest object |
-| `date_max` | TEXT | ISO date, latest object |
-| `depth_min` | REAL | Shallowest object depth (m) |
-| `depth_max` | REAL | Deepest object depth (m) |
-| `object_count` | INTEGER | Total objects in the sample |
-| `instrument` | TEXT | e.g. "UVP6", "UVP5SD", "Loki" |
-| `profile_id` | TEXT | Cast identifier (use for distinct casts) |
-| `station_id` | TEXT | Station label |
-| `original_id` | TEXT | Free-field original identifier |
-| `free_fields_json` | TEXT | Raw JSON free fields |
-| `iho_zone` | TEXT | Zone IHO/MEOW assignée par point-in-polygon au sync (ex. `"Baie de Baffin"`, `"MEOW: Northern Labrador"`, `"Hors zone référencée"`) |
+| `sample_id` | INTEGER PK | ID EcoTaxa du sample. **Toujours présent.** |
+| `project_id` | INTEGER | Projet parent. **Toujours présent.** |
+| `lat_avg` | REAL | Latitude du sample (WGS84). **Fiable** — position autoritative renvoyée par EcoTaxa au niveau sample. |
+| `lon_avg` | REAL | Longitude du sample. **Fiable** (même source). |
+| `instrument` | TEXT | ex. "UVP6", "UVP5SD", "Loki". **Fiable.** |
+| `original_id` | TEXT | `orig_id` EcoTaxa du sample (ex. `am_leg2_hopedalesaddle_1`). **Toujours présent.** Encode souvent la station/cast. |
+| `profile_id` | TEXT | **Le CAST (déploiement).** = free-column native si elle existe, sinon dérivé d'`original_id` (sans le `_<n>` final). Samples partageant un `profile_id` = samples d'un même cast → `COUNT(*) GROUP BY profile_id` = nb de samples par cast. |
+| `station_id` | TEXT | Station (lieu). **Souvent NULL** : n'existe que si le projet a une free-column station native. Un cast n'est PAS une station — jamais dérivé d'`original_id`. |
+| `object_count` | INTEGER | **Total réel d'objets du sample** = `nb_validated + nb_predicted + nb_dubious + nb_unclassified`, via `sample_taxo_stats` (sans plafond ni download). **Fiable.** |
+| `nb_validated` | INTEGER | Objets **validés** (vérité terrain) dans le sample. Sans download. |
+| `nb_predicted` | INTEGER | Objets **prédits** (modèle, PAS validés). Un sample tout-`nb_predicted` sans validé → prédictions jamais vérifiées, signaler avant analyse quantitative. |
+| `nb_dubious` | INTEGER | Objets **douteux**. |
+| `nb_unclassified` | INTEGER | Objets **non classifiés**. |
+| `used_taxa` | TEXT (JSON) | **Liste des taxon_id présents** dans le sample. Permet « quels samples contiennent le taxon X » **depuis le cache** (`WHERE used_taxa LIKE '%25828%'`). IDs → noms via `search_ecotaxa_taxa` / `get_taxon`. |
+| `date_min` / `date_max` | TEXT | Dates ISO issues du scan d'objets (object-level). **Peuvent être NULL** (dates par objet, pas de date au niveau sample). |
+| `depth_min` / `depth_max` | REAL | Profondeurs (m) issues du scan d'objets. **Peuvent être NULL** (même raison). |
+| `free_fields_json` | TEXT | Free-columns brutes du sample (souvent `{}`). |
+| `iho_zone` | TEXT | Zone IHO/MEOW assignée par point-in-polygon au sync (ex. `"Baie de Baffin"`, `"MEOW: Northern Labrador"`, `"Hors zone référencée"`). **Fiable** (dérive de lat/lon). |
 
-`objects_cache` also exists; join on `sample_id`. Validated objects =
-`classification_status = 'V'`.
+**Règle d'or fiabilité** : fiables au niveau sample → `sample_id`, `project_id`,
+`lat_avg`, `lon_avg`, `instrument`, `original_id`, `profile_id`, `iho_zone`,
+`object_count`, `nb_validated/predicted/dubious/unclassified`, `used_taxa` (tous
+via des appels sample-level, sans download). Peuvent être NULL → `date_*` /
+`depth_*` (dérivés des objets), `station_id` (pas de donnée station pour beaucoup
+de projets). Ne jamais présenter un 0/NULL comme un fait négatif sans le signaler.
+
+**Le cache répond donc, sans download** : où (`lat/lon`, `iho_zone`), quand
+(`date_*` si dispo), quel cast (`profile_id`), quel instrument, **combien
+d'objets et à quel niveau de validation** (`object_count`, `nb_*`), et **quels
+taxons sont présents** (`used_taxa`). Seuls les objets individuels (tailles,
+scores, position par objet) exigent l'export.
 
 ### Zone queries — utiliser `iho_zone` directement
 
@@ -146,19 +184,14 @@ GROUP BY iho_zone
 ORDER BY n_samples DESC
 ```
 
-**Audit taxonomique depuis objects_cache — toujours qualifier les colonnes :**
-```sql
-SELECT s.profile_id AS cast_id,
-       o.classification_status,
-       o.taxon_name,
-       COUNT(*) AS n
-FROM objects_cache o
-JOIN samples_cache s ON o.sample_id = s.sample_id
-WHERE s.iho_zone LIKE '%Baffin%'
-GROUP BY s.profile_id, o.classification_status, o.taxon_name
-ORDER BY s.profile_id, n DESC
-```
-Toujours préfixer `o.sample_id` et `s.sample_id` dans les JOINs — la colonne existe dans les deux tables et SQLite lève une ambiguïté sans préfixe.
+**Audit taxonomique (taxons, statuts V/P/D/U) — PAS dans le cache.**
+Le cache n'a aucune table d'objets : impossible de faire un `GROUP BY taxon` en
+SQL cache. Pour la taxonomie, sortir du cache :
+- taxons dominants + V/P/D/U par sample, sans download → `summarize_ecotaxa_samples(sample_ids=[...])`
+- counts exacts par taxon → export d'objets (`query_ecotaxa` / `export_ecotaxa_samples`), puis `run_pandas`
+Le cache sert à trouver les `sample_id` (par zone/temps/cast) ; l'audit taxo se
+fait ensuite sur ces `sample_id` via l'API/export. Voir la section « Audit
+taxonomique » plus bas.
 
 **Casts avec position (pour carte) — toujours inclure lat/lon :**
 ```sql
@@ -177,11 +210,18 @@ ORDER BY date_min
 
 Règle : dès que l'utilisateur demande d'afficher des casts sur une carte, toujours inclure `AVG(lat_avg) AS lat` et `AVG(lon_avg) AS lon` dans le SELECT groupé par `profile_id`.
 
-**Règle `profile_id` NULL** : avant tout `GROUP BY profile_id`, vérifier que la colonne est non-nulle :
-```sql
-SELECT COUNT(*) AS total, COUNT(profile_id) AS avec_profile_id FROM samples_cache WHERE iho_zone LIKE '...';
-```
-Si `avec_profile_id = 0`, ne pas grouper par cast — signaler à l'utilisateur que `profile_id` n'est pas renseigné dans ce cache et proposer de grouper par `sample_id` à la place. Ne jamais inventer de cast IDs.
+**`profile_id` = le cast, et il est renseigné.** Depuis le sync, `profile_id`
+est rempli pour tout sample ayant un `original_id` : free-column native si elle
+existe, sinon dérivé d'`original_id` (sans le `_<n>` final). Donc
+`GROUP BY profile_id` fonctionne et `COUNT(*) GROUP BY profile_id` = **nb de
+samples par cast**. Ne pas retomber sur l'ancienne règle « profile_id NULL →
+grouper par sample_id » : elle est obsolète. `profile_id` n'est jamais inventé —
+il vient toujours d'une donnée EcoTaxa réelle (`original_id`).
+
+Cas limite unique : un sample sans `original_id` du tout (rarissime) aura
+`profile_id` NULL — alors seulement, signaler et grouper par `sample_id`. Ne
+jamais confondre avec `station_id`, qui lui est souvent NULL (voir schéma) : un
+cast n'est pas une station.
 
 **Depth filter — `depth_max`:**
 - `depth_max_gte=200` → `depth_max >= 200` ("descend en-dessous de 200 m")
