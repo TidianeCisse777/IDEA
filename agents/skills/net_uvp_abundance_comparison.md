@@ -88,6 +88,28 @@ uvp_density = (
     canonical.groupby("sample_id", as_index=False)["abundance_ind_m3"].mean()
     .rename(columns={"sample_id": "uvp_sample_id", "abundance_ind_m3": "uvp_ind_m3"})
 )
+```
+
+### Optional (user-driven) — align the UVP depth range to the net tow
+
+Depth alignment is NOT automatic; apply it only when the user asks. A UVP cast is
+per-5 m bins, a net tow is integrated between `MIN_SAMPLE_DEPTH` and
+`MAX_SAMPLE_DEPTH`. If the user wants the comparison over the tow's depth range,
+restrict the UVP bins before aggregating (state the range used in the answer):
+
+```python
+bins = canonical[
+    (canonical["depth_bin"] >= net_min_depth) & (canonical["depth_bin"] <= net_max_depth)
+]
+uvp_density = (
+    bins.groupby("sample_id", as_index=False)["abundance_ind_m3"].mean()
+    .rename(columns={"sample_id": "uvp_sample_id", "abundance_ind_m3": "uvp_ind_m3"})
+)
+```
+
+Otherwise use the full-cast mean above.
+
+```python
 
 # bridge net station density and UVP cast density via the correspondence
 paired = (
