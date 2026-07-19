@@ -401,6 +401,64 @@ def _infer_station_map_contract(figure: Any) -> dict[str, Any] | None:
     }
 
 
+def _upgrade_plain_lat_lon_scatter_to_station_map(figure: Any, plt: Any) -> Any | None:
+    """Convert an unambiguous longitude/latitude scatter into a safe map.
+
+    This is deliberately narrower than a generic graph fallback: it accepts one
+    ordinary Matplotlib axis, one non-empty scatter, and explicit longitude and
+    latitude labels.  That is the exact shape emitted for EcoTaxa cast maps
+    when the model omits the Cartopy template and graph contract.  Other
+    contract omissions remain blocked.
+    """
+    axes = list(getattr(figure, "axes", []))
+    if len(axes) != 1 or axes[0].__class__.__module__.startswith("cartopy."):
+        return None
+    axis = axes[0]
+    x_label = str(axis.get_xlabel() or "").strip().lower()
+    y_label = str(axis.get_ylabel() or "").strip().lower()
+    if not ("longitude" in x_label and "latitude" in y_label):
+        return None
+    collections = [
+        artist for artist in getattr(axis, "collections", [])
+        if getattr(artist, "get_offsets", None) is not None
+        and len(artist.get_offsets()) > 0
+    ]
+    if len(collections) != 1 or getattr(axis, "lines", []):
+        return None
+
+    import numpy as np
+    import cartopy.crs as ccrs
+
+    offsets = np.asarray(collections[0].get_offsets(), dtype=float)
+    finite = offsets[np.isfinite(offsets).all(axis=1)]
+    if finite.size == 0:
+        return None
+    lon, lat = finite[:, 0], finite[:, 1]
+    if not (np.all((-180 <= lon) & (lon <= 180)) and np.all((-90 <= lat) & (lat <= 90))):
+        return None
+
+    map_figure, map_axis = plt.subplots(
+        figsize=figure.get_size_inches(), subplot_kw={"projection": ccrs.PlateCarree()}
+    )
+    lon_span = max(float(lon.max() - lon.min()), 0.25)
+    lat_span = max(float(lat.max() - lat.min()), 0.25)
+    map_axis.set_extent(
+        [lon.min() - lon_span * 0.12, lon.max() + lon_span * 0.12,
+         lat.min() - lat_span * 0.12, lat.max() + lat_span * 0.12],
+        crs=ccrs.PlateCarree(),
+    )
+    points = map_axis.scatter(
+        lon, lat, s=collections[0].get_sizes() or 36, color="tab:blue",
+        alpha=0.8, edgecolors="black", linewidths=0.3,
+        transform=ccrs.PlateCarree(),
+    )
+    points.set_gid("station_map_points")
+    map_axis.set_title(axis.get_title() or "Carte des stations")
+    map_axis.gridlines(draw_labels=True, linestyle=":", linewidth=0.5, alpha=0.6)
+    plt.close(figure)
+    return map_figure
+
+
 _CANONICAL_COLUMNS = frozenset(
     {
         "sample_id",
@@ -1018,6 +1076,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     graph_contract = normalize_graph_contract(graph_contract, figure)
                     if graph_contract is None:
                         graph_contract = _infer_station_map_contract(figure)
+                    if graph_contract is None:
+                        upgraded_figure = _upgrade_plain_lat_lon_scatter_to_station_map(
+                            figure, plt
+                        )
+                        if upgraded_figure is not None:
+                            figure = upgraded_figure
+                            graph_contract = _infer_station_map_contract(figure)
                     contract_issue = validate_graph_contract(graph_contract, figure)
                     if contract_issue:
                         plt.close("all")

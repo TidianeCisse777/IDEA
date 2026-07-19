@@ -253,6 +253,22 @@ def build_dataset_state_capsule(
             "do not ask for the geographic scope again."
         )
 
+    campaigns: list[str] = []
+    for key in store.keys(prefix=f"{thread_id}:dataset:"):
+        entry = store.get(key) or {}
+        campaign_meta = entry.get("meta") or {}
+        if campaign_meta.get("source") != "ecotaxa_export_campaign":
+            continue
+        name = _clean(campaign_meta.get("variable_name") or key.rsplit(":", 1)[-1])
+        description = _clean(campaign_meta.get("description") or "Export EcoTaxa consolidé")
+        marker = " (active)" if name == variable else ""
+        campaigns.append(f"- {name}{marker}: {description}")
+    campaign_block = (
+        "\nECO TAXA EXPORTED CAMPAIGNS (persistent, reusable tables):\n"
+        + "\n".join(sorted(campaigns)[:8]) + "\n"
+        if campaigns else ""
+    )
+
     # When the active df is a derived subset, surface the loaded file as the
     # canonical source so a new geographic/zone request re-anchors on the full
     # file instead of a subset of a different zone (docs/e2e/cartes-samples-labrador-2026).
@@ -331,6 +347,7 @@ def build_dataset_state_capsule(
         "- " + "; ".join(fields) + "\n"
         + active_join_note
         + selection_block
+        + campaign_block
         + "Canonical environmental enrichment validates these detected aliases "
         "itself; direct station/cast identifiers are not required.\n"
         "Identifiers absent from this capsule and the current user message are "
@@ -395,6 +412,17 @@ def reject_ungrounded_ecotaxa_identifiers(
 
     active = store.get(thread_id)
     active_meta = (active or {}).get("meta") or {}
+    pending_export = active_meta.get("pending_ecotaxa_export_plan") or {}
+    pending_sample_ids = {
+        identifier
+        for identifier in _flatten_identifier_values(pending_export.get("sample_ids"))
+    }
+    if (
+        tool_name == "export_ecotaxa_samples"
+        and arguments.get("confirmed") is True
+        and requested == pending_sample_ids
+    ):
+        return None
     grounded_from_meta = {
         identifier
         for key in _IDENTIFIER_ARGUMENTS

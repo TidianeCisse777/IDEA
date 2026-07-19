@@ -764,6 +764,36 @@ def test_run_graph_blocks_missing_graph_contract(tmp_path):
     assert "/graphs/" not in result
 
 
+def test_run_graph_upgrades_an_unambiguous_lat_lon_scatter_to_station_map(tmp_path):
+    """A model omission must not turn a valid cast map into a blocked turn."""
+    pytest.importorskip("cartopy.crs")
+    thread_id = "thread-cast-map-contract-fallback"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame(
+            {
+                "cast_id": ["cast-01", "cast-02"],
+                "lon": [-71.2, -70.7],
+                "lat": [78.3, 78.8],
+            }
+        ),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+
+    result = run_graph.invoke({"code": """
+fig, ax = plt.subplots(figsize=(8, 8))
+ax.scatter(df['lon'], df['lat'], s=40, c='tab:blue')
+ax.set_title('Casts dans la baie de Baffin')
+ax.set_xlabel('Longitude')
+ax.set_ylabel('Latitude')
+"""})
+
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
+
+
 def test_run_graph_renders_compliant_vertical_profile_contract(tmp_path):
     thread_id = "thread-valid-vertical-contract"
     store = SessionStore(tmp_path / "sessions")

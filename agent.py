@@ -32,6 +32,25 @@ from tools.tool_catalog import build_tool_catalog
 
 load_dotenv()
 
+
+def _configure_langsmith_tracing() -> None:
+    """Normalize the legacy LangChain tracing variables for LangSmith.
+
+    Existing deployments were configured with ``LANGCHAIN_TRACING_V2`` and
+    ``LANGCHAIN_API_KEY``.  LangSmith clients now read ``LANGSMITH_TRACING``
+    and ``LANGSMITH_API_KEY``.  Keep the legacy variables supported while
+    making the active process observable by both integrations.  The API key
+    is copied only in-process and is never logged.
+    """
+    if os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true":
+        os.environ.setdefault("LANGSMITH_TRACING", "true")
+    legacy_key = os.getenv("LANGCHAIN_API_KEY")
+    if legacy_key:
+        os.environ.setdefault("LANGSMITH_API_KEY", legacy_key)
+
+
+_configure_langsmith_tracing()
+
 import langchain
 langchain.verbose = os.getenv("LANGCHAIN_VERBOSE", "false").lower() == "true"
 

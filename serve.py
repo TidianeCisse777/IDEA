@@ -30,6 +30,7 @@ load_dotenv()
 
 from agent import (
     make_agent,
+    _make_tracer,
     _CHECKPOINTS_DB,
     repair_invalid_tool_history,
     arepair_invalid_tool_history,
@@ -63,6 +64,59 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("copepod.serve")
+
+_EXPORT_REQUEST = re.compile(r"\b(?:export\w*|download\w*|t[eé]l[eé]charg\w*)\b", re.I)
+_EXPORT_CONFIRMATION = re.compile(r"^\s*(?:yes|yeah|yep|oui|si|ja|da|go|confirm\w*|launch\w*|lance\w*|ok|okay)\b", re.I)
+
+
+def _explicit_sample_ids(text: str) -> list[int]:
+    return list(dict.fromkeys(int(value) for value in re.findall(r"(?<!\d)(\d{6,})(?!\d)", text)))
+
+
+def _present_ecotaxa_export(content: str, *, confirmed: bool) -> str:
+    """Keep tool protocol and storage details out of user-facing replies."""
+    if not confirmed:
+        match = re.search(r"Plan d'export — (\d+) samples sur (\d+) projets", content)
+        if match:
+            return (
+                f"Export prêt : {match.group(1)} samples sur {match.group(2)} projets. "
+                "Confirmez pour lancer l’export."
+            )
+        return "Export prêt. Confirmez pour lancer l’export."
+    match = re.search(r"Table de campagne consolidée.*?\((\d+) lignes, (\d+) projets\)", content)
+    if match:
+        return f"Export terminé : {match.group(1)} objets sur {match.group(2)} projets. La campagne est prête pour analyse."
+    return "Export terminé. La campagne est prête pour analyse."
+
+
+def _run_pending_ecotaxa_export(thread_id: str, text: str):
+    """Execute the deterministic EcoTaxa export handshake outside the LLM."""
+    meta = ((default_store.get(thread_id) or {}).get("meta") or {})
+    pending = meta.get("pending_ecotaxa_export_plan") or {}
+    is_confirmation = bool(_EXPORT_CONFIRMATION.search(text))
+    requested_ids = _explicit_sample_ids(text)
+    if is_confirmation and pending.get("sample_ids"):
+        args = {"sample_ids": pending["sample_ids"], "confirmed": True,
+                "status": pending.get("status", "V"), "taxon": pending.get("taxon")}
+    elif _EXPORT_REQUEST.search(text):
+        selection_name = None
+        if not requested_ids:
+            selection = default_store.get(f"{thread_id}:ecotaxa_selection_latest") or {}
+            requested_ids = (selection.get("meta") or {}).get("sample_ids") or []
+            if requested_ids:
+                selection_name = "latest"
+        if not requested_ids:
+            return None
+        args = (
+            {"selection_name": selection_name, "confirmed": False}
+            if selection_name else {"sample_ids": requested_ids, "confirmed": False}
+        )
+    else:
+        return None
+    from tools.copepod_sources import make_source_tools
+    export_tool = next(tool for tool in make_source_tools(thread_id) if tool.name == "export_ecotaxa_samples")
+    result = export_tool.invoke(args)
+    return _present_ecotaxa_export(str(getattr(result, "content", result)), confirmed=bool(args["confirmed"]))
 
 
 def _retry_after_seconds(exc: RateLimitError) -> int:
@@ -147,8 +201,19 @@ class _RunIdCaptureCallback(BaseCallbackHandler):
             )
 
 
-def _request_callbacks(thread_id: str, message_id: str | None = None, chat_id: str | None = None, config: dict | None = None) -> list:
+def _request_callbacks(
+    thread_id: str,
+    message_id: str | None = None,
+    chat_id: str | None = None,
+    config: dict | None = None,
+    *,
+    user_id: str = "anonymous",
+    user_email: str | None = None,
+) -> list:
     callbacks = list((config or {}).get("callbacks") or [])
+    tracer = _make_tracer(thread_id, user_id=user_id, user_email=user_email)
+    if tracer is not None:
+        callbacks.append(tracer)
     callbacks.append(_RunIdCaptureCallback(thread_id, message_id=message_id, chat_id=chat_id))
     return callbacks
 
@@ -1167,6 +1232,20 @@ async def chat_completions(
             return _quick_response("")
 
     last_user_text = resolve_attached_files(last_user.text() if last_user else "")
+    deterministic_export = await asyncio.to_thread(
+        _run_pending_ecotaxa_export, tid, last_user_text
+    )
+    if deterministic_export is not None:
+        _log_turn(tid, last_user_text, str(deterministic_export), {
+            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        }, user_id=user_id)
+        if req.stream:
+            return StreamingResponse(
+                _quick_sse_response(str(deterministic_export)),
+                media_type="text/event-stream",
+            )
+        return _quick_response(str(deterministic_export))
 
     # OpenWebUI ne forward JAMAIS les fichiers dans le body (metadata est pop()é
     # avant l'envoi). On requête directement le SQLite d'OpenWebUI via chat_id.
@@ -1235,7 +1314,13 @@ async def chat_completions(
             "user_role": x_openwebui_user_role,
             "language": language,
         },
-        "callbacks": _request_callbacks(tid, openwebui_message_id, chat_id=x_openwebui_chat_id or req.chat_id),
+        "callbacks": _request_callbacks(
+            tid,
+            openwebui_message_id,
+            chat_id=x_openwebui_chat_id or req.chat_id,
+            user_id=user_id,
+            user_email=x_openwebui_user_email,
+        ),
     }
     messages = {"messages": [{"role": "user", "content": last_user_content}]}
 

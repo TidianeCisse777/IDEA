@@ -2852,6 +2852,10 @@ def make_source_tools(thread_id: str) -> list:
         normalized = _normalize_sample_ids(sample_ids)
         if not normalized and selection_name:
             resolved_selection_name, normalized = _load_sample_selection(selection_name)
+        selection_meta: dict = {}
+        if resolved_selection_name:
+            selection_entry = _store.get(f"{thread_id}:selection:{resolved_selection_name}")
+            selection_meta = dict((selection_entry or {}).get("meta") or {})
         if not normalized:
             if selection_name:
                 return _eco_blocked(
@@ -3097,6 +3101,10 @@ def make_source_tools(thread_id: str) -> list:
         normalized = _normalize_sample_ids(sample_ids)
         if not normalized and selection_name:
             resolved_selection_name, normalized = _load_sample_selection(selection_name)
+        selection_meta: dict = {}
+        if resolved_selection_name:
+            selection_entry = _store.get(f"{thread_id}:selection:{resolved_selection_name}")
+            selection_meta = dict((selection_entry or {}).get("meta") or {})
         if not normalized:
             if selection_name:
                 return _eco_blocked(
@@ -3126,11 +3134,35 @@ def make_source_tools(thread_id: str) -> list:
 
         # Dry-run : montrer le plan, ne pas exécuter.
         if not confirmed:
+            try:
+                sample_stats = summarize_samples(normalized[:3])
+            except Exception:
+                sample_stats = []
+            _store.update_meta(
+                thread_id,
+                {
+                    "pending_ecotaxa_export_plan": {
+                        "sample_ids": normalized,
+                        "status": status,
+                        "taxon": taxon,
+                    }
+                },
+            )
             lines = [
                 f"# Plan d'export — {len(normalized)} samples sur {len(groups)} projets",
             ]
             if resolved_selection_name:
                 lines.extend(["", f"Sélection : `{resolved_selection_name}`"])
+            if sample_stats:
+                lines.extend(["", "Aperçu représentatif de 3 samples ; l'export portera sur toute la sélection.", "", "| sample_id | projet | V | P | D | U | total | taxons dominants |", "|---:|---:|---:|---:|---:|---:|---:|---|"])
+                grand = {"V": 0, "P": 0, "D": 0, "U": 0}
+                for item in sample_stats:
+                    values = {"V": item["nb_validated"], "P": item["nb_predicted"], "D": item["nb_dubious"], "U": item["nb_unclassified"]}
+                    total = sum(values.values())
+                    top = ", ".join(t["name"] for t in item.get("per_taxon", [])[:3]) or "—"
+                    lines.append(f"| {item['sample_id']} | {item['projid']} | {values['V']} | {values['P']} | {values['D']} | {values['U']} | {total} | {top} |")
+                    for key, value in values.items(): grand[key] += value
+                lines.append(f"| **TOTAL** | — | **{grand['V']}** | **{grand['P']}** | **{grand['D']}** | **{grand['U']}** | **{sum(grand.values())}** | — |")
             lines.extend([
                 "",
                 "| project_id | nb_samples | sample_ids |",
@@ -3147,9 +3179,7 @@ def make_source_tools(thread_id: str) -> list:
                 lines.append(f"⚠️ {len(unresolved)} samples absents du cache : {unresolved}")
             lines.append("")
             lines.append(
-                "Pour lancer l'export, rappeler avec `confirmed=true`. "
-                "Chaque projet déclenchera un `query_ecotaxa` indépendant ; "
-                "un refus serveur sur un projet n'arrête pas les autres."
+                "Confirmez pour lancer l'export de cette sélection."
             )
             return _eco_blocked(
                 "\n".join(lines),
@@ -3158,6 +3188,7 @@ def make_source_tools(thread_id: str) -> list:
             )
 
         # Exécution réelle.
+        _store.update_meta(thread_id, {"pending_ecotaxa_export_plan": None})
         successes: list[str] = []
         failures: list[str] = []
         artifact_refs: list[str] = []
@@ -3212,7 +3243,12 @@ def make_source_tools(thread_id: str) -> list:
                 method="EcoTaxa bulk export",
                 metrics={"projects_failed": len(failures)},
             )
-        campaign_variable = dataset_variable_name("ecotaxa", "campaign")
+        campaign_label = resolved_selection_name or "samples_" + "_".join(
+            str(sample_id) for sample_id in normalized[:3]
+        )
+        campaign_variable = dataset_variable_name(
+            "ecotaxa", "campaign", campaign_label, uuid.uuid4().hex[:8]
+        )
         campaign_df = pd.concat(campaign_frames, ignore_index=True, sort=False)
         store_dataset(
             _store,
@@ -3223,10 +3259,21 @@ def make_source_tools(thread_id: str) -> list:
             meta={
                 "source": "ecotaxa_export_campaign",
                 "selection_name": resolved_selection_name,
+                "selection_filters": selection_meta.get("filters") or {},
                 "export_project_ids": sorted(groups),
                 "raw_export_variables": data_refs,
                 "n_rows": len(campaign_df),
                 "n_projects": len(campaign_frames),
+                "description": (
+                    f"Export EcoTaxa consolidé : {len(normalized)} samples, "
+                    f"projets={','.join(str(project) for project in sorted(groups))}, "
+                    f"statut={status or 'tous'}, "
+                    f"taxon={taxon or 'tous'}"
+                    + (", " + ", ".join(
+                        f"{key}={value}"
+                        for key, value in (selection_meta.get("filters") or {}).items()
+                    ) if selection_meta.get("filters") else "")
+                ),
             },
         )
         summary += (
@@ -3515,15 +3562,15 @@ def make_source_tools(thread_id: str) -> list:
                     _store.set(f"{thread_id}:selection:{sel_name}", None, sel_meta)
                     _store.set(f"{thread_id}:ecotaxa_selection_latest", None, sel_meta)
                     selection_note = (
-                        f"\n\n_({len(sel_sample_ids)} samples mémorisés comme sélection — "
-                        'exportables via `export_ecotaxa_samples(selection_name="latest")`)_'
+                        f"\n\nLa sélection complète de {len(sel_sample_ids)} samples est conservée "
+                        "pour l’analyse ou l’export."
                     )
                 except Exception:
                     selection_note = ""
 
         header = "| " + " | ".join(columns) + " |"
         separator = "|" + "|".join("---" for _ in columns) + "|"
-        preview_rows = rows[:50]
+        preview_rows = rows[:10] if "sample_id" in columns else rows[:50]
         data_lines = [
             "| " + " | ".join(
                 str(row[c]) if row[c] is not None else "—" for c in columns
@@ -3543,6 +3590,29 @@ def make_source_tools(thread_id: str) -> list:
             if displayed == len(rows)
             else f"aperçu : {displayed} sur {len(rows)} lignes"
         )
+        selection_overview: list[str] = []
+        if "sample_id" in dataframe.columns:
+            projects = dataframe["project_id"].dropna().nunique() if "project_id" in dataframe.columns else "—"
+            dates = (
+                pd.to_datetime(dataframe["date_min"], errors="coerce")
+                if "date_min" in dataframe.columns
+                else pd.Series(dtype="datetime64[ns]")
+            )
+            depth_series = [
+                pd.to_numeric(dataframe[column], errors="coerce")
+                for column in ("depth_min", "depth_max")
+                if column in dataframe.columns
+            ]
+            depths = pd.concat(depth_series).dropna() if depth_series else pd.Series(dtype=float)
+            instruments = ", ".join(sorted(map(str, dataframe.get("instrument", pd.Series(dtype=str)).dropna().unique()))) or "—"
+            zones = ", ".join(sorted(map(str, dataframe.get("iho_zone", pd.Series(dtype=str)).dropna().unique()))) or "—"
+            selection_overview = [
+                "## Synthèse de la sélection complète", "",
+                f"{dataframe['sample_id'].nunique()} samples · {projects} projets · zones : {zones}.",
+                f"Période : {dates.min().date() if not dates.dropna().empty else '—'} → {dates.max().date() if not dates.dropna().empty else '—'} · instruments : {instruments}.",
+                f"Profondeur couverte : {depths.min():.2f} → {depths.max():.2f} m." if not depths.empty else "Profondeur : —.",
+                "",
+            ]
         summary = [
             "## Résultat SQL EcoTaxa",
             "",
@@ -3551,7 +3621,7 @@ def make_source_tools(thread_id: str) -> list:
             f"| {len(rows)} | {len(columns)} | {display_label} |",
             "",
         ]
-        body = "\n".join([*summary, header, separator, *data_lines]) + note + selection_note
+        body = "\n".join([*selection_overview, *summary, header, separator, *data_lines]) + note + selection_note
         return _eco_success(
             body,
             data_ref=variable_name,

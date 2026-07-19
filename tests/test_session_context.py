@@ -174,6 +174,25 @@ def test_current_user_message_grounds_remote_ecotaxa_sample_id(tmp_path):
     assert rejection is None
 
 
+def test_confirmed_export_can_reuse_the_pending_dry_run_scope(tmp_path):
+    store = SessionStore(tmp_path)
+    store.set(
+        "export-confirmation",
+        None,
+        {"pending_ecotaxa_export_plan": {"sample_ids": [14859000001, 17498000048]}},
+    )
+
+    rejection = reject_ungrounded_ecotaxa_identifiers(
+        store,
+        "export-confirmation",
+        [HumanMessage(content="Oui, lancer l'export.")],
+        "export_ecotaxa_samples",
+        {"sample_ids": [14859000001, 17498000048], "confirmed": True},
+    )
+
+    assert rejection is None
+
+
 def test_current_turn_discovery_result_grounds_remote_project_id(tmp_path):
     store = SessionStore(tmp_path)
     messages = [

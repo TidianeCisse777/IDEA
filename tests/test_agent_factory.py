@@ -1,4 +1,5 @@
 """Tests TDD — agent.py slice 4"""
+import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -65,6 +66,21 @@ def test_make_tracer_defaults_user_id_to_anonymous(monkeypatch):
     tracer = _make_tracer("thread-abc123")
     assert tracer is not None
     assert any("anonymous" in tag for tag in tracer.tags)
+
+
+def test_legacy_langchain_trace_settings_enable_langsmith(monkeypatch):
+    """The deployed legacy environment must remain queryable in LangSmith."""
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    monkeypatch.setenv("LANGCHAIN_API_KEY", "fake-legacy-key")
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+
+    from agent import _configure_langsmith_tracing
+
+    _configure_langsmith_tracing()
+
+    assert os.environ["LANGSMITH_TRACING"] == "true"
+    assert os.environ["LANGSMITH_API_KEY"] == "fake-legacy-key"
 
 
 # --- Comportement 1 : make_agent retourne un graph ---
@@ -1355,10 +1371,10 @@ def test_system_prompt_routes_ecotaxa_export_planning_to_dry_run_tool():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "ecotaxa dry-run export planning" in prompt
-    assert "prépare l'export" in prompt
-    assert "mais ne lance rien" in prompt
-    assert "export_ecotaxa_samples(sample_ids=[...], confirmed=false)" in prompt
+    assert "ne lance jamais un téléchargement d'objets" in prompt
+    assert "l'intention déclenche un **plan**" in prompt
+    assert "confirmed=false" in prompt
+    assert "confirmation explicite" in prompt
     assert "do not stop after loading the skill" in prompt
 
 
@@ -1367,7 +1383,7 @@ def test_system_prompt_handles_export_failed_rights_without_relaunching_export()
 
     prompt = _routing_contract("ecotaxa_navigation.md", "ecotaxa_query.md")
     assert "previous `export_failed` / rights failure" in prompt
-    assert "verify access without relaunching export" in prompt
+    assert "use `preview_ecotaxa_project(project_id=...)` to verify access" in prompt
     assert "preview_ecotaxa_project(project_id=...)" in prompt
     assert "do not call `query_ecotaxa`" in prompt
     assert "or `export_ecotaxa_samples`" in prompt

@@ -1257,18 +1257,21 @@ def test_bulk_export_persists_a_consolidated_campaign_table_for_analysis(seeded_
             "confirmed": True,
         })
 
-    campaign = _store.get(f"{thread_id}:dataset:df_ecotaxa_campaign")
+    active = _store.get(thread_id)
+    campaign_variable = active["meta"]["variable_name"]
+    assert campaign_variable.startswith("df_ecotaxa_campaign_samples_")
+    campaign = _store.get(f"{thread_id}:dataset:{campaign_variable}")
     assert campaign is not None
     assert campaign["df"].to_dict("records") == [
         {"object_id": "c", "sample_id": 2331000001, "export_project_id": 2331},
         {"object_id": "a", "sample_id": 14853000001, "export_project_id": 14853},
         {"object_id": "b", "sample_id": 14853000002, "export_project_id": 14853},
     ]
-    assert _store.get(thread_id)["df"].equals(campaign["df"])
+    assert active["df"].equals(campaign["df"])
     assert _store.get(f"{thread_id}:ecotaxa")["df"].equals(campaign["df"])
     assert _store.get(f"{thread_id}:dataset:df_ecotaxa_14853_bulk_14853000001_14853000002")["df"].equals(project_14853)
     assert _store.get(f"{thread_id}:dataset:df_ecotaxa_2331_bulk_2331000001")["df"].equals(project_2331)
-    assert "df_ecotaxa_campaign" in result
+    assert campaign_variable in result
 
 
 # ── SLICE 4 GATE ──────────────────────────────────────────────────────────────
@@ -1986,7 +1989,7 @@ def test_query_ecotaxa_cache_memorizes_exportable_selection(tmp_path, monkeypatc
         {"sample_id": 101},
         {"sample_id": 102},
     ]
-    assert "latest" in out  # the response points the user to the export path
+    assert "sélection complète de 2 samples" in out.lower()
 
     # The export tool picks the selection up and plans both projects.
     export_tool = next(t for t in tools if t.name == "export_ecotaxa_samples")

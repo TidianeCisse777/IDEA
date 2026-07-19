@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "source:ecotaxa"
 next_tool: null
-max_tokens: 9500
+max_tokens: 11000
 size_exemption: The read-only EcoTaxa decision tree is kept atomic so the model can choose one route without loading a second navigation fragment; runtime delivery is budget-aware and tested end to end.
 ---
 
@@ -320,7 +320,9 @@ plan courant.
    accepter par exemple « oui, lance cet export » ou « confirme le plan ci-dessus ».
    Si l'utilisateur change de période, de taxon, de statut, de profondeur ou de
    sélection, refaire le plan : l'ancienne confirmation ne vaut plus.
-4. **Exécuter exactement le plan confirmé.** Pour une sélection, rappeler avec
+4. **Exécuter exactement le plan confirmé.** Dès cette confirmation, appeler
+   l'export dans le même tour : ne pas répondre avec le plan, ne pas redemander
+   les `sample_id`, et ne pas exiger une formulation technique. Pour une sélection, rappeler avec
    les mêmes arguments et `confirmed=True`. Pour un sample/projet, appeler le
    téléchargement choisi à l'étape 1 seulement après confirmation. Ne remplacer
    jamais silencieusement un scope multi-projets par le dernier projet vu.
