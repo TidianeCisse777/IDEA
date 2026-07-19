@@ -140,6 +140,34 @@ until docker compose exec -T mcp-ecotaxa curl -sf http://localhost:8001/health >
 done
 echo "[start] MCP EcoTaxa OK"
 
+# First boot builds the account's cache from a live EcoTaxa sync, kicked off in
+# the background as soon as the MCP server sees an empty cache. That sync takes
+# a bit, so the preflight below would otherwise read an as-yet-empty cache,
+# fail, and force a needless second ./start.sh. Wait for the sync to reach a
+# usable state first. Bounded by ECOTAXA_SYNC_WAIT_SECONDS (default 600). A
+# populated cache from a previous run reports "ok" immediately and skips the wait.
+SYNC_WAIT_MAX="${ECOTAXA_SYNC_WAIT_SECONDS:-600}"
+echo "[start] Waiting for the initial EcoTaxa cache sync (up to ${SYNC_WAIT_MAX}s)..."
+sync_waited=0
+while [ "$sync_waited" -lt "$SYNC_WAIT_MAX" ]; do
+  SYNC_HEALTH="$(docker compose exec -T mcp-ecotaxa curl -sf http://localhost:8001/health 2>/dev/null || true)"
+  case "$SYNC_HEALTH" in
+    *'"last_sync_status":"ok"'*|*'"last_sync_status":"partial"'*)
+      echo "[start] Initial sync complete."
+      break
+      ;;
+    *'"last_sync_status":"error"'*|*'"last_sync_status":"failed"'*)
+      echo "[start] Initial sync reported an error — continuing to the cache check for details."
+      break
+      ;;
+  esac
+  sleep 5
+  sync_waited=$((sync_waited + 5))
+done
+if [ "$sync_waited" -ge "$SYNC_WAIT_MAX" ]; then
+  echo "[start] WARNING: sync did not finish within ${SYNC_WAIT_MAX}s — running the cache check anyway."
+fi
+
 # Cache preflight: gate the agent on a populated, readable EcoTaxa cache.
 # Runs inside the MCP container (has python3 + the bind-mounted script) so it
 # does not depend on a host python. A non-zero exit blocks startup entirely —

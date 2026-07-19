@@ -1,13 +1,15 @@
 """EcoTaxa cache synchronization engine (M4).
 
-Strategy: full sync (F1), per-project transaction (E3), 5 req/s throttle,
-object cap 50k per project (P2). Pulls (lat, lon, objdate, sample_id) via
-``POST /object_set/{id}/query`` paginated, aggregates to sample-level
+Strategy: full sync (F1), per-project transaction (E3), 5 req/s aggregate
+throttle, object cap 50k per project (P2). Pulls (lat, lon, objdate, sample_id)
+via ``POST /object_set/{id}/query`` paginated, aggregates to sample-level
 averages, and replaces the project's slice of ``samples_cache`` atomically.
 
 Parallelism: HTTP fetches run in a ThreadPoolExecutor (default 8 workers);
 SQLite writes stay in the main thread to avoid cross-thread connection
-issues. Incremental sync: each project carries a signature
+issues. A single ``_SharedRateLimiter`` caps the *aggregate* request rate across
+all workers, so the last large project fetching alone uses the full budget
+rather than the old per-worker ``rps / concurrency`` fraction. Incremental sync: each project carries a signature
 (objcount, pctvalidated, pctclassified) read straight from `list_projects`;
 projects whose signature did not change since the last sync are skipped.
 """
@@ -62,6 +64,33 @@ _TRANSIENT_EXCEPTIONS = (
 )
 
 
+class _SharedRateLimiter:
+    """Thread-safe aggregate rate limiter shared across all sync workers.
+
+    Enforces at most ``rps`` acquisitions per second *across every thread*, so a
+    single active worker uses the whole budget instead of the old static
+    ``rps / worker_count`` split — where a lone straggler project (e.g. the
+    largest one, still fetching after the others finished) crawled at 1/8 of the
+    allowance while 7 workers sat idle. The aggregate cap still protects EcoTaxa.
+    """
+
+    def __init__(self, rps: float) -> None:
+        self._min_interval = 1.0 / rps if rps and rps > 0 else 0.0
+        self._lock = threading.Lock()
+        self._next_time = 0.0
+
+    def acquire(self) -> None:
+        if self._min_interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            start = now if now >= self._next_time else self._next_time
+            self._next_time = start + self._min_interval
+            wait = start - now
+        if wait > 0:
+            time.sleep(wait)
+
+
 def _with_retries(
     operation: Callable[[], Any],
     *,
@@ -90,11 +119,15 @@ def _fetch_project_samples(
     window_size: int = _DEFAULT_WINDOW_SIZE,
     object_cap: int = _DEFAULT_OBJECT_CAP,
     rate_limit_rps: float = _DEFAULT_RATE_LIMIT_RPS,
+    rate_limiter: "_SharedRateLimiter | None" = None,
 ) -> tuple[list[dict], str | None]:
     """HTTP-only: fetch + aggregate, no DB writes. Returns (samples, instrument).
 
     Safe to call from a worker thread when the caller provides a thread-local
-    client/session. Raises on EcoTaxa failure.
+    client/session. Raises on EcoTaxa failure. When ``rate_limiter`` is supplied
+    (the concurrent path), throttling is shared across all workers so the
+    aggregate rate is capped once instead of per worker; otherwise a private
+    limiter is built from ``rate_limit_rps`` for standalone single-project calls.
     """
     project_meta = _with_retries(lambda: client.get_project(project_id))
     instrument = project_meta.get("instrument")
@@ -103,12 +136,12 @@ def _fetch_project_samples(
     aggregates: dict[int, dict] = {}
     window_start = 0
     objects_seen = 0
-    min_interval = 1.0 / rate_limit_rps if rate_limit_rps > 0 else 0.0
+    limiter = rate_limiter if rate_limiter is not None else _SharedRateLimiter(rate_limit_rps)
 
     while objects_seen < object_cap:
         remaining_cap = object_cap - objects_seen
         size = min(window_size, remaining_cap)
-        before = time.monotonic()
+        limiter.acquire()
         payload = _with_retries(
             lambda: client.query_objects(
                 project_id=project_id,
@@ -176,11 +209,6 @@ def _fetch_project_samples(
         window_start += len(rows)
         if len(rows) < size:
             break
-
-        # Throttle between API calls.
-        elapsed = time.monotonic() - before
-        if elapsed < min_interval:
-            time.sleep(min_interval - elapsed)
 
     # Discover from the authoritative sample list, not only from objects: the
     # object scan is capped (object_cap), so large projects would otherwise miss
@@ -483,11 +511,10 @@ def run_full_sync(
         return thread_client
 
     effective_concurrency = max(1, concurrency)
-    worker_rate_limit_rps = (
-        rate_limit_rps / effective_concurrency
-        if rate_limit_rps > 0
-        else rate_limit_rps
-    )
+    # One aggregate limiter shared by all workers: the whole run stays under
+    # rate_limit_rps, but any single active worker (notably the last, largest
+    # project fetching alone) uses the full budget instead of rps/concurrency.
+    shared_limiter = _SharedRateLimiter(rate_limit_rps)
 
     def fetch_one(args: tuple[int, dict, tuple | None]):
         project_id, _meta, _sig = args
@@ -497,7 +524,8 @@ def run_full_sync(
             project_id=project_id,
             window_size=window_size,
             object_cap=object_cap,
-            rate_limit_rps=worker_rate_limit_rps,
+            rate_limit_rps=rate_limit_rps,
+            rate_limiter=shared_limiter,
         )
         schema_json = _fetch_project_schema_json(thread_client, project_id=project_id)
         return project_id, samples, schema_json

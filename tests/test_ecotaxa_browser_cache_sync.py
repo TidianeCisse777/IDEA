@@ -541,6 +541,10 @@ def test_run_full_sync_fetches_projects_concurrently(conn):
         client,
         now_iso="2026-06-15T03:00:00Z",
         concurrency=2,
+        # Give ample rate budget so the shared aggregate limiter does not space
+        # the two request starts apart — this test verifies concurrency, not
+        # throttling (rate limiting is covered by the dedicated limiter tests).
+        rate_limit_rps=1000.0,
     )
 
     assert result["status"] == "ok"
@@ -740,3 +744,60 @@ def test_run_full_sync_soft_fails_on_unreachable_extra_project(conn):
     assert result["status"] == "partial"  # not "failed" — 42 synced fine
     assert result["projects_synced"] == 1
     assert "14853" in (result["error_message"] or "")
+
+
+def test_shared_rate_limiter_bounds_aggregate_rate():
+    """The shared limiter spaces acquisitions to at most ``rps`` per second."""
+    from core.ecotaxa_browser.cache.sync import _SharedRateLimiter
+
+    limiter = _SharedRateLimiter(rps=50.0)
+    start = time.monotonic()
+    for _ in range(5):
+        limiter.acquire()
+    elapsed = time.monotonic() - start
+
+    # 5 acquisitions => 4 gaps of 1/50s = 0.08s minimum spacing.
+    assert elapsed >= 0.06
+    assert elapsed < 1.0
+
+
+def test_shared_rate_limiter_zero_rps_never_sleeps():
+    from core.ecotaxa_browser.cache.sync import _SharedRateLimiter
+
+    limiter = _SharedRateLimiter(rps=0.0)
+    start = time.monotonic()
+    for _ in range(50):
+        limiter.acquire()
+    assert time.monotonic() - start < 0.05
+
+
+def test_run_full_sync_single_project_uses_full_rate_budget(conn):
+    """A lone (straggler) project fetches at the full aggregate budget.
+
+    Regression guard for the old ``rps / concurrency`` static split, where one
+    active worker among 8 was throttled to 1/8 of the budget even when the other
+    7 were idle. The shared limiter lets the single active fetch use all of it.
+    """
+    from core.ecotaxa_browser.cache.sync import run_full_sync
+
+    rows = [[70.0, -64.0, "2018-08-01", str(i), "UVP5"] for i in range(1, 5)]
+    client = _make_client(
+        projects=[{"projid": 42, "title": "A", "instrument": "UVP5", "objcount": 4}],
+        objects_by_project={42: rows},
+    )
+
+    start = time.monotonic()
+    run_full_sync(
+        conn,
+        client,
+        now_iso="2026-06-15T03:00:00Z",
+        window_size=1,
+        rate_limit_rps=20.0,
+        concurrency=8,
+    )
+    elapsed = time.monotonic() - start
+
+    # 5 windows => 4 gaps at 20 rps = 0.20s (full budget) plus fixed overhead.
+    # The old split throttled to 20/8 = 2.5 rps => ~1.6s + overhead (~2.0s).
+    # Assert the fast path with margin for scheduling overhead.
+    assert elapsed < 1.2
