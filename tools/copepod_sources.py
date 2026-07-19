@@ -633,9 +633,10 @@ def make_source_tools(thread_id: str) -> list:
             ]
         lines += [
             "",
-            "Étape suivante : `load_skill(\"net_uvp_abundance_comparison\")` pour "
-            "calculer la densité de copépodes des deux côtés (filet en ind./m³, UVP "
-            "converti en ind./m³) et poser le delta par station.",
+            "Étape suivante (à la demande de l'utilisateur) : "
+            "`load_skill(\"net_uvp_abundance_comparison\")`, puis join sur les objets "
+            "du cast UVP matché (enrichissement EcoPart) pour obtenir la densité "
+            "copépode UVP en ind./m³, et poser le delta par station.",
         ]
         return _eco_success(
             "\n".join(lines),

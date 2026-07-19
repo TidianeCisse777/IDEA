@@ -53,43 +53,56 @@ net_density = neolabs_copepod_density(net_df)  # per STATION_NAME, ind./m³
 It filters `CLASS == 'Copepoda'`, sums per `SAMPLE_ID`, averages per station.
 Output key column: `copepod_density_ind_m3`.
 
-## Step 2 — UVP copepod density (ind./m³)
+## Step 2 — UVP copepod density (ind./m³), user-triggered join on the cast objects
 
-UVP copepod density comes from EcoTaxa copepod objects normalised by the EcoPart
-sampled volume. Use the existing UVP path, do not reinvent it:
+This is the "join on the objects of the matched cast" the user asks for. It is a
+remote enrichment: run it only when the user requests it (heavy op, confirmation
+required). Do not auto-run it after Step 1.
 
-1. Ensure the matched UVP project is loaded and enriched with EcoPart volume via
-   `enrich_ecotaxa_with_ecopart_remote` (confirmation required — heavy op).
-2. Build the canonical UVP copepod density with
-   `core.copepod_sample_depth.build_canonical_sample_depth` (copepod filter +
-   volume normalisation). UVP density is typically **ind./L**.
+For each matched `uvp_sample_id` (from `df_net_uvp_matches`):
 
-If the UVP copepod density cannot be computed remotely in this session, say so
-and stop at Step 1 rather than fabricating a UVP number.
+1. Get that cast's EcoTaxa objects (`object_annotation_hierarchy`, `sample_id`,
+   depth) and join the EcoPart sampled volume via
+   `enrich_ecotaxa_with_ecopart_remote`. The join key is the profile/sample of
+   the cast — this is the object-level join, not a spatial one.
+2. Build the deterministic UVP density with
+   `core.copepod_sample_depth.build_canonical_sample_depth(df)`. It filters
+   copepods by hierarchy, normalises by `ecopart_Sampled volume [L]`, and returns
+   one row per `(sample_id, depth_bin)` with `copepod_count`, `sampled_volume_L`,
+   **`abundance_ind_L`** and **`abundance_ind_m3`** (already both units — no
+   manual conversion).
 
-## Step 3 — Align units, then bridge through the matches
+If the cast objects or the EcoPart volume cannot be retrieved in this session,
+say so and stop at Step 1 rather than fabricating a UVP number.
 
-UVP is usually **ind./L**; net is **ind./m³**. Align BEFORE comparing:
+## Step 3 — Per-sample UVP density, then bridge through the matches
+
+The net side is one depth-integrated concentration per station; make the UVP side
+comparable by averaging its depth-bin concentrations per cast (`abundance_ind_m3`
+is already ind./m³):
 
 ```python
-from core.net_uvp_comparison import to_ind_per_m3, compare_paired_density
+from core.net_uvp_comparison import compare_paired_density
 
-uvp_density["uvp_ind_m3"] = to_ind_per_m3(
-    uvp_density["copepod_density_ind_per_L"], from_unit="ind_per_L"
+uvp_density = (
+    canonical.groupby("sample_id", as_index=False)["abundance_ind_m3"].mean()
+    .rename(columns={"sample_id": "uvp_sample_id", "abundance_ind_m3": "uvp_ind_m3"})
 )
 
-# bridge net station density and UVP sample density via the correspondence
+# bridge net station density and UVP cast density via the correspondence
 paired = (
     df_net_uvp_matches
     .merge(net_density[["STATION_NAME", "copepod_density_ind_m3"]],
            left_on="station", right_on="STATION_NAME", how="inner")
-    .merge(uvp_density[["uvp_sample_id", "uvp_ind_m3"]],
-           on="uvp_sample_id", how="inner")
+    .merge(uvp_density, on="uvp_sample_id", how="inner")
     .rename(columns={"copepod_density_ind_m3": "net_ind_m3"})
 )
 ```
 
-If the UVP density is already in ind./m³, pass `from_unit="ind_per_m3"`.
+Only if you instead used an ind./L metric (e.g. `m5_cop_dens_ind_per_L` from
+`core.copepod_abundance_analysis.compute_m5`), convert first:
+`to_ind_per_m3(series, from_unit="ind_per_L")` (× 1000). `build_canonical_sample_depth`
+already gives ind./m³, so no conversion is needed on that path.
 
 ## Step 4 — Paired comparison, deterministic contract
 

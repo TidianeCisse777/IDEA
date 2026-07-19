@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from core.copepod_sample_depth import build_canonical_sample_depth
 from core.neolabs_abundance import neolabs_copepod_density
 from core.net_uvp_comparison import compare_paired_density, to_ind_per_m3
 
@@ -94,3 +95,54 @@ def test_full_net_uvp_comparison_produces_real_paired_table():
     # les deux côtés portent des nombres réels non nuls
     assert result["net_ind_m3"].gt(0).all()
     assert result["uvp_ind_m3"].gt(0).all()
+
+
+def test_join_on_cast_objects_yields_uvp_density_and_comparison():
+    """Maillon primaire user-triggered : join sur les objets du cast UVP matché
+    -> build_canonical_sample_depth (copépodes / volume EcoPart) -> densité UVP
+    ind./m³ par sample -> pont via la correspondance -> comparaison filet↔UVP.
+    C'est exactement ce que le skill exécute au Step 2→4, sans conversion (le
+    contrat rend déjà l'ind./m³)."""
+    # objets EcoTaxa d'un cast, enrichis du volume EcoPart (join sur le profil/cast)
+    objects = pd.DataFrame(
+        {
+            "sample_id": [10, 10, 10, 10, 20, 20],
+            "depth_bin": [0, 0, 5, 5, 0, 0],
+            "object_annotation_hierarchy": [
+                "living>Crustacea>Copepoda>Calanoida",
+                "living>Crustacea>Copepoda>Calanoida",
+                "living>Crustacea>Copepoda",
+                "not-living>detritus",  # non copépode -> exclu
+                "living>Crustacea>Copepoda",
+                "living>Crustacea>Copepoda",
+            ],
+            "ecopart_Sampled volume [L]": [100.0, 100.0, 100.0, 100.0, 50.0, 50.0],
+        }
+    )
+    canonical = build_canonical_sample_depth(objects)
+    assert {"abundance_ind_m3", "copepod_count", "sampled_volume_L"} <= set(canonical.columns)
+
+    # densité UVP par cast (moyenne des bins de profondeur), déjà en ind./m³
+    uvp_density = (
+        canonical.groupby("sample_id", as_index=False)["abundance_ind_m3"]
+        .mean()
+        .rename(columns={"sample_id": "uvp_sample_id", "abundance_ind_m3": "uvp_ind_m3"})
+    )
+
+    matches = pd.DataFrame({"station": ["S1", "S2"], "uvp_sample_id": [10, 20]})
+    net_density = pd.DataFrame(
+        {"STATION_NAME": ["S1", "S2"], "copepod_density_ind_m3": [15.0, 40.0]}
+    )
+    paired = (
+        matches.merge(net_density, left_on="station", right_on="STATION_NAME")
+        .merge(uvp_density, on="uvp_sample_id")
+        .rename(columns={"copepod_density_ind_m3": "net_ind_m3"})
+    )
+    result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m3")
+
+    # sample 10 : bins 20 et 10 ind/m³ -> moyenne 15 ; sample 20 : 40
+    s1 = result[result["station"] == "S1"].iloc[0]
+    assert s1["uvp_ind_m3"] == pytest.approx(15.0)
+    assert s1["abundance_ratio"] == pytest.approx(1.0)
+    s2 = result[result["station"] == "S2"].iloc[0]
+    assert s2["uvp_ind_m3"] == pytest.approx(40.0)
