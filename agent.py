@@ -144,10 +144,41 @@ def record_harness_usage(thread_id: str, usage: dict) -> None:
                 cumulative["prompt_tokens"] + cumulative["completion_tokens"]
             )
             trace["usage"] = {
+                "total_tokens": int(usage.get("total_tokens", 0) or 0),
                 "cumulative_model_calls": cumulative,
                 "final_response_call": copy.deepcopy(usage),
             }
             trace["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def record_harness_fast_route(
+    thread_id: str,
+    *,
+    route: str,
+    timings_ms: dict[str, float],
+    cache_hit: bool,
+) -> None:
+    """Record a deterministic response that intentionally made no model calls."""
+    with _harness_trace_lock:
+        _harness_trace_by_thread[thread_id] = {
+            "thread_id": thread_id,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "route": route,
+            "timings_ms": dict(timings_ms),
+            "cache_hit": bool(cache_hit),
+            "model_calls": [],
+            "tool_calls": [],
+            "usage": {
+                "total_tokens": 0,
+                "cumulative_model_calls": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "cached_tokens": 0,
+                    "total_tokens": 0,
+                },
+            },
+        }
 
 
 def _begin_harness_turn(thread_id: str, messages: list) -> None:

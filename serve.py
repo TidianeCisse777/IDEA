@@ -37,6 +37,7 @@ from agent import (
     get_context_audit,
     get_harness_trace,
     record_harness_usage,
+    record_harness_fast_route,
 )
 from tools.openwebui_uploads import resolve_attached_files, resolve_request_files, resolve_chat_files
 from tools.public_url import graph_url, serve_base_url
@@ -44,6 +45,7 @@ from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_work
 from tools.session_store import default_store
 from tools.run_store import default_run_store
 from tools.feedback import submit_feedback
+from tools.ecotaxa_cast_map import parse_ecotaxa_cast_map_request, render_ecotaxa_cast_map
 from tools.tool_catalog import (
     get_tool_presentation,
     resolve_user_language,
@@ -117,6 +119,29 @@ def _run_pending_ecotaxa_export(thread_id: str, text: str):
     export_tool = next(tool for tool in make_source_tools(thread_id) if tool.name == "export_ecotaxa_samples")
     result = export_tool.invoke(args)
     return _present_ecotaxa_export(str(getattr(result, "content", result)), confirmed=bool(args["confirmed"]))
+
+
+def _try_fast_ecotaxa_cast_map(thread_id: str, text: str) -> str | None:
+    """Render a standard explicit EcoTaxa cast map without a ReAct loop."""
+    request = parse_ecotaxa_cast_map_request(text)
+    if request is None:
+        return None
+    try:
+        rendered = render_ecotaxa_cast_map(request)
+    except (OSError, ValueError):
+        return None
+    record_harness_fast_route(
+        thread_id,
+        route="fast_ecotaxa_cast_map",
+        timings_ms=rendered.timings_ms,
+        cache_hit=rendered.cache_hit,
+    )
+    suffix = ", distingués par projet." if request.group_by == "project" else "."
+    limit = (
+        f" {rendered.excluded_missing_cast_ids} samples sans identifiant de cast ne sont pas affichés."
+        if rendered.excluded_missing_cast_ids else ""
+    )
+    return f"{rendered.image_markdown}\n\n{rendered.cast_count} casts affichés{suffix}{limit}"
 
 
 def _retry_after_seconds(exc: RateLimitError) -> int:
@@ -1246,6 +1271,18 @@ async def chat_completions(
                 media_type="text/event-stream",
             )
         return _quick_response(str(deterministic_export))
+
+    fast_cast_map = await asyncio.to_thread(
+        _try_fast_ecotaxa_cast_map, tid, last_user_text
+    )
+    if fast_cast_map is not None:
+        _log_turn(tid, last_user_text, fast_cast_map, {
+            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        }, user_id=user_id)
+        if req.stream:
+            return StreamingResponse(_quick_sse_response(fast_cast_map), media_type="text/event-stream")
+        return _quick_response(fast_cast_map)
 
     # OpenWebUI ne forward JAMAIS les fichiers dans le body (metadata est pop()é
     # avant l'envoi). On requête directement le SQLite d'OpenWebUI via chat_id.
