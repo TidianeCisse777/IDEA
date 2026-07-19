@@ -265,6 +265,28 @@ After `query_ecotaxa_cache`, use `run_pandas` for derived tables, joins,
 rankings, or cross-source comparisons. The result is available as
 `df_ecotaxa_cache_query`.
 
+### Campagne → export : `selection_name="latest"`
+
+Dès qu'une requête cache renvoie une colonne `sample_id`, sa sélection (samples
++ projets résolus) est **mémorisée automatiquement**. Pour exporter EXACTEMENT ce
+que la campagne a sélectionné — un ou plusieurs samples, un ou plusieurs projets
+— appeler directement, sans ré-extraire les IDs :
+
+```
+export_ecotaxa_samples(selection_name="latest", status="", taxon=None)
+```
+
+Exemple « tous les objets de la mer du Labrador en 2014 » :
+```
+1. query_ecotaxa_cache("SELECT sample_id, project_id FROM samples_cache
+       WHERE iho_zone LIKE '%Labrador%' AND date_min >= '2014-01-01'
+         AND date_min <= '2014-12-31'")           → sélection mémorisée
+2. export_ecotaxa_samples(selection_name="latest", status="")  # dry-run puis confirmed=True
+```
+`status=""` = tous les objets (pas seulement les validés). `taxon="Calanus"` pour
+ne descendre qu'un taxon. Le pré-filtrage taxon peut se faire au niveau cache
+via `used_taxa` (ex. `WHERE used_taxa LIKE '%25828%'`) avant l'export.
+
 ---
 
 ## Scénarios de navigation — arbre de décision complet

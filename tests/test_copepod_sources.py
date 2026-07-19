@@ -1899,3 +1899,72 @@ def test_query_ecotaxa_cache_keeps_complete_agent_result(tmp_path, monkeypatch):
     session = store.get("sql-full-thread")
     assert session["df"].shape == (1001, 1)
     assert "aperçu de 50 lignes sur 1001" in result
+
+
+def test_query_ecotaxa_cache_memorizes_exportable_selection(tmp_path, monkeypatch):
+    """A cache campaign returning sample_id registers an exportable 'latest'
+    selection so export_ecotaxa_samples(selection_name='latest') exports exactly
+    what the exploration selected — including across several projects."""
+    import sqlite3
+    from core.ecotaxa_browser.cache.repo import init_schema, upsert_sample
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    upsert_sample(conn, sample_id=101, project_id=42, lat_avg=55.0, lon_avg=-55.0,
+                  date_min="2014-06-01", date_max="2014-06-02", object_count=10,
+                  instrument="UVP6", last_synced="ts", iho_zone="Mer du Labrador")
+    upsert_sample(conn, sample_id=102, project_id=99, lat_avg=56.0, lon_avg=-56.0,
+                  date_min="2014-07-01", date_max="2014-07-02", object_count=5,
+                  instrument="UVP6", last_synced="ts", iho_zone="Mer du Labrador")
+    conn.commit(); conn.close()
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+
+    from tools.copepod_sources import make_source_tools
+    thread_id = "thread-campaign"
+    tools = make_source_tools(thread_id)
+    cache_tool = next(t for t in tools if t.name == "query_ecotaxa_cache")
+
+    # Campaign: all Labrador samples, only sample_id selected (project resolved
+    # from the cache) — the common exploration shape.
+    out = cache_tool.invoke(
+        {"sql": "SELECT sample_id FROM samples_cache WHERE iho_zone LIKE '%Labrador%'"}
+    )
+
+    latest = _store.get(f"{thread_id}:ecotaxa_selection_latest")
+    assert latest is not None
+    assert set(latest["meta"]["sample_ids"]) == {101, 102}
+    assert set(latest["meta"]["project_ids"]) == {42, 99}
+    assert "latest" in out  # the response points the user to the export path
+
+    # The export tool picks the selection up and plans both projects.
+    export_tool = next(t for t in tools if t.name == "export_ecotaxa_samples")
+    plan = export_tool.invoke({"selection_name": "latest"})
+    assert "101" in plan and "102" in plan
+    assert "42" in plan and "99" in plan
+
+
+def test_query_ecotaxa_cache_aggregate_does_not_memorize_selection(tmp_path, monkeypatch):
+    """An aggregate campaign with no per-sample sample_id must not register a
+    selection (nothing exportable)."""
+    import sqlite3
+    from core.ecotaxa_browser.cache.repo import init_schema, upsert_sample
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    upsert_sample(conn, sample_id=201, project_id=42, lat_avg=55.0, lon_avg=-55.0,
+                  date_min="2014-06-01", date_max="2014-06-02", object_count=10,
+                  instrument="UVP6", last_synced="ts", iho_zone="Mer du Labrador")
+    conn.commit(); conn.close()
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+
+    from tools.copepod_sources import make_source_tools
+    thread_id = "thread-aggregate"
+    cache_tool = next(
+        t for t in make_source_tools(thread_id) if t.name == "query_ecotaxa_cache"
+    )
+    cache_tool.invoke(
+        {"sql": "SELECT project_id, COUNT(*) AS n FROM samples_cache GROUP BY project_id"}
+    )
+    assert _store.get(f"{thread_id}:ecotaxa_selection_latest") is None

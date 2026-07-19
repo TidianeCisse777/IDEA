@@ -3437,6 +3437,59 @@ def make_source_tools(thread_id: str) -> list:
             },
         )
 
+        # Campagne → export : dès qu'une exploration SQL renvoie des `sample_id`,
+        # la mémoriser comme sélection exportable (`latest`). N'importe quelle
+        # campagne (zone + temps + taxon…) devient ainsi exportable directement
+        # via `export_ecotaxa_samples(selection_name="latest")`, sans que le
+        # modèle ait à ré-extraire les identifiants à la main.
+        selection_note = ""
+        if "sample_id" in dataframe.columns:
+            id_series = pd.to_numeric(dataframe["sample_id"], errors="coerce").dropna()
+            sids = [int(s) for s in dict.fromkeys(id_series.tolist())]
+            selection_samples: list[dict] = []
+            if sids and "project_id" in dataframe.columns:
+                pairs = dataframe[["sample_id", "project_id"]].dropna().drop_duplicates()
+                for row in pairs.itertuples(index=False):
+                    try:
+                        selection_samples.append(
+                            {"sample_id": int(row.sample_id), "project_id": int(row.project_id)}
+                        )
+                    except (TypeError, ValueError):
+                        continue
+            elif sids:
+                # project_id absent du SELECT → le résoudre depuis le cache.
+                try:
+                    mapping = resolve_sample_projects(sids)
+                except Exception:
+                    mapping = {}
+                selection_samples = [
+                    {"sample_id": int(s), "project_id": int(p)} for s, p in mapping.items()
+                ]
+            if selection_samples:
+                try:
+                    # Register only the selection METADATA (sample/project ids)
+                    # for export — never rebuild/overwrite the active dataframe,
+                    # which must stay the exact SQL result the campaign returned.
+                    sel_sample_ids = [int(s["sample_id"]) for s in selection_samples]
+                    sel_project_ids = sorted({int(s["project_id"]) for s in selection_samples})
+                    sel_name = _selection_name()
+                    sel_meta = {
+                        "selection_name": sel_name,
+                        "sample_ids": sel_sample_ids,
+                        "project_ids": sel_project_ids,
+                        "n_samples": len(sel_sample_ids),
+                        "filters": {"sql": sql},
+                        "source": "ecotaxa_selection",
+                    }
+                    _store.set(f"{thread_id}:selection:{sel_name}", None, sel_meta)
+                    _store.set(f"{thread_id}:ecotaxa_selection_latest", None, sel_meta)
+                    selection_note = (
+                        f"\n\n_({len(sel_sample_ids)} samples mémorisés comme sélection — "
+                        'exportables via `export_ecotaxa_samples(selection_name="latest")`)_'
+                    )
+                except Exception:
+                    selection_note = ""
+
         header = "| " + " | ".join(columns) + " |"
         separator = "|" + "|".join("---" for _ in columns) + "|"
         preview_rows = rows[:50]
@@ -3467,7 +3520,7 @@ def make_source_tools(thread_id: str) -> list:
             f"| {len(rows)} | {len(columns)} | {display_label} |",
             "",
         ]
-        body = "\n".join([*summary, header, separator, *data_lines]) + note
+        body = "\n".join([*summary, header, separator, *data_lines]) + note + selection_note
         return _eco_success(
             body,
             data_ref=variable_name,
