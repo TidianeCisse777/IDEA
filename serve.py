@@ -230,6 +230,46 @@ def _backfill_ecotaxa_cache() -> None:
         logger.warning("iho_zone backfill skipped: %s", e)
 
 
+from contextlib import asynccontextmanager as _asynccontextmanager
+
+
+@_asynccontextmanager
+async def _open_checkpointer(pg_dsn: str):
+    """Yield the short-term (conversation) checkpointer.
+
+    Prefers Postgres when a DSN is available: unlike the single-writer SQLite
+    file, a Postgres checkpointer is safe under several uvicorn workers /
+    processes, so the agent can scale horizontally without "database is locked"
+    contention. Falls back to SQLite (single process) and finally MemorySaver.
+    """
+    if pg_dsn:
+        try:
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+            async with AsyncPostgresSaver.from_conn_string(pg_dsn) as cp:
+                await cp.setup()
+                logger.info("Postgres checkpointer ready (multi-worker safe)")
+                yield cp
+                return
+        except Exception as e:  # noqa: BLE001 — degrade, never fail boot on this
+            logger.warning(
+                "AsyncPostgresSaver unavailable (%s) — falling back to SQLite", e
+            )
+    try:
+        import aiosqlite  # noqa: F401
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+        async with AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTS_DB)) as cp:
+            logger.info("SQLite checkpointer ready: %s", _CHECKPOINTS_DB)
+            yield cp
+            return
+    except Exception as e:  # noqa: BLE001
+        logger.warning("AsyncSqliteSaver unavailable (%s) — using MemorySaver", e)
+    from langgraph.checkpoint.memory import MemorySaver
+
+    yield MemorySaver()
+
+
 async def lifespan(app: FastAPI):
     """Initialize checkpointer + long-term memory store + feedback polling."""
     import agent as _agent_module
@@ -267,20 +307,9 @@ async def lifespan(app: FastAPI):
                     enable_deletes=False,
                 )
                 logger.info("AsyncPostgresStore ready (long-term memory)")
-                # ── SQLite short-term checkpointer ──────────────────────────────
-                try:
-                    import aiosqlite
-                    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-                    async with AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTS_DB)) as cp:
-                        _agent_module._checkpointer = cp
-                        logger.info("SQLite checkpointer ready: %s", _CHECKPOINTS_DB)
-                        poll_task = asyncio.create_task(_feedback_polling_loop())
-                        try:
-                            yield
-                        finally:
-                            poll_task.cancel()
-                except Exception as e:
-                    logger.warning("AsyncSqliteSaver unavailable (%s) — using MemorySaver", e)
+                # ── Short-term checkpointer (Postgres-first, multi-worker safe) ──
+                async with _open_checkpointer(pg_dsn) as cp:
+                    _agent_module._checkpointer = cp
                     poll_task = asyncio.create_task(_feedback_polling_loop())
                     try:
                         yield
@@ -292,19 +321,8 @@ async def lifespan(app: FastAPI):
             pg_dsn = ""
 
     if not pg_dsn:
-        try:
-            import aiosqlite
-            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-            async with AsyncSqliteSaver.from_conn_string(str(_CHECKPOINTS_DB)) as cp:
-                _agent_module._checkpointer = cp
-                logger.info("SQLite checkpointer ready: %s", _CHECKPOINTS_DB)
-                poll_task = asyncio.create_task(_feedback_polling_loop())
-                try:
-                    yield
-                finally:
-                    poll_task.cancel()
-        except Exception as e:
-            logger.warning("AsyncSqliteSaver unavailable (%s) — using MemorySaver", e)
+        async with _open_checkpointer("") as cp:
+            _agent_module._checkpointer = cp
             poll_task = asyncio.create_task(_feedback_polling_loop())
             try:
                 yield
