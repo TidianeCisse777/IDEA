@@ -287,6 +287,56 @@ Exemple « tous les objets de la mer du Labrador en 2014 » :
 ne descendre qu'un taxon. Le pré-filtrage taxon peut se faire au niveau cache
 via `used_taxa` (ex. `WHERE used_taxa LIKE '%25828%'`) avant l'export.
 
+### Protocole obligatoire — préparer puis confirmer l'export
+
+Ne lance jamais un téléchargement d'objets dès la première demande « exporte ».
+L'intention déclenche un **plan**, puis une nouvelle confirmation explicite de
+l'utilisateur déclenche l'export. Ne confonds pas un « oui » donné avant le plan,
+une demande d'analyse/graphe, ou une ancienne confirmation avec l'approbation du
+plan courant.
+
+1. **Choisir le scope le plus étroit.**
+   - Un sample résolu : `query_ecotaxa_sample(sample_id=S)`.
+   - Plusieurs samples d'un seul projet connu, ou le projet entier :
+     `query_ecotaxa(project_id=P, sample_ids=[...])` ou `query_ecotaxa(project_id=P)`.
+   - Une sélection mémorisée, ou des samples couvrant plusieurs projets :
+     `export_ecotaxa_samples`.
+   - Après une campagne cache qui a retourné `sample_id`, employer
+     `selection_name="latest"` : ne recopie jamais les IDs de l'aperçu.
+2. **Décrire le plan à l'utilisateur.** Indiquer le scope (sample(s) et projet(s)
+   si connus), les filtres demandés, et que l'opération téléchargera tous les
+   objets concernés. Pour une sélection, obtenir le plan exact avec :
+
+   ```
+   export_ecotaxa_samples(
+       selection_name="latest", status="", taxon=None, confirmed=False
+   )
+   ```
+
+   `confirmed=False` est un dry-run : il n'exporte rien et renvoie la répartition
+   projet → samples. Pour `query_ecotaxa` ou `query_ecotaxa_sample`, préparer le
+   même résumé à partir du scope déjà résolu, sans appeler le download.
+3. **Attendre une nouvelle approbation explicite.** Une fois le plan présenté,
+   accepter par exemple « oui, lance cet export » ou « confirme le plan ci-dessus ».
+   Si l'utilisateur change de période, de taxon, de statut, de profondeur ou de
+   sélection, refaire le plan : l'ancienne confirmation ne vaut plus.
+4. **Exécuter exactement le plan confirmé.** Pour une sélection, rappeler avec
+   les mêmes arguments et `confirmed=True`. Pour un sample/projet, appeler le
+   téléchargement choisi à l'étape 1 seulement après confirmation. Ne remplacer
+   jamais silencieusement un scope multi-projets par le dernier projet vu.
+5. **Après le résultat.** Si l'export réussit, annoncer le lien de téléchargement,
+   la source, le scope effectivement exporté et la prochaine analyse possible.
+   Si EcoTaxa retourne `EXPORT_FAILED`, reprendre son message, signaler que les
+   objets n'ont pas été téléchargés, puis proposer une prévisualisation ou un
+   résumé read-only ; ne fabriquer aucun résultat partiel.
+
+Les filtres suivent toujours le plan confirmé : `status="V"` signifie validés
+seulement, `status="P"` prédits seulement et `status=""` tous les statuts.
+`taxon` est optionnel ; les filtres de profondeur sont disponibles pour un export
+de projet. Ne télécharge pas des objets pour obtenir simplement un count, un
+schéma, un aperçu, ou les V/P/D/U : ces besoins restent couverts par le cache et
+les outils de résumé légers.
+
 ---
 
 ## Scénarios de navigation — arbre de décision complet
