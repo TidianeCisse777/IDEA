@@ -324,9 +324,9 @@ EXTRA_CASES: list[dict[str, Any]] = [
             )
         },
         "outputs": {
-            "expected_sequence": ["get_ecotaxa_cache_status"],
+            "expected_sequence": ["query_ecotaxa_cache"],
             "required_tool_args": [
-                {"name": "get_ecotaxa_cache_status", "args": {}},
+                {"name": "query_ecotaxa_cache", "args": {}},
             ],
             "forbidden_tools": [
                 "find_ecotaxa_samples_in_region",

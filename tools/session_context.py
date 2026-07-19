@@ -97,7 +97,10 @@ def _working_tables(
             continue  # already the headline active dataset
         rows = meta.get("n_rows")
         rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
-        found.append((variable, _clean(source or "derived", limit=60), rows_text))
+        description = _clean(meta.get("description") or "", limit=100)
+        found.append(
+            (variable, _clean(source or "derived", limit=60), rows_text, description)
+        )
     return sorted(set(found))
 
 
@@ -119,7 +122,8 @@ def _loaded_files(store: SessionStore, thread_id: str) -> list[tuple[str, str, s
         path = _clean(meta.get("path") or source[len("file:"):], limit=120)
         rows = meta.get("n_rows")
         rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
-        found.append((variable, path, rows_text))
+        description = _clean(meta.get("description") or "", limit=100)
+        found.append((variable, path, rows_text, description))
     return sorted(set(found))
 
 
@@ -202,9 +206,11 @@ def build_dataset_state_capsule(
         "depth": detect_column(dataframe.columns, DEFAULT_DEPTH_CANDIDATES),
     }
 
+    description = _clean(meta.get("description") or "", limit=140)
     fields = [
         f"variable={variable}",
         f"source={source}",
+        *( [f"description={description}"] if description else [] ),
         f"shape={rows}x{columns}",
         "aliases=" + (",".join(aliases) if aliases else "none"),
         "identity_columns=" + (
@@ -309,7 +315,8 @@ def build_dataset_state_capsule(
         listed = tables[:_MAX_WORKING_TABLES]
         lines = "\n".join(
             f"- {variable}: source={source}, rows={rows}"
-            for variable, source, rows in listed
+            + (f", desc={description}" if description else "")
+            for variable, source, rows, description in listed
         )
         more = (
             f"\n- (+{len(tables) - len(listed)} more)"
@@ -329,7 +336,9 @@ def build_dataset_state_capsule(
     if len(files) > 1:
         listed = files[:_MAX_LOADED_FILES]
         lines = "\n".join(
-            f"- {variable}: path={path}, rows={rows}" for variable, path, rows in listed
+            f"- {variable}: path={path}, rows={rows}"
+            + (f", desc={description}" if description else "")
+            for variable, path, rows, description in listed
         )
         more = (
             f"\n- (+{len(files) - len(listed)} more)"

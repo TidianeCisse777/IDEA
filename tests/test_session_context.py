@@ -463,3 +463,64 @@ def test_capsule_surfaces_derived_working_tables_without_stale_ids(tmp_path):
     assert "df_ecotaxa_42" not in capsule
     assert "project_id=42" not in capsule
     assert "42000002" not in capsule
+
+
+def test_capsule_working_table_shows_its_description(tmp_path):
+    """A derived table carrying a `description` surfaces it in WORKING TABLES —
+    parity with EcoTaxa selections/campaigns — so the agent can tell a join or
+    analysis apart by what it is, not just by an opaque variable name."""
+    store = SessionStore(tmp_path)
+    thread_id = "desc-context"
+
+    store_dataset(
+        store, thread_id,
+        pd.DataFrame({"station_id": ["s1"], "temp": [4.0]}),
+        variable_name="df_join_ab12cd34ef56",
+        meta={
+            "source": "analysis:join",
+            "n_rows": 1,
+            "description": "Jointure df_file_net × df_ctd sur station_id",
+        },
+    )
+    # Active df = a loaded file, so the join is a non-active working table.
+    store_dataset(
+        store, thread_id,
+        pd.DataFrame({"latitude": [67.0], "longitude": [-63.0]}),
+        variable_name="df_file_net",
+        meta={"source": "file:/d/net.tsv", "path": "/d/net.tsv", "n_rows": 1},
+        latest_alias="active",
+        is_loaded_file=True,
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "df_join_ab12cd34ef56" in capsule
+    assert "Jointure df_file_net × df_ctd sur station_id" in capsule
+
+
+def test_capsule_loaded_file_shows_its_description(tmp_path):
+    """A loaded file carrying a `description` surfaces it in LOADED FILES, so a
+    multi-file roster is readable by what each file is, not only by path."""
+    store = SessionStore(tmp_path)
+    thread_id = "desc-files"
+
+    for name, desc in (("net", "Comptages filet NeoLabs"), ("ctd", "Profils CTD")):
+        store_dataset(
+            store, thread_id,
+            pd.DataFrame({"latitude": [67.0], "longitude": [-63.0]}),
+            variable_name=f"df_file_{name}",
+            meta={
+                "source": f"file:/d/{name}.tsv",
+                "path": f"/d/{name}.tsv",
+                "n_rows": 1,
+                "description": desc,
+            },
+            latest_alias="active" if name == "ctd" else None,
+            is_loaded_file=True,
+        )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "LOADED FILES" in capsule
+    assert "Comptages filet NeoLabs" in capsule
+    assert "Profils CTD" in capsule

@@ -386,6 +386,29 @@ def get_project_signature(
     return (int(row[0]), round(float(row[1]), 4), round(float(row[2]), 4))
 
 
+def project_is_fully_unenriched(
+    conn: sqlite3.Connection, project_id: int
+) -> bool:
+    """True when the project has cached samples but not one carries taxo stats.
+
+    Distinguishes a whole-project enrichment drop (e.g. the taxo-stats batch
+    failing for a large project) from the normal case where a few samples have
+    no classifiable object. Used by the incremental sync to re-sync a
+    signature-unchanged project whose local rows never got enriched, instead of
+    skipping it forever. Requires *some* samples so an empty project is not
+    endlessly re-synced.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS total, COUNT(nb_validated) AS enriched "
+        "FROM samples_cache WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    if not row:
+        return False
+    total, enriched = int(row[0]), int(row[1])
+    return total > 0 and enriched == 0
+
+
 def upsert_project_signature(
     conn: sqlite3.Connection,
     *,
