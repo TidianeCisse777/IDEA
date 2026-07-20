@@ -16,7 +16,7 @@ from core.environment_resolver.column_detection import (
 )
 from tools.session_store import SessionStore
 
-_MAX_CAPSULE_CHARS = 2000
+_MAX_CAPSULE_CHARS = 12000
 _IDENTITY_COLUMNS = tuple(dict.fromkeys((
     "project_id",
     "sample_id",
@@ -72,8 +72,8 @@ _STALE_ID_KEYS = ("project_id", "sample_id", "sample_ids")
 
 def _working_tables(
     store: SessionStore, thread_id: str, *, active_variable: str
-) -> list[tuple[str, str, str]]:
-    """Return (variable, source, rows) for derived working tables.
+) -> list[tuple[str, str, str, str]]:
+    """Return (variable, source, rows, description) for working tables.
 
     These are results that are neither loaded files nor zone subsets — EcoTaxa
     cache queries (`df_ecotaxa_cache_query`), joins, enrichment outputs. Surfacing
@@ -83,17 +83,22 @@ def _working_tables(
     external project/sample id (`_STALE_ID_KEYS`) are skipped so no stale
     identifier is re-exposed.
     """
-    found: list[tuple[str, str, str]] = []
+    found: list[tuple[str, str, str, str]] = []
     for key in store.keys(prefix=f"{thread_id}:dataset:"):
         entry = store.get(key)
         meta = (entry or {}).get("meta") or {}
         source = str(meta.get("source") or "")
         if source.startswith("file:") or meta.get("zone_canonical"):
             continue  # already surfaced by _loaded_files / _live_zone_subsets
-        if any(meta.get(id_key) is not None for id_key in _STALE_ID_KEYS):
+        if meta.get("alias_of"):
+            continue  # moving compatibility alias, not a distinct working table
+        if (
+            source != "ecotaxa_selection"
+            and any(meta.get(id_key) is not None for id_key in _STALE_ID_KEYS)
+        ):
             continue  # raw project/sample-keyed export — keep hidden
         variable = _clean(meta.get("variable_name") or key.rsplit(":", 1)[-1], limit=80)
-        if variable == active_variable:
+        if variable == active_variable and source != "ecotaxa_selection":
             continue  # already the headline active dataset
         rows = meta.get("n_rows")
         rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
@@ -312,15 +317,19 @@ def build_dataset_state_capsule(
     working_block = ""
     tables = _working_tables(store, thread_id, active_variable=variable)
     if tables:
-        listed = tables[:_MAX_WORKING_TABLES]
+        # Every named EcoTaxa selection remains visible for the life of the
+        # conversation. Only unrelated derived tables use the compact cap.
+        selections = [item for item in tables if item[1] == "ecotaxa_selection"]
+        other_tables = [item for item in tables if item[1] != "ecotaxa_selection"]
+        listed = [*selections, *other_tables[:_MAX_WORKING_TABLES]]
         lines = "\n".join(
             f"- {variable}: source={source}, rows={rows}"
             + (f", desc={description}" if description else "")
             for variable, source, rows, description in listed
         )
         more = (
-            f"\n- (+{len(tables) - len(listed)} more)"
-            if len(tables) > len(listed)
+            f"\n- (+{len(other_tables) - _MAX_WORKING_TABLES} other derived tables)"
+            if len(other_tables) > _MAX_WORKING_TABLES
             else ""
         )
         working_block = (

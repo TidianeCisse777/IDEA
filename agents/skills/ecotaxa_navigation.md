@@ -46,9 +46,17 @@ paginated object browsing. They remain registered only for compatibility.
 ## Cache-first route
 
 `query_ecotaxa_cache` accepts read-only `SELECT` and `WITH`/CTE queries,
-including joins, subqueries and aggregations. It stores the complete result in
-`df_ecotaxa_cache_query`; add `LIMIT` only when the user asks for an overview,
-top, or page.
+including joins, subqueries and aggregations. Add `LIMIT` only when the user
+asks for an overview, top, or page.
+
+When a query returns `sample_id`, pass a short descriptive `selection_name`
+(for example `baffin_2024` or `project_17498_deep`). The complete result is
+persisted under a stable unique `df_ecotaxa_selection_*` variable. Every saved
+selection remains available in `WORKING TABLES` for `run_pandas` and
+`run_graph` until the conversation is cleared. `df_ecotaxa_cache_query` and
+`latest` always point to the newest result; they do not replace older named
+selections. Reuse the exact saved variable whose description matches the
+follow-up instead of rerunning its SQL.
 
 Use the table map once when the schema is unknown, before a join, or after an
 unknown-column error. Otherwise query directly. Use the single-table

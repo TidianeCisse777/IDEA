@@ -891,6 +891,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - `df_sql`       : dernière copie SQL matérialisée
         - `loaded_file`  : fichier original chargé, immuable comme table de référence
         - `df_file_*`    : fichiers chargés, y compris après une requête EcoTaxa
+        - `df_ecotaxa_selection_*`: sélections cache EcoTaxa persistantes et
+          simultanément réutilisables par leur nom exact dans WORKING TABLES
+        - `df_ecotaxa_cache_query`: alias de la dernière requête cache EcoTaxa
 
         Pour comparer un fichier et EcoTaxa, utilise `loaded_file` ou le
         `df_file_*` correspondant comme table de gauche et

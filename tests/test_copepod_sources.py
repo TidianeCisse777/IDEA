@@ -2035,7 +2035,7 @@ def test_query_ecotaxa_cache_keeps_complete_agent_result(tmp_path, monkeypatch):
 
     session = store.get("sql-full-thread")
     assert session["df"].shape == (1001, 1)
-    assert "aperçu de 50 lignes sur 1001" in result
+    assert "aperçu de 10 lignes sur 1001" in result
 
 
 def test_query_ecotaxa_cache_memorizes_exportable_selection(tmp_path, monkeypatch):
@@ -2076,7 +2076,10 @@ def test_query_ecotaxa_cache_memorizes_exportable_selection(tmp_path, monkeypatc
     # campaign: it remains the active DataFrame for a subsequent analysis.
     active = _store.get(thread_id)
     assert active is not None
-    assert active["meta"]["variable_name"] == "df_ecotaxa_cache_query"
+    assert active["meta"]["variable_name"].startswith(
+        "df_ecotaxa_selection_samples_"
+    )
+    assert latest["meta"]["variable_name"] == active["meta"]["variable_name"]
     assert active["df"].to_dict("records") == [
         {"sample_id": 101},
         {"sample_id": 102},

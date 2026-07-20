@@ -1,6 +1,7 @@
 """tools/copepod_sources.py — LangChain tools pour accès EcoTaxa/EcoPart."""
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import unicodedata
@@ -698,6 +699,27 @@ def make_source_tools(thread_id: str) -> list:
         if project_ids:
             parts.append("projects_" + "_".join(str(int(pid)) for pid in project_ids[:4]))
         return "_".join(part for part in parts if part)
+
+    def _persistent_cache_selection_identity(
+        *,
+        sql: str,
+        sample_ids: list[int],
+        requested_name: str | None,
+    ) -> tuple[str, str, str]:
+        """Return stable selection, dataframe and human label identifiers."""
+
+        compact_sql = " ".join(str(sql).split())
+        label = str(requested_name or "samples").strip() or "samples"
+        slug = _slug_part(label)[:48] or "samples"
+        digest_source = compact_sql + "\n" + ",".join(
+            str(int(sample_id)) for sample_id in sample_ids
+        )
+        short_id = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:8]
+        selection_key = f"selection_{slug}_{short_id}"
+        variable_name = dataset_variable_name(
+            "ecotaxa", "selection", slug, short_id
+        )
+        return selection_key, variable_name, label
 
     def _store_sample_selection(
         *,
@@ -3640,8 +3662,19 @@ def make_source_tools(thread_id: str) -> list:
         )
 
     @tool(response_format="content_and_artifact")
-    def query_ecotaxa_cache(sql: str) -> str:
+    def query_ecotaxa_cache(
+        sql: str,
+        selection_name: str | None = None,
+    ) -> str:
         """Exécute un SELECT ou WITH/CTE libre sur le cache SQLite EcoTaxa local.
+
+        Args:
+            sql: Requête SQLite read-only à exécuter.
+            selection_name: Nom descriptif facultatif pour une requête qui
+                retourne `sample_id` (ex. `baffin_2024`). Chaque sélection est
+                persistée sous un DataFrame unique et reste disponible dans le
+                sandbox pendant toute la conversation. Si absent, `samples`
+                est utilisé avec un identifiant stable dérivé du contenu.
 
         Routing requirement: before calling this tool in an agent turn, call
         `load_skill("ecotaxa_navigation")` first unless it has already been
@@ -3664,9 +3697,10 @@ def make_source_tools(thread_id: str) -> list:
         sous-requêtes et agrégations. La connexion SQLite est ouverte en mode
         lecture seule et `query_only`; toute écriture reste impossible. Aucun
         LIMIT n'est ajouté par défaut :
-        le résultat complet est conservé dans `df_ecotaxa_cache_query`. Ajouter
-        un LIMIT uniquement si l'utilisateur demande explicitement un aperçu,
-        un top ou une pagination.
+        le résultat complet est conservé sous un nom unique quand il contient
+        `sample_id`; `df_ecotaxa_cache_query` reste l'alias de la dernière
+        requête. Ajouter un LIMIT uniquement si l'utilisateur demande
+        explicitement un aperçu, un top ou une pagination.
 
         Zones nommées — règle stricte : utiliser la colonne `iho_zone`
         pré-calculée par point-in-polygon. Ne jamais écrire de bornes lat/lon
@@ -3846,73 +3880,108 @@ def make_source_tools(thread_id: str) -> list:
             return _eco_empty("La requête n'a retourné aucune ligne.")
 
         dataframe = pd.DataFrame.from_records(rows, columns=columns)
-        variable_name = "df_ecotaxa_cache_query"
-        store_dataset(
-            _store,
-            thread_id,
-            dataframe,
-            variable_name=variable_name,
-            meta={
-                "source": "ecotaxa_cache",
-                "sql": sql,
-                "n_rows": len(dataframe),
-                "n_cols": len(dataframe.columns),
-                "truncated": truncated,
-            },
-        )
+        latest_variable = "df_ecotaxa_cache_query"
+        base_meta = {
+            "source": "ecotaxa_cache",
+            "sql": sql,
+            "n_rows": len(dataframe),
+            "n_cols": len(dataframe.columns),
+            "truncated": truncated,
+        }
 
-        # Campagne → export : dès qu'une exploration SQL renvoie des `sample_id`,
-        # la mémoriser comme sélection exportable (`latest`). N'importe quelle
-        # campagne (zone + temps + taxon…) devient ainsi exportable directement
-        # via `export_ecotaxa_samples(selection_name="latest")`, sans que le
-        # modèle ait à ré-extraire les identifiants à la main.
+        # Every sample-level SQL result becomes its own persistent sandbox table.
+        # The legacy variable remains a moving alias to the latest query.
         selection_note = ""
-        if "sample_id" in dataframe.columns:
-            id_series = pd.to_numeric(dataframe["sample_id"], errors="coerce").dropna()
-            sids = [int(s) for s in dict.fromkeys(id_series.tolist())]
-            selection_samples: list[dict] = []
-            if sids and "project_id" in dataframe.columns:
-                pairs = dataframe[["sample_id", "project_id"]].dropna().drop_duplicates()
-                for row in pairs.itertuples(index=False):
-                    try:
-                        selection_samples.append(
-                            {"sample_id": int(row.sample_id), "project_id": int(row.project_id)}
-                        )
-                    except (TypeError, ValueError):
-                        continue
-            elif sids:
-                # project_id absent du SELECT → le résoudre depuis le cache.
+        persisted_variable = latest_variable
+        id_series = (
+            pd.to_numeric(dataframe["sample_id"], errors="coerce").dropna()
+            if "sample_id" in dataframe.columns
+            else pd.Series(dtype="int64")
+        )
+        sample_ids = [int(value) for value in dict.fromkeys(id_series.tolist())]
+        if sample_ids:
+            project_ids: list[int] = []
+            if "project_id" in dataframe.columns:
+                project_series = pd.to_numeric(
+                    dataframe["project_id"], errors="coerce"
+                ).dropna()
+                project_ids = sorted({int(value) for value in project_series.tolist()})
+            if not project_ids:
                 try:
-                    mapping = resolve_sample_projects(sids)
-                except Exception:
-                    mapping = {}
-                selection_samples = [
-                    {"sample_id": int(s), "project_id": int(p)} for s, p in mapping.items()
-                ]
-            if selection_samples:
-                try:
-                    # Register only the selection METADATA (sample/project ids)
-                    # for export — never rebuild/overwrite the active dataframe,
-                    # which must stay the exact SQL result the campaign returned.
-                    sel_sample_ids = [int(s["sample_id"]) for s in selection_samples]
-                    sel_project_ids = sorted({int(s["project_id"]) for s in selection_samples})
-                    sel_name = _selection_name()
-                    sel_meta = {
-                        "selection_name": sel_name,
-                        "sample_ids": sel_sample_ids,
-                        "project_ids": sel_project_ids,
-                        "n_samples": len(sel_sample_ids),
-                        "filters": {"sql": sql},
-                        "source": "ecotaxa_selection",
-                    }
-                    _store.set(f"{thread_id}:selection:{sel_name}", None, sel_meta)
-                    _store.set(f"{thread_id}:ecotaxa_selection_latest", None, sel_meta)
-                    selection_note = (
-                        f"\n\nLa sélection complète de {len(sel_sample_ids)} samples est conservée "
-                        "pour l’analyse ou l’export."
+                    project_ids = sorted(
+                        {int(value) for value in resolve_sample_projects(sample_ids).values()}
                     )
                 except Exception:
-                    selection_note = ""
+                    project_ids = []
+
+            selection_key, persisted_variable, label = (
+                _persistent_cache_selection_identity(
+                    sql=sql,
+                    sample_ids=sample_ids,
+                    requested_name=selection_name,
+                )
+            )
+            compact_sql = " ".join(str(sql).split())
+            description = (
+                f"Sélection EcoTaxa « {label} » · {len(sample_ids)} samples · "
+                f"{len(project_ids)} projets · SQL: {compact_sql[:180]}"
+            )
+            selection_meta = {
+                **base_meta,
+                "source": "ecotaxa_selection",
+                "selection_name": selection_key,
+                "sample_ids": sample_ids,
+                "project_ids": project_ids,
+                "n_samples": len(sample_ids),
+                "filters": {"sql": sql},
+                "description": description,
+            }
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=persisted_variable,
+                meta=selection_meta,
+            )
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=latest_variable,
+                meta={
+                    **base_meta,
+                    "alias_of": persisted_variable,
+                    "description": f"Alias vers la dernière sélection : {persisted_variable}",
+                },
+                set_active=False,
+            )
+            stored_selection_meta = {
+                **selection_meta,
+                "variable_name": persisted_variable,
+            }
+            _store.set(
+                f"{thread_id}:selection:{selection_key}",
+                None,
+                stored_selection_meta,
+            )
+            _store.set(
+                f"{thread_id}:ecotaxa_selection_latest",
+                None,
+                stored_selection_meta,
+            )
+            selection_note = (
+                f"\n\nLa sélection complète de {len(sample_ids)} samples est "
+                f"conservée dans `{persisted_variable}` sous le nom "
+                f"`{selection_key}` ; `latest` pointe vers cette sélection."
+            )
+        else:
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=latest_variable,
+                meta=base_meta,
+            )
 
         header = "| " + " | ".join(columns) + " |"
         separator = "|" + "|".join("---" for _ in columns) + "|"
@@ -3924,8 +3993,9 @@ def make_source_tools(thread_id: str) -> list:
             for row in preview_rows
         ]
         note = (
-            f"\n_(aperçu de 50 lignes sur {len(rows)} ; résultat complet dans "
-            "`df_ecotaxa_cache_query`)_"
+            f"\n_(aperçu de {len(preview_rows)} lignes sur {len(rows)} ; "
+            f"résultat complet dans `{persisted_variable}` ; "
+            "`df_ecotaxa_cache_query` pointe vers la dernière requête)_"
             if len(rows) > len(preview_rows) else ""
         )
         if truncated:
@@ -3970,7 +4040,7 @@ def make_source_tools(thread_id: str) -> list:
         body = "\n".join([*selection_overview, *summary, header, separator, *data_lines]) + note + selection_note
         return _eco_success(
             body,
-            data_ref=variable_name,
+            data_ref=persisted_variable,
             persisted=True,
             metrics={"rows": len(rows), "truncated": truncated},
         )
