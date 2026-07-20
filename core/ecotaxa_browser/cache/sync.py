@@ -342,16 +342,13 @@ def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int,
             ("profileid", "profile_id", "profile", "sample_profileid"),
         )
         # Cruise projects (e.g. Amundsen UVP6) often carry no station/profile
-        # free-column at all: EcoTaxa then encodes the cast (deployment) identity
-        # only in orig_id, where a trailing "_<n>" indexes the samples of one
-        # cast (e.g. "am_leg2_hopedalesaddle_1" and "_2" are two samples of the
-        # hopedalesaddle cast). Derive the cast into profile_id when absent —
-        # never overriding a native value. This lets samples be counted per cast.
-        # station_id is deliberately left to EcoTaxa's own field: a cast is NOT a
-        # station, and this project carries no separate station data, so no
-        # station is fabricated.
+        # free-column: EcoTaxa encodes the cast identity only in orig_id, where
+        # a trailing "_<n>" indexes the samples of one cast. Derive profile_id
+        # and station_id when absent — never overriding native values.
         if original_id and profile_id is None:
             profile_id = _cast_from_orig_id(original_id)
+        if original_id and station_id is None:
+            station_id = _station_from_orig_id(original_id)
         metadata[sample_id] = {
             "original_id": original_id,
             # Authoritative per-sample position from list_samples. EcoTaxa
@@ -372,15 +369,35 @@ def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int,
 
 
 _CAST_SUFFIX_RE = re.compile(r"_\d+$")
+# Cruise prefix patterns: am_leg2_, amundsen2024_, gn2015_, uvp6_sn..._2024_am_leg2_, etc.
+_CRUISE_PREFIX_RE = re.compile(
+    r"^(?:uvp\d*_sn[^_]+_\d+_)?(?:[a-z]{1,6}\d{0,4}_(?:leg\d+_)?)",
+    re.IGNORECASE,
+)
 
 
 def _cast_from_orig_id(orig_id: str) -> str:
-    """Cast (deployment) identity derived from a sample orig_id by dropping a
-    trailing ``_<n>`` sample index. Samples that share the base belong to the
-    same cast (e.g. ``..._1`` and ``..._2`` are two samples of one cast). Falls
-    back to orig_id itself when there is no such suffix (a single-sample cast).
-    A cast is NOT a station — station stays whatever EcoTaxa provides."""
+    """Cast identity from orig_id: drop trailing ``_<n>`` sample index."""
     return _CAST_SUFFIX_RE.sub("", orig_id) or orig_id
+
+
+def _station_from_orig_id(orig_id: str) -> str | None:
+    """Best-effort station name from orig_id when EcoTaxa provides no station field.
+
+    Strips known cruise prefixes (``am_leg2_``, ``gn2015_``, …) and the
+    trailing cast-index suffix, returning the middle token as a normalized
+    lowercase key. Returns None when the result is empty or looks like a
+    bare numeric.
+    Examples:
+      am_leg2_tcaqf3_2  → tcaqf3   (matches NeoLabs TCA-QF3 after normalization)
+      am_leg2_b5        → b5
+      gn2015_l2_012     → l2
+    """
+    stripped = _CRUISE_PREFIX_RE.sub("", orig_id)
+    station = _CAST_SUFFIX_RE.sub("", stripped).strip("_")
+    if not station or station.isdigit():
+        return None
+    return station.lower()
 
 
 def _first_optional_str(values: dict, keys: tuple[str, ...]) -> str | None:

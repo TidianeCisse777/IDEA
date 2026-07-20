@@ -25,7 +25,20 @@ import numpy as np
 import pandas as pd
 
 
-NET_UVP_MATCH_METHOD_VERSION = "net-uvp-spatial-match-v1"
+NET_UVP_MATCH_METHOD_VERSION = "net-uvp-station-date-match-v2"
+
+
+def _normalize_station(name: str | None) -> str:
+    """Lowercase + strip dashes/underscores for fuzzy station name matching.
+
+    TCA-QF3 → tcaqf3, am_leg2_tcaqf3 → tcaqf3 (after cruise prefix removal).
+    """
+    if not name:
+        return ""
+    import re
+    # Strip cruise prefix (am_leg2_, gn2015_, etc.)
+    s = re.sub(r"^(?:[a-z]{1,6}\d{0,4}_(?:leg\d+_)?)", "", str(name), flags=re.IGNORECASE)
+    return re.sub(r"[-_\s]", "", s).lower()
 NET_UVP_COMPARE_METHOD_VERSION = "net-uvp-density-compare-v1"
 
 _EARTH_RADIUS_KM = 6371.0
@@ -126,12 +139,38 @@ def match_net_to_uvp(
     if uvp_time_col and uvp_time_col in uvp.columns:
         uvp_time = pd.to_datetime(uvp[uvp_time_col], errors="coerce", utc=True)
 
+    # Pre-compute normalized station names for UVP (from station_id column when available).
+    uvp_station_col = "station_id" if "station_id" in uvp.columns else None
+    uvp_norm_stations: list[str] = []
+    if uvp_station_col:
+        uvp_norm_stations = [_normalize_station(v) for v in uvp[uvp_station_col]]
+
     rows: list[dict] = []
     for pos, (idx, net_row) in enumerate(net.iterrows()):
+        net_station_norm = _normalize_station(str(net_row.get(net_station_col) or net_row[net_id_col]))
+
+        # Strategy 1: station name match (exact normalized) + date filter.
+        station_idx: int | None = None
+        if uvp_norm_stations and net_station_norm:
+            for i, s in enumerate(uvp_norm_stations):
+                if s and s == net_station_norm:
+                    station_idx = i
+                    break
+
+        # Strategy 2: spatial fallback (nearest within max_km).
         dkm = haversine_km(net_lat.iloc[pos], net_lon.iloc[pos], u_lat, u_lon)
-        nearest = int(np.argmin(dkm))
-        distance = float(dkm[nearest])
-        if distance > max_km:
+        spatial_nearest = int(np.argmin(dkm))
+        spatial_distance = float(dkm[spatial_nearest])
+
+        if station_idx is not None:
+            nearest = station_idx
+            distance = float(dkm[nearest])
+            match_method = "station_name"
+        elif spatial_distance <= max_km:
+            nearest = spatial_nearest
+            distance = spatial_distance
+            match_method = "spatial"
+        else:
             continue
 
         time_gap = None
@@ -152,7 +191,7 @@ def match_net_to_uvp(
         rows.append(
             {
                 "net_sample_id": net_row[net_id_col],
-                "station": net_row.get(net_station_col),
+                "station": net_row.get(net_station_col) or net_row[net_id_col],
                 "latitude": float(net_lat.iloc[pos]),
                 "longitude": float(net_lon.iloc[pos]),
                 "net_datetime": net_time.iloc[pos] if net_time is not None else None,
@@ -162,6 +201,7 @@ def match_net_to_uvp(
                 "distance_km": round(distance, 3),
                 "time_gap_days": round(time_gap, 1) if time_gap is not None else None,
                 "match_status": status,
+                "match_method": match_method,
                 "method_version": NET_UVP_MATCH_METHOD_VERSION,
             }
         )
@@ -180,6 +220,7 @@ def match_net_to_uvp(
             "distance_km",
             "time_gap_days",
             "match_status",
+            "match_method",
             "method_version",
         ],
     )
