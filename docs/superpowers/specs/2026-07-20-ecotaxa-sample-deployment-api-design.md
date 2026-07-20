@@ -164,6 +164,14 @@ After sample statistics are fetched:
 - an empty sample has exact zero counts, 100% metadata coverage, no temporal or
   depth envelope, zero missing-value counts, and no invented values.
 
+If sample statistics are unavailable or contain no entry for a sample,
+`object_count`, V/P/D/U, `metadata_complete`, `metadata_coverage_pct`, and
+`depth_complete` remain null for that sample. The synchronization may still
+cache its identity, position, and scanned envelopes, but it must not substitute
+the capped object-scan count. A real empty sample is distinguishable because
+EcoTaxa sample statistics return an explicit record whose four counters are
+zero.
+
 Because the project scan remains capped, some samples will legitimately have
 partial or absent envelopes. Their exact counts and positions remain usable,
 but temporal/depth filters must not treat their absence as proof that they do
@@ -235,6 +243,9 @@ are never presented as the definitive deployment envelope.
 - A cache row with null or incomplete metadata remains a valid sample row. The
   agent reports incomplete coverage instead of converting null to zero or
   claiming absence.
+- Failure of one cache sample-stat batch is non-fatal for synchronization, but
+  all count and completeness fields for affected samples remain null; no scan
+  count is promoted to an authoritative total.
 
 ## Tool and instruction behavior
 
