@@ -779,7 +779,8 @@ def test_run_graph_requires_graph_writer_after_loaded_analysis_skill(tmp_path):
     ]
 
 
-def test_run_graph_blocks_missing_graph_contract(tmp_path):
+def test_run_graph_infers_generic_contract_when_missing(tmp_path):
+    """A plain matplotlib figure without graph_contract now auto-infers a generic contract."""
     thread_id = "thread-missing-graph-contract"
     store = SessionStore(tmp_path / "sessions")
     store.set(
@@ -790,14 +791,10 @@ def test_run_graph_blocks_missing_graph_contract(tmp_path):
     run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
 
     result = run_graph.invoke({
-        "code": "fig, ax = plt.subplots(); ax.plot(df['x'], df['y'])",
+        "code": "fig, ax = plt.subplots(); ax.set_xlabel('x'); ax.set_ylabel('y'); ax.plot(df['x'], df['y'])",
     })
 
-    assert "graph contract blocked: graph_contract is missing" in result
-    assert "Retry exactly once" in result
-    assert "same active dataframe" in result
-    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is True
-    assert "/graphs/" not in result
+    assert "/graphs/" in result
 
 
 def test_run_graph_upgrades_an_unambiguous_lat_lon_scatter_to_station_map(tmp_path):

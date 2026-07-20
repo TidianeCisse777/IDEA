@@ -401,6 +401,30 @@ def _infer_station_map_contract(figure: Any) -> dict[str, Any] | None:
     }
 
 
+def _infer_generic_contract(figure: Any) -> dict[str, Any] | None:
+    """Minimal graph_contract for a plain matplotlib figure with no Cartopy axes.
+
+    Used as a last-resort fallback when the model omitted graph_contract entirely.
+    Reads x/y labels from the first axis to fill the role fields.
+    """
+    axes = list(getattr(figure, "axes", []))
+    if not axes:
+        return None
+    if any(a.__class__.__module__.startswith("cartopy.") for a in axes):
+        return None
+    axis = axes[0]
+    x_role = str(axis.get_xlabel() or "x").strip() or "x"
+    y_role = str(axis.get_ylabel() or "y").strip() or "y"
+    return {
+        "kind": "generic",
+        "axes": [{"axis_index": 0, "x": x_role, "y": y_role}],
+        "inverted_axes": [],
+        "mappings": {},
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": [x_role, y_role],
+    }
+
+
 def _upgrade_plain_lat_lon_scatter_to_station_map(figure: Any, plt: Any) -> Any | None:
     """Convert an unambiguous longitude/latitude scatter into a safe map.
 
@@ -1165,6 +1189,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         if upgraded_figure is not None:
                             figure = upgraded_figure
                             graph_contract = _infer_station_map_contract(figure)
+                    # Last-resort fallback: plain matplotlib figure, no contract → infer generic.
+                    if graph_contract is None:
+                        graph_contract = _infer_generic_contract(figure)
                     contract_issue = validate_graph_contract(graph_contract, figure)
                     if contract_issue:
                         plt.close("all")
