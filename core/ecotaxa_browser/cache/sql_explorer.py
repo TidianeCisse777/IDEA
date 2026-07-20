@@ -14,8 +14,8 @@ _HARD_CAP = 500
 # Ordered for presentation: most useful table first.
 CACHE_TABLES: dict[str, str] = {
     "samples_cache": (
-        "Index spatio-temporel de tous les samples EcoTaxa "
-        "(lat/lon/dates/profondeur/instrument/station). "
+        "EcoTaxa sample-level positions, date/time envelopes, depth envelopes, "
+        "instruments, authoritative sample-stat counts, and metadata completeness. "
         "Table principale pour l'exploration géographique et temporelle."
     ),
     "objects_cache": (

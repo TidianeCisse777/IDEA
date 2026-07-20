@@ -3620,13 +3620,14 @@ def make_source_tools(thread_id: str) -> list:
         Remplace tout pattern nécessitant plusieurs appels ou un export pour
         un comptage, regroupement ou filtrage arbitraire.
 
-        Explorer les objets : la table `objects_cache` (indexée dans les caches
-        enrichis) permet d'agréger les objets par taxon, statut, sample, date ou
-        profondeur en SQL — vérifie sa présence avec `describe_ecotaxa_cache_table`
-        avant, car elle est absente d'un cache non enrichi. Si elle est absente,
-        le cache ne connaît des objets que des agrégats (`samples_cache.object_count`,
-        `project_signatures_cache.pctvalidated`), et le détail objet par objet passe
-        par le chemin live `list_ecotaxa_sample_objects` / `get_ecotaxa_object`.
+        Les comptes sample-level sont directement disponibles dans `samples_cache` :
+        `object_count`, `nb_validated`, `nb_predicted`, `nb_dubious` et
+        `nb_unclassified` proviennent des statistiques EcoTaxa autoritatives. Ne
+        jamais dériver un statut depuis `object_count`. La table `objects_cache`
+        est optionnelle et réservée aux questions explicitement object-level
+        (taxon, statut, date ou profondeur de chaque objet). Vérifier sa présence
+        avec `describe_ecotaxa_cache_table` avant de l'utiliser. Le détail d'un
+        sample résolu peut sinon passer par `summarize_ecotaxa_sample_deployment`.
 
         Seuls les SELECT sont autorisés. Aucun LIMIT n'est ajouté par défaut :
         le résultat complet est conservé dans `df_ecotaxa_cache_query`. Ajouter
@@ -3658,9 +3659,20 @@ def make_source_tools(thread_id: str) -> list:
         | original_id | TEXT | label complet (ex. am_leg4_RA76_1) |
         | station_id | TEXT | station (ex. RA76, St-27), jamais le cast |
         | profile_id | TEXT | identifiant du cast/profil |
-        | object_count | INTEGER | objets imagés |
+        | object_count | INTEGER | total autoritatif des objets du sample |
+        | nb_validated / nb_predicted | INTEGER | comptes V/P autoritatifs au grain sample |
+        | nb_dubious / nb_unclassified | INTEGER | comptes D/U autoritatifs au grain sample |
         | instrument | TEXT | UVP6, UVP5SD, Loki, … |
         | iho_zone | TEXT | zone IHO/MEOW assignée par point-in-polygon (ex. "Baie de Baffin") — utiliser LIKE '%…%' |
+        | datetime_min / datetime_max | TEXT | enveloppe ISO date-heure dérivée des objets |
+        | time_min / time_max | TEXT | enveloppe horaire HH:MM:SS dérivée des objets |
+        | temporal_precision | TEXT | `datetime`, `date`, `partial` ou `none` |
+        | missing_date_count / missing_time_count | INTEGER | objets sans date / heure exploitable |
+        | missing_depth_min_count / missing_depth_max_count | INTEGER | objets sans borne de profondeur |
+        | depth_complete | INTEGER | 1 si le scan et toutes les bornes de profondeur sont complets |
+        | metadata_objects_scanned | INTEGER | nombre d'objets inspectés pour les enveloppes |
+        | metadata_complete | INTEGER | 1 si le scan couvre le total autoritatif sans écart |
+        | metadata_coverage_pct | REAL | pourcentage du total autoritatif inspecté |
 
         **objects_cache** — index objet optionnel, absent du cache standard
         Présente uniquement dans les caches enrichis. Vérifier sa présence avec
@@ -3685,6 +3697,44 @@ def make_source_tools(thread_id: str) -> list:
 
         ## Exemples
         ```sql
+        -- Date envelope overlap, complete metadata only
+        SELECT sample_id, project_id, date_min, date_max, iho_zone
+        FROM samples_cache
+        WHERE metadata_complete = 1
+          AND missing_date_count = 0
+          AND date_min <= '2015-05-22'
+          AND date_max >= '2015-05-20'
+
+        -- Date-time envelope overlap, complete timestamp metadata only
+        SELECT sample_id, project_id, datetime_min, datetime_max, iho_zone
+        FROM samples_cache
+        WHERE metadata_complete = 1
+          AND temporal_precision = 'datetime'
+          AND datetime_min <= '2015-05-22T16:00:00'
+          AND datetime_max >= '2015-05-22T14:00:00'
+
+        -- Hour envelope overlap, normal same-day range
+        SELECT sample_id, project_id, time_min, time_max, iho_zone
+        FROM samples_cache
+        WHERE metadata_complete = 1
+          AND missing_time_count = 0
+          AND time_min <= '16:00:00'
+          AND time_max >= '14:00:00'
+
+        -- Hour envelope overlap across midnight
+        SELECT sample_id, project_id, time_min, time_max, iho_zone
+        FROM samples_cache
+        WHERE metadata_complete = 1
+          AND missing_time_count = 0
+          AND (time_max >= '22:00:00' OR time_min <= '02:00:00')
+
+        -- Complete depth-envelope overlap
+        SELECT sample_id, project_id, depth_min, depth_max, iho_zone
+        FROM samples_cache
+        WHERE depth_complete = 1
+          AND depth_min <= 300
+          AND depth_max >= 100
+
         -- Samples par station (cross-project)
         SELECT sample_id, project_id, original_id, station_id, date_min, depth_max
         FROM samples_cache WHERE station_id LIKE '%RA76%' ORDER BY date_min
@@ -3729,6 +3779,12 @@ def make_source_tools(thread_id: str) -> list:
         SELECT project_id, objcount, pctvalidated, pctclassified
         FROM project_signatures_cache ORDER BY pctvalidated DESC
         ```
+
+        Rows excluded by completeness guards are unknown, not non-matches.
+        Count and report incomplete or partial rows with a second query that
+        preserves the same project and/or `iho_zone` scope. For one resolved
+        incomplete sample, use `summarize_ecotaxa_sample_deployment`; do not
+        launch live detail calls silently for a large batch.
         """
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:

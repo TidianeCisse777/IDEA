@@ -1883,6 +1883,39 @@ def test_query_ecotaxa_cache_persists_select_as_dataframe(tmp_path, monkeypatch)
     assert session["df"].to_dict("records") == [{"station_id": "ST-1", "n": 1}]
 
 
+def test_ecotaxa_cache_contract_exposes_sample_metadata_envelopes_and_coverage():
+    from core.ecotaxa_browser.cache.sql_explorer import CACHE_TABLES
+    from tools.copepod_sources import make_source_tools
+
+    description = next(
+        tool.description
+        for tool in make_source_tools("sql-metadata-contract-thread")
+        if tool.name == "query_ecotaxa_cache"
+    )
+
+    for column in (
+        "datetime_min",
+        "datetime_max",
+        "time_min",
+        "time_max",
+        "temporal_precision",
+        "missing_date_count",
+        "missing_time_count",
+        "missing_depth_min_count",
+        "missing_depth_max_count",
+        "depth_complete",
+        "metadata_objects_scanned",
+        "metadata_complete",
+        "metadata_coverage_pct",
+    ):
+        assert column in description
+    assert "(time_max >= '22:00:00' OR time_min <= '02:00:00')" in description
+    assert "unknown, not non-matches" in description
+    assert "sample-level positions, date/time envelopes, depth envelopes" in (
+        CACHE_TABLES["samples_cache"]
+    )
+
+
 def test_query_ecotaxa_cache_keeps_complete_agent_result(tmp_path, monkeypatch):
     import sqlite3
 

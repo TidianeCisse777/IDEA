@@ -88,7 +88,11 @@ def test_ecotaxa_prompt_distinguishes_samples_casts_and_validated_objects():
 
     assert "profile_id" in text
     assert "never use `sample_id` as a proxy for a cast" in text
-    assert "objects_cache.classification_status" in text
+    assert "samples_cache.nb_validated" in text
+    assert "samples_cache.nb_predicted" in text
+    assert "samples_cache.nb_dubious" in text
+    assert "samples_cache.nb_unclassified" in text
+    assert "only for an explicitly object-level query" in text
     assert "objets validés" in text
     assert "pre-aggregate object metrics by `sample_id`" in text
 

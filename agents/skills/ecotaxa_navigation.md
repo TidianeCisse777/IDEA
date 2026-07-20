@@ -1,6 +1,6 @@
 ---
 name: ecotaxa_navigation
-version: 2.0.0
+version: 2.1.0
 triggers:
   - Explicit EcoTaxa discovery, navigation, read-only inspection, or export planning intent
 forbidden_when:
@@ -32,11 +32,12 @@ Deux skills EcoTaxa, deux niveaux de données. Ne pas les confondre :
 |---|---|---|
 | Niveau | **Sample** (une ligne / sample) | **Objet** (un organisme / vignette) |
 | Source | Cache SQL local (`query_ecotaxa_cache`) | API/export EcoTaxa (`query_ecotaxa`, download TSV) |
-| Répond à | où / quand / quel cast / quel instrument / combien de samples | quels taxons / tailles / statuts V-P-D-U / scores |
+| Répond à | où / quand / quel cast / quel instrument / comptes sample-level V-P-D-U | détail taxon / taille / statut / score de chaque objet |
 | Réseau | non (local) | oui (téléchargement, confirmation) |
 
 Règle : **rester dans ce skill** tant que la question est au niveau sample
-(zones, casts, positions, dates, comptages de samples). **Basculer sur
+(zones, casts, positions, dates/heures/profondeurs, comptages de samples et
+statistiques V/P/D/U au grain sample). **Basculer sur
 `ecotaxa_query`** seulement quand il faut les **objets** (taxons précis, tailles,
 statuts). Le cache trouve les `sample_id` ; l'export analyse leurs objets.
 
@@ -50,12 +51,12 @@ statuts). Le cache trouve les `sample_id` ; l'export analyse leurs objets.
 The cache is a local SQLite database (`data/ecotaxa_cache.sqlite`).
 Write read-only `SELECT` statements — no `INSERT`, `UPDATE`, `DELETE`.
 
-**Le cache est SAMPLE-level, pas object-level.** Il ne contient QUE quatre
-tables : `samples_cache` (une ligne par sample), `project_schemas_cache`,
-`project_signatures_cache`, `sync_runs`. **Il n'y a PAS de table `objects_cache`
-ni d'objets individuels dans le cache** — pour les objets (taxons, statuts V/P/D/U,
-scores) il faut passer par l'API/export (voir plus bas). Ne jamais écrire une
-requête qui lit `objects_cache` : elle échoue, la table n'existe pas.
+**Le chemin par défaut est SAMPLE-level.** `samples_cache` porte une ligne par
+sample, les statistiques autoritatives du sample et les enveloppes dérivées des
+objets. `objects_cache` est optionnelle : ne l'utiliser que pour une question
+explicitement object-level, après avoir vérifié sa présence avec
+`describe_ecotaxa_cache_table`. Son absence ne bloque jamais les agrégats
+sample-level.
 
 ### `samples_cache` — ce qu'on sait vraiment d'un sample
 
@@ -76,22 +77,41 @@ requête qui lit `objects_cache` : elle échoue, la table n'existe pas.
 | `nb_unclassified` | INTEGER | Objets **non classifiés**. |
 | `used_taxa` | TEXT (JSON) | **Liste des taxon_id présents** dans le sample. Permet « quels samples contiennent le taxon X » **depuis le cache** (`WHERE used_taxa LIKE '%25828%'`). IDs → noms via `search_ecotaxa_taxa` / `get_taxon`. |
 | `date_min` / `date_max` | TEXT | Dates ISO issues du scan d'objets (object-level). **Peuvent être NULL** (dates par objet, pas de date au niveau sample). |
+| `datetime_min` / `datetime_max` | TEXT | Enveloppe date-heure ISO dérivée des objets. Exacte seulement avec `metadata_complete = 1` et `temporal_precision = 'datetime'`. |
+| `time_min` / `time_max` | TEXT | Enveloppe horaire `HH:MM:SS` dérivée des objets. Exacte seulement avec `metadata_complete = 1` et `missing_time_count = 0`. |
+| `temporal_precision` | TEXT | `datetime`, `date`, `partial` ou `none` selon les métadonnées temporelles observées. |
 | `depth_min` / `depth_max` | REAL | Profondeurs (m) issues du scan d'objets. **Peuvent être NULL** (même raison). |
+| `missing_date_count` / `missing_time_count` | INTEGER | Nombre d'objets sans date / heure exploitable. |
+| `missing_depth_min_count` / `missing_depth_max_count` | INTEGER | Nombre d'objets sans borne min / max de profondeur. |
+| `depth_complete` | INTEGER | 1 si le scan est complet et toutes les bornes de profondeur sont présentes. |
+| `metadata_objects_scanned` | INTEGER | Nombre d'objets inspectés pour construire les enveloppes. |
+| `metadata_complete` | INTEGER | 1 si le scan couvre le total autoritatif sans divergence. |
+| `metadata_coverage_pct` | REAL | Part du total autoritatif inspectée, en pourcentage. |
 | `free_fields_json` | TEXT | Free-columns brutes du sample (souvent `{}`). |
 | `iho_zone` | TEXT | Zone IHO/MEOW assignée par point-in-polygon au sync (ex. `"Baie de Baffin"`, `"MEOW: Northern Labrador"`, `"Hors zone référencée"`). **Fiable** (dérive de lat/lon). |
 
 **Règle d'or fiabilité** : fiables au niveau sample → `sample_id`, `project_id`,
 `lat_avg`, `lon_avg`, `instrument`, `original_id`, `profile_id`, `iho_zone`,
 `object_count`, `nb_validated/predicted/dubious/unclassified`, `used_taxa` (tous
-via des appels sample-level, sans download). Peuvent être NULL → `date_*` /
-`depth_*` (dérivés des objets), `station_id` (pas de donnée station pour beaucoup
-de projets). Ne jamais présenter un 0/NULL comme un fait négatif sans le signaler.
+via des appels sample-level, sans download). Peuvent être NULL → `date_*`,
+`datetime_*`, `time_*`, `depth_*` (enveloppes dérivées des objets), `station_id`
+(pas de donnée station pour beaucoup de projets). Ne jamais présenter un 0/NULL
+comme un fait négatif sans le signaler. Position et comptes sont autoritatifs au
+niveau sample ; date, heure, date-heure et profondeur restent des enveloppes
+object-derived soumises aux gardes de complétude.
 
 **Le cache répond donc, sans download** : où (`lat/lon`, `iho_zone`), quand
 (`date_*` si dispo), quel cast (`profile_id`), quel instrument, **combien
 d'objets et à quel niveau de validation** (`object_count`, `nb_*`), et **quels
 taxons sont présents** (`used_taxa`). Seuls les objets individuels (tailles,
-scores, position par objet) exigent l'export.
+scores, position ou statut d'un objet précis) exigent `objects_cache` si
+disponible, sinon l'export.
+
+For cross-sample date, hour, date-time, or depth questions, query the cache
+first. Restrict exact envelope claims to complete rows and report how many rows
+in the same scope have unknown or partial metadata. For one resolved incomplete
+sample, use `summarize_ecotaxa_sample_deployment`; never launch that live call
+silently for a large batch.
 
 ### Zone queries — utiliser `iho_zone` directement
 
@@ -153,16 +173,63 @@ protégé. Règles :
 
 ### Common SQL patterns
 
-**Samples in a zone + time window (inclure iho_zone dans le SELECT) :**
+**Date envelope overlap in a zone (inclure `iho_zone` dans le SELECT) :**
 ```sql
 SELECT sample_id, project_id, original_id, lat_avg, lon_avg, iho_zone,
        date_min, date_max, depth_min, depth_max, instrument
 FROM samples_cache
 WHERE iho_zone LIKE '%Baffin%'
-  AND date_min >= '2024-01-01'
-  AND date_max <= '2024-12-31'
+  AND metadata_complete = 1
+  AND missing_date_count = 0
+  AND date_min <= '2024-12-31'
+  AND date_max >= '2024-01-01'
 ORDER BY date_min
 ```
+
+**Date-time envelope overlap, complete timestamp metadata only :**
+```sql
+SELECT sample_id, project_id, datetime_min, datetime_max, iho_zone
+FROM samples_cache
+WHERE metadata_complete = 1
+  AND temporal_precision = 'datetime'
+  AND datetime_min <= '2015-05-22T16:00:00'
+  AND datetime_max >= '2015-05-22T14:00:00'
+```
+
+**Hour envelope overlap, normal same-day range :**
+```sql
+SELECT sample_id, project_id, time_min, time_max, iho_zone
+FROM samples_cache
+WHERE metadata_complete = 1
+  AND missing_time_count = 0
+  AND time_min <= '16:00:00'
+  AND time_max >= '14:00:00'
+```
+
+**Hour envelope overlap across midnight :**
+```sql
+SELECT sample_id, project_id, time_min, time_max, iho_zone
+FROM samples_cache
+WHERE metadata_complete = 1
+  AND missing_time_count = 0
+  AND (time_max >= '22:00:00' OR time_min <= '02:00:00')
+```
+
+**Complete depth-envelope overlap :**
+```sql
+SELECT sample_id, project_id, depth_min, depth_max, iho_zone
+FROM samples_cache
+WHERE depth_complete = 1
+  AND depth_min <= 300
+  AND depth_max >= 100
+```
+
+Dans chaque cas, les lignes exclues par la garde de complétude sont inconnues,
+pas des non-correspondances. Exécuter un second `COUNT(*)` dans le même scope
+`project_id` / `iho_zone` avec la garde complémentaire (`metadata_complete IS
+NOT 1`, compteur manquant non nul, précision inadéquate, ou `depth_complete IS
+NOT 1`) et rapporter ce nombre. Ne pas étendre silencieusement une enveloppe
+partielle en minimum/maximum exact.
 
 **Projects in a zone (aggregate) :**
 ```sql
@@ -209,14 +276,11 @@ GROUP BY iho_zone
 ORDER BY n_samples DESC
 ```
 
-**Audit taxonomique (taxons, statuts V/P/D/U) — PAS dans le cache.**
-Le cache n'a aucune table d'objets : impossible de faire un `GROUP BY taxon` en
-SQL cache. Pour la taxonomie, sortir du cache :
-- taxons dominants + V/P/D/U par sample, sans download → `summarize_ecotaxa_samples(sample_ids=[...])`
-- counts exacts par taxon → export d'objets (`query_ecotaxa` / `export_ecotaxa_samples`), puis `run_pandas`
-Le cache sert à trouver les `sample_id` (par zone/temps/cast) ; l'audit taxo se
-fait ensuite sur ces `sample_id` via l'API/export. Voir la section « Audit
-taxonomique » plus bas.
+**Audit taxonomique : distinguer le grain.** Les V/P/D/U et `object_count` au
+grain sample viennent directement de `samples_cache`. Un `GROUP BY taxon` est
+explicitement object-level : utiliser `objects_cache` seulement si cette table
+optionnelle est présente, sinon exporter les objets après confirmation. Ne
+jamais joindre `objects_cache` pour recalculer les comptes sample-level.
 
 **Casts avec position (pour carte) — toujours inclure lat/lon :**
 ```sql
@@ -248,10 +312,10 @@ Cas limite unique : un sample sans `original_id` du tout (rarissime) aura
 jamais confondre avec `station_id`, qui lui est souvent NULL (voir schéma) : un
 cast n'est pas une station.
 
-**Depth filter — `depth_max`:**
-- `depth_max_gte=200` → `depth_max >= 200` ("descend en-dessous de 200 m")
-- `depth_max_lt=100` → `depth_max < 100` ("n'a pas atteint 100 m")
-- `depth_min_gte=50` → `depth_min >= 50` ("ne touche pas la surface")
+**Depth filters :** une affirmation exacte sur l'enveloppe exige toujours
+`depth_complete = 1`. Pour un intervalle demandé `[a, b]`, utiliser l'overlap
+`depth_min <= b AND depth_max >= a`; compter séparément les lignes où
+`depth_complete IS NOT 1` dans le même scope.
 
 **Instrument filter:**
 ```sql
@@ -276,7 +340,7 @@ Si `query_ecotaxa_cache` retourne 0 lignes pour un `project_id` donné, **ne pas
 | Stats V/P/D/U + nb objets d'un projet | `preview_ecotaxa_project(project_id)` |
 | Breakdown taxons V/P/D/U | `count_ecotaxa_taxa(project_ids=[...])` |
 | Stats V/P/D/U d'une liste de samples | `summarize_ecotaxa_samples(sample_ids=[...])` |
-| Détail d'un sample (lat/lon, dates) | `get_ecotaxa_sample(sample_id)` |
+| Détail d'un sample résolu dont les enveloppes cache sont incomplètes | `summarize_ecotaxa_sample_deployment(sample_id)` |
 | Objets d'un sample (lecture seule) | `list_ecotaxa_sample_objects(sample_id)` |
 | Télécharger un sample complet | `query_ecotaxa_sample(sample_id)` |
 
@@ -294,9 +358,16 @@ Ces colonnes sont fiables, sans download, sans JOIN sur `objects_cache`.
 Ne jamais faire un JOIN `samples_cache` × `objects_cache` pour obtenir des
 stats V/P/D/U par sample — `nb_validated` etc. sont déjà agrégés au niveau sample.
 
-- "état des images / stats du projet X" → `preview_ecotaxa_project(X)` directement, pas de cache
-- "combien de validés dans le projet X" → `count_ecotaxa_taxa(project_ids=[X])` ou `preview_ecotaxa_project(X)`
-- "état des images du sample Y" → `summarize_ecotaxa_samples(sample_ids=[Y])`
+For sample-level V/P/D/U counts, use the authoritative
+`samples_cache.nb_validated`, `samples_cache.nb_predicted`,
+`samples_cache.nb_dubious`, and `samples_cache.nb_unclassified` columns; never
+derive a status count from `object_count`. Use
+`objects_cache.classification_status` only for an explicitly object-level query
+when the optional object cache is present.
+
+- "état des images / stats du projet X" → sommer les colonnes `samples_cache.nb_*` si le projet est indexé ; utiliser le résumé direct seulement en fallback de cache absent
+- "combien de validés dans le projet X" → `SUM(nb_validated)` dans `samples_cache`, pas `SUM(object_count)`
+- "enveloppe incomplète du sample résolu Y" → `summarize_ecotaxa_sample_deployment(sample_id=Y)` ; ne jamais répéter cet appel live silencieusement sur un grand lot
 - Ne jamais retourner 0/0/0/0 si le projet est connu — aller sur l'API.
 
 After `query_ecotaxa_cache`, use `run_pandas` for derived tables, joins,
@@ -392,10 +463,11 @@ Trois niveaux d'exploration. Chaque niveau s'appuie sur le précédent ; ne pas 
 
 ```
 NIVEAU 1 — Cache local (SQL, sans réseau)
-  query_ecotaxa_cache → sample_id, lat/lon, zone, date, instrument, object_count
+  query_ecotaxa_cache → sample_id, lat/lon, zone, date/heure/profondeur,
+                         instrument, object_count, V/P/D/U
 
-NIVEAU 2 — Stats API par sample (réseau léger, pas d'objets)
-  summarize_ecotaxa_samples(sample_ids=[...]) → V/P/D/U + top taxa par sample
+NIVEAU 2 — Détail live d'un sample résolu (fallback ciblé)
+  summarize_ecotaxa_sample_deployment(sample_id=...) → enveloppes et couverture
 
 NIVEAU 3 — Objets individuels (réseau, téléchargement)
   ├─ Browse read-only : list_ecotaxa_sample_objects(sample_id)
@@ -409,8 +481,8 @@ NIVEAU 3 — Objets individuels (réseau, téléchargement)
 | # | Ce que dit l'utilisateur | Niveau | Tool(s) | Download ? |
 |---|---|---|---|---|
 | A | "quels samples dans Baie d'Hudson 2021" | 1 | `query_ecotaxa_cache` SQL | Non |
-| B | "nb images validées / prédites par sample" | 2 | `summarize_ecotaxa_samples(sample_ids=[...])` | Non |
-| C | "carte : positions des samples + nb prédits" | 1+2 | cache SQL → `summarize_ecotaxa_samples` → `run_pandas` join → `run_graph` | Non |
+| B | "nb images validées / prédites par sample" | 1 | `query_ecotaxa_cache` sur `samples_cache.nb_*` | Non |
+| C | "carte : positions des samples + nb prédits" | 1 | cache SQL avec lat/lon + `nb_predicted` → `run_graph` | Non |
 | D | "browse les objets du sample 123" | 3 | `list_ecotaxa_sample_objects(sample_id=123)` | Non |
 | E | "télécharge / analyse le sample 123" | 3 | `query_ecotaxa_sample(sample_id=123)` → `load_file` | Oui (1 sample) |
 | F | "tous les objets des samples 123 et 456, même projet" | 3 | `query_ecotaxa(project_id=X, sample_ids=[123,456])` → `load_file` | Oui |
@@ -457,25 +529,27 @@ si l'utilisateur veut analyser ou visualiser. L'export reste confirmé avant lan
 ```
 1. query_ecotaxa_cache(sql="""
        SELECT sample_id, lat_avg AS lat, lon_avg AS lon,
-              date_min, instrument
+              iho_zone, date_min, instrument,
+              nb_validated, nb_predicted
        FROM samples_cache
-       WHERE iho_zone LIKE '%Hudson%' AND date_min >= '2021-01-01'
+       WHERE iho_zone LIKE '%Hudson%'
+         AND metadata_complete = 1
+         AND missing_date_count = 0
+         AND date_min <= '2021-12-31'
+         AND date_max >= '2021-01-01'
    """)
-   → df_ecotaxa_cache_query  [sample_id, lat, lon, date_min, instrument]
+   → df_ecotaxa_cache_query  [sample_id, lat, lon, date_min, instrument, V, P]
 
-2. summarize_ecotaxa_samples(sample_ids=[<ids issus de l'étape 1>])
-   → tableau [sample_id, V, P, D, U, total, top_taxa]
+2. Compter séparément les lignes du même scope où `metadata_complete IS NOT 1`
+   ou `missing_date_count <> 0`, puis rapporter cette couverture inconnue.
 
 3. run_pandas:
-   import pandas as pd
-   df = df_ecotaxa_cache_query.merge(df_stats, on="sample_id")
-   # df_stats = résultat parsé de summarize_ecotaxa_samples (table markdown → DataFrame)
-   df["n_predicted"] = df["P"] + df["V"]
+   result = df_ecotaxa_cache_query.assign(
+       n_predicted=df_ecotaxa_cache_query["nb_predicted"]
+   )
 
-4. run_graph: scatter map lat/lon, taille/couleur = n_predicted, tooltip = top_taxa
+4. run_graph: scatter map lat/lon, taille/couleur = n_predicted
 ```
-
-`summarize_ecotaxa_samples` appelle `/sample_set/taxo_stats` — 1 seul appel réseau, aucun objet téléchargé.
 
 ### Scénarios F/G — objets de plusieurs samples
 
@@ -497,7 +571,8 @@ Descendre **uniquement** si l'utilisateur veut :
 - obtenir les **object_id** pour annotation ou export externe
 - faire une **analyse pandas/graphique sur les objets eux-mêmes** (profil de taille, abondance, etc.)
 
-Si le besoin est "nb de prédits / validés par sample" → niveau 2 suffit, ne pas exporter.
+Si le besoin est "nb de prédits / validés par sample" → `samples_cache.nb_*`
+suffit ; ne pas appeler le live et ne pas exporter.
 
 ---
 

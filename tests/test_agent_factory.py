@@ -1286,6 +1286,20 @@ def test_ecotaxa_navigation_distinguishes_loki_instrument_from_project():
     assert "project title" in skill
 
 
+def test_ecotaxa_navigation_documents_sample_time_and_coverage_guards():
+    skill = Path("agents/skills/ecotaxa_navigation.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "version: 2.1.0" in skill
+    assert "datetime_min" in skill
+    assert "time_min" in skill
+    assert "metadata_complete = 1" in skill
+    assert "missing_time_count = 0" in skill
+    assert "depth_complete = 1" in skill
+    assert "summarize_ecotaxa_sample_deployment" in skill
+
+
 def test_system_prompt_prioritizes_read_only_source_tools_over_generic_pandas():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
