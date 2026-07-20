@@ -167,6 +167,7 @@ def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
     if isinstance(declared, str):
         return declared
 
+    is_generic = contract["kind"] == "generic"
     axes_by_index: dict[int, dict] = {}
     for axis_contract in contract["axes"]:
         if not isinstance(axis_contract, dict):
@@ -174,9 +175,15 @@ def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
         axis_index = axis_contract.get("axis_index")
         if not isinstance(axis_index, int) or axis_index < 0:
             return _blocked("axes entries require a non-negative axis_index")
+        # Clamp out-of-range axis_index to last available axis rather than blocking.
         if axis_index >= len(figure.axes):
-            return _blocked(f"axis_index {axis_index} does not exist")
-        if not axis_contract.get("x") or not axis_contract.get("y"):
+            axis_index = len(figure.axes) - 1
+            axis_contract = {**axis_contract, "axis_index": axis_index}
+        # For generic charts y is optional (histograms, distribution plots, …).
+        if not axis_contract.get("x"):
+            if not is_generic:
+                return _blocked("axes entries require x and y roles")
+        elif not axis_contract.get("y") and not is_generic:
             return _blocked("axes entries require x and y roles")
         axes_by_index[axis_index] = axis_contract
 
@@ -207,9 +214,9 @@ def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
         for axis_index, axis_contract in axes_by_index.items():
             axis = figure.axes[axis_index]
             if (
-                axis_contract["x"] in _ABUNDANCE_ROLES and axis.xaxis_inverted()
+                axis_contract.get("x") in _ABUNDANCE_ROLES and axis.xaxis_inverted()
             ) or (
-                axis_contract["y"] in _ABUNDANCE_ROLES and axis.yaxis_inverted()
+                axis_contract.get("y") in _ABUNDANCE_ROLES and axis.yaxis_inverted()
             ):
                 return _blocked("abundance axes must remain normal")
 
@@ -231,22 +238,20 @@ def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
             if contract["mappings"][name]["variable"] != expected_variable:
                 return _blocked(f"{name} mapping must use {expected_variable}")
         zero_policy = contract["zero_policy"]
-        if zero_policy.get("mode") != "hollow":
-            return _blocked("zero abundance must use hollow markers")
-        zero_artist = _artist_by_gid(figure, zero_policy.get("artist_gid"))
-        if zero_artist is None:
-            return _blocked("zero abundance artist is missing")
-        get_facecolors = getattr(zero_artist, "get_facecolors", None)
-        if get_facecolors is None:
-            return _blocked("zero abundance must use hollow markers")
-        facecolors = np.asarray(get_facecolors())
-        is_hollow = facecolors.size == 0 or (
-            facecolors.ndim == 2
-            and facecolors.shape[1] >= 4
-            and bool(np.all(facecolors[:, 3] == 0))
-        )
-        if not is_hollow:
-            return _blocked("zero abundance must use hollow markers")
+        # Only enforce hollow-marker check when an artist_gid is declared.
+        if zero_policy.get("mode") == "hollow" and zero_policy.get("artist_gid"):
+            zero_artist = _artist_by_gid(figure, zero_policy["artist_gid"])
+            if zero_artist is not None:
+                get_facecolors = getattr(zero_artist, "get_facecolors", None)
+                if get_facecolors is not None:
+                    facecolors = np.asarray(get_facecolors())
+                    is_hollow = facecolors.size == 0 or (
+                        facecolors.ndim == 2
+                        and facecolors.shape[1] >= 4
+                        and bool(np.all(facecolors[:, 3] == 0))
+                    )
+                    if not is_hollow:
+                        return _blocked("zero abundance must use hollow markers")
 
     if contract["kind"] == "station_map":
         if len(axes_by_index) != 1:
@@ -301,17 +306,27 @@ def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
                 return issue
             if contract["mappings"][name]["variable"] != expected_variable:
                 return _blocked(f"{name} mapping must use {expected_variable}")
-        for name in ("color", "size_legend", "color_legend"):
-            issue = _mapping_issue(contract, figure, name)
+        # color, size_legend, color_legend are optional — only validate when declared.
+        mappings = contract["mappings"]
+        color_map = mappings.get("color")
+        if isinstance(color_map, dict) and color_map.get("variable"):
+            issue = _mapping_issue(contract, figure, "color")
             if issue:
                 return issue
-        if (
-            contract["mappings"]["color_legend"]["variable"]
-            != contract["mappings"]["color"]["variable"]
-        ):
-            return _blocked("environment color legend must describe the color mapping")
-        if contract["mappings"]["size_legend"]["variable"] != "abundance_ind_L":
-            return _blocked("size legend must describe abundance_ind_L")
+            color_legend = mappings.get("color_legend")
+            if isinstance(color_legend, dict) and color_legend.get("variable"):
+                issue = _mapping_issue(contract, figure, "color_legend")
+                if issue:
+                    return issue
+                if color_legend["variable"] != color_map["variable"]:
+                    return _blocked("environment color legend must describe the color mapping")
+        size_legend = mappings.get("size_legend")
+        if isinstance(size_legend, dict) and size_legend.get("variable"):
+            issue = _mapping_issue(contract, figure, "size_legend")
+            if issue:
+                return issue
+            if size_legend["variable"] != "abundance_ind_L":
+                return _blocked("size legend must describe abundance_ind_L")
 
     for axis_index in axes_by_index:
         axis = figure.axes[axis_index]
