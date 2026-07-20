@@ -486,7 +486,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # EcoTaxa audit — cache-only tools replaced by query_ecotaxa_cache SQL.
     "audit_ecotaxa_spatial_coverage": "hidden_legacy",
     "query_ecotaxa_cache": "ecotaxa_discovery",
-    "find_uvp_matches_for_net_table": "ecotaxa_discovery",
+    "find_uvp_matches_for_net_table": "file_analysis",
     "summarize_ecotaxa_project": "hidden_legacy",
     "summarize_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa exports.

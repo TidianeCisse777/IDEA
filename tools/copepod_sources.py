@@ -540,7 +540,7 @@ def make_source_tools(thread_id: str) -> list:
             conn = open_connection(cache_db)
             init_schema(conn)
             uvp_df = pd.read_sql_query(
-                "SELECT sample_id, project_id, instrument, lat_avg, lon_avg, "
+                "SELECT sample_id, project_id, instrument, station_id, lat_avg, lon_avg, "
                 "date_min, date_max, object_count FROM samples_cache "
                 "WHERE lat_avg BETWEEN ? AND ? AND lon_avg BETWEEN ? AND ? "
                 "AND instrument LIKE 'UVP%'",

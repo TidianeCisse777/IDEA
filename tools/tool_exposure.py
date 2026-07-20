@@ -99,9 +99,8 @@ _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
         "run_pandas", "split_dataframe_by_zone",
     ),
     "ecotaxa_discovery": (
-        "query_ecotaxa_cache", "find_uvp_matches_for_net_table",
-        "list_ecotaxa_cache_tables", "describe_ecotaxa_cache_table",
-        "list_ecotaxa_campaigns", "preview_ecotaxa_project",
+        "query_ecotaxa_cache", "list_ecotaxa_cache_tables",
+        "describe_ecotaxa_cache_table", "list_ecotaxa_campaigns", "preview_ecotaxa_project",
         "resolve_ecotaxa_sample", "find_ecotaxa_projects",
     ),
     "ecotaxa_geo_time": (
