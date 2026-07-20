@@ -449,24 +449,24 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "enrich_with_amundsen_ctd": "enrichment_amundsen",
     "enrich_with_bio_oracle": "enrichment_bio_oracle",
     "enrich_with_ogsl": "enrichment_ogsl",
-    # EcoTaxa discovery.
-    "list_ecotaxa_projects": "ecotaxa_discovery",
-    "find_ecotaxa_projects": "ecotaxa_discovery",
-    "list_ecotaxa_campaigns": "ecotaxa_discovery",
-    "preview_ecotaxa_project": "ecotaxa_discovery",
+    # EcoTaxa discovery is cache-first. The former project/sample convenience
+    # wrappers stay registered for compatibility but are no longer advertised
+    # to the model; their read-only use cases are covered by cache SQL.
+    "list_ecotaxa_projects": "hidden_legacy",
+    "find_ecotaxa_projects": "hidden_legacy",
+    "list_ecotaxa_campaigns": "hidden_legacy",
+    "preview_ecotaxa_project": "hidden_legacy",
     "list_ecotaxa_cache_tables": "ecotaxa_discovery",
     "describe_ecotaxa_cache_table": "ecotaxa_discovery",
-    "describe_ecotaxa_project_coverage": "ecotaxa_audit",
-    # Cross-project reference resolution is part of EcoTaxa discovery and stays
-    # visible in the deterministic overflow fallback used by the agent.
-    "resolve_ecotaxa_sample": "ecotaxa_discovery",
-    "get_ecotaxa_sample": "ecotaxa_samples",
+    "describe_ecotaxa_project_coverage": "hidden_legacy",
+    "resolve_ecotaxa_sample": "hidden_legacy",
+    "get_ecotaxa_sample": "hidden_legacy",
     # A paginated API page is neither persistent nor suitable for an object-level
     # analysis. Keep these compatibility tools out of the LLM's normal routing.
     "list_ecotaxa_sample_objects": "hidden_legacy",
     "get_ecotaxa_object": "hidden_legacy",
-    "summarize_ecotaxa_sample": "ecotaxa_samples",
-    "summarize_ecotaxa_samples": "ecotaxa_samples",
+    "summarize_ecotaxa_sample": "hidden_legacy",
+    "summarize_ecotaxa_samples": "hidden_legacy",
     "summarize_ecotaxa_sample_deployment": "ecotaxa_samples",
     # EcoTaxa geography and time — replaced by query_ecotaxa_cache SQL.
     "find_ecotaxa_samples_in_region": "hidden_legacy",
@@ -478,7 +478,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # EcoTaxa taxonomy.
     "search_ecotaxa_taxa": "ecotaxa_taxonomy",
     "count_ecotaxa_taxa": "ecotaxa_taxonomy",
-    "find_ecotaxa_observations": "ecotaxa_taxonomy",
+    "find_ecotaxa_observations": "hidden_legacy",
     # EcoTaxa schema.
     "inspect_ecotaxa_project_schema": "ecotaxa_schema",
     "inspect_ecotaxa_column": "ecotaxa_schema",

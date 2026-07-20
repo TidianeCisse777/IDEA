@@ -1189,7 +1189,9 @@ def test_system_prompt_mentions_supported_sql_backends():
 
 def test_system_prompt_routes_ecotaxa_project_discovery():
     contract = _routing_contract("ecotaxa_navigation.md")
-    assert "list_ecotaxa_projects" in contract
+    assert "list/search projects, campaigns, samples, labels" in contract
+    assert "query_ecotaxa_cache" in contract
+    assert "list_ecotaxa_projects" not in contract
 
 
 def test_system_prompt_loads_ecotaxa_skill_only_after_success():
@@ -1204,9 +1206,10 @@ def test_system_prompt_routes_ecotaxa_list_preview_and_export_separately():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md", "ecotaxa_query.md")
-    assert "`list_ecotaxa_projects`" in prompt
-    assert "`preview_ecotaxa_project`" in prompt
-    assert "présente-moi" in prompt
+    assert "sample/project counts" in prompt
+    assert "query_ecotaxa_cache" in prompt
+    assert "`list_ecotaxa_projects`" not in prompt
+    assert "`preview_ecotaxa_project`" not in prompt
     assert "do not call `query_ecotaxa` for preview-only requests" in prompt
     assert "charge" in prompt
     assert "exporte" in prompt
@@ -1317,47 +1320,42 @@ def test_system_prompt_routes_ecotaxa_stats_tables_to_project_summary():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "authorized ecotaxa read-only routes beat dataframe/graph/export routes" in prompt
-    assert 'load_skill("ecotaxa_navigation")` first' in prompt
-    assert "source selection gateway has explicitly authorized ecotaxa" in prompt
-    assert "summarize_ecotaxa_projects" in prompt
-    assert "summarize_ecotaxa_project" in prompt
-    assert "ecotaxa dry-run export planning" in prompt
+    assert "cache-first route" in prompt
+    assert "query_ecotaxa_cache" in prompt
+    assert "sum(object_count)" in prompt
+    assert "sum(nb_validated)" in prompt
     assert "confirmed=false" in prompt
-    assert "do not call `run_pandas`" in prompt
-    assert "do not call `query_ecotaxa`" in prompt
+    assert "summarize_ecotaxa_projects" not in prompt
+    assert "summarize_ecotaxa_project" not in prompt
 
 
 def test_system_prompt_separates_ecotaxa_summary_from_preview():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "project preview / object sample" in prompt
-    assert "do not use `preview_ecotaxa_project` for project summaries" in prompt
-    assert "stats tables" in prompt
-    assert "scan-before-export" in prompt
-    assert "summarize_ecotaxa_project" in prompt
+    assert "sample/project counts or v/p/d/u totals" in prompt
+    assert "cache sql" in prompt
+    assert "preview_ecotaxa_project" not in prompt
+    assert "summarize_ecotaxa_project" not in prompt
 
 
 def test_system_prompt_loads_ecotaxa_navigation_before_zone_lookup():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "for ecotaxa navigation requests with a named zone" in prompt
-    assert '(1) `load_skill("ecotaxa_navigation")`' in prompt
-    assert "(2) `get_zone_info(zone_name=...)`" in prompt
-    assert "first geography/source-boundary tool" in prompt
+    assert "use the cached `iho_zone`" in prompt
+    assert "never invent a bounding box" in prompt
+    assert "query_ecotaxa_cache" in prompt
 
 
 def test_system_prompt_handles_multiple_named_ecotaxa_zones_separately():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "multiple named zones" in prompt
-    assert "baie de baffin et baie d'ungava" in prompt
-    assert "do not merge names into one fake zone" in prompt
-    assert "call `get_zone_info` once per zone" in prompt
-    assert "once per zone with the same date/instrument filters" in prompt
+    assert "one or more named zones" in prompt
+    assert "one `query_ecotaxa_cache` select" in prompt
+    assert "keep one zone label per row" in prompt
+    assert "deduplicate by `sample_id`" in prompt
 
 
 def test_system_prompt_preserves_ecotaxa_source_links():
@@ -1374,69 +1372,60 @@ def test_system_prompt_loads_ecotaxa_navigation_before_column_inspection():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "distribution, range, statistics, or distinct values of one column" in prompt
-    assert "call `inspect_ecotaxa_column` with `project_id`" in prompt
-    assert "first call `load_skill(\"ecotaxa_navigation\")`" in prompt
-    assert "do not call `inspect_ecotaxa_project_schema` before or after" in prompt
-    assert "`obj_depth` must stay `obj_depth`" in prompt
+    assert "distribution of one export/api column" in prompt
+    assert "`inspect_ecotaxa_column`" in prompt
+    assert "fields available in a project export" in prompt
+    assert "`inspect_ecotaxa_project_schema`" in prompt
 
 
 def test_system_prompt_routes_ecotaxa_export_planning_to_dry_run_tool():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "ne lance jamais un téléchargement d'objets" in prompt
-    assert "l'intention déclenche un **plan**" in prompt
+    assert "every object export follows two turns" in prompt
     assert "confirmed=false" in prompt
-    assert "confirmation explicite" in prompt
-    assert "do not stop after loading the skill" in prompt
+    assert "explicit confirmation" in prompt
+    assert "execute exactly that scope" in prompt
 
 
 def test_system_prompt_handles_export_failed_rights_without_relaunching_export():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md", "ecotaxa_query.md")
-    assert "previous `export_failed` / rights failure" in prompt
-    assert "use `preview_ecotaxa_project(project_id=...)` to verify access" in prompt
-    assert "preview_ecotaxa_project(project_id=...)" in prompt
-    assert "do not call `query_ecotaxa`" in prompt
-    assert "or `export_ecotaxa_samples`" in prompt
+    assert "on `export_failed`" in prompt
+    assert "report the failure and stop" in prompt
+    assert "do not substitute a partial page" in prompt
+    assert "preview_ecotaxa_project" not in prompt
 
 
 def test_system_prompt_handles_missing_ecotaxa_project_cache_read_only():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "absent from the ecotaxa cache" in prompt
-    assert "summarize_ecotaxa_project" in prompt
-    assert "cache-missing message" in prompt
-    assert "do not switch to `query_ecotaxa`" in prompt
+    assert "an empty cache result is not proof" in prompt
+    assert "check `sync_runs`" in prompt
+    assert '"not indexed"' in prompt
+    assert "summarize_ecotaxa_project" not in prompt
 
 
 def test_system_prompt_handles_sample_taxon_exact_vs_approximation():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "no-export approximation" in prompt
-    assert "summarize_ecotaxa_samples(sample_ids=[...])" in prompt
-    assert "exact per-sample counts for one taxon" in prompt
-    assert "require an export/download path with confirmation" in prompt
+    assert "the cache stores taxon ids" in prompt
+    assert "json_each" in prompt
+    assert "exact taxon counts per sample/cast" in prompt
+    assert "otherwise an export" in prompt
 
 
 def test_system_prompt_routes_current_ecotaxa_sample_followups_without_kb():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("ecotaxa_navigation.md")
-    assert "current-result follow-ups" in prompt
-    assert "ambiguous cache/context wording" in prompt
-    assert "samples présents" in prompt
-    assert "which of these" in prompt
-    assert "extract the visible `sample_id`" in prompt
-    assert "short clarifying question" in prompt
-    assert "2–3 concrete scope options" in prompt
-    assert "never route to the knowledge base" in prompt
-    assert "do not call `query_copepod_knowledge_base`" in prompt
-    assert "do not answer with a fresh metadata list" in prompt
+    assert "resolve a numeric id, label, station, profile" in prompt
+    assert "preserve every match" in prompt
+    assert "ask the user to choose" in prompt
+    assert "query_ecotaxa_cache" in prompt
 
 
 def test_system_prompt_allows_operational_synthesis_without_scientific_interpretation():
@@ -1458,25 +1447,14 @@ def test_ecotaxa_navigation_skill_prefers_read_only_when_ambiguous():
         encoding="utf-8"
     ).lower()
 
-    assert "general ambiguity rule" in skill
-    assert "prefer read-only navigation tools over exports" in skill
-    assert "summarize_ecotaxa_projects" in skill
-    assert "summarize_ecotaxa_project(project_id=x)" in skill
-    assert "not the project" in skill
-    assert "do not switch to `run_pandas`" in skill
-    assert "query_ecotaxa" in skill
-    assert "choose the read-only summary" in skill
-    assert "exact_user_column" in skill
-    assert "do not rewrite a clear column name" in skill
-    assert "ne lance rien" in skill
+    assert "cache-first route" in skill
+    assert "sample/project counts" in skill
+    assert "query_ecotaxa_cache" in skill
+    assert "individual objects require an export plan" in skill
     assert "confirmed=false" in skill
-    assert "multiple zones" in skill
-    assert "do not concatenate zones" in skill
     assert "export_failed" in skill
-    assert "missing export rights" in skill
-    assert "preserve ecotaxa project/sample source links" in skill
-    assert "absent from the local" in skill
-    assert "do not compensate" in skill
+    assert "not indexed" in skill
+    assert "list_ecotaxa_projects" not in skill
 
 
 def test_ecotaxa_navigation_skill_handles_current_sample_taxon_rankings():
@@ -1484,17 +1462,12 @@ def test_ecotaxa_navigation_skill_handles_current_sample_taxon_rankings():
         encoding="utf-8"
     ).lower()
 
-    assert "parmi ceux-là" in skill
-    assert "reuse those ids" in skill
-    assert "samples présents" in skill
-    assert "ambiguous unless" in skill
-    assert "ecotaxa cache" in skill
-    assert "ask one short clarification question" in skill
-    assert "summarize_ecotaxa_samples(sample_ids=[...])" in skill
-    assert "taxon-specific limitation" in skill
-    assert "not exact per-sample counts" in skill
-    assert "do not fall back to a fresh sample" in skill
-    assert "exact object-level filtering requires an export/download" in skill
+    assert "search_ecotaxa_taxa" in skill
+    assert "json_each" in skill
+    assert "count_ecotaxa_taxa" in skill
+    assert "exact taxon counts per sample/cast" in skill
+    assert "otherwise an export" in skill
+    assert "summarize_ecotaxa_samples" not in skill
 
 
 def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
@@ -1508,13 +1481,9 @@ def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
     assert 'load_skill("ecotaxa_navigation")' in prompt
     assert "count_ecotaxa_taxa" not in prompt
     assert "count_ecotaxa_taxa" in skill
-    assert "25828" not in prompt
-    assert "copepoda<multicrustacea" not in prompt
-
-    assert "taxa_ids=<taxon_id" in skill
-    assert "25828" in skill
-    assert "copepoda<multicrustacea" in skill
-    assert "copépodes" in skill
+    assert "search_ecotaxa_taxa" in skill
+    assert "project × taxon" in skill
+    assert "not a per-sample taxon count" in skill
 
 
 def test_system_prompt_routes_bio_oracle_loaded_table_to_canonical_enrichment():

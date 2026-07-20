@@ -34,24 +34,24 @@ Ce skill couvre les **objets** (organismes exportés en TSV : taxons, tailles,
 statuts V/P/D/U). Il n'a **rien à voir avec le cache**. Pour tout ce qui est au
 niveau **sample** — zones, casts (`profile_id`), positions, dates, comptage de
 samples — c'est `ecotaxa_navigation` + `query_ecotaxa_cache` (SQL local, sans
-download). Le cache **ne contient aucun objet** : ne jamais y chercher un taxon
-ou un statut. Chaîne type : cache pour trouver les `sample_id` → export ici pour
-analyser leurs objets.
+download). Une table objet locale peut exister comme extension, mais elle n'est
+jamais supposée présente. Chaîne type : cache pour trouver les `sample_id` →
+export ici pour analyser leurs objets quand le détail local n'existe pas.
 
 ---
 
-## Discovering accessible projects
+## Discovering cached projects
 
-The project list depends on the configured EcoTaxa account and can change.
-Call `list_ecotaxa_projects` to get real-time `project_id` values and names,
-then use the chosen identifier with `query_ecotaxa`.
-Never present a hardcoded project list.
+Use `query_ecotaxa_cache` over `samples_cache` to list the indexed
+`project_id` values, instruments, sample counts and temporal coverage. Never
+present a hardcoded project list. A project absent from the cache is
+"not indexed", not proven absent from EcoTaxa.
 
 ---
 
 ## Choosing the right tool
 
-- To present a project, display its metadata, counts or a few objects: call `preview_ecotaxa_project`.
+- To present a project or its counts: aggregate `samples_cache` with `query_ecotaxa_cache`.
 - To load, export, download or analyse the full data: call `query_ecotaxa`.
 - Do not call `query_ecotaxa` for a simple preview request — this export can be slow and modifies the analysis session.
 - Ne lance pas `query_ecotaxa` pour une simple demande d'aperçu.

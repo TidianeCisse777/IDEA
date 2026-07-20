@@ -75,8 +75,8 @@ def test_aggregate_object_request_prefers_cache_sql_over_object_tools():
 
     assert "global aggregation" in COPEPOD_SYSTEM_PROMPT
     skill = Path("agents/skills/ecotaxa_navigation.md").read_text()
-    assert "global aggregation" in skill
-    assert "`list_ecotaxa_sample_objects` / `get_ecotaxa_object`" in skill
+    assert "query_ecotaxa_cache" in skill
+    assert "paginated object browsing" in skill
 
 
 def test_ecotaxa_prompt_distinguishes_samples_casts_and_validated_objects():
