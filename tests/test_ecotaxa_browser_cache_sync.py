@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 import time
+from collections import Counter
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from unittest.mock import MagicMock
 
@@ -39,26 +40,57 @@ def _make_client(
         pid, {"projid": pid, "title": f"Project {pid}", "instrument": "UVP5"}
     )
 
+    def _normalized_fixture_row(row):
+        def sample_id(value):
+            return int(value) if value is not None else None
+
+        if len(row) >= 7:
+            return [row[0], row[1], row[2], row[3], row[4], row[5]], sample_id(row[6])
+        if len(row) >= 6:
+            return [row[0], row[1], row[2], None, row[3], row[4]], sample_id(row[5])
+        return [row[0], row[1], row[2], None, None, None], sample_id(row[3])
+
     def _query_objects(*, project_id, filters, fields, window_start, window_size):
         rows = objects_by_project.get(project_id, [])
         page = rows[window_start : window_start + window_size]
         details = []
         sample_ids = []
         for row in page:
-            if row and len(row) >= 6:
-                details.append([row[0], row[1], row[2], row[3], row[4]])
-                sample_ids.append(int(row[5]) if row[5] is not None else None)
-            else:
-                details.append([row[0], row[1], row[2]] if row else row)
-                sample_ids.append(
-                    int(row[3]) if row and len(row) > 3 and row[3] is not None else None
-                )
+            if not row:
+                details.append(row)
+                sample_ids.append(None)
+                continue
+            detail, fixture_sample_id = _normalized_fixture_row(row)
+            details.append(detail)
+            sample_ids.append(fixture_sample_id)
         return {"details": details, "sample_ids": sample_ids, "total_ids": len(rows)}
 
     client.query_objects.side_effect = _query_objects
     client.list_samples.side_effect = lambda project_id: (
         samples_by_project or {}
     ).get(project_id, [])
+
+    fixture_counts = Counter()
+    for project_rows in objects_by_project.values():
+        for fixture_row in project_rows:
+            _details, fixture_sample_id = _normalized_fixture_row(fixture_row)
+            if fixture_sample_id is not None:
+                fixture_counts[fixture_sample_id] += 1
+
+    def _sample_taxo_stats(sample_ids):
+        return [
+            {
+                "sample_id": int(sample_id),
+                "nb_validated": 0,
+                "nb_predicted": 0,
+                "nb_dubious": 0,
+                "nb_unclassified": fixture_counts[int(sample_id)],
+                "used_taxa": [],
+            }
+            for sample_id in sample_ids
+        ]
+
+    client.sample_taxo_stats.side_effect = _sample_taxo_stats
     return client
 
 
@@ -256,14 +288,88 @@ def test_sync_respects_object_cap(conn):
         window_size=10,
         object_cap=30,
     )
-    # We stopped after 30 objects → only the first 30 are aggregated.
+    # The object scan stops after 30 rows but authoritative stats cover all 100.
     assert client.query_objects.call_count == 3
     total_objects = sum(
         row["object_count"]
         for row in conn.execute("SELECT object_count FROM samples_cache")
     )
-    assert total_objects == 30
+    assert total_objects == 100
     assert samples_synced > 0
+
+
+def test_sync_aggregates_time_datetime_depth_and_completeness(conn):
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    client = _make_client(
+        projects=[{"projid": 42, "title": "P", "instrument": "UVP5"}],
+        objects_by_project={42: [
+            [67.0, -63.0, "2015-05-22", "14:03:58", 1.8, 2.0, "1"],
+            [67.0, -63.0, "2015-05-22", "14:08:01", 3.3, 352.6, "1"],
+        ]},
+    )
+
+    sync_project(conn, client, project_id=42, last_synced="ts")
+    row = conn.execute("SELECT * FROM samples_cache WHERE sample_id=1").fetchone()
+
+    assert row["datetime_min"] == "2015-05-22T14:03:58"
+    assert row["datetime_max"] == "2015-05-22T14:08:01"
+    assert row["time_min"] == "14:03:58"
+    assert row["time_max"] == "14:08:01"
+    assert row["temporal_precision"] == "datetime"
+    assert row["object_count"] == 2
+    assert row["metadata_objects_scanned"] == 2
+    assert row["metadata_complete"] == 1
+    assert row["depth_complete"] == 1
+    assert client.query_objects.call_args.kwargs["fields"] == (
+        "obj.latitude,obj.longitude,obj.objdate,obj.objtime,"
+        "obj.depth_min,obj.depth_max"
+    )
+
+
+def test_sync_cap_keeps_stats_count_and_marks_sample_metadata_partial(conn):
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    objects = [
+        [67.0, -63.0, "2015-05-22", "14:03:58", 1.0, 2.0, str(i % 5)]
+        for i in range(100)
+    ]
+    client = _make_client(
+        projects=[{"projid": 42, "title": "P", "instrument": "UVP5"}],
+        objects_by_project={42: objects},
+    )
+
+    sync_project(
+        conn, client, project_id=42, last_synced="ts",
+        window_size=10, object_cap=30,
+    )
+    rows = list(conn.execute("SELECT * FROM samples_cache ORDER BY sample_id"))
+
+    assert sum(row["object_count"] for row in rows) == 100
+    assert sum(row["metadata_objects_scanned"] for row in rows) == 30
+    assert all(row["metadata_complete"] == 0 for row in rows)
+    assert all(row["metadata_coverage_pct"] == pytest.approx(30.0) for row in rows)
+
+
+def test_sync_stats_failure_never_promotes_scan_count(conn):
+    from core.ecotaxa_browser.cache.sync import sync_project
+
+    client = _make_client(
+        projects=[{"projid": 42, "title": "P", "instrument": "UVP5"}],
+        objects_by_project={42: [
+            [67.0, -63.0, "2015-05-22", "14:03:58", 1.0, 2.0, "1"],
+        ]},
+    )
+    client.sample_taxo_stats.side_effect = RuntimeError("stats endpoint down")
+
+    sync_project(conn, client, project_id=42, last_synced="ts")
+    row = conn.execute("SELECT * FROM samples_cache WHERE sample_id=1").fetchone()
+
+    assert row["object_count"] is None
+    assert row["nb_validated"] is None
+    assert row["metadata_objects_scanned"] == 1
+    assert row["metadata_complete"] is None
+    assert row["metadata_coverage_pct"] is None
 
 
 def test_sync_project_rollback_on_failure_keeps_previous_state(conn):
@@ -1016,8 +1122,7 @@ def test_sync_enriches_samples_with_taxo_stats(conn):
 
 
 def test_sync_without_taxo_stats_degrades_gracefully(conn):
-    """When sample_taxo_stats fails, object_count falls back to the scan count
-    and the new stat columns stay NULL — the sync still succeeds."""
+    """When sample_taxo_stats fails, counts stay unknown but the sync succeeds."""
     from core.ecotaxa_browser.cache.sync import sync_project
 
     client = _make_client(
@@ -1032,7 +1137,7 @@ def test_sync_without_taxo_stats_degrades_gracefully(conn):
         "SELECT object_count, nb_validated, used_taxa FROM samples_cache "
         "WHERE sample_id=42000001"
     ).fetchone()
-    assert row["object_count"] == 1        # from the object scan
+    assert row["object_count"] is None     # never promoted from the object scan
     assert row["nb_validated"] is None
     assert row["used_taxa"] is None
 
