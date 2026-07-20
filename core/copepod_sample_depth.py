@@ -20,7 +20,17 @@ def build_canonical_sample_depth(
     volume_rtol: float = 1e-6,
     volume_atol: float = 1e-9,
 ) -> pd.DataFrame:
-    """Agrège une table objet en une ligne canonique par sample et bin 5 m."""
+    """Agrège une table objet en une ligne canonique par sample et bin 5 m.
+
+    Si `depth_bin` est absent mais `object_depth_min` est présent, dérive
+    automatiquement les bins EcoPart centrés à 2.5, 7.5, 12.5 … m
+    (floor(depth/5)*5 + 2.5), compatibles avec la colonne `Depth [m]` EcoPart.
+    """
+    # Auto-derive depth_bin from object_depth_min when absent (standard UVP export).
+    if "depth_bin" not in df.columns and "object_depth_min" in df.columns:
+        df = df.copy()
+        df["depth_bin"] = (df["object_depth_min"] // 5) * 5 + 2.5
+
     required = (*_KEY_COLUMNS, "object_annotation_hierarchy", volume_column)
     missing = [column for column in required if column not in df.columns]
     if missing:

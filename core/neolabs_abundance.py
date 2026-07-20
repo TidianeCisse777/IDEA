@@ -12,13 +12,16 @@ import pandas as pd
 
 
 NEOLABS_COPEPOD_METHOD_VERSION = "neolabs-copepod-density-v1"
-_DEPTH_ABUNDANCE = "Total abundance (ind./m3 depth vol)"
+# NeoLabs exports use per-stage columns; ALL_STAGES_ABUND is the sum across
+# all copepodite and naupliar stages for a given taxon × sample row.
+_DEPTH_ABUNDANCE = "ALL_STAGES_ABUND (ind./m3 depth vol.)"
+_DEPTH_ABUNDANCE_LEGACY = "Total abundance (ind./m3 depth vol)"
 
 
 def neolabs_copepod_density(
     df: pd.DataFrame,
     *,
-    abundance_column: str = _DEPTH_ABUNDANCE,
+    abundance_column: str | None = None,
     class_column: str = "CLASS",
     copepod_class: str = "Copepoda",
     sample_column: str = "SAMPLE_ID",
@@ -36,6 +39,15 @@ def neolabs_copepod_density(
     `copepod_density_ind_m3`, `n_samples`, `method_version`. Lève `ValueError`
     sur entrée incomplète plutôt que de produire un chiffre faux.
     """
+    # Auto-detect abundance column: prefer ALL_STAGES, fall back to legacy name.
+    if abundance_column is None:
+        if _DEPTH_ABUNDANCE in df.columns:
+            abundance_column = _DEPTH_ABUNDANCE
+        elif _DEPTH_ABUNDANCE_LEGACY in df.columns:
+            abundance_column = _DEPTH_ABUNDANCE_LEGACY
+        else:
+            abundance_column = _DEPTH_ABUNDANCE  # will raise a clear error below
+
     required = {class_column, sample_column, station_column, abundance_column}
     missing = sorted(required.difference(df.columns))
     if missing:
