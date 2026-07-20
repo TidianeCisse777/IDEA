@@ -693,8 +693,19 @@ def test_summarize_ecotaxa_sample_deployment_renders_metadata_depths_and_uvp_fie
             "truncated": False,
             "date_min": "2015-05-22",
             "date_max": "2015-05-23",
+            "datetime_min": "2015-05-22T14:03:58",
+            "datetime_max": "2015-05-23T14:08:01",
+            "temporal_precision": "datetime",
             "depth_min": 1.8,
             "depth_max": 4.5,
+            "metadata_complete": True,
+            "metadata_coverage_pct": 100.0,
+            "count_discrepancy": False,
+            "query_total_objects": 3420,
+            "nb_validated": 3000,
+            "nb_predicted": 400,
+            "nb_dubious": 10,
+            "nb_unclassified": 10,
             "acquisition_ids": [420000014],
         },
     }
@@ -711,11 +722,62 @@ def test_summarize_ecotaxa_sample_deployment_renders_metadata_depths_and_uvp_fie
     assert "gn2015_l2_019" in result
     assert "2015-05-22" in result
     assert "2015-05-23" in result
+    assert "14:03:58" in result
     assert "1.8" in result
     assert "4.5" in result
+    assert "validés" in result.lower()
+    assert "prédits" in result.lower()
+    assert "100" in result
     assert "profileid" in result
     assert "pixel=0.147" in result
     assert "uvp5" in result
+
+
+def test_summarize_ecotaxa_sample_deployment_marks_partial_metadata_and_count_mismatch():
+    fake_deployment = {
+        "sample": {
+            "sample_id": 42000013,
+            "project_id": 42,
+            "original_id": "gn2015_l2_019",
+            "latitude": None,
+            "longitude": None,
+            "free_fields": {},
+        },
+        "acquisitions": [],
+        "object_summary": {
+            "total_objects": 3,
+            "objects_scanned": 2,
+            "truncated": True,
+            "date_min": "2015-05-22",
+            "date_max": "2015-05-22",
+            "datetime_min": "2015-05-22T14:03:58",
+            "datetime_max": "2015-05-22T14:08:01",
+            "temporal_precision": "datetime",
+            "depth_min": 1.8,
+            "depth_max": 4.5,
+            "metadata_complete": False,
+            "metadata_coverage_pct": 66.666,
+            "count_discrepancy": True,
+            "query_total_objects": 2,
+            "nb_validated": 3,
+            "nb_predicted": 0,
+            "nb_dubious": 0,
+            "nb_unclassified": 0,
+            "acquisition_ids": [],
+        },
+    }
+
+    with patch("tools.copepod_sources.summarize_sample_deployment", return_value=fake_deployment):
+        from tools.copepod_sources import make_source_tools
+
+        tools = make_source_tools("thread-deployment-partial")
+        tool = next(t for t in tools if t.name == "summarize_ecotaxa_sample_deployment")
+        result = tool.invoke({"sample_id": 42000013})
+
+    assert "partielle" in result.lower()
+    assert "statistiques du sample" in result.lower()
+    assert "| objets total (statistiques sample) | 3 |" in result
+    assert "requête d’objets (2)" in result
 
 
 def test_find_ecotaxa_samples_in_region_requires_filter():

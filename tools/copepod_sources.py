@@ -2977,13 +2977,36 @@ def make_source_tools(thread_id: str) -> list:
             f"| original_id | {sample.get('original_id') or '—'} |",
             f"| latitude | {_fmt(sample.get('latitude'))} |",
             f"| longitude | {_fmt(sample.get('longitude'))} |",
+            f"| objets total (statistiques sample) | {_fmt(summary.get('total_objects'))} |",
+            f"| validés | {_fmt(summary.get('nb_validated'))} |",
+            f"| prédits | {_fmt(summary.get('nb_predicted'))} |",
+            f"| douteux | {_fmt(summary.get('nb_dubious'))} |",
+            f"| non classifiés | {_fmt(summary.get('nb_unclassified'))} |",
             f"| date_min objets | {_fmt(summary.get('date_min'))} |",
             f"| date_max objets | {_fmt(summary.get('date_max'))} |",
+            f"| date-heure min | {_fmt(summary.get('datetime_min'))} |",
+            f"| date-heure max | {_fmt(summary.get('datetime_max'))} |",
+            f"| précision temporelle | {_fmt(summary.get('temporal_precision'))} |",
             f"| depth_min objets | {_fmt(summary.get('depth_min'))} |",
             f"| depth_max objets | {_fmt(summary.get('depth_max'))} |",
+            f"| couverture métadonnées | {_fmt(summary.get('metadata_coverage_pct'))} % |",
             f"| objets scannés | {summary.get('objects_scanned')} / {summary.get('total_objects')} |",
             f"| résumé tronqué | {'oui' if summary.get('truncated') else 'non'} |",
         ]
+
+        if summary.get("metadata_complete") is not True:
+            lines.extend([
+                "",
+                "⚠ Enveloppe temporelle et de profondeur partielle : "
+                f"{summary.get('objects_scanned', 0)} / "
+                f"{summary.get('total_objects', 0)} objets couverts.",
+            ])
+        if summary.get("count_discrepancy"):
+            lines.extend([
+                "",
+                "⚠ Le total autoritatif des statistiques du sample diffère du total "
+                f"retourné par la requête d’objets ({summary.get('query_total_objects')}).",
+            ])
 
         sample_free = sample.get("free_fields") or {}
         if sample_free:
@@ -3019,6 +3042,8 @@ def make_source_tools(thread_id: str) -> list:
             },
             metrics={
                 "objects_scanned": int(summary.get("objects_scanned") or 0),
+                "authoritative_total_objects": int(summary.get("total_objects") or 0),
+                "query_total_objects": summary.get("query_total_objects"),
                 "acquisitions": len(acquisitions),
             },
         )
