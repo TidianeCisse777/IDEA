@@ -3637,7 +3637,12 @@ def make_source_tools(thread_id: str) -> list:
         | instrument | TEXT | UVP6, UVP5SD, Loki, … |
         | iho_zone | TEXT | zone IHO/MEOW assignée par point-in-polygon (ex. "Baie de Baffin") — utiliser LIKE '%…%' |
 
-        **objects_cache** — index objet optionnel pour les agrégations détaillées
+        **objects_cache** — index objet optionnel, absent du cache standard
+        Présente uniquement dans les caches enrichis. Vérifier sa présence avec
+        `list_ecotaxa_cache_tables` avant toute requête.
+        Utiliser UNIQUEMENT pour : détail objet par objet, taxon par objet,
+        profondeur par objet. Ne PAS utiliser pour les stats V/P/D/U par sample
+        — utiliser `nb_validated/predicted/dubious/unclassified` de `samples_cache`.
         | colonne | contenu |
         |---|---|
         | object_id / sample_id / project_id | identifiants objet et parent |
