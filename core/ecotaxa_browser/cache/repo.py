@@ -24,7 +24,7 @@ _geo_registry_loaded = False
 # resync to populate (i.e. _ensure_column adds a column whose data must come
 # from EcoTaxa, not a backfill). Stored in the SQLite user_version pragma so
 # the startup code can detect an old-format cache and trigger a resync.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _load_geo_registry():
@@ -46,6 +46,7 @@ _SECONDARY_INDEXES = {
     "idx_samples_project": "samples_cache(project_id)",
     "idx_samples_bbox": "samples_cache(lat_avg, lon_avg)",
     "idx_samples_date": "samples_cache(date_min, date_max)",
+    "idx_samples_datetime": "samples_cache(datetime_min, datetime_max)",
     "idx_samples_depth_max": "samples_cache(depth_max)",
     "idx_samples_zone": "samples_cache(iho_zone)",
 }
@@ -72,7 +73,20 @@ CREATE TABLE IF NOT EXISTS samples_cache (
     used_taxa TEXT,
     instrument TEXT,
     last_synced TEXT NOT NULL,
-    iho_zone TEXT
+    iho_zone TEXT,
+    datetime_min TEXT,
+    datetime_max TEXT,
+    time_min TEXT,
+    time_max TEXT,
+    temporal_precision TEXT,
+    missing_date_count INTEGER,
+    missing_time_count INTEGER,
+    missing_depth_min_count INTEGER,
+    missing_depth_max_count INTEGER,
+    depth_complete INTEGER,
+    metadata_objects_scanned INTEGER,
+    metadata_complete INTEGER,
+    metadata_coverage_pct REAL
 );
 
 CREATE TABLE IF NOT EXISTS project_schemas_cache (
@@ -131,6 +145,12 @@ def init_schema(conn: sqlite3.Connection) -> None:
     even after init_schema has run the column migrations.
     """
     conn.executescript(_SCHEMA)
+    _ensure_column(conn, "samples_cache", "lat_avg", "REAL")
+    _ensure_column(conn, "samples_cache", "lon_avg", "REAL")
+    _ensure_column(conn, "samples_cache", "date_min", "TEXT")
+    _ensure_column(conn, "samples_cache", "date_max", "TEXT")
+    _ensure_column(conn, "samples_cache", "object_count", "INTEGER")
+    _ensure_column(conn, "samples_cache", "instrument", "TEXT")
     _ensure_column(conn, "samples_cache", "depth_min", "REAL")
     _ensure_column(conn, "samples_cache", "depth_max", "REAL")
     _ensure_column(conn, "samples_cache", "original_id", "TEXT")
@@ -145,6 +165,23 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "samples_cache", "nb_dubious", "INTEGER")
     _ensure_column(conn, "samples_cache", "nb_unclassified", "INTEGER")
     _ensure_column(conn, "samples_cache", "used_taxa", "TEXT")
+    deployment_columns = {
+        "datetime_min": "TEXT",
+        "datetime_max": "TEXT",
+        "time_min": "TEXT",
+        "time_max": "TEXT",
+        "temporal_precision": "TEXT",
+        "missing_date_count": "INTEGER",
+        "missing_time_count": "INTEGER",
+        "missing_depth_min_count": "INTEGER",
+        "missing_depth_max_count": "INTEGER",
+        "depth_complete": "INTEGER",
+        "metadata_objects_scanned": "INTEGER",
+        "metadata_complete": "INTEGER",
+        "metadata_coverage_pct": "REAL",
+    }
+    for column_name, column_type in deployment_columns.items():
+        _ensure_column(conn, "samples_cache", column_name, column_type)
     create_secondary_indexes(conn)
     conn.commit()
 
@@ -260,7 +297,7 @@ def upsert_sample(
     lon_avg: float | None,
     date_min: str | None,
     date_max: str | None,
-    object_count: int,
+    object_count: int | None,
     instrument: str | None,
     last_synced: str,
     depth_min: float | None = None,
@@ -270,6 +307,19 @@ def upsert_sample(
     profile_id: str | None = None,
     free_fields_json: str | None = None,
     iho_zone: str | None = None,
+    datetime_min: str | None = None,
+    datetime_max: str | None = None,
+    time_min: str | None = None,
+    time_max: str | None = None,
+    temporal_precision: str | None = None,
+    missing_date_count: int | None = None,
+    missing_time_count: int | None = None,
+    missing_depth_min_count: int | None = None,
+    missing_depth_max_count: int | None = None,
+    depth_complete: bool | None = None,
+    metadata_objects_scanned: int | None = None,
+    metadata_complete: bool | None = None,
+    metadata_coverage_pct: float | None = None,
 ) -> None:
     """Insert or update a single sample row."""
     if iho_zone is None:
@@ -280,9 +330,13 @@ def upsert_sample(
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
             original_id, station_id, profile_id, free_fields_json,
-            object_count, instrument, last_synced, iho_zone
+            object_count, instrument, last_synced, iho_zone,
+            datetime_min, datetime_max, time_min, time_max, temporal_precision,
+            missing_date_count, missing_time_count, missing_depth_min_count,
+            missing_depth_max_count, depth_complete, metadata_objects_scanned,
+            metadata_complete, metadata_coverage_pct
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(sample_id) DO UPDATE SET
             project_id = excluded.project_id,
             lat_avg = excluded.lat_avg,
@@ -298,13 +352,33 @@ def upsert_sample(
             object_count = excluded.object_count,
             instrument = excluded.instrument,
             last_synced = excluded.last_synced,
-            iho_zone = excluded.iho_zone
+            iho_zone = excluded.iho_zone,
+            datetime_min = excluded.datetime_min,
+            datetime_max = excluded.datetime_max,
+            time_min = excluded.time_min,
+            time_max = excluded.time_max,
+            temporal_precision = excluded.temporal_precision,
+            missing_date_count = excluded.missing_date_count,
+            missing_time_count = excluded.missing_time_count,
+            missing_depth_min_count = excluded.missing_depth_min_count,
+            missing_depth_max_count = excluded.missing_depth_max_count,
+            depth_complete = excluded.depth_complete,
+            metadata_objects_scanned = excluded.metadata_objects_scanned,
+            metadata_complete = excluded.metadata_complete,
+            metadata_coverage_pct = excluded.metadata_coverage_pct
         """,
         (
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
             original_id, station_id, profile_id, free_fields_json,
             object_count, instrument, last_synced, iho_zone,
+            datetime_min, datetime_max, time_min, time_max, temporal_precision,
+            missing_date_count, missing_time_count, missing_depth_min_count,
+            missing_depth_max_count,
+            int(depth_complete) if depth_complete is not None else None,
+            metadata_objects_scanned,
+            int(metadata_complete) if metadata_complete is not None else None,
+            metadata_coverage_pct,
         ),
     )
     conn.commit()
@@ -354,7 +428,11 @@ def replace_project_samples(
                 sample.get("station_id"),
                 sample.get("profile_id"),
                 sample.get("free_fields_json"),
-                int(sample.get("object_count") or 0),
+                (
+                    int(sample["object_count"])
+                    if sample.get("object_count") is not None
+                    else None
+                ),
                 sample.get("nb_validated"),
                 sample.get("nb_predicted"),
                 sample.get("nb_dubious"),
@@ -363,6 +441,27 @@ def replace_project_samples(
                 sample.get("instrument"),
                 last_synced,
                 zone_values[i],
+                sample.get("datetime_min"),
+                sample.get("datetime_max"),
+                sample.get("time_min"),
+                sample.get("time_max"),
+                sample.get("temporal_precision"),
+                sample.get("missing_date_count"),
+                sample.get("missing_time_count"),
+                sample.get("missing_depth_min_count"),
+                sample.get("missing_depth_max_count"),
+                (
+                    int(sample["depth_complete"])
+                    if sample.get("depth_complete") is not None
+                    else None
+                ),
+                sample.get("metadata_objects_scanned"),
+                (
+                    int(sample["metadata_complete"])
+                    if sample.get("metadata_complete") is not None
+                    else None
+                ),
+                sample.get("metadata_coverage_pct"),
             )
             for i, sample in enumerate(samples)
         ]
@@ -373,9 +472,13 @@ def replace_project_samples(
                 date_min, date_max, depth_min, depth_max,
                 original_id, station_id, profile_id, free_fields_json,
                 object_count, nb_validated, nb_predicted, nb_dubious,
-                nb_unclassified, used_taxa, instrument, last_synced, iho_zone
+                nb_unclassified, used_taxa, instrument, last_synced, iho_zone,
+                datetime_min, datetime_max, time_min, time_max, temporal_precision,
+                missing_date_count, missing_time_count, missing_depth_min_count,
+                missing_depth_max_count, depth_complete, metadata_objects_scanned,
+                metadata_complete, metadata_coverage_pct
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
