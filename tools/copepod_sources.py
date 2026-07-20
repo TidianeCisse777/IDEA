@@ -508,6 +508,15 @@ def make_source_tools(thread_id: str) -> list:
             net_df.columns,
             ("deployment_datetime_start", "deployment_date_start", "date", "datetime"),
         )
+        # Clé de dédup = station + date — pas sample_id.
+        id_col = _detect(
+            net_df.columns,
+            ("station_name", "station", "station_id", "sample_id", "deployment_id"),
+        ) or net_df.columns[0]
+        station_col = _detect(
+            net_df.columns,
+            ("station_name", "station", "station_id"),
+        )
         if lat_col is None or lon_col is None:
             return _eco_blocked(
                 "Vérification filet↔UVP impossible : colonnes latitude/longitude "
@@ -566,6 +575,8 @@ def make_source_tools(thread_id: str) -> list:
             uvp_df,
             max_km=max_distance_km,
             max_days=max_time_gap_days,
+            net_id_col=id_col,
+            net_station_col=station_col or id_col,
             net_lat_col=lat_col,
             net_lon_col=lon_col,
             net_time_col=time_col,
