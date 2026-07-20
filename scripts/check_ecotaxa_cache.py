@@ -49,10 +49,11 @@ def validate_cache_health(
     min_projects: float | None = None,
     max_age_hours: float | None = None,
 ) -> CacheHealthResult:
-    """Validate a /health payload. Block on emptiness; warn on staleness.
+    """Validate a /health payload. Block on emptiness or a stale schema.
 
-    Blocking (ok=False): missing cache section, samples below minimum, or
-    projects below minimum — the cache cannot serve real queries.
+    Blocking (ok=False): missing cache section, stale/unknown schema, samples
+    below minimum, or projects below minimum — the cache cannot serve current
+    queries.
     Non-blocking (warnings): a later failed sync over still-usable data, or a
     stale cache older than the age threshold.
     """
@@ -87,6 +88,13 @@ def validate_cache_health(
 
     samples = cache.get("samples_indexed") or 0
     projects = cache.get("projects_indexed") or 0
+
+    if cache.get("schema_current") is not True:
+        errors.append(
+            "Schéma du cache EcoTaxa absent ou obsolète "
+            f"(version détectée : {cache.get('schema_version', 'inconnue')}). "
+            "Attendre la fin d'un sync complet avant de démarrer."
+        )
 
     if samples < min_samples:
         errors.append(

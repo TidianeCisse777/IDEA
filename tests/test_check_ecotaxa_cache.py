@@ -14,6 +14,8 @@ def _payload(**overrides):
         "schemas_indexed": 6,
         "last_sync_status": "ok",
         "cache_age_hours": 2.0,
+        "schema_version": 3,
+        "schema_current": True,
     }
     base.update(overrides)
     return {"status": "ok", "cache": base}
@@ -30,6 +32,20 @@ def test_missing_cache_payload_blocks():
     result = validate_cache_health({"status": "ok", "cache": None})
     assert result.ok is False
     assert any("cache" in e.lower() for e in result.errors)
+
+
+@pytest.mark.parametrize("schema_current", [None, False])
+def test_missing_or_stale_schema_blocks(schema_current):
+    payload = _payload()
+    if schema_current is None:
+        payload["cache"].pop("schema_current")
+    else:
+        payload["cache"]["schema_current"] = schema_current
+
+    result = validate_cache_health(payload)
+
+    assert result.ok is False
+    assert any("schéma" in e.lower() for e in result.errors)
 
 
 def test_empty_samples_blocks():

@@ -55,6 +55,8 @@ async def test_health_reports_empty_cache_when_no_sync_yet(monkeypatch, cache_db
     assert body["cache"]["projects_indexed"] == 0
     assert body["cache"]["last_sync_status"] is None
     assert body["cache"]["cache_age_hours"] is None
+    assert body["cache"]["schema_version"] == 0
+    assert body["cache"]["schema_current"] is False
 
 
 @pytest.mark.anyio
@@ -79,6 +81,7 @@ async def test_health_reports_cache_age_and_status_after_sync(
         conn, run_id=run_id, ended_at=five_hours_ago, status="ok",
         projects_synced=1, samples_synced=1, error_message=None,
     )
+    set_schema_version(conn, SCHEMA_VERSION)
     conn.close()
 
     app = create_app()
@@ -93,6 +96,8 @@ async def test_health_reports_cache_age_and_status_after_sync(
     assert body["cache"]["projects_indexed"] == 1
     assert body["cache"]["last_sync_status"] == "ok"
     assert 4.5 < body["cache"]["cache_age_hours"] < 5.5
+    assert body["cache"]["schema_version"] == SCHEMA_VERSION
+    assert body["cache"]["schema_current"] is True
 
 
 @pytest.mark.anyio

@@ -1,4 +1,5 @@
 import ast
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -7,6 +8,7 @@ import yaml
 def test_compose_defines_mcp_ecotaxa_service():
     compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
     service = compose["services"]["mcp-ecotaxa"]
+    agent = compose["services"]["copepod-agent"]
 
     assert service["ports"] == ["8001:8001"]
     assert service["env_file"] == [".env"]
@@ -23,6 +25,9 @@ def test_compose_defines_mcp_ecotaxa_service():
     assert "ECOTAXA_TOKEN=${ECOTAXA_TOKEN:-}" in environment
     assert "ECOTAXA_USERNAME=${ECOTAXA_USERNAME:-}" in environment
     assert "ECOTAXA_PASSWORD=${ECOTAXA_PASSWORD:-}" in environment
+    canonical_cache = "ECOTAXA_CACHE_DB=/app/data/ecotaxa_cache.sqlite"
+    assert canonical_cache in environment
+    assert canonical_cache in agent["environment"]
 
     assert ".:/app" in service["volumes"]
     assert "./data:/app/data" in service["volumes"]
@@ -56,6 +61,14 @@ def test_standalone_mcp_compose_is_shareable_without_repo_mount():
     assert "ZONES_REGISTRY=/app/data/geo/zones_registry.geojson" in environment
 
     assert "mcp_ecotaxa_cache" in compose["volumes"]
+
+
+def test_start_script_waits_for_current_schema_and_has_valid_bash_syntax():
+    source = Path("start.sh").read_text(encoding="utf-8")
+
+    assert '"schema_current":true' in source
+    assert source.index('"schema_current":true') < source.index("Initial sync complete.")
+    subprocess.run(["bash", "-n", "start.sh"], check=True)
 
 
 def test_mcp_image_has_a_minimal_dependency_set():
