@@ -1102,6 +1102,12 @@ def make_source_tools(thread_id: str) -> list:
                     "SELECT project_id, COUNT(*) FROM samples_cache GROUP BY project_id"
                 ).fetchall()
             }
+            date_ranges = {
+                int(row[0]): (row[1], row[2])
+                for row in conn.execute(
+                    "SELECT project_id, MIN(date_min), MAX(date_max) FROM samples_cache GROUP BY project_id"
+                ).fetchall()
+            }
             conn.close()
         except Exception as exc:
             return _eco_error(
@@ -1161,36 +1167,43 @@ def make_source_tools(thread_id: str) -> list:
                 f"(query={query!r}, min_legs={min_legs}, instrument={instrument!r})."
             )
 
-        # Sort: most legs first, then alphabetical root.
+        # Sort: most samples first, then alphabetical root.
         ordered = sorted(
             campaigns.values(),
-            key=lambda item: (-len(item["project_ids"]), item["root"].lower()),
+            key=lambda item: (-item["n_samples"], item["root"].lower()),
         )
 
-        lines = [
-            f"# {len(ordered)} campagne(s) EcoTaxa",
-            "",
-            "| campagne (racine) | legs | instruments | samples | project_ids | exemple |",
-            "|---|---:|---|---:|---|---|",
-        ]
+        # Enrich each entry with date range across all legs
         for item in ordered:
-            pids = sorted(item["project_ids"])
-            pids_cell = (
-                ", ".join(str(pid) for pid in pids[:8])
-                + (f" +{len(pids) - 8}" if len(pids) > 8 else "")
-            )
-            lines.append(
-                f"| `{item['root']}` | {len(pids)} | "
-                f"{', '.join(sorted(item['instruments'])) or '—'} | "
-                f"{item['n_samples']} | {pids_cell} | "
-                f"{item['example_title']} |"
-            )
-        lines.extend([
+            dates = [date_ranges.get(pid) for pid in item["project_ids"] if date_ranges.get(pid)]
+            d_min = min((d[0] for d in dates if d[0]), default=None)
+            d_max = max((d[1] for d in dates if d[1]), default=None)
+            item["date_min"] = d_min
+            item["date_max"] = d_max
+
+        total_samples = sum(item["n_samples"] for item in ordered)
+        lines = [
+            f"{len(ordered)} campagnes — {total_samples} samples au total.",
             "",
-            "Pour drill dans une campagne : "
-            "`find_ecotaxa_samples_in_region(project_ids=[...], date_range=..., zone_name=...)` "
-            "avec les project_ids de la ligne voulue.",
-        ])
+            "| Campagne | Instrument | Samples | Période |",
+            "|---|---|---:|---|",
+        ]
+        for item in ordered[:10]:
+            period = "—"
+            if item.get("date_min") and item.get("date_max"):
+                y_min = item["date_min"][:4]
+                y_max = item["date_max"][:4]
+                period = y_min if y_min == y_max else f"{y_min}–{y_max}"
+            legs = len(item["project_ids"])
+            name = item["root"]
+            leg_label = f" ({legs} legs)" if legs > 1 else ""
+            lines.append(
+                f"| {name}{leg_label} | "
+                f"{', '.join(sorted(item['instruments'])) or '—'} | "
+                f"{item['n_samples']} | {period} |"
+            )
+        if len(ordered) > 10:
+            lines.append(f"| … +{len(ordered) - 10} autres | | | |")
         return _eco_success("\n".join(lines), metrics={"campaigns": len(ordered)})
 
     @tool(response_format="content_and_artifact")
