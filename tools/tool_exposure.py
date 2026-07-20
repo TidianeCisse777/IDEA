@@ -96,7 +96,7 @@ _ECOTAXA_GEO_TERMS = (
 )
 _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     "file_analysis": (
-        "run_pandas", "split_dataframe_by_zone",
+        "run_pandas", "find_uvp_matches_for_net_table", "split_dataframe_by_zone",
     ),
     "ecotaxa_discovery": (
         "query_ecotaxa_cache", "list_ecotaxa_cache_tables",
@@ -128,13 +128,13 @@ _GROUP_ORDER: tuple[ToolExposureGroup, ...] = (
     "enrichment_ogsl",
     "sql_workspace",
     "ecotaxa_discovery",
+    "ecotaxa_export",
     "ecotaxa_samples",
     "ecotaxa_objects",
     "ecotaxa_geo_time",
     "ecotaxa_taxonomy",
     "ecotaxa_schema",
     "ecotaxa_audit",
-    "ecotaxa_export",
 )
 
 
@@ -353,8 +353,7 @@ def decide_tool_exposure(
             geo_fallback = ("ecotaxa_geo_time",) if signals.geographic_requested else ()
             fallback_groups = tuple(
                 group for group in (
-                    "core", "file_analysis" if signals.cross_source_compare_requested else "geography",
-                    "geography", "ecotaxa_discovery",
+                    "core", "file_analysis", "geography", "ecotaxa_discovery",
                     *geo_fallback,
                     *signals.ecotaxa_intents,
                 )
@@ -365,12 +364,11 @@ def decide_tool_exposure(
         fallback_limits: dict[ToolExposureGroup, int] = {
             "ecotaxa_discovery": 3 if signals.ecotaxa_intents else 4,
         }
-        if signals.cross_source_compare_requested:
+        if turn_context.file_loaded:
+            # Always guarantee run_pandas + find_uvp_matches_for_net_table.
             fallback_limits["file_analysis"] = 2
-            # Ensure find_uvp_matches_for_net_table is reachable (priority slot 2).
-            fallback_limits["ecotaxa_discovery"] = max(
-                fallback_limits["ecotaxa_discovery"], 2
-            )
+        if signals.cross_source_compare_requested:
+            fallback_limits["file_analysis"] = max(fallback_limits.get("file_analysis", 0), 2)
         if "ecotaxa_geo_time" in fallback_groups:
             fallback_limits["ecotaxa_geo_time"] = 2 if signals.multi_zone_requested else 1
         for intent in signals.ecotaxa_intents:

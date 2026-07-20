@@ -255,7 +255,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "list_ecotaxa_cache_tables": _source("EcoTaxa · tables du cache", "EcoTaxa · cache tables", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "describe_ecotaxa_cache_table": _source("EcoTaxa · schéma d'une table cache", "EcoTaxa · cache table schema", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "query_ecotaxa_cache": _source("EcoTaxa · SQL cache", "EcoTaxa · SQL cache", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "find_uvp_matches_for_net_table": _source("EcoTaxa · correspondances filet↔UVP", "EcoTaxa · net↔UVP matches", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
+    "find_uvp_matches_for_net_table": _presentation("Correspondances filet↔UVP (cache local)", "Net↔UVP matches (local cache)", "data"),
     # Bio-ORACLE.
     "list_bio_oracle_datasets": _source("Bio-ORACLE · jeux de données", "Bio-ORACLE · datasets", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
     "preview_bio_oracle_point": _source("Bio-ORACLE · aperçu ponctuel", "Bio-ORACLE · point preview", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
@@ -766,6 +766,8 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
         sql_available = False
 
     tools = [apply_strict_tool_schema(item) for item in tools]
+    for tool in tools:
+        tool.handle_tool_error = True
 
     name_counts = Counter(tool.name for tool in tools)
     duplicates = sorted(name for name, count in name_counts.items() if count > 1)

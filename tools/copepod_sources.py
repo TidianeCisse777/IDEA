@@ -459,6 +459,7 @@ def make_source_tools(thread_id: str) -> list:
 
     @tool(response_format="content_and_artifact")
     def find_uvp_matches_for_net_table(
+        net_variable_name: str | None = None,
         latitude_column: str | None = None,
         longitude_column: str | None = None,
         time_column: str | None = None,
@@ -483,17 +484,12 @@ def make_source_tools(thread_id: str) -> list:
         `load_skill("net_uvp_abundance_comparison")` pour calculer et comparer les
         deux abondances ; sinon dire clairement qu'aucun sample UVP ne recouvre la
         zone du filet.
+
+        `net_variable_name` : nom de la variable en session à utiliser comme table
+        de filet (ex. `df_file_neolabs_sample`). Si absent, utilise le dernier
+        fichier chargé. Utile quand plusieurs fichiers sont en session.
         """
         from core.net_uvp_comparison import match_net_to_uvp
-
-        loaded = loaded_file_dataset(_store, thread_id)
-        if not loaded or loaded.get("df") is None:
-            return _eco_blocked(
-                "Aucun fichier de filet chargé. Charge d'abord une table NeoLabs "
-                "(`load_file`) avec des colonnes latitude/longitude/date.",
-                retryable=False,
-            )
-        net_df = loaded["df"].copy()
 
         def _detect(cols, candidates):
             lower = {str(c).strip().lower(): c for c in cols}
@@ -501,6 +497,43 @@ def make_source_tools(thread_id: str) -> list:
                 if cand in lower:
                     return lower[cand]
             return None
+
+        # Résolution du dataset : par nom explicite ou fichier actif.
+        if net_variable_name:
+            entry = _store.get(f"{thread_id}:dataset:{net_variable_name}")
+            if not entry or entry.get("df") is None:
+                # Lister les datasets disponibles pour aider l'agent.
+                available = []
+                for key in _store.keys(f"{thread_id}:dataset:"):
+                    e = _store.get(key)
+                    if e and e.get("df") is not None:
+                        meta = e.get("meta") or {}
+                        var = meta.get("variable_name", key.split(":")[-1])
+                        available.append(f"`{var}` ({len(e['df'])} lignes)")
+                avail_text = ", ".join(available) if available else "aucun"
+                return _eco_blocked(
+                    f"`{net_variable_name}` introuvable en session. "
+                    f"Variables disponibles : {avail_text}.",
+                    retryable=False,
+                )
+            loaded = entry
+        else:
+            loaded = loaded_file_dataset(_store, thread_id)
+            if not loaded or loaded.get("df") is None:
+                available = []
+                for key in _store.keys(f"{thread_id}:dataset:"):
+                    e = _store.get(key)
+                    if e and e.get("df") is not None:
+                        meta = e.get("meta") or {}
+                        var = meta.get("variable_name", key.split(":")[-1])
+                        available.append(f"`{var}` ({len(e['df'])} lignes)")
+                avail_text = ", ".join(available) if available else "aucun"
+                return _eco_blocked(
+                    "Aucun fichier actif en session. "
+                    + (f"Variables disponibles : {avail_text}. Précisez `net_variable_name`." if available else "Chargez d'abord un fichier via `load_file`."),
+                    retryable=False,
+                )
+        net_df = loaded["df"].copy()
 
         lat_col = latitude_column or _detect(net_df.columns, ("latitude", "lat", "lat_avg"))
         lon_col = longitude_column or _detect(net_df.columns, ("longitude", "lon", "lon_avg", "long"))
