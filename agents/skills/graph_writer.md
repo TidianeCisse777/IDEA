@@ -120,11 +120,12 @@ missing or disagrees with the actual matplotlib axes/artists. Use exactly these
 fields: `"kind"`, `"axes"`, `"inverted_axes"`, `"mappings"`,
 `"zero_policy"`, and `"source_variables"`.
 
-For a visual outside the four specialised families:
+For a visual outside the four specialised families (bar, line, scatter, histogram,
+boxplot, heatmap, time series, area, bubble, pie — all treated as `"generic"`):
 
 ```python
 graph_contract = {
-    "kind": "generic",
+    "kind": "generic",  # also accepts: "bar","line","scatter","heatmap","time_series","histogram","boxplot"
     "axes": [{"axis_index": 0, "x": "<x role>", "y": "<y role>"}],
     "inverted_axes": [],
     "mappings": {},
@@ -199,9 +200,10 @@ graph_contract = {
 
 ### Choosing the map kind
 
-There are exactly two valid `graph_contract["kind"]` values for a map with data
-points. Never emit `kind: "map"` or `kind: "scatter"` for a geographic map — the
-contract validator rejects them and the user is told the map "is not supported".
+There are exactly two valid `graph_contract["kind"]` values for a **geographic map**
+with data points. Never emit `kind: "map"` or `kind: "scatter"` for a geographic
+map — use one of the two below. (`"scatter"` is valid for non-geographic scatter
+plots and resolves to `"generic"`.)
 
 - **`station_map`** — sample positions, and any encoding that is **not**
   measured abundance: number of samples per position, taxa richness

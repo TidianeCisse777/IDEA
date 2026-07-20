@@ -24,6 +24,22 @@ _ALLOWED_KINDS = {
     "abundance_environment_map",
     "station_map",
 }
+# Common chart-type aliases the LLM may emit — all treated as "generic".
+_GENERIC_ALIASES = {
+    "bar",
+    "bar_chart",
+    "line",
+    "line_chart",
+    "scatter",
+    "scatter_plot",
+    "heatmap",
+    "time_series",
+    "histogram",
+    "boxplot",
+    "pie",
+    "area",
+    "bubble",
+}
 _ABUNDANCE_ROLES = {"abundance_ind_L", "abundance_ind_m3"}
 
 
@@ -138,6 +154,8 @@ def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
     missing = sorted(_REQUIRED_FIELDS.difference(contract))
     if missing:
         return _blocked("missing fields: " + ", ".join(missing))
+    if contract["kind"] in _GENERIC_ALIASES:
+        contract = {**contract, "kind": "generic"}
     if contract["kind"] not in _ALLOWED_KINDS:
         return _blocked(f"unsupported kind: {contract['kind']}")
     if not isinstance(contract["axes"], list) or not contract["axes"]:
