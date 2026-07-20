@@ -149,7 +149,9 @@ def match_net_to_uvp(
     for pos, (idx, net_row) in enumerate(net.iterrows()):
         net_station_norm = _normalize_station(str(net_row.get(net_station_col) or net_row[net_id_col]))
 
-        # Strategy 1: station name match (exact normalized) + date filter.
+        # Match by normalized station name — no haversine fallback.
+        # station_id is always populated in the cache (derived from original_id
+        # during sync), so a spatial fallback would only produce false positives.
         station_idx: int | None = None
         if uvp_norm_stations and net_station_norm:
             for i, s in enumerate(uvp_norm_stations):
@@ -157,21 +159,13 @@ def match_net_to_uvp(
                     station_idx = i
                     break
 
-        # Strategy 2: spatial fallback (nearest within max_km).
-        dkm = haversine_km(net_lat.iloc[pos], net_lon.iloc[pos], u_lat, u_lon)
-        spatial_nearest = int(np.argmin(dkm))
-        spatial_distance = float(dkm[spatial_nearest])
-
-        if station_idx is not None:
-            nearest = station_idx
-            distance = float(dkm[nearest])
-            match_method = "station_name"
-        elif spatial_distance <= max_km:
-            nearest = spatial_nearest
-            distance = spatial_distance
-            match_method = "spatial"
-        else:
+        if station_idx is None:
             continue
+
+        nearest = station_idx
+        dkm = haversine_km(net_lat.iloc[pos], net_lon.iloc[pos], u_lat, u_lon)
+        distance = float(dkm[nearest])
+        match_method = "station_name"
 
         time_gap = None
         if net_time is not None and uvp_time is not None:
