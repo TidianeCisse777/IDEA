@@ -5,6 +5,14 @@ import sqlite3
 import pytest
 
 
+DEPLOYMENT_COLUMNS = {
+    "datetime_min", "datetime_max", "time_min", "time_max",
+    "temporal_precision", "missing_date_count", "missing_time_count",
+    "missing_depth_min_count", "missing_depth_max_count", "depth_complete",
+    "metadata_objects_scanned", "metadata_complete", "metadata_coverage_pct",
+}
+
+
 @pytest.fixture
 def conn():
     connection = sqlite3.connect(":memory:")
@@ -76,6 +84,129 @@ def test_init_schema_migrates_existing_samples_cache_with_light_sample_metadata_
         "profile_id",
         "free_fields_json",
     }.issubset(columns)
+    assert DEPLOYMENT_COLUMNS <= columns
+
+
+def test_init_schema_migrates_sample_deployment_metadata_columns(conn):
+    from core.ecotaxa_browser.cache.repo import init_schema
+
+    conn.execute(
+        "CREATE TABLE samples_cache (sample_id INTEGER PRIMARY KEY, "
+        "project_id INTEGER NOT NULL, last_synced TEXT NOT NULL)"
+    )
+    init_schema(conn)
+
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(samples_cache)")}
+    indexes = {row["name"] for row in conn.execute("PRAGMA index_list(samples_cache)")}
+    assert DEPLOYMENT_COLUMNS <= columns
+    assert "idx_samples_datetime" in indexes
+
+
+def test_upsert_sample_round_trips_deployment_metadata(conn):
+    from core.ecotaxa_browser.cache.repo import init_schema, upsert_sample
+
+    init_schema(conn)
+    upsert_sample(
+        conn,
+        sample_id=42,
+        project_id=7,
+        lat_avg=67.0,
+        lon_avg=-63.0,
+        date_min="2015-05-22",
+        date_max="2015-05-22",
+        object_count=10,
+        instrument="UVP5",
+        last_synced="ts",
+        datetime_min="2015-05-22T14:03:58",
+        datetime_max="2015-05-22T14:08:01",
+        time_min="14:03:58",
+        time_max="14:08:01",
+        temporal_precision="datetime",
+        missing_date_count=0,
+        missing_time_count=0,
+        missing_depth_min_count=0,
+        missing_depth_max_count=0,
+        depth_complete=True,
+        metadata_objects_scanned=10,
+        metadata_complete=True,
+        metadata_coverage_pct=100.0,
+    )
+
+    row = conn.execute("SELECT * FROM samples_cache WHERE sample_id=42").fetchone()
+    assert row["datetime_min"] == "2015-05-22T14:03:58"
+    assert row["time_max"] == "14:08:01"
+    assert row["metadata_complete"] == 1
+    assert row["depth_complete"] == 1
+    assert row["metadata_coverage_pct"] == pytest.approx(100.0)
+
+
+def test_upsert_sample_preserves_unknown_authoritative_counts_as_null(conn):
+    from core.ecotaxa_browser.cache.repo import init_schema, upsert_sample
+
+    init_schema(conn)
+    upsert_sample(
+        conn,
+        sample_id=42,
+        project_id=7,
+        lat_avg=None,
+        lon_avg=None,
+        date_min=None,
+        date_max=None,
+        object_count=None,
+        instrument="UVP5",
+        last_synced="ts",
+        metadata_objects_scanned=3,
+        metadata_complete=None,
+        metadata_coverage_pct=None,
+    )
+
+    row = conn.execute("SELECT * FROM samples_cache WHERE sample_id=42").fetchone()
+    assert row["object_count"] is None
+    assert row["metadata_complete"] is None
+    assert row["metadata_coverage_pct"] is None
+
+
+def test_replace_project_samples_persists_deployment_metadata(conn):
+    from core.ecotaxa_browser.cache.repo import init_schema, replace_project_samples
+
+    init_schema(conn)
+    replace_project_samples(
+        conn,
+        project_id=7,
+        samples=[{
+            "sample_id": 42,
+            "lat_avg": 67.0,
+            "lon_avg": -63.0,
+            "date_min": "2015-05-22",
+            "date_max": "2015-05-22",
+            "object_count": None,
+            "instrument": "UVP5",
+            "datetime_min": "2015-05-22T14:03:58",
+            "datetime_max": "2015-05-22T14:08:01",
+            "time_min": "14:03:58",
+            "time_max": "14:08:01",
+            "temporal_precision": "datetime",
+            "missing_date_count": 0,
+            "missing_time_count": 0,
+            "missing_depth_min_count": 0,
+            "missing_depth_max_count": 0,
+            "depth_complete": True,
+            "metadata_objects_scanned": 10,
+            "metadata_complete": True,
+            "metadata_coverage_pct": 100.0,
+            "station_id": "station-1",
+            "profile_id": "profile-1",
+        }],
+        last_synced="ts",
+    )
+
+    row = conn.execute("SELECT * FROM samples_cache WHERE sample_id=42").fetchone()
+    assert row["object_count"] is None
+    assert row["datetime_max"] == "2015-05-22T14:08:01"
+    assert row["metadata_objects_scanned"] == 10
+    assert row["metadata_complete"] == 1
+    assert row["station_id"] == "station-1"
+    assert row["profile_id"] == "profile-1"
 
 
 def test_upsert_sample_inserts_and_then_updates(conn):

@@ -1,6 +1,7 @@
 """tools/copepod_sources.py — LangChain tools pour accès EcoTaxa/EcoPart."""
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import unicodedata
@@ -38,6 +39,7 @@ from core.ecotaxa_browser.taxonomy import search_taxa
 from core.ecotaxa_browser.cache.repo import (
     init_schema,
     open_connection,
+    open_readonly_connection,
     project_cache_coverage,
     query_samples_filtered,
     resolve_samples,
@@ -741,6 +743,27 @@ def make_source_tools(thread_id: str) -> list:
         if project_ids:
             parts.append("projects_" + "_".join(str(int(pid)) for pid in project_ids[:4]))
         return "_".join(part for part in parts if part)
+
+    def _persistent_cache_selection_identity(
+        *,
+        sql: str,
+        sample_ids: list[int],
+        requested_name: str | None,
+    ) -> tuple[str, str, str]:
+        """Return stable selection, dataframe and human label identifiers."""
+
+        compact_sql = " ".join(str(sql).split())
+        label = str(requested_name or "samples").strip() or "samples"
+        slug = _slug_part(label)[:48] or "samples"
+        digest_source = compact_sql + "\n" + ",".join(
+            str(int(sample_id)) for sample_id in sample_ids
+        )
+        short_id = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:8]
+        selection_key = f"selection_{slug}_{short_id}"
+        variable_name = dataset_variable_name(
+            "ecotaxa", "selection", slug, short_id
+        )
+        return selection_key, variable_name, label
 
     def _store_sample_selection(
         *,
@@ -3021,13 +3044,36 @@ def make_source_tools(thread_id: str) -> list:
             f"| original_id | {sample.get('original_id') or '—'} |",
             f"| latitude | {_fmt(sample.get('latitude'))} |",
             f"| longitude | {_fmt(sample.get('longitude'))} |",
+            f"| objets total (statistiques sample) | {_fmt(summary.get('total_objects'))} |",
+            f"| validés | {_fmt(summary.get('nb_validated'))} |",
+            f"| prédits | {_fmt(summary.get('nb_predicted'))} |",
+            f"| douteux | {_fmt(summary.get('nb_dubious'))} |",
+            f"| non classifiés | {_fmt(summary.get('nb_unclassified'))} |",
             f"| date_min objets | {_fmt(summary.get('date_min'))} |",
             f"| date_max objets | {_fmt(summary.get('date_max'))} |",
+            f"| date-heure min | {_fmt(summary.get('datetime_min'))} |",
+            f"| date-heure max | {_fmt(summary.get('datetime_max'))} |",
+            f"| précision temporelle | {_fmt(summary.get('temporal_precision'))} |",
             f"| depth_min objets | {_fmt(summary.get('depth_min'))} |",
             f"| depth_max objets | {_fmt(summary.get('depth_max'))} |",
+            f"| couverture métadonnées | {_fmt(summary.get('metadata_coverage_pct'))} % |",
             f"| objets scannés | {summary.get('objects_scanned')} / {summary.get('total_objects')} |",
             f"| résumé tronqué | {'oui' if summary.get('truncated') else 'non'} |",
         ]
+
+        if summary.get("metadata_complete") is not True:
+            lines.extend([
+                "",
+                "⚠ Enveloppe temporelle et de profondeur partielle : "
+                f"{summary.get('objects_scanned', 0)} / "
+                f"{summary.get('total_objects', 0)} objets couverts.",
+            ])
+        if summary.get("count_discrepancy"):
+            lines.extend([
+                "",
+                "⚠ Le total autoritatif des statistiques du sample diffère du total "
+                f"retourné par la requête d’objets ({summary.get('query_total_objects')}).",
+            ])
 
         sample_free = sample.get("free_fields") or {}
         if sample_free:
@@ -3063,6 +3109,8 @@ def make_source_tools(thread_id: str) -> list:
             },
             metrics={
                 "objects_scanned": int(summary.get("objects_scanned") or 0),
+                "authoritative_total_objects": int(summary.get("total_objects") or 0),
+                "query_total_objects": summary.get("query_total_objects"),
                 "acquisitions": len(acquisitions),
             },
         )
@@ -3547,39 +3595,56 @@ def make_source_tools(thread_id: str) -> list:
 
     @tool(response_format="content_and_artifact")
     def list_ecotaxa_cache_tables() -> str:
-        """Liste les tables du cache SQLite EcoTaxa avec leur nombre de lignes.
+        """Cartographie complète des tables réellement présentes dans le cache EcoTaxa.
 
-        Point d'entrée de l'exploration SQL : appeler en premier pour savoir
-        quelles tables sont disponibles. Retourne nom, nombre de lignes indexées
-        et description de chaque table.
+        Retourne en un appel le nom, le grain, le nombre de lignes, les colonnes,
+        clés primaires, index et relations de chaque table non interne. Inclut
+        les tables d'extension locales lorsqu'elles existent.
 
-        Suivi naturel : `describe_ecotaxa_cache_table` pour le schéma exact,
-        puis `query_ecotaxa_cache` pour un SELECT libre.
+        À utiliser quand le schéma est inconnu, avant une jointure, ou après une
+        erreur de colonne. Si le schéma utile est déjà connu, interroger le cache
+        directement sans rappeler cette carte.
         """
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
+            conn = open_readonly_connection(cache_db)
             tables = _sql_explorer.list_tables(conn)
             conn.close()
         except Exception as exc:
             return _eco_error(f"Erreur lecture cache : {exc}", retryable=True)
 
-        lines = [
-            "## Tables du cache EcoTaxa",
-            "",
-            "| table | lignes | description |",
-            "|---|---:|---|",
-        ]
+        lines = ["## Carte du cache EcoTaxa", ""]
+        total_columns = 0
         for t in tables:
             count = t["rows"] if t["rows"] is not None else "—"
-            lines.append(f"| `{t['table']}` | {count} | {t['description']} |")
+            columns = []
+            for column in t["columns"]:
+                suffix = " PK" if column["pk"] else ""
+                columns.append(f"`{column['name']}` {column['type'] or 'ANY'}{suffix}")
+            total_columns += len(columns)
+            relations = [
+                f"`{item['from_column']}` → "
+                f"`{item['to_table']}.{item['to_column']}` ({item['kind']})"
+                for item in t["relations"]
+            ]
+            index_names = [f"`{item['name']}`" for item in t["indexes"]]
+            lines += [
+                f"### `{t['table']}` — {count} lignes",
+                f"- Grain : {t['grain']}",
+                f"- Rôle : {t['description']}",
+                f"- Colonnes : {', '.join(columns) or 'aucune'}",
+                f"- Relations : {', '.join(relations) or 'aucune déclarée'}",
+                f"- Index : {', '.join(index_names) or 'aucun'}",
+                "",
+            ]
         lines += [
-            "",
-            "Utiliser `describe_ecotaxa_cache_table` pour le schéma, "
-            "puis `query_ecotaxa_cache(sql=...)` pour un SELECT libre.",
+            "La carte reflète le fichier actuellement ouvert. Utiliser ensuite "
+            "un SELECT ou WITH read-only pour l'exploration.",
         ]
-        return _eco_success("\n".join(lines), metrics={"tables": len(tables)})
+        return _eco_success(
+            "\n".join(lines),
+            metrics={"tables": len(tables), "columns": total_columns},
+        )
 
     @tool(response_format="content_and_artifact")
     def describe_ecotaxa_cache_table(table_name: str) -> str:
@@ -3593,8 +3658,7 @@ def make_source_tools(thread_id: str) -> list:
         """
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
+            conn = open_readonly_connection(cache_db)
             result = _sql_explorer.describe_table(conn, table_name)
             conn.close()
         except Exception as exc:
@@ -3608,6 +3672,8 @@ def make_source_tools(thread_id: str) -> list:
             "",
             result["description"],
             "",
+            f"Grain : {result['grain']}",
+            "",
             "### Colonnes",
             "",
             "| # | colonne | type | not null | PK |",
@@ -3620,16 +3686,39 @@ def make_source_tools(thread_id: str) -> list:
                 f"| {col['cid']} | `{col['name']}` | {col['type']} | {nn} | {pk} |"
             )
         if result["indexes"]:
-            lines += ["", "### Index", "", "| nom | unique |", "|---|:---:|"]
+            lines += ["", "### Index", "", "| nom | colonnes | unique |", "|---|---|:---:|"]
             for idx in result["indexes"]:
-                lines.append(f"| `{idx['name']}` | {'✓' if idx['unique'] else ''} |")
+                index_columns = ", ".join(f"`{name}`" for name in idx["columns"])
+                lines.append(
+                    f"| `{idx['name']}` | {index_columns} | "
+                    f"{'✓' if idx['unique'] else ''} |"
+                )
+        if result["relations"]:
+            lines += ["", "### Relations"]
+            for relation in result["relations"]:
+                lines.append(
+                    f"- `{relation['from_column']}` → "
+                    f"`{relation['to_table']}.{relation['to_column']}` "
+                    f"({relation['kind']})"
+                )
         return _eco_success(
             "\n".join(lines), metrics={"columns": len(result["columns"])}
         )
 
     @tool(response_format="content_and_artifact")
-    def query_ecotaxa_cache(sql: str) -> str:
-        """Exécute un SELECT libre sur le cache SQLite EcoTaxa local.
+    def query_ecotaxa_cache(
+        sql: str,
+        selection_name: str | None = None,
+    ) -> str:
+        """Exécute un SELECT ou WITH/CTE libre sur le cache SQLite EcoTaxa local.
+
+        Args:
+            sql: Requête SQLite read-only à exécuter.
+            selection_name: Nom descriptif facultatif pour une requête qui
+                retourne `sample_id` (ex. `baffin_2024`). Chaque sélection est
+                persistée sous un DataFrame unique et reste disponible dans le
+                sandbox pendant toute la conversation. Si absent, `samples`
+                est utilisé avec un identifiant stable dérivé du contenu.
 
         Routing requirement: before calling this tool in an agent turn, call
         `load_skill("ecotaxa_navigation")` first unless it has already been
@@ -3639,18 +3728,23 @@ def make_source_tools(thread_id: str) -> list:
         Remplace tout pattern nécessitant plusieurs appels ou un export pour
         un comptage, regroupement ou filtrage arbitraire.
 
-        Explorer les objets : la table `objects_cache` (indexée dans les caches
-        enrichis) permet d'agréger les objets par taxon, statut, sample, date ou
-        profondeur en SQL — vérifie sa présence avec `describe_ecotaxa_cache_table`
-        avant, car elle est absente d'un cache non enrichi. Si elle est absente,
-        le cache ne connaît des objets que des agrégats (`samples_cache.object_count`,
-        `project_signatures_cache.pctvalidated`), et le détail objet par objet passe
-        par le chemin live `list_ecotaxa_sample_objects` / `get_ecotaxa_object`.
+        Les comptes sample-level sont directement disponibles dans `samples_cache` :
+        `object_count`, `nb_validated`, `nb_predicted`, `nb_dubious` et
+        `nb_unclassified` proviennent des statistiques EcoTaxa autoritatives. Ne
+        jamais dériver un statut depuis `object_count`. La table `objects_cache`
+        est optionnelle et réservée aux questions explicitement object-level
+        (taxon, statut, date ou profondeur de chaque objet). Vérifier sa présence
+        avec `describe_ecotaxa_cache_table` avant de l'utiliser. Le détail d'un
+        sample résolu peut sinon passer par `summarize_ecotaxa_sample_deployment`.
 
-        Seuls les SELECT sont autorisés. Aucun LIMIT n'est ajouté par défaut :
-        le résultat complet est conservé dans `df_ecotaxa_cache_query`. Ajouter
-        un LIMIT uniquement si l'utilisateur demande explicitement un aperçu,
-        un top ou une pagination.
+        Les SELECT et WITH/CTE read-only sont autorisés, y compris jointures,
+        sous-requêtes et agrégations. La connexion SQLite est ouverte en mode
+        lecture seule et `query_only`; toute écriture reste impossible. Aucun
+        LIMIT n'est ajouté par défaut :
+        le résultat complet est conservé sous un nom unique quand il contient
+        `sample_id`; `df_ecotaxa_cache_query` reste l'alias de la dernière
+        requête. Ajouter un LIMIT uniquement si l'utilisateur demande
+        explicitement un aperçu, un top ou une pagination.
 
         Zones nommées — règle stricte : utiliser la colonne `iho_zone`
         pré-calculée par point-in-polygon. Ne jamais écrire de bornes lat/lon
@@ -3661,8 +3755,10 @@ def make_source_tools(thread_id: str) -> list:
         `get_zone_info` reste utile uniquement pour afficher la description
         d'une zone à l'utilisateur, pas pour construire une bbox de filtrage.
 
-        Utiliser `list_ecotaxa_cache_tables` pour découvrir les tables
-        et `describe_ecotaxa_cache_table` pour leur schéma exact.
+        Utiliser `list_ecotaxa_cache_tables` lorsque le schéma est inconnu,
+        avant une jointure ou après une erreur de colonne. Ne pas rappeler la
+        carte si le schéma nécessaire est déjà connu. Utiliser
+        `describe_ecotaxa_cache_table` pour approfondir une seule table.
 
         ## Tables disponibles
 
@@ -3677,9 +3773,20 @@ def make_source_tools(thread_id: str) -> list:
         | original_id | TEXT | label complet (ex. am_leg4_RA76_1) |
         | station_id | TEXT | station (ex. RA76, St-27), jamais le cast |
         | profile_id | TEXT | identifiant du cast/profil |
-        | object_count | INTEGER | objets imagés |
+        | object_count | INTEGER | total autoritatif des objets du sample |
+        | nb_validated / nb_predicted | INTEGER | comptes V/P autoritatifs au grain sample |
+        | nb_dubious / nb_unclassified | INTEGER | comptes D/U autoritatifs au grain sample |
         | instrument | TEXT | UVP6, UVP5SD, Loki, … |
         | iho_zone | TEXT | zone IHO/MEOW assignée par point-in-polygon (ex. "Baie de Baffin") — utiliser LIKE '%…%' |
+        | datetime_min / datetime_max | TEXT | enveloppe ISO date-heure dérivée des objets |
+        | time_min / time_max | TEXT | enveloppe horaire HH:MM:SS dérivée des objets |
+        | temporal_precision | TEXT | `datetime`, `date`, `partial` ou `none` |
+        | missing_date_count / missing_time_count | INTEGER | objets sans date / heure exploitable |
+        | missing_depth_min_count / missing_depth_max_count | INTEGER | objets sans borne de profondeur |
+        | depth_complete | INTEGER | 1 si le scan et toutes les bornes de profondeur sont complets |
+        | metadata_objects_scanned | INTEGER | nombre d'objets inspectés pour les enveloppes |
+        | metadata_complete | INTEGER | 1 si le scan couvre le total autoritatif sans écart |
+        | metadata_coverage_pct | REAL | pourcentage du total autoritatif inspecté |
 
         **objects_cache** — index objet optionnel, absent du cache standard
         Présente uniquement dans les caches enrichis. Vérifier sa présence avec
@@ -3704,6 +3811,44 @@ def make_source_tools(thread_id: str) -> list:
 
         ## Exemples
         ```sql
+        -- Date envelope overlap, complete metadata only
+        SELECT sample_id, project_id, date_min, date_max, iho_zone
+        FROM samples_cache
+        WHERE metadata_complete = 1
+          AND missing_date_count = 0
+          AND date_min <= '2015-05-22'
+          AND date_max >= '2015-05-20'
+
+        -- Date-time envelope overlap, complete timestamp metadata only
+        SELECT sample_id, project_id, datetime_min, datetime_max, iho_zone
+        FROM samples_cache
+        WHERE metadata_complete = 1
+          AND temporal_precision = 'datetime'
+          AND datetime_min <= '2015-05-22T16:00:00'
+          AND datetime_max >= '2015-05-22T14:00:00'
+
+        -- Hour envelope overlap, normal same-day range
+        SELECT sample_id, project_id, time_min, time_max, iho_zone
+        FROM samples_cache
+        WHERE metadata_complete = 1
+          AND missing_time_count = 0
+          AND time_min <= '16:00:00'
+          AND time_max >= '14:00:00'
+
+        -- Hour envelope overlap across midnight
+        SELECT sample_id, project_id, time_min, time_max, iho_zone
+        FROM samples_cache
+        WHERE metadata_complete = 1
+          AND missing_time_count = 0
+          AND (time_max >= '22:00:00' OR time_min <= '02:00:00')
+
+        -- Complete depth-envelope overlap
+        SELECT sample_id, project_id, depth_min, depth_max, iho_zone
+        FROM samples_cache
+        WHERE depth_complete = 1
+          AND depth_min <= 300
+          AND depth_max >= 100
+
         -- Samples par station (cross-project)
         SELECT sample_id, project_id, original_id, station_id, date_min, depth_max
         FROM samples_cache WHERE station_id LIKE '%RA76%' ORDER BY date_min
@@ -3748,11 +3893,16 @@ def make_source_tools(thread_id: str) -> list:
         SELECT project_id, objcount, pctvalidated, pctclassified
         FROM project_signatures_cache ORDER BY pctvalidated DESC
         ```
+
+        Rows excluded by completeness guards are unknown, not non-matches.
+        Count and report incomplete or partial rows with a second query that
+        preserves the same project and/or `iho_zone` scope. For one resolved
+        incomplete sample, use `summarize_ecotaxa_sample_deployment`; do not
+        launch live detail calls silently for a large batch.
         """
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
+            conn = open_readonly_connection(cache_db)
             # Keep the complete SELECT result in the persisted DataFrame. The
             # response below may show a compact preview, but it is not data loss.
             result = _sql_explorer.run_select(conn, sql, cap=None)
@@ -3774,73 +3924,108 @@ def make_source_tools(thread_id: str) -> list:
             return _eco_empty("La requête n'a retourné aucune ligne.")
 
         dataframe = pd.DataFrame.from_records(rows, columns=columns)
-        variable_name = "df_ecotaxa_cache_query"
-        store_dataset(
-            _store,
-            thread_id,
-            dataframe,
-            variable_name=variable_name,
-            meta={
-                "source": "ecotaxa_cache",
-                "sql": sql,
-                "n_rows": len(dataframe),
-                "n_cols": len(dataframe.columns),
-                "truncated": truncated,
-            },
-        )
+        latest_variable = "df_ecotaxa_cache_query"
+        base_meta = {
+            "source": "ecotaxa_cache",
+            "sql": sql,
+            "n_rows": len(dataframe),
+            "n_cols": len(dataframe.columns),
+            "truncated": truncated,
+        }
 
-        # Campagne → export : dès qu'une exploration SQL renvoie des `sample_id`,
-        # la mémoriser comme sélection exportable (`latest`). N'importe quelle
-        # campagne (zone + temps + taxon…) devient ainsi exportable directement
-        # via `export_ecotaxa_samples(selection_name="latest")`, sans que le
-        # modèle ait à ré-extraire les identifiants à la main.
+        # Every sample-level SQL result becomes its own persistent sandbox table.
+        # The legacy variable remains a moving alias to the latest query.
         selection_note = ""
-        if "sample_id" in dataframe.columns:
-            id_series = pd.to_numeric(dataframe["sample_id"], errors="coerce").dropna()
-            sids = [int(s) for s in dict.fromkeys(id_series.tolist())]
-            selection_samples: list[dict] = []
-            if sids and "project_id" in dataframe.columns:
-                pairs = dataframe[["sample_id", "project_id"]].dropna().drop_duplicates()
-                for row in pairs.itertuples(index=False):
-                    try:
-                        selection_samples.append(
-                            {"sample_id": int(row.sample_id), "project_id": int(row.project_id)}
-                        )
-                    except (TypeError, ValueError):
-                        continue
-            elif sids:
-                # project_id absent du SELECT → le résoudre depuis le cache.
+        persisted_variable = latest_variable
+        id_series = (
+            pd.to_numeric(dataframe["sample_id"], errors="coerce").dropna()
+            if "sample_id" in dataframe.columns
+            else pd.Series(dtype="int64")
+        )
+        sample_ids = [int(value) for value in dict.fromkeys(id_series.tolist())]
+        if sample_ids:
+            project_ids: list[int] = []
+            if "project_id" in dataframe.columns:
+                project_series = pd.to_numeric(
+                    dataframe["project_id"], errors="coerce"
+                ).dropna()
+                project_ids = sorted({int(value) for value in project_series.tolist()})
+            if not project_ids:
                 try:
-                    mapping = resolve_sample_projects(sids)
-                except Exception:
-                    mapping = {}
-                selection_samples = [
-                    {"sample_id": int(s), "project_id": int(p)} for s, p in mapping.items()
-                ]
-            if selection_samples:
-                try:
-                    # Register only the selection METADATA (sample/project ids)
-                    # for export — never rebuild/overwrite the active dataframe,
-                    # which must stay the exact SQL result the campaign returned.
-                    sel_sample_ids = [int(s["sample_id"]) for s in selection_samples]
-                    sel_project_ids = sorted({int(s["project_id"]) for s in selection_samples})
-                    sel_name = _selection_name()
-                    sel_meta = {
-                        "selection_name": sel_name,
-                        "sample_ids": sel_sample_ids,
-                        "project_ids": sel_project_ids,
-                        "n_samples": len(sel_sample_ids),
-                        "filters": {"sql": sql},
-                        "source": "ecotaxa_selection",
-                    }
-                    _store.set(f"{thread_id}:selection:{sel_name}", None, sel_meta)
-                    _store.set(f"{thread_id}:ecotaxa_selection_latest", None, sel_meta)
-                    selection_note = (
-                        f"\n\nLa sélection complète de {len(sel_sample_ids)} samples est conservée "
-                        "pour l’analyse ou l’export."
+                    project_ids = sorted(
+                        {int(value) for value in resolve_sample_projects(sample_ids).values()}
                     )
                 except Exception:
-                    selection_note = ""
+                    project_ids = []
+
+            selection_key, persisted_variable, label = (
+                _persistent_cache_selection_identity(
+                    sql=sql,
+                    sample_ids=sample_ids,
+                    requested_name=selection_name,
+                )
+            )
+            compact_sql = " ".join(str(sql).split())
+            description = (
+                f"Sélection EcoTaxa « {label} » · {len(sample_ids)} samples · "
+                f"{len(project_ids)} projets · SQL: {compact_sql[:180]}"
+            )
+            selection_meta = {
+                **base_meta,
+                "source": "ecotaxa_selection",
+                "selection_name": selection_key,
+                "sample_ids": sample_ids,
+                "project_ids": project_ids,
+                "n_samples": len(sample_ids),
+                "filters": {"sql": sql},
+                "description": description,
+            }
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=persisted_variable,
+                meta=selection_meta,
+            )
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=latest_variable,
+                meta={
+                    **base_meta,
+                    "alias_of": persisted_variable,
+                    "description": f"Alias vers la dernière sélection : {persisted_variable}",
+                },
+                set_active=False,
+            )
+            stored_selection_meta = {
+                **selection_meta,
+                "variable_name": persisted_variable,
+            }
+            _store.set(
+                f"{thread_id}:selection:{selection_key}",
+                None,
+                stored_selection_meta,
+            )
+            _store.set(
+                f"{thread_id}:ecotaxa_selection_latest",
+                None,
+                stored_selection_meta,
+            )
+            selection_note = (
+                f"\n\nLa sélection complète de {len(sample_ids)} samples est "
+                f"conservée dans `{persisted_variable}` sous le nom "
+                f"`{selection_key}` ; `latest` pointe vers cette sélection."
+            )
+        else:
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=latest_variable,
+                meta=base_meta,
+            )
 
         header = "| " + " | ".join(columns) + " |"
         separator = "|" + "|".join("---" for _ in columns) + "|"
@@ -3852,8 +4037,9 @@ def make_source_tools(thread_id: str) -> list:
             for row in preview_rows
         ]
         note = (
-            f"\n_(aperçu de 50 lignes sur {len(rows)} ; résultat complet dans "
-            "`df_ecotaxa_cache_query`)_"
+            f"\n_(aperçu de {len(preview_rows)} lignes sur {len(rows)} ; "
+            f"résultat complet dans `{persisted_variable}` ; "
+            "`df_ecotaxa_cache_query` pointe vers la dernière requête)_"
             if len(rows) > len(preview_rows) else ""
         )
         if truncated:
@@ -3898,7 +4084,7 @@ def make_source_tools(thread_id: str) -> list:
         body = "\n".join([*selection_overview, *summary, header, separator, *data_lines]) + note + selection_note
         return _eco_success(
             body,
-            data_ref=variable_name,
+            data_ref=persisted_variable,
             persisted=True,
             metrics={"rows": len(rows), "truncated": truncated},
         )

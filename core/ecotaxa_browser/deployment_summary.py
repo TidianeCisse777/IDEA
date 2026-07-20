@@ -8,15 +8,17 @@ This does not start an EcoTaxa export job and does not download images.
 from __future__ import annotations
 
 from core.ecotaxa_browser.acquisitions import _normalize_acquisition
+from core.ecotaxa_browser.sample_metadata import (
+    OBJECT_METADATA_FIELDS,
+    accumulate_metadata_row,
+    finalize_metadata,
+    new_metadata_aggregate,
+    normalize_sample_stats,
+)
 from core.ecotaxa_browser.samples import _normalize_sample
 from tools.ecotaxa_client import EcotaxaClient
 
-_DEPLOYMENT_FIELDS = ",".join([
-    "obj.objdate",
-    "obj.depth_min",
-    "obj.depth_max",
-    "obj.acquisid",
-])
+_DEPLOYMENT_FIELDS = f"{OBJECT_METADATA_FIELDS},obj.acquisid"
 
 
 def summarize_sample_deployment(
@@ -32,6 +34,19 @@ def summarize_sample_deployment(
     raw_sample = client.get_sample(sample_id)
     sample = _normalize_sample(raw_sample)
     project_id = int(sample["project_id"])
+    stats_rows = client.sample_taxo_stats([sample_id])
+    stats_row = next(
+        (
+            row for row in stats_rows
+            if int(row.get("sample_id", -1)) == int(sample_id)
+        ),
+        None,
+    )
+    if stats_row is None:
+        raise RuntimeError(
+            f"EcoTaxa sample statistics returned no entry for sample {sample_id}"
+        )
+    stats = normalize_sample_stats(stats_row)
 
     acquisitions = [
         _normalize_acquisition(item)
@@ -44,12 +59,22 @@ def summarize_sample_deployment(
         project_id=project_id,
         page_size=page_size,
         max_objects=max_objects,
+        authoritative_total=int(stats["object_count"]),
     )
 
     return {
         "sample": sample,
         "acquisitions": acquisitions,
-        "object_summary": object_summary,
+        "object_summary": object_summary | {
+            key: stats[key]
+            for key in (
+                "nb_validated",
+                "nb_predicted",
+                "nb_dubious",
+                "nb_unclassified",
+                "used_taxa",
+            )
+        },
     }
 
 
@@ -60,18 +85,29 @@ def _summarize_sample_objects(
     project_id: int,
     page_size: int,
     max_objects: int,
+    authoritative_total: int,
 ) -> dict:
     if page_size < 1:
         raise ValueError("page_size must be at least 1")
     if max_objects < 1:
         raise ValueError("max_objects must be at least 1")
 
-    total_objects: int | None = None
-    objects_scanned = 0
-    date_min: str | None = None
-    date_max: str | None = None
-    depth_min: float | None = None
-    depth_max: float | None = None
+    if authoritative_total == 0:
+        metadata = finalize_metadata(
+            new_metadata_aggregate(),
+            authoritative_total=0,
+            query_total=0,
+        )
+        return {
+            **metadata,
+            "total_objects": 0,
+            "objects_scanned": metadata["metadata_objects_scanned"],
+            "truncated": False,
+            "acquisition_ids": [],
+        }
+
+    total_objects_from_query: int | None = None
+    aggregate = new_metadata_aggregate()
     acquisition_ids: set[int] = set()
 
     window_start = 0
@@ -84,52 +120,33 @@ def _summarize_sample_objects(
             window_start,
             window_size,
         )
-        if total_objects is None:
-            total_objects = int(result.get("total_ids") or 0)
+        if total_objects_from_query is None:
+            total_objects_from_query = int(result.get("total_ids") or 0)
         rows = result.get("details") or []
         if not rows:
             break
 
         for row in rows:
-            objdate = row[0]
-            dmin = _as_float(row[1])
-            dmax = _as_float(row[2])
-            acquisid = row[3]
-            if objdate:
-                text = str(objdate)
-                date_min = text if date_min is None else min(date_min, text)
-                date_max = text if date_max is None else max(date_max, text)
-            if dmin is not None:
-                depth_min = dmin if depth_min is None else min(depth_min, dmin)
-            if dmax is not None:
-                depth_max = dmax if depth_max is None else max(depth_max, dmax)
+            accumulate_metadata_row(aggregate, row[:4])
+            acquisid = row[4] if len(row) > 4 else None
             if acquisid is not None:
                 acquisition_ids.add(int(acquisid))
 
-        objects_scanned += len(rows)
         window_start += len(rows)
-        if total_objects is not None and window_start >= total_objects:
+        if total_objects_from_query is not None and window_start >= total_objects_from_query:
             break
         if len(rows) < window_size:
             break
 
-    total = total_objects or 0
+    metadata = finalize_metadata(
+        aggregate,
+        authoritative_total=authoritative_total,
+        query_total=total_objects_from_query,
+    )
     return {
-        "total_objects": total,
-        "objects_scanned": objects_scanned,
-        "truncated": objects_scanned < total,
-        "date_min": date_min,
-        "date_max": date_max,
-        "depth_min": depth_min,
-        "depth_max": depth_max,
+        **metadata,
+        "total_objects": authoritative_total,
+        "objects_scanned": metadata["metadata_objects_scanned"],
+        "truncated": metadata["metadata_complete"] is not True,
         "acquisition_ids": sorted(acquisition_ids),
     }
-
-
-def _as_float(value) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None

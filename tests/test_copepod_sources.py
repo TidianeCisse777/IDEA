@@ -693,8 +693,19 @@ def test_summarize_ecotaxa_sample_deployment_renders_metadata_depths_and_uvp_fie
             "truncated": False,
             "date_min": "2015-05-22",
             "date_max": "2015-05-23",
+            "datetime_min": "2015-05-22T14:03:58",
+            "datetime_max": "2015-05-23T14:08:01",
+            "temporal_precision": "datetime",
             "depth_min": 1.8,
             "depth_max": 4.5,
+            "metadata_complete": True,
+            "metadata_coverage_pct": 100.0,
+            "count_discrepancy": False,
+            "query_total_objects": 3420,
+            "nb_validated": 3000,
+            "nb_predicted": 400,
+            "nb_dubious": 10,
+            "nb_unclassified": 10,
             "acquisition_ids": [420000014],
         },
     }
@@ -711,11 +722,62 @@ def test_summarize_ecotaxa_sample_deployment_renders_metadata_depths_and_uvp_fie
     assert "gn2015_l2_019" in result
     assert "2015-05-22" in result
     assert "2015-05-23" in result
+    assert "14:03:58" in result
     assert "1.8" in result
     assert "4.5" in result
+    assert "validés" in result.lower()
+    assert "prédits" in result.lower()
+    assert "100" in result
     assert "profileid" in result
     assert "pixel=0.147" in result
     assert "uvp5" in result
+
+
+def test_summarize_ecotaxa_sample_deployment_marks_partial_metadata_and_count_mismatch():
+    fake_deployment = {
+        "sample": {
+            "sample_id": 42000013,
+            "project_id": 42,
+            "original_id": "gn2015_l2_019",
+            "latitude": None,
+            "longitude": None,
+            "free_fields": {},
+        },
+        "acquisitions": [],
+        "object_summary": {
+            "total_objects": 3,
+            "objects_scanned": 2,
+            "truncated": True,
+            "date_min": "2015-05-22",
+            "date_max": "2015-05-22",
+            "datetime_min": "2015-05-22T14:03:58",
+            "datetime_max": "2015-05-22T14:08:01",
+            "temporal_precision": "datetime",
+            "depth_min": 1.8,
+            "depth_max": 4.5,
+            "metadata_complete": False,
+            "metadata_coverage_pct": 66.666,
+            "count_discrepancy": True,
+            "query_total_objects": 2,
+            "nb_validated": 3,
+            "nb_predicted": 0,
+            "nb_dubious": 0,
+            "nb_unclassified": 0,
+            "acquisition_ids": [],
+        },
+    }
+
+    with patch("tools.copepod_sources.summarize_sample_deployment", return_value=fake_deployment):
+        from tools.copepod_sources import make_source_tools
+
+        tools = make_source_tools("thread-deployment-partial")
+        tool = next(t for t in tools if t.name == "summarize_ecotaxa_sample_deployment")
+        result = tool.invoke({"sample_id": 42000013})
+
+    assert "partielle" in result.lower()
+    assert "statistiques du sample" in result.lower()
+    assert "| objets total (statistiques sample) | 3 |" in result
+    assert "requête d’objets (2)" in result
 
 
 def test_find_ecotaxa_samples_in_region_requires_filter():
@@ -1821,6 +1883,128 @@ def test_query_ecotaxa_cache_persists_select_as_dataframe(tmp_path, monkeypatch)
     assert session["df"].to_dict("records") == [{"station_id": "ST-1", "n": 1}]
 
 
+def test_ecotaxa_cache_map_is_complete_and_does_not_migrate_file(
+    tmp_path, monkeypatch
+):
+    import sqlite3
+
+    import tools.copepod_sources as source_module
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    conn.executescript(
+        """
+        CREATE TABLE local_extension (
+            extension_id INTEGER PRIMARY KEY,
+            sample_id INTEGER,
+            score REAL
+        );
+        CREATE INDEX idx_extension_sample ON local_extension(sample_id);
+        INSERT INTO local_extension VALUES (1, 42000001, 0.75);
+        """
+    )
+    conn.close()
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+
+    tool = next(
+        item for item in source_module.make_source_tools("cache-map-thread")
+        if item.name == "list_ecotaxa_cache_tables"
+    )
+    result = tool.invoke({})
+
+    assert "Carte du cache EcoTaxa" in result
+    assert "local_extension" in result
+    assert "extension_id" in result
+    assert "Grain non documenté" in result
+    assert "idx_extension_sample" in result
+
+    conn = sqlite3.connect(cache_db)
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    conn.close()
+    assert tables == {"local_extension"}
+
+
+def test_ecotaxa_cache_query_accepts_readonly_cte(tmp_path, monkeypatch):
+    import sqlite3
+
+    import tools.copepod_sources as source_module
+    from tools.session_store import SessionStore
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    conn.executescript(
+        """
+        CREATE TABLE samples_cache (
+            sample_id INTEGER PRIMARY KEY,
+            project_id INTEGER,
+            last_synced TEXT
+        );
+        INSERT INTO samples_cache VALUES (1, 42, 'test'), (2, 42, 'test');
+        """
+    )
+    conn.close()
+    store = SessionStore(tmp_path / "sessions")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+    monkeypatch.setattr(source_module, "_store", store)
+
+    tool = next(
+        item for item in source_module.make_source_tools("cache-cte-thread")
+        if item.name == "query_ecotaxa_cache"
+    )
+    result = tool.invoke(
+        {
+            "sql": (
+                "WITH counts AS (SELECT project_id, COUNT(*) AS n "
+                "FROM samples_cache GROUP BY project_id) "
+                "SELECT * FROM counts"
+            )
+        }
+    )
+
+    assert "lignes retournées" in result
+    assert store.get("cache-cte-thread")["df"].to_dict("records") == [
+        {"project_id": 42, "n": 2}
+    ]
+
+
+def test_ecotaxa_cache_contract_exposes_sample_metadata_envelopes_and_coverage():
+    from core.ecotaxa_browser.cache.sql_explorer import CACHE_TABLES
+    from tools.copepod_sources import make_source_tools
+
+    description = next(
+        tool.description
+        for tool in make_source_tools("sql-metadata-contract-thread")
+        if tool.name == "query_ecotaxa_cache"
+    )
+
+    for column in (
+        "datetime_min",
+        "datetime_max",
+        "time_min",
+        "time_max",
+        "temporal_precision",
+        "missing_date_count",
+        "missing_time_count",
+        "missing_depth_min_count",
+        "missing_depth_max_count",
+        "depth_complete",
+        "metadata_objects_scanned",
+        "metadata_complete",
+        "metadata_coverage_pct",
+    ):
+        assert column in description
+    assert "(time_max >= '22:00:00' OR time_min <= '02:00:00')" in description
+    assert "unknown, not non-matches" in description
+    assert "sample-level positions, date/time envelopes, depth envelopes" in (
+        CACHE_TABLES["samples_cache"]
+    )
+
+
 def test_query_ecotaxa_cache_keeps_complete_agent_result(tmp_path, monkeypatch):
     import sqlite3
 
@@ -1851,7 +2035,7 @@ def test_query_ecotaxa_cache_keeps_complete_agent_result(tmp_path, monkeypatch):
 
     session = store.get("sql-full-thread")
     assert session["df"].shape == (1001, 1)
-    assert "aperçu de 50 lignes sur 1001" in result
+    assert "aperçu de 10 lignes sur 1001" in result
 
 
 def test_query_ecotaxa_cache_memorizes_exportable_selection(tmp_path, monkeypatch):
@@ -1892,7 +2076,10 @@ def test_query_ecotaxa_cache_memorizes_exportable_selection(tmp_path, monkeypatc
     # campaign: it remains the active DataFrame for a subsequent analysis.
     active = _store.get(thread_id)
     assert active is not None
-    assert active["meta"]["variable_name"] == "df_ecotaxa_cache_query"
+    assert active["meta"]["variable_name"].startswith(
+        "df_ecotaxa_selection_samples_"
+    )
+    assert latest["meta"]["variable_name"] == active["meta"]["variable_name"]
     assert active["df"].to_dict("records") == [
         {"sample_id": 101},
         {"sample_id": 102},

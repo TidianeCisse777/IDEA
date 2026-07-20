@@ -44,8 +44,7 @@ docker compose up -d mcp-ecotaxa
 # Sanity check
 curl http://localhost:8001/health
 
-# First-time cache warmup (otherwise cache tools return CACHE_EMPTY,
-# or SYNC_IN_PROGRESS while the first sync is running)
+# Optional manual cache refresh (first boot already starts one automatically)
 curl -X POST http://localhost:8001/admin/resync \
   -H "Authorization: Bearer $MCP_AUTH_TOKEN"
 
@@ -55,6 +54,13 @@ curl http://localhost:8001/health | jq '.cache'
 
 After that, the nightly scheduler refreshes the cache automatically at
 3 AM (configurable via `ECOTAXA_SYNC_HOUR`).
+
+On boot, a missing cache or a cache with an older schema triggers a forced full
+sync, even when project signatures have not changed. The current schema version
+is stamped only when that refresh returns `ok`; `partial` and `failed` keep the
+cache stale. `start.sh` waits for both a usable sync status and
+`schema_current: true`, then its preflight also rejects an empty or stale cache
+before starting the agent.
 
 ---
 
@@ -76,7 +82,7 @@ After that, the nightly scheduler refreshes the cache automatically at
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | Returns `{status, cache: {samples_indexed, projects_indexed, schemas_indexed, last_sync_status, cache_age_hours}}` |
+| `GET` | `/health` | Returns `{status, cache: {samples_indexed, projects_indexed, schemas_indexed, last_sync_status, cache_age_hours, schema_version, schema_current}}` |
 
 ### Bearer-protected
 

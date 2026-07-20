@@ -100,8 +100,7 @@ _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     ),
     "ecotaxa_discovery": (
         "query_ecotaxa_cache", "list_ecotaxa_cache_tables",
-        "describe_ecotaxa_cache_table", "list_ecotaxa_campaigns", "preview_ecotaxa_project",
-        "resolve_ecotaxa_sample", "find_ecotaxa_projects",
+        "describe_ecotaxa_cache_table",
     ),
     "ecotaxa_geo_time": (
         "find_ecotaxa_samples_in_region", "combine_ecotaxa_selections",
@@ -110,8 +109,6 @@ _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
         "rank_ecotaxa_samples_by_region",
     ),
     "ecotaxa_samples": (
-        "list_ecotaxa_project_samples", "get_ecotaxa_sample",
-        "summarize_ecotaxa_samples", "summarize_ecotaxa_sample",
         "summarize_ecotaxa_sample_deployment",
     ),
 }

@@ -83,6 +83,7 @@ services:
       - ECOTAXA_TOKEN=${ECOTAXA_TOKEN:-}
       - ECOTAXA_USERNAME=${ECOTAXA_USERNAME:-}
       - ECOTAXA_PASSWORD=${ECOTAXA_PASSWORD:-}
+      - ECOTAXA_CACHE_DB=/app/data/ecotaxa_cache.sqlite
     command: uvicorn core.mcp.ecotaxa_server:create_app --factory --host 0.0.0.0 --port 8001 --reload
     volumes:
       - .:/app

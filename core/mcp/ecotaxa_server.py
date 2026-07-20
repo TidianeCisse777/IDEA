@@ -24,6 +24,7 @@ from core.ecotaxa_browser.cache.repo import (
     cache_counts,
     cache_needs_resync,
     cache_progress,
+    get_schema_version,
     init_schema,
     latest_sync_status,
     open_connection,
@@ -132,17 +133,24 @@ def _open_cache() -> sqlite3.Connection:
     return conn
 
 
-def _run_full_sync_with_real_client(cache_db: str) -> None:
-    """Default sync runner — overridable in tests via monkeypatch."""
+def _run_full_sync_with_real_client(cache_db: str, *, force: bool = False) -> None:
+    """Run a sync, forcing stale schemas before stamping complete results."""
     client = EcotaxaClient()
     conn = open_connection(cache_db)
     try:
         init_schema(conn)
+        force = force or cache_needs_resync(conn)
         now = datetime.now(timezone.utc).isoformat()
-        run_full_sync(conn, client, now_iso=now, client_factory=EcotaxaClient)
-        # Stamp the schema version after a successful sync so the next boot
-        # knows the cache is up-to-date with the current code structure.
-        set_schema_version(conn, SCHEMA_VERSION)
+        result = run_full_sync(
+            conn,
+            client,
+            now_iso=now,
+            force=force,
+            client_factory=EcotaxaClient,
+        )
+        # Only a complete refresh proves every row has the current metadata.
+        if result.get("status") == "ok":
+            set_schema_version(conn, SCHEMA_VERSION)
     finally:
         conn.close()
 
@@ -213,12 +221,15 @@ def create_app() -> ASGIApp:
             try:
                 counts = cache_counts(conn)
                 last_sync = latest_sync_status(conn)
+                schema_version = get_schema_version(conn)
                 cache_payload = {
                     "samples_indexed": counts["samples_indexed"],
                     "projects_indexed": counts["projects_indexed"],
                     "schemas_indexed": counts["schemas_indexed"],
                     "last_sync_status": (last_sync or {}).get("status"),
                     "cache_age_hours": _compute_cache_age_hours(last_sync),
+                    "schema_version": schema_version,
+                    "schema_current": schema_version == SCHEMA_VERSION,
                 }
             finally:
                 conn.close()
@@ -310,7 +321,12 @@ def create_app() -> ASGIApp:
                                 )
                             loop = asyncio.get_running_loop()
                             loop.run_in_executor(
-                                None, _run_full_sync_with_real_client, cache_db,
+                                None,
+                                partial(
+                                    _run_full_sync_with_real_client,
+                                    cache_db,
+                                    force=True,
+                                ),
                             )
                     except Exception:
                         # On ne bloque pas le boot sur un sync auto-trigger

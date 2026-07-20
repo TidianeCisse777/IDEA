@@ -144,18 +144,21 @@ echo "[start] MCP EcoTaxa OK"
 # the background as soon as the MCP server sees an empty cache. That sync takes
 # a bit, so the preflight below would otherwise read an as-yet-empty cache,
 # fail, and force a needless second ./start.sh. Wait for the sync to reach a
-# usable state first. Bounded by ECOTAXA_SYNC_WAIT_SECONDS (default 600). A
-# populated cache from a previous run reports "ok" immediately and skips the wait.
+# usable state first. Bounded by ECOTAXA_SYNC_WAIT_SECONDS (default 600).
+# A populated cache is released only when its schema is also current: an old
+# "ok" sync from a v2 cache must not race the v3 metadata refresh.
 SYNC_WAIT_MAX="${ECOTAXA_SYNC_WAIT_SECONDS:-600}"
 echo "[start] Waiting for the initial EcoTaxa cache sync (up to ${SYNC_WAIT_MAX}s)..."
 sync_waited=0
 while [ "$sync_waited" -lt "$SYNC_WAIT_MAX" ]; do
   SYNC_HEALTH="$(docker compose exec -T mcp-ecotaxa curl -sf http://localhost:8001/health 2>/dev/null || true)"
+  if [[ "$SYNC_HEALTH" == *'"schema_current":true'* ]] && \
+     { [[ "$SYNC_HEALTH" == *'"last_sync_status":"ok"'* ]] || \
+       [[ "$SYNC_HEALTH" == *'"last_sync_status":"partial"'* ]]; }; then
+    echo "[start] Initial sync complete."
+    break
+  fi
   case "$SYNC_HEALTH" in
-    *'"last_sync_status":"ok"'*|*'"last_sync_status":"partial"'*)
-      echo "[start] Initial sync complete."
-      break
-      ;;
     *'"last_sync_status":"error"'*|*'"last_sync_status":"failed"'*)
       echo "[start] Initial sync reported an error — continuing to the cache check for details."
       break

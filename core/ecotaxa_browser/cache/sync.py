@@ -1,9 +1,11 @@
 """EcoTaxa cache synchronization engine (M4).
 
 Strategy: full sync (F1), per-project transaction (E3), 5 req/s aggregate
-throttle, object cap 50k per project (P2). Pulls (lat, lon, objdate, sample_id)
-via ``POST /object_set/{id}/query`` paginated, aggregates to sample-level
-averages, and replaces the project's slice of ``samples_cache`` atomically.
+throttle, object cap 50k per project (P2). Pulls latitude/longitude plus
+object date, time, and depth metadata
+via ``POST /object_set/{id}/query`` paginated, aggregates time/depth metadata
+and sample-level coordinate averages, and replaces the project's slice of
+``samples_cache`` atomically.
 
 Parallelism: HTTP fetches run in a ThreadPoolExecutor (default 8 workers);
 SQLite writes stay in the main thread to avoid cross-thread connection
@@ -45,10 +47,17 @@ from core.ecotaxa_browser.cache.repo import (
     upsert_project_signature,
 )
 from core.ecotaxa_browser.schema import get_project_schema
+from core.ecotaxa_browser.sample_metadata import (
+    OBJECT_METADATA_FIELDS,
+    accumulate_metadata_row,
+    finalize_metadata,
+    new_metadata_aggregate,
+    normalize_sample_stats,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-_QUERY_FIELDS = "obj.latitude,obj.longitude,obj.objdate,obj.depth_min,obj.depth_max"
+_QUERY_FIELDS = f"obj.latitude,obj.longitude,{OBJECT_METADATA_FIELDS}"
 _DEFAULT_WINDOW_SIZE = 5000
 _DEFAULT_OBJECT_CAP = 50_000
 _DEFAULT_RATE_LIMIT_RPS = 5.0
@@ -162,11 +171,9 @@ def _fetch_project_samples(
             break
 
         for row, sample_id in zip(rows, parallel_sample_ids):
-            if not row or len(row) < 3:
+            if not row or len(row) < 6:
                 continue
-            lat, lon, objdate = row[0], row[1], row[2]
-            obj_depth_min = _as_float(row[3]) if len(row) > 3 else None
-            obj_depth_max = _as_float(row[4]) if len(row) > 4 else None
+            lat, lon = row[0], row[1]
             # A sample_id is required to key the aggregate; coordinates are NOT.
             # Projects that store position only at the sample level (or not at
             # all — e.g. older LOKI projects) still get indexed by date/project
@@ -186,29 +193,14 @@ def _fetch_project_samples(
                     "lat_sum": 0.0,
                     "lon_sum": 0.0,
                     "geo_count": 0,
-                    "count": 0,
-                    "date_min": objdate,
-                    "date_max": objdate,
-                    "depth_min": obj_depth_min,
-                    "depth_max": obj_depth_max,
+                    "metadata": new_metadata_aggregate(),
                 },
             )
-            agg["count"] += 1
             if latf is not None and lonf is not None:
                 agg["lat_sum"] += latf
                 agg["lon_sum"] += lonf
                 agg["geo_count"] += 1
-            if objdate is not None:
-                if agg["date_min"] is None or objdate < agg["date_min"]:
-                    agg["date_min"] = objdate
-                if agg["date_max"] is None or objdate > agg["date_max"]:
-                    agg["date_max"] = objdate
-            if obj_depth_min is not None:
-                if agg["depth_min"] is None or obj_depth_min < agg["depth_min"]:
-                    agg["depth_min"] = obj_depth_min
-            if obj_depth_max is not None:
-                if agg["depth_max"] is None or obj_depth_max > agg["depth_max"]:
-                    agg["depth_max"] = obj_depth_max
+            accumulate_metadata_row(agg["metadata"], row[2:6])
 
         objects_seen += len(rows)
         window_start += len(rows)
@@ -219,10 +211,6 @@ def _fetch_project_samples(
     # object scan is capped (object_cap), so large projects would otherwise miss
     # every sample beyond the first window. Union guarantees each sample is
     # indexed even when it has no object in the scanned window.
-    _EMPTY_AGG = {
-        "lat_sum": 0.0, "lon_sum": 0.0, "geo_count": 0, "count": 0,
-        "date_min": None, "date_max": None, "depth_min": None, "depth_max": None,
-    }
     all_sample_ids = set(aggregates) | set(sample_metadata)
     # Cheap, cap-free per-sample classification stats (no object download): the
     # accurate object total (V+P+D+U) plus the taxa present in each sample. This
@@ -233,7 +221,7 @@ def _fetch_project_samples(
     )
     samples = []
     for sid in all_sample_ids:
-        agg = aggregates.get(sid, _EMPTY_AGG)
+        agg = aggregates.get(sid)
         meta = dict(sample_metadata.get(sid, {}))
         # Prefer the per-sample position (complete, cap-independent); fall back
         # to the averaged object coordinates only when the sample carries none.
@@ -241,27 +229,27 @@ def _fetch_project_samples(
         sample_lon = meta.pop("sample_lon", None)
         if sample_lat is not None and sample_lon is not None:
             lat_avg, lon_avg = sample_lat, sample_lon
-        elif agg["geo_count"]:
+        elif agg is not None and agg["geo_count"]:
             lat_avg = agg["lat_sum"] / agg["geo_count"]
             lon_avg = agg["lon_sum"] / agg["geo_count"]
         else:
             lat_avg, lon_avg = None, None
+        stat = taxo_stats.get(sid)
+        authoritative_total = stat["object_count"] if stat is not None else None
+        metadata = finalize_metadata(
+            agg["metadata"] if agg is not None else new_metadata_aggregate(),
+            authoritative_total=authoritative_total,
+        )
         sample_row = {
             "sample_id": sid,
             "lat_avg": lat_avg,
             "lon_avg": lon_avg,
-            "date_min": agg["date_min"],
-            "date_max": agg["date_max"],
-            "depth_min": agg["depth_min"],
-            "depth_max": agg["depth_max"],
-            "object_count": agg["count"],
+            "object_count": authoritative_total,
             "instrument": instrument,
+            **metadata,
             **meta,
         }
-        stat = taxo_stats.get(sid)
         if stat is not None:
-            # Authoritative total overrides the capped-scan count.
-            sample_row["object_count"] = stat["object_count"]
             sample_row["nb_validated"] = stat["nb_validated"]
             sample_row["nb_predicted"] = stat["nb_predicted"]
             sample_row["nb_dubious"] = stat["nb_dubious"]
@@ -299,21 +287,16 @@ def _fetch_project_taxo_stats(
             if not isinstance(row, dict):
                 continue
             try:
-                sid = int(row["sample_id"])
+                normalized = normalize_sample_stats(row)
+                sid = int(normalized["sample_id"])
             except (KeyError, TypeError, ValueError):
                 continue
-            v = int(row.get("nb_validated") or 0)
-            p = int(row.get("nb_predicted") or 0)
-            d = int(row.get("nb_dubious") or 0)
-            u = int(row.get("nb_unclassified") or 0)
-            used = row.get("used_taxa") or []
             stats[sid] = {
-                "object_count": v + p + d + u,
-                "nb_validated": v,
-                "nb_predicted": p,
-                "nb_dubious": d,
-                "nb_unclassified": u,
-                "used_taxa": json.dumps(used) if used else None,
+                **normalized,
+                "used_taxa": (
+                    json.dumps(normalized["used_taxa"])
+                    if normalized["used_taxa"] else None
+                ),
             }
     return stats
 

@@ -108,7 +108,7 @@ def test_get_acquisition_returns_stable_fields():
     assert acquisition["free_fields"] == {"pixel": 0.147}
 
 
-def test_summarize_sample_deployment_combines_sample_acquisition_and_depths():
+def test_summarize_sample_deployment_uses_stats_and_object_time():
     from core.ecotaxa_browser.deployment_summary import summarize_sample_deployment
 
     with patch("core.ecotaxa_browser.deployment_summary.EcotaxaClient") as client_class:
@@ -137,36 +137,109 @@ def test_summarize_sample_deployment_combines_sample_acquisition_and_depths():
                 "free_columns": {},
             },
         ]
+        client.sample_taxo_stats.return_value = [{
+            "sample_id": 42000013,
+            "nb_validated": 1,
+            "nb_predicted": 1,
+            "nb_dubious": 0,
+            "nb_unclassified": 0,
+            "used_taxa": [25828],
+        }]
         client.query_objects.return_value = {
             "total_ids": 2,
             "details": [
-                ["2015-05-22", 1.8, 2.0, 420000014],
-                ["2015-05-23", 3.3, 4.5, 420000014],
+                ["2015-05-22", "14:03:58", 1.8, 2.0, 420000014],
+                ["2015-05-22", "14:08:01", 3.3, 4.5, 420000014],
             ],
         }
 
         result = summarize_sample_deployment(42000013, page_size=10)
 
+    client.sample_taxo_stats.assert_called_once_with([42000013])
     client.query_objects.assert_called_once_with(
         42,
         {"samples": "42000013"},
-        "obj.objdate,obj.depth_min,obj.depth_max,obj.acquisid",
+        "obj.objdate,obj.objtime,obj.depth_min,obj.depth_max,obj.acquisid",
         0,
         10,
     )
     assert result["sample"]["free_fields"]["profileid"] == "019"
     assert [a["acquisition_id"] for a in result["acquisitions"]] == [420000014]
     assert result["acquisitions"][0]["free_fields"] == {"pixel": 0.147}
-    assert result["object_summary"] == {
-        "total_objects": 2,
-        "objects_scanned": 2,
-        "truncated": False,
-        "date_min": "2015-05-22",
-        "date_max": "2015-05-23",
-        "depth_min": 1.8,
-        "depth_max": 4.5,
-        "acquisition_ids": [420000014],
-    }
+    summary = result["object_summary"]
+    assert summary["total_objects"] == 2
+    assert summary["nb_validated"] == 1
+    assert summary["nb_predicted"] == 1
+    assert summary["datetime_min"] == "2015-05-22T14:03:58"
+    assert summary["datetime_max"] == "2015-05-22T14:08:01"
+    assert summary["metadata_complete"] is True
+    assert summary["count_discrepancy"] is False
+
+
+def test_summarize_sample_deployment_marks_mismatched_object_query_partial():
+    from core.ecotaxa_browser.deployment_summary import summarize_sample_deployment
+
+    with patch("core.ecotaxa_browser.deployment_summary.EcotaxaClient") as client_class:
+        client = client_class.return_value
+        client.get_sample.return_value = {
+            "sampleid": 42000013,
+            "projid": 42,
+            "orig_id": "gn2015_l2_019",
+            "free_columns": {},
+        }
+        client.list_acquisitions.return_value = []
+        client.sample_taxo_stats.return_value = [{
+            "sample_id": 42000013,
+            "nb_validated": 3,
+            "nb_predicted": 0,
+            "nb_dubious": 0,
+            "nb_unclassified": 0,
+        }]
+        client.query_objects.return_value = {
+            "total_ids": 2,
+            "details": [
+                ["2015-05-22", "14:03:58", 1.8, 2.0, 420000014],
+                ["2015-05-22", "14:08:01", 3.3, 4.5, 420000014],
+            ],
+        }
+
+        result = summarize_sample_deployment(42000013, page_size=10)
+
+    summary = result["object_summary"]
+    assert summary["total_objects"] == 3
+    assert summary["query_total_objects"] == 2
+    assert summary["metadata_complete"] is False
+    assert summary["count_discrepancy"] is True
+    assert summary["metadata_coverage_pct"] == pytest.approx(66.666, rel=1e-3)
+
+
+def test_summarize_sample_deployment_returns_complete_empty_stats_without_query():
+    from core.ecotaxa_browser.deployment_summary import summarize_sample_deployment
+
+    with patch("core.ecotaxa_browser.deployment_summary.EcotaxaClient") as client_class:
+        client = client_class.return_value
+        client.get_sample.return_value = {
+            "sampleid": 42000013,
+            "projid": 42,
+            "orig_id": "gn2015_l2_019",
+            "free_columns": {},
+        }
+        client.list_acquisitions.return_value = []
+        client.sample_taxo_stats.return_value = [{
+            "sample_id": 42000013,
+            "nb_validated": 0,
+            "nb_predicted": 0,
+            "nb_dubious": 0,
+            "nb_unclassified": 0,
+        }]
+
+        result = summarize_sample_deployment(42000013)
+
+    client.query_objects.assert_not_called()
+    summary = result["object_summary"]
+    assert summary["total_objects"] == 0
+    assert summary["metadata_complete"] is True
+    assert summary["metadata_coverage_pct"] == 100.0
 
 
 @vcr.use_cassette("tests/cassettes/sample_objects.yaml", record_mode="none")

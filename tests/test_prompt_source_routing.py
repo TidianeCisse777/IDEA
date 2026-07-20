@@ -78,3 +78,12 @@ def test_source_procedures_are_not_duplicated_in_system_prompt():
 
 def test_system_prompt_is_small_enough_for_routing_rules_to_stay_salient():
     assert len(COPEPOD_SYSTEM_PROMPT) < 45_000
+
+
+def test_ecotaxa_compact_prompt_routes_hour_datetime_and_depth_to_cache():
+    prompt = COPEPOD_SYSTEM_PROMPT
+
+    assert "hour" in prompt.lower()
+    assert "date-time" in prompt.lower()
+    assert "depth" in prompt.lower()
+    assert "query_ecotaxa_cache" in prompt

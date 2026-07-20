@@ -243,14 +243,14 @@ def test_enrichment_without_loaded_file_keeps_canonical_tool_hidden():
 @pytest.mark.parametrize(
     ("text", "expected_group", "expected_tool"),
     [
-        ("Explore EcoTaxa", "ecotaxa_discovery", "find_ecotaxa_projects"),
-        ("Liste les samples EcoTaxa du projet", "ecotaxa_samples", "get_ecotaxa_sample"),
-        ("Résous la station RA76 dans EcoTaxa", "ecotaxa_discovery", "resolve_ecotaxa_sample"),
-        ("Trouve les samples EcoTaxa au Labrador en 2020", "ecotaxa_geo_time", "find_ecotaxa_samples_in_region"),
+        ("Explore EcoTaxa", "ecotaxa_discovery", "query_ecotaxa_cache"),
+        ("Liste les samples EcoTaxa du projet", "ecotaxa_samples", "query_ecotaxa_cache"),
+        ("Résous la station RA76 dans EcoTaxa", "ecotaxa_discovery", "query_ecotaxa_cache"),
+        ("Trouve les samples EcoTaxa au Labrador en 2020", "ecotaxa_geo_time", "query_ecotaxa_cache"),
         ("Compte les taxons EcoTaxa", "ecotaxa_taxonomy", "count_ecotaxa_taxa"),
         ("Inspecte le schéma du projet EcoTaxa", "ecotaxa_schema", "inspect_ecotaxa_project_schema"),
-        ("Audite la couverture EcoTaxa", "ecotaxa_audit", "audit_ecotaxa_spatial_coverage"),
-        ("Résume maintenant le projet 17498", "ecotaxa_audit", "summarize_ecotaxa_project"),
+        ("Audite la couverture EcoTaxa", "ecotaxa_audit", "query_ecotaxa_cache"),
+        ("Résume maintenant le projet 17498", "ecotaxa_audit", "query_ecotaxa_cache"),
         ("Exporte les données EcoTaxa", "ecotaxa_export", "query_ecotaxa"),
     ],
 )
@@ -272,6 +272,31 @@ def test_object_pagination_is_not_exposed_to_the_agent():
     assert "list_ecotaxa_sample_objects" not in decision.tool_names
 
 
+def test_cache_replaced_navigation_wrappers_are_not_exposed_to_the_agent():
+    decision = _decision(
+        "Explore les projets, campagnes, samples et taxons EcoTaxa",
+        sources=("ecotaxa",),
+    )
+
+    hidden = {
+        "list_ecotaxa_projects",
+        "find_ecotaxa_projects",
+        "list_ecotaxa_campaigns",
+        "preview_ecotaxa_project",
+        "resolve_ecotaxa_sample",
+        "get_ecotaxa_sample",
+        "summarize_ecotaxa_sample",
+        "summarize_ecotaxa_samples",
+        "list_ecotaxa_sample_objects",
+        "get_ecotaxa_object",
+        "describe_ecotaxa_project_coverage",
+        "find_ecotaxa_observations",
+    }
+
+    assert hidden.isdisjoint(decision.tool_names)
+    assert "query_ecotaxa_cache" in decision.tool_names
+
+
 def test_ecotaxa_does_not_always_include_geo_time_for_a_project_audit():
     decision = _decision("Audite le projet EcoTaxa", sources=("ecotaxa",))
 
@@ -289,9 +314,10 @@ def test_ecotaxa_exploration_keeps_discovery_and_multiple_intents():
     assert "ecotaxa_discovery" in decision.active_groups
     assert "ecotaxa_samples" in decision.active_groups
     assert "ecotaxa_geo_time" not in decision.active_groups
-    assert "preview_ecotaxa_project" in decision.tool_names
-    assert "list_ecotaxa_campaigns" in decision.tool_names
-    assert "list_ecotaxa_project_samples" in decision.tool_names
+    assert "query_ecotaxa_cache" in decision.tool_names
+    assert "preview_ecotaxa_project" not in decision.tool_names
+    assert "list_ecotaxa_campaigns" not in decision.tool_names
+    assert "get_ecotaxa_sample" not in decision.tool_names
 
 
 def test_ecotaxa_does_not_expose_geo_time_for_non_geographic_exploration():
@@ -299,7 +325,7 @@ def test_ecotaxa_does_not_expose_geo_time_for_non_geographic_exploration():
 
     assert "ecotaxa_discovery" in decision.active_groups
     assert "ecotaxa_geo_time" not in decision.active_groups
-    assert "get_ecotaxa_cache_status" in decision.tool_names
+    assert "query_ecotaxa_cache" in decision.tool_names
 
 
 def test_visual_overflow_keeps_graph_and_ecotaxa_discovery():
@@ -309,10 +335,9 @@ def test_visual_overflow_keeps_graph_and_ecotaxa_discovery():
         output_intent="visual",
     )
 
-    assert decision.policy_overflow is True
     assert "run_graph" in decision.tool_names
-    assert "list_ecotaxa_campaigns" in decision.tool_names
     assert "query_ecotaxa_cache" in decision.tool_names
+    assert "list_ecotaxa_campaigns" not in decision.tool_names
 
 
 def test_ecotaxa_overflow_keeps_central_cache_query():

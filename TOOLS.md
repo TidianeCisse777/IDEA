@@ -149,10 +149,11 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 ### Samples & résumés (sans export)
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
+| `query_ecotaxa_cache` | Chemin local cache-first pour les requêtes cross-sample par date, heure, date-heure, profondeur, station ou cast ; chaque résultat avec `sample_id` devient une sélection persistante unique (`selection_name` descriptif), simultanément disponible dans le sandbox, tandis que `latest` et `df_ecotaxa_cache_query` ciblent la plus récente | non |
 | `get_ecotaxa_sample` | Métadonnées + free fields d'un `sample_id` | non |
 | `summarize_ecotaxa_project` / `summarize_ecotaxa_projects` | Résumé(s) projet (dates, bbox, V/P/D/U, top taxa) | non |
 | `summarize_ecotaxa_sample` / `summarize_ecotaxa_samples` | Résumé(s) sample (`selection_name="latest"` possible) | non |
-| `summarize_ecotaxa_sample_deployment` | Position, dates, profondeurs, acquisition, free fields | non |
+| `summarize_ecotaxa_sample_deployment` | Fallback/detail live pour un sample résolu : position, date, heure/date-heure, profondeur, acquisition, free fields et signalement des enveloppes partielles avec leur couverture | non |
 | `get_ecotaxa_cache_status` | État du cache MCP (samples/projets indexés, dernier sync) | non |
 | `audit_ecotaxa_availability` | Audite la disponibilité taxonomique par projet dans le cache | non |
 | `audit_ecotaxa_spatial_coverage` | Audite la couverture spatiale des projets/samples du cache | non |
