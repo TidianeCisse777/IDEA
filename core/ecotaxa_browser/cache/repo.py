@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterable, Iterator, Sequence
+from urllib.parse import quote
 
 import pandas as pd
 
@@ -1130,4 +1132,15 @@ def open_connection(path: str) -> sqlite3.Connection:
     # docs/mcp note. A concurrent-read benchmark shows this timeout alone
     # yields zero lock errors at 500k+ rows.)
     conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
+def open_readonly_connection(path: str) -> sqlite3.Connection:
+    """Open an existing cache without creating, migrating, or mutating it."""
+    resolved = Path(path).expanduser().resolve()
+    uri = f"file:{quote(str(resolved), safe='/')}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA query_only=ON")
     return conn

@@ -1883,6 +1883,95 @@ def test_query_ecotaxa_cache_persists_select_as_dataframe(tmp_path, monkeypatch)
     assert session["df"].to_dict("records") == [{"station_id": "ST-1", "n": 1}]
 
 
+def test_ecotaxa_cache_map_is_complete_and_does_not_migrate_file(
+    tmp_path, monkeypatch
+):
+    import sqlite3
+
+    import tools.copepod_sources as source_module
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    conn.executescript(
+        """
+        CREATE TABLE local_extension (
+            extension_id INTEGER PRIMARY KEY,
+            sample_id INTEGER,
+            score REAL
+        );
+        CREATE INDEX idx_extension_sample ON local_extension(sample_id);
+        INSERT INTO local_extension VALUES (1, 42000001, 0.75);
+        """
+    )
+    conn.close()
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+
+    tool = next(
+        item for item in source_module.make_source_tools("cache-map-thread")
+        if item.name == "list_ecotaxa_cache_tables"
+    )
+    result = tool.invoke({})
+
+    assert "Carte du cache EcoTaxa" in result
+    assert "local_extension" in result
+    assert "extension_id" in result
+    assert "Grain non documenté" in result
+    assert "idx_extension_sample" in result
+
+    conn = sqlite3.connect(cache_db)
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    conn.close()
+    assert tables == {"local_extension"}
+
+
+def test_ecotaxa_cache_query_accepts_readonly_cte(tmp_path, monkeypatch):
+    import sqlite3
+
+    import tools.copepod_sources as source_module
+    from tools.session_store import SessionStore
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    conn.executescript(
+        """
+        CREATE TABLE samples_cache (
+            sample_id INTEGER PRIMARY KEY,
+            project_id INTEGER,
+            last_synced TEXT
+        );
+        INSERT INTO samples_cache VALUES (1, 42, 'test'), (2, 42, 'test');
+        """
+    )
+    conn.close()
+    store = SessionStore(tmp_path / "sessions")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+    monkeypatch.setattr(source_module, "_store", store)
+
+    tool = next(
+        item for item in source_module.make_source_tools("cache-cte-thread")
+        if item.name == "query_ecotaxa_cache"
+    )
+    result = tool.invoke(
+        {
+            "sql": (
+                "WITH counts AS (SELECT project_id, COUNT(*) AS n "
+                "FROM samples_cache GROUP BY project_id) "
+                "SELECT * FROM counts"
+            )
+        }
+    )
+
+    assert "lignes retournées" in result
+    assert store.get("cache-cte-thread")["df"].to_dict("records") == [
+        {"project_id": 42, "n": 2}
+    ]
+
+
 def test_ecotaxa_cache_contract_exposes_sample_metadata_envelopes_and_coverage():
     from core.ecotaxa_browser.cache.sql_explorer import CACHE_TABLES
     from tools.copepod_sources import make_source_tools

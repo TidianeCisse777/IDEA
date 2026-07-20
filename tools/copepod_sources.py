@@ -38,6 +38,7 @@ from core.ecotaxa_browser.taxonomy import search_taxa
 from core.ecotaxa_browser.cache.repo import (
     init_schema,
     open_connection,
+    open_readonly_connection,
     project_cache_coverage,
     query_samples_filtered,
     resolve_samples,
@@ -3528,39 +3529,56 @@ def make_source_tools(thread_id: str) -> list:
 
     @tool(response_format="content_and_artifact")
     def list_ecotaxa_cache_tables() -> str:
-        """Liste les tables du cache SQLite EcoTaxa avec leur nombre de lignes.
+        """Cartographie complète des tables réellement présentes dans le cache EcoTaxa.
 
-        Point d'entrée de l'exploration SQL : appeler en premier pour savoir
-        quelles tables sont disponibles. Retourne nom, nombre de lignes indexées
-        et description de chaque table.
+        Retourne en un appel le nom, le grain, le nombre de lignes, les colonnes,
+        clés primaires, index et relations de chaque table non interne. Inclut
+        les tables d'extension locales lorsqu'elles existent.
 
-        Suivi naturel : `describe_ecotaxa_cache_table` pour le schéma exact,
-        puis `query_ecotaxa_cache` pour un SELECT libre.
+        À utiliser quand le schéma est inconnu, avant une jointure, ou après une
+        erreur de colonne. Si le schéma utile est déjà connu, interroger le cache
+        directement sans rappeler cette carte.
         """
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
+            conn = open_readonly_connection(cache_db)
             tables = _sql_explorer.list_tables(conn)
             conn.close()
         except Exception as exc:
             return _eco_error(f"Erreur lecture cache : {exc}", retryable=True)
 
-        lines = [
-            "## Tables du cache EcoTaxa",
-            "",
-            "| table | lignes | description |",
-            "|---|---:|---|",
-        ]
+        lines = ["## Carte du cache EcoTaxa", ""]
+        total_columns = 0
         for t in tables:
             count = t["rows"] if t["rows"] is not None else "—"
-            lines.append(f"| `{t['table']}` | {count} | {t['description']} |")
+            columns = []
+            for column in t["columns"]:
+                suffix = " PK" if column["pk"] else ""
+                columns.append(f"`{column['name']}` {column['type'] or 'ANY'}{suffix}")
+            total_columns += len(columns)
+            relations = [
+                f"`{item['from_column']}` → "
+                f"`{item['to_table']}.{item['to_column']}` ({item['kind']})"
+                for item in t["relations"]
+            ]
+            index_names = [f"`{item['name']}`" for item in t["indexes"]]
+            lines += [
+                f"### `{t['table']}` — {count} lignes",
+                f"- Grain : {t['grain']}",
+                f"- Rôle : {t['description']}",
+                f"- Colonnes : {', '.join(columns) or 'aucune'}",
+                f"- Relations : {', '.join(relations) or 'aucune déclarée'}",
+                f"- Index : {', '.join(index_names) or 'aucun'}",
+                "",
+            ]
         lines += [
-            "",
-            "Utiliser `describe_ecotaxa_cache_table` pour le schéma, "
-            "puis `query_ecotaxa_cache(sql=...)` pour un SELECT libre.",
+            "La carte reflète le fichier actuellement ouvert. Utiliser ensuite "
+            "un SELECT ou WITH read-only pour l'exploration.",
         ]
-        return _eco_success("\n".join(lines), metrics={"tables": len(tables)})
+        return _eco_success(
+            "\n".join(lines),
+            metrics={"tables": len(tables), "columns": total_columns},
+        )
 
     @tool(response_format="content_and_artifact")
     def describe_ecotaxa_cache_table(table_name: str) -> str:
@@ -3574,8 +3592,7 @@ def make_source_tools(thread_id: str) -> list:
         """
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
+            conn = open_readonly_connection(cache_db)
             result = _sql_explorer.describe_table(conn, table_name)
             conn.close()
         except Exception as exc:
@@ -3589,6 +3606,8 @@ def make_source_tools(thread_id: str) -> list:
             "",
             result["description"],
             "",
+            f"Grain : {result['grain']}",
+            "",
             "### Colonnes",
             "",
             "| # | colonne | type | not null | PK |",
@@ -3601,16 +3620,28 @@ def make_source_tools(thread_id: str) -> list:
                 f"| {col['cid']} | `{col['name']}` | {col['type']} | {nn} | {pk} |"
             )
         if result["indexes"]:
-            lines += ["", "### Index", "", "| nom | unique |", "|---|:---:|"]
+            lines += ["", "### Index", "", "| nom | colonnes | unique |", "|---|---|:---:|"]
             for idx in result["indexes"]:
-                lines.append(f"| `{idx['name']}` | {'✓' if idx['unique'] else ''} |")
+                index_columns = ", ".join(f"`{name}`" for name in idx["columns"])
+                lines.append(
+                    f"| `{idx['name']}` | {index_columns} | "
+                    f"{'✓' if idx['unique'] else ''} |"
+                )
+        if result["relations"]:
+            lines += ["", "### Relations"]
+            for relation in result["relations"]:
+                lines.append(
+                    f"- `{relation['from_column']}` → "
+                    f"`{relation['to_table']}.{relation['to_column']}` "
+                    f"({relation['kind']})"
+                )
         return _eco_success(
             "\n".join(lines), metrics={"columns": len(result["columns"])}
         )
 
     @tool(response_format="content_and_artifact")
     def query_ecotaxa_cache(sql: str) -> str:
-        """Exécute un SELECT libre sur le cache SQLite EcoTaxa local.
+        """Exécute un SELECT ou WITH/CTE libre sur le cache SQLite EcoTaxa local.
 
         Routing requirement: before calling this tool in an agent turn, call
         `load_skill("ecotaxa_navigation")` first unless it has already been
@@ -3629,7 +3660,10 @@ def make_source_tools(thread_id: str) -> list:
         avec `describe_ecotaxa_cache_table` avant de l'utiliser. Le détail d'un
         sample résolu peut sinon passer par `summarize_ecotaxa_sample_deployment`.
 
-        Seuls les SELECT sont autorisés. Aucun LIMIT n'est ajouté par défaut :
+        Les SELECT et WITH/CTE read-only sont autorisés, y compris jointures,
+        sous-requêtes et agrégations. La connexion SQLite est ouverte en mode
+        lecture seule et `query_only`; toute écriture reste impossible. Aucun
+        LIMIT n'est ajouté par défaut :
         le résultat complet est conservé dans `df_ecotaxa_cache_query`. Ajouter
         un LIMIT uniquement si l'utilisateur demande explicitement un aperçu,
         un top ou une pagination.
@@ -3643,8 +3677,10 @@ def make_source_tools(thread_id: str) -> list:
         `get_zone_info` reste utile uniquement pour afficher la description
         d'une zone à l'utilisateur, pas pour construire une bbox de filtrage.
 
-        Utiliser `list_ecotaxa_cache_tables` pour découvrir les tables
-        et `describe_ecotaxa_cache_table` pour leur schéma exact.
+        Utiliser `list_ecotaxa_cache_tables` lorsque le schéma est inconnu,
+        avant une jointure ou après une erreur de colonne. Ne pas rappeler la
+        carte si le schéma nécessaire est déjà connu. Utiliser
+        `describe_ecotaxa_cache_table` pour approfondir une seule table.
 
         ## Tables disponibles
 
@@ -3788,8 +3824,7 @@ def make_source_tools(thread_id: str) -> list:
         """
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
+            conn = open_readonly_connection(cache_db)
             # Keep the complete SELECT result in the persisted DataFrame. The
             # response below may show a compact preview, but it is not data loss.
             result = _sql_explorer.run_select(conn, sql, cap=None)

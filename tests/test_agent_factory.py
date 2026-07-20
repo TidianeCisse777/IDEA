@@ -1291,7 +1291,7 @@ def test_ecotaxa_navigation_documents_sample_time_and_coverage_guards():
         encoding="utf-8"
     )
 
-    assert "version: 2.1.0" in skill
+    assert "version: 2.2.0" in skill
     assert "datetime_min" in skill
     assert "time_min" in skill
     assert "metadata_complete = 1" in skill

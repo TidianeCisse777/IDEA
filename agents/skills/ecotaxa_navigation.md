@@ -1,6 +1,6 @@
 ---
 name: ecotaxa_navigation
-version: 2.1.0
+version: 2.2.0
 triggers:
   - Explicit EcoTaxa discovery, navigation, read-only inspection, or export planning intent
 forbidden_when:
@@ -48,8 +48,15 @@ statuts). Le cache trouve les `sample_id` ; l'export analyse leurs objets.
 **All zone / time / region / grouping / ranking queries go through
 `query_ecotaxa_cache(sql=...)`.**
 
-The cache is a local SQLite database (`data/ecotaxa_cache.sqlite`).
-Write read-only `SELECT` statements — no `INSERT`, `UPDATE`, `DELETE`.
+The cache is a local SQLite database (`data/ecotaxa_cache.sqlite`). Use its
+table map once when discovering the cache, preparing a join, or recovering
+from an unknown-column error; the map includes actual tables, grains, columns,
+keys, indexes, and relations. If the needed schema is already known, query it
+directly without repeating discovery. Write arbitrary read-only `SELECT` or
+`WITH`/CTE statements, including joins, subqueries, and aggregations. No
+`INSERT`, `UPDATE`, `DELETE`, DDL, `ATTACH`, or mutating `PRAGMA` is allowed.
+No implicit `LIMIT` is added: the full result is persisted while the displayed
+preview remains compact.
 
 **Le chemin par défaut est SAMPLE-level.** `samples_cache` porte une ligne par
 sample, les statistiques autoritatives du sample et les enveloppes dérivées des
