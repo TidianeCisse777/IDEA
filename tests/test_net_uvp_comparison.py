@@ -45,24 +45,26 @@ def test_haversine_zero_and_known_distance():
     assert float(haversine_km(0.0, 0.0, 1.0, 0.0)) == pytest.approx(111.19, abs=0.5)
 
 
-def test_matches_nearest_uvp_within_max_km():
-    out = match_net_to_uvp(_net(), _uvp(), max_km=50.0)
-    # seule la station S1 a un UVP < 50 km ; S2 est trop loin de tout
-    assert list(out["net_sample_id"]) == [101]
-    row = out.iloc[0]
-    assert row["uvp_sample_id"] == 1
-    assert row["distance_km"] < 0.5
-    assert row["match_status"] == "matched"
-    assert row["method_version"] == NET_UVP_MATCH_METHOD_VERSION
+def test_matches_by_station_name():
+    net = _net().copy()
+    uvp = _uvp().assign(station_id=["S1", "S2"])
+    out = match_net_to_uvp(net, uvp, max_days=None)
+    assert list(out["net_sample_id"]) == [101, 102]
+    assert list(out["match_method"]) == ["station_name", "station_name"]
+    assert out.iloc[0]["uvp_sample_id"] == 1
+    assert out.iloc[0]["match_status"] == "matched"
+    assert out.iloc[0]["method_version"] == NET_UVP_MATCH_METHOD_VERSION
 
 
 def test_temporal_gap_flags_spatial_only():
     net = _net().assign(deployment_datetime_start=["2014-06-01", "2014-06-01"])
-    uvp = _uvp().assign(date_min=["2024-06-01", "2024-06-01"])  # 10 ans plus tard
-    out = match_net_to_uvp(net, uvp, max_km=50.0, max_days=60)
-    row = out.iloc[0]
-    assert row["match_status"] == "spatial_only"
-    assert row["time_gap_days"] > 3000  # écart temporel exposé, pas masqué
+    uvp = _uvp().assign(
+        station_id=["S1", "S2"],
+        date_min=["2024-06-01", "2024-06-01"],
+    )
+    out = match_net_to_uvp(net, uvp, max_days=60)
+    assert list(out["match_status"]) == ["spatial_only", "spatial_only"]
+    assert out.iloc[0]["time_gap_days"] > 3000
 
 
 def test_rejects_missing_net_columns():
