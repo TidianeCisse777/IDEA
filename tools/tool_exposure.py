@@ -99,10 +99,10 @@ _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
         "run_pandas", "split_dataframe_by_zone",
     ),
     "ecotaxa_discovery": (
-        "query_ecotaxa_cache", "list_ecotaxa_cache_tables",
-        "describe_ecotaxa_cache_table", "list_ecotaxa_campaigns", "preview_ecotaxa_project",
-        "resolve_ecotaxa_sample",
-        "find_ecotaxa_projects",
+        "query_ecotaxa_cache", "find_uvp_matches_for_net_table",
+        "list_ecotaxa_cache_tables", "describe_ecotaxa_cache_table",
+        "list_ecotaxa_campaigns", "preview_ecotaxa_project",
+        "resolve_ecotaxa_sample", "find_ecotaxa_projects",
     ),
     "ecotaxa_geo_time": (
         "find_ecotaxa_samples_in_region", "combine_ecotaxa_selections",
@@ -368,6 +368,10 @@ def decide_tool_exposure(
         }
         if signals.cross_source_compare_requested:
             fallback_limits["file_analysis"] = 2
+            # Ensure find_uvp_matches_for_net_table is reachable (priority slot 2).
+            fallback_limits["ecotaxa_discovery"] = max(
+                fallback_limits["ecotaxa_discovery"], 2
+            )
         if "ecotaxa_geo_time" in fallback_groups:
             fallback_limits["ecotaxa_geo_time"] = 2 if signals.multi_zone_requested else 1
         for intent in signals.ecotaxa_intents:
