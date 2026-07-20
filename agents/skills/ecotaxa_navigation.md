@@ -281,6 +281,19 @@ Si `query_ecotaxa_cache` retourne 0 lignes pour un `project_id` donné, **ne pas
 | Télécharger un sample complet | `query_ecotaxa_sample(sample_id)` |
 
 **Règle de routage V/P/D/U :**
+
+Stats par sample depuis le cache (sans API) — **toujours utiliser `samples_cache` directement** :
+```sql
+SELECT sample_id, original_id, iho_zone,
+       nb_validated, nb_predicted, nb_dubious, nb_unclassified, object_count
+FROM samples_cache
+WHERE iho_zone LIKE '%Labrador%'
+ORDER BY date_min
+```
+Ces colonnes sont fiables, sans download, sans JOIN sur `objects_cache`.
+Ne jamais faire un JOIN `samples_cache` × `objects_cache` pour obtenir des
+stats V/P/D/U par sample — `nb_validated` etc. sont déjà agrégés au niveau sample.
+
 - "état des images / stats du projet X" → `preview_ecotaxa_project(X)` directement, pas de cache
 - "combien de validés dans le projet X" → `count_ecotaxa_taxa(project_ids=[X])` ou `preview_ecotaxa_project(X)`
 - "état des images du sample Y" → `summarize_ecotaxa_samples(sample_ids=[Y])`
