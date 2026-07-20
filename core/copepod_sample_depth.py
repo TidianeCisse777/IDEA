@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -12,9 +14,26 @@ CANONICAL_METHOD_VERSION = "copepod-sample-depth-v1"
 _KEY_COLUMNS = ("sample_id", "depth_bin")
 
 
+def _build_taxon_mask(df: pd.DataFrame, taxon_filter: str | None) -> pd.Series:
+    """Masque booléen sur object_annotation_hierarchy.
+
+    - ``None``  → copépodes (comportement historique, ``copepod_hierarchy_mask``).
+    - ``"*"``   → tous les organismes sans filtre taxonomique.
+    - Toute autre chaîne → recherche insensible à la casse dans la hiérarchie
+      (ex. ``"Calanus"``, ``"Calanidae"``, ``"Copepoda"``).
+    """
+    if taxon_filter is None:
+        return copepod_hierarchy_mask(df)
+    if taxon_filter == "*":
+        return pd.Series(True, index=df.index)
+    hier = df["object_annotation_hierarchy"].astype("string")
+    return hier.str.contains(taxon_filter, case=False, na=False, regex=False)
+
+
 def build_canonical_sample_depth(
     df: pd.DataFrame,
     *,
+    taxon_filter: str | None = None,
     volume_column: str = "ecopart_Sampled volume [L]",
     stable_columns: tuple[str, ...] | None = None,
     volume_rtol: float = 1e-6,
@@ -22,11 +41,17 @@ def build_canonical_sample_depth(
 ) -> pd.DataFrame:
     """Agrège une table objet en une ligne canonique par sample et bin 5 m.
 
-    Si `depth_bin` est absent mais `object_depth_min` est présent, dérive
+    ``taxon_filter`` contrôle quels organismes sont comptés comme cible :
+
+    - ``None`` (défaut) → copépodes uniquement (``copepod_hierarchy_mask``).
+    - ``"Calanus"`` → tout objet dont la hiérarchie contient « Calanus ».
+    - ``"Copepoda"`` → tout copépode (plus large que le masque taxonomique strict).
+    - ``"*"`` → tous les organismes (densité totale toutes catégories).
+
+    Si ``depth_bin`` est absent mais ``object_depth_min`` est présent, dérive
     automatiquement les bins EcoPart centrés à 2.5, 7.5, 12.5 … m
-    (floor(depth/5)*5 + 2.5), compatibles avec la colonne `Depth [m]` EcoPart.
+    (floor(depth/5)*5 + 2.5), compatibles avec la colonne ``Depth [m]`` EcoPart.
     """
-    # Auto-derive depth_bin from object_depth_min when absent (standard UVP export).
     if "depth_bin" not in df.columns and "object_depth_min" in df.columns:
         df = df.copy()
         df["depth_bin"] = (df["object_depth_min"] // 5) * 5 + 2.5
@@ -48,7 +73,7 @@ def build_canonical_sample_depth(
         )
 
     work = df.copy()
-    work["_is_copepod"] = copepod_hierarchy_mask(work).astype("int64")
+    work["_is_target"] = _build_taxon_mask(work, taxon_filter).astype("int64")
     work["depth_bin"] = pd.to_numeric(work["depth_bin"], errors="coerce")
     work[volume_column] = pd.to_numeric(work[volume_column], errors="coerce")
     invalid_keys = {
@@ -78,7 +103,7 @@ def build_canonical_sample_depth(
         row: dict[str, object] = {
             "sample_id": key[0],
             "depth_bin": key[1],
-            "copepod_count": int(group["_is_copepod"].sum()),
+            "target_count": int(group["_is_target"].sum()),
             "sampled_volume_L": canonical_volume,
         }
         for column in stable_columns or ():
@@ -92,8 +117,9 @@ def build_canonical_sample_depth(
 
     canonical = pd.DataFrame(rows)
     canonical["abundance_ind_L"] = (
-        canonical["copepod_count"] / canonical["sampled_volume_L"]
+        canonical["target_count"] / canonical["sampled_volume_L"]
     )
     canonical["abundance_ind_m3"] = canonical["abundance_ind_L"] * 1000.0
+    canonical["taxon_filter"] = taxon_filter if taxon_filter is not None else "Copepoda(mask)"
     canonical["canonical_method_version"] = CANONICAL_METHOD_VERSION
     return canonical
