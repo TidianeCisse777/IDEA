@@ -22,10 +22,13 @@ from core.ecotaxa_browser.acquisitions import (
 from core.ecotaxa_browser.cache.repo import (
     backfill_iho_zones,
     cache_counts,
+    cache_needs_resync,
     cache_progress,
     init_schema,
     latest_sync_status,
     open_connection,
+    set_schema_version,
+    SCHEMA_VERSION,
 )
 from core.ecotaxa_browser.cache import sql_explorer as _sql_explorer
 from core.ecotaxa_browser.cache.sync import run_full_sync
@@ -137,6 +140,9 @@ def _run_full_sync_with_real_client(cache_db: str) -> None:
         init_schema(conn)
         now = datetime.now(timezone.utc).isoformat()
         run_full_sync(conn, client, now_iso=now, client_factory=EcotaxaClient)
+        # Stamp the schema version after a successful sync so the next boot
+        # knows the cache is up-to-date with the current code structure.
+        set_schema_version(conn, SCHEMA_VERSION)
     finally:
         conn.close()
 
@@ -293,9 +299,15 @@ def create_app() -> ASGIApp:
                                 counts.get("samples_indexed", 0) == 0
                                 and counts.get("projects_indexed", 0) == 0
                             )
+                            schema_stale = cache_needs_resync(conn)
                         finally:
                             conn.close()
-                        if cache_empty:
+                        if cache_empty or schema_stale:
+                            if schema_stale and not cache_empty:
+                                import logging as _logging
+                                _logging.getLogger(__name__).info(
+                                    "EcoTaxa cache schema outdated — triggering resync at boot"
+                                )
                             loop = asyncio.get_running_loop()
                             loop.run_in_executor(
                                 None, _run_full_sync_with_real_client, cache_db,

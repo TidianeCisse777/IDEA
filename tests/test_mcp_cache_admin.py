@@ -11,10 +11,14 @@ from httpx import ASGITransport, AsyncClient
 
 from core.ecotaxa_browser.cache.repo import (
     cache_counts,
+    cache_needs_resync,
     finish_sync_run,
+    get_schema_version,
     init_schema,
+    set_schema_version,
     start_sync_run,
     upsert_sample,
+    SCHEMA_VERSION,
 )
 
 
@@ -199,3 +203,87 @@ async def test_admin_sync_runs_status_returns_404_when_missing(monkeypatch, cach
         )
 
     assert response.status_code == 404
+
+
+# --- schema version / cache_needs_resync unit tests ---
+
+
+def test_init_schema_does_not_stamp_schema_version(tmp_path):
+    """init_schema migrates columns but does NOT stamp the version.
+
+    The version is only stamped after a successful EcoTaxa sync so the boot
+    logic can still detect a stale-schema cache after migrations run.
+    """
+    path = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(str(path))
+    init_schema(conn)
+    assert get_schema_version(conn) == 0  # untouched by init_schema
+    conn.close()
+
+
+def test_cache_needs_resync_false_after_set_schema_version(tmp_path):
+    path = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(str(path))
+    init_schema(conn)
+    set_schema_version(conn, SCHEMA_VERSION)
+    assert not cache_needs_resync(conn)
+    conn.close()
+
+
+def test_cache_needs_resync_true_when_version_is_zero(tmp_path):
+    """Simulates an old cache built before schema versioning was introduced."""
+    path = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(str(path))
+    init_schema(conn)
+    set_schema_version(conn, 0)
+    assert cache_needs_resync(conn)
+    conn.close()
+
+
+def test_cache_needs_resync_true_when_version_is_stale(tmp_path):
+    path = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(str(path))
+    init_schema(conn)
+    set_schema_version(conn, SCHEMA_VERSION - 1)
+    assert cache_needs_resync(conn)
+    conn.close()
+
+
+def test_boot_check_triggers_resync_when_schema_stale(monkeypatch, tmp_path):
+    """Boot check (cache_empty or schema_stale) is True for an outdated cache.
+
+    The lifespan fires run_in_executor when this condition holds. We test the
+    check condition directly because ASGITransport does not run ASGI lifespans.
+    """
+    path = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    upsert_sample(
+        conn, sample_id=1, project_id=42, lat_avg=70.0, lon_avg=-64.0,
+        date_min="2024-01-01", date_max="2024-01-01",
+        object_count=10, instrument="UVP6", last_synced="2024-01-01T00:00:00Z",
+    )
+    # Simulate an old-format cache (version not yet stamped by a sync)
+    set_schema_version(conn, 0)
+    conn.close()
+
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(path))
+
+    from core.mcp.ecotaxa_server import _open_cache
+    from core.ecotaxa_browser.cache.repo import cache_counts, cache_needs_resync
+
+    conn = _open_cache()
+    try:
+        counts = cache_counts(conn)
+        cache_empty = (
+            counts.get("samples_indexed", 0) == 0
+            and counts.get("projects_indexed", 0) == 0
+        )
+        schema_stale = cache_needs_resync(conn)
+    finally:
+        conn.close()
+
+    assert not cache_empty, "cache has data — should not be considered empty"
+    assert schema_stale, "version=0 should be detected as stale"
+    assert cache_empty or schema_stale, "boot should trigger a resync"

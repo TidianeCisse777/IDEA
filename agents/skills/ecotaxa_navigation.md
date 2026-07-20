@@ -126,27 +126,52 @@ GROUP BY iho_zone
 Ne plus utiliser `get_zone_info` + bbox pour les requêtes de zone — `iho_zone` est plus précis.
 `get_zone_info` reste utile pour afficher la description d'une zone à l'utilisateur.
 
+### Règles de persistance des variables — critique
+
+**`df_ecotaxa_cache_query` = sélection canonique des samples.** Toujours
+protégé. Règles :
+
+1. **Inclure `iho_zone` dans tout SELECT sample-level.** Même si l'utilisateur
+   ne demande pas un groupement par zone, inclure `iho_zone` dans les SELECTs
+   qui retournent des lignes sample-level — cela permet une agrégation par zone
+   en aval via `run_pandas` sans re-requêter le cache.
+
+2. **Les agrégations ne doivent jamais écraser `df_ecotaxa_cache_query`.** Si
+   un "groupe par zone" ou un COUNT est demandé après une sélection existante,
+   deux options :
+   - **Option A (préférentielle)** : `run_pandas` sur `df_ecotaxa_cache_query`
+     existant — `df_ecotaxa_cache_query.groupby('iho_zone').size()`. Utilisable
+     seulement si `iho_zone` est dans le DataFrame.
+   - **Option B** : re-lancer `query_ecotaxa_cache` avec `GROUP BY iho_zone` et
+     stocker le résultat dans une **variable distincte** (`df_zone_counts`,
+     `df_zone_summary`, etc.). Ne jamais écraser `df_ecotaxa_cache_query`.
+
+3. **Ne jamais reconstruire un découpage spatial avec des bbox manuelles** si
+   `iho_zone` est disponible. Des bbox hardcodées de mémoire donnent des
+   comptages faux ou incomplets pour les zones aux frontières complexes (baie
+   d'Hudson, archipel arctique, etc.).
+
 ### Common SQL patterns
 
-**Samples in a zone + time window:**
+**Samples in a zone + time window (inclure iho_zone dans le SELECT) :**
 ```sql
-SELECT sample_id, project_id, lat_avg, lon_avg, date_min, date_max,
-       depth_min, depth_max, instrument
+SELECT sample_id, project_id, original_id, lat_avg, lon_avg, iho_zone,
+       date_min, date_max, depth_min, depth_max, instrument
 FROM samples_cache
-WHERE iho_zone = 'Baie de Baffin'
+WHERE iho_zone LIKE '%Baffin%'
   AND date_min >= '2024-01-01'
   AND date_max <= '2024-12-31'
 ORDER BY date_min
 ```
 
-**Projects in a zone (aggregate):**
+**Projects in a zone (aggregate) :**
 ```sql
 SELECT project_id,
        COUNT(*) AS n_samples,
        MIN(date_min) AS date_min, MAX(date_max) AS date_max,
        GROUP_CONCAT(DISTINCT instrument) AS instruments
 FROM samples_cache
-WHERE iho_zone = 'Baie de Baffin'
+WHERE iho_zone LIKE '%Baffin%'
 GROUP BY project_id
 ORDER BY n_samples DESC
 ```
@@ -157,7 +182,7 @@ SELECT strftime('%Y', date_min) AS year,
        COUNT(*) AS n_samples,
        COUNT(DISTINCT profile_id) AS n_casts
 FROM samples_cache
-WHERE iho_zone = 'Baie de Baffin'
+WHERE iho_zone LIKE '%Baffin%'
 GROUP BY year ORDER BY year
 ```
 

@@ -3595,12 +3595,14 @@ def make_source_tools(thread_id: str) -> list:
         un LIMIT uniquement si l'utilisateur demande explicitement un aperçu,
         un top ou une pagination.
 
-        Zones nommées — règle stricte : pour une baie / mer / détroit / zone
-        nommée, tu DOIS d'abord appeler `get_zone_info(zone_name=...)` et
-        réutiliser sa `bbox` dans `WHERE lat_avg BETWEEN … AND lon_avg BETWEEN
-        …`. N'écris JAMAIS de bornes lat/lon littérales de mémoire : des
-        coordonnées inventées donnent des comptages faux ou vides. Sans nom de
-        zone (bbox numérique déjà fournie), filtre directement.
+        Zones nommées — règle stricte : utiliser la colonne `iho_zone`
+        pré-calculée par point-in-polygon. Ne jamais écrire de bornes lat/lon
+        littérales de mémoire — des coordonnées inventées donnent des comptages
+        faux ou vides. Toujours filtrer avec `WHERE iho_zone LIKE '%Baffin%'`,
+        `WHERE iho_zone LIKE '%Hudson%'`, etc. (voir skill ecotaxa_navigation
+        pour la table de correspondance zone nommée → LIKE pattern).
+        `get_zone_info` reste utile uniquement pour afficher la description
+        d'une zone à l'utilisateur, pas pour construire une bbox de filtrage.
 
         Utiliser `list_ecotaxa_cache_tables` pour découvrir les tables
         et `describe_ecotaxa_cache_table` pour leur schéma exact.
@@ -3620,6 +3622,7 @@ def make_source_tools(thread_id: str) -> list:
         | profile_id | TEXT | identifiant du cast/profil |
         | object_count | INTEGER | objets imagés |
         | instrument | TEXT | UVP6, UVP5SD, Loki, … |
+        | iho_zone | TEXT | zone IHO/MEOW assignée par point-in-polygon (ex. "Baie de Baffin") — utiliser LIKE '%…%' |
 
         **objects_cache** — index objet optionnel pour les agrégations détaillées
         | colonne | contenu |
@@ -3648,6 +3651,22 @@ def make_source_tools(thread_id: str) -> list:
         FROM samples_cache
         WHERE profile_id IS NOT NULL AND TRIM(profile_id) <> ''
         GROUP BY profile_id ORDER BY n_samples DESC, cast_id
+
+        -- Samples par zone IHO (toujours utiliser iho_zone, jamais de bbox manuelle)
+        SELECT iho_zone, COUNT(*) AS n_samples,
+               MIN(date_min) AS date_min, MAX(date_max) AS date_max,
+               GROUP_CONCAT(DISTINCT instrument) AS instruments
+        FROM samples_cache
+        WHERE iho_zone != 'Hors zone référencée'
+        GROUP BY iho_zone
+        ORDER BY n_samples DESC
+
+        -- Samples d'une zone nommée (LIKE, jamais = ni coordonnées inventées)
+        SELECT sample_id, project_id, original_id, lat_avg, lon_avg, iho_zone,
+               date_min, depth_max, instrument
+        FROM samples_cache
+        WHERE iho_zone LIKE '%Baffin%'
+        ORDER BY date_min
 
         -- Instruments dans une bbox
         SELECT instrument, COUNT(*) AS n, COUNT(DISTINCT project_id) AS n_projets

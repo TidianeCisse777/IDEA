@@ -20,6 +20,12 @@ _GEO_REGISTRY_PATH = "data/geo/zones_registry.geojson"
 _geo_registry_cache: object = None
 _geo_registry_loaded = False
 
+# Bump this integer every time the schema gains columns that require a full
+# resync to populate (i.e. _ensure_column adds a column whose data must come
+# from EcoTaxa, not a backfill). Stored in the SQLite user_version pragma so
+# the startup code can detect an old-format cache and trigger a resync.
+SCHEMA_VERSION = 2
+
 
 def _load_geo_registry():
     global _geo_registry_cache, _geo_registry_loaded
@@ -95,8 +101,35 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 """
 
 
+def get_schema_version(conn: sqlite3.Connection) -> int:
+    """Return the stored schema version (SQLite user_version pragma)."""
+    return int(conn.execute("PRAGMA user_version").fetchone()[0])
+
+
+def set_schema_version(conn: sqlite3.Connection, version: int) -> None:
+    """Persist the schema version. Called after a successful migration."""
+    conn.execute(f"PRAGMA user_version = {int(version)}")
+    conn.commit()
+
+
+def cache_needs_resync(conn: sqlite3.Connection) -> bool:
+    """True when the on-disk schema version is older than the current code.
+
+    A stale version means columns were added by _ensure_column but existing
+    rows still carry NULL for those fields — a full EcoTaxa resync is needed
+    to populate them.
+    """
+    return get_schema_version(conn) < SCHEMA_VERSION
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create tables and indexes if they do not exist (idempotent)."""
+    """Create tables and indexes if they do not exist (idempotent).
+
+    Does NOT stamp SCHEMA_VERSION — the version is only updated after a
+    successful full sync (see ecotaxa_server._run_full_sync_with_real_client).
+    This lets the boot logic detect an old-format cache via cache_needs_resync
+    even after init_schema has run the column migrations.
+    """
     conn.executescript(_SCHEMA)
     _ensure_column(conn, "samples_cache", "depth_min", "REAL")
     _ensure_column(conn, "samples_cache", "depth_max", "REAL")

@@ -64,7 +64,7 @@ plt.tight_layout()
 - Always use `fig, ax = plt.subplots()` — never call `plt.show()`
 - Always define `title`, `xlabel`, `ylabel`
 - Keep figures readable: `figsize` must stay at or below `(16, 14)`. If a heatmap or ordination needs more space, aggregate or filter groups rather than increasing figure height.
-- Legends must stay readable: if a grouping variable has more than 15 levels, do NOT call `ax.legend()` for every group. Use a single color, a continuous color scale, top 12 groups + "Other", or add a small note such as `Legend omitted: 83 stations`.
+- Always include a legend or point labels. For scatter/line charts with multiple series: `ax.legend()` with a variable title. For station maps ≤ 50 points: annotate each point with `original_id` / `sample_id`. For station maps > 50 points: a colourbar or size legend. For a single series: at minimum a colorbar label or descriptive title. Never omit all legend context. When > 15 levels, use top 12 + "Other", a continuous colour scale, or a note (`Legend omitted: 83 stations`) — but always include something.
 - Axis labels must stay readable: never show more than 50 visible tick labels on either axis. For heatmaps with many stations/samples, keep the top 40 groups by abundance or display sparse ticks.
 - Taxon tick labels must be short: if labels contain taxonomy paths such as `Animalia | Arthropoda | ...`, display only the terminal taxon name; truncate labels longer than 35 characters with an ellipsis.
 - For long labels (taxon names): `ax.tick_params(axis='x', rotation=45)`
@@ -93,9 +93,16 @@ effort. La clarté prime sur l'esthétique.
 - **Labels lisibles** : jamais de chevauchement — rotation (`rotation=45`),
   troncature des noms longs (taxon terminal, ≤ 35 car.), et pas plus de ~50
   ticks visibles par axe (sinon agrège ou espace les ticks).
-- **Légende maîtrisée** : au-delà de ~8–12 séries, ne pas empiler une légende
-  illisible — étiquetage direct des éléments clés, top N + « Autres », échelle
-  de couleur continue, ou note (`Legend omitted: 83 stations`).
+- **Légende toujours présente et détaillée** : toute figure doit inclure une
+  légende ou des labels identifiant les éléments affichés. Par défaut :
+  - Graphe avec plusieurs séries → `ax.legend()` avec titre de variable.
+  - Carte de stations (≤ 50 points) → annoter chaque point avec `original_id`
+    (ou `sample_id` si absent) directement sur la figure (`ax.annotate`).
+  - Carte de stations (> 50 points) → légende de couleur ou de taille avec le
+    nom de la variable encodée ; ajouter un titre à la légende.
+  - Heatmap / scatter unique → titre d'axe + colorbar avec label.
+  - Au-delà de ~12 séries → top N + « Autres » ou échelle continue ; jamais
+    omettre totalement : ajouter au minimum une note (`Legend omitted: 83 stations`).
 - **Densité de points (overplotting)** : quand les points se superposent
   (scatter, carte à nombreuses stations), rends la distribution visible —
   transparence (`alpha=0.3–0.6`), marqueurs plus petits, ou agrégation
@@ -245,6 +252,27 @@ graph_contract = {
 
 For a plain positions map, keep only the `position` mapping and drop
 `size`/`color`/legends entirely.
+
+**Règle légende / labels obligatoire — toute carte de stations** :
+
+- **≤ 50 points** : annoter chaque point avec `original_id` (ou `sample_id` si
+  absent). Ne pas attendre que l'utilisateur le demande.
+- **> 50 points** : ajouter une légende de couleur ou de taille identifiant la
+  variable encodée (zone, instrument, projet, n_samples…). Ne jamais laisser
+  une carte sans contexte de lecture.
+
+```python
+if len(plot_df) <= 50:
+    for _, row in plot_df.iterrows():
+        label = row.get("original_id") or str(row.get("sample_id", ""))
+        ax.annotate(label, (row["lon_avg"], row["lat_avg"]),
+                    xycoords=ccrs.PlateCarree()._as_mpl_transform(ax),
+                    fontsize=7, color="white",
+                    xytext=(4, 4), textcoords="offset points")
+else:
+    # Ajouter au minimum une légende de couleur/taille ou un titre de légende
+    ax.legend(title="<variable encodée>", loc="lower left", fontsize=7)
+```
 
 For a sample map, `run_graph` provides `zone_polygons`, a mapping of canonical
 names to local Shapely geometries from the IHO/NeoLab/MEOW registry. Draw each
