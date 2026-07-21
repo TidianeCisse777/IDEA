@@ -64,7 +64,7 @@ plt.tight_layout()
 - Always use `fig, ax = plt.subplots()` — never call `plt.show()`
 - Always define `title`, `xlabel`, `ylabel`
 - Keep figures readable: `figsize` must stay at or below `(16, 14)`. If a heatmap or ordination needs more space, aggregate or filter groups rather than increasing figure height.
-- Always include a legend or point labels. For scatter/line charts with multiple series: `ax.legend()` with a variable title. For station maps ≤ 50 points: annotate each point with `original_id` / `sample_id`. For station maps > 50 points: a colourbar or size legend. For a single series: at minimum a colorbar label or descriptive title. Never omit all legend context. When > 15 levels, use top 12 + "Other", a continuous colour scale, or a note (`Legend omitted: 83 stations`) — but always include something.
+- Always include a legend or point labels. For scatter/line charts with multiple series: `ax.legend()` with a variable title. For station maps ≤ 50 points: annotate each point with `original_id` / `sample_id`. For station maps > 50 points: a colourbar or size legend. For a single series: at minimum a colorbar label or descriptive title. Never omit all legend context. When > 15 levels, use top 12 + "Other", a continuous colour scale, or a note (`Legend omitted: 83 stations`) — but always include something. Exception: a `vertical_profile` may show 16–30 profiles with `ax.legend(ncol=2)` or more; above 30, filter or aggregate profiles.
 - Axis labels must stay readable: never show more than 50 visible tick labels on either axis. For heatmaps with many stations/samples, keep the top 40 groups by abundance or display sparse ticks.
 - Taxon tick labels must be short: if labels contain taxonomy paths such as `Animalia | Arthropoda | ...`, display only the terminal taxon name; truncate labels longer than 35 characters with an ellipsis.
 - For long labels (taxon names): `ax.tick_params(axis='x', rotation=45)`
@@ -137,6 +137,13 @@ graph_contract = {
 ### Vertical abundance profile
 
 Only the depth y-axis is inverted. Never invert the abundance x-axis.
+
+The contract always declares the canonical semantic role (`abundance_ind_L` or
+`abundance_ind_m3`), even when the real DataFrame column has a French name such
+as `abondance_totale_ind_m3`. Keep the real column name in `source_variables`.
+When a prior calculation produced a persistent table, use that exact named table
+instead of recalculating abundance inside the graph code. For 16–30 profiles,
+use a compact multi-column legend; do not create a one-column legend.
 
 ```python
 ax.plot(plot_df["abundance_ind_L"], plot_df["depth_m"])
@@ -307,7 +314,8 @@ plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a"}
 plot_df = df_ecotaxa_cache_query.copy()
 plot_df = plot_df.dropna(subset=["lat_avg", "lon_avg"])
 
-zones = plot_df["iho_zone"].fillna("Inconnu").unique().tolist()
+# Sort zones so color assignment is stable regardless of DataFrame assembly order.
+zones = sorted(plot_df["iho_zone"].fillna("Inconnu").unique().tolist())
 cmap = get_cmap("tab20", max(len(zones), 1))
 color_map = {z: cmap(i % cmap.N) for i, z in enumerate(zones)}
 
@@ -330,7 +338,7 @@ for zone_name in zones:
         ax.add_feature(feat, zorder=3)
 
 # Plot actual sample points on top
-for zone_name, group in plot_df.groupby("iho_zone", sort=False):
+for zone_name, group in plot_df.groupby("iho_zone", sort=True):
     pts = ax.scatter(
         group["lon_avg"], group["lat_avg"],
         s=14, color=color_map.get(zone_name, "white"), alpha=0.85,
@@ -688,6 +696,56 @@ ax.set_ylabel("Depth (m)")
 plt.tight_layout()
 
 graph_explanation = "Profil vertical. Axes : mesure x profondeur (m). Source : fichier charge. Confidence: <confidence>."
+```
+
+### Vertical profile with multiple samples or profiles
+
+When the request compares profiles, build `plot_df` from the exact persistent
+table returned by the calculation. Do not recompute a derived abundance in the
+graph code. Keep the real data-column name in `value_col`, but declare the
+canonical abundance role in `graph_contract`.
+
+```python
+# Replace df_derived_abundance_df with the exact persistent variable returned by run_pandas.
+plot_df = df_derived_abundance_df.copy()
+profile_col = "Profile"
+depth_col = "Depth [m]"
+value_col = "abondance_totale_ind_m3"  # real source column; may be French
+abundance_role = "abundance_ind_m3"    # required graph-contract role
+
+plot_df[depth_col] = pd.to_numeric(plot_df[depth_col], errors="coerce")
+plot_df[value_col] = pd.to_numeric(plot_df[value_col], errors="coerce")
+plot_df = plot_df.dropna(subset=[profile_col, depth_col, value_col])
+if plot_df.empty:
+    raise ValueError("No rows remain after filtering; check profile, depth, and abundance columns.")
+
+profiles = sorted(plot_df[profile_col].astype(str).unique())
+if len(profiles) > 30:
+    raise ValueError("More than 30 profiles: filter or aggregate before plotting.")
+
+fig, ax = plt.subplots(figsize=(10, 8))
+for profile, group in plot_df.groupby(profile_col, sort=True):
+    group = group.sort_values(depth_col)
+    ax.plot(group[value_col], group[depth_col], marker="o", markersize=3,
+            linewidth=1, alpha=0.8, label=str(profile))
+ax.invert_yaxis()
+ax.grid(True, alpha=0.25)
+ax.set_title("<descriptive title>")
+ax.set_xlabel("Abondance (ind·m⁻³)")
+ax.set_ylabel("Depth (m)")
+if len(profiles) > 15:
+    ax.legend(title=profile_col, ncol=3, fontsize=6, title_fontsize=7, frameon=False)
+else:
+    ax.legend(title=profile_col, fontsize=7, title_fontsize=8, frameon=False)
+
+graph_contract = {
+    "kind": "vertical_profile",
+    "axes": [{"axis_index": 0, "x": abundance_role, "y": "depth_m"}],
+    "inverted_axes": [{"axis_index": 0, "axis": "y"}],
+    "mappings": {},
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": [profile_col, depth_col, value_col],
+}
 ```
 
 ### Taxonomic composition stacked bar template

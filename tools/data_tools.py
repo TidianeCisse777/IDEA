@@ -166,7 +166,17 @@ def reset_graph_block_on_new_turn(store: SessionStore, thread_id: str, messages:
         _clear_graph_quality_block(store, thread_id)
 
 
-def _graph_quality_issue(plt: Any) -> str | None:
+def _legend_column_count(legend: Any) -> int:
+    """Return a matplotlib legend's declared column count across versions."""
+    getter = getattr(legend, "get_ncols", None)
+    value = getter() if callable(getter) else getattr(legend, "_ncols", 1)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _graph_quality_issue(plt: Any, graph_contract: dict | None = None) -> str | None:
     """Return a blocking message when a produced figure is likely unreadable."""
     for fig_num in plt.get_fignums():
         fig = plt.figure(fig_num)
@@ -184,11 +194,19 @@ def _graph_quality_issue(plt: Any) -> str | None:
             else:
                 labels = [t.get_text() for t in legend.get_texts() if t.get_text()]
                 if len(labels) > 15:
-                    return (
-                        f"Graph quality blocked: {len(labels)} legend entries is too many. "
-                        "Omit the legend, aggregate groups, or show only the top 12 groups. "
-                        "Do not answer with a table; revise the matplotlib code and call run_graph again."
+                    compact_vertical_profile = (
+                        graph_contract is not None
+                        and graph_contract.get("kind") == "vertical_profile"
+                        and len(labels) <= 30
+                        and _legend_column_count(legend) >= 2
                     )
+                    if not compact_vertical_profile:
+                        return (
+                            f"Graph quality blocked: {len(labels)} legend entries is too many. "
+                            "For a vertical profile, use at most 30 entries in at least two legend columns; "
+                            "otherwise omit the legend, aggregate groups, or show only the top 12 groups. "
+                            "Do not answer with a table; revise the matplotlib code and call run_graph again."
+                        )
             for axis_name, tick_labels in [
                 ("x", ax.get_xticklabels()),
                 ("y", ax.get_yticklabels()),
@@ -1029,6 +1047,32 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         latest_alias=join_variable,
                     )
 
+            derived_variable = None
+            if not canonical_note and not join_variable and isinstance(result, pd.DataFrame):
+                derived_name = next(
+                    (
+                        name
+                        for name in ("derived_df", "result_df", "profile_df", "abundance_df")
+                        if new_vars.get(name) is result
+                    ),
+                    None,
+                )
+                if derived_name:
+                    derived_variable = dataset_variable_name("derived", derived_name)
+                    store_dataset(
+                        _store,
+                        thread_id,
+                        result,
+                        variable_name=derived_variable,
+                        meta={
+                            "source": "analysis:derived",
+                            "n_rows": int(result.shape[0]),
+                            "n_cols": int(result.shape[1]),
+                            "description": f"Table dérivée nommée {derived_name}",
+                        },
+                        latest_alias=derived_variable,
+                    )
+
             if result is None:
                 printed_note = (
                     "\n\nSortie contrôlée du code :\n" + printed_output
@@ -1051,7 +1095,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 suffix = " (aperçu 20 premières)" if n_rows > 20 else ""
 
                 persisted_variable = (
-                    "df_canonical_sample_depth" if canonical_note else join_variable
+                    "df_canonical_sample_depth"
+                    if canonical_note
+                    else (join_variable or derived_variable)
                 )
                 if persisted_variable:
                     persistence_contract = (
@@ -1062,11 +1108,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         "\nPersistence: persisted=false; variable=null — "
                         "résultat éphémère à cet appel"
                     )
-                join_note = (
+                persistence_note = (
                     f"\nVariable persistante : `{join_variable}` — table jointe "
                     "réutilisable dans les prochains tours."
                     if join_variable
-                    else ""
+                    else (
+                        f"\nVariable persistante : `{derived_variable}` — table dérivée "
+                        "réutilisable dans les prochains tours."
+                        if derived_variable
+                        else ""
+                    )
                 )
                 attrs_note = ""
                 if result.attrs:
@@ -1081,7 +1132,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     )
                 summary = (
                     f"{n_rows} lignes × {n_cols} colonnes{suffix}"
-                    f"{canonical_note}{join_note}{persistence_contract}{attrs_note}"
+                    f"{canonical_note}{persistence_note}{persistence_contract}{attrs_note}"
                     f"\n\n{preview}"
                 )
                 if printed_output:
@@ -1205,7 +1256,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                             retryable=True,
                             method="graph contract validation",
                         )
-                quality_issue = _graph_quality_issue(plt)
+                quality_issue = _graph_quality_issue(plt, graph_contract)
                 if quality_issue:
                     plt.close("all")
                     _mark_graph_quality_blocked(_store, thread_id)

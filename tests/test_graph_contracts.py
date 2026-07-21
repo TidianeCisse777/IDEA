@@ -293,6 +293,21 @@ def test_vertical_profile_accepts_only_inverted_depth_y_axis():
     plt.close(fig)
 
 
+def test_vertical_profile_normalizes_french_total_abundance_alias():
+    fig, ax = plt.subplots()
+    ax.invert_yaxis()
+    contract = _vertical_contract()
+    contract["axes"][0]["x"] = "abondance_totale_ind_m3"
+    contract["source_variables"] = ["depth_m", "abondance_totale_ind_m3"]
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["axes"][0]["x"] == "abundance_ind_m3"
+    assert normalized["source_variables"] == ["depth_m", "abondance_totale_ind_m3"]
+    assert validate_graph_contract(normalized, fig) is None
+    plt.close(fig)
+
+
 def test_vertical_profile_blocks_inverted_abundance_x_axis():
     fig, ax = plt.subplots()
     ax.invert_xaxis()

@@ -55,6 +55,12 @@ _GENERIC_ALIASES = {
     "relationship_panel",
 }
 _ABUNDANCE_ROLES = {"abundance_ind_L", "abundance_ind_m3"}
+_VERTICAL_PROFILE_ABUNDANCE_ALIASES = {
+    "abondance_ind_L": "abundance_ind_L",
+    "abondance_totale_ind_L": "abundance_ind_L",
+    "abondance_ind_m3": "abundance_ind_m3",
+    "abondance_totale_ind_m3": "abundance_ind_m3",
+}
 
 
 def _blocked(message: str) -> str:
@@ -94,10 +100,24 @@ def _mapping_issue(contract: dict, figure: Any, name: str) -> str | None:
 
 
 def normalize_graph_contract(contract: dict | None, figure: Any) -> dict | None:
-    """Bind deterministic station-map mappings to the primary scatter artist."""
-    if not isinstance(contract, dict) or contract.get("kind") != "station_map":
+    """Normalize recoverable graph-contract omissions without changing data names."""
+    if not isinstance(contract, dict):
         return contract
     normalized = deepcopy(contract)
+    if normalized.get("kind") == "vertical_profile":
+        axes = normalized.get("axes")
+        if not isinstance(axes, list):
+            return normalized
+        for axis in axes:
+            if isinstance(axis, dict):
+                axis_name = axis.get("x")
+                canonical_name = _VERTICAL_PROFILE_ABUNDANCE_ALIASES.get(axis_name)
+                if canonical_name:
+                    axis["x"] = canonical_name
+        return normalized
+
+    if normalized.get("kind") != "station_map":
+        return normalized
     axes = normalized.get("axes")
     if not isinstance(axes, list) or len(axes) != 1:
         return normalized

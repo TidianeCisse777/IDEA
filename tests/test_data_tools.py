@@ -856,6 +856,100 @@ graph_contract = {
     assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
 
 
+def test_run_graph_renders_compact_legend_for_thirty_vertical_profiles(tmp_path):
+    thread_id = "thread-vertical-profile-compact-legend"
+    profiles = [f"profile-{index:02d}" for index in range(30)]
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({
+            "profile": profiles,
+            "depth_m": list(range(30)),
+            "abundance_ind_m3": list(range(30)),
+        }),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+fig, ax = plt.subplots(figsize=(10, 8))
+for profile, group in df.groupby('profile'):
+    ax.plot(group['abundance_ind_m3'], group['depth_m'], label=profile)
+ax.invert_yaxis()
+ax.legend(ncol=3, fontsize=6)
+graph_contract = {
+    'kind': 'vertical_profile',
+    'axes': [{'axis_index': 0, 'x': 'abundance_ind_m3', 'y': 'depth_m'}],
+    'inverted_axes': [{'axis_index': 0, 'axis': 'y'}],
+    'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['profile', 'depth_m', 'abundance_ind_m3'],
+}
+"""
+
+    result = run_graph.invoke({"code": code})
+
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
+
+
+def test_compact_vertical_profile_legend_keeps_tick_readability_guard(tmp_path):
+    thread_id = "thread-vertical-profile-compact-legend-ticks"
+    profiles = [f"profile-{index:02d}" for index in range(30)]
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({
+            "profile": profiles,
+            "depth_m": list(range(30)),
+            "abundance_ind_m3": list(range(30)),
+        }),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    code = """
+fig, ax = plt.subplots(figsize=(10, 8))
+for profile, group in df.groupby('profile'):
+    ax.plot(group['abundance_ind_m3'], group['depth_m'], label=profile)
+ax.invert_yaxis()
+ax.legend(ncol=3, fontsize=6)
+ax.set_xticks(range(60))
+graph_contract = {
+    'kind': 'vertical_profile',
+    'axes': [{'axis_index': 0, 'x': 'abundance_ind_m3', 'y': 'depth_m'}],
+    'inverted_axes': [{'axis_index': 0, 'axis': 'y'}],
+    'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['profile', 'depth_m', 'abundance_ind_m3'],
+}
+"""
+
+    result = run_graph.invoke({"code": code})
+
+    assert "Graph quality blocked" in result
+    assert "tick labels" in result
+
+
+def test_run_pandas_persists_explicit_named_derived_dataframe(tmp_path):
+    thread_id = "thread-derived-dataframe"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({"depth_m": [5.0, 10.0], "abundance_ind_L": [1.0, 2.0]}),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_pandas = next(t for t in make_tools(thread_id, store=store) if t.name == "run_pandas")
+
+    result = run_pandas.invoke({"code": """
+abundance_df = df.assign(abundance_ind_m3=df['abundance_ind_L'] * 1000)
+result = abundance_df
+"""})
+
+    persisted = store.get(f"{thread_id}:dataset:df_derived_abundance_df")
+    assert "Persistence: persisted=true; variable=df_derived_abundance_df" in result
+    assert persisted is not None
+    assert persisted["df"]["abundance_ind_m3"].tolist() == [1000.0, 2000.0]
+
+
 def test_run_graph_blocks_unreadable_oversized_figures(tmp_path):
     thread_id = "thread-oversized-graph"
     store = SessionStore(tmp_path / "sessions")
