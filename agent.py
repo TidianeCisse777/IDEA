@@ -82,6 +82,10 @@ _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "100000"))
 _CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
+# A manifest may budget a substantial skill, but it must not override the
+# context safety ceiling.  A single 40k-character skill body repeatedly fed to
+# a ReAct loop is enough to drown out both the user request and tool results.
+_MAX_SKILL_RESULT_CHARS = int(os.getenv("MAX_SKILL_RESULT_CHARS", "12000"))
 _KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "2"))
 # Second-pass budget: if total tool-result chars after first compaction exceeds
 # this, oldest eligible messages are compacted further (never the current turn).
@@ -514,7 +518,7 @@ def _tool_schema_tokens(tools) -> int:
 
 
 def _truncate_tool_results(messages):
-    """Cap generic results while preserving validated, budgeted skill bodies."""
+    """Cap tool results, including manifest-validated skill bodies."""
     output = []
     metrics = {
         "tool_messages_seen": 0,
@@ -539,7 +543,10 @@ def _truncate_tool_results(messages):
                 and isinstance(provenance.get("max_tokens"), int)
             ):
                 declared_tokens = min(12_000, max(1, provenance["max_tokens"]))
-                limit = max(limit, declared_tokens * 4)
+                limit = max(
+                    limit,
+                    min(_MAX_SKILL_RESULT_CHARS, declared_tokens * 4),
+                )
             if len(message.content) > limit:
                 content = (
                     message.content[:limit]

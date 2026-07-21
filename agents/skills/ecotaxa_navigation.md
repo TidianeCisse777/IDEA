@@ -24,6 +24,16 @@ Stay at sample level unless the user explicitly needs individual objects.
 - Taxon names/counts and project export schemas use the dedicated read-only API tools.
 - Individual objects require an export plan and explicit confirmation.
 
+## Mandatory map workflow
+
+For every EcoTaxa map request, including a follow-up edit to an existing map,
+this skill is mandatory. Load `graph_planner` first, then `graph_writer`, in
+separate tool-call batches before querying or rendering. Do not reuse a
+previous map workflow: the current turn must load both graph skills.
+
+The finished figure must be a Cartopy GeoAxes with real Natural Earth coastlines.
+Never use a plain longitude/latitude scatter or artificial lines as a coastline.
+
 ## Visible tool map
 
 | Need | Tool |
@@ -76,7 +86,7 @@ One row in `samples_cache` is one EcoTaxa sample. Important columns:
 |---|---|
 | `sample_id`, `project_id` | Stable identifiers |
 | `original_id`, `station_id`, `profile_id` | Deployment label, station, and cast/profile |
-| `lat_avg`, `lon_avg`, `iho_zone` | Cached location and polygon-derived zone |
+| `lat_avg`, `lon_avg`, `iho_zone`, `zone_reference` | Cached location, polygon-derived label, and its geographic reference |
 | `instrument` | Sampling instrument |
 | `object_count` | Authoritative total from sample statistics |
 | `nb_validated`, `nb_predicted`, `nb_dubious`, `nb_unclassified` | Authoritative sample-level V/P/D/U counts |
@@ -115,14 +125,74 @@ Do not infer a project from a label prefix.
 
 ### Geography, dates and depth
 
-Use the cached `iho_zone`; never invent a bounding box. Prefer `LIKE` for named
-zones and inspect distinct matches when a word can identify multiple zones.
+Use the cached `iho_zone`; never invent a bounding box.
+
+**Exact named zone.** When the user names one exact zone label, use exact
+equality with that label. For example, “Mer de Beaufort” means only
+`iho_zone = 'Mer de Beaufort'`.
+
+For a French or English name, call `get_zone_info` first and use its returned
+canonical label in the equality filter. For example, `Beaufort Sea` resolves to
+`Mer de Beaufort`, then filter only `iho_zone = 'Mer de Beaufort'`. Never
+translate a zone label manually and never use a partial text match as a
+substitute for alias resolution.
+
+```sql
+WHERE iho_zone = 'Mer de Beaufort'
+```
+
+Never use `LIKE` for an explicitly named zone. IHO labels and MEOW labels are
+different geographic reference systems and may overlap spatially; never merge
+IHO and MEOW labels into one count. “Mer de Beaufort” and
+“MEOW: Beaufort-Amundsen-Viscount Melville-Queen Maud” must remain separate.
+
+### Zone reference
+
+`samples_cache.zone_reference` is the authoritative non-overlapping
+classification of each `iho_zone` label:
+
+- `IHO`: physical sea, bay, or strait;
+- `MEOW`: marine ecoregion;
+- `OUTSIDE`: coordinates exist but match no registry polygon;
+- `MISSING_COORDINATES`: no usable latitude/longitude.
+
+Every grouping or ranking by `iho_zone` must select and group by both
+`zone_reference` and `iho_zone`. Never aggregate IHO and MEOW rows into one
+ranking, total, or legend. The cache query rejects `GROUP BY iho_zone` without
+`zone_reference`.
+
+```sql
+SELECT zone_reference, iho_zone, COUNT(DISTINCT sample_id) AS n_samples
+FROM samples_cache
+GROUP BY zone_reference, iho_zone
+ORDER BY zone_reference, n_samples DESC, iho_zone;
+```
+
+### Generic zone coverage
+
+For a generic zone coverage question, query the cache in the same turn. Do not
+reply that it needs to be queried and do not wait for the user to name IHO or
+MEOW: present the returned reference groups separately.
+
+```sql
+SELECT zone_reference,
+       COALESCE(iho_zone, 'Sans coordonnées GPS') AS zone,
+       COUNT(DISTINCT sample_id) AS n_samples,
+       COUNT(DISTINCT project_id) AS n_projects
+FROM samples_cache
+GROUP BY zone_reference, iho_zone
+ORDER BY zone_reference, n_samples DESC, zone;
+```
+
+**Broad label search.** Use `LIKE` only when the user explicitly asks to find
+all zone labels containing a word such as “Beaufort”. First return the distinct
+matching labels, then keep their counts separate.
 
 ```sql
 SELECT sample_id, project_id, original_id, lat_avg, lon_avg, iho_zone,
        date_min, date_max, depth_min, depth_max, instrument
 FROM samples_cache
-WHERE iho_zone LIKE '%Baffin%'
+WHERE iho_zone = 'Baie de Baffin'
   AND metadata_complete = 1
   AND missing_date_count = 0
   AND date_min <= '2024-12-31'
@@ -172,6 +242,25 @@ When displaying `description`, always reproduce the full text verbatim — never
 summarize, paraphrase, or replace it with a placeholder like "description
 longue" or "description disponible". If the text is long, display it in full.
 
+### Linked metadata follow-up
+
+The active selection may carry a foreign key without every metadata field the
+user now asks to display. Use the permanent linked-data map, then make one
+read-only cache join to retrieve the field before any derivation or rendering.
+Never synthesize a label from an identifier or build a literal lookup table.
+
+```sql
+SELECT s.sample_id, s.profile_id, s.station_id, s.lat_avg, s.lon_avg,
+       s.project_id, p.title AS project_name
+FROM samples_cache AS s
+LEFT JOIN projects_cache AS p ON p.project_id = s.project_id
+WHERE s.iho_zone = 'Baie de Baffin';
+```
+
+This is an example of the declared sample → project relationship, not a
+project-map exception: apply the same retrieval step to any linked metadata
+requested after a selection, table, or graph already exists.
+
 ### Counts and groupings
 
 ```sql
@@ -186,12 +275,12 @@ FROM samples_cache
 GROUP BY project_id;
 
 -- Zone ranking
-SELECT iho_zone,
+SELECT zone_reference, iho_zone,
        COUNT(DISTINCT profile_id) AS n_casts,
        COUNT(DISTINCT sample_id) AS n_samples
 FROM samples_cache
-GROUP BY iho_zone
-ORDER BY n_samples DESC;
+GROUP BY zone_reference, iho_zone
+ORDER BY zone_reference, n_samples DESC;
 ```
 
 For a map, return `sample_id`, `lat_avg`, `lon_avg`, `iho_zone`, and the metric
@@ -214,12 +303,12 @@ WHERE iho_zone != ''
 SELECT COUNT(*) AS n_samples, COUNT(DISTINCT project_id) AS n_projects
 FROM samples_cache;
 
--- CORRECT for zone breakdown: include NULL as explicit group
-SELECT COALESCE(iho_zone, 'Sans coordonnées GPS') AS zone,
+-- CORRECT for zone breakdown: include NULL as explicit group and keep references separate
+SELECT zone_reference, COALESCE(iho_zone, 'Sans coordonnées GPS') AS zone,
        COUNT(*) AS n_samples
 FROM samples_cache
-GROUP BY iho_zone
-ORDER BY n_samples DESC;
+GROUP BY zone_reference, iho_zone
+ORDER BY zone_reference, n_samples DESC;
 ```
 
 **For global discovery questions** ("qu'est-ce qu'on a ?", "liste les campagnes"),
@@ -251,7 +340,7 @@ WHERE EXISTS (
 It is not a per-sample taxon count.
 
 Exact taxon counts per sample/cast, morphology, scores, or individual object
-statuses require the object cache when present, otherwise an export.
+statuses require an export.
 
 ## Live fallback for one sample
 
@@ -291,9 +380,12 @@ Every object export follows two turns:
 
 1. Resolve the scope from the cache and present project/sample scope, status,
    taxon and depth filters. For saved/multi-project selections, call
-   `export_ecotaxa_samples(..., confirmed=False)` to obtain the dry-run.
+   `export_ecotaxa_samples(selection_name="latest", confirmed=False)` to
+   obtain the dry-run. A textual “selection ready” is not a plan.
 2. Wait for a new explicit confirmation referring to that plan, then execute
-   exactly that scope (`confirmed=True` for the saved/multi-project route).
+   exactly that scope with
+   `export_ecotaxa_samples(selection_name="latest", confirmed=True)`.
+   Never reconstruct a generated selection identifier from a previous result.
 
 If the scope changes, prepare a new plan. Never export merely for a sample-level
 count, summary, preview, or graph.

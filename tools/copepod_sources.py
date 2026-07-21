@@ -68,6 +68,19 @@ _DOWNLOADS_DIR.mkdir(exist_ok=True)
 _ECOTAXA_UI_BASE = "https://ecotaxa.obs-vlfr.fr"
 
 
+def _zone_grouping_requires_reference(sql: str) -> bool:
+    """True when a cache aggregation would mix IHO and MEOW zone labels."""
+    group_by = re.search(
+        r"\bgroup\s+by\s+(.*?)(?:\border\s+by\b|\blimit\b|;|$)",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if group_by is None:
+        return False
+    grouped_columns = group_by.group(1).lower()
+    return "iho_zone" in grouped_columns and "zone_reference" not in grouped_columns
+
+
 def _ecotaxa_output(factory, summary: str, **fields):
     provenance = {"source": "ecotaxa", **dict(fields.pop("provenance", {}))}
     return factory(summary, provenance=provenance, **fields)
@@ -871,6 +884,16 @@ def make_source_tools(thread_id: str) -> list:
             session = _store.get(f"{thread_id}:ecotaxa_selection_latest")
         else:
             session = _store.get(f"{thread_id}:selection:{key}")
+            # Cache queries expose a canonical key prefixed with ``selection_``.
+            # Models occasionally preserve the stable slug and digest but omit
+            # that mechanical prefix. Resolve that exact, unambiguous alias from
+            # the current selection instead of discarding a persisted scope.
+            if not session and not key.startswith("selection_"):
+                latest = _store.get(f"{thread_id}:ecotaxa_selection_latest")
+                latest_meta = (latest or {}).get("meta") or {}
+                latest_name = str(latest_meta.get("selection_name") or "")
+                if latest_name.removeprefix("selection_") == key:
+                    session = latest
         if not session:
             return key, []
         meta = session.get("meta") or {}
@@ -3635,7 +3658,10 @@ def make_source_tools(thread_id: str) -> list:
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
             conn = open_readonly_connection(cache_db)
-            tables = _sql_explorer.list_tables(conn)
+            tables = [
+                table for table in _sql_explorer.list_tables(conn)
+                if table["table"] != "objects_cache"
+            ]
             conn.close()
         except Exception as exc:
             return _eco_error(f"Erreur lecture cache : {exc}", retryable=True)
@@ -3683,6 +3709,10 @@ def make_source_tools(thread_id: str) -> list:
 
         Paire naturelle avec `list_ecotaxa_cache_tables` et `query_ecotaxa_cache`.
         """
+        if str(table_name).strip().lower() == "objects_cache":
+            return _eco_blocked(
+                "Le niveau objet se traite uniquement avec un export EcoTaxa confirmé."
+            )
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
             conn = open_readonly_connection(cache_db)
@@ -3758,11 +3788,8 @@ def make_source_tools(thread_id: str) -> list:
         Les comptes sample-level sont directement disponibles dans `samples_cache` :
         `object_count`, `nb_validated`, `nb_predicted`, `nb_dubious` et
         `nb_unclassified` proviennent des statistiques EcoTaxa autoritatives. Ne
-        jamais dériver un statut depuis `object_count`. La table `objects_cache`
-        est optionnelle et réservée aux questions explicitement object-level
-        (taxon, statut, date ou profondeur de chaque objet). Vérifier sa présence
-        avec `describe_ecotaxa_cache_table` avant de l'utiliser. Le détail d'un
-        sample résolu peut sinon passer par `summarize_ecotaxa_sample_deployment`.
+        jamais dériver un statut depuis `object_count`. Le détail d'un objet
+        nécessite un export confirmé.
 
         Les SELECT et WITH/CTE read-only sont autorisés, y compris jointures,
         sous-requêtes et agrégations. La connexion SQLite est ouverte en mode
@@ -3776,9 +3803,14 @@ def make_source_tools(thread_id: str) -> list:
         Zones nommées — règle stricte : utiliser la colonne `iho_zone`
         pré-calculée par point-in-polygon. Ne jamais écrire de bornes lat/lon
         littérales de mémoire — des coordonnées inventées donnent des comptages
-        faux ou vides. Toujours filtrer avec `WHERE iho_zone LIKE '%Baffin%'`,
-        `WHERE iho_zone LIKE '%Hudson%'`, etc. (voir skill ecotaxa_navigation
-        pour la table de correspondance zone nommée → LIKE pattern).
+        faux ou vides. For an exact named zone, use exact equality such as
+        `WHERE iho_zone = 'Baie de Baffin'`; never merge an IHO label with an
+        overlapping MEOW label. Use `LIKE` only when the user explicitly asks
+        to search all zone labels containing a word, and keep every returned
+        label separate. `zone_reference` classifies cache labels as `IHO`,
+        `MEOW`, `OUTSIDE`, or `MISSING_COORDINATES`: every zone ranking must
+        select and group by both `zone_reference` and `iho_zone`. A grouping
+        by `iho_zone` alone is refused.
         `get_zone_info` reste utile uniquement pour afficher la description
         d'une zone à l'utilisateur, pas pour construire une bbox de filtrage.
 
@@ -3804,7 +3836,8 @@ def make_source_tools(thread_id: str) -> list:
         | nb_validated / nb_predicted | INTEGER | comptes V/P autoritatifs au grain sample |
         | nb_dubious / nb_unclassified | INTEGER | comptes D/U autoritatifs au grain sample |
         | instrument | TEXT | UVP6, UVP5SD, Loki, … |
-        | iho_zone | TEXT | zone IHO/MEOW assignée par point-in-polygon (ex. "Baie de Baffin") — utiliser LIKE '%…%' |
+        | iho_zone | TEXT | zone IHO/MEOW assignée par point-in-polygon (ex. "Baie de Baffin") — égalité exacte pour une zone nommée |
+        | zone_reference | TEXT | référentiel du label : IHO, MEOW, OUTSIDE ou MISSING_COORDINATES — obligatoire dans un regroupement de zones |
         | datetime_min / datetime_max | TEXT | enveloppe ISO date-heure dérivée des objets |
         | time_min / time_max | TEXT | enveloppe horaire HH:MM:SS dérivée des objets |
         | temporal_precision | TEXT | `datetime`, `date`, `partial` ou `none` |
@@ -3814,18 +3847,6 @@ def make_source_tools(thread_id: str) -> list:
         | metadata_objects_scanned | INTEGER | nombre d'objets inspectés pour les enveloppes |
         | metadata_complete | INTEGER | 1 si le scan couvre le total autoritatif sans écart |
         | metadata_coverage_pct | REAL | pourcentage du total autoritatif inspecté |
-
-        **objects_cache** — index objet optionnel, absent du cache standard
-        Présente uniquement dans les caches enrichis. Vérifier sa présence avec
-        `list_ecotaxa_cache_tables` avant toute requête.
-        Utiliser UNIQUEMENT pour : détail objet par objet, taxon par objet,
-        profondeur par objet. Ne PAS utiliser pour les stats V/P/D/U par sample
-        — utiliser `nb_validated/predicted/dubious/unclassified` de `samples_cache`.
-        | colonne | contenu |
-        |---|---|
-        | object_id / sample_id / project_id | identifiants objet et parent |
-        | taxon / classification_status | classification et statut d'annotation (`V` = validé) |
-        | date / depth | date et profondeur objet |
 
         **project_schemas_cache** — schémas JSON des projets
         | project_id PK | schema_json (title, instrument, levels, free fields) |
@@ -3886,20 +3907,19 @@ def make_source_tools(thread_id: str) -> list:
         WHERE profile_id IS NOT NULL AND TRIM(profile_id) <> ''
         GROUP BY profile_id ORDER BY n_samples DESC, cast_id
 
-        -- Samples par zone IHO (toujours utiliser iho_zone, jamais de bbox manuelle)
-        SELECT iho_zone, COUNT(*) AS n_samples,
+        -- Samples par zone : références IHO et MEOW séparées
+        SELECT zone_reference, iho_zone, COUNT(*) AS n_samples,
                MIN(date_min) AS date_min, MAX(date_max) AS date_max,
                GROUP_CONCAT(DISTINCT instrument) AS instruments
         FROM samples_cache
-        WHERE iho_zone != 'Hors zone référencée'
-        GROUP BY iho_zone
-        ORDER BY n_samples DESC
+        GROUP BY zone_reference, iho_zone
+        ORDER BY zone_reference, n_samples DESC
 
-        -- Samples d'une zone nommée (LIKE, jamais = ni coordonnées inventées)
+        -- Samples d'une zone nommée (égalité exacte, jamais de bbox inventée)
         SELECT sample_id, project_id, original_id, lat_avg, lon_avg, iho_zone,
                date_min, depth_max, instrument
         FROM samples_cache
-        WHERE iho_zone LIKE '%Baffin%'
+        WHERE iho_zone = 'Baie de Baffin'
         ORDER BY date_min
 
         -- Instruments dans une bbox
@@ -3927,6 +3947,15 @@ def make_source_tools(thread_id: str) -> list:
         incomplete sample, use `summarize_ecotaxa_sample_deployment`; do not
         launch live detail calls silently for a large batch.
         """
+        if re.search(r"\bobjects_cache\b", sql, flags=re.IGNORECASE):
+            return _eco_blocked(
+                "Le niveau objet se traite uniquement avec un export EcoTaxa confirmé."
+            )
+        if _zone_grouping_requires_reference(sql):
+            return _eco_blocked(
+                "Agrégation de zones refusée : groupe par zone_reference et iho_zone "
+                "pour garder les référentiels IHO et MEOW séparés."
+            )
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         try:
             conn = open_readonly_connection(cache_db)

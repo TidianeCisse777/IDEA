@@ -22,6 +22,44 @@ from tools.code_sandbox import apply_restricted_builtins
 _GRAPHS_DIR = graphs_dir()
 
 
+def _synthetic_record_table_guard(code: str) -> str | None:
+    """Reject a DataFrame made entirely from literal records without lineage."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+
+    def is_dataframe_call(node: ast.Call) -> bool:
+        return (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "DataFrame"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in {"pd", "pandas"}
+        )
+
+    def is_literal_sequence(node: ast.AST) -> bool:
+        return isinstance(node, (ast.List, ast.Tuple, ast.Set)) and all(
+            isinstance(value, ast.Constant) for value in node.elts
+        )
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not is_dataframe_call(node):
+            continue
+        payload = node.args[0] if node.args else next(
+            (keyword.value for keyword in node.keywords if keyword.arg == "data"),
+            None,
+        )
+        if isinstance(payload, ast.Dict) and payload.values and all(
+            is_literal_sequence(value) for value in payload.values
+        ):
+            return (
+                "Record labels must be retrieved from a persisted dataset or source "
+                "query, not synthesized from literal values. Retrieve linked metadata "
+                "before deriving or rendering."
+            )
+    return None
+
+
 def _patch_cartopy_gridliner_polygon() -> None:
     """Workaround : cartopy 0.25 + shapely 2.1 crashent dans `_draw_gridliner`
     quand le path frontière de la carte n'a pas un premier/dernier point
@@ -948,6 +986,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
         try:
             code_lower = code.lower()
+            synthetic_record_guard = _synthetic_record_table_guard(code)
+            if synthetic_record_guard:
+                return blocked(
+                    synthetic_record_guard,
+                    retryable=True,
+                    method="data lineage validation",
+                )
             if (
                 "zone" in code_lower
                 and "bbox" in code_lower
@@ -1300,6 +1345,35 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
 
         except Exception as e:
+            # A confirmed EcoTaxa export is object-grain data.  A vertical
+            # profile needs a derived abundance metric, not an invented source
+            # column.  This is detected from the failing operation and the
+            # actual schema, rather than from the user's wording, so every
+            # language and paraphrase follows the same recovery path.
+            raw_object_export = bool(
+                df is not None
+                and {"object_id", "object_depth_min"}.issubset(df.columns)
+                and any(
+                    column in df.columns
+                    for column in (
+                        "object_annotation_category",
+                        "object_annotation_hierarchy",
+                    )
+                )
+            )
+            if (
+                raw_object_export
+                and isinstance(e, ValueError)
+                and "abundance column" in str(e).casefold()
+            ):
+                return blocked(
+                    "The current table is one object per row, not a precomputed abundance table. "
+                    "Before retrying the graph, use run_pandas on this exact table: select one "
+                    "observed annotation, count object_id by sample_id and object_depth_min, "
+                    "and persist the resulting profile table. Then render from that table.",
+                    retryable=True,
+                    method="object-grain abundance precondition",
+                )
             # Only surface the columns hint when a loaded dataframe is actually
             # in play. For standalone figures (e.g. cartopy zone maps) there is
             # no file, and appending "(no file loaded)" wrongly suggests the

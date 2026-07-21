@@ -27,6 +27,10 @@ _ENRICHMENT_PATTERN = re.compile(
     r"\b(?:enrich\w*|enrichis\w*|enrichir|enrichment|coupl\w*|compl[eè]te\w*)\b",
     re.IGNORECASE,
 )
+_CONFIRMATION_PATTERN = re.compile(
+    r"\b(?:confirm(?:e|é|ée|er|ation)?|yes|oui)\b",
+    re.IGNORECASE,
+)
 _TAXONOMY_PATTERN = re.compile(
     r"\b(?:taxon\w*|taxa|taxonomi\w*|esp[eè]ce\w*|species)\b",
     re.IGNORECASE,
@@ -141,6 +145,7 @@ class TurnSignals:
 
     latest_user_text: str
     enrichment_requested: bool
+    confirmation_requested: bool
     taxonomy_requested: bool
     sql_copy_requested: bool
     geographic_requested: bool
@@ -218,6 +223,7 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
     return TurnSignals(
         latest_user_text=text,
         enrichment_requested=bool(_ENRICHMENT_PATTERN.search(text)),
+        confirmation_requested=bool(_CONFIRMATION_PATTERN.search(text)),
         taxonomy_requested=bool(_TAXONOMY_PATTERN.search(text)),
         sql_copy_requested=bool(_SQL_COPY_PATTERN.search(text)),
         geographic_requested=any(term in normalized_text for term in _ECOTAXA_GEO_TERMS),
@@ -229,6 +235,15 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         multi_zone_requested=multi_zone_requested,
         cross_source_compare_requested=cross_source_compare_requested,
     )
+
+
+def _bio_oracle_confirmation_plan_pending(messages: list[Any]) -> bool:
+    """True only after the canonical Bio-ORACLE tool returned its own plan."""
+    for message in reversed(messages[:-1]):
+        content = str(getattr(message, "content", "")).casefold()
+        if "confirmation required:" in content and "bio-oracle" in content:
+            return True
+    return False
 
 
 def _ordered_names(
@@ -299,12 +314,21 @@ def decide_tool_exposure(
         for source in _ENRICHMENT_GROUP_BY_SOURCE
         if source in source_decision.explicit_sources
     )
+    has_active_table = bool(turn_context.active_variable)
     focused_enrichment = bool(
-        turn_context.file_loaded
+        has_active_table
         and signals.enrichment_requested
         and explicit_enrichment_sources
     )
-    if turn_context.file_loaded and signals.enrichment_requested:
+    bio_oracle_confirmation_followup = bool(
+        has_active_table
+        and signals.confirmation_requested
+        and "bio_oracle" in authorized
+        and _bio_oracle_confirmation_plan_pending(messages)
+    )
+    if has_active_table and (
+        signals.enrichment_requested or bio_oracle_confirmation_followup
+    ):
         enrichment_sources = explicit_enrichment_sources or tuple(
             source for source in _ENRICHMENT_GROUP_BY_SOURCE if source in authorized
         )
@@ -404,6 +428,32 @@ def decide_tool_exposure(
         reasons.append("policy overflow fallback")
 
     selected_set = set(selected)
+    # Named environmental enrichments are dedicated workflows, not generic
+    # local analyses. Leaving ``run_pandas`` visible lets the model fabricate
+    # empty environmental columns instead of calling the canonical matcher.
+    # Bio-ORACLE retains the same narrow path when the user confirms its plan.
+    canonical_enrichment_tool: str | None = None
+    if focused_enrichment and "amundsen" in explicit_enrichment_sources:
+        canonical_enrichment_tool = "enrich_with_amundsen_ctd"
+    elif focused_enrichment and "bio_oracle" in explicit_enrichment_sources:
+        canonical_enrichment_tool = "enrich_with_bio_oracle"
+    elif bio_oracle_confirmation_followup:
+        canonical_enrichment_tool = "enrich_with_bio_oracle"
+    if canonical_enrichment_tool:
+        canonical_names = {"load_skill", canonical_enrichment_tool}
+        selected = tuple(name for name in selected if name in canonical_names)
+        selected_set = set(selected)
+        reasons.append(f"canonical {canonical_enrichment_tool} workflow")
+
+    # Once the writer has been loaded in this turn, its only valid successor is
+    # graph execution (or a local calculation).  Do not give the model the
+    # identical loader again: it has no state transition and can otherwise
+    # create an unbounded ReAct loop of graph_writer calls.
+    if "graph_writer" in skills:
+        selected = tuple(name for name in selected if name != "load_skill")
+        selected_set = set(selected)
+        reasons.append("graph writer already loaded this turn")
+
     return ToolExposureDecision(
         tool_names=selected,
         active_groups=active_groups,

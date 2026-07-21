@@ -7,7 +7,7 @@ forbidden_when:
   - Amundsen is not authorized by the source decision
 requires:
   - "source:amundsen"
-next_tool: null
+next_tool: enrich_with_amundsen_ctd
 max_tokens: 700
 ---
 

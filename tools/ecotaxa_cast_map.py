@@ -12,6 +12,7 @@ import unicodedata
 
 import pandas as pd
 
+from core.cartography import configure_offline_cartopy
 from core.runtime_paths import graphs_dir
 from tools.public_url import graph_url
 
@@ -153,6 +154,7 @@ def render_ecotaxa_cast_map(request: CastMapRequest) -> RenderedCastMap:
     import matplotlib.pyplot as plt
     import cartopy.crs as ccrs
 
+    configure_offline_cartopy()
     lon, lat = rows["lon"], rows["lat"]
     lon_padding = max(float(lon.max() - lon.min()) * 0.12, 0.25)
     lat_padding = max(float(lat.max() - lat.min()) * 0.12, 0.25)

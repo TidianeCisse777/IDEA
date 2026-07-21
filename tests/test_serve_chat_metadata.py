@@ -121,6 +121,139 @@ async def test_chat_completions_resumes_persisted_dataframe_after_restart(
 
 
 @pytest.mark.asyncio
+async def test_cast_map_request_reaches_react_agent(monkeypatch):
+    """Cast-map requests must stay extensible through the normal agent path."""
+    import serve as serve_module
+
+    mock_msg = MagicMock()
+    mock_msg.content = "carte générée"
+    mock_msg.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+    mock_msg.response_metadata = {}
+    mock_agent = MagicMock()
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_msg]})
+
+    monkeypatch.setattr(serve_module, "make_agent", lambda *args, **kwargs: mock_agent)
+    monkeypatch.setattr(serve_module, "arepair_invalid_tool_history", AsyncMock())
+    monkeypatch.setattr(serve_module, "_log_turn", lambda *args, **kwargs: None)
+    request = MagicMock()
+    request.headers = {}
+    req = serve_module.ChatRequest(
+        messages=[serve_module.Message(
+            role="user",
+            content="Affiche une carte des casts dans la Baie de Baffin dans EcoTaxa",
+        )],
+        stream=False,
+    )
+
+    await serve_module.chat_completions(
+        req,
+        request,
+        x_openwebui_chat_id=None,
+        x_openwebui_message_id=None,
+    )
+
+    mock_agent.ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Affiche les échantillons de l’export sur une carte.",
+        "Dans EcoTaxa, exporte les samples de la Mer de Beaufort.",
+    ],
+)
+async def test_export_wording_reaches_react_agent_when_no_plan_is_pending(
+    monkeypatch, message
+):
+    """References and new requests stay in the LLM's contextual workflow."""
+    import serve as serve_module
+    import tools.copepod_sources as sources_module
+
+    class StoreWithLatestSelection:
+        def get(self, key):
+            if str(key).endswith(":ecotaxa_selection_latest"):
+                return {"meta": {"sample_ids": [14622000039]}}
+            return {"meta": {}}
+
+    export_tool = MagicMock()
+    export_tool.name = "export_ecotaxa_samples"
+    export_tool.invoke.return_value = MagicMock(content="Plan d'export — 1 samples sur 1 projets")
+    reply = MagicMock()
+    reply.content = "réponse de l'agent"
+    reply.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+    reply.response_metadata = {}
+    mock_agent = MagicMock()
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": [reply]})
+
+    monkeypatch.setattr(serve_module, "default_store", StoreWithLatestSelection())
+    monkeypatch.setattr(sources_module, "make_source_tools", lambda thread_id: [export_tool])
+    monkeypatch.setattr(serve_module, "make_agent", lambda *args, **kwargs: mock_agent)
+    monkeypatch.setattr(serve_module, "arepair_invalid_tool_history", AsyncMock())
+    monkeypatch.setattr(serve_module, "_log_turn", lambda *args, **kwargs: None)
+
+    await serve_module.chat_completions(
+        serve_module.ChatRequest(
+            messages=[serve_module.Message(role="user", content=message)],
+            stream=False,
+        ),
+        MagicMock(headers={}),
+        x_openwebui_chat_id="export-context-chat",
+        x_openwebui_message_id=None,
+    )
+
+    mock_agent.ainvoke.assert_awaited_once()
+    export_tool.invoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pending_export_confirmation_reaches_react_agent(monkeypatch):
+    """Confirmation language is interpreted by the agent, not HTTP regexes."""
+    import serve as serve_module
+    import tools.copepod_sources as sources_module
+
+    class StoreWithPendingExport:
+        def get(self, key):
+            return {
+                "meta": {
+                    "pending_ecotaxa_export_plan": {
+                        "sample_ids": [14622000039],
+                    }
+                }
+            }
+
+    export_tool = MagicMock()
+    export_tool.name = "export_ecotaxa_samples"
+    export_tool.invoke.return_value = MagicMock(
+        content="Table de campagne consolidée (3 lignes, 1 projets)"
+    )
+    reply = MagicMock()
+    reply.content = "export confirmé"
+    reply.usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+    reply.response_metadata = {}
+    mock_agent = MagicMock()
+    mock_agent.ainvoke = AsyncMock(return_value={"messages": [reply]})
+    monkeypatch.setattr(serve_module, "default_store", StoreWithPendingExport())
+    monkeypatch.setattr(sources_module, "make_source_tools", lambda thread_id: [export_tool])
+    monkeypatch.setattr(serve_module, "make_agent", lambda *args, **kwargs: mock_agent)
+    monkeypatch.setattr(serve_module, "arepair_invalid_tool_history", AsyncMock())
+    monkeypatch.setattr(serve_module, "_log_turn", lambda *args, **kwargs: None)
+
+    await serve_module.chat_completions(
+        serve_module.ChatRequest(
+            messages=[serve_module.Message(role="user", content="Yes, I confirm the export.")],
+            stream=False,
+        ),
+        MagicMock(headers={}),
+        x_openwebui_chat_id="export-confirmation-chat",
+        x_openwebui_message_id=None,
+    )
+
+    mock_agent.ainvoke.assert_awaited_once()
+    export_tool.invoke.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_chat_completions_uses_openwebui_chat_id_as_stable_conversation_key(monkeypatch):
     import serve as serve_module
 

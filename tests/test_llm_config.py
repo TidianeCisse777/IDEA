@@ -12,6 +12,17 @@ def test_openrouter_key_takes_precedence(monkeypatch):
     }
 
 
+def test_openai_base_url_uses_openai_key_when_both_keys_are_configured(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+    assert chat_openai_connection_kwargs() == {
+        "api_key": "openai-key",
+        "base_url": "https://api.openai.com/v1",
+    }
+
+
 def test_openai_key_remains_the_fallback(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)

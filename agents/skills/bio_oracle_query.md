@@ -7,7 +7,7 @@ forbidden_when:
   - Bio-ORACLE is not authorized by the source decision
 requires:
   - "source:bio_oracle"
-next_tool: null
+next_tool: enrich_with_bio_oracle
 max_tokens: 850
 ---
 
@@ -56,10 +56,11 @@ Friendly variables include `temperature`, `salinity`, `oxygen`, `chlorophyll`,
 
 ## Confirmation
 
-For more than 10 source rows with multiple variables × scenarios, the canonical
-tool returns a confirmation plan when `confirmed=False`. Report that plan and
+When the tool estimates more than its configured limit of unique Bio-ORACLE
+queries (1,000 by default, after coordinate binning × variables × scenarios),
+it returns a confirmation plan when `confirmed=False`. Report that plan and
 wait. After explicit confirmation, call the same canonical enrichment with
-`confirmed=True` and the same parameters. Light/default enrichment runs
+`confirmed=True` and the same parameters. Requests below that limit run
 directly.
 
 ## Result contract

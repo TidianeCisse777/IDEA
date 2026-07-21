@@ -37,7 +37,6 @@ from agent import (
     get_context_audit,
     get_harness_trace,
     record_harness_usage,
-    record_harness_fast_route,
 )
 from tools.openwebui_uploads import resolve_attached_files, resolve_request_files, resolve_chat_files
 from tools.public_url import graph_url, serve_base_url
@@ -45,7 +44,6 @@ from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_work
 from tools.session_store import default_store
 from tools.run_store import default_run_store
 from tools.feedback import submit_feedback
-from tools.ecotaxa_cast_map import parse_ecotaxa_cast_map_request, render_ecotaxa_cast_map
 from tools.tool_catalog import (
     get_tool_presentation,
     resolve_user_language,
@@ -66,83 +64,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("copepod.serve")
-
-_EXPORT_REQUEST = re.compile(r"\b(?:export\w*|download\w*|t[eé]l[eé]charg\w*)\b", re.I)
-_EXPORT_CONFIRMATION = re.compile(r"^\s*(?:yes|yeah|yep|oui|si|ja|da|go|confirm\w*|launch\w*|lance\w*|ok|okay)\b", re.I)
-
-
-def _explicit_sample_ids(text: str) -> list[int]:
-    return list(dict.fromkeys(int(value) for value in re.findall(r"(?<!\d)(\d{6,})(?!\d)", text)))
-
-
-def _present_ecotaxa_export(content: str, *, confirmed: bool) -> str:
-    """Keep tool protocol and storage details out of user-facing replies."""
-    if not confirmed:
-        match = re.search(r"Plan d'export — (\d+) samples sur (\d+) projets", content)
-        if match:
-            return (
-                f"Export prêt : {match.group(1)} samples sur {match.group(2)} projets. "
-                "Confirmez pour lancer l’export."
-            )
-        return "Export prêt. Confirmez pour lancer l’export."
-    match = re.search(r"Table de campagne consolidée.*?\((\d+) lignes, (\d+) projets\)", content)
-    if match:
-        return f"Export terminé : {match.group(1)} objets sur {match.group(2)} projets. La campagne est prête pour analyse."
-    return "Export terminé. La campagne est prête pour analyse."
-
-
-def _run_pending_ecotaxa_export(thread_id: str, text: str):
-    """Execute the deterministic EcoTaxa export handshake outside the LLM."""
-    meta = ((default_store.get(thread_id) or {}).get("meta") or {})
-    pending = meta.get("pending_ecotaxa_export_plan") or {}
-    is_confirmation = bool(_EXPORT_CONFIRMATION.search(text))
-    requested_ids = _explicit_sample_ids(text)
-    if is_confirmation and pending.get("sample_ids"):
-        args = {"sample_ids": pending["sample_ids"], "confirmed": True,
-                "status": pending.get("status", "V"), "taxon": pending.get("taxon")}
-    elif _EXPORT_REQUEST.search(text):
-        selection_name = None
-        if not requested_ids:
-            selection = default_store.get(f"{thread_id}:ecotaxa_selection_latest") or {}
-            requested_ids = (selection.get("meta") or {}).get("sample_ids") or []
-            if requested_ids:
-                selection_name = "latest"
-        if not requested_ids:
-            return None
-        args = (
-            {"selection_name": selection_name, "confirmed": False}
-            if selection_name else {"sample_ids": requested_ids, "confirmed": False}
-        )
-    else:
-        return None
-    from tools.copepod_sources import make_source_tools
-    export_tool = next(tool for tool in make_source_tools(thread_id) if tool.name == "export_ecotaxa_samples")
-    result = export_tool.invoke(args)
-    return _present_ecotaxa_export(str(getattr(result, "content", result)), confirmed=bool(args["confirmed"]))
-
-
-def _try_fast_ecotaxa_cast_map(thread_id: str, text: str) -> str | None:
-    """Render a standard explicit EcoTaxa cast map without a ReAct loop."""
-    request = parse_ecotaxa_cast_map_request(text)
-    if request is None:
-        return None
-    try:
-        rendered = render_ecotaxa_cast_map(request)
-    except (OSError, ValueError):
-        return None
-    record_harness_fast_route(
-        thread_id,
-        route="fast_ecotaxa_cast_map",
-        timings_ms=rendered.timings_ms,
-        cache_hit=rendered.cache_hit,
-    )
-    suffix = ", distingués par projet." if request.group_by == "project" else "."
-    limit = (
-        f" {rendered.excluded_missing_cast_ids} samples sans identifiant de cast ne sont pas affichés."
-        if rendered.excluded_missing_cast_ids else ""
-    )
-    return f"{rendered.image_markdown}\n\n{rendered.cast_count} casts affichés{suffix}{limit}"
-
 
 def _retry_after_seconds(exc: RateLimitError) -> int:
     raw = exc.response.headers.get("retry-after") if exc.response is not None else None
@@ -619,7 +540,7 @@ def list_models():
                 "description": (
                     "Assistant scientifique spécialisé en zooplancton marin (copépodes). "
                     "Explore et analyse les données EcoTaxa (LOKI, UVP5), EcoPart et CTD Amundsen. "
-                    "Répond en français à des questions scientifiques sans écrire de code."
+                    "Répond en français aux questions scientifiques."
                 ),
             }
         ],
@@ -1294,33 +1215,6 @@ async def chat_completions(
             return _quick_response("")
 
     last_user_text = resolve_attached_files(last_user.text() if last_user else "")
-    deterministic_export = await asyncio.to_thread(
-        _run_pending_ecotaxa_export, tid, last_user_text
-    )
-    if deterministic_export is not None:
-        _log_turn(tid, last_user_text, str(deterministic_export), {
-            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-            "prompt_tokens_details": {"cached_tokens": 0},
-        }, user_id=user_id)
-        if req.stream:
-            return StreamingResponse(
-                _quick_sse_response(str(deterministic_export)),
-                media_type="text/event-stream",
-            )
-        return _quick_response(str(deterministic_export))
-
-    fast_cast_map = await asyncio.to_thread(
-        _try_fast_ecotaxa_cast_map, tid, last_user_text
-    )
-    if fast_cast_map is not None:
-        _log_turn(tid, last_user_text, fast_cast_map, {
-            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-            "prompt_tokens_details": {"cached_tokens": 0},
-        }, user_id=user_id)
-        if req.stream:
-            return StreamingResponse(_quick_sse_response(fast_cast_map), media_type="text/event-stream")
-        return _quick_response(fast_cast_map)
-
     # OpenWebUI ne forward JAMAIS les fichiers dans le body (metadata est pop()é
     # avant l'envoi). On requête directement le SQLite d'OpenWebUI via chat_id.
     # Fallback : req.files pour les appelants directs de l'API (hors OpenWebUI).

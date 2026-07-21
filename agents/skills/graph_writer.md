@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "intent:visual"
 next_tool: run_graph
-max_tokens: 10500
+max_tokens: 10800
 size_exemption: The writer owns one executable graph-contract vocabulary shared by runtime validation across all chart families; its full body is delivered with a manifest-governed cap instead of the generic tool truncation.
 ---
 
@@ -287,6 +287,19 @@ For a sample map, `run_graph` provides `zone_polygons`, a mapping of canonical
 names to local Shapely geometries from the IHO/NeoLab/MEOW registry. Draw each
 Use Cartopy `ShapelyFeature` with the DataFrame's `zone` values. Never use bare `df`.
 
+### EcoTaxa export map: aggregate objects into samples first
+
+An EcoTaxa export is normally one row per **object**, not one row per sample.
+For a map whose points are samples and whose size encodes one taxon's abundance:
+
+- inspect the active export columns; do not assume `lat_avg` / `lon_avg` exist;
+- if the export has `object_lat` / `object_lon`, group by `sample_id`, retaining
+  the first non-null coordinates and counting only rows matching the selected
+  taxon; use those aggregate coordinates for the map;
+- never draw one point per object when the request is about samples or casts;
+- if coordinates are missing both from the export and from a named sample-level
+  source, stop with that precise limitation rather than inventing columns.
+
 Use `kind: "station_map"`, one Cartopy GeoAxes, longitude/latitude roles, a
 point artist gid, a `position` mapping with `longitude_latitude`,
 `zero_policy: include`, and actual `source_variables`. Retry once on a missing
@@ -304,7 +317,6 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from matplotlib.lines import Line2D
-from matplotlib.cm import get_cmap
 import pandas as pd
 
 plt.style.use("dark_background")
@@ -316,7 +328,7 @@ plot_df = plot_df.dropna(subset=["lat_avg", "lon_avg"])
 
 # Sort zones so color assignment is stable regardless of DataFrame assembly order.
 zones = sorted(plot_df["iho_zone"].fillna("Inconnu").unique().tolist())
-cmap = get_cmap("tab20", max(len(zones), 1))
+cmap = plt.get_cmap("tab20", max(len(zones), 1))
 color_map = {z: cmap(i % cmap.N) for i, z in enumerate(zones)}
 
 fig = plt.figure(figsize=(16, 8))
@@ -659,6 +671,22 @@ ordination, composition, and depth profiles into generic scatter plots.
 
 Use for "profil vertical", "vertical distribution", abundance by depth,
 biomass by depth, CTD variable by depth, or diel/depth positioning plots.
+
+#### EcoTaxa object-export profiles
+
+An enriched EcoTaxa export has one row per object and therefore normally has
+**no abundance column**. For a taxon profile, calculate abundance before
+rendering: filter one real `object_annotation_category` (or another real
+annotation label), then group by `sample_id` and numeric `object_depth_min`
+(or the available object-depth field), with `object_id.size()` as
+`abundance_objects`. If CTD temperature is requested, carry the mean of the
+real Amundsen temperature field in that same grouped table. Assign that table
+to both `profile_df` and `result` in `run_pandas`; this persists the derived
+table for the graph. Then plot one line per `sample_id`, invert only the depth
+y-axis, and use the temperature field for a colorbar or an explicitly labelled
+secondary encoding. Never reject this request merely because a raw export lacks
+an abundance column, and never count rows without first filtering the selected
+taxon.
 
 ```python
 import matplotlib

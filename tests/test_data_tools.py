@@ -856,6 +856,28 @@ graph_contract = {
     assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
 
 
+def test_run_graph_requires_derived_abundance_for_raw_object_export(tmp_path):
+    thread_id = "thread-object-grain-profile"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({
+            "object_id": ["a", "b"],
+            "object_depth_min": [10.0, 20.0],
+            "object_annotation_category": ["Ostracoda", "Ostracoda"],
+        }),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+
+    result = run_graph.invoke({
+        "code": "raise ValueError('No abundance column found in active enriched table')"
+    })
+
+    assert "one object per row" in result
+    assert "count object_id by sample_id and object_depth_min" in result
+
+
 def test_run_graph_renders_compact_legend_for_thirty_vertical_profiles(tmp_path):
     thread_id = "thread-vertical-profile-compact-legend"
     profiles = [f"profile-{index:02d}" for index in range(30)]

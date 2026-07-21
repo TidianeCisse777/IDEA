@@ -196,6 +196,24 @@ def test_station_map_normalizer_binds_primary_scatter_to_missing_mappings():
     plt.close(fig)
 
 
+def test_station_map_normalizer_supplies_recoverable_metadata_defaults():
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    ax.scatter([-52.8], [58.6], transform=ccrs.PlateCarree())
+    contract = {
+        "kind": "station_map",
+        "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
+        "mappings": {"position": {"variable": "longitude_latitude"}},
+    }
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["inverted_axes"] == []
+    assert normalized["zero_policy"] == {"mode": "include", "artist_gid": None}
+    assert normalized["source_variables"] == ["longitude", "latitude"]
+    assert validate_graph_contract(normalized, fig) is None
+    plt.close(fig)
+
+
 def test_station_map_normalizer_replaces_invalid_xy_position_mapping():
     fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
     ax.scatter([-52.8], [58.6], transform=ccrs.PlateCarree())

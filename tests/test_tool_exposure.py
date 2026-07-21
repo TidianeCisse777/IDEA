@@ -162,6 +162,23 @@ def test_graph_and_deliverable_execution_unlock_from_successful_current_turn_ski
     assert "export_deliverable" in report.tool_names
 
 
+def test_graph_writer_is_not_reexposed_after_it_succeeds_in_the_same_turn():
+    messages = _successful_skill_messages(
+        "Affiche une carte", "graph_planner", "graph_writer"
+    )
+
+    decision = _decision(
+        "Affiche une carte",
+        file_loaded=True,
+        sources=("file",),
+        messages=messages,
+        output_intent="visual",
+    )
+
+    assert "run_graph" in decision.tool_names
+    assert "load_skill" not in decision.tool_names
+
+
 @pytest.mark.parametrize(
     ("source", "text", "expected"),
     [

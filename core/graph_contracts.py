@@ -125,6 +125,24 @@ def normalize_graph_contract(contract: dict | None, figure: Any) -> dict | None:
     if not isinstance(axis_index, int) or not 0 <= axis_index < len(figure.axes):
         return normalized
 
+    # These fields describe safe, conventional station-map behaviour.  The
+    # renderer can recover them when an otherwise valid Cartopy map omits the
+    # bookkeeping, which avoids discarding the figure solely for metadata.
+    normalized.setdefault("inverted_axes", [])
+    normalized.setdefault("zero_policy", {"mode": "include", "artist_gid": None})
+    if not isinstance(normalized.get("source_variables"), list):
+        source_variables = ["longitude", "latitude"]
+        mappings = normalized.get("mappings")
+        if isinstance(mappings, dict):
+            for mapping in mappings.values():
+                variable = mapping.get("variable") if isinstance(mapping, dict) else None
+                if isinstance(variable, str) and variable not in {
+                    "longitude_latitude",
+                    *source_variables,
+                }:
+                    source_variables.append(variable)
+        normalized["source_variables"] = source_variables
+
     primary = None
     for artist in getattr(figure.axes[axis_index], "collections", []):
         get_offsets = getattr(artist, "get_offsets", None)

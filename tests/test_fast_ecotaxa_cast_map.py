@@ -1,40 +1,8 @@
-"""Fast path for standard EcoTaxa cast maps."""
-from unittest.mock import patch
+"""EcoTaxa cast-map parsing and rendering."""
 
 import sqlite3
 
 import pytest
-
-
-def test_fast_cast_map_bypasses_react_for_explicit_ecotaxa_request():
-    from serve import _try_fast_ecotaxa_cast_map
-    from tools.ecotaxa_cast_map import CastMapRequest, RenderedCastMap
-
-    request = CastMapRequest(zone_name="Baie de Baffin", group_by="project")
-    rendered = RenderedCastMap(
-        image_markdown="![graph](http://test/maps/baffin.png)",
-        cast_count=76,
-        excluded_missing_cast_ids=0,
-        cache_hit=True,
-        timings_ms={"query": 10.0, "render": 100.0},
-    )
-    with patch("serve.parse_ecotaxa_cast_map_request", return_value=request), patch(
-        "serve.render_ecotaxa_cast_map", return_value=rendered
-    ):
-        reply = _try_fast_ecotaxa_cast_map(
-            "thread-fast-map", "Show EcoTaxa casts by project in Baffin Bay on a map"
-        )
-
-    assert reply == "![graph](http://test/maps/baffin.png)\n\n76 casts affichés, distingués par projet."
-
-
-def test_fast_cast_map_does_not_capture_ambiguous_request():
-    from serve import _try_fast_ecotaxa_cast_map
-
-    with patch("serve.parse_ecotaxa_cast_map_request", return_value=None):
-        reply = _try_fast_ecotaxa_cast_map("thread-fast-map", "Montre les casts sur une carte")
-
-    assert reply is None
 
 
 def test_parser_resolves_english_baffin_bay_to_cached_zone(tmp_path, monkeypatch):
@@ -80,6 +48,11 @@ def test_second_identical_cast_map_reuses_rendered_image(tmp_path, monkeypatch):
         )
     monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
     monkeypatch.setattr("tools.ecotaxa_cast_map.graphs_dir", lambda: tmp_path / "graphs")
+    configured = []
+    monkeypatch.setattr(
+        "tools.ecotaxa_cast_map.configure_offline_cartopy",
+        lambda: configured.append(True),
+    )
     (tmp_path / "graphs").mkdir()
     request = CastMapRequest(zone_name="Baie de Baffin", group_by="project")
 
@@ -88,6 +61,7 @@ def test_second_identical_cast_map_reuses_rendered_image(tmp_path, monkeypatch):
 
     assert first.cache_hit is False
     assert second.cache_hit is True
+    assert configured == [True]
 
 
 def test_fast_cast_map_records_zero_model_calls_for_local_diagnostics():

@@ -38,6 +38,28 @@ def test_permanent_system_prompt_stays_within_step_10_budget():
     assert _approx_tokens([SystemMessage(content=COPEPOD_SYSTEM_PROMPT)]) <= 3_500
 
 
+def test_skill_result_has_a_context_safety_ceiling():
+    from langchain_core.messages import ToolMessage
+    import agent as agent_module
+
+    content = "x" * 50_000
+    message = ToolMessage(
+        content=content,
+        name="load_skill",
+        tool_call_id="skill-cap",
+        artifact={
+            "status": "success",
+            "method": "skill loader",
+            "provenance": {"max_tokens": 10_800},
+        },
+    )
+
+    messages, metrics = agent_module._truncate_tool_results([message])
+
+    assert len(messages[0].content) <= agent_module._MAX_SKILL_RESULT_CHARS + 100
+    assert metrics["tool_messages_truncated"] == 1
+
+
 # --- Comportement 0 : _make_tracer inclut user_id ---
 
 def test_make_tracer_uses_email_as_tag_when_provided(monkeypatch):

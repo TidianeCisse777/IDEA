@@ -40,6 +40,65 @@ def test_graph_skills_must_run_in_separate_sequential_tool_batches():
     assert "wait for the planner result" in prompt
 
 
+def test_every_ecotaxa_map_loads_navigation_then_graph_skills():
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    navigation = Path("agents/skills/ecotaxa_navigation.md").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert "every ecotaxa map request" in prompt
+    assert "load `ecotaxa_navigation`, then `graph_planner`, then `graph_writer`" in prompt
+    assert "every ecotaxa map request" in navigation
+    assert "load `graph_planner` first, then `graph_writer`" in navigation
+
+
+def test_ecotaxa_named_zone_queries_keep_iho_and_meow_labels_separate():
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    navigation = Path("agents/skills/ecotaxa_navigation.md").read_text(
+        encoding="utf-8"
+    ).lower()
+    source_tool = Path("tools/copepod_sources.py").read_text(encoding="utf-8").lower()
+
+    assert "exact named zone" in navigation
+    assert "iho_zone = 'mer de beaufort'" in navigation
+    assert "never use `like` for an explicitly named zone" in navigation
+    assert "iho and meow labels into one count" in navigation
+    assert "exact named zone" in source_tool
+    assert "iho_zone = 'baie de baffin'" in source_tool
+    assert "zone_reference" in prompt
+    assert "zone_reference" in navigation
+    assert "zone_reference" in source_tool
+
+
+def test_ecotaxa_navigation_resolves_bilingual_zone_aliases_before_exact_sql():
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    navigation = Path("agents/skills/ecotaxa_navigation.md").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert "french/english aliases" in prompt
+    assert "get_zone_info" in prompt
+    assert "returned canonical label" in prompt
+    assert "beaufort sea" in navigation
+    assert "mer de beaufort" in navigation
+    assert "translate a zone label manually" in navigation
+    assert "equality filter" in navigation
+
+
+def test_generic_ecotaxa_zone_coverage_queries_cache_in_the_same_turn():
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    navigation = Path("agents/skills/ecotaxa_navigation.md").read_text(
+        encoding="utf-8"
+    ).lower()
+
+    assert "generic ecotaxa zone coverage question" in prompt
+    assert "must query the cache in the same turn" in prompt
+    assert "never answer that the cache must be queried" in prompt
+    assert "generic zone coverage" in navigation
+    assert "query_ecotaxa_cache" in navigation
+    assert "zone_reference, iho_zone" in navigation
+
+
 def test_each_new_visual_turn_restarts_planner_even_after_previous_graph():
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "follow-up edit to an existing graph" in prompt

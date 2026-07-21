@@ -16,7 +16,12 @@ from urllib.parse import quote
 
 import pandas as pd
 
-from core.geo import assign_zones, load_registry
+from core.geo import (
+    MISSING_COORDS_LABEL,
+    OUTSIDE_ZONE_LABEL,
+    assign_zones,
+    load_registry,
+)
 
 _GEO_REGISTRY_PATH = "data/geo/zones_registry.geojson"
 _geo_registry_cache: object = None
@@ -51,6 +56,7 @@ _SECONDARY_INDEXES = {
     "idx_samples_datetime": "samples_cache(datetime_min, datetime_max)",
     "idx_samples_depth_max": "samples_cache(depth_max)",
     "idx_samples_zone": "samples_cache(iho_zone)",
+    "idx_samples_zone_reference": "samples_cache(zone_reference, iho_zone)",
 }
 
 _SCHEMA = """
@@ -76,6 +82,7 @@ CREATE TABLE IF NOT EXISTS samples_cache (
     instrument TEXT,
     last_synced TEXT NOT NULL,
     iho_zone TEXT,
+    zone_reference TEXT,
     datetime_min TEXT,
     datetime_max TEXT,
     time_min TEXT,
@@ -173,6 +180,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "samples_cache", "profile_id", "TEXT")
     _ensure_column(conn, "samples_cache", "free_fields_json", "TEXT")
     _ensure_column(conn, "samples_cache", "iho_zone", "TEXT")
+    _ensure_column(conn, "samples_cache", "zone_reference", "TEXT")
     # Sample-level classification stats (from sample_taxo_stats, no object
     # download): counts per status + list of taxa present in the sample.
     _ensure_column(conn, "samples_cache", "nb_validated", "INTEGER")
@@ -220,6 +228,39 @@ def is_samples_cache_empty(conn: sqlite3.Connection) -> bool:
     return conn.execute("SELECT 1 FROM samples_cache LIMIT 1").fetchone() is None
 
 
+def _zone_reference_from_label(label: str | None) -> str:
+    """Return the non-overlapping geographic reference behind one cache label."""
+    normalized = (label or "").strip()
+    if not normalized or normalized == MISSING_COORDS_LABEL:
+        return "MISSING_COORDINATES"
+    if normalized == OUTSIDE_ZONE_LABEL:
+        return "OUTSIDE"
+    if normalized.startswith("MEOW:"):
+        return "MEOW"
+    return "IHO"
+
+
+def backfill_zone_references(conn: sqlite3.Connection) -> int:
+    """Classify every cached zone label without re-downloading EcoTaxa data."""
+    rows = conn.execute(
+        """
+        SELECT sample_id, iho_zone FROM samples_cache
+        WHERE zone_reference IS NULL OR TRIM(zone_reference) = ''
+        """
+    ).fetchall()
+    updates = [
+        (_zone_reference_from_label(row[1]), row[0])
+        for row in rows
+    ]
+    if updates:
+        conn.executemany(
+            "UPDATE samples_cache SET zone_reference = ? WHERE sample_id = ?",
+            updates,
+        )
+        conn.commit()
+    return len(updates)
+
+
 def backfill_iho_zones(conn: sqlite3.Connection, *, chunk_size: int = 5000) -> int:
     """Assign iho_zone to existing samples that have coordinates but no zone.
 
@@ -254,6 +295,7 @@ def backfill_iho_zones(conn: sqlite3.Connection, *, chunk_size: int = 5000) -> i
         conn.commit()
         total_updated += len(rows)
 
+    backfill_zone_references(conn)
     return total_updated
 
 
@@ -322,6 +364,7 @@ def upsert_sample(
     profile_id: str | None = None,
     free_fields_json: str | None = None,
     iho_zone: str | None = None,
+    zone_reference: str | None = None,
     datetime_min: str | None = None,
     datetime_max: str | None = None,
     time_min: str | None = None,
@@ -339,19 +382,21 @@ def upsert_sample(
     """Insert or update a single sample row."""
     if iho_zone is None:
         iho_zone = _compute_iho_zone(lat_avg, lon_avg)
+    if zone_reference is None:
+        zone_reference = _zone_reference_from_label(iho_zone)
     conn.execute(
         """
         INSERT INTO samples_cache (
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
             original_id, station_id, profile_id, free_fields_json,
-            object_count, instrument, last_synced, iho_zone,
+            object_count, instrument, last_synced, iho_zone, zone_reference,
             datetime_min, datetime_max, time_min, time_max, temporal_precision,
             missing_date_count, missing_time_count, missing_depth_min_count,
             missing_depth_max_count, depth_complete, metadata_objects_scanned,
             metadata_complete, metadata_coverage_pct
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(sample_id) DO UPDATE SET
             project_id = excluded.project_id,
             lat_avg = excluded.lat_avg,
@@ -368,6 +413,7 @@ def upsert_sample(
             instrument = excluded.instrument,
             last_synced = excluded.last_synced,
             iho_zone = excluded.iho_zone,
+            zone_reference = excluded.zone_reference,
             datetime_min = excluded.datetime_min,
             datetime_max = excluded.datetime_max,
             time_min = excluded.time_min,
@@ -386,7 +432,7 @@ def upsert_sample(
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
             original_id, station_id, profile_id, free_fields_json,
-            object_count, instrument, last_synced, iho_zone,
+            object_count, instrument, last_synced, iho_zone, zone_reference,
             datetime_min, datetime_max, time_min, time_max, temporal_precision,
             missing_date_count, missing_time_count, missing_depth_min_count,
             missing_depth_max_count,
@@ -428,6 +474,10 @@ def replace_project_samples(
             zone_values = zone_series.tolist()
         else:
             zone_values = [None] * len(samples)
+        zone_references = [
+            _zone_reference_from_label(zone)
+            for zone in zone_values
+        ]
 
         rows = [
             (
@@ -456,6 +506,7 @@ def replace_project_samples(
                 sample.get("instrument"),
                 last_synced,
                 zone_values[i],
+                zone_references[i],
                 sample.get("datetime_min"),
                 sample.get("datetime_max"),
                 sample.get("time_min"),
@@ -488,12 +539,13 @@ def replace_project_samples(
                 original_id, station_id, profile_id, free_fields_json,
                 object_count, nb_validated, nb_predicted, nb_dubious,
                 nb_unclassified, used_taxa, instrument, last_synced, iho_zone,
+                zone_reference,
                 datetime_min, datetime_max, time_min, time_max, temporal_precision,
                 missing_date_count, missing_time_count, missing_depth_min_count,
                 missing_depth_max_count, depth_complete, metadata_objects_scanned,
                 metadata_complete, metadata_coverage_pct
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
