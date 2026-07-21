@@ -63,7 +63,7 @@ def match_net_to_uvp(
     uvp_df: pd.DataFrame,
     *,
     max_km: float = 50.0,
-    max_days: float | None = None,
+    max_days: float | None = 2.0,
     net_id_col: str = "SAMPLE_ID",
     net_station_col: str = "STATION_NAME",
     net_lat_col: str = "latitude",
@@ -75,32 +75,38 @@ def match_net_to_uvp(
     uvp_lat_col: str = "lat_avg",
     uvp_lon_col: str = "lon_avg",
     uvp_time_col: str | None = "date_min",
+    uvp_profile_col: str | None = "profile_id",
 ) -> pd.DataFrame:
     """Apparie chaque déploiement filet à son sample UVP le plus proche (< max_km).
 
-    Le rapprochement est spatial : pour chaque déploiement filet unique on prend
-    le sample UVP le plus proche en distance, puis on filtre à `max_km`.
+    Pour chaque déploiement filet unique, on collecte TOUS les samples UVP dont le
+    nom de station normalisé correspond, puis on sélectionne celui dont l'écart
+    temporel est minimal (best temporal match parmi les candidats de même station).
     L'écart temporel (`time_gap_days`) est toujours calculé et renvoyé — jamais
     masqué. Si `max_days` est fourni, `match_status` vaut `matched` seulement
     quand l'écart temporel est aussi respecté, sinon `spatial_only` (même station,
     campagnes d'années différentes — cas typique filet historique vs UVP récent).
 
+    `uvp_profile_col` : colonne du cache contenant le nom de profil string (ex.
+    `gn2015_l2`). Si présente, propagée dans la sortie comme `uvp_profile_str` —
+    évite au skill de reconstruire ce bridge depuis `df_ecotaxa_ecopart`.
+
     Renvoie une ligne par déploiement filet ayant un voisin UVP < `max_km` :
     `net_sample_id`, `station`, `latitude`, `longitude`, `net_datetime`,
-    `uvp_sample_id`, `uvp_project_id`, `uvp_instrument`, `distance_km`,
-    `time_gap_days`, `match_status`, `method_version`. Lève `ValueError` sur
-    colonnes manquantes ou coordonnées entièrement absentes.
+    `uvp_sample_id`, `uvp_profile_str`, `uvp_project_id`, `uvp_instrument`,
+    `distance_km`, `time_gap_days`, `match_status`, `method_version`. Lève
+    `ValueError` sur colonnes manquantes ou coordonnées entièrement absentes.
     """
-    required_net = {net_id_col, net_lat_col, net_lon_col}
-    required_uvp = {uvp_id_col, uvp_lat_col, uvp_lon_col}
-    missing_net = sorted(required_net.difference(net_df.columns))
-    missing_uvp = sorted(required_uvp.difference(uvp_df.columns))
+    # Seul net_id_col est strictement obligatoire — lat/lon sont optionnels
+    # (distance_km sera None si absent, mais le matching station+date reste valide).
+    missing_net = sorted({net_id_col}.difference(net_df.columns))
     if missing_net:
         raise ValueError(
             "Appariement filet↔UVP refusé : colonne(s) filet absente(s) : "
             + ", ".join(f"`{c}`" for c in missing_net)
             + "."
         )
+    missing_uvp = sorted({uvp_id_col}.difference(uvp_df.columns))
     if missing_uvp:
         raise ValueError(
             "Appariement filet↔UVP refusé : colonne(s) UVP absente(s) : "
@@ -109,28 +115,26 @@ def match_net_to_uvp(
         )
 
     net = net_df.drop_duplicates(subset=[net_id_col]).copy()
-    net_lat = pd.to_numeric(net[net_lat_col], errors="coerce")
-    net_lon = pd.to_numeric(net[net_lon_col], errors="coerce")
-    valid_net = net_lat.notna() & net_lon.notna()
-    net = net.loc[valid_net]
-    net_lat = net_lat.loc[valid_net]
-    net_lon = net_lon.loc[valid_net]
-    if net.empty:
-        raise ValueError(
-            "Appariement filet↔UVP impossible : aucune coordonnée filet exploitable."
-        )
 
-    uvp = uvp_df.copy()
-    u_lat = pd.to_numeric(uvp[uvp_lat_col], errors="coerce")
-    u_lon = pd.to_numeric(uvp[uvp_lon_col], errors="coerce")
-    valid_uvp = u_lat.notna() & u_lon.notna()
-    uvp = uvp.loc[valid_uvp].reset_index(drop=True)
-    u_lat = u_lat.loc[valid_uvp].to_numpy()
-    u_lon = u_lon.loc[valid_uvp].to_numpy()
-    if uvp.empty:
-        raise ValueError(
-            "Appariement filet↔UVP impossible : aucune coordonnée UVP exploitable."
-        )
+    # Lat/lon filet : optionnels — uniquement pour distance_km en sortie.
+    _has_net_coords = net_lat_col in net.columns and net_lon_col in net.columns
+    if _has_net_coords:
+        net_lat = pd.to_numeric(net[net_lat_col], errors="coerce")
+        net_lon = pd.to_numeric(net[net_lon_col], errors="coerce")
+    else:
+        net_lat = pd.Series(pd.NA, index=net.index, dtype=float)
+        net_lon = pd.Series(pd.NA, index=net.index, dtype=float)
+
+    uvp = uvp_df.copy().reset_index(drop=True)
+
+    # Lat/lon UVP : optionnels — utilisés pour distance_km quand les deux côtés ont des coords.
+    _has_uvp_coords = uvp_lat_col in uvp.columns and uvp_lon_col in uvp.columns
+    if _has_uvp_coords:
+        u_lat = pd.to_numeric(uvp[uvp_lat_col], errors="coerce").to_numpy()
+        u_lon = pd.to_numeric(uvp[uvp_lon_col], errors="coerce").to_numpy()
+    else:
+        u_lat = np.full(len(uvp), np.nan)
+        u_lon = np.full(len(uvp), np.nan)
 
     net_time = None
     if net_time_col and net_time_col in net.columns:
@@ -140,43 +144,55 @@ def match_net_to_uvp(
         uvp_time = pd.to_datetime(uvp[uvp_time_col], errors="coerce", utc=True)
 
     # Pre-compute normalized station names for UVP (from station_id column when available).
-    uvp_station_col = "station_id" if "station_id" in uvp.columns else None
+    uvp_station_col_name = "station_id" if "station_id" in uvp.columns else None
     uvp_norm_stations: list[str] = []
-    if uvp_station_col:
-        uvp_norm_stations = [_normalize_station(v) for v in uvp[uvp_station_col]]
+    if uvp_station_col_name:
+        uvp_norm_stations = [_normalize_station(v) for v in uvp[uvp_station_col_name]]
+
+    has_profile = uvp_profile_col and uvp_profile_col in uvp.columns
 
     rows: list[dict] = []
     for pos, (idx, net_row) in enumerate(net.iterrows()):
         net_station_norm = _normalize_station(str(net_row.get(net_station_col) or net_row[net_id_col]))
 
-        # Match by normalized station name — no haversine fallback.
-        # station_id is always populated in the cache (derived from original_id
-        # during sync), so a spatial fallback would only produce false positives.
-        station_idx: int | None = None
+        # Collect ALL UVP candidates matching this station name, then pick best
+        # temporal match. Avoids silently returning the first (wrong-date) sample
+        # when a station is visited multiple times by different campaigns.
+        candidate_indices: list[int] = []
         if uvp_norm_stations and net_station_norm:
             for i, s in enumerate(uvp_norm_stations):
                 if s and s == net_station_norm:
-                    station_idx = i
-                    break
+                    candidate_indices.append(i)
 
-        if station_idx is None:
+        if not candidate_indices:
             continue
 
-        nearest = station_idx
-        dkm = haversine_km(net_lat.iloc[pos], net_lon.iloc[pos], u_lat, u_lon)
-        distance = float(dkm[nearest])
-        match_method = "station_name"
+        nt = net_time.iloc[pos] if net_time is not None else None
 
-        time_gap = None
-        if net_time is not None and uvp_time is not None:
-            nt = net_time.iloc[pos]
-            ut = uvp_time.iloc[nearest]
-            if pd.notna(nt) and pd.notna(ut):
-                time_gap = abs((ut - nt).total_seconds()) / 86400.0
+        def _time_gap(i: int) -> float:
+            if uvp_time is not None and nt is not None and pd.notna(nt):
+                ut = uvp_time.iloc[i]
+                if pd.notna(ut):
+                    return abs((ut - nt).total_seconds()) / 86400.0
+            return float("inf")
 
-        if max_days is not None and time_gap is not None and time_gap > max_days:
-            status = "spatial_only"
-        elif max_days is not None and time_gap is None:
+        # Best = smallest time gap among candidates (inf when time unavailable).
+        nearest = min(candidate_indices, key=_time_gap)
+        time_gap_val = _time_gap(nearest)
+        time_gap: float | None = None if time_gap_val == float("inf") else time_gap_val
+
+        # distance_km : calculée si les deux côtés ont des coordonnées, None sinon.
+        nl = net_lat.iloc[pos]
+        nlo = net_lon.iloc[pos]
+        if (
+            pd.notna(nl) and pd.notna(nlo)
+            and not np.isnan(u_lat[nearest]) and not np.isnan(u_lon[nearest])
+        ):
+            distance: float | None = round(float(haversine_km(nl, nlo, u_lat, u_lon)[nearest]), 3)
+        else:
+            distance = None
+
+        if max_days is not None and (time_gap is None or time_gap > max_days):
             status = "spatial_only"
         else:
             status = "matched"
@@ -186,16 +202,17 @@ def match_net_to_uvp(
             {
                 "net_sample_id": net_row[net_id_col],
                 "station": net_row.get(net_station_col) or net_row[net_id_col],
-                "latitude": float(net_lat.iloc[pos]),
-                "longitude": float(net_lon.iloc[pos]),
-                "net_datetime": net_time.iloc[pos] if net_time is not None else None,
+                "latitude": float(nl) if pd.notna(nl) else None,
+                "longitude": float(nlo) if pd.notna(nlo) else None,
+                "net_datetime": nt,
                 "uvp_sample_id": u[uvp_id_col],
+                "uvp_profile_str": u[uvp_profile_col] if has_profile else None,
                 "uvp_project_id": u.get(uvp_project_col),
                 "uvp_instrument": u.get(uvp_instrument_col),
-                "distance_km": round(distance, 3),
+                "distance_km": distance,
                 "time_gap_days": round(time_gap, 1) if time_gap is not None else None,
                 "match_status": status,
-                "match_method": match_method,
+                "match_method": "station_name",
                 "method_version": NET_UVP_MATCH_METHOD_VERSION,
             }
         )
@@ -209,6 +226,7 @@ def match_net_to_uvp(
             "longitude",
             "net_datetime",
             "uvp_sample_id",
+            "uvp_profile_str",
             "uvp_project_id",
             "uvp_instrument",
             "distance_km",

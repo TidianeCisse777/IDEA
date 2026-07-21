@@ -106,6 +106,9 @@ def neolabs_copepod_density(
             + ", ".join(f"`{c}`" for c in missing)
             + "."
         )
+    # lat/lon optionnels : présents dans neolabs_sample, pas dans neolabs_abundance.
+    lat_column = lat_column if lat_column in df.columns else None
+    lon_column = lon_column if lon_column in df.columns else None
 
     # Filtre taxon
     taxon_col_vals = df[taxon_column].astype("string")

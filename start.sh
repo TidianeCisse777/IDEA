@@ -150,12 +150,14 @@ echo "[start] MCP EcoTaxa OK"
 SYNC_WAIT_MAX="${ECOTAXA_SYNC_WAIT_SECONDS:-600}"
 echo "[start] Waiting for the initial EcoTaxa cache sync (up to ${SYNC_WAIT_MAX}s)..."
 sync_waited=0
+sync_start=$(date +%s)
 while [ "$sync_waited" -lt "$SYNC_WAIT_MAX" ]; do
   SYNC_HEALTH="$(docker compose exec -T mcp-ecotaxa curl -sf http://localhost:8001/health 2>/dev/null || true)"
   if [[ "$SYNC_HEALTH" == *'"schema_current":true'* ]] && \
      { [[ "$SYNC_HEALTH" == *'"last_sync_status":"ok"'* ]] || \
        [[ "$SYNC_HEALTH" == *'"last_sync_status":"partial"'* ]]; }; then
-    echo "[start] Initial sync complete."
+    sync_elapsed=$(( $(date +%s) - sync_start ))
+    printf "[start] Cache EcoTaxa synchronisé en %ds.\n" "$sync_elapsed"
     break
   fi
   case "$SYNC_HEALTH" in
@@ -176,6 +178,7 @@ fi
 # does not depend on a host python. A non-zero exit blocks startup entirely —
 # whoever runs ./start.sh gets a guaranteed-good cache or a clear failure.
 echo "[start] Checking EcoTaxa cache health..."
+preflight_start=$(date +%s)
 if ! docker compose exec -T mcp-ecotaxa sh -c \
      'curl -sf http://localhost:8001/health | python3 scripts/check_ecotaxa_cache.py'; then
   echo "[start] EcoTaxa cache preflight FAILED — agent will NOT start."
@@ -186,6 +189,11 @@ if ! docker compose exec -T mcp-ecotaxa sh -c \
   echo "[start] Then run ./start.sh again."
   exit 1
 fi
+preflight_elapsed=$(( $(date +%s) - preflight_start ))
+total_cache_elapsed=$(( $(date +%s) - sync_start ))
+echo ""
+echo "  Cache EcoTaxa : OK (verification en ${preflight_elapsed}s — total ${total_cache_elapsed}s)"
+echo ""
 
 if [ "$AGENT_MODE" = "local" ]; then
   LOCAL_AGENT_PID=""

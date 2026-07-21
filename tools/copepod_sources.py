@@ -466,7 +466,7 @@ def make_source_tools(thread_id: str) -> list:
         longitude_column: str | None = None,
         time_column: str | None = None,
         max_distance_km: float = 50.0,
-        max_time_gap_days: float | None = 60.0,
+        max_time_gap_days: float | None = 2.0,
     ) -> str:
         """Vérifie quels samples UVP EcoTaxa correspondent au fichier de filet chargé, SANS enrichir.
 
@@ -552,41 +552,69 @@ def make_source_tools(thread_id: str) -> list:
             net_df.columns,
             ("station_name", "station", "station_id"),
         )
-        if lat_col is None or lon_col is None:
-            return _eco_blocked(
-                "Vérification filet↔UVP impossible : colonnes latitude/longitude "
-                "introuvables dans le fichier chargé. Préciser via `latitude_column` "
-                "et `longitude_column`.",
-                retryable=False,
-            )
+        # lat/lon optionnels : utiles pour la distance_km en sortie, pas pour le
+        # lookup principal (station_id + date sont la clé fiable quand le GPS varie).
+        lat = pd.to_numeric(net_df[lat_col], errors="coerce") if lat_col else None
+        lon = pd.to_numeric(net_df[lon_col], errors="coerce") if lon_col else None
 
-        lat = pd.to_numeric(net_df[lat_col], errors="coerce")
-        lon = pd.to_numeric(net_df[lon_col], errors="coerce")
-        if lat.notna().sum() == 0 or lon.notna().sum() == 0:
-            return _eco_empty(
-                "Aucune coordonnée exploitable dans le fichier de filet — rien à "
-                "confronter au cache UVP EcoTaxa."
-            )
-        # Marge ≈ max_distance_km convertie en degrés (grossière, pour la bbox SQL).
-        margin = max(max_distance_km / 111.0, 0.2)
+        # Lookup principal : station_id normalisés extraits du fichier filet.
+        # La lat/lon n'est PAS utilisée comme filtre SQL — un GPS qui dérive d'une
+        # campagne à l'autre sortirait sinon de la bbox et serait silencieusement exclu.
+        from core.net_uvp_comparison import _normalize_station
+
+        net_station_key = station_col or id_col
+        raw_stations = net_df[net_station_key].dropna().astype(str).unique().tolist()
+        norm_to_raw: dict[str, str] = {}
+        for s in raw_stations:
+            norm = _normalize_station(s)
+            if norm:
+                norm_to_raw[norm] = s  # garde la forme brute pour le diagnostic
+
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         conn = None
         try:
             conn = open_connection(cache_db)
             init_schema(conn)
-            uvp_df = pd.read_sql_query(
-                "SELECT sample_id, project_id, instrument, station_id, lat_avg, lon_avg, "
-                "date_min, date_max, object_count FROM samples_cache "
-                "WHERE lat_avg BETWEEN ? AND ? AND lon_avg BETWEEN ? AND ? "
-                "AND instrument LIKE 'UVP%'",
-                conn,
-                params=(
-                    float(lat.min()) - margin,
-                    float(lat.max()) + margin,
-                    float(lon.min()) - margin,
-                    float(lon.max()) + margin,
-                ),
-            )
+            if norm_to_raw:
+                # Requête par station_id : le cache stocke déjà les noms courts
+                # normalisés (ex. "l2", "tcaqf3") — on les compare après
+                # normalisation Python pour tolérer les variations de casse/tirets.
+                # On charge d'abord tous les UVP et on filtre en Python pour que
+                # _normalize_station s'applique des deux côtés.
+                uvp_df = pd.read_sql_query(
+                    "SELECT sample_id, project_id, instrument, station_id, profile_id, "
+                    "lat_avg, lon_avg, date_min, date_max, object_count FROM samples_cache "
+                    "WHERE instrument LIKE 'UVP%'",
+                    conn,
+                )
+                # Filtre Python : conserver uniquement les stations qui matchent.
+                uvp_df = uvp_df[
+                    uvp_df["station_id"].apply(
+                        lambda s: _normalize_station(str(s)) in norm_to_raw
+                    )
+                ].reset_index(drop=True)
+            else:
+                # Pas de nom de station dans le fichier : fallback bbox lat/lon.
+                if lat is None or lon is None or lat.notna().sum() == 0:
+                    return _eco_blocked(
+                        "Vérification filet↔UVP impossible : ni colonne station "
+                        "ni coordonnées lat/lon exploitables dans le fichier chargé.",
+                        retryable=False,
+                    )
+                margin = max(max_distance_km / 111.0, 0.2)
+                uvp_df = pd.read_sql_query(
+                    "SELECT sample_id, project_id, instrument, station_id, profile_id, "
+                    "lat_avg, lon_avg, date_min, date_max, object_count FROM samples_cache "
+                    "WHERE lat_avg BETWEEN ? AND ? AND lon_avg BETWEEN ? AND ? "
+                    "AND instrument LIKE 'UVP%'",
+                    conn,
+                    params=(
+                        float(lat.min()) - margin,
+                        float(lat.max()) + margin,
+                        float(lon.min()) - margin,
+                        float(lon.max()) + margin,
+                    ),
+                )
         except Exception as exc:
             return _eco_error(
                 f"Impossible d'interroger le cache EcoTaxa : {exc}", retryable=True
@@ -595,32 +623,31 @@ def make_source_tools(thread_id: str) -> list:
             if conn is not None:
                 conn.close()
 
-        env = (
-            f"lat {float(lat.min()):.2f}→{float(lat.max()):.2f}, "
-            f"lon {float(lon.min()):.2f}→{float(lon.max()):.2f}"
-        )
+        n_net_stations = len(norm_to_raw) if norm_to_raw else "?"
+        env = f"{n_net_stations} station(s) filet"
         if uvp_df.empty:
             return _eco_empty(
-                f"Aucun sample UVP dans l'emprise du filet ({env}). Rien à comparer "
-                "côté UVP EcoTaxa pour ce fichier."
+                f"Aucun sample UVP dans le cache pour les stations du filet ({env}). "
+                "Vérifiez que le cache EcoTaxa est synchronisé et que les noms de "
+                "station correspondent."
             )
 
-        matches = match_net_to_uvp(
-            net_df,
-            uvp_df,
+        kwargs: dict = dict(
             max_km=max_distance_km,
             max_days=max_time_gap_days,
             net_id_col=id_col,
             net_station_col=station_col or id_col,
-            net_lat_col=lat_col,
-            net_lon_col=lon_col,
             net_time_col=time_col,
         )
+        if lat_col:
+            kwargs["net_lat_col"] = lat_col
+        if lon_col:
+            kwargs["net_lon_col"] = lon_col
+        matches = match_net_to_uvp(net_df, uvp_df, **kwargs)
         if matches.empty:
             return _eco_empty(
-                f"{len(uvp_df)} sample(s) UVP dans l'emprise ({env}) mais aucun à "
-                f"moins de {max_distance_km:g} km d'un déploiement filet. "
-                "Rapprochement spatial impossible à cette tolérance."
+                f"Stations UVP trouvées dans le cache ({env}) mais aucune correspondance "
+                "station+date établie. Vérifiez les noms de station et les dates."
             )
 
         variable_name = "df_net_uvp_matches"

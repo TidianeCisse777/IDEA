@@ -64,14 +64,17 @@ canonical = build_canonical_sample_depth(
     taxon_filter="Calanus",              # ← user's choice
     volume_column="ecopart_Sampled volume [L]",
 )
-# canonical columns: sample_id (string), depth_bin, target_count,
-#                    sampled_volume_L, abundance_ind_L, abundance_ind_m3
+# canonical columns: sample_id (string, e.g. "am_leg4_RA27_1"), depth_bin,
+#                    target_count, sampled_volume_L, abundance_ind_L, abundance_ind_m3
 
-# Aggregate per profile (mean over depth bins)
+# Bridge: EcoTaxa sample_id has a cast suffix (_1, _2…) that the cache profile_id
+# does not. Strip it to align with uvp_profile_str in df_net_uvp_matches.
+canonical["uvp_profile_str"] = canonical["sample_id"].str.replace(r"_\d+$", "", regex=True)
+
+# Aggregate per profile (mean over casts and depth bins)
 uvp_density = (
     canonical
-    .groupby("sample_id", as_index=False)["abundance_ind_m3"].mean()
-    .rename(columns={"sample_id": "uvp_profile_str"})
+    .groupby("uvp_profile_str", as_index=False)["abundance_ind_m3"].mean()
 )
 ```
 
@@ -109,22 +112,26 @@ net_density = neolabs_copepod_density(
 ```python
 from core.net_uvp_comparison import compare_paired_density
 
-# Step 1: add the string profile to the match table
-id_bridge = df_ecotaxa_ecopart[["sample_id_internal","sample_id"]].drop_duplicates()
-id_bridge.columns = ["uvp_sample_id","uvp_profile_str"]
-matched = df_net_uvp_matches[df_net_uvp_matches["match_status"]=="matched"].merge(
-    id_bridge, on="uvp_sample_id", how="left"
+# Step 1: keep only matched rows, one row per (station, uvp_profile_str).
+# df_net_uvp_matches has one row per net_sample_id — a station with several
+# net tows produces duplicates. Dedup here so compare_paired_density operates
+# at station grain.
+matched = (
+    df_net_uvp_matches[df_net_uvp_matches["match_status"] == "matched"]
+    .drop_duplicates(subset=["station", "uvp_profile_str"])
 )
 
 # Step 2: join net density
 paired = matched.merge(
-    net_density.rename(columns={"copepod_density_ind_m3":"net_ind_m3"}),
-    left_on="station", right_on="STATION_NAME", how="inner"
+    net_density.rename(columns={"STATION_NAME": "station", "copepod_density_ind_m3": "net_ind_m3"}),
+    on="station", how="inner"
 )
 
-# Step 3: join UVP density
-paired = paired.merge(uvp_density.rename(columns={"abundance_ind_m3":"uvp_ind_m3"}),
-                      on="uvp_profile_str", how="inner")
+# Step 3: join UVP density (uvp_density already keyed on uvp_profile_str after strip)
+paired = paired.merge(
+    uvp_density.rename(columns={"abundance_ind_m3": "uvp_ind_m3"}),
+    on="uvp_profile_str", how="inner"
+)
 
 # Step 4: compare
 result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m3")

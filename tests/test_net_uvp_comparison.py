@@ -32,6 +32,8 @@ def _uvp():
             "sample_id": [1, 2],
             "project_id": [42, 42],
             "instrument": ["UVP5SD", "UVP5SD"],
+            "station_id": ["S1", "S2"],
+            "profile_id": ["cruise_s1_1", "cruise_s2_1"],
             "lat_avg": [67.5, 10.0],  # sample 2 loin de tout
             "lon_avg": [-63.8, 10.0],
             "date_min": ["2015-06-03", "2015-06-03"],
@@ -46,22 +48,44 @@ def test_haversine_zero_and_known_distance():
 
 
 def test_matches_by_station_name():
-    net = _net().copy()
-    uvp = _uvp().assign(station_id=["S1", "S2"])
-    out = match_net_to_uvp(net, uvp, max_days=None)
+    out = match_net_to_uvp(_net(), _uvp(), max_days=None)
     assert list(out["net_sample_id"]) == [101, 102]
     assert list(out["match_method"]) == ["station_name", "station_name"]
     assert out.iloc[0]["uvp_sample_id"] == 1
+    assert out.iloc[0]["uvp_profile_str"] == "cruise_s1_1"
     assert out.iloc[0]["match_status"] == "matched"
     assert out.iloc[0]["method_version"] == NET_UVP_MATCH_METHOD_VERSION
 
 
+def test_picks_best_temporal_match_among_candidates():
+    """Station visitée deux fois : on doit choisir le sample temporellement le plus proche."""
+    net = pd.DataFrame({
+        "SAMPLE_ID": [1],
+        "STATION_NAME": ["S1"],
+        "latitude": [67.5],
+        "longitude": [-63.8],
+        "deployment_datetime_start": ["2015-06-01"],
+    })
+    uvp = pd.DataFrame({
+        "sample_id": [10, 20],        # deux passages à S1
+        "project_id": [42, 42],
+        "instrument": ["UVP5SD", "UVP5SD"],
+        "station_id": ["S1", "S1"],   # même station
+        "profile_id": ["p_old", "p_close"],
+        "lat_avg": [67.5, 67.5],
+        "lon_avg": [-63.8, -63.8],
+        "date_min": ["2010-01-01", "2015-06-03"],  # p_close est à 2 jours
+    })
+    out = match_net_to_uvp(net, uvp, max_days=None)
+    assert len(out) == 1
+    assert out.iloc[0]["uvp_sample_id"] == 20      # p_close sélectionné
+    assert out.iloc[0]["uvp_profile_str"] == "p_close"
+    assert out.iloc[0]["time_gap_days"] == pytest.approx(2.0, abs=0.5)
+
+
 def test_temporal_gap_flags_spatial_only():
     net = _net().assign(deployment_datetime_start=["2014-06-01", "2014-06-01"])
-    uvp = _uvp().assign(
-        station_id=["S1", "S2"],
-        date_min=["2024-06-01", "2024-06-01"],
-    )
+    uvp = _uvp().assign(date_min=["2024-06-01", "2024-06-01"])
     out = match_net_to_uvp(net, uvp, max_days=60)
     assert list(out["match_status"]) == ["spatial_only", "spatial_only"]
     assert out.iloc[0]["time_gap_days"] > 3000
