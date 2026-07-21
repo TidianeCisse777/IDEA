@@ -114,6 +114,33 @@ def normalize_graph_contract(contract: dict | None, figure: Any) -> dict | None:
                 canonical_name = _VERTICAL_PROFILE_ABUNDANCE_ALIASES.get(axis_name)
                 if canonical_name:
                     axis["x"] = canonical_name
+
+        # A one-axis vertical profile has exactly one meaningful inversion:
+        # depth on y.  Accept the two shorthand forms the model commonly emits
+        # only when the rendered axis proves that this is the case.  All other
+        # inversion declarations remain subject to strict validation below.
+        inversions = normalized.get("inverted_axes")
+        axis_is_single_profile = (
+            len(axes) == 1
+            and isinstance(axes[0], dict)
+            and axes[0].get("axis_index") == 0
+            and len(figure.axes) == 1
+            and figure.axes[0].yaxis_inverted()
+        )
+        shorthand_depth_inversion = inversions in (
+            ["y"],
+            [{"axis": "y"}],
+            [{"axis_index": 0, "target": "y"}],
+        ) or (
+            isinstance(inversions, list)
+            and len(inversions) == 1
+            and isinstance(inversions[0], dict)
+            and inversions[0].get("axis_index") == 0
+            and "axis" not in inversions[0]
+            and "y" in inversions[0]
+        )
+        if axis_is_single_profile and shorthand_depth_inversion:
+            normalized["inverted_axes"] = [{"axis_index": 0, "axis": "y"}]
         return normalized
 
     if normalized.get("kind") != "station_map":

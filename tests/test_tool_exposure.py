@@ -138,6 +138,35 @@ def test_explicit_visual_intent_exposes_graph_workflow_before_graph_skills():
     assert "semantic visual output requested" in decision.reasons
 
 
+def test_already_enriched_table_keeps_local_analysis_and_graph_tools_available():
+    """A provenance mention is not a request to enrich the table again."""
+    visual_context = _turn(
+        file_loaded=True,
+        sources=("file", "bio_oracle"),
+        output_intent="visual",
+    )
+    from tools.tool_catalog import TOOL_POLICIES
+    from tools.tool_exposure import decide_tool_exposure
+
+    decision = decide_tool_exposure(
+        tuple(TOOL_POLICIES),
+        TOOL_POLICIES,
+        visual_context,
+        _source_decision("file", "bio_oracle"),
+        [
+            HumanMessage(
+                content=(
+                    "À partir de l’export 2024 enrichi avec Bio-ORACLE, "
+                    "affiche un profil vertical pertinent."
+                )
+            )
+        ],
+    )
+
+    assert "run_pandas" in decision.tool_names
+    assert "run_graph" in decision.tool_names
+
+
 def test_graph_and_deliverable_execution_unlock_from_successful_current_turn_skills():
     graph_messages = _successful_skill_messages(
         "Fais une carte", "graph_planner", "graph_writer"
@@ -229,7 +258,9 @@ def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
     assert not any(group.startswith("ecotaxa_") for group in decision.active_groups)
     # file_analysis actif (fichier chargé) → run_pandas + split_dataframe_by_zone.
     assert "split_dataframe_by_zone" in decision.tool_names
-    assert len(decision.tool_names) == 8
+    # Direct enrichment keeps the local sandbox available for the resulting
+    # table; it must not collapse to the canonical enrichment tool alone.
+    assert len(decision.tool_names) == 9
 
 
 @pytest.mark.parametrize(

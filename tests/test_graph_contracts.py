@@ -5,6 +5,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
+import pytest
 
 from core.graph_contracts import normalize_graph_contract, validate_graph_contract
 
@@ -322,6 +323,27 @@ def test_vertical_profile_normalizes_french_total_abundance_alias():
 
     assert normalized["axes"][0]["x"] == "abundance_ind_m3"
     assert normalized["source_variables"] == ["depth_m", "abondance_totale_ind_m3"]
+    assert validate_graph_contract(normalized, fig) is None
+    plt.close(fig)
+
+
+@pytest.mark.parametrize(
+    "inverted_axes",
+    [
+        ["y"],
+        [{"axis": "y"}],
+        [{"axis_index": 0, "target": "y"}],
+        [{"axis_index": 0, "x": "abondance_moyenne", "y": "profondeur_bin_m"}],
+    ],
+)
+def test_vertical_profile_normalizes_single_axis_depth_inversion_shorthand(inverted_axes):
+    fig, ax = plt.subplots()
+    ax.invert_yaxis()
+    contract = _vertical_contract(inverted_axes=inverted_axes)
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["inverted_axes"] == [{"axis_index": 0, "axis": "y"}]
     assert validate_graph_contract(normalized, fig) is None
     plt.close(fig)
 

@@ -136,11 +136,10 @@ graph_contract = {
 
 ### Vertical abundance profile
 
-Only the depth y-axis is inverted. Never invert the abundance x-axis.
-
-The contract always declares the canonical semantic role (`abundance_ind_L` or
-`abundance_ind_m3`), even when the real DataFrame column has a French name such
-as `abondance_totale_ind_m3`. Keep the real column name in `source_variables`.
+Invert only depth y. `vertical_profile` requires ind./L or ind./m³; raw counts
+use `generic` with real fields and units. For a French abundance column, keep
+the real name in `source_variables` but declare `abundance_ind_L` or
+`abundance_ind_m3` in the contract.
 When a prior calculation produced a persistent table, use that exact named table
 instead of recalculating abundance inside the graph code. For 16–30 profiles,
 use a compact multi-column legend; do not create a one-column legend.

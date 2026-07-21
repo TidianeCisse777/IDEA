@@ -428,22 +428,10 @@ def decide_tool_exposure(
         reasons.append("policy overflow fallback")
 
     selected_set = set(selected)
-    # Named environmental enrichments are dedicated workflows, not generic
-    # local analyses. Leaving ``run_pandas`` visible lets the model fabricate
-    # empty environmental columns instead of calling the canonical matcher.
-    # Bio-ORACLE retains the same narrow path when the user confirms its plan.
-    canonical_enrichment_tool: str | None = None
-    if focused_enrichment and "amundsen" in explicit_enrichment_sources:
-        canonical_enrichment_tool = "enrich_with_amundsen_ctd"
-    elif focused_enrichment and "bio_oracle" in explicit_enrichment_sources:
-        canonical_enrichment_tool = "enrich_with_bio_oracle"
-    elif bio_oracle_confirmation_followup:
-        canonical_enrichment_tool = "enrich_with_bio_oracle"
-    if canonical_enrichment_tool:
-        canonical_names = {"load_skill", canonical_enrichment_tool}
-        selected = tuple(name for name in selected if name in canonical_names)
-        selected_set = set(selected)
-        reasons.append(f"canonical {canonical_enrichment_tool} workflow")
+    # An enrichment tool is available for a direct enrichment request, but it
+    # must not suppress the local sandbox.  A table may be *described* as
+    # already enriched while the user is asking for an analysis or a graph;
+    # keeping run_pandas/run_graph reachable preserves that valid workflow.
 
     # Once the writer has been loaded in this turn, its only valid successor is
     # graph execution (or a local calculation).  Do not give the model the
