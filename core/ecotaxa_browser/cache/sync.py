@@ -353,6 +353,15 @@ def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int,
 
 
 _CAST_SUFFIX_RE = re.compile(r"_\d+$")
+# EcoTaxa appends a literal "Comments:" trailer to every project description.
+_ECOTAXA_COMMENTS_TRAILER = re.compile(r"\s*Comments:\s*$", re.IGNORECASE)
+
+
+def _clean_ecotaxa_description(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    cleaned = _ECOTAXA_COMMENTS_TRAILER.sub("", raw).strip()
+    return cleaned or None
 # Cruise prefix patterns: am_leg2_, amundsen2024_, gn2015_, uvp6_sn..._2024_am_leg2_, etc.
 _CRUISE_PREFIX_RE = re.compile(
     r"^(?:uvp\d*_sn[^_]+_\d+_)?(?:[a-z]{1,6}\d{0,4}_(?:leg\d+_)?)",
@@ -672,7 +681,7 @@ def run_full_sync(
                         project_id=pid,
                         title=str(_meta.get("title") or pid),
                         instrument=_meta.get("instrument"),
-                        description=(_meta.get("comments") or "").strip() or None,
+                        description=_clean_ecotaxa_description(_meta.get("comments")),
                         status=_meta.get("status"),
                         contact_name=_contact.get("name") if isinstance(_contact, dict) else None,
                         objcount=int(_meta["objcount"]) if _meta.get("objcount") is not None else None,
