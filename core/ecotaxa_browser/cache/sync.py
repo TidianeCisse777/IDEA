@@ -48,19 +48,12 @@ from core.ecotaxa_browser.cache.repo import (
     upsert_project_signature,
 )
 from core.ecotaxa_browser.schema import get_project_schema
-from core.ecotaxa_browser.sample_metadata import (
-    OBJECT_METADATA_FIELDS,
-    accumulate_metadata_row,
-    finalize_metadata,
-    new_metadata_aggregate,
-    normalize_sample_stats,
-)
+from core.ecotaxa_browser.sample_metadata import normalize_sample_stats
 
 _LOGGER = logging.getLogger(__name__)
 
-_QUERY_FIELDS = f"obj.latitude,obj.longitude,{OBJECT_METADATA_FIELDS}"
-_DEFAULT_WINDOW_SIZE = 5000
-_DEFAULT_OBJECT_CAP = 50_000
+_DEFAULT_WINDOW_SIZE = 5000   # kept for API backward-compat, no longer used
+_DEFAULT_OBJECT_CAP = 50_000  # kept for API backward-compat, no longer used
 _DEFAULT_RATE_LIMIT_RPS = 5.0
 _DEFAULT_CONCURRENCY = 8
 _DEFAULT_RETRY_ATTEMPTS = 3
@@ -131,123 +124,68 @@ def _fetch_project_samples(
     client: Any,
     *,
     project_id: int,
-    window_size: int = _DEFAULT_WINDOW_SIZE,
-    object_cap: int = _DEFAULT_OBJECT_CAP,
+    window_size: int = _DEFAULT_WINDOW_SIZE,   # unused, kept for API compat
+    object_cap: int = _DEFAULT_OBJECT_CAP,     # unused, kept for API compat
     rate_limit_rps: float = _DEFAULT_RATE_LIMIT_RPS,
     rate_limiter: "_SharedRateLimiter | None" = None,
 ) -> tuple[list[dict], str | None]:
-    """HTTP-only: fetch + aggregate, no DB writes. Returns (samples, instrument).
+    """HTTP-only: fetch sample metadata + taxo stats. Returns (samples, instrument).
 
-    Safe to call from a worker thread when the caller provides a thread-local
-    client/session. Raises on EcoTaxa failure. When ``rate_limiter`` is supplied
-    (the concurrent path), throttling is shared across all workers so the
-    aggregate rate is capped once instead of per worker; otherwise a private
-    limiter is built from ``rate_limit_rps`` for standalone single-project calls.
+    No object download. Temporal data (date_min/date_max) comes from the
+    ``sampledatetime`` free field retrieved via individual get_sample calls.
+    depth_min/depth_max are not populated.
     """
     project_meta = _with_retries(lambda: client.get_project(project_id))
     instrument = project_meta.get("instrument")
-    sample_metadata = _fetch_project_sample_metadata(client, project_id=project_id)
-
-    aggregates: dict[int, dict] = {}
-    window_start = 0
-    objects_seen = 0
     limiter = rate_limiter if rate_limiter is not None else _SharedRateLimiter(rate_limit_rps)
-
-    while objects_seen < object_cap:
-        remaining_cap = object_cap - objects_seen
-        size = min(window_size, remaining_cap)
-        limiter.acquire()
-        payload = _with_retries(
-            lambda: client.query_objects(
-                project_id=project_id,
-                filters={},
-                fields=_QUERY_FIELDS,
-                window_start=window_start,
-                window_size=size,
-            )
-        )
-        rows = payload.get("details") or []
-        parallel_sample_ids = payload.get("sample_ids") or []
-        if not rows:
-            break
-
-        for row, sample_id in zip(rows, parallel_sample_ids):
-            if not row or len(row) < 6:
-                continue
-            lat, lon = row[0], row[1]
-            # A sample_id is required to key the aggregate; coordinates are NOT.
-            # Projects that store position only at the sample level (or not at
-            # all — e.g. older LOKI projects) still get indexed by date/project
-            # with lat_avg/lon_avg left NULL, so temporal and per-project
-            # exploration works even when spatial (zone) queries cannot match.
-            if sample_id is None:
-                continue
-            try:
-                sid = int(sample_id)
-            except (TypeError, ValueError):
-                continue
-            latf = _as_float(lat)
-            lonf = _as_float(lon)
-            agg = aggregates.setdefault(
-                sid,
-                {
-                    "lat_sum": 0.0,
-                    "lon_sum": 0.0,
-                    "geo_count": 0,
-                    "metadata": new_metadata_aggregate(),
-                },
-            )
-            if latf is not None and lonf is not None:
-                agg["lat_sum"] += latf
-                agg["lon_sum"] += lonf
-                agg["geo_count"] += 1
-            accumulate_metadata_row(agg["metadata"], row[2:6])
-
-        objects_seen += len(rows)
-        window_start += len(rows)
-        if len(rows) < size:
-            break
-
-    # Discover from the authoritative sample list, not only from objects: the
-    # object scan is capped (object_cap), so large projects would otherwise miss
-    # every sample beyond the first window. Union guarantees each sample is
-    # indexed even when it has no object in the scanned window.
-    all_sample_ids = set(aggregates) | set(sample_metadata)
-    # Cheap, cap-free per-sample classification stats (no object download): the
-    # accurate object total (V+P+D+U) plus the taxa present in each sample. This
-    # replaces the capped object-scan count — which is 0 for samples beyond the
-    # 50k window in large projects — with EcoTaxa's authoritative sample totals.
+    sample_metadata = _fetch_project_sample_metadata(
+        client, project_id=project_id, rate_limiter=limiter
+    )
     taxo_stats = _fetch_project_taxo_stats(
-        client, project_id=project_id, sample_ids=all_sample_ids
+        client, project_id=project_id, sample_ids=set(sample_metadata)
     )
     samples = []
-    for sid in all_sample_ids:
-        agg = aggregates.get(sid)
-        meta = dict(sample_metadata.get(sid, {}))
-        # Prefer the per-sample position (complete, cap-independent); fall back
-        # to the averaged object coordinates only when the sample carries none.
+    for sid, meta in sample_metadata.items():
         sample_lat = meta.pop("sample_lat", None)
         sample_lon = meta.pop("sample_lon", None)
-        if sample_lat is not None and sample_lon is not None:
-            lat_avg, lon_avg = sample_lat, sample_lon
-        elif agg is not None and agg["geo_count"]:
-            lat_avg = agg["lat_sum"] / agg["geo_count"]
-            lon_avg = agg["lon_sum"] / agg["geo_count"]
-        else:
-            lat_avg, lon_avg = None, None
+        sample_date = meta.pop("sample_date", None)
+        sample_time = meta.pop("sample_time", None)
         stat = taxo_stats.get(sid)
         authoritative_total = stat["object_count"] if stat is not None else None
-        metadata = finalize_metadata(
-            agg["metadata"] if agg is not None else new_metadata_aggregate(),
-            authoritative_total=authoritative_total,
-        )
+        has_date = sample_date is not None
+        has_time = sample_time is not None
+        datetime_iso = f"{sample_date}T{sample_time}" if has_date and has_time else None
+        if has_date and has_time:
+            temporal_precision = "datetime"
+        elif has_date:
+            temporal_precision = "date"
+        else:
+            temporal_precision = "none"
         sample_row = {
             "sample_id": sid,
-            "lat_avg": lat_avg,
-            "lon_avg": lon_avg,
+            "lat_avg": sample_lat,
+            "lon_avg": sample_lon,
             "object_count": authoritative_total,
             "instrument": instrument,
-            **metadata,
+            "date_min": sample_date,
+            "date_max": sample_date,
+            "time_min": sample_time,
+            "time_max": sample_time,
+            "datetime_min": datetime_iso,
+            "datetime_max": datetime_iso,
+            "depth_min": None,
+            "depth_max": None,
+            "missing_date_count": 0 if has_date else 1,
+            "missing_time_count": 0 if has_time else 1,
+            "missing_depth_min_count": 1,
+            "missing_depth_max_count": 1,
+            "metadata_objects_scanned": 0,
+            "temporal_precision": temporal_precision,
+            "metadata_complete": has_date,
+            "metadata_coverage_pct": 100.0 if has_date else 0.0,
+            "depth_complete": False,
+            "query_total_objects": None,
+            "count_discrepancy": False,
             **meta,
         }
         if stat is not None:
@@ -302,8 +240,18 @@ def _fetch_project_taxo_stats(
     return stats
 
 
-def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int, dict]:
-    """Fetch lightweight sample metadata once per project."""
+def _fetch_project_sample_metadata(
+    client: Any,
+    *,
+    project_id: int,
+    rate_limiter: "_SharedRateLimiter | None" = None,
+) -> dict[int, dict]:
+    """Fetch sample metadata: bulk list for IDs/coords, get_sample for free_columns.
+
+    list_samples returns free_columns: {} (always empty from the search endpoint).
+    get_sample returns populated free_columns including sampledatetime, profileid,
+    stationid. One HTTP call per sample — use the shared rate limiter.
+    """
     if not hasattr(client, "list_samples"):
         return {}
     raw_samples = _with_retries(lambda: client.list_samples(project_id))
@@ -313,10 +261,20 @@ def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int,
             sample_id = int(sample["sampleid"])
         except (KeyError, TypeError, ValueError):
             continue
-        free_fields = sample.get("free_columns") or {}
+        original_id = _as_optional_str(sample.get("orig_id"))
+        sample_lat = _as_float(sample.get("latitude"))
+        sample_lon = _as_float(sample.get("longitude"))
+        # list_samples always returns free_columns: {}; get_sample returns the
+        # real free fields (sampledatetime, profileid, stationid, …).
+        try:
+            if rate_limiter is not None:
+                rate_limiter.acquire()
+            full = _with_retries(lambda sid=sample_id: client.get_sample(sid))
+            free_fields = full.get("free_columns") or {} if isinstance(full, dict) else {}
+        except Exception:  # noqa: BLE001 — degrade gracefully, no free fields
+            free_fields = {}
         if not isinstance(free_fields, dict):
             free_fields = {}
-        original_id = _as_optional_str(sample.get("orig_id"))
         station_id = _first_optional_str(
             free_fields,
             ("stationid", "station_id", "station", "sample_stationid"),
@@ -325,29 +283,22 @@ def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int,
             free_fields,
             ("profileid", "profile_id", "profile", "sample_profileid"),
         )
-        # Cruise projects (e.g. Amundsen UVP6) often carry no station/profile
-        # free-column: EcoTaxa encodes the cast identity only in orig_id, where
-        # a trailing "_<n>" indexes the samples of one cast. Derive profile_id
-        # and station_id when absent — never overriding native values.
         if original_id and profile_id is None:
             profile_id = _cast_from_orig_id(original_id)
         if original_id and station_id is None:
             station_id = _station_from_orig_id(original_id)
+        sample_date, sample_time = _parse_sample_datetime(
+            _as_optional_str(free_fields.get("sampledatetime"))
+        )
         metadata[sample_id] = {
             "original_id": original_id,
-            # Authoritative per-sample position from list_samples. EcoTaxa
-            # returns latitude/longitude directly on every sample, complete and
-            # independent of the object-scan cap. Kept separate from the object
-            # aggregate so _fetch_project_samples can prefer it (see there).
-            "sample_lat": _as_float(sample.get("latitude")),
-            "sample_lon": _as_float(sample.get("longitude")),
+            "sample_lat": sample_lat,
+            "sample_lon": sample_lon,
             "station_id": station_id,
             "profile_id": profile_id,
-            "free_fields_json": json.dumps(
-                free_fields,
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
+            "sample_date": sample_date,
+            "sample_time": sample_time,
+            "free_fields_json": json.dumps(free_fields, ensure_ascii=False, sort_keys=True),
         }
     return metadata
 
@@ -355,6 +306,29 @@ def _fetch_project_sample_metadata(client: Any, *, project_id: int) -> dict[int,
 _CAST_SUFFIX_RE = re.compile(r"_\d+$")
 # EcoTaxa appends a literal "Comments:" trailer to every project description.
 _ECOTAXA_COMMENTS_TRAILER = re.compile(r"\s*Comments:\s*$", re.IGNORECASE)
+# sampledatetime free-field format: "YYYYMMDD-HHMMSS" or "YYYYMMDD"
+_SAMPLEDATETIME_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$")
+_SAMPLEDATE_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})$")
+
+
+def _parse_sample_datetime(raw: str | None) -> tuple[str | None, str | None]:
+    """Parse EcoTaxa sampledatetime free field → (date_iso, time_iso).
+
+    Accepts "YYYYMMDD-HHMMSS" (full datetime) or "YYYYMMDD" (date only).
+    Returns (None, None) when the value is absent or unparseable.
+    """
+    if not raw:
+        return None, None
+    raw = raw.strip()
+    m = _SAMPLEDATETIME_RE.match(raw)
+    if m:
+        y, mo, d, h, mi, s = m.groups()
+        return f"{y}-{mo}-{d}", f"{h}:{mi}:{s}"
+    m = _SAMPLEDATE_RE.match(raw)
+    if m:
+        y, mo, d = m.groups()
+        return f"{y}-{mo}-{d}", None
+    return None, None
 
 
 def _clean_ecotaxa_description(raw: str | None) -> str | None:

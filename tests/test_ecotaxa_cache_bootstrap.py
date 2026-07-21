@@ -40,31 +40,23 @@ class DeterministicSyncClient:
                 "orig_id": "sample_001",
                 "latitude": 67.0,
                 "longitude": -63.0,
-                "free_columns": {
-                    "stationid": "station-1",
-                    "profileid": "profile-1",
-                },
+                "free_columns": {},  # always empty from search endpoint
             }
         ]
 
-    def query_objects(
-        self,
-        *,
-        project_id: int,
-        filters: dict,
-        fields: str,
-        window_start: int,
-        window_size: int,
-    ) -> dict:
-        assert project_id == 42
-        if window_start:
-            return {"details": [], "sample_ids": [], "total_ids": 1}
+    def get_sample(self, sample_id: int) -> dict:
+        assert sample_id == 42000001
         return {
-            "details": [
-                [67.0, -63.0, "2015-05-22", "14:03:58", 5.0, 25.0]
-            ],
-            "sample_ids": [42000001],
-            "total_ids": 1,
+            "sampleid": 42000001,
+            "projid": 42,
+            "orig_id": "sample_001",
+            "latitude": 67.0,
+            "longitude": -63.0,
+            "free_columns": {
+                "stationid": "station-1",
+                "profileid": "profile-1",
+                "sampledatetime": "20150522-140358",
+            },
         }
 
     def sample_taxo_stats(self, sample_ids: list[int]) -> list[dict]:
@@ -166,10 +158,10 @@ def _assert_current_complete_sample(path) -> None:
     assert row["date_min"] == "2015-05-22"
     assert row["datetime_min"] == "2015-05-22T14:03:58"
     assert row["time_min"] == "14:03:58"
-    assert row["depth_min"] == pytest.approx(5.0)
-    assert row["depth_max"] == pytest.approx(25.0)
+    assert row["depth_min"] is None   # no object download — depth not available
+    assert row["depth_max"] is None
     assert row["temporal_precision"] == "datetime"
-    assert row["depth_complete"] == 1
+    assert row["depth_complete"] == 0
     assert row["metadata_complete"] == 1
     assert row["metadata_coverage_pct"] == pytest.approx(100.0)
 
