@@ -8,6 +8,7 @@ import secrets
 import sqlite3
 from datetime import datetime, timezone
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -60,6 +61,7 @@ _MCP_PATHS = {"/mcp", "/mcp/"}
 _ADMIN_PREFIX = "/admin/"
 _DEFAULT_CACHE_DB = "data/ecotaxa_cache.sqlite"
 _DEFAULT_SYNC_HOUR = 3
+_DEFAULT_CACHE_MAX_AGE_HOURS = 168.0
 
 
 def build_nightly_scheduler(
@@ -166,6 +168,47 @@ def _compute_cache_age_hours(last_sync: dict | None) -> float | None:
         ended = ended.replace(tzinfo=timezone.utc)
     delta = datetime.now(timezone.utc) - ended
     return delta.total_seconds() / 3600.0
+
+
+def _cache_max_age_hours() -> float:
+    """Return the maximum acceptable age for a cache at boot."""
+    try:
+        value = float(os.getenv("ECOTAXA_CACHE_MAX_AGE_HOURS", _DEFAULT_CACHE_MAX_AGE_HOURS))
+    except (TypeError, ValueError):
+        return _DEFAULT_CACHE_MAX_AGE_HOURS
+    return value if value >= 0 else _DEFAULT_CACHE_MAX_AGE_HOURS
+
+
+def _cache_requires_bootstrap(conn: sqlite3.Connection) -> bool:
+    """Whether startup must run a full sync before the agent can use this cache."""
+    counts = cache_counts(conn)
+    cache_incomplete = (
+        counts.get("samples_indexed", 0) == 0
+        or counts.get("projects_indexed", 0) == 0
+    )
+    if cache_incomplete or cache_needs_resync(conn):
+        return True
+    age_hours = _compute_cache_age_hours(latest_sync_status(conn))
+    return age_hours is None or age_hours > _cache_max_age_hours()
+
+
+def _quarantine_unreadable_cache(cache_db: str) -> Path | None:
+    """Preserve an unreadable SQLite file before a fresh cache is created."""
+    source = Path(cache_db)
+    if not source.exists():
+        return None
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = source.with_name(f"{source.name}.corrupt-{stamp}")
+    index = 1
+    while target.exists():
+        target = source.with_name(f"{source.name}.corrupt-{stamp}-{index}")
+        index += 1
+    source.replace(target)
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(f"{source}{suffix}")
+        if sidecar.exists():
+            sidecar.replace(Path(f"{target}{suffix}"))
+    return target
 
 
 def _resolve_or_generate_mcp_token() -> str:
@@ -281,61 +324,59 @@ def create_app() -> ASGIApp:
 
     http_app = mcp.http_app(path="/mcp")
 
+    cache_db = _cache_db_path()
+    scheduler = None
     if os.getenv("ECOTAXA_NIGHTLY_SYNC", "true").lower() != "false":
-        cache_db = _cache_db_path()
         cron_hour = int(os.getenv("ECOTAXA_SYNC_HOUR", str(_DEFAULT_SYNC_HOUR)))
         scheduler = build_nightly_scheduler(
             cache_db=cache_db,
             runner=_run_full_sync_with_real_client,
             cron_hour=cron_hour,
         )
-        original_lifespan = http_app.router.lifespan_context
 
-        from contextlib import asynccontextmanager
+    original_lifespan = http_app.router.lifespan_context
 
-        @asynccontextmanager
-        async def _wrapped_lifespan(app):
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _wrapped_lifespan(app):
+        if scheduler is not None:
             scheduler.start()
-            try:
-                async with original_lifespan(app) as state:
-                    # Premier démarrage / cache vide → déclenche un sync
-                    # immédiat en arrière-plan. Non bloquant : le serveur
-                    # devient `healthy` tout de suite, le sync se termine
-                    # quand il se termine.
+        try:
+            async with original_lifespan(app) as state:
+                # Any missing, outdated, or over-age cache is rebuilt in
+                # the background. start.sh waits for this run before it
+                # brings up the agent, so users never query stale data.
+                try:
                     try:
                         conn = _open_cache()
+                    except sqlite3.DatabaseError:
+                        _quarantine_unreadable_cache(cache_db)
+                        requires_bootstrap = True
+                    else:
                         try:
-                            counts = cache_counts(conn)
-                            cache_empty = (
-                                counts.get("samples_indexed", 0) == 0
-                                and counts.get("projects_indexed", 0) == 0
-                            )
-                            schema_stale = cache_needs_resync(conn)
+                            requires_bootstrap = _cache_requires_bootstrap(conn)
                         finally:
                             conn.close()
-                        if cache_empty or schema_stale:
-                            if schema_stale and not cache_empty:
-                                import logging as _logging
-                                _logging.getLogger(__name__).info(
-                                    "EcoTaxa cache schema outdated — triggering resync at boot"
-                                )
-                            loop = asyncio.get_running_loop()
-                            loop.run_in_executor(
-                                None,
-                                partial(
-                                    _run_full_sync_with_real_client,
-                                    cache_db,
-                                    force=True,
-                                ),
-                            )
-                    except Exception:
-                        # On ne bloque pas le boot sur un sync auto-trigger
-                        pass
-                    yield state
-            finally:
+                    if requires_bootstrap:
+                        loop = asyncio.get_running_loop()
+                        loop.run_in_executor(
+                            None,
+                            partial(
+                                _run_full_sync_with_real_client,
+                                cache_db,
+                                force=True,
+                            ),
+                        )
+                except Exception:
+                    # On ne bloque pas le boot sur un sync auto-trigger
+                    pass
+                yield state
+        finally:
+            if scheduler is not None:
                 scheduler.shutdown(wait=False)
 
-        http_app.router.lifespan_context = _wrapped_lifespan
+    http_app.router.lifespan_context = _wrapped_lifespan
 
     return BearerAuthMiddleware(http_app, token)
 

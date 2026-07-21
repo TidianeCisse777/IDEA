@@ -55,10 +55,11 @@ curl http://localhost:8001/health | jq '.cache'
 After that, the nightly scheduler refreshes the cache automatically at
 3 AM (configurable via `ECOTAXA_SYNC_HOUR`).
 
-On boot, a missing cache or a cache with an older schema triggers a forced full
-sync, even when project signatures have not changed. The current schema version
-is stamped only when that refresh returns `ok`; `partial` and `failed` keep the
-cache stale. `start.sh` waits for both a usable sync status and
+On boot, a missing, unreadable, older-schema, or over-age cache triggers a
+forced full sync, even when project signatures have not changed. An unreadable
+SQLite file is retained beside the new cache as `.corrupt-…`. The current schema
+version is stamped only when that refresh returns `ok`; `partial` and `failed`
+keep the cache stale. `start.sh` waits for both a usable sync status and
 `schema_current: true`, then its preflight also rejects an empty or stale cache
 before starting the agent.
 
@@ -71,6 +72,7 @@ before starting the agent.
 | `MCP_AUTH_TOKEN` | yes | — | Shared Bearer protecting `/mcp` and `/admin/*` |
 | `ECOTAXA_USERNAME` + `ECOTAXA_PASSWORD` | yes | — | EcoTaxa service account credentials |
 | `ECOTAXA_CACHE_DB` | no | `data/ecotaxa_cache.sqlite` | Path to the local SQLite cache |
+| `ECOTAXA_CACHE_MAX_AGE_HOURS` | no | `168` | Maximum cache age before startup forces a full sync |
 | `ECOTAXA_NIGHTLY_SYNC` | no | `true` | Set to `false` to disable the nightly cron |
 | `ECOTAXA_SYNC_HOUR` | no | `3` | UTC hour for the nightly sync (0–23) |
 

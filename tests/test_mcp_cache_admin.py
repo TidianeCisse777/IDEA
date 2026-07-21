@@ -292,3 +292,54 @@ def test_boot_check_triggers_resync_when_schema_stale(monkeypatch, tmp_path):
     assert not cache_empty, "cache has data — should not be considered empty"
     assert schema_stale, "version=0 should be detected as stale"
     assert cache_empty or schema_stale, "boot should trigger a resync"
+
+
+def test_boot_check_triggers_resync_when_current_schema_cache_is_too_old(
+    monkeypatch, tmp_path
+):
+    """Age alone refreshes an otherwise structurally current cache."""
+    import core.mcp.ecotaxa_server as server
+
+    path = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    init_schema(conn)
+    upsert_sample(
+        conn, sample_id=1, project_id=42, lat_avg=70.0, lon_avg=-64.0,
+        date_min="2024-01-01", date_max="2024-01-01",
+        object_count=10, instrument="UVP6", last_synced="2024-01-01T00:00:00Z",
+    )
+    conn.execute(
+        "INSERT INTO projects_cache (project_id, title, last_synced) "
+        "VALUES (42, 'test', '2024-01-01T00:00:00Z')"
+    )
+    set_schema_version(conn, SCHEMA_VERSION)
+    conn.execute(
+        "INSERT INTO sync_runs (started_at, ended_at, status, projects_synced, samples_synced) "
+        "VALUES ('2024-01-01T00:00:00+00:00', '2024-01-01T01:00:00+00:00', 'ok', 1, 1)"
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(path))
+    monkeypatch.setenv("ECOTAXA_CACHE_MAX_AGE_HOURS", "24")
+    conn = server._open_cache()
+    try:
+        assert server._cache_requires_bootstrap(conn) is True
+    finally:
+        conn.close()
+
+
+def test_unreadable_cache_is_quarantined_before_rebuild(tmp_path):
+    """A non-SQLite cache must be preserved, never overwritten in place."""
+    import core.mcp.ecotaxa_server as server
+
+    path = tmp_path / "cache.sqlite"
+    path.write_text("not a sqlite database", encoding="utf-8")
+
+    quarantined = server._quarantine_unreadable_cache(str(path))
+
+    assert path.exists() is False
+    assert quarantined is not None
+    assert quarantined.exists()
+    assert quarantined.read_text(encoding="utf-8") == "not a sqlite database"

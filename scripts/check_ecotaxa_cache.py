@@ -17,7 +17,7 @@ Usage:
 Thresholds (env-overridable):
     ECOTAXA_CACHE_MIN_SAMPLES   default 1
     ECOTAXA_CACHE_MIN_PROJECTS  default 1
-    ECOTAXA_CACHE_MAX_AGE_HOURS default 168 (7 days) — warning only
+    ECOTAXA_CACHE_MAX_AGE_HOURS default 168 (7 days) — blocks startup
 """
 
 from __future__ import annotations
@@ -77,8 +77,7 @@ def validate_cache_health(
     Blocking (ok=False): missing cache section, stale/unknown schema, samples
     below minimum, or projects below minimum — the cache cannot serve current
     queries.
-    Non-blocking (warnings): a later failed sync over still-usable data, or a
-    stale cache older than the age threshold.
+    Non-blocking (warnings): a later failed sync over still-usable data.
     """
     if min_samples is None:
         min_samples = _env_float("ECOTAXA_CACHE_MIN_SAMPLES", 1)
@@ -139,9 +138,9 @@ def validate_cache_health(
 
     age = cache.get("cache_age_hours")
     if age is not None and age > max_age_hours:
-        warnings.append(
+        errors.append(
             f"Cache âgé de {age:.0f} h (seuil : {int(max_age_hours)} h). "
-            "Envisager un resync pour rafraîchir l'index."
+            "Le resync doit se terminer avant de démarrer l'agent."
         )
 
     return CacheHealthResult(ok=not errors, errors=errors, warnings=warnings)

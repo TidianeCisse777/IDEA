@@ -79,11 +79,11 @@ def test_failed_last_sync_warns_but_does_not_block():
     assert any("sync" in w.lower() for w in result.warnings)
 
 
-def test_stale_cache_warns_but_does_not_block():
+def test_stale_cache_blocks_agent_startup():
     result = validate_cache_health(_payload(cache_age_hours=1000.0), max_age_hours=168.0)
-    assert result.ok is True
-    assert any("stale" in w.lower() or "old" in w.lower() or "âg" in w.lower() or "age" in w.lower()
-               for w in result.warnings)
+    assert result.ok is False
+    assert any("stale" in error.lower() or "old" in error.lower() or "âg" in error.lower() or "age" in error.lower()
+               for error in result.errors)
 
 
 def test_partial_sync_is_acceptable():
