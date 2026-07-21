@@ -9,6 +9,7 @@ requires:
   - "source:ecotaxa"
 next_tool: null
 max_tokens: 4500
+size_exemption: ecotaxa_navigation owns the complete cache SQL vocabulary including table schema, join patterns, and SQL prohibitions shared by all EcoTaxa cache queries; its full body is delivered with a manifest-governed cap instead of the generic tool truncation.
 ---
 
 # EcoTaxa navigation
@@ -57,6 +58,11 @@ selection remains available in `WORKING TABLES` for `run_pandas` and
 `latest` always point to the newest result; they do not replace older named
 selections. Reuse the exact saved variable whose description matches the
 follow-up instead of rerunning its SQL.
+
+**Schema-first rule**: if you are unsure whether a column or table exists,
+call `list_ecotaxa_cache_tables` (full map) or `describe_ecotaxa_cache_table`
+(one table) before writing SQL. Never refuse a query or invent a workaround
+(e.g. `json_extract`) when a direct column exists — check first.
 
 Use the table map once when the schema is unknown, before a join, or after an
 unknown-column error. Otherwise query directly. Use the single-table
@@ -134,6 +140,34 @@ For an interval `[a,b]`, use envelope overlap: `min <= b AND max >= a`.
 Also count rows excluded by completeness guards in the same scope and report
 them as unknown, not as non-matches.
 
+### Resolving project metadata
+
+`projects_cache` is the single project reference table. One row per synced
+project. Columns: `project_id`, `title`, `instrument`, `description`, `status`,
+`contact_name`, `objcount`, `pctvalidated`, `pctclassified`, `last_synced`.
+
+JOIN it whenever the user asks for project names, description, validation rate,
+or object counts in a table or legend.
+
+```sql
+SELECT sc.project_id,
+       p.title,
+       p.instrument,
+       p.status,
+       p.contact_name,
+       p.objcount,
+       p.pctvalidated,
+       COUNT(sc.sample_id) AS n_samples
+FROM samples_cache AS sc
+LEFT JOIN projects_cache AS p USING (project_id)
+GROUP BY sc.project_id
+ORDER BY n_samples DESC;
+```
+
+Do **not** tell the user that project metadata is unavailable — `title` is
+always present; `description`, `status`, `contact_name` may be NULL for real
+projects not yet resynced, but are never missing from fat-cache campaigns.
+
 ### Counts and groupings
 
 ```sql
@@ -159,6 +193,39 @@ ORDER BY n_samples DESC;
 For a map, return `sample_id`, `lat_avg`, `lon_avg`, `iho_zone`, and the metric
 to encode, then use `run_graph` on the persisted result. Aggregate coincident
 coordinates so overlapping samples remain countable.
+
+### SQL prohibitions
+
+**Never filter out samples without a zone in global counts or discovery queries.**
+`iho_zone` is NULL for samples uploaded without GPS coordinates — they are real
+samples and must appear in any global count, summary, or campaign listing.
+
+```sql
+-- FORBIDDEN: silently drops all samples where iho_zone IS NULL
+WHERE iho_zone != 'Hors zone référencée'
+WHERE iho_zone IS NOT NULL
+WHERE iho_zone != ''
+
+-- CORRECT for global count: no iho_zone filter
+SELECT COUNT(*) AS n_samples, COUNT(DISTINCT project_id) AS n_projects
+FROM samples_cache;
+
+-- CORRECT for zone breakdown: include NULL as explicit group
+SELECT COALESCE(iho_zone, 'Sans coordonnées GPS') AS zone,
+       COUNT(*) AS n_samples
+FROM samples_cache
+GROUP BY iho_zone
+ORDER BY n_samples DESC;
+```
+
+**For global discovery questions** ("qu'est-ce qu'on a ?", "liste les campagnes"),
+call `list_ecotaxa_campaigns` — do not write a SQL aggregation from scratch.
+`list_ecotaxa_campaigns` counts all samples including those without coordinates
+and returns a structured campaign table.
+
+**Never run the same SQL query twice in a row.** If a first result looks
+incomplete, check the result before retrying — the cache is read-only and
+deterministic.
 
 ## Taxonomy
 

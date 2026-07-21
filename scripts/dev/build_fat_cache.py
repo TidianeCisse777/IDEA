@@ -239,7 +239,28 @@ def build_fat_cache(
 
     conn = sqlite3.connect(output)
     conn.row_factory = sqlite3.Row
+
+    # Drop and recreate projects_cache so the new schema (v5 columns) is applied
+    # even when the source cache was built at an earlier schema version.
+    conn.execute("DROP TABLE IF EXISTS projects_cache")
+    conn.commit()
     init_schema(conn)
+
+    # Backfill projects_cache from project_schemas_cache for real projects already in the base copy.
+    conn.execute("""
+        INSERT OR IGNORE INTO projects_cache
+            (project_id, title, instrument, description, status, contact_name,
+             objcount, pctvalidated, pctclassified, last_synced)
+        SELECT ps.project_id,
+               COALESCE(json_extract(ps.schema_json, '$.title'), CAST(ps.project_id AS TEXT)),
+               json_extract(ps.schema_json, '$.instrument'),
+               NULL, NULL, NULL,
+               sig.objcount, sig.pctvalidated, sig.pctclassified,
+               ps.last_synced
+        FROM project_schemas_cache ps
+        LEFT JOIN project_signatures_cache sig USING (project_id)
+    """)
+    conn.commit()
 
     # Ensure objects_cache exists (absent from real cache, present in synthetic)
     conn.executescript("""
@@ -352,6 +373,15 @@ def build_fat_cache(
         conn.execute(
             "INSERT OR REPLACE INTO project_schemas_cache VALUES (?, ?, ?)",
             (pid, json.dumps(schema), now),
+        )
+        conn.execute(
+            """INSERT OR REPLACE INTO projects_cache
+               (project_id, title, instrument, description, status, contact_name,
+                objcount, pctvalidated, pctclassified, last_synced)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (pid, camp["name"], instrument,
+             f"Synthetic fat-cache campaign: {camp['name']}", "Annotate", None,
+             proj_objects, 100.0, 100.0, now),
         )
         pct_validated = round(100 * random.uniform(0.3, 0.9), 1)
         conn.execute(

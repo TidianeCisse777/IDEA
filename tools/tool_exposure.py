@@ -359,7 +359,10 @@ def decide_tool_exposure(
         else:
             fallback_groups = ("core",)
         fallback_limits: dict[ToolExposureGroup, int] = {
-            "ecotaxa_discovery": 3 if signals.ecotaxa_intents else 4,
+            # Always keep all 3 ecotaxa_discovery tools — schema-first rule
+            # requires list_ecotaxa_cache_tables and describe_ecotaxa_cache_table
+            # to be reachable whenever the agent may need to verify a column.
+            "ecotaxa_discovery": 3,
         }
         if turn_context.file_loaded:
             # Always guarantee run_pandas + find_uvp_matches_for_net_table.
@@ -371,6 +374,14 @@ def decide_tool_exposure(
         for intent in signals.ecotaxa_intents:
             fallback_limits[intent] = 4
         selected = _ordered_names(names, policies, fallback_groups, fallback_limits)
+        # Hard guarantee: schema inspection tools must survive any overflow when
+        # EcoTaxa is authorized — the schema-first rule requires them to be
+        # reachable without needing to load a skill first.
+        if "ecotaxa" in authorized:
+            _schema_tools = ("list_ecotaxa_cache_tables", "describe_ecotaxa_cache_table")
+            for _st in _schema_tools:
+                if _st in names and _st not in selected and len(selected) < max_tools:
+                    selected = (*selected, _st)
         if signals.regional_ranking_requested:
             ranker = "rank_ecotaxa_samples_by_region"
             if ranker in names and ranker not in selected:

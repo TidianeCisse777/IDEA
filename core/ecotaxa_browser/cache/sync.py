@@ -43,6 +43,7 @@ from core.ecotaxa_browser.cache.repo import (
     project_is_fully_unenriched,
     replace_project_samples,
     start_sync_run,
+    upsert_project,
     upsert_project_schema,
     upsert_project_signature,
 )
@@ -663,6 +664,20 @@ def run_full_sync(
                         conn,
                         project_id=pid,
                         schema_json=schema_json,
+                        last_synced=now_iso,
+                    )
+                    _contact = _meta.get("contact") or {}
+                    upsert_project(
+                        conn,
+                        project_id=pid,
+                        title=str(_meta.get("title") or pid),
+                        instrument=_meta.get("instrument"),
+                        description=(_meta.get("comments") or "").strip() or None,
+                        status=_meta.get("status"),
+                        contact_name=_contact.get("name") if isinstance(_contact, dict) else None,
+                        objcount=int(_meta["objcount"]) if _meta.get("objcount") is not None else None,
+                        pctvalidated=float(_meta["pctvalidated"]) if _meta.get("pctvalidated") is not None else None,
+                        pctclassified=float(_meta["pctclassified"]) if _meta.get("pctclassified") is not None else None,
                         last_synced=now_iso,
                     )
                     if signature is not None:

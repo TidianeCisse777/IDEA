@@ -14,36 +14,57 @@ _HARD_CAP = 500
 # Ordered for presentation: most useful table first.
 CACHE_TABLES: dict[str, str] = {
     "samples_cache": (
-        "EcoTaxa sample-level positions, date/time envelopes, depth envelopes, "
-        "instruments, authoritative sample-stat counts, and metadata completeness. "
-        "Table principale pour l'exploration géographique et temporelle."
+        "Table principale — une ligne par sample EcoTaxa. "
+        "Colonnes clés : sample_id, project_id, lat_avg, lon_avg, iho_zone, "
+        "instrument, date_min, date_max, depth_min, depth_max, "
+        "object_count, nb_validated, nb_predicted, nb_dubious, nb_unclassified, "
+        "used_taxa (JSON), original_id, station_id, profile_id. "
+        "Point d'entrée pour toute exploration géographique, temporelle, ou par instrument."
+    ),
+    "projects_cache": (
+        "Référentiel projet — une ligne par projet EcoTaxa synced. "
+        "Colonnes : project_id, title, instrument, description, status, contact_name, "
+        "objcount, pctvalidated, pctclassified, last_synced. "
+        "JOIN avec samples_cache ON project_id pour enrichir n'importe quelle requête "
+        "avec le nom du projet, l'instrument, le responsable scientifique et les stats de validation. "
+        "title et instrument sont toujours renseignés ; description/status/contact_name "
+        "sont populés au sync live (peuvent être NULL sur des caches locaux)."
     ),
     "objects_cache": (
-        "Index optionnel des objets EcoTaxa pour les agrégations par taxon, "
-        "statut, sample, date ou profondeur. Présent dans les caches enrichis."
+        "Index optionnel des objets EcoTaxa — une ligne par objet. "
+        "Colonnes : object_id, sample_id, project_id, original_id, object_date, "
+        "depth_min, depth_max, taxon, classification_status, latitude, longitude. "
+        "Utilisé pour les agrégations par taxon, statut ou profondeur. "
+        "Présent uniquement dans les caches enrichis (fat-cache)."
     ),
     "project_schemas_cache": (
-        "Snapshot JSON des schémas de projets EcoTaxa "
-        "(title, instrument, colonnes sample/acquisition/object, free fields). "
-        "Interroger schema_json pour voir les champs disponibles par projet."
+        "Snapshot JSON technique des schémas d'export EcoTaxa par projet. "
+        "Colonnes : project_id, schema_json, last_synced. "
+        "schema_json contient la liste des champs sample/acquisition/object disponibles "
+        "pour un export. Usage : inspect_ecotaxa_project_schema ou compare_ecotaxa_projects. "
+        "Pour les métadonnées projet (titre, stats), utiliser projects_cache à la place."
     ),
     "project_signatures_cache": (
-        "Statistiques de classification par projet "
-        "(objcount total, pctvalidated, pctclassified). "
-        "Mise à jour à chaque sync — bonne mesure de maturité d'annotation."
+        "Table interne de détection de changement — une ligne par projet. "
+        "Colonnes : project_id, objcount, pctvalidated, pctclassified, last_synced. "
+        "Utilisée par le sync pour détecter si un projet a évolué depuis le dernier sync. "
+        "Pour les requêtes sur les stats de validation, préférer projects_cache "
+        "qui contient les mêmes champs plus title, instrument et description."
     ),
     "sync_runs": (
-        "Historique des synchronisations du cache "
-        "(started_at, ended_at, status, projects_synced, samples_synced, error_message). "
-        "Utile pour diagnostiquer la fraîcheur du cache."
+        "Historique des synchronisations du cache — une ligne par run. "
+        "Colonnes : run_id, started_at, ended_at, status, projects_synced, "
+        "samples_synced, error_message. "
+        "Utile pour diagnostiquer la fraîcheur du cache et l'historique des syncs."
     ),
 }
 
 TABLE_GRAINS: dict[str, str] = {
     "samples_cache": "Une ligne par sample EcoTaxa (`sample_id`).",
+    "projects_cache": "Une ligne par projet EcoTaxa (`project_id`).",
     "objects_cache": "Une ligne par objet EcoTaxa (`object_id`).",
-    "project_schemas_cache": "Une ligne par projet EcoTaxa (`project_id`).",
-    "project_signatures_cache": "Une ligne par projet EcoTaxa (`project_id`).",
+    "project_schemas_cache": "Une ligne par projet EcoTaxa (`project_id`) — schéma d'export JSON.",
+    "project_signatures_cache": "Une ligne par projet EcoTaxa (`project_id`) — usage interne sync.",
     "sync_runs": "Une ligne par exécution de synchronisation (`run_id`).",
 }
 
@@ -51,13 +72,13 @@ LOGICAL_RELATIONS: dict[str, list[dict[str, str]]] = {
     "samples_cache": [
         {
             "from_column": "project_id",
-            "to_table": "project_schemas_cache",
+            "to_table": "projects_cache",
             "to_column": "project_id",
             "kind": "logical",
         },
         {
             "from_column": "project_id",
-            "to_table": "project_signatures_cache",
+            "to_table": "project_schemas_cache",
             "to_column": "project_id",
             "kind": "logical",
         },
@@ -68,7 +89,13 @@ LOGICAL_RELATIONS: dict[str, list[dict[str, str]]] = {
             "to_table": "samples_cache",
             "to_column": "sample_id",
             "kind": "logical",
-        }
+        },
+        {
+            "from_column": "project_id",
+            "to_table": "projects_cache",
+            "to_column": "project_id",
+            "kind": "logical",
+        },
     ],
 }
 

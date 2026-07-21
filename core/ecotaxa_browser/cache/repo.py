@@ -26,7 +26,7 @@ _geo_registry_loaded = False
 # resync to populate (i.e. _ensure_column adds a column whose data must come
 # from EcoTaxa, not a backfill). Stored in the SQLite user_version pragma so
 # the startup code can detect an old-format cache and trigger a resync.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 
 def _load_geo_registry():
@@ -95,6 +95,19 @@ CREATE TABLE IF NOT EXISTS project_schemas_cache (
     project_id INTEGER PRIMARY KEY,
     schema_json TEXT NOT NULL,
     last_synced TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS projects_cache (
+    project_id    INTEGER PRIMARY KEY,
+    title         TEXT NOT NULL,
+    instrument    TEXT,
+    description   TEXT,
+    status        TEXT,
+    contact_name  TEXT,
+    objcount      INTEGER,
+    pctvalidated  REAL,
+    pctclassified REAL,
+    last_synced   TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS project_signatures_cache (
@@ -506,6 +519,45 @@ def upsert_project_schema(
             last_synced = excluded.last_synced
         """,
         (project_id, schema_json, last_synced),
+    )
+    conn.commit()
+
+
+def upsert_project(
+    conn: sqlite3.Connection,
+    *,
+    project_id: int,
+    title: str,
+    instrument: str | None = None,
+    description: str | None = None,
+    status: str | None = None,
+    contact_name: str | None = None,
+    objcount: int | None = None,
+    pctvalidated: float | None = None,
+    pctclassified: float | None = None,
+    last_synced: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO projects_cache
+            (project_id, title, instrument, description, status, contact_name,
+             objcount, pctvalidated, pctclassified, last_synced)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(project_id) DO UPDATE SET
+            title         = excluded.title,
+            instrument    = excluded.instrument,
+            description   = excluded.description,
+            status        = excluded.status,
+            contact_name  = excluded.contact_name,
+            objcount      = excluded.objcount,
+            pctvalidated  = excluded.pctvalidated,
+            pctclassified = excluded.pctclassified,
+            last_synced   = excluded.last_synced
+        """,
+        (
+            project_id, title, instrument, description, status, contact_name,
+            objcount, pctvalidated, pctclassified, last_synced,
+        ),
     )
     conn.commit()
 

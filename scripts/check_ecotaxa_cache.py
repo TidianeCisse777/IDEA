@@ -31,7 +31,7 @@ from pathlib import Path
 
 
 # Must match SCHEMA_VERSION in core/ecotaxa_browser/cache/repo.py.
-_EXPECTED_SCHEMA_VERSION = 3
+_EXPECTED_SCHEMA_VERSION = 5
 
 _REQUIRED_TABLES: dict[str, list[str]] = {
     "samples_cache": [
@@ -44,6 +44,7 @@ _REQUIRED_TABLES: dict[str, list[str]] = {
     "project_schemas_cache": ["project_id", "schema_json", "last_synced"],
     "project_signatures_cache": ["project_id", "objcount", "pctvalidated", "pctclassified", "last_synced"],
     "sync_runs": ["run_id", "started_at", "ended_at", "status", "projects_synced", "samples_synced", "error_message"],
+    "projects_cache": ["project_id", "title", "instrument", "description", "status", "contact_name", "objcount", "pctvalidated", "pctclassified", "last_synced"],
 }
 
 
