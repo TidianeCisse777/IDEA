@@ -168,6 +168,10 @@ Do **not** tell the user that project metadata is unavailable — `title` is
 always present; `description`, `status`, `contact_name` may be NULL for real
 projects not yet resynced, but are never missing from fat-cache campaigns.
 
+When displaying `description`, always reproduce the full text verbatim — never
+summarize, paraphrase, or replace it with a placeholder like "description
+longue" or "description disponible". If the text is long, display it in full.
+
 ### Counts and groupings
 
 ```sql
