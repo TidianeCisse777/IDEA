@@ -244,13 +244,14 @@ def _fetch_project_sample_metadata(
     client: Any,
     *,
     project_id: int,
-    rate_limiter: "_SharedRateLimiter | None" = None,
+    rate_limiter: "_SharedRateLimiter | None" = None,  # unused, kept for API compat
 ) -> dict[int, dict]:
-    """Fetch sample metadata: bulk list for IDs/coords, get_sample for free_columns.
+    """Fetch sample metadata via list_samples (one bulk call per project).
 
-    list_samples returns free_columns: {} (always empty from the search endpoint).
-    get_sample returns populated free_columns including sampledatetime, profileid,
-    stationid. One HTTP call per sample — use the shared rate limiter.
+    list_samples provides lat/lon and orig_id. free_columns is always {} from
+    this endpoint, so station/profile are derived from orig_id heuristics.
+    date_min/date_max are not populated here (no object download, no per-sample
+    date API at the sample level).
     """
     if not hasattr(client, "list_samples"):
         return {}
@@ -262,19 +263,7 @@ def _fetch_project_sample_metadata(
         except (KeyError, TypeError, ValueError):
             continue
         original_id = _as_optional_str(sample.get("orig_id"))
-        sample_lat = _as_float(sample.get("latitude"))
-        sample_lon = _as_float(sample.get("longitude"))
-        # list_samples always returns free_columns: {}; get_sample returns the
-        # real free fields (sampledatetime, profileid, stationid, …).
-        try:
-            if rate_limiter is not None:
-                rate_limiter.acquire()
-            full = _with_retries(lambda sid=sample_id: client.get_sample(sid))
-            free_fields = full.get("free_columns") or {} if isinstance(full, dict) else {}
-        except Exception:  # noqa: BLE001 — degrade gracefully, no free fields
-            free_fields = {}
-        if not isinstance(free_fields, dict):
-            free_fields = {}
+        free_fields: dict = {}  # list_samples always returns free_columns: {}
         station_id = _first_optional_str(
             free_fields,
             ("stationid", "station_id", "station", "sample_stationid"),
@@ -287,17 +276,14 @@ def _fetch_project_sample_metadata(
             profile_id = _cast_from_orig_id(original_id)
         if original_id and station_id is None:
             station_id = _station_from_orig_id(original_id)
-        sample_date, sample_time = _parse_sample_datetime(
-            _as_optional_str(free_fields.get("sampledatetime"))
-        )
         metadata[sample_id] = {
             "original_id": original_id,
-            "sample_lat": sample_lat,
-            "sample_lon": sample_lon,
+            "sample_lat": _as_float(sample.get("latitude")),
+            "sample_lon": _as_float(sample.get("longitude")),
             "station_id": station_id,
             "profile_id": profile_id,
-            "sample_date": sample_date,
-            "sample_time": sample_time,
+            "sample_date": None,
+            "sample_time": None,
             "free_fields_json": json.dumps(free_fields, ensure_ascii=False, sort_keys=True),
         }
     return metadata

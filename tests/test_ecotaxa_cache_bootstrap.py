@@ -155,15 +155,17 @@ def _read_sample(path) -> tuple[int, sqlite3.Row]:
 def _assert_current_complete_sample(path) -> None:
     version, row = _read_sample(path)
     assert version == SCHEMA_VERSION
-    assert row["date_min"] == "2015-05-22"
-    assert row["datetime_min"] == "2015-05-22T14:03:58"
-    assert row["time_min"] == "14:03:58"
-    assert row["depth_min"] is None   # no object download — depth not available
+    # No object download and no per-sample date API — all temporal/depth fields NULL
+    assert row["date_min"] is None
+    assert row["datetime_min"] is None
+    assert row["time_min"] is None
+    assert row["depth_min"] is None
     assert row["depth_max"] is None
-    assert row["temporal_precision"] == "datetime"
+    assert row["temporal_precision"] == "none"
     assert row["depth_complete"] == 0
-    assert row["metadata_complete"] == 1
-    assert row["metadata_coverage_pct"] == pytest.approx(100.0)
+    assert row["metadata_complete"] == 0
+    assert row["lat_avg"] == pytest.approx(67.0)
+    assert row["lon_avg"] == pytest.approx(-63.0)
 
 
 def test_bootstrap_creates_missing_cache_with_current_complete_sample(
