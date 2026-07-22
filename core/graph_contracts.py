@@ -61,6 +61,23 @@ _VERTICAL_PROFILE_ABUNDANCE_ALIASES = {
     "abondance_ind_m3": "abundance_ind_m3",
     "abondance_totale_ind_m3": "abundance_ind_m3",
 }
+_STATION_MAP_LONGITUDE_ALIASES = {
+    "longitude",
+    "lon",
+    "lng",
+    "lon_avg",
+    "object_lon",
+    "longitude_deg",
+    "longitude_degrees",
+}
+_STATION_MAP_LATITUDE_ALIASES = {
+    "latitude",
+    "lat",
+    "lat_avg",
+    "object_lat",
+    "latitude_deg",
+    "latitude_degrees",
+}
 
 
 def _blocked(message: str) -> str:
@@ -148,6 +165,13 @@ def normalize_graph_contract(contract: dict | None, figure: Any) -> dict | None:
     axes = normalized.get("axes")
     if not isinstance(axes, list) or len(axes) != 1:
         return normalized
+    if isinstance(axes[0], dict):
+        x_role = axes[0].get("x")
+        y_role = axes[0].get("y")
+        if isinstance(x_role, str) and x_role.strip().casefold() in _STATION_MAP_LONGITUDE_ALIASES:
+            axes[0]["x"] = "longitude"
+        if isinstance(y_role, str) and y_role.strip().casefold() in _STATION_MAP_LATITUDE_ALIASES:
+            axes[0]["y"] = "latitude"
     axis_index = axes[0].get("axis_index") if isinstance(axes[0], dict) else None
     if not isinstance(axis_index, int) or not 0 <= axis_index < len(figure.axes):
         return normalized

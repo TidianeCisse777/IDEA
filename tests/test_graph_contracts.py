@@ -179,6 +179,23 @@ def test_station_map_accepts_positions_without_abundance():
     plt.close(fig)
 
 
+def test_station_map_normalizes_lon_lat_axis_aliases():
+    """Les alias usuels du modèle ne doivent pas bloquer une carte valide."""
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    points = ax.scatter([-52.8], [58.6], transform=ccrs.PlateCarree())
+    points.set_gid("map_points")
+    contract = _station_map_contract()
+    contract["axes"] = [{"axis_index": 0, "x": "lon", "y": "lat"}]
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["axes"] == [
+        {"axis_index": 0, "x": "longitude", "y": "latitude"}
+    ]
+    assert validate_graph_contract(normalized, fig) is None
+    plt.close(fig)
+
+
 def test_station_map_normalizer_binds_primary_scatter_to_missing_mappings():
     fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
     ax.scatter([-52.8], [58.6], s=[40], c=[3.0], transform=ccrs.PlateCarree())
