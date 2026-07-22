@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
@@ -37,6 +38,7 @@ from agent import (
     arepair_invalid_tool_history,
     get_context_audit,
     get_harness_trace,
+    record_harness_fast_route,
     record_harness_usage,
 )
 from tools.openwebui_uploads import resolve_attached_files, resolve_request_files, resolve_chat_files
@@ -45,6 +47,10 @@ from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_work
 from tools.session_store import default_store
 from tools.run_store import default_run_store
 from tools.feedback import submit_feedback
+from tools.ecotaxa_cast_map import (
+    parse_ecotaxa_cast_map_request,
+    render_ecotaxa_cast_map,
+)
 from tools.tool_catalog import (
     get_tool_presentation,
     resolve_user_language,
@@ -65,6 +71,35 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("copepod.serve")
+
+
+def _try_fast_ecotaxa_cast_map(thread_id: str, text: str) -> str | None:
+    """Render an explicit, standard EcoTaxa cast map outside the ReAct loop."""
+    request = parse_ecotaxa_cast_map_request(text)
+    if request is None:
+        return None
+    try:
+        rendered = render_ecotaxa_cast_map(request)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        logger.info("thread=%s EcoTaxa cast map unavailable: %s", thread_id, exc)
+        return None
+    record_harness_fast_route(
+        thread_id,
+        route="fast_ecotaxa_cast_map",
+        timings_ms=rendered.timings_ms,
+        cache_hit=rendered.cache_hit,
+    )
+    suffix = ", distingués par projet." if request.group_by == "project" else "."
+    excluded = (
+        f" {rendered.excluded_missing_cast_ids} samples sans identifiant de cast "
+        "ne sont pas affichés."
+        if rendered.excluded_missing_cast_ids
+        else ""
+    )
+    return (
+        f"{rendered.image_markdown}\n\n{rendered.cast_count} casts affichés"
+        f"{suffix}{excluded}"
+    )
 
 def _retry_after_seconds(exc: RateLimitError) -> int:
     raw = exc.response.headers.get("retry-after") if exc.response is not None else None
@@ -1238,6 +1273,20 @@ async def chat_completions(
             return _quick_response("")
 
     last_user_text = resolve_attached_files(last_user.text() if last_user else "")
+    fast_cast_map = await asyncio.to_thread(
+        _try_fast_ecotaxa_cast_map, tid, last_user_text
+    )
+    if fast_cast_map is not None:
+        _log_turn(tid, last_user_text, fast_cast_map, {
+            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        }, user_id=user_id)
+        if req.stream:
+            return StreamingResponse(
+                _quick_sse_response(fast_cast_map), media_type="text/event-stream"
+            )
+        return _quick_response(fast_cast_map)
+
     # OpenWebUI ne forward JAMAIS les fichiers dans le body (metadata est pop()é
     # avant l'envoi). On requête directement le SQLite d'OpenWebUI via chat_id.
     # Fallback : req.files pour les appelants directs de l'API (hors OpenWebUI).

@@ -1,6 +1,7 @@
 """EcoTaxa cast-map parsing and rendering."""
 
 import sqlite3
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -81,3 +82,65 @@ def test_fast_cast_map_records_zero_model_calls_for_local_diagnostics():
     assert trace["model_calls"] == []
     assert trace["timings_ms"]["render"] == 640.0
     assert trace["cache_hit"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_bypasses_agent_for_explicit_ecotaxa_cast_map(
+    monkeypatch,
+):
+    """A standard EcoTaxa cast map must never depend on an LLM graph contract."""
+    import serve as serve_module
+    from tools.ecotaxa_cast_map import CastMapRequest, RenderedCastMap
+
+    monkeypatch.setattr(
+        serve_module,
+        "parse_ecotaxa_cast_map_request",
+        lambda text: CastMapRequest(zone_name="Baie de Baffin"),
+    )
+    monkeypatch.setattr(
+        serve_module,
+        "render_ecotaxa_cast_map",
+        lambda request: RenderedCastMap(
+            image_markdown="![graph](http://test/graphs/ecotaxa-casts.png)",
+            cast_count=17,
+            excluded_missing_cast_ids=2,
+            cache_hit=False,
+            timings_ms={"query": 4.0, "render": 12.0},
+        ),
+    )
+
+    def fail_if_agent_is_constructed(*args, **kwargs):
+        raise AssertionError("La demande cartographique ne doit pas appeler l'agent")
+
+    monkeypatch.setattr(serve_module, "make_agent", fail_if_agent_is_constructed)
+    monkeypatch.setattr(serve_module, "_log_turn", lambda *args, **kwargs: None)
+
+    request = MagicMock()
+    request.headers = {}
+    response = await serve_module.chat_completions(
+        serve_module.ChatRequest(
+            model="copepod-agent",
+            stream=False,
+            messages=[
+                serve_module.Message(
+                    role="user",
+                    content=(
+                        "Dans EcoTaxa, affiche les casts de la Baie de Baffin "
+                        "sur une carte."
+                    ),
+                )
+            ],
+        ),
+        request,
+        x_openwebui_chat_id=None,
+        x_openwebui_message_id=None,
+        x_openwebui_user_id=None,
+        x_openwebui_user_name=None,
+        x_openwebui_user_email=None,
+        x_openwebui_user_role=None,
+    )
+
+    content = response["choices"][0]["message"]["content"]
+    assert "ecotaxa-casts.png" in content
+    assert "17 casts affichés" in content
+    assert "2 samples sans identifiant de cast" in content

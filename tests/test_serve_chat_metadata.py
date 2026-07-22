@@ -121,8 +121,8 @@ async def test_chat_completions_resumes_persisted_dataframe_after_restart(
 
 
 @pytest.mark.asyncio
-async def test_cast_map_request_reaches_react_agent(monkeypatch):
-    """Cast-map requests must stay extensible through the normal agent path."""
+async def test_generic_cast_map_request_reaches_react_agent(monkeypatch):
+    """Only explicit EcoTaxa cast maps use the deterministic route."""
     import serve as serve_module
 
     mock_msg = MagicMock()
@@ -140,7 +140,7 @@ async def test_cast_map_request_reaches_react_agent(monkeypatch):
     req = serve_module.ChatRequest(
         messages=[serve_module.Message(
             role="user",
-            content="Affiche une carte des casts dans la Baie de Baffin dans EcoTaxa",
+            content="Affiche une carte des casts de mon fichier chargé.",
         )],
         stream=False,
     )
