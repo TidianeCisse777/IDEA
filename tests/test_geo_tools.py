@@ -77,17 +77,14 @@ def test_get_zone_info_polygon_wkt_preview_is_truncated_with_note():
     assert "zone_name" in result["usage_hint"]
 
 
-def test_get_zone_info_pandas_filter_string_uses_polygon_aware_columns():
-    """Le pandas_filter conservé pour compat reste un bbox filter df['latitude']/'longitude',
-    parce que c'est ce que l'agent injectait dans run_pandas. Plus précis maintenant
-    parce que le bbox vient du polygone, pas d'une bbox tapée à la main."""
+def test_get_zone_info_steers_loaded_files_to_polygon_filter():
+    """A zone resolver must not hand the model a bbox pandas filter."""
     from tools.geo_tools import get_zone_info
 
     result = get_zone_info.invoke({"zone_name": "Baie d'Ungava"})
-    f = result["pandas_filter"]
-    assert "df['latitude']"  in f
-    assert "df['longitude']" in f
-    assert ">=" in f and "<=" in f
+    assert "pandas_filter" not in result
+    assert "filter_dataframe_by_zone" in result["usage_hint"]
+    assert "bbox" not in result["usage_hint"].lower()
 
 
 def test_get_zone_info_supports_hawke_and_nunavik_and_arctique():

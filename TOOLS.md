@@ -106,7 +106,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `load_file` | Charge CSV/TSV/Excel/JSON/Parquet, inspecte colonnes/types/manquants/plages, détecte les exports UVP EcoTaxa/EcoPart (hint `load_skill`) | non |
-| `run_pandas` | Exécute du pandas contrôlé sur les DataFrames de session (namespace restreint : imports allowlistés, pas de secrets/réseau/FS) ; source de toute valeur numérique. Un résultat de jointure (`merge`/`join`/`concat`) est persisté comme nouveau df `df_join_*` réutilisable ; une agrégation simple reste éphémère | non |
+| `run_pandas` | Exécute du pandas contrôlé sur les DataFrames de session (namespace restreint : imports allowlistés, pas de secrets/réseau/FS) ; source de toute valeur numérique. Un résultat de jointure (`merge`/`join`/`concat`) est persisté comme nouveau df `df_join_*` réutilisable ; une copie modifiée d'une table nommée, de même granularité, devient `df_derived_*` réutilisable ; une agrégation simple reste éphémère | non |
 | `run_graph` | Exécute du code matplotlib/Cartopy après un `graph_writer` autorisé, utilise les fonds Natural Earth 110m embarqués hors ligne et héberge le PNG persistant (`/graphs/{file}`) | non |
 
 ---

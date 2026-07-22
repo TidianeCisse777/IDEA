@@ -625,6 +625,42 @@ def _result_is_direct_join(code: str) -> bool:
     return False
 
 
+def _modified_source_variable(
+    result: Any,
+    local_vars: dict[str, Any],
+    injected_keys: set[str],
+    code: str,
+) -> str | None:
+    """Return the named session table from which ``result`` is a changed copy.
+
+    A table update commonly follows ``df = df_join_*.copy(); ...; result = df``.
+    It is neither a new join nor an analytical aggregation, so the existing
+    persistence paths do not recognise it. Keep this rule narrow: only a
+    same-index, same-granularity result retaining every source column becomes a
+    persisted derived table. Aggregations, previews, and filtered subsets keep
+    their existing ephemeral contract.
+    """
+    if not isinstance(result, pd.DataFrame):
+        return None
+
+    for name in sorted(injected_keys):
+        source = local_vars.get(name)
+        if (
+            not name.startswith("df_")
+            or not isinstance(source, pd.DataFrame)
+            or result is source
+            or not re.search(rf"\b{re.escape(name)}\b", code)
+        ):
+            continue
+        if (
+            result.index.equals(source.index)
+            and source.columns.isin(result.columns).all()
+            and not result.equals(source)
+        ):
+            return name
+    return None
+
+
 def _ast_operand_name(node: ast.AST) -> str | None:
     """Best-effort readable name for a merge/join operand AST node."""
     if isinstance(node, ast.Name):
@@ -947,6 +983,8 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - `df_sql`       : dernière copie SQL matérialisée
         - `loaded_file`  : fichier original chargé, immuable comme table de référence
         - `df_file_*`    : fichiers chargés, y compris après une requête EcoTaxa
+        - `df_derived_*` : copies modifiées de tables de session, persistées sous
+          le nom exact retourné par l'appel précédent
         - `df_ecotaxa_selection_*`: sélections cache EcoTaxa persistantes et
           simultanément réutilisables par leur nom exact dans WORKING TABLES
         - `df_ecotaxa_cache_query`: alias de la dernière requête cache EcoTaxa
@@ -968,6 +1006,8 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - a canonical sample-depth DataFrame → `df_canonical_sample_depth`;
         - a join/merge/concat result → a new `df_join_*` table (reuse it instead
           of re-joining the source files).
+        - a modified same-granularity copy of a named `df_*` table → a new
+          `df_derived_*` table (reuse the exact returned name in later calls).
         Every DataFrame output states `Persistence: persisted=true|false`; never
         describe an ephemeral (`false`) result as saved.
         """
@@ -994,8 +1034,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     method="data lineage validation",
                 )
             if (
-                "zone" in code_lower
-                and "bbox" in code_lower
+                "bbox" in code_lower
                 and (
                     "ax.plot" in code_lower
                     or "rectangle" in code_lower
@@ -1094,14 +1133,26 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
 
             derived_variable = None
             if not canonical_note and not join_variable and isinstance(result, pd.DataFrame):
-                derived_name = next(
-                    (
-                        name
-                        for name in ("derived_df", "result_df", "profile_df", "abundance_df")
-                        if new_vars.get(name) is result
-                    ),
-                    None,
+                derived_name = _modified_source_variable(
+                    result, local_vars, injected_keys, code
                 )
+                derived_description = None
+                if derived_name:
+                    derived_description = f"Table dérivée modifiée depuis {derived_name}"
+                else:
+                    derived_name = next(
+                        (
+                            name
+                            for name in (
+                                "derived_df",
+                                "result_df",
+                                "profile_df",
+                                "abundance_df",
+                            )
+                            if new_vars.get(name) is result
+                        ),
+                        None,
+                    )
                 if derived_name:
                     derived_variable = dataset_variable_name("derived", derived_name)
                     store_dataset(
@@ -1113,7 +1164,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                             "source": "analysis:derived",
                             "n_rows": int(result.shape[0]),
                             "n_cols": int(result.shape[1]),
-                            "description": f"Table dérivée nommée {derived_name}",
+                            "description": (
+                                derived_description
+                                or f"Table dérivée nommée {derived_name}"
+                            ),
                         },
                         latest_alias=derived_variable,
                     )
@@ -1251,9 +1305,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             # supplied executable graph code; activating the reviewed writer
             # skill lets the render attempt continue instead of ending the
             # whole user turn on a recoverable sequencing error.
-            from tools.skill_tool import _record_loaded_skill
+            from tools.skill_manifest import load_skill_document
+            from tools.skill_tool import SKILLS_DIR, _record_loaded_skill
 
-            _record_loaded_skill(_store, thread_id, "graph_writer")
+            _record_loaded_skill(
+                _store, thread_id, "graph_writer",
+                load_skill_document(SKILLS_DIR / "graph_writer.md"),
+            )
             loaded_skills = [*loaded_skills, "graph_writer"]
 
         try:

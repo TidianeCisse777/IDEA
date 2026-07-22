@@ -17,6 +17,17 @@ except ImportError:
 
 SKILLS_DIR = Path(__file__).parent.parent / "agents" / "skills"
 
+_RUNTIME_CAPSULES = {
+    "graph_planner": """Plan before code. Stop on an empty selected table. Use only the explicit source variable and never invent an artifact URL. For a named geographic request, resolve/filter the exact zone first; maps use Cartopy `station_map` or `abundance_environment_map`, never `kind:\"map\"`/`kind:\"scatter\"`. Aggregate NeoLabs taxon rows to samples before station/sample plots. Load graph_writer before run_graph.""",
+    "graph_writer": """Stop on empty data; use only the named active table and validate plot_df after filtering. Use Agg matplotlib, readable labelled axes/units, legend or labelled colourbar, and never invent an artifact URL. Define graph_contract and neutral graph_explanation. Keep identifiers as strings. Never produce a graph where exploratory and confirmed values are visually indistinguishable. Maps use Cartopy GeoAxes, longitude/latitude position mapping, coastlines, aggregation of coincident points, and the exact zone polygon from `zone_polygons` via Cartopy ShapelyFeature; never draw a bbox rectangle. Vertical profiles invert only depth. Return only the image emitted by run_graph.""",
+    "ecotaxa_navigation": """EcoTaxa is authorized: use the local SQLite cache at sample level unless objects are explicitly requested. Inspect available cache schema before relying on a column; issue one read-only SELECT statement without a semicolon. Reuse the active selection/table for follow-ups. Never infer missing identifiers or use an external source unless explicitly requested. For maps, use the exact persisted query result and the active graph rules.""",
+}
+
+
+def _runtime_capsule(skill_name: str, document: SkillDocument) -> str:
+    """Small persistent execution rules; the complete skill remains unchanged."""
+    return _RUNTIME_CAPSULES.get(skill_name, document.content[:1600])
+
 
 def _hub_skill_name(stem: str) -> str:
     return f"copepod-{stem.replace('_', '-')}"
@@ -60,15 +71,32 @@ def _pull_from_hub(skill_name: str) -> str | None:
         return None
 
 
-def _record_loaded_skill(store: SessionStore, thread_id: str | None, skill_name: str) -> None:
+def _record_loaded_skill(
+    store: SessionStore,
+    thread_id: str | None,
+    skill_name: str,
+    document: SkillDocument,
+) -> bool:
     if not thread_id:
-        return
+        return False
     session = store.get(thread_id) or {"df": None, "meta": {}}
     meta = dict(session.get("meta") or {})
     loaded = list(meta.get("loaded_skills") or [])
     if skill_name not in loaded:
         loaded.append(skill_name)
-    store.update_meta(thread_id, {"loaded_skills": loaded})
+    capsules = dict(meta.get("active_skill_capsules") or {})
+    existing = capsules.get(skill_name) or {}
+    already_active = existing.get("sha256") == document.sha256
+    capsules[skill_name] = {
+        "version": document.manifest.version,
+        "sha256": document.sha256,
+        "content": _runtime_capsule(skill_name, document),
+    }
+    store.update_meta(thread_id, {
+        "loaded_skills": loaded,
+        "active_skill_capsules": capsules,
+    })
+    return already_active
 
 
 def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = None):
@@ -128,7 +156,9 @@ def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = N
                     selected_document = hub_document
                     source = "LangSmith Context Hub"
 
-        _record_loaded_skill(_store, thread_id, skill_name)
+        already_active = _record_loaded_skill(
+            _store, thread_id, skill_name, selected_document,
+        )
         manifest = selected_document.manifest
         provenance = {
             "source": source,
@@ -143,8 +173,15 @@ def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = N
             provenance["path"] = str(local_document.path)
         if hub_fallback_reason:
             provenance["hub_fallback_reason"] = hub_fallback_reason
+        content = (
+            f"Skill '{skill_name}' already active in this session; reuse its "
+            "active rules."
+            if already_active else selected_document.content
+        )
+        if not already_active and skill_name in _RUNTIME_CAPSULES:
+            content = _runtime_capsule(skill_name, selected_document)
         return success(
-            selected_document.content,
+            content,
             provenance=provenance,
             persisted=bool(thread_id),
             method="skill loader",

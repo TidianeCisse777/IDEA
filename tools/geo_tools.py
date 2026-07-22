@@ -75,15 +75,6 @@ def _bbox_from_polygon(polygon: BaseGeometry) -> dict[str, float]:
     return {"south": miny, "west": minx, "north": maxy, "east": maxx}
 
 
-def _pandas_filter(bbox: dict[str, float]) -> str:
-    return (
-        "df["
-        f"(df['latitude'] >= {bbox['south']}) & (df['latitude'] <= {bbox['north']}) & "
-        f"(df['longitude'] >= {bbox['west']}) & (df['longitude'] <= {bbox['east']})"
-        "]"
-    )
-
-
 @tool(response_format="content_and_artifact")
 def get_zone_info(zone_name: str) -> dict:
     """Resolve a named NeoLab zone to canonical name, bbox, aliases and filter.
@@ -138,10 +129,11 @@ def get_zone_info(zone_name: str) -> dict:
         "bbox": bbox,
         "polygon_wkt_preview": preview,
         "aliases": list(aliases),
-        "pandas_filter": _pandas_filter(bbox),
         "usage_hint": (
-            f"For EcoTaxa / Bio-ORACLE queries, pass zone_name='{canonical}' "
-            "to the downstream tool — do NOT copy the polygon_wkt through the LLM."
+            f"For a loaded local file, call filter_dataframe_by_zone with "
+            f"zone_name='{canonical}'. For EcoTaxa / Bio-ORACLE queries, pass "
+            f"zone_name='{canonical}' to the downstream tool. Do NOT copy the "
+            "polygon_wkt through the LLM."
         ),
     }
     return success(
