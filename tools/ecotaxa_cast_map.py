@@ -34,6 +34,7 @@ class RenderedCastMap:
 
 _MAP_WORDS = frozenset({"map", "carte", "mapa", "karte", "地图"})
 _PROJECT_WORDS = frozenset({"project", "projet", "proyecto", "projekt"})
+_MAP_RENDERER_VERSION = "v2"
 _ZONE_GENERIC_WORDS = frozenset({
     "baie", "bay", "gulf", "golfe", "sea", "mer", "strait", "detroit",
     "passage", "canal", "ocean", "oceano", "oceanique",
@@ -128,9 +129,9 @@ def _load_cast_map_rows(
 
 def _map_path(request: CastMapRequest, sync_fingerprint: str) -> Path:
     key = hashlib.sha256(
-        f"{request.zone_name}|{request.group_by}|{sync_fingerprint}".encode()
+        f"{_MAP_RENDERER_VERSION}|{request.zone_name}|{request.group_by}|{sync_fingerprint}".encode()
     ).hexdigest()[:16]
-    return graphs_dir() / f"ecotaxa-casts-{key}.png"
+    return graphs_dir() / f"ecotaxa-casts-{_MAP_RENDERER_VERSION}-{key}.png"
 
 
 def render_ecotaxa_cast_map(request: CastMapRequest) -> RenderedCastMap:
@@ -152,6 +153,7 @@ def render_ecotaxa_cast_map(request: CastMapRequest) -> RenderedCastMap:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import cartopy.feature as cfeature
     import cartopy.crs as ccrs
 
     configure_offline_cartopy()
@@ -163,7 +165,16 @@ def render_ecotaxa_cast_map(request: CastMapRequest) -> RenderedCastMap:
         [lon.min() - lon_padding, lon.max() + lon_padding, lat.min() - lat_padding, lat.max() + lat_padding],
         crs=ccrs.PlateCarree(),
     )
-    axis.coastlines(resolution="110m", linewidth=0.5)
+    axis.set_facecolor("#dceff6")
+    axis.add_feature(cfeature.OCEAN, facecolor="#dceff6", zorder=0)
+    axis.add_feature(
+        cfeature.LAND,
+        facecolor="#e8e1d5",
+        edgecolor="#6e675e",
+        linewidth=0.35,
+        zorder=1,
+    )
+    axis.coastlines(resolution="110m", linewidth=0.5, zorder=2)
     if request.group_by == "project":
         colors = plt.get_cmap("tab10")
         for index, (project_id, project_rows) in enumerate(rows.groupby("project_id", sort=True)):

@@ -4,6 +4,7 @@ import sqlite3
 from unittest.mock import MagicMock
 
 import pytest
+from PIL import Image
 
 
 def test_parser_resolves_english_baffin_bay_to_cached_zone(tmp_path, monkeypatch):
@@ -26,6 +27,14 @@ def test_parser_resolves_english_baffin_bay_to_cached_zone(tmp_path, monkeypatch
     assert request is not None
     assert request.zone_name == "Baie de Baffin"
     assert request.group_by == "project"
+
+
+def test_map_cache_key_includes_cartography_style_version():
+    from tools.ecotaxa_cast_map import CastMapRequest, _map_path
+
+    path = _map_path(CastMapRequest(zone_name="Baie de Baffin"), "2026-07-22")
+
+    assert "-v2-" in path.name
 
 
 def test_second_identical_cast_map_reuses_rendered_image(tmp_path, monkeypatch):
@@ -63,6 +72,10 @@ def test_second_identical_cast_map_reuses_rendered_image(tmp_path, monkeypatch):
     assert first.cache_hit is False
     assert second.cache_hit is True
     assert configured == [True]
+    image_path = next((tmp_path / "graphs").glob("ecotaxa-casts-*.png"))
+    colors = set(Image.open(image_path).convert("RGB").getdata())
+    assert (220, 239, 246) in colors  # eau
+    assert (232, 225, 213) in colors  # terre
 
 
 def test_fast_cast_map_records_zero_model_calls_for_local_diagnostics():
