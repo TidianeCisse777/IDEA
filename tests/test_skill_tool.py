@@ -97,7 +97,7 @@ def test_load_skill_skips_hub_when_no_api_key(monkeypatch, tmp_path):
         result = skill_tool.invoke({"skill_name": "graph_planner"})
 
     mock_class.assert_not_called()
-    assert result.strip() == "# Local graph planner"
+    assert "Plan before code" in result
 
 
 def test_load_skill_records_loaded_skills_in_session(monkeypatch, tmp_path):
@@ -121,9 +121,34 @@ def test_load_skill_records_loaded_skills_in_session(monkeypatch, tmp_path):
         result = skill_tool.invoke({"skill_name": "graph_writer"})
 
     session = store.get("thread-skills")
-    assert result.strip() == "# Local graph writer"
+    assert "Stop on empty data" in result
     assert session is not None
     assert session["meta"]["loaded_skills"] == ["graph_writer"]
+
+
+def test_load_skill_reuses_active_versioned_capsule(monkeypatch, tmp_path):
+    from tools.session_store import SessionStore
+
+    monkeypatch.delenv("LANGCHAIN_API_KEY", raising=False)
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    body = "# Graph rules\n" + ("Use the active table.\n" * 50)
+    (skills_dir / "graph_writer.md").write_text(_skill_doc("graph_writer", body))
+    store = SessionStore(tmp_path / "sessions")
+
+    with patch("tools.skill_tool.SKILLS_DIR", skills_dir):
+        from tools.skill_tool import make_skill_tool
+
+        tool = make_skill_tool(thread_id="thread-capsule", store=store)
+        first = tool.invoke({"skill_name": "graph_writer"})
+        second = tool.invoke({"skill_name": "graph_writer"})
+
+    assert len(second) < len(first)
+    assert "already active" in second
+    capsule = store.get("thread-capsule")["meta"]["active_skill_capsules"]["graph_writer"]
+    assert "Stop on empty data" in capsule["content"]
+    assert capsule["sha256"]
 
 
 def test_every_local_skill_has_valid_common_manifest_and_budget():

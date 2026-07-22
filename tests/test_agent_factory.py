@@ -1147,11 +1147,20 @@ def test_system_prompt_routes_named_zone_map_requests():
 
     prompt = COPEPOD_SYSTEM_PROMPT.lower()
     assert "resolve every named iho/meow/neolab zone with `get_zone_info" in prompt
+    assert "next geographic operation must be the separate tool call" in prompt
+    assert "never put that tool name, a bbox, or point-in-polygon code inside `run_pandas`" in prompt
     assert "requested output intent" in prompt
     assert "a map, plotted vertical profile" in prompt
     assert "load_skill(\"graph_planner\")" in prompt
     assert "load_skill(\"graph_writer\")" in prompt
     assert "very next tool call must be `run_graph`" in prompt
+
+
+def test_system_prompt_resolves_the_bundled_neolabs_pair_without_paths():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "data/neolabs/neolabs_abundance.csv" in COPEPOD_SYSTEM_PROMPT
+    assert "data/neolabs/neolabs_sample.csv" in COPEPOD_SYSTEM_PROMPT
 
 
 def test_graph_rules_preserve_identifier_types_and_validate_non_empty_plot_df():

@@ -76,6 +76,28 @@ def test_capsule_is_deterministic_and_contains_no_row_values(tmp_path):
     assert "ACTIVE DATASET STATE" in first
 
 
+def test_dataset_capsule_includes_active_skill_rules(tmp_path):
+    store = SessionStore(tmp_path)
+    thread_id = "skill-capsule-context"
+    frame = pd.DataFrame({"sample_id": ["sample-1"]})
+    store_dataset(
+        store, thread_id, frame,
+        variable_name="df_file_samples",
+        meta={"source": "file:samples.csv", "n_rows": 1, "n_cols": 1},
+    )
+    store.update_meta(thread_id, {"active_skill_capsules": {
+        "graph_writer": {
+            "version": "1.0.0", "sha256": "abc", "content": "Render the active table exactly once.",
+        },
+    }})
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "ACTIVE SKILL RULES" in capsule
+    assert "graph_writer" in capsule
+    assert "Render the active table exactly once." in capsule
+
+
 def test_capsule_surfaces_environment_columns_recognized_by_enrichment(tmp_path):
     store = SessionStore(tmp_path)
     thread_id = "ecotaxa-enrichment-context"

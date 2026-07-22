@@ -17,6 +17,8 @@ from core.environment_resolver.column_detection import (
 from tools.session_store import SessionStore
 
 _MAX_CAPSULE_CHARS = 12000
+_MAX_ACTIVE_SKILL_RULES_CHARS = 4000
+_MAX_SINGLE_SKILL_RULE_CHARS = 1600
 _IDENTITY_COLUMNS = tuple(dict.fromkeys((
     "project_id",
     "sample_id",
@@ -179,6 +181,23 @@ def _source_scope_line(store: SessionStore, thread_id: str, messages: object) ->
     )
 
 
+def _active_skill_rules(store: SessionStore, thread_id: str) -> str:
+    """Render bounded, versioned rules retained after tool-history compaction."""
+    meta = (store.get(thread_id) or {}).get("meta") or {}
+    capsules = meta.get("active_skill_capsules") or {}
+    lines: list[str] = []
+    for name, capsule in sorted(capsules.items()):
+        if not isinstance(capsule, dict):
+            continue
+        content = _clean(capsule.get("content") or "", limit=_MAX_SINGLE_SKILL_RULE_CHARS)
+        if content:
+            lines.append(f"- {name}@{_clean(capsule.get('version') or '?', limit=20)}: {content}")
+    if not lines:
+        return ""
+    return ("\nACTIVE SKILL RULES (already loaded; reuse them, do not reload):\n"
+            + "\n".join(lines))[:_MAX_ACTIVE_SKILL_RULES_CHARS]
+
+
 def build_dataset_state_capsule(
     store: SessionStore, thread_id: str, messages: object = None
 ) -> str:
@@ -339,6 +358,7 @@ def build_dataset_state_capsule(
         )
 
     scope_line = _source_scope_line(store, thread_id, messages)
+    skill_rules = _active_skill_rules(store, thread_id)
 
     loaded_files_block = ""
     files = _loaded_files(store, thread_id)
@@ -371,6 +391,7 @@ def build_dataset_state_capsule(
         "Identifiers absent from this capsule and the current user message are "
         "ungrounded; do not infer them from older conversation turns."
         + scope_line
+        + skill_rules
         + working_block
         + loaded_files_block
         + anchor_note
