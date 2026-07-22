@@ -120,7 +120,7 @@ else
 fi
 
 if [ "$BUILD_MODE" = "build" ]; then
-  docker compose up -d "${SERVICES[@]}"
+  docker compose up -d --build "${SERVICES[@]}"
 else
   docker compose up -d --no-build "${SERVICES[@]}" || {
     echo "[start] Docker image missing. Run once with ./start.sh --build, or pull the published images."
@@ -136,6 +136,14 @@ echo "[start] Postgres OK"
 
 echo "[start] Waiting for MCP EcoTaxa..."
 until docker compose exec -T mcp-ecotaxa curl -sf http://localhost:8001/health >/dev/null 2>&1; do
+  MCP_CONTAINER="$(docker compose ps -q mcp-ecotaxa 2>/dev/null || true)"
+  MCP_STATE="$(docker inspect -f '{{.State.Status}}' "$MCP_CONTAINER" 2>/dev/null || true)"
+  if [ "$MCP_STATE" = "exited" ] || [ "$MCP_STATE" = "dead" ]; then
+    echo "[start] MCP EcoTaxa stopped before becoming healthy. Last logs:"
+    docker compose logs --tail=50 mcp-ecotaxa || true
+    echo "[start] Rebuild it with: ./start.sh --build"
+    exit 1
+  fi
   sleep 1
 done
 echo "[start] MCP EcoTaxa OK"

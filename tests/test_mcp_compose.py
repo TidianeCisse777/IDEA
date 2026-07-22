@@ -67,7 +67,10 @@ def test_start_script_waits_for_current_schema_and_has_valid_bash_syntax():
     source = Path("start.sh").read_text(encoding="utf-8")
 
     assert '"schema_current":true' in source
-    assert source.index('"schema_current":true') < source.index("Initial sync complete.")
+    assert source.index('"schema_current":true') < source.index("Checking EcoTaxa cache health")
+    assert "MCP EcoTaxa stopped before becoming healthy" in source
+    assert "docker compose logs --tail=50 mcp-ecotaxa" in source
+    assert 'docker compose up -d --build "${SERVICES[@]}"' in source
     subprocess.run(["bash", "-n", "start.sh"], check=True)
 
 
