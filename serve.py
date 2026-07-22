@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
 import uuid
 from datetime import datetime, timezone
@@ -389,8 +390,14 @@ app.add_middleware(
 
 GRAPHS_DIR = graphs_dir()
 
+
+_LOCAL_PNG_MARKDOWN = re.compile(
+    r"!\[([^\]]*)\]\((?:file://)?(/[^\s)]+\.png)\)", re.IGNORECASE
+)
+
+
 def _extract_and_host_images(text: str) -> str:
-    """Remplace les data URIs base64 par des URLs hébergées sur /graphs/."""
+    """Remplace les images locales ou base64 par des URLs hébergées sur /graphs/."""
     def replace(match):
         b64 = match.group(1).replace("\n", "").replace(" ", "")
         # Rétablit le padding si manquant
@@ -404,12 +411,28 @@ def _extract_and_host_images(text: str) -> str:
             f"[⬇ Télécharger le graphe]({url})"
         )
     # re.DOTALL pour capturer les base64 multi-lignes
-    return re.sub(
+    hosted = re.sub(
         r"!\[.*?\]\(data:image/png;base64,([A-Za-z0-9+/=\n\s]+?)\)",
         replace,
         text,
         flags=re.DOTALL,
     )
+
+    def host_local_png(match: re.Match) -> str:
+        source = Path(match.group(2))
+        if not source.is_file():
+            return match.group(0)
+        graph_id = uuid.uuid4().hex[:12]
+        filename = f"{graph_id}.png"
+        target = GRAPHS_DIR / filename
+        try:
+            GRAPHS_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+        except OSError:
+            return match.group(0)
+        return f"![{match.group(1)}]({graph_url(filename)})"
+
+    return _LOCAL_PNG_MARKDOWN.sub(host_local_png, hosted)
 
 class Message(BaseModel):
     role: str

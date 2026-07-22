@@ -638,6 +638,37 @@ async def test_stream_image_in_agent_response_replaced():
 
 
 @pytest.mark.asyncio
+async def test_stream_hosts_local_png_image(tmp_path, monkeypatch):
+    """Une carte locale temporaire doit être publiée via /graphs/, pas exposée telle quelle."""
+    from serve import _stream_agent_sse
+
+    local_png = tmp_path / "baffin-map.png"
+    local_png.write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+        b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00"
+        b"\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18"
+        b"\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    hosted_dir = tmp_path / "hosted-graphs"
+    monkeypatch.setattr("serve.GRAPHS_DIR", hosted_dir)
+    updates = [
+        {"model": {"messages": [AIMessage(
+            content=f"![Carte Baie de Baffin]({local_png})",
+            tool_calls=[],
+        )]}},
+    ]
+
+    chunks = [c async for c in _stream_agent_sse(_make_mock_agent(updates), {}, {}, "tid-test")]
+    full = "".join(chunks)
+
+    assert str(local_png) not in full
+    assert "/graphs/" in full
+    hosted_images = list(hosted_dir.glob("*.png"))
+    assert len(hosted_images) == 1
+    assert hosted_images[0].read_bytes() == local_png.read_bytes()
+
+
+@pytest.mark.asyncio
 async def test_stream_image_in_tool_result_replaced():
     """Le base64 dans le résultat d'un outil est extrait et hébergé."""
     from serve import _stream_agent_sse
