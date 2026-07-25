@@ -248,9 +248,7 @@ def resolve_request_files(
 # ---------------------------------------------------------------------------
 
 _CHAT_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
-
-# Fichiers déjà injectés par thread — évite de répéter load_file à chaque tour.
-_injected_by_thread: dict[str, set[str]] = {}
+_OWUI_INJECTED_KEY = "owui_injected_files"
 
 
 def _get_chat_files_from_db(
@@ -342,6 +340,7 @@ def resolve_chat_files(
     *,
     uploads_dir: Path | None = None,
     webui_container: str = DEFAULT_WEBUI_CONTAINER,
+    store=None,
 ) -> tuple[str, list[dict]]:
     """Résout les fichiers d'un chat OpenWebUI via le SQLite (x-openwebui-chat-id).
 
@@ -349,7 +348,8 @@ def resolve_chat_files(
     directement `chat_file JOIN file` pour obtenir le path container.
 
     Retourne `(text_instruction, image_parts)`.
-    Chaque fichier n'est injecté qu'une fois par thread (évite les doublons).
+    Chaque fichier n'est injecté qu'une fois par thread. L'état de déduplication
+    est stocké dans le SessionStore (SQLite) pour survivre aux reloads uvicorn.
     """
     if not chat_id:
         return "", []
@@ -359,11 +359,18 @@ def resolve_chat_files(
         return "", []
 
     uploads_root = uploads_dir or Path("/tmp/webui_uploads")
-    already_injected = _injected_by_thread.setdefault(thread_id or chat_id, set())
+    tid = thread_id or chat_id
+
+    # Déduplication persistante via SessionStore (survit aux reloads uvicorn).
+    already_injected: set[str] = set()
+    if store is not None:
+        persisted = store.get(f"{tid}:{_OWUI_INJECTED_KEY}") or {}
+        already_injected = set(persisted.get("file_ids") or [])
 
     tabular_paths: list[str] = []
     image_parts: list[dict] = []
     image_names: list[str] = []
+    newly_injected: list[str] = []
 
     for f in db_files:
         file_id = f["id"]
@@ -381,7 +388,7 @@ def resolve_chat_files(
             logger.warning("chat_file_copy_failed name=%s err=%s", filename, exc)
             continue
 
-        already_injected.add(file_id)
+        newly_injected.append(file_id)
 
         if content_type.startswith("image/"):
             try:
@@ -396,6 +403,11 @@ def resolve_chat_files(
             tabular_paths.append(str(local_path))
 
         logger.info("chat_file_resolved name=%s type=%s → %s", filename, content_type or "?", local_path)
+
+    # Persiste les ids nouvellement injectés pour les prochains tours.
+    if newly_injected and store is not None:
+        updated = already_injected | set(newly_injected)
+        store.set(f"{tid}:{_OWUI_INJECTED_KEY}", {"file_ids": list(updated)})
 
     text_parts: list[str] = []
     if tabular_paths:

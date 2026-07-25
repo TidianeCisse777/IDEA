@@ -102,7 +102,12 @@ Recommended `sample_df` contents:
 
 ## Required steps
 
-1. Identify the relevant columns in the loaded file
+1. Identify the relevant columns in the loaded file using `all_columns` from `ACTIVE DATASET STATE` as the authoritative source of available column names.
+
+**Step 1b — Column disambiguation**: before proceeding, check whether the user's request (e.g. "abondance", "température", "profondeur") maps to more than one column in `all_columns`. If multiple candidates exist, list them explicitly and ask the user which one to use. Never select a column silently when ambiguity exists.
+
+**Step 1c — Schema verification**: call `run_pandas` on the active variable to inspect actual values before planning: check column dtypes, count NaN per candidate axis column, and sample unique values for categorical columns (use `.nunique()` to assess cardinality). If a column has > 80 % NaN or an unexpected dtype for the intended role, surface the issue and ask the user how to proceed rather than planning a graph on unusable data.
+
 2. Check the geographic dimension (step 0)
 3. Check whether NeoLabs taxon-level data requires a rebuilt `sample_df` (step 0b)
 4. Decide from the requested output intent, not from a closed list of words:

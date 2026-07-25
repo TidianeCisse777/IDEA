@@ -1292,7 +1292,7 @@ async def chat_completions(
     # Fallback : req.files pour les appelants directs de l'API (hors OpenWebUI).
     owui_chat_id = x_openwebui_chat_id or req.chat_id
     if owui_chat_id:
-        request_files_text, request_image_parts = resolve_chat_files(owui_chat_id, thread_id=tid)
+        request_files_text, request_image_parts = resolve_chat_files(owui_chat_id, thread_id=tid, store=default_store)
     else:
         owui_files = (req.metadata or {}).get("files") or req.files
         request_files_text, request_image_parts = resolve_request_files(owui_files)

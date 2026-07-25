@@ -63,6 +63,39 @@ def _present_columns(columns: Iterable[object]) -> list[str]:
     return [column for column in _IDENTITY_COLUMNS if column in available]
 
 
+_MAX_ALL_COLUMNS = 50
+
+
+def _prioritized_columns(
+    dataframe: "pd.DataFrame",
+    env_detected: dict[str, str | None],
+) -> str:
+    """Return a comma-separated column list ordered by graphing relevance.
+
+    Priority: (1) env-detected columns, (2) other numeric columns,
+    (3) categorical columns, truncated at _MAX_ALL_COLUMNS with '(+N more)'.
+    """
+    import pandas as pd
+
+    env_cols = [c for c in env_detected.values() if c]
+    env_set = set(env_cols)
+
+    numeric_others = [
+        c for c in dataframe.select_dtypes(include="number").columns
+        if c not in env_set
+    ]
+    categorical = [
+        c for c in dataframe.columns
+        if c not in env_set and c not in numeric_others
+    ]
+
+    ordered = [*env_cols, *numeric_others, *categorical]
+    total = len(ordered)
+    shown = ordered[:_MAX_ALL_COLUMNS]
+    suffix = f",(+{total - len(shown)} more)" if total > len(shown) else ""
+    return ",".join(shown) + suffix
+
+
 _MAX_DERIVED_SUBSETS = 12
 _MAX_LOADED_FILES = 12
 _MAX_WORKING_TABLES = 12
@@ -244,6 +277,7 @@ def build_dataset_state_capsule(
             f"{role}:{column or 'none'}"
             for role, column in environment_columns.items()
         ),
+        "all_columns=" + _prioritized_columns(dataframe, environment_columns),
     ]
     active_join_note = ""
     if source == "analysis:join":
@@ -362,7 +396,7 @@ def build_dataset_state_capsule(
 
     loaded_files_block = ""
     files = _loaded_files(store, thread_id)
-    if len(files) > 1:
+    if len(files) >= 1:
         listed = files[:_MAX_LOADED_FILES]
         lines = "\n".join(
             f"- {variable}: path={path}, rows={rows}"
@@ -375,8 +409,8 @@ def build_dataset_state_capsule(
             else ""
         )
         loaded_files_block = (
-            "\nLOADED FILES (each reusable by its exact variable name — target the "
-            "right file by name; do not reload a file already listed here):\n"
+            "\nLOADED FILES (already in session — do not call load_file again for "
+            "any path listed here; use the variable name directly):\n"
             + lines + more
         )
 

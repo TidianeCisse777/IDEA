@@ -432,7 +432,9 @@ def test_capsule_identifies_persisted_join_as_active_file(tmp_path):
     assert "df_join_abundance_sample" in capsule
 
 
-def test_capsule_no_loaded_files_block_for_single_file(tmp_path):
+def test_capsule_loaded_files_block_shown_even_for_single_file(tmp_path):
+    """A single loaded file must appear in LOADED FILES so the agent sees
+    the 'do not reload' signal even in a one-file session."""
     store = SessionStore(tmp_path)
     thread_id = "single-file-context"
     store_dataset(
@@ -442,7 +444,9 @@ def test_capsule_no_loaded_files_block_for_single_file(tmp_path):
         is_loaded_file=True,
     )
     capsule = build_dataset_state_capsule(store, thread_id)
-    assert "LOADED FILES" not in capsule
+    assert "LOADED FILES" in capsule
+    assert "df_file_solo" in capsule
+    assert "do not call load_file again" in capsule
 
 
 def test_capsule_surfaces_derived_working_tables_without_stale_ids(tmp_path):
@@ -546,3 +550,68 @@ def test_capsule_loaded_file_shows_its_description(tmp_path):
     assert "LOADED FILES" in capsule
     assert "Comptages filet NeoLabs" in capsule
     assert "Profils CTD" in capsule
+
+
+def test_capsule_all_columns_numeric_before_categorical(tmp_path):
+    """all_columns field must appear in the capsule and list numeric columns
+    before categorical ones so the agent sees graphable axes first."""
+    store = SessionStore(tmp_path)
+    thread_id = "col-order"
+
+    df = pd.DataFrame({
+        "taxon": ["Calanus", "Metridia"],          # categorical
+        "station": ["S1", "S2"],                   # categorical
+        "abundance_ind_L": [12.4, 0.3],            # numeric → should appear first
+        "temperature": [4.1, 3.8],                 # numeric → should appear first
+        "depth": [50.0, 100.0],                    # numeric (env) → first of all
+        "latitude": [67.0, 68.0],                  # numeric (env) → first of all
+    })
+    store_dataset(
+        store, thread_id, df,
+        variable_name="df_file_neolabs",
+        meta={"source": "file:/d/neolabs.csv", "path": "/d/neolabs.csv", "n_rows": 2},
+        latest_alias="active",
+        is_loaded_file=True,
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "all_columns=" in capsule
+    # numeric columns must appear before categorical ones
+    pos_numeric = capsule.index("abundance_ind_L")
+    pos_categorical = capsule.index("taxon")
+    assert pos_numeric < pos_categorical, (
+        "numeric columns should appear before categorical ones in all_columns"
+    )
+    # env-detected columns must appear first among numerics
+    pos_depth = capsule.index("depth")
+    pos_abundance = capsule.index("abundance_ind_L")
+    assert pos_depth < pos_abundance, (
+        "env-detected columns (depth) should precede other numeric columns"
+    )
+
+
+def test_capsule_all_columns_truncated_with_remainder_count(tmp_path):
+    """When the dataframe has more than 50 columns, all_columns is truncated
+    and the number of hidden columns is stated as '(+N more)'."""
+    store = SessionStore(tmp_path)
+    thread_id = "many-cols"
+
+    cols = {f"col_{i:03d}": range(2) for i in range(70)}
+    cols["latitude"] = [67.0, 68.0]
+    cols["abundance"] = [1.0, 2.0]
+    df = pd.DataFrame(cols)
+    store_dataset(
+        store, thread_id, df,
+        variable_name="df_file_big",
+        meta={"source": "file:/d/big.tsv", "path": "/d/big.tsv", "n_rows": 2},
+        latest_alias="active",
+        is_loaded_file=True,
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "all_columns=" in capsule
+    assert "(+" in capsule and "more)" in capsule
+    # all 72 column names must NOT all appear (truncation happened)
+    assert capsule.count("col_") < 70
