@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "intent:visual"
 next_tool: run_graph
-max_tokens: 10800
+max_tokens: 11000
 size_exemption: The writer owns one executable graph-contract vocabulary shared by runtime validation across all chart families; its full body is delivered with a manifest-governed cap instead of the generic tool truncation.
 ---
 
@@ -670,6 +670,10 @@ ordination, composition, and depth profiles into generic scatter plots.
 
 Use for "profil vertical", "vertical distribution", abundance by depth,
 biomass by depth, CTD variable by depth, or diel/depth positioning plots.
+
+Render one coherent profile per subject: the profile's own working table must
+already be built (source-specific grouping done upstream). Plot the measurement
+against depth on an inverted y-axis; do not mix unrelated groups onto one profile.
 
 #### EcoTaxa object-export profiles
 

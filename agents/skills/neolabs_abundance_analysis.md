@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "dataset:neolabs_abundance"
 next_tool: run_pandas
-max_tokens: 3600
+max_tokens: 3700
 size_exemption: The sample-level aggregation, diversity, environmental matching, and ordination rules share one required sample_df contract; the small overage avoids divergent analytical bases.
 description: Standard ecological analysis workflow for NeoLabs taxonomy abundance tables enriched with Amundsen CTD. Use when the user asks to analyse NeoLabs abundance, zooplankton abundance, copepod abundance, diversity, anomalies, seasonality, CTD relationships, PCA, PCoA, NMDS, RDA, or community-environment ordination.
 ---
@@ -60,6 +60,11 @@ environmental columns, or no environmental source is authorized.
 ## Core rule
 
 NeoLabs abundance rows are taxon-level rows. Do not analyse temporal, spatial, environmental, or station-level patterns directly from raw rows without first rebuilding the correct working table.
+
+**Vertical profile — build the working table correctly (NeoLabs-specific):**
+- **One profile = one deployment** (station + cast). Never pool different deployments/stations onto one profile.
+- **Pick the deployment by the number of DISTINCT depth strata** (`MIN/MAX_SAMPLE_DEPTH.nunique()`), not by row count: a deployment with a single stratum is not a profile (a real multinet has several nets at successive depths). If none is named, ask which deployment (or draw one small-multiple per station for a small set).
+- **Total abundance at a stratum = SUM of the taxon rows** at that stratum (each row is one taxon), never their mean; then plot that summed abundance against depth (the graph skill inverts the depth axis).
 
 ## Column families (wide per-stage files) — read before any abundance calculation
 

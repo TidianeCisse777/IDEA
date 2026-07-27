@@ -303,8 +303,11 @@ DEPLOYMENT (deployment_id) — un trait d'engin à une station
   │      1 deployment = 1 profil = PLUSIEURS net samples (un par strate).
   │      Ex. deployment de 9 filets : 2-10 m, 10-20 m, 20-30 m … 115-125 m.
   │      Un mono-filet (Ringnet) ou un V-Tow intégré = 1 seul net sample.
-  │      Pour un profil vertical : trier les net samples d'UN deployment par
-  │      profondeur ; ne jamais mélanger des deployments différents.
+  │      ⇒ RÈGLE PROFIL : UN profil vertical = UN seul deployment (station+cast),
+  │        ses net samples empilés par strate de profondeur. JAMAIS pooler des
+  │        deployments/stations différents sur un même profil. Si aucun deployment
+  │        n'est nommé, DEMANDER lequel (ou en proposer un par station si l'ensemble
+  │        est petit) — ne trace pas MAX_SAMPLE_DEPTH sur toutes les lignes.
   │    │
   │    └─ ANALYSIS (analysis_id, analysis_type) — analyse taxonomique d'un sample
   │         · tous les samples ne sont PAS analysés (0 à 2 analyses / sample)

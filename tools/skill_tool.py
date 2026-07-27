@@ -175,6 +175,21 @@ def source_navigation_reference(skill_names: tuple[str, ...]) -> str:
     )
 
 
+def dataset_analysis_reference(skill_names: tuple[str, ...]) -> str:
+    """Full reviewed body of a dataset-triggered analysis skill (e.g. NeoLabs).
+
+    Pre-activated when the matching file is the active dataset because the model
+    does not reliably `load_skill` it and the file's column traps otherwise yield
+    wrong numbers (aggregate-column double counting, single-stratum "profiles").
+    """
+    return _full_skill_reference(
+        skill_names,
+        "## DATASET ANALYSIS REFERENCE (authoritative reviewed workflow for the "
+        "active dataset; already active — apply these rules directly, never call "
+        "load_skill for it)",
+    )
+
+
 def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = None):
     _store = store or default_store
     skills = _discover_skill_documents()
