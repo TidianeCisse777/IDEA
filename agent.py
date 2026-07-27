@@ -669,6 +669,58 @@ class _ContextMiddleware(AgentMiddleware):
         from tools.turn_context import build_turn_context
         from dataclasses import replace
 
+        # A visual turn always ends in run_graph, whose Cartopy/matplotlib
+        # contracts live in graph_planner + graph_writer. Both are represented
+        # by static runtime capsules, so seeding them here — before the capsule
+        # is projected — lets the model render directly instead of spending one
+        # model round-trip per skill on load_skill. run_graph already self-heals
+        # the same capsule, so this only removes latency, never changes output.
+        from tools.skill_tool import preseed_capsule_skills
+        from tools.source_scope import source_decision_for_turn
+
+        # Resolve the turn's authorized sources up front so a source-procedure
+        # skill can be pre-activated before the capsule is projected (same
+        # round-trip saving as graph skills). Reused below for tool scoping.
+        source_decision = source_decision_for_turn(
+            session_store, self.thread_id, original_messages
+        )
+
+        preseeded_graph_skills: list[str] = []
+        graph_reference_block = ""
+        visual_turn = output_intent.intent == "visual" and os.getenv(
+            "DISABLE_GRAPH_PRESEED", ""
+        ).lower() not in ("1", "true", "yes")
+        if visual_turn:
+            from tools.skill_tool import graph_rendering_reference
+
+            preseeded_graph_skills = preseed_capsule_skills(
+                session_store, self.thread_id, ("graph_planner", "graph_writer")
+            )
+            # Inject the full reviewed graph templates directly (not through the
+            # compact state capsule, which would truncate them). Tokens are
+            # near-free for latency; round-trips are the cost we removed.
+            graph_reference_block = graph_rendering_reference()
+
+        # EcoTaxa's read procedure lives in ecotaxa_navigation, whose full rules
+        # are captured by a runtime capsule. When EcoTaxa is authorized this turn,
+        # pre-activate it so the model queries the cache directly instead of
+        # spending a load_skill round-trip first (the cache query itself is ~0.1ms).
+        preseeded_source_skills: list[str] = []
+        source_reference_block = ""
+        if "ecotaxa" in source_decision.authorized_sources and os.getenv(
+            "DISABLE_SOURCE_PRESEED", ""
+        ).lower() not in ("1", "true", "yes"):
+            from tools.skill_tool import source_navigation_reference
+
+            preseeded_source_skills = preseed_capsule_skills(
+                session_store, self.thread_id, ("ecotaxa_navigation",)
+            )
+            # Inject the full reviewed ecotaxa_navigation body (not just the
+            # capsule), same rationale as the graph templates.
+            source_reference_block = source_navigation_reference(
+                ("ecotaxa_navigation",)
+            )
+
         # Rebuild the typed turn state once; the model-facing capsule (active
         # dataset, live zone subsets, authorized source scope) is its projection.
         turn_ctx = build_turn_context(
@@ -681,7 +733,28 @@ class _ContextMiddleware(AgentMiddleware):
         dataset_block = turn_ctx.capsule
         system_message = request.system_message
         base = system_message.content if system_message is not None else ""
-        injected_context = block + dataset_block
+        # Surface the last render's verified facts so the answer's `Données`
+        # line reports real counts/encodings instead of fabricating them. Kept
+        # in the system context, never in the streamed tool output.
+        graph_grounding_block = ""
+        try:
+            grounding = session_store.get(f"{self.thread_id}:last_graph_grounding")
+            facts = ((grounding or {}).get("meta") or {}).get("facts")
+            if facts:
+                graph_grounding_block = (
+                    "\n\nDERNIER GRAPHIQUE — faits vérifiés pour la ligne Données "
+                    f"(reformuler, ne pas citer ce libellé) : {facts}"
+                )
+        except Exception:
+            pass
+
+        injected_context = (
+            block
+            + dataset_block
+            + graph_reference_block
+            + source_reference_block
+            + graph_grounding_block
+        )
         base_system_tokens = (
             _approx_tokens([SystemMessage(content=base)]) if base else 0
         )
@@ -692,19 +765,11 @@ class _ContextMiddleware(AgentMiddleware):
         )
         # Apply the deterministic source and exposure policies before pricing
         # tool schemas or assigning the remaining history budget.
-        from tools.source_scope import (
-            filter_tools_for_decision,
-            source_decision_for_turn,
-        )
+        from tools.source_scope import filter_tools_for_decision
         from tools.tool_catalog import TOOL_POLICIES
         from tools.tool_exposure import decide_tool_exposure
 
         original_tools = list(request.tools)
-        source_decision = source_decision_for_turn(
-            session_store,
-            self.thread_id,
-            original_messages,
-        )
         scoped_tools = filter_tools_for_decision(
             original_tools,
             source_decision,
@@ -805,6 +870,10 @@ class _ContextMiddleware(AgentMiddleware):
             "turn_derived_subsets": len(turn_ctx.derived_zone_subsets),
             "turn_output_intent": output_intent.intent,
             "turn_output_intent_confidence": output_intent.confidence,
+            "preseeded_graph_skills": list(preseeded_graph_skills),
+            "preseeded_source_skills": list(preseeded_source_skills),
+            "graph_reference_chars": len(graph_reference_block),
+            "source_reference_chars": len(source_reference_block),
             "tools_before_policy": [
                 getattr(item, "name", "") for item in original_tools
             ],

@@ -18,7 +18,7 @@ except ImportError:
 SKILLS_DIR = Path(__file__).parent.parent / "agents" / "skills"
 
 _RUNTIME_CAPSULES = {
-    "graph_planner": """Plan before code. Stop on an empty selected table. Use only the explicit source variable and never invent an artifact URL. For a named geographic request, resolve/filter the exact zone first; maps use Cartopy `station_map` or `abundance_environment_map`, never `kind:\"map\"`/`kind:\"scatter\"`. Aggregate NeoLabs taxon rows to samples before station/sample plots. Load graph_writer before run_graph.""",
+    "graph_planner": """Plan before code. Stop on an empty selected table. Use only the explicit source variable and never invent an artifact URL. For a named geographic request, resolve/filter the exact zone first; maps use Cartopy `station_map` or `abundance_environment_map`, never `kind:\"map\"`/`kind:\"scatter\"`. Aggregate NeoLabs taxon rows to samples before station/sample plots. graph_writer is already active — go straight to run_graph, never call load_skill.""",
     "graph_writer": """Stop on empty data; use only the named active table and validate plot_df after filtering. Use Agg matplotlib, readable labelled axes/units, legend or labelled colourbar, and never invent an artifact URL. Define graph_contract and neutral graph_explanation. Keep identifiers as strings. Never produce a graph where exploratory and confirmed values are visually indistinguishable. Maps use Cartopy GeoAxes, longitude/latitude position mapping, coastlines, aggregation of coincident points, and the exact zone polygon from `zone_polygons` via Cartopy ShapelyFeature; never draw a bbox rectangle. Vertical profiles invert only depth. Return only the image emitted by run_graph.""",
     "ecotaxa_navigation": """EcoTaxa is authorized: use the local SQLite cache at sample level unless objects are explicitly requested. Inspect available cache schema before relying on a column; issue one read-only SELECT statement without a semicolon. Reuse the active selection/table for follow-ups. Never infer missing identifiers or use an external source unless explicitly requested. For maps, use the exact persisted query result and the active graph rules.""",
 }
@@ -99,6 +99,82 @@ def _record_loaded_skill(
     return already_active
 
 
+def preseed_capsule_skills(
+    store: SessionStore,
+    thread_id: str | None,
+    skill_names: tuple[str, ...],
+) -> list[str]:
+    """Activate a skill's runtime capsule without a model round-trip.
+
+    Only skills whose full guidance is already captured by a static runtime
+    capsule (``_RUNTIME_CAPSULES``) are eligible: for those, ``load_skill``
+    returns nothing more than the capsule, so seeding it directly gives the
+    model the same rules while removing the ``load_skill`` call. Idempotent;
+    reuses the exact seam ``load_skill`` and ``run_graph`` already use.
+    """
+    if not thread_id:
+        return []
+    documents = _discover_skill_documents()
+    seeded: list[str] = []
+    for name in skill_names:
+        if name not in _RUNTIME_CAPSULES or name not in documents:
+            continue
+        already_active = _record_loaded_skill(store, thread_id, name, documents[name])
+        if not already_active:
+            seeded.append(name)
+    return seeded
+
+
+_GRAPH_REFERENCE_SKILLS = ("graph_planner", "graph_writer")
+_reference_cache: dict[str, str] = {}
+
+
+def _full_skill_reference(skill_names: tuple[str, ...], header: str) -> str:
+    """Concatenate the full reviewed bodies of the given skills, under a header.
+
+    ``load_skill`` only ever returned the ~600-char runtime capsule for these
+    skills (see ``_RUNTIME_CAPSULES``), so their reviewed procedures/templates
+    never reached the model — it re-derived from memory instead. Latency is
+    driven by model round-trips, not prompt tokens (measured: flat ~1.2s floor
+    over 11K–32K tokens), so injecting the authoritative bodies when the skill
+    is already active raises precision at negligible latency cost. Cached: the
+    skill files are static.
+    """
+    cache_key = "|".join(skill_names)
+    cached = _reference_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    documents = _discover_skill_documents()
+    parts = [
+        f"### {name}\n{documents[name].content}"
+        for name in skill_names
+        if name in documents
+    ]
+    reference = f"\n\n{header}\n\n" + "\n\n".join(parts) if parts else ""
+    _reference_cache[cache_key] = reference
+    return reference
+
+
+def graph_rendering_reference() -> str:
+    """Full reviewed graph_planner + graph_writer bodies for direct in-context use."""
+    return _full_skill_reference(
+        _GRAPH_REFERENCE_SKILLS,
+        "## GRAPH RENDERING REFERENCE (authoritative reviewed templates; "
+        "graph_planner and graph_writer are already active — build run_graph "
+        "code directly from these templates, never call load_skill for them)",
+    )
+
+
+def source_navigation_reference(skill_names: tuple[str, ...]) -> str:
+    """Full reviewed body of an already-active source-procedure skill (e.g. EcoTaxa)."""
+    return _full_skill_reference(
+        skill_names,
+        "## SOURCE NAVIGATION REFERENCE (authoritative reviewed procedure; this "
+        "source skill is already active — query directly from these rules, never "
+        "call load_skill for it)",
+    )
+
+
 def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = None):
     _store = store or default_store
     skills = _discover_skill_documents()
@@ -110,7 +186,10 @@ def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = N
         "Load one manifest-validated specialized skill only when its semantic "
         "activation intent matches. Available skills and primary triggers: "
         f"{activation_catalog}. "
-        f"For visualization tasks, call graph_planner first, then graph_writer."
+        "For visualization tasks graph_planner and graph_writer are pre-activated "
+        "automatically: reuse the ACTIVE SKILL RULES capsule and call run_graph "
+        "directly. Do not spend a load_skill call on them when those rules are "
+        "already present."
     )
 
     @tool(description=description, response_format="content_and_artifact")

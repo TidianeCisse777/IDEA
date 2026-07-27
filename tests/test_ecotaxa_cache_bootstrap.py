@@ -265,3 +265,30 @@ def test_cache_mode_rejects_unknown_values(monkeypatch):
 
     with pytest.raises(RuntimeError, match="publisher or consumer"):
         server._cache_mode()
+
+
+def test_successful_publisher_sync_publishes_shared_cache(monkeypatch, tmp_path):
+    import core.mcp.ecotaxa_server as server
+
+    cache_path = tmp_path / "ecotaxa_cache.sqlite"
+    monkeypatch.setenv("ECOTAXA_CACHE_AUTO_PUBLISH", "true")
+    monkeypatch.setenv("ECOTAXA_CACHE_RELEASE_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("ECOTAXA_CACHE_RELEASE_TAG", "ecotaxa-cache-current")
+    monkeypatch.setenv("GITHUB_TOKEN", "test-github-token")
+    monkeypatch.setattr(server, "EcotaxaClient", DeterministicSyncClient)
+    monkeypatch.setattr(server, "run_full_sync", lambda *args, **kwargs: {"status": "ok"})
+    published = {}
+
+    def fake_publish(cache, repository, tag, token):
+        published.update(cache=cache, repository=repository, tag=tag, token=token)
+
+    monkeypatch.setattr(server, "publish_github_release_cache", fake_publish)
+
+    server._run_full_sync_with_real_client(str(cache_path))
+
+    assert published == {
+        "cache": cache_path,
+        "repository": "owner/repo",
+        "tag": "ecotaxa-cache-current",
+        "token": "test-github-token",
+    }
