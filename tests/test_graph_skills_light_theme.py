@@ -17,4 +17,11 @@ def test_graph_skills_require_a_single_light_theme_without_dark_templates():
     assert "color='white'" not in writer
     assert 'colors="white"' not in writer
     assert "colors='white'" not in writer
+    assert "Confidence:" not in writer
+    assert "confidence_label" not in writer
+    assert "## Uncertainty rendering" not in writer
+    assert "### Zoom to data" in writer
+    assert "def padded_extent" in writer
+    assert "Confidence:" not in planner
+    assert "Uncertainty assessment" not in planner
     assert "light background" in planner.lower()

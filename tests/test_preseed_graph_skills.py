@@ -95,7 +95,7 @@ def test_graph_reference_delivers_full_reviewed_templates():
         "Cartopy",
         "zone_polygons",
         "graph_contract",
-        "Confidence palette",
+        "Zoom to data",
     ):
         assert marker in reference, marker
 

@@ -76,7 +76,7 @@ plt.tight_layout()
 - For horizontal bar charts when there are many categories (> 10): use `ax.barh()`
 - Never call `plt.savefig()` — the system captures the figure automatically
 - Never invent or rewrite the image URL in the final answer. Return the exact image markdown emitted by `run_graph`; do not replace it with `/graphs/graph.png`.
-- After the figure code, set a string variable named `graph_explanation` to a neutral description limited to: axes, source, and confidence level. No reading of the chart, no observations, no priorities, no "Lecture rapide", no interpretation cues. The assistant ignores this field when replying to the user — it is kept only as metadata for the tool layer.
+- After the figure code, set a string variable named `graph_explanation` to a neutral description limited to axes and source. No reading of the chart, observations, priorities, or interpretation cues. The assistant ignores this field when replying to the user — it is kept only as metadata for the tool layer.
 - For multi-source graphs, never plot directly from bare `df`. `df` is only the latest active table. First build `plot_df` explicitly from named source DataFrames such as `df_ecotaxa_ecopart`, `df_ecotaxa_ecopart_105`, `df_ctd`, `df_bio_oracle`, `df_ogsl`, or `df_sql`.
 - Treat station, sample, cast, profile, analysis, taxon, and project identifiers as labels, not numbers. Never cast identifiers such as `STATION_NAME`, `SAMPLE_ID`, `ANALYSIS_ID`, `CAST_NUMBER`, or `profile_id` with `int()` / `float()` just to filter. Normalize both sides of identifier comparisons with `.astype(str).str.strip()`.
 - After every filtering step that creates `plot_df`, validate that rows remain before plotting:
@@ -373,12 +373,6 @@ ax.legend(handles=handles, title="iho_zone", loc="lower left",
           fontsize=7, title_fontsize=8, frameon=True, framealpha=0.85)
 
 ax.set_title("Samples EcoTaxa — découpage par zone IHO/MEOW", fontsize=14, color="#0f172a")
-ax.text(0.99, 0.01, f"{len(plot_df)} samples | Confidence: high",
-        transform=ax.transAxes, ha="right", va="bottom", fontsize=8,
-        color="#444444",
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="#ffffff",
-                  edgecolor="#cccccc", alpha=0.8))
-
 graph_contract = {
     "kind": "station_map",
     "axes": [{"axis_index": 0, "x": "longitude", "y": "latitude"}],
@@ -523,12 +517,13 @@ proj = ccrs.LambertConformal(central_longitude=-55, central_latitude=54)
 
 fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={{"projection": proj}})
 
-margin = 2
+lon_pad = max((map_df['longitude'].max() - map_df['longitude'].min()) * 0.12, 0.25)
+lat_pad = max((map_df['latitude'].max() - map_df['latitude'].min()) * 0.12, 0.25)
 ax.set_extent([
-    map_df['longitude'].min() - margin,
-    map_df['longitude'].max() + margin,
-    map_df['latitude'].min()  - margin,
-    map_df['latitude'].max()  + margin,
+    map_df['longitude'].min() - lon_pad,
+    map_df['longitude'].max() + lon_pad,
+    map_df['latitude'].min()  - lat_pad,
+    map_df['latitude'].max()  + lat_pad,
 ], crs=ccrs.PlateCarree())
 
 ax.add_feature(cfeature.LAND,      facecolor='#efe7d2', zorder=1)
@@ -576,10 +571,11 @@ central_lon = float(map_df['longitude'].mean())
 proj = ccrs.LambertConformal(central_longitude=central_lon, central_latitude=float(map_df['latitude'].mean()))
 fig, ax = plt.subplots(figsize=(12, 8), subplot_kw={{"projection": proj}})
 
-margin = 3
+lon_pad = max((map_df['longitude'].max() - map_df['longitude'].min()) * 0.12, 0.25)
+lat_pad = max((map_df['latitude'].max() - map_df['latitude'].min()) * 0.12, 0.25)
 ax.set_extent([
-    map_df['longitude'].min() - margin, map_df['longitude'].max() + margin,
-    map_df['latitude'].min() - margin,  map_df['latitude'].max() + margin,
+    map_df['longitude'].min() - lon_pad, map_df['longitude'].max() + lon_pad,
+    map_df['latitude'].min() - lat_pad,  map_df['latitude'].max() + lat_pad,
 ], crs=ccrs.PlateCarree())
 
 ax.add_feature(cfeature.LAND,      facecolor='#efe7d2', zorder=1)
@@ -629,13 +625,14 @@ fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={"projection": proj})
 fig.patch.set_facecolor('#ffffff')
 ax.set_facecolor('#f8fafc')
 
-# --- extent: auto-fit with margin ---
-margin = 3  # degrees
+# --- extent: zoom to the data with a proportional margin ---
+lon_pad = max((map_df['longitude'].max() - map_df['longitude'].min()) * 0.12, 0.25)
+lat_pad = max((map_df['latitude'].max() - map_df['latitude'].min()) * 0.12, 0.25)
 ax.set_extent([
-    map_df['longitude'].min() - margin,
-    map_df['longitude'].max() + margin,
-    map_df['latitude'].min()  - margin,
-    map_df['latitude'].max()  + margin,
+    map_df['longitude'].min() - lon_pad,
+    map_df['longitude'].max() + lon_pad,
+    map_df['latitude'].min()  - lat_pad,
+    map_df['latitude'].max()  + lat_pad,
 ], crs=ccrs.PlateCarree())
 
 # --- background ---
@@ -752,7 +749,7 @@ ax.set_xlabel("<measurement label>")
 ax.set_ylabel("Depth (m)")
 plt.tight_layout()
 
-graph_explanation = "Profil vertical. Axes : mesure x profondeur (m). Source : fichier charge. Confidence: <confidence>."
+graph_explanation = "Profil vertical. Axes : mesure x profondeur (m). Source : fichier charge."
 ```
 
 ### Vertical profile with multiple samples or profiles
@@ -853,7 +850,7 @@ ax.tick_params(axis="y", colors="#334155")
 ax.legend(title="Taxon", bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
 plt.tight_layout()
 
-graph_explanation = "Composition taxonomique empilee. Axes : groupe x abondance relative. Source : fichier charge. Confidence: <confidence>."
+graph_explanation = "Composition taxonomique empilee. Axes : groupe x abondance relative. Source : fichier charge."
 ```
 
 ### Taxonomic composition heatmap template
@@ -916,7 +913,7 @@ ax.set_xlabel("<group label>")
 ax.set_ylabel("Taxon")
 plt.tight_layout()
 
-graph_explanation = "Heatmap de composition taxonomique. Axes : groupe x taxon. Couleur : log1p abondance. Source : fichier charge. Confidence: <confidence>."
+graph_explanation = "Heatmap de composition taxonomique. Axes : groupe x taxon. Couleur : log1p abondance. Source : fichier charge."
 ```
 
 ### Rank-abundance template
@@ -961,66 +958,26 @@ ax.set_ylabel("Relative abundance")
 ax.grid(True, alpha=0.25)
 plt.tight_layout()
 
-graph_explanation = "Courbe rank-abundance. Axes : rang taxonomique x abondance relative. Source : fichier charge. Confidence: <confidence>."
+graph_explanation = "Courbe rank-abundance. Axes : rang taxonomique x abondance relative. Source : fichier charge."
 ```
 
 ---
 
-## Uncertainty rendering (CT-AG-27)
+### Zoom to data
 
-Every graph must reflect the confidence level from the plan. Confirmed and exploratory data must never look identical.
-
-### Confidence palette
-
-| Status | Color | Marker / fill |
-|---|---|---|
-| confirmed | full saturation (`#1f77b4`, `#2ca02c`, `viridis` cmap) | solid fill, `alpha=0.9` |
-| exploratory | desaturated (`#7f9ec0`, `#92c190`, `cividis` cmap) | hatched fill (`hatch='//'`), `alpha=0.6` |
-| uncertain identification | gray (`#9e9e9e`) | open marker (`facecolor='none'`, `edgecolor='gray'`), `alpha=0.6` |
-
-### Mandatory annotations
-
-After defining title/xlabel/ylabel, **always** add a confidence stamp in the bottom-right corner of the axes:
+For a regional or station map, zoom to the populated extent instead of leaving a
+world-scale or arbitrarily wide view. Use a proportional margin with a small
+minimum so a single station remains visible. Do not use this helper for a map
+that explicitly requests a global view or the full geometry of a named zone.
 
 ```python
-confidence_label = f"Confidence: {confidence} ({n_confirmed} confirmed, {n_exploratory} exploratory, {n_uncertain} uncertain)"
-ax.text(
-    0.99, 0.01, confidence_label,
-    transform=ax.transAxes,
-    ha='right', va='bottom',
-    fontsize=8, color='#444444',
-    bbox=dict(boxstyle='round,pad=0.3', facecolor='#ffffff', edgecolor='#cbd5e1', alpha=0.8),
-)
+def padded_extent(map_df, lon_col="longitude", lat_col="latitude", pad=0.12, minimum=0.25):
+    west, east = map_df[lon_col].min(), map_df[lon_col].max()
+    south, north = map_df[lat_col].min(), map_df[lat_col].max()
+    lon_pad = max((east - west) * pad, minimum)
+    lat_pad = max((north - south) * pad, minimum)
+    return west - lon_pad, east + lon_pad, south - lat_pad, north + lat_pad
+
+west, east, south, north = padded_extent(map_df)
+ax.set_extent([west, east, south, north], crs=ccrs.PlateCarree())
 ```
-
-When confidence is `low`, add a second annotation in the top-left:
-
-```python
-ax.text(
-    0.01, 0.99, "⚠ Low confidence — exploratory result",
-    transform=ax.transAxes,
-    ha='left', va='top',
-    fontsize=9, color='#b30000', weight='bold',
-)
-```
-
-### Visual encoding rules
-
-- For bar charts mixing confirmed and exploratory categories: split into two series (full vs hatched) on the same axes.
-- For scatter/map: pass `c=color_array` where each row's color comes from the palette above based on its status.
-- For line charts of derived variables: solid line for confirmed segments, dashed line (`linestyle='--'`) for exploratory segments.
-- For histograms: stack confirmed (solid) on top of exploratory (hatched) using `ax.hist([data_confirmed, data_exploratory], stacked=True, ...)`.
-
-### graph_explanation
-
-The `graph_explanation` string must include the axes, source, and confidence level with the dominant uncertainty source. No reading of the chart, no peak/trend description, no priorities. Example:
-
-```python
-graph_explanation = (
-    "Distribution verticale de Calanus hyperboreus, EcoTaxa 1165. "
-    "Axes : abondance × profondeur (m). Source : run_pandas sur df_ecotaxa_1165. "
-    "Confidence: medium — 12 rows out of 84 lack sampled volume (exploratory)."
-)
-```
-
-Never produce a graph where exploratory and confirmed values are visually indistinguishable.
