@@ -79,6 +79,8 @@ before starting the agent.
 | `ECOTAXA_CACHE_RELEASE_REPOSITORY` | consumer | — | GitHub repository holding the shared cache release |
 | `ECOTAXA_CACHE_RELEASE_TAG` | consumer | — | Release tag containing `manifest.json` and `ecotaxa_cache.sqlite.gz` |
 | `ECOTAXA_CACHE_RELEASE_TOKEN` | no | — | Read-only GitHub token for a private release; never an EcoTaxa credential |
+| `ECOTAXA_CACHE_AUTO_PUBLISH` | no | `true` | Publisher republishes the cache only after a sync ending `ok` |
+| `GITHUB_TOKEN` | publisher | — | Fine-grained GitHub write token used solely to update release assets |
 
 ---
 

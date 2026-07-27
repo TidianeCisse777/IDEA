@@ -57,6 +57,16 @@ def test_start_script_generates_internal_mcp_token():
     assert "MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN" in script
 
 
+def test_publisher_startup_can_supply_a_github_token_without_storing_it():
+    script = Path("start.sh").read_text(encoding="utf-8")
+    env_example = Path(".env.example").read_text(encoding="utf-8")
+
+    assert "ECOTAXA_CACHE_AUTO_PUBLISH=true" in env_example
+    assert "GITHUB_TOKEN=" in env_example
+    assert 'gh auth token' in script
+    assert "ECOTAXA_CACHE_AUTO_PUBLISH" in script
+
+
 def test_start_script_does_not_build_by_default():
     script = Path("start.sh").read_text(encoding="utf-8")
 

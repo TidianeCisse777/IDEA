@@ -65,7 +65,8 @@ ECOTAXA_CACHE_RELEASE_TOKEN=...
 The default `consumer` mode downloads the validated shared EcoTaxa cache and
 does not use EcoTaxa credentials. Only the cache maintainer switches to
 `ECOTAXA_CACHE_MODE=publisher`, supplies credentials locally, runs a complete
-sync, and publishes a new release:
+sync, then automatically republishes the release when `GITHUB_TOKEN` is
+configured. A manual publication remains available:
 
 ```bash
 python scripts/publish_ecotaxa_cache.py \

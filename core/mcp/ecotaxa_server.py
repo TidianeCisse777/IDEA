@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import secrets
 import sqlite3
@@ -33,7 +34,10 @@ from core.ecotaxa_browser.cache.repo import (
     SCHEMA_VERSION,
 )
 from core.ecotaxa_browser.cache import sql_explorer as _sql_explorer
-from core.ecotaxa_browser.cache.distribution import download_github_release_cache
+from core.ecotaxa_browser.cache.distribution import (
+    download_github_release_cache,
+    publish_github_release_cache,
+)
 from core.ecotaxa_browser.cache.sync import run_full_sync
 from core.ecotaxa_browser.objects import get_object, list_sample_objects
 from core.ecotaxa_browser.projects import get_project
@@ -63,6 +67,7 @@ _ADMIN_PREFIX = "/admin/"
 _DEFAULT_CACHE_DB = "data/ecotaxa_cache.sqlite"
 _DEFAULT_SYNC_HOUR = 3
 _DEFAULT_CACHE_MAX_AGE_HOURS = 168.0
+_LOGGER = logging.getLogger(__name__)
 
 
 def _cache_mode() -> Literal["publisher", "consumer"]:
@@ -88,6 +93,22 @@ def _bootstrap_consumer_cache() -> None:
         or None
     )
     download_github_release_cache(repository, tag, token, Path(_cache_db_path()))
+
+
+def _publish_cache_after_successful_sync(cache_db: str) -> None:
+    """Publish a new shared release after, and only after, a complete sync."""
+    if os.getenv("ECOTAXA_CACHE_AUTO_PUBLISH", "true").lower() == "false":
+        return
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        _LOGGER.warning("EcoTaxa cache sync succeeded but GITHUB_TOKEN is absent; release unchanged")
+        return
+    repository = os.getenv("ECOTAXA_CACHE_RELEASE_REPOSITORY", "TidianeCisse777/IDEA")
+    tag = os.getenv("ECOTAXA_CACHE_RELEASE_TAG", "ecotaxa-cache-current")
+    try:
+        publish_github_release_cache(Path(cache_db), repository, tag, token)
+    except Exception:  # noqa: BLE001 - local cache stays healthy if publication fails
+        _LOGGER.exception("EcoTaxa cache sync succeeded but release publication failed")
 
 
 def build_nightly_scheduler(
@@ -179,6 +200,7 @@ def _run_full_sync_with_real_client(cache_db: str, *, force: bool = False) -> No
         # Only a complete refresh proves every row has the current metadata.
         if result.get("status") == "ok":
             set_schema_version(conn, SCHEMA_VERSION)
+            _publish_cache_after_successful_sync(cache_db)
     finally:
         conn.close()
 

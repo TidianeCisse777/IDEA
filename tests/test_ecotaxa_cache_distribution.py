@@ -161,3 +161,41 @@ def test_download_github_release_cache_uses_manifest_and_archive_assets(tmp_path
         "https://release.test/manifest",
         "https://release.test/archive",
     ]
+
+
+def test_publish_github_release_uploads_archive_before_manifest(tmp_path):
+    from core.ecotaxa_browser.cache.distribution import publish_github_release_cache
+
+    source = seeded_current_cache(tmp_path / "source.sqlite")
+    release_url = "https://api.github.com/repos/owner/repo/releases/tags/ecotaxa-cache-current"
+    upload_url = "https://uploads.github.com/repos/owner/repo/releases/17/assets"
+    requests = []
+
+    def opener(request):
+        requests.append((request.get_method(), request.full_url, request.data))
+        if request.full_url == release_url:
+            return io.BytesIO(
+                json.dumps(
+                    {
+                        "upload_url": upload_url + "{?name,label}",
+                        "assets": [
+                            {"name": "manifest.json", "url": "https://api.test/assets/1"},
+                            {"name": "ecotaxa_cache.sqlite.gz", "url": "https://api.test/assets/2"},
+                        ],
+                    }
+                ).encode()
+            )
+        return io.BytesIO(b"{}")
+
+    publish_github_release_cache(
+        source, "owner/repo", "ecotaxa-cache-current", "test-token", opener=opener
+    )
+
+    methods_and_urls = [(method, url) for method, url, _ in requests]
+    assert methods_and_urls == [
+        ("GET", release_url),
+        ("DELETE", "https://api.test/assets/2"),
+        ("POST", upload_url + "?name=ecotaxa_cache.sqlite.gz"),
+        ("DELETE", "https://api.test/assets/1"),
+        ("POST", upload_url + "?name=manifest.json"),
+    ]
