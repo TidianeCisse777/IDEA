@@ -225,3 +225,43 @@ def test_partial_bootstrap_keeps_schema_stale(monkeypatch, tmp_path):
         assert get_schema_version(conn) == 2
     finally:
         conn.close()
+
+
+def test_consumer_bootstrap_downloads_shared_release_without_ecotaxa_client(
+    monkeypatch, tmp_path
+):
+    import core.mcp.ecotaxa_server as server
+
+    cache_path = tmp_path / "ecotaxa_cache.sqlite"
+    monkeypatch.setenv("ECOTAXA_CACHE_MODE", "consumer")
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_path))
+    monkeypatch.setenv("ECOTAXA_CACHE_RELEASE_REPOSITORY", "owner/repo")
+    monkeypatch.setenv("ECOTAXA_CACHE_RELEASE_TAG", "ecotaxa-cache-current")
+    monkeypatch.delenv("ECOTAXA_USERNAME", raising=False)
+    monkeypatch.delenv("ECOTAXA_PASSWORD", raising=False)
+    received = {}
+
+    def fake_download(repository, tag, token, destination):
+        received.update(
+            repository=repository, tag=tag, token=token, destination=destination
+        )
+
+    monkeypatch.setattr(server, "download_github_release_cache", fake_download)
+
+    server._bootstrap_consumer_cache()
+
+    assert received == {
+        "repository": "owner/repo",
+        "tag": "ecotaxa-cache-current",
+        "token": None,
+        "destination": cache_path,
+    }
+
+
+def test_cache_mode_rejects_unknown_values(monkeypatch):
+    import core.mcp.ecotaxa_server as server
+
+    monkeypatch.setenv("ECOTAXA_CACHE_MODE", "shared")
+
+    with pytest.raises(RuntimeError, match="publisher or consumer"):
+        server._cache_mode()
