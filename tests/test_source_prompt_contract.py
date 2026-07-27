@@ -68,6 +68,14 @@ def test_ecotaxa_cache_prompt_does_not_impose_an_implicit_limit():
     assert "GROUP BY" in navigation
 
 
+def test_ecotaxa_cache_prompt_requires_schema_and_result_validation():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "inspect the cache schema before writing SQL" in COPEPOD_SYSTEM_PROMPT
+    assert "validate the returned columns, row count, and error/truncation status" in COPEPOD_SYSTEM_PROMPT
+    assert "Never infer a value, column, or conclusion that is absent from that result" in COPEPOD_SYSTEM_PROMPT
+
+
 def test_aggregate_object_request_prefers_cache_sql_over_object_tools():
     from pathlib import Path
 
