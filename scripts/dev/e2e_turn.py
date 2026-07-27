@@ -20,8 +20,28 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
+# Permit direct ``python scripts/dev/e2e_turn.py ...`` execution from any
+# working directory without requiring callers to set PYTHONPATH manually.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+# ------------------------------------------------------------------
+# Provider override : passer --openai en argument force OpenAI direct
+# (utile quand le quota OpenRouter est épuisé), sans toucher au .env.
+# ------------------------------------------------------------------
+_USE_OPENAI_DIRECT = "--openai" in sys.argv
+if _USE_OPENAI_DIRECT:
+    sys.argv.remove("--openai")
+
 import agent as agent_module
 from agent import make_agent, repair_invalid_tool_history
+
+# Appliqué après load_dotenv() (appelé dans agent.py à l'import).
+if _USE_OPENAI_DIRECT:
+    os.environ.pop("OPENAI_BASE_URL", None)
+    os.environ.pop("OPENROUTER_API_KEY", None)
+    os.environ["LLM_MODEL"] = "gpt-4o-mini"
 
 
 _START = time.monotonic()

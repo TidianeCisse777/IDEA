@@ -272,6 +272,9 @@ def test_capsule_surfaces_loaded_file_when_active_is_derived_subset(tmp_path):
     assert "variable=df_in_baie_de_baffin_neolabs" in capsule  # actif = dérivé
     assert "loaded_file=df_file_neolabs_taxonomy" in capsule    # ancre canonique
     assert "derived subset" in capsule
+    # Le message doit distinguer les deux cas explicitement
+    assert "analyse" in capsule.lower() or "analys" in capsule.lower()
+    assert "directly" in capsule.lower() or "directement" in capsule.lower()
     assert len(capsule) <= 2000
 
 

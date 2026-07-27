@@ -106,7 +106,7 @@ Recommended `sample_df` contents:
 
 **Step 1b — Column disambiguation**: before proceeding, check whether the user's request (e.g. "abondance", "température", "profondeur") maps to more than one column in `all_columns`. If multiple candidates exist, list them explicitly and ask the user which one to use. Never select a column silently when ambiguity exists.
 
-**Step 1c — Schema verification**: call `run_pandas` on the active variable to inspect actual values before planning: check column dtypes, count NaN per candidate axis column, and sample unique values for categorical columns (use `.nunique()` to assess cardinality). If a column has > 80 % NaN or an unexpected dtype for the intended role, surface the issue and ask the user how to proceed rather than planning a graph on unusable data.
+**Step 1c — Candidate inspection**: **Direct EcoTaxa cache map first:** if the successful exact cache query uses only `sample_id`, `iho_zone`, `lat_avg`, and `lon_avg`, it is the inspection — load `graph_writer` directly and never call `run_pandas` merely to recheck those fields. **Otherwise**, before loading `graph_writer`, call `run_pandas` on the active table. Inspect each candidate's dtype, NaN/non-null counts, numeric range or categorical `.nunique()` plus sample, and rows complete across all required columns. Plan and render only compatible columns with at least one complete row. If a column is >80 % NaN, has the wrong dtype, or leaves no complete row, state the issue and ask; never silently replace a column.
 
 2. Check the geographic dimension (step 0)
 3. Check whether NeoLabs taxon-level data requires a rebuilt `sample_df` (step 0b)
@@ -127,10 +127,12 @@ Recommended `sample_df` contents:
    - **taxonomic composition**: stacked bar chart of relative or absolute abundance by taxon across station, month, depth bin, sample, or zone.
    - **composition heatmap**: heatmap of log1p or relative abundance for dominant taxa across station, month, depth bin, sample, or zone.
    - **rank-abundance**: taxa ordered by decreasing total or relative abundance.
-6. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
+6. **Variable naming for graph data**: when `run_pandas` prepares a DataFrame for `run_graph`, always assign it to a variable named exactly `plot_df` (e.g. `plot_df = df.groupby(...).sum(); result = plot_df`). `plot_df` is automatically persisted and available in `run_graph`'s namespace — any other name is ephemeral and invisible to `run_graph`.
+
+7. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
    - For station/sample/profile/cast/taxon filters, preserve identifiers as labels and normalize comparisons as text. Example: use `df["STATION_NAME"].astype(str).str.strip() == str(station).strip()`, never `int(station)` for filtering.
-7. Flag any missing values that could affect the output
-8. **Uncertainty assessment (CT-AG-27)** — for each row going into the graph, classify it as:
+8. Flag any missing values that could affect the output
+9. **Uncertainty assessment (CT-AG-27)** — for each row going into the graph, classify it as:
    - **confirmed**: validated source (EcoTaxa statut V), required columns complete, no missing volume/calibration
    - **exploratory**: at least one of — taxon not validated (statut != V), partial column (NaN in a non-critical field), join with tolerance, derived variable without canonical method
    - **uncertain identification**: morphologically ambiguous taxon (e.g. *C. glacialis* vs *C. finmarchicus* in overlap zones), historical pre-molecular identification

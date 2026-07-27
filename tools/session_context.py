@@ -343,10 +343,10 @@ def build_dataset_state_capsule(
         if loaded_variable and loaded_variable != variable:
             anchor_note = (
                 f"\nCANONICAL SOURCE: loaded_file={loaded_variable}. The active "
-                f"dataset above is a derived subset. For a new zone/geographic "
-                f"filter, start from {loaded_variable} (or call "
-                f"filter_dataframe_by_zone without source_variable), never from "
-                f"a subset of another zone."
+                f"dataset above is a derived subset. "
+                f"To analyse, graph, or enrich the current subset, use {variable} directly — never re-filter from {loaded_variable}. "
+                f"Only for a NEW zone/geographic filter, start from {loaded_variable} "
+                f"(or call filter_dataframe_by_zone without source_variable)."
             )
 
     derived_block = ""

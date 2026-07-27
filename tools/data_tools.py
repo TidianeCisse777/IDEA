@@ -404,6 +404,11 @@ def _dataframe_vars(
         named = store.get(key)
         if project_id.isdigit() and named and named.get("df") is not None:
             local_vars.setdefault(f"df_ecopart_{project_id}", named["df"])
+
+    last_plot = store.get(f"{thread_id}:last_plot_df")
+    if last_plot and last_plot.get("df") is not None:
+        local_vars.setdefault("plot_df", last_plot["df"])
+
     return local_vars
 
 
@@ -1092,6 +1097,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 _store, thread_id, new_vars, result
             )
 
+            # Persist plot_df so run_graph can access it without recomputing.
+            plot_df_val = new_vars.get("plot_df")
+            if isinstance(plot_df_val, pd.DataFrame):
+                _store.set(f"{thread_id}:last_plot_df", plot_df_val, {"source": "analysis:plot_df"})
+
             # A join workflow may keep the joined DataFrame in a named
             # intermediate (`joined`, `merged`, or `result_df`) while assigning
             # a compact summary dict to `result`. Persist that named table too;
@@ -1182,6 +1192,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         "Code exécuté." + canonical_note + printed_note,
                         data_ref="df_canonical_sample_depth",
                         persisted=True,
+                        method="controlled pandas execution",
+                    )
+                if not printed_output:
+                    return blocked(
+                        "Calcul non vérifiable : aucune variable `result` n'a été "
+                        "assignée, donc aucune valeur exploitable n'a été retournée. "
+                        "Inspecte d'abord les colonnes nécessaires, puis assigne le "
+                        "calcul vérifié à `result`; ne donne aucune valeur à l'utilisateur "
+                        "avant ce résultat.",
+                        retryable=True,
                         method="controlled pandas execution",
                     )
                 return success(
@@ -1314,6 +1334,18 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
             loaded_skills = [*loaded_skills, "graph_writer"]
 
+        _fail_key = f"{thread_id}:run_graph_fail_count"
+
+        def _record_graph_failure() -> int:
+            """Increment consecutive-failure counter; return new count."""
+            stored = _store.get(_fail_key) or {}
+            count = (stored.get("meta") or {}).get("count", 0) + 1
+            _store.set(_fail_key, None, {"count": count})
+            return count
+
+        def _clear_graph_failure() -> None:
+            _store.set(_fail_key, None, {"count": 0})
+
         try:
             import matplotlib
             matplotlib.use("Agg")
@@ -1337,7 +1369,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 for fig_num in plt.get_fignums():
                     figure = plt.figure(fig_num)
                     graph_contract = normalize_graph_contract(graph_contract, figure)
-                    if graph_contract is None:
+                    if graph_contract is None or not isinstance(graph_contract, dict):
                         graph_contract = _infer_station_map_contract(figure)
                     if graph_contract is None:
                         upgraded_figure = _upgrade_plain_lat_lon_scatter_to_station_map(
@@ -1350,9 +1382,33 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     if graph_contract is None:
                         graph_contract = _infer_generic_contract(figure)
                     contract_issue = validate_graph_contract(graph_contract, figure)
+                    # A Cartopy point map can be rendered safely even when the
+                    # model emitted an incomplete station_map bookkeeping
+                    # object. Recover the canonical contract from the real
+                    # GeoAxes and point collection instead of spending retries
+                    # on metadata-shape errors.
+                    if (
+                        contract_issue
+                        and isinstance(graph_contract, dict)
+                        and graph_contract.get("kind") == "station_map"
+                    ):
+                        inferred_contract = _infer_station_map_contract(figure)
+                        if inferred_contract is not None:
+                            graph_contract = inferred_contract
+                            contract_issue = validate_graph_contract(
+                                graph_contract, figure
+                            )
                     if contract_issue:
                         plt.close("all")
                         _mark_graph_quality_blocked(_store, thread_id)
+                        fail_count = _record_graph_failure()
+                        if fail_count >= 2:
+                            return error(
+                                f"{contract_issue} Stop retrying. Report what data was available, "
+                                "what you attempted to plot, and why the graph could not be produced.",
+                                retryable=False,
+                                method="graph contract validation",
+                            )
                         return blocked(
                             f"{contract_issue} Retry exactly once: revise the graph code using this diagnostic, "
                             "reuse the same active dataframe, and call run_graph again. Do not answer with a table.",
@@ -1363,6 +1419,14 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 if quality_issue:
                     plt.close("all")
                     _mark_graph_quality_blocked(_store, thread_id)
+                    fail_count = _record_graph_failure()
+                    if fail_count >= 2:
+                        return error(
+                            f"{quality_issue} Stop retrying. Report what data was available, "
+                            "what you attempted to plot, and why the graph could not be produced.",
+                            retryable=False,
+                            method="graph quality validation",
+                        )
                     return blocked(
                             f"{quality_issue} Retry exactly once: revise the graph code using this diagnostic, "
                             "reuse the same active dataframe, and call run_graph again. Do not answer with a table.",
@@ -1376,6 +1440,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 graph_id = uuid.uuid4().hex[:12]
                 (_GRAPHS_DIR / f"{graph_id}.png").write_bytes(buf.read())
                 _clear_graph_quality_block(_store, thread_id)
+                _clear_graph_failure()
                 image_markdown = f"![graph]({graph_url(f'{graph_id}.png')})"
                 graph_explanation = local_vars.get("graph_explanation")
                 if isinstance(graph_explanation, str) and graph_explanation.strip():
@@ -1396,6 +1461,15 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     method="controlled matplotlib execution",
                 )
 
+            fail_count = _record_graph_failure()
+            if fail_count >= 2:
+                return error(
+                    "run_graph failed twice in a row without producing a figure. "
+                    "Stop retrying. Report to the user what data was available, "
+                    "what you attempted to plot, and why the graph could not be produced.",
+                    retryable=False,
+                    method="controlled matplotlib execution",
+                )
             return empty(
                 "Code executed but no figure was produced. Make sure your matplotlib code creates a figure.",
                 retryable=True,
@@ -1436,16 +1510,23 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             # in play. For standalone figures (e.g. cartopy zone maps) there is
             # no file, and appending "(no file loaded)" wrongly suggests the
             # error is a missing file rather than a plotting bug.
+            fail_count = _record_graph_failure()
+            terminal = fail_count >= 2
+            diagnostic_suffix = (
+                "\n\nStop retrying. Report to the user what data was available, "
+                "what you attempted to plot, and why the graph could not be produced."
+                if terminal else ""
+            )
             if df is not None:
                 return error(
                     f"Error: {type(e).__name__}: {e}\n\n"
-                    f"Available columns:\n{df.dtypes.to_string()}",
-                    retryable=True,
+                    f"Available columns:\n{df.dtypes.to_string()}{diagnostic_suffix}",
+                    retryable=not terminal,
                     method="controlled matplotlib execution",
                 )
             return error(
-                f"Error: {type(e).__name__}: {e}",
-                retryable=True,
+                f"Error: {type(e).__name__}: {e}{diagnostic_suffix}",
+                retryable=not terminal,
                 method="controlled matplotlib execution",
             )
 

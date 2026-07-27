@@ -435,6 +435,15 @@ def source_rejection_for_call(
     if source is None or source in decision.authorized_sources:
         return None
     label = _SOURCE_LABELS[source]
+    # `load_skill` has a single generic schema, so source-specific skills
+    # cannot be removed independently from the tool list.  Keep this common
+    # wrong turn compact and actionable: the model sees the active file path
+    # instead of a long policy explanation that costs another completion.
+    if name == "load_skill" and decision.primary_source == "file":
+        return (
+            f"{label} non sélectionnée. Reprendre avec le fichier chargé "
+            "et ses outils d'analyse."
+        )
     active = ", ".join(
         _SOURCE_LABELS[item] for item in decision.authorized_sources
     ) or "aucune"

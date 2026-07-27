@@ -225,10 +225,22 @@ def graph_workflow_rejection(
     args: dict[str, Any],
     messages: list[Any],
 ) -> str | None:
-    """Do not enforce a planner/writer sequence across conversation turns.
+    """Reject only a planner/writer batch, while preserving cross-turn reuse."""
+    if name != "load_skill" or str(args.get("skill_name", "")) != "graph_writer":
+        return None
 
-    Output intent is still gated by the middleware. Skill availability and
-    graph-contract validation remain enforced by the skill/data tools, while
-    valid follow-up edits may reuse graph skills loaded in an earlier turn.
-    """
+    start = _latest_human_index(messages)
+    for message in messages[start + 1 :]:
+        if not isinstance(message, AIMessage):
+            continue
+        skills = {
+            str(call.get("args", {}).get("skill_name", ""))
+            for call in message.tool_calls or []
+            if str(call.get("name", "")) == "load_skill"
+        }
+        if {"graph_planner", "graph_writer"}.issubset(skills):
+            return (
+                "Graph workflow blocked: load graph_planner first and wait for its "
+                "result before loading graph_writer."
+            )
     return None

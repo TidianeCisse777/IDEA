@@ -1489,3 +1489,47 @@ def test_run_pandas_unblocks_after_new_user_turn(tmp_path):
     reset_graph_block_on_new_turn(store, tid, [HumanMessage("moyenne de X ?")])
     ok = run_pandas.invoke({"code": "result = len(df)"})
     assert ok == "3"
+
+
+def test_run_graph_can_access_plot_df_persisted_by_run_pandas(tmp_path):
+    """run_graph must see a DataFrame that run_pandas persisted as plot_df.
+
+    The root cause of the missing rank-abundance graph: the agent does
+    `plot_df = ...; result = plot_df` in run_pandas, then tries to use
+    `plot_df` in run_graph — but run_graph only sees persisted DataFrames,
+    not the ephemeral `result`. After this fix, the persisted `plot_df`
+    variable must be available in run_graph's execution namespace.
+    """
+    from tools.dataset_registry import store_dataset
+
+    store = SessionStore(tmp_path / "sessions")
+    tid = "thread-plot-df"
+
+    df = pd.DataFrame({"taxon": ["Calanus", "Oithona"], "abundance": [100.0, 50.0]})
+    store_dataset(store, tid, df, variable_name="df_file_taxa",
+                  meta={"source": "file:taxa.csv"})
+    store.update_meta(tid, {"loaded_skills": ["graph_writer"]})
+
+    tools_list = make_tools(tid, store=store)
+    run_pandas = next(t for t in tools_list if t.name == "run_pandas")
+    run_graph_tool = next(t for t in tools_list if t.name == "run_graph")
+
+    # run_pandas persists plot_df
+    run_pandas.invoke({
+        "code": (
+            "plot_df = df_file_taxa.sort_values('abundance', ascending=False)\n"
+            "result = plot_df"
+        )
+    })
+
+    # run_graph must see plot_df in its namespace without recomputing
+    graph_code = (
+        _GENERIC_GRAPH_CONTRACT_CODE
+        + "\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "assert 'plot_df' in dir() or plot_df is not None\n"
+        "fig, ax = plt.subplots()\n"
+        "ax.bar(plot_df['taxon'], plot_df['abundance'])\n"
+        "ax.set_xlabel('taxon'); ax.set_ylabel('y')\n"
+    )
+    result = run_graph_tool.invoke({"code": graph_code})
+    assert "error" not in result.lower() or "name 'plot_df'" not in result
