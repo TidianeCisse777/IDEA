@@ -74,6 +74,19 @@ case "$CACHE_MODE" in
     ;;
 esac
 
+# A local maintainer may already be authenticated with GitHub CLI. Pass that
+# token only to this Compose invocation; never persist it in .env or logs.
+if [ "$CACHE_MODE" = "publisher" ] && \
+   [ "${ECOTAXA_CACHE_AUTO_PUBLISH:-true}" != "false" ] && \
+   [ -z "${GITHUB_TOKEN:-}" ] && \
+   command -v gh >/dev/null 2>&1; then
+  GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
+  if [ -n "$GITHUB_TOKEN" ]; then
+    export GITHUB_TOKEN
+    echo "[start] Using the active GitHub CLI token for cache publication."
+  fi
+fi
+
 missing=()
 for var_name in "${REQUIRED_ENV_VARS[@]}"; do
   value="${!var_name:-}"

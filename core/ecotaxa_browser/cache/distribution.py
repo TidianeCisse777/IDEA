@@ -7,9 +7,11 @@ import hashlib
 import io
 import json
 import shutil
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import BinaryIO, Callable
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -170,6 +172,81 @@ def _request_bytes(
             return response.read()
     except Exception as exc:
         raise CacheValidationError("unable to download shared cache release") from exc
+
+
+def _github_request_bytes(
+    url: str,
+    token: str,
+    *,
+    method: str,
+    opener: Callable[[Request], BinaryIO],
+    data: bytes | None = None,
+    content_type: str | None = None,
+) -> bytes:
+    """Call the GitHub release API without logging its authorization token."""
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "idea-ecotaxa-cache",
+    }
+    if content_type:
+        headers["Content-Type"] = content_type
+    try:
+        with opener(Request(url, data=data, headers=headers, method=method)) as response:
+            return response.read()
+    except Exception as exc:
+        raise CacheValidationError("unable to publish shared cache release") from exc
+
+
+def publish_github_release_cache(
+    cache_path: Path,
+    repository: str,
+    tag: str,
+    token: str,
+    *,
+    opener: Callable[[Request], BinaryIO] = urlopen,
+) -> CacheManifest:
+    """Replace the current release assets with a newly validated cache bundle.
+
+    The archive is uploaded before the manifest. A consumer that races this
+    short replacement window rejects a mismatched pair and preserves its local
+    cache, then succeeds on its next bootstrap.
+    """
+    if not repository or "/" not in repository or not tag or not token:
+        raise CacheValidationError("release repository, tag, and token are required")
+    release_url = f"https://api.github.com/repos/{repository}/releases/tags/{tag}"
+    try:
+        release = json.loads(
+            _github_request_bytes(
+                release_url, token, method="GET", opener=opener
+            ).decode("utf-8")
+        )
+        upload_base = str(release["upload_url"]).split("{")[0]
+        assets = {str(asset["name"]): str(asset["url"]) for asset in release["assets"]}
+    except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CacheValidationError("shared cache release has invalid metadata") from exc
+
+    with tempfile.TemporaryDirectory(prefix="ecotaxa-release-") as directory:
+        manifest_path, archive_path = build_cache_bundle(cache_path, Path(directory))
+        for path, content_type in (
+            (archive_path, "application/gzip"),
+            (manifest_path, "application/json"),
+        ):
+            name = path.name
+            previous_asset = assets.get(name)
+            if previous_asset:
+                _github_request_bytes(
+                    previous_asset, token, method="DELETE", opener=opener
+                )
+            _github_request_bytes(
+                f"{upload_base}?name={quote(name)}",
+                token,
+                method="POST",
+                data=path.read_bytes(),
+                content_type=content_type,
+                opener=opener,
+            )
+        return validate_installed_cache(cache_path)
 
 
 def download_github_release_cache(
