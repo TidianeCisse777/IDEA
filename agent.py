@@ -721,6 +721,28 @@ class _ContextMiddleware(AgentMiddleware):
                 ("ecotaxa_navigation",)
             )
 
+        # Pre-activate the NeoLabs analysis skill when a NeoLabs abundance file is
+        # the active dataset. The model does not reliably load_skill it, and this
+        # file's column traps (aggregate double-counting, single-stratum
+        # "profiles") otherwise produce wrong numbers.
+        neolabs_reference_block = ""
+        if os.getenv("DISABLE_SOURCE_PRESEED", "").lower() not in (
+            "1", "true", "yes"
+        ):
+            try:
+                from tools.data_tools import _is_neolabs_columns
+
+                active = session_store.get(self.thread_id) or {}
+                active_df = active.get("df")
+                if active_df is not None and _is_neolabs_columns(active_df.columns):
+                    from tools.skill_tool import dataset_analysis_reference
+
+                    neolabs_reference_block = dataset_analysis_reference(
+                        ("neolabs_abundance_analysis",)
+                    )
+            except Exception:
+                pass
+
         # Rebuild the typed turn state once; the model-facing capsule (active
         # dataset, live zone subsets, authorized source scope) is its projection.
         turn_ctx = build_turn_context(
@@ -753,6 +775,7 @@ class _ContextMiddleware(AgentMiddleware):
             + dataset_block
             + graph_reference_block
             + source_reference_block
+            + neolabs_reference_block
             + graph_grounding_block
         )
         base_system_tokens = (
@@ -874,6 +897,7 @@ class _ContextMiddleware(AgentMiddleware):
             "preseeded_source_skills": list(preseeded_source_skills),
             "graph_reference_chars": len(graph_reference_block),
             "source_reference_chars": len(source_reference_block),
+            "neolabs_reference_chars": len(neolabs_reference_block),
             "tools_before_policy": [
                 getattr(item, "name", "") for item in original_tools
             ],
