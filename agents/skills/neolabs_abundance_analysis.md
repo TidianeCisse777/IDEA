@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "dataset:neolabs_abundance"
 next_tool: run_pandas
-max_tokens: 3400
+max_tokens: 3600
 size_exemption: The sample-level aggregation, diversity, environmental matching, and ordination rules share one required sample_df contract; the small overage avoids divergent analytical bases.
 description: Standard ecological analysis workflow for NeoLabs taxonomy abundance tables enriched with Amundsen CTD. Use when the user asks to analyse NeoLabs abundance, zooplankton abundance, copepod abundance, diversity, anomalies, seasonality, CTD relationships, PCA, PCoA, NMDS, RDA, or community-environment ordination.
 ---
@@ -319,13 +319,22 @@ Interpretation rule:
 
 ## When to ask for clarification
 
-Ask only if the file lacks an essential column and no equivalent can be inferred:
-- no sample key (`SAMPLE_ID`, `ANALYSIS_ID`)
-- no taxon column (`TAXON_ID`)
-- no abundance column
-- no date/station/lat/lon for coverage analysis
+Always ask (or, when one sensible default exists, declare the assumption up front
+before computing) when a vague request leaves a consequential choice open — per
+the system-prompt ambiguity rule. On this wide per-stage file the recurring open
+choices are:
+- **metric**: raw count (`SAMPLE_ABUND`) vs density (`ABUND ind./m3`) vs biomass.
+- **volume basis**: depth-vol vs flowmeter-vol.
+- **stage/level**: a specific stage (C1–C5, M, F, nauplii) vs a subtotal
+  (COPEPODID/NAUPLIUS) vs the row total (`ALL_STAGES`).
+- **aggregation**: taxon-level rows vs `sample_df` (per `SAMPLE_ID + ANALYSIS_ID`)
+  vs station/date; and for a graph, which chart and which axis.
 
-Otherwise inspect the file and proceed with the closest valid workflow.
+Also ask when the file lacks an essential column with no inferable equivalent
+(no `SAMPLE_ID`/`ANALYSIS_ID`, no `TAXON_ID`, no abundance column, no
+date/station/lat/lon for coverage). Otherwise inspect the file, then — if a
+material choice remains — surface it (question or up-front `Hypothèse: …`) before
+running the calculation; never pick silently and reveal it only afterward.
 
 ## Runtime routing contract
 
