@@ -294,8 +294,8 @@ Variables utiles :
 | Variable | Rôle | Défaut |
 |---|---|---|
 | `MCP_AUTH_TOKEN` | Bearer token pour `/mcp` et `/admin/*` | requis |
-| `ECOTAXA_USERNAME` | Login EcoTaxa | requis |
-| `ECOTAXA_PASSWORD` | Mot de passe EcoTaxa | requis |
+| `ECOTAXA_USERNAME` | Login EcoTaxa | mainteneur publisher seulement |
+| `ECOTAXA_PASSWORD` | Mot de passe EcoTaxa | mainteneur publisher seulement |
 | `ECOTAXA_CACHE_DB` | chemin SQLite du cache | `data/ecotaxa_cache.sqlite` |
 | `ECOTAXA_NIGHTLY_SYNC` | active le sync nocturne | `true` |
 | `ECOTAXA_SYNC_HOUR` | heure UTC du sync nocturne | `3` |
