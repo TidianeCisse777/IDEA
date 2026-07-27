@@ -94,6 +94,39 @@ def _make_client(
     return client
 
 
+def test_sample_sync_preserves_direct_free_fields_and_exact_ids():
+    """Detailed sample metadata wins over lossy ``orig_id`` heuristics."""
+    from core.ecotaxa_browser.cache.sync import _fetch_project_sample_metadata
+
+    client = MagicMock()
+    client.list_samples.return_value = [
+        {
+            "sampleid": 149000128,
+            "orig_id": "ge_2016_119",
+            "latitude": 70.0,
+            "longitude": -57.0,
+        }
+    ]
+    client.get_sample.return_value = {
+        "free_columns": {
+            "profileid": "hdr20160630002943",
+            "stationid": "g502",
+            "ctdrosettefilename": "1601119",
+        }
+    }
+
+    rows = _fetch_project_sample_metadata(client, project_id=149)
+
+    assert client.get_sample.call_args_list == [((149000128,),)]
+    assert rows[149000128]["profile_id"] == "hdr20160630002943"
+    assert rows[149000128]["station_id"] == "g502"
+    assert json.loads(rows[149000128]["free_fields_json"]) == {
+        "profileid": "hdr20160630002943",
+        "stationid": "g502",
+        "ctdrosettefilename": "1601119",
+    }
+
+
 def test_sync_one_project_aggregates_lat_lon_date_per_sample(conn):
     from core.ecotaxa_browser.cache.sync import sync_project
 

@@ -246,12 +246,14 @@ def _fetch_project_sample_metadata(
     project_id: int,
     rate_limiter: "_SharedRateLimiter | None" = None,  # unused, kept for API compat
 ) -> dict[int, dict]:
-    """Fetch sample metadata via list_samples (one bulk call per project).
+    """Fetch direct sample metadata without downloading any EcoTaxa objects.
 
-    list_samples provides lat/lon and orig_id. free_columns is always {} from
-    this endpoint, so station/profile are derived from orig_id heuristics.
-    date_min/date_max are not populated here (no object download, no per-sample
-    date API at the sample level).
+    ``list_samples`` supplies the project membership, coordinates, and original
+    ID in one request. Its ``free_columns`` is always empty, so each sample is
+    then read once through ``get_sample`` to retain its actual free-field values
+    (such as ``profileid``, ``stationid``, and ``ctdrosettefilename``). The
+    shared rate limiter keeps those detail calls within the normal sync budget.
+    Dates and object-depth envelopes are deliberately not inferred here.
     """
     if not hasattr(client, "list_samples"):
         return {}
@@ -263,7 +265,24 @@ def _fetch_project_sample_metadata(
         except (KeyError, TypeError, ValueError):
             continue
         original_id = _as_optional_str(sample.get("orig_id"))
-        free_fields: dict = {}  # list_samples always returns free_columns: {}
+        free_fields: dict = {}
+        if hasattr(client, "get_sample"):
+            try:
+                if rate_limiter is not None:
+                    rate_limiter.acquire()
+                detail = _with_retries(
+                    lambda sample_id=sample_id: client.get_sample(sample_id)
+                )
+                if isinstance(detail, dict) and isinstance(
+                    detail.get("free_columns"), dict
+                ):
+                    free_fields = detail["free_columns"]
+            except Exception as exc:  # noqa: BLE001 - direct fields are enrichment
+                _LOGGER.warning(
+                    "sample %s direct metadata fetch failed: %s",
+                    sample_id,
+                    exc,
+                )
         station_id = _first_optional_str(
             free_fields,
             ("stationid", "station_id", "station", "sample_stationid"),
