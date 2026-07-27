@@ -289,6 +289,54 @@ def _graph_quality_issue(plt: Any, graph_contract: dict | None = None) -> str | 
     return None
 
 
+_NEOLABS_ARCHITECTURE = """Modèle de données NeoLabs (deux fichiers joignables) :
+
+DEPLOYMENT (deployment_id) — un trait d'engin à une station
+  = station_name + cast_number + datetime + gear + tow_type
+  · tow_type : V-Tow (vertical) | O-Tow (oblique)
+  · gear     : Hydrobios / Bioness / 4x1m2 / 2x1m2 (multinet) | Ringnet (mono-filet)
+  │
+  ├─ NET SAMPLE (sample_id ≈ net_sampling_id) — 1 filet = 1 strate de profondeur
+  │    [min_sample_depth, max_sample_depth] ; sample_nets = position/maille du filet
+  │    → PROFIL VERTICAL : un deployment multinet (Hydrobios, Bioness, 4x1m2…)
+  │      ouvre/ferme plusieurs filets à des profondeurs successives, donc
+  │      1 deployment = 1 profil = PLUSIEURS net samples (un par strate).
+  │      Ex. deployment de 9 filets : 2-10 m, 10-20 m, 20-30 m … 115-125 m.
+  │      Un mono-filet (Ringnet) ou un V-Tow intégré = 1 seul net sample.
+  │      Pour un profil vertical : trier les net samples d'UN deployment par
+  │      profondeur ; ne jamais mélanger des deployments différents.
+  │    │
+  │    └─ ANALYSIS (analysis_id, analysis_type) — analyse taxonomique d'un sample
+  │         · tous les samples ne sont PAS analysés (0 à 2 analyses / sample)
+  │         │
+  │         └─ ABONDANCE — 1 ligne par TAXON, clé SAMPLE_ID + ANALYSIS_ID + TAXON_ID
+
+Vocabulaire :
+- V-Tow (trait vertical) : filet descendu à la profondeur max puis remonté droit
+  vers la surface — intègre la colonne d'eau ; avec un multinet à filets fermables,
+  chaque filet isole une strate discrète. Majorité des traits.
+- O-Tow (trait oblique) : filet remorqué en biais, navire en route — intègre à la
+  fois la profondeur et une distance horizontale (pas un point vertical strict).
+- Maille (`net_mesh_size`, µm) : 50 / 64 = petits copépodes & nauplii, 200 =
+  copépodes standard, 500 / 750 = plus gros zooplancton. `net_mouth_aperture` =
+  surface d'ouverture du filet (m²), sert au volume filtré.
+- `sample_nets` : le(s) filet(s) du prélèvement ; ex. `200-RED` = filet maille
+  200 µm (repère couleur), `1`…`9` = position dans le multinet, `1+2+3` = filets
+  combinés (poolés) en un seul net sample.
+- Engins (`gear`) : Hydrobios (jusqu'à 9 filets fermables), Bioness, 4x1m2 / 2x1m2
+  (± LOKI) = multinets (plusieurs strates) ; Ringnet 1 m / 50 cm = mono-filet.
+
+Deux fichiers, deux grains :
+- neolabs_sample.csv  (colonnes minuscules) : 1 ligne / net sample ; deployment,
+  station, cast, gear, tow, filet, profondeurs, LATITUDE/LONGITUDE, volumes filtrés.
+- neolabs_abundance.csv (colonnes MAJUSCULES) : 1 ligne / taxon×analyse ; abondance
+  et biomasse par stade. `ALL_STAGES` = total de la ligne — NE PAS le sommer avec ses
+  composants (C1-C5 / M / F / COP_NS / COPEPODID) ; `X_SAMPLE_ABUND` = comptage brut,
+  `X_ABUND (ind./m3 …)` = densité (métrique comparable, défaut depth vol).
+- Jointure : `SAMPLE_ID = sample_id` (+ `ANALYSIS_ID`). lat/lon UNIQUEMENT côté sample
+  → toute carte ou analyse spatiale NeoLabs exige cette jointure d'abord."""
+
+
 def _uvp_skill_hint(col_names: list[str]) -> str:
     """Retourne un hint load_skill si le fichier est un export UVP EcoTaxa ou EcoPart.
 
@@ -339,29 +387,18 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
         )
     if is_neolabs:
         return (
-            "→ Fichier NeoLabs abondance (taxonomie, 1 ligne par taxon×analyse). "
-            "Modèle NeoLabs : deployment (cast à une station) → net samples "
-            "(1 filet = 1 strate de profondeur ; un multinet Hydrobios/Bioness/4x1m2 "
-            "empile plusieurs filets = un profil vertical) → analyse taxonomique → "
-            "lignes par taxon. Abondance par STADE : `ALL_STAGES` = total de la ligne "
-            "(ne PAS le sommer avec C1-C5/M/F/COP_NS/COPEPODID, qui en sont les "
-            "composants) ; `X_SAMPLE_ABUND` = comptage brut, `X_ABUND (ind./m3 …)` = "
-            "densité (métrique comparable, défaut depth vol). latitude/longitude ne "
-            "sont PAS dans ce fichier : joindre `neolabs_sample.csv` par "
-            "`SAMPLE_ID = sample_id` (+ `ANALYSIS_ID`) pour toute carte ou analyse "
-            "spatiale. Charge `neolabs_abundance_analysis` ; densité copépodes → "
-            "contrat `neolabs_copepod_density`."
+            "→ Fichier NeoLabs ABONDANCE chargé (1 ligne par taxon×analyse).\n\n"
+            + _NEOLABS_ARCHITECTURE
+            + "\n\nCharge `neolabs_abundance_analysis` ; pour une densité de "
+            "copépodes utilise le contrat `neolabs_copepod_density` — ne fais pas "
+            "une moyenne tous-taxons sur les lignes brutes."
         )
     if is_neolabs_sample:
         return (
-            "→ Fichier NeoLabs sample (métadonnées de prélèvement, 1 ligne par net "
-            "sample). Contient deployment, station, cast_number, gear, tow_type "
-            "(V-Tow vertical / O-Tow oblique), filet, `min/max_sample_depth`, "
-            "latitude, longitude, volumes filtrés. Un multinet = plusieurs net "
-            "samples empilés par profondeur (profil vertical). Se joint à "
-            "`neolabs_abundance.csv` par `sample_id = SAMPLE_ID` (+ `analysis_id`) ; "
-            "tous les samples ne sont pas analysés. Fournit les lat/lon absentes du "
-            "fichier abondance."
+            "→ Fichier NeoLabs SAMPLE chargé (1 ligne par net sample ; fournit les "
+            "latitude/longitude et les strates de profondeur absentes du fichier "
+            "abondance).\n\n"
+            + _NEOLABS_ARCHITECTURE
         )
     if is_ecotaxa_uvp_raw:
         return (
