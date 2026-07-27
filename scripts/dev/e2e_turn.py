@@ -41,7 +41,7 @@ from agent import make_agent, repair_invalid_tool_history
 if _USE_OPENAI_DIRECT:
     os.environ.pop("OPENAI_BASE_URL", None)
     os.environ.pop("OPENROUTER_API_KEY", None)
-    os.environ["LLM_MODEL"] = "gpt-4o-mini"
+    os.environ["LLM_MODEL"] = os.getenv("OPENAI_DIRECT_MODEL", "gpt-5.4-mini")
 
 
 _START = time.monotonic()

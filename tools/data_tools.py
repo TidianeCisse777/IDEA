@@ -434,11 +434,15 @@ def _infer_station_map_contract(figure: Any) -> dict[str, Any] | None:
         axis for axis in getattr(figure, "axes", [])
         if axis.__class__.__module__.startswith("cartopy.")
     ]
-    if len(axes) != 1:
+    # Use the first Cartopy axis even when the figure also carries an inset or a
+    # second GeoAxes: a rendered map must not be blocked for missing bookkeeping
+    # just because it has more than one geo panel.
+    if not axes:
         return None
     point_artist = next(
         (
-            artist for artist in getattr(axes[0], "collections", [])
+            artist for axis in axes
+            for artist in getattr(axis, "collections", [])
             if getattr(artist, "get_offsets", None) is not None
             and len(artist.get_offsets()) > 0
         ),
@@ -463,19 +467,26 @@ def _infer_station_map_contract(figure: Any) -> dict[str, Any] | None:
 
 
 def _infer_generic_contract(figure: Any) -> dict[str, Any] | None:
-    """Minimal graph_contract for a plain matplotlib figure with no Cartopy axes.
+    """Guaranteed last-resort graph_contract for any rendered figure with an axis.
 
-    Used as a last-resort fallback when the model omitted graph_contract entirely.
-    Reads x/y labels from the first axis to fill the role fields.
+    When the model omits ``graph_contract`` entirely and no kind-specific
+    inference applies, a successfully rendered figure must still not be blocked
+    for missing bookkeeping — the code is good, only the metadata is absent. This
+    always returns a structurally valid ``generic`` contract as long as the
+    figure has at least one axis, including Cartopy maps (roles longitude/latitude).
+    Semantic guarantees (depth inversion, independent panels, hollow zeros) live
+    in the kind-specific validation paths and are never bypassed by this fallback,
+    which only ever fires when the model supplied no contract at all.
     """
     axes = list(getattr(figure, "axes", []))
     if not axes:
         return None
-    if any(a.__class__.__module__.startswith("cartopy.") for a in axes):
-        return None
     axis = axes[0]
-    x_role = str(axis.get_xlabel() or "x").strip() or "x"
-    y_role = str(axis.get_ylabel() or "y").strip() or "y"
+    if axis.__class__.__module__.startswith("cartopy."):
+        x_role, y_role = "longitude", "latitude"
+    else:
+        x_role = str(axis.get_xlabel() or "x").strip() or "x"
+        y_role = str(axis.get_ylabel() or "y").strip() or "y"
     return {
         "kind": "generic",
         "axes": [{"axis_index": 0, "x": x_role, "y": y_role}],
@@ -1442,18 +1453,39 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 _clear_graph_quality_block(_store, thread_id)
                 _clear_graph_failure()
                 image_markdown = f"![graph]({graph_url(f'{graph_id}.png')})"
-                graph_explanation = local_vars.get("graph_explanation")
-                if isinstance(graph_explanation, str) and graph_explanation.strip():
-                    explanation = graph_explanation.strip()
-                    if not explanation.lower().startswith("lecture rapide"):
-                        explanation = f"Lecture rapide:\n{explanation}"
-                    summary = f"{image_markdown}\n\n{explanation}"
-                    return success(
-                        summary,
-                        artifact_refs=(graph_url(f"{graph_id}.png"),),
-                        persisted=True,
-                        method="controlled matplotlib execution",
+
+                # Grounded facts for the answer's mandatory `Données` line, so the
+                # model reports the real plotted count and encodings instead of
+                # fabricating them. Stored in session state (NOT in the returned
+                # content, which serve.py streams verbatim to the UI); the next
+                # model request injects them into context via the middleware.
+                grounding_bits: list[str] = []
+                plotted_df = local_vars.get("plot_df")
+                if isinstance(plotted_df, pd.DataFrame):
+                    grounding_bits.append(f"lignes tracées={len(plotted_df)}")
+                    grounding_bits.append(
+                        "colonnes utilisées=" + ",".join(map(str, plotted_df.columns))
                     )
+                if isinstance(graph_contract, dict):
+                    mappings = graph_contract.get("mappings")
+                    if isinstance(mappings, dict):
+                        encodings = [
+                            f"{channel}={spec.get('variable')}"
+                            for channel, spec in mappings.items()
+                            if isinstance(spec, dict) and spec.get("variable")
+                        ]
+                        if encodings:
+                            grounding_bits.append("encodages=" + "; ".join(encodings))
+                _store.set(
+                    f"{thread_id}:last_graph_grounding",
+                    None,
+                    {"facts": " · ".join(grounding_bits)} if grounding_bits else {},
+                )
+
+                # Do not echo graph_explanation / "Lecture rapide": serve.py
+                # streams this tool content verbatim to the UI, where it would
+                # duplicate and compete with the model's Résultat/Données/Méthode/
+                # Limite answer. Return the image only; the model writes the caption.
                 return success(
                     image_markdown,
                     artifact_refs=(graph_url(f"{graph_id}.png"),),
