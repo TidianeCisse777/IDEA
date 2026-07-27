@@ -61,6 +61,34 @@ environmental columns, or no environmental source is authorized.
 
 NeoLabs abundance rows are taxon-level rows. Do not analyse temporal, spatial, environmental, or station-level patterns directly from raw rows without first rebuilding the correct working table.
 
+## Column families (wide per-stage files) — read before any abundance calculation
+
+Many NeoLabs files have no single `Total abundance` column: abundance is spread
+across **per-stage columns**, each in three or five variants. Two traps here
+produce wrong numbers if ignored.
+
+**Metric variants per stage `X`:**
+- `X_SAMPLE_ABUND (nbr of ind.)` — raw count in that sample. **Not comparable
+  across samples** (different filtered volumes). Never sum these as a "total number
+  of individuals".
+- `X_ABUND (ind./m3 depth vol.)` and `X_ABUND (ind./m3 flowmeter vol.)` —
+  **density**, already normalised (`= X_SAMPLE_ABUND / volume`). This is the
+  comparable metric. Default to `depth vol`.
+- `X_BIOMASS (...)` — µg C m⁻³ (copepodite/adult stages only; nauplii have none).
+
+**Stage columns are NOT disjoint — never sum an aggregate with its components:**
+- Individual stages: `C1`–`C5`, `M` (male), `F` (female), `N1`–`N6` (nauplii).
+- Aggregates (already sums of the above): `COP_NS`/`COPEPODID` = copepodite
+  subtotals, `NAUP_NS`/`NAUPLIUS` = nauplii subtotals, **`ALL_STAGES` = the row
+  total (sum of every stage)**.
+- For a per-row total, read `ALL_STAGES_ABUND (ind./m3 depth vol.)` directly —
+  do **not** reconstruct it by adding stage columns, and never rank `ALL_STAGES`,
+  `COPEPODID`, and `C1`–`C5` against each other: that double/triple-counts.
+
+When the file lacks a single `Total abundance` column, `ALL_STAGES_ABUND
+(ind./m3 depth vol.)` is the total abundance; use it wherever this skill says
+`Total abundance (ind./m3 depth vol)`.
+
 ## Visual output routing
 
 This skill is not a graph_writer replacement. For any visual request on a
