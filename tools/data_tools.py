@@ -311,13 +311,26 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
         and "sample_id" in col_set
         and not is_ecopart
     )
-    # NeoLabs taxonomy net file : signal exclusif (abondance ind./m³ depth vol +
-    # taxon-level rows + classe taxonomique). Sans ce hint, l'agent tombait sur un
-    # run_pandas libre et faisait une moyenne tous-taxons fausse.
+    # NeoLabs abundance file: taxon-level rows with per-stage abundance. Accept
+    # BOTH the normalized single-total export and the raw WIDE per-stage export
+    # (columns like `ALL_STAGES_ABUND (ind./m3 depth vol.)`). The earlier check
+    # required the phantom `Total abundance` column and silently missed the real
+    # wide file, so the load hint never fired.
+    has_stage_density = any(
+        c.endswith("_ABUND (ind./m3 depth vol.)") for c in col_set
+    )
     is_neolabs = (
-        "Total abundance (ind./m3 depth vol)" in col_set
-        and "TAXON_ID" in col_set
+        "TAXON_ID" in col_set
         and ("CLASS" in col_set or "ZOOPLANKTON_CATEGORY" in col_set)
+        and ("Total abundance (ind./m3 depth vol)" in col_set or has_stage_density)
+    )
+    # NeoLabs sample file: one row per net sample — the deployment/net/depth/coords
+    # metadata the abundance file must join to for any spatial or vertical work.
+    is_neolabs_sample = (
+        "sample_id" in col_set
+        and "deployment_id" in col_set
+        and "net_sampling_ids" in col_set
+        and "tow_type" in col_set
     )
     if is_ecopart:
         return (
@@ -326,11 +339,29 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
         )
     if is_neolabs:
         return (
-            "→ Fichier NeoLabs taxonomy détecté. Charge le skill "
-            "`neolabs_abundance_analysis`. Pour une densité de copépodes, utilise le "
-            "contrat déterministe `neolabs_copepod_density` de `core.neolabs_abundance` "
-            "(filtre CLASS==Copepoda, somme par sample, moyenne par station) — ne fais "
-            "PAS une moyenne tous-taxons sur les lignes brutes."
+            "→ Fichier NeoLabs abondance (taxonomie, 1 ligne par taxon×analyse). "
+            "Modèle NeoLabs : deployment (cast à une station) → net samples "
+            "(1 filet = 1 strate de profondeur ; un multinet Hydrobios/Bioness/4x1m2 "
+            "empile plusieurs filets = un profil vertical) → analyse taxonomique → "
+            "lignes par taxon. Abondance par STADE : `ALL_STAGES` = total de la ligne "
+            "(ne PAS le sommer avec C1-C5/M/F/COP_NS/COPEPODID, qui en sont les "
+            "composants) ; `X_SAMPLE_ABUND` = comptage brut, `X_ABUND (ind./m3 …)` = "
+            "densité (métrique comparable, défaut depth vol). latitude/longitude ne "
+            "sont PAS dans ce fichier : joindre `neolabs_sample.csv` par "
+            "`SAMPLE_ID = sample_id` (+ `ANALYSIS_ID`) pour toute carte ou analyse "
+            "spatiale. Charge `neolabs_abundance_analysis` ; densité copépodes → "
+            "contrat `neolabs_copepod_density`."
+        )
+    if is_neolabs_sample:
+        return (
+            "→ Fichier NeoLabs sample (métadonnées de prélèvement, 1 ligne par net "
+            "sample). Contient deployment, station, cast_number, gear, tow_type "
+            "(V-Tow vertical / O-Tow oblique), filet, `min/max_sample_depth`, "
+            "latitude, longitude, volumes filtrés. Un multinet = plusieurs net "
+            "samples empilés par profondeur (profil vertical). Se joint à "
+            "`neolabs_abundance.csv` par `sample_id = SAMPLE_ID` (+ `analysis_id`) ; "
+            "tous les samples ne sont pas analysés. Fournit les lat/lon absentes du "
+            "fichier abondance."
         )
     if is_ecotaxa_uvp_raw:
         return (
@@ -754,12 +785,20 @@ def _describe_join(code: str, frame: "pd.DataFrame") -> str:
 
 
 def _is_neolabs_columns(columns) -> bool:
-    """True si les colonnes trahissent une table NeoLabs taxonomy."""
+    """True si les colonnes trahissent une table NeoLabs taxonomy.
+
+    Reconnaît le format normalisé (`Total abundance …`) ET le format wide brut
+    (colonnes par stade `X_ABUND (ind./m3 depth vol.)`).
+    """
     cols = set(columns)
+    has_total = "Total abundance (ind./m3 depth vol)" in cols
+    has_stage_density = any(
+        str(c).endswith("_ABUND (ind./m3 depth vol.)") for c in cols
+    )
     return (
-        "Total abundance (ind./m3 depth vol)" in cols
-        and "TAXON_ID" in cols
+        "TAXON_ID" in cols
         and ("CLASS" in cols or "ZOOPLANKTON_CATEGORY" in cols)
+        and (has_total or has_stage_density)
     )
 
 
