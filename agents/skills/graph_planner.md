@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "intent:visual"
 next_tool: graph_writer
-max_tokens: 2900
+max_tokens: 3000
 ---
 
 # Skill: graph_planner
@@ -102,6 +102,9 @@ Recommended `sample_df` contents:
 
 ## Required steps
 
+0. **Visual theme**: every planned graph uses the mandatory light background:
+   white figure, pale plotting area, dark text, and pale land/ocean for maps.
+   Do not plan a dark theme, a black/charcoal background, or white labels.
 1. Identify the relevant columns in the loaded file using `all_columns` from `ACTIVE DATASET STATE` as the authoritative source of available column names.
 
 **Step 1b — Column disambiguation**: before proceeding, check whether the user's request (e.g. "abondance", "température", "profondeur") maps to more than one column in `all_columns`. If multiple candidates exist, list them explicitly and ask the user which one to use. Never select a column silently when ambiguity exists.

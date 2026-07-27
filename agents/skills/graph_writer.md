@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "intent:visual"
 next_tool: run_graph
-max_tokens: 11000
+max_tokens: 11500
 size_exemption: The writer owns one executable graph-contract vocabulary shared by runtime validation across all chart families; its full body is delivered with a manifest-governed cap instead of the generic tool truncation.
 ---
 
@@ -49,6 +49,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots(figsize=(10, 6))
+fig.patch.set_facecolor("#ffffff")
+ax.set_facecolor("#f8fafc")
+ax.tick_params(colors="#334155")
 
 # --- your code here ---
 
@@ -61,6 +64,8 @@ plt.tight_layout()
 ## Mandatory rules
 
 - Always use `matplotlib.use("Agg")` — no interactive display
+- Use the single light theme below for every graph and map. Never select a dark
+  matplotlib style or use white text/markers as a workaround for a dark background.
 - Always use `fig, ax = plt.subplots()` — never call `plt.show()`
 - Always define `title`, `xlabel`, `ylabel`
 - Keep figures readable: `figsize` must stay at or below `(16, 14)`. If a heatmap or ordination needs more space, aggregate or filter groups rather than increasing figure height.
@@ -188,7 +193,7 @@ ts_points = ax.scatter(x, y, s=sizes, c=depth, cmap="viridis")
 ts_points.set_gid("ts_points")
 station_shapes = ax.scatter([], [], marker="s")
 station_shapes.set_gid("station_shapes")
-zero_points = ax.scatter(zero_x, zero_y, facecolors="none", edgecolors="white")
+zero_points = ax.scatter(zero_x, zero_y, facecolors="none", edgecolors="#475569")
 zero_points.set_gid("zero_abundance")
 graph_contract = {
     "kind": "temperature_salinity",
@@ -275,7 +280,7 @@ if len(plot_df) <= 50:
         label = row.get("original_id") or str(row.get("sample_id", ""))
         ax.annotate(label, (row["lon_avg"], row["lat_avg"]),
                     xycoords=ccrs.PlateCarree()._as_mpl_transform(ax),
-                    fontsize=7, color="white",
+                    fontsize=7, color="#0f172a",
                     xytext=(4, 4), textcoords="offset points")
 else:
     # Ajouter au minimum une légende de couleur/taille ou un titre de légende
@@ -318,8 +323,10 @@ import cartopy.feature as cfeature
 from matplotlib.lines import Line2D
 import pandas as pd
 
-plt.style.use("dark_background")
-plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a"})
+plt.rcParams.update({"figure.facecolor": "#ffffff", "axes.facecolor": "#f8fafc",
+                     "axes.edgecolor": "#94a3b8", "axes.labelcolor": "#0f172a",
+                     "xtick.color": "#334155", "ytick.color": "#334155",
+                     "text.color": "#0f172a", "grid.alpha": 0.35})
 
 # Use the correct DataFrame variable (df_ecotaxa_cache_query, loaded_file, etc.)
 plot_df = df_ecotaxa_cache_query.copy()
@@ -333,10 +340,10 @@ color_map = {z: cmap(i % cmap.N) for i, z in enumerate(zones)}
 fig = plt.figure(figsize=(16, 8))
 ax = plt.axes(projection=ccrs.Robinson())
 ax.set_global()
-ax.add_feature(cfeature.LAND, facecolor="#2b2b2b", zorder=1)
-ax.add_feature(cfeature.OCEAN, facecolor="#13324c", zorder=0)
-ax.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="#aaaaaa", zorder=2)
-ax.gridlines(linewidth=0.4, color="gray", alpha=0.25, linestyle="--")
+ax.add_feature(cfeature.LAND, facecolor="#efe7d2", zorder=1)
+ax.add_feature(cfeature.OCEAN, facecolor="#dbeafe", zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.4, edgecolor="#475569", zorder=2)
+ax.gridlines(linewidth=0.4, color="#94a3b8", alpha=0.35, linestyle="--")
 
 # Draw zone polygon boundaries — zone_polygons keys match iho_zone values exactly
 for zone_name in zones:
@@ -352,7 +359,7 @@ for zone_name in zones:
 for zone_name, group in plot_df.groupby("iho_zone", sort=True):
     pts = ax.scatter(
         group["lon_avg"], group["lat_avg"],
-        s=14, color=color_map.get(zone_name, "white"), alpha=0.85,
+        s=14, color=color_map.get(zone_name, "#2563eb"), alpha=0.85,
         transform=ccrs.PlateCarree(), zorder=4, label=zone_name,
     )
     pts.set_gid("map_points")
@@ -365,11 +372,11 @@ handles = [Line2D([0], [0], marker="o", color="none",
 ax.legend(handles=handles, title="iho_zone", loc="lower left",
           fontsize=7, title_fontsize=8, frameon=True, framealpha=0.85)
 
-ax.set_title("Samples EcoTaxa — découpage par zone IHO/MEOW", fontsize=14, color="white")
+ax.set_title("Samples EcoTaxa — découpage par zone IHO/MEOW", fontsize=14, color="#0f172a")
 ax.text(0.99, 0.01, f"{len(plot_df)} samples | Confidence: high",
         transform=ax.transAxes, ha="right", va="bottom", fontsize=8,
         color="#444444",
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white",
+        bbox=dict(boxstyle="round,pad=0.25", facecolor="#ffffff",
                   edgecolor="#cccccc", alpha=0.8))
 
 graph_contract = {
@@ -443,9 +450,10 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from cartopy.mpl.ticker import LongitudeFormatter, LatitudeFormatter
 
-plt.style.use("dark_background")
-plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
-                     "grid.alpha": 0.25, "axes.edgecolor": "#444"})
+plt.rcParams.update({"figure.facecolor": "#ffffff", "axes.facecolor": "#f8fafc",
+                     "axes.edgecolor": "#94a3b8", "axes.labelcolor": "#0f172a",
+                     "xtick.color": "#334155", "ytick.color": "#334155",
+                     "text.color": "#0f172a", "grid.alpha": 0.35})
 
 bbox = {"south": <south>, "west": <west>, "north": <north>, "east": <east>}
 proj = ccrs.PlateCarree()
@@ -453,10 +461,10 @@ proj = ccrs.PlateCarree()
 fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={"projection": proj})
 ax.set_extent([bbox["west"], bbox["east"], bbox["south"], bbox["north"]], crs=ccrs.PlateCarree())
 
-ax.add_feature(cfeature.LAND, facecolor="#2d2d2d", zorder=1)
-ax.add_feature(cfeature.OCEAN, facecolor="#1a3a5c", zorder=0)
-ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor="#aaaaaa", zorder=2)
-ax.add_feature(cfeature.BORDERS, linestyle=":", linewidth=0.5, edgecolor="#666666", zorder=2)
+ax.add_feature(cfeature.LAND, facecolor="#efe7d2", zorder=1)
+ax.add_feature(cfeature.OCEAN, facecolor="#dbeafe", zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor="#475569", zorder=2)
+ax.add_feature(cfeature.BORDERS, linestyle=":", linewidth=0.5, edgecolor="#64748b", zorder=2)
 
 # lon/lat labels via the axis (avoids the broken gridline labeler)
 import numpy as np
@@ -464,23 +472,36 @@ ax.set_xticks(np.linspace(bbox["west"], bbox["east"], 5), crs=ccrs.PlateCarree()
 ax.set_yticks(np.linspace(bbox["south"], bbox["north"], 5), crs=ccrs.PlateCarree())
 ax.xaxis.set_major_formatter(LongitudeFormatter())
 ax.yaxis.set_major_formatter(LatitudeFormatter())
-ax.tick_params(colors="#aaaaaa", labelsize=8)
-ax.gridlines(linewidth=0.5, color="gray", alpha=0.3, linestyle="--")  # lines only, no draw_labels
+ax.tick_params(colors="#334155", labelsize=8)
+ax.gridlines(linewidth=0.5, color="#94a3b8", alpha=0.35, linestyle="--")  # lines only, no draw_labels
 
-ax.set_title("<zone name>", fontsize=13, color="white")
+ax.set_title("<zone name>", fontsize=13, color="#0f172a")
 plt.tight_layout()
 
 graph_explanation = "Carte de <zone name>. Axes : longitude x latitude. Source : get_zone_info."
 ```
 
-### Dark background (mandatory for all maps)
+## Light theme (mandatory for all graphs)
 
-Every map must start with:
+Every graph and map must use this clear template. It is the only approved
+theme: white figure, softly tinted plotting area, dark text, and pale geographic
+features. Never use a dark matplotlib style, a black/charcoal figure, or white text
+to compensate for a dark surface.
+
 ```python
-plt.style.use("dark_background")
-plt.rcParams.update({{"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a", "grid.alpha": 0.25}})
+plt.rcParams.update({
+    "figure.facecolor": "#ffffff",
+    "axes.facecolor": "#f8fafc",
+    "axes.edgecolor": "#94a3b8",
+    "axes.labelcolor": "#0f172a",
+    "xtick.color": "#334155",
+    "ytick.color": "#334155",
+    "text.color": "#0f172a",
+    "grid.color": "#cbd5e1",
+    "grid.alpha": 0.55,
+})
+# Cartopy maps: LAND="#efe7d2", OCEAN="#dbeafe", COASTLINE="#475569".
 ```
-Use `facecolor='#2d2d2d'` for LAND and `facecolor='#1a3a5c'` for OCEAN on dark maps.
 
 ---
 
@@ -493,8 +514,9 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
-plt.style.use("dark_background")
-plt.rcParams.update({{"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a"}})
+plt.rcParams.update({{"figure.facecolor": "#ffffff", "axes.facecolor": "#f8fafc",
+                     "axes.edgecolor": "#94a3b8", "axes.labelcolor": "#0f172a",
+                     "xtick.color": "#334155", "ytick.color": "#334155", "text.color": "#0f172a"}})
 
 map_df = df[['longitude', 'latitude']].dropna()
 proj = ccrs.LambertConformal(central_longitude=-55, central_latitude=54)
@@ -509,22 +531,22 @@ ax.set_extent([
     map_df['latitude'].max()  + margin,
 ], crs=ccrs.PlateCarree())
 
-ax.add_feature(cfeature.LAND,      facecolor='#2d2d2d', zorder=1)
-ax.add_feature(cfeature.OCEAN,     facecolor='#1a3a5c', zorder=0)
-ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#aaaaaa', zorder=2)
-ax.add_feature(cfeature.BORDERS,   linestyle=':', linewidth=0.5, edgecolor='#666666', zorder=2)
+ax.add_feature(cfeature.LAND,      facecolor='#efe7d2', zorder=1)
+ax.add_feature(cfeature.OCEAN,     facecolor='#dbeafe', zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#475569', zorder=2)
+ax.add_feature(cfeature.BORDERS,   linestyle=':', linewidth=0.5, edgecolor='#64748b', zorder=2)
 
-gl = ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', alpha=0.4, linestyle='--')
+gl = ax.gridlines(draw_labels=True, linewidth=0.5, color='#94a3b8', alpha=0.45, linestyle='--')
 gl.top_labels = False
 gl.right_labels = False
 
 sc = ax.scatter(
     map_df['longitude'], map_df['latitude'],
-    color='white', s=40, alpha=0.9,
+    color='#2563eb', s=40, alpha=0.9,
     transform=ccrs.PlateCarree(), zorder=3,
 )
 
-ax.set_title("<titre>", fontsize=13, color='white')
+ax.set_title("<titre>", fontsize=13, color='#0f172a')
 plt.tight_layout()
 ```
 
@@ -542,8 +564,9 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import numpy as np
 
-plt.style.use("dark_background")
-plt.rcParams.update({{"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a"}})
+plt.rcParams.update({{"figure.facecolor": "#ffffff", "axes.facecolor": "#f8fafc",
+                     "axes.edgecolor": "#94a3b8", "axes.labelcolor": "#0f172a",
+                     "xtick.color": "#334155", "ytick.color": "#334155", "text.color": "#0f172a"}})
 
 # --- prepare data ---
 # delta_df must have: latitude, longitude, delta_rechauffement_degC
@@ -559,10 +582,10 @@ ax.set_extent([
     map_df['latitude'].min() - margin,  map_df['latitude'].max() + margin,
 ], crs=ccrs.PlateCarree())
 
-ax.add_feature(cfeature.LAND,      facecolor='#2d2d2d', zorder=1)
-ax.add_feature(cfeature.OCEAN,     facecolor='#1a3a5c', zorder=0)
-ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#aaaaaa', zorder=2)
-gl = ax.gridlines(draw_labels=True, linewidth=0.4, color='gray', alpha=0.4, linestyle='--')
+ax.add_feature(cfeature.LAND,      facecolor='#efe7d2', zorder=1)
+ax.add_feature(cfeature.OCEAN,     facecolor='#dbeafe', zorder=0)
+ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#475569', zorder=2)
+gl = ax.gridlines(draw_labels=True, linewidth=0.4, color='#94a3b8', alpha=0.45, linestyle='--')
 gl.top_labels = False; gl.right_labels = False
 
 vmax = float(map_df['delta_rechauffement_degC'].abs().quantile(0.95)) or 5
@@ -574,10 +597,10 @@ sc = ax.scatter(
     transform=ccrs.PlateCarree(), zorder=3,
 )
 cbar = plt.colorbar(sc, ax=ax, label='Δ température (°C)', shrink=0.6, pad=0.02)
-cbar.ax.yaxis.label.set_color('white')
-cbar.ax.tick_params(colors='white')
+cbar.ax.yaxis.label.set_color('#0f172a')
+cbar.ax.tick_params(colors='#334155')
 
-ax.set_title("<titre — ex: Delta réchauffement Bio-ORACLE SSP5-8.5 2100 vs CTD actuel>", fontsize=13, color='white')
+ax.set_title("<titre — ex: Delta réchauffement Bio-ORACLE SSP5-8.5 2100 vs CTD actuel>", fontsize=13, color='#0f172a')
 plt.tight_layout()
 
 graph_explanation = "Carte du delta de température par station. Axes : longitude × latitude. Couleur : Δ°C (Bio-ORACLE SSP5-8.5 2100 − CTD actuel), coolwarm centrée sur 0. Source : run_pandas sur delta_df."
@@ -603,6 +626,8 @@ central_lon = float(map_df['longitude'].mean())
 proj = ccrs.NorthPolarStereo(central_longitude=central_lon)
 
 fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={"projection": proj})
+fig.patch.set_facecolor('#ffffff')
+ax.set_facecolor('#f8fafc')
 
 # --- extent: auto-fit with margin ---
 margin = 3  # degrees
@@ -697,9 +722,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-plt.style.use("dark_background")
-plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
-                     "grid.alpha": 0.25, "axes.edgecolor": "#444"})
+plt.rcParams.update({"figure.facecolor": "#ffffff", "axes.facecolor": "#f8fafc",
+                     "axes.edgecolor": "#94a3b8", "axes.labelcolor": "#0f172a",
+                     "xtick.color": "#334155", "ytick.color": "#334155",
+                     "text.color": "#0f172a", "grid.alpha": 0.35})
 
 plot_df = df.copy()
 depth_col = "<depth column>"          # e.g. MIN_SAMPLE_DEPTH or depth_min_m
@@ -718,7 +744,7 @@ profile_df = (
 )
 
 fig, ax = plt.subplots(figsize=(8, 7))
-ax.plot(profile_df[value_col], profile_df[depth_col], marker="o", color="#eeeeee", linewidth=1.8)
+ax.plot(profile_df[value_col], profile_df[depth_col], marker="o", color="#2563eb", linewidth=1.8)
 ax.invert_yaxis()
 ax.grid(True, alpha=0.25)
 ax.set_title("<descriptive title>")
@@ -790,9 +816,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-plt.style.use("dark_background")
-plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
-                     "grid.alpha": 0.25, "axes.edgecolor": "#444"})
+plt.rcParams.update({"figure.facecolor": "#ffffff", "axes.facecolor": "#f8fafc",
+                     "axes.edgecolor": "#94a3b8", "axes.labelcolor": "#0f172a",
+                     "xtick.color": "#334155", "ytick.color": "#334155",
+                     "text.color": "#0f172a", "grid.alpha": 0.35})
 
 group_col = "<station/month/depth/sample column>"
 taxon_col = "<taxon column>"
@@ -821,8 +848,8 @@ matrix.plot(kind="bar", stacked=True, ax=ax, colormap="tab10", width=0.85)
 ax.set_title("<descriptive title>")
 ax.set_xlabel("<group label>")
 ax.set_ylabel("Relative abundance")
-ax.tick_params(axis="x", rotation=45, colors="#cccccc")
-ax.tick_params(axis="y", colors="#cccccc")
+ax.tick_params(axis="x", rotation=45, colors="#334155")
+ax.tick_params(axis="y", colors="#334155")
 ax.legend(title="Taxon", bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
 plt.tight_layout()
 
@@ -841,9 +868,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-plt.style.use("dark_background")
-plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
-                     "grid.alpha": 0.25, "axes.edgecolor": "#444"})
+plt.rcParams.update({"figure.facecolor": "#ffffff", "axes.facecolor": "#f8fafc",
+                     "axes.edgecolor": "#94a3b8", "axes.labelcolor": "#0f172a",
+                     "xtick.color": "#334155", "ytick.color": "#334155",
+                     "text.color": "#0f172a", "grid.alpha": 0.35})
 
 group_col = "<station/month/depth/sample column>"
 taxon_col = "<taxon column>"
@@ -871,18 +899,18 @@ short_taxa = [
     str(label).split("|")[-1].strip()[:35] + ("…" if len(str(label).split("|")[-1].strip()) > 35 else "")
     for label in matrix.index
 ]
-ax.set_yticklabels(short_taxa, fontsize=8, color="#cccccc")
+ax.set_yticklabels(short_taxa, fontsize=8, color="#334155")
 if len(matrix.columns) <= 25:
     ax.set_xticks(range(len(matrix.columns)))
-    ax.set_xticklabels(matrix.columns, rotation=45, ha="right", fontsize=8, color="#cccccc")
+    ax.set_xticklabels(matrix.columns, rotation=45, ha="right", fontsize=8, color="#334155")
 else:
     step = max(1, len(matrix.columns) // 20)
     ticks = list(range(0, len(matrix.columns), step))
     ax.set_xticks(ticks)
-    ax.set_xticklabels([matrix.columns[i] for i in ticks], rotation=45, ha="right", fontsize=7, color="#cccccc")
+    ax.set_xticklabels([matrix.columns[i] for i in ticks], rotation=45, ha="right", fontsize=7, color="#334155")
 cbar = plt.colorbar(im, ax=ax, label="log1p abundance")
-cbar.ax.yaxis.label.set_color("white")
-cbar.ax.tick_params(colors="white")
+cbar.ax.yaxis.label.set_color("#0f172a")
+cbar.ax.tick_params(colors="#334155")
 ax.set_title("<descriptive title>")
 ax.set_xlabel("<group label>")
 ax.set_ylabel("Taxon")
@@ -902,9 +930,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 
-plt.style.use("dark_background")
-plt.rcParams.update({"axes.facecolor": "#1a1a1a", "figure.facecolor": "#1a1a1a",
-                     "grid.alpha": 0.25, "axes.edgecolor": "#444"})
+plt.rcParams.update({"figure.facecolor": "#ffffff", "axes.facecolor": "#f8fafc",
+                     "axes.edgecolor": "#94a3b8", "axes.labelcolor": "#0f172a",
+                     "xtick.color": "#334155", "ytick.color": "#334155",
+                     "text.color": "#0f172a", "grid.alpha": 0.35})
 
 taxon_col = "<taxon column>"
 value_col = "<abundance column>"
@@ -924,7 +953,7 @@ rank_df["rank"] = np.arange(1, len(rank_df) + 1)
 rank_df["relative_abundance"] = rank_df[value_col] / rank_df[value_col].sum()
 
 fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(rank_df["rank"], rank_df["relative_abundance"], marker="o", color="#eeeeee", linewidth=1.8)
+ax.plot(rank_df["rank"], rank_df["relative_abundance"], marker="o", color="#2563eb", linewidth=1.8)
 ax.set_yscale("log")
 ax.set_title("<descriptive title>")
 ax.set_xlabel("Taxon rank")
@@ -960,7 +989,7 @@ ax.text(
     transform=ax.transAxes,
     ha='right', va='bottom',
     fontsize=8, color='#444444',
-    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='#cccccc', alpha=0.8),
+    bbox=dict(boxstyle='round,pad=0.3', facecolor='#ffffff', edgecolor='#cbd5e1', alpha=0.8),
 )
 ```
 
