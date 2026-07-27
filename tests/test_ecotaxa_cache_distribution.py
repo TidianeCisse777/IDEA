@@ -121,3 +121,43 @@ def test_install_cache_release_preserves_existing_cache_when_hash_is_wrong(tmp_p
         )
 
     assert destination.read_bytes() == original_bytes
+
+
+def test_download_github_release_cache_uses_manifest_and_archive_assets(tmp_path):
+    from core.ecotaxa_browser.cache.distribution import (
+        build_cache_bundle,
+        download_github_release_cache,
+    )
+
+    source = seeded_current_cache(tmp_path / "source.sqlite")
+    manifest_path, archive_path = build_cache_bundle(source, tmp_path / "release")
+    responses = {
+        "https://api.github.com/repos/owner/repo/releases/tags/ecotaxa-cache-current": json.dumps(
+            {
+                "assets": [
+                    {"name": "manifest.json", "url": "https://release.test/manifest"},
+                    {"name": "ecotaxa_cache.sqlite.gz", "url": "https://release.test/archive"},
+                ]
+            }
+        ).encode(),
+        "https://release.test/manifest": manifest_path.read_bytes(),
+        "https://release.test/archive": archive_path.read_bytes(),
+    }
+    requested_urls = []
+
+    def opener(request):
+        requested_urls.append(request.full_url)
+        return io.BytesIO(responses[request.full_url])
+
+    destination = tmp_path / "data" / "ecotaxa_cache.sqlite"
+    installed = download_github_release_cache(
+        "owner/repo", "ecotaxa-cache-current", None, destination, opener=opener
+    )
+
+    assert installed.samples_indexed == 1
+    assert destination.read_bytes() == source.read_bytes()
+    assert requested_urls == [
+        "https://api.github.com/repos/owner/repo/releases/tags/ecotaxa-cache-current",
+        "https://release.test/manifest",
+        "https://release.test/archive",
+    ]

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import io
 import json
 import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Callable
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from core.ecotaxa_browser.cache.repo import (
@@ -151,3 +153,61 @@ def install_cache_release(
         return installed
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _request_bytes(
+    url: str,
+    token: str | None,
+    *,
+    opener: Callable[[Request], BinaryIO],
+    accept: str,
+) -> bytes:
+    headers = {"Accept": accept, "User-Agent": "idea-ecotaxa-cache"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        with opener(Request(url, headers=headers)) as response:
+            return response.read()
+    except Exception as exc:
+        raise CacheValidationError("unable to download shared cache release") from exc
+
+
+def download_github_release_cache(
+    repository: str,
+    tag: str,
+    token: str | None,
+    destination: Path,
+    *,
+    opener: Callable[[Request], BinaryIO] = urlopen,
+) -> CacheManifest:
+    """Download the named GitHub release and install its verified cache assets."""
+    if not repository or "/" not in repository or not tag:
+        raise CacheValidationError("release repository and tag are required")
+    release_url = f"https://api.github.com/repos/{repository}/releases/tags/{tag}"
+    try:
+        release = json.loads(
+            _request_bytes(
+                release_url,
+                token,
+                opener=opener,
+                accept="application/vnd.github+json",
+            ).decode("utf-8")
+        )
+        assets = {asset["name"]: asset["url"] for asset in release["assets"]}
+        manifest_url = assets["manifest.json"]
+        archive_url = assets["ecotaxa_cache.sqlite.gz"]
+    except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CacheValidationError("shared cache release has invalid assets") from exc
+    manifest = _request_bytes(
+        manifest_url,
+        token,
+        opener=opener,
+        accept="application/octet-stream",
+    )
+    archive = _request_bytes(
+        archive_url,
+        token,
+        opener=opener,
+        accept="application/octet-stream",
+    )
+    return install_cache_release(manifest, io.BytesIO(archive), destination)
