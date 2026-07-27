@@ -11,13 +11,16 @@ def _env_assignment_keys(text: str) -> set[str]:
     }
 
 
-def test_env_example_exposes_required_user_secrets_with_placeholders():
+def test_env_example_configures_consumers_without_ecotaxa_credentials():
     env_example = Path(".env.example").read_text(encoding="utf-8")
 
-    # Les 3 secrets que l'utilisateur doit fournir, avec des placeholders explicites.
+    # Un collaborateur utilise une release validée, jamais le mot de passe EcoTaxa.
     assert "OPENAI_API_KEY=REPLACE_WITH_THE_OPENAI_KEY" in env_example
-    assert "ECOTAXA_USERNAME=REPLACE_WITH_THE_ECOTAXA_USERNAME" in env_example
-    assert "ECOTAXA_PASSWORD=REPLACE_WITH_THE_ECOTAXA_PASSWORD" in env_example
+    assert "ECOTAXA_CACHE_MODE=consumer" in env_example
+    assert "ECOTAXA_CACHE_RELEASE_REPOSITORY=TidianeCisse777/IDEA" in env_example
+    assert "ECOTAXA_CACHE_RELEASE_TAG=ecotaxa-cache-current" in env_example
+    assert "ECOTAXA_USERNAME=\n" in env_example
+    assert "ECOTAXA_PASSWORD=\n" in env_example
 
     # MCP_AUTH_TOKEN est généré par ./start.sh, jamais saisi par l'utilisateur :
     # présent mais vide dans le fichier partagé.
@@ -40,10 +43,13 @@ def test_start_script_generates_internal_mcp_token():
 
     required_block = script.split("REQUIRED_ENV_VARS=(", 1)[1].split(")", 1)[0]
     assert "OPENAI_API_KEY" in required_block
-    assert "ECOTAXA_USERNAME" in required_block
-    assert "ECOTAXA_PASSWORD" in required_block
     assert "LANGCHAIN_API_KEY" in required_block
     assert "MCP_AUTH_TOKEN" not in required_block
+    assert "REQUIRED_ENV_VARS+=(ECOTAXA_USERNAME ECOTAXA_PASSWORD)" in script
+    assert (
+        "REQUIRED_ENV_VARS+=(ECOTAXA_CACHE_RELEASE_REPOSITORY "
+        "ECOTAXA_CACHE_RELEASE_TAG)" in script
+    )
 
     assert "generate_mcp_token()" in script
     assert "openssl rand -hex 32" in script
@@ -79,11 +85,11 @@ def test_openwebui_supports_container_and_local_agent_modes():
 def test_readme_documents_minimal_user_setup_and_local_agent_mode():
     readme = Path("README.md").read_text(encoding="utf-8")
 
-    # Setup minimal : l'utilisateur ne remplit que les 3 valeurs requises.
+    # Setup minimal : aucun credential EcoTaxa ne circule chez les consommateurs.
     assert "fill only" in readme
     assert "OPENAI_API_KEY" in readme
-    assert "ECOTAXA_USERNAME" in readme
-    assert "ECOTAXA_PASSWORD" in readme
+    assert "does not use EcoTaxa credentials" in readme
+    assert "ECOTAXA_CACHE_MODE=publisher" in readme
 
     # MCP_AUTH_TOKEN est généré automatiquement par ./start.sh.
     assert "generates `MCP_AUTH_TOKEN`" in readme

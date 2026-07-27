@@ -42,7 +42,7 @@ et notes détaillées sont sous [`docs/`](docs/README.md)**. Les notes internes
 
 - Docker Desktop with Docker Compose
 - `OPENAI_API_KEY`
-- EcoTaxa credentials: `ECOTAXA_USERNAME`, `ECOTAXA_PASSWORD`
+- A GitHub read token only when the shared cache release is private
 - Optional: `cloudflared` for temporary public URLs
 - Optional: `DATABASE_URL` (SQLAlchemy) to enable the read-only SQL workspace
 
@@ -58,8 +58,20 @@ Edit `.env` and fill only:
 
 ```dotenv
 OPENAI_API_KEY=...
-ECOTAXA_USERNAME=...
-ECOTAXA_PASSWORD=...
+# Only when the GitHub repository/release is private.
+ECOTAXA_CACHE_RELEASE_TOKEN=...
+```
+
+The default `consumer` mode downloads the validated shared EcoTaxa cache and
+does not use EcoTaxa credentials. Only the cache maintainer switches to
+`ECOTAXA_CACHE_MODE=publisher`, supplies credentials locally, runs a complete
+sync, and publishes a new release:
+
+```bash
+python scripts/publish_ecotaxa_cache.py \
+  --repository TidianeCisse777/IDEA \
+  --tag ecotaxa-cache-current \
+  --publish
 ```
 
 Optional — to enable the read-only SQL workspace, also set:
