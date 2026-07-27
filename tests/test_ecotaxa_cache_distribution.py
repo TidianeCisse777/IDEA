@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import io
 import json
 from datetime import datetime, timezone
 
@@ -79,3 +80,44 @@ def test_build_cache_bundle_rejects_an_empty_or_unstamped_cache(tmp_path):
 
     with pytest.raises(CacheValidationError, match="schema|empty|sync"):
         build_cache_bundle(empty_cache, tmp_path / "release")
+
+
+def test_install_cache_release_replaces_destination_only_after_verification(tmp_path):
+    from core.ecotaxa_browser.cache.distribution import (
+        build_cache_bundle,
+        install_cache_release,
+    )
+
+    destination = seeded_current_cache(tmp_path / "ecotaxa_cache.sqlite")
+    replacement = seeded_current_cache(tmp_path / "replacement.sqlite")
+    manifest_path, archive_path = build_cache_bundle(replacement, tmp_path / "release")
+
+    installed = install_cache_release(
+        manifest_path.read_bytes(), io.BytesIO(archive_path.read_bytes()), destination
+    )
+
+    assert destination.read_bytes() == replacement.read_bytes()
+    assert installed.samples_indexed == 1
+    assert not list(tmp_path.glob(".ecotaxa_cache.sqlite.*.tmp"))
+
+
+def test_install_cache_release_preserves_existing_cache_when_hash_is_wrong(tmp_path):
+    from core.ecotaxa_browser.cache.distribution import (
+        CacheValidationError,
+        build_cache_bundle,
+        install_cache_release,
+    )
+
+    destination = seeded_current_cache(tmp_path / "ecotaxa_cache.sqlite")
+    original_bytes = destination.read_bytes()
+    replacement = seeded_current_cache(tmp_path / "replacement.sqlite")
+    manifest_path, archive_path = build_cache_bundle(replacement, tmp_path / "release")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["sha256"] = "0" * 64
+
+    with pytest.raises(CacheValidationError, match="integrity"):
+        install_cache_release(
+            json.dumps(manifest).encode(), io.BytesIO(archive_path.read_bytes()), destination
+        )
+
+    assert destination.read_bytes() == original_bytes

@@ -8,6 +8,8 @@ import json
 import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import BinaryIO
+from uuid import uuid4
 
 from core.ecotaxa_browser.cache.repo import (
     SCHEMA_VERSION,
@@ -36,6 +38,27 @@ class CacheManifest:
     def to_dict(self) -> dict[str, int | str]:
         """Return the stable JSON representation stored beside the archive."""
         return asdict(self)
+
+    @classmethod
+    def from_json(cls, payload: bytes) -> "CacheManifest":
+        """Parse a release manifest and reject incomplete or malformed data."""
+        try:
+            raw = json.loads(payload.decode("utf-8"))
+            manifest = cls(
+                schema_version=int(raw["schema_version"]),
+                sha256=str(raw["sha256"]),
+                size_bytes=int(raw["size_bytes"]),
+                projects_indexed=int(raw["projects_indexed"]),
+                samples_indexed=int(raw["samples_indexed"]),
+                synced_at=str(raw["synced_at"]),
+            )
+        except (KeyError, TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+            raise CacheValidationError("release manifest is invalid") from exc
+        if len(manifest.sha256) != 64 or any(c not in "0123456789abcdef" for c in manifest.sha256.lower()):
+            raise CacheValidationError("release manifest has an invalid sha256")
+        if manifest.size_bytes <= 0 or manifest.projects_indexed <= 0 or manifest.samples_indexed <= 0:
+            raise CacheValidationError("release manifest has invalid cache counts")
+        return manifest
 
 
 def _sha256_file(path: Path) -> str:
@@ -92,3 +115,39 @@ def build_cache_bundle(cache_path: Path, output_dir: Path) -> tuple[Path, Path]:
         json.dumps(manifest.to_dict(), sort_keys=True) + "\n", encoding="utf-8"
     )
     return manifest_path, archive_path
+
+
+def install_cache_release(
+    manifest_bytes: bytes,
+    archive_stream: BinaryIO,
+    destination: Path,
+) -> CacheManifest:
+    """Verify a released archive and atomically replace the local cache."""
+    manifest = CacheManifest.from_json(manifest_bytes)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
+    try:
+        try:
+            with gzip.GzipFile(fileobj=archive_stream, mode="rb") as source:
+                with temporary.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+        except (OSError, EOFError) as exc:
+            raise CacheValidationError("release archive is unreadable") from exc
+
+        if temporary.stat().st_size != manifest.size_bytes:
+            raise CacheValidationError("release archive integrity check failed")
+        if _sha256_file(temporary) != manifest.sha256:
+            raise CacheValidationError("release archive integrity check failed")
+
+        installed = validate_installed_cache(temporary)
+        if (
+            installed.schema_version != manifest.schema_version
+            or installed.projects_indexed != manifest.projects_indexed
+            or installed.samples_indexed != manifest.samples_indexed
+            or installed.synced_at != manifest.synced_at
+        ):
+            raise CacheValidationError("release manifest does not match cache")
+        temporary.replace(destination)
+        return installed
+    finally:
+        temporary.unlink(missing_ok=True)
