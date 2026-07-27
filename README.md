@@ -42,7 +42,7 @@ et notes détaillées sont sous [`docs/`](docs/README.md)**. Les notes internes
 
 - Docker Desktop with Docker Compose
 - `OPENAI_API_KEY`
-- EcoTaxa credentials: `ECOTAXA_USERNAME`, `ECOTAXA_PASSWORD`
+- A GitHub read token only when the shared cache release is private
 - Optional: `cloudflared` for temporary public URLs
 - Optional: `DATABASE_URL` (SQLAlchemy) to enable the read-only SQL workspace
 
@@ -58,8 +58,20 @@ Edit `.env` and fill only:
 
 ```dotenv
 OPENAI_API_KEY=...
-ECOTAXA_USERNAME=...
-ECOTAXA_PASSWORD=...
+# Only when the GitHub repository/release is private.
+ECOTAXA_CACHE_RELEASE_TOKEN=...
+```
+
+The default `consumer` mode downloads the validated shared EcoTaxa cache and
+does not use EcoTaxa credentials. Only the cache maintainer switches to
+`ECOTAXA_CACHE_MODE=publisher`, supplies credentials locally, runs a complete
+sync, and publishes a new release:
+
+```bash
+python scripts/publish_ecotaxa_cache.py \
+  --repository TidianeCisse777/IDEA \
+  --tag ecotaxa-cache-current \
+  --publish
 ```
 
 Optional — to enable the read-only SQL workspace, also set:
@@ -96,17 +108,22 @@ http://localhost:3000
 `./start.sh` starts Postgres, MCP EcoTaxa, the agent API, and Open WebUI. It
 also generates `MCP_AUTH_TOKEN` in `.env` if missing.
 
-### First run: wait for the EcoTaxa cache
+### Cache EcoTaxa au premier démarrage
 
-On the first start the EcoTaxa cache fills in the background (~1–2 min, longer
-for large accounts). Until it is populated, EcoTaxa questions return an empty
-result even though the agent is up.
+En mode `consumer` (le défaut du fichier `.env.example`), le MCP télécharge
+avant son démarrage le cache validé de la release `ecotaxa-cache-current`.
+L’agent ne demande ni n’utilise d’identifiant EcoTaxa. Pour une release privée,
+chaque collaborateur renseigne seulement un jeton GitHub de lecture dans
+`ECOTAXA_CACHE_RELEASE_TOKEN`.
+
+En mode `publisher`, le cache est synchronisé depuis EcoTaxa (~1–2 min, plus
+longtemps pour les grands comptes) avant d’être publié par le mainteneur.
 
 **Watch the progress live** — `last_sync_status` is `running` while the sync
 is in progress, and `samples_indexed` / `projects_indexed` climb as it goes:
 
 ```bash
-# refresh every 3s; stop when last_sync_status flips to "ok"
+# refresh every 3s; stop when last_sync_status is "ok"
 while true; do
   curl -s http://localhost:8001/health | jq -c .cache
   sleep 3

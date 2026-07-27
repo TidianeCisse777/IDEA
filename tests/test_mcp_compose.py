@@ -25,6 +25,13 @@ def test_compose_defines_mcp_ecotaxa_service():
     assert "ECOTAXA_TOKEN=${ECOTAXA_TOKEN:-}" in environment
     assert "ECOTAXA_USERNAME=${ECOTAXA_USERNAME:-}" in environment
     assert "ECOTAXA_PASSWORD=${ECOTAXA_PASSWORD:-}" in environment
+    assert "ECOTAXA_CACHE_MODE=${ECOTAXA_CACHE_MODE:-publisher}" in environment
+    assert (
+        "ECOTAXA_CACHE_RELEASE_REPOSITORY=${ECOTAXA_CACHE_RELEASE_REPOSITORY:-}"
+        in environment
+    )
+    assert "ECOTAXA_CACHE_RELEASE_TAG=${ECOTAXA_CACHE_RELEASE_TAG:-}" in environment
+    assert "ECOTAXA_CACHE_RELEASE_TOKEN=${ECOTAXA_CACHE_RELEASE_TOKEN:-}" in environment
     canonical_cache = "ECOTAXA_CACHE_DB=/app/data/ecotaxa_cache.sqlite"
     assert canonical_cache in environment
     assert canonical_cache in agent["environment"]

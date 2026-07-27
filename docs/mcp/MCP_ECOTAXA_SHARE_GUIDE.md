@@ -15,7 +15,7 @@ ne contourne pas les droits du compte EcoTaxa configuré.
 
 1. récupérer `docker-compose.mcp.yml` et `.env.mcp.example` ;
 2. créer `.env.mcp` depuis l'exemple ;
-3. renseigner `MCP_AUTH_TOKEN` et les identifiants EcoTaxa ;
+3. renseigner `MCP_AUTH_TOKEN` et la release cache partagée ;
 4. lancer le conteneur ;
 5. connecter l'agent MCP à `http://localhost:8001/mcp`.
 
@@ -136,9 +136,10 @@ la fin du sync.
 ## Prérequis
 
 - Docker Desktop avec Docker Compose ;
-- identifiants EcoTaxa :
-  - `ECOTAXA_USERNAME` ;
-  - `ECOTAXA_PASSWORD` ;
+- accès à la release GitHub partagée ; un token GitHub de lecture seulement si
+  le dépôt est privé ;
+- les identifiants EcoTaxa ne sont nécessaires que pour le mainteneur qui
+  construit une nouvelle release.
 - un secret `MCP_AUTH_TOKEN` pour protéger le serveur MCP.
 
 ## Lancement Avec Docker Compose
@@ -197,8 +198,11 @@ Renseigner dans `.env.mcp` :
 
 ```dotenv
 MCP_AUTH_TOKEN=un-token-long-et-secret
-ECOTAXA_USERNAME=...
-ECOTAXA_PASSWORD=...
+ECOTAXA_CACHE_MODE=consumer
+ECOTAXA_CACHE_RELEASE_REPOSITORY=TidianeCisse777/IDEA
+ECOTAXA_CACHE_RELEASE_TAG=ecotaxa-cache-current
+# requis seulement pour une release privée
+ECOTAXA_CACHE_RELEASE_TOKEN=...
 ```
 
 Puis lancer :
@@ -255,8 +259,9 @@ Renseigner dans `.env` :
 
 ```dotenv
 MCP_AUTH_TOKEN=un-token-long-et-secret
-ECOTAXA_USERNAME=...
-ECOTAXA_PASSWORD=...
+ECOTAXA_CACHE_MODE=consumer
+ECOTAXA_CACHE_RELEASE_REPOSITORY=TidianeCisse777/IDEA
+ECOTAXA_CACHE_RELEASE_TAG=ecotaxa-cache-current
 ```
 
 Lancer le service :
@@ -294,8 +299,8 @@ Variables utiles :
 | Variable | Rôle | Défaut |
 |---|---|---|
 | `MCP_AUTH_TOKEN` | Bearer token pour `/mcp` et `/admin/*` | requis |
-| `ECOTAXA_USERNAME` | Login EcoTaxa | requis |
-| `ECOTAXA_PASSWORD` | Mot de passe EcoTaxa | requis |
+| `ECOTAXA_USERNAME` | Login EcoTaxa | mainteneur publisher seulement |
+| `ECOTAXA_PASSWORD` | Mot de passe EcoTaxa | mainteneur publisher seulement |
 | `ECOTAXA_CACHE_DB` | chemin SQLite du cache | `data/ecotaxa_cache.sqlite` |
 | `ECOTAXA_NIGHTLY_SYNC` | active le sync nocturne | `true` |
 | `ECOTAXA_SYNC_HOUR` | heure UTC du sync nocturne | `3` |

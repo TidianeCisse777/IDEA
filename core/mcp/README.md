@@ -70,11 +70,15 @@ before starting the agent.
 | Env var | Required | Default | Role |
 |---|---|---|---|
 | `MCP_AUTH_TOKEN` | yes | — | Shared Bearer protecting `/mcp` and `/admin/*` |
-| `ECOTAXA_USERNAME` + `ECOTAXA_PASSWORD` | yes | — | EcoTaxa service account credentials |
+| `ECOTAXA_USERNAME` + `ECOTAXA_PASSWORD` | publisher | — | EcoTaxa service account credentials |
 | `ECOTAXA_CACHE_DB` | no | `data/ecotaxa_cache.sqlite` | Path to the local SQLite cache |
 | `ECOTAXA_CACHE_MAX_AGE_HOURS` | no | `168` | Maximum cache age before startup forces a full sync |
 | `ECOTAXA_NIGHTLY_SYNC` | no | `true` | Set to `false` to disable the nightly cron |
 | `ECOTAXA_SYNC_HOUR` | no | `3` | UTC hour for the nightly sync (0–23) |
+| `ECOTAXA_CACHE_MODE` | no | `publisher` | `publisher` syncs EcoTaxa; `consumer` installs a shared release only |
+| `ECOTAXA_CACHE_RELEASE_REPOSITORY` | consumer | — | GitHub repository holding the shared cache release |
+| `ECOTAXA_CACHE_RELEASE_TAG` | consumer | — | Release tag containing `manifest.json` and `ecotaxa_cache.sqlite.gz` |
+| `ECOTAXA_CACHE_RELEASE_TOKEN` | no | — | Read-only GitHub token for a private release; never an EcoTaxa credential |
 
 ---
 

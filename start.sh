@@ -34,8 +34,6 @@ done
 
 REQUIRED_ENV_VARS=(
   OPENAI_API_KEY
-  ECOTAXA_USERNAME
-  ECOTAXA_PASSWORD
   LANGCHAIN_API_KEY
 )
 
@@ -62,6 +60,20 @@ set -a
 source .env
 set +a
 
+CACHE_MODE="${ECOTAXA_CACHE_MODE:-publisher}"
+case "$CACHE_MODE" in
+  publisher)
+    REQUIRED_ENV_VARS+=(ECOTAXA_USERNAME ECOTAXA_PASSWORD)
+    ;;
+  consumer)
+    REQUIRED_ENV_VARS+=(ECOTAXA_CACHE_RELEASE_REPOSITORY ECOTAXA_CACHE_RELEASE_TAG)
+    ;;
+  *)
+    echo "[start] ECOTAXA_CACHE_MODE must be publisher or consumer."
+    exit 1
+    ;;
+esac
+
 missing=()
 for var_name in "${REQUIRED_ENV_VARS[@]}"; do
   value="${!var_name:-}"
@@ -77,6 +89,8 @@ if [ "${#missing[@]}" -gt 0 ]; then
   echo "[start] MCP_AUTH_TOKEN will be generated automatically."
   exit 1
 fi
+
+echo "[start] EcoTaxa cache mode: ${CACHE_MODE}"
 
 if [ -z "${MCP_AUTH_TOKEN:-}" ] || [[ "${MCP_AUTH_TOKEN:-}" == REPLACE_WITH_* ]]; then
   MCP_AUTH_TOKEN="$(generate_mcp_token)"

@@ -9,7 +9,7 @@ import sqlite3
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import anyio
 from fastmcp import FastMCP
@@ -33,6 +33,7 @@ from core.ecotaxa_browser.cache.repo import (
     SCHEMA_VERSION,
 )
 from core.ecotaxa_browser.cache import sql_explorer as _sql_explorer
+from core.ecotaxa_browser.cache.distribution import download_github_release_cache
 from core.ecotaxa_browser.cache.sync import run_full_sync
 from core.ecotaxa_browser.objects import get_object, list_sample_objects
 from core.ecotaxa_browser.projects import get_project
@@ -62,6 +63,31 @@ _ADMIN_PREFIX = "/admin/"
 _DEFAULT_CACHE_DB = "data/ecotaxa_cache.sqlite"
 _DEFAULT_SYNC_HOUR = 3
 _DEFAULT_CACHE_MAX_AGE_HOURS = 168.0
+
+
+def _cache_mode() -> Literal["publisher", "consumer"]:
+    """Return the only two supported cache ownership modes."""
+    mode = os.getenv("ECOTAXA_CACHE_MODE", "publisher").strip().lower()
+    if mode not in {"publisher", "consumer"}:
+        raise RuntimeError("ECOTAXA_CACHE_MODE must be publisher or consumer")
+    return cast(Literal["publisher", "consumer"], mode)
+
+
+def _bootstrap_consumer_cache() -> None:
+    """Install the maintained cache release; consumer mode never syncs EcoTaxa."""
+    repository = os.getenv("ECOTAXA_CACHE_RELEASE_REPOSITORY", "").strip()
+    tag = os.getenv("ECOTAXA_CACHE_RELEASE_TAG", "").strip()
+    if not repository or not tag:
+        raise RuntimeError(
+            "consumer mode requires ECOTAXA_CACHE_RELEASE_REPOSITORY and "
+            "ECOTAXA_CACHE_RELEASE_TAG"
+        )
+    token = (
+        os.getenv("ECOTAXA_CACHE_RELEASE_TOKEN")
+        or os.getenv("GITHUB_TOKEN")
+        or None
+    )
+    download_github_release_cache(repository, tag, token, Path(_cache_db_path()))
 
 
 def build_nightly_scheduler(
@@ -252,6 +278,7 @@ def _resolve_or_generate_mcp_token() -> str:
 
 def create_app() -> ASGIApp:
     """Build the authenticated EcoTaxa MCP ASGI application."""
+    cache_mode = _cache_mode()
     token = _resolve_or_generate_mcp_token()
 
     mcp = create_mcp()
@@ -282,6 +309,10 @@ def create_app() -> ASGIApp:
 
     @mcp.custom_route("/admin/resync", methods=["POST"])
     async def admin_resync(request: Any) -> JSONResponse:
+        if cache_mode == "consumer":
+            return JSONResponse(
+                {"error": "consumer cache is release-managed"}, status_code=403
+            )
         cache_db = _cache_db_path()
         # Resolve runner lazily so tests can monkeypatch the module-level fn.
         import core.mcp.ecotaxa_server as _server_module
@@ -326,7 +357,10 @@ def create_app() -> ASGIApp:
 
     cache_db = _cache_db_path()
     scheduler = None
-    if os.getenv("ECOTAXA_NIGHTLY_SYNC", "true").lower() != "false":
+    if (
+        cache_mode == "publisher"
+        and os.getenv("ECOTAXA_NIGHTLY_SYNC", "true").lower() != "false"
+    ):
         cron_hour = int(os.getenv("ECOTAXA_SYNC_HOUR", str(_DEFAULT_SYNC_HOUR)))
         scheduler = build_nightly_scheduler(
             cache_db=cache_db,
@@ -340,37 +374,40 @@ def create_app() -> ASGIApp:
 
     @asynccontextmanager
     async def _wrapped_lifespan(app):
-        if scheduler is not None:
+        if cache_mode == "consumer":
+            _bootstrap_consumer_cache()
+        elif scheduler is not None:
             scheduler.start()
         try:
             async with original_lifespan(app) as state:
                 # Any missing, outdated, or over-age cache is rebuilt in
                 # the background. start.sh waits for this run before it
                 # brings up the agent, so users never query stale data.
-                try:
+                if cache_mode == "publisher":
                     try:
-                        conn = _open_cache()
-                    except sqlite3.DatabaseError:
-                        _quarantine_unreadable_cache(cache_db)
-                        requires_bootstrap = True
-                    else:
                         try:
-                            requires_bootstrap = _cache_requires_bootstrap(conn)
-                        finally:
-                            conn.close()
-                    if requires_bootstrap:
-                        loop = asyncio.get_running_loop()
-                        loop.run_in_executor(
-                            None,
-                            partial(
-                                _run_full_sync_with_real_client,
-                                cache_db,
-                                force=True,
-                            ),
-                        )
-                except Exception:
-                    # On ne bloque pas le boot sur un sync auto-trigger
-                    pass
+                            conn = _open_cache()
+                        except sqlite3.DatabaseError:
+                            _quarantine_unreadable_cache(cache_db)
+                            requires_bootstrap = True
+                        else:
+                            try:
+                                requires_bootstrap = _cache_requires_bootstrap(conn)
+                            finally:
+                                conn.close()
+                        if requires_bootstrap:
+                            loop = asyncio.get_running_loop()
+                            loop.run_in_executor(
+                                None,
+                                partial(
+                                    _run_full_sync_with_real_client,
+                                    cache_db,
+                                    force=True,
+                                ),
+                            )
+                    except Exception:
+                        # On ne bloque pas le boot sur un sync auto-trigger
+                        pass
                 yield state
         finally:
             if scheduler is not None:
