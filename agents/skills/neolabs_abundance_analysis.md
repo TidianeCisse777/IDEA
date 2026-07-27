@@ -61,6 +61,8 @@ environmental columns, or no environmental source is authorized.
 
 NeoLabs abundance rows are taxon-level rows. Do not analyse temporal, spatial, environmental, or station-level patterns directly from raw rows without first rebuilding the correct working table.
 
+**One profile = one deployment.** A vertical profile is a single deployment (station + cast) with its net samples stacked by depth stratum; never pool different deployments/stations onto one profile. If none is named, ask which deployment (or draw one per station for a small set).
+
 ## Column families (wide per-stage files) — read before any abundance calculation
 
 Many NeoLabs files have no single `Total abundance` column: abundance is spread
