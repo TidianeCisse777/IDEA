@@ -15,47 +15,7 @@ description: Standard ecological analysis workflow for NeoLabs taxonomy abundanc
 
 # Skill: neolabs_abundance_analysis
 
-Use this skill for NeoLabs taxonomy abundance files, especially tables like `neolabs_taxonomy_abundance_amundsen_ctd.tsv`.
-
-## Step 1 — Optional, source-authorized environmental enrichment
-
-Environmental vocabulary alone never authorizes an online source. Run an
-enrichment only when the Source Selection Gateway authorizes a source and the
-user requests that source's environmental data. If no source is authorized and
-the loaded file lacks the requested environmental columns, report that limit or
-ask which source to use; do not choose Amundsen, Bio-ORACLE, or OGSL yourself.
-
-When enrichment is explicitly requested, call only the named source's canonical
-loaded-table enrichment on the exact active variable. Do not run discovery or
-raw retrieval first. Continue the taxon-level analysis only from the exact
-persisted enriched variable returned by a successful result.
-
-### Canonical source routes
-
-Use exactly one of these routes according to the authorized source:
-
-```
-enrich_with_amundsen_ctd(source_variable="<exact active variable>")
-enrich_with_bio_oracle(source_variable="<exact active variable>", variables=[...])
-enrich_with_ogsl(source_variable="<exact active variable>")
-```
-
-Pass `zone_name` or `date_range` only when the user actually requested that
-scope. Never copy illustrative zone names, dates, variables, or identifiers into
-a real call.
-
-### Sub-step 1d — join abundance via run_pandas
-
-```
-merged = abundance.merge(enriched_sample, left_on="SAMPLE_ID", right_on="sample_id")
-```
-
-Each taxon row now has env columns; THEN continue with the standard workflow below.
-
-### When to skip this whole pre-step
-
-Skip when the request is biological only, the file already contains the needed
-environmental columns, or no environmental source is authorized.
+Use this skill for NeoLabs taxonomy abundance files, especially tables like `neolabs_taxonomy_abundance_amundsen_ctd.tsv`. The anti-error essentials come first; workflows follow; the optional enrichment pre-step is last.
 
 ## Core rule
 
@@ -93,24 +53,6 @@ produce wrong numbers if ignored.
 When the file lacks a single `Total abundance` column, `ALL_STAGES_ABUND
 (ind./m3 depth vol.)` is the total abundance; use it wherever this skill says
 `Total abundance (ind./m3 depth vol)`.
-
-## Visual output routing
-
-This skill is not a graph_writer replacement. For any visual request on a
-NeoLabs abundance file, use this skill only to choose the correct ecological
-working table and transformations. Then call `load_skill("graph_planner")`,
-then call `load_skill("graph_writer")`; the very next execution call must be `run_graph`.
-
-Recommended levels:
-
-| Analysis | Working table |
-|---|---|
-| Taxon ranking | raw taxon-level table |
-| Sample/station/time coverage | `sample_df`, one row per `SAMPLE_ID + ANALYSIS_ID` |
-| Abundance by sample/station/year | `sample_df`, aggregating taxon rows |
-| Diversity indices | taxon matrix, one row per `SAMPLE_ID + ANALYSIS_ID`, one column per `TAXON_ID` |
-| CTD relationships | `sample_df` filtered to `ctd_match_status == "matched"` |
-| Ordination | taxon matrix joined to environmental `sample_df` |
 
 ## Default abundance metric
 
@@ -176,6 +118,25 @@ Name any derived column explicitly with the unit (`abundance_per_L`,
 `m5_cop_dens_ind_per_m3`) so the user can verify the conversion. Never
 plot a mixed-unit chart without stating the conversion in the answer.
 
+## When to ask for clarification
+
+Always ask (or, when one sensible default exists, declare the assumption up front
+before computing) when a vague request leaves a consequential choice open — per
+the system-prompt ambiguity rule. On this wide per-stage file the recurring open
+choices are:
+- **metric**: raw count (`SAMPLE_ABUND`) vs density (`ABUND ind./m3`) vs biomass.
+- **volume basis**: depth-vol vs flowmeter-vol.
+- **stage/level**: a specific stage (C1–C5, M, F, nauplii) vs a subtotal
+  (COPEPODID/NAUPLIUS) vs the row total (`ALL_STAGES`).
+- **aggregation**: taxon-level rows vs `sample_df` (per `SAMPLE_ID + ANALYSIS_ID`)
+  vs station/date; and for a graph, which chart and which axis.
+
+Also ask when the file lacks an essential column with no inferable equivalent
+(no `SAMPLE_ID`/`ANALYSIS_ID`, no `TAXON_ID`, no abundance column, no
+date/station/lat/lon for coverage). Otherwise inspect the file, then — if a
+material choice remains — surface it (question or up-front `Hypothèse: …`) before
+running the calculation; never pick silently and reveal it only afterward.
+
 ## Build `sample_df`
 
 For sample-level analyses, group by:
@@ -215,6 +176,24 @@ sample_df = (
 ```
 
 Adjust column names to the actual file after inspection.
+
+## Visual output routing
+
+This skill is not a graph_writer replacement. For any visual request on a
+NeoLabs abundance file, use this skill only to choose the correct ecological
+working table and transformations, then render with the pre-activated graph
+rules (`graph_planner`/`graph_writer`); the next execution call is `run_graph`.
+
+Recommended levels:
+
+| Analysis | Working table |
+|---|---|
+| Taxon ranking | raw taxon-level table |
+| Sample/station/time coverage | `sample_df`, one row per `SAMPLE_ID + ANALYSIS_ID` |
+| Abundance by sample/station/year | `sample_df`, aggregating taxon rows |
+| Diversity indices | taxon matrix, one row per `SAMPLE_ID + ANALYSIS_ID`, one column per `TAXON_ID` |
+| CTD relationships | `sample_df` filtered to `ctd_match_status == "matched"` |
+| Ordination | taxon matrix joined to environmental `sample_df` |
 
 ## Standard analyses to propose
 
@@ -322,26 +301,46 @@ Interpretation rule:
 - Do not claim causality.
 - Say "ordination exploratoire" unless a formal model, permutation test, and assumptions are explicitly implemented.
 
-## When to ask for clarification
+## Optional pre-step — source-authorized environmental enrichment
 
-Always ask (or, when one sensible default exists, declare the assumption up front
-before computing) when a vague request leaves a consequential choice open — per
-the system-prompt ambiguity rule. On this wide per-stage file the recurring open
-choices are:
-- **metric**: raw count (`SAMPLE_ABUND`) vs density (`ABUND ind./m3`) vs biomass.
-- **volume basis**: depth-vol vs flowmeter-vol.
-- **stage/level**: a specific stage (C1–C5, M, F, nauplii) vs a subtotal
-  (COPEPODID/NAUPLIUS) vs the row total (`ALL_STAGES`).
-- **aggregation**: taxon-level rows vs `sample_df` (per `SAMPLE_ID + ANALYSIS_ID`)
-  vs station/date; and for a graph, which chart and which axis.
+Do this FIRST only when the user explicitly asks to enrich with environmental
+data; otherwise skip it and go straight to the analysis above.
 
-Also ask when the file lacks an essential column with no inferable equivalent
-(no `SAMPLE_ID`/`ANALYSIS_ID`, no `TAXON_ID`, no abundance column, no
-date/station/lat/lon for coverage). Otherwise inspect the file, then — if a
-material choice remains — surface it (question or up-front `Hypothèse: …`) before
-running the calculation; never pick silently and reveal it only afterward.
+Environmental vocabulary alone never authorizes an online source. Run an
+enrichment only when the Source Selection Gateway authorizes a source and the
+user requests that source's environmental data. If no source is authorized and
+the loaded file lacks the requested environmental columns, report that limit or
+ask which source to use; do not choose Amundsen, Bio-ORACLE, or OGSL yourself.
+
+When enrichment is explicitly requested, call only the named source's canonical
+loaded-table enrichment on the exact active variable. Do not run discovery or
+raw retrieval first. Continue the taxon-level analysis only from the exact
+persisted enriched variable returned by a successful result.
+
+### Canonical source routes
+
+Use exactly one of these routes according to the authorized source:
+
+```
+enrich_with_amundsen_ctd(source_variable="<exact active variable>")
+enrich_with_bio_oracle(source_variable="<exact active variable>", variables=[...])
+enrich_with_ogsl(source_variable="<exact active variable>")
+```
+
+Pass `zone_name` or `date_range` only when the user actually requested that
+scope. Never copy illustrative zone names, dates, variables, or identifiers into
+a real call.
+
+### Sub-step — join abundance via run_pandas
+
+```
+merged = abundance.merge(enriched_sample, left_on="SAMPLE_ID", right_on="sample_id")
+```
+
+Each taxon row now has env columns; THEN continue with the standard workflow
+(the core rule and the analysis sections above).
 
 ## Runtime routing contract
 
-- Load with `load_skill("neolabs_abundance_analysis")` for NeoLabs abundance tables keyed by `sample_id + analysis_id`, including ordination, NMDS, and RDA.
-- `neolabs_abundance_analysis` is not a replacement for `graph_planner` or `graph_writer`. Then call `load_skill("graph_planner")`, then call `load_skill("graph_writer")`; the very next execution call must be `run_graph`.
+- This skill is pre-activated whenever a NeoLabs abundance table is the active dataset — apply its rules directly; do not spend a `load_skill` call on it.
+- It is not a replacement for the graph skills: `graph_planner`/`graph_writer` are pre-activated on visual turns; build the correct working table here, then call `run_graph` directly.
