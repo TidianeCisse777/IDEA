@@ -258,6 +258,36 @@ def test_consumer_bootstrap_downloads_shared_release_without_ecotaxa_client(
     }
 
 
+def test_legacy_environment_without_ecotaxa_settings_uses_shared_cache_defaults(
+    monkeypatch, tmp_path
+):
+    import core.mcp.ecotaxa_server as server
+
+    cache_path = tmp_path / "ecotaxa_cache.sqlite"
+    monkeypatch.delenv("ECOTAXA_CACHE_MODE", raising=False)
+    monkeypatch.delenv("ECOTAXA_CACHE_RELEASE_REPOSITORY", raising=False)
+    monkeypatch.delenv("ECOTAXA_CACHE_RELEASE_TAG", raising=False)
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_path))
+    received = {}
+
+    def fake_download(repository, tag, token, destination):
+        received.update(
+            repository=repository, tag=tag, token=token, destination=destination
+        )
+
+    monkeypatch.setattr(server, "download_github_release_cache", fake_download)
+
+    assert server._cache_mode() == "consumer"
+    server._bootstrap_consumer_cache()
+
+    assert received == {
+        "repository": "TidianeCisse777/IDEA",
+        "tag": "ecotaxa-cache-current",
+        "token": None,
+        "destination": cache_path,
+    }
+
+
 def test_cache_mode_rejects_unknown_values(monkeypatch):
     import core.mcp.ecotaxa_server as server
 

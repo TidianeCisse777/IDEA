@@ -60,7 +60,7 @@ set -a
 source .env
 set +a
 
-CACHE_MODE="${ECOTAXA_CACHE_MODE:-publisher}"
+CACHE_MODE="${ECOTAXA_CACHE_MODE:-consumer}"
 case "$CACHE_MODE" in
   publisher)
     REQUIRED_ENV_VARS+=(ECOTAXA_USERNAME ECOTAXA_PASSWORD)

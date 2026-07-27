@@ -72,7 +72,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def _cache_mode() -> Literal["publisher", "consumer"]:
     """Return the only two supported cache ownership modes."""
-    mode = os.getenv("ECOTAXA_CACHE_MODE", "publisher").strip().lower()
+    mode = os.getenv("ECOTAXA_CACHE_MODE", "consumer").strip().lower()
     if mode not in {"publisher", "consumer"}:
         raise RuntimeError("ECOTAXA_CACHE_MODE must be publisher or consumer")
     return cast(Literal["publisher", "consumer"], mode)
@@ -80,13 +80,10 @@ def _cache_mode() -> Literal["publisher", "consumer"]:
 
 def _bootstrap_consumer_cache() -> None:
     """Install the maintained cache release; consumer mode never syncs EcoTaxa."""
-    repository = os.getenv("ECOTAXA_CACHE_RELEASE_REPOSITORY", "").strip()
-    tag = os.getenv("ECOTAXA_CACHE_RELEASE_TAG", "").strip()
-    if not repository or not tag:
-        raise RuntimeError(
-            "consumer mode requires ECOTAXA_CACHE_RELEASE_REPOSITORY and "
-            "ECOTAXA_CACHE_RELEASE_TAG"
-        )
+    repository = os.getenv(
+        "ECOTAXA_CACHE_RELEASE_REPOSITORY", "TidianeCisse777/IDEA"
+    ).strip()
+    tag = os.getenv("ECOTAXA_CACHE_RELEASE_TAG", "ecotaxa-cache-current").strip()
     token = (
         os.getenv("ECOTAXA_CACHE_RELEASE_TOKEN")
         or os.getenv("GITHUB_TOKEN")

@@ -57,6 +57,7 @@ def test_start_script_generates_internal_mcp_token():
     assert "openssl rand -hex 32" in script
     assert "MCP_AUTH_TOKEN=\"$(generate_mcp_token)\"" in script
     assert "MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN" in script
+    assert 'CACHE_MODE="${ECOTAXA_CACHE_MODE:-consumer}"' in script
 
 
 def test_publisher_startup_can_supply_a_github_token_without_storing_it():
