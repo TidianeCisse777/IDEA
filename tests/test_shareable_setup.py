@@ -19,8 +19,10 @@ def test_env_example_configures_consumers_without_ecotaxa_credentials():
     assert "ECOTAXA_CACHE_MODE=consumer" in env_example
     assert "ECOTAXA_CACHE_RELEASE_REPOSITORY=TidianeCisse777/IDEA" in env_example
     assert "ECOTAXA_CACHE_RELEASE_TAG=ecotaxa-cache-current" in env_example
-    assert "ECOTAXA_USERNAME=\n" in env_example
-    assert "ECOTAXA_PASSWORD=\n" in env_example
+    assert "ECOTAXA_USERNAME=" not in env_example
+    assert "ECOTAXA_PASSWORD=" not in env_example
+    assert "ECOTAXA_CACHE_AUTO_PUBLISH=" not in env_example
+    assert "GITHUB_TOKEN=" not in env_example
 
     # MCP_AUTH_TOKEN est généré par ./start.sh, jamais saisi par l'utilisateur :
     # présent mais vide dans le fichier partagé.
@@ -59,10 +61,10 @@ def test_start_script_generates_internal_mcp_token():
 
 def test_publisher_startup_can_supply_a_github_token_without_storing_it():
     script = Path("start.sh").read_text(encoding="utf-8")
-    env_example = Path(".env.example").read_text(encoding="utf-8")
+    publisher_env_example = Path(".env.mcp.example").read_text(encoding="utf-8")
 
-    assert "ECOTAXA_CACHE_AUTO_PUBLISH=true" in env_example
-    assert "GITHUB_TOKEN=" in env_example
+    assert "ECOTAXA_CACHE_AUTO_PUBLISH=true" in publisher_env_example
+    assert "GITHUB_TOKEN=" in publisher_env_example
     assert 'gh auth token' in script
     assert "ECOTAXA_CACHE_AUTO_PUBLISH" in script
 
