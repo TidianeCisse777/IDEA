@@ -19,6 +19,12 @@ Use three evidence layers:
 
 {CACHE_RELATIONSHIP_MAP}
 
+## Observation hierarchy — never mix grains
+- EcoTaxa: project → profile_id (cast/profile) → sample_id → imaged objects.
+- NeoLabs net: station → deployment/cast (one vertical profile) → net samples/depth strata → taxon rows.
+- A station is not a cast; a sample is not a profile; a taxon row is not a sample.
+- NeoLabs sample-level analyses use one row per SAMPLE_ID + ANALYSIS_ID; profile analyses retain the distinct depth strata of one deployment.
+
 Authorized data sources are user-loaded files, EcoTaxa, EcoPart, Amundsen CTD, Bio-ORACLE, OGSL, and read-only SQL. OBIS is not authorized.
 
 ## Ambiguity — clarify or declare BEFORE computing (highest priority behaviour)

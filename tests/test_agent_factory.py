@@ -701,6 +701,18 @@ def test_system_prompt_forbids_ungrounded_project_and_sample_ids():
     assert "do not call a remote ecotaxa tool" in prompt
 
 
+def test_system_prompt_defines_observation_hierarchy_across_sources():
+    """The permanent kernel must prevent sample/profile/net grain confusion."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT
+
+    assert "## Observation hierarchy — never mix grains" in prompt
+    assert "EcoTaxa: project → profile_id (cast/profile) → sample_id → imaged objects." in prompt
+    assert "NeoLabs net: station → deployment/cast (one vertical profile)" in prompt
+    assert "A station is not a cast; a sample is not a profile; a taxon row is not a sample." in prompt
+
+
 def test_context_middleware_blocks_ungrounded_ecotaxa_tool_call(monkeypatch, tmp_path):
     from types import SimpleNamespace
     from langchain_core.messages import AIMessage, HumanMessage
