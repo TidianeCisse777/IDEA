@@ -118,6 +118,29 @@ effort. La clarté prime sur l'esthétique.
 - **Comparabilité** : échelles cohérentes entre panneaux ; ne tronque pas un axe
   numérique sans le signaler.
 
+## Grant-ready standard (all visuals)
+
+Every visual is a concise evidence figure suitable for insertion into a research
+proposal, report, or PDF at its final size. Apply this standard to every graph,
+map, profile, and analytical visual without waiting for a keyword.
+
+- Keep only the evidence needed to answer the request: one scientific message,
+  one concise title, labelled axes with units, and a legend only when it decodes
+  a real visual encoding. Use no decorative overlays, dashboard furniture, or
+  technical status badges.
+- Make every text element legible at 100% viewing size. If labels or legends do
+  not fit, shorten, aggregate, use sparse ticks, or split the comparison; never
+  solve crowding by making the figure harder to read.
+- Do not use colour alone to convey a category, status, or comparison. Pair it
+  with a label, marker shape, line style, hatch, or direct annotation when that
+  distinction is needed to interpret the figure.
+- For regional maps, use the exact requested geometry and a proportional data
+  extent. Add a small locator inset only when the reader needs wider geographic
+  context; do not use a world view as decoration.
+- For a follow-up visual edit, reuse the active selection and preserve its
+  scientific meaning. Modify only the requested extent, context, encoding, or
+  layout; re-query only when the requested geographic/data scope truly changes.
+
 ## Executable graph contract (mandatory)
 
 Every visual must define `graph_contract`. Rendering is blocked when it is
