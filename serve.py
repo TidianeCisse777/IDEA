@@ -183,6 +183,26 @@ class _RunIdCaptureCallback(BaseCallbackHandler):
             )
 
 
+async def _flush_tracers() -> None:
+    """Vide la file d'upload LangSmith avant de terminer la requête.
+
+    Le LangChainTracer envoie ses runs par batch depuis un thread de fond.
+    Sous ``uvicorn --reload`` (compose), un reload ou un arrêt entre la fin de
+    la requête et l'envoi du batch perd la trace : le run_id est capturé
+    localement (on_chain_start) mais jamais visible côté LangSmith (404 à
+    l'audit). Un flush bloquant, déporté hors de l'event loop, garantit la
+    persistance. No-op si le tracing est désactivé.
+    """
+    if os.getenv("LANGCHAIN_TRACING_V2", "false").lower() != "true":
+        return
+    try:
+        from langchain_core.tracers.langchain import wait_for_all_tracers
+
+        await asyncio.to_thread(wait_for_all_tracers)
+    except Exception:  # noqa: BLE001 - le flush ne doit jamais casser la réponse
+        logger.warning("langsmith trace flush failed", exc_info=True)
+
+
 def _request_callbacks(
     thread_id: str,
     message_id: str | None = None,
@@ -1206,6 +1226,7 @@ async def _stream_agent_sse(
     }
     yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n"
     logger.info("thread=%s STREAM done", thread_id)
+    await _flush_tracers()
     yield "data: [DONE]\n\n"
 
 
@@ -1397,6 +1418,8 @@ async def chat_completions(
         default_run_store.set(tid, str(run_id))
         logger.info("thread=%s captured_run_id=%s", tid, run_id)
         _log_feedback_event("captured_run_id", tid, run_id=str(run_id))
+
+    await _flush_tracers()
 
     text = _extract_and_host_images(result["messages"][-1].content)
 
