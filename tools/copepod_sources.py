@@ -16,6 +16,7 @@ from core.ecotaxa_browser.column_distribution import get_column_distribution
 from core.ecotaxa_browser.compare_schemas import compare_project_schemas
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
 from core.ecotaxa_browser.observations import find_observations
+from core.ecotaxa_browser.profile_maps import profiles_for_map
 from core.ecotaxa_browser.region import (
     group_project_samples_by_region,
     projects_in_region,
@@ -1474,9 +1475,8 @@ def make_source_tools(thread_id: str) -> list:
     def preview_ecotaxa_project(project_id: int) -> str:
         """Aperçu LÉGER d'un projet EcoTaxa : metadata + 10 objets exemple.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly rather than loading it again.
 
         Renvoie :
         - une fiche metadata (instrument, statut, droits du compte, objets,
@@ -1760,9 +1760,8 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Compte les objets validés / prédits / douteux par projet et par taxon.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly rather than loading it again.
 
         `taxa` accepte des IDs entiers ou des noms scientifiques. Utile pour
         évaluer la confiance des annotations avant d'exporter. Les noms sont
@@ -2146,9 +2145,8 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Cherche les samples EcoTaxa dans une bbox géo et/ou une période.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly rather than loading it again.
 
         Do NOT use this tool when the user names a taxon/group (Copepoda,
         Calanus, copepods, etc.). This tool has no `taxon` argument. For
@@ -2486,6 +2484,113 @@ def make_source_tools(thread_id: str) -> list:
                 "samples": int(result["total_matching"]),
                 "years": int(result["n_years"]),
             },
+        )
+
+    @tool(response_format="content_and_artifact")
+    def summarize_ecotaxa_profiles_for_map(zone_name: str) -> str:
+        """Prépare une carte de profils/casts EcoTaxa dans une zone nommée.
+
+        Utiliser pour toute carte où un point représente un profil/cast et où
+        sa taille doit représenter le nombre de samples de ce profil. Le tool
+        résout le contour NeoLab exact en interne, conserve une seule ligne
+        par ``profile_id`` et fournit directement ``n_samples``, ``lat_avg``
+        et ``lon_avg`` au sandbox graphique. Ne pas remplacer cet appel par
+        une agrégation SQL libre sur ``samples_cache``.
+
+        ``zone_name`` accepte le nom canonique ou un alias (par exemple
+        ``Baie de Baffin`` ou ``Hudson Bay``). Lecture du cache partagé local
+        uniquement : aucun téléchargement ni identifiant EcoTaxa requis.
+        """
+        try:
+            result = profiles_for_map(zone_name)
+        except EcoTaxaBrowserError as exc:
+            return _eco_error(f"Erreur EcoTaxa ({exc.code}) : {exc}")
+        except Exception as exc:
+            return _eco_error(
+                f"Erreur lors de l'agrégation des profils EcoTaxa : {exc}",
+                retryable=False,
+            )
+
+        zone = result["zone"]
+        coverage = result["coverage"]
+        profiles = result["profiles"]
+        if not profiles:
+            if coverage["samples_in_zone"] == 0:
+                reason = (
+                    "0 sample dans le contour exact du cache partagé pour cette zone. "
+                    "Ce constat ne conclut pas à une absence globale dans EcoTaxa."
+                )
+            elif coverage["samples_with_profile_id"] == 0:
+                reason = (
+                    f"{coverage['samples_in_zone']} sample(s) dans le contour exact, "
+                    "mais aucun profile_id renseigné."
+                )
+            else:
+                reason = (
+                    "Aucun profil avec coordonnées utilisables après le filtre exact."
+                )
+            return _eco_empty(
+                "# Carte des profils EcoTaxa — aucune ligne à tracer\n\n"
+                f"{reason}\n\n"
+                f"Zone résolue : {zone['canonical']} ({zone['source']}).\n"
+                "Prochaine action : choisir une autre zone du cache ou compléter "
+                "la prochaine synchronisation source.",
+                metrics=coverage,
+                provenance={"zone": zone},
+            )
+
+        dataframe = pd.DataFrame.from_records(
+            profiles,
+            columns=["profile_id", "n_samples", "lat_avg", "lon_avg"],
+        )
+        variable_name = "df_ecotaxa_profile_map"
+        store_dataset(
+            _store,
+            thread_id,
+            dataframe,
+            variable_name=variable_name,
+            latest_alias=ECOTAXA,
+            meta={
+                "source": "ecotaxa_profile_map",
+                "source_scope": "local_cache",
+                "zone": zone,
+                "coverage": coverage,
+                "n_profiles": len(dataframe),
+                "row_contract": "one row per profile_id; n_samples is distinct samples",
+            },
+        )
+        lines = [
+            f"# Carte des profils EcoTaxa — {len(dataframe)} profils",
+            "",
+            f"Zone exacte : {zone['canonical']} ({zone['source']}).",
+            (
+                f"{coverage['samples_in_zone']} samples dans le contour ; "
+                f"{coverage['samples_with_profile_id']} avec profile_id ; "
+                f"{coverage['samples_missing_profile_id']} sans profile_id."
+            ),
+            f"DataFrame de rendu : `{variable_name}`.",
+            "",
+            "| profile_id | n_samples | lat_avg | lon_avg |",
+            "|---|---:|---:|---:|",
+        ]
+        for profile in profiles[:30]:
+            lines.append(
+                f"| {profile['profile_id']} | {profile['n_samples']} | "
+                f"{profile['lat_avg']:.5f} | {profile['lon_avg']:.5f} |"
+            )
+        if len(profiles) > 30:
+            lines.append(f"| … | … | … | … |\n\nAperçu de 30 profils sur {len(profiles)}.")
+        lines.extend([
+            "",
+            "Rendu requis : un point par ligne/profil ; taille de marqueur basée sur "
+            "`n_samples` ; tracer le contour exact de la zone résolue.",
+        ])
+        return _eco_success(
+            "\n".join(lines),
+            data_ref=variable_name,
+            persisted=True,
+            metrics={**coverage, "profiles": len(dataframe)},
+            provenance={"zone": zone},
         )
 
     @tool(response_format="content_and_artifact")
@@ -3777,9 +3882,8 @@ def make_source_tools(thread_id: str) -> list:
                 sandbox pendant toute la conversation. Si absent, `samples`
                 est utilisé avec un identifiant stable dérivé du contenu.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly rather than loading it again.
 
         Outil central d'exploration : écrire directement le SELECT voulu.
         Remplace tout pattern nécessitant plusieurs appels ou un export pour
@@ -4148,6 +4252,7 @@ def make_source_tools(thread_id: str) -> list:
     return [
         find_ecotaxa_projects,
         find_ecotaxa_samples_in_region,
+        summarize_ecotaxa_profiles_for_map,
         combine_ecotaxa_selections,
         group_ecotaxa_samples_by_year,
         find_ecotaxa_projects_in_region,

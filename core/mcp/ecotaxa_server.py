@@ -47,6 +47,7 @@ from core.ecotaxa_browser.compare_schemas import compare_project_schemas
 from core.ecotaxa_browser.errors import EcoTaxaBrowserError
 from core.ecotaxa_browser.deployment_summary import summarize_sample_deployment
 from core.ecotaxa_browser.observations import find_observations
+from core.ecotaxa_browser.profile_maps import profiles_for_map
 from core.ecotaxa_browser.preview import preview_project
 from core.ecotaxa_browser.region import (
     group_project_samples_by_region,
@@ -635,6 +636,21 @@ def create_mcp() -> FastMCP:
                 depth_max_gte=depth_max_gte,
                 month=month,
             )
+        except EcoTaxaBrowserError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+
+    @mcp.tool(name="profiles_for_map")
+    async def profiles_for_map_tool(zone_name: str) -> dict:
+        """Return one map-ready row per EcoTaxa profile in an exact named zone.
+
+        A row has ``profile_id``, ``n_samples``, ``lat_avg`` and ``lon_avg``.
+        ``n_samples`` is the number of distinct samples represented by that
+        profile; use it for marker size. The zone polygon is resolved
+        internally from the NeoLab registry and coverage diagnostics explain
+        an empty result without making claims about global EcoTaxa coverage.
+        """
+        try:
+            return await _run_sync(profiles_for_map, zone_name)
         except EcoTaxaBrowserError as exc:
             return {"ok": False, "error": exc.as_dict()}
 

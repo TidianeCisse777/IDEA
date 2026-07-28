@@ -4,7 +4,7 @@
 > (`tools/tool_catalog.py` → `agent.py` → `create_agent`). Pour les use cases voir [`SPEC.md`](SPEC.md),
 > pour le câblage voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
 >
-> **66 tools obligatoires, 69 avec SQL** (les 3 tools SQL ne sont ajoutés que si
+> **67 tools obligatoires, 70 avec SQL** (les 3 tools SQL ne sont ajoutés que si
 > `DATABASE_URL` est résolvable). Ce total est le catalogue enregistré; le modèle
 > voit une allowlist déterministe de **15 tools maximum par appel**, calculée par
 > `tools/tool_exposure.py` sous l'autorité de `tools/source_scope.py`. Le prompt
@@ -23,7 +23,7 @@
 - Les 18 autres tools de ces quatre familles restent enregistrés pour compatibilité, mais appartiennent au groupe `hidden_legacy` : ils ne sont jamais présentés au modèle et sont bloqués avant exécution.
 
 <!-- TOOL-INVENTORY:START -->
-Inventaire généré : **66 tools obligatoires**, **69 avec SQL**.
+Inventaire généré : **67 tools obligatoires**, **70 avec SQL**.
 
 | Tool | Famille | Source | Risque | Confirmation | Optionnel | I/O distant | État de session |
 |---|---|---|---|---|---|---|---|
@@ -91,6 +91,7 @@ Inventaire généré : **66 tools obligatoires**, **69 avec SQL**.
 | `run_pandas` | data | file | medium | non | non | non | oui |
 | `search_ecotaxa_taxa` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `split_dataframe_by_zone` | geography | geography | medium | non | non | non | oui |
+| `summarize_ecotaxa_profiles_for_map` | ecotaxa | ecotaxa | medium | non | non | non | oui |
 | `summarize_ecotaxa_project` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `summarize_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `summarize_ecotaxa_sample` | ecotaxa | ecotaxa | low | non | non | oui | non |
@@ -113,7 +114,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 2. EcoTaxa — `tools/copepod_sources.py` (31)
+## 2. EcoTaxa — `tools/copepod_sources.py` (32)
 
 ### Catalogue & recherche
 | Tool | Rôle | Coûteux ? |
@@ -143,6 +144,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `find_ecotaxa_samples_in_region` | Samples par `bbox`/`zone_name`/`date_range`/`instrument`/`project_ids` ; inclut station/profile si le cache a été resynchronisé ; crée une sélection nommée | non |
+| `summarize_ecotaxa_profiles_for_map` | Carte déterministe par profil/cast dans une zone nommée exacte : une ligne par `profile_id`, coordonnées agrégées et `n_samples` pour la taille des points ; explique distinctement les lacunes de couverture du cache | non |
 | `group_ecotaxa_samples_by_year` | Vue **interannuelle** d'un lieu (station ou zone, plusieurs stations possibles) : tableau année × (n_samples, n_stations, dates, instruments, projets) ; mémorise une sélection multi-années pour un export étalé sur les années | non |
 | `find_ecotaxa_projects_in_region` | Projets agrégés par zone/période (row/projet) | non |
 | `group_ecotaxa_project_samples_by_region` | Samples d'un projet groupés par zone | non |

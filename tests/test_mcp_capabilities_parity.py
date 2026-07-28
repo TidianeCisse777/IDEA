@@ -133,6 +133,7 @@ def test_new_quickwin_tools_are_exposed(tool_names):
     assert "list_ecotaxa_cache_tables" in tool_names
     assert "describe_ecotaxa_cache_table" in tool_names
     assert "query_ecotaxa_cache" in tool_names
+    assert "summarize_ecotaxa_profiles_for_map" in tool_names
 
 
 # ---- MCP parity: same capabilities exposed via the FastMCP façade ----
@@ -164,6 +165,7 @@ TOOL_TO_MCP_TOOL: dict[str, str] = {
     "list_ecotaxa_cache_tables": "list_tables",
     "describe_ecotaxa_cache_table": "describe_table",
     "query_ecotaxa_cache": "read_query",
+    "summarize_ecotaxa_profiles_for_map": "profiles_for_map",
     # Exempted (export tools stay agent-only by design):
     # "query_ecotaxa", "query_ecotaxa_sample", "export_ecotaxa_samples"
 }

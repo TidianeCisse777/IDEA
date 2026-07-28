@@ -41,6 +41,7 @@ Never use a plain longitude/latitude scatter or artificial lines as a coastline.
 | Discover the actual cache | `list_ecotaxa_cache_tables` |
 | Inspect one cache table | `describe_ecotaxa_cache_table` |
 | Filter, join, count, group, rank, or resolve samples | `query_ecotaxa_cache` |
+| Map profiles/casts, with point size = samples per profile | `summarize_ecotaxa_profiles_for_map` |
 | Complete one partially cached sample | `summarize_ecotaxa_sample_deployment` |
 | Resolve a taxon name | `search_ecotaxa_taxa` |
 | Count V/P/D/U for project × taxon | `count_ecotaxa_taxa` |
@@ -99,6 +100,21 @@ One row in `samples_cache` is one EcoTaxa sample. Important columns:
 `profile_id` is the cast. `station_id` is a location and must never be renamed
 or counted as a cast. Count samples with `COUNT(DISTINCT sample_id)` and casts
 with `COUNT(DISTINCT profile_id)`.
+
+### Profile / cast maps
+
+For a map of profiles, casts, or deployments where point size means the number
+of samples, call `summarize_ecotaxa_profiles_for_map(zone_name=...)` directly.
+It resolves the exact named-zone polygon internally and persists
+`df_ecotaxa_profile_map` with exactly these render columns:
+`profile_id`, `n_samples`, `lat_avg`, and `lon_avg`.
+
+One row is one point and one non-empty `profile_id`. `n_samples` is the count
+of distinct sample IDs for that profile. Never group a profile map by sample_id,
+never use `station_id` as a profile surrogate, and never replace this route
+with a handwritten cache SQL aggregation. If the result is empty, report its
+coverage diagnostic: it describes the exact shared-cache coverage only, not
+global EcoTaxa absence.
 
 Never derive V/P/D/U from `object_count`. Never sum a sample-level count after
 joining samples to multiple object rows; pre-aggregate objects by `sample_id`

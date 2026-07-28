@@ -251,6 +251,37 @@ contract.** If the user asked for positions / number of samples / number of
 taxa, use `station_map` with that variable — inventing an abundance column is a
 data-integrity violation.
 
+### EcoTaxa profile / cast map
+
+For `df_ecotaxa_profile_map`, draw **one point per profile**. Its required
+columns are `profile_id`, `n_samples`, `lat_avg`, and `lon_avg`; do not merge,
+expand, or regroup it. The point-size encoding is `n_samples` and must have a
+size legend. Never use `sample_id` as a grouping key for this map.
+
+```python
+plot_df = df_ecotaxa_profile_map.dropna(
+    subset=["profile_id", "n_samples", "lat_avg", "lon_avg"]
+).copy()
+sizes = 36 + 220 * (
+    plot_df["n_samples"] / plot_df["n_samples"].max()
+).clip(lower=0.15)
+map_points = ax.scatter(
+    plot_df["lon_avg"], plot_df["lat_avg"], s=sizes,
+    color="#2563eb", edgecolor="#0f172a", linewidth=0.45,
+    transform=ccrs.PlateCarree(), zorder=3,
+)
+map_points.set_gid("map_points")
+size_legend = ax.legend(
+    *map_points.legend_elements(prop="sizes", num=4),
+    title="Samples par profil", loc="lower left",
+)
+size_legend.set_gid("station_size_legend")
+```
+
+Use `kind: "station_map"`, a coordinate `position` mapping, a `size` mapping
+for `n_samples`, and `source_variables` naming those columns. Draw the exact
+resolved zone polygon; do not request a second lookup merely to render it.
+
 ### Station / position map (`station_map`)
 
 The data axis must be a Cartopy GeoAxes. Give the point collection a stable gid.
