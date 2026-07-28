@@ -1808,9 +1808,8 @@ def make_source_tools(thread_id: str) -> list:
     def search_ecotaxa_taxa(query: str) -> str:
         """Recherche par autocomplétion les taxons EcoTaxa qui matchent une chaîne.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Appeler ce tool AVANT `count_ecotaxa_taxa` ou
         `find_ecotaxa_observations` lorsque le nom de taxon est ambigu, mal
@@ -2019,9 +2018,8 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Inspecte la distribution d'une colonne d'un projet EcoTaxa.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Pour les colonnes numériques : min/max/mean/median/p25/p75. Pour les
         colonnes texte : top valeurs + nombre de distinctes. Précise `level`
@@ -2081,9 +2079,8 @@ def make_source_tools(thread_id: str) -> list:
     def compare_ecotaxa_projects(project_ids: list[int]) -> str:
         """Compare les schémas de plusieurs projets EcoTaxa avant un export combiné.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Retourne les colonnes communes, les conflits de type, les conflits de
         niveau, et les colonnes uniques par projet.
@@ -2339,9 +2336,8 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Regroupe par ANNÉE les samples EcoTaxa d'un lieu suivi dans la durée.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         À utiliser quand l'utilisateur veut une vue **interannuelle** d'un
         même endroit : « couverture par année à la station X », « combien de
@@ -2607,9 +2603,8 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Liste les projets EcoTaxa avec au moins un sample dans une zone / période.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Même format que `find_ecotaxa_samples_in_region` :
         - `zone_name` (recommandé pour les zones nommées NeoLab) : le tool
@@ -2691,9 +2686,8 @@ def make_source_tools(thread_id: str) -> list:
     def group_ecotaxa_project_samples_by_region(project_id: int) -> str:
         """Groupe tous les samples cache d'un projet EcoTaxa par zone IHO/NeoLab.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Utiliser quand l'utilisateur demande une vue « par mer », « par
         secteur », « par zone », ou « groupe les samples du projet X par
@@ -2736,9 +2730,8 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Classe les régions / mers EcoTaxa par nombre ou ancienneté des samples.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Utiliser quand l'utilisateur demande les zones, mers, secteurs ou
         régions les moins / plus échantillonnés dans le cache EcoTaxa, ou un
@@ -2805,9 +2798,8 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Trouve les samples EcoTaxa dont le projet a le taxon attesté.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Granularité projet-filtrée : retourne les samples (bbox/date/instrument)
         appartenant à un projet où le taxon a au moins un objet du statut
@@ -2896,9 +2888,8 @@ def make_source_tools(thread_id: str) -> list:
     def get_ecotaxa_sample(sample_id: int) -> str:
         """Renvoie les métadonnées complètes d'un sample (déploiement) EcoTaxa.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         `sample_id` est l'identifiant EcoTaxa du sample (entier, ex. 42000002).
         Réponse : identifiants, lat/lon, original_id (nom de station lisible),
@@ -2981,9 +2972,8 @@ def make_source_tools(thread_id: str) -> list:
         Ne pas confondre avec `get_ecotaxa_object`, qui ne montre qu'UN objet à
         partir d'un `object_id` déjà connu — pas d'un sample.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Requête objet paginée légère (`object_set/query`) — aucun job d'export,
         aucune image.
@@ -3076,9 +3066,8 @@ def make_source_tools(thread_id: str) -> list:
         objets → c'est `list_ecotaxa_sample_objects(sample_id=...)`. Ne jamais
         passer un `sample_id` à ce tool-ci.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Lecture seule, aucun export, aucune image.
 
@@ -3158,9 +3147,8 @@ def make_source_tools(thread_id: str) -> list:
     def summarize_ecotaxa_sample_deployment(sample_id: int) -> str:
         """Résume le déploiement d'un sample EcoTaxa sans export complet.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Utiliser pour répondre aux questions sur date/lieu/profondeur de
         déploiement, acquisition_id, instrument, cast/profile/station ids et
@@ -3277,9 +3265,8 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Résume un batch de samples EcoTaxa sans télécharger les objets.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         À utiliser IMPÉRATIVEMENT pour calculer les totaux V/P/D/U d'une
         sélection EcoTaxa (ex. « donne les totaux validés/prédits »,
@@ -3391,9 +3378,8 @@ def make_source_tools(thread_id: str) -> list:
     def summarize_ecotaxa_sample(sample_id: int) -> str:
         """Résume UN sample EcoTaxa (V/P/D/U counts + taxa observés).
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Variante mono-sample de `summarize_ecotaxa_samples`. Renvoie le même
         tableau réduit à une ligne. Pas de download.
@@ -3411,9 +3397,8 @@ def make_source_tools(thread_id: str) -> list:
     def summarize_ecotaxa_projects(project_ids: list[int]) -> str:
         """Résume un batch de projets EcoTaxa sans télécharger les objets.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Pour chaque `project_id`, renvoie un tableau avec :
         - `n_samples` (depuis le cache local)
@@ -3494,9 +3479,8 @@ def make_source_tools(thread_id: str) -> list:
     def summarize_ecotaxa_project(project_id: int) -> str:
         """Résume UN projet EcoTaxa (n_samples + envelope + V/P/D/U + taxa).
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Variante mono-projet de `summarize_ecotaxa_projects`. Renvoie le
         même tableau réduit à une ligne. Pas de download.
@@ -3520,9 +3504,8 @@ def make_source_tools(thread_id: str) -> list:
     ) -> str:
         """Exporte une sélection de samples EcoTaxa, multi-projets en 1 appel.
 
-        Routing requirement: before calling this tool in an agent turn, call
-        `load_skill("ecotaxa_navigation")` first unless it has already been
-        called in the same turn.
+        EcoTaxa navigation is already pre-activated with this source family;
+        call this tool directly and never reload the skill in a later turn.
 
         Groupe automatiquement les `sample_ids` par projet (via le cache
         local — pas d'appel API supplémentaire) et lance UN `query_ecotaxa`

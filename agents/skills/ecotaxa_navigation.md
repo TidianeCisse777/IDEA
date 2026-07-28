@@ -27,9 +27,9 @@ Stay at sample level unless the user explicitly needs individual objects.
 ## Mandatory map workflow
 
 For every EcoTaxa map request, including a follow-up edit to an existing map,
-this skill is mandatory. Load `graph_planner` first, then `graph_writer`, in
-separate tool-call batches before querying or rendering. Do not reuse a
-previous map workflow: the current turn must load both graph skills.
+this navigation skill and the graph workflow are already active in the
+session. Reuse their active rules directly. Never reload either skill in a later turn
+before querying or rendering.
 
 The finished figure must be a Cartopy GeoAxes with real Natural Earth coastlines.
 Never use a plain longitude/latitude scatter or artificial lines as a coastline.

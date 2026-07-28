@@ -112,7 +112,7 @@ Recommended `sample_df` contents:
 
 **Step 1b — Column disambiguation**: before proceeding, check whether the user's request (e.g. "abondance", "température", "profondeur") maps to more than one column in `all_columns`. If multiple candidates exist, list them explicitly and ask the user which one to use. Never select a column silently when ambiguity exists.
 
-**Step 1c — Candidate inspection**: **Direct EcoTaxa cache map first:** if the successful exact cache query uses only `sample_id`, `iho_zone`, `lat_avg`, and `lon_avg`, it is the inspection — load `graph_writer` directly and never call `run_pandas` merely to recheck those fields. **Otherwise**, before loading `graph_writer`, call `run_pandas` on the active table. Inspect each candidate's dtype, NaN/non-null counts, numeric range or categorical `.nunique()` plus sample, and rows complete across all required columns. Plan and render only compatible columns with at least one complete row. If a column is >80 % NaN, has the wrong dtype, or leaves no complete row, state the issue and ask; never silently replace a column.
+**Step 1c — Candidate inspection**: **Direct EcoTaxa cache map first:** if the successful exact cache query uses only `sample_id`, `iho_zone`, `lat_avg`, and `lon_avg`, it is the inspection — use the already-active graph workflow directly and never call `run_pandas` merely to recheck those fields. **Otherwise**, inspect the active table with `run_pandas`. Inspect each candidate's dtype, NaN/non-null counts, numeric range or categorical `.nunique()` plus sample, and rows complete across all required columns. Plan and render only compatible columns with at least one complete row. If a column is >80 % NaN, has the wrong dtype, or leaves no complete row, state the issue and ask; never silently replace a column.
 
 2. Check the geographic dimension (step 0)
 3. Check whether NeoLabs taxon-level data requires a rebuilt `sample_df` (step 0b)
@@ -158,4 +158,4 @@ Output the plan wrapped in a `<details>` block so it is hidden by default:
 </details>
 ```
 
-The plan is not the final answer for visual output. For any visual output, after this plan the agent must immediately use `graph_writer` and execute the generated matplotlib code with `run_graph` in the same turn. Never call `run_graph` immediately after `load_skill("graph_planner")`: first call `load_skill("graph_writer")`, then the next execution call is `run_graph`. Never answer the user with only this `<details>` block unless a real blocker makes the figure impossible.
+The plan is not the final answer for visual output. For any visual output, reuse the already-active graph workflow and execute the generated matplotlib code with `run_graph` in the same turn. Never reload `graph_planner` or `graph_writer` in a later turn. Never answer the user with only this `<details>` block unless a real blocker makes the figure impossible.

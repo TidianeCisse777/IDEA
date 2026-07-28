@@ -1050,8 +1050,8 @@ def test_graph_planner_treats_profiles_as_semantically_visual():
     assert "requested output intent" in planner
     assert "not from a closed list of words" in planner
     assert "never answer the user with only this `<details>` block" in planner
-    assert 'never call `run_graph` immediately after `load_skill("graph_planner")`' in planner
-    assert 'first call `load_skill("graph_writer")`' in planner
+    assert "reuse the already-active graph workflow" in planner
+    assert "never reload `graph_planner` or `graph_writer` in a later turn" in planner
 
 
 def test_graph_writer_supports_standalone_named_zone_maps():
@@ -1322,7 +1322,7 @@ def test_ecotaxa_navigation_distinguishes_loki_instrument_from_project():
         encoding="utf-8"
     ).lower()
 
-    assert 'load_skill("ecotaxa_navigation")' in prompt
+    assert "is pre-activated whenever ecotaxa is authorized" in prompt
     assert "loki-as-instrument" in prompt
     assert "samples-by-zone queries" in skill
     assert "projet loki" in skill
@@ -1521,7 +1521,7 @@ def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
         encoding="utf-8"
     ).lower()
 
-    assert 'load_skill("ecotaxa_navigation")' in prompt
+    assert "is pre-activated whenever ecotaxa is authorized" in prompt
     assert "count_ecotaxa_taxa" not in prompt
     assert "count_ecotaxa_taxa" in skill
     assert "search_ecotaxa_taxa" in skill
@@ -1741,10 +1741,9 @@ def test_system_prompt_neolabs_graphs_still_require_graph_writer():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("neolabs_abundance_analysis.md", "graph_planner.md", "graph_writer.md")
-    assert "not a replacement for `graph_planner` or `graph_writer`" in prompt
-    assert 'then call `load_skill("graph_planner")`' in prompt
-    assert 'then call `load_skill("graph_writer")`' in prompt
-    assert "the very next execution call must be `run_graph`" in prompt
+    assert "not a graph_writer replacement" in prompt
+    assert "pre-activated on visual turns" in prompt
+    assert "call `run_graph` directly" in prompt
 
 
 def test_graph_planner_requires_sample_df_for_neolabs_taxon_level_data():
@@ -1764,9 +1763,8 @@ def test_neolabs_skill_routes_visual_outputs_through_graph_writer():
     ).lower()
 
     assert "not a graph_writer replacement" in skill
-    assert 'load_skill("graph_planner")' in skill
-    assert 'load_skill("graph_writer")' in skill
-    assert "very next execution call must be `run_graph`" in skill
+    assert "pre-activated on visual turns" in skill
+    assert "call `run_graph` directly" in skill
 
 
 def test_system_prompt_requires_executable_graph_contracts():

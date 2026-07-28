@@ -151,7 +151,7 @@ result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m
 
 ## Graphs
 
-After building `result`, call `load_skill("graph_writer")` then `run_graph` for:
+After building `result`, use the already-active graph rules, then call `run_graph` for:
 - Scatter: `net_ind_m3` vs `uvp_ind_m3` per station (1:1 line reference)
 - Bar: `abundance_log2_ratio` per station (0 = perfect agreement)
 - Map: station bubbles coloured by ratio (needs lat/lon from `df_file_neolabs_sample`)

@@ -119,7 +119,7 @@ Without velocity fields, wind, or repeated transects, call this a possible signa
 - Loaded table with coordinates/time/depth: use `run_pandas` to inspect available columns and compute evidence.
 - Need CTD context: use the canonical enrichment only when the user explicitly names Amundsen or OGSL and the Source Selection Gateway authorizes it.
 - Broad environmental context: use Bio-ORACLE only when explicitly named and authorized; state that it is too coarse to locate a fine front.
-- Visual request: load `graph_planner` and `graph_writer`, then use `run_graph`.
+- Visual request: reuse the already-active graph workflow, then use `run_graph`.
 
 ## Forbidden
 
