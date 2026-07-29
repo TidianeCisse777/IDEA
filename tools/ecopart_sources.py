@@ -10,6 +10,13 @@ import pandas as pd
 import requests
 from langchain_core.tools import tool
 
+try:
+    from sqlalchemy.exc import OperationalError as SQLAlchemyOperationalError
+except ImportError:  # SQLAlchemy is optional outside the PostgreSQL session store.
+    _SQLALCHEMY_OPERATIONAL_ERRORS: tuple[type[Exception], ...] = ()
+else:
+    _SQLALCHEMY_OPERATIONAL_ERRORS = (SQLAlchemyOperationalError,)
+
 from core.ecopart_client import (
     EcopartClient,
     EcopartDownloadError,
@@ -44,7 +51,7 @@ _RECOVERABLE_PARTITION_ERRORS = (
     pd.errors.InvalidIndexError,
     pd.errors.MergeError,
     pd.errors.ParserError,
-)
+) + _SQLALCHEMY_OPERATIONAL_ERRORS
 
 
 def _ep_result(factory, summary: str, **fields):
