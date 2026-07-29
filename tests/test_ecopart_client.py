@@ -372,10 +372,10 @@ def test_download_tsv_extracts_tsv_from_zip():
 def test_download_tsv_raises_when_no_links():
     import pytest
 
-    from core.ecopart_client import EcopartClient
+    from core.ecopart_client import EcopartClient, EcopartDownloadError
 
     client = EcopartClient()
-    with pytest.raises(RuntimeError, match="No download links"):
+    with pytest.raises(EcopartDownloadError, match="No download links"):
         client.download_tsv([])
 
 

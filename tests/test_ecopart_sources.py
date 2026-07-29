@@ -479,9 +479,12 @@ def test_remote_campaign_reports_invalid_export_project_id_rows():
         result = enrich.invoke({"confirmed": True})
 
     out = _store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    meta = _store.get(f"{thread_id}:ecotaxa_ecopart")["meta"]
     assert "partiel" in result.lower()
     assert "1 ligne(s) avec `export_project_id` invalide" in result
     assert set(out["obj_orig_id"].dropna()) == {"alpha_1"}
+    assert meta["invalid_export_project_rows"] == 1
+    assert meta["projects_failed"] == 0
 
 
 def test_remote_explicit_projects_bypass_campaign_partitioning():

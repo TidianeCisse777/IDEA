@@ -267,7 +267,7 @@ def test_remote_enrichment_reports_a_failed_campaign_partition(_isolated_store):
     assert set(out["ecopart_project_id"]) == {301}
 
 
-def test_remote_enrichment_continues_after_a_campaign_join_exception(_isolated_store):
+def test_remote_enrichment_continues_after_an_operational_campaign_join_error(_isolated_store):
     """A broken join for one project must not discard later successful projects."""
     from tools.ecopart_sources import _perform_enrichment as real_join
 
@@ -300,7 +300,7 @@ def test_remote_enrichment_continues_after_a_campaign_join_exception(_isolated_s
 
     def join_partition(thread_id, project_id, **kwargs):
         if project_id == 301:
-            raise RuntimeError("jointure indisponible")
+            raise OSError("stockage temporairement indisponible")
         return real_join(thread_id, project_id, **kwargs)
 
     with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
@@ -314,9 +314,40 @@ def test_remote_enrichment_continues_after_a_campaign_join_exception(_isolated_s
 
     out = _isolated_store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
     assert "partiel" in result.lower()
-    assert "jointure indisponible" in result
+    assert "stockage temporairement indisponible" in result
     assert set(out["export_project_id"]) == {202}
     assert set(out["ecopart_project_id"]) == {302}
+
+
+def test_remote_enrichment_propagates_a_campaign_join_programming_error(_isolated_store):
+    """Unexpected join errors must not be reported as recoverable coverage gaps."""
+    thread_id = "campaign-programming-error"
+    _isolated_store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["alpha_1"],
+            "object_depth_min": [2.5],
+            "export_project_id": [101],
+        }),
+        {"source": "ecotaxa_export_campaign", "export_project_ids": [101]},
+    )
+    client = MagicMock()
+    client.start_export.return_value = ["/Task/Show/301"]
+    client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["alpha"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [101.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
+        return_value={"project_id": 301, "resolution": "lien projet 101"},
+    ), patch(
+        "tools.ecopart_sources._perform_enrichment",
+        side_effect=RuntimeError("erreur de programmation"),
+    ):
+        with pytest.raises(RuntimeError, match="erreur de programmation"):
+            _enrich_tool(thread_id).invoke({"confirmed": True})
 
 
 # --------------------------------------------------------------------------- #

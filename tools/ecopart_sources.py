@@ -7,9 +7,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+import requests
 from langchain_core.tools import tool
 
-from core.ecopart_client import EcopartClient, EcopartExportError
+from core.ecopart_client import (
+    EcopartClient,
+    EcopartDownloadError,
+    EcopartExportError,
+)
 from core.ecotaxa_ecopart_join import (
     audit_ecotaxa_ecopart_dataframe,
     depth_bin_5m,
@@ -30,6 +35,16 @@ from tools.tool_result import blocked, empty, error, success, validate_tool_arti
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
+
+_RECOVERABLE_PARTITION_ERRORS = (
+    EcopartDownloadError,
+    OSError,
+    requests.RequestException,
+    pd.errors.EmptyDataError,
+    pd.errors.InvalidIndexError,
+    pd.errors.MergeError,
+    pd.errors.ParserError,
+)
 
 
 def _ep_result(factory, summary: str, **fields):
@@ -673,6 +688,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
 
     resolved: list[tuple[int, int, pd.DataFrame, str]] = []
     failures: list[str] = []
+    failed_project_ids: set[int] = set()
     if n_invalid_project_rows:
         failures.append(
             f"{n_invalid_project_rows} ligne(s) avec `export_project_id` invalide "
@@ -686,6 +702,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             client=client,
         )
         if "error" in resolution:
+            failed_project_ids.add(ecotaxa_pid)
             failures.append(
                 f"EcoTaxa {ecotaxa_pid} — résolution EcoPart impossible : "
                 f"{resolution['error']}"
@@ -720,7 +737,8 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             metrics={
                 "projects": len(normalized_project_ids),
                 "projects_resolved": len(resolved),
-                "projects_failed": len(failures),
+                "projects_failed": len(failed_project_ids),
+                "invalid_export_project_rows": n_invalid_project_rows,
             },
         )
 
@@ -738,6 +756,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             )
             df_ep = client.download_tsv(links)
             if df_ep.empty:
+                failed_project_ids.add(ecotaxa_pid)
                 failures.append(
                     f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
                     "aucun sample EcoPart exporté."
@@ -776,6 +795,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             )
             join_artifact = validate_tool_artifact(join_result[1])
             if join_artifact.status != "success":
+                failed_project_ids.add(ecotaxa_pid)
                 failures.append(
                     f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
                     f"{join_result[0]}"
@@ -784,6 +804,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
 
             joined_session = _store.get(f"{thread_id}:{ECOTAXA_ECOPART}")
             if joined_session is None or joined_session.get("df") is None:
+                failed_project_ids.add(ecotaxa_pid)
                 failures.append(
                     f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
                     "la jointure annoncée n'a pas été persistée."
@@ -808,6 +829,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                 f"{len(joined)} lignes, {partition_matched} matchées"
             )
         except EcopartExportError as exc:
+            failed_project_ids.add(ecotaxa_pid)
             failures.append(
                 _format_ecopart_export_error(
                     exc,
@@ -816,9 +838,8 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                 )
             )
             continue
-        except Exception as exc:
-            # Deliberately catch only recoverable operational failures. BaseException
-            # subclasses (KeyboardInterrupt/SystemExit) must still stop the run.
+        except _RECOVERABLE_PARTITION_ERRORS as exc:
+            failed_project_ids.add(ecotaxa_pid)
             failures.append(
                 f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
                 f"échec de la partition : {exc}"
@@ -834,7 +855,8 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             metrics={
                 "projects": len(normalized_project_ids),
                 "projects_succeeded": 0,
-                "projects_failed": len(failures),
+                "projects_failed": len(failed_project_ids),
+                "invalid_export_project_rows": n_invalid_project_rows,
             },
         )
 
@@ -853,6 +875,9 @@ def _enrich_ecotaxa_campaign_with_ecopart(
         "project_pairs": project_pairs,
         "partial_enrichment": partial,
         "project_failures": failures,
+        "failed_project_ids": sorted(failed_project_ids),
+        "projects_failed": len(failed_project_ids),
+        "invalid_export_project_rows": n_invalid_project_rows,
         "partition_provenance": partition_provenance,
         "n_rows": len(combined),
         "n_matched": n_matched,
@@ -886,7 +911,8 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             "matched": n_matched,
             "projects": len(normalized_project_ids),
             "projects_succeeded": len(joined_frames),
-            "projects_failed": len(failures),
+            "projects_failed": len(failed_project_ids),
+            "invalid_export_project_rows": n_invalid_project_rows,
         },
     )
 
