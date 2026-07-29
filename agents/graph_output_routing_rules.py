@@ -2,10 +2,16 @@
 
 
 GRAPH_OUTPUT_ROUTING_RULES = """## Graph Output Routing Rules
-- Decide from the requested output intent, not from individual words. Graph skills are pre-activated only when the user asks for or clearly implies a visual representation of the data.
-- A general presentation verb such as “show”, “display”, or “present” does not establish visual intent by itself. Infer the intended artifact from what is being requested.
-- A map, plotted vertical profile, curve, chart, or other graphical encoding is visual even when the user does not use the word “graph”. These are examples of visual intent, not a closed trigger list.
-- A number, calculation, ranking, summary, coordinates, or table is non-visual unless the user also requests a graphical representation. Do not use graph tools; use the specialized or tabular execution tool only when needed.
-- If the output format is genuinely ambiguous, prefer the minimal non-visual answer. Ask only when the choice would materially change the requested result.
-- For visual intent, use the already-active graph workflow: reuse its active rules and never call `load_skill` for `graph_planner` or `graph_writer` again in the session. When EcoTaxa is authorized, `ecotaxa_navigation` is also already active; every EcoTaxa map uses these active rules directly. **Direct EcoTaxa cache-map branch:** after a successful exact cache query limited to `sample_id`, `iho_zone`, `lat_avg`, and `lon_avg`, render directly without a redundant `run_pandas` inspection. **All other graphs:** inspect every candidate graph column and the complete rows they share, then use the already-active graph workflow to render only if that inspection is usable. Tabular preparation must continue to `run_graph`; do not stop after preparation. A follow-up edit reuses the active workflow.
-- If `run_graph` returns a correctable graph-contract or graph-quality block, retry exactly once: revise the code using the diagnostic, preserve the same active dataframe, and call `run_graph` again. Do not answer with a table or claim a graph exists before the retry. If the retry is blocked too, stop and report the final diagnostic without looping."""
+- Intent -> route: map/profile/curve/chart/visual encoding = visual; number,
+  calculation, ranking, summary, coordinates or table = non-visual unless a
+  graphic is requested. “Show/display/present” alone is not visual intent.
+- Ambiguous format -> minimal non-visual answer; ask only if it changes the
+  result.
+- Visual -> reuse active graph rules; never reload `graph_planner` or
+  `graph_writer`. EcoTaxa maps also reuse active `ecotaxa_navigation`.
+  Exact cache map (`sample_id`, `iho_zone`, `lat_avg`, `lon_avg`) -> render
+  directly. Other graphs -> inspect candidate fields + complete rows, then
+  `run_graph`; preparation alone is not completion.
+- Correctable `run_graph` block -> retry exactly once with its diagnostic and
+  same dataframe. If still blocked, report the diagnostic; never claim a graph
+  or silently return a table."""

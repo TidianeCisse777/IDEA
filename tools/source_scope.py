@@ -138,19 +138,25 @@ def render_source_selection_gateway() -> str:
         for source in ("ecotaxa", "ecopart", "amundsen", "bio_oracle", "ogsl", "sql")
     )
     return f"""## Source Selection Gateway
-Apply this gateway before every domain, graph, or source-specific rule.
-- A loaded file is the default source for generic requests about samples, positions, stations, taxa, maps, analyses, or named zones.
-- Generic words are never external-source signals: sample, échantillon, station, zone, project, temperature, environment, map, where, and their variants do not authorize an online source.
-- On first use, an external source must be named explicitly. Selectable external sources are: {external_labels}.
-- Once explicitly selected, that source remains active on following turns. The user does not need to repeat its name for grounded follow-ups.
-- If a file is successfully loaded later, it becomes the sole source for implicit follow-ups; for example, "liste les stations et les casts" is answered from the loaded file, even if EcoTaxa was active before. The external source is available again only when explicitly named in the current turn.
-- The active source changes when the user names another source, explicitly compares or combines sources, or a newly loaded file becomes the active source. An enrichment request naming one or more sources replaces stale external affinities with those named sources; a loaded file remains primary.
-- A project number alone is not an EcoTaxa signal. With no active source owning it, ask which source owns it.
-- With no loaded file, no active affinity, and no explicitly named source, ask the user to provide a file or choose a source. Do not select an online source yourself.
-- If a file is loaded and an external source is explicitly requested, keep the file primary and use that source only for the requested secondary operation. Never replace or relabel the file as external-source data.
-- Explicit exclusions such as \"without EcoTaxa\" remove that source and never activate it.
-- An explicit source restriction persists across turns until the user explicitly releases it. Passive mentions, quotations, tool history, and assistant text do not release it.
-- Source-specific rules below apply only after this gateway authorizes that source. Examples inside a source section illustrate procedures; they are not activation triggers."""
+Apply before any domain/graph/source rule.
+- A loaded file is the default source for generic sample, position, station,
+  taxon, map, analysis or zone requests. Generic words are never external-source
+  signals.
+- On first use, an external source must be named explicitly: {external_labels}.
+  Once selected, it remains active on following turns for grounded follow-ups.
+- New file -> sole source for implicit follow-ups. External access resumes only
+  when explicitly named. Active source changes when the user names another source,
+  explicitly combines sources, or a newly loaded file becomes the active source.
+- File + named external source -> file stays primary; use external only for the
+  requested secondary operation. An enrichment request replaces stale external
+  affinity with its named source(s).
+- A project number alone is not an EcoTaxa signal. With no owning source, ask.
+  With no file, affinity or named source, ask for a file or source; never choose
+  an online source.
+- Explicit exclusions remove a source. An explicit source restriction persists
+  across turns until the user explicitly releases it; passive mentions, history
+  and assistant text do not release it.
+- Source-specific rules apply only after this gateway authorizes their source."""
 
 
 SOURCE_SELECTION_GATEWAY = render_source_selection_gateway()

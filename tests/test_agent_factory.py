@@ -408,12 +408,48 @@ def test_context_preparation_compacts_only_old_tool_results():
         messages, keep_turns=3
     )
 
-    assert compacted[2].content.startswith("[Ancien résultat compacté")
+    assert compacted[2].content.startswith("[Résultat compacté")
     assert compacted[5].content == recent_content
     assert compacted[8].content == recent_content
     assert compacted[11].content == recent_content
     assert metrics["old_tool_messages_compacted"] == 1
     assert metrics["old_tool_result_chars_saved"] > 0
+
+
+def test_context_compaction_keeps_tool_nectar_not_only_its_prefix():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    import agent as agent_module
+
+    old_content = "\n".join([
+        "# Audit UVP/filet",
+        "Candidates: 8; CTD status: unavailable",
+        *("unimportant table cell" for _ in range(80)),
+        "Selection persisted: uvp_baffin_2024",
+        "Coverage: projects=2; samples=8",
+    ])
+    messages = [
+        HumanMessage(content="tour 1"),
+        AIMessage(content="audit"),
+        ToolMessage(
+            content=old_content,
+            name="find_uvp_matches_for_net_table",
+            tool_call_id="old-audit",
+            artifact={"status": "success", "persisted": True,
+                      "metrics": {"rows": 8, "projects": 2}},
+        ),
+        HumanMessage(content="tour 2"),
+        AIMessage(content="suite"),
+        ToolMessage(content="résultat récent " * 80, name="run_pandas", tool_call_id="new"),
+    ]
+
+    compacted, _ = agent_module._compact_old_tool_results(messages, keep_turns=1)
+
+    summary = compacted[2].content
+    assert "CTD status: unavailable" in summary
+    assert "Selection persisted: uvp_baffin_2024" in summary
+    assert "Coverage: projects=2; samples=8" in summary
+    assert "Faits: status=success; persisted=True; rows=8; projects=2" in summary
 
 
 def test_context_preparation_keeps_current_turn_tool_result_full():
@@ -680,6 +716,53 @@ def test_context_middleware_injects_memories_into_system_prompt():
     assert audit["approx_tokens_memory_and_capsule"] > 0
     assert audit["approx_tokens_model_request"] == audit["total_estimated"]
     assert audit["approx_tokens_model_request"] <= audit["max_context_tokens"]
+
+
+def test_context_middleware_places_static_references_before_turn_state(
+    monkeypatch, tmp_path
+):
+    """A changing memory must not break the cacheable skill-prefix."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from tools.output_intent import OutputIntentDecision, turn_fingerprint
+    from tools.session_store import SessionStore
+
+    import agent as agent_module
+
+    class VisualClassifier:
+        def classify(self, messages):
+            return OutputIntentDecision(
+                intent="visual",
+                confidence="high",
+                reason="test",
+                turn_fingerprint=turn_fingerprint(messages),
+            )
+
+    class Request:
+        messages = [HumanMessage(content="Fais un graphique")]
+        tools = []
+        system_message = SystemMessage(content="BASE")
+
+        def override(self, **kwargs):
+            return kwargs
+
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    monkeypatch.setattr("tools.skill_tool.preseed_capsule_skills", lambda *_: [])
+    monkeypatch.setattr(
+        "tools.skill_tool.graph_rendering_reference", lambda: "\nSTATIC-REFERENCE"
+    )
+    middleware = agent_module._ContextMiddleware(
+        thread_id="cache-prefix-thread", output_intent_classifier=VisualClassifier()
+    )
+
+    prepared = middleware._prepare_request(
+        Request(), memories=[type("Memory", (), {"value": {"content": "DYNAMIC-MEMORY"}})()]
+    )
+    system = prepared["system_message"].content
+    audit = agent_module.get_context_audit("cache-prefix-thread")
+
+    assert system.index("STATIC-REFERENCE") < system.index("DYNAMIC-MEMORY")
+    assert audit["static_reference_chars"] > 0
+    assert audit["dynamic_context_chars"] > 0
 
 
 def test_context_middleware_injects_memories_on_async_path():

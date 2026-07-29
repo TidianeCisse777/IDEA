@@ -78,6 +78,10 @@ def _load_system_prompt() -> str:
 
 _SYSTEM_PROMPT = _load_system_prompt()
 
+# Quality ceiling, deliberately lower than the provider's technical context
+# window: the agent must keep its instructions, tool evidence and user request
+# in the high-attention portion of the context. Override only for controlled
+# evaluations that need a larger window.
 _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "100000"))
 _CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
 # Tool results over this many chars get truncated before being sent to the LLM
@@ -86,7 +90,7 @@ _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 # context safety ceiling.  A single 40k-character skill body repeatedly fed to
 # a ReAct loop is enough to drown out both the user request and tool results.
 _MAX_SKILL_RESULT_CHARS = int(os.getenv("MAX_SKILL_RESULT_CHARS", "12000"))
-_KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "2"))
+_KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "1"))
 # Second-pass budget: if total tool-result chars after first compaction exceeds
 # this, oldest eligible messages are compacted further (never the current turn).
 _MAX_TOTAL_TOOL_CHARS = int(os.getenv("MAX_TOTAL_TOOL_RESULT_CHARS", "40000"))
@@ -397,6 +401,55 @@ def _compact_old_tool_results(
         metrics["old_tool_result_chars_before"] += before
         metrics["old_tool_result_chars_after"] += len(compact)
 
+    def _semantic_tool_summary(message, *, reason: str, limit: int = 1200) -> str:
+        """Keep durable facts rather than an arbitrary leading excerpt."""
+        raw = str(message.content or "")
+        lines = [" ".join(line.split()) for line in raw.splitlines()]
+        lines = [line for line in lines if line]
+        signals = (
+            "status", "résultat", "result", "error", "erreur", "failed",
+            "blocked", "warning", "variable", "persist", "selection",
+            "export", "project", "sample", "rows", "lignes", "coverage",
+            "couverture", "ctd", "limit", "limite",
+        )
+        chosen: list[str] = []
+
+        def add(line: str) -> None:
+            line = line[:260]
+            if line and line not in chosen:
+                chosen.append(line)
+
+        for line in lines[:3]:
+            add(line)
+        for line in lines:
+            if any(marker in line.lower() for marker in signals):
+                add(line)
+            if len(chosen) >= 12:
+                break
+        for line in lines[-2:]:
+            add(line)
+
+        artifact = message.artifact if isinstance(message.artifact, dict) else {}
+        facts: list[str] = []
+        for key in ("status", "persisted", "data_ref"):
+            value = artifact.get(key)
+            if value not in (None, "", [], {}):
+                facts.append(f"{key}={value}")
+        metrics_data = artifact.get("metrics")
+        if isinstance(metrics_data, dict):
+            for key in ("rows", "columns", "samples", "projects"):
+                value = metrics_data.get(key)
+                if value not in (None, "", [], {}):
+                    facts.append(f"{key}={value}")
+        fact_text = ("; ".join(facts))[:320]
+        body = "\n".join(f"- {line}" for line in chosen)
+        compact = (
+            f"[Résultat compacté — tool={message.name or 'unknown'}; {reason}]"
+            + (f"\nFaits: {fact_text}" if fact_text else "")
+            + (f"\n{body}" if body else "")
+        )
+        return compact[:limit]
+
     # ── First pass: compact by turn-age ───────────────────────────────────────
     for index, message in enumerate(messages):
         if not (
@@ -424,10 +477,8 @@ def _compact_old_tool_results(
             continue
 
         if index < cutoff:
-            snippet = " ".join(message.content.split())[:240]
-            compact = (
-                f"[Ancien résultat compacté — tool={message.name or 'unknown'}; "
-                f"résumé: {snippet}]"
+            compact = _semantic_tool_summary(
+                message, reason="hors fenêtre récente"
             )
             _record_compaction(len(message.content), compact)
             output.append(message.model_copy(update={"content": compact}))
@@ -460,10 +511,8 @@ def _compact_old_tool_results(
                 if len(m.content) <= 320:
                     continue  # Already compacted or inherently short
                 before = len(m.content)
-                snippet = " ".join(m.content.split())[:240]
-                compact = (
-                    f"[Résultat compacté (budget global) — tool={m.name or 'unknown'}; "
-                    f"résumé: {snippet}]"
+                compact = _semantic_tool_summary(
+                    m, reason="budget global", limit=700
                 )
                 output[i] = m.model_copy(update={"content": compact})
                 total_chars -= before - len(compact)
@@ -770,14 +819,22 @@ class _ContextMiddleware(AgentMiddleware):
         except Exception:
             pass
 
-        injected_context = (
-            block
-            + dataset_block
-            + graph_reference_block
+        # Cache-stable prefix first: the permanent kernel is already ``base``;
+        # append every invariant reference before anything that can vary with a
+        # user, a thread or a turn.  Exact-prefix prompt caches can then reuse
+        # this whole block. Session memory, active tables and graph facts must
+        # remain at the tail.
+        static_reference_block = (
+            graph_reference_block
             + source_reference_block
             + neolabs_reference_block
+        )
+        dynamic_context_block = (
+            block
+            + dataset_block
             + graph_grounding_block
         )
+        injected_context = static_reference_block + dynamic_context_block
         base_system_tokens = (
             _approx_tokens([SystemMessage(content=base)]) if base else 0
         )
@@ -898,6 +955,8 @@ class _ContextMiddleware(AgentMiddleware):
             "graph_reference_chars": len(graph_reference_block),
             "source_reference_chars": len(source_reference_block),
             "neolabs_reference_chars": len(neolabs_reference_block),
+            "static_reference_chars": len(static_reference_block),
+            "dynamic_context_chars": len(dynamic_context_block),
             "tools_before_policy": [
                 getattr(item, "name", "") for item in original_tools
             ],

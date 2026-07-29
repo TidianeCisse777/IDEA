@@ -155,7 +155,8 @@ def test_capsule_surfaces_active_ecotaxa_selection_context(tmp_path):
 
     assert "ACTIVE ECOTAXA SELECTION" in capsule
     assert "selection_baie_de_baffin" in capsule
-    assert "sample_ids=101,102,103" in capsule
+    assert "sample_ids=" not in capsule
+    assert "project_ids=10,11" in capsule
     assert "zone_name=Baie de Baffin" in capsule
     assert "df_ecotaxa_selection_baie_de_baffin" in capsule
 
@@ -488,6 +489,7 @@ def test_capsule_surfaces_derived_working_tables_without_stale_ids(tmp_path):
 
     assert "WORKING TABLES" in capsule
     assert "df_ecotaxa_cache_query" in capsule
+    assert "schema=measures=[n]; other=[instrument]" in capsule
     # the raw project-keyed export and its ids are never re-exposed
     assert "df_ecotaxa_42" not in capsule
     assert "project_id=42" not in capsule
@@ -525,6 +527,48 @@ def test_capsule_working_table_shows_its_description(tmp_path):
 
     assert "df_join_ab12cd34ef56" in capsule
     assert "Jointure df_file_net × df_ctd sur station_id" in capsule
+
+
+def test_capsule_export_campaign_shows_typed_schema(tmp_path):
+    """A reusable multi-project EcoTaxa export remains discoverable by schema."""
+    store = SessionStore(tmp_path)
+    thread_id = "campaign-schema"
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({
+            "export_project_id": [17498],
+            "sample_id": [17498000001],
+            "profile_id": ["cast-1"],
+            "object_annotation_category": ["Copepoda"],
+            "object_depth_min": [25.0],
+            "object_area": [2.4],
+        }),
+        variable_name="df_ecotaxa_campaign",
+        meta={
+            "source": "ecotaxa_export_campaign",
+            "description": "Export EcoTaxa 2024",
+            "n_rows": 1,
+        },
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({"station": ["S1"]}),
+        variable_name="df_file_net",
+        meta={"source": "file:/d/net.csv", "n_rows": 1},
+        latest_alias="active",
+        is_loaded_file=True,
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "ECO TAXA EXPORTED CAMPAIGNS" in capsule
+    assert "df_ecotaxa_campaign" in capsule
+    assert "schema=keys=[export_project_id]; sample=[profile_id,sample_id]" in capsule
+    assert "taxon=[object_annotation_category]" in capsule
+    assert "environment=[object_depth_min]" in capsule
+    assert "measures=[object_area]" in capsule
 
 
 def test_capsule_loaded_file_shows_its_description(tmp_path):
@@ -585,6 +629,7 @@ def test_capsule_all_columns_follow_scientific_workflow_priority(tmp_path):
     capsule = build_dataset_state_capsule(store, thread_id)
 
     assert "all_columns=" in capsule
+    assert "SCHEMA BY TYPE: sample=[deployment,profile,sample_id,analysis,station]" in capsule
     all_columns = capsule.split("all_columns=", 1)[1].split("\n", 1)[0]
     ordered = all_columns.split(",")
     assert ordered.index("deployment") < ordered.index("profile")
@@ -618,6 +663,7 @@ def test_capsule_all_columns_truncated_with_remainder_count(tmp_path):
     capsule = build_dataset_state_capsule(store, thread_id)
 
     assert "all_columns=" in capsule
-    assert "(+48 more)" in capsule
-    # The 72-column table exposes only its 24 most useful fields here.
-    assert capsule.count("col_") <= 22
+    assert "(+40 more)" in capsule
+    # The active schema exposes only its 32 broadest candidates here.
+    all_columns = capsule.split("all_columns=", 1)[1].split("\n", 1)[0]
+    assert all_columns.count("col_") <= 30

@@ -283,5 +283,5 @@ Backends : SQLite, PostgreSQL, MySQL, MariaDB (protocole MySQL).
 | Géographie | `geo_tools.py` | 3 |
 | Savoir & taxonomie | `rag_tool.py`, `taxonomy_tool.py` | 2 |
 | Skills & livrables | `skill_tool.py`, `deliverable_tool.py` | 2 |
-| **Total obligatoire** | | **66** |
-| **Total avec SQL** | | **69** |
+| **Total obligatoire** | | **68** |
+| **Total avec SQL** | | **71** |
