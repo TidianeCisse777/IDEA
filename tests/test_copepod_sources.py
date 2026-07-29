@@ -1997,7 +1997,14 @@ def _selection_name_from(result: str) -> str:
     return match.group(1)
 
 
-def _net_uvp_certification_tool(tmp_path, monkeypatch, fetch_ctd_metadata):
+def _net_uvp_certification_tool(
+    tmp_path,
+    monkeypatch,
+    fetch_ctd_metadata,
+    *,
+    row_order: list[int] | None = None,
+    duplicate_first_row: bool = False,
+):
     import sqlite3
 
     import tools.amundsen_sources as amundsen_module
@@ -2006,6 +2013,7 @@ def _net_uvp_certification_tool(tmp_path, monkeypatch, fetch_ctd_metadata):
     from tools.dataset_registry import store_dataset
     from tools.session_store import SessionStore
 
+    tmp_path.mkdir(parents=True, exist_ok=True)
     cache_db = tmp_path / "cache.sqlite"
     conn = sqlite3.connect(cache_db)
     init_schema(conn)
@@ -2025,19 +2033,28 @@ def _net_uvp_certification_tool(tmp_path, monkeypatch, fetch_ctd_metadata):
 
     thread_id = "net-uvp-certified-thread"
     store = SessionStore(tmp_path / "sessions")
+    net_rows = pd.DataFrame(
+        {
+            "Sample ID": [501, 502, 503],
+            "Deployment ID": [1, 2, 3],
+            "Station Name": ["ST-101", "ST-203", "ST-404"],
+            "Latitude": [67.5, 68.0, 68.5],
+            "Longitude": [-63.8, -64.0, -64.2],
+            "Deployment Datetime Start": ["2024-06-01", "2024-06-02", "2024-06-03"],
+        }
+    )
+    if duplicate_first_row:
+        duplicate = net_rows.iloc[[0]].copy()
+        duplicate["Sample ID"] = 504
+        duplicate["Deployment ID"] = 4
+        net_rows = pd.concat([net_rows, duplicate], ignore_index=True)
+    if row_order:
+        net_rows = net_rows.iloc[row_order].reset_index(drop=True)
+
     store_dataset(
         store,
         thread_id,
-        pd.DataFrame(
-            {
-                "Sample ID": [501, 502, 503],
-                "Deployment ID": [1, 2, 3],
-                "Station Name": ["ST-101", "ST-203", "ST-404"],
-                "Latitude": [67.5, 68.0, 68.5],
-                "Longitude": [-63.8, -64.0, -64.2],
-                "Deployment Datetime Start": ["2024-06-01", "2024-06-02", "2024-06-03"],
-            }
-        ),
+        net_rows,
         variable_name="df_file_baffin_2024",
         meta={"source": "file"},
         is_loaded_file=True,
@@ -2093,6 +2110,81 @@ def test_audit_without_ctd_certificate_creates_no_selection(tmp_path, monkeypatc
 
     tool, store, thread_id = _net_uvp_certification_tool(
         tmp_path, monkeypatch, unavailable_ctd_metadata
+    )
+
+    tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+
+    assert not any(
+        ":selection:net_uvp_certified_" in key for key in store.keys(thread_id)
+    )
+
+
+def test_audit_selection_is_canonical_across_permuted_matches(tmp_path, monkeypatch):
+    def fetch_ctd_metadata(**_kwargs):
+        return pd.DataFrame(
+            {
+                "filename": ["2406_062.int.nc", "2406_063.int.nc"],
+                "station": ["ST-101", "ST-203"],
+                "cast_number": [62, 63],
+                "latitude": [67.5, 68.0],
+                "longitude": [-63.8, -64.0],
+                "time": ["2024-06-02T00:00:00Z", "2024-06-03T00:00:00Z"],
+            }
+        )
+
+    first_tool, first_store, first_thread = _net_uvp_certification_tool(
+        tmp_path / "first", monkeypatch, fetch_ctd_metadata
+    )
+    first_name = _selection_name_from(
+        first_tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+    )
+    first_meta = first_store.get(f"{first_thread}:selection:{first_name}")["meta"]
+
+    second_tool, second_store, second_thread = _net_uvp_certification_tool(
+        tmp_path / "second", monkeypatch, fetch_ctd_metadata, row_order=[2, 1, 0]
+    )
+    second_name = _selection_name_from(
+        second_tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+    )
+    second_meta = second_store.get(f"{second_thread}:selection:{second_name}")["meta"]
+
+    assert first_name == second_name
+    assert first_meta["sample_ids"] == second_meta["sample_ids"] == [101, 203]
+    assert first_meta["project_ids"] == second_meta["project_ids"] == [10, 20]
+
+
+def test_audit_selection_deduplicates_repeated_certified_project_sample_pair(
+    tmp_path, monkeypatch
+):
+    def fetch_ctd_metadata(**_kwargs):
+        return pd.DataFrame(
+            {
+                "filename": ["2406_062.int.nc", "2406_063.int.nc"],
+                "station": ["ST-101", "ST-203"],
+                "cast_number": [62, 63],
+                "latitude": [67.5, 68.0],
+                "longitude": [-63.8, -64.0],
+                "time": ["2024-06-02T00:00:00Z", "2024-06-03T00:00:00Z"],
+            }
+        )
+
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, fetch_ctd_metadata, duplicate_first_row=True
+    )
+
+    name = _selection_name_from(
+        tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+    )
+    meta = store.get(f"{thread_id}:selection:{name}")["meta"]
+
+    assert meta["sample_ids"] == [101, 203]
+    assert meta["project_ids"] == [10, 20]
+    assert meta["n_samples"] == 2
+
+
+def test_audit_with_empty_ctd_response_creates_no_selection(tmp_path, monkeypatch):
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, lambda **_kwargs: pd.DataFrame()
     )
 
     tool.invoke({"net_variable_name": "df_file_baffin_2024"})

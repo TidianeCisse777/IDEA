@@ -768,8 +768,10 @@ def make_source_tools(thread_id: str) -> list:
         )
 
         certified_selection_name = None
-        certified_matches = matches.loc[matches["join_eligible"]].drop_duplicates(
-            ["uvp_project_id", "uvp_sample_id"]
+        certified_matches = (
+            matches.loc[matches["join_eligible"]]
+            .drop_duplicates(["uvp_project_id", "uvp_sample_id"])
+            .sort_values(["uvp_project_id", "uvp_sample_id"])
         )
         if not certified_matches.empty:
             source_name = str(
