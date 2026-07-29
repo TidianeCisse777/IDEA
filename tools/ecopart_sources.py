@@ -24,6 +24,7 @@ from tools.dataset_registry import (
     store_dataset,
 )
 from tools.ecotaxa_client import EcotaxaClient
+from tools.public_url import download_url
 from tools.session_store import default_store as _store
 from tools.tool_result import blocked, empty, error, success, validate_tool_artifact
 
@@ -684,18 +685,18 @@ def make_ecopart_tools(thread_id: str) -> list:
             )
             # Keep the pre-registry project key readable by existing sessions/tools.
             _store.set(f"{thread_id}:ecopart:{project_id}", df, meta)
-            download_url = f"http://localhost:8000/downloads/{output_path.name}"
+            artifact_url = download_url(output_path.name)
             summary = (
                 f"EcoPart chargé — {len(df)} lignes.\n"
                 f"Données disponibles dans `{variable_name}` "
                 f"et `df_ecopart` (dernier projet chargé).\n"
                 f"Appelle run_pandas directement pour analyser.\n"
-                f"Télécharger : {download_url}"
+                f"Télécharger : {artifact_url}"
             )
             return _ep_success(
                 summary,
                 data_ref=variable_name,
-                artifact_refs=(download_url,),
+                artifact_refs=(artifact_url,),
                 provenance={"project_id": int(project_id)},
                 persisted=True,
                 method="EcoPart export",
@@ -931,7 +932,7 @@ def make_ecopart_tools(thread_id: str) -> list:
             ecopart_project_id,
             ecotaxa_session=session_et,
         )
-        download_url = f"http://localhost:8000/downloads/{output_path.name}"
+        artifact_url = download_url(output_path.name)
         scope = (
             f"projet EcoTaxa {ecotaxa_project_id}"
             if ecotaxa_project_id is not None
@@ -941,7 +942,7 @@ def make_ecopart_tools(thread_id: str) -> list:
         join_artifact = validate_tool_artifact(join_result[1])
         summary = (
             f"{prefix}EcoPart téléchargé pour {scope} — {len(df_ep)} lignes "
-            f"(`{variable_name}`, télécharger : {download_url}).\n\n{join_result[0]}"
+            f"(`{variable_name}`, télécharger : {artifact_url}).\n\n{join_result[0]}"
         )
         if join_artifact.status != "success":
             factory = {
@@ -954,7 +955,7 @@ def make_ecopart_tools(thread_id: str) -> list:
         return _ep_success(
             summary,
             data_ref=join_artifact.data_ref,
-            artifact_refs=(download_url,),
+            artifact_refs=(artifact_url,),
             persisted=True,
             method="EcoPart export and EcoTaxa-EcoPart join",
             metrics={"ecopart_rows": len(df_ep), **dict(join_artifact.metrics)},

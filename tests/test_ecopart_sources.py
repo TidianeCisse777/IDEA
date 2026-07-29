@@ -138,7 +138,7 @@ def test_preview_ecopart_sample_inaccessible():
     assert "non accessible" in result
 
 
-def test_query_ecopart_stores_dataframe_and_returns_download_link():
+def test_query_ecopart_stores_dataframe_and_returns_public_download_link(monkeypatch):
     import pandas as pd
     from unittest.mock import MagicMock, patch
 
@@ -146,6 +146,7 @@ def test_query_ecopart_stores_dataframe_and_returns_download_link():
     from tools.session_store import default_store as _store
 
     _store._store.clear()
+    monkeypatch.setenv("SERVE_BASE_URL", "https://agent.example.test")
 
     fake_df = pd.DataFrame(
         [
@@ -174,6 +175,7 @@ def test_query_ecopart_stores_dataframe_and_returns_download_link():
     assert _store.has("thread-query")
     assert "EcoPart chargé" in result
     assert "Télécharger :" in result
+    assert "https://agent.example.test/downloads/" in result
     assert "run_pandas" in result
 
 
