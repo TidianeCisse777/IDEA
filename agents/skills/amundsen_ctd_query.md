@@ -1,6 +1,6 @@
 ---
 name: amundsen_ctd_query
-version: 1.0.1
+version: 1.0.3
 triggers:
   - Explicit Amundsen CTD query or loaded-table enrichment intent
 forbidden_when:
@@ -13,59 +13,46 @@ max_tokens: 700
 
 # Skill: amundsen_ctd_query
 
-## Activation precondition
+## Activation
 
-Apply this skill only when the Source Selection Gateway authorizes Amundsen CTD,
-either by an explicit current request or an inherited active-source follow-up,
-and the active session does not forbid Amundsen CTD. Do not load or apply this
-skill for generic requests about samples, projects, stations, positions, zones,
-temperature, salinity, environment, maps, or analyses. A loaded table remains
-the primary source; Amundsen is only the requested enrichment source.
+Use only when the Source Selection Gateway authorizes Amundsen CTD. A generic
+temperature, salinity, or environment request without an explicit current
+Amundsen CTD mention concerns the active table; it does not authorize Amundsen.
+The loaded table stays primary and Amundsen is only its requested enrichment.
 
-## Current explicit enrichment request
+## Enrichment
 
-When the user says “enrichis avec Amundsen”, “ajoute le CTD Amundsen”, “joins
-mon sample avec Amundsen”, or equivalent, call `enrich_with_amundsen_ctd`
-directly on the exact active variable. This is the only canonical loaded-table
-enrichment path.
+Call `enrich_with_amundsen_ctd` directly on the exact active variable for
+“enrichis avec Amundsen”, “ajoute le CTD Amundsen”, or equivalent. The same
+path applies when Amundsen CTD is named with a request for its data, measures,
+parameters, or CTD/environmental variables: “donne les données Amundsen”,
+“température et salinité Amundsen”, or “ajoute l'oxygène Amundsen”. The verb
+*enrichir* is not required. This is the only canonical loaded-table enrichment
+path.
 
-When the user first asks for a subset (specific sample, station, date, rows,
-or filter), first build `result` with `run_pandas` and pass a clear
-`persist_as="df_subset_..."`. Confirm that the result says
-`Persistence: persisted=true`; then call `enrich_with_amundsen_ctd` with that
-exact `source_variable`. Never enrich the original full file after a requested
-subset, and never rely on the bare active `df` for this hand-off.
+Pass only variables requested by the user: `temperature`/`température`,
+`salinité`/`salinity`, `oxygène`/`oxygen`, `nitrate`, `chlorophylle`,
+`fluorescence`, `densité`, or `pression`. For a broad environmental request,
+keep the canonical default set.
 
-- Do not run discovery, preview, or raw CTD retrieval first.
-- Do not require station/cast identifiers.
-- Do not reuse an earlier assistant refusal or schema assessment.
-- Pass the exact `source_variable` whenever the intended table is a persisted
-  subset or derived `df_*` table.
+For an EcoTaxa export with `sample_ctdrosettefilename` (or an equivalent CTD
+filename column), the tool automatically fetches the matching CTD profile by
+filename and selects the closest `PRES` locally. It does not issue one query
+per object depth. Without that filename, it falls back to the usual
+latitude/longitude/time nearest-profile enrichment.
 
-The canonical enrichment auto-detects supported latitude, longitude, time, and
-depth aliases, including EcoTaxa/NeoLabs forms. It deduplicates repeated source
-points, batches ERDDAP requests, matches by spatial/temporal/depth proximity,
-and preserves source rows. Let the tool return its own blocked diagnostic when
-required metadata is absent.
+For a requested subset, first persist it with `run_pandas`, then pass its exact
+`source_variable`; never enrich the original full table. Do not run discovery,
+preview, or raw CTD retrieval first. Do not require station/cast identifiers or
+reuse an earlier refusal. The canonical tool detects compatible position/time/depth
+columns, batches ERDDAP, and preserves source rows; retain its blocked
+diagnostic when metadata is insufficient.
 
-## Optional user constraints
+## Constraints and result
 
-Pass only constraints the user actually supplied:
-
-- requested CTD variables via `variables`;
-- `zone_name` for an explicitly named geographic subset;
-- `date_range` for an explicit temporal restriction;
-- explicit column overrides or tolerance changes.
-
-Otherwise keep canonical defaults.
-
-## Result contract
-
-- Treat only a successful tool result as enrichment success.
-- Report total rows, matched rows, status counts, distance/time quality metrics,
-  exact persisted variable, download link, and Amundsen provenance.
-- Preserve `no_match`, `matched_no_value`, and `outside_amundsen_ctd_range` as
-  visible limits.
-- Do not substitute OGSL, Bio-ORACLE, EcoPart, or any other source after an
-  empty, blocked, or failed result.
-- Do not add scientific or biological interpretation.
+Pass only explicit variables, `zone_name`, `date_range`, column overrides, or
+tolerances. Treat only a successful tool result as success. Report rows,
+matches, status/quality metrics, persisted variable, download, and provenance;
+keep `no_match`, `matched_no_value`, and `outside_amundsen_ctd_range` visible.
+Do not replace a failed result with another source or add scientific
+interpretation.

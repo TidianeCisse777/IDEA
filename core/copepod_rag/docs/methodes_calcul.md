@@ -3,7 +3,7 @@
 # Format RAG — chaque section délimitée par --- est un chunk autonome
 
 ---
-# Comment calculer une concentration en ind m⁻³ depuis EcoTaxa et EcoPart ?
+# Comment calculer une abondance ou concentration en ind m⁻³ depuis EcoTaxa et EcoPart ?
 
 La concentration en individus par mètre cube se calcule en comptant les objets EcoTaxa correspondant au taxon ou au groupe cible, puis en divisant ce nombre par le volume échantillonné donné par EcoPart.
 
@@ -363,7 +363,11 @@ nitrate : selon source
 
 Limites :
 - EcoPart est la source la plus directe pour associer CTD/particules aux objets UVP.
-- Amundsen est la CTD officielle ; elle se joint par proximite date/heure + lat/lon + profondeur.
+- Pour un enrichissement CTD générique, Amundsen est la CTD officielle ; elle se joint par proximité date/heure + lat/lon + profondeur.
+- Cette proximité ne certifie pas une correspondance filet ↔ UVP/EcoTaxa. Pour
+  cette comparaison, valider aussi le même `ctdrosettefilename` dans Amundsen,
+  avec station, heure et coordonnées cohérentes ; seules les lignes
+  `join_eligible=true` peuvent être comparées.
 - Il faut conserver `depth_delta_m` pour documenter la qualite de la jointure.
 
 Feedback si le calcul n'est pas possible :
@@ -441,7 +445,7 @@ matched_cast_no_depth_interval_rows
 
 Limites :
 - `SAMPLE_ID + ANALYSIS_ID` ne prouve pas un match CTD ; il sert seulement à récupérer le contexte de prélèvement.
-- La CTD Amundsen se joint par proximité date/heure + latitude/longitude + profondeur, pas par clé directe.
+- L'enrichissement CTD Amundsen se joint par proximité date/heure + latitude/longitude + profondeur, pas par clé directe. Cette règle ne suffit pas à certifier une correspondance filet ↔ UVP/EcoTaxa : celle-ci exige aussi le fichier CTD partagé (`ctdrosettefilename`) validé par Amundsen, avec `join_eligible=true`.
 - Les lignes hors plage temporelle officielle Amundsen CTD doivent rester dans la table avec `ctd_match_status=outside_amundsen_ctd_range`.
 - Les deltas de match doivent être cités dans tout résultat ou graphique croisant abondance et CTD.
 

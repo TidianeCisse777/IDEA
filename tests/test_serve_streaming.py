@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import pytest
 
+from fastapi import Request
 from core.runtime_paths import graphs_dir
 from unittest.mock import MagicMock
 from langchain_core.messages import AIMessage, ToolMessage
@@ -37,6 +38,39 @@ def test_compose_persists_graphs_in_a_dedicated_named_volume():
 
     assert "copepod_graphs:/app/data/graphs" in compose
     assert "  copepod_graphs:" in compose
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_forwarded_origin_after_endpoint_returns(monkeypatch):
+    """SSE graph URLs keep the caller's current proxy host, not process env."""
+    from serve import _stream_with_request_origin
+    from tools.public_url import graph_url, request_public_origin
+
+    monkeypatch.setenv("SERVE_BASE_URL", "https://expired.trycloudflare.com")
+    request = Request(
+        {
+            "type": "http",
+            "scheme": "http",
+            "path": "/v1/chat/completions",
+            "headers": [
+                (b"host", b"copepod_agent:8000"),
+                (b"x-forwarded-host", b"fresh.trycloudflare.com"),
+                (b"x-forwarded-proto", b"https"),
+            ],
+        }
+    )
+
+    async def delayed_graph_url():
+        await asyncio.sleep(0)
+        yield graph_url("map.png")
+
+    chunks = [
+        chunk async for chunk in _stream_with_request_origin(
+            request_public_origin(request), delayed_graph_url()
+        )
+    ]
+
+    assert chunks == ["https://fresh.trycloudflare.com/graphs/map.png"]
 
 def test_sse_chunk_contains_content():
     from serve import _make_sse_chunk

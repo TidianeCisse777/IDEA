@@ -23,6 +23,15 @@ def _extract_title(text: str) -> str:
     return first[:80] or "untitled"
 
 
+def _is_document_preamble(content: str) -> bool:
+    """Skip filename/format-only headers that add no retrievable knowledge."""
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    return bool(lines) and all(
+        line.startswith("#") or line.lower().startswith("format rag")
+        for line in lines
+    )
+
+
 def chunk_doc(path: Path) -> list[dict]:
     raw = path.read_text(encoding="utf-8")
     segments = _SEPARATOR.split(raw)
@@ -32,6 +41,8 @@ def chunk_doc(path: Path) -> list[dict]:
     for seg in segments:
         content = seg.strip()
         if not content:
+            continue
+        if _is_document_preamble(content):
             continue
         chunks.append({
             "doc": path.name,

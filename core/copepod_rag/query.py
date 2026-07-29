@@ -53,6 +53,42 @@ def _generate_alternative_queries(question: str) -> list[str]:
         return []
 
 
+def _routing_guidance_bonus(question: str, chunk: dict) -> float:
+    """Prioritize the RAG decision section for explicit source-route questions.
+
+    Embeddings are good at topical similarity but can rank a single-source
+    reference above a document's explicit cross-source decision table.  This
+    small, transparent reranker applies only to source-choice and join-route
+    questions; it never changes which chunks are retrieved.
+    """
+    q = question.casefold()
+    title = str(chunk.get("title", "")).casefold()
+    content = str(chunk.get("content", "")).casefold()
+    source_names = ("ecotaxa", "ecopart", "amundsen", "bio-oracle", "ogsl")
+    named_sources = sum(name in q for name in source_names)
+
+    if named_sources >= 2 and any(word in q for word in ("choisir", "quelle source", "source utiliser")):
+        if "quelle source utiliser" in title:
+            return 0.18
+
+    if any(word in q for word in ("joindre", "jointure", "join")):
+        if "ecotaxa" in q and "ecopart" in q:
+            if "ecotaxa" in title and "ecopart" in title:
+                return 0.12
+            if "ecotaxa" in content and "ecopart" in content and "joint" in content:
+                return 0.05
+
+    if (
+        any(word in q for word in ("calculer", "méthode", "methode"))
+        and any(word in q for word in ("abondance", "concentration", "ind m3", "ind./m3"))
+        and chunk.get("doc") == "methodes_calcul.md"
+    ):
+        if "calculer une abondance ou concentration" in title:
+            return 0.12
+        return 0.05
+    return 0.0
+
+
 
 @contextlib.contextmanager
 def _silence_native_fds():
@@ -166,7 +202,7 @@ def query_copepod_rag(
                     "score": distance,
                 })
 
-        chunks.sort(key=lambda c: c["score"])
+        chunks.sort(key=lambda c: (c["score"] - _routing_guidance_bonus(question, c), c["score"]))
         return chunks[:top_k]
     finally:
         if os.getenv("PYTEST_CURRENT_TEST"):

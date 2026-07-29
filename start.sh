@@ -134,6 +134,11 @@ if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/n
   fi
 fi
 
+# A Cloudflare quick-tunnel hostname is replaced on every launch.  Start from
+# the local origin explicitly so a stale value in .env can never be inherited
+# while the new tunnel is being created.
+LOCAL_SERVE_BASE_URL="http://localhost:8000"
+
 if [ "$AGENT_MODE" = "local" ]; then
   export OPENWEBUI_AGENT_BASE_URL="http://host.docker.internal:8000/v1"
   SERVICES=(postgres mcp-ecotaxa open-webui)
@@ -242,7 +247,7 @@ if [ "$AGENT_MODE" = "local" ]; then
       AGENT_PYTHON="python"
     fi
     echo "[start] Launching local agent: ${AGENT_PYTHON} serve.py (logs: ${LOCAL_AGENT_LOG})"
-    "${AGENT_PYTHON}" serve.py > "${LOCAL_AGENT_LOG}" 2>&1 &
+    SERVE_BASE_URL="$LOCAL_SERVE_BASE_URL" "${AGENT_PYTHON}" serve.py > "${LOCAL_AGENT_LOG}" 2>&1 &
     LOCAL_AGENT_PID=$!
   fi
   echo "[start] Waiting for local agent API on http://localhost:8000..."
@@ -258,9 +263,9 @@ if [ "$AGENT_MODE" = "local" ]; then
 else
   echo "[start] Cache OK — starting copepod-agent..."
   if [ "$BUILD_MODE" = "build" ]; then
-    docker compose up -d copepod-agent
+    SERVE_BASE_URL="$LOCAL_SERVE_BASE_URL" docker compose up -d --no-deps --force-recreate copepod-agent
   else
-    docker compose up -d --no-build copepod-agent || {
+    SERVE_BASE_URL="$LOCAL_SERVE_BASE_URL" docker compose up -d --no-build --no-deps --force-recreate copepod-agent || {
       echo "[start] Docker image missing. Run once with ./start.sh --build, or pull the published images."
       exit 1
     }
@@ -308,14 +313,36 @@ if command -v cloudflared >/dev/null 2>&1; then
   if [ -n "$SERVE_TUNNEL_URL" ]; then
     if [ "$AGENT_MODE" = "local" ]; then
       echo "[start] Agent API public URL: ${SERVE_TUNNEL_URL}"
-      echo "[start] For public file links in local-agent mode, restart your local agent with SERVE_BASE_URL=${SERVE_TUNNEL_URL}."
+      if [ -n "$LOCAL_AGENT_PID" ]; then
+        echo "[start] Updating locally started agent public file URL..."
+        kill "$LOCAL_AGENT_PID" 2>/dev/null || true
+        wait "$LOCAL_AGENT_PID" 2>/dev/null || true
+        SERVE_BASE_URL="$SERVE_TUNNEL_URL" "${AGENT_PYTHON}" serve.py > "${LOCAL_AGENT_LOG}" 2>&1 &
+        LOCAL_AGENT_PID=$!
+        until curl -sf http://localhost:8000/ >/dev/null 2>&1; do
+          if ! kill -0 "$LOCAL_AGENT_PID" 2>/dev/null; then
+            echo "[start] Local agent died while applying the public URL. Last log lines:"
+            tail -20 "${LOCAL_AGENT_LOG}" || true
+            exit 1
+          fi
+          sleep 1
+        done
+        echo "[start] Agent public file URL updated."
+      else
+        echo "[start] A local agent was already running; restart it with SERVE_BASE_URL=${SERVE_TUNNEL_URL} to publish its graphs."
+      fi
     else
       echo "[start] Updating agent public file URL..."
       if [ "$BUILD_MODE" = "build" ]; then
-        SERVE_BASE_URL="$SERVE_TUNNEL_URL" docker compose up -d --no-deps copepod-agent
+        SERVE_BASE_URL="$SERVE_TUNNEL_URL" docker compose up -d --no-deps --force-recreate copepod-agent
       else
-        SERVE_BASE_URL="$SERVE_TUNNEL_URL" docker compose up -d --no-build --no-deps copepod-agent
+        SERVE_BASE_URL="$SERVE_TUNNEL_URL" docker compose up -d --no-build --no-deps --force-recreate copepod-agent
       fi
+      echo "[start] Waiting for agent restart with the current public URL..."
+      until docker compose exec -T copepod-agent curl -sf http://localhost:8000/ >/dev/null 2>&1; do
+        sleep 1
+      done
+      echo "[start] Agent public file URL updated."
     fi
   fi
 fi

@@ -742,7 +742,7 @@ def test_enrich_with_amundsen_ctd_batches_large_spatiotemporal_sources():
     assert enriched["amundsen_match_status"].tolist() == [
         "matched",
         "matched",
-        "no_match",
+        "source_unavailable",
     ]
     assert enriched["amundsen_station"].tolist()[:2] == ["ARCTIC-2018", "ARCTIC-2018"]
     assert pd.isna(enriched["amundsen_station"].iloc[2])
@@ -1108,6 +1108,192 @@ def test_enrich_with_amundsen_ctd_matches_depth_within_profile():
     assert enriched["amundsen_match_status"].tolist() == ["matched", "matched"]
     assert enriched["amundsen_te90_degC"].tolist() == [-1.0, 1.5]
     assert enriched["amundsen_pres_dbar"].tolist() == [2.0, 50.0]
+
+
+def test_enrich_with_amundsen_ctd_prefers_sample_ctd_filename_over_spatial_batches():
+    """EcoTaxa exports with rosette files fetch each CTD profile once."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-rosette-filename"
+    source = pd.DataFrame(
+        {
+            "sample_ctdrosettefilename": ["1601002.0", "1601002", "1601076.0"],
+            "object_depth_min": [5.0, 50.0, 10.0],
+            "object_lat": [58.55, 58.55, 59.04],
+            "object_lon": [-52.84, -52.84, -63.60],
+            "object_date": ["2016-06-07", "2016-06-07", "2016-06-21"],
+        }
+    )
+    _store.set(thread_id, source, {"source": "ecotaxa_export_campaign"})
+    ctd = pd.DataFrame(
+        [
+            {
+                "filename": "1601002.int.nc", "time": "2016-06-07T12:00:00Z",
+                "latitude": 58.55, "longitude": -52.84, "station": "G320",
+                "cast_number": 2, "PRES": 5.0, "TE90": -1.0, "PSAL": 31.0,
+                "OXYM": 280.0,
+            },
+            {
+                "filename": "1601002.int.nc", "time": "2016-06-07T12:00:00Z",
+                "latitude": 58.55, "longitude": -52.84, "station": "G320",
+                "cast_number": 2, "PRES": 50.0, "TE90": 1.5, "PSAL": 33.0,
+                "OXYM": 275.0,
+            },
+            {
+                "filename": "1601076.int.nc", "time": "2016-06-21T12:00:00Z",
+                "latitude": 59.04, "longitude": -63.60, "station": "G502",
+                "cast_number": 76, "PRES": 10.0, "TE90": 0.5, "PSAL": 32.0,
+                "OXYM": 270.0,
+            },
+        ]
+    )
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_ctd_profile_rows_by_filename",
+        return_value=ctd,
+        create=True,
+    ) as fetch_by_filename, patch(
+        "tools.amundsen_sources._fetch_amundsen_bbox",
+        side_effect=AssertionError("the spatial fallback must not run"),
+    ):
+        enrich = next(
+            tool
+            for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        enrich.invoke(
+            {"variables": ["temperature", "salinity", "pressure", "oxygen"]}
+        )
+
+    fetch_by_filename.assert_called_once()
+    assert fetch_by_filename.call_args.kwargs["variables"] == ["TE90", "PSAL", "PRES", "OXYM"]
+    enriched_key = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")[-1]
+    enriched = _store.get(enriched_key)["df"]
+    assert enriched["amundsen_match_status"].tolist() == ["matched", "matched", "matched"]
+    assert enriched["amundsen_filename"].tolist() == [
+        "1601002.int.nc", "1601002.int.nc", "1601076.int.nc",
+    ]
+    assert enriched["amundsen_te90_degC"].tolist() == [-1.0, 1.5, 0.5]
+
+
+def test_filename_enrichment_reports_upstream_failure_without_crashing():
+    """A failed filename lookup remains a structured Amundsen result."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-rosette-outage"
+    _store.set(
+        thread_id,
+        pd.DataFrame(
+            {
+                "sample_ctdrosettefilename": ["1601002.0"],
+                "object_depth_min": [5.0],
+                "object_lat": [58.55],
+                "object_lon": [-52.84],
+                "object_date": ["2016-06-07"],
+            }
+        ),
+        {"source": "ecotaxa_export_campaign"},
+    )
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_ctd_profile_rows_by_filename",
+        side_effect=TimeoutError("ERDDAP timed out"),
+    ):
+        enrich = next(
+            tool
+            for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({"variables": ["temperature", "pressure"]})
+
+    assert "temporairement indisponible" in result.lower()
+    assert not _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
+
+
+def test_filename_enrichment_works_when_export_has_no_coordinates():
+    """A CTD filename is sufficient; absent coordinates are only an audit gap."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-filename-without-coordinates"
+    _store.set(
+        thread_id,
+        pd.DataFrame({"sample_ctdrosettefilename": ["1801_001"]}),
+        {"source": "ecotaxa_export_campaign"},
+    )
+    ctd = pd.DataFrame(
+        [{
+            "filename": "1801_001.int.nc", "time": "2018-05-31T18:07:39Z",
+            "latitude": 60.8307, "longitude": -64.6823, "station": "N01 (356)",
+            "cast_number": 1, "PRES": 2.0, "TE90": -1.28, "PSAL": 32.499,
+        }]
+    )
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_ctd_profile_rows_by_filename",
+        return_value=ctd,
+    ), patch(
+        "tools.amundsen_sources._fetch_amundsen_bbox",
+        side_effect=AssertionError("a filename match must not fall back to spatial batches"),
+    ):
+        enrich = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        enrich.invoke({"variables": ["temperature", "salinity"]})
+
+    enriched_key = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")[-1]
+    enriched = _store.get(enriched_key)["df"]
+    assert enriched["amundsen_match_status"].tolist() == ["matched"]
+    assert enriched["amundsen_filename"].tolist() == ["1801_001.int.nc"]
+    assert enriched["amundsen_te90_degC"].tolist() == [-1.28]
+    assert enriched["amundsen_distance_km"].isna().all()
+
+
+def test_filename_enrichment_outage_never_persists_repeated_export_rows():
+    """One unavailable CTD profile must fail the whole repeated-object export cleanly."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-filename-outage-repeated-rows"
+    _store.set(
+        thread_id,
+        pd.DataFrame(
+            {
+                "sample_ctdrosettefilename": ["1601002", "1601002", "1601002"],
+                "object_lat": [58.55, 58.55, 58.55],
+                "object_lon": [-52.84, -52.84, -52.84],
+            }
+        ),
+        {"source": "ecotaxa_export_campaign"},
+    )
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_ctd_profile_rows_by_filename",
+        side_effect=TimeoutError("ERDDAP timed out"),
+    ):
+        enrich = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({"variables": ["temperature"]})
+
+    assert "temporairement indisponible" in result.lower()
+    assert not _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
 
 
 def test_enrich_with_amundsen_ctd_filters_candidates_outside_time_tolerance():

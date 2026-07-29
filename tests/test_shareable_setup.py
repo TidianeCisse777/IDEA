@@ -78,6 +78,26 @@ def test_start_script_does_not_build_by_default():
     assert "--build: allow Docker Compose to build images if needed." in script
 
 
+def test_start_script_replaces_any_stale_public_agent_url_with_its_tunnel_url():
+    """Quick-tunnel URLs are ephemeral: every start must replace the old one."""
+    script = Path("start.sh").read_text(encoding="utf-8")
+
+    # The agent never boots from a stale SERVE_BASE_URL left in .env.
+    assert 'LOCAL_SERVE_BASE_URL="http://localhost:8000"' in script
+    assert (
+        'SERVE_BASE_URL="$LOCAL_SERVE_BASE_URL" docker compose up -d '
+        '--no-deps --force-recreate copepod-agent'
+    ) in script
+
+    # Once start.sh has obtained its *current* quick tunnel, it recreates the
+    # agent with that exact URL instead of relying on Compose's old container.
+    assert (
+        'SERVE_BASE_URL="$SERVE_TUNNEL_URL" docker compose up -d '
+        '--no-build --no-deps --force-recreate copepod-agent'
+    ) in script
+    assert 'SERVE_BASE_URL="$SERVE_TUNNEL_URL" "${AGENT_PYTHON}" serve.py' in script
+
+
 def test_openwebui_supports_container_and_local_agent_modes():
     compose = yaml.safe_load(Path("docker-compose.yml").read_text(encoding="utf-8"))
     webui = compose["services"]["open-webui"]

@@ -12,9 +12,9 @@ Every graph and downloadable artifact returned by the agent must use the URL thr
 
 The FastAPI request establishes a request-scoped public origin for the duration of one chat-completion response. URL construction resolves in this order:
 
-1. an explicit, non-local `SERVE_BASE_URL`, for a deliberately configured stable public domain;
-2. `X-Forwarded-Proto` plus `X-Forwarded-Host`, when the reverse proxy provides them;
-3. the request scheme and `Host` header;
+1. `X-Forwarded-Proto` plus `X-Forwarded-Host`, when the reverse proxy provides them;
+2. the request scheme and `Host` header;
+3. `SERVE_BASE_URL`, for CLI/background code that has no HTTP request;
 4. the existing local default (`http://localhost:8000`) outside a request context, including CLI and isolated tool tests.
 
 The resolved origin is stored with `contextvars.ContextVar`, so concurrent requests cannot leak an origin into one another. It is entered at the FastAPI request boundary and reset after both streaming and non-streaming responses finish. Existing `graph_url()` and `download_url()` callers remain unchanged.

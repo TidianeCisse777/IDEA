@@ -81,6 +81,31 @@ Ne pas faire :
 
 ---
 
+# Correspondance filet ↔ UVP/EcoTaxa certifiée par CTD Amundsen
+
+Mots-clés : filet, UVP, EcoTaxa, Amundsen, ctdrosettefilename, fichier CTD,
+station, date, position, join_eligible, correspondance certifiée
+
+Cette procédure est plus stricte qu'un enrichissement CTD ordinaire. Elle sert
+uniquement à établir qu'un fichier filet chargé correspond réellement à des
+samples UVP/EcoTaxa, avant toute comparaison ou calcul d'abondance croisé.
+
+Validation obligatoire, dans cet ordre :
+1. compatibilité de position et de temps entre le déploiement filet et le sample
+   UVP/EcoTaxa ;
+2. présence d'un même fichier CTD Amundsen (`ctdrosettefilename` ou son alias)
+   côté UVP/EcoTaxa et côté Amundsen ;
+3. confirmation par Amundsen des métadonnées du fichier : station, heure et
+   coordonnées cohérentes.
+
+Seules les lignes marquées `join_eligible=true` constituent une correspondance
+validée. Une proximité spatiale, une même journée, un nom de station ressemblant
+ou un identifiant d'analyse ne suffisent jamais. Les candidats non validés sont
+conservés dans l'audit avec leur raison ; ils ne doivent ni être joints pour une
+analyse ni alimenter un graphique comparatif.
+
+---
+
 # Bio-ORACLE
 
 Mots-clés : Bio-ORACLE, scenario, SSP, variable, griddap, couche, surface, depth_layer
@@ -134,7 +159,7 @@ Règle pratique :
 
 ---
 
-# EcoTaxa et EcoPart
+# Comment joindre EcoTaxa et EcoPart, puis vérifier la qualité ?
 
 Mots-clés : EcoTaxa, EcoPart, profile_id, volume échantillonné, bins de profondeur, concentration
 

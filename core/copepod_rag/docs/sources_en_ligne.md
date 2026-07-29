@@ -28,24 +28,29 @@ Mots-clés : sources en ligne, EcoTaxa, EcoPart, Amundsen CTD, OGSL, Bio-ORACLE,
 
 ---
 
-# Comment accéder à EcoTaxa ?
+# EcoTaxa : cache partagé puis export ciblé
 
-Mots-clés : EcoTaxa, annotations taxonomiques, objets individuels, morphométrie, validation humaine, credentials, export authentifié
+Mots-clés : EcoTaxa, cache partagé EcoTaxa, métadonnées échantillon, profils, casts, annotations taxonomiques, objets individuels, morphométrie, export ciblé
 
-**Ce que ça contient :** annotations taxonomiques, statut de validation, morphométrie image, métadonnées d'objet et parfois images/vignettes.
+**Ce que contient le cache partagé :** métadonnées de projet, sample, profil/cast,
+station, position, date, profondeur enveloppe, instrument, volume et champs libres
+utiles à la sélection. Il est commun à tous les utilisateurs du dépôt : aucun
+mot de passe EcoTaxa n'est requis pour l'explorer.
 
-**Niveau :** objet individuel.
+**Ce qui exige un export EcoTaxa :** objets individuels, taxons/annotations,
+morphométrie image, valeurs par profondeur ou toute analyse à grain objet. Le
+cache prépare alors la sélection exacte ; l'export est confirmé séparément et
+son résultat doit être audité.
 
-**Accès :** compte requis pour les exports complets. Credentials locaux dans `.env`, jamais commités.
+**Niveau :** cache = sample/profil ; export = objet individuel.
 
 **Workflow recommandé :**
-1. découvrir les projets accessibles à l'utilisateur ;
-2. sélectionner le projet demandé ;
-3. lancer un export authentifié ;
-4. attendre le job async ;
-5. télécharger le ZIP/TSV ;
-6. inspecter colonnes, validation, profondeur, taxon, morphométrie ;
-7. travailler sur une copie ou table dérivée.
+1. explorer ou filtrer le cache partagé ;
+2. vérifier les champs directs de sample/profil disponibles ;
+3. si la demande exige le grain objet, proposer l'export de cette sélection ;
+4. après confirmation, inspecter colonnes, validation, profondeur, taxon et
+   morphométrie dans l'export ;
+5. travailler sur une copie ou table dérivée.
 
 **Limites :**
 - EcoTaxa ne fournit pas nécessairement le volume échantillonné ;

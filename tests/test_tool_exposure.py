@@ -229,6 +229,23 @@ def test_explicit_enrichment_exposes_one_canonical_source_tool(source, text, exp
     assert source_tools == [expected]
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Avec Amundsen CTD, ajoute la température et la salinité à mon fichier",
+        "Donne les données environnementales Amundsen CTD pour le tableau chargé",
+        "Donne-moi les données Amundsen CTD associées à ce fichier",
+        "Complète ce fichier avec l'oxygène et les nitrates Amundsen",
+    ],
+)
+def test_named_amundsen_environment_request_exposes_canonical_enrichment(text):
+    """CTD variables with a named Amundsen source are an enrichment request."""
+    decision = _decision(text, file_loaded=True, sources=("file", "amundsen"))
+
+    assert "enrich_with_amundsen_ctd" in decision.tool_names
+    assert "enrichment_amundsen" in decision.active_groups
+
+
 def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
     from tools.tool_catalog import TOOL_POLICIES
     from tools.tool_exposure import decide_tool_exposure
@@ -388,23 +405,23 @@ def test_visual_overflow_keeps_graph_and_ecotaxa_discovery():
     assert "list_ecotaxa_campaigns" not in decision.tool_names
 
 
-def test_ecotaxa_overflow_keeps_central_cache_query():
+def test_compact_ecotaxa_exposure_keeps_central_cache_query_without_overflow():
     decision = _decision(
         "Explore les samples EcoTaxa par projet, station, date et instrument",
         sources=("ecotaxa",),
     )
 
-    assert decision.policy_overflow is True
+    assert decision.policy_overflow is False
     assert "query_ecotaxa_cache" in decision.tool_names
 
 
-def test_global_region_ranking_uses_cache_sql_during_overflow():
+def test_global_region_ranking_keeps_cache_sql_in_compact_exposure():
     decision = _decision(
         "Dans tout le cache EcoTaxa, classe les zones et écorégions par nombre de samples",
         sources=("ecotaxa",),
     )
 
-    assert decision.policy_overflow is True
+    assert decision.policy_overflow is False
     assert "query_ecotaxa_cache" in decision.tool_names
     assert "rank_ecotaxa_samples_by_region" not in decision.tool_names
 
@@ -462,5 +479,6 @@ def test_overflow_falls_back_to_the_core_when_discovery_does_not_fit():
         "load_file",
         "load_skill",
         "query_copepod_knowledge_base",
+        "run_pandas",
     )
     assert len(decision.tool_names) <= 4

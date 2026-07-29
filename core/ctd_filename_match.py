@@ -10,6 +10,7 @@ join eligible.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 
@@ -49,7 +50,19 @@ def ctd_filename_aliases(value: object) -> set[str]:
     weaker alias is intentionally accepted only alongside station, time and
     coordinate validation in :func:`match_uvp_to_amundsen_ctd`.
     """
-    tokens = _ascii_tokens(value)
+    if value is None:
+        return set()
+    try:
+        if math.isnan(float(value)):
+            return set()
+    except (TypeError, ValueError):
+        pass
+    raw = str(value).strip()
+    # Spreadsheet exports often serialise a numeric rosette id as ``1601002.0``.
+    # It is the same identifier as ``1601002``; treating the decimal suffix as
+    # a second token would make an otherwise exact CTD-file match impossible.
+    raw = re.sub(r"^(\d+)\.0+$", r"\1", raw)
+    tokens = _ascii_tokens(raw)
     while tokens and tokens[-1] in {"nc", "int", "cnv", "csv", "txt"}:
         tokens.pop()
     if not tokens:

@@ -34,6 +34,7 @@ _AMUNDSEN_FRIENDLY_VARS: dict[str, str] = {
     "chlorophyll": "FLOR", "chlorophylle": "FLOR", "chl": "FLOR",
     "fluorescence": "FLOR", "flor": "FLOR",
     "density": "SIGT", "densité": "SIGT", "sigma": "SIGT", "sigt": "SIGT",
+    "pressure": "PRES", "pression": "PRES", "pres": "PRES",
     "iron": "FLOR",  # Amundsen has no iron — fall back to chlorophyll proxy
     "dfe": "FLOR",
 }
@@ -67,6 +68,12 @@ _AMUNDSEN_CORE_COLUMNS = (
 _AMUNDSEN_CTD_MATCH_METADATA_COLUMNS = (
     "filename", "time", "latitude", "longitude", "station", "cast_number"
 )
+_CTD_FILENAME_CANDIDATES = (
+    "sample_ctdrosettefilename",
+    "ctdrosettefilename",
+    "ctd_rosette_filename",
+    "ctd_filename",
+)
 _AMUNDSEN_REQUEST_TIMEOUT_SECONDS = 20
 _AMUNDSEN_TIME_MIN = pd.Timestamp("2014-07-15T08:20:04Z")
 _AMUNDSEN_TIME_MAX = pd.Timestamp("2024-10-01T02:03:25Z")
@@ -76,12 +83,18 @@ from core.environment_resolver import (
     DEFAULT_LAT_CANDIDATES,
     DEFAULT_LON_CANDIDATES,
     DEFAULT_TIME_CANDIDATES,
+    DEFAULT_DEPTH_CANDIDATES,
+    ResolvedEnvironmentSchema,
     compute_bbox_time_window,
     detect_column,
+    haversine_km,
     parse_source_coords,
+    resolve_environment_schema,
     resolve_source_dataframe,
     build_enrichment_provenance,
 )
+from core.ctd_filename_match import ctd_filename_aliases
+from core.enrich_scoping import scope_dataframe
 from core.amundsen_ctd_client import (
     list_amundsen_datasets as _list_amundsen_datasets,
     preview_amundsen_profile as _preview_amundsen_profile,
@@ -91,11 +104,16 @@ from tools.dataset_registry import (
     CTD,
     CTD_ENRICHED,
     dataset_variable_name,
+    enrichment_source_note,
     store_dataset,
 )
 from tools.public_url import download_url
 from tools.ctd_matcher import CtdProfileMatcher
-from tools.point_enrichment import format_method_block, run_point_enrichment
+from tools.point_enrichment import (
+    EnrichmentOutcome,
+    format_method_block,
+    run_point_enrichment,
+)
 from tools.session_store import default_store as _store
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
@@ -217,9 +235,8 @@ def _fetch_amundsen_ctd_metadata_by_filename(
     if cached is not None:
         return _filter_to_request(cached, bbox=bbox, time_window=time_window)
 
-    # ERDDAP regex is deliberately a broad server-side prefilter.  Exact alias
-    # equality is enforced locally below, before the CTD match is certified.
-    filename_regex = ".*(" + "|".join(re.escape(alias) for alias in aliases) + ").*"
+    # ERDDAP prefilters by filename; exact aliases are enforced locally below.
+    filename_regex = _amundsen_filename_regex(aliases)
     constraints = [
         f'filename=~"{filename_regex}"',
         f"latitude>={float(bbox['lat_min']):.4f}",
@@ -255,6 +272,74 @@ def _fetch_amundsen_ctd_metadata_by_filename(
             ].reset_index(drop=True)
     cache_set("amundsen_ctd_metadata_by_filename", cache_key, result)
     return _filter_to_request(result, bbox=bbox, time_window=time_window)
+
+
+def _amundsen_filename_regex(aliases: list[str]) -> str:
+    """Build a selective ERDDAP regex while retaining numeric cast aliases.
+
+    A short alias such as ``1`` must mean the terminal filename component
+    ``_001.``; a broad ``.*1.*`` would retrieve nearly the entire archive.
+    Longer identifiers from EcoTaxa are preserved as regular substring
+    prefilters and all candidates remain locally alias-validated.
+    """
+    patterns = []
+    for alias in aliases:
+        escaped = re.escape(alias)
+        if alias.isdigit() and len(alias) <= 3:
+            patterns.append(rf".*[_-]0*{escaped}\..*")
+        else:
+            patterns.append(rf".*{escaped}.*")
+    return "(" + "|".join(patterns) + ")"
+
+
+def _fetch_amundsen_ctd_profile_rows_by_filename(
+    *,
+    filename_aliases: set[str],
+    variables: list[str],
+) -> pd.DataFrame:
+    """Fetch full vertical CTD rows for EcoTaxa rosette-file aliases.
+
+    This is intentionally separate from the metadata-only helper used by the
+    Net↔UVP certification route: an explicit enrichment needs pressure and
+    requested CTD values so it can select the nearest depth locally.
+    """
+    aliases = sorted(
+        {str(alias).strip() for alias in filename_aliases if str(alias).strip()}
+    )
+    columns = list(dict.fromkeys([*_AMUNDSEN_CORE_COLUMNS, *variables]))
+    if not aliases:
+        return pd.DataFrame(columns=columns)
+
+    cache_key = {"filename_aliases": aliases, "variables": sorted(variables)}
+    cached = cache_get("amundsen_ctd_profile_rows_by_filename", cache_key)
+    if cached is not None:
+        return cached
+
+    filename_regex = _amundsen_filename_regex(aliases)
+    query = ",".join(columns) + "&" + quote(
+        f'filename=~"{filename_regex}"', safe="=~"
+    )
+    response = requests.get(
+        f"{_AMUNDSEN_TABLEDAP_URL}?{query}",
+        timeout=_AMUNDSEN_REQUEST_TIMEOUT_SECONDS,
+    )
+    if response.status_code == 404:
+        result = pd.DataFrame(columns=columns)
+    else:
+        response.raise_for_status()
+        lines = response.text.splitlines()
+        if len(lines) <= 1:
+            result = pd.DataFrame(columns=columns)
+        else:
+            body = "\n".join([lines[0]] + lines[2:]) if len(lines) > 2 else lines[0]
+            result = pd.read_csv(io.StringIO(body))
+            result = result.loc[
+                result["filename"].map(
+                    lambda value: bool(ctd_filename_aliases(value) & set(aliases))
+                )
+            ].reset_index(drop=True)
+    cache_set("amundsen_ctd_profile_rows_by_filename", cache_key, result)
+    return result
 
 
 def _format_table(rows: list[dict], columns: list[str]) -> str:
@@ -326,6 +411,304 @@ class AmundsenMatcher(CtdProfileMatcher):
 
     def _extra_diagnostics(self, points, candidate_positions):
         return {"query_unique_count": len(candidate_positions or [])}
+
+
+def _run_filename_enrichment(
+    *,
+    thread_id: str,
+    source_variable: str | None,
+    selected_variables: list[str],
+    latitude_column: str | None,
+    longitude_column: str | None,
+    time_column: str | None,
+    depth_column: str | None,
+    zone_name: str | None,
+    date_range: list | None,
+) -> EnrichmentOutcome:
+    """Enrich one EcoTaxa export through its CTD-rosette filenames.
+
+    The CTD filename identifies the profile.  Position/time remain transparent
+    audit metrics, not a broad ERDDAP retrieval key; depth chooses one row in
+    that already identified vertical profile.
+    """
+    source = resolve_source_dataframe(_store, thread_id, source_variable)
+    status_col = "amundsen_match_status"
+    if source is None:
+        return EnrichmentOutcome(enriched=None, status_col=status_col, error="Aucune table chargée à enrichir.")
+
+    filename_col = detect_column(source.columns, _CTD_FILENAME_CANDIDATES)
+    if filename_col is None:
+        return EnrichmentOutcome(enriched=None, status_col=status_col, error="Colonne de fichier CTD absente.")
+
+    # The filename identifies the CTD profile, so coordinates and time are
+    # audit/disambiguation information rather than prerequisites.  Keep any
+    # available fields, but do not reject a valid EcoTaxa export solely because
+    # it has no geographic metadata.
+    def resolve_optional_column(
+        override: str | None, candidates: tuple[str, ...], role: str
+    ) -> tuple[str | None, str]:
+        if override is not None:
+            resolved = detect_column(source.columns, (override,))
+            if resolved is None:
+                return None, f"invalid override for {role}"
+            return str(resolved), "explicit"
+        resolved = detect_column(source.columns, candidates)
+        return (str(resolved) if resolved is not None else None), "detected"
+
+    lat_col, lat_resolution = resolve_optional_column(
+        latitude_column, DEFAULT_LAT_CANDIDATES, "latitude"
+    )
+    lon_col, lon_resolution = resolve_optional_column(
+        longitude_column, DEFAULT_LON_CANDIDATES, "longitude"
+    )
+    time_col, time_resolution = resolve_optional_column(
+        time_column, DEFAULT_TIME_CANDIDATES, "time"
+    )
+    depth_col, depth_resolution = resolve_optional_column(
+        depth_column, DEFAULT_DEPTH_CANDIDATES, "depth"
+    )
+    invalid_roles = [
+        role for role, resolution in (
+            ("latitude", lat_resolution), ("longitude", lon_resolution),
+            ("time", time_resolution), ("depth", depth_resolution),
+        ) if resolution.startswith("invalid override")
+    ]
+    if invalid_roles:
+        return EnrichmentOutcome(
+            enriched=None,
+            status_col=status_col,
+            error=(
+                "Enrichissement Amundsen impossible : override "
+                + ", ".join(invalid_roles)
+                + " absent des colonnes source."
+            ),
+        )
+    if date_range is not None and time_col is None:
+        return EnrichmentOutcome(
+            enriched=None,
+            status_col=status_col,
+            error="Enrichissement Amundsen impossible : filtre date sans colonne temporelle.",
+        )
+    if zone_name and (lat_col is None or lon_col is None):
+        return EnrichmentOutcome(
+            enriched=None,
+            status_col=status_col,
+            error="Enrichissement Amundsen impossible : filtre zone sans coordonnées source.",
+        )
+    schema = ResolvedEnvironmentSchema(
+        latitude_column=lat_col,
+        longitude_column=lon_col,
+        time_column=time_col,
+        depth_column=depth_col,
+        resolution={
+            "latitude": lat_resolution,
+            "longitude": lon_resolution,
+            "time": time_resolution,
+            "depth": depth_resolution,
+        },
+    )
+
+    scoping_lines: list[str] = []
+    working = source.copy(deep=True)
+    if zone_name or date_range is not None:
+        scoped = scope_dataframe(
+            working,
+            zone_name=zone_name,
+            date_range=date_range,
+            lat_col=schema.latitude_column,
+            lon_col=schema.longitude_column,
+            time_col=schema.time_column,
+        )
+        if scoped.error:
+            return EnrichmentOutcome(
+                enriched=None,
+                status_col=status_col,
+                error=f"Enrichissement Amundsen impossible : {scoped.error}",
+            )
+        working = scoped.df
+        scoping_lines = list(scoped.description_lines)
+        if working.empty:
+            return EnrichmentOutcome(
+                enriched=None,
+                status_col=status_col,
+                error=(
+                    "Enrichissement Amundsen impossible : le filtre zone/date a "
+                    "éliminé toutes les lignes.\n" + "\n".join(scoping_lines)
+                ),
+            )
+
+    source_aliases = working[filename_col].map(ctd_filename_aliases)
+    requested_aliases = set().union(*source_aliases.tolist()) if len(source_aliases) else set()
+    n_rows = len(working)
+    n_unique = len(requested_aliases)
+    source_note = enrichment_source_note(_store, thread_id, source, source_variable)
+    try:
+        ctd = _fetch_amundsen_ctd_profile_rows_by_filename(
+            filename_aliases=requested_aliases,
+            variables=selected_variables,
+        )
+        fetch_failures: list[str] = []
+    except Exception as exc:
+        ctd = pd.DataFrame(
+            columns=list(dict.fromkeys([*_AMUNDSEN_CORE_COLUMNS, *selected_variables]))
+        )
+        fetch_failures = [str(exc)]
+
+    ctd = ctd.copy()
+    ctd_aliases = (
+        ctd["filename"].map(ctd_filename_aliases)
+        if "filename" in ctd.columns
+        else pd.Series([], dtype=object)
+    )
+    source_lat = (
+        pd.to_numeric(working[schema.latitude_column], errors="coerce")
+        if schema.latitude_column else pd.Series([float("nan")] * n_rows)
+    )
+    source_lon = (
+        pd.to_numeric(working[schema.longitude_column], errors="coerce")
+        if schema.longitude_column else pd.Series([float("nan")] * n_rows)
+    )
+    source_time = (
+        pd.to_datetime(working[schema.time_column], errors="coerce", utc=True)
+        if schema.time_column else pd.Series([pd.NaT] * n_rows)
+    )
+    source_depth = (
+        pd.to_numeric(working[schema.depth_column], errors="coerce")
+        if schema.depth_column else pd.Series([float("nan")] * n_rows)
+    )
+    ctd_time = (
+        pd.to_datetime(ctd.get("time"), errors="coerce", utc=True)
+        if "time" in ctd.columns else pd.Series([], dtype="datetime64[ns, UTC]")
+    )
+    ctd_pres = pd.to_numeric(ctd.get("PRES"), errors="coerce") if "PRES" in ctd.columns else pd.Series(dtype=float)
+
+    statuses: list[str] = []
+    values: dict[str, list] = {
+        "amundsen_dataset_id": [],
+        "amundsen_time": [],
+        "amundsen_distance_km": [],
+        "amundsen_time_delta_min": [],
+        "amundsen_pres_dbar": [],
+        "amundsen_te90_degC": [],
+        "amundsen_psal_psu": [],
+        "amundsen_station": [],
+        "amundsen_cast_number": [],
+        "amundsen_filename": [],
+    }
+    n_matched = 0
+
+    for position, aliases in enumerate(source_aliases.tolist()):
+        default = {key: pd.NA for key in values}
+        default["amundsen_dataset_id"] = _AMUNDSEN_DATASET_ID
+        if not aliases:
+            statuses.append("missing_ctd_filename")
+            for key, column in values.items():
+                column.append(default[key])
+            continue
+        if fetch_failures:
+            statuses.append("source_unavailable")
+            for key, column in values.items():
+                column.append(default[key])
+            continue
+        candidates = ctd.loc[ctd_aliases.map(lambda ctd_set: bool(aliases & ctd_set))]
+        if candidates.empty:
+            statuses.append("no_match")
+            for key, column in values.items():
+                column.append(default[key])
+            continue
+
+        profile_columns = [
+            column for column in ("filename", "station", "cast_number", "time")
+            if column in candidates.columns
+        ]
+        profiles = [group for _, group in candidates.groupby(profile_columns, dropna=False, sort=False)]
+
+        def profile_score(profile: pd.DataFrame) -> tuple[float, float, str]:
+            first = profile.iloc[0]
+            time_delta = float("inf")
+            if pd.notna(source_time.iloc[position]) and not ctd_time.empty:
+                profile_time = pd.to_datetime(first.get("time"), errors="coerce", utc=True)
+                if pd.notna(profile_time):
+                    time_delta = abs((profile_time - source_time.iloc[position]).total_seconds())
+            distance = float("inf")
+            lat = pd.to_numeric(pd.Series([first.get("latitude")]), errors="coerce").iloc[0]
+            lon = pd.to_numeric(pd.Series([first.get("longitude")]), errors="coerce").iloc[0]
+            if pd.notna(source_lat.iloc[position]) and pd.notna(source_lon.iloc[position]) and pd.notna(lat) and pd.notna(lon):
+                distance = haversine_km(float(source_lat.iloc[position]), float(source_lon.iloc[position]), float(lat), float(lon))
+            return (time_delta, distance, str(first.get("filename", "")))
+
+        profile = min(profiles, key=profile_score)
+        profile_indices = profile.index
+        if pd.notna(source_depth.iloc[position]) and "PRES" in profile.columns:
+            depth_delta = (ctd_pres.loc[profile_indices] - source_depth.iloc[position]).abs()
+            best_index = depth_delta.idxmin()
+        else:
+            best_index = profile_indices[0]
+        best = ctd.loc[best_index]
+        best_time = pd.to_datetime(best.get("time"), errors="coerce", utc=True)
+        best_lat = pd.to_numeric(pd.Series([best.get("latitude")]), errors="coerce").iloc[0]
+        best_lon = pd.to_numeric(pd.Series([best.get("longitude")]), errors="coerce").iloc[0]
+        distance = (
+            round(haversine_km(float(source_lat.iloc[position]), float(source_lon.iloc[position]), float(best_lat), float(best_lon)), 3)
+            if pd.notna(source_lat.iloc[position]) and pd.notna(source_lon.iloc[position]) and pd.notna(best_lat) and pd.notna(best_lon)
+            else pd.NA
+        )
+        time_delta = (
+            round(abs((best_time - source_time.iloc[position]).total_seconds()) / 60.0, 1)
+            if pd.notna(best_time) and pd.notna(source_time.iloc[position]) else pd.NA
+        )
+        requested_values = [best.get(variable) for variable in selected_variables if variable in best.index]
+        status = "matched_no_value" if requested_values and all(pd.isna(value) for value in requested_values) else "matched"
+        statuses.append(status)
+        n_matched += int(status == "matched")
+        row_values = {
+            "amundsen_dataset_id": _AMUNDSEN_DATASET_ID,
+            "amundsen_time": best.get("time", pd.NA),
+            "amundsen_distance_km": distance,
+            "amundsen_time_delta_min": time_delta,
+            "amundsen_pres_dbar": best.get("PRES", pd.NA),
+            "amundsen_te90_degC": best.get("TE90", pd.NA),
+            "amundsen_psal_psu": best.get("PSAL", pd.NA),
+            "amundsen_station": best.get("station", pd.NA),
+            "amundsen_cast_number": best.get("cast_number", pd.NA),
+            "amundsen_filename": best.get("filename", pd.NA),
+        }
+        for key, column in values.items():
+            column.append(row_values[key])
+
+    enriched = working.copy(deep=True).reset_index(drop=True)
+    enriched[status_col] = statuses
+    for key, column in values.items():
+        enriched[key] = column
+    return EnrichmentOutcome(
+        enriched=enriched,
+        n_rows=n_rows,
+        n_matched=n_matched,
+        n_unique=n_unique,
+        status_col=status_col,
+        source_note=source_note,
+        scoping_lines=scoping_lines,
+        method_lines=[
+            f"- Appariement prioritaire par fichier CTD : colonne source={filename_col!r}",
+            f"- Profils CTD demandés par alias de fichier : {n_unique}",
+            "- Profondeur : mesure PRES la plus proche dans le profil identifié",
+        ],
+        diagnostics={
+            "route": "ctd_filename",
+            "filename_column": filename_col,
+            "query_unique_count": n_unique,
+            "erddap_calls": 1,
+            "batch_count": 1,
+            "fallback_months": 0,
+            "fallback_subbatches": 0,
+            "fetch_failures": fetch_failures,
+        },
+        lat_col=schema.latitude_column,
+        lon_col=schema.longitude_column,
+        time_col=schema.time_column,
+        depth_col=schema.depth_column,
+        resolved_schema=schema,
+    )
 
 
 
@@ -759,11 +1142,13 @@ def make_amundsen_tools(thread_id: str) -> list:
         zone_name: str | None = None,
         date_range: list | None = None,
     ) -> str:
-        """Enrichit la table chargée avec la CTD Amundsen par lat/lon/time.
+        """Enrichit la table chargée avec la CTD Amundsen.
 
-        Auto-détecte les colonnes `latitude`, `longitude` et `time` si elles ne
-        sont pas fournies. Interroge Amundsen ERDDAP par lots bbox + fenêtre
-        temps en parallèle, puis matche localement au plus proche voisin.
+        Si l'export contient un nom de fichier CTD (notamment
+        `sample_ctdrosettefilename`), interroge les profils par ce fichier puis
+        choisit localement la mesure `PRES` la plus proche. Sinon, auto-détecte
+        les colonnes latitude/longitude/time et utilise le repli par lots
+        espace-temps.
 
         Si `zone_name` est fourni, le df est filtré au polygone IHO/MEOW de
         cette zone avant l'enrichissement (équivalent à appeler
@@ -780,29 +1165,47 @@ def make_amundsen_tools(thread_id: str) -> list:
             if translated not in selected_variables:
                 selected_variables.append(translated)
 
-        matcher = AmundsenMatcher(
-            selected_variables=selected_variables,
-            spatial_tolerance_km=spatial_tolerance_km,
-            time_tolerance_hours=time_tolerance_hours,
-            initial_batch_spatial_degrees=initial_batch_spatial_degrees,
-            batch_spatial_degrees=batch_spatial_degrees,
-            max_source_points_per_batch=max_source_points_per_batch,
-            max_ctd_rows_per_batch=max_ctd_rows_per_batch,
-            depth_padding_dbar=depth_padding_dbar,
-            max_workers=max_workers,
+        source = resolve_source_dataframe(_store, thread_id, source_variable)
+        filename_col = (
+            detect_column(source.columns, _CTD_FILENAME_CANDIDATES)
+            if source is not None else None
         )
-        outcome = run_point_enrichment(
-            _store,
-            thread_id,
-            matcher=matcher,
-            source_variable=source_variable,
-            latitude_column=latitude_column,
-            longitude_column=longitude_column,
-            time_column=time_column,
-            depth_column=depth_column,
-            zone_name=zone_name,
-            date_range=date_range,
-        )
+        if filename_col is not None:
+            outcome = _run_filename_enrichment(
+                thread_id=thread_id,
+                source_variable=source_variable,
+                selected_variables=selected_variables,
+                latitude_column=latitude_column,
+                longitude_column=longitude_column,
+                time_column=time_column,
+                depth_column=depth_column,
+                zone_name=zone_name,
+                date_range=date_range,
+            )
+        else:
+            matcher = AmundsenMatcher(
+                selected_variables=selected_variables,
+                spatial_tolerance_km=spatial_tolerance_km,
+                time_tolerance_hours=time_tolerance_hours,
+                initial_batch_spatial_degrees=initial_batch_spatial_degrees,
+                batch_spatial_degrees=batch_spatial_degrees,
+                max_source_points_per_batch=max_source_points_per_batch,
+                max_ctd_rows_per_batch=max_ctd_rows_per_batch,
+                depth_padding_dbar=depth_padding_dbar,
+                max_workers=max_workers,
+            )
+            outcome = run_point_enrichment(
+                _store,
+                thread_id,
+                matcher=matcher,
+                source_variable=source_variable,
+                latitude_column=latitude_column,
+                longitude_column=longitude_column,
+                time_column=time_column,
+                depth_column=depth_column,
+                zone_name=zone_name,
+                date_range=date_range,
+            )
         if outcome.error:
             return _am_blocked(outcome.error)
 
@@ -816,13 +1219,15 @@ def make_amundsen_tools(thread_id: str) -> list:
         n_no_value = int(status_counts.get("matched_no_value", 0))
         n_no_match = int(status_counts.get("no_match", 0))
         n_source_unavailable = int(status_counts.get("source_unavailable", 0))
+        n_missing_filename = int(status_counts.get("missing_ctd_filename", 0))
         n_outside_range = int(status_counts.get("outside_amundsen_ctd_range", 0))
         fetch_failures = diag.get("fetch_failures", [])
         queryable_points = int(diag.get("query_unique_count", 0))
-        if queryable_points and n_source_unavailable == queryable_points:
+        attempted_rows = n - n_missing_filename
+        if attempted_rows and n_source_unavailable == attempted_rows:
             return _am_error(
                 "Amundsen ERDDAP est temporairement indisponible : les requêtes "
-                f"ont échoué pour {n_source_unavailable} point(s) source. Cette "
+                f"ont échoué pour {n_source_unavailable} ligne(s) source. Cette "
                 "erreur ne permet pas de conclure à l'absence de profils CTD ; "
                 "retenter plus tard.",
                 retryable=True,
@@ -852,6 +1257,8 @@ def make_amundsen_tools(thread_id: str) -> list:
                 "max_workers": max_workers,
                 "zone_name": zone_name,
                 "date_range": date_range,
+                "match_route": diag.get("route", "spatiotemporal"),
+                "filename_column": diag.get("filename_column"),
             },
             resolved_schema=outcome.resolved_schema,
             variables=selected_variables,
@@ -900,31 +1307,48 @@ def make_amundsen_tools(thread_id: str) -> list:
                 f"{_AMUNDSEN_TIME_MIN.isoformat()} à "
                 f"{_AMUNDSEN_TIME_MAX.isoformat()}"
             ),
-            (
-                f"- Points source uniques interrogés : "
-                f"{diag['query_unique_count']} sur {n_unique} point(s) unique(s), "
-                f"{n_unique} point(s) unique(s) sur {n} ligne(s)"
-            ),
-            (
-                f"- Bornes batch : max_source_points={int(max_source_points_per_batch)}, "
-                f"max_ctd_rows={int(max_ctd_rows_per_batch)}, "
-                f"depth_padding_dbar={float(depth_padding_dbar):g}"
-            ),
-            (
-                f"- Requêtes ERDDAP : {diag['erddap_calls']} lot(s) temps-espace "
-                f"({diag['batch_count']} lot(s) initiaux par mois/grille "
-                f"{float(initial_batch_spatial_degrees):g}°, "
-                f"{diag['fallback_months']} mois splitté(s) en "
-                f"{diag['fallback_subbatches']} sous-lot(s) grille "
-                f"{float(batch_spatial_degrees):g}°)"
-            ),
-            (
-                f"- Statuts : matched={n_matched}, "
-                f"matched_no_value={n_no_value}, no_match={n_no_match}, "
-                f"source_unavailable={n_source_unavailable}, "
-                f"outside_amundsen_ctd_range={n_outside_range}"
-            ),
         ]
+        if diag.get("route") == "ctd_filename":
+            method_lines.extend(
+                [
+                    (
+                        "- Appariement : fichier CTD → profil vertical → PRES la "
+                        "plus proche; position/temps restent des métriques d'audit"
+                    ),
+                    (
+                        f"- Requêtes ERDDAP : {diag['erddap_calls']} requête groupée "
+                        f"pour {diag['query_unique_count']} alias de fichier CTD"
+                    ),
+                ]
+            )
+        else:
+            method_lines.extend(
+                [
+                    (
+                        f"- Points source uniques interrogés : "
+                        f"{diag['query_unique_count']} sur {n_unique} point(s) unique(s), "
+                        f"{n_unique} point(s) unique(s) sur {n} ligne(s)"
+                    ),
+                    (
+                        f"- Bornes batch : max_source_points={int(max_source_points_per_batch)}, "
+                        f"max_ctd_rows={int(max_ctd_rows_per_batch)}, "
+                        f"depth_padding_dbar={float(depth_padding_dbar):g}"
+                    ),
+                    (
+                        f"- Requêtes ERDDAP : {diag['erddap_calls']} lot(s) temps-espace "
+                        f"({diag['batch_count']} lot(s) initiaux par mois/grille "
+                        f"{float(initial_batch_spatial_degrees):g}°, "
+                        f"{diag['fallback_months']} mois splitté(s) en "
+                        f"{diag['fallback_subbatches']} sous-lot(s) grille "
+                        f"{float(batch_spatial_degrees):g}°)"
+                    ),
+                ]
+            )
+        method_lines.append(
+            f"- Statuts : matched={n_matched}, matched_no_value={n_no_value}, "
+            f"no_match={n_no_match}, source_unavailable={n_source_unavailable}, "
+            f"outside_amundsen_ctd_range={n_outside_range}"
+        )
         matched_mask = enriched["amundsen_match_status"].isin(
             ["matched", "matched_no_value"]
         )
@@ -1005,7 +1429,11 @@ def make_amundsen_tools(thread_id: str) -> list:
             data_ref=variable_name,
             artifact_refs=(download_url(output_path.name),),
             persisted=True,
-            method="Amundsen spatiotemporal nearest-neighbor enrichment",
+            method=(
+                "Amundsen CTD filename-profile enrichment"
+                if diag.get("route") == "ctd_filename"
+                else "Amundsen spatiotemporal nearest-neighbor enrichment"
+            ),
             metrics={"rows": n, "matched": n_matched, "unique_points": n_unique},
         )
 

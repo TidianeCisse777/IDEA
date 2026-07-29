@@ -42,7 +42,12 @@ from agent import (
     record_harness_usage,
 )
 from tools.openwebui_uploads import resolve_attached_files, resolve_request_files, resolve_chat_files
-from tools.public_url import graph_url, serve_base_url
+from tools.public_url import (
+    activate_request_origin,
+    graph_url,
+    request_public_origin,
+    serve_base_url,
+)
 from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_workspace_database_url
 from tools.session_store import default_store
 from tools.run_store import default_run_store
@@ -442,6 +447,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _bind_public_request_origin(request: Request, call_next):
+    """Expose the caller's current public origin to URL-producing tools."""
+    with activate_request_origin(request_public_origin(request)):
+        return await call_next(request)
 
 GRAPHS_DIR = graphs_dir()
 
@@ -1246,6 +1258,15 @@ async def _stream_agent_sse(
     yield "data: [DONE]\n\n"
 
 
+async def _stream_with_request_origin(
+    origin: str, stream: AsyncGenerator[str, None]
+) -> AsyncGenerator[str, None]:
+    """Keep the public request origin alive while an SSE body is consumed."""
+    with activate_request_origin(origin):
+        async for chunk in stream:
+            yield chunk
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(
     req: ChatRequest,
@@ -1406,14 +1427,17 @@ async def chat_completions(
     if req.stream:
         logger.info("thread=%s STREAM start", tid)
         return StreamingResponse(
-            _stream_agent_sse(
-                agent,
-                messages,
-                config,
-                tid,
-                last_user_text=last_user_text,
-                user_id=user_id,
-                language=language,
+            _stream_with_request_origin(
+                request_public_origin(request),
+                _stream_agent_sse(
+                    agent,
+                    messages,
+                    config,
+                    tid,
+                    last_user_text=last_user_text,
+                    user_id=user_id,
+                    language=language,
+                ),
             ),
             media_type="text/event-stream",
         )

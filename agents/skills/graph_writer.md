@@ -247,39 +247,33 @@ data-integrity violation.
 ### EcoTaxa profile / cast map
 
 For `df_ecotaxa_profile_map`, draw **one point per profile** from `profile_id`,
-`n_samples`, `lat_avg`, `lon_avg`; do not merge or regroup it. Size encodes
-`n_samples` with a legend. Never use `sample_id` as the grouping key.
+`n_samples`, `lat_avg`, `lon_avg`; do not merge or regroup it. The default: one
+uniform marker per profile. Encode size from `n_samples` **only when the user
+explicitly requests that encoding**. Never use `sample_id` as the grouping key.
 
 ```python
 plot_df = df_ecotaxa_profile_map.dropna(
     subset=["profile_id", "n_samples", "lat_avg", "lon_avg"]
 ).copy()
-sizes = 36 + 220 * (
-    plot_df["n_samples"] / plot_df["n_samples"].max()
-).clip(lower=0.15)
+# default: one uniform marker per profile
 map_points = ax.scatter(
-    plot_df["lon_avg"], plot_df["lat_avg"], s=sizes,
+    plot_df["lon_avg"], plot_df["lat_avg"], s=48,
     color="#2563eb", edgecolor="#0f172a", linewidth=0.45,
     transform=ccrs.PlateCarree(), zorder=3,
 )
 map_points.set_gid("map_points")
-legend_counts = sorted(plot_df["n_samples"].astype(int).unique())
-legend_handles = [
-    ax.scatter([], [], s=36 + 220 * (count / plot_df["n_samples"].max()),
-               color="#2563eb", edgecolor="#0f172a")
-    for count in legend_counts
-]
-size_legend = ax.legend(legend_handles, [str(count) for count in legend_counts],
-                        title="Samples par profil", loc="lower left")
-size_legend.set_gid("station_size_legend")
 ```
 
-Use `station_map` with position/size mappings and those source variables. For a
-named zone draw its exact polygon without a second lookup.
+When the user explicitly requests size = number of samples, replace `s=48` with
+the `n_samples` scaling and add a size legend using the real count values. Only
+then include a `size` mapping and `station_size_legend` in the graph contract.
+Otherwise the contract contains only the position mapping. For a named zone draw
+its exact polygon without a second lookup.
 
-Global cast map: color `zone` with `zone_legend=ax.legend(...)`; call
+Global cast map: colour `zone` only if the user requests a zone encoding; call
 `ax.add_artist(zone_legend)` before `size_legend=ax.legend(...)`. Set gids
-`station_color_legend`/`station_size_legend`, use global Cartopy, one IHO/MEOW.
+`station_color_legend`/`station_size_legend` only for the corresponding selected
+encodings, use global Cartopy, one IHO/MEOW.
 Never label individual casts globally unless explicitly requested.
 
 ### Station / position map (`station_map`)

@@ -27,6 +27,17 @@ _ENRICHMENT_PATTERN = re.compile(
     r"\b(?:enrich\w*|enrichis\w*|enrichir|enrichment|coupl\w*|compl[eè]te\w*)\b",
     re.IGNORECASE,
 )
+# A request for CTD/environmental variables is an Amundsen enrichment only
+# when Amundsen is explicitly named in the same turn.  Generic mentions of
+# temperature or salinity must remain local-data requests.
+_AMUNDSEN_ENVIRONMENT_PATTERN = re.compile(
+    r"\b(?:donn[eé]es?|mesures?|param[eè]tres?|"
+    r"variables?\s+(?:env(?:iron\w*)?|hydrographi\w*|physico[- ]?chimi\w*|ctd)|"
+    r"env(?:iron\w*)?|temp(?:[eé]rature)?s?|te90|salinit[eé]|salinity|psal|"
+    r"oxyg[eè]ne|oxygen|o2|oxym|nitrates?|no3|ntra|chlorophylle|chlorophyll|"
+    r"fluorescen\w*|flor|densit[eé]|density|sigt|pression|pressure|pres|ph)\b",
+    re.IGNORECASE,
+)
 _CONFIRMATION_PATTERN = re.compile(
     r"\b(?:confirm(?:e|é|ée|er|ation)?|yes|oui)\b",
     re.IGNORECASE,
@@ -315,9 +326,16 @@ def decide_tool_exposure(
         if source in source_decision.explicit_sources
     )
     has_active_table = bool(turn_context.active_variable)
+    named_amundsen_environment_request = bool(
+        "amundsen" in source_decision.explicit_sources
+        and _AMUNDSEN_ENVIRONMENT_PATTERN.search(signals.latest_user_text)
+    )
+    enrichment_requested = (
+        signals.enrichment_requested or named_amundsen_environment_request
+    )
     focused_enrichment = bool(
         has_active_table
-        and signals.enrichment_requested
+        and enrichment_requested
         and explicit_enrichment_sources
     )
     bio_oracle_confirmation_followup = bool(
@@ -337,7 +355,7 @@ def decide_tool_exposure(
         )
     )
     if has_active_table and (
-        signals.enrichment_requested or bio_oracle_confirmation_followup
+        enrichment_requested or bio_oracle_confirmation_followup
     ):
         enrichment_sources = explicit_enrichment_sources or tuple(
             source for source in _ENRICHMENT_GROUP_BY_SOURCE if source in authorized
@@ -345,7 +363,10 @@ def decide_tool_exposure(
         for source in enrichment_sources:
             if source in authorized:
                 groups.append(_ENRICHMENT_GROUP_BY_SOURCE[source])
-                reasons.append(f"current explicit {source} enrichment")
+                if source == "amundsen" and named_amundsen_environment_request:
+                    reasons.append("explicit Amundsen environmental variables")
+                else:
+                    reasons.append(f"current explicit {source} enrichment")
 
     if "sql" in authorized and not focused_enrichment:
         groups.append("sql_workspace")
