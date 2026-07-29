@@ -1374,16 +1374,13 @@ def test_enrich_with_bio_oracle_returns_method_block_and_traceability_columns():
     assert enriched[time_col].iloc[0] == "2050-01-01T00:00:00Z"
 
 
-def test_system_prompt_prefers_enrich_with_bio_oracle_for_csv_enrichment():
-    """Le prompt doit mentionner enrich_with_bio_oracle avant couple_zooplankton_bio_oracle."""
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+def test_bio_oracle_skill_prefers_canonical_table_enrichment():
+    """The on-demand source skill owns the canonical enrichment route."""
+    from pathlib import Path
 
-    prompt = COPEPOD_SYSTEM_PROMPT
-    assert "enrich_with_bio_oracle" in prompt
-    new_idx = prompt.find("enrich_with_bio_oracle")
-    old_idx = prompt.find("couple_zooplankton_bio_oracle")
-    assert new_idx != -1
-    assert new_idx < old_idx or old_idx == -1
+    skill = Path("agents/skills/bio_oracle_query.md").read_text(encoding="utf-8")
+    assert "`enrich_with_bio_oracle` directly" in skill
+    assert "couple_zooplankton_bio_oracle" not in skill
 
 
 def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_nan_float():

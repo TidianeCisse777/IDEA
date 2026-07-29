@@ -268,6 +268,8 @@ class BioOracleMatcher:
         confirmed: bool,
         max_workers: int,
     ):
+        # Preserve user-facing column labels. The underlying client normalizes
+        # aliases (for example SSP4-4.5 -> ssp245) before the ERDDAP request.
         self.variables = variables
         self.scenarios = scenarios
         self.depth_layer = depth_layer
@@ -386,24 +388,41 @@ class BioOracleMatcher:
                         "depth_layer": layer, "target_year": year,
                     })
 
-        def _fetch_tile(args: tuple) -> tuple[tuple, pd.DataFrame | None]:
+        def _fetch_tile(args: tuple) -> tuple[tuple, pd.DataFrame | None, str | None]:
             tile_key, payload = args
             try:
-                return tile_key, _fetch_bio_oracle_bbox(**payload)
-            except Exception:
-                return tile_key, None
+                return tile_key, _fetch_bio_oracle_bbox(**payload), None
+            except Exception as exc:
+                return tile_key, None, str(exc)
 
         tile_dfs: dict[tuple, pd.DataFrame | None] = {}
+        tile_failures: list[str] = []
         job_items = list(tile_jobs.items())
         effective_workers = max(1, min(int(self.max_workers), len(job_items) or 1))
         if effective_workers == 1 or len(job_items) <= 1:
             for item in job_items:
-                tk, df = _fetch_tile(item)
+                tk, df, failure = _fetch_tile(item)
                 tile_dfs[tk] = df
+                if failure:
+                    tile_failures.append(failure)
         else:
             with ThreadPoolExecutor(max_workers=effective_workers) as pool:
-                for tk, df in pool.map(_fetch_tile, job_items):
+                for tk, df, failure in pool.map(_fetch_tile, job_items):
                     tile_dfs[tk] = df
+                    if failure:
+                        tile_failures.append(failure)
+
+        if tile_jobs and len(tile_failures) == len(tile_jobs):
+            detail = tile_failures[0].replace("\n", " ")[:240]
+            return MatchResult(
+                columns=pd.DataFrame(index=range(n_unique)),
+                statuses=pd.Series(["no_value"] * n_unique),
+                error=(
+                    "Bio-ORACLE indisponible pour cette requête : toutes les "
+                    f"{len(tile_jobs)} récupérations distantes ont échoué ({detail}). "
+                    "Aucun enrichissement n'a été enregistré."
+                ),
+            )
 
         cache: dict[tuple, dict] = {}
         for key in unique_query_keys:

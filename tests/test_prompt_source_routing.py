@@ -30,6 +30,20 @@ def test_external_sources_require_first_explicit_selection_then_persist():
     assert "remains active on following turns" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_prompt_accepts_flexible_bio_oracle_phrasing():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "bioracle" in COPEPOD_SYSTEM_PROMPT
+    assert "SSP4-4.5" in COPEPOD_SYSTEM_PROMPT
+
+
+def test_prompt_names_all_persisted_ecotaxa_and_dataframe_outputs():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "EcoTaxa selection/export" in COPEPOD_SYSTEM_PROMPT
+    assert "`selection:*`" in COPEPOD_SYSTEM_PROMPT
+
+
 def test_project_number_alone_is_not_ecotaxa():
     assert "A project number alone is not an EcoTaxa signal" in COPEPOD_SYSTEM_PROMPT
 

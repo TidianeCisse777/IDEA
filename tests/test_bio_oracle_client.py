@@ -46,6 +46,13 @@ def test_plan_bio_oracle_request_accepts_explicit_scenario_and_depth_layer():
     assert result["recommended_next_step"] == "proceed"
 
 
+def test_bio_oracle_normalizes_common_4_5_formulations():
+    from core.bio_oracle_client import _resolve_scenario
+
+    for formulation in ("4.5", "RCP4.5", "SSP4-4.5"):
+        assert _resolve_scenario(formulation) == "ssp245"
+
+
 def test_list_bio_oracle_datasets_normalizes_erddap_response():
     import requests
     from core.bio_oracle_client import list_bio_oracle_datasets

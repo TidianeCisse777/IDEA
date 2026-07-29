@@ -103,6 +103,12 @@ def test_active_ecotaxa_is_inherited_without_repeating_source_name():
     assert decision.evidence == "inherited_affinity"
 
 
+def test_bioracle_typo_is_an_explicit_bio_oracle_selection():
+    from tools.source_scope import parse_explicit_sources
+
+    assert parse_explicit_sources("enrichis avec bioracle") == ("bio_oracle",)
+
+
 def test_comparison_combines_active_and_new_source():
     from tools.source_scope import SourceAffinity, decide_source
 
@@ -157,6 +163,25 @@ def test_loaded_file_takes_over_inherited_ecotaxa_for_implicit_followup():
     assert decision.authorized_sources == ("file",)
     assert decision.primary_source == "file"
     assert decision.evidence == "loaded_file_default"
+
+
+def test_file_enrichment_affinity_survives_a_terse_bio_oracle_confirmation():
+    from tools.source_scope import SourceAffinity, decide_source
+
+    decision = decide_source(
+        "oui, 2050 et le reste est confirmé",
+        affinity=SourceAffinity(
+            active_sources=("file", "bio_oracle"),
+            evidence="explicit_name",
+            origin_user_text="enrichis avec bioracle temperature en 4.5",
+            updated_at="2026-07-29T22:15:00+00:00",
+        ),
+        file_loaded=True,
+    )
+
+    assert decision.primary_source == "file"
+    assert decision.authorized_sources == ("file", "bio_oracle")
+    assert decision.evidence == "inherited_affinity"
 
 
 def test_explicit_multi_source_enrichment_keeps_only_named_sources_and_file():

@@ -147,7 +147,7 @@ the requested graph.
    - **taxonomic composition**: stacked bar chart of relative or absolute abundance by taxon across station, month, depth bin, sample, or zone.
    - **composition heatmap**: heatmap of log1p or relative abundance for dominant taxa across station, month, depth bin, sample, or zone.
    - **rank-abundance**: taxa ordered by decreasing total or relative abundance.
-6. **Variable naming for graph data**: when `run_pandas` prepares a DataFrame for `run_graph`, always assign it to a variable named exactly `plot_df` (e.g. `plot_df = df.groupby(...).sum(); result = plot_df`). `plot_df` is automatically persisted and available in `run_graph`'s namespace — any other name is ephemeral and invisible to `run_graph`.
+6. **Render table**: `run_pandas` must create `plot_df` and set `result = plot_df`; it persists for `run_graph`. A successful graph persists its exact rows as `df_graph_plot`. On an iteration, complete a missing requested field from the same known scope with the narrowest authorized read, then render.
 
 7. Define the relevant columns, aggregations (groupby, pivot, agg), and filters
    - For station/sample/profile/cast/taxon filters, preserve identifiers as labels and normalize comparisons as text. Example: use `df["STATION_NAME"].astype(str).str.strip() == str(station).strip()`, never `int(station)` for filtering.

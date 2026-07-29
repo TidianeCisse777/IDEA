@@ -82,7 +82,8 @@ _SOURCE_PATTERNS: dict[SourceName, re.Pattern[str]] = {
         re.IGNORECASE,
     ),
     "amundsen": re.compile(r"\bamundsen(?:\s+ctd)?\b", re.IGNORECASE),
-    "bio_oracle": re.compile(r"\bbio[\s-]*oracle\b", re.IGNORECASE),
+    # Accept the common one-o typo ``bioracle`` as an explicit source choice.
+    "bio_oracle": re.compile(r"\bbio(?:[\s-]*oracle|racle)\b", re.IGNORECASE),
     "ogsl": re.compile(r"\bogsl\b", re.IGNORECASE),
     "sql": re.compile(r"\bsql\b|\b(?:workspace|espace)\s+sql\b", re.IGNORECASE),
 }
@@ -232,10 +233,20 @@ def decide_source(
             if "file" not in selected:
                 selected = ("file", *selected)
         else:
-            # Loading a file is a source switch for implicit follow-ups. Do
-            # not let a stale external affinity keep EcoTaxa tools visible.
-            selected = ("file",)
-            evidence = "loaded_file_default"
+            # A file loaded *after* an external exploration takes over as
+            # usual. Conversely, ``("file", external)`` records an external
+            # source explicitly selected to enrich this very file: retain it
+            # for terse confirmations such as "oui, 2050".
+            inherited_file_enrichment = (
+                "file" in inherited
+                and any(source in _EXTERNAL_SOURCES for source in inherited)
+            )
+            if inherited_file_enrichment:
+                selected = tuple(inherited)
+                evidence = "inherited_affinity"
+            else:
+                selected = ("file",)
+                evidence = "loaded_file_default"
     selected = tuple(source for source in selected if source not in excluded)
     primary = "file" if "file" in selected else (selected[0] if selected else None)
     return SourceDecision(

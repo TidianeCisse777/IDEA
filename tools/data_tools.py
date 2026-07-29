@@ -444,6 +444,21 @@ def _source_alias_for_loaded_file(path: str, col_names: list[str]) -> str | None
     return None
 
 
+def _file_variable_name(path: str) -> str:
+    """Return the stable session name for a loaded file.
+
+    NeoLabs files are frequently uploaded with a UUID prepended to their
+    filename. Keep their semantic names stable so the model and user can refer
+    to the sample and abundance tables unambiguously across upload methods.
+    """
+    stem = Path(path).stem.lower()
+    if stem.endswith("neolabs_sample"):
+        return "df_file_neolabs_sample"
+    if stem.endswith("neolabs_abundance"):
+        return "df_file_neolabs_abundance"
+    return dataset_variable_name("file", Path(path).stem)
+
+
 def _dataframe_vars(
     store: SessionStore,
     thread_id: str,
@@ -945,12 +960,16 @@ def _reuse_loaded_file(
     n_rows = meta.get("n_rows", len(df))
     n_cols = meta.get("n_cols", len(col_names))
     alias_note = f"\nAlias de session : `{source_alias}`" if source_alias else ""
+    reference_note = (
+        f"\nTable à citer dans une prochaine demande : `{variable_name}`"
+        if len(store.keys(f"{thread_id}:dataset:")) > 1 else ""
+    )
     return success(
         "Fichier déjà chargé en session — réutilisé sans relecture.\n"
         f"{n_rows} lignes × {n_cols} colonnes\n"
-        f"Variable persistante : `{variable_name}`\n"
+        f"Table de session disponible : `{variable_name}`\n"
         f"Colonnes : {', '.join(map(str, col_names))}"
-        f"{alias_note}",
+        f"{alias_note}{reference_note}",
         data_ref=variable_name,
         provenance={"source": "file", "path": str(resolved_path)},
         persisted=True,
@@ -979,7 +998,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - Essaie une variante du chemin si le fichier est dans /tmp/webui_uploads/.
         - Ne signale l'erreur à l'utilisateur qu'après avoir épuisé ces options.
         """
-        variable_name = dataset_variable_name("file", Path(path).stem)
+        variable_name = _file_variable_name(path)
 
         # Idempotent: a file already loaded in this session is reused instead of
         # being re-read. Avoids wasted I/O across turns and, crucially, avoids
@@ -1042,13 +1061,19 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
 
         enc_note = f" (encodage : {meta['encoding']})" if meta.get("encoding") else ""
+        live_tables_before_load = len(_store.keys(f"{thread_id}:dataset:"))
+        reference_note = (
+            f"\nTable à citer dans une prochaine demande : `{variable_name}`"
+            if live_tables_before_load > 1 else ""
+        )
         summary = (
             f"Fichier chargé : {meta['path']}{enc_note}\n"
             f"{meta['n_rows']} lignes × {meta['n_cols']} colonnes\n"
-            f"Variable persistante : `{variable_name}`\n"
+            f"Nouvelle table disponible : `{variable_name}`\n"
             f"Colonnes : {cols}"
             f"{alias_note}"
             f"{route_note}"
+            f"{reference_note}"
             + (f"\n\n{hint}" if hint else "")
         )
         return success(
@@ -1215,6 +1240,15 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 if not isinstance(result, pd.DataFrame):
                     return blocked(
                         "`persist_as` exige que `result` soit un DataFrame.",
+                        retryable=True,
+                        method="controlled pandas execution",
+                    )
+                existing = _store.get(f"{thread_id}:dataset:{persist_as}")
+                if existing and isinstance(existing.get("df"), pd.DataFrame):
+                    return blocked(
+                        f"`persist_as={persist_as}` remplacerait une table déjà "
+                        "persistée. Conserve la table source et choisis un nouveau "
+                        "nom dérivé (par exemple `df_derived_<nom>`).",
                         retryable=True,
                         method="controlled pandas execution",
                     )
@@ -1583,10 +1617,43 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 grounding_bits: list[str] = []
                 plotted_df = local_vars.get("plot_df")
                 if isinstance(plotted_df, pd.DataFrame):
+                    # A graph is often refined over several user turns (labels,
+                    # colour, contour, filters). Keep the exact rows that were
+                    # rendered as the active table, rather than leaving the
+                    # older input/query active and forcing the model to guess or
+                    # repeat a broader source query on the next iteration.
+                    parent_variable = ((session or {}).get("meta") or {}).get(
+                        "variable_name"
+                    )
+                    graph_variable = "df_graph_plot"
+                    rendered_df = plotted_df.copy()
+                    store_dataset(
+                        _store,
+                        thread_id,
+                        rendered_df,
+                        variable_name=graph_variable,
+                        meta={
+                            "source": "analysis:graph-plot",
+                            "parent_variable": parent_variable,
+                            "graph_id": graph_id,
+                            "n_rows": len(rendered_df),
+                            "n_cols": len(rendered_df.columns),
+                        },
+                    )
+                    _store.set(
+                        f"{thread_id}:last_plot_df",
+                        rendered_df,
+                        {
+                            "source": "analysis:graph-plot",
+                            "variable_name": graph_variable,
+                            "graph_id": graph_id,
+                        },
+                    )
                     grounding_bits.append(f"lignes tracées={len(plotted_df)}")
                     grounding_bits.append(
                         "colonnes utilisées=" + ",".join(map(str, plotted_df.columns))
                     )
+                    grounding_bits.append(f"table de rendu={graph_variable}")
                 if isinstance(graph_contract, dict):
                     mappings = graph_contract.get("mappings")
                     if isinstance(mappings, dict):
@@ -1609,9 +1676,15 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 # Limite answer. Return the image only; the model writes the caption.
                 return success(
                     image_markdown,
+                    data_ref=("df_graph_plot" if isinstance(plotted_df, pd.DataFrame) else None),
                     artifact_refs=(graph_url(f"{graph_id}.png"),),
                     persisted=True,
                     method="controlled matplotlib execution",
+                    metrics=(
+                        {"rows": len(plotted_df), "columns": len(plotted_df.columns)}
+                        if isinstance(plotted_df, pd.DataFrame)
+                        else {}
+                    ),
                 )
 
             fail_count = _record_graph_failure()

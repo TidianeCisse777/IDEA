@@ -97,6 +97,33 @@ def test_load_file_tool_returns_summary(tsv_path):
     assert "profile_id" in result
 
 
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("data/neolabs/neolabs_sample.csv", "df_file_neolabs_sample"),
+        ("/tmp/webui_uploads/123_neolabs_abundance.csv", "df_file_neolabs_abundance"),
+    ],
+)
+def test_neolabs_file_names_are_stable_across_upload_paths(path, expected):
+    from tools.data_tools import _file_variable_name
+
+    assert _file_variable_name(path) == expected
+
+
+def test_second_loaded_file_invites_the_user_to_name_its_table(tmp_path):
+    first = tmp_path / "first.csv"
+    second = tmp_path / "neolabs_sample.csv"
+    pd.DataFrame({"x": [1]}).to_csv(first, index=False)
+    pd.DataFrame({"sample_id": ["S1"]}).to_csv(second, index=False)
+
+    load = next(t for t in make_tools("thread-file-reference") if t.name == "load_file")
+    load.invoke({"path": str(first)})
+    result = load.invoke({"path": str(second)})
+
+    assert "Nouvelle table disponible : `df_file_neolabs_sample`" in result
+    assert "Table à citer dans une prochaine demande" in result
+
+
 def test_run_pandas_marks_truncated_dataframe_preview():
     """Le modèle ne doit pas compléter une table au-delà des lignes visibles."""
     from tools.dataset_registry import store_dataset
@@ -443,11 +470,14 @@ def test_run_pandas_persists_canonical_sample_depth_result_for_later_calls(tsv_p
     first = run_pandas.invoke(
         {
             "code": (
-                "result = pd.DataFrame({"
-                "'sample_id': ['RA18'], 'depth_bin': [212.5], "
-                "'copepod_count': [1], 'sampled_volume_L': [100.0], "
-                "'abundance_ind_L': [0.01], 'abundance_ind_m3': [10.0], "
-                "'canonical_method_version': ['copepod-sample-depth-v1']})"
+                "canonical = df.head(1).rename(columns={'profile_id': 'sample_id', "
+                "'depth': 'depth_bin'}).copy(); "
+                "canonical['copepod_count'] = 1; "
+                "canonical['sampled_volume_L'] = 100.0; "
+                "canonical['abundance_ind_L'] = 0.01; "
+                "canonical['abundance_ind_m3'] = 10.0; "
+                "canonical['canonical_method_version'] = 'copepod-sample-depth-v1'; "
+                "result = canonical"
             )
         }
     )
@@ -503,6 +533,34 @@ def test_run_pandas_persists_explicitly_named_subset_for_later_enrichment(tsv_pa
     assert stored is not None
     assert stored["df"]["profile_id"].tolist() == ["ips_007"]
     assert "Persistence: persisted=true; variable=df_subset_ips_007" in result
+
+
+def test_run_pandas_never_overwrites_a_persisted_source_with_persist_as(tsv_path):
+    """A staging copy must not silently replace the named source table."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-persist-as-overwrite-guard"
+    tools = make_tools(thread_id)
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    source = pd.DataFrame({"sample_id": ["A", "B"], "value": [1, 2]})
+    store_dataset(
+        _store,
+        thread_id,
+        source,
+        variable_name="df_ecotaxa_export",
+        meta={"source": "ecotaxa:export", "n_rows": 2, "n_cols": 2},
+    )
+
+    result = run_pandas.invoke(
+        {
+            "code": "result = df_ecotaxa_export.head(1).copy()",
+            "persist_as": "df_ecotaxa_export",
+        }
+    )
+
+    stored = _store.get(f"{thread_id}:dataset:df_ecotaxa_export")
+    assert "remplacerait une table déjà persistée" in result
+    assert stored["df"].shape == (2, 2)
 
 
 def test_run_pandas_reports_persisted_canonical_zero_count(tsv_path):
@@ -720,9 +778,9 @@ def test_run_pandas_no_file_loaded():
     assert "aucun fichier" in result.lower()
 
 
-# --- Comportement 5 : run_graph ajoute une lecture rapide ---
+# --- Comportement 5 : run_graph renvoie seulement l'artefact ---
 
-def test_run_graph_includes_quick_reading(tmp_path):
+def test_run_graph_returns_artifact_without_tool_caption(tmp_path):
     thread_id = "thread-graph"
     tools = make_tools(thread_id)
     load_file_tool = next(t for t in tools if t.name == "load_file")
@@ -756,8 +814,8 @@ graph_explanation = (
 
     result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
     assert "/graphs/" in result
-    assert "Lecture rapide" in result
-    assert "courbe en ligne" in result
+    assert "Lecture rapide" not in result
+    assert "courbe en ligne" not in result
 
 
 def test_run_graph_works_without_loaded_file_for_standalone_map():
@@ -1554,3 +1612,8 @@ def test_run_graph_can_access_plot_df_persisted_by_run_pandas(tmp_path):
     )
     result = run_graph_tool.invoke({"code": graph_code})
     assert "error" not in result.lower() or "name 'plot_df'" not in result
+    rendered = store.get(tid)
+    assert rendered["meta"]["variable_name"] == "df_graph_plot"
+    assert list(rendered["df"].columns) == ["taxon", "abundance"]
+    assert len(rendered["df"]) == 2
+    assert store.get(f"{tid}:dataset:df_graph_plot") is not None

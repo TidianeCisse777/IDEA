@@ -49,6 +49,17 @@ def test_request_origin_overrides_stale_serve_base_url_with_forwarded_proxy(monk
         assert graph_url("other.png") == "https://fresh.trycloudflare.com/graphs/other.png"
 
 
+def test_internal_docker_host_falls_back_to_configured_public_origin(monkeypatch):
+    """Open WebUI reaches the agent by Docker DNS, not a browser-visible host."""
+    from tools.public_url import activate_request_origin, graph_url, request_public_origin
+
+    monkeypatch.setenv("SERVE_BASE_URL", "http://localhost:8000")
+    request = _request((b"host", b"copepod-agent:8000"))
+
+    with activate_request_origin(request_public_origin(request)):
+        assert graph_url("map.png") == "http://localhost:8000/graphs/map.png"
+
+
 def test_request_origin_rejects_malformed_forwarded_host(monkeypatch):
     """Forwarded host injection must fall back to the actual request host."""
     from tools.public_url import activate_request_origin, graph_url, request_public_origin

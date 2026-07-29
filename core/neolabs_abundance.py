@@ -34,6 +34,8 @@ _ALL_STAGE_COLS: dict[str, str] = {
     "ALL_STAGES": "ALL_STAGES_ABUND (ind./m3 depth vol.)",
 }
 
+_NORMALIZED_TOTAL_COLUMN = "Total abundance (ind./m3 depth vol)"
+
 # Groupes prédéfinis pour faciliter l'usage.
 STAGE_GROUPS: dict[str, list[str]] = {
     "all":          list(_ALL_STAGE_COLS),
@@ -83,15 +85,26 @@ def neolabs_copepod_density(
     else:
         stage_list = list(stages)
 
-    # Colonnes abundance correspondantes
+    # Colonnes abundance correspondantes. Les exports NeoLabs normalisés
+    # exposent parfois seulement le total officiel, alors que le format wide
+    # fournit `ALL_STAGES_ABUND`. Les deux représentent le même agrégat par
+    # défaut et doivent donc suivre exactement le même contrat.
+    use_normalized_total = (
+        stage_list == ["ALL_STAGES"]
+        and _ALL_STAGE_COLS["ALL_STAGES"] not in df.columns
+        and _NORMALIZED_TOTAL_COLUMN in df.columns
+    )
     stage_cols: list[str] = []
     unknown = []
-    for s in stage_list:
-        col = _ALL_STAGE_COLS.get(s)
-        if col is None:
-            unknown.append(s)
-        else:
-            stage_cols.append(col)
+    if use_normalized_total:
+        stage_cols.append(_NORMALIZED_TOTAL_COLUMN)
+    else:
+        for s in stage_list:
+            col = _ALL_STAGE_COLS.get(s)
+            if col is None:
+                unknown.append(s)
+            else:
+                stage_cols.append(col)
     if unknown:
         raise ValueError(
             f"Stade(s) inconnu(s) : {unknown}. "
@@ -116,7 +129,8 @@ def neolabs_copepod_density(
     sub = df.loc[mask].copy()
     if sub.empty:
         raise ValueError(
-            f"Aucune ligne `{taxon_column} == '{taxon_filter}'` dans la table."
+            f"Aucune ligne de copépodes (`{taxon_column} == '{taxon_filter}'`) "
+            "dans la table."
         )
 
     # Somme des stades par ligne → densité de la ligne

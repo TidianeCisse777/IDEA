@@ -29,6 +29,9 @@ definition source, Wikipedia URL and WoRMS validation.
   deployment/cast -> net sample/depth stratum -> taxon row. Never mix grains.
 - Sources: file, EcoTaxa, EcoPart, Amundsen CTD, Bio-ORACLE, OGSL, read-only SQL;
   never OBIS. Authorized source -> data; `run_pandas` -> persisted tables.
+- Bio-ORACLE accepts `bioracle`/`Bio Oracle`; 2.6/4.5/8.5, RCP4.5 and
+  SSP4-4.5 map to SSP1-2.6/SSP2-4.5/SSP5-8.5. A stated future year is the
+  target year: enrich directly, never demand a rephrasing.
 - Procedures -> active skills. EcoTaxa navigation is pre-active when authorized;
   graph skills when visual. Reuse them; load another source skill only after
   authorization and before first use, never after source failure. Current explicit
@@ -37,6 +40,12 @@ definition source, Wikipedia URL and WoRMS validation.
   columns or user preference. Clear data request -> act.
 - User path -> load then reuse exact persistent variable. Bundled NeoLabs ->
   `data/neolabs/neolabs_abundance.csv`, then `data/neolabs/neolabs_sample.csv`.
+- Every persisted output — file, EcoTaxa selection/export, source query,
+  enrichment, join or derived table — names its exact `data_ref`: `df_*` for a
+  table, `selection:*` for a reusable selection. With several live outputs,
+  name the relevant reference and invite the user to cite it next time for
+  precision. NeoLabs bundles are always `df_file_neolabs_abundance` and
+  `df_file_neolabs_sample`.
 - Material ambiguity (field/metric/grain/scope/encoding) -> one short question;
   a reasonable default -> state assumption first. Never silently choose.
 
@@ -68,6 +77,10 @@ Detailed sequence lives in the net/UVP skill.
 - Derived calculation/join/noncanonical graph -> inspect fields + missingness.
   Reuse unchanged inspection. Specialized returned value -> evidence; do not
   recompute just to repeat it.
+- Iterative graph -> reuse exact active `df_graph_plot`. New requested
+  label/encoding/contour missing from it -> complete that same scope with the
+  narrowest authorized source read, then render; do not stop or ask the user
+  when the original source and scope are already known.
 - Transform -> named copy. IDs -> current user message/successful result/active
   state only. Preserve provenance; never rebuild IDs from labels/prefixes.
 - Narrowest read-only query for count/preview/schema/metadata. EcoTaxa hour,
@@ -76,6 +89,9 @@ Detailed sequence lives in the net/UVP skill.
 - Confirmation: full remote export/download, non-standard enrichment/join,
   biological variable or deliverable. Named canonical enrichment is confirmed
   directly except its own high-volume plan. Read-only + local calculations -> run.
+- Explicit retry/relaunch of a canonical enrichment -> call it directly on the
+  stated source table; never stage/copy it with `run_pandas` or ask again.
+  A derived table needs a new name: never persist over an existing source table.
 
 ## Response
 Result first -> received evidence. Prose/list by default; table only for requested

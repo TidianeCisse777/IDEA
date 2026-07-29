@@ -22,6 +22,7 @@ _SAFE_HOST = re.compile(
     r"^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|"
     r"\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?$"
 )
+_INTERNAL_AGENT_HOSTS = frozenset({"copepod-agent", "copepod_agent"})
 
 
 def _first_header_value(request: _RequestLike, name: str) -> str:
@@ -32,6 +33,12 @@ def _first_header_value(request: _RequestLike, name: str) -> str:
 def _safe_host(value: str) -> str | None:
     """Return a host[:port] only when it cannot alter the generated URL."""
     return value if value and _SAFE_HOST.fullmatch(value) else None
+
+
+def _is_internal_agent_host(host: str) -> bool:
+    """Whether ``host`` is Docker-only and therefore not browser-visible."""
+    hostname = host.removeprefix("[").split("]", 1)[0].split(":", 1)[0].lower()
+    return hostname in _INTERNAL_AGENT_HOSTS
 
 
 def request_public_origin(request: _RequestLike) -> str:
@@ -48,9 +55,9 @@ def request_public_origin(request: _RequestLike) -> str:
 
     host = _safe_host(_first_header_value(request, "host"))
     scheme = str(getattr(request.url, "scheme", "http")).lower()
-    if host and scheme in {"http", "https"}:
+    if host and not _is_internal_agent_host(host) and scheme in {"http", "https"}:
         return f"{scheme}://{host}"
-    return "http://localhost:8000"
+    return (os.getenv("SERVE_BASE_URL") or "http://localhost:8000").rstrip("/")
 
 
 @contextmanager

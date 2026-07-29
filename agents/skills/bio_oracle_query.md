@@ -44,7 +44,8 @@ persisted enriched table for any requested neutral aggregation.
 
 Friendly variables include `temperature`, `salinity`, `oxygen`, `chlorophyll`,
 `nitrate`, `ph`, and `iron`. Scenarios include `baseline`, `SSP1-2.6`,
-`SSP2-4.5`, and `SSP5-8.5`.
+`SSP2-4.5`, and `SSP5-8.5`; treat `2.6`, `4.5`, `8.5`, `RCP4.5`, and the
+common `SSP4-4.5` typo as their standard SSP equivalents (`4.5` → `SSP2-4.5`).
 
 - Pass only variables/scenarios requested by the user; otherwise use canonical
   defaults.
