@@ -755,6 +755,7 @@ def make_source_tools(thread_id: str) -> list:
             meta={
                 "source": "net_uvp_match",
                 "file_variable": (loaded.get("meta") or {}).get("variable_name"),
+                "net_variable_name": (loaded.get("meta") or {}).get("variable_name"),
                 "n_rows": len(matches),
                 "n_cols": len(matches.columns),
                 "deployment_column": deployment_col,
@@ -910,6 +911,7 @@ def make_source_tools(thread_id: str) -> list:
             "export UVP enrichi EcoPart": uvp_enriched_variable,
         }
         datasets = {}
+        dataset_entries = {}
         missing = []
         for label, variable_name in variable_names.items():
             entry = _store.get(f"{thread_id}:dataset:{variable_name}")
@@ -917,10 +919,62 @@ def make_source_tools(thread_id: str) -> list:
                 missing.append(f"{label} `{variable_name}`")
             else:
                 datasets[label] = entry["df"]
+                dataset_entries[label] = entry
         if missing:
             return blocked(
                 "Jointure filet↔UVP enrichie refusée : table(s) persistée(s) "
                 f"introuvable(s) : {', '.join(missing)}.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+
+        audit_meta = dict(
+            (dataset_entries["audit certifié"].get("meta") or {})
+        )
+        if audit_meta.get("source") != "net_uvp_match":
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : l'audit doit provenir "
+                "de la vérification filet↔UVP certifiée.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        if audit_meta.get("net_variable_name") != net_variable_name:
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : l'audit certifié ne "
+                "correspond pas à la table filet demandée.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        if "ctd_filename_verified" not in audit_meta:
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : la provenance de "
+                "certification CTD de l'audit est absente.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+
+        enriched = datasets["export UVP enrichi EcoPart"]
+        enriched_meta = dict(
+            (dataset_entries["export UVP enrichi EcoPart"].get("meta") or {})
+        )
+        enriched_source = str(enriched_meta.get("source") or "")
+        if not (
+            enriched_source.startswith("join:ecotaxa+ecopart")
+            or enriched_source == "join:ecotaxa_campaign+ecopart"
+        ):
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : l'export UVP doit "
+                "provenir d'un enrichissement EcoTaxa+EcoPart.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        if not any(
+            column in enriched.columns
+            for column in ("object_id", "obj_orig_id", "obj_id", "objid")
+        ):
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : l'export EcoTaxa+EcoPart "
+                "ne contient aucun identifiant objet.",
                 provenance={"source": "net_uvp_ecopart_certified"},
                 retryable=False,
             )

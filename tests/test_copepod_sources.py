@@ -2194,8 +2194,13 @@ def test_audit_with_empty_ctd_response_creates_no_selection(tmp_path, monkeypatc
     )
 
 
-def test_join_net_uvp_enriched_persists_certified_object_rows(
-    tmp_path, monkeypatch
+def _net_uvp_enriched_tool(
+    tmp_path,
+    monkeypatch,
+    *,
+    audit_meta: dict | None = None,
+    enriched_meta: dict | None = None,
+    enriched_has_object_id: bool = True,
 ):
     import tools.copepod_sources as source_module
     from tools.dataset_registry import store_dataset
@@ -2229,22 +2234,26 @@ def test_join_net_uvp_enriched_persists_certified_object_rows(
             }
         ),
         variable_name="df_net_uvp_matches",
-        meta={"source": "net_uvp_match"},
+        meta=audit_meta or {
+            "source": "net_uvp_match",
+            "net_variable_name": "df_file_baffin_2024",
+            "ctd_filename_verified": 1,
+        },
         set_active=False,
     )
+    enriched = {
+        "export_project_id": [10, 10, 20],
+        "sample_profileid": ["uvp-101", "uvp-101", "uvp-203"],
+        "ecopart_Sampled volume [L]": [100.0, 100.0, 80.0],
+    }
+    if enriched_has_object_id:
+        enriched["object_id"] = ["obj-1", "obj-2", "obj-3"]
     store_dataset(
         store,
         thread_id,
-        pd.DataFrame(
-            {
-                "export_project_id": [10, 10, 20],
-                "sample_profileid": ["uvp-101", "uvp-101", "uvp-203"],
-                "object_id": ["obj-1", "obj-2", "obj-3"],
-                "ecopart_Sampled volume [L]": [100.0, 100.0, 80.0],
-            }
-        ),
+        pd.DataFrame(enriched),
         variable_name="df_ecotaxa_ecopart_campaign",
-        meta={"source": "ecotaxa_ecopart"},
+        meta=enriched_meta or {"source": "join:ecotaxa_campaign+ecopart"},
         set_active=False,
     )
     monkeypatch.setattr(source_module, "_store", store)
@@ -2253,6 +2262,14 @@ def test_join_net_uvp_enriched_persists_certified_object_rows(
         item for item in source_module.make_source_tools(thread_id)
         if item.name == "join_net_uvp_enriched"
     )
+    return join_tool, store, thread_id
+
+
+def test_join_net_uvp_enriched_persists_certified_object_rows(
+    tmp_path, monkeypatch
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+
     join_tool.invoke(
         {
             "net_variable_name": "df_file_baffin_2024",
@@ -2265,6 +2282,85 @@ def test_join_net_uvp_enriched_persists_certified_object_rows(
     assert stored["df"]["join_eligible"].all()
     assert "ecopart_Sampled volume [L]" in stored["df"]
     assert stored["meta"]["source"] == "net_uvp_ecopart_certified"
+    assert stored["meta"]["net_variable_name"] == "df_file_baffin_2024"
+    assert stored["meta"]["audit_variable_name"] == "df_net_uvp_matches"
+    assert stored["meta"]["uvp_enriched_variable"] == "df_ecotaxa_ecopart_campaign"
+
+
+@pytest.mark.parametrize(
+    "audit_meta",
+    [
+        {
+            "source": "file",
+            "net_variable_name": "df_file_baffin_2024",
+            "ctd_filename_verified": 1,
+        },
+        {
+            "source": "net_uvp_match",
+            "net_variable_name": "df_file_other_campaign",
+            "ctd_filename_verified": 1,
+        },
+    ],
+    ids=["wrong-source", "wrong-net-variable"],
+)
+def test_join_net_uvp_enriched_rejects_untrusted_audit_provenance(
+    tmp_path, monkeypatch, audit_meta
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(
+        tmp_path,
+        monkeypatch,
+        audit_meta=audit_meta,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
+def test_join_net_uvp_enriched_rejects_raw_file_masquerading_as_enriched(
+    tmp_path, monkeypatch
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(
+        tmp_path,
+        monkeypatch,
+        enriched_meta={"source": "file"},
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
+def test_join_net_uvp_enriched_rejects_enrichment_without_object_identifier(
+    tmp_path, monkeypatch
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(
+        tmp_path,
+        monkeypatch,
+        enriched_has_object_id=False,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
 
 
 def test_ecotaxa_cache_map_is_complete_and_does_not_migrate_file(
