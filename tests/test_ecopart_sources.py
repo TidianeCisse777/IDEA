@@ -389,8 +389,11 @@ def test_remote_enrichment_partitions_campaign_by_ecotaxa_project():
         result = enrich.invoke({"confirmed": True})
 
     out = _store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    meta = _store.get(f"{thread_id}:ecotaxa_ecopart")["meta"]
     assert set(out["export_project_id"]) == {101, 202}
     assert set(out["ecopart_project_id"]) == {301, 302}
+    assert meta["partition_provenance"]["101:301"]["dataset_id"] == "ecopart:301"
+    assert meta["partition_provenance"]["202:302"]["dataset_id"] == "ecopart:302"
     assert "2/2 projets enrichis" in result
 
 
@@ -436,6 +439,99 @@ def test_remote_campaign_dry_run_resolves_every_partition_without_download():
     client.start_export.assert_not_called()
     client.download_tsv.assert_not_called()
     assert _store.get(f"{thread_id}:ecotaxa_ecopart") is None
+
+
+def test_remote_campaign_reports_invalid_export_project_id_rows():
+    """Invalid campaign rows stay visible instead of being silently discarded."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-remote-campaign-invalid-id"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["alpha_1", "bad_1"],
+            "object_depth_min": [2.5, 2.5],
+            "export_project_id": [101, "unknown"],
+        }),
+        {"source": "ecotaxa_export_campaign", "export_project_ids": [101]},
+    )
+    client = MagicMock()
+    client.start_export.return_value = ["/Task/Show/301"]
+    client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["alpha"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [101.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
+        return_value={"project_id": 301, "resolution": "lien projet 101"},
+    ):
+        enrich = next(
+            tool
+            for tool in make_ecopart_tools(thread_id)
+            if tool.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = enrich.invoke({"confirmed": True})
+
+    out = _store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    assert "partiel" in result.lower()
+    assert "1 ligne(s) avec `export_project_id` invalide" in result
+    assert set(out["obj_orig_id"].dropna()) == {"alpha_1"}
+
+
+def test_remote_explicit_projects_bypass_campaign_partitioning():
+    """Explicit project IDs use only their campaign partition and no lookup."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-remote-campaign-explicit"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["alpha_1", "beta_1"],
+            "object_depth_min": [2.5, 2.5],
+            "export_project_id": [101, 202],
+        }),
+        {"source": "ecotaxa_export_campaign", "export_project_ids": [101, 202]},
+    )
+    client = MagicMock()
+    client.start_export.return_value = ["/Task/Show/901"]
+    client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["alpha"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [101.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources.EcotaxaClient",
+        side_effect=AssertionError("a campaign partition should avoid auto-load"),
+    ), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
+        side_effect=AssertionError("explicit EcoPart ID should avoid lookup"),
+    ):
+        enrich = next(
+            tool
+            for tool in make_ecopart_tools(thread_id)
+            if tool.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = enrich.invoke({
+            "ecotaxa_project_id": 101,
+            "ecopart_project_id": 901,
+            "confirmed": True,
+        })
+
+    out = _store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    assert "Enrichissement terminé" in result
+    assert set(out["obj_orig_id"].dropna()) == {"alpha_1"}
+    client.start_export.assert_called_once_with(project_id=901, ecotaxa_project_id=101)
 
 
 def test_enrich_remote_dry_run_by_default_does_not_download():

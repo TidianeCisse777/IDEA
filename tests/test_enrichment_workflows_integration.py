@@ -267,6 +267,58 @@ def test_remote_enrichment_reports_a_failed_campaign_partition(_isolated_store):
     assert set(out["ecopart_project_id"]) == {301}
 
 
+def test_remote_enrichment_continues_after_a_campaign_join_exception(_isolated_store):
+    """A broken join for one project must not discard later successful projects."""
+    from tools.ecopart_sources import _perform_enrichment as real_join
+
+    thread_id = "campaign-join-exception"
+    _isolated_store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["alpha_1", "beta_1"],
+            "object_depth_min": [2.5, 2.5],
+            "export_project_id": [101, 202],
+        }),
+        {"source": "ecotaxa_export_campaign", "export_project_ids": [101, 202]},
+    )
+    client = MagicMock()
+    client.start_export.side_effect = lambda **kwargs: [
+        f"/Task/Show/{kwargs['project_id']}"
+    ]
+    client.download_tsv.side_effect = lambda links: pd.DataFrame({
+        "Profile": ["alpha" if links == ["/Task/Show/301"] else "beta"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [101.0 if links == ["/Task/Show/301"] else 202.0],
+    })
+    resolutions = {
+        101: {"project_id": 301, "resolution": "lien projet 101"},
+        202: {"project_id": 302, "resolution": "lien projet 202"},
+    }
+
+    def resolve_partition(_frame, *, known_ecotaxa_pid=None, **_kwargs):
+        return resolutions[known_ecotaxa_pid]
+
+    def join_partition(thread_id, project_id, **kwargs):
+        if project_id == 301:
+            raise RuntimeError("jointure indisponible")
+        return real_join(thread_id, project_id, **kwargs)
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
+        side_effect=resolve_partition,
+    ), patch(
+        "tools.ecopart_sources._perform_enrichment",
+        side_effect=join_partition,
+    ):
+        result = _enrich_tool(thread_id).invoke({"confirmed": True})
+
+    out = _isolated_store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    assert "partiel" in result.lower()
+    assert "jointure indisponible" in result
+    assert set(out["export_project_id"]) == {202}
+    assert set(out["ecopart_project_id"]) == {302}
+
+
 # --------------------------------------------------------------------------- #
 # 4. Workflow 3 — full remote: real query_ecotaxa → real enrich_remote
 # --------------------------------------------------------------------------- #

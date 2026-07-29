@@ -85,16 +85,34 @@ def _ecotaxa_session_for_project(
         if candidate_project is not None and int(candidate_project) == requested:
             candidates.append(session)
 
-    if not candidates:
-        return None
+    if candidates:
+        # Prefer the canonical full-project variable when both a full export and a
+        # scoped bulk export exist. Otherwise the sole/latest named dataset is safe.
+        canonical = f"df_ecotaxa_{requested}"
+        for session in candidates:
+            if (session.get("meta") or {}).get("variable_name") == canonical:
+                return session
+        return candidates[-1]
 
-    # Prefer the canonical full-project variable when both a full export and a
-    # scoped bulk export exist. Otherwise the sole/latest named dataset is safe.
-    canonical = f"df_ecotaxa_{requested}"
-    for session in candidates:
-        if (session.get("meta") or {}).get("variable_name") == canonical:
-            return session
-    return candidates[-1]
+    # A consolidated campaign retains the raw project provenance line by line.
+    # An explicit EcoTaxa project therefore remains a mono-project request even
+    # when no raw per-project export slot was kept in the current session.
+    if latest is not None and isinstance(latest.get("df"), pd.DataFrame):
+        campaign = latest["df"]
+        if "export_project_id" in campaign.columns:
+            project_values = pd.to_numeric(
+                campaign["export_project_id"], errors="coerce"
+            )
+            partition = campaign.loc[project_values == requested].copy()
+            if not partition.empty:
+                return {
+                    "df": partition,
+                    "meta": {
+                        **dict(latest.get("meta") or {}),
+                        "project_id": requested,
+                    },
+                }
+    return None
 
 
 def _session_for_variable(thread_id: str, variable_name: str | None) -> dict | None:
@@ -631,21 +649,35 @@ def _enrich_ecotaxa_campaign_with_ecopart(
 ) -> tuple:
     """Resolve and enrich each project partition of a consolidated campaign."""
     campaign_df = session_et["df"]
-    project_ids = pd.to_numeric(
+    numeric_project_ids = pd.to_numeric(
         campaign_df["export_project_id"], errors="coerce"
-    ).dropna()
+    )
+    valid_project_ids = (
+        numeric_project_ids.notna()
+        & numeric_project_ids.mod(1).eq(0)
+        & numeric_project_ids.gt(0)
+    )
+    project_ids = numeric_project_ids.loc[valid_project_ids]
     normalized_project_ids = sorted({int(project_id) for project_id in project_ids})
+    n_invalid_project_rows = int((~valid_project_ids).sum())
     if not normalized_project_ids:
+        invalid_note = (
+            f" {n_invalid_project_rows} ligne(s) avec `export_project_id` invalide."
+            if n_invalid_project_rows
+            else ""
+        )
         return _ep_blocked(
             "Campagne EcoTaxa invalide — `export_project_id` ne contient aucun "
-            "identifiant de projet exploitable."
+            f"identifiant de projet exploitable.{invalid_note}"
         )
 
     resolved: list[tuple[int, int, pd.DataFrame, str]] = []
     failures: list[str] = []
-    numeric_project_ids = pd.to_numeric(
-        campaign_df["export_project_id"], errors="coerce"
-    )
+    if n_invalid_project_rows:
+        failures.append(
+            f"{n_invalid_project_rows} ligne(s) avec `export_project_id` invalide "
+            "ignorée(s)."
+        )
     for ecotaxa_pid in normalized_project_ids:
         partition = campaign_df.loc[numeric_project_ids == ecotaxa_pid].copy()
         resolution = _lookup_ecopart_project_for_ecotaxa(
@@ -695,6 +727,8 @@ def _enrich_ecotaxa_campaign_with_ecopart(
     joined_frames: list[pd.DataFrame] = []
     artifact_refs: list[str] = []
     successes: list[str] = []
+    successful_pairs: list[tuple[int, int]] = []
+    partition_provenance: dict[str, dict] = {}
     n_matched = 0
     for ecotaxa_pid, ecopart_pid, partition, _resolution in resolved:
         try:
@@ -703,6 +737,76 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                 ecotaxa_project_id=ecotaxa_pid,
             )
             df_ep = client.download_tsv(links)
+            if df_ep.empty:
+                failures.append(
+                    f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
+                    "aucun sample EcoPart exporté."
+                )
+                continue
+
+            file_id = uuid.uuid4().hex
+            output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
+            df_ep.to_csv(output_path, sep="\t", index=False)
+            artifact_url = download_url(output_path.name)
+
+            variable_name = dataset_variable_name("ecopart", ecopart_pid)
+            meta = {
+                "source": f"ecopart:{ecopart_pid}",
+                "project_id": ecopart_pid,
+                "ecotaxa_project_id": ecotaxa_pid,
+                "n_rows": len(df_ep),
+            }
+            store_dataset(
+                _store,
+                thread_id,
+                df_ep,
+                variable_name=variable_name,
+                meta=meta,
+                latest_alias=ECOPART,
+            )
+            _store.set(f"{thread_id}:ecopart:{ecopart_pid}", df_ep, meta)
+
+            join_result = _perform_enrichment(
+                thread_id,
+                ecopart_pid,
+                ecotaxa_session={
+                    "df": partition,
+                    "meta": session_et.get("meta") or {},
+                },
+            )
+            join_artifact = validate_tool_artifact(join_result[1])
+            if join_artifact.status != "success":
+                failures.append(
+                    f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
+                    f"{join_result[0]}"
+                )
+                continue
+
+            joined_session = _store.get(f"{thread_id}:{ECOTAXA_ECOPART}")
+            if joined_session is None or joined_session.get("df") is None:
+                failures.append(
+                    f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
+                    "la jointure annoncée n'a pas été persistée."
+                )
+                continue
+            joined = joined_session["df"].copy()
+            # Zero-object EcoPart bins are synthesized by the join and therefore do
+            # not inherit EcoTaxa columns. Re-attach both project identifiers to
+            # every output row, including those explicit sampled-zero bins.
+            joined["export_project_id"] = ecotaxa_pid
+            joined["ecopart_project_id"] = ecopart_pid
+            joined_frames.append(joined)
+            successful_pairs.append((ecotaxa_pid, ecopart_pid))
+            partition_provenance[f"{ecotaxa_pid}:{ecopart_pid}"] = dict(
+                (joined_session.get("meta") or {}).get("provenance") or {}
+            )
+            artifact_refs.append(artifact_url)
+            partition_matched = int(join_artifact.metrics.get("matched", 0))
+            n_matched += partition_matched
+            successes.append(
+                f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} : "
+                f"{len(joined)} lignes, {partition_matched} matchées"
+            )
         except EcopartExportError as exc:
             failures.append(
                 _format_ecopart_export_error(
@@ -713,74 +817,13 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             )
             continue
         except Exception as exc:
+            # Deliberately catch only recoverable operational failures. BaseException
+            # subclasses (KeyboardInterrupt/SystemExit) must still stop the run.
             failures.append(
                 f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
-                f"erreur EcoPart : {exc}"
+                f"échec de la partition : {exc}"
             )
             continue
-
-        if df_ep.empty:
-            failures.append(
-                f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
-                "aucun sample EcoPart exporté."
-            )
-            continue
-
-        file_id = uuid.uuid4().hex
-        output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
-        df_ep.to_csv(output_path, sep="\t", index=False)
-        artifact_refs.append(download_url(output_path.name))
-
-        variable_name = dataset_variable_name("ecopart", ecopart_pid)
-        meta = {
-            "source": f"ecopart:{ecopart_pid}",
-            "project_id": ecopart_pid,
-            "ecotaxa_project_id": ecotaxa_pid,
-            "n_rows": len(df_ep),
-        }
-        store_dataset(
-            _store,
-            thread_id,
-            df_ep,
-            variable_name=variable_name,
-            meta=meta,
-            latest_alias=ECOPART,
-        )
-        _store.set(f"{thread_id}:ecopart:{ecopart_pid}", df_ep, meta)
-
-        join_result = _perform_enrichment(
-            thread_id,
-            ecopart_pid,
-            ecotaxa_session={"df": partition, "meta": session_et.get("meta") or {}},
-        )
-        join_artifact = validate_tool_artifact(join_result[1])
-        if join_artifact.status != "success":
-            failures.append(
-                f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
-                f"{join_result[0]}"
-            )
-            continue
-
-        joined_session = _store.get(f"{thread_id}:{ECOTAXA_ECOPART}")
-        if joined_session is None or joined_session.get("df") is None:
-            failures.append(
-                f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
-                "la jointure annoncée n'a pas été persistée."
-            )
-            continue
-        joined = joined_session["df"].copy()
-        # Zero-object EcoPart bins are synthesized by the join and therefore do
-        # not inherit EcoTaxa columns. Re-attach both project identifiers to
-        # every output row, including those explicit sampled-zero bins.
-        joined["export_project_id"] = ecotaxa_pid
-        joined["ecopart_project_id"] = ecopart_pid
-        joined_frames.append(joined)
-        partition_matched = int(join_artifact.metrics.get("matched", 0))
-        n_matched += partition_matched
-        successes.append(
-            f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} : "
-            f"{len(joined)} lignes, {partition_matched} matchées"
-        )
 
     if not joined_frames:
         detail = "\n".join(f"- {failure}" for failure in failures)
@@ -802,8 +845,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             "ecotaxa_project_id": ecotaxa_pid,
             "ecopart_project_id": ecopart_pid,
         }
-        for ecotaxa_pid, ecopart_pid, _partition, _resolution in resolved
-        if ecotaxa_pid in set(combined["export_project_id"])
+        for ecotaxa_pid, ecopart_pid in successful_pairs
     ]
     partial = bool(failures)
     meta = {
@@ -811,6 +853,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
         "project_pairs": project_pairs,
         "partial_enrichment": partial,
         "project_failures": failures,
+        "partition_provenance": partition_provenance,
         "n_rows": len(combined),
         "n_matched": n_matched,
     }
