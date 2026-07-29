@@ -37,7 +37,7 @@ def _zone_points(zone_name: str):
     return (inside.x, inside.y), outside
 
 
-def _seed(conn, *, sample_id, profile_id, longitude, latitude):
+def _seed(conn, *, sample_id, profile_id, longitude, latitude, iho_zone=None):
     upsert_sample(
         conn,
         sample_id=sample_id,
@@ -49,6 +49,7 @@ def _seed(conn, *, sample_id, profile_id, longitude, latitude):
         object_count=1,
         instrument="UVP5",
         profile_id=profile_id,
+        iho_zone=iho_zone,
         last_synced="now",
     )
 
@@ -106,3 +107,33 @@ def test_profiles_for_map_rejects_unknown_zone(cache_db, monkeypatch):
     with pytest.raises(EcoTaxaBrowserError) as exc_info:
         profiles_for_map("Zone imaginaire")
     assert exc_info.value.code == "UNKNOWN_ZONE"
+
+
+def test_profiles_for_map_global_keeps_one_cast_per_profile_and_its_iho_zone(
+    cache_db, monkeypatch
+):
+    from core.ecotaxa_browser.profile_maps import profiles_for_map
+
+    conn = sqlite3.connect(cache_db)
+    _seed(conn, sample_id=1, profile_id="P-baffin", longitude=-65, latitude=70, iho_zone="Baie de Baffin")
+    _seed(conn, sample_id=2, profile_id="P-baffin", longitude=-65, latitude=70, iho_zone="Baie de Baffin")
+    _seed(conn, sample_id=3, profile_id="P-davis", longitude=-58, latitude=66, iho_zone="Détroit de Davis")
+    _seed(conn, sample_id=4, profile_id="P-no-coords", longitude=None, latitude=None, iho_zone="Baie de Baffin")
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+
+    result = profiles_for_map()
+
+    assert result["zone"] == {
+        "requested": None,
+        "canonical": "Toutes les zones IHO",
+        "source": "cache partagé EcoTaxa",
+        "reference": "IHO",
+    }
+    assert result["profiles"] == [
+        {"profile_id": "P-baffin", "n_samples": 2, "lat_avg": 70.0, "lon_avg": -65.0, "zone": "Baie de Baffin"},
+        {"profile_id": "P-davis", "n_samples": 1, "lat_avg": 66.0, "lon_avg": -58.0, "zone": "Détroit de Davis"},
+    ]
+    assert result["coverage"]["zone_reference"] == "IHO"
+    assert result["coverage"]["profiles_missing_coordinates"] == 1

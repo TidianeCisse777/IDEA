@@ -2580,8 +2580,11 @@ def make_source_tools(thread_id: str) -> list:
         )
 
     @tool(response_format="content_and_artifact")
-    def summarize_ecotaxa_profiles_for_map(zone_name: str) -> str:
-        """Prépare une carte de profils/casts EcoTaxa dans une zone nommée.
+    def summarize_ecotaxa_profiles_for_map(
+        zone_name: str | None = None,
+        zone_reference: str = "IHO",
+    ) -> str:
+        """Prépare une carte de profils/casts EcoTaxa, locale ou globale.
 
         Utiliser pour toute carte où un point représente un profil/cast et où
         sa taille doit représenter le nombre de samples de ce profil. Le tool
@@ -2591,11 +2594,19 @@ def make_source_tools(thread_id: str) -> list:
         une agrégation SQL libre sur ``samples_cache``.
 
         ``zone_name`` accepte le nom canonique ou un alias (par exemple
-        ``Baie de Baffin`` ou ``Hudson Bay``). Lecture du cache partagé local
-        uniquement : aucun téléchargement ni identifiant EcoTaxa requis.
+        ``Baie de Baffin`` ou ``Hudson Bay``). L'omettre seulement pour une
+        carte globale : dans ce cas ``zone_reference`` vaut ``IHO`` (défaut)
+        ou ``MEOW`` et chaque profil reçoit sa colonne catégorielle ``zone``
+        pour le coloriage. Ne jamais mélanger IHO et MEOW dans une même carte.
+        Lecture du cache partagé local uniquement : aucun téléchargement ni
+        identifiant EcoTaxa requis.
         """
         try:
-            result = profiles_for_map(zone_name)
+            result = (
+                profiles_for_map(zone_name)
+                if zone_name and zone_name.strip()
+                else profiles_for_map(zone_reference=zone_reference)
+            )
         except EcoTaxaBrowserError as exc:
             return _eco_error(f"Erreur EcoTaxa ({exc.code}) : {exc}")
         except Exception as exc:
@@ -2632,10 +2643,10 @@ def make_source_tools(thread_id: str) -> list:
                 provenance={"zone": zone},
             )
 
-        dataframe = pd.DataFrame.from_records(
-            profiles,
-            columns=["profile_id", "n_samples", "lat_avg", "lon_avg"],
-        )
+        columns = ["profile_id", "n_samples", "lat_avg", "lon_avg"]
+        if "reference" in zone:
+            columns.append("zone")
+        dataframe = pd.DataFrame.from_records(profiles, columns=columns)
         variable_name = "df_ecotaxa_profile_map"
         store_dataset(
             _store,
@@ -2655,7 +2666,11 @@ def make_source_tools(thread_id: str) -> list:
         lines = [
             f"# Carte des profils EcoTaxa — {len(dataframe)} profils",
             "",
-            f"Zone exacte : {zone['canonical']} ({zone['source']}).",
+            (
+                f"Référence globale : {zone['reference']} ({zone['source']})."
+                if "reference" in zone
+                else f"Zone exacte : {zone['canonical']} ({zone['source']})."
+            ),
             (
                 f"{coverage['samples_in_zone']} samples dans le contour ; "
                 f"{coverage['samples_with_profile_id']} avec profile_id ; "
@@ -2675,8 +2690,14 @@ def make_source_tools(thread_id: str) -> list:
             lines.append(f"| … | … | … | … |\n\nAperçu de 30 profils sur {len(profiles)}.")
         lines.extend([
             "",
-            "Rendu requis : un point par ligne/profil ; taille de marqueur basée sur "
-            "`n_samples` ; tracer le contour exact de la zone résolue.",
+            (
+                "Rendu requis : un point par ligne/profil ; taille de marqueur basée sur "
+                "`n_samples` ; colorer par `zone` ; rendre une carte mondiale de la référence "
+                "géographique indiquée."
+                if "reference" in zone
+                else "Rendu requis : un point par ligne/profil ; taille de marqueur basée sur "
+                "`n_samples` ; tracer le contour exact de la zone résolue."
+            ),
         ])
         return _eco_success(
             "\n".join(lines),

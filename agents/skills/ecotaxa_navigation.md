@@ -108,11 +108,11 @@ with `COUNT(DISTINCT profile_id)`.
 
 ### Profile / cast maps
 
-For a map of profiles, casts, or deployments where point size means the number
-of samples, call `summarize_ecotaxa_profiles_for_map(zone_name=...)` directly.
-It resolves the exact named-zone polygon internally and persists
-`df_ecotaxa_profile_map` with exactly these render columns:
-`profile_id`, `n_samples`, `lat_avg`, and `lon_avg`.
+For profile/cast maps, call `summarize_ecotaxa_profiles_for_map` directly.
+Pass `zone_name` for one zone; for a global map omit it and pass one
+`zone_reference` (`IHO`, or `MEOW` on request). Global
+output `df_ecotaxa_profile_map` has `profile_id`, `n_samples`, `lat_avg`,
+`lon_avg`, and categorical `zone`. Never combine IHO and MEOW in one figure.
 
 One row is one point and one non-empty `profile_id`. `n_samples` is the count
 of distinct sample IDs for that profile. Never group a profile map by sample_id,

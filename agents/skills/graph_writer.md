@@ -68,7 +68,7 @@ plt.tight_layout()
 - Always use `fig, ax = plt.subplots()` — never call `plt.show()`
 - Always define `title`, `xlabel`, `ylabel`
 - Keep figures readable: `figsize` must stay at or below `(16, 14)`. If a heatmap or ordination needs more space, aggregate or filter groups rather than increasing figure height.
-- Always include a legend or labels. Multi-series: `ax.legend()` with a variable title. For station maps, `station_id` is the default map label because it is concise; use `original_id` or `sample_id` only when the user explicitly requests it. Do not suppress station labels based only on their count: if crowded, user can request another extent/presentation. A single series needs a colorbar label or descriptive title. For >15 non-station levels, use top 12 + "Other", a continuous scale, or a note. A `vertical_profile` may show 16–30 profiles with `ax.legend(ncol=2)`; above 30, filter or aggregate.
+- Include only labels and legends needed to decode the requested encodings. For station maps, use `station_id` only when labels improve reading or the user asks; use `original_id` or `sample_id` only on request. A single series needs a colorbar label or descriptive title. For >15 non-station levels, use top 12 + "Other", a continuous scale, or a note. A `vertical_profile` may show 16–30 profiles with `ax.legend(ncol=2)`; above 30, filter or aggregate.
 - Axis labels must stay readable: never show more than 50 visible tick labels on either axis. For heatmaps with many stations/samples, keep the top 40 groups by abundance or display sparse ticks.
 - Taxon tick labels must be short: if labels contain taxonomy paths such as `Animalia | Arthropoda | ...`, display only the terminal taxon name; truncate labels longer than 35 characters with an ellipsis.
 - For long labels (taxon names): `ax.tick_params(axis='x', rotation=45)`
@@ -246,10 +246,9 @@ data-integrity violation.
 
 ### EcoTaxa profile / cast map
 
-For `df_ecotaxa_profile_map`, draw **one point per profile**. Its required
-columns are `profile_id`, `n_samples`, `lat_avg`, and `lon_avg`; do not merge,
-expand, or regroup it. The point-size encoding is `n_samples` and must have a
-size legend. Never use `sample_id` as a grouping key for this map.
+For `df_ecotaxa_profile_map`, draw **one point per profile** from `profile_id`,
+`n_samples`, `lat_avg`, `lon_avg`; do not merge or regroup it. Size encodes
+`n_samples` with a legend. Never use `sample_id` as the grouping key.
 
 ```python
 plot_df = df_ecotaxa_profile_map.dropna(
@@ -275,9 +274,13 @@ size_legend = ax.legend(legend_handles, [str(count) for count in legend_counts],
 size_legend.set_gid("station_size_legend")
 ```
 
-Use `kind: "station_map"`, a coordinate `position` mapping, a `size` mapping
-for `n_samples`, and `source_variables` naming those columns. Draw the exact
-resolved zone polygon; do not request a second lookup merely to render it.
+Use `station_map` with position/size mappings and those source variables. For a
+named zone draw its exact polygon without a second lookup.
+
+Global cast map: color `zone` with `zone_legend=ax.legend(...)`; call
+`ax.add_artist(zone_legend)` before `size_legend=ax.legend(...)`. Set gids
+`station_color_legend`/`station_size_legend`, use global Cartopy, one IHO/MEOW.
+Never label individual casts globally unless explicitly requested.
 
 ### Station / position map (`station_map`)
 
@@ -317,21 +320,20 @@ graph_contract = {
 For a plain positions map, keep only the `position` mapping and drop
 `size`/`color`/legends entirely.
 
-**Règle légende / labels obligatoire — toute carte de stations** :
+**Lisibilité des cartes** :
 
-- Libeller chaque station unique par `station_id` par défaut. Remplacer par
-  `original_id` ou `sample_id` seulement sur demande explicite. Ne pas retirer
-  les labels parce qu'il y a 21, 30 ou davantage de stations : l'utilisateur
-  décide ensuite si un autre cadrage ou une carte plus sobre est préférable.
-- Quand la taille encode `n_samples`, la légende doit afficher les comptes réels
-  correspondants. Size-legend labels must be exact `n_samples` counts, never
-  marker areas or a transformed size scale. Never use `pts.legend_elements(prop="sizes")`.
+- Ajouter les labels de station ou de cast seulement s'ils restent lisibles et
+  servent la demande. Une carte dense, globale, ou colorée par groupe utilise
+  sa légende, sans labels individuels, sauf demande explicite.
+- Quand la taille encode `n_samples`, la légende affiche les comptes réels,
+  jamais les aires transformées. Never use `pts.legend_elements(prop="sizes")`.
 
 Never use `ccrs.PlateCarree()._as_mpl_transform(ax)`: use `ax.text(...,
 transform=ccrs.PlateCarree(), clip_on=True)` for geographic labels.
 
 ```python
-label_column = "station_id"  # replace only on explicit request
+# Optional only: use this block when point labels improve the requested map.
+label_column = "station_id"
 label_df = plot_df.dropna(subset=[label_column]).drop_duplicates(label_column)
 for _, row in label_df.iterrows():
     ax.text(row["lon_avg"], row["lat_avg"], str(row[label_column]),
@@ -722,7 +724,7 @@ plt.tight_layout()
 - Extent auto-computed from data + margin — never hardcode coordinates
 - Color variable: use `c=df['<col>']` + `cmap='viridis'` for continuous (abundance, biomass, temperature, salinity)
 - No color variable: use `color='steelblue'`
-- Station labels: use `ax.text(lon, lat, name, transform=ccrs.PlateCarree(), clip_on=True, fontsize=7)` on unique stations; default to `station_id`, otherwise only an explicitly requested ID.
+- Station labels are optional: use `ax.text(...)` only when they improve the requested map.
 - Never use folium — cartopy only
 - When writing the code, make the `graph_explanation` reflect the actual plotting choices (axes, source, encoding) — never describe what the chart shows or suggest priorities.
 

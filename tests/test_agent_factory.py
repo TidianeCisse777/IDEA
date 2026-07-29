@@ -1088,19 +1088,19 @@ def test_graph_writer_supports_standalone_named_zone_maps():
     assert "ccrs.lambertconformal" in writer
 
 
-def test_graph_writer_uses_station_id_as_the_default_map_label():
+def test_graph_writer_keeps_station_labels_optional_for_readability():
     writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
 
-    assert "`station_id` is the default map label" in writer
-    assert "`original_id` or `sample_id` only when the user explicitly requests it" in writer
+    assert "only when labels improve reading or the user asks" in writer
+    assert "sans labels individuels, sauf demande explicite" in writer
     assert "Never use `ccrs.PlateCarree()._as_mpl_transform(ax)`" in writer
 
 
-def test_graph_writer_preserves_station_labels_and_uses_real_size_counts():
+def test_graph_writer_prioritizes_readable_maps_and_real_size_counts():
     writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
 
-    assert "Do not suppress station labels based only on their count" in writer
-    assert "Size-legend labels must be exact `n_samples` counts" in writer
+    assert "Une carte dense, globale, ou colorée par groupe" in writer
+    assert "légende affiche les comptes réels" in writer
     assert "Never use `pts.legend_elements(prop=\"sizes\")`" in writer
 
 
