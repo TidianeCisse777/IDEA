@@ -291,6 +291,21 @@ def test_system_prompt_requires_the_strict_net_uvp_match_route():
     assert "date_from" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_net_uvp_live_guidance_uses_the_certified_selection_and_final_join():
+    """Expected live route recovers safely and never exports candidates."""
+    contract = _routing_contract("net_uvp_abundance_comparison.md")
+
+    assert "exact persistent variable returned" in contract
+    assert "available persistent variables" in contract
+    assert "retry the audit with that exact name" in contract
+    assert "exact certified selection identifier returned by the audit" in contract
+    assert "export_ecotaxa_samples" in contract
+    assert "enrich_ecotaxa_with_ecopart_remote" in contract
+    assert "join_net_uvp_enriched" in contract
+    assert "stop before `export_ecotaxa_samples`" in contract
+    assert "ctd_filename_match_status=\"matched\"" in contract
+
+
 def test_system_prompt_prioritizes_current_explicit_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

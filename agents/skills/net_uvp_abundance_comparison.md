@@ -1,6 +1,6 @@
 ---
 name: net_uvp_abundance_comparison
-version: 2.0.1
+version: 2.1.0
 triggers:
   - User asks to compare net (NeoLabs) abundance against UVP (EcoTaxa/EcoPart) abundance
   - User asks to join net and UVP data, compute density, make comparisons by taxon or stage
@@ -12,50 +12,70 @@ requires:
 next_tool: run_pandas
 max_tokens: 3500
 description: >
-  Open environment for net↔UVP comparisons. The session has all the data;
-  run_pandas composes freely. No rigid pipeline — user drives taxon, stage, depth range.
+  Guided certified preparation for net↔UVP comparisons, followed by open
+  analysis where the user drives taxon, stage, and depth range.
 ---
 
 # Skill: net_uvp_abundance_comparison
 
 ## What is in session
 
-After the preparation steps, the session contains:
+After the guided preparation steps, the session contains:
 
 | Variable | Content |
 |---|---|
 | `df_net_uvp_matches` | Correspondence table: `net_sample_id`, `net_deployment_id`, `station`, `uvp_sample_id`, `uvp_profile_str`, `distance_km`, `time_gap_days`, `ctd_filename_match_status`, `amundsen_filename`, `station_name_match`, `match_status`, `join_eligible` |
-| `df_ecotaxa_ecopart` | UVP objects enriched with EcoPart volumes: `sample_id` (string profile, e.g. `am_leg4_RA27_2`), `sample_id_internal` (numeric), `object_annotation_hierarchy`, `object_depth_min`, `depth_bin`, `ecopart_Sampled volume [L]` |
-| `df_ecotaxa` | UVP objects before EcoPart enrichment (no volume column) |
+| exact variable returned by the EcoTaxa export | Consolidated multi-project UVP objects with `export_project_id` |
+| exact variable returned by the EcoPart enrichment | Multi-project UVP objects enriched with EcoPart volumes |
+| `df_net_uvp_ecopart` | Canonical final object table created by `join_net_uvp_enriched`; it contains only certified audit rows |
 | `df_file_neolabs_abundance` | Net tow taxonomy: `SAMPLE_ID`, `STATION_NAME`, `CLASS`, `ORDER`, `FAMILY`, per-stage abundance columns (`C1_ABUND ...`, `ALL_STAGES_ABUND ...`) |
 | `df_file_neolabs_sample` | Net tow metadata: `SAMPLE_ID`, `STATION_NAME`, `latitude`, `longitude`, `deployment_datetime_start` |
 
-Variable names come from `load_file`:
+Variable names come from successful tool results:
 - `load_file("neolabs_abundance.csv")` → `df_file_neolabs_abundance`
 - `load_file("neolabs_sample.csv")` → `df_file_neolabs_sample`
-- `query_ecotaxa(...)` / export → `df_ecotaxa`
-- `enrich_ecotaxa_with_ecopart_remote(...)` → `df_ecotaxa_ecopart`
 - `find_uvp_matches_for_net_table(...)` → `df_net_uvp_matches`
+- `join_net_uvp_enriched(...)` → `df_net_uvp_ecopart`
 
 All of these are automatically injected into every `run_pandas` call — no reload needed.
 
-## Bridge key between UVP and net
+## Guided preparation: audit → export → EcoPart → final join
 
-`df_net_uvp_matches` links:
-- `uvp_sample_id` (integer) ↔ `sample_id_internal` in the EcoTaxa DataFrame
-- `station` ↔ `STATION_NAME` in the NeoLabs abundance DataFrame
+1. If the user requests a filet subset, create it with `run_pandas` and an
+   explicit `persist_as`. Use the **exact persistent variable returned** in
+   `Persistence: persisted=true` for the audit. If the audit rejects a wrong
+   table name, read the **available persistent variables** from that blocked
+   result and **retry the audit with that exact name**; never guess a replacement.
+2. Run `find_uvp_matches_for_net_table` on that exact table. The export scope is
+   only the rows where `join_eligible=True` and
+   `ctd_filename_match_status="matched"`. If none exist, **stop before `export_ecotaxa_samples`**:
+   report that no certified comparison is possible,
+   keep the audit visible, and do not create an export plan.
+3. Reuse the **exact certified selection identifier returned by the audit**.
+   Call `export_ecotaxa_samples(confirmed=False)` for the project-by-project
+   dry-run. Wait for a new explicit user confirmation, then call the same
+   selection with `confirmed=True`. Never rebuild its sample IDs manually.
+4. On the consolidated multi-project EcoTaxa table, call
+   `enrich_ecotaxa_with_ecopart_remote(confirmed=False)`. Present the EcoPart
+   project-by-project plan, wait for a new explicit confirmation, then call
+   `confirmed=True`. Keep partial-project coverage visible.
+5. Call `join_net_uvp_enriched` with the exact persisted filet, audit, and
+   enriched-campaign variable names. This local tool is the only final bridge.
+   Continue calculations only from its canonical `df_net_uvp_ecopart` result.
 
-Always join through `df_net_uvp_matches` — never invent a spatial join directly.
+The two confirmations are distinct: EcoTaxa object export does not authorize
+the later EcoPart downloads.
 
 ## Non-negotiable validation gate
 
-`join_eligible=True` is the sole authorization for a filet↔UVP abundance
-comparison. It proves the net↔UVP position and time checks **and** a shared
-CTD-rosette file validated in Amundsen against its station, time, and
-coordinates. A `spatial_only`, `filename_candidate`, missing CTD evidence, or
-station-name resemblance remains an auditable candidate, never an analysis
-row. If no row is eligible, state that the comparison cannot be made; do not
-fall back to a station-, zone-, or spatial-only comparison.
+An audit row can authorize a filet↔UVP abundance comparison only when
+`join_eligible=True` and `ctd_filename_match_status="matched"`. This proves the
+net↔UVP position and time checks **and** a shared CTD-rosette file validated in
+Amundsen against its station, time, and coordinates. A `spatial_only`,
+`filename_candidate`, missing CTD evidence, or station-name resemblance remains
+an auditable candidate, never an export or analysis row. If no row is eligible,
+state that the comparison cannot be made; do not fall back to a station-, zone-,
+or spatial-only comparison.
 
 The certification call is filename-led and metadata-only. Retrieve `PRES` or
 other vertical CTD variables only after validation, when the user explicitly
@@ -79,7 +99,7 @@ from core.copepod_sample_depth import build_canonical_sample_depth
 #   "*"           → all organisms
 
 canonical = build_canonical_sample_depth(
-    df_ecotaxa_ecopart,                  # enriched EcoTaxa+EcoPart DataFrame
+    df_net_uvp_ecopart,                  # certified final object table
     taxon_filter="Calanus",              # ← user's choice
     volume_column="ecopart_Sampled volume [L]",
 )
@@ -126,37 +146,43 @@ net_density = neolabs_copepod_density(
 #                      stages_used, taxon_filter
 ```
 
-## Bridge and compare (run_pandas)
+## Compare from the canonical final table (run_pandas)
 
 ```python
 from core.net_uvp_comparison import compare_paired_density
 
-# Step 1: use only explicitly join-eligible matches, one row per deployment.
-# The table is expanded to individual net samples after a deployment-level match.
-# Do not use `spatial_only` or a `filename_candidate` for abundance comparisons.
-# `join_eligible=True` means net↔UVP position/time plus an Amundsen CTD file
-# validated by station, time, and coordinates. Stop if `matched` is empty.
-matched = (
-    df_net_uvp_matches[df_net_uvp_matches["join_eligible"]]
-    .drop_duplicates(subset=["net_deployment_id", "uvp_profile_str"])
+# The certified final table already carries the audited net/profile bridge.
+# Reduce it to one mapping row per profile before attaching calculated densities.
+certified_bridge = df_net_uvp_ecopart[
+    ["uvp_profile_str", "station", "join_eligible", "ctd_filename_match_status"]
+].drop_duplicates()
+
+if (
+    certified_bridge.empty
+    or not certified_bridge["join_eligible"].all()
+    or not certified_bridge["ctd_filename_match_status"].eq("matched").all()
+):
+    raise ValueError("Table finale non certifiée : comparaison non réalisable.")
+
+paired = (
+    certified_bridge
+    .merge(
+        net_density.rename(
+            columns={
+                "STATION_NAME": "station",
+                "copepod_density_ind_m3": "net_ind_m3",
+            }
+        ),
+        on="station",
+        how="inner",
+    )
+    .merge(
+        uvp_density.rename(columns={"abundance_ind_m3": "uvp_ind_m3"}),
+        on="uvp_profile_str",
+        how="inner",
+    )
 )
 
-if matched.empty:
-    raise ValueError("Aucune jointure filet↔UVP validée : comparaison non réalisable.")
-
-# Step 2: join net density
-paired = matched.merge(
-    net_density.rename(columns={"STATION_NAME": "station", "copepod_density_ind_m3": "net_ind_m3"}),
-    on="station", how="inner"
-)
-
-# Step 3: join UVP density (uvp_density already keyed on uvp_profile_str after strip)
-paired = paired.merge(
-    uvp_density.rename(columns={"abundance_ind_m3": "uvp_ind_m3"}),
-    on="uvp_profile_str", how="inner"
-)
-
-# Step 4: compare
 result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m3")
 # adds: abundance_delta_ind_m3, abundance_abs_delta_ind_m3,
 #       abundance_ratio (uvp/net), abundance_log2_ratio

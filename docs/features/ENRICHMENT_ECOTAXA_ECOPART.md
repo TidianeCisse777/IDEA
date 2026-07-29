@@ -13,6 +13,51 @@ Tests : `tests/test_ecopart_sources.py` (unitaires) ·
 
 ---
 
+## Parcours guidé filet → UVP certifié
+
+La comparaison filet↔UVP ajoute une porte de certification en amont des trois
+workflows EcoTaxa↔EcoPart :
+
+1. **Sous-sélection filet persistée** — si l'utilisateur restreint la table
+   (période, campagne, qualité), `run_pandas` persiste cette copie sous un nom
+   explicite. L'audit réutilise exactement le nom retourné. Si un mauvais nom
+   est fourni, le résultat bloqué liste les tables disponibles : l'agent reprend
+   le bon nom, sans revenir silencieusement au fichier complet.
+2. **Audit CTD** — `find_uvp_matches_for_net_table` vérifie position, temps et
+   fichier CTD-rosette contre les métadonnées Amundsen. Seules les lignes
+   `join_eligible=True` avec `ctd_filename_match_status="matched"` publient une
+   sélection UVP exportable. S'il n'en existe aucune, le parcours s'arrête :
+   aucun plan ni export EcoTaxa/EcoPart n'est lancé.
+3. **Export EcoTaxa confirmé** — l'identifiant exact de la sélection certifiée
+   alimente le dry-run multi-projets de `export_ecotaxa_samples`. Une nouvelle
+   confirmation explicite déclenche l'export et crée une table de campagne
+   consolidée portant `export_project_id`.
+4. **EcoPart confirmé, par projet** — la table de campagne alimente le dry-run
+   de `enrich_ecotaxa_with_ecopart_remote`. Une seconde confirmation explicite
+   déclenche chaque export EcoPart, joint chaque partition sur profil/profondeur,
+   puis consolide les projets réussis avec leur couverture.
+5. **Jointure locale certifiée** — `join_net_uvp_enriched` reçoit les noms exacts
+   de la table filet, de l'audit et de la campagne enrichie. La clé finale est
+   `(export_project_id, profil UVP)` ; aucune ligne `spatial_only` ne peut entrer
+   dans `df_net_uvp_ecopart`.
+6. **Analyses** — abondances, tableaux et graphiques partent uniquement de cette
+   table canonique finale et des constructeurs métriques existants. La jointure
+   ne crée aucune métrique ni interprétation scientifique.
+
+Les confirmations EcoTaxa et EcoPart sont indépendantes : accepter l'export
+d'objets n'autorise pas automatiquement les téléchargements EcoPart.
+
+### Scénario live attendu
+
+Pour une demande portant sur une sous-sélection filet, la trace doit montrer le
+nom dérivé persistant renvoyé par `run_pandas`. Si l'audit reçoit d'abord un nom
+erroné, son résultat bloqué doit citer les tables disponibles, puis l'appel
+suivant doit reprendre le nom exact. Enfin, si l'audit ne contient aucune ligne
+CTD certifiée, la trace se termine sur le constat de non-comparabilité : aucun
+appel d'export EcoTaxa ou EcoPart ne suit.
+
+---
+
 ## Les 3 workflows
 
 Tous convergent vers la **même jointure** `(sample_id, depth_bin)`. La seule
