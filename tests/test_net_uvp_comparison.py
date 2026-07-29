@@ -232,6 +232,27 @@ def test_certified_join_excludes_uncertified_audit_rows():
     ).empty
 
 
+def test_certified_join_excludes_serialized_false_audit_rows():
+    net = pd.DataFrame({"SAMPLE_ID": ["101"]})
+    audit = pd.DataFrame(
+        {
+            "net_sample_id": [101],
+            "uvp_sample_id": [10],
+            "uvp_project_id": [42],
+            "uvp_profile_str": ["profile-a"],
+            "join_eligible": ["False"],
+        }
+    )
+    enriched = pd.DataFrame(
+        {
+            "export_project_id": [42],
+            "sample_profileid": ["profile-a"],
+        }
+    )
+
+    assert join_certified_net_uvp_enriched(net, audit, enriched).empty
+
+
 def test_certified_join_prioritizes_explicit_export_profile_id():
     net = pd.DataFrame({"SAMPLE_ID": [101]})
     audit = pd.DataFrame(

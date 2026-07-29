@@ -251,6 +251,14 @@ def join_certified_net_uvp_enriched(
     def normalized_id(values: pd.Series) -> pd.Series:
         return values.astype("string").str.strip().replace("", pd.NA)
 
+    def explicitly_certified(value: object) -> bool:
+        """Accept only booleans or unambiguous serialized true values."""
+        if isinstance(value, (bool, np.bool_)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1"}
+        return False
+
     net_id_col = next(
         (column for column in ("SAMPLE_ID", "sample_id", "net_sample_id") if column in net_df.columns),
         None,
@@ -267,7 +275,7 @@ def join_certified_net_uvp_enriched(
     )
     require_columns(uvp_enriched_df, ("export_project_id",), "export UVP")
 
-    audit = audit_df.loc[audit_df["join_eligible"].fillna(False).astype(bool)].copy()
+    audit = audit_df.loc[audit_df["join_eligible"].map(explicitly_certified)].copy()
     if audit.empty:
         return net_df.iloc[0:0].copy()
     audit["_net_sample_key"] = normalized_id(audit["net_sample_id"])
