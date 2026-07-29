@@ -1227,9 +1227,11 @@ def make_amundsen_tools(thread_id: str) -> list:
         if attempted_rows and n_source_unavailable == attempted_rows:
             return _am_error(
                 "Amundsen ERDDAP est temporairement indisponible : les requêtes "
-                f"ont échoué pour {n_source_unavailable} ligne(s) source. Cette "
-                "erreur ne permet pas de conclure à l'absence de profils CTD ; "
-                "retenter plus tard.",
+                f"ont échoué pour {n_source_unavailable} ligne(s) source. Reçu : "
+                f"la table source ({n} lignes) et {queryable_points} référence(s) "
+                "CTD à interroger. Non reçu : aucun profil CTD ni aucune valeur "
+                "d'enrichissement n'a été ajoutée. Cette erreur ne permet pas de "
+                "conclure à l'absence de profils CTD ; retenter plus tard.",
                 retryable=True,
                 method="Amundsen ERDDAP availability check",
                 metrics={

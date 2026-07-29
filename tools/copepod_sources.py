@@ -959,15 +959,22 @@ def make_source_tools(thread_id: str) -> list:
             if exploratory_override:
                 lines += [
                     "",
-                    "⚠ CTD non vérifié : la dérogation confirmée conserve ces "
-                    "candidats comme exploratoires, jamais comme certifiés.",
+                    "⚠ Données CTD Amundsen indisponibles : les correspondances "
+                    "de position et de temps ci-dessus ont bien été reçues, mais "
+                    "ni le fichier CTD commun ni les variables CTD n'ont pu être "
+                    "vérifiés. La sélection reste donc provisoire (CTD non vérifié) et ne prouve pas "
+                    "l'absence de données CTD.",
                 ]
             else:
                 lines += [
                     "",
-                    "⚠ Validation CTD Amundsen indisponible : les candidats spatiaux/temporels ne peuvent pas "
-                    "être certifiés. Ce résultat ne permet pas de conclure à l'absence de correspondance UVP/CTD. "
-                    "Une confirmation explicite est requise avant toute dérogation exploratoire.",
+                    "⚠ Validation CTD Amundsen indisponible : les candidats "
+                    "spatiaux/temporels ci-dessus ont été reçus, avec leurs "
+                    "distances et écarts de temps, mais le fichier CTD commun et "
+                    "les variables CTD n'ont pas été reçus. Ce résultat ne permet "
+                    "pas de conclure à l'absence de correspondance UVP/CTD. "
+                    "Une confirmation explicite est requise avant de préparer un "
+                    "export provisoire non vérifié.",
                 ]
         elif n_matched == 0 and n_spatial > 0:
             lines += [
