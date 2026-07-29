@@ -326,6 +326,16 @@ def decide_tool_exposure(
         and "bio_oracle" in authorized
         and _bio_oracle_confirmation_plan_pending(messages)
     )
+    ecotaxa_export_confirmation_followup = bool(
+        turn_context.pending_ecotaxa_export and signals.confirmation_requested
+    )
+    ecotaxa_intents = tuple(
+        dict.fromkeys(
+            (*signals.ecotaxa_intents,)
+            if not ecotaxa_export_confirmation_followup
+            else (*signals.ecotaxa_intents, "ecotaxa_export")
+        )
+    )
     if has_active_table and (
         signals.enrichment_requested or bio_oracle_confirmation_followup
     ):
@@ -347,9 +357,12 @@ def decide_tool_exposure(
         ecotaxa_groups = ["ecotaxa_discovery"]
         if signals.geographic_requested:
             ecotaxa_groups.append("ecotaxa_geo_time")
-        ecotaxa_groups.extend(signals.ecotaxa_intents)
+        ecotaxa_groups.extend(ecotaxa_intents)
         groups.extend(ecotaxa_groups)
         reasons.append("authorized EcoTaxa intent")
+    elif ecotaxa_export_confirmation_followup and not focused_enrichment:
+        groups.append("ecotaxa_export")
+        reasons.append("pending EcoTaxa export confirmation")
     # Keep the dedicated comparison route visible from the wording itself. A
     # file may be present in the session capsule even when the active source
     # snapshot was replaced by a preceding EcoTaxa query.
@@ -368,7 +381,7 @@ def decide_tool_exposure(
                 "file_analysis" if signals.cross_source_compare_requested else "geography",
                 "geography", "visualization", "ecotaxa_discovery",
                 *geo_visual_fallback,
-                *signals.ecotaxa_intents,
+                *ecotaxa_intents,
             )
         elif "ecotaxa" in authorized:
             geo_fallback = ("ecotaxa_geo_time",) if signals.geographic_requested else ()
@@ -376,7 +389,7 @@ def decide_tool_exposure(
                 group for group in (
                     "core", "file_analysis", "geography", "ecotaxa_discovery",
                     *geo_fallback,
-                    *signals.ecotaxa_intents,
+                    *ecotaxa_intents,
                 )
                 if group in active_groups
             )
@@ -395,7 +408,7 @@ def decide_tool_exposure(
             fallback_limits["file_analysis"] = max(fallback_limits.get("file_analysis", 0), 2)
         if "ecotaxa_geo_time" in fallback_groups:
             fallback_limits["ecotaxa_geo_time"] = 2 if signals.multi_zone_requested else 1
-        for intent in signals.ecotaxa_intents:
+        for intent in ecotaxa_intents:
             fallback_limits[intent] = 4
         selected = _ordered_names(names, policies, fallback_groups, fallback_limits)
         # Hard guarantee: schema inspection tools must survive any overflow when

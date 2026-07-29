@@ -1061,7 +1061,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         )
 
     @tool(response_format="content_and_artifact")
-    def run_pandas(code: str) -> str:
+    def run_pandas(code: str, persist_as: str | None = None) -> str:
         """Exécute du code Python/pandas sur le(s) DataFrame(s) chargés.
 
         Variables disponibles selon ce qui a été chargé dans la session :
@@ -1094,6 +1094,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         afin qu'un tableau de contrôle préparé explicitement ne soit pas perdu.
         Pour une jointure : result = df_ecotaxa.merge(df_ctd, on='station_id', how='left')
 
+        Pour conserver explicitement n'importe quel sous-ensemble ou table
+        dérivée pour une étape suivante (enrichissement, graphique, export),
+        passe `persist_as="df_nom_explicite"`. La table `result` est alors
+        persistée exactement sous ce nom. Utilise ensuite ce même nom dans
+        `source_variable` de l'outil d'enrichissement ; ne réutilise pas le
+        fichier complet par défaut.
+
         IMPORTANT: each call to run_pandas is isolated — variables computed in a
         previous call (e.g. `station_stats`, `delta_df`) are NOT available in the
         next call. Exceptions persisted automatically and reusable by their exact
@@ -1106,6 +1113,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         Every DataFrame output states `Persistence: persisted=true|false`; never
         describe an ephemeral (`false`) result as saved.
         """
+        if persist_as is not None and not re.fullmatch(r"df_[A-Za-z][A-Za-z0-9_]*", persist_as):
+            return blocked(
+                "`persist_as` doit être un nom de table Python commençant par `df_` "
+                "(ex. `df_subset_28853`).",
+                retryable=False,
+                method="controlled pandas execution",
+            )
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
             return blocked("Aucun fichier chargé. Utilise load_file d'abord.")
@@ -1196,9 +1210,32 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             # intermediate (`joined`, `merged`, or `result_df`) while assigning
             # a compact summary dict to `result`. Persist that named table too;
             # otherwise the next turn cannot reuse the active joined file.
+            explicit_variable = None
+            if persist_as is not None:
+                if not isinstance(result, pd.DataFrame):
+                    return blocked(
+                        "`persist_as` exige que `result` soit un DataFrame.",
+                        retryable=True,
+                        method="controlled pandas execution",
+                    )
+                explicit_variable = persist_as
+                store_dataset(
+                    _store,
+                    thread_id,
+                    result,
+                    variable_name=explicit_variable,
+                    meta={
+                        "source": "analysis:explicit-derived",
+                        "n_rows": int(result.shape[0]),
+                        "n_cols": int(result.shape[1]),
+                        "description": f"Table explicitement persistée : {explicit_variable}",
+                    },
+                    latest_alias=explicit_variable,
+                )
+
             join_variable = None
             join_frame = None
-            if not canonical_note and _is_join_code(code):
+            if not canonical_note and not explicit_variable and _is_join_code(code):
                 preferred_join = next(
                     (
                         new_vars[name]
@@ -1232,7 +1269,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     )
 
             derived_variable = None
-            if not canonical_note and not join_variable and isinstance(result, pd.DataFrame):
+            if not canonical_note and not explicit_variable and not join_variable and isinstance(result, pd.DataFrame):
                 derived_name = _modified_source_variable(
                     result, local_vars, injected_keys, code
                 )
@@ -1306,7 +1343,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 persisted_variable = (
                     "df_canonical_sample_depth"
                     if canonical_note
-                    else (join_variable or derived_variable)
+                    else (explicit_variable or join_variable or derived_variable)
                 )
                 if persisted_variable:
                     persistence_contract = (
@@ -1318,6 +1355,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         "résultat éphémère à cet appel"
                     )
                 persistence_note = (
+                    f"\nVariable persistante : `{explicit_variable}` — table sélectionnée "
+                    "réutilisable dans les prochains tours."
+                    if explicit_variable
+                    else (
                     f"\nVariable persistante : `{join_variable}` — table jointe "
                     "réutilisable dans les prochains tours."
                     if join_variable
@@ -1326,6 +1367,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         "réutilisable dans les prochains tours."
                         if derived_variable
                         else ""
+                    )
                     )
                 )
                 attrs_note = ""

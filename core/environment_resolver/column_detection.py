@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Iterable
+import unicodedata
 
 DEFAULT_LAT_CANDIDATES: tuple[str, ...] = (
     "latitude",
@@ -47,11 +48,23 @@ DEFAULT_DEPTH_CANDIDATES: tuple[str, ...] = (
 )
 
 
+def normalize_column_name(value: object) -> str:
+    """Normalize a header without guessing its scientific meaning.
+
+    Case, accents and separators are presentation details: ``Sample ID``,
+    ``sample-id`` and ``SAMPLE.ID`` therefore represent the same header.
+    The result is only used to compare known aliases, never to infer a role
+    from a column's values.
+    """
+    decomposed = unicodedata.normalize("NFKD", str(value)).casefold()
+    return "".join(char for char in decomposed if char.isalnum())
+
+
 def detect_column(columns: Iterable, candidates: tuple[str, ...]) -> str | None:
-    """Return the first column from `columns` whose lowercased name matches a candidate."""
-    lower_to_real = {str(c).lower(): c for c in columns}
+    """Return the first candidate match, ignoring case, accents and separators."""
+    normalized_to_real = {normalize_column_name(column): column for column in columns}
     for candidate in candidates:
-        match = lower_to_real.get(candidate.lower())
+        match = normalized_to_real.get(normalize_column_name(candidate))
         if match is not None:
             return match
     return None

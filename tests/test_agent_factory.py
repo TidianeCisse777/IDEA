@@ -281,6 +281,16 @@ def test_system_prompt_mentions_sources():
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_system_prompt_requires_the_strict_net_uvp_match_route():
+    """A net↔UVP request cannot be answered by an ad-hoc spatial estimate."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "find_uvp_matches_for_net_table" in COPEPOD_SYSTEM_PROMPT
+    assert "Never estimate a correspondence" in COPEPOD_SYSTEM_PROMPT
+    assert "join_eligible=True" in COPEPOD_SYSTEM_PROMPT
+    assert "date_from" in COPEPOD_SYSTEM_PROMPT
+
+
 def test_system_prompt_prioritizes_current_explicit_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -1021,6 +1031,19 @@ def test_system_prompt_mentions_graph_explanation():
     assert "lecture rapide" in prompt
 
 
+def test_system_prompt_keeps_general_questions_out_of_data_report_format():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "A documentation, RAG, definition, greeting, or general explanation is not a data result." in COPEPOD_SYSTEM_PROMPT
+    assert "Never add Résultat/Données/Méthode/Limite to those answers." in COPEPOD_SYSTEM_PROMPT
+
+
+def test_system_prompt_requires_bold_labels_for_graph_result_blocks():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "`**Résultat** — …`, `**Données** — …`, `**Méthode** — …`, and `**Limite** — …`" in COPEPOD_SYSTEM_PROMPT
+
+
 def test_system_prompt_forbids_bare_df_for_multi_source_graphs():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -1063,6 +1086,38 @@ def test_graph_writer_supports_standalone_named_zone_maps():
     assert "never plot directly from bare `df`" in writer
     assert "bbox = {\"south\"" in writer
     assert "ccrs.lambertconformal" in writer
+
+
+def test_graph_writer_uses_station_id_as_the_default_map_label():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    assert "`station_id` is the default map label" in writer
+    assert "`original_id` or `sample_id` only when the user explicitly requests it" in writer
+    assert "Never use `ccrs.PlateCarree()._as_mpl_transform(ax)`" in writer
+
+
+def test_graph_writer_preserves_station_labels_and_uses_real_size_counts():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    assert "Do not suppress station labels based only on their count" in writer
+    assert "Size-legend labels must be exact `n_samples` counts" in writer
+    assert "Never use `pts.legend_elements(prop=\"sizes\")`" in writer
+
+
+def test_graph_writer_treats_user_framing_as_the_graph_contract():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    assert "The user's scientific question and requested framing are binding" in writer
+    assert "make the requested state of the data visible" in writer
+
+
+def test_ecotaxa_object_requests_escalate_from_cache_selection_to_export():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    navigation = Path("agents/skills/ecotaxa_navigation.md").read_text(encoding="utf-8")
+
+    assert "object-grain values" in COPEPOD_SYSTEM_PROMPT
+    assert "propose an export of that exact selection" in navigation
 
 
 def test_biodiversity_graph_plan_is_frozen_in_docs():

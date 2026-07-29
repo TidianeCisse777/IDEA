@@ -44,7 +44,14 @@ def _registry() -> Registry:
 
 
 def _normalise(text: str) -> str:
-    return re.sub(r"[''`]", "'", text.lower().strip())
+    """Normalize apostrophes so French geographic aliases stay equivalent."""
+    apostrophes = str.maketrans({
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u02bc": "'",
+        "`": "'",
+    })
+    return text.translate(apostrophes).lower().strip()
 
 
 def _match_canonical(zone_name: str) -> str | None:

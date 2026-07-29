@@ -1045,6 +1045,22 @@ def _remove_graph_markdown_images(text: str, urls: set[str]) -> str:
     return re.sub(r"\n{3,}", "\n\n", deduped).strip()
 
 
+def _append_generated_graph_images(text: str, messages: list) -> str:
+    """Keep graph artifacts visible for non-streaming OpenAI clients too."""
+    seen_urls = _graph_image_urls(text)
+    images: list[str] = []
+    for message in messages:
+        if getattr(message, "name", None) != "run_graph":
+            continue
+        hosted = _extract_and_host_images(str(getattr(message, "content", "") or ""))
+        for match in re.finditer(r"!\[[^\]]*\]\(([^\)]*/graphs/[^\)]*\.png)\)", hosted):
+            url = match.group(1)
+            if url not in seen_urls:
+                seen_urls.add(url)
+                images.append(match.group(0))
+    return f"{text.rstrip()}\n\n{'\n\n'.join(images)}" if images else text
+
+
 async def _stream_agent_sse(
     agent,
     messages: dict,
@@ -1421,7 +1437,10 @@ async def chat_completions(
 
     await _flush_tracers()
 
-    text = _extract_and_host_images(result["messages"][-1].content)
+    text = _append_generated_graph_images(
+        _extract_and_host_images(result["messages"][-1].content),
+        result.get("messages", []),
+    )
 
     # Usage du dernier AIMessage uniquement (pas l'historique entier)
     prompt_tokens = completion_tokens = cached_tokens = 0

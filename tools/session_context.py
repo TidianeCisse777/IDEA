@@ -12,7 +12,9 @@ from core.environment_resolver.column_detection import (
     DEFAULT_LAT_CANDIDATES,
     DEFAULT_LON_CANDIDATES,
     DEFAULT_TIME_CANDIDATES,
+    DEFAULT_TIME_END_CANDIDATES,
     detect_column,
+    normalize_column_name,
 )
 from tools.session_store import SessionStore
 
@@ -63,33 +65,148 @@ def _present_columns(columns: Iterable[object]) -> list[str]:
     return [column for column in _IDENTITY_COLUMNS if column in available]
 
 
-_MAX_ALL_COLUMNS = 50
+# The always-injected dataset capsule must stay a compact orientation aid.
+# The complete schema remains in the persisted DataFrame for targeted inspection.
+_MAX_ALL_COLUMNS = 24
+
+# The model should encounter the columns in the same order a scientist uses to
+# scope an analysis: first the observation/key, then when and where it was
+# taken, then its depth and measurements.  Keep this list narrow and stable;
+# unknown columns fall into the measure/category groups below.
+_IDENTIFIER_PRIORITY = (
+    "project_id",
+    "project",
+    "campaign_id",
+    "campaign",
+    "cruise_id",
+    "cruise",
+    "deployment_id",
+    "deployment",
+    "net_id",
+    "net",
+    "cast_id",
+    "cast",
+    "profile_id",
+    "profile",
+    "sample_id",
+    "sample",
+    "analysis_id",
+    "analysis",
+    "object_id",
+    "object",
+    "original_id",
+    "station_id",
+    "station_name",
+    "station",
+)
+
+_TAXONOMY_PRIORITY = (
+    "taxon",
+    "taxon_name",
+    "scientific_name",
+    "object_annotation_category",
+    "category",
+    "taxonomy",
+    "phylum",
+    "class",
+    "order",
+    "family",
+    "genus",
+    "species",
+    "stage",
+    "life_stage",
+)
+
+_ABUNDANCE_MARKERS = (
+    "abund",
+    "biomass",
+    "density",
+    "concentration",
+    "objectcount",
+    "nobject",
+    "count",
+)
 
 
 def _prioritized_columns(
     dataframe: "pd.DataFrame",
     env_detected: dict[str, str | None],
 ) -> str:
-    """Return a comma-separated column list ordered by graphing relevance.
+    """Return columns in scientific-scoping order, truncated safely.
 
-    Priority: (1) env-detected columns, (2) other numeric columns,
-    (3) categorical columns, truncated at _MAX_ALL_COLUMNS with '(+N more)'.
+    Priority: identifiers/join keys, time, position, depth, taxonomy,
+    abundance/biomass measures, other numeric measures, then remaining
+    categories. This makes the compact context useful before the model has
+    inspected rows, while preserving every available column in the underlying
+    DataFrame for a subsequent targeted inspection.
     """
     import pandas as pd
 
-    env_cols = [c for c in env_detected.values() if c]
-    env_set = set(env_cols)
+    columns = list(dataframe.columns)
+    normalized_to_real = {normalize_column_name(column): column for column in columns}
 
-    numeric_others = [
-        c for c in dataframe.select_dtypes(include="number").columns
-        if c not in env_set
+    def candidates(names: tuple[str, ...]) -> list[object]:
+        return [
+            normalized_to_real[normalize_column_name(name)]
+            for name in names
+            if normalize_column_name(name) in normalized_to_real
+        ]
+
+    identifiers = candidates(_IDENTIFIER_PRIORITY)
+    identifier_set = set(identifiers)
+    # Keep unfamiliar `*_id` keys early as well, without promoting generic
+    # categorical names such as `taxon_id` above the canonical observation IDs.
+    identifiers.extend(
+        column
+        for column in columns
+        if column not in identifier_set
+        and (str(column).lower().endswith("_id") or str(column).lower() == "id")
+    )
+
+    time_cols = candidates((*DEFAULT_TIME_CANDIDATES, *DEFAULT_TIME_END_CANDIDATES))
+    position_cols = candidates((*DEFAULT_LAT_CANDIDATES, *DEFAULT_LON_CANDIDATES))
+    depth_cols = candidates(DEFAULT_DEPTH_CANDIDATES)
+    taxonomy_cols = candidates(_TAXONOMY_PRIORITY)
+
+    priority_sets = (
+        set(identifiers)
+        | set(time_cols)
+        | set(position_cols)
+        | set(depth_cols)
+        | set(taxonomy_cols)
+    )
+
+    other_numeric_measures = [
+        column
+        for column in dataframe.select_dtypes(include="number").columns
+        if column not in priority_sets
     ]
-    categorical = [
-        c for c in dataframe.columns
-        if c not in env_set and c not in numeric_others
+    abundance_measures = [
+        column
+        for column in other_numeric_measures
+        if any(marker in normalize_column_name(column) for marker in _ABUNDANCE_MARKERS)
+    ]
+    numeric_measures = [
+        column for column in other_numeric_measures if column not in abundance_measures
+    ]
+    categories = [
+        column
+        for column in columns
+        if column not in priority_sets
+        and column not in abundance_measures
+        and column not in numeric_measures
     ]
 
-    ordered = [*env_cols, *numeric_others, *categorical]
+    ordered = [
+        *identifiers,
+        *time_cols,
+        *position_cols,
+        *depth_cols,
+        *taxonomy_cols,
+        *abundance_measures,
+        *numeric_measures,
+        *categories,
+    ]
     total = len(ordered)
     shown = ordered[:_MAX_ALL_COLUMNS]
     suffix = f",(+{total - len(shown)} more)" if total > len(shown) else ""

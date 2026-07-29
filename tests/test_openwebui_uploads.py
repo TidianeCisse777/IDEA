@@ -227,3 +227,46 @@ def test_default_webui_container_matches_docker_compose():
         f"container_name={match.group(1)!r}. docker exec va échouer silencieusement "
         "et les uploads ne seront jamais visibles par l'agent."
     )
+
+
+def test_resolve_chat_files_persists_and_deduplicates_two_files(tmp_path, monkeypatch):
+    """Deux fichiers ne doivent pas faire échouer le SessionStore avant le LLM."""
+    from tools import openwebui_uploads
+    from tools.session_store import SessionStore
+
+    files = [
+        {
+            "id": "sample-id",
+            "filename": "sample.csv",
+            "path": "/app/backend/data/uploads/sample-id_sample.csv",
+            "content_type": "text/csv",
+        },
+        {
+            "id": "abundance-id",
+            "filename": "abundance.csv",
+            "path": "/app/backend/data/uploads/abundance-id_abundance.csv",
+            "content_type": "text/csv",
+        },
+    ]
+    monkeypatch.setattr(openwebui_uploads, "_get_chat_files_from_db", lambda *args, **kwargs: files)
+
+    def fake_copy(_source: str, destination: Path, **_kwargs) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("a,b\n1,2\n", encoding="utf-8")
+
+    monkeypatch.setattr(openwebui_uploads, "_copy_from_webui_container", fake_copy)
+    store = SessionStore(tmp_path / "sessions")
+
+    text, image_parts = openwebui_uploads.resolve_chat_files(
+        "chat-id", thread_id="thread-id", uploads_dir=tmp_path / "uploads", store=store
+    )
+    repeated_text, repeated_images = openwebui_uploads.resolve_chat_files(
+        "chat-id", thread_id="thread-id", uploads_dir=tmp_path / "uploads", store=store
+    )
+
+    assert "sample.csv" in text and "abundance.csv" in text
+    assert image_parts == []
+    assert repeated_text == ""
+    assert repeated_images == []
+    persisted = store.get("thread-id:owui_injected_files")
+    assert set(persisted["meta"]["file_ids"]) == {"sample-id", "abundance-id"}

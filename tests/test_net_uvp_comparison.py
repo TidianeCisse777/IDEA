@@ -34,8 +34,8 @@ def _uvp():
             "instrument": ["UVP5SD", "UVP5SD"],
             "station_id": ["S1", "S2"],
             "profile_id": ["cruise_s1_1", "cruise_s2_1"],
-            "lat_avg": [67.5, 10.0],  # sample 2 loin de tout
-            "lon_avg": [-63.8, 10.0],
+            "lat_avg": [67.5, 60.0],
+            "lon_avg": [-63.8, -60.0],
             "date_min": ["2015-06-03", "2015-06-03"],
         }
     )
@@ -47,13 +47,14 @@ def test_haversine_zero_and_known_distance():
     assert float(haversine_km(0.0, 0.0, 1.0, 0.0)) == pytest.approx(111.19, abs=0.5)
 
 
-def test_matches_by_station_name():
+def test_matches_by_spatiotemporal_proximity():
     out = match_net_to_uvp(_net(), _uvp(), max_days=None)
     assert list(out["net_sample_id"]) == [101, 102]
-    assert list(out["match_method"]) == ["station_name", "station_name"]
+    assert list(out["match_method"]) == ["deployment_spatiotemporal", "deployment_spatiotemporal"]
     assert out.iloc[0]["uvp_sample_id"] == 1
     assert out.iloc[0]["uvp_profile_str"] == "cruise_s1_1"
     assert out.iloc[0]["match_status"] == "matched"
+    assert out["join_eligible"].all()
     assert out.iloc[0]["method_version"] == NET_UVP_MATCH_METHOD_VERSION
 
 
@@ -88,7 +89,50 @@ def test_temporal_gap_flags_spatial_only():
     uvp = _uvp().assign(date_min=["2024-06-01", "2024-06-01"])
     out = match_net_to_uvp(net, uvp, max_days=60)
     assert list(out["match_status"]) == ["spatial_only", "spatial_only"]
+    assert not out["join_eligible"].any()
     assert out.iloc[0]["time_gap_days"] > 3000
+
+
+def test_matches_once_per_deployment_then_expands_to_net_samples():
+    net = pd.DataFrame(
+        {
+            "SAMPLE_ID": [101, 102],
+            "DEPLOYMENT_ID": [7, 7],
+            "STATION_NAME": ["Filet-7", "Filet-7"],
+            "latitude": [67.5, 67.5],
+            "longitude": [-63.8, -63.8],
+            "deployment_datetime_start": ["2015-06-01", "2015-06-01"],
+        }
+    )
+    uvp = pd.DataFrame(
+        {
+            "sample_id": [10, 20],
+            "project_id": [42, 42],
+            "instrument": ["UVP5SD", "UVP5SD"],
+            # Names deliberately differ: station text is evidence, not a filter.
+            "station_id": ["Different-name", "Filet-7"],
+            "profile_id": ["p_close_date", "p_old_date"],
+            "lat_avg": [67.51, 67.5001],
+            "lon_avg": [-63.8, -63.8],
+            "date_min": ["2015-06-02", "2010-01-01"],
+        }
+    )
+    out = match_net_to_uvp(
+        net, uvp, max_km=50, max_days=2, net_deployment_col="DEPLOYMENT_ID"
+    )
+    assert list(out["net_sample_id"]) == [101, 102]
+    assert out["net_deployment_id"].eq("7").all()
+    assert out["uvp_sample_id"].eq(10).all()
+    assert not out["station_name_match"].any()
+    assert out["join_eligible"].all()
+
+
+def test_missing_uvp_dates_stays_spatial_only_and_is_not_join_eligible():
+    uvp = _uvp().assign(date_min=[None, None])
+    out = match_net_to_uvp(_net(), uvp, max_days=2)
+    assert len(out) == 2
+    assert out["match_status"].eq("spatial_only").all()
+    assert not out["join_eligible"].any()
 
 
 def test_rejects_missing_net_columns():

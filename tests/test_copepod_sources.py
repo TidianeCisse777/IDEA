@@ -1334,6 +1334,15 @@ def test_bulk_export_persists_a_consolidated_campaign_table_for_analysis(seeded_
     assert _store.get(f"{thread_id}:dataset:df_ecotaxa_14853_bulk_14853000001_14853000002")["df"].equals(project_14853)
     assert _store.get(f"{thread_id}:dataset:df_ecotaxa_2331_bulk_2331000001")["df"].equals(project_2331)
     assert campaign_variable in result
+    assert "## Colonnes de l'export" not in result
+
+    from tools.session_context import build_dataset_state_capsule
+
+    capsule = build_dataset_state_capsule(_store, thread_id)
+    assert "shape=3x3" in capsule
+    assert "object_id" in capsule
+    assert "sample_id" in capsule
+    assert "export_project_id" in capsule
 
 
 # ── SLICE 4 GATE ──────────────────────────────────────────────────────────────
@@ -1881,6 +1890,103 @@ def test_query_ecotaxa_cache_persists_select_as_dataframe(tmp_path, monkeypatch)
     assert "station_id" in result
     assert session["meta"]["variable_name"] == "df_ecotaxa_cache_query"
     assert session["df"].to_dict("records") == [{"station_id": "ST-1", "n": 1}]
+
+
+def test_net_uvp_match_tool_requires_explicit_call_and_matches_by_deployment(tmp_path, monkeypatch):
+    """The matching tool is opt-in and persists only time-compatible joins."""
+    import sqlite3
+
+    import tools.copepod_sources as source_module
+    from core.ecotaxa_browser.cache.repo import init_schema
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO samples_cache "
+        "(sample_id, project_id, station_id, profile_id, cruise_id, ctd_rosette_filename, instrument, "
+        "lat_avg, lon_avg, date_min, datetime_min, last_synced) "
+        "VALUES (1, 10, 'cache-name', 'uvp_profile', 'amundsen2024', '062', 'UVP5SD', "
+        "67.5, -63.8, '2024-06-02', '2024-06-02T00:00:00', 'test')"
+    )
+    conn.commit()
+    conn.close()
+
+    thread_id = "net-uvp-thread"
+    store = SessionStore(tmp_path / "sessions")
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "Sample ID": [101, 102, 103],
+                "Deployment ID": [7, 7, 6],
+                "Station Name": ["file-name", "file-name", "file-name"],
+                "Latitude": [67.5, 67.5, 67.5],
+                "Longitude": [-63.8, -63.8, -63.8],
+                "Deployment Datetime Start": ["2024-06-01", "2024-06-01", "2022-06-01"],
+            }
+        ),
+        variable_name="df_file_net",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+    monkeypatch.setattr(source_module, "_store", store)
+    import tools.amundsen_sources as amundsen_module
+    metadata_call = {}
+
+    def fake_fetch_ctd_metadata(**kwargs):
+        metadata_call.update(kwargs)
+        return pd.DataFrame({
+            "filename": ["2406_062.int.nc"],
+            "station": ["cache-name"],
+            "cast_number": [62],
+            "latitude": [67.5],
+            "longitude": [-63.8],
+            "time": ["2024-06-02T00:00:00Z"],
+        })
+
+    monkeypatch.setattr(
+        amundsen_module,
+        "_fetch_amundsen_ctd_metadata_by_filename",
+        fake_fetch_ctd_metadata,
+        raising=False,
+    )
+
+    tool = next(
+        item for item in source_module.make_source_tools(thread_id)
+        if item.name == "find_uvp_matches_for_net_table"
+    )
+    result = tool.invoke({"date_from": "2023-01-01"})
+
+    assert "1 `matched`" in result
+    matches = store.get(f"{thread_id}:dataset:df_net_uvp_matches")["df"]
+    assert matches["net_sample_id"].tolist() == [101, 102]
+    assert matches["net_deployment_id"].eq("7").all()
+    assert matches["uvp_sample_id"].eq(1).all()
+    assert matches["join_eligible"].all()
+    assert matches["match_status"].eq("matched").all()
+    assert matches["ctd_filename_match_status"].eq("matched").all()
+    assert "62" in metadata_call["filename_aliases"]
+
+    def unavailable_ctd_metadata(**_kwargs):
+        raise TimeoutError("Amundsen indisponible")
+
+    monkeypatch.setattr(
+        amundsen_module,
+        "_fetch_amundsen_ctd_metadata_by_filename",
+        unavailable_ctd_metadata,
+        raising=False,
+    )
+    unavailable_result = tool.invoke({"date_from": "2023-01-01"})
+    unavailable_matches = store.get(f"{thread_id}:dataset:df_net_uvp_matches")["df"]
+    assert "Validation CTD Amundsen indisponible" in unavailable_result
+    assert "Aucune paire synchrone" not in unavailable_result
+    assert unavailable_matches["ctd_filename_match_status"].eq("source_unavailable").all()
+    assert not unavailable_matches["join_eligible"].any()
 
 
 def test_ecotaxa_cache_map_is_complete_and_does_not_migrate_file(

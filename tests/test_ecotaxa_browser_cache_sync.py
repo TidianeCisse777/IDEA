@@ -120,11 +120,37 @@ def test_sample_sync_preserves_direct_free_fields_and_exact_ids():
     assert client.get_sample.call_args_list == [((149000128,),)]
     assert rows[149000128]["profile_id"] == "hdr20160630002943"
     assert rows[149000128]["station_id"] == "g502"
+    assert rows[149000128]["ctd_rosette_filename"] == "1601119"
     assert json.loads(rows[149000128]["free_fields_json"]) == {
         "profileid": "hdr20160630002943",
         "stationid": "g502",
         "ctdrosettefilename": "1601119",
     }
+
+
+def test_sample_sync_extracts_ctd_link_and_sample_datetime():
+    """The cache keeps the exact CTD provenance needed for UVP joins."""
+    from core.ecotaxa_browser.cache.sync import _fetch_project_sample_metadata
+
+    client = MagicMock()
+    client.list_samples.return_value = [{
+        "sampleid": 10101000001,
+        "orig_id": "amundsen2023_324_1",
+        "latitude": 70.0,
+        "longitude": -57.0,
+    }]
+    client.get_sample.return_value = {"free_columns": {
+        "cruise": "amundsen2023",
+        "stationid": "324",
+        "ctdrosettefilename": "062",
+        "sampledatetime": "20230902-082825",
+    }}
+
+    row = _fetch_project_sample_metadata(client, project_id=10101)[10101000001]
+    assert row["cruise_id"] == "amundsen2023"
+    assert row["ctd_rosette_filename"] == "062"
+    assert row["sample_date"] == "2023-09-02"
+    assert row["sample_time"] == "08:28:25"
 
 
 def test_sync_one_project_aggregates_lat_lon_date_per_sample(conn):

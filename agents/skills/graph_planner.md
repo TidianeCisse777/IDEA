@@ -25,6 +25,11 @@ You must plan a graph before writing any code.
   failure and do not claim that a figure exists.
 - Plan only from the explicitly selected source variable. Never switch sources
   or transcribe values to make a graph possible.
+- An EcoTaxa cache selection contains sample metadata, not object-grain values.
+  When the requested profile, depth band, taxon abundance, morphology, score,
+  or analysis requires object values, do not plan or render it from a cache-only table.
+  Resolve the exact selection and propose its export; only plan after its
+  confirmed export supplies the required values.
 - Planner and writer are sequential tool steps. Never request this skill and
   `graph_writer` in the same tool-call batch; wait for this result first.
 
@@ -108,9 +113,18 @@ Recommended `sample_df` contents:
    title/labels/units/legend, and no decorative overlays. For a map, keep the
    data-focused extent; add a locator inset only when broader geography is
    necessary to understand the result.
-1. Identify the relevant columns in the loaded file using `all_columns` from `ACTIVE DATASET STATE` as the authoritative source of available column names.
+1. Use `all_columns` as a compact priority schema. If a requested field is not listed,
+   inspect persisted `df.columns` with `run_pandas`; do not call it unavailable.
 
-**Step 1b — Column disambiguation**: before proceeding, check whether the user's request (e.g. "abondance", "température", "profondeur") maps to more than one column in `all_columns`. If multiple candidates exist, list them explicitly and ask the user which one to use. Never select a column silently when ambiguity exists.
+**Step 1a — Intent framing**: Before selecting a chart, check whether the
+scientific question, measure, comparison/grouping, and scope are clear. Ask at
+most one consolidated scoping question when a material choice is missing; offer
+the realistic options together and do not ask about cosmetic details. After the
+answer, render with that choice rather than asking again. A second question is
+allowed only when inspection proves that the chosen columns or rows cannot make
+the requested graph.
+
+**Step 1b — Column disambiguation**: before proceeding, check whether the user's request (e.g. "abondance", "température", "profondeur") maps to more than one visible candidate in `all_columns` or in the targeted inspection. If multiple candidates exist, list them explicitly and ask the user which one to use. Never select a column silently when ambiguity exists.
 
 **Step 1c — Candidate inspection**: **Direct EcoTaxa cache map first:** if the successful exact cache query uses only `sample_id`, `iho_zone`, `lat_avg`, and `lon_avg`, it is the inspection — use the already-active graph workflow directly and never call `run_pandas` merely to recheck those fields. **Otherwise**, inspect the active table with `run_pandas`. Inspect each candidate's dtype, NaN/non-null counts, numeric range or categorical `.nunique()` plus sample, and rows complete across all required columns. Plan and render only compatible columns with at least one complete row. If a column is >80 % NaN, has the wrong dtype, or leaves no complete row, state the issue and ask; never silently replace a column.
 

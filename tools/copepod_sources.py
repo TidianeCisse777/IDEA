@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import unicodedata
@@ -47,6 +48,7 @@ from core.ecotaxa_browser.cache.repo import (
 )
 from core.ecotaxa_browser.cache import sql_explorer as _sql_explorer
 from core.geo import audit_zone_coverage, load_registry
+from core.environment_resolver.column_detection import detect_column
 
 _ZONES_REGISTRY_PATH = (
     Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
@@ -65,6 +67,8 @@ from tools.tool_result import blocked, empty, error, success, validate_tool_arti
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
+
+_LOGGER = logging.getLogger(__name__)
 
 _ECOTAXA_UI_BASE = "https://ecotaxa.obs-vlfr.fr"
 
@@ -479,40 +483,32 @@ def make_source_tools(thread_id: str) -> list:
         latitude_column: str | None = None,
         longitude_column: str | None = None,
         time_column: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
         max_distance_km: float = 50.0,
         max_time_gap_days: float | None = 2.0,
     ) -> str:
-        """Vérifie quels samples UVP EcoTaxa correspondent au fichier de filet chargé, SANS enrichir.
+        """Cherche à la demande les correspondances filet ↔ UVP dans le cache EcoTaxa.
 
-        À utiliser sur une question de DISPONIBILITÉ, avant toute comparaison
-        filet↔UVP — « est-ce qu'il existe des samples UVP dans EcoTaxa qui
-        correspondent à mes données de filet ? », « prends dans EcoTaxa les
-        samples qui correspondent à ce filet », « peut-on comparer l'abondance
-        filet et UVP sur ces stations ? ». Lecture seule : lit le fichier de
-        filet chargé (déploiements NeoLabs), calcule pour chaque déploiement le
-        sample UVP EcoTaxa le plus proche dans le cache (haversine < `max_distance_km`),
-        et expose l'écart temporel (`time_gap_days`). Le rapprochement est
-        SPATIAL (stations de monitoring revisitées) : si l'écart temporel dépasse
-        `max_time_gap_days`, le statut passe à `spatial_only` (même station,
-        campagnes d'années différentes) au lieu d'être masqué. Ne télécharge ni ne
-        calcule aucune abondance UVP. Persiste la table de correspondance
-        `df_net_uvp_matches`. Si des correspondances existent, router ensuite vers
-        `load_skill("net_uvp_abundance_comparison")` pour calculer et comparer les
-        deux abondances ; sinon dire clairement qu'aucun sample UVP ne recouvre la
-        zone du filet.
+        Utiliser seulement si l'utilisateur demande explicitement une recherche ou
+        une comparaison UVP/EcoTaxa pour un fichier de filet. Ne jamais l'appeler
+        automatiquement au chargement du fichier. Lecture seule : pour chaque
+        déploiement, sélectionne un sample UVP dans le rayon demandé puis vérifie
+        l'écart temporel et le fichier CTD-rosette commun avec les métadonnées
+        Amundsen. Le nom de station sert de diagnostic et de départage, jamais de
+        filtre bloquant. Un résultat `matched` est spatialement et temporellement
+        compatible, avec le CTD commun vérifié, et peut être joint; tout autre
+        statut reste auditable, sans droit de jointure d'abondance.
 
         `net_variable_name` : nom de la variable en session à utiliser comme table
         de filet (ex. `df_file_neolabs_sample`). Si absent, utilise le dernier
         fichier chargé. Utile quand plusieurs fichiers sont en session.
+
+        `date_from` / `date_to` : bornes ISO facultatives. Quand l'utilisateur
+        demande une période, les passer ici : la vérification ignore alors toutes
+        les lignes filet hors période.
         """
         from core.net_uvp_comparison import match_net_to_uvp
-
-        def _detect(cols, candidates):
-            lower = {str(c).strip().lower(): c for c in cols}
-            for cand in candidates:
-                if cand in lower:
-                    return lower[cand]
-            return None
 
         # Résolution du dataset : par nom explicite ou fichier actif.
         if net_variable_name:
@@ -551,84 +547,72 @@ def make_source_tools(thread_id: str) -> list:
                 )
         net_df = loaded["df"].copy()
 
-        lat_col = latitude_column or _detect(net_df.columns, ("latitude", "lat", "lat_avg"))
-        lon_col = longitude_column or _detect(net_df.columns, ("longitude", "lon", "lon_avg", "long"))
-        time_col = time_column or _detect(
+        lat_col = latitude_column or detect_column(net_df.columns, ("latitude", "lat", "lat_avg", "sample_lat"))
+        lon_col = longitude_column or detect_column(net_df.columns, ("longitude", "lon", "lon_avg", "long", "sample_lon"))
+        time_col = time_column or detect_column(
             net_df.columns,
-            ("deployment_datetime_start", "deployment_date_start", "date", "datetime"),
+            ("deployment_datetime_start", "deployment_date_start", "sample_datetime", "date", "datetime", "sample_date"),
         )
-        # Clé de dédup = station + date — pas sample_id.
-        id_col = _detect(
+        if date_from or date_to:
+            if not time_col:
+                return _eco_blocked(
+                    "Filtre temporel demandé, mais aucune colonne de date/heure exploitable dans le fichier filet.",
+                    retryable=False,
+                )
+            timestamps = pd.to_datetime(net_df[time_col], errors="coerce", utc=True)
+            keep = timestamps.notna()
+            if date_from:
+                start = pd.to_datetime(date_from, errors="coerce", utc=True)
+                if pd.isna(start):
+                    return _eco_blocked(
+                        f"Borne `date_from` invalide : {date_from!r}. Utilisez une date ISO, par exemple `2023-01-01`.",
+                        retryable=False,
+                    )
+                keep &= timestamps >= start
+            if date_to:
+                end = pd.to_datetime(date_to, errors="coerce", utc=True)
+                if pd.isna(end):
+                    return _eco_blocked(
+                        f"Borne `date_to` invalide : {date_to!r}. Utilisez une date ISO, par exemple `2023-12-31`.",
+                        retryable=False,
+                    )
+                keep &= timestamps <= end
+            net_df = net_df.loc[keep].copy()
+            if net_df.empty:
+                return _eco_empty("Aucune ligne filet dans la période demandée.")
+        id_col = detect_column(
             net_df.columns,
-            ("station_name", "station", "station_id", "sample_id", "deployment_id"),
+            ("sample_id", "net_sampling_id", "net_sampling_ids", "analysis_id"),
         ) or net_df.columns[0]
-        station_col = _detect(
+        station_col = detect_column(
             net_df.columns,
             ("station_name", "station", "station_id"),
         )
-        # lat/lon optionnels : utiles pour la distance_km en sortie, pas pour le
-        # lookup principal (station_id + date sont la clé fiable quand le GPS varie).
-        lat = pd.to_numeric(net_df[lat_col], errors="coerce") if lat_col else None
-        lon = pd.to_numeric(net_df[lon_col], errors="coerce") if lon_col else None
-
-        # Lookup principal : station_id normalisés extraits du fichier filet.
-        # La lat/lon n'est PAS utilisée comme filtre SQL — un GPS qui dérive d'une
-        # campagne à l'autre sortirait sinon de la bbox et serait silencieusement exclu.
-        from core.net_uvp_comparison import _normalize_station
-
-        net_station_key = station_col or id_col
-        raw_stations = net_df[net_station_key].dropna().astype(str).unique().tolist()
-        norm_to_raw: dict[str, str] = {}
-        for s in raw_stations:
-            norm = _normalize_station(s)
-            if norm:
-                norm_to_raw[norm] = s  # garde la forme brute pour le diagnostic
+        deployment_col = detect_column(
+            net_df.columns, ("deployment_id", "deployment", "deploymentid")
+        )
+        cast_col = detect_column(net_df.columns, ("cast_number", "cast_id", "cast"))
+        if not lat_col or not lon_col:
+            return _eco_blocked(
+                "Vérification filet↔UVP impossible : aucune paire de colonnes latitude/longitude exploitable dans le fichier chargé.",
+                retryable=False,
+            )
+        n_deployments = (
+            int(net_df[deployment_col].dropna().nunique())
+            if deployment_col
+            else int(net_df[id_col].dropna().nunique())
+        )
 
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
         conn = None
         try:
-            conn = open_connection(cache_db)
-            init_schema(conn)
-            if norm_to_raw:
-                # Requête par station_id : le cache stocke déjà les noms courts
-                # normalisés (ex. "l2", "tcaqf3") — on les compare après
-                # normalisation Python pour tolérer les variations de casse/tirets.
-                # On charge d'abord tous les UVP et on filtre en Python pour que
-                # _normalize_station s'applique des deux côtés.
-                uvp_df = pd.read_sql_query(
-                    "SELECT sample_id, project_id, instrument, station_id, profile_id, "
-                    "lat_avg, lon_avg, date_min, date_max, object_count FROM samples_cache "
-                    "WHERE instrument LIKE 'UVP%'",
-                    conn,
-                )
-                # Filtre Python : conserver uniquement les stations qui matchent.
-                uvp_df = uvp_df[
-                    uvp_df["station_id"].apply(
-                        lambda s: _normalize_station(str(s)) in norm_to_raw
-                    )
-                ].reset_index(drop=True)
-            else:
-                # Pas de nom de station dans le fichier : fallback bbox lat/lon.
-                if lat is None or lon is None or lat.notna().sum() == 0:
-                    return _eco_blocked(
-                        "Vérification filet↔UVP impossible : ni colonne station "
-                        "ni coordonnées lat/lon exploitables dans le fichier chargé.",
-                        retryable=False,
-                    )
-                margin = max(max_distance_km / 111.0, 0.2)
-                uvp_df = pd.read_sql_query(
-                    "SELECT sample_id, project_id, instrument, station_id, profile_id, "
-                    "lat_avg, lon_avg, date_min, date_max, object_count FROM samples_cache "
-                    "WHERE lat_avg BETWEEN ? AND ? AND lon_avg BETWEEN ? AND ? "
-                    "AND instrument LIKE 'UVP%'",
-                    conn,
-                    params=(
-                        float(lat.min()) - margin,
-                        float(lat.max()) + margin,
-                        float(lon.min()) - margin,
-                        float(lon.max()) + margin,
-                    ),
-                )
+            conn = open_readonly_connection(cache_db)
+            uvp_df = pd.read_sql_query(
+                "SELECT sample_id, project_id, instrument, station_id, profile_id, cruise_id, ctd_rosette_filename, "
+                "lat_avg, lon_avg, date_min, date_max, datetime_min, datetime_max, object_count "
+                "FROM samples_cache WHERE instrument LIKE 'UVP%'",
+                conn,
+            )
         except Exception as exc:
             return _eco_error(
                 f"Impossible d'interroger le cache EcoTaxa : {exc}", retryable=True
@@ -637,14 +621,16 @@ def make_source_tools(thread_id: str) -> list:
             if conn is not None:
                 conn.close()
 
-        n_net_stations = len(norm_to_raw) if norm_to_raw else "?"
-        env = f"{n_net_stations} station(s) filet"
+        env = f"{n_deployments} déploiement(s) filet"
         if uvp_df.empty:
             return _eco_empty(
-                f"Aucun sample UVP dans le cache pour les stations du filet ({env}). "
-                "Vérifiez que le cache EcoTaxa est synchronisé et que les noms de "
-                "station correspondent."
+                f"Aucun sample UVP disponible dans le cache EcoTaxa ({env}). "
+                "Vérifiez la synchronisation du cache."
             )
+
+        uvp_df["match_datetime"] = uvp_df["datetime_min"].where(
+            uvp_df["datetime_min"].notna(), uvp_df["date_min"]
+        )
 
         kwargs: dict = dict(
             max_km=max_distance_km,
@@ -652,17 +638,113 @@ def make_source_tools(thread_id: str) -> list:
             net_id_col=id_col,
             net_station_col=station_col or id_col,
             net_time_col=time_col,
+            net_deployment_col=deployment_col,
+            net_cast_col=cast_col,
+            uvp_time_col="match_datetime",
         )
-        if lat_col:
-            kwargs["net_lat_col"] = lat_col
-        if lon_col:
-            kwargs["net_lon_col"] = lon_col
+        kwargs["net_lat_col"] = lat_col
+        kwargs["net_lon_col"] = lon_col
         matches = match_net_to_uvp(net_df, uvp_df, **kwargs)
         if matches.empty:
             return _eco_empty(
-                f"Stations UVP trouvées dans le cache ({env}) mais aucune correspondance "
-                "station+date établie. Vérifiez les noms de station et les dates."
+                f"Aucun sample UVP à moins de {max_distance_km:g} km des {env}. "
+                "Aucune jointure n'est donc possible avec les seuils demandés."
             )
+
+        # A spatio-temporal candidate becomes joinable only after its EcoTaxa
+        # rosette filename is verified against Amundsen CTD metadata.  The user
+        # explicitly asked for a net↔UVP correspondence, so this read-only CTD
+        # lookup is part of that requested verification, never a file-load side
+        # effect.
+        matches["spatiotemporal_match_status"] = matches["match_status"]
+        matches["spatiotemporal_eligible"] = matches["join_eligible"]
+        matches["ctd_filename_match_status"] = "missing_ctd_link"
+        matches["ctd_filename_join_eligible"] = False
+        ctd_source_unavailable = False
+        selected_uvp = uvp_df[uvp_df["sample_id"].isin(matches["uvp_sample_id"])].copy()
+        selected_uvp = selected_uvp.dropna(
+            subset=["ctd_rosette_filename", "match_datetime", "lat_avg", "lon_avg"]
+        )
+        if not selected_uvp.empty:
+            from tools.amundsen_sources import (
+                _AMUNDSEN_TIME_MAX,
+                _AMUNDSEN_TIME_MIN,
+                _fetch_amundsen_ctd_metadata_by_filename,
+            )
+            from core.ctd_filename_match import (
+                ctd_filename_aliases,
+                match_uvp_to_amundsen_ctd,
+            )
+
+            times = pd.to_datetime(selected_uvp["match_datetime"], errors="coerce", utc=True)
+            selected_uvp = selected_uvp.loc[times.notna()].copy()
+            times = times.loc[times.notna()]
+            in_coverage = times.ge(_AMUNDSEN_TIME_MIN) & times.le(_AMUNDSEN_TIME_MAX)
+            selected_uvp = selected_uvp.loc[in_coverage].copy()
+            times = times.loc[in_coverage]
+            if not selected_uvp.empty:
+                margin = 0.05
+                bbox = {
+                    "lat_min": float(selected_uvp["lat_avg"].min()) - margin,
+                    "lat_max": float(selected_uvp["lat_avg"].max()) + margin,
+                    "lon_min": float(selected_uvp["lon_avg"].min()) - margin,
+                    "lon_max": float(selected_uvp["lon_avg"].max()) + margin,
+                }
+                time_window = {
+                    "start": (times.min() - pd.Timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "end": (times.max() + pd.Timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+                try:
+                    filename_aliases = set().union(
+                        *(ctd_filename_aliases(value) for value in selected_uvp["ctd_rosette_filename"])
+                    )
+                    ctd = _fetch_amundsen_ctd_metadata_by_filename(
+                        filename_aliases=filename_aliases,
+                        bbox=bbox,
+                        time_window=time_window,
+                    )
+                    ctd_matches = match_uvp_to_amundsen_ctd(selected_uvp, ctd)
+                except Exception as exc:  # CTD remains an explicit verification, never a silent fallback.
+                    _LOGGER.warning("UVP↔Amundsen filename verification failed: %s", exc)
+                    ctd_source_unavailable = True
+                    ctd_matches = pd.DataFrame()
+                if not ctd_matches.empty:
+                    ctd_matches = ctd_matches.rename(columns={
+                        "match_status": "ctd_filename_match_status",
+                        "join_eligible": "ctd_filename_join_eligible",
+                        "distance_km": "ctd_filename_distance_km",
+                        "time_delta_min": "ctd_filename_time_delta_min",
+                    })
+                    ctd_columns = [
+                        "uvp_sample_id", "uvp_ctd_filename", "amundsen_filename",
+                        "amundsen_station", "amundsen_cast_number", "filename_match",
+                        "station_match", "ctd_filename_distance_km",
+                        "ctd_filename_time_delta_min", "ctd_filename_match_status",
+                        "ctd_filename_join_eligible",
+                    ]
+                    matches = matches.drop(columns=[
+                        "ctd_filename_match_status", "ctd_filename_join_eligible"
+                    ]).merge(ctd_matches[ctd_columns], on="uvp_sample_id", how="left")
+                    matches["ctd_filename_match_status"] = matches[
+                        "ctd_filename_match_status"
+                    ].fillna("no_amundsen_filename_match")
+                    matches["ctd_filename_join_eligible"] = matches[
+                        "ctd_filename_join_eligible"
+                    ].fillna(False).astype(bool)
+        if ctd_source_unavailable:
+            # An outage is evidence about the verification service, not evidence
+            # that the candidate has no shared CTD file.
+            ctd_candidates = matches["spatiotemporal_eligible"]
+            matches.loc[ctd_candidates, "ctd_filename_match_status"] = "source_unavailable"
+        matches["join_eligible"] = (
+            matches["spatiotemporal_eligible"] & matches["ctd_filename_join_eligible"]
+        )
+        # Keep the visible status truthful: a spatial/time candidate whose CTD
+        # file cannot be certified is not a completed net↔UVP match.
+        ctd_not_verified = matches["spatiotemporal_eligible"] & ~matches["join_eligible"]
+        matches.loc[ctd_not_verified, "match_status"] = matches.loc[
+            ctd_not_verified, "ctd_filename_match_status"
+        ]
 
         variable_name = "df_net_uvp_matches"
         store_dataset(
@@ -675,12 +757,19 @@ def make_source_tools(thread_id: str) -> list:
                 "file_variable": (loaded.get("meta") or {}).get("variable_name"),
                 "n_rows": len(matches),
                 "n_cols": len(matches.columns),
+                "deployment_column": deployment_col,
+                "temporal_cache_coverage": int(uvp_df["match_datetime"].notna().sum()),
+                "ctd_filename_verified": int(matches["ctd_filename_join_eligible"].sum()),
+                "ctd_source_unavailable": ctd_source_unavailable,
+                "date_from": date_from,
+                "date_to": date_to,
             },
             set_active=False,
         )
 
-        n_matched = int((matches["match_status"] == "matched").sum())
-        n_spatial = int((matches["match_status"] == "spatial_only").sum())
+        by_deployment = matches.drop_duplicates("net_deployment_id")
+        n_matched = int(by_deployment["join_eligible"].sum())
+        n_spatial = int((~by_deployment["join_eligible"]).sum())
         n_proj = int(matches["uvp_project_id"].nunique())
         instruments = ", ".join(sorted(matches["uvp_instrument"].dropna().astype(str).unique()))
         preview = (
@@ -688,42 +777,50 @@ def make_source_tools(thread_id: str) -> list:
             .head(10)[
                 [
                     "net_sample_id",
+                    "net_deployment_id",
                     "station",
                     "uvp_sample_id",
                     "uvp_project_id",
                     "uvp_instrument",
                     "distance_km",
                     "time_gap_days",
+                    "station_name_match",
+                    "candidate_count",
                     "match_status",
+                    "ctd_filename_match_status",
+                    "join_eligible",
                 ]
             ]
         )
         lines = [
             "## Correspondances filet ↔ UVP (EcoTaxa)",
             f"Emprise du filet : {env}",
-            f"Déploiements filet appariés à un sample UVP < {max_distance_km:g} km : "
-            f"{len(matches)} "
-            f"(sur {net_df[lat_col].notna().sum()} avec coordonnées).",
+            f"Déploiements avec un candidat UVP < {max_distance_km:g} km : {len(by_deployment)} sur {n_deployments}.",
             f"Projets UVP concernés : {n_proj} ; instruments : {instruments or '—'}.",
             f"Statut temporel (tolérance {max_time_gap_days if max_time_gap_days is not None else '∞'} j) : "
-            f"{n_matched} `matched` (proximité spatiale ET temporelle), "
-            f"{n_spatial} `spatial_only` (même station, campagnes d'années différentes).",
+            f"{n_matched} `matched` (jointure autorisée : position, temps et fichier CTD Amundsen vérifiés), "
+            f"{n_spatial} non jointables (candidat spatial, date ou fichier CTD non vérifié).",
             "",
             preview.to_markdown(index=False),
         ]
-        if n_matched == 0 and n_spatial > 0:
+        if date_from or date_to:
+            lines.insert(2, f"Période filet appliquée : {date_from or 'sans borne initiale'} → {date_to or 'sans borne finale'}.")
+        if ctd_source_unavailable:
             lines += [
                 "",
-                "⚠ Aucune paire synchrone : la comparaison sera **station/zone** "
-                "(climatologique), pas cast-à-cast. L'écart temporel est dans "
-                "`time_gap_days`.",
+                "⚠ Validation CTD Amundsen indisponible : les candidats spatiaux/temporels ne peuvent pas "
+                "être certifiés. Ce résultat ne permet pas de conclure à l'absence de correspondance UVP/CTD.",
+            ]
+        elif n_matched == 0 and n_spatial > 0:
+            lines += [
+                "",
+                "⚠ Aucune paire synchrone : le cache ne permet pas une jointure d'abondance fiable avec ce fichier. "
+                "Les candidats restent visibles pour audit dans `df_net_uvp_matches`.",
             ]
         lines += [
             "",
-            "Étape suivante (à la demande de l'utilisateur) : "
-            "`load_skill(\"net_uvp_abundance_comparison\")`, puis join sur les objets "
-            "du cast UVP matché (enrichissement EcoPart) pour obtenir la densité "
-            "copépode UVP en ind./m³, et poser le delta par station.",
+            "Étape suivante, seulement si l'utilisateur le demande : utiliser les lignes `join_eligible=True` "
+            "pour préparer la comparaison d'abondance filet↔UVP.",
         ]
         return _eco_success(
             "\n".join(lines),
@@ -3630,6 +3727,9 @@ def make_source_tools(thread_id: str) -> list:
         artifact_refs: list[str] = []
         data_refs: list[str] = []
         campaign_frames: list[pd.DataFrame] = []
+        succeeded_project_ids: list[int] = []
+        failed_project_ids: list[int] = []
+        exported_samples = 0
         total_rows = 0
         for pid in sorted(groups):
             sids = groups[pid]
@@ -3651,6 +3751,8 @@ def make_source_tools(thread_id: str) -> list:
                 successes.append(f"### ✅ Projet {pid} ({len(sids)} samples)\n\n{summary}")
                 artifact_refs.append(artifact_url)
                 data_refs.append(variable_name)
+                succeeded_project_ids.append(pid)
+                exported_samples += len(sids)
                 raw_export = _store.get(f"{thread_id}:dataset:{variable_name}")
                 if raw_export is not None and isinstance(raw_export.get("df"), pd.DataFrame):
                     campaign_frame = raw_export["df"].copy()
@@ -3661,6 +3763,7 @@ def make_source_tools(thread_id: str) -> list:
                     campaign_frames.append(campaign_frame)
                 total_rows += row_count
             except Exception as exc:
+                failed_project_ids.append(pid)
                 failures.append(_format_export_failure(pid, exc))
 
         parts = [f"# Bulk export EcoTaxa — {len(groups)} projets traités"]
@@ -3686,6 +3789,16 @@ def make_source_tools(thread_id: str) -> list:
             "ecotaxa", "campaign", campaign_label, uuid.uuid4().hex[:8]
         )
         campaign_df = pd.concat(campaign_frames, ignore_index=True, sort=False)
+        partial_export = bool(failures or unresolved)
+        coverage = (
+            f"Export EcoTaxa {'partiel' if partial_export else 'complet'} : "
+            f"{exported_samples}/{len(normalized)} samples, "
+            f"projets réussis={','.join(str(project) for project in succeeded_project_ids) or 'aucun'}"
+        )
+        if failed_project_ids:
+            coverage += ", projets en échec=" + ",".join(
+                str(project) for project in failed_project_ids
+            )
         store_dataset(
             _store,
             thread_id,
@@ -3696,13 +3809,18 @@ def make_source_tools(thread_id: str) -> list:
                 "source": "ecotaxa_export_campaign",
                 "selection_name": resolved_selection_name,
                 "selection_filters": selection_meta.get("filters") or {},
-                "export_project_ids": sorted(groups),
+                "export_project_ids": succeeded_project_ids,
+                "requested_project_ids": sorted(groups),
+                "failed_project_ids": failed_project_ids,
+                "requested_samples": len(normalized),
+                "exported_samples": exported_samples,
+                "partial_export": partial_export,
                 "raw_export_variables": data_refs,
                 "n_rows": len(campaign_df),
+                "n_cols": len(campaign_df.columns),
                 "n_projects": len(campaign_frames),
                 "description": (
-                    f"Export EcoTaxa consolidé : {len(normalized)} samples, "
-                    f"projets={','.join(str(project) for project in sorted(groups))}, "
+                    coverage + "; "
                     f"statut={status or 'tous'}, "
                     f"taxon={taxon or 'tous'}"
                     + (", " + ", ".join(
@@ -3714,9 +3832,42 @@ def make_source_tools(thread_id: str) -> list:
         )
         summary += (
             f"\n\nTable de campagne consolidée : `{campaign_variable}` "
-            f"({len(campaign_df)} lignes, {len(campaign_frames)} projets) — "
+            f"({len(campaign_df)} lignes, {len(campaign_frames)}/{len(groups)} projets réussis) — "
             "table active pour l'analyse et les graphes."
         )
+        audit_lines = [
+            "## État des lieux d'export",
+            "",
+            (
+                f"- portée demandée : {len(normalized)} samples sur {len(groups)} projets "
+                f"(statut={status or 'tous'}, taxon={taxon or 'tous'})"
+            ),
+            (
+                f"- portée exportée : {exported_samples}/{len(normalized)} samples, "
+                f"{len(succeeded_project_ids)}/{len(groups)} projets, {len(campaign_df)} lignes objet"
+            ),
+            f"- campagne : {'PARTIELLE' if partial_export else 'COMPLÈTE'}",
+            "",
+            "## Audit de couverture",
+        ]
+        if partial_export:
+            if failed_project_ids:
+                audit_lines.append(
+                    "- projets non couverts : "
+                    + ", ".join(str(project_id) for project_id in failed_project_ids)
+                    + " (causes détaillées dans les échecs ci-dessus)"
+                )
+            if unresolved:
+                audit_lines.append(
+                    "- samples non couverts (absents du cache) : "
+                    + ", ".join(str(sample_id) for sample_id in unresolved)
+                )
+            audit_lines.append(
+                "- toute analyse suivante décrit uniquement la couverture effectivement exportée"
+            )
+        else:
+            audit_lines.append("- aucun sample ni projet demandé n'a été exclu")
+        summary += "\n\n" + "\n".join(audit_lines)
         return _eco_success(
             summary,
             data_ref=campaign_variable,
@@ -3727,6 +3878,9 @@ def make_source_tools(thread_id: str) -> list:
             metrics={
                 "projects_succeeded": len(successes),
                 "projects_failed": len(failures),
+                "samples_requested": len(normalized),
+                "samples_exported": exported_samples,
+                "partial_export": partial_export,
                 "rows": total_rows,
             },
         )

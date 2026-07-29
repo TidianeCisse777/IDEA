@@ -37,6 +37,7 @@ class TurnContext:
     explicit_sources: tuple[str, ...]
     capsule: str
     output_intent: Literal["visual", "non_visual", "ambiguous"] = "ambiguous"
+    pending_ecotaxa_export: bool = False
 
 
 def build_turn_context(
@@ -73,6 +74,7 @@ def build_turn_context(
     output_intent = meta.get("output_intent_decision", {}).get("intent", "ambiguous")
     if output_intent not in {"visual", "non_visual", "ambiguous"}:
         output_intent = "ambiguous"
+    pending_ecotaxa_export = bool(meta.get("pending_ecotaxa_export_plan"))
 
     return TurnContext(
         thread_id=thread_id,
@@ -85,4 +87,5 @@ def build_turn_context(
         explicit_sources=explicit,
         capsule=capsule,
         output_intent=output_intent,
+        pending_ecotaxa_export=pending_ecotaxa_export,
     )

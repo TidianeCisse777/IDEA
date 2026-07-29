@@ -31,13 +31,14 @@ from pathlib import Path
 
 
 # Must match SCHEMA_VERSION in core/ecotaxa_browser/cache/repo.py.
-_EXPECTED_SCHEMA_VERSION = 5
+_EXPECTED_SCHEMA_VERSION = 6
 
 _REQUIRED_TABLES: dict[str, list[str]] = {
     "samples_cache": [
         "sample_id", "project_id", "lat_avg", "lon_avg",
         "date_min", "date_max", "depth_min", "depth_max",
-        "original_id", "station_id", "profile_id", "free_fields_json",
+        "original_id", "station_id", "profile_id", "cruise_id",
+        "ctd_rosette_filename", "free_fields_json",
         "object_count", "nb_validated", "nb_predicted", "nb_dubious",
         "nb_unclassified", "used_taxa", "instrument", "last_synced", "iho_zone",
     ],

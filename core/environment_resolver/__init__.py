@@ -13,6 +13,7 @@ from core.environment_resolver.column_detection import (
     DEFAULT_TIME_CANDIDATES,
     DEFAULT_TIME_END_CANDIDATES,
     detect_column,
+    normalize_column_name,
 )
 from core.environment_resolver.coords import (
     CoordsValidation,
@@ -39,6 +40,7 @@ __all__ = [
     "detect_column",
     "haversine_km",
     "match_ctd_rows",
+    "normalize_column_name",
     "parse_source_coords",
     "resolve_source_dataframe",
     "ResolvedEnvironmentSchema",

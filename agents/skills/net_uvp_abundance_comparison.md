@@ -1,6 +1,6 @@
 ---
 name: net_uvp_abundance_comparison
-version: 2.0.0
+version: 2.0.1
 triggers:
   - User asks to compare net (NeoLabs) abundance against UVP (EcoTaxa/EcoPart) abundance
   - User asks to join net and UVP data, compute density, make comparisons by taxon or stage
@@ -24,7 +24,7 @@ After the preparation steps, the session contains:
 
 | Variable | Content |
 |---|---|
-| `df_net_uvp_matches` | Correspondence table: `net_sample_id`, `station`, `uvp_sample_id`, `uvp_profile_str`, `distance_km`, `time_gap_days`, `match_status` |
+| `df_net_uvp_matches` | Correspondence table: `net_sample_id`, `net_deployment_id`, `station`, `uvp_sample_id`, `uvp_profile_str`, `distance_km`, `time_gap_days`, `ctd_filename_match_status`, `amundsen_filename`, `station_name_match`, `match_status`, `join_eligible` |
 | `df_ecotaxa_ecopart` | UVP objects enriched with EcoPart volumes: `sample_id` (string profile, e.g. `am_leg4_RA27_2`), `sample_id_internal` (numeric), `object_annotation_hierarchy`, `object_depth_min`, `depth_bin`, `ecopart_Sampled volume [L]` |
 | `df_ecotaxa` | UVP objects before EcoPart enrichment (no volume column) |
 | `df_file_neolabs_abundance` | Net tow taxonomy: `SAMPLE_ID`, `STATION_NAME`, `CLASS`, `ORDER`, `FAMILY`, per-stage abundance columns (`C1_ABUND ...`, `ALL_STAGES_ABUND ...`) |
@@ -46,6 +46,25 @@ All of these are automatically injected into every `run_pandas` call — no relo
 - `station` ↔ `STATION_NAME` in the NeoLabs abundance DataFrame
 
 Always join through `df_net_uvp_matches` — never invent a spatial join directly.
+
+## Non-negotiable validation gate
+
+`join_eligible=True` is the sole authorization for a filet↔UVP abundance
+comparison. It proves the net↔UVP position and time checks **and** a shared
+CTD-rosette file validated in Amundsen against its station, time, and
+coordinates. A `spatial_only`, `filename_candidate`, missing CTD evidence, or
+station-name resemblance remains an auditable candidate, never an analysis
+row. If no row is eligible, state that the comparison cannot be made; do not
+fall back to a station-, zone-, or spatial-only comparison.
+
+The certification call is filename-led and metadata-only. Retrieve `PRES` or
+other vertical CTD variables only after validation, when the user explicitly
+requests CTD enrichment.
+
+For every authorized comparison, keep these audit fields in the paired table
+or accompanying audit: `distance_km`, `time_gap_days`, `uvp_ctd_filename`,
+`amundsen_filename`, `station_match`, `ctd_filename_distance_km`,
+`ctd_filename_time_delta_min`, and `match_status`.
 
 ## How to compute UVP density (run_pandas)
 
@@ -112,14 +131,18 @@ net_density = neolabs_copepod_density(
 ```python
 from core.net_uvp_comparison import compare_paired_density
 
-# Step 1: keep only matched rows, one row per (station, uvp_profile_str).
-# df_net_uvp_matches has one row per net_sample_id — a station with several
-# net tows produces duplicates. Dedup here so compare_paired_density operates
-# at station grain.
+# Step 1: use only explicitly join-eligible matches, one row per deployment.
+# The table is expanded to individual net samples after a deployment-level match.
+# Do not use `spatial_only` or a `filename_candidate` for abundance comparisons.
+# `join_eligible=True` means net↔UVP position/time plus an Amundsen CTD file
+# validated by station, time, and coordinates. Stop if `matched` is empty.
 matched = (
-    df_net_uvp_matches[df_net_uvp_matches["match_status"] == "matched"]
-    .drop_duplicates(subset=["station", "uvp_profile_str"])
+    df_net_uvp_matches[df_net_uvp_matches["join_eligible"]]
+    .drop_duplicates(subset=["net_deployment_id", "uvp_profile_str"])
 )
+
+if matched.empty:
+    raise ValueError("Aucune jointure filet↔UVP validée : comparaison non réalisable.")
 
 # Step 2: join net density
 paired = matched.merge(
@@ -146,7 +169,8 @@ result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m
   size selectivity, detection thresholds. Never present one as "more correct".
 - UVP detects organisms reliably above ~600 µm → compare `late_stages` (C4+C5+M+F)
   on the net side when comparing totals, not `ALL_STAGES` which includes nauplii.
-- Always keep `time_gap_days` and `match_status` visible in any result table.
+- Always keep the CTD audit fields named above visible in the paired table or
+  accompanying audit; never reduce them to a station name or a distance alone.
 - No causal or biological interpretation: describe the numbers, state the comparison basis.
 
 ## Graphs
