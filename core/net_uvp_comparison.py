@@ -230,10 +230,15 @@ def join_certified_net_uvp_enriched(
     net_df: pd.DataFrame,
     audit_df: pd.DataFrame,
     uvp_enriched_df: pd.DataFrame,
+    *,
+    allow_unverified_ctd: bool = False,
 ) -> pd.DataFrame:
     """Joint filet, correspondances certifiées et export UVP enrichi.
 
     Seules les correspondances dont ``join_eligible`` vaut vrai sont retenues.
+    Une dérogation explicite peut aussi retenir les lignes exploratoires dont la
+    vérification CTD est exactement ``unavailable``; elle ne couvre jamais un
+    échec de correspondance CTD.
     La jointure UVP est volontairement limitée aux deux clés auditables : projet
     EcoTaxa et profil UVP. Côté export, le profil est choisi dans cet ordre :
     ``sample_profileid``, puis ``sample_id`` ou ``obj_orig_id`` sans suffixe
@@ -275,7 +280,17 @@ def join_certified_net_uvp_enriched(
     )
     require_columns(uvp_enriched_df, ("export_project_id",), "export UVP")
 
-    audit = audit_df.loc[audit_df["join_eligible"].map(explicitly_certified)].copy()
+    accepted = audit_df["join_eligible"].map(explicitly_certified)
+    if (
+        allow_unverified_ctd
+        and "ctd_verification" in audit_df.columns
+        and "exploratory" in audit_df.columns
+    ):
+        accepted |= (
+            audit_df["ctd_verification"].astype("string").str.strip().eq("unavailable")
+            & audit_df["exploratory"].map(explicitly_certified)
+        )
+    audit = audit_df.loc[accepted].copy()
     if audit.empty:
         return net_df.iloc[0:0].copy()
     audit["_net_sample_key"] = normalized_id(audit["net_sample_id"])

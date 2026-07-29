@@ -291,6 +291,18 @@ def test_system_prompt_requires_the_strict_net_uvp_match_route():
     assert "date_from" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_system_prompt_requires_confirmation_for_unavailable_ctd_override():
+    """An outage may be explored only after a new explicit confirmation."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "allow_unverified_ctd=true" in prompt
+    assert "explicit confirmation" in prompt
+    assert 'ctd_verification="unavailable"' in prompt
+    assert "exploratory=true" in prompt
+    assert "no match" in prompt
+
+
 def test_net_uvp_live_guidance_uses_the_certified_selection_and_final_join():
     """Expected live route recovers safely and never exports candidates."""
     contract = _routing_contract("net_uvp_abundance_comparison.md")
