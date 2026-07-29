@@ -111,7 +111,8 @@ _ECOTAXA_GEO_TERMS = (
 )
 _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     "file_analysis": (
-        "run_pandas", "find_uvp_matches_for_net_table", "split_dataframe_by_zone",
+        "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
+        "split_dataframe_by_zone",
     ),
     "ecotaxa_discovery": (
         "query_ecotaxa_cache", "list_ecotaxa_cache_tables",
@@ -423,10 +424,10 @@ def decide_tool_exposure(
             "ecotaxa_discovery": 3,
         }
         if turn_context.file_loaded:
-            # Always guarantee run_pandas + find_uvp_matches_for_net_table.
-            fallback_limits["file_analysis"] = 2
+            # Always guarantee local analysis plus the certified audit/join route.
+            fallback_limits["file_analysis"] = 3
         if signals.cross_source_compare_requested:
-            fallback_limits["file_analysis"] = max(fallback_limits.get("file_analysis", 0), 2)
+            fallback_limits["file_analysis"] = max(fallback_limits.get("file_analysis", 0), 3)
         if "ecotaxa_geo_time" in fallback_groups:
             fallback_limits["ecotaxa_geo_time"] = 2 if signals.multi_zone_requested else 1
         for intent in ecotaxa_intents:

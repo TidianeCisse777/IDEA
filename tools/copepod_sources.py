@@ -886,6 +886,89 @@ def make_source_tools(thread_id: str) -> list:
             },
         )
 
+    @tool(response_format="content_and_artifact")
+    def join_net_uvp_enriched(
+        net_variable_name: str,
+        uvp_enriched_variable: str,
+        audit_variable_name: str = "df_net_uvp_matches",
+    ) -> str:
+        """Joint localement un filet à des objets UVP enrichis EcoPart certifiés.
+
+        Utiliser seulement après l'audit filet↔UVP
+        `find_uvp_matches_for_net_table` et après l'enrichissement EcoPart de
+        l'export UVP. Les trois arguments sont des noms exacts de DataFrames
+        persistés en session. L'audit est l'unique autorité de jointure : seules
+        ses lignes `join_eligible=True`, déjà validées par le fichier CTD
+        Amundsen, peuvent atteindre la table finale. Ce tool ne télécharge rien
+        et ne calcule aucune interprétation scientifique.
+        """
+        from core.net_uvp_comparison import join_certified_net_uvp_enriched
+
+        variable_names = {
+            "table filet": net_variable_name,
+            "audit certifié": audit_variable_name,
+            "export UVP enrichi EcoPart": uvp_enriched_variable,
+        }
+        datasets = {}
+        missing = []
+        for label, variable_name in variable_names.items():
+            entry = _store.get(f"{thread_id}:dataset:{variable_name}")
+            if not entry or entry.get("df") is None:
+                missing.append(f"{label} `{variable_name}`")
+            else:
+                datasets[label] = entry["df"]
+        if missing:
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : table(s) persistée(s) "
+                f"introuvable(s) : {', '.join(missing)}.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+
+        try:
+            joined = join_certified_net_uvp_enriched(
+                datasets["table filet"],
+                datasets["audit certifié"],
+                datasets["export UVP enrichi EcoPart"],
+            )
+        except ValueError as exc:
+            return blocked(
+                str(exc),
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+
+        if joined.empty:
+            return empty(
+                "Aucune ligne objet ne relie l'audit certifié à l'export UVP "
+                "enrichi EcoPart ; aucune table finale n'a été créée.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+            )
+
+        variable_name = "df_net_uvp_ecopart"
+        store_dataset(
+            _store,
+            thread_id,
+            joined,
+            variable_name=variable_name,
+            meta={
+                "source": "net_uvp_ecopart_certified",
+                "net_variable_name": net_variable_name,
+                "audit_variable_name": audit_variable_name,
+                "uvp_enriched_variable": uvp_enriched_variable,
+                "n_rows": len(joined),
+                "n_cols": len(joined.columns),
+            },
+        )
+        return success(
+            "Table filet↔UVP enrichie EcoPart créée à partir des seules "
+            f"correspondances certifiées : {len(joined)} ligne(s) objet.",
+            provenance={"source": "net_uvp_ecopart_certified"},
+            data_ref=variable_name,
+            persisted=True,
+            metrics={"rows": len(joined), "columns": len(joined.columns)},
+        )
+
     def _normalize_sample_ids(sample_ids) -> list[int]:
         if sample_ids is None:
             return []
@@ -4498,4 +4581,5 @@ def make_source_tools(thread_id: str) -> list:
         describe_ecotaxa_cache_table,
         query_ecotaxa_cache,
         find_uvp_matches_for_net_table,
+        join_net_uvp_enriched,
     ]

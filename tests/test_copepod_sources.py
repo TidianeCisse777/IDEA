@@ -2194,6 +2194,79 @@ def test_audit_with_empty_ctd_response_creates_no_selection(tmp_path, monkeypatc
     )
 
 
+def test_join_net_uvp_enriched_persists_certified_object_rows(
+    tmp_path, monkeypatch
+):
+    import tools.copepod_sources as source_module
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    thread_id = "net-uvp-enriched-thread"
+    store = SessionStore(tmp_path / "sessions")
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "SAMPLE_ID": [501, 502],
+                "net_density_ind_m3": [12.0, 15.0],
+            }
+        ),
+        variable_name="df_file_baffin_2024",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "net_sample_id": [501, 502],
+                "uvp_project_id": [10, 20],
+                "uvp_profile_str": ["uvp-101", "uvp-203"],
+                "join_eligible": [True, False],
+                "ctd_filename_join_eligible": [True, False],
+            }
+        ),
+        variable_name="df_net_uvp_matches",
+        meta={"source": "net_uvp_match"},
+        set_active=False,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "export_project_id": [10, 10, 20],
+                "sample_profileid": ["uvp-101", "uvp-101", "uvp-203"],
+                "object_id": ["obj-1", "obj-2", "obj-3"],
+                "ecopart_Sampled volume [L]": [100.0, 100.0, 80.0],
+            }
+        ),
+        variable_name="df_ecotaxa_ecopart_campaign",
+        meta={"source": "ecotaxa_ecopart"},
+        set_active=False,
+    )
+    monkeypatch.setattr(source_module, "_store", store)
+
+    join_tool = next(
+        item for item in source_module.make_source_tools(thread_id)
+        if item.name == "join_net_uvp_enriched"
+    )
+    join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    stored = store.get(f"{thread_id}:dataset:df_net_uvp_ecopart")
+    assert stored["df"]["object_id"].tolist() == ["obj-1", "obj-2"]
+    assert stored["df"]["join_eligible"].all()
+    assert "ecopart_Sampled volume [L]" in stored["df"]
+    assert stored["meta"]["source"] == "net_uvp_ecopart_certified"
+
+
 def test_ecotaxa_cache_map_is_complete_and_does_not_migrate_file(
     tmp_path, monkeypatch
 ):

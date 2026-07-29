@@ -257,6 +257,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "query_ecotaxa_cache": _source("EcoTaxa · SQL cache", "EcoTaxa · SQL cache", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_profiles_for_map": _source("EcoTaxa · profils pour carte", "EcoTaxa · map-ready profiles", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "find_uvp_matches_for_net_table": _presentation("Correspondances filet↔UVP (cache local)", "Net↔UVP matches (local cache)", "data"),
+    "join_net_uvp_enriched": _presentation("Jointure filet↔UVP enrichie certifiée", "Certified enriched net↔UVP join", "data"),
     # Bio-ORACLE.
     "list_bio_oracle_datasets": _source("Bio-ORACLE · jeux de données", "Bio-ORACLE · datasets", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
     "preview_bio_oracle_point": _source("Bio-ORACLE · aperçu ponctuel", "Bio-ORACLE · point preview", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
@@ -316,6 +317,7 @@ class _PolicyProfile:
 
 _POLICY_PROFILES: Mapping[str, _PolicyProfile] = MappingProxyType({
     "local_read": _PolicyProfile("low", True, False, False, False, True, False, 3),
+    "local_low_session": _PolicyProfile("low", False, True, False, False, True, False, 3),
     "local_session": _PolicyProfile("medium", False, True, False, False, True, False, 3),
     "local_artifact": _PolicyProfile("medium", False, True, False, True, True, False, 2),
     "local_heavy": _PolicyProfile("high", False, True, False, True, True, True, 1),
@@ -335,6 +337,7 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "load_file": "local_session",
     "run_pandas": "local_session",
     "run_graph": "local_artifact",
+    "join_net_uvp_enriched": "local_low_session",
     # EcoTaxa read-only/cache navigation.
     "audit_ecotaxa_spatial_coverage": "remote_read",
     "list_ecotaxa_cache_tables": "local_source_read",
@@ -492,6 +495,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "query_ecotaxa_cache": "ecotaxa_discovery",
     "summarize_ecotaxa_profiles_for_map": "ecotaxa_discovery",
     "find_uvp_matches_for_net_table": "file_analysis",
+    "join_net_uvp_enriched": "file_analysis",
     "summarize_ecotaxa_project": "hidden_legacy",
     "summarize_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa exports.
