@@ -49,8 +49,12 @@ All of these are automatically injected into every `run_pandas` call — no relo
 2. Run `find_uvp_matches_for_net_table` on that exact table. The certified
    export scope is only the rows where `join_eligible=True` and
    `ctd_filename_match_status="matched"`.
-   - If the audit says the CTD source is unavailable, announce that CTD is
-     unverified and wait for a new explicit user confirmation.
+   - If the audit says the CTD source is unavailable, ask in plain language:
+     “La vérification CTD n’est pas accessible pour le moment : ces
+     correspondances ne peuvent pas être certifiées. Souhaites-tu quand même
+     préparer un export provisoire, clairement signalé comme non vérifié ?”
+     Do not expose internal labels, tool arguments, or selection identifiers.
+     A natural “oui, continue sans CTD” is sufficient confirmation.
    - On that confirmation, do not merely acknowledge the exploratory
      confirmation: the very next tool call must be `find_uvp_matches_for_net_table`
      with the exact same audit arguments plus `allow_unverified_ctd=True`.

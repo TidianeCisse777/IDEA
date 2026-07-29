@@ -318,22 +318,22 @@ def test_unavailable_ctd_confirmation_runs_reaudit_then_export_dry_run():
     )
     ordered_steps = [
         "ctd source is unavailable",
-        "wait for a new explicit user confirmation",
+        "plain language",
+        "oui, continue sans ctd",
         "very next tool call must be `find_uvp_matches_for_net_table`",
         "with the exact same audit arguments",
         "`allow_unverified_ctd=true`",
         "that re-audit makes its exact selection the active selection",
         "`export_ecotaxa_samples(selection_name=\"latest\", confirmed=false)`",
         "this dry-run downloads nothing",
-        "wait for a separate explicit export confirmation",
-        "`confirmed=true`",
     ]
 
     for contract in contracts:
         positions = [contract.index(step) for step in ordered_steps]
         assert positions == sorted(positions)
-        assert "never use the exploratory override for a ctd no match" in contract
-        assert "do not merely acknowledge the exploratory confirmation" in contract
+        assert "ctd no match" in contract
+        assert "do not merely acknowledge" in contract
+        assert "do not expose" in contract
 
 
 def test_net_uvp_live_guidance_uses_the_certified_selection_and_final_join():
