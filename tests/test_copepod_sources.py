@@ -2205,6 +2205,7 @@ def _net_uvp_enriched_tool(
     audit_meta: dict | None = None,
     enriched_meta: dict | None = None,
     enriched_has_object_id: bool = True,
+    net_density_first: float = 12.0,
 ):
     import tools.copepod_sources as source_module
     from tools.dataset_registry import store_dataset
@@ -2212,15 +2213,16 @@ def _net_uvp_enriched_tool(
 
     thread_id = "net-uvp-enriched-thread"
     store = SessionStore(tmp_path / "sessions")
+    net_df = pd.DataFrame(
+        {
+            "SAMPLE_ID": [501, 502],
+            "net_density_ind_m3": [net_density_first, 15.0],
+        }
+    )
     store_dataset(
         store,
         thread_id,
-        pd.DataFrame(
-            {
-                "SAMPLE_ID": [501, 502],
-                "net_density_ind_m3": [12.0, 15.0],
-            }
-        ),
+        net_df,
         variable_name="df_file_baffin_2024",
         meta={"source": "file"},
         is_loaded_file=True,
@@ -2242,8 +2244,8 @@ def _net_uvp_enriched_tool(
             "source": "net_uvp_match",
             "net_variable_name": "df_file_baffin_2024",
             "ctd_filename_verified": 1,
-            "net_dataframe_fingerprint": (
-                "sha256:0d833772dfe9978d88a02adfa5aa4aef2fd13203501561ad34c97f2622f97fa7"
+            "net_dataframe_fingerprint": source_module._net_dataframe_fingerprint(
+                net_df
             ),
         },
         set_active=False,
@@ -2307,6 +2309,52 @@ def test_join_net_uvp_enriched_rejects_same_name_net_replacement(
             {
                 "SAMPLE_ID": [501, 999],
                 "net_density_ind_m3": [12.0, 15.0],
+            }
+        ),
+        variable_name="df_file_baffin_2024",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
+def test_net_dataframe_fingerprint_preserves_ieee_float_distinctions():
+    from tools.copepod_sources import _net_dataframe_fingerprint
+
+    first = pd.DataFrame({"density": [12.00000000001]})
+    second = pd.DataFrame({"density": [12.00000000002]})
+
+    assert _net_dataframe_fingerprint(first) == _net_dataframe_fingerprint(
+        first.copy()
+    )
+    assert _net_dataframe_fingerprint(first) != _net_dataframe_fingerprint(second)
+
+
+def test_join_net_uvp_enriched_rejects_ieee_float_replacement_after_audit(
+    tmp_path, monkeypatch
+):
+    from tools.dataset_registry import store_dataset
+    join_tool, store, thread_id = _net_uvp_enriched_tool(
+        tmp_path,
+        monkeypatch,
+        net_density_first=12.00000000001,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "SAMPLE_ID": [501, 502],
+                "net_density_ind_m3": [12.00000000002, 15.0],
             }
         ),
         variable_name="df_file_baffin_2024",

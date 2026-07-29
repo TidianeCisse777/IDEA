@@ -75,20 +75,25 @@ _ECOTAXA_UI_BASE = "https://ecotaxa.obs-vlfr.fr"
 
 def _net_dataframe_fingerprint(dataframe: pd.DataFrame) -> str:
     """Return a stable content-and-schema identity for a persisted net table."""
-    schema = "|".join(
-        f"{column}\x1f{dtype}"
-        for column, dtype in zip(dataframe.columns, dataframe.dtypes, strict=True)
+    schema = repr(
+        (
+            dataframe.shape,
+            tuple(map(str, dataframe.columns)),
+            tuple(map(str, dataframe.dtypes)),
+            str(dataframe.index.dtype),
+        )
     )
-    payload = dataframe.to_json(
-        orient="split",
-        date_format="iso",
-        date_unit="ns",
-        default_handler=str,
+    row_hashes = pd.util.hash_pandas_object(
+        dataframe,
+        index=True,
+        categorize=False,
+        hash_key="copepodnetfp0001",
     )
     digest = hashlib.sha256()
     digest.update(schema.encode("utf-8"))
     digest.update(b"\x1e")
-    digest.update(payload.encode("utf-8"))
+    for row_hash in row_hashes:
+        digest.update(int(row_hash).to_bytes(8, byteorder="big", signed=False))
     return f"sha256:{digest.hexdigest()}"
 
 
