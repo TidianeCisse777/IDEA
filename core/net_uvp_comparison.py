@@ -226,6 +226,156 @@ def match_net_to_uvp(
     return pd.DataFrame(rows, columns=_MATCH_COLUMNS)
 
 
+def join_certified_net_uvp_enriched(
+    net_df: pd.DataFrame,
+    audit_df: pd.DataFrame,
+    uvp_enriched_df: pd.DataFrame,
+    *,
+    allow_unverified_ctd: bool = False,
+) -> pd.DataFrame:
+    """Joint filet, correspondances certifiées et export UVP enrichi.
+
+    Seules les correspondances dont ``join_eligible`` vaut vrai et dont toute
+    preuve CTD explicite est vérifiée sont retenues.
+    Une dérogation explicite peut aussi retenir les lignes exploratoires dont la
+    vérification CTD est exactement ``unavailable``; elle ne couvre jamais un
+    échec de correspondance CTD.
+    La jointure UVP est volontairement limitée aux deux clés auditables : projet
+    EcoTaxa et profil UVP. Côté export, le profil est choisi dans cet ordre :
+    ``sample_profileid``, puis ``sample_id`` ou ``obj_orig_id`` sans suffixe
+    d'objet ``_NNN``. Les clés absentes ou contradictoires sont refusées.
+    """
+    def require_columns(frame: pd.DataFrame, columns: tuple[str, ...], label: str) -> None:
+        missing = [column for column in columns if column not in frame.columns]
+        if missing:
+            raise ValueError(
+                f"Jointure filet↔UVP refusée : colonne(s) {label} absente(s) : "
+                + ", ".join(f"`{column}`" for column in missing)
+                + "."
+            )
+
+    def normalized_id(values: pd.Series) -> pd.Series:
+        return values.astype("string").str.strip().replace("", pd.NA)
+
+    def explicitly_certified(value: object) -> bool:
+        """Accept only booleans or unambiguous serialized true values."""
+        if isinstance(value, (bool, np.bool_)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1"}
+        return False
+
+    net_id_col = next(
+        (column for column in ("SAMPLE_ID", "sample_id", "net_sample_id") if column in net_df.columns),
+        None,
+    )
+    if net_id_col is None:
+        raise ValueError(
+            "Jointure filet↔UVP refusée : aucune colonne identifiant le sample filet "
+            "(`SAMPLE_ID`, `sample_id` ou `net_sample_id`) n'est présente."
+        )
+    require_columns(
+        audit_df,
+        ("net_sample_id", "uvp_project_id", "uvp_profile_str", "join_eligible"),
+        "audit",
+    )
+    require_columns(uvp_enriched_df, ("export_project_id",), "export UVP")
+
+    certified = audit_df["join_eligible"].map(explicitly_certified)
+    if "ctd_verification" in audit_df.columns:
+        certified &= (
+            audit_df["ctd_verification"]
+            .astype("string")
+            .str.strip()
+            .eq("verified")
+        )
+    elif "ctd_filename_join_eligible" in audit_df.columns:
+        certified &= audit_df["ctd_filename_join_eligible"].map(
+            explicitly_certified
+        )
+    elif "ctd_filename_match_status" in audit_df.columns:
+        certified &= (
+            audit_df["ctd_filename_match_status"]
+            .astype("string")
+            .str.strip()
+            .eq("matched")
+        )
+    accepted = certified
+    if (
+        allow_unverified_ctd
+        and "ctd_verification" in audit_df.columns
+        and "exploratory" in audit_df.columns
+    ):
+        accepted |= (
+            audit_df["ctd_verification"].astype("string").str.strip().eq("unavailable")
+            & audit_df["exploratory"].map(explicitly_certified)
+        )
+    audit = audit_df.loc[accepted].copy()
+    if audit.empty:
+        return net_df.iloc[0:0].copy()
+    audit["_net_sample_key"] = normalized_id(audit["net_sample_id"])
+    audit["_audit_project_key"] = normalized_id(audit["uvp_project_id"])
+    audit["_audit_profile_key"] = normalized_id(audit["uvp_profile_str"])
+    if audit[["_net_sample_key", "_audit_project_key", "_audit_profile_key"]].isna().any().any():
+        raise ValueError("Jointure filet↔UVP refusée : clé d'audit certifiée absente.")
+    audit = audit.drop_duplicates(
+        subset=["_net_sample_key", "_audit_project_key", "_audit_profile_key"]
+    )
+    if audit.duplicated("_net_sample_key", keep=False).any():
+        raise ValueError("Jointure filet↔UVP refusée : clé de profil audit ambiguë.")
+
+    enriched = uvp_enriched_df.copy()
+    profile_candidates: dict[str, pd.Series] = {}
+    for column in ("sample_profileid", "sample_id", "obj_orig_id"):
+        if column in enriched.columns:
+            candidate = normalized_id(enriched[column])
+            if column != "sample_profileid":
+                candidate = candidate.str.replace(r"_\d+$", "", regex=True)
+            profile_candidates[column] = candidate
+    if not profile_candidates:
+        raise ValueError(
+            "Jointure filet↔UVP refusée : aucune clé de profil exportée "
+            "(`sample_profileid`, `sample_id` ou `obj_orig_id`) n'est présente."
+        )
+    fallback_values = pd.concat(
+        [
+            profile_candidates[column]
+            for column in ("sample_id", "obj_orig_id")
+            if column in profile_candidates
+        ],
+        axis=1,
+    ) if any(column in profile_candidates for column in ("sample_id", "obj_orig_id")) else None
+    if fallback_values is not None and fallback_values.nunique(axis=1, dropna=True).gt(1).any():
+        fallback_conflict = fallback_values.nunique(axis=1, dropna=True).gt(1)
+        explicit_profile = profile_candidates.get("sample_profileid")
+        if explicit_profile is None or explicit_profile[fallback_conflict].isna().any():
+            raise ValueError("Jointure filet↔UVP refusée : clé de profil exportée ambiguë.")
+    if "sample_profileid" in profile_candidates:
+        profile_key = profile_candidates["sample_profileid"].copy()
+        if fallback_values is not None:
+            profile_key = profile_key.fillna(fallback_values.bfill(axis=1).iloc[:, 0])
+    else:
+        assert fallback_values is not None
+        profile_key = fallback_values.bfill(axis=1).iloc[:, 0]
+    if profile_key.isna().any():
+        raise ValueError("Jointure filet↔UVP refusée : clé de profil exportée absente.")
+    enriched["_export_profile_key"] = profile_key
+    enriched["_export_project_key"] = normalized_id(enriched["export_project_id"])
+    if enriched["_export_project_key"].isna().any():
+        raise ValueError("Jointure filet↔UVP refusée : clé de projet exportée absente.")
+
+    net = net_df.copy()
+    net["_net_sample_key"] = normalized_id(net[net_id_col])
+    out = net.merge(audit, on="_net_sample_key", how="inner", suffixes=("", "_audit"))
+    return out.merge(
+        enriched,
+        left_on=["_audit_project_key", "_audit_profile_key"],
+        right_on=["_export_project_key", "_export_profile_key"],
+        how="inner",
+        suffixes=("", "_uvp"),
+    )
+
+
 def to_ind_per_m3(density: pd.Series, *, from_unit: str) -> pd.Series:
     """Convertit une densité vers `ind./m³` (base filet) avant comparaison.
 

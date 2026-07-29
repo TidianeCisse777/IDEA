@@ -4,13 +4,13 @@
 > (`tools/tool_catalog.py` → `agent.py` → `create_agent`). Pour les use cases voir [`SPEC.md`](SPEC.md),
 > pour le câblage voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
 >
-> **67 tools obligatoires, 70 avec SQL** (les 3 tools SQL ne sont ajoutés que si
+> **68 tools obligatoires, 71 avec SQL** (les 3 tools SQL ne sont ajoutés que si
 > `DATABASE_URL` est résolvable). Ce total est le catalogue enregistré; le modèle
 > voit une allowlist déterministe de **15 tools maximum par appel**, calculée par
 > `tools/tool_exposure.py` sous l'autorité de `tools/source_scope.py`. Le prompt
 > conserve les principes de routage métier; l'autorisation et la visibilité sont
 > exécutables en Python.
-> Les 65 tools ont des entrées Pydantic strictes et renvoient un artefact `ToolResult`
+> Les tools ont des entrées Pydantic strictes et renvoient un artefact `ToolResult`
 > structuré (`success`, `empty`, `blocked`, `error` ou `cancelled`) en plus du texte visible.
 
 ### Exposition dynamique
@@ -23,7 +23,7 @@
 - Les 18 autres tools de ces quatre familles restent enregistrés pour compatibilité, mais appartiennent au groupe `hidden_legacy` : ils ne sont jamais présentés au modèle et sont bloqués avant exécution.
 
 <!-- TOOL-INVENTORY:START -->
-Inventaire généré : **67 tools obligatoires**, **70 avec SQL**.
+Inventaire généré : **68 tools obligatoires**, **71 avec SQL**.
 
 | Tool | Famille | Source | Risque | Confirmation | Optionnel | I/O distant | État de session |
 |---|---|---|---|---|---|---|---|
@@ -51,7 +51,7 @@ Inventaire généré : **67 tools obligatoires**, **70 avec SQL**.
 | `find_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `find_ecotaxa_projects_in_region` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `find_ecotaxa_samples_in_region` | ecotaxa | ecotaxa | medium | non | non | oui | oui |
-| `find_uvp_matches_for_net_table` | data | file | low | non | non | non | non |
+| `find_uvp_matches_for_net_table` | data | file | low | non | non | oui | non |
 | `get_ecotaxa_object` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `get_ecotaxa_sample` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `get_zone_info` | geography | geography | low | non | non | non | non |
@@ -60,6 +60,7 @@ Inventaire généré : **67 tools obligatoires**, **70 avec SQL**.
 | `inspect_ecotaxa_column` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `inspect_ecotaxa_project_schema` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `join_ecotaxa_ecopart` | ecopart | ecopart | medium | non | non | non | oui |
+| `join_net_uvp_enriched` | data | file | low | non | non | non | oui |
 | `list_amundsen_datasets` | amundsen | amundsen | low | non | non | oui | non |
 | `list_bio_oracle_datasets` | bio_oracle | bio_oracle | low | non | non | oui | non |
 | `list_ecopart_samples` | ecopart | ecopart | low | non | non | oui | non |
@@ -104,13 +105,15 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 1. Données & analyse — `tools/data_tools.py` (3)
+## 1. Données & analyse — `tools/data_tools.py`, `tools/copepod_sources.py` (5)
 
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `load_file` | Charge CSV/TSV/Excel/JSON/Parquet, inspecte colonnes/types/manquants/plages, détecte les exports UVP EcoTaxa/EcoPart (hint `load_skill`) | non |
 | `run_pandas` | Exécute du pandas contrôlé sur les DataFrames de session (namespace restreint : imports allowlistés, pas de secrets/réseau/FS) ; source de toute valeur numérique. Un résultat de jointure (`merge`/`join`/`concat`) est persisté comme nouveau df `df_join_*` réutilisable ; une copie modifiée d'une table nommée, de même granularité, devient `df_derived_*` réutilisable ; une agrégation simple reste éphémère | non |
 | `run_graph` | Exécute du code matplotlib/Cartopy après un `graph_writer` autorisé, utilise les fonds Natural Earth 110m embarqués hors ligne et héberge le PNG persistant (`/graphs/{file}`) | non |
+| `find_uvp_matches_for_net_table` | Audite une table filet persistée contre les samples UVP du cache puis certifie le fichier CTD partagé avec Amundsen ; publie une sélection exportable seulement pour `join_eligible=True` et CTD `matched` | non |
+| `join_net_uvp_enriched` | Joint localement la table filet, l'audit certifié et la campagne UVP enrichie EcoPart sur `(export_project_id, profil UVP)` ; exclut les candidats non certifiés et persiste `df_net_uvp_ecopart` | non |
 
 ---
 
@@ -280,5 +283,5 @@ Backends : SQLite, PostgreSQL, MySQL, MariaDB (protocole MySQL).
 | Géographie | `geo_tools.py` | 3 |
 | Savoir & taxonomie | `rag_tool.py`, `taxonomy_tool.py` | 2 |
 | Skills & livrables | `skill_tool.py`, `deliverable_tool.py` | 2 |
-| **Total obligatoire** | | **66** |
-| **Total avec SQL** | | **69** |
+| **Total obligatoire** | | **68** |
+| **Total avec SQL** | | **71** |

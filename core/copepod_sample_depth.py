@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 import numpy as np
 import pandas as pd
 
@@ -41,6 +39,9 @@ def build_canonical_sample_depth(
 ) -> pd.DataFrame:
     """Agrège une table objet en une ligne canonique par sample et bin 5 m.
 
+    Quand ``export_project_id`` est présent, il fait partie de la clé canonique :
+    deux projets portant le même identifiant de sample restent donc séparés.
+
     ``taxon_filter`` contrôle quels organismes sont comptés comme cible :
 
     - ``None`` (défaut) → copépodes uniquement (``copepod_hierarchy_mask``).
@@ -73,6 +74,11 @@ def build_canonical_sample_depth(
         )
 
     work = df.copy()
+    key_columns = (
+        ("export_project_id", *_KEY_COLUMNS)
+        if "export_project_id" in work.columns
+        else _KEY_COLUMNS
+    )
     work["_is_target"] = _build_taxon_mask(work, taxon_filter).astype("int64")
     work["depth_bin"] = pd.to_numeric(work["depth_bin"], errors="coerce")
     work[volume_column] = pd.to_numeric(work[volume_column], errors="coerce")
@@ -80,6 +86,11 @@ def build_canonical_sample_depth(
         "sample_id": work["sample_id"].isna() | work["sample_id"].astype("string").str.strip().eq(""),
         "depth_bin": work["depth_bin"].isna() | ~np.isfinite(work["depth_bin"]),
     }
+    if "export_project_id" in work.columns:
+        invalid_keys["export_project_id"] = (
+            work["export_project_id"].isna()
+            | work["export_project_id"].astype("string").str.strip().eq("")
+        )
     for column, mask in invalid_keys.items():
         if mask.any():
             bad_rows = ", ".join(str(index) for index in work.index[mask][:5])
@@ -89,9 +100,13 @@ def build_canonical_sample_depth(
             )
 
     rows: list[dict[str, object]] = []
-    for key, group in work.groupby(list(_KEY_COLUMNS), sort=True):
+    for key, group in work.groupby(list(key_columns), sort=True):
+        key_values = key if isinstance(key, tuple) else (key,)
+        key_map = dict(zip(key_columns, key_values, strict=True))
         volumes = group[volume_column].to_numpy(dtype=float)
-        key_text = f"({key[0]}, {float(key[1])})"
+        key_text = ", ".join(
+            f"{column}={value}" for column, value in key_map.items()
+        )
         if not np.all(np.isfinite(volumes) & (volumes > 0)):
             raise ValueError(f"volume invalide pour la clé {key_text}.")
         canonical_volume = float(volumes.mean())
@@ -101,8 +116,7 @@ def build_canonical_sample_depth(
             raise ValueError(f"Volumes incompatibles pour la clé {key_text}.")
 
         row: dict[str, object] = {
-            "sample_id": key[0],
-            "depth_bin": key[1],
+            **key_map,
             "target_count": int(group["_is_target"].sum()),
             "sampled_volume_L": canonical_volume,
         }

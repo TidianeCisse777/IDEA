@@ -1989,6 +1989,640 @@ def test_net_uvp_match_tool_requires_explicit_call_and_matches_by_deployment(tmp
     assert not unavailable_matches["join_eligible"].any()
 
 
+def _selection_name_from(result: str) -> str:
+    import re
+
+    match = re.search(r"`selection:([^`]+)`", result)
+    assert match, result
+    return match.group(1)
+
+
+def _net_uvp_certification_tool(
+    tmp_path,
+    monkeypatch,
+    fetch_ctd_metadata,
+    *,
+    row_order: list[int] | None = None,
+    duplicate_first_row: bool = False,
+):
+    import sqlite3
+
+    import tools.amundsen_sources as amundsen_module
+    import tools.copepod_sources as source_module
+    from core.ecotaxa_browser.cache.repo import init_schema
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    conn.executemany(
+        "INSERT INTO samples_cache "
+        "(sample_id, project_id, station_id, profile_id, cruise_id, ctd_rosette_filename, instrument, "
+        "lat_avg, lon_avg, date_min, datetime_min, last_synced) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (101, 10, "ST-101", "uvp-101", "amundsen2024", "062", "UVP5SD", 67.5, -63.8, "2024-06-02", "2024-06-02T00:00:00", "test"),
+            (203, 20, "ST-203", "uvp-203", "amundsen2024", "063", "UVP5SD", 68.0, -64.0, "2024-06-03", "2024-06-03T00:00:00", "test"),
+            (404, 30, "ST-404", "uvp-404", "amundsen2024", "064", "UVP5SD", 68.5, -64.2, "2024-06-04", "2024-06-04T00:00:00", "test"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    thread_id = "net-uvp-certified-thread"
+    store = SessionStore(tmp_path / "sessions")
+    net_rows = pd.DataFrame(
+        {
+            "Sample ID": [501, 502, 503],
+            "Deployment ID": [1, 2, 3],
+            "Station Name": ["ST-101", "ST-203", "ST-404"],
+            "Latitude": [67.5, 68.0, 68.5],
+            "Longitude": [-63.8, -64.0, -64.2],
+            "Deployment Datetime Start": ["2024-06-01", "2024-06-02", "2024-06-03"],
+        }
+    )
+    if duplicate_first_row:
+        duplicate = net_rows.iloc[[0]].copy()
+        duplicate["Sample ID"] = 504
+        duplicate["Deployment ID"] = 4
+        net_rows = pd.concat([net_rows, duplicate], ignore_index=True)
+    if row_order:
+        net_rows = net_rows.iloc[row_order].reset_index(drop=True)
+
+    store_dataset(
+        store,
+        thread_id,
+        net_rows,
+        variable_name="df_file_baffin_2024",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+    monkeypatch.setattr(source_module, "_store", store)
+    monkeypatch.setattr(
+        amundsen_module,
+        "_fetch_amundsen_ctd_metadata_by_filename",
+        fetch_ctd_metadata,
+        raising=False,
+    )
+    tool = next(
+        item for item in source_module.make_source_tools(thread_id)
+        if item.name == "find_uvp_matches_for_net_table"
+    )
+    return tool, store, thread_id
+
+
+def test_audit_publishes_only_ctd_certified_selection(tmp_path, monkeypatch):
+    def fetch_ctd_metadata(**_kwargs):
+        return pd.DataFrame(
+            {
+                "filename": ["2406_062.int.nc", "2406_063.int.nc"],
+                "station": ["ST-101", "ST-203"],
+                "cast_number": [62, 63],
+                "latitude": [67.5, 68.0],
+                "longitude": [-63.8, -64.0],
+                "time": ["2024-06-02T00:00:00Z", "2024-06-03T00:00:00Z"],
+            }
+        )
+
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, fetch_ctd_metadata
+    )
+
+    result = tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+
+    name = _selection_name_from(result)
+    meta = store.get(f"{thread_id}:selection:{name}")["meta"]
+    assert meta["sample_ids"] == [101, 203]
+    assert meta["project_ids"] == [10, 20]
+    assert meta["source"] == "net_uvp_certified_selection"
+    assert meta["audit_variable"] == "df_net_uvp_matches"
+    assert meta["net_variable_name"] == "df_file_baffin_2024"
+    audit_meta = store.get(f"{thread_id}:dataset:df_net_uvp_matches")["meta"]
+    assert meta["net_dataframe_fingerprint"] == audit_meta[
+        "net_dataframe_fingerprint"
+    ]
+    assert meta["date_from"] is None
+    assert meta["date_to"] is None
+
+
+def test_audit_without_ctd_certificate_creates_no_selection(tmp_path, monkeypatch):
+    def unavailable_ctd_metadata(**_kwargs):
+        raise TimeoutError("Amundsen indisponible")
+
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, unavailable_ctd_metadata
+    )
+
+    tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+
+    assert not any(
+        ":selection:net_uvp_certified_" in key for key in store.keys(thread_id)
+    )
+
+
+def test_audit_unavailable_ctd_opt_in_publishes_exploratory_selection(
+    tmp_path, monkeypatch
+):
+    def unavailable_ctd_metadata(**_kwargs):
+        raise TimeoutError("Amundsen indisponible")
+
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, unavailable_ctd_metadata
+    )
+
+    result = tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "allow_unverified_ctd": True,
+        }
+    )
+
+    name = _selection_name_from(result)
+    selection_meta = store.get(f"{thread_id}:selection:{name}")["meta"]
+    audit = store.get(f"{thread_id}:dataset:df_net_uvp_matches")
+
+    assert selection_meta["source"] == "net_uvp_exploratory_selection"
+    assert selection_meta["ctd_verification"] == "unavailable"
+    assert selection_meta["exploratory"] is True
+    assert audit["meta"]["ctd_verification"] == "unavailable"
+    assert audit["meta"]["exploratory"] is True
+    eligible = audit["df"]["spatiotemporal_eligible"]
+    assert audit["df"].loc[eligible, "ctd_verification"].eq("unavailable").all()
+    assert audit["df"].loc[eligible, "exploratory"].all()
+    assert not audit["df"]["join_eligible"].any()
+    assert "CTD non vérifié" in result
+
+
+def test_audit_ctd_no_match_never_publishes_exploratory_selection(
+    tmp_path, monkeypatch
+):
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, lambda **_kwargs: pd.DataFrame()
+    )
+
+    tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "allow_unverified_ctd": True,
+        }
+    )
+
+    assert not any(
+        ":selection:net_uvp_exploratory_" in key
+        for key in store.keys(thread_id)
+    )
+
+
+def test_empty_exploratory_audit_invalidates_latest_selection(
+    tmp_path, monkeypatch
+):
+    """A failed re-audit cannot make a later dry-run reuse another scope."""
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, lambda **_kwargs: pd.DataFrame()
+    )
+    store.set(
+        f"{thread_id}:ecotaxa_selection_latest",
+        None,
+        {
+            "selection_name": "old_other_file_scope",
+            "sample_ids": [999999],
+            "project_ids": [999],
+            "n_samples": 1,
+        },
+    )
+
+    tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "allow_unverified_ctd": True,
+        }
+    )
+
+    latest = store.get(f"{thread_id}:ecotaxa_selection_latest")
+    assert latest["meta"]["source"] == "net_uvp_empty_selection"
+    assert latest["meta"]["sample_ids"] == []
+
+
+def test_audit_selection_is_canonical_across_permuted_matches(tmp_path, monkeypatch):
+    def fetch_ctd_metadata(**_kwargs):
+        return pd.DataFrame(
+            {
+                "filename": ["2406_062.int.nc", "2406_063.int.nc"],
+                "station": ["ST-101", "ST-203"],
+                "cast_number": [62, 63],
+                "latitude": [67.5, 68.0],
+                "longitude": [-63.8, -64.0],
+                "time": ["2024-06-02T00:00:00Z", "2024-06-03T00:00:00Z"],
+            }
+        )
+
+    first_tool, first_store, first_thread = _net_uvp_certification_tool(
+        tmp_path / "first", monkeypatch, fetch_ctd_metadata
+    )
+    first_name = _selection_name_from(
+        first_tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+    )
+    first_meta = first_store.get(f"{first_thread}:selection:{first_name}")["meta"]
+
+    second_tool, second_store, second_thread = _net_uvp_certification_tool(
+        tmp_path / "second", monkeypatch, fetch_ctd_metadata, row_order=[2, 1, 0]
+    )
+    second_name = _selection_name_from(
+        second_tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+    )
+    second_meta = second_store.get(f"{second_thread}:selection:{second_name}")["meta"]
+
+    assert first_name == second_name
+    assert first_meta["sample_ids"] == second_meta["sample_ids"] == [101, 203]
+    assert first_meta["project_ids"] == second_meta["project_ids"] == [10, 20]
+
+
+def test_audit_selection_deduplicates_repeated_certified_project_sample_pair(
+    tmp_path, monkeypatch
+):
+    def fetch_ctd_metadata(**_kwargs):
+        return pd.DataFrame(
+            {
+                "filename": ["2406_062.int.nc", "2406_063.int.nc"],
+                "station": ["ST-101", "ST-203"],
+                "cast_number": [62, 63],
+                "latitude": [67.5, 68.0],
+                "longitude": [-63.8, -64.0],
+                "time": ["2024-06-02T00:00:00Z", "2024-06-03T00:00:00Z"],
+            }
+        )
+
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, fetch_ctd_metadata, duplicate_first_row=True
+    )
+
+    name = _selection_name_from(
+        tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+    )
+    meta = store.get(f"{thread_id}:selection:{name}")["meta"]
+
+    assert meta["sample_ids"] == [101, 203]
+    assert meta["project_ids"] == [10, 20]
+    assert meta["n_samples"] == 2
+
+
+def test_audit_with_empty_ctd_response_creates_no_selection(tmp_path, monkeypatch):
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, lambda **_kwargs: pd.DataFrame()
+    )
+
+    tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+
+    assert not any(
+        ":selection:net_uvp_certified_" in key for key in store.keys(thread_id)
+    )
+
+
+def _net_uvp_enriched_tool(
+    tmp_path,
+    monkeypatch,
+    *,
+    audit_meta: dict | None = None,
+    exploratory_audit: bool = False,
+    enriched_meta: dict | None = None,
+    enriched_has_object_id: bool = True,
+    net_density_first: float = 12.0,
+):
+    import tools.copepod_sources as source_module
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    thread_id = "net-uvp-enriched-thread"
+    store = SessionStore(tmp_path / "sessions")
+    net_df = pd.DataFrame(
+        {
+            "SAMPLE_ID": [501, 502],
+            "net_density_ind_m3": [net_density_first, 15.0],
+        }
+    )
+    store_dataset(
+        store,
+        thread_id,
+        net_df,
+        variable_name="df_file_baffin_2024",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+    audit_df = pd.DataFrame(
+        {
+            "net_sample_id": [501, 502],
+            "uvp_project_id": [10, 20],
+            "uvp_profile_str": ["uvp-101", "uvp-203"],
+            "join_eligible": [not exploratory_audit, False],
+            "ctd_filename_join_eligible": [not exploratory_audit, False],
+        }
+    )
+    if exploratory_audit:
+        audit_df["ctd_verification"] = ["unavailable", "unavailable"]
+        audit_df["exploratory"] = [True, True]
+    store_dataset(
+        store,
+        thread_id,
+        audit_df,
+        variable_name="df_net_uvp_matches",
+        meta=audit_meta or {
+            "source": "net_uvp_match",
+            "net_variable_name": "df_file_baffin_2024",
+            "ctd_filename_verified": 0 if exploratory_audit else 1,
+            "ctd_verification": (
+                "unavailable" if exploratory_audit else "verified"
+            ),
+            "exploratory": exploratory_audit,
+            "allow_unverified_ctd": exploratory_audit,
+            "net_dataframe_fingerprint": source_module._net_dataframe_fingerprint(
+                net_df
+            ),
+        },
+        set_active=False,
+    )
+    enriched = {
+        "export_project_id": [10, 10, 20],
+        "sample_profileid": ["uvp-101", "uvp-101", "uvp-203"],
+        "ecopart_Sampled volume [L]": [100.0, 100.0, 80.0],
+    }
+    if enriched_has_object_id:
+        enriched["object_id"] = ["obj-1", "obj-2", "obj-3"]
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(enriched),
+        variable_name="df_ecotaxa_ecopart_campaign",
+        meta=enriched_meta or {"source": "join:ecotaxa_campaign+ecopart"},
+        set_active=False,
+    )
+    monkeypatch.setattr(source_module, "_store", store)
+
+    join_tool = next(
+        item for item in source_module.make_source_tools(thread_id)
+        if item.name == "join_net_uvp_enriched"
+    )
+    return join_tool, store, thread_id
+
+
+def test_join_net_uvp_enriched_persists_certified_object_rows(
+    tmp_path, monkeypatch
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+
+    join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    stored = store.get(f"{thread_id}:dataset:df_net_uvp_ecopart")
+    assert stored["df"]["object_id"].tolist() == ["obj-1", "obj-2"]
+    assert stored["df"]["join_eligible"].all()
+    assert "ecopart_Sampled volume [L]" in stored["df"]
+    assert stored["meta"]["source"] == "net_uvp_ecopart_certified"
+    assert stored["meta"]["net_variable_name"] == "df_file_baffin_2024"
+    assert stored["meta"]["audit_variable_name"] == "df_net_uvp_matches"
+    assert stored["meta"]["uvp_enriched_variable"] == "df_ecotaxa_ecopart_campaign"
+
+
+def test_join_net_uvp_enriched_requires_opt_in_for_unavailable_ctd_audit(
+    tmp_path, monkeypatch
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(
+        tmp_path,
+        monkeypatch,
+        exploratory_audit=True,
+    )
+
+    blocked_result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in blocked_result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+    join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+            "allow_unverified_ctd": True,
+        }
+    )
+
+    stored = store.get(f"{thread_id}:dataset:df_net_uvp_ecopart")
+    assert stored["df"]["ctd_verification"].eq("unavailable").all()
+    assert stored["df"]["exploratory"].all()
+    assert stored["meta"]["ctd_verification"] == "unavailable"
+    assert stored["meta"]["exploratory"] is True
+
+
+@pytest.mark.parametrize(
+    ("join_eligible", "ctd_verification"),
+    [
+        (False, "verified"),
+        (True, "no_match"),
+        (True, "unavailable"),
+    ],
+)
+def test_certified_join_wrapper_rejects_ctd_without_match_or_opt_in(
+    tmp_path,
+    monkeypatch,
+    join_eligible,
+    ctd_verification,
+):
+    from tools.dataset_registry import store_dataset
+
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+    audit_entry = store.get(f"{thread_id}:dataset:df_net_uvp_matches")
+    audit = audit_entry["df"].copy()
+    audit["join_eligible"] = join_eligible
+    audit["ctd_verification"] = ctd_verification
+    audit["exploratory"] = False
+    store_dataset(
+        store,
+        thread_id,
+        audit,
+        variable_name="df_net_uvp_matches",
+        meta={
+            **audit_entry["meta"],
+            "ctd_verification": ctd_verification,
+            "exploratory": False,
+            "allow_unverified_ctd": False,
+        },
+        set_active=False,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "aucune table finale n'a été créée" in result.lower()
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
+def test_join_net_uvp_enriched_rejects_same_name_net_replacement(
+    tmp_path, monkeypatch
+):
+    from tools.dataset_registry import store_dataset
+
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "SAMPLE_ID": [501, 999],
+                "net_density_ind_m3": [12.0, 15.0],
+            }
+        ),
+        variable_name="df_file_baffin_2024",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
+def test_net_dataframe_fingerprint_preserves_ieee_float_distinctions():
+    from tools.copepod_sources import _net_dataframe_fingerprint
+
+    first = pd.DataFrame({"density": [12.00000000001]})
+    second = pd.DataFrame({"density": [12.00000000002]})
+
+    assert _net_dataframe_fingerprint(first) == _net_dataframe_fingerprint(
+        first.copy()
+    )
+    assert _net_dataframe_fingerprint(first) != _net_dataframe_fingerprint(second)
+
+
+def test_join_net_uvp_enriched_rejects_ieee_float_replacement_after_audit(
+    tmp_path, monkeypatch
+):
+    from tools.dataset_registry import store_dataset
+    join_tool, store, thread_id = _net_uvp_enriched_tool(
+        tmp_path,
+        monkeypatch,
+        net_density_first=12.00000000001,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "SAMPLE_ID": [501, 502],
+                "net_density_ind_m3": [12.00000000002, 15.0],
+            }
+        ),
+        variable_name="df_file_baffin_2024",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
+@pytest.mark.parametrize(
+    "audit_meta",
+    [
+        {
+            "source": "file",
+            "net_variable_name": "df_file_baffin_2024",
+            "ctd_filename_verified": 1,
+        },
+        {
+            "source": "net_uvp_match",
+            "net_variable_name": "df_file_other_campaign",
+            "ctd_filename_verified": 1,
+        },
+    ],
+    ids=["wrong-source", "wrong-net-variable"],
+)
+def test_join_net_uvp_enriched_rejects_untrusted_audit_provenance(
+    tmp_path, monkeypatch, audit_meta
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(
+        tmp_path,
+        monkeypatch,
+        audit_meta=audit_meta,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
+def test_join_net_uvp_enriched_rejects_raw_file_masquerading_as_enriched(
+    tmp_path, monkeypatch
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(
+        tmp_path,
+        monkeypatch,
+        enriched_meta={"source": "file"},
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
+def test_join_net_uvp_enriched_rejects_enrichment_without_object_identifier(
+    tmp_path, monkeypatch
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(
+        tmp_path,
+        monkeypatch,
+        enriched_has_object_id=False,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
 def test_ecotaxa_cache_map_is_complete_and_does_not_migrate_file(
     tmp_path, monkeypatch
 ):

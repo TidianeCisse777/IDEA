@@ -13,7 +13,7 @@ def test_source_gateway_precedes_source_specific_routing():
 
 def test_generic_requests_default_to_loaded_file():
     assert "A loaded file is the default source" in COPEPOD_SYSTEM_PROMPT
-    assert "Generic words are never external-source signals" in COPEPOD_SYSTEM_PROMPT
+    assert "Generic words are never external-source\n  signals" in COPEPOD_SYSTEM_PROMPT
 
 
 def test_external_sources_require_first_explicit_selection_then_persist():
@@ -35,24 +35,18 @@ def test_project_number_alone_is_not_ecotaxa():
 
 
 def test_explicit_lock_requires_explicit_release():
-    assert (
-        "persists across turns until the user explicitly releases it"
-        in COPEPOD_SYSTEM_PROMPT
-    )
+    assert "restriction persists\n  across turns until the user explicitly releases it" in COPEPOD_SYSTEM_PROMPT
 
 
 def test_failed_tools_cannot_be_reported_as_success():
     prompt = COPEPOD_SYSTEM_PROMPT
-    assert "## Tool Result Truth" in prompt
-    assert "Error, blocked, exception, or an empty result is not success" in prompt
-    assert "Never announce an image, file, or URL unless" in prompt
+    assert "## State and execution" in prompt
+    assert "Error, blocked, exception, or empty result != success" in prompt
+    assert "Announce\n  image/file/URL only when this turn returned it" in prompt
 
 
 def test_empty_results_stop_before_graphing():
-    assert (
-        "When a filter returns zero rows, stop before graph planning"
-        in COPEPOD_SYSTEM_PROMPT
-    )
+    assert "zero rows -> stop before graph" in COPEPOD_SYSTEM_PROMPT
 
 
 def test_graph_skills_forbid_invented_artifacts_and_empty_renders():

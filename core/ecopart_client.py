@@ -39,6 +39,10 @@ class EcopartExportError(RuntimeError):
         self.raw = raw
 
 
+class EcopartDownloadError(RuntimeError):
+    """Raised when an EcoPart export cannot be downloaded or parsed."""
+
+
 def _parse_ecopart_task_error(page_text: str) -> tuple[str, str, int | None]:
     """Classify an EcoPart task error page; return (kind, short_message, task_id)."""
     task_id = None
@@ -240,13 +244,16 @@ class EcopartClient:
             task_list_resp.raise_for_status()
             task_links = re.findall(r"""href=['"](/Task/Show/(\d+))['"]""", task_list_resp.text)
         if not task_links:
-            raise RuntimeError("EcoPart export task was not created")
+            raise EcopartExportError(
+                "task_creation",
+                "La tâche d'export EcoPart n'a pas été créée.",
+            )
         newest_task = max(task_links, key=lambda item: int(item[1]))
         return [newest_task[0]]
 
     def download_tsv(self, links: list[str]) -> pd.DataFrame:
         if not links:
-            raise RuntimeError("No download links provided")
+            raise EcopartDownloadError("No download links provided")
         for link in links:
             if "/Task/Show/" in link:
                 link = self._wait_for_export(link)
@@ -256,21 +263,32 @@ class EcopartClient:
                 continue
             ctype = resp.headers.get("content-type", "").lower()
             if "html" in ctype or resp.content.lstrip().lower().startswith(b"<!doctype html"):
-                raise RuntimeError(f"EcoPart returned HTML instead of an export file: {url}")
+                raise EcopartDownloadError(
+                    f"EcoPart a renvoyé du HTML au lieu d'un export : {url}"
+                )
             if resp.content[:4] == b"PK\x03\x04" or "zip" in ctype:
-                with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-                    names = [
-                        name
-                        for name in zf.namelist()
-                        if name.lower().endswith((".tsv", ".csv")) and "summary" not in name.lower()
-                    ]
-                    if not names:
-                        raise RuntimeError("EcoPart ZIP contains no tabular export file")
-                    frames = [self._read_delimited(zf.read(name)) for name in names]
-                    return pd.concat(frames, ignore_index=True, sort=False)
+                try:
+                    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+                        names = [
+                            name
+                            for name in zf.namelist()
+                            if name.lower().endswith((".tsv", ".csv")) and "summary" not in name.lower()
+                        ]
+                        if not names:
+                            raise EcopartDownloadError(
+                                "L'archive EcoPart ne contient aucun export tabulaire."
+                            )
+                        frames = [self._read_delimited(zf.read(name)) for name in names]
+                        return pd.concat(frames, ignore_index=True, sort=False)
+                except zipfile.BadZipFile as exc:
+                    raise EcopartDownloadError(
+                        "L'archive téléchargée depuis EcoPart est illisible."
+                    ) from exc
             if "tab" in ctype or "tsv" in ctype or "csv" in ctype or "text" in ctype:
                 return self._read_delimited(resp.content)
-        raise RuntimeError("No downloadable file found in provided links")
+        raise EcopartDownloadError(
+            "Aucun fichier téléchargeable EcoPart trouvé dans les liens fournis."
+        )
 
     def _wait_for_export(self, task_link: str) -> str:
         task_url = urljoin(f"{_BASE_URL}/", task_link)
@@ -304,12 +322,19 @@ class EcopartClient:
         first_line = next((line for line in content.splitlines() if line.strip()), b"")
         separator = b"\t" if first_line.count(b"\t") > first_line.count(b",") else b","
         if separator not in first_line:
-            raise RuntimeError("EcoPart export is not a recognized TSV or CSV file")
+            raise EcopartDownloadError(
+                "L'export EcoPart n'est pas un fichier TSV ou CSV reconnu."
+            )
         try:
             text = content.decode("utf-8-sig")
         except UnicodeDecodeError:
             text = content.decode("cp1252")
-        return pd.read_csv(io.StringIO(text), sep=separator.decode(), low_memory=False)
+        try:
+            return pd.read_csv(io.StringIO(text), sep=separator.decode(), low_memory=False)
+        except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+            raise EcopartDownloadError(
+                "L'export EcoPart est vide ou ne peut pas être analysé."
+            ) from exc
 
     def get_stats(self, project_id: int) -> dict:
         resp = self._session.get(

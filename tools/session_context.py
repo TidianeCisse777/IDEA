@@ -67,7 +67,9 @@ def _present_columns(columns: Iterable[object]) -> list[str]:
 
 # The always-injected dataset capsule must stay a compact orientation aid.
 # The complete schema remains in the persisted DataFrame for targeted inspection.
-_MAX_ALL_COLUMNS = 24
+_MAX_ALL_COLUMNS = 32
+_MAX_TABLE_SCHEMA_COLUMNS = 16
+_MAX_EXPORT_SCHEMA_COLUMNS = 24
 
 # The model should encounter the columns in the same order a scientist uses to
 # scope an analysis: first the observation/key, then when and where it was
@@ -127,10 +129,21 @@ _ABUNDANCE_MARKERS = (
     "count",
 )
 
+_PROJECT_KEY_MARKERS = ("project", "campaign", "cruise")
+_SAMPLE_MARKERS = (
+    "sample", "profile", "station", "deployment", "net", "cast", "analysis",
+)
+_ENVIRONMENT_MARKERS = (
+    "depth", "pres", "temperature", "temp", "salin", "oxygen", "conduct",
+    "fluor", "chlorophyll", "ph", "turbid", "volume", "flowmeter",
+)
+
 
 def _prioritized_columns(
     dataframe: "pd.DataFrame",
     env_detected: dict[str, str | None],
+    *,
+    limit: int = _MAX_ALL_COLUMNS,
 ) -> str:
     """Return columns in scientific-scoping order, truncated safely.
 
@@ -197,25 +210,104 @@ def _prioritized_columns(
         and column not in numeric_measures
     ]
 
+    # Reserve room for every scientific family.  A wide export can contain many
+    # *_id fields; letting those consume the whole preview would hide exactly the
+    # time, space, environment, taxon and measure candidates needed for routing.
     ordered = [
-        *identifiers,
-        *time_cols,
-        *position_cols,
-        *depth_cols,
-        *taxonomy_cols,
-        *abundance_measures,
-        *numeric_measures,
+        *identifiers[:8],
+        *time_cols[:4],
+        *position_cols[:4],
+        *depth_cols[:4],
+        *taxonomy_cols[:6],
+        *abundance_measures[:6],
+        *numeric_measures[:6],
         *categories,
     ]
-    total = len(ordered)
-    shown = ordered[:_MAX_ALL_COLUMNS]
+    ordered = list(dict.fromkeys(ordered))
+    ordered.extend(column for column in columns if column not in set(ordered))
+    total = len(columns)
+    shown = ordered[:limit]
     suffix = f",(+{total - len(shown)} more)" if total > len(shown) else ""
     return ",".join(shown) + suffix
 
 
-_MAX_DERIVED_SUBSETS = 12
-_MAX_LOADED_FILES = 12
-_MAX_WORKING_TABLES = 12
+def _schema_by_type(
+    dataframe: "pd.DataFrame",
+    env_detected: dict[str, str | None],
+    *,
+    limit: int,
+) -> str:
+    """Return a short schema grouped by scientific role, never every column."""
+    selected = _prioritized_columns(
+        dataframe, env_detected, limit=limit
+    ).split(",")
+    remainder = next((item for item in selected if item.startswith("(+")), "")
+    names = [item for item in selected if not item.startswith("(+")]
+    taxon_names = {normalize_column_name(name) for name in _TAXONOMY_PRIORITY}
+    time_names = {
+        normalize_column_name(name)
+        for name in (
+            *DEFAULT_TIME_CANDIDATES,
+            *DEFAULT_TIME_END_CANDIDATES,
+        )
+    }
+    space_names = {
+        normalize_column_name(name)
+        for name in (*DEFAULT_LAT_CANDIDATES, *DEFAULT_LON_CANDIDATES)
+    }
+    environment_names = {
+        normalize_column_name(name) for name in DEFAULT_DEPTH_CANDIDATES
+    }
+    environment_names.update(
+        normalize_column_name(name)
+        for name in env_detected.values()
+        if name and normalize_column_name(name) not in space_names | time_names
+    )
+    numeric_names = {
+        str(column)
+        for column in dataframe.select_dtypes(include="number").columns
+    }
+    groups: dict[str, list[str]] = {
+        "keys": [], "sample": [], "space": [], "time": [],
+        "environment": [], "taxon": [], "measures": [], "other": [],
+    }
+    for name in names:
+        normalized_name = normalize_column_name(name)
+        if any(marker in normalized_name for marker in _PROJECT_KEY_MARKERS):
+            groups["keys"].append(name)
+        elif normalized_name in space_names:
+            groups["space"].append(name)
+        elif normalized_name in time_names:
+            groups["time"].append(name)
+        elif (
+            normalized_name in environment_names
+            or any(marker in normalized_name for marker in _ENVIRONMENT_MARKERS)
+        ):
+            groups["environment"].append(name)
+        elif normalized_name in taxon_names:
+            groups["taxon"].append(name)
+        elif (
+            any(marker in normalized_name for marker in _SAMPLE_MARKERS)
+            or normalized_name in {"object", "objectid"}
+        ):
+            groups["sample"].append(name)
+        elif name in numeric_names or any(
+            marker in normalized_name for marker in _ABUNDANCE_MARKERS
+        ):
+            groups["measures"].append(name)
+        else:
+            groups["other"].append(name)
+    rendered = [
+        f"{label}=[{','.join(values)}]"
+        for label, values in groups.items()
+        if values
+    ]
+    return "; ".join(rendered + ([remainder] if remainder else []))
+
+
+_MAX_DERIVED_SUBSETS = 6
+_MAX_LOADED_FILES = 6
+_MAX_WORKING_TABLES = 8
 # Meta keys that carry an external EcoTaxa identifier. A dataset carrying any of
 # them is a raw project/sample-keyed export and must stay hidden so its id is not
 # re-exposed as the current subject (see the module docstring).
@@ -224,8 +316,8 @@ _STALE_ID_KEYS = ("project_id", "sample_id", "sample_ids")
 
 def _working_tables(
     store: SessionStore, thread_id: str, *, active_variable: str
-) -> list[tuple[str, str, str, str]]:
-    """Return (variable, source, rows, description) for working tables.
+) -> list[tuple[str, str, str, str, str]]:
+    """Return (variable, source, rows, description, compact_schema).
 
     These are results that are neither loaded files nor zone subsets — EcoTaxa
     cache queries (`df_ecotaxa_cache_query`), joins, enrichment outputs. Surfacing
@@ -235,7 +327,7 @@ def _working_tables(
     external project/sample id (`_STALE_ID_KEYS`) are skipped so no stale
     identifier is re-exposed.
     """
-    found: list[tuple[str, str, str, str]] = []
+    found: list[tuple[str, str, str, str, str]] = []
     for key in store.keys(prefix=f"{thread_id}:dataset:"):
         entry = store.get(key)
         meta = (entry or {}).get("meta") or {}
@@ -255,8 +347,27 @@ def _working_tables(
         rows = meta.get("n_rows")
         rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
         description = _clean(meta.get("description") or "", limit=100)
+        dataframe = (entry or {}).get("df")
+        if dataframe is not None:
+            environment_columns = {
+                "latitude": detect_column(dataframe.columns, DEFAULT_LAT_CANDIDATES),
+                "longitude": detect_column(dataframe.columns, DEFAULT_LON_CANDIDATES),
+                "time": detect_column(dataframe.columns, DEFAULT_TIME_CANDIDATES),
+                "depth": detect_column(dataframe.columns, DEFAULT_DEPTH_CANDIDATES),
+            }
+            schema = _schema_by_type(
+                dataframe, environment_columns, limit=_MAX_TABLE_SCHEMA_COLUMNS
+            )
+        else:
+            schema = "unknown"
         found.append(
-            (variable, _clean(source or "derived", limit=60), rows_text, description)
+            (
+                variable,
+                _clean(source or "derived", limit=60),
+                rows_text,
+                description,
+                schema,
+            )
         )
     return sorted(set(found))
 
@@ -412,9 +523,6 @@ def build_dataset_state_capsule(
     if meta.get("source") == "ecotaxa_selection" or meta.get("selection_name"):
         selection_name = _clean(meta.get("selection_name") or "latest")
         sample_ids = meta.get("sample_ids") or []
-        sample_id_text = ",".join(str(value) for value in sample_ids[:20])
-        if len(sample_ids) > 20:
-            sample_id_text += f",...(+{len(sample_ids) - 20})"
         project_ids = meta.get("project_ids") or []
         project_id_text = ",".join(str(value) for value in project_ids)
         filters = meta.get("filters") or {}
@@ -427,7 +535,6 @@ def build_dataset_state_capsule(
             f"- name={selection_name}\n"
             f"- variable={variable}\n"
             f"- samples={len(sample_ids) or rows}\n"
-            f"- sample_ids={sample_id_text or 'not listed'}\n"
             f"- project_ids={project_id_text or 'not listed'}\n"
             f"- filters={filter_text or 'not listed'}\n"
             "- Reuse this selection for follow-up tables, SQL, pandas, and graphs; "
@@ -442,8 +549,21 @@ def build_dataset_state_capsule(
             continue
         name = _clean(campaign_meta.get("variable_name") or key.rsplit(":", 1)[-1])
         description = _clean(campaign_meta.get("description") or "Export EcoTaxa consolidé")
+        campaign_df = entry.get("df")
+        if campaign_df is not None:
+            campaign_environment = {
+                "latitude": detect_column(campaign_df.columns, DEFAULT_LAT_CANDIDATES),
+                "longitude": detect_column(campaign_df.columns, DEFAULT_LON_CANDIDATES),
+                "time": detect_column(campaign_df.columns, DEFAULT_TIME_CANDIDATES),
+                "depth": detect_column(campaign_df.columns, DEFAULT_DEPTH_CANDIDATES),
+            }
+            schema = _schema_by_type(
+                campaign_df, campaign_environment, limit=_MAX_EXPORT_SCHEMA_COLUMNS
+            )
+        else:
+            schema = "unknown"
         marker = " (active)" if name == variable else ""
-        campaigns.append(f"- {name}{marker}: {description}")
+        campaigns.append(f"- {name}{marker}: {description}; schema={schema}")
     campaign_block = (
         "\nECO TAXA EXPORTED CAMPAIGNS (persistent, reusable tables):\n"
         + "\n".join(sorted(campaigns)[:8]) + "\n"
@@ -491,13 +611,18 @@ def build_dataset_state_capsule(
         # conversation. Only unrelated derived tables use the compact cap.
         selections = [item for item in tables if item[1] == "ecotaxa_selection"]
         other_tables = [item for item in tables if item[1] != "ecotaxa_selection"]
-        listed = [*selections, *other_tables[:_MAX_WORKING_TABLES]]
+        listed = [*selections[:_MAX_WORKING_TABLES], *other_tables[:_MAX_WORKING_TABLES]]
         lines = "\n".join(
             f"- {variable}: source={source}, rows={rows}"
+            + f", schema={schema}"
             + (f", desc={description}" if description else "")
-            for variable, source, rows, description in listed
+            for variable, source, rows, description, schema in listed
         )
         more = (
+            f"\n- (+{len(selections) - _MAX_WORKING_TABLES} other selections)"
+            if len(selections) > _MAX_WORKING_TABLES
+            else ""
+        ) + (
             f"\n- (+{len(other_tables) - _MAX_WORKING_TABLES} other derived tables)"
             if len(other_tables) > _MAX_WORKING_TABLES
             else ""
@@ -534,6 +659,9 @@ def build_dataset_state_capsule(
     capsule = (
         "\n\n## ACTIVE DATASET STATE (authoritative, current turn)\n"
         "- " + "; ".join(fields) + "\n"
+        "SCHEMA BY TYPE: "
+        + _schema_by_type(dataframe, environment_columns, limit=_MAX_ALL_COLUMNS)
+        + "\n"
         + active_join_note
         + selection_block
         + campaign_block

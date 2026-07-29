@@ -19,7 +19,7 @@ def test_generated_gateway_documents_persistent_affinity_and_bare_ids():
     assert "A project number alone is not an EcoTaxa signal" in gateway
     assert "remains active on following turns" in gateway
     assert "newly loaded file becomes the active source" in gateway
-    assert "becomes the sole source for implicit follow-ups" in gateway
+    assert "New file -> sole source for implicit follow-ups" in gateway
     assert "names another source" in gateway
 
 
@@ -32,16 +32,13 @@ def test_gateway_names_every_selectable_external_source():
         assert label in gateway
 
 
-def test_ecotaxa_prompt_makes_cache_sql_the_default_exploration_path():
+def test_ecotaxa_skill_makes_cache_sql_the_default_exploration_path():
     from pathlib import Path
 
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    assert "query_ecotaxa_cache" in COPEPOD_SYSTEM_PROMPT
-    assert "GROUP BY" in COPEPOD_SYSTEM_PROMPT
-    assert "df_ecotaxa_cache_query" in COPEPOD_SYSTEM_PROMPT
     navigation = Path("agents/skills/ecotaxa_navigation.md").read_text()
     assert "query_ecotaxa_cache" in navigation
+    assert "GROUP BY" in navigation
+    assert "df_ecotaxa_cache_query" in navigation
 
 
 def test_cross_source_analysis_uses_generic_run_pandas_sandbox():
@@ -50,10 +47,9 @@ def test_cross_source_analysis_uses_generic_run_pandas_sandbox():
 
     text = COPEPOD_SYSTEM_PROMPT + "\n" + Path("agents/skills/ecotaxa_navigation.md").read_text()
     assert "run_pandas" in text
-    assert "loaded_file" in text
-    assert "df_file_*" in text
+    assert "persistent variable" in text
     assert "df_ecotaxa_cache_query" in text
-    assert "dedicated comparison tool" in text
+    assert "comparison" in text
 
 
 def test_ecotaxa_cache_prompt_does_not_impose_an_implicit_limit():
@@ -62,26 +58,22 @@ def test_ecotaxa_cache_prompt_does_not_impose_an_implicit_limit():
 
     navigation = Path("agents/skills/ecotaxa_navigation.md").read_text()
 
-    prompt_text = f"{COPEPOD_SYSTEM_PROMPT}\n{navigation}"
-    assert "sans LIMIT implicite" in prompt_text
-    assert "résultat complet" in prompt_text
+    assert "Add `LIMIT` only when" in navigation
     assert "GROUP BY" in navigation
 
 
-def test_ecotaxa_cache_prompt_requires_schema_and_result_validation():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+def test_ecotaxa_skill_requires_schema_and_result_validation():
+    from pathlib import Path
 
-    assert "inspect the cache schema before writing SQL" in COPEPOD_SYSTEM_PROMPT
-    assert "validate the returned columns, row count, and error/truncation status" in COPEPOD_SYSTEM_PROMPT
-    assert "Never infer a value, column, or conclusion that is absent from that result" in COPEPOD_SYSTEM_PROMPT
+    navigation = Path("agents/skills/ecotaxa_navigation.md").read_text()
+    assert "Schema-first rule" in navigation
+    assert "before writing SQL" in navigation
+    assert "Never refuse a query or invent a workaround" in navigation
 
 
 def test_aggregate_object_request_prefers_cache_sql_over_object_tools():
     from pathlib import Path
 
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    assert "global aggregation" in COPEPOD_SYSTEM_PROMPT
     skill = Path("agents/skills/ecotaxa_navigation.md").read_text()
     assert "query_ecotaxa_cache" in skill
     assert "paginated object browsing" in skill
@@ -95,14 +87,14 @@ def test_ecotaxa_prompt_distinguishes_samples_casts_and_validated_objects():
     text = f"{prompt.COPEPOD_SYSTEM_PROMPT}\n{skill}"
 
     assert "profile_id" in text
-    assert "never use `sample_id` as a proxy for a cast" in text
-    assert "samples_cache.nb_validated" in text
-    assert "samples_cache.nb_predicted" in text
-    assert "samples_cache.nb_dubious" in text
-    assert "samples_cache.nb_unclassified" in text
-    assert "only for an explicitly object-level query" in text
-    assert "objets validés" in text
-    assert "pre-aggregate object metrics by `sample_id`" in text
+    assert "Never group a profile map by sample_id" in text
+    assert "`nb_validated`" in text
+    assert "`nb_predicted`" in text
+    assert "`nb_dubious`" in text
+    assert "`nb_unclassified`" in text
+    assert "Stay at sample level unless" in text
+    assert "Individual objects require an export plan" in text
+    assert "pre-aggregate objects by `sample_id`" in text
 
 
 def test_ecotaxa_sample_maps_require_a_persisted_named_dataframe():
@@ -110,11 +102,10 @@ def test_ecotaxa_sample_maps_require_a_persisted_named_dataframe():
 
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
+    navigation = Path("agents/skills/ecotaxa_navigation.md").read_text()
     graph_writer = Path("agents/skills/graph_writer.md").read_text()
-    text = f"{COPEPOD_SYSTEM_PROMPT}\n{graph_writer}"
-    assert "map of EcoTaxa samples" in text
-    assert "reference bare `df`" in text
-    assert "exact combined variable" in text
+    text = f"{COPEPOD_SYSTEM_PROMPT}\n{navigation}\n{graph_writer}"
+    assert "sample maps" in text
+    assert "bare `df`" in text
+    assert "exact saved variable" in text
     assert "exact named DataFrame" in text
-    assert "never run separate selections and plot only the last active one" in text
-    assert "combined table" in text

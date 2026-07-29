@@ -83,7 +83,7 @@ python serve.py                          # serveur FastAPI seul
 | `LANGSMITH_API_KEY` | Tracing + pull Hub des skills (le system prompt est lu localement) |
 | `LANGCHAIN_TRACING_V2` | `true` pour activer LangSmith |
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |
-| `MAX_CONTEXT_TOKENS` | Défaut 100000 — au-delà, trim_messages |
+| `MAX_CONTEXT_TOKENS` | Défaut 100000 — plafond de qualité ; au-delà, trim_messages |
 | `KEEP_FULL_TOOL_TURNS` | Défaut 3 — anciens résultats de tools compactés au-delà de ces tours |
 | `MAX_TOOL_RESULT_CHARS` | Défaut 8000 — au-delà, troncature des résultats de tools |
 | `CHECKPOINTS_DB` | Chemin SQLite des checkpoints LangGraph (`data/checkpoints.sqlite`) |

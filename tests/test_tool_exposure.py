@@ -111,6 +111,17 @@ def test_run_pandas_is_permanent_sandbox_without_loaded_file():
     assert "run_graph" not in decision.tool_names
 
 
+def test_join_net_uvp_enriched_is_exposed_for_file_analysis():
+    decision = _decision(
+        "Prépare la table filet et UVP enrichie EcoPart déjà disponible.",
+        file_loaded=True,
+        sources=("file",),
+    )
+
+    assert "file_analysis" in decision.active_groups
+    assert "join_net_uvp_enriched" in decision.tool_names
+
+
 def test_explicit_visual_intent_exposes_graph_workflow_before_graph_skills():
     # The fixture carries the semantic decision that the runtime computes
     # before the first model call; no graph skill has been loaded yet.
@@ -273,11 +284,12 @@ def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
     assert "enrich_with_amundsen_ctd" in decision.tool_names
     assert "enrich_ecotaxa_with_ecopart_remote" not in decision.tool_names
     assert not any(group.startswith("ecotaxa_") for group in decision.active_groups)
-    # file_analysis actif (fichier chargé) → run_pandas + split_dataframe_by_zone.
+    # file_analysis actif (fichier chargé) → analyse locale, audit/jointure
+    # certifiés et découpage géographique.
     assert "split_dataframe_by_zone" in decision.tool_names
     # Direct enrichment keeps the local sandbox available for the resulting
     # table; it must not collapse to the canonical enrichment tool alone.
-    assert len(decision.tool_names) == 9
+    assert len(decision.tool_names) == 10
 
 
 @pytest.mark.parametrize(

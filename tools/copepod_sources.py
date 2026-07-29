@@ -9,8 +9,9 @@ import unicodedata
 import uuid
 from pathlib import Path
 
-import requests
+import numpy as np
 import pandas as pd
+import requests
 from langchain_core.tools import tool
 
 from core.ecotaxa_browser.column_distribution import get_column_distribution
@@ -71,6 +72,30 @@ _DOWNLOADS_DIR.mkdir(exist_ok=True)
 _LOGGER = logging.getLogger(__name__)
 
 _ECOTAXA_UI_BASE = "https://ecotaxa.obs-vlfr.fr"
+
+
+def _net_dataframe_fingerprint(dataframe: pd.DataFrame) -> str:
+    """Return a stable content-and-schema identity for a persisted net table."""
+    schema = repr(
+        (
+            dataframe.shape,
+            tuple(map(str, dataframe.columns)),
+            tuple(map(str, dataframe.dtypes)),
+            str(dataframe.index.dtype),
+        )
+    )
+    row_hashes = pd.util.hash_pandas_object(
+        dataframe,
+        index=True,
+        categorize=False,
+        hash_key="copepodnetfp0001",
+    )
+    digest = hashlib.sha256()
+    digest.update(schema.encode("utf-8"))
+    digest.update(b"\x1e")
+    for row_hash in row_hashes:
+        digest.update(int(row_hash).to_bytes(8, byteorder="big", signed=False))
+    return f"sha256:{digest.hexdigest()}"
 
 
 def _zone_grouping_requires_reference(sql: str) -> bool:
@@ -487,6 +512,7 @@ def make_source_tools(thread_id: str) -> list:
         date_to: str | None = None,
         max_distance_km: float = 50.0,
         max_time_gap_days: float | None = 2.0,
+        allow_unverified_ctd: bool = False,
     ) -> str:
         """Cherche à la demande les correspondances filet ↔ UVP dans le cache EcoTaxa.
 
@@ -507,6 +533,11 @@ def make_source_tools(thread_id: str) -> list:
         `date_from` / `date_to` : bornes ISO facultatives. Quand l'utilisateur
         demande une période, les passer ici : la vérification ignore alors toutes
         les lignes filet hors période.
+
+        `allow_unverified_ctd` : dérogation exploratoire, désactivée par défaut.
+        Ne la passer à vrai qu'après confirmation explicite de l'utilisateur et
+        seulement après un audit ayant signalé la source CTD indisponible. Elle ne
+        contourne jamais une absence de correspondance CTD.
         """
         from core.net_uvp_comparison import match_net_to_uvp
 
@@ -545,6 +576,7 @@ def make_source_tools(thread_id: str) -> list:
                     + (f"Variables disponibles : {avail_text}. Précisez `net_variable_name`." if available else "Chargez d'abord un fichier via `load_file`."),
                     retryable=False,
                 )
+        net_dataframe_fingerprint = _net_dataframe_fingerprint(loaded["df"])
         net_df = loaded["df"].copy()
 
         lat_col = latitude_column or detect_column(net_df.columns, ("latitude", "lat", "lat_avg", "sample_lat"))
@@ -660,6 +692,8 @@ def make_source_tools(thread_id: str) -> list:
         matches["spatiotemporal_eligible"] = matches["join_eligible"]
         matches["ctd_filename_match_status"] = "missing_ctd_link"
         matches["ctd_filename_join_eligible"] = False
+        matches["ctd_verification"] = "not_applicable"
+        matches["exploratory"] = False
         ctd_source_unavailable = False
         selected_uvp = uvp_df[uvp_df["sample_id"].isin(matches["uvp_sample_id"])].copy()
         selected_uvp = selected_uvp.dropna(
@@ -703,7 +737,11 @@ def make_source_tools(thread_id: str) -> list:
                         bbox=bbox,
                         time_window=time_window,
                     )
-                    ctd_matches = match_uvp_to_amundsen_ctd(selected_uvp, ctd)
+                    ctd_matches = (
+                        match_uvp_to_amundsen_ctd(selected_uvp, ctd)
+                        if not ctd.empty
+                        else pd.DataFrame()
+                    )
                 except Exception as exc:  # CTD remains an explicit verification, never a silent fallback.
                     _LOGGER.warning("UVP↔Amundsen filename verification failed: %s", exc)
                     ctd_source_unavailable = True
@@ -739,6 +777,16 @@ def make_source_tools(thread_id: str) -> list:
         matches["join_eligible"] = (
             matches["spatiotemporal_eligible"] & matches["ctd_filename_join_eligible"]
         )
+        matches.loc[
+            matches["spatiotemporal_eligible"] & ~matches["join_eligible"],
+            "ctd_verification",
+        ] = "no_match"
+        matches.loc[matches["join_eligible"], "ctd_verification"] = "verified"
+        if ctd_source_unavailable:
+            ctd_candidates = matches["spatiotemporal_eligible"]
+            matches.loc[ctd_candidates, "ctd_verification"] = "unavailable"
+            if allow_unverified_ctd:
+                matches.loc[ctd_candidates, "exploratory"] = True
         # Keep the visible status truthful: a spatial/time candidate whose CTD
         # file cannot be certified is not a completed net↔UVP match.
         ctd_not_verified = matches["spatiotemporal_eligible"] & ~matches["join_eligible"]
@@ -747,6 +795,16 @@ def make_source_tools(thread_id: str) -> list:
         ]
 
         variable_name = "df_net_uvp_matches"
+        exploratory_override = bool(
+            ctd_source_unavailable
+            and allow_unverified_ctd
+            and matches["exploratory"].any()
+        )
+        audit_ctd_verification = (
+            "unavailable"
+            if ctd_source_unavailable
+            else ("verified" if matches["join_eligible"].any() else "no_match")
+        )
         store_dataset(
             _store,
             thread_id,
@@ -755,20 +813,101 @@ def make_source_tools(thread_id: str) -> list:
             meta={
                 "source": "net_uvp_match",
                 "file_variable": (loaded.get("meta") or {}).get("variable_name"),
+                "net_variable_name": (loaded.get("meta") or {}).get("variable_name"),
+                "net_dataframe_fingerprint": net_dataframe_fingerprint,
                 "n_rows": len(matches),
                 "n_cols": len(matches.columns),
                 "deployment_column": deployment_col,
                 "temporal_cache_coverage": int(uvp_df["match_datetime"].notna().sum()),
                 "ctd_filename_verified": int(matches["ctd_filename_join_eligible"].sum()),
                 "ctd_source_unavailable": ctd_source_unavailable,
+                "ctd_verification": audit_ctd_verification,
+                "exploratory": exploratory_override,
+                "allow_unverified_ctd": exploratory_override,
                 "date_from": date_from,
                 "date_to": date_to,
             },
             set_active=False,
         )
 
+        certified_selection_name = None
+        selected_matches = (
+            matches.loc[matches["join_eligible"] | matches["exploratory"]]
+            .drop_duplicates(["uvp_project_id", "uvp_sample_id"])
+            .sort_values(["uvp_project_id", "uvp_sample_id"])
+        )
+        if not selected_matches.empty:
+            source_name = str(
+                net_variable_name
+                or (loaded.get("meta") or {}).get("variable_name")
+                or "net"
+            )
+            certified_samples = (
+                selected_matches[["uvp_sample_id", "uvp_project_id"]]
+                .rename(columns={
+                    "uvp_sample_id": "sample_id",
+                    "uvp_project_id": "project_id",
+                })
+                .to_dict("records")
+            )
+            digest_payload = "|".join([
+                source_name,
+                str(date_from or ""),
+                str(date_to or ""),
+                ",".join(
+                    f"{sample['project_id']}:{sample['sample_id']}"
+                    for sample in certified_samples
+                ),
+            ])
+            digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()[:8]
+            selection_kind = "exploratory" if exploratory_override else "certified"
+            certified_selection_name = (
+                f"net_uvp_{selection_kind}_{_slug_part(source_name)}_{digest}"
+            )
+            _store_sample_selection(
+                name=certified_selection_name,
+                samples=certified_samples,
+                filters={
+                    "join_eligible": not exploratory_override,
+                    "ctd_verification": audit_ctd_verification,
+                    "exploratory": exploratory_override,
+                },
+                source=(
+                    "net_uvp_exploratory_selection"
+                    if exploratory_override
+                    else "net_uvp_certified_selection"
+                ),
+                extra_meta={
+                    "audit_variable": variable_name,
+                    "net_variable_name": source_name,
+                    "net_dataframe_fingerprint": net_dataframe_fingerprint,
+                    "ctd_verification": audit_ctd_verification,
+                    "exploratory": exploratory_override,
+                    "allow_unverified_ctd": exploratory_override,
+                    "date_from": date_from,
+                    "date_to": date_to,
+                },
+            )
+        else:
+            # ``selection_name="latest"`` is the only safe hand-off the
+            # agent can use immediately after an audit.  A no-candidate audit
+            # must therefore invalidate an older selection instead of letting
+            # a later dry-run silently export a different net scope.
+            _store.set(
+                f"{thread_id}:ecotaxa_selection_latest",
+                None,
+                {
+                    "selection_name": None,
+                    "sample_ids": [],
+                    "project_ids": [],
+                    "n_samples": 0,
+                    "source": "net_uvp_empty_selection",
+                },
+            )
+
         by_deployment = matches.drop_duplicates("net_deployment_id")
         n_matched = int(by_deployment["join_eligible"].sum())
+        n_exploratory = int(by_deployment["exploratory"].sum())
         n_spatial = int((~by_deployment["join_eligible"]).sum())
         n_proj = int(matches["uvp_project_id"].nunique())
         instruments = ", ".join(sorted(matches["uvp_instrument"].dropna().astype(str).unique()))
@@ -799,28 +938,59 @@ def make_source_tools(thread_id: str) -> list:
             f"Projets UVP concernés : {n_proj} ; instruments : {instruments or '—'}.",
             f"Statut temporel (tolérance {max_time_gap_days if max_time_gap_days is not None else '∞'} j) : "
             f"{n_matched} `matched` (jointure autorisée : position, temps et fichier CTD Amundsen vérifiés), "
-            f"{n_spatial} non jointables (candidat spatial, date ou fichier CTD non vérifié).",
+            f"{n_exploratory} exploratoire(s) avec CTD non vérifié, "
+            f"{n_spatial - n_exploratory} non jointable(s).",
             "",
             preview.to_markdown(index=False),
         ]
         if date_from or date_to:
             lines.insert(2, f"Période filet appliquée : {date_from or 'sans borne initiale'} → {date_to or 'sans borne finale'}.")
+        if certified_selection_name:
+            lines.insert(
+                5,
+                (
+                    "Sélection UVP exploratoire publiée (CTD non vérifié) : "
+                    if exploratory_override
+                    else "Sélection UVP certifiée publiée : "
+                )
+                + f"`selection:{certified_selection_name}` ({len(selected_matches)} sample(s)).",
+            )
         if ctd_source_unavailable:
-            lines += [
-                "",
-                "⚠ Validation CTD Amundsen indisponible : les candidats spatiaux/temporels ne peuvent pas "
-                "être certifiés. Ce résultat ne permet pas de conclure à l'absence de correspondance UVP/CTD.",
-            ]
+            if exploratory_override:
+                lines += [
+                    "",
+                    "⚠ Données CTD Amundsen indisponibles : les correspondances "
+                    "de position et de temps ci-dessus ont bien été reçues, mais "
+                    "ni le fichier CTD commun ni les variables CTD n'ont pu être "
+                    "vérifiés. La sélection reste donc provisoire (CTD non vérifié) et ne prouve pas "
+                    "l'absence de données CTD.",
+                ]
+            else:
+                lines += [
+                    "",
+                    "⚠ Validation CTD Amundsen indisponible : les candidats "
+                    "spatiaux/temporels ci-dessus ont été reçus, avec leurs "
+                    "distances et écarts de temps, mais le fichier CTD commun et "
+                    "les variables CTD n'ont pas été reçus. Ce résultat ne permet "
+                    "pas de conclure à l'absence de correspondance UVP/CTD. "
+                    "Une confirmation explicite est requise avant de préparer un "
+                    "export provisoire non vérifié.",
+                ]
         elif n_matched == 0 and n_spatial > 0:
             lines += [
                 "",
                 "⚠ Aucune paire synchrone : le cache ne permet pas une jointure d'abondance fiable avec ce fichier. "
                 "Les candidats restent visibles pour audit dans `df_net_uvp_matches`.",
             ]
+        next_scope = (
+            "les lignes `exploratory=True` avec `ctd_verification=\"unavailable\"`"
+            if exploratory_override
+            else "les lignes `join_eligible=True`"
+        )
         lines += [
             "",
-            "Étape suivante, seulement si l'utilisateur le demande : utiliser les lignes `join_eligible=True` "
-            "pour préparer la comparaison d'abondance filet↔UVP.",
+            "Étape suivante, seulement si l'utilisateur le demande : utiliser "
+            f"{next_scope} pour préparer la comparaison d'abondance filet↔UVP.",
         ]
         return _eco_success(
             "\n".join(lines),
@@ -832,6 +1002,200 @@ def make_source_tools(thread_id: str) -> list:
                 "spatial_only": n_spatial,
                 "uvp_projects": n_proj,
             },
+        )
+
+    @tool(response_format="content_and_artifact")
+    def join_net_uvp_enriched(
+        net_variable_name: str,
+        uvp_enriched_variable: str,
+        audit_variable_name: str = "df_net_uvp_matches",
+        allow_unverified_ctd: bool = False,
+    ) -> str:
+        """Joint localement un filet à des objets UVP enrichis EcoPart certifiés.
+
+        Utiliser seulement après l'audit filet↔UVP
+        `find_uvp_matches_for_net_table` et après l'enrichissement EcoPart de
+        l'export UVP. Les trois arguments sont des noms exacts de DataFrames
+        persistés en session. L'audit est l'unique autorité de jointure : seules
+        ses lignes `join_eligible=True`, déjà validées par le fichier CTD
+        Amundsen, peuvent atteindre la table finale. Ce tool ne télécharge rien
+        et ne calcule aucune interprétation scientifique. Une ligne CTD
+        indisponible peut être jointe seulement avec `allow_unverified_ctd=True`
+        et une preuve d'opt-in exploratoire persistée par l'audit; un no-match
+        reste toujours refusé.
+        """
+        from core.net_uvp_comparison import join_certified_net_uvp_enriched
+
+        variable_names = {
+            "table filet": net_variable_name,
+            "audit certifié": audit_variable_name,
+            "export UVP enrichi EcoPart": uvp_enriched_variable,
+        }
+        datasets = {}
+        dataset_entries = {}
+        missing = []
+        for label, variable_name in variable_names.items():
+            entry = _store.get(f"{thread_id}:dataset:{variable_name}")
+            if not entry or entry.get("df") is None:
+                missing.append(f"{label} `{variable_name}`")
+            else:
+                datasets[label] = entry["df"]
+                dataset_entries[label] = entry
+        if missing:
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : table(s) persistée(s) "
+                f"introuvable(s) : {', '.join(missing)}.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+
+        audit_meta = dict(
+            (dataset_entries["audit certifié"].get("meta") or {})
+        )
+        if audit_meta.get("source") != "net_uvp_match":
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : l'audit doit provenir "
+                "de la vérification filet↔UVP certifiée.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        if audit_meta.get("net_variable_name") != net_variable_name:
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : l'audit certifié ne "
+                "correspond pas à la table filet demandée.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        if "ctd_filename_verified" not in audit_meta:
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : la provenance de "
+                "certification CTD de l'audit est absente.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        exploratory_override = bool(
+            allow_unverified_ctd
+            and audit_meta.get("allow_unverified_ctd") is True
+            and audit_meta.get("ctd_verification") == "unavailable"
+            and audit_meta.get("exploratory") is True
+        )
+        has_certified_rows = bool(
+            datasets["audit certifié"]["join_eligible"]
+            .map(
+                lambda value: (
+                    bool(value)
+                    if isinstance(value, (bool, np.bool_))
+                    else str(value).strip().lower() in {"true", "1"}
+                )
+            )
+            .any()
+        )
+        if audit_meta.get("exploratory") is True and not (
+            exploratory_override or has_certified_rows
+        ):
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : la vérification CTD est "
+                "indisponible et la dérogation exploratoire n'est pas activée.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        current_net_fingerprint = _net_dataframe_fingerprint(
+            datasets["table filet"]
+        )
+        if audit_meta.get("net_dataframe_fingerprint") != current_net_fingerprint:
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : la table filet a changé "
+                "depuis l'audit certifié.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+
+        enriched = datasets["export UVP enrichi EcoPart"]
+        enriched_meta = dict(
+            (dataset_entries["export UVP enrichi EcoPart"].get("meta") or {})
+        )
+        enriched_source = str(enriched_meta.get("source") or "")
+        if not (
+            enriched_source.startswith("join:ecotaxa+ecopart")
+            or enriched_source == "join:ecotaxa_campaign+ecopart"
+        ):
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : l'export UVP doit "
+                "provenir d'un enrichissement EcoTaxa+EcoPart.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        if not any(
+            column in enriched.columns
+            for column in ("object_id", "obj_orig_id", "obj_id", "objid")
+        ):
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : l'export EcoTaxa+EcoPart "
+                "ne contient aucun identifiant objet.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+
+        try:
+            joined = join_certified_net_uvp_enriched(
+                datasets["table filet"],
+                datasets["audit certifié"],
+                datasets["export UVP enrichi EcoPart"],
+                allow_unverified_ctd=exploratory_override,
+            )
+        except ValueError as exc:
+            return blocked(
+                str(exc),
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+
+        if joined.empty:
+            return empty(
+                "Aucune ligne objet ne relie l'audit certifié à l'export UVP "
+                "enrichi EcoPart ; aucune table finale n'a été créée.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+            )
+
+        joined_exploratory = bool(
+            "exploratory" in joined.columns
+            and joined["exploratory"].fillna(False).astype(bool).any()
+        )
+        ctd_verification = (
+            "unavailable" if joined_exploratory else "verified"
+        )
+        variable_name = "df_net_uvp_ecopart"
+        store_dataset(
+            _store,
+            thread_id,
+            joined,
+            variable_name=variable_name,
+            meta={
+                "source": "net_uvp_ecopart_certified",
+                "net_variable_name": net_variable_name,
+                "net_dataframe_fingerprint": current_net_fingerprint,
+                "audit_variable_name": audit_variable_name,
+                "uvp_enriched_variable": uvp_enriched_variable,
+                "ctd_verification": ctd_verification,
+                "exploratory": joined_exploratory,
+                "allow_unverified_ctd": exploratory_override,
+                "n_rows": len(joined),
+                "n_cols": len(joined.columns),
+            },
+        )
+        return success(
+            (
+                "Table filet↔UVP enrichie EcoPart exploratoire créée avec CTD "
+                "non vérifié"
+                if joined_exploratory
+                else "Table filet↔UVP enrichie EcoPart créée à partir des seules "
+                "correspondances certifiées"
+            )
+            + f" : {len(joined)} ligne(s) objet.",
+            provenance={"source": "net_uvp_ecopart_certified"},
+            data_ref=variable_name,
+            persisted=True,
+            metrics={"rows": len(joined), "columns": len(joined.columns)},
         )
 
     def _normalize_sample_ids(sample_ids) -> list[int]:
@@ -908,6 +1272,8 @@ def make_source_tools(thread_id: str) -> list:
         name: str,
         samples: list[dict],
         filters: dict,
+        source: str = "ecotaxa_selection",
+        extra_meta: dict | None = None,
     ) -> None:
         import pandas as pd
 
@@ -919,7 +1285,8 @@ def make_source_tools(thread_id: str) -> list:
             "project_ids": project_ids,
             "n_samples": len(sample_ids),
             "filters": filters,
-            "source": "ecotaxa_selection",
+            "source": source,
+            **(extra_meta or {}),
         }
         _store.set(f"{thread_id}:selection:{name}", None, meta)
         _store.set(f"{thread_id}:ecotaxa_selection_latest", None, meta)
@@ -4443,4 +4810,5 @@ def make_source_tools(thread_id: str) -> list:
         describe_ecotaxa_cache_table,
         query_ecotaxa_cache,
         find_uvp_matches_for_net_table,
+        join_net_uvp_enriched,
     ]

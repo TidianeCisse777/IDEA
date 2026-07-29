@@ -136,7 +136,7 @@ flowchart LR
   décision et les bloque fail-closed.
 - **Skills manifestés** : `tools/skill_manifest.py` valide les 15 manifests et leurs budgets. `load_skill` n'accepte une copie Hub que si son hash correspond au fichier local revu; version, environnement, hash et source sont renvoyés dans la provenance. Les résultats de skills utilisent leur plafond déclaré au lieu de la troncature générique à 8 000 caractères.
 - **`_ContextMiddleware`** (agent construit via `create_agent`, LangChain 1.x) :
-  - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : filtrage de source, allowlist dynamique des tools, troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 40000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`. Le budget des schémas est recalculé après filtrage.
+  - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : préfixe fixe cacheable (kernel puis références préchargées), filtrage de source, allowlist dynamique des tools, troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 100000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`. Le budget des schémas est recalculé après filtrage.
   - Le trim utilise `request.override(messages=...)` : il borne le contexte du modèle sans supprimer l'historique complet conservé dans le checkpoint LangGraph.
   - Les mêmes wrappers injectent le bloc mémoire long terme (`store.search` / `asearch` sur `(user_id, "memories")`) dans le system prompt. Les deux variantes existent car `serve.py` invoque en async avec un store async.
   - Ils reconstruisent aussi un `TurnContext` typé (`tools/turn_context.py`) en début de tour et injectent sa projection — la **carte d'état de session** (`build_dataset_state_capsule`) : dataset actif, roster `LOADED FILES` (tous les fichiers chargés par nom), `DERIVED ZONE SUBSETS` (variable↔zone), et `ACTIVE SOURCE SCOPE` (sources autorisées). L'agent lit son état au lieu de le ré-inférer de l'historique.
@@ -246,7 +246,7 @@ Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`
 | `OPENAI_API_KEY` | Provider LLM | requis |
 | `LLM_MODEL` | Modèle | `gpt-5.4-mini` |
 | `LLM_MAX_OUTPUT_TOKENS` | Tokens de sortie max | 16000 |
-| `MAX_CONTEXT_TOKENS` | Seuil de trim de l'historique | 40000 |
+| `MAX_CONTEXT_TOKENS` | Plafond de qualité et seuil de trim de l'historique | 100000 |
 | `MAX_TOOL_RESULT_CHARS` | Seuil de troncature des résultats de tools | 8000 |
 | `CHECKPOINTS_DB` | SQLite des checkpoints | `data/checkpoints.sqlite` |
 | `DATABASE_URL` | Workspace SQL read-only | optionnel |
