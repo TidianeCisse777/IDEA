@@ -9,6 +9,7 @@ from core.net_uvp_comparison import (
     NET_UVP_MATCH_METHOD_VERSION,
     compare_paired_density,
     haversine_km,
+    join_certified_net_uvp_enriched,
     match_net_to_uvp,
     to_ind_per_m3,
 )
@@ -174,3 +175,82 @@ def test_compare_paired_density_handles_zero_net():
 def test_compare_rejects_missing_column():
     with pytest.raises(ValueError, match="absente"):
         compare_paired_density(pd.DataFrame({"a": [1]}), net_col="a", uvp_col="b")
+
+
+def test_certified_join_uses_project_and_profile_keys():
+    net = pd.DataFrame(
+        {
+            "SAMPLE_ID": ["101", "102"],
+            "net_measurement": [1.0, 2.0],
+        }
+    )
+    audit = pd.DataFrame(
+        {
+            "net_sample_id": [101, 102],
+            "uvp_sample_id": [10, 20],
+            "uvp_project_id": [42, 42],
+            "uvp_profile_str": ["profile-a", "profile-b"],
+            "join_eligible": [True, True],
+            "ctd_filename_join_eligible": [True, True],
+        }
+    )
+    enriched = pd.DataFrame(
+        {
+            "export_project_id": [42, 99, 42],
+            "sample_profileid": ["profile-a", "profile-b", "other-profile"],
+            "density_ind_m3": [15.0, 99.0, 3.0],
+        }
+    )
+
+    out = join_certified_net_uvp_enriched(net, audit, enriched)
+
+    assert set(out["uvp_sample_id"]) == {10}
+    assert out["ctd_filename_join_eligible"].all()
+
+
+def test_certified_join_excludes_uncertified_audit_rows():
+    net = pd.DataFrame({"SAMPLE_ID": ["101"]})
+    audit = pd.DataFrame(
+        {
+            "net_sample_id": [101],
+            "uvp_sample_id": [10],
+            "uvp_project_id": [42],
+            "uvp_profile_str": ["profile-a"],
+            "join_eligible": [True],
+            "ctd_filename_join_eligible": [True],
+        }
+    )
+    enriched = pd.DataFrame(
+        {
+            "export_project_id": [42],
+            "sample_profileid": ["profile-a"],
+        }
+    )
+
+    assert join_certified_net_uvp_enriched(
+        net, audit.assign(join_eligible=False), enriched
+    ).empty
+
+
+def test_certified_join_prioritizes_explicit_export_profile_id():
+    net = pd.DataFrame({"SAMPLE_ID": [101]})
+    audit = pd.DataFrame(
+        {
+            "net_sample_id": [101],
+            "uvp_sample_id": [10],
+            "uvp_project_id": [42],
+            "uvp_profile_str": ["profile-a"],
+            "join_eligible": [True],
+        }
+    )
+    enriched = pd.DataFrame(
+        {
+            "export_project_id": [42],
+            "sample_profileid": ["profile-a"],
+            "sample_id": ["unrelated-object-id"],
+        }
+    )
+
+    out = join_certified_net_uvp_enriched(net, audit, enriched)
+
+    assert set(out["uvp_sample_id"]) == {10}
