@@ -316,6 +316,8 @@ def test_net_uvp_live_guidance_uses_the_certified_selection_and_final_join():
     assert "join_net_uvp_enriched" in contract
     assert "stop before `export_ecotaxa_samples`" in contract
     assert "ctd_filename_match_status=\"matched\"" in contract
+    assert "keep `export_project_id` in every canonical aggregation" in contract
+    assert 'on=["export_project_id", "uvp_profile_str"]' in contract
 
 
 def test_system_prompt_prioritizes_current_explicit_enrichment():

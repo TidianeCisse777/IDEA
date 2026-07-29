@@ -41,8 +41,11 @@ workflows EcoTaxa↔EcoPart :
    `(export_project_id, profil UVP)` ; aucune ligne `spatial_only` ne peut entrer
    dans `df_net_uvp_ecopart`.
 6. **Analyses** — abondances, tableaux et graphiques partent uniquement de cette
-   table canonique finale et des constructeurs métriques existants. La jointure
-   ne crée aucune métrique ni interprétation scientifique.
+   table canonique finale et des constructeurs métriques existants.
+   `export_project_id` reste dans la clé de toute agrégation sample-profondeur
+   et toute fusion utilise `(export_project_id, profil UVP)` afin que deux
+   campagnes partageant un libellé de profil ne soient jamais réunies. La
+   jointure ne crée aucune métrique ni interprétation scientifique.
 
 Les confirmations EcoTaxa et EcoPart sont indépendantes : accepter l'export
 d'objets n'autorise pas automatiquement les téléchargements EcoPart.

@@ -235,7 +235,8 @@ def join_certified_net_uvp_enriched(
 ) -> pd.DataFrame:
     """Joint filet, correspondances certifiées et export UVP enrichi.
 
-    Seules les correspondances dont ``join_eligible`` vaut vrai sont retenues.
+    Seules les correspondances dont ``join_eligible`` vaut vrai et dont toute
+    preuve CTD explicite est vérifiée sont retenues.
     Une dérogation explicite peut aussi retenir les lignes exploratoires dont la
     vérification CTD est exactement ``unavailable``; elle ne couvre jamais un
     échec de correspondance CTD.
@@ -280,7 +281,26 @@ def join_certified_net_uvp_enriched(
     )
     require_columns(uvp_enriched_df, ("export_project_id",), "export UVP")
 
-    accepted = audit_df["join_eligible"].map(explicitly_certified)
+    certified = audit_df["join_eligible"].map(explicitly_certified)
+    if "ctd_verification" in audit_df.columns:
+        certified &= (
+            audit_df["ctd_verification"]
+            .astype("string")
+            .str.strip()
+            .eq("verified")
+        )
+    elif "ctd_filename_join_eligible" in audit_df.columns:
+        certified &= audit_df["ctd_filename_join_eligible"].map(
+            explicitly_certified
+        )
+    elif "ctd_filename_match_status" in audit_df.columns:
+        certified &= (
+            audit_df["ctd_filename_match_status"]
+            .astype("string")
+            .str.strip()
+            .eq("matched")
+        )
+    accepted = certified
     if (
         allow_unverified_ctd
         and "ctd_verification" in audit_df.columns

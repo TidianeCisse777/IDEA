@@ -2393,6 +2393,53 @@ def test_join_net_uvp_enriched_requires_opt_in_for_unavailable_ctd_audit(
     assert stored["meta"]["exploratory"] is True
 
 
+@pytest.mark.parametrize(
+    ("join_eligible", "ctd_verification"),
+    [
+        (False, "verified"),
+        (True, "no_match"),
+        (True, "unavailable"),
+    ],
+)
+def test_certified_join_wrapper_rejects_ctd_without_match_or_opt_in(
+    tmp_path,
+    monkeypatch,
+    join_eligible,
+    ctd_verification,
+):
+    from tools.dataset_registry import store_dataset
+
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+    audit_entry = store.get(f"{thread_id}:dataset:df_net_uvp_matches")
+    audit = audit_entry["df"].copy()
+    audit["join_eligible"] = join_eligible
+    audit["ctd_verification"] = ctd_verification
+    audit["exploratory"] = False
+    store_dataset(
+        store,
+        thread_id,
+        audit,
+        variable_name="df_net_uvp_matches",
+        meta={
+            **audit_entry["meta"],
+            "ctd_verification": ctd_verification,
+            "exploratory": False,
+            "allow_unverified_ctd": False,
+        },
+        set_active=False,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "aucune table finale n'a été créée" in result.lower()
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+
+
 def test_join_net_uvp_enriched_rejects_same_name_net_replacement(
     tmp_path, monkeypatch
 ):

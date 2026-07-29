@@ -138,3 +138,86 @@ La trace de recette doit observer :
    réponse annonce la non-comparabilité et aucun appel
    `export_ecotaxa_samples` ou EcoPart ne suit ;
 5. sinon les deux plans confirmés précèdent la jointure locale et les analyses.
+
+## Correctif de revue 1/5
+
+Deux défauts confirmés par la revue ont été corrigés sans modifier le
+comportement exploratoire de Task 6.
+
+### Clé projet conservée
+
+- `join_certified_net_uvp_enriched` conserve déjà `export_project_id` après la
+  jointure `(projet, profil)`.
+- `build_canonical_sample_depth` ajoute maintenant automatiquement
+  `export_project_id` à sa clé quand la colonne est présente. Le grain devient
+  alors `(export_project_id, sample_id, depth_bin)`.
+- Le skill groupe les densités et fusionne le bridge sur
+  `(export_project_id, uvp_profile_str)`, jamais sur le profil seul.
+- L'E2E force une collision : projets 10 et 20, même `shared-profile` et même
+  `shared-cast_1`. Deux cibles canoniques et deux stations distinctes survivent.
+
+### Porte CTD indépendante
+
+- Le helper certifié exige toujours `join_eligible=True`.
+- Si une preuve CTD explicite existe, elle doit aussi être certifiée :
+  `ctd_verification="verified"`, ou son équivalent filename historique.
+- `no_match` et `unavailable` sont refusés sans opt-in, même si une fixture
+  contradictoire force `join_eligible=True`.
+- Le wrapper persistant couvre séparément `join_eligible=False`, `no_match` et
+  `unavailable`, et vérifie qu'aucune table finale n'est créée.
+- Les gardes de provenance du wrapper restent des tests distincts
+  (source d'audit, table filet liée, fingerprint et origine EcoPart).
+- L'exception Task 6 reste inchangée : seul
+  `allow_unverified_ctd=True` avec `ctd_verification="unavailable"` et
+  `exploratory=True` peut emprunter le chemin exploratoire confirmé.
+
+### TDD du correctif
+
+RED :
+
+```text
+E2E collision/protection core : 3 échecs attendus, 1 succès
+Wrapper persistant CTD : 2 échecs attendus ; garde join_eligible déjà verte
+Contrat du skill projet+profil : 1 échec attendu
+```
+
+GREEN minimal :
+
+```text
+E2E collision/protection core : 4 passed
+Wrapper persistant CTD : 3 passed
+Contrat du skill projet+profil : 1 passed
+```
+
+La suite historique `tests/test_copepod_sample_depth.py` conserve deux échecs
+préexistants : elle attend encore la colonne legacy `copepod_count`, tandis que
+le contrat runtime courant renvoie `target_count`. Les huit autres tests de ce
+module passent, y compris les validations de clés et de volumes.
+
+### Vérification du correctif
+
+```text
+tests/test_net_uvp_comparison.py + tests/test_net_uvp_pipeline_e2e.py
+23 passed
+
+tests/test_copepod_sources.py -k 'net_uvp or audit_ or join_net_uvp_enriched'
+16 passed, 83 deselected, 4 warnings
+
+tests/test_agent_factory.py -k 'certified or net_uvp'
+2 passed
+
+tests/test_copepod_sample_depth.py hors les deux attentes copepod_count legacy
+11 passed, 2 deselected
+
+ruff check (core et E2E touchés)
+All checks passed
+```
+
+La matrice prescrite complète après correctif donne :
+
+```text
+339 passed, 25 failed, 5 warnings
+```
+
+Les 25 échecs sont les mêmes contrats hors périmètre déjà classifiés dans le
+rapport initial ; aucun échec Task 5 ou Task 6 n'est ajouté.

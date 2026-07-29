@@ -1,6 +1,6 @@
 ---
 name: net_uvp_abundance_comparison
-version: 2.1.0
+version: 2.1.1
 triggers:
   - User asks to compare net (NeoLabs) abundance against UVP (EcoTaxa/EcoPart) abundance
   - User asks to join net and UVP data, compute density, make comparisons by taxon or stage
@@ -62,6 +62,8 @@ All of these are automatically injected into every `run_pandas` call — no relo
 5. Call `join_net_uvp_enriched` with the exact persisted filet, audit, and
    enriched-campaign variable names. This local tool is the only final bridge.
    Continue calculations only from its canonical `df_net_uvp_ecopart` result.
+   Keep `export_project_id` in every canonical aggregation and pair it with
+   `uvp_profile_str`; profile labels are not globally unique across projects.
 
 The two confirmations are distinct: EcoTaxa object export does not authorize
 the later EcoPart downloads.
@@ -102,18 +104,19 @@ canonical = build_canonical_sample_depth(
     df_net_uvp_ecopart,                  # certified final object table
     taxon_filter="Calanus",              # ← user's choice
     volume_column="ecopart_Sampled volume [L]",
+    stable_columns=("uvp_profile_str",),
 )
-# canonical columns: sample_id (string, e.g. "am_leg4_RA27_1"), depth_bin,
-#                    target_count, sampled_volume_L, abundance_ind_L, abundance_ind_m3
+# canonical columns include export_project_id, uvp_profile_str, sample_id,
+# depth_bin, target_count, sampled_volume_L, abundance_ind_L, abundance_ind_m3.
 
-# Bridge: EcoTaxa sample_id has a cast suffix (_1, _2…) that the cache profile_id
-# does not. Strip it to align with uvp_profile_str in df_net_uvp_matches.
-canonical["uvp_profile_str"] = canonical["sample_id"].str.replace(r"_\d+$", "", regex=True)
-
-# Aggregate per profile (mean over casts and depth bins)
+# Aggregate per project + profile (mean over casts and depth bins).
 uvp_density = (
     canonical
-    .groupby("uvp_profile_str", as_index=False)["abundance_ind_m3"].mean()
+    .groupby(
+        ["export_project_id", "uvp_profile_str"],
+        as_index=False,
+    )["abundance_ind_m3"]
+    .mean()
 )
 ```
 
@@ -154,7 +157,13 @@ from core.net_uvp_comparison import compare_paired_density
 # The certified final table already carries the audited net/profile bridge.
 # Reduce it to one mapping row per profile before attaching calculated densities.
 certified_bridge = df_net_uvp_ecopart[
-    ["uvp_profile_str", "station", "join_eligible", "ctd_filename_match_status"]
+    [
+        "export_project_id",
+        "uvp_profile_str",
+        "station",
+        "join_eligible",
+        "ctd_filename_match_status",
+    ]
 ].drop_duplicates()
 
 if (
@@ -178,7 +187,7 @@ paired = (
     )
     .merge(
         uvp_density.rename(columns={"abundance_ind_m3": "uvp_ind_m3"}),
-        on="uvp_profile_str",
+        on=["export_project_id", "uvp_profile_str"],
         how="inner",
     )
 )
