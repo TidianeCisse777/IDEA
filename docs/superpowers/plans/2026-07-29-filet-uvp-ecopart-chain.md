@@ -254,3 +254,14 @@ git commit -m "docs: document certified net UVP EcoPart workflow"
 ## Plan self-review
 
 Every requirement from the approved design maps to a task: certified selection (1), strict bridge (2), runtime tool exposure (3), multi-project EcoPart (4), and user-facing workflow plus regression coverage (5). The sole final key is project plus UVP profile, so campaigns cannot collide. The final tool creates no scientific metric; later calculations continue through the canonical sample-depth contracts.
+
+### Task 6: Dérogation exploratoire après indisponibilité CTD confirmée
+
+**Files:**
+- Modify: `tools/copepod_sources.py`, `core/net_uvp_comparison.py`, `agents/copepod_system_prompt.py`
+- Test: `tests/test_copepod_sources.py`, `tests/test_net_uvp_comparison.py`, `tests/test_agent_factory.py`
+
+- [x] Tests de garde : aucune sélection ni jointure sans certificat CTD ; avec une indisponibilité CTD explicite et `allow_unverified_ctd=True`, persister une sélection/table marquée `ctd_verification="unavailable"` et `exploratory=True`.
+- [x] Dérogation opt-in, non activée par défaut, qui ne s'applique qu'au statut source indisponible, jamais à une absence de match CTD ; conserver ce statut et la preuve d'opt-in dans chaque artefact.
+- [x] Confirmation explicite avant l'appel opt-in ; confirmations d'export distantes distinctes et prévisualisation `latest` invalidée après audit vide.
+- [x] Tests ciblés, régressions audit/jointure, test E2E live et relectures indépendantes réalisés.
