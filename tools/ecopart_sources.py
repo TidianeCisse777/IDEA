@@ -458,6 +458,7 @@ def _lookup_ecopart_project_for_ecotaxa(
     known_ecotaxa_pid: int | None = None,
     bbox_margin: float = 0.05,
     max_candidates: int = 30,
+    client: EcopartClient | None = None,
 ) -> dict:
     """Resolve the EcoPart project matching an EcoTaxa dataframe **without** starting
     any export. Returns a dict `{project_id, project_name, resolution, error}`.
@@ -489,11 +490,12 @@ def _lookup_ecopart_project_for_ecotaxa(
         None,
     )
 
-    try:
-        client = EcopartClient()
-        client.login()
-    except Exception as exc:
-        return {"error": f"Erreur EcoPart : {exc}"}
+    if client is None:
+        try:
+            client = EcopartClient()
+            client.login()
+        except Exception as exc:
+            return {"error": f"Erreur EcoPart : {exc}"}
 
     # Fast, authoritative path: ask the server directly for the EcoPart samples
     # linked to this EcoTaxa project (filt_proj), then read one popover for the
@@ -618,6 +620,232 @@ def _lookup_ecopart_project_for_ecotaxa(
         "project_name": names.get(best_pid) or None,
         "resolution": how,
     })
+
+
+def _enrich_ecotaxa_campaign_with_ecopart(
+    thread_id: str,
+    session_et: dict,
+    client: EcopartClient,
+    *,
+    confirmed: bool,
+) -> tuple:
+    """Resolve and enrich each project partition of a consolidated campaign."""
+    campaign_df = session_et["df"]
+    project_ids = pd.to_numeric(
+        campaign_df["export_project_id"], errors="coerce"
+    ).dropna()
+    normalized_project_ids = sorted({int(project_id) for project_id in project_ids})
+    if not normalized_project_ids:
+        return _ep_blocked(
+            "Campagne EcoTaxa invalide — `export_project_id` ne contient aucun "
+            "identifiant de projet exploitable."
+        )
+
+    resolved: list[tuple[int, int, pd.DataFrame, str]] = []
+    failures: list[str] = []
+    numeric_project_ids = pd.to_numeric(
+        campaign_df["export_project_id"], errors="coerce"
+    )
+    for ecotaxa_pid in normalized_project_ids:
+        partition = campaign_df.loc[numeric_project_ids == ecotaxa_pid].copy()
+        resolution = _lookup_ecopart_project_for_ecotaxa(
+            partition,
+            known_ecotaxa_pid=ecotaxa_pid,
+            client=client,
+        )
+        if "error" in resolution:
+            failures.append(
+                f"EcoTaxa {ecotaxa_pid} — résolution EcoPart impossible : "
+                f"{resolution['error']}"
+            )
+            continue
+        ecopart_pid = int(resolution["project_id"])
+        resolved.append((
+            ecotaxa_pid,
+            ecopart_pid,
+            partition,
+            str(resolution.get("resolution") or "lien résolu"),
+        ))
+
+    if not confirmed:
+        mappings = [
+            f"- EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} ({resolution})"
+            for ecotaxa_pid, ecopart_pid, _partition, resolution in resolved
+        ]
+        failure_lines = [f"- Échec : {failure}" for failure in failures]
+        coverage = (
+            f"{len(resolved)}/{len(normalized_project_ids)} projets résolus"
+        )
+        return _ep_blocked(
+            "Plan d'enrichissement EcoPart de campagne (dry-run) — "
+            f"{coverage}.\n"
+            + "\n".join([*mappings, *failure_lines])
+            + "\nOpération lourde : un export EcoPart et une jointure "
+            "(sample_id, depth_bin) seront exécutés par projet. "
+            "Aucune donnée téléchargée pour l'instant.\n"
+            "Confirme pour lancer : rappelle "
+            "`enrich_ecotaxa_with_ecopart_remote` avec `confirmed=True`.",
+            metrics={
+                "projects": len(normalized_project_ids),
+                "projects_resolved": len(resolved),
+                "projects_failed": len(failures),
+            },
+        )
+
+    joined_frames: list[pd.DataFrame] = []
+    artifact_refs: list[str] = []
+    successes: list[str] = []
+    n_matched = 0
+    for ecotaxa_pid, ecopart_pid, partition, _resolution in resolved:
+        try:
+            links = client.start_export(
+                project_id=ecopart_pid,
+                ecotaxa_project_id=ecotaxa_pid,
+            )
+            df_ep = client.download_tsv(links)
+        except EcopartExportError as exc:
+            failures.append(
+                _format_ecopart_export_error(
+                    exc,
+                    project_id=ecopart_pid,
+                    ecotaxa_project_id=ecotaxa_pid,
+                )
+            )
+            continue
+        except Exception as exc:
+            failures.append(
+                f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
+                f"erreur EcoPart : {exc}"
+            )
+            continue
+
+        if df_ep.empty:
+            failures.append(
+                f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
+                "aucun sample EcoPart exporté."
+            )
+            continue
+
+        file_id = uuid.uuid4().hex
+        output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
+        df_ep.to_csv(output_path, sep="\t", index=False)
+        artifact_refs.append(download_url(output_path.name))
+
+        variable_name = dataset_variable_name("ecopart", ecopart_pid)
+        meta = {
+            "source": f"ecopart:{ecopart_pid}",
+            "project_id": ecopart_pid,
+            "ecotaxa_project_id": ecotaxa_pid,
+            "n_rows": len(df_ep),
+        }
+        store_dataset(
+            _store,
+            thread_id,
+            df_ep,
+            variable_name=variable_name,
+            meta=meta,
+            latest_alias=ECOPART,
+        )
+        _store.set(f"{thread_id}:ecopart:{ecopart_pid}", df_ep, meta)
+
+        join_result = _perform_enrichment(
+            thread_id,
+            ecopart_pid,
+            ecotaxa_session={"df": partition, "meta": session_et.get("meta") or {}},
+        )
+        join_artifact = validate_tool_artifact(join_result[1])
+        if join_artifact.status != "success":
+            failures.append(
+                f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
+                f"{join_result[0]}"
+            )
+            continue
+
+        joined_session = _store.get(f"{thread_id}:{ECOTAXA_ECOPART}")
+        if joined_session is None or joined_session.get("df") is None:
+            failures.append(
+                f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
+                "la jointure annoncée n'a pas été persistée."
+            )
+            continue
+        joined = joined_session["df"].copy()
+        # Zero-object EcoPart bins are synthesized by the join and therefore do
+        # not inherit EcoTaxa columns. Re-attach both project identifiers to
+        # every output row, including those explicit sampled-zero bins.
+        joined["export_project_id"] = ecotaxa_pid
+        joined["ecopart_project_id"] = ecopart_pid
+        joined_frames.append(joined)
+        partition_matched = int(join_artifact.metrics.get("matched", 0))
+        n_matched += partition_matched
+        successes.append(
+            f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} : "
+            f"{len(joined)} lignes, {partition_matched} matchées"
+        )
+
+    if not joined_frames:
+        detail = "\n".join(f"- {failure}" for failure in failures)
+        return _ep_error(
+            "Enrichissement EcoPart de campagne échoué — "
+            f"0/{len(normalized_project_ids)} projets enrichis.\n{detail}",
+            retryable=True,
+            metrics={
+                "projects": len(normalized_project_ids),
+                "projects_succeeded": 0,
+                "projects_failed": len(failures),
+            },
+        )
+
+    combined = pd.concat(joined_frames, ignore_index=True, sort=False)
+    campaign_variable = dataset_variable_name("ecotaxa_ecopart", "campaign")
+    project_pairs = [
+        {
+            "ecotaxa_project_id": ecotaxa_pid,
+            "ecopart_project_id": ecopart_pid,
+        }
+        for ecotaxa_pid, ecopart_pid, _partition, _resolution in resolved
+        if ecotaxa_pid in set(combined["export_project_id"])
+    ]
+    partial = bool(failures)
+    meta = {
+        "source": "join:ecotaxa_campaign+ecopart",
+        "project_pairs": project_pairs,
+        "partial_enrichment": partial,
+        "project_failures": failures,
+        "n_rows": len(combined),
+        "n_matched": n_matched,
+    }
+    store_dataset(
+        _store,
+        thread_id,
+        combined,
+        variable_name=campaign_variable,
+        meta=meta,
+        latest_alias=ECOTAXA_ECOPART,
+    )
+
+    status = "partiel" if partial else "terminé"
+    lines = [
+        f"Enrichissement EcoPart de campagne {status} — "
+        f"{len(joined_frames)}/{len(normalized_project_ids)} projets enrichis, "
+        f"{len(combined)} lignes consolidées.",
+        *[f"- Succès : {item}" for item in successes],
+        *[f"- Échec : {failure}" for failure in failures],
+        f"Données disponibles dans `{campaign_variable}` et `df_ecotaxa_ecopart`.",
+    ]
+    return _ep_success(
+        "\n".join(lines),
+        data_ref=campaign_variable,
+        artifact_refs=artifact_refs,
+        persisted=True,
+        method="Partitioned EcoTaxa campaign-EcoPart export and join",
+        metrics={
+            "rows": len(combined),
+            "matched": n_matched,
+            "projects": len(normalized_project_ids),
+            "projects_succeeded": len(joined_frames),
+            "projects_failed": len(failures),
+        },
+    )
 
 
 def make_ecopart_tools(thread_id: str) -> list:
@@ -842,6 +1070,21 @@ def make_ecopart_tools(thread_id: str) -> list:
             client.login()
         except Exception as exc:
             return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
+
+        campaign_df = session_et.get("df")
+        is_campaign = (
+            ecotaxa_project_id is None
+            and ecopart_project_id is None
+            and isinstance(campaign_df, pd.DataFrame)
+            and "export_project_id" in campaign_df.columns
+        )
+        if is_campaign:
+            return _enrich_ecotaxa_campaign_with_ecopart(
+                thread_id,
+                session_et,
+                client,
+                confirmed=confirmed,
+            )
 
         resolution_note = ""
         if ecotaxa_project_id is None and ecopart_project_id is None:

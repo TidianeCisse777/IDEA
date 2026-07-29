@@ -206,6 +206,67 @@ def test_remote_enrichment_selects_named_ecotaxa_project_not_latest_alias(
     assert merged["obj_orig_id"].isna().any()
 
 
+def test_remote_enrichment_reports_a_failed_campaign_partition(_isolated_store):
+    """One failed EcoPart project keeps successful campaign partitions usable."""
+    from core.ecopart_client import EcopartExportError
+
+    thread_id = "campaign-partial"
+    campaign = pd.DataFrame({
+        "obj_orig_id": ["alpha_1", "beta_1"],
+        "object_depth_min": [2.5, 2.5],
+        "export_project_id": [101, 202],
+    })
+    _isolated_store.set(
+        f"{thread_id}:ecotaxa",
+        campaign,
+        {
+            "source": "ecotaxa_export_campaign",
+            "export_project_ids": [101, 202],
+        },
+    )
+
+    client = MagicMock()
+
+    def start_export(*, project_id, ecotaxa_project_id):
+        if project_id == 302:
+            raise EcopartExportError(
+                kind="empty_sample_set",
+                message="aucun sample exportable",
+                task_id=77,
+            )
+        return [f"/Task/Show/{project_id}"]
+
+    client.start_export.side_effect = start_export
+    client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["alpha"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [101.0],
+    })
+    resolutions = {
+        101: {"project_id": 301, "resolution": "lien projet 101"},
+        202: {"project_id": 302, "resolution": "lien projet 202"},
+    }
+
+    def resolve_partition(_frame, *, known_ecotaxa_pid=None, **_kwargs):
+        return resolutions.get(
+            known_ecotaxa_pid,
+            {"project_id": 301, "resolution": "résolution globale incorrecte"},
+        )
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
+        side_effect=resolve_partition,
+    ):
+        result = _enrich_tool(thread_id).invoke({"confirmed": True})
+
+    assert "partiel" in result.lower()
+    assert "EcoTaxa 202" in result
+    assert "tâche #77" in result
+    out = _isolated_store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
+    assert set(out["export_project_id"]) == {101}
+    assert set(out["ecopart_project_id"]) == {301}
+
+
 # --------------------------------------------------------------------------- #
 # 4. Workflow 3 — full remote: real query_ecotaxa → real enrich_remote
 # --------------------------------------------------------------------------- #
