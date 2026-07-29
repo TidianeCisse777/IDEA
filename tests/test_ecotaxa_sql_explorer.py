@@ -40,6 +40,26 @@ def test_run_select_without_cap_returns_all_rows():
     assert result["truncated"] is False
 
 
+def test_run_select_accepts_one_terminal_semicolon_but_blocks_statement_chaining():
+    from core.ecotaxa_browser.cache.sql_explorer import run_select
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE samples (sample_id INTEGER)")
+    conn.execute("INSERT INTO samples VALUES (1)")
+
+    terminal_semicolon = run_select(conn, "SELECT sample_id FROM samples;")
+    chained_statements = run_select(
+        conn, "SELECT sample_id FROM samples; SELECT 2"
+    )
+
+    assert terminal_semicolon["ok"] is True
+    assert terminal_semicolon["rows"] == [{"sample_id": 1}]
+    assert chained_statements == {
+        "ok": False,
+        "error": "Statement chaining (;) is not allowed — use a single SELECT.",
+    }
+
+
 def test_table_map_covers_actual_tables_columns_grains_and_relations():
     from core.ecotaxa_browser.cache import sql_explorer
 

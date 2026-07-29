@@ -16,6 +16,7 @@ def test_profile_maps_aggregate_samples_before_rendering_one_point_per_profile()
     assert "profile_id" in graph_writer
     assert "n_samples" in graph_writer
     assert "one point per profile" in graph_writer
+    assert "Never label individual casts globally" in graph_writer
 
 
 def test_ecotaxa_tools_do_not_reload_the_preactivated_navigation_skill():

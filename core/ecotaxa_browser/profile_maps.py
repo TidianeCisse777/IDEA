@@ -53,19 +53,29 @@ def _non_empty_profile(value: object) -> str | None:
     return text or None
 
 
-def profiles_for_map(zone_name: str) -> dict:
-    """Return one exact-zone map row per profile and truthful coverage metrics.
+def profiles_for_map(zone_name: str | None = None, *, zone_reference: str = "IHO") -> dict:
+    """Return one map row per profile for an exact zone or a global reference.
 
     The cache is opened read-only. A bounding box narrows the SQLite query,
     then the canonical registry polygon performs the definitive inclusion
     check. This matters for bays whose polygon is much narrower than its
     rectangle.
     """
-    if not isinstance(zone_name, str) or not zone_name.strip():
-        raise EcoTaxaBrowserError("INVALID_ZONE", "zone_name must be a non-empty string.")
-
-    resolved = _resolve_named_zone(zone_name)
-    polygon = resolved["polygon"]
+    is_global = zone_name is None or not str(zone_name).strip()
+    if is_global:
+        reference = str(zone_reference or "IHO").upper()
+        if reference not in {"IHO", "MEOW"}:
+            raise EcoTaxaBrowserError(
+                "INVALID_ZONE_REFERENCE",
+                "zone_reference must be IHO or MEOW for a global profile map.",
+            )
+        resolved = None
+        polygon = None
+    else:
+        if not isinstance(zone_name, str):
+            raise EcoTaxaBrowserError("INVALID_ZONE", "zone_name must be a string.")
+        resolved = _resolve_named_zone(zone_name)
+        polygon = resolved["polygon"]
     conn = open_readonly_connection(_cache_db_path())
     try:
         if cache_counts(conn)["samples_indexed"] == 0:
@@ -74,29 +84,51 @@ def profiles_for_map(zone_name: str) -> dict:
                 "EcoTaxa local cache is empty — wait for the shared cache bootstrap.",
             )
 
-        candidate_rows = query_samples_filtered(
-            conn,
-            bbox=_bbox_from_polygon(polygon),
-        )
-        rows_in_zone = [
-            row for row in candidate_rows
-            if row["lat_avg"] is not None
-            and row["lon_avg"] is not None
-            and polygon.contains(Point(row["lon_avg"], row["lat_avg"]))
-        ]
+        if is_global:
+            # Keep the IHO and MEOW classifications separate. OUTSIDE is part
+            # of each global reference view: it is an explicit cache label,
+            # rather than an excuse to drop a mapped cast silently.
+            candidate_rows = conn.execute(
+                "SELECT * FROM samples_cache WHERE zone_reference IN (?, 'OUTSIDE')",
+                (reference,),
+            ).fetchall()
+            rows_in_zone = [
+                row for row in candidate_rows
+                if row["lat_avg"] is not None and row["lon_avg"] is not None
+            ]
+            missing_profiles_sql = (
+                "SELECT COUNT(DISTINCT TRIM(profile_id)) FROM samples_cache "
+                "WHERE zone_reference IN (?, 'OUTSIDE') "
+                "AND profile_id IS NOT NULL AND TRIM(profile_id) <> '' "
+                "AND (lat_avg IS NULL OR lon_avg IS NULL)"
+            )
+            profiles_missing_coordinates = conn.execute(
+                missing_profiles_sql, (reference,)
+            ).fetchone()[0]
+        else:
+            candidate_rows = query_samples_filtered(
+                conn,
+                bbox=_bbox_from_polygon(polygon),
+            )
+            rows_in_zone = [
+                row for row in candidate_rows
+                if row["lat_avg"] is not None
+                and row["lon_avg"] is not None
+                and polygon.contains(Point(row["lon_avg"], row["lat_avg"]))
+            ]
+            profiles_missing_coordinates = conn.execute(
+                """
+                SELECT COUNT(DISTINCT TRIM(profile_id))
+                FROM samples_cache
+                WHERE profile_id IS NOT NULL
+                  AND TRIM(profile_id) <> ''
+                  AND (lat_avg IS NULL OR lon_avg IS NULL)
+                """
+            ).fetchone()[0]
         profile_rows = [
             row for row in rows_in_zone if _non_empty_profile(row["profile_id"])
         ]
         missing_profile = len(rows_in_zone) - len(profile_rows)
-        profiles_missing_coordinates = conn.execute(
-            """
-            SELECT COUNT(DISTINCT TRIM(profile_id))
-            FROM samples_cache
-            WHERE profile_id IS NOT NULL
-              AND TRIM(profile_id) <> ''
-              AND (lat_avg IS NULL OR lon_avg IS NULL)
-            """
-        ).fetchone()[0]
     finally:
         conn.close()
 
@@ -106,36 +138,53 @@ def profiles_for_map(zone_name: str) -> dict:
         assert profile_id is not None  # narrowed directly above
         group = grouped.setdefault(
             profile_id,
-            {"sample_ids": set(), "latitudes": [], "longitudes": []},
+            {"sample_ids": set(), "latitudes": [], "longitudes": [], "zones": set()},
         )
         group["sample_ids"].add(int(row["sample_id"]))
         group["latitudes"].append(float(row["lat_avg"]))
         group["longitudes"].append(float(row["lon_avg"]))
+        if is_global:
+            group["zones"].add(str(row["iho_zone"] or "Inconnu"))
 
-    profiles = [
-        {
+    profiles = []
+    for profile_id, group in sorted(grouped.items()):
+        profile = {
             "profile_id": profile_id,
             "n_samples": len(group["sample_ids"]),
             "lat_avg": sum(group["latitudes"]) / len(group["latitudes"]),
             "lon_avg": sum(group["longitudes"]) / len(group["longitudes"]),
         }
-        for profile_id, group in sorted(grouped.items())
-    ]
+        if is_global:
+            zones = sorted(group["zones"])
+            profile["zone"] = zones[0] if len(zones) == 1 else "Zones multiples"
+        profiles.append(profile)
 
-    return {
-        "zone": {
+    zone = (
+        {
+            "requested": None,
+            "canonical": f"Toutes les zones {reference}",
+            "source": "cache partagé EcoTaxa",
+            "reference": reference,
+        }
+        if is_global
+        else {
             "requested": zone_name,
             "canonical": resolved["canonical"],
             "source": resolved["source"],
-        },
+        }
+    )
+    coverage = {
+        "samples_in_zone": len(rows_in_zone),
+        "samples_with_profile_id": len(profile_rows),
+        "profiles_with_coordinates": len(profiles),
+        "samples_missing_profile_id": missing_profile,
+        "profiles_missing_coordinates": int(profiles_missing_coordinates or 0),
+    }
+    if is_global:
+        coverage["zone_reference"] = reference
+
+    return {
+        "zone": zone,
         "profiles": profiles,
-        "coverage": {
-            "samples_in_zone": len(rows_in_zone),
-            "samples_with_profile_id": len(profile_rows),
-            "profiles_with_coordinates": len(profiles),
-            "samples_missing_profile_id": missing_profile,
-            # These rows cannot be assigned to an exact named zone; report
-            # them separately instead of pretending they are absent.
-            "profiles_missing_coordinates": int(profiles_missing_coordinates or 0),
-        },
+        "coverage": coverage,
     }

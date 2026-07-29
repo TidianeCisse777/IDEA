@@ -35,6 +35,14 @@ def test_detect_column_matches_case_insensitively():
     assert detect_column(columns, ("object_date",)) == "Object_Date"
 
 
+def test_detect_column_ignores_case_accents_and_separators():
+    columns = ["Sample ID", "SAMPLE-DATE", "Latitude (Degrees North)"]
+
+    assert detect_column(columns, ("sample_id",)) == "Sample ID"
+    assert detect_column(columns, ("sample_date",)) == "SAMPLE-DATE"
+    assert detect_column(columns, ("latitude (degrees_north)",)) == "Latitude (Degrees North)"
+
+
 def test_detect_column_returns_first_matching_candidate():
     columns = ["sample_lat", "object_lat"]
     assert detect_column(columns, ("object_lat", "sample_lat")) == "object_lat"

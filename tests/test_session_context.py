@@ -555,19 +555,24 @@ def test_capsule_loaded_file_shows_its_description(tmp_path):
     assert "Profils CTD" in capsule
 
 
-def test_capsule_all_columns_numeric_before_categorical(tmp_path):
-    """all_columns field must appear in the capsule and list numeric columns
-    before categorical ones so the agent sees graphable axes first."""
+def test_capsule_all_columns_follow_scientific_workflow_priority(tmp_path):
+    """The capsule exposes keys, time and position before graph measures."""
     store = SessionStore(tmp_path)
     thread_id = "col-order"
 
     df = pd.DataFrame({
-        "taxon": ["Calanus", "Metridia"],          # categorical
-        "station": ["S1", "S2"],                   # categorical
-        "abundance_ind_L": [12.4, 0.3],            # numeric → should appear first
-        "temperature": [4.1, 3.8],                 # numeric → should appear first
-        "depth": [50.0, 100.0],                    # numeric (env) → first of all
-        "latitude": [67.0, 68.0],                  # numeric (env) → first of all
+        "taxon": ["Calanus", "Metridia"],
+        "station": ["S1", "S2"],
+        "abundance_ind_L": [12.4, 0.3],
+        "temperature": [4.1, 3.8],
+        "depth": [50.0, 100.0],
+        "latitude": [67.0, 68.0],
+        "longitude": [-68.0, -67.0],
+        "sampledatetime": ["2025-01-01", "2025-01-02"],
+        "sample_id": [101, 102],
+        "analysis": [1001, 1002],
+        "profile": [10, 11],
+        "deployment": [1, 1],
     })
     store_dataset(
         store, thread_id, df,
@@ -580,23 +585,21 @@ def test_capsule_all_columns_numeric_before_categorical(tmp_path):
     capsule = build_dataset_state_capsule(store, thread_id)
 
     assert "all_columns=" in capsule
-    # numeric columns must appear before categorical ones
-    pos_numeric = capsule.index("abundance_ind_L")
-    pos_categorical = capsule.index("taxon")
-    assert pos_numeric < pos_categorical, (
-        "numeric columns should appear before categorical ones in all_columns"
-    )
-    # env-detected columns must appear first among numerics
-    pos_depth = capsule.index("depth")
-    pos_abundance = capsule.index("abundance_ind_L")
-    assert pos_depth < pos_abundance, (
-        "env-detected columns (depth) should precede other numeric columns"
-    )
+    all_columns = capsule.split("all_columns=", 1)[1].split("\n", 1)[0]
+    ordered = all_columns.split(",")
+    assert ordered.index("deployment") < ordered.index("profile")
+    assert ordered.index("profile") < ordered.index("sample_id")
+    assert ordered.index("sample_id") < ordered.index("analysis")
+    assert ordered.index("analysis") < ordered.index("sampledatetime")
+    assert ordered.index("sampledatetime") < ordered.index("latitude")
+    assert ordered.index("latitude") < ordered.index("depth")
+    assert ordered.index("depth") < ordered.index("taxon")
+    assert ordered.index("taxon") < ordered.index("abundance_ind_L")
+    assert ordered.index("abundance_ind_L") < ordered.index("temperature")
 
 
 def test_capsule_all_columns_truncated_with_remainder_count(tmp_path):
-    """When the dataframe has more than 50 columns, all_columns is truncated
-    and the number of hidden columns is stated as '(+N more)'."""
+    """The permanent capsule shows a compact schema, never every column."""
     store = SessionStore(tmp_path)
     thread_id = "many-cols"
 
@@ -615,6 +618,6 @@ def test_capsule_all_columns_truncated_with_remainder_count(tmp_path):
     capsule = build_dataset_state_capsule(store, thread_id)
 
     assert "all_columns=" in capsule
-    assert "(+" in capsule and "more)" in capsule
-    # all 72 column names must NOT all appear (truncation happened)
-    assert capsule.count("col_") < 70
+    assert "(+48 more)" in capsule
+    # The 72-column table exposes only its 24 most useful fields here.
+    assert capsule.count("col_") <= 22

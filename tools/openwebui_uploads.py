@@ -365,7 +365,7 @@ def resolve_chat_files(
     already_injected: set[str] = set()
     if store is not None:
         persisted = store.get(f"{tid}:{_OWUI_INJECTED_KEY}") or {}
-        already_injected = set(persisted.get("file_ids") or [])
+        already_injected = set((persisted.get("meta") or {}).get("file_ids") or [])
 
     tabular_paths: list[str] = []
     image_parts: list[dict] = []
@@ -407,7 +407,11 @@ def resolve_chat_files(
     # Persiste les ids nouvellement injectés pour les prochains tours.
     if newly_injected and store is not None:
         updated = already_injected | set(newly_injected)
-        store.set(f"{tid}:{_OWUI_INJECTED_KEY}", {"file_ids": list(updated)})
+        store.set(
+            f"{tid}:{_OWUI_INJECTED_KEY}",
+            None,
+            {"file_ids": sorted(updated)},
+        )
 
     text_parts: list[str] = []
     if tabular_paths:

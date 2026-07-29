@@ -46,6 +46,8 @@ services:
     volumes:
       - .:/app
       - ./data:/app/data
+      # Graph artifacts must survive a source-clone replacement or agent rebuild.
+      - copepod_graphs:/app/data/graphs
       - copepod_logs:/app/logs
       - copepod_static:/app/static
       - copepod_models:/app/models
@@ -127,6 +129,20 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Open WebUI normally re-runs its own file RAG on every chat turn.  IDEA
+  # resolves persisted attachments from the chat ID instead, so install a
+  # scoped inlet filter that prevents the duplicate context and status UI.
+  open-webui-bootstrap:
+    image: openwebui/open-webui:0.9.6
+    depends_on:
+      open-webui:
+        condition: service_started
+    volumes:
+      - open_webui_data:/app/backend/data
+      - ./openwebui:/bootstrap:ro
+    command: python /bootstrap/install_idea_file_bridge_filter.py
+    restart: "no"
+
   watchtower:
     image: containrrr/watchtower:latest
     container_name: watchtower
@@ -143,6 +159,7 @@ services:
 
 volumes:
   copepod_logs:
+  copepod_graphs:
   copepod_static:
   copepod_models:
   copepod_rag_index:

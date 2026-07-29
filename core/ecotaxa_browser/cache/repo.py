@@ -31,7 +31,7 @@ _geo_registry_loaded = False
 # resync to populate (i.e. _ensure_column adds a column whose data must come
 # from EcoTaxa, not a backfill). Stored in the SQLite user_version pragma so
 # the startup code can detect an old-format cache and trigger a resync.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def _load_geo_registry():
@@ -54,6 +54,7 @@ _SECONDARY_INDEXES = {
     "idx_samples_bbox": "samples_cache(lat_avg, lon_avg)",
     "idx_samples_date": "samples_cache(date_min, date_max)",
     "idx_samples_datetime": "samples_cache(datetime_min, datetime_max)",
+    "idx_samples_ctd_filename": "samples_cache(ctd_rosette_filename)",
     "idx_samples_depth_max": "samples_cache(depth_max)",
     "idx_samples_zone": "samples_cache(iho_zone)",
     "idx_samples_zone_reference": "samples_cache(zone_reference, iho_zone)",
@@ -72,6 +73,8 @@ CREATE TABLE IF NOT EXISTS samples_cache (
     original_id TEXT,
     station_id TEXT,
     profile_id TEXT,
+    cruise_id TEXT,
+    ctd_rosette_filename TEXT,
     free_fields_json TEXT,
     object_count INTEGER,
     nb_validated INTEGER,
@@ -178,6 +181,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "samples_cache", "original_id", "TEXT")
     _ensure_column(conn, "samples_cache", "station_id", "TEXT")
     _ensure_column(conn, "samples_cache", "profile_id", "TEXT")
+    _ensure_column(conn, "samples_cache", "cruise_id", "TEXT")
+    _ensure_column(conn, "samples_cache", "ctd_rosette_filename", "TEXT")
     _ensure_column(conn, "samples_cache", "free_fields_json", "TEXT")
     _ensure_column(conn, "samples_cache", "iho_zone", "TEXT")
     _ensure_column(conn, "samples_cache", "zone_reference", "TEXT")
@@ -362,6 +367,8 @@ def upsert_sample(
     original_id: str | None = None,
     station_id: str | None = None,
     profile_id: str | None = None,
+    cruise_id: str | None = None,
+    ctd_rosette_filename: str | None = None,
     free_fields_json: str | None = None,
     iho_zone: str | None = None,
     zone_reference: str | None = None,
@@ -389,14 +396,15 @@ def upsert_sample(
         INSERT INTO samples_cache (
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
-            original_id, station_id, profile_id, free_fields_json,
+            original_id, station_id, profile_id, cruise_id, ctd_rosette_filename,
+            free_fields_json,
             object_count, instrument, last_synced, iho_zone, zone_reference,
             datetime_min, datetime_max, time_min, time_max, temporal_precision,
             missing_date_count, missing_time_count, missing_depth_min_count,
             missing_depth_max_count, depth_complete, metadata_objects_scanned,
             metadata_complete, metadata_coverage_pct
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(sample_id) DO UPDATE SET
             project_id = excluded.project_id,
             lat_avg = excluded.lat_avg,
@@ -408,6 +416,8 @@ def upsert_sample(
             original_id = excluded.original_id,
             station_id = excluded.station_id,
             profile_id = excluded.profile_id,
+            cruise_id = excluded.cruise_id,
+            ctd_rosette_filename = excluded.ctd_rosette_filename,
             free_fields_json = excluded.free_fields_json,
             object_count = excluded.object_count,
             instrument = excluded.instrument,
@@ -431,7 +441,8 @@ def upsert_sample(
         (
             sample_id, project_id, lat_avg, lon_avg,
             date_min, date_max, depth_min, depth_max,
-            original_id, station_id, profile_id, free_fields_json,
+            original_id, station_id, profile_id, cruise_id, ctd_rosette_filename,
+            free_fields_json,
             object_count, instrument, last_synced, iho_zone, zone_reference,
             datetime_min, datetime_max, time_min, time_max, temporal_precision,
             missing_date_count, missing_time_count, missing_depth_min_count,
@@ -492,6 +503,8 @@ def replace_project_samples(
                 sample.get("original_id"),
                 sample.get("station_id"),
                 sample.get("profile_id"),
+                sample.get("cruise_id"),
+                sample.get("ctd_rosette_filename"),
                 sample.get("free_fields_json"),
                 (
                     int(sample["object_count"])
@@ -536,7 +549,8 @@ def replace_project_samples(
             INSERT INTO samples_cache (
                 sample_id, project_id, lat_avg, lon_avg,
                 date_min, date_max, depth_min, depth_max,
-                original_id, station_id, profile_id, free_fields_json,
+                original_id, station_id, profile_id, cruise_id, ctd_rosette_filename,
+                free_fields_json,
                 object_count, nb_validated, nb_predicted, nb_dubious,
                 nb_unclassified, used_taxa, instrument, last_synced, iho_zone,
                 zone_reference,
@@ -545,7 +559,7 @@ def replace_project_samples(
                 missing_depth_max_count, depth_complete, metadata_objects_scanned,
                 metadata_complete, metadata_coverage_pct
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )

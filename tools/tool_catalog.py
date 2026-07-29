@@ -249,7 +249,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "summarize_ecotaxa_samples": _source("EcoTaxa · résumé de samples", "EcoTaxa · samples summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_project": _source("EcoTaxa · résumé du projet", "EcoTaxa · project summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_projects": _source("EcoTaxa · résumé des projets", "EcoTaxa · projects summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "export_ecotaxa_samples": _source("EcoTaxa · export des samples", "EcoTaxa · samples export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True),
+    "export_ecotaxa_samples": _source("EcoTaxa · export des samples", "EcoTaxa · samples export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True, progress_fr="Export des samples EcoTaxa en cours — les projets sont traités successivement", progress_en="EcoTaxa samples export in progress — projects are processed sequentially"),
     "resolve_ecotaxa_sample": _source("EcoTaxa · résolution de sample", "EcoTaxa · sample resolver", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "audit_ecotaxa_spatial_coverage": _source("EcoTaxa · audit de couverture spatiale", "EcoTaxa · spatial coverage audit", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "list_ecotaxa_cache_tables": _source("EcoTaxa · tables du cache", "EcoTaxa · cache tables", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
@@ -341,7 +341,9 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "describe_ecotaxa_cache_table": "local_source_read",
     "query_ecotaxa_cache": "local_source_read",
     "summarize_ecotaxa_profiles_for_map": "local_source_session",
-    "find_uvp_matches_for_net_table": "local_source_read",
+    # Reads the local EcoTaxa cache then verifies the shared CTD-rosette file
+    # against Amundsen metadata; it is read-only but no longer purely local.
+    "find_uvp_matches_for_net_table": "remote_read",
     "compare_ecotaxa_projects": "remote_read",
     "count_ecotaxa_taxa": "remote_read",
     "describe_ecotaxa_project_coverage": "remote_read",

@@ -23,13 +23,17 @@ Stay at sample level unless the user explicitly needs individual objects.
 - One incomplete sample may use the targeted live deployment fallback.
 - Taxon names/counts and project export schemas use the dedicated read-only API tools.
 - Individual objects require an export plan and explicit confirmation.
+- Object-grain analysis (profile, depth band, taxon abundance, morphology, or
+  score) cannot use cache metadata alone. Resolve its samples in the cache,
+  then propose exporting that exact saved selection. Do not replace object
+  values with sample envelopes/counts; the request is not confirmation.
 
 ## Mandatory map workflow
 
 For every EcoTaxa map request, including a follow-up edit to an existing map,
-this skill is mandatory. Load `graph_planner` first, then `graph_writer`, in
-separate tool-call batches before querying or rendering. Do not reuse a
-previous map workflow: the current turn must load both graph skills.
+this navigation skill and the graph workflow are already active in the
+session. Reuse their active rules directly. Never reload either skill in a later turn
+before querying or rendering.
 
 The finished figure must be a Cartopy GeoAxes with real Natural Earth coastlines.
 Never use a plain longitude/latitude scatter or artificial lines as a coastline.
@@ -87,6 +91,7 @@ One row in `samples_cache` is one EcoTaxa sample. Important columns:
 |---|---|
 | `sample_id`, `project_id` | Stable identifiers |
 | `original_id`, `station_id`, `profile_id` | Deployment label, station, and cast/profile |
+| `cruise_id`, `ctd_rosette_filename` | Campaign and CTD-rosette filename |
 | `lat_avg`, `lon_avg`, `iho_zone`, `zone_reference` | Cached location, polygon-derived label, and its geographic reference |
 | `instrument` | Sampling instrument |
 | `object_count` | Authoritative total from sample statistics |
@@ -103,11 +108,11 @@ with `COUNT(DISTINCT profile_id)`.
 
 ### Profile / cast maps
 
-For a map of profiles, casts, or deployments where point size means the number
-of samples, call `summarize_ecotaxa_profiles_for_map(zone_name=...)` directly.
-It resolves the exact named-zone polygon internally and persists
-`df_ecotaxa_profile_map` with exactly these render columns:
-`profile_id`, `n_samples`, `lat_avg`, and `lon_avg`.
+For profile/cast maps, call `summarize_ecotaxa_profiles_for_map` directly.
+Pass `zone_name` for one zone; for a global map omit it and pass one
+`zone_reference` (`IHO`, or `MEOW` on request). Global
+output `df_ecotaxa_profile_map` has `profile_id`, `n_samples`, `lat_avg`,
+`lon_avg`, and categorical `zone`. Never combine IHO and MEOW in one figure.
 
 One row is one point and one non-empty `profile_id`. `n_samples` is the count
 of distinct sample IDs for that profile. Never group a profile map by sample_id,
@@ -149,9 +154,11 @@ equality with that label. For example, “Mer de Beaufort” means only
 
 For a French or English name, call `get_zone_info` first and use its returned
 canonical label in the equality filter. For example, `Beaufort Sea` resolves to
-`Mer de Beaufort`, then filter only `iho_zone = 'Mer de Beaufort'`. Never
-translate a zone label manually and never use a partial text match as a
-substitute for alias resolution.
+`Mer de Beaufort`, then filter only `iho_zone = 'Mer de Beaufort'`. Keep this
+canonical value unchanged in SQL and geometry calls. In user-facing French,
+use the French canonical label (for example `Baie d'Hudson`, not `Hudson Bay`);
+in user-facing English, use an English alias when available. Localization is
+presentation only, never a partial-text substitute for alias resolution.
 
 ```sql
 WHERE iho_zone = 'Mer de Beaufort'
@@ -410,7 +417,11 @@ When a cache query returns `sample_id`, the selection is saved automatically as
 `selection_name="latest"`. Reuse it for export instead of copying IDs from a
 displayed preview.
 
-After a successful export, use the returned persistent dataset with
+After a successful export, first provide a concise closing audit before any
+next analysis: requested versus exported samples/projects, object-row count,
+filters, complete/partial status, and every exclusion or project failure with
+its returned reason. State explicitly that a partial campaign supports only
+the exported coverage. Then use the returned persistent dataset with
 `run_pandas` or `run_graph`. A multi-project export contains
 `export_project_id`; keep that provenance. On `EXPORT_FAILED`, report the
 failure and stop—do not substitute a partial page or fabricate rows.

@@ -484,6 +484,27 @@ def test_run_pandas_arbitrary_dataframe_is_absent_from_next_call(tsv_path):
     assert "temporary_summary" in second
 
 
+def test_run_pandas_persists_explicitly_named_subset_for_later_enrichment(tsv_path):
+    """A user-selected subset must be reusable as the exact enrichment source."""
+    thread_id = "thread-persisted-subset-for-enrichment"
+    tools = make_tools(thread_id)
+    load_file_tool = next(t for t in tools if t.name == "load_file")
+    run_pandas = next(t for t in tools if t.name == "run_pandas")
+    load_file_tool.invoke({"path": tsv_path})
+
+    result = run_pandas.invoke(
+        {
+            "code": "result = df.loc[df['profile_id'].eq('ips_007')].copy()",
+            "persist_as": "df_subset_ips_007",
+        }
+    )
+
+    stored = _store.get(f"{thread_id}:dataset:df_subset_ips_007")
+    assert stored is not None
+    assert stored["df"]["profile_id"].tolist() == ["ips_007"]
+    assert "Persistence: persisted=true; variable=df_subset_ips_007" in result
+
+
 def test_run_pandas_reports_persisted_canonical_zero_count(tsv_path):
     thread_id = "thread-canonical-zero-count"
     tools = make_tools(thread_id)

@@ -18,7 +18,8 @@ CACHE_TABLES: dict[str, str] = {
         "Colonnes clés : sample_id, project_id, lat_avg, lon_avg, iho_zone, "
         "instrument, date_min, date_max, depth_min, depth_max, "
         "object_count, nb_validated, nb_predicted, nb_dubious, nb_unclassified, "
-        "used_taxa (JSON), original_id, station_id, profile_id. "
+        "used_taxa (JSON), original_id, station_id, profile_id, cruise_id, "
+        "ctd_rosette_filename. "
         "Point d'entrée pour toute exploration géographique, temporelle, ou par instrument."
     ),
     "projects_cache": (
@@ -246,7 +247,10 @@ def run_select(
             "ok": False,
             "error": f"Only SELECT or WITH statements are allowed (got {first!r}).",
         }
-    if ";" in stripped:
+    # A trailing semicolon is normal SQL syntax for one statement.  Only a
+    # semicolon followed by another non-whitespace token can chain statements.
+    statement = stripped[:-1].rstrip() if stripped.endswith(";") else stripped
+    if ";" in statement:
         return {
             "ok": False,
             "error": "Statement chaining (;) is not allowed — use a single SELECT.",
@@ -254,7 +258,7 @@ def run_select(
 
     try:
         conn.execute("PRAGMA query_only=ON")
-        cur = conn.execute(stripped)
+        cur = conn.execute(statement)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

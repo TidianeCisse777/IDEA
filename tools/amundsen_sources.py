@@ -5,6 +5,7 @@ import io
 import json
 import uuid
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
@@ -60,7 +61,13 @@ def _am_success(summary: str, **fields): return _am_result(success, summary, **f
 def _am_empty(summary: str, **fields): return _am_result(empty, summary, **fields)
 def _am_blocked(summary: str, **fields): return _am_result(blocked, summary, **fields)
 def _am_error(summary: str, **fields): return _am_result(error, summary, **fields)
-_AMUNDSEN_CORE_COLUMNS = ("time", "latitude", "longitude", "station", "cast_number", "PRES")
+_AMUNDSEN_CORE_COLUMNS = (
+    "filename", "time", "latitude", "longitude", "station", "cast_number", "PRES"
+)
+_AMUNDSEN_CTD_MATCH_METADATA_COLUMNS = (
+    "filename", "time", "latitude", "longitude", "station", "cast_number"
+)
+_AMUNDSEN_REQUEST_TIMEOUT_SECONDS = 20
 _AMUNDSEN_TIME_MIN = pd.Timestamp("2014-07-15T08:20:04Z")
 _AMUNDSEN_TIME_MAX = pd.Timestamp("2024-10-01T02:03:25Z")
 
@@ -166,7 +173,7 @@ def _fetch_amundsen_bbox(
         quote(constraint, safe="><=:-T.Z") for constraint in constraints
     )
     url = f"{_AMUNDSEN_TABLEDAP_URL}?{query}"
-    response = requests.get(url, timeout=120)
+    response = requests.get(url, timeout=_AMUNDSEN_REQUEST_TIMEOUT_SECONDS)
     if response.status_code == 404:
         result = pd.DataFrame(columns=columns)
         cache_set("amundsen_bbox", cache_key, result)
@@ -180,6 +187,73 @@ def _fetch_amundsen_bbox(
     body = "\n".join([lines[0]] + lines[2:]) if len(lines) > 2 else lines[0]
     result = pd.read_csv(io.StringIO(body))
     cache_set("amundsen_bbox", cache_key, result)
+    return _filter_to_request(result, bbox=bbox, time_window=time_window)
+
+
+def _fetch_amundsen_ctd_metadata_by_filename(
+    *,
+    filename_aliases: set[str],
+    bbox: dict,
+    time_window: dict,
+) -> pd.DataFrame:
+    """Fetch only CTD cast metadata for filename-led UVP certification.
+
+    EcoTaxa often holds a short rosette label (for example ``142``), whereas
+    Amundsen holds a complete filename.  The ERDDAP filename regex narrows the
+    remote query first; position and time then disambiguate recurring labels.
+    This path intentionally excludes ``PRES`` and every vertical measurement:
+    those are requested only for a user-approved CTD enrichment.
+    """
+    aliases = sorted({str(alias).strip() for alias in filename_aliases if str(alias).strip()})
+    if not aliases:
+        return pd.DataFrame(columns=_AMUNDSEN_CTD_MATCH_METADATA_COLUMNS)
+
+    cache_key = {
+        "filename_aliases": aliases,
+        "bbox": {key: round(float(value), 4) for key, value in sorted(bbox.items())},
+        "time_window": dict(time_window),
+    }
+    cached = cache_get("amundsen_ctd_metadata_by_filename", cache_key)
+    if cached is not None:
+        return _filter_to_request(cached, bbox=bbox, time_window=time_window)
+
+    # ERDDAP regex is deliberately a broad server-side prefilter.  Exact alias
+    # equality is enforced locally below, before the CTD match is certified.
+    filename_regex = ".*(" + "|".join(re.escape(alias) for alias in aliases) + ").*"
+    constraints = [
+        f'filename=~"{filename_regex}"',
+        f"latitude>={float(bbox['lat_min']):.4f}",
+        f"latitude<={float(bbox['lat_max']):.4f}",
+        f"longitude>={float(bbox['lon_min']):.4f}",
+        f"longitude<={float(bbox['lon_max']):.4f}",
+        f"time>={time_window['start']}",
+        f"time<={time_window['end']}",
+    ]
+    query = ",".join(_AMUNDSEN_CTD_MATCH_METADATA_COLUMNS) + "&" + "&".join(
+        quote(constraint, safe="><=:-T.Z~") for constraint in constraints
+    )
+    response = requests.get(
+        f"{_AMUNDSEN_TABLEDAP_URL}?{query}",
+        timeout=_AMUNDSEN_REQUEST_TIMEOUT_SECONDS,
+    )
+    if response.status_code == 404:
+        result = pd.DataFrame(columns=_AMUNDSEN_CTD_MATCH_METADATA_COLUMNS)
+    else:
+        response.raise_for_status()
+        lines = response.text.splitlines()
+        if len(lines) <= 1:
+            result = pd.DataFrame(columns=_AMUNDSEN_CTD_MATCH_METADATA_COLUMNS)
+        else:
+            body = "\n".join([lines[0]] + lines[2:]) if len(lines) > 2 else lines[0]
+            result = pd.read_csv(io.StringIO(body))
+            from core.ctd_filename_match import ctd_filename_aliases
+
+            result = result.loc[
+                result["filename"].map(
+                    lambda value: bool(ctd_filename_aliases(value) & set(aliases))
+                )
+            ].reset_index(drop=True)
+    cache_set("amundsen_ctd_metadata_by_filename", cache_key, result)
     return _filter_to_request(result, bbox=bbox, time_window=time_window)
 
 
@@ -236,13 +310,19 @@ class AmundsenMatcher(CtdProfileMatcher):
     def _extra_columns(self, matched, n_unique):
         station: list = [pd.NA] * n_unique
         cast: list = [pd.NA] * n_unique
+        filename: list = [pd.NA] * n_unique
         for position, item in enumerate(matched):
             if item is None:
                 continue
             best, _ = item
             station[position] = best.get("station")
             cast[position] = best.get("cast_number")
-        return {"amundsen_station": station, "amundsen_cast_number": cast}
+            filename[position] = best.get("filename")
+        return {
+            "amundsen_station": station,
+            "amundsen_cast_number": cast,
+            "amundsen_filename": filename,
+        }
 
     def _extra_diagnostics(self, points, candidate_positions):
         return {"query_unique_count": len(candidate_positions or [])}
@@ -735,7 +815,25 @@ def make_amundsen_tools(thread_id: str) -> list:
         n_matched = int(status_counts.get("matched", 0))
         n_no_value = int(status_counts.get("matched_no_value", 0))
         n_no_match = int(status_counts.get("no_match", 0))
+        n_source_unavailable = int(status_counts.get("source_unavailable", 0))
         n_outside_range = int(status_counts.get("outside_amundsen_ctd_range", 0))
+        fetch_failures = diag.get("fetch_failures", [])
+        queryable_points = int(diag.get("query_unique_count", 0))
+        if queryable_points and n_source_unavailable == queryable_points:
+            return _am_error(
+                "Amundsen ERDDAP est temporairement indisponible : les requêtes "
+                f"ont échoué pour {n_source_unavailable} point(s) source. Cette "
+                "erreur ne permet pas de conclure à l'absence de profils CTD ; "
+                "retenter plus tard.",
+                retryable=True,
+                method="Amundsen ERDDAP availability check",
+                metrics={
+                    "rows": n,
+                    "unique_points": n_unique,
+                    "source_unavailable": n_source_unavailable,
+                    "fetch_failures": len(fetch_failures),
+                },
+            )
         plural = "matchées" if n_matched > 1 else "matchée"
 
         provenance = build_enrichment_provenance(
@@ -823,6 +921,7 @@ def make_amundsen_tools(thread_id: str) -> list:
             (
                 f"- Statuts : matched={n_matched}, "
                 f"matched_no_value={n_no_value}, no_match={n_no_match}, "
+                f"source_unavailable={n_source_unavailable}, "
                 f"outside_amundsen_ctd_range={n_outside_range}"
             ),
         ]
@@ -852,11 +951,10 @@ def make_amundsen_tools(thread_id: str) -> list:
                     "- Qualité d'appariement (sur lignes matched) : "
                     + " ; ".join(quality_bits)
                 )
-        fetch_failures = diag.get("fetch_failures", [])
         if fetch_failures:
             method_lines.append(
                 f"- Avertissement : {len(fetch_failures)} lot(s) ERDDAP en erreur, "
-                "lignes conservées avec `no_match`."
+                "les lignes concernées sont marquées `source_unavailable`, pas `no_match`."
             )
             sample_errors = []
             seen: set[str] = set()
@@ -869,6 +967,12 @@ def make_amundsen_tools(thread_id: str) -> list:
                     break
             for sample in sample_errors:
                 method_lines.append(f"  · {sample}")
+        if n_source_unavailable:
+            method_lines.append(
+                f"- Limite : {n_source_unavailable} ligne(s) ne peuvent pas être "
+                "évaluées car la source Amundsen était temporairement indisponible ; "
+                "ce résultat ne conclut pas à l'absence de CTD."
+            )
         if n_no_match:
             method_lines.append(
                 f"- Note : {n_no_match} ligne(s) sans match — la zone-date "

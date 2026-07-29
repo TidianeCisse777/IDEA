@@ -396,6 +396,43 @@ def test_enrich_with_amundsen_ctd_matches_by_lat_lon_time():
     assert json.dumps(provenance, ensure_ascii=False, sort_keys=True) in result
 
 
+def test_enrich_with_amundsen_ctd_reports_upstream_outage_without_claiming_no_ctd():
+    """A total ERDDAP outage is retryable, not an ecological no-match result."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-upstream-outage"
+    _store.set(
+        thread_id,
+        pd.DataFrame(
+            {
+                "latitude": [74.10],
+                "longitude": [-80.20],
+                "object_date": ["2018-08-01"],
+            }
+        ),
+        {"source": "ecotaxa_export_campaign", "variable_name": "df_ecotaxa_campaign"},
+    )
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_bbox",
+        side_effect=TimeoutError("ERDDAP read timeout"),
+    ):
+        enrich = next(
+            tool
+            for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
+
+    assert "temporairement indisponible" in result.lower()
+    assert "ne permet pas de conclure à l'absence" in result.lower()
+    assert not _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
+
+
 def test_enrich_with_amundsen_ctd_refuses_absent_override_before_fetch():
     import pandas as pd
     from unittest.mock import patch
@@ -949,8 +986,53 @@ def test_fetch_amundsen_bbox_queries_erddap_with_bbox_and_time_constraints():
     assert "2013-07-01" in url and "2013-09-01" in url
     # pres_range is dropped from canonical fetch
     assert "PRES>=" not in url and "PRES%3E%3D" not in url
+    assert mock_get.call_args.kwargs["timeout"] == 20
     assert dataframe.iloc[0]["station"] == "BRK-15"
     assert float(dataframe.iloc[0]["TE90"]) == -1.2
+
+
+def test_ctd_metadata_lookup_filters_by_filename_and_never_downloads_vertical_rows():
+    """La certification filet↔UVP ne doit demander que les métadonnées CTD."""
+    from unittest.mock import MagicMock, patch
+
+    import tools.amundsen_sources as amundsen
+
+    fetch_metadata = getattr(
+        amundsen, "_fetch_amundsen_ctd_metadata_by_filename", None
+    )
+    assert callable(fetch_metadata), "la recherche CTD par fichier doit exister"
+
+    csv_body = (
+        "filename,time,latitude,longitude,station,cast_number\n"
+        "UTC,degrees_north,degrees_east,,count\n"
+        "2409_142.int.nc,2024-09-26T15:40:00Z,76.3833,-77.4102,RA67,142\n"
+    )
+    response = MagicMock(status_code=200, text=csv_body)
+    response.raise_for_status = MagicMock()
+
+    with patch("tools.amundsen_sources.cache_get", return_value=None), patch(
+        "tools.amundsen_sources.cache_set"
+    ), patch("tools.amundsen_sources.requests.get", return_value=response) as mock_get:
+        dataframe = fetch_metadata(
+            filename_aliases={"142"},
+            bbox={
+                "lat_min": 76.3333,
+                "lat_max": 76.4333,
+                "lon_min": -77.4602,
+                "lon_max": -77.3602,
+            },
+            time_window={
+                "start": "2024-09-26T13:39:32Z",
+                "end": "2024-09-26T17:39:32Z",
+            },
+        )
+
+    url = mock_get.call_args.args[0]
+    assert "filename=~" in url or "filename%3D~" in url
+    assert "142" in url
+    assert "PRES" not in url and "TE90" not in url
+    assert mock_get.call_args.kwargs["timeout"] == 20
+    assert dataframe["filename"].tolist() == ["2409_142.int.nc"]
 
 
 def test_enrich_with_amundsen_ctd_matches_depth_within_profile():

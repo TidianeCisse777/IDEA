@@ -281,6 +281,16 @@ def test_system_prompt_mentions_sources():
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_system_prompt_requires_the_strict_net_uvp_match_route():
+    """A net↔UVP request cannot be answered by an ad-hoc spatial estimate."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "find_uvp_matches_for_net_table" in COPEPOD_SYSTEM_PROMPT
+    assert "Never estimate a correspondence" in COPEPOD_SYSTEM_PROMPT
+    assert "join_eligible=True" in COPEPOD_SYSTEM_PROMPT
+    assert "date_from" in COPEPOD_SYSTEM_PROMPT
+
+
 def test_system_prompt_prioritizes_current_explicit_enrichment():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -1021,6 +1031,19 @@ def test_system_prompt_mentions_graph_explanation():
     assert "lecture rapide" in prompt
 
 
+def test_system_prompt_keeps_general_questions_out_of_data_report_format():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "A documentation, RAG, definition, greeting, or general explanation is not a data result." in COPEPOD_SYSTEM_PROMPT
+    assert "Never add Résultat/Données/Méthode/Limite to those answers." in COPEPOD_SYSTEM_PROMPT
+
+
+def test_system_prompt_requires_bold_labels_for_graph_result_blocks():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "`**Résultat** — …`, `**Données** — …`, `**Méthode** — …`, and `**Limite** — …`" in COPEPOD_SYSTEM_PROMPT
+
+
 def test_system_prompt_forbids_bare_df_for_multi_source_graphs():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -1050,8 +1073,8 @@ def test_graph_planner_treats_profiles_as_semantically_visual():
     assert "requested output intent" in planner
     assert "not from a closed list of words" in planner
     assert "never answer the user with only this `<details>` block" in planner
-    assert 'never call `run_graph` immediately after `load_skill("graph_planner")`' in planner
-    assert 'first call `load_skill("graph_writer")`' in planner
+    assert "reuse the already-active graph workflow" in planner
+    assert "never reload `graph_planner` or `graph_writer` in a later turn" in planner
 
 
 def test_graph_writer_supports_standalone_named_zone_maps():
@@ -1063,6 +1086,38 @@ def test_graph_writer_supports_standalone_named_zone_maps():
     assert "never plot directly from bare `df`" in writer
     assert "bbox = {\"south\"" in writer
     assert "ccrs.lambertconformal" in writer
+
+
+def test_graph_writer_keeps_station_labels_optional_for_readability():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    assert "only when labels improve reading or the user asks" in writer
+    assert "sans labels individuels, sauf demande explicite" in writer
+    assert "Never use `ccrs.PlateCarree()._as_mpl_transform(ax)`" in writer
+
+
+def test_graph_writer_prioritizes_readable_maps_and_real_size_counts():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    assert "Une carte dense, globale, ou colorée par groupe" in writer
+    assert "légende affiche les comptes réels" in writer
+    assert "Never use `pts.legend_elements(prop=\"sizes\")`" in writer
+
+
+def test_graph_writer_treats_user_framing_as_the_graph_contract():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    assert "The user's scientific question and requested framing are binding" in writer
+    assert "make the requested state of the data visible" in writer
+
+
+def test_ecotaxa_object_requests_escalate_from_cache_selection_to_export():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    navigation = Path("agents/skills/ecotaxa_navigation.md").read_text(encoding="utf-8")
+
+    assert "object-grain values" in COPEPOD_SYSTEM_PROMPT
+    assert "propose an export of that exact selection" in navigation
 
 
 def test_biodiversity_graph_plan_is_frozen_in_docs():
@@ -1322,7 +1377,7 @@ def test_ecotaxa_navigation_distinguishes_loki_instrument_from_project():
         encoding="utf-8"
     ).lower()
 
-    assert 'load_skill("ecotaxa_navigation")' in prompt
+    assert "is pre-activated whenever ecotaxa is authorized" in prompt
     assert "loki-as-instrument" in prompt
     assert "samples-by-zone queries" in skill
     assert "projet loki" in skill
@@ -1521,7 +1576,7 @@ def test_ecotaxa_navigation_skill_owns_project_taxon_count_details():
         encoding="utf-8"
     ).lower()
 
-    assert 'load_skill("ecotaxa_navigation")' in prompt
+    assert "is pre-activated whenever ecotaxa is authorized" in prompt
     assert "count_ecotaxa_taxa" not in prompt
     assert "count_ecotaxa_taxa" in skill
     assert "search_ecotaxa_taxa" in skill
@@ -1741,10 +1796,9 @@ def test_system_prompt_neolabs_graphs_still_require_graph_writer():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
     prompt = _routing_contract("neolabs_abundance_analysis.md", "graph_planner.md", "graph_writer.md")
-    assert "not a replacement for `graph_planner` or `graph_writer`" in prompt
-    assert 'then call `load_skill("graph_planner")`' in prompt
-    assert 'then call `load_skill("graph_writer")`' in prompt
-    assert "the very next execution call must be `run_graph`" in prompt
+    assert "not a graph_writer replacement" in prompt
+    assert "pre-activated on visual turns" in prompt
+    assert "call `run_graph` directly" in prompt
 
 
 def test_graph_planner_requires_sample_df_for_neolabs_taxon_level_data():
@@ -1764,9 +1818,8 @@ def test_neolabs_skill_routes_visual_outputs_through_graph_writer():
     ).lower()
 
     assert "not a graph_writer replacement" in skill
-    assert 'load_skill("graph_planner")' in skill
-    assert 'load_skill("graph_writer")' in skill
-    assert "very next execution call must be `run_graph`" in skill
+    assert "pre-activated on visual turns" in skill
+    assert "call `run_graph` directly" in skill
 
 
 def test_system_prompt_requires_executable_graph_contracts():

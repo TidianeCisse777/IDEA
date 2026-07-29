@@ -22,20 +22,19 @@ You must write correct and complete code to produce the planned visual output.
   write or execute graph code.
   - Never invent or reuse an artifact URL. Only relay the exact artifact returned
   by a successful `run_graph` call for the current request.
-- If `run_graph` returns a correctable graph-contract or graph-quality block,
-  no image exists yet: revise the code using the exact diagnostic and retry exactly once
-  with the same active dataframe. This includes
-  `graph_contract is missing` and an axis/artist mismatch. Do not answer with a
-  table or claim a graph exists before that retry. If the retry is blocked too,
-  stop and surface the final diagnostic without looping. For unrelated data,
-  source, authorization, or column errors, surface the failure directly.
+- On a correctable `run_graph` contract/quality block, no image exists: revise
+  from its diagnostic and retry once with the same dataframe; otherwise surface
+  the final diagnostic. For data, source, authorization, or column errors,
+  surface the failure directly.
 - Use only values present in the explicitly selected source variable. Never
   hardcode coordinates, identifiers, counts, or substitute columns from another
   source.
-- A new request naming a different zone is a new graph request, not an edit of
-  the last figure: resolve/filter the named zone from the loaded source and
-  render the new figure. Do not refuse because the previous figure used another
-  zone.
+- A newly named zone supersedes the prior figure scope: resolve/filter it and
+  render it; never reuse the former zone.
+- The user's scientific question and requested framing are binding: make the requested state of the data visible. Preserve explicit population, measure,
+  comparison/grouping, scope, encoding, and labels. Never silently substitute
+  a generic/easier graph; if impossible, state the conflict and ask one focused
+  question.
 
 ## Visual output
 
@@ -69,7 +68,7 @@ plt.tight_layout()
 - Always use `fig, ax = plt.subplots()` — never call `plt.show()`
 - Always define `title`, `xlabel`, `ylabel`
 - Keep figures readable: `figsize` must stay at or below `(16, 14)`. If a heatmap or ordination needs more space, aggregate or filter groups rather than increasing figure height.
-- Always include a legend or point labels. For scatter/line charts with multiple series: `ax.legend()` with a variable title. For station maps ≤ 50 points: annotate each point with `original_id` / `sample_id`. For station maps > 50 points: a colourbar or size legend. For a single series: at minimum a colorbar label or descriptive title. Never omit all legend context. When > 15 levels, use top 12 + "Other", a continuous colour scale, or a note (`Legend omitted: 83 stations`) — but always include something. Exception: a `vertical_profile` may show 16–30 profiles with `ax.legend(ncol=2)` or more; above 30, filter or aggregate profiles.
+- Include only labels and legends needed to decode the requested encodings. For station maps, use `station_id` only when labels improve reading or the user asks; use `original_id` or `sample_id` only on request. A single series needs a colorbar label or descriptive title. For >15 non-station levels, use top 12 + "Other", a continuous scale, or a note. A `vertical_profile` may show 16–30 profiles with `ax.legend(ncol=2)`; above 30, filter or aggregate.
 - Axis labels must stay readable: never show more than 50 visible tick labels on either axis. For heatmaps with many stations/samples, keep the top 40 groups by abundance or display sparse ticks.
 - Taxon tick labels must be short: if labels contain taxonomy paths such as `Animalia | Arthropoda | ...`, display only the terminal taxon name; truncate labels longer than 35 characters with an ellipsis.
 - For long labels (taxon names): `ax.tick_params(axis='x', rotation=45)`
@@ -98,16 +97,10 @@ effort. La clarté prime sur l'esthétique.
 - **Labels lisibles** : jamais de chevauchement — rotation (`rotation=45`),
   troncature des noms longs (taxon terminal, ≤ 35 car.), et pas plus de ~50
   ticks visibles par axe (sinon agrège ou espace les ticks).
-- **Légende toujours présente et détaillée** : toute figure doit inclure une
-  légende ou des labels identifiant les éléments affichés. Par défaut :
-  - Graphe avec plusieurs séries → `ax.legend()` avec titre de variable.
-  - Carte de stations (≤ 50 points) → annoter chaque point avec `original_id`
-    (ou `sample_id` si absent) directement sur la figure (`ax.annotate`).
-  - Carte de stations (> 50 points) → légende de couleur ou de taille avec le
-    nom de la variable encodée ; ajouter un titre à la légende.
-  - Heatmap / scatter unique → titre d'axe + colorbar avec label.
-  - Au-delà de ~12 séries → top N + « Autres » ou échelle continue ; jamais
-    omettre totalement : ajouter au minimum une note (`Legend omitted: 83 stations`).
+- **Légende toujours présente et détaillée** : multi-séries → `ax.legend()` ;
+  cartes de stations → appliquer la règle de labels ci-dessous ; heatmap ou
+  scatter unique → titre d'axe + colorbar. Au-delà de ~12 séries, top N +
+  « Autres », échelle continue, ou note de légende.
 - **Densité de points (overplotting)** : quand les points se superposent
   (scatter, carte à nombreuses stations), rends la distribution visible —
   transparence (`alpha=0.3–0.6`), marqueurs plus petits, ou agrégation
@@ -253,10 +246,9 @@ data-integrity violation.
 
 ### EcoTaxa profile / cast map
 
-For `df_ecotaxa_profile_map`, draw **one point per profile**. Its required
-columns are `profile_id`, `n_samples`, `lat_avg`, and `lon_avg`; do not merge,
-expand, or regroup it. The point-size encoding is `n_samples` and must have a
-size legend. Never use `sample_id` as a grouping key for this map.
+For `df_ecotaxa_profile_map`, draw **one point per profile** from `profile_id`,
+`n_samples`, `lat_avg`, `lon_avg`; do not merge or regroup it. Size encodes
+`n_samples` with a legend. Never use `sample_id` as the grouping key.
 
 ```python
 plot_df = df_ecotaxa_profile_map.dropna(
@@ -271,16 +263,24 @@ map_points = ax.scatter(
     transform=ccrs.PlateCarree(), zorder=3,
 )
 map_points.set_gid("map_points")
-size_legend = ax.legend(
-    *map_points.legend_elements(prop="sizes", num=4),
-    title="Samples par profil", loc="lower left",
-)
+legend_counts = sorted(plot_df["n_samples"].astype(int).unique())
+legend_handles = [
+    ax.scatter([], [], s=36 + 220 * (count / plot_df["n_samples"].max()),
+               color="#2563eb", edgecolor="#0f172a")
+    for count in legend_counts
+]
+size_legend = ax.legend(legend_handles, [str(count) for count in legend_counts],
+                        title="Samples par profil", loc="lower left")
 size_legend.set_gid("station_size_legend")
 ```
 
-Use `kind: "station_map"`, a coordinate `position` mapping, a `size` mapping
-for `n_samples`, and `source_variables` naming those columns. Draw the exact
-resolved zone polygon; do not request a second lookup merely to render it.
+Use `station_map` with position/size mappings and those source variables. For a
+named zone draw its exact polygon without a second lookup.
+
+Global cast map: color `zone` with `zone_legend=ax.legend(...)`; call
+`ax.add_artist(zone_legend)` before `size_legend=ax.legend(...)`. Set gids
+`station_color_legend`/`station_size_legend`, use global Cartopy, one IHO/MEOW.
+Never label individual casts globally unless explicitly requested.
 
 ### Station / position map (`station_map`)
 
@@ -320,25 +320,25 @@ graph_contract = {
 For a plain positions map, keep only the `position` mapping and drop
 `size`/`color`/legends entirely.
 
-**Règle légende / labels obligatoire — toute carte de stations** :
+**Lisibilité des cartes** :
 
-- **≤ 50 points** : annoter chaque point avec `original_id` (ou `sample_id` si
-  absent). Ne pas attendre que l'utilisateur le demande.
-- **> 50 points** : ajouter une légende de couleur ou de taille identifiant la
-  variable encodée (zone, instrument, projet, n_samples…). Ne jamais laisser
-  une carte sans contexte de lecture.
+- Ajouter les labels de station ou de cast seulement s'ils restent lisibles et
+  servent la demande. Une carte dense, globale, ou colorée par groupe utilise
+  sa légende, sans labels individuels, sauf demande explicite.
+- Quand la taille encode `n_samples`, la légende affiche les comptes réels,
+  jamais les aires transformées. Never use `pts.legend_elements(prop="sizes")`.
+
+Never use `ccrs.PlateCarree()._as_mpl_transform(ax)`: use `ax.text(...,
+transform=ccrs.PlateCarree(), clip_on=True)` for geographic labels.
 
 ```python
-if len(plot_df) <= 50:
-    for _, row in plot_df.iterrows():
-        label = row.get("original_id") or str(row.get("sample_id", ""))
-        ax.annotate(label, (row["lon_avg"], row["lat_avg"]),
-                    xycoords=ccrs.PlateCarree()._as_mpl_transform(ax),
-                    fontsize=7, color="#0f172a",
-                    xytext=(4, 4), textcoords="offset points")
-else:
-    # Ajouter au minimum une légende de couleur/taille ou un titre de légende
-    ax.legend(title="<variable encodée>", loc="lower left", fontsize=7)
+# Optional only: use this block when point labels improve the requested map.
+label_column = "station_id"
+label_df = plot_df.dropna(subset=[label_column]).drop_duplicates(label_column)
+for _, row in label_df.iterrows():
+    ax.text(row["lon_avg"], row["lat_avg"], str(row[label_column]),
+            transform=ccrs.PlateCarree(), clip_on=True, fontsize=7,
+            color="#0f172a", ha="left", va="bottom")
 ```
 
 For a sample map, `run_graph` provides `zone_polygons`, a mapping of canonical
@@ -717,14 +717,14 @@ plt.tight_layout()
 
 ### Rules
 
-- **Always** `transform=ccrs.PlateCarree()` on scatter/annotate calls — required by cartopy
+- **Always** `transform=ccrs.PlateCarree()` on geographic scatter/text calls — required by cartopy
 - **Always** `subplot_kw={"projection": proj}` — never `plt.subplots()` without projection for maps
 - Use `NorthPolarStereo` for Arctic/Amundsen data (lat > 55°N)
 - Use `ccrs.PlateCarree()` as projection for tropical/global data
 - Extent auto-computed from data + margin — never hardcode coordinates
 - Color variable: use `c=df['<col>']` + `cmap='viridis'` for continuous (abundance, biomass, temperature, salinity)
 - No color variable: use `color='steelblue'`
-- Station labels: iterate unique stations and call `ax.annotate(name, (lon, lat), transform=ccrs.PlateCarree(), fontsize=7)`
+- Station labels are optional: use `ax.text(...)` only when they improve the requested map.
 - Never use folium — cartopy only
 - When writing the code, make the `graph_explanation` reflect the actual plotting choices (axes, source, encoding) — never describe what the chart shows or suggest priorities.
 
@@ -753,13 +753,12 @@ against depth on an inverted y-axis; do not mix unrelated groups onto one profil
 
 #### EcoTaxa object-export profiles
 
-An enriched EcoTaxa export has one row per object and therefore normally has
-**no abundance column**. For a taxon profile, calculate abundance before
-rendering: filter one real `object_annotation_category` (or another real
-annotation label), then group by `sample_id` and numeric `object_depth_min`
-(or the available object-depth field), with `object_id.size()` as
-`abundance_objects`. If CTD temperature is requested, carry the mean of the
-real Amundsen temperature field in that same grouped table. Assign that table
+An EcoTaxa export has one row per object, normally without concentration. For a
+taxon profile, filter one real annotation label and group numeric
+`object_depth_min` (or available object depth) by `sample_id`, using
+`object_id.size()` as `object_count`. A count is not ind./L or ind./m³: use a
+`generic` contract (`object_count` x, `depth_m` y), never an abundance role.
+If CTD temperature is requested, carry the mean real field. Assign that table
 to both `profile_df` and `result` in `run_pandas`; this persists the derived
 table for the graph. Then plot one line per `sample_id`, invert only the depth
 y-axis, and use the temperature field for a colorbar or an explicitly labelled

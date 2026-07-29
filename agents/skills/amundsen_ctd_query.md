@@ -1,6 +1,6 @@
 ---
 name: amundsen_ctd_query
-version: 1.0.0
+version: 1.0.1
 triggers:
   - Explicit Amundsen CTD query or loaded-table enrichment intent
 forbidden_when:
@@ -29,11 +29,18 @@ mon sample avec Amundsen”, or equivalent, call `enrich_with_amundsen_ctd`
 directly on the exact active variable. This is the only canonical loaded-table
 enrichment path.
 
+When the user first asks for a subset (specific sample, station, date, rows,
+or filter), first build `result` with `run_pandas` and pass a clear
+`persist_as="df_subset_..."`. Confirm that the result says
+`Persistence: persisted=true`; then call `enrich_with_amundsen_ctd` with that
+exact `source_variable`. Never enrich the original full file after a requested
+subset, and never rely on the bare active `df` for this hand-off.
+
 - Do not run discovery, preview, or raw CTD retrieval first.
 - Do not require station/cast identifiers.
 - Do not reuse an earlier assistant refusal or schema assessment.
-- Pass `source_variable` only when several datasets are live and the active
-  capsule does not already identify the intended table.
+- Pass the exact `source_variable` whenever the intended table is a persisted
+  subset or derived `df_*` table.
 
 The canonical enrichment auto-detects supported latitude, longitude, time, and
 depth aliases, including EcoTaxa/NeoLabs forms. It deduplicates repeated source

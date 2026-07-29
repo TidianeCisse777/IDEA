@@ -251,7 +251,8 @@ def _fetch_project_sample_metadata(
     ``list_samples`` supplies the project membership, coordinates, and original
     ID in one request. Its ``free_columns`` is always empty, so each sample is
     then read once through ``get_sample`` to retain its actual free-field values
-    (such as ``profileid``, ``stationid``, and ``ctdrosettefilename``). The
+    (such as ``profileid``, ``stationid``, ``sampledatetime``, and
+    ``ctdrosettefilename``). The
     shared rate limiter keeps those detail calls within the normal sync budget.
     Dates and object-depth envelopes are deliberately not inferred here.
     """
@@ -291,6 +292,24 @@ def _fetch_project_sample_metadata(
             free_fields,
             ("profileid", "profile_id", "profile", "sample_profileid"),
         )
+        cruise_id = _first_optional_str(
+            free_fields,
+            ("cruise", "sample_cruise", "cruise_id"),
+        )
+        ctd_rosette_filename = _first_optional_str(
+            free_fields,
+            (
+                "ctdrosettefilename",
+                "ctd_rosette_filename",
+                "sample_ctdrosettefilename",
+            ),
+        )
+        sample_date, sample_time = _parse_sample_datetime(
+            _first_optional_str(
+                free_fields,
+                ("sampledatetime", "sample_datetime", "datetime", "sample_date"),
+            )
+        )
         if original_id and profile_id is None:
             profile_id = _cast_from_orig_id(original_id)
         if original_id and station_id is None:
@@ -301,8 +320,10 @@ def _fetch_project_sample_metadata(
             "sample_lon": _as_float(sample.get("longitude")),
             "station_id": station_id,
             "profile_id": profile_id,
-            "sample_date": None,
-            "sample_time": None,
+            "cruise_id": cruise_id,
+            "ctd_rosette_filename": ctd_rosette_filename,
+            "sample_date": sample_date,
+            "sample_time": sample_time,
             "free_fields_json": json.dumps(free_fields, ensure_ascii=False, sort_keys=True),
         }
     return metadata

@@ -8,6 +8,7 @@ On vérifie :
 """
 import asyncio
 import json
+from pathlib import Path
 import pytest
 
 from core.runtime_paths import graphs_dir
@@ -16,6 +17,26 @@ from langchain_core.messages import AIMessage, ToolMessage
 
 
 # ── helpers purs ───────────────────────────────────────────────────────────────
+
+def test_non_stream_response_keeps_graph_returned_by_graph_tool():
+    """Un client sans SSE reçoit quand même l'image créée par le graphe."""
+    from serve import _append_generated_graph_images
+
+    image = "![graph](http://localhost:8000/graphs/abc123.png)"
+    response = _append_generated_graph_images(
+        "Voici la carte.",
+        [ToolMessage(content=image, name="run_graph", tool_call_id="tc1")],
+    )
+
+    assert response == f"Voici la carte.\n\n{image}"
+
+
+def test_compose_persists_graphs_in_a_dedicated_named_volume():
+    """Les graphes ne doivent pas dépendre du dossier data du clone courant."""
+    compose = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text()
+
+    assert "copepod_graphs:/app/data/graphs" in compose
+    assert "  copepod_graphs:" in compose
 
 def test_sse_chunk_contains_content():
     from serve import _make_sse_chunk
@@ -433,6 +454,21 @@ def test_format_tool_line_query_ecotaxa_sample_shows_waiting_message():
     assert "sample_id=`42000002`" in line
     assert "status=`V`" in line
     assert "Export du sample EcoTaxa en cours" in line
+    assert "%" not in line
+
+
+def test_format_tool_line_confirmed_ecotaxa_samples_export_shows_waiting_message():
+    """L'export réel multi-samples annonce clairement son exécution."""
+    from serve import _format_tool_line
+
+    line = _format_tool_line(
+        "export_ecotaxa_samples",
+        {"sample_ids": [10101000001], "confirmed": True},
+    )
+
+    assert "export_ecotaxa_samples" not in line
+    assert "<summary>EcoTaxa · export des samples</summary>" in line
+    assert "Export des samples EcoTaxa en cours" in line
     assert "%" not in line
 
 

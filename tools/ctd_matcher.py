@@ -113,6 +113,7 @@ class CtdProfileMatcher:
         fallback_months = 0
         fallback_subbatches = 0
         fetch_failures: list[str] = []
+        failed_positions: set[int] = set()
         counters_lock = threading.Lock()
 
         def _fetch_and_match_positions(positions: list[int]) -> tuple[bool, str | None]:
@@ -206,6 +207,7 @@ class CtdProfileMatcher:
             if len(subbatches) <= 1:
                 if error:
                     fetch_failures.append(error)
+                    failed_positions.update(positions)
                 continue
             fallback_months += 1
             fallback_subbatches += len(subbatches)
@@ -216,9 +218,18 @@ class CtdProfileMatcher:
             _fetch_and_match_positions,
             max_workers=int(self.max_workers),
         )
-        for sub_ok, sub_error in fallback_results:
+        for positions, (sub_ok, sub_error) in zip(
+            fallback_subbatch_jobs, fallback_results
+        ):
             if not sub_ok and sub_error:
                 fetch_failures.append(sub_error)
+                failed_positions.update(positions)
+
+        # A failed remote batch carries no information about CTD coverage.  Keep
+        # it distinct from a successful query that found no nearby profile.
+        for position in failed_positions:
+            if statuses[position] == "no_match":
+                statuses[position] = "source_unavailable"
 
         columns = pd.DataFrame({
             **self._common_columns(matched, n_unique),
