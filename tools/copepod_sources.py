@@ -73,6 +73,25 @@ _LOGGER = logging.getLogger(__name__)
 _ECOTAXA_UI_BASE = "https://ecotaxa.obs-vlfr.fr"
 
 
+def _net_dataframe_fingerprint(dataframe: pd.DataFrame) -> str:
+    """Return a stable content-and-schema identity for a persisted net table."""
+    schema = "|".join(
+        f"{column}\x1f{dtype}"
+        for column, dtype in zip(dataframe.columns, dataframe.dtypes, strict=True)
+    )
+    payload = dataframe.to_json(
+        orient="split",
+        date_format="iso",
+        date_unit="ns",
+        default_handler=str,
+    )
+    digest = hashlib.sha256()
+    digest.update(schema.encode("utf-8"))
+    digest.update(b"\x1e")
+    digest.update(payload.encode("utf-8"))
+    return f"sha256:{digest.hexdigest()}"
+
+
 def _zone_grouping_requires_reference(sql: str) -> bool:
     """True when a cache aggregation would mix IHO and MEOW zone labels."""
     group_by = re.search(
@@ -545,6 +564,7 @@ def make_source_tools(thread_id: str) -> list:
                     + (f"Variables disponibles : {avail_text}. Précisez `net_variable_name`." if available else "Chargez d'abord un fichier via `load_file`."),
                     retryable=False,
                 )
+        net_dataframe_fingerprint = _net_dataframe_fingerprint(loaded["df"])
         net_df = loaded["df"].copy()
 
         lat_col = latitude_column or detect_column(net_df.columns, ("latitude", "lat", "lat_avg", "sample_lat"))
@@ -756,6 +776,7 @@ def make_source_tools(thread_id: str) -> list:
                 "source": "net_uvp_match",
                 "file_variable": (loaded.get("meta") or {}).get("variable_name"),
                 "net_variable_name": (loaded.get("meta") or {}).get("variable_name"),
+                "net_dataframe_fingerprint": net_dataframe_fingerprint,
                 "n_rows": len(matches),
                 "n_cols": len(matches.columns),
                 "deployment_column": deployment_col,
@@ -809,6 +830,7 @@ def make_source_tools(thread_id: str) -> list:
                 extra_meta={
                     "audit_variable": variable_name,
                     "net_variable_name": source_name,
+                    "net_dataframe_fingerprint": net_dataframe_fingerprint,
                     "date_from": date_from,
                     "date_to": date_to,
                 },
@@ -952,6 +974,16 @@ def make_source_tools(thread_id: str) -> list:
                 provenance={"source": "net_uvp_ecopart_certified"},
                 retryable=False,
             )
+        current_net_fingerprint = _net_dataframe_fingerprint(
+            datasets["table filet"]
+        )
+        if audit_meta.get("net_dataframe_fingerprint") != current_net_fingerprint:
+            return blocked(
+                "Jointure filet↔UVP enrichie refusée : la table filet a changé "
+                "depuis l'audit certifié.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
 
         enriched = datasets["export UVP enrichi EcoPart"]
         enriched_meta = dict(
@@ -1008,6 +1040,7 @@ def make_source_tools(thread_id: str) -> list:
             meta={
                 "source": "net_uvp_ecopart_certified",
                 "net_variable_name": net_variable_name,
+                "net_dataframe_fingerprint": current_net_fingerprint,
                 "audit_variable_name": audit_variable_name,
                 "uvp_enriched_variable": uvp_enriched_variable,
                 "n_rows": len(joined),

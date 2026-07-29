@@ -2100,6 +2100,10 @@ def test_audit_publishes_only_ctd_certified_selection(tmp_path, monkeypatch):
     assert meta["source"] == "net_uvp_certified_selection"
     assert meta["audit_variable"] == "df_net_uvp_matches"
     assert meta["net_variable_name"] == "df_file_baffin_2024"
+    audit_meta = store.get(f"{thread_id}:dataset:df_net_uvp_matches")["meta"]
+    assert meta["net_dataframe_fingerprint"] == audit_meta[
+        "net_dataframe_fingerprint"
+    ]
     assert meta["date_from"] is None
     assert meta["date_to"] is None
 
@@ -2238,6 +2242,9 @@ def _net_uvp_enriched_tool(
             "source": "net_uvp_match",
             "net_variable_name": "df_file_baffin_2024",
             "ctd_filename_verified": 1,
+            "net_dataframe_fingerprint": (
+                "sha256:0d833772dfe9978d88a02adfa5aa4aef2fd13203501561ad34c97f2622f97fa7"
+            ),
         },
         set_active=False,
     )
@@ -2285,6 +2292,37 @@ def test_join_net_uvp_enriched_persists_certified_object_rows(
     assert stored["meta"]["net_variable_name"] == "df_file_baffin_2024"
     assert stored["meta"]["audit_variable_name"] == "df_net_uvp_matches"
     assert stored["meta"]["uvp_enriched_variable"] == "df_ecotaxa_ecopart_campaign"
+
+
+def test_join_net_uvp_enriched_rejects_same_name_net_replacement(
+    tmp_path, monkeypatch
+):
+    from tools.dataset_registry import store_dataset
+
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "SAMPLE_ID": [501, 999],
+                "net_density_ind_m3": [12.0, 15.0],
+            }
+        ),
+        variable_name="df_file_baffin_2024",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "refusée" in result
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
 
 
 @pytest.mark.parametrize(
