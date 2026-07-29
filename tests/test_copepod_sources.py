@@ -1989,6 +1989,119 @@ def test_net_uvp_match_tool_requires_explicit_call_and_matches_by_deployment(tmp
     assert not unavailable_matches["join_eligible"].any()
 
 
+def _selection_name_from(result: str) -> str:
+    import re
+
+    match = re.search(r"`selection:([^`]+)`", result)
+    assert match, result
+    return match.group(1)
+
+
+def _net_uvp_certification_tool(tmp_path, monkeypatch, fetch_ctd_metadata):
+    import sqlite3
+
+    import tools.amundsen_sources as amundsen_module
+    import tools.copepod_sources as source_module
+    from core.ecotaxa_browser.cache.repo import init_schema
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    cache_db = tmp_path / "cache.sqlite"
+    conn = sqlite3.connect(cache_db)
+    init_schema(conn)
+    conn.executemany(
+        "INSERT INTO samples_cache "
+        "(sample_id, project_id, station_id, profile_id, cruise_id, ctd_rosette_filename, instrument, "
+        "lat_avg, lon_avg, date_min, datetime_min, last_synced) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (101, 10, "ST-101", "uvp-101", "amundsen2024", "062", "UVP5SD", 67.5, -63.8, "2024-06-02", "2024-06-02T00:00:00", "test"),
+            (203, 20, "ST-203", "uvp-203", "amundsen2024", "063", "UVP5SD", 68.0, -64.0, "2024-06-03", "2024-06-03T00:00:00", "test"),
+            (404, 30, "ST-404", "uvp-404", "amundsen2024", "064", "UVP5SD", 68.5, -64.2, "2024-06-04", "2024-06-04T00:00:00", "test"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    thread_id = "net-uvp-certified-thread"
+    store = SessionStore(tmp_path / "sessions")
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "Sample ID": [501, 502, 503],
+                "Deployment ID": [1, 2, 3],
+                "Station Name": ["ST-101", "ST-203", "ST-404"],
+                "Latitude": [67.5, 68.0, 68.5],
+                "Longitude": [-63.8, -64.0, -64.2],
+                "Deployment Datetime Start": ["2024-06-01", "2024-06-02", "2024-06-03"],
+            }
+        ),
+        variable_name="df_file_baffin_2024",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+    monkeypatch.setenv("ECOTAXA_CACHE_DB", str(cache_db))
+    monkeypatch.setattr(source_module, "_store", store)
+    monkeypatch.setattr(
+        amundsen_module,
+        "_fetch_amundsen_ctd_metadata_by_filename",
+        fetch_ctd_metadata,
+        raising=False,
+    )
+    tool = next(
+        item for item in source_module.make_source_tools(thread_id)
+        if item.name == "find_uvp_matches_for_net_table"
+    )
+    return tool, store, thread_id
+
+
+def test_audit_publishes_only_ctd_certified_selection(tmp_path, monkeypatch):
+    def fetch_ctd_metadata(**_kwargs):
+        return pd.DataFrame(
+            {
+                "filename": ["2406_062.int.nc", "2406_063.int.nc"],
+                "station": ["ST-101", "ST-203"],
+                "cast_number": [62, 63],
+                "latitude": [67.5, 68.0],
+                "longitude": [-63.8, -64.0],
+                "time": ["2024-06-02T00:00:00Z", "2024-06-03T00:00:00Z"],
+            }
+        )
+
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, fetch_ctd_metadata
+    )
+
+    result = tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+
+    name = _selection_name_from(result)
+    meta = store.get(f"{thread_id}:selection:{name}")["meta"]
+    assert meta["sample_ids"] == [101, 203]
+    assert meta["project_ids"] == [10, 20]
+    assert meta["source"] == "net_uvp_certified_selection"
+    assert meta["audit_variable"] == "df_net_uvp_matches"
+    assert meta["net_variable_name"] == "df_file_baffin_2024"
+    assert meta["date_from"] is None
+    assert meta["date_to"] is None
+
+
+def test_audit_without_ctd_certificate_creates_no_selection(tmp_path, monkeypatch):
+    def unavailable_ctd_metadata(**_kwargs):
+        raise TimeoutError("Amundsen indisponible")
+
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, unavailable_ctd_metadata
+    )
+
+    tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+
+    assert not any(
+        ":selection:net_uvp_certified_" in key for key in store.keys(thread_id)
+    )
+
+
 def test_ecotaxa_cache_map_is_complete_and_does_not_migrate_file(
     tmp_path, monkeypatch
 ):

@@ -767,6 +767,50 @@ def make_source_tools(thread_id: str) -> list:
             set_active=False,
         )
 
+        certified_selection_name = None
+        certified_matches = matches.loc[matches["join_eligible"]].drop_duplicates(
+            ["uvp_project_id", "uvp_sample_id"]
+        )
+        if not certified_matches.empty:
+            source_name = str(
+                net_variable_name
+                or (loaded.get("meta") or {}).get("variable_name")
+                or "net"
+            )
+            certified_samples = (
+                certified_matches[["uvp_sample_id", "uvp_project_id"]]
+                .rename(columns={
+                    "uvp_sample_id": "sample_id",
+                    "uvp_project_id": "project_id",
+                })
+                .to_dict("records")
+            )
+            digest_payload = "|".join([
+                source_name,
+                str(date_from or ""),
+                str(date_to or ""),
+                ",".join(
+                    f"{sample['project_id']}:{sample['sample_id']}"
+                    for sample in certified_samples
+                ),
+            ])
+            digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()[:8]
+            certified_selection_name = (
+                f"net_uvp_certified_{_slug_part(source_name)}_{digest}"
+            )
+            _store_sample_selection(
+                name=certified_selection_name,
+                samples=certified_samples,
+                filters={"join_eligible": True},
+                source="net_uvp_certified_selection",
+                extra_meta={
+                    "audit_variable": variable_name,
+                    "net_variable_name": source_name,
+                    "date_from": date_from,
+                    "date_to": date_to,
+                },
+            )
+
         by_deployment = matches.drop_duplicates("net_deployment_id")
         n_matched = int(by_deployment["join_eligible"].sum())
         n_spatial = int((~by_deployment["join_eligible"]).sum())
@@ -805,6 +849,12 @@ def make_source_tools(thread_id: str) -> list:
         ]
         if date_from or date_to:
             lines.insert(2, f"Période filet appliquée : {date_from or 'sans borne initiale'} → {date_to or 'sans borne finale'}.")
+        if certified_selection_name:
+            lines.insert(
+                5,
+                "Sélection UVP certifiée publiée : "
+                f"`selection:{certified_selection_name}` ({len(certified_matches)} sample(s)).",
+            )
         if ctd_source_unavailable:
             lines += [
                 "",
@@ -908,6 +958,8 @@ def make_source_tools(thread_id: str) -> list:
         name: str,
         samples: list[dict],
         filters: dict,
+        source: str = "ecotaxa_selection",
+        extra_meta: dict | None = None,
     ) -> None:
         import pandas as pd
 
@@ -919,7 +971,8 @@ def make_source_tools(thread_id: str) -> list:
             "project_ids": project_ids,
             "n_samples": len(sample_ids),
             "filters": filters,
-            "source": "ecotaxa_selection",
+            "source": source,
+            **(extra_meta or {}),
         }
         _store.set(f"{thread_id}:selection:{name}", None, meta)
         _store.set(f"{thread_id}:ecotaxa_selection_latest", None, meta)
