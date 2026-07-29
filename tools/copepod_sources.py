@@ -888,6 +888,22 @@ def make_source_tools(thread_id: str) -> list:
                     "date_to": date_to,
                 },
             )
+        else:
+            # ``selection_name="latest"`` is the only safe hand-off the
+            # agent can use immediately after an audit.  A no-candidate audit
+            # must therefore invalidate an older selection instead of letting
+            # a later dry-run silently export a different net scope.
+            _store.set(
+                f"{thread_id}:ecotaxa_selection_latest",
+                None,
+                {
+                    "selection_name": None,
+                    "sample_ids": [],
+                    "project_ids": [],
+                    "n_samples": 0,
+                    "source": "net_uvp_empty_selection",
+                },
+            )
 
         by_deployment = matches.drop_duplicates("net_deployment_id")
         n_matched = int(by_deployment["join_eligible"].sum())

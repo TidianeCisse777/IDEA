@@ -2176,6 +2176,36 @@ def test_audit_ctd_no_match_never_publishes_exploratory_selection(
     )
 
 
+def test_empty_exploratory_audit_invalidates_latest_selection(
+    tmp_path, monkeypatch
+):
+    """A failed re-audit cannot make a later dry-run reuse another scope."""
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, lambda **_kwargs: pd.DataFrame()
+    )
+    store.set(
+        f"{thread_id}:ecotaxa_selection_latest",
+        None,
+        {
+            "selection_name": "old_other_file_scope",
+            "sample_ids": [999999],
+            "project_ids": [999],
+            "n_samples": 1,
+        },
+    )
+
+    tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "allow_unverified_ctd": True,
+        }
+    )
+
+    latest = store.get(f"{thread_id}:ecotaxa_selection_latest")
+    assert latest["meta"]["source"] == "net_uvp_empty_selection"
+    assert latest["meta"]["sample_ids"] == []
+
+
 def test_audit_selection_is_canonical_across_permuted_matches(tmp_path, monkeypatch):
     def fetch_ctd_metadata(**_kwargs):
         return pd.DataFrame(
