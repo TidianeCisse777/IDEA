@@ -303,6 +303,39 @@ def test_system_prompt_requires_confirmation_for_unavailable_ctd_override():
     assert "no match" in prompt
 
 
+def test_unavailable_ctd_confirmation_runs_reaudit_then_export_dry_run():
+    """The exploratory confirmation executes work instead of being acknowledged."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    contracts = (
+        " ".join(COPEPOD_SYSTEM_PROMPT.lower().split()),
+        " ".join(
+            (Path("agents/skills") / "net_uvp_abundance_comparison.md")
+            .read_text(encoding="utf-8")
+            .lower()
+            .split()
+        ),
+    )
+    ordered_steps = [
+        "ctd source is unavailable",
+        "wait for a new explicit user confirmation",
+        "very next tool call must be `find_uvp_matches_for_net_table`",
+        "with the exact same audit arguments",
+        "`allow_unverified_ctd=true`",
+        "exact exploratory selection identifier returned by that re-audit",
+        "`export_ecotaxa_samples` with `confirmed=false`",
+        "this dry-run downloads nothing",
+        "wait for a separate explicit export confirmation",
+        "`confirmed=true`",
+    ]
+
+    for contract in contracts:
+        positions = [contract.index(step) for step in ordered_steps]
+        assert positions == sorted(positions)
+        assert "never use the exploratory override for a ctd no match" in contract
+        assert "do not merely acknowledge the exploratory confirmation" in contract
+
+
 def test_net_uvp_live_guidance_uses_the_certified_selection_and_final_join():
     """Expected live route recovers safely and never exports candidates."""
     contract = _routing_contract("net_uvp_abundance_comparison.md")

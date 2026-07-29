@@ -1,6 +1,6 @@
 ---
 name: net_uvp_abundance_comparison
-version: 2.1.1
+version: 2.1.2
 triggers:
   - User asks to compare net (NeoLabs) abundance against UVP (EcoTaxa/EcoPart) abundance
   - User asks to join net and UVP data, compute density, make comparisons by taxon or stage
@@ -27,7 +27,7 @@ After the guided preparation steps, the session contains:
 | `df_net_uvp_matches` | Correspondence table: `net_sample_id`, `net_deployment_id`, `station`, `uvp_sample_id`, `uvp_profile_str`, `distance_km`, `time_gap_days`, `ctd_filename_match_status`, `amundsen_filename`, `station_name_match`, `match_status`, `join_eligible` |
 | exact variable returned by the EcoTaxa export | Consolidated multi-project UVP objects with `export_project_id` |
 | exact variable returned by the EcoPart enrichment | Multi-project UVP objects enriched with EcoPart volumes |
-| `df_net_uvp_ecopart` | Canonical final object table created by `join_net_uvp_enriched`; it contains only certified audit rows |
+| `df_net_uvp_ecopart` | Canonical final object table created by `join_net_uvp_enriched`; it contains certified rows or explicitly confirmed exploratory rows |
 | `df_file_neolabs_abundance` | Net tow taxonomy: `SAMPLE_ID`, `STATION_NAME`, `CLASS`, `ORDER`, `FAMILY`, per-stage abundance columns (`C1_ABUND ...`, `ALL_STAGES_ABUND ...`) |
 | `df_file_neolabs_sample` | Net tow metadata: `SAMPLE_ID`, `STATION_NAME`, `latitude`, `longitude`, `deployment_datetime_start` |
 
@@ -46,38 +46,54 @@ All of these are automatically injected into every `run_pandas` call — no relo
    `Persistence: persisted=true` for the audit. If the audit rejects a wrong
    table name, read the **available persistent variables** from that blocked
    result and **retry the audit with that exact name**; never guess a replacement.
-2. Run `find_uvp_matches_for_net_table` on that exact table. The export scope is
-   only the rows where `join_eligible=True` and
-   `ctd_filename_match_status="matched"`. If none exist, **stop before `export_ecotaxa_samples`**:
-   report that no certified comparison is possible,
-   keep the audit visible, and do not create an export plan.
-3. Reuse the **exact certified selection identifier returned by the audit**.
-   Call `export_ecotaxa_samples(confirmed=False)` for the project-by-project
-   dry-run. Wait for a new explicit user confirmation, then call the same
-   selection with `confirmed=True`. Never rebuild its sample IDs manually.
+2. Run `find_uvp_matches_for_net_table` on that exact table. The certified
+   export scope is only the rows where `join_eligible=True` and
+   `ctd_filename_match_status="matched"`.
+   - If the audit says the CTD source is unavailable, announce that CTD is
+     unverified and wait for a new explicit user confirmation.
+   - On that confirmation, do not merely acknowledge the exploratory
+     confirmation: the very next tool call must be `find_uvp_matches_for_net_table`
+     with the exact same audit arguments plus `allow_unverified_ctd=True`.
+   - Reuse the exact exploratory selection identifier returned by that re-audit
+     and call `export_ecotaxa_samples` with `confirmed=False` in the same turn.
+     This dry-run downloads nothing. Then wait for a separate explicit export
+     confirmation before calling `confirmed=True`.
+   - **Never use the exploratory override for a CTD no match.** For a no-match,
+     stop before `export_ecotaxa_samples`, keep the audit visible, and do not
+     create an export plan.
+3. Reuse the **exact certified selection identifier returned by the audit**, or
+   the exact exploratory selection identifier returned by the re-audit.
+   For the certified path, call `export_ecotaxa_samples(confirmed=False)` for
+   the project-by-project dry-run. For the exploratory path, that dry-run was
+   already performed in step 2: do not repeat it. Wait for the separate export
+   confirmation, then call the same selection with `confirmed=True`. Never
+   rebuild its sample IDs manually.
 4. On the consolidated multi-project EcoTaxa table, call
    `enrich_ecotaxa_with_ecopart_remote(confirmed=False)`. Present the EcoPart
    project-by-project plan, wait for a new explicit confirmation, then call
    `confirmed=True`. Keep partial-project coverage visible.
 5. Call `join_net_uvp_enriched` with the exact persisted filet, audit, and
    enriched-campaign variable names. This local tool is the only final bridge.
+   Pass `allow_unverified_ctd=True` when the persisted audit and selection are
+   marked `ctd_verification="unavailable"` and `exploratory=True`.
    Continue calculations only from its canonical `df_net_uvp_ecopart` result.
    Keep `export_project_id` in every canonical aggregation and pair it with
    `uvp_profile_str`; profile labels are not globally unique across projects.
 
-The two confirmations are distinct: EcoTaxa object export does not authorize
-the later EcoPart downloads.
+The exploratory override, EcoTaxa object export, and later EcoPart downloads
+each require their own distinct confirmation.
 
 ## Non-negotiable validation gate
 
-An audit row can authorize a filet↔UVP abundance comparison only when
+An audit row can authorize a certified filet↔UVP abundance comparison only when
 `join_eligible=True` and `ctd_filename_match_status="matched"`. This proves the
 net↔UVP position and time checks **and** a shared CTD-rosette file validated in
 Amundsen against its station, time, and coordinates. A `spatial_only`,
 `filename_candidate`, missing CTD evidence, or station-name resemblance remains
-an auditable candidate, never an export or analysis row. If no row is eligible,
-state that the comparison cannot be made; do not fall back to a station-, zone-,
-or spatial-only comparison.
+an auditable candidate, never an export or analysis row. The sole exception is
+the confirmed source-unavailable path above; its rows must retain
+`ctd_verification="unavailable"` and `exploratory=True`. A CTD no-match is never
+eligible. Do not fall back to a station-, zone-, or spatial-only comparison.
 
 The certification call is filename-led and metadata-only. Retrieve `PRES` or
 other vertical CTD variables only after validation, when the user explicitly
