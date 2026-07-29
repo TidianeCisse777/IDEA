@@ -54,10 +54,11 @@ All of these are automatically injected into every `run_pandas` call — no relo
    - On that confirmation, do not merely acknowledge the exploratory
      confirmation: the very next tool call must be `find_uvp_matches_for_net_table`
      with the exact same audit arguments plus `allow_unverified_ctd=True`.
-   - Reuse the exact exploratory selection identifier returned by that re-audit
-     and call `export_ecotaxa_samples` with `confirmed=False` in the same turn.
-     This dry-run downloads nothing. Then wait for a separate explicit export
-     confirmation before calling `confirmed=True`.
+   - That re-audit makes its exact selection the active selection. Call
+     `export_ecotaxa_samples(selection_name="latest", confirmed=False)` in the
+     same turn: it cannot accidentally use a guessed selection identifier.
+     This dry-run downloads nothing. Then wait for a separate explicit export confirmation
+     before calling `confirmed=True`.
    - **Never use the exploratory override for a CTD no match.** For a no-match,
      stop before `export_ecotaxa_samples`, keep the audit visible, and do not
      create an export plan.
