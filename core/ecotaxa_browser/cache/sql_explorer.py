@@ -14,7 +14,8 @@ _HARD_CAP = 500
 # Ordered for presentation: most useful table first.
 CACHE_TABLES: dict[str, str] = {
     "samples_cache": (
-        "Table principale — une ligne par sample EcoTaxa. "
+        "Table principale — une ligne par sample EcoTaxa : positions au niveau sample, "
+        "enveloppes date/heure et enveloppes de profondeur. "
         "Colonnes clés : sample_id, project_id, lat_avg, lon_avg, iho_zone, "
         "instrument, date_min, date_max, depth_min, depth_max, "
         "object_count, nb_validated, nb_predicted, nb_dubious, nb_unclassified, "

@@ -1141,12 +1141,6 @@ def make_ecopart_tools(thread_id: str) -> list:
         if ecotaxa_project_id is None and ecopart_project_id is None:
             ecotaxa_project_id = session_et.get("meta", {}).get("project_id")
 
-        try:
-            client = EcopartClient()
-            client.login()
-        except Exception as exc:
-            return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
-
         campaign_df = session_et.get("df")
         is_campaign = (
             ecotaxa_project_id is None
@@ -1154,6 +1148,31 @@ def make_ecopart_tools(thread_id: str) -> list:
             and isinstance(campaign_df, pd.DataFrame)
             and "export_project_id" in campaign_df.columns
         )
+        # Avoid an upstream request when neither an explicit/recorded project
+        # nor enough local metadata exists to resolve one. This produces a
+        # useful local diagnostic even while EcoPart is unavailable.
+        if not is_campaign and ecotaxa_project_id is None and ecopart_project_id is None:
+            candidate_labels = _candidate_ecotaxa_profile_labels(session_et["df"])
+            has_coordinates = any(
+                column in session_et["df"].columns
+                for column in (
+                    "object_lat", "sample_lat", "latitude", "lat",
+                    "object_lon", "sample_long", "longitude", "lon",
+                )
+            )
+            if not candidate_labels and not has_coordinates:
+                return _ep_blocked(
+                    "Résolution EcoPart automatique impossible — aucun projet EcoTaxa "
+                    "ni métadonnée locale (coordonnées ou profil) n'est disponible. "
+                    "Fournis `ecotaxa_project_id` ou `ecopart_project_id`."
+                )
+
+        try:
+            client = EcopartClient()
+            client.login()
+        except Exception as exc:
+            return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
+
         if is_campaign:
             return _enrich_ecotaxa_campaign_with_ecopart(
                 thread_id,

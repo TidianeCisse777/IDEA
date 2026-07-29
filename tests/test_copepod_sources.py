@@ -589,7 +589,7 @@ def test_ecotaxa_skill_uses_live_project_listing():
 def test_ecotaxa_skill_routes_preview_without_export():
     skill = Path("agents/skills/ecotaxa_query.md").read_text(encoding="utf-8")
 
-    assert "preview_ecotaxa_project" in skill
+    assert "query_ecotaxa_cache" in skill
     assert "query_ecotaxa" in skill
     assert "Ne lance pas `query_ecotaxa`" in skill
 
@@ -617,7 +617,7 @@ def test_source_tools_include_get_ecotaxa_sample():
     assert "query_ecotaxa_sample" in tool_names
 
 
-def test_ecotaxa_navigation_tools_require_skill_load_in_description():
+def test_ecotaxa_navigation_tools_describe_the_preseeded_navigation_contract():
     from tools.copepod_sources import make_source_tools
 
     tools_by_name = {source_tool.name: source_tool for source_tool in make_source_tools("thread-descriptions")}
@@ -639,7 +639,7 @@ def test_ecotaxa_navigation_tools_require_skill_load_in_description():
 
     for tool_name in navigation_tools:
         assert tool_name in tools_by_name
-        assert 'load_skill("ecotaxa_navigation")' in tools_by_name[tool_name].description
+        assert "already pre-activated with this source family" in tools_by_name[tool_name].description
 
 
 def test_get_ecotaxa_sample_renders_sample_metadata():
@@ -824,12 +824,12 @@ def test_source_tools_include_object_read_tools():
     assert "get_ecotaxa_object" in names
 
 
-def test_object_read_tools_require_skill_load_in_description():
+def test_object_read_tools_do_not_request_a_redundant_skill_load():
     from tools.copepod_sources import make_source_tools
 
     by_name = {t.name: t for t in make_source_tools("thread-objects-desc")}
     for name in ("list_ecotaxa_sample_objects", "get_ecotaxa_object"):
-        assert 'load_skill("ecotaxa_navigation")' in by_name[name].description
+        assert 'load_skill("ecotaxa_navigation")' not in by_name[name].description
 
 
 def test_get_ecotaxa_object_renders_full_context():
@@ -2740,7 +2740,7 @@ def test_ecotaxa_cache_contract_exposes_sample_metadata_envelopes_and_coverage()
         assert column in description
     assert "(time_max >= '22:00:00' OR time_min <= '02:00:00')" in description
     assert "unknown, not non-matches" in description
-    assert "sample-level positions, date/time envelopes, depth envelopes" in (
+    assert "positions au niveau sample, enveloppes date/heure et enveloppes de profondeur" in (
         CACHE_TABLES["samples_cache"]
     )
 
