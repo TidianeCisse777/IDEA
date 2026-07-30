@@ -1669,6 +1669,20 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     None,
                     {"facts": " · ".join(grounding_bits)} if grounding_bits else {},
                 )
+                _store.set(
+                    f"{thread_id}:last_graph_state",
+                    None,
+                    {
+                        "code": code,
+                        "graph_id": graph_id,
+                        "plot_data_ref": (
+                            "df_graph_plot"
+                            if isinstance(plotted_df, pd.DataFrame)
+                            else None
+                        ),
+                        "graph_contract": graph_contract,
+                    },
+                )
 
                 # Do not echo graph_explanation / "Lecture rapide": serve.py
                 # streams this tool content verbatim to the UI, where it would

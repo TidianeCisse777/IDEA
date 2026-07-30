@@ -694,6 +694,62 @@ def test_context_middleware_places_static_references_before_turn_state(
     assert audit["dynamic_context_chars"] > 0
 
 
+def test_context_middleware_injects_last_graph_script_for_an_edit(monkeypatch, tmp_path):
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+    from langchain_core.tools import tool
+    from tools.output_intent import OutputIntentDecision, turn_fingerprint
+    from tools.session_store import SessionStore
+
+    import agent as agent_module
+
+    @tool
+    def run_pandas(code: str) -> str:
+        """Local analysis."""
+        return code
+
+    @tool
+    def run_graph(code: str) -> str:
+        """Graph rendering."""
+        return code
+
+    class VisualClassifier:
+        def classify(self, messages):
+            return OutputIntentDecision(
+                intent="visual", confidence="high", reason="edit",
+                turn_fingerprint=turn_fingerprint(messages),
+            )
+
+    class Request:
+        messages = [
+            AIMessage(content="![graph](/graphs/previous.png)"),
+            HumanMessage(content="Un peu moins encombré, stp."),
+        ]
+        tools = [run_pandas, run_graph]
+        system_message = SystemMessage(content="BASE")
+
+        def override(self, **kwargs):
+            return kwargs
+
+    store = SessionStore(tmp_path)
+    store.set(
+        "graph-edit-context:last_graph_state", None,
+        {"code": "fig, ax = plt.subplots()\nax.legend()", "graph_id": "previous", "plot_data_ref": "df_graph_plot"},
+    )
+    monkeypatch.setattr("tools.session_store.default_store", store)
+    monkeypatch.setattr("tools.skill_tool.preseed_capsule_skills", lambda *_: [])
+    monkeypatch.setattr("tools.skill_tool.graph_rendering_reference", lambda: "")
+    middleware = agent_module._ContextMiddleware(
+        thread_id="graph-edit-context", output_intent_classifier=VisualClassifier()
+    )
+
+    prepared = middleware._prepare_request(Request(), memories=[])
+
+    system = prepared["system_message"].content
+    assert "LAST GRAPH AVAILABLE" in system
+    assert "ax.legend()" in system
+    assert "run_graph" in [tool.name for tool in prepared["tools"]]
+
+
 def test_context_middleware_injects_memories_on_async_path():
     """serve.py invoque en async avec un store async — awrap_model_call doit marcher."""
     import asyncio

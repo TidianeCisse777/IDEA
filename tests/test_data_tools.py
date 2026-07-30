@@ -818,6 +818,72 @@ graph_explanation = (
     assert "courbe en ligne" not in result
 
 
+def test_successful_graph_persists_its_editable_state(tmp_path):
+    """La prochaine retouche doit repartir du script réellement rendu."""
+    thread_id = "thread-editable-graph"
+    tools = make_tools(thread_id)
+    load_file = next(tool for tool in tools if tool.name == "load_file")
+    run_graph = next(tool for tool in tools if tool.name == "run_graph")
+    path = tmp_path / "graph.tsv"
+    pd.DataFrame({"x": [1, 2], "y": [3, 4]}).to_csv(path, sep="\t", index=False)
+    load_file.invoke({"path": str(path)})
+    _store.update_meta(thread_id, {"loaded_skills": ["graph_writer"]})
+    code = (
+        "fig, ax = plt.subplots()\n"
+        "plot_df = df[['x', 'y']].copy()\n"
+        "ax.plot(plot_df['x'], plot_df['y'])\n"
+        + _GENERIC_GRAPH_CONTRACT_CODE
+    )
+
+    run_graph.invoke({"code": code})
+
+    state = _store.get(f"{thread_id}:last_graph_state")
+    assert state is not None
+    assert state["meta"]["code"] == code
+    assert state["meta"]["plot_data_ref"] == "df_graph_plot"
+    assert state["meta"]["graph_id"]
+
+
+def test_failed_graph_edit_keeps_the_last_successful_state(tmp_path):
+    thread_id = "thread-edit-failure"
+    tools = make_tools(thread_id)
+    load_file = next(tool for tool in tools if tool.name == "load_file")
+    run_graph = next(tool for tool in tools if tool.name == "run_graph")
+    path = tmp_path / "graph.tsv"
+    pd.DataFrame({"x": [1, 2], "y": [3, 4]}).to_csv(path, sep="\t", index=False)
+    load_file.invoke({"path": str(path)})
+    _store.update_meta(thread_id, {"loaded_skills": ["graph_writer"]})
+    original_code = "fig, ax = plt.subplots()\nax.plot(df['x'], df['y'])\n" + _GENERIC_GRAPH_CONTRACT_CODE
+    run_graph.invoke({"code": original_code})
+
+    failed = run_graph.invoke({"code": "raise RuntimeError('retouche invalide')"})
+
+    state = _store.get(f"{thread_id}:last_graph_state")
+    assert "retouche invalide" in failed
+    assert state["meta"]["code"] == original_code
+
+
+def test_later_successful_graph_replaces_the_editable_state(tmp_path):
+    thread_id = "thread-replace-graph"
+    tools = make_tools(thread_id)
+    load_file = next(tool for tool in tools if tool.name == "load_file")
+    run_graph = next(tool for tool in tools if tool.name == "run_graph")
+    path = tmp_path / "graph.tsv"
+    pd.DataFrame({"x": [1, 2], "y": [3, 4]}).to_csv(path, sep="\t", index=False)
+    load_file.invoke({"path": str(path)})
+    _store.update_meta(thread_id, {"loaded_skills": ["graph_writer"]})
+    first = "fig, ax = plt.subplots()\nax.plot(df['x'], df['y'])\n" + _GENERIC_GRAPH_CONTRACT_CODE
+    second = "fig, ax = plt.subplots()\nax.bar(df['x'], df['y'])\n" + _GENERIC_GRAPH_CONTRACT_CODE
+
+    run_graph.invoke({"code": first})
+    first_state = _store.get(f"{thread_id}:last_graph_state")["meta"]
+    run_graph.invoke({"code": second})
+    second_state = _store.get(f"{thread_id}:last_graph_state")["meta"]
+
+    assert second_state["code"] == second
+    assert second_state["graph_id"] != first_state["graph_id"]
+
+
 def test_run_graph_works_without_loaded_file_for_standalone_map():
     """Carte d'une zone nommée : pas de df nécessaire, run_graph doit exécuter."""
     thread_id = "thread-standalone-graph"

@@ -808,6 +808,7 @@ class _ContextMiddleware(AgentMiddleware):
         # line reports real counts/encodings instead of fabricating them. Kept
         # in the system context, never in the streamed tool output.
         graph_grounding_block = ""
+        graph_edit_block = ""
         try:
             grounding = session_store.get(f"{self.thread_id}:last_graph_grounding")
             facts = ((grounding or {}).get("meta") or {}).get("facts")
@@ -816,6 +817,13 @@ class _ContextMiddleware(AgentMiddleware):
                     "\n\nDERNIER GRAPHIQUE — faits vérifiés pour la ligne Données "
                     f"(reformuler, ne pas citer ce libellé) : {facts}"
                 )
+        except Exception:
+            pass
+        try:
+            from tools.graph_state import graph_edit_reference
+
+            if visual_turn:
+                graph_edit_block = graph_edit_reference(session_store, self.thread_id)
         except Exception:
             pass
 
@@ -833,6 +841,7 @@ class _ContextMiddleware(AgentMiddleware):
             block
             + dataset_block
             + graph_grounding_block
+            + graph_edit_block
         )
         injected_context = static_reference_block + dynamic_context_block
         base_system_tokens = (
