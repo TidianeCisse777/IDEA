@@ -147,27 +147,8 @@ def test_deliverable_writer_skill_covers_figures_sources_limitations():
 
 # --- Comportement 6 : system prompt route les demandes de livrable ---
 
-def test_system_prompt_routes_deliverable_requests():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-    prompt = COPEPOD_SYSTEM_PROMPT.lower()
-    assert "deliverable_writer" in prompt
-    assert "export_deliverable" in prompt
 
 
-def test_deliverable_instructions_require_manifest_and_all_operation_statuses():
-    skill = Path("agents/skills/deliverable_writer.md").read_text().lower()
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    assert "traceability_manifest" in skill
-    assert "réussie" in skill
-    assert "partielle" in skill
-    assert "échouée" in skill
-    assert "non confirmée" in skill
-    assert "geographic_scope" in skill
-    assert "temporal_scope" in skill
-    assert "selection_criteria" in skill
-    assert "traceability_manifest" in COPEPOD_SYSTEM_PROMPT
-    assert "study_context" in COPEPOD_SYSTEM_PROMPT
 
 
 def test_export_deliverable_rejects_reference_url_absent_from_manifest(

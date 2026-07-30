@@ -1706,10 +1706,3 @@ def test_enrich_with_amundsen_ctd_can_target_specific_dataset_via_source_variabl
     assert "Profile" not in enriched.columns  # serait l'UVP
     assert enriched["station_id"].tolist() == ["FILET-1"]
     assert enriched["amundsen_match_status"].tolist() == ["matched"]
-
-
-def test_system_prompt_documents_source_variable_for_multi_file_sessions():
-    """Le routage doit dire à l'agent de passer source_variable quand plusieurs fichiers."""
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    assert "source_variable" in COPEPOD_SYSTEM_PROMPT

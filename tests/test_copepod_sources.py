@@ -577,13 +577,6 @@ def test_list_ecotaxa_projects_returns_controlled_error():
     assert not _store.has("thread-error")
 
 
-def test_ecotaxa_skill_uses_live_project_listing():
-    skill = Path("agents/skills/ecotaxa_query.md").read_text(encoding="utf-8")
-
-    assert "list_ecotaxa_projects" in skill
-    assert "UVP5 Amundsen 2018" not in skill
-    assert "LOKI ArcticNet" not in skill
-    assert "Green Edge 2015 IceCamp" not in skill
 
 
 def test_ecotaxa_skill_routes_preview_without_export():

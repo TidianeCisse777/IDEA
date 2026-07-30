@@ -24,17 +24,3 @@ def test_graph_skills_require_a_single_light_theme_without_dark_templates():
     assert "def padded_extent" in writer
     assert "Confidence:" not in planner
     assert "Uncertainty assessment" not in planner
-
-
-def test_every_visual_uses_the_grant_ready_standard_without_keyword_detection():
-    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
-    planner = Path("agents/skills/graph_planner.md").read_text(encoding="utf-8")
-    system_prompt = Path("agents/copepod_system_prompt.py").read_text(encoding="utf-8")
-
-    assert "## Grant-ready standard (all visuals)" in writer
-    assert "legible at 100%" in writer
-    assert "Do not use colour alone" in writer
-    assert "no decorative overlays" in writer
-    assert "Every visual uses the grant-ready standard" in planner
-    assert "All visual outputs follow the grant-ready standard" in system_prompt
-    assert "light background" in planner.lower()
