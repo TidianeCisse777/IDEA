@@ -839,7 +839,7 @@ def test_context_middleware_allows_currently_grounded_ecotaxa_tool_call(monkeypa
     assert result.content == "ok"
 
 
-def test_context_middleware_exposes_cross_project_sample_resolver(
+def test_context_middleware_exposes_ecotaxa_cache_exploration(
     monkeypatch, tmp_path
 ):
     from types import SimpleNamespace
@@ -852,8 +852,8 @@ def test_context_middleware_exposes_cross_project_sample_resolver(
     middleware = agent_module._ContextMiddleware(thread_id="resolve-thread")
     request = SimpleNamespace(
         tool_call={
-            "name": "resolve_ecotaxa_sample",
-            "args": {"reference": "RA76"},
+            "name": "query_ecotaxa_cache",
+            "args": {"sql": "SELECT 1"},
             "id": "call-resolve",
         },
         state={
@@ -865,10 +865,10 @@ def test_context_middleware_exposes_cross_project_sample_resolver(
 
     result = middleware.wrap_tool_call(
         request,
-        lambda req: ToolMessage(content="resolver-called", tool_call_id=req.tool_call["id"]),
+        lambda req: ToolMessage(content="cache-explorer-called", tool_call_id=req.tool_call["id"]),
     )
 
-    assert result.content == "resolver-called"
+    assert result.content == "cache-explorer-called"
 
 
 def test_context_middleware_blocks_bare_project_id_without_source_affinity(
@@ -919,7 +919,11 @@ def test_context_middleware_inherits_ecotaxa_then_blocks_other_source(
     middleware = agent_module._ContextMiddleware(thread_id="affinity-thread")
 
     explicit = SimpleNamespace(
-        tool_call={"name": "find_ecotaxa_projects", "args": {}, "id": "call-eco"},
+        tool_call={
+            "name": "query_ecotaxa_cache",
+            "args": {"sql": "SELECT 1"},
+            "id": "call-eco",
+        },
         state={"messages": [HumanMessage(content="Explore EcoTaxa")]},
     )
     allowed = middleware.wrap_tool_call(
@@ -956,9 +960,9 @@ def test_context_middleware_filters_model_tools_from_same_source_decision(
         return code
 
     @tool
-    def find_ecotaxa_projects() -> str:
-        """EcoTaxa discovery."""
-        return "ok"
+    def query_ecotaxa_cache(sql: str) -> str:
+        """EcoTaxa cache discovery."""
+        return sql
 
     @tool
     def query_bio_oracle() -> str:
@@ -967,7 +971,7 @@ def test_context_middleware_filters_model_tools_from_same_source_decision(
 
     class Request:
         messages = [HumanMessage(content="Explore EcoTaxa")]
-        tools = [run_pandas, find_ecotaxa_projects, query_bio_oracle]
+        tools = [run_pandas, query_ecotaxa_cache, query_bio_oracle]
         system_message = SystemMessage(content="BASE")
 
         def override(self, **kwargs):
@@ -978,26 +982,22 @@ def test_context_middleware_filters_model_tools_from_same_source_decision(
 
     prepared = middleware._prepare_request(Request(), memories=[])
 
-    assert [item.name for item in prepared["tools"]] == ["find_ecotaxa_projects"]
+    assert [item.name for item in prepared["tools"]] == [
+        "run_pandas",
+        "query_ecotaxa_cache",
+    ]
     audit = agent_module.get_context_audit("model-filter-thread")
     assert audit["tools_before_policy"] == [
         "run_pandas",
-        "find_ecotaxa_projects",
+        "query_ecotaxa_cache",
         "query_bio_oracle",
     ]
     assert audit["tools_after_source_scope"] == [
         "run_pandas",
-        "find_ecotaxa_projects",
+        "query_ecotaxa_cache",
     ]
-    assert audit["tools_exposed"] == ["find_ecotaxa_projects"]
-    assert audit["tool_exposure_count"] == 1
-    assert audit["tool_exposure_alert"] is False
-    assert audit["tool_exposure_groups"] == [
-        "core",
-        "geography",
-        "ecotaxa_geo_time",
-        "ecotaxa_discovery",
-    ]
+    assert audit["tools_exposed"] == ["run_pandas", "query_ecotaxa_cache"]
+    assert audit["turn_authorized_sources"] == ["ecotaxa"]
     assert audit["approx_tokens_tool_schemas_after"] < audit[
         "approx_tokens_tool_schemas_before"
     ]
