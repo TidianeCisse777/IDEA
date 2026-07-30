@@ -257,4 +257,4 @@ Quelle que soit la direction, ces actions ont un ROI direct :
 - Mécanique EcoTaxa ↔ EcoPart : [`ENRICHMENT_ECOTAXA_ECOPART.md`](../features/ENRICHMENT_ECOTAXA_ECOPART.md)
 - Architecture globale : [`ARCHITECTURE.md`](../../ARCHITECTURE.md)
 - Inventaire tools : [`TOOLS.md`](../../TOOLS.md)
-- README MCP : [`core/mcp/README.md`](../../core/mcp/README.md)
+- README MCP autonome : [`TidianeCisse777/mcp-ecotaxa`](https://github.com/TidianeCisse777/mcp-ecotaxa)

@@ -639,7 +639,7 @@ pytest -q tests/test_ecotaxa_browser_observations.py tests/test_mcp_capabilities
 
 ## Références Internes
 
-- `core/mcp/README.md` : documentation technique du serveur.
+- [`TidianeCisse777/mcp-ecotaxa`](https://github.com/TidianeCisse777/mcp-ecotaxa) : documentation technique et déploiement du serveur autonome.
 - `MCP_CAPABILITIES.md` : catalogue détaillé des demandes utilisateur.
 - `core/ecotaxa_browser/` : logique métier pure Python.
 - `tools/copepod_sources.py` : wrappers LangChain utilisés par l'agent IDEA.

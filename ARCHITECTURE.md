@@ -235,7 +235,7 @@ projets, schémas, zones) pour une découverte géographique/temporelle rapide.
 - États : `CACHE_EMPTY`, `SYNC_IN_PROGRESS`, réponses `partial=True`.
 - L'agent IDEA consomme la **même logique en Python** (pas via HTTP). Le service HTTP est destiné aux agents MCP externes — voir [`PARTAGE.md`](PARTAGE.md).
 
-Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`, `core/mcp/README.md`.
+Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`, et le dépôt autonome [`mcp-ecotaxa`](https://github.com/TidianeCisse777/mcp-ecotaxa).
 
 ---
 
