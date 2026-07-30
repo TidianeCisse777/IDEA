@@ -522,6 +522,20 @@ def test_format_tool_line_query_ecopart_shows_waiting_message():
     assert "%" not in line
 
 
+def test_format_tool_line_ecopart_enrichment_reassures_user_while_waiting():
+    """L'enrichissement EcoPart confirme que le traitement est lancé."""
+    from serve import _format_tool_line
+
+    line = _format_tool_line(
+        "enrich_ecotaxa_with_ecopart_remote",
+        {"ecotaxa_project_id": 17498, "confirmed": True},
+    )
+
+    assert "Enrichissement EcoPart en cours" in line
+    assert "plusieurs minutes" in line
+    assert "page peut rester ouverte" in line
+
+
 def test_format_tool_line_query_bio_oracle_shows_waiting_message():
     """query_bio_oracle → affiche un indicateur d'attente sans faux pourcentage."""
     from serve import _format_tool_line

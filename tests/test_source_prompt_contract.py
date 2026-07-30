@@ -11,6 +11,47 @@ def test_system_prompt_embeds_generated_source_gateway_once():
     assert SOURCE_SELECTION_GATEWAY in COPEPOD_SYSTEM_PROMPT
 
 
+def test_system_prompt_keeps_canonical_join_policy_and_accepts_any_loaded_file():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "EcoTaxa↔EcoPart: canonical join only" in COPEPOD_SYSTEM_PROMPT
+    assert "Amundsen CTD: canonical enrichment only" in COPEPOD_SYSTEM_PROMPT
+    assert "Any loaded tabular file is in scope" in COPEPOD_SYSTEM_PROMPT
+    assert "never ask whether it concerns copepods" in COPEPOD_SYSTEM_PROMPT
+
+
+def test_system_prompt_requires_comparable_abundance_before_cross_instrument_comparison():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = " ".join(COPEPOD_SYSTEM_PROMPT.split())
+    assert "Cross-instrument abundance comparison" in prompt
+    assert "normalize to ind./m³" in prompt
+    assert "Raw object/image counts and incompatible volumes are never comparable" in prompt
+    assert "FlowCam uses its own export-native concentration workflow" in prompt
+
+
+def test_system_prompt_lists_french_net_uvp_audit_intents():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = " ".join(COPEPOD_SYSTEM_PROMPT.split())
+    assert "analyse les correspondances filet–UVP" in prompt
+    assert "cherche les profils UVP/EcoTaxa associés" in prompt
+    assert "prépare une comparaison d'abondance filet–UVP" in prompt
+
+
+def test_net_uvp_skill_requires_stratum_matched_and_explained_profiles():
+    from pathlib import Path
+
+    skill = Path("agents/skills/net_uvp_abundance_comparison.md").read_text()
+    normalized = skill.lower()
+
+    assert "never compare a full uvp profile with one net stratum" in normalized
+    assert "same depth interval" in normalized
+    assert "sum of sampled volumes" in normalized
+    assert "method disclosure" in normalized
+    assert "user may change" in normalized
+
+
 def test_generated_gateway_documents_persistent_affinity_and_bare_ids():
     from tools.source_scope import render_source_selection_gateway
 

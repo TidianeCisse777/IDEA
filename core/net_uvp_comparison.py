@@ -88,12 +88,13 @@ def match_net_to_uvp(
 ) -> pd.DataFrame:
     """Match each deployment to its closest spatially plausible UVP sample.
 
-    Station labels are evidence only, never a prerequisite: the cache and a net
-    file can use different station naming conventions.  ``matched`` requires
-    both spatial and temporal agreement; ``spatial_only`` is retained for audit
-    when dates are missing or outside the requested tolerance. Only ``matched``
-    rows are eligible for an abundance join. One chosen UVP sample is expanded
-    to all net samples in the same deployment.
+    A normalized station label is a mandatory first key.  Spatial and temporal
+    proximity only disambiguate candidates already assigned to that station.
+    ``matched`` therefore requires station, spatial, and temporal agreement;
+    ``spatial_only`` is retained only for station-matched candidates when dates
+    are missing or outside the requested tolerance. Only ``matched`` rows are
+    eligible for an abundance join. One chosen UVP sample is expanded to all
+    net samples in the same deployment.
     """
     missing_net = sorted({net_id_col, net_lat_col, net_lon_col}.difference(net_df.columns))
     if missing_net:
@@ -185,12 +186,18 @@ def match_net_to_uvp(
             if "station_id" in candidates.columns and normalized_station
             else False
         )
+        # Station identity is the primary audit key.  Distance and time narrow
+        # down only station-matched candidates; they can never compensate for
+        # a different station label.
+        candidates = candidates.loc[candidates["_station_name_match"]].copy()
+        if candidates.empty:
+            continue
         # A synchronous candidate wins; then spatial proximity, temporal gap and
-        # station-name agreement resolve ties. Station text never excludes data.
+        # deterministic source ID resolve ties within the same station.
         candidates["_time_sort"] = candidates["_time_gap_days"].fillna(np.inf)
         selected = candidates.sort_values(
-            ["_temporal_match", "_distance_km", "_time_sort", "_station_name_match", uvp_id_col],
-            ascending=[False, True, True, False, True],
+            ["_temporal_match", "_distance_km", "_time_sort", uvp_id_col],
+            ascending=[False, True, True, True],
             kind="stable",
         ).iloc[0]
         matched = bool(selected["_temporal_match"])

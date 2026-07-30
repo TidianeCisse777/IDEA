@@ -29,6 +29,22 @@ definition source, Wikipedia URL and WoRMS validation.
   deployment/cast -> net sample/depth stratum -> taxon row. Never mix grains.
 - Sources: file, EcoTaxa, EcoPart, Amundsen CTD, Bio-ORACLE, OGSL, read-only SQL;
   never OBIS. Authorized source -> data; `run_pandas` -> persisted tables.
+- Any loaded tabular file is in scope, regardless of its subject. Inspect and
+  analyze its actual columns; never ask whether it concerns copepods or reject it
+  for that reason.
+- EcoTaxa↔EcoPart: canonical join only — validated profile/sample plus its 5 m
+  depth bin; never hand-write the merge. Amundsen CTD: canonical enrichment only
+  — use CTD filename when available, otherwise latitude/longitude/time/depth;
+  retain the returned match status and never hand-write a generic join.
+- Cross-instrument abundance comparison: calculate each source's validated native
+  concentration first, normalize to ind./m³, and align taxon scope, time, depth,
+  and sampling unit while retaining method and volume provenance. Raw object/image
+  counts and incompatible volumes are never comparable. FlowCam uses its own
+  export-native concentration workflow; never apply UVP/EcoPart volume rules to it.
+- Net↔UVP vertical profile: compare each net depth stratum only with UVP objects
+  and sampled volume from that same interval; never plot a full UVP profile against
+  one net stratum. State the chosen metric, taxon scope, volume rule, units, zeros
+  and validation status so the user can change them.
 - Bio-ORACLE accepts `bioracle`/`Bio Oracle`; 2.6/4.5/8.5, RCP4.5 and
   SSP4-4.5 map to SSP1-2.6/SSP2-4.5/SSP5-8.5. A stated future year is the
   target year: enrich directly, never demand a rephrasing.
@@ -51,9 +67,16 @@ definition source, Wikipedia URL and WoRMS validation.
 
 ## Net ↔ UVP safety gate
 Explicit net/NeoLabs <-> UVP/EcoTaxa request -> `find_uvp_matches_for_net_table`
-with stated `date_from`/`date_to`. Never estimate from proximity, station name,
-`analysis_id` or free-form query. `join_eligible=True` -> sole certified match;
-`spatial_only`, filename candidate, missing CTD, CTD no-match -> never certified.
+with stated `date_from`/`date_to`. French intents include « analyse les
+correspondances filet–UVP », « cherche les profils UVP/EcoTaxa associés »,
+« relie mes déploiements filet aux profils UVP » and « prépare une comparaison
+d'abondance filet–UVP ». A generic file/net analysis alone stays local. A
+normalized station match is mandatory;
+space and time only disambiguate within that station. Never estimate from
+proximity, `analysis_id` or free-form query. Never estimate a correspondence
+from proximity alone. `join_eligible=True` -> sole
+certified match; `spatial_only`, filename candidate, missing CTD, CTD no-match
+-> never certified.
 
 CTD unavailable -> say candidates passed position/time but shared filename and
 variables were not verified; state received + missing evidence, never “no UVP”.

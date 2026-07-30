@@ -204,6 +204,25 @@ def test_start_export_returns_candidate_download_links():
     assert links == ["/Task/Show/99"]
 
 
+def test_start_export_uses_longer_timeout_than_short_ecopart_reads():
+    from unittest.mock import MagicMock
+
+    import core.ecopart_client as ecopart
+    from core.ecopart_client import EcopartClient
+
+    form_resp = MagicMock(ok=True, text='<input name="backurl" value="/?filt_uproj=105">')
+    task_resp = MagicMock(ok=True, text='<a href="/Task/Show/99">99 View</a>')
+    client = EcopartClient()
+    client._session.get = MagicMock(return_value=form_resp)
+    client._session.post = MagicMock(return_value=task_resp)
+
+    client.start_export(105)
+
+    assert client._session.get.call_args.kwargs["timeout"] == ecopart._EXPORT_TIMEOUT
+    assert client._session.post.call_args.kwargs["timeout"] == ecopart._EXPORT_TIMEOUT
+    assert ecopart._EXPORT_TIMEOUT > ecopart._TIMEOUT
+
+
 def test_start_export_finds_task_from_list_after_confirmation_page():
     from unittest.mock import MagicMock
 

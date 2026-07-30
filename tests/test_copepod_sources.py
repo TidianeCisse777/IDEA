@@ -1923,7 +1923,7 @@ def test_net_uvp_match_tool_requires_explicit_call_and_matches_by_deployment(tmp
             {
                 "Sample ID": [101, 102, 103],
                 "Deployment ID": [7, 7, 6],
-                "Station Name": ["file-name", "file-name", "file-name"],
+                    "Station Name": ["cache-name", "cache-name", "cache-name"],
                 "Latitude": [67.5, 67.5, 67.5],
                 "Longitude": [-63.8, -63.8, -63.8],
                 "Deployment Datetime Start": ["2024-06-01", "2024-06-01", "2022-06-01"],

@@ -519,12 +519,13 @@ def make_source_tools(thread_id: str) -> list:
         Utiliser seulement si l'utilisateur demande explicitement une recherche ou
         une comparaison UVP/EcoTaxa pour un fichier de filet. Ne jamais l'appeler
         automatiquement au chargement du fichier. Lecture seule : pour chaque
-        déploiement, sélectionne un sample UVP dans le rayon demandé puis vérifie
-        l'écart temporel et le fichier CTD-rosette commun avec les métadonnées
-        Amundsen. Le nom de station sert de diagnostic et de départage, jamais de
-        filtre bloquant. Un résultat `matched` est spatialement et temporellement
-        compatible, avec le CTD commun vérifié, et peut être joint; tout autre
-        statut reste auditable, sans droit de jointure d'abondance.
+        déploiement, exige d'abord un nom de station normalisé identique, puis
+        sélectionne un sample UVP dans le rayon demandé et vérifie l'écart
+        temporel ainsi que le fichier CTD-rosette commun avec les métadonnées
+        Amundsen. Position et temps ne servent qu'à départager les candidats de
+        cette même station. Un résultat `matched` est compatible par station,
+        position et temps, avec le CTD commun vérifié, et peut être joint; tout
+        autre statut reste auditable, sans droit de jointure d'abondance.
 
         `net_variable_name` : nom de la variable en session à utiliser comme table
         de filet (ex. `df_file_neolabs_sample`). Si absent, utilise le dernier
@@ -679,7 +680,7 @@ def make_source_tools(thread_id: str) -> list:
         matches = match_net_to_uvp(net_df, uvp_df, **kwargs)
         if matches.empty:
             return _eco_empty(
-                f"Aucun sample UVP à moins de {max_distance_km:g} km des {env}. "
+                f"Aucun sample UVP de station concordante à moins de {max_distance_km:g} km des {env}. "
                 "Aucune jointure n'est donc possible avec les seuils demandés."
             )
 

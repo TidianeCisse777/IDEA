@@ -1,6 +1,6 @@
 ---
 name: net_uvp_abundance_comparison
-version: 2.1.2
+version: 2.1.3
 triggers:
   - User asks to compare net (NeoLabs) abundance against UVP (EcoTaxa/EcoPart) abundance
   - User asks to join net and UVP data, compute density, make comparisons by taxon or stage
@@ -46,8 +46,10 @@ All of these are automatically injected into every `run_pandas` call — no relo
    `Persistence: persisted=true` for the audit. If the audit rejects a wrong
    table name, read the **available persistent variables** from that blocked
    result and **retry the audit with that exact name**; never guess a replacement.
-2. Run `find_uvp_matches_for_net_table` on that exact table. The certified
-   export scope is only the rows where `join_eligible=True` and
+2. Run `find_uvp_matches_for_net_table` on that exact table. A normalized
+   station match is mandatory; spatial and temporal information only choose
+   among candidates from that same station. The certified export scope is only
+   the rows where `join_eligible=True` and
    `ctd_filename_match_status="matched"`.
    - If the audit says the CTD source is unavailable, ask in plain language:
      “La vérification CTD n’est pas accessible pour le moment : ces
@@ -91,9 +93,11 @@ each require their own distinct confirmation.
 ## Non-negotiable validation gate
 
 An audit row can authorize a certified filet↔UVP abundance comparison only when
-`join_eligible=True` and `ctd_filename_match_status="matched"`. This proves the
-net↔UVP position and time checks **and** a shared CTD-rosette file validated in
-Amundsen against its station, time, and coordinates. A `spatial_only`,
+`join_eligible=True` and `ctd_filename_match_status="matched"`. This proves a
+normalized station match, the net↔UVP position and time checks **and** a shared
+CTD-rosette file validated in Amundsen against its station, time, and
+coordinates. A differently named station is excluded before the spatial/time
+comparison. A `spatial_only`,
 `filename_candidate`, missing CTD evidence, or station-name resemblance remains
 an auditable candidate, never an export or analysis row. The sole exception is
 the confirmed source-unavailable path above; its rows must retain
@@ -229,9 +233,64 @@ result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m
   accompanying audit; never reduce them to a station name or a distance alone.
 - No causal or biological interpretation: describe the numbers, state the comparison basis.
 
+## Stratified vertical profile (mandatory for filet ↔ UVP)
+
+Use this procedure when the user asks for a vertical profile or a comparison by
+depth stratum. It is an analytical calculation, then the already-active graph
+rules render its exact persisted result.
+
+1. Start from the canonical final object table, never from a whole UVP profile
+   or from an unaudited candidate. A profile can serve several net strata.
+2. Inspect the available net abundance fields. If more than one metric or stage
+   scope is plausible, name the choices and ask the user. For the chosen field,
+   remove object-expanded duplicates at the net taxon-row grain, then **sum**
+   taxon rows once per `net_sample_id` and `[min_sample_depth,
+   max_sample_depth]`. Never average taxon rows and never sum their copies
+   repeated by the object join.
+3. For each audited net stratum, retain UVP records from the same project and
+   profile whose depth bin lies in that **same depth interval**. Count unique
+   target object identifiers for the numerator. For the denominator, take the
+   sampled volume once per depth bin and use the **sum of sampled volumes**.
+   Convert the resulting UVP density to `ind./m³` before comparison.
+4. Retain a zero UVP abundance only when the selected interval has a positive,
+   documented sampled volume. If volume coverage for a bin or interval cannot
+   be established, mark that stratum incomplete and exclude it rather than
+   treating it as zero.
+5. Never compare a full UVP profile with one net stratum. A profile plot uses
+   one paired UVP value and one paired net value per common interval. Draw the
+   net interval itself (its lower and upper depth), not only a point detached
+   from the sampled stratum.
+
+Persist the prepared comparison table. It must retain at least: net sample,
+station, project, UVP profile, lower and upper depth, net abundance in
+`ind./m³`, UVP target-object count, UVP sampled volume in L, UVP abundance in
+`ind./m³`, and the CTD/exploratory status.
+
+### Method disclosure
+
+With every such graph, state concisely:
+
+- **Filet** — selected abundance field, taxon/stage scope, and aggregation by
+  depth stratum;
+- **UVP** — target annotation criterion, same depth interval, unique-object
+  numerator, and sampled-volume denominator;
+- **Common unit** — `ind./m³` and any conversion used;
+- **Zeros and coverage** — whether a zero has documented volume coverage or a
+  stratum was excluded as incomplete;
+- **Validation** — certified or exploratory, with the reason when exploratory.
+
+The user may change the net metric or stages, taxon criterion, depth interval,
+binning, volume basis, zero policy, or graph scale. On a requested change,
+rebuild the named comparison table and repeat this disclosure; never silently
+keep the old parameters.
+
 ## Graphs
 
 After building `result`, use the already-active graph rules, then call `run_graph` for:
 - Scatter: `net_ind_m3` vs `uvp_ind_m3` per station (1:1 line reference)
 - Bar: `abundance_log2_ratio` per station (0 = perfect agreement)
 - Map: station bubbles coloured by ratio (needs lat/lon from `df_file_neolabs_sample`)
+- Vertical profile: paired net and UVP values by the same net stratum. Use a
+  segment spanning each net interval for both methods; a connector may show the
+  within-stratum comparison. Keep exploratory and certified series visually
+  distinguishable.

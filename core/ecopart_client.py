@@ -17,6 +17,7 @@ load_dotenv()
 
 _BASE_URL = "https://ecopart.obs-vlfr.fr"
 _TIMEOUT = 60
+_EXPORT_TIMEOUT = 180
 _EXPORT_POLL_ATTEMPTS = 60
 _EXPORT_POLL_INTERVAL = 2
 
@@ -218,7 +219,7 @@ class EcopartClient:
         resp = self._session.get(
             f"{_BASE_URL}/Task/Create/TaskPartExport",
             params=params,
-            timeout=_TIMEOUT,
+            timeout=_EXPORT_TIMEOUT,
         )
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -235,12 +236,12 @@ class EcopartClient:
                 "fileformat": "TSV",
                 "starttask": "Y",
             },
-            timeout=_TIMEOUT,
+            timeout=_EXPORT_TIMEOUT,
         )
         task_resp.raise_for_status()
         task_links = re.findall(r"""href=['"](/Task/Show/(\d+))['"]""", task_resp.text)
         if not task_links:
-            task_list_resp = self._session.get(f"{_BASE_URL}/Task/listall", timeout=_TIMEOUT)
+            task_list_resp = self._session.get(f"{_BASE_URL}/Task/listall", timeout=_EXPORT_TIMEOUT)
             task_list_resp.raise_for_status()
             task_links = re.findall(r"""href=['"](/Task/Show/(\d+))['"]""", task_list_resp.text)
         if not task_links:
@@ -258,7 +259,7 @@ class EcopartClient:
             if "/Task/Show/" in link:
                 link = self._wait_for_export(link)
             url = urljoin(f"{_BASE_URL}/", link)
-            resp = self._session.get(url, timeout=_TIMEOUT)
+            resp = self._session.get(url, timeout=_EXPORT_TIMEOUT)
             if not resp.ok:
                 continue
             ctype = resp.headers.get("content-type", "").lower()
@@ -293,7 +294,7 @@ class EcopartClient:
     def _wait_for_export(self, task_link: str) -> str:
         task_url = urljoin(f"{_BASE_URL}/", task_link)
         for attempt in range(_EXPORT_POLL_ATTEMPTS):
-            resp = self._session.get(task_url, timeout=_TIMEOUT)
+            resp = self._session.get(task_url, timeout=_EXPORT_TIMEOUT)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
             file_link = next(

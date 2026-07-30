@@ -94,6 +94,34 @@ def test_temporal_gap_flags_spatial_only():
     assert out.iloc[0]["time_gap_days"] > 3000
 
 
+def test_rejects_spatiotemporal_candidate_when_station_name_does_not_match():
+    net = pd.DataFrame(
+        {
+            "SAMPLE_ID": [101],
+            "STATION_NAME": ["Filet-7"],
+            "latitude": [67.5],
+            "longitude": [-63.8],
+            "deployment_datetime_start": ["2015-06-01"],
+        }
+    )
+    uvp = pd.DataFrame(
+        {
+            "sample_id": [10],
+            "project_id": [42],
+            "instrument": ["UVP5SD"],
+            "station_id": ["Different-name"],
+            "profile_id": ["p_close"],
+            "lat_avg": [67.5001],
+            "lon_avg": [-63.8],
+            "date_min": ["2015-06-01"],
+        }
+    )
+
+    out = match_net_to_uvp(net, uvp, max_km=50, max_days=2)
+
+    assert out.empty
+
+
 def test_matches_once_per_deployment_then_expands_to_net_samples():
     net = pd.DataFrame(
         {
@@ -110,7 +138,7 @@ def test_matches_once_per_deployment_then_expands_to_net_samples():
             "sample_id": [10, 20],
             "project_id": [42, 42],
             "instrument": ["UVP5SD", "UVP5SD"],
-            # Names deliberately differ: station text is evidence, not a filter.
+            # The closer candidate is a different station and must be excluded.
             "station_id": ["Different-name", "Filet-7"],
             "profile_id": ["p_close_date", "p_old_date"],
             "lat_avg": [67.51, 67.5001],
@@ -123,9 +151,10 @@ def test_matches_once_per_deployment_then_expands_to_net_samples():
     )
     assert list(out["net_sample_id"]) == [101, 102]
     assert out["net_deployment_id"].eq("7").all()
-    assert out["uvp_sample_id"].eq(10).all()
-    assert not out["station_name_match"].any()
-    assert out["join_eligible"].all()
+    assert out["uvp_sample_id"].eq(20).all()
+    assert out["station_name_match"].all()
+    assert out["match_status"].eq("spatial_only").all()
+    assert not out["join_eligible"].any()
 
 
 def test_missing_uvp_dates_stays_spatial_only_and_is_not_join_eligible():
