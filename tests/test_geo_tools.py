@@ -177,6 +177,55 @@ def test_filter_dataframe_by_zone_defaults_lat_lon_column_names(session_store):
     assert out["n_out"] == 1
 
 
+def test_prepare_net_uvp_audit_subsets_persists_each_zone_time_window(session_store):
+    """Un audit filet↔UVP ciblé reçoit des sous-ensembles déjà croisés.
+
+    Une seule préparation doit éviter les appels parallèles fragiles
+    ``load/filter/run_pandas/audit`` et garder chaque fenêtre réutilisable.
+    """
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    df = pd.DataFrame({
+        "station_id": ["BAF_JAN", "BAF_AUG", "LAB_JAN"],
+        "latitude": [74.0, 75.0, 55.0],
+        "longitude": [-68.0, -73.0, -55.0],
+        "deployment_datetime_start": [
+            "2024-01-15T12:00:00Z",
+            "2024-08-15T12:00:00Z",
+            "2024-01-15T12:00:00Z",
+        ],
+    })
+    thread = "thread-net-uvp-multiple-windows"
+    _load_df_into_session(session_store, thread, df)
+    fn = next(
+        tool for tool in make_geo_tools(thread, store=session_store)
+        if tool.name == "prepare_net_uvp_audit_subsets"
+    )
+
+    out = fn.invoke({
+        "zone_names": ["Baie de Baffin"],
+        "time_windows": [
+            "2024-01-01/2024-03-31",
+            "2024-07-01/2024-09-30",
+        ],
+    })
+
+    assert out["n_subsets"] == 2
+    assert [item["n_rows"] for item in out["subsets"]] == [1, 1]
+    assert all(item["zone"] == "Baie de Baffin" for item in out["subsets"])
+    assert all(item["data_ref"].startswith("df_net_uvp_scope_") for item in out["subsets"])
+    for item in out["subsets"]:
+        saved = session_store.get(f"{thread}:dataset:{item['data_ref']}")
+        assert saved is not None
+        assert saved["meta"]["source"] == "net_uvp_audit_subset"
+        assert saved["meta"]["time_window"] == item["time_window"]
+    audit_input = session_store.get(f"{thread}:dataset:{out['audit_data_ref']}")
+    assert audit_input is not None
+    assert audit_input["meta"]["net_uvp_audit_input"] is True
+    assert len(audit_input["df"]) == 2
+
+
 def test_filter_dataframe_by_zone_blocks_on_unknown_zone(session_store):
     """Zone inconnue → précondition bloquée, jamais faux résultat vide."""
     import pandas as pd

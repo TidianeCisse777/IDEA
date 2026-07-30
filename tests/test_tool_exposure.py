@@ -122,6 +122,47 @@ def test_join_net_uvp_enriched_is_exposed_for_file_analysis():
     assert "join_net_uvp_enriched" in decision.tool_names
 
 
+def test_scoped_net_uvp_audit_is_exposed_in_strict_stages():
+    """Le chargement, le sous-ensemble et l'audit ne doivent jamais coexister.
+
+    Sinon le modèle les lance en parallèle et l'audit lit le fichier complet.
+    """
+    text = "Charge NeoLabs, prends 2024 en Baie de Baffin puis audite avec les profils UVP."
+    first = _decision(text, file_loaded=False, sources=("file",))
+    assert first.tool_names == ("load_file",)
+
+    prepared = _decision(text, file_loaded=True, sources=("file",))
+    assert prepared.tool_names == ("prepare_net_uvp_audit_subsets",)
+
+    call_id = "scope-1"
+    content, artifact = success("subset ready")
+    history = [
+        HumanMessage(content=text),
+        AIMessage(content="", tool_calls=[{
+            "name": "prepare_net_uvp_audit_subsets",
+            "args": {"zone_names": ["Baie de Baffin"]},
+            "id": call_id,
+            "type": "tool_call",
+        }]),
+        ToolMessage(content=content, artifact=artifact, tool_call_id=call_id),
+    ]
+    audited = _decision(text, file_loaded=True, sources=("file",), messages=history)
+    assert audited.tool_names == ("find_uvp_matches_for_net_table",)
+
+    audit_call_id = "audit-1"
+    history.extend([
+        AIMessage(content="", tool_calls=[{
+            "name": "find_uvp_matches_for_net_table",
+            "args": {"net_variable_name": "df_net_uvp_audit_demo_prepared"},
+            "id": audit_call_id,
+            "type": "tool_call",
+        }]),
+        ToolMessage(content=content, artifact=artifact, tool_call_id=audit_call_id),
+    ])
+    completed = _decision(text, file_loaded=True, sources=("file",), messages=history)
+    assert completed.tool_names == ()
+
+
 def test_explicit_visual_intent_exposes_graph_workflow_before_graph_skills():
     # The fixture carries the semantic decision that the runtime computes
     # before the first model call; no graph skill has been loaded yet.
@@ -289,7 +330,7 @@ def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
     assert "split_dataframe_by_zone" in decision.tool_names
     # Direct enrichment keeps the local sandbox available for the resulting
     # table; it must not collapse to the canonical enrichment tool alone.
-    assert len(decision.tool_names) == 10
+    assert len(decision.tool_names) == 11
 
 
 @pytest.mark.parametrize(

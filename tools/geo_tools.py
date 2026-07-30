@@ -15,6 +15,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+import pandas as pd
 from langchain_core.tools import tool
 from shapely.geometry.base import BaseGeometry
 
@@ -305,6 +306,198 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
             metrics={"rows_in": int(len(kept)), "rows_out": int(len(df) - len(kept))},
         )
 
+    @tool(response_format="content_and_artifact")
+    def prepare_net_uvp_audit_subsets(
+        zone_names: list[str] | None = None,
+        time_windows: list[str] | None = None,
+        lat_col: str = "latitude",
+        lon_col: str = "longitude",
+        time_col: str = "deployment_datetime_start",
+        source_variable: str | None = None,
+    ) -> dict:
+        """Prépare, en UNE étape, les sous-ensembles pour un audit filet ↔ UVP.
+
+        Utilise ce tool avant l'audit dès qu'une demande mentionne une ou
+        plusieurs zones, années, périodes ou fenêtres temporelles. Il applique
+        toutes les combinaisons **zone × fenêtre de temps**, persiste chaque
+        sous-ensemble non vide et retourne ses ``data_ref``. Ensuite seulement,
+        appelle l'audit UVP une fois par ``data_ref`` retourné. Ne lance jamais
+        cet outil et l'audit en parallèle.
+
+        ``zone_names`` peut contenir plusieurs baies/mers reconnues par le
+        registre NeoLab. Chaque élément de ``time_windows`` est
+        ``"début/fin"`` (ISO-8601, inclusifs), par exemple
+        ``["2024-01-01/2024-03-31", "2024-07-01/2024-09-30"]``. Omettre une
+        dimension pour conserver toutes les zones ou toutes les dates du fichier.
+        """
+        session = _store.get(thread_id)
+        if not session or session.get("df") is None:
+            return blocked("Aucun fichier chargé. Utilise load_file d'abord.")
+        if not zone_names and not time_windows:
+            return blocked(
+                "Indique au moins une zone ou une fenêtre temporelle à préparer."
+            )
+
+        if source_variable:
+            source_session = _store.get(f"{thread_id}:dataset:{source_variable}")
+            if not source_session or source_session.get("df") is None:
+                return blocked(
+                    f"Variable source inconnue : {source_variable}. "
+                    "Utilise un data_ref existant ou le fichier chargé."
+                )
+        else:
+            source_session = loaded_file_dataset(_store, thread_id) or session
+        df = source_session["df"]
+        source_meta = source_session.get("meta") or {}
+        source_name = source_meta.get("variable_name") or source_variable or "df"
+
+        missing = [col for col in (lat_col, lon_col) if col not in df.columns]
+        if missing:
+            return blocked(
+                f"Colonnes absentes du DataFrame : {missing}. "
+                "Passe lat_col / lon_col explicites."
+            )
+        if time_windows and time_col not in df.columns:
+            return blocked(
+                f"Colonne temporelle absente : {time_col}. "
+                f"Colonnes disponibles : {list(df.columns)}. Passe time_col explicite."
+            )
+
+        canonical_zones: list[str | None] = []
+        for zone_name in zone_names or [None]:
+            if zone_name is None:
+                canonical_zones.append(None)
+                continue
+            canonical = _match_canonical(zone_name)
+            if canonical is None:
+                return blocked(f"Zone '{zone_name}' inconnue du registry.")
+            canonical_zones.append(canonical)
+
+        parsed_windows: list[tuple[str | None, str | None]] = []
+        for window in time_windows or [None]:
+            if window is None:
+                parsed_windows.append((None, None))
+                continue
+            start, separator, end = str(window).partition("/")
+            if not separator or not start.strip() or not end.strip():
+                return blocked(
+                    "Chaque fenêtre temporelle doit être au format début/fin (ISO-8601)."
+                )
+            start, end = start.strip(), end.strip()
+            try:
+                start_at = pd.to_datetime(start, utc=True)
+                end_at = pd.to_datetime(end, utc=True)
+            except (TypeError, ValueError):
+                return blocked(
+                    f"Fenêtre temporelle invalide : start={start!r}, end={end!r}."
+                )
+            if start_at > end_at:
+                return blocked("Une fenêtre temporelle doit avoir start antérieur à end.")
+            parsed_windows.append((str(start), str(end)))
+
+        timestamps = (
+            pd.to_datetime(df[time_col], errors="coerce", utc=True)
+            if time_windows else None
+        )
+        subsets: list[dict[str, object]] = []
+        audit_frames: list[pd.DataFrame] = []
+        for canonical in canonical_zones:
+            zone_df = (
+                _core_filter_by_zone(
+                    df, canonical, lat_col=lat_col, lon_col=lon_col, registry=_registry(),
+                )
+                if canonical else df
+            )
+            for start, end in parsed_windows:
+                if timestamps is None:
+                    subset = zone_df
+                else:
+                    start_at = pd.to_datetime(start, utc=True)
+                    end_at = pd.to_datetime(end, utc=True)
+                    # A bare ISO date denotes the full final calendar day.
+                    if len(end) == 10:
+                        end_at += pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+                    subset = zone_df.loc[
+                        (timestamps.loc[zone_df.index] >= start_at)
+                        & (timestamps.loc[zone_df.index] <= end_at)
+                    ]
+                scope = {
+                    "zone": canonical,
+                    "time_window": {"start": start, "end": end} if start else None,
+                    "n_rows": int(len(subset)),
+                }
+                if subset.empty:
+                    subsets.append(scope)
+                    continue
+                variable_name = dataset_variable_name(
+                    "net_uvp_scope", canonical or "all", start or "all_time", end or "all_time",
+                )
+                store_dataset(
+                    _store,
+                    thread_id,
+                    subset.copy(),
+                    variable_name=variable_name,
+                    meta={
+                        "source": "net_uvp_audit_subset",
+                        "parent_source": source_meta.get("source", "df"),
+                        "parent_variable": source_name,
+                        "zone_canonical": canonical,
+                        "time_window": scope["time_window"],
+                        "lat_col": lat_col,
+                        "lon_col": lon_col,
+                        "time_col": time_col,
+                        "n_rows": int(len(subset)),
+                    },
+                    latest_alias=None,
+                    set_active=False,
+                )
+                scope["data_ref"] = variable_name
+                subsets.append(scope)
+                audit_frames.append(subset.copy())
+
+        persisted = [item for item in subsets if "data_ref" in item]
+        audit_data_ref: str | None = None
+        if audit_frames:
+            # One audit input covers every requested scope; the model is not
+            # left to remember a separate audit call for each time window.
+            audit_dataframe = pd.concat(audit_frames, ignore_index=True)
+            audit_data_ref = dataset_variable_name("net_uvp_audit", source_name, "prepared")
+            store_dataset(
+                _store,
+                thread_id,
+                audit_dataframe,
+                variable_name=audit_data_ref,
+                meta={
+                    "source": "net_uvp_audit_subset",
+                    "net_uvp_audit_input": True,
+                    "parent_source": source_meta.get("source", "df"),
+                    "parent_variable": source_name,
+                    "scope_refs": [str(item["data_ref"]) for item in persisted],
+                    "lat_col": lat_col,
+                    "lon_col": lon_col,
+                    "time_col": time_col,
+                    "n_rows": int(len(audit_dataframe)),
+                },
+                latest_alias=None,
+                set_active=False,
+            )
+        content = {
+            "n_subsets": len(persisted),
+            "audit_data_ref": audit_data_ref,
+            "subsets": subsets,
+        }
+        return success(
+            f"{len(persisted)} sous-ensemble(s) prêt(s). "
+            f"Auditez `{audit_data_ref}` pour couvrir toutes les fenêtres."
+            if audit_data_ref else "Aucun sous-ensemble non vide à auditer.",
+            content=content,
+            data_ref=audit_data_ref,
+            provenance={"source": str(source_meta.get("source", "df"))},
+            persisted=bool(persisted),
+            method="zone polygon × inclusive time-window filtering",
+            metrics={"requested_scopes": len(subsets), "persisted_scopes": len(persisted)},
+        )
+
     _FAMILY_LABELS = {
         "auto": "mers/baies/détroits (IHO) + écorégions MEOW en complément",
         "iho": "mers / baies / détroits (IHO)",
@@ -525,4 +718,4 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
             },
         )
 
-    return [filter_dataframe_by_zone, split_dataframe_by_zone]
+    return [filter_dataframe_by_zone, prepare_net_uvp_audit_subsets, split_dataframe_by_zone]

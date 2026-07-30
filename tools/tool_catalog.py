@@ -286,6 +286,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "audit_ecotaxa_ecopart_join": _source("EcoTaxa/EcoPart · audit de jumelage", "EcoTaxa/EcoPart · join audit", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     # Geography and core services.
     "filter_dataframe_by_zone": _presentation("Filtrage géographique", "Geographic filtering", "geography"),
+    "prepare_net_uvp_audit_subsets": _presentation("Préparation d'audit filet↔UVP", "Net↔UVP audit subset preparation", "geography"),
     "split_dataframe_by_zone": _presentation("Découpage géographique", "Geographic split", "geography"),
     "get_zone_info": _presentation("Information géographique", "Geographic information", "geography"),
     "query_copepod_knowledge_base": _presentation("Recherche documentaire", "Knowledge-base search", "core"),
@@ -406,6 +407,7 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     # Geography and core services.
     "get_zone_info": "local_read",
     "filter_dataframe_by_zone": "local_session",
+    "prepare_net_uvp_audit_subsets": "local_session",
     "split_dataframe_by_zone": "local_session",
     "query_copepod_knowledge_base": "local_read",
     "lookup_marine_taxonomy": "remote_read",
@@ -445,6 +447,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "run_graph": "visualization",
     "get_zone_info": "geography",
     "filter_dataframe_by_zone": "geography",
+    "prepare_net_uvp_audit_subsets": "file_analysis",
     # Le découpage annote le DataFrame chargé : c'est une capacité d'analyse de
     # fichier, exposée seulement quand un fichier est chargé. La garder hors du
     # groupe permanent "geography" préserve le budget d'outils EcoTaxa.

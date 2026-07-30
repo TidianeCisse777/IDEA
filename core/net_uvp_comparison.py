@@ -70,7 +70,7 @@ def match_net_to_uvp(
     uvp_df: pd.DataFrame,
     *,
     max_km: float = 50.0,
-    max_days: float | None = 2.0,
+    max_days: float | None = 0.5,
     net_id_col: str = "SAMPLE_ID",
     net_station_col: str = "STATION_NAME",
     net_lat_col: str = "latitude",

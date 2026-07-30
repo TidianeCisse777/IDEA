@@ -261,6 +261,9 @@ def test_system_prompt_requires_the_strict_net_uvp_match_route():
     assert "Never estimate a correspondence" in COPEPOD_SYSTEM_PROMPT
     assert "join_eligible=True" in COPEPOD_SYSTEM_PROMPT
     assert "date_from" in COPEPOD_SYSTEM_PROMPT
+    assert "An explicit request to export the matches is confirmation" in COPEPOD_SYSTEM_PROMPT
+    assert "CTD unavailable never means no export possible" in COPEPOD_SYSTEM_PROMPT
+    assert "Subset before audit" in COPEPOD_SYSTEM_PROMPT
 
 
 
@@ -274,11 +277,13 @@ def test_net_uvp_live_guidance_uses_the_certified_selection_and_final_join():
     assert "exact persistent variable returned" in contract
     assert "available persistent variables" in contract
     assert "retry the audit with that exact name" in contract
+    assert "never audit the full loaded file" in contract
     assert "exact certified selection identifier returned by the audit" in contract
     assert "export_ecotaxa_samples" in contract
     assert "enrich_ecotaxa_with_ecopart_remote" in contract
     assert "join_net_uvp_enriched" in contract
     assert "stop before `export_ecotaxa_samples`" in contract
+    assert "exporte les correspondances" in contract
     assert "ctd_filename_match_status=\"matched\"" in contract
     assert "keep `export_project_id` in every canonical aggregation" in contract
     assert 'on=["export_project_id", "uvp_profile_str"]' in contract

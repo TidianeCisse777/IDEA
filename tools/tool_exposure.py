@@ -109,9 +109,21 @@ _ECOTAXA_GEO_TERMS = (
     "latitude", "longitude", "coordonnée", "coordonne", "géographique",
     "geographique", "labrador", "baffin", "ungava", "hudson",
 )
+_NET_UVP_AUDIT_PATTERN = re.compile(
+    r"\b(?:audit\w*|correspond\w*|appariement\w*|match\w*|compar\w*)\b.*"
+    r"\b(?:uvp|filet|neolab)\b|\b(?:uvp|filet|neolab)\b.*"
+    r"\b(?:audit\w*|correspond\w*|appariement\w*|match\w*|compar\w*)\b",
+    re.IGNORECASE,
+)
+_TIME_SCOPE_PATTERN = re.compile(
+    r"\b(?:20\d{2}|ann[eé]e?|p[eé]riode|fen[eê]tre|date|mois|saison|"
+    r"janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|"
+    r"octobre|novembre|d[eé]cembre)\b",
+    re.IGNORECASE,
+)
 _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     "file_analysis": (
-        "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
+        "prepare_net_uvp_audit_subsets", "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
         "split_dataframe_by_zone",
     ),
     "ecotaxa_discovery": (
@@ -463,6 +475,29 @@ def decide_tool_exposure(
         reasons.append("policy overflow fallback")
 
     selected_set = set(selected)
+    # A scoped net↔UVP audit has a strict state progression. Keeping only the
+    # next valid capability prevents concurrent load/filter/audit calls, where
+    # the audit would otherwise see the wrong table.
+    net_uvp_audit_requested = bool(_NET_UVP_AUDIT_PATTERN.search(signals.latest_user_text))
+    scoped_net_uvp_request = net_uvp_audit_requested and (
+        signals.geographic_requested or bool(_TIME_SCOPE_PATTERN.search(signals.latest_user_text))
+    )
+    if scoped_net_uvp_request:
+        completed = set(signals.successful_tools_this_turn)
+        if "find_uvp_matches_for_net_table" in completed:
+            next_names = ()
+            reasons.append("scoped net/UVP audit complete")
+        elif "prepare_net_uvp_audit_subsets" in completed:
+            next_names = ("find_uvp_matches_for_net_table",)
+            reasons.append("prepared net/UVP subsets: audit stage")
+        elif turn_context.file_loaded:
+            next_names = ("prepare_net_uvp_audit_subsets",)
+            reasons.append("scoped net/UVP request: subset preparation stage")
+        else:
+            next_names = ("load_file",)
+            reasons.append("scoped net/UVP request: file loading stage")
+        selected = tuple(name for name in next_names if name in names)
+        selected_set = set(selected)
     # An enrichment tool is available for a direct enrichment request, but it
     # must not suppress the local sandbox.  A table may be *described* as
     # already enriched while the user is asking for an analysis or a graph;

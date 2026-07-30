@@ -511,7 +511,7 @@ def make_source_tools(thread_id: str) -> list:
         date_from: str | None = None,
         date_to: str | None = None,
         max_distance_km: float = 50.0,
-        max_time_gap_days: float | None = 2.0,
+        max_time_gap_days: float | None = 0.5,
         allow_unverified_ctd: bool = False,
     ) -> str:
         """Cherche à la demande les correspondances filet ↔ UVP dans le cache EcoTaxa.
@@ -530,6 +530,8 @@ def make_source_tools(thread_id: str) -> list:
         `net_variable_name` : nom de la variable en session à utiliser comme table
         de filet (ex. `df_file_neolabs_sample`). Si absent, utilise le dernier
         fichier chargé. Utile quand plusieurs fichiers sont en session.
+        Après `prepare_net_uvp_audit_subsets`, utiliser exclusivement l'un des
+        `data_ref` retournés, jamais le fichier chargé complet.
 
         `date_from` / `date_to` : bornes ISO facultatives. Quand l'utilisateur
         demande une période, les passer ici : la vérification ignore alors toutes
@@ -577,6 +579,32 @@ def make_source_tools(thread_id: str) -> list:
                     + (f"Variables disponibles : {avail_text}. Précisez `net_variable_name`." if available else "Chargez d'abord un fichier via `load_file`."),
                     retryable=False,
                 )
+        prepared_scopes = []
+        audit_inputs = []
+        for key in _store.keys(f"{thread_id}:dataset:"):
+            entry = _store.get(key)
+            meta = (entry or {}).get("meta") or {}
+            if meta.get("source") == "net_uvp_audit_subset":
+                name = str(meta.get("variable_name") or key.rsplit(":", 1)[-1])
+                prepared_scopes.append(name)
+                if meta.get("net_uvp_audit_input") is True:
+                    audit_inputs.append(name)
+        selected_meta = loaded.get("meta") or {}
+        selected_variable = str(selected_meta.get("variable_name") or net_variable_name or "")
+        permitted = audit_inputs or prepared_scopes
+        if permitted and selected_variable not in permitted:
+            refs = ", ".join(f"`{name}`" for name in sorted(permitted))
+            return _eco_blocked(
+                "Des sous-ensembles préparés existent pour cet audit. "
+                f"Auditez uniquement leur data_ref : {refs}, pas `{selected_variable}`.",
+                retryable=False,
+            )
+        if selected_meta.get("net_uvp_audit_input") is True:
+            # The preparation table already is the union of all requested
+            # windows.  A model may still repeat one window as an audit
+            # argument; applying it would silently discard the other windows.
+            date_from = None
+            date_to = None
         net_dataframe_fingerprint = _net_dataframe_fingerprint(loaded["df"])
         net_df = loaded["df"].copy()
 
@@ -907,45 +935,22 @@ def make_source_tools(thread_id: str) -> list:
             )
 
         by_deployment = matches.drop_duplicates("net_deployment_id")
+        n_station_matched = int(by_deployment["station_name_match"].sum())
         n_matched = int(by_deployment["join_eligible"].sum())
-        n_exploratory = int(by_deployment["exploratory"].sum())
         n_spatial = int((~by_deployment["join_eligible"]).sum())
         n_proj = int(matches["uvp_project_id"].nunique())
-        instruments = ", ".join(sorted(matches["uvp_instrument"].dropna().astype(str).unique()))
-        preview = (
-            matches.sort_values("distance_km")
-            .head(10)[
-                [
-                    "net_sample_id",
-                    "net_deployment_id",
-                    "station",
-                    "uvp_sample_id",
-                    "uvp_project_id",
-                    "uvp_instrument",
-                    "distance_km",
-                    "time_gap_days",
-                    "station_name_match",
-                    "candidate_count",
-                    "match_status",
-                    "ctd_filename_match_status",
-                    "join_eligible",
-                ]
-            ]
+        time_tolerance = (
+            f"{max_time_gap_days * 24:g} h"
+            if max_time_gap_days is not None and max_time_gap_days < 1
+            else f"{max_time_gap_days:g} j" if max_time_gap_days is not None else "sans limite"
         )
         lines = [
-            "## Correspondances filet ↔ UVP (EcoTaxa)",
-            f"Emprise du filet : {env}",
-            f"Déploiements avec un candidat UVP < {max_distance_km:g} km : {len(by_deployment)} sur {n_deployments}.",
-            f"Projets UVP concernés : {n_proj} ; instruments : {instruments or '—'}.",
-            f"Statut temporel (tolérance {max_time_gap_days if max_time_gap_days is not None else '∞'} j) : "
-            f"{n_matched} `matched` (jointure autorisée : position, temps et fichier CTD Amundsen vérifiés), "
-            f"{n_exploratory} exploratoire(s) avec CTD non vérifié, "
-            f"{n_spatial - n_exploratory} non jointable(s).",
-            "",
-            preview.to_markdown(index=False),
+            "## Audit filet ↔ UVP",
+            f"Station concordante : {n_station_matched} déploiement(s) sur {n_deployments}.",
+            f"Temps : tolérance {time_tolerance} ; jointures certifiées : {n_matched}.",
         ]
         if date_from or date_to:
-            lines.insert(2, f"Période filet appliquée : {date_from or 'sans borne initiale'} → {date_to or 'sans borne finale'}.")
+            lines.insert(1, f"Période : {date_from or 'sans borne initiale'} → {date_to or 'sans borne finale'}.")
         if certified_selection_name:
             lines.insert(
                 5,
@@ -969,30 +974,15 @@ def make_source_tools(thread_id: str) -> list:
             else:
                 lines += [
                     "",
-                    "⚠ Validation CTD Amundsen indisponible : les candidats "
-                    "spatiaux/temporels ci-dessus ont été reçus, avec leurs "
-                    "distances et écarts de temps, mais le fichier CTD commun et "
-                    "les variables CTD n'ont pas été reçus. Ce résultat ne permet "
-                    "pas de conclure à l'absence de correspondance UVP/CTD. "
-                    "Une confirmation explicite est requise avant de préparer un "
-                    "export provisoire non vérifié.",
+                    "⚠ CTD Amundsen indisponible : export provisoire possible "
+                    "pour les correspondances station/position/temps, avec CTD non vérifié. "
+                    "Une confirmation explicite reste requise.",
                 ]
         elif n_matched == 0 and n_spatial > 0:
             lines += [
                 "",
-                "⚠ Aucune paire synchrone : le cache ne permet pas une jointure d'abondance fiable avec ce fichier. "
-                "Les candidats restent visibles pour audit dans `df_net_uvp_matches`.",
+                "⚠ Aucune jointure certifiée avec ces seuils.",
             ]
-        next_scope = (
-            "les lignes `exploratory=True` avec `ctd_verification=\"unavailable\"`"
-            if exploratory_override
-            else "les lignes `join_eligible=True`"
-        )
-        lines += [
-            "",
-            "Étape suivante, seulement si l'utilisateur le demande : utiliser "
-            f"{next_scope} pour préparer la comparaison d'abondance filet↔UVP.",
-        ]
         return _eco_success(
             "\n".join(lines),
             data_ref=variable_name,
@@ -4029,6 +4019,13 @@ def make_source_tools(thread_id: str) -> list:
             selection_meta = dict((selection_entry or {}).get("meta") or {})
         if not normalized:
             if selection_name:
+                latest_selection = _store.get(f"{thread_id}:ecotaxa_selection_latest")
+                latest_meta = dict((latest_selection or {}).get("meta") or {})
+                if latest_meta.get("source") == "net_uvp_empty_selection":
+                    return _eco_blocked(
+                        "Aucune correspondance validée à exporter : l’audit n’a trouvé "
+                        "aucun match utilisable pour la jointure."
+                    )
                 return _eco_blocked(
                     f"Erreur : sélection `{selection_name}` introuvable ou vide. "
                     "Relance une recherche EcoTaxa ou passe des sample_ids explicites."

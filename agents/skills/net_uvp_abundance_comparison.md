@@ -42,11 +42,14 @@ All of these are automatically injected into every `run_pandas` call — no relo
 
 ## Guided preparation: audit → export → EcoPart → final join
 
-1. If the user requests a filet subset, create it with `run_pandas` and an
-   explicit `persist_as`. Use the **exact persistent variable returned** in
-   `Persistence: persisted=true` for the audit. If the audit rejects a wrong
-   table name, read the **available persistent variables** from that blocked
-   result and **retry the audit with that exact name**; never guess a replacement.
+1. If the user requests a filet subset by zone and/or time, create it with
+   `prepare_net_uvp_audit_subsets`. It persists every requested zone × time
+   window; use the exact persistent variable returned as `audit_data_ref` for
+   the audit, so all windows are covered. Never audit the full
+   loaded file when the request names a year, zone, station
+   subset, or other filter: create that subset first.
+   If an audit rejects a reference, read its available persistent variables and
+   retry the audit with that exact name; never guess one.
 2. Run `find_uvp_matches_for_net_table` on that exact table. A normalized
    station match is mandatory; spatial and temporal information only choose
    among candidates from that same station. The certified export scope is only
@@ -57,7 +60,8 @@ All of these are automatically injected into every `run_pandas` call — no relo
      correspondances ne peuvent pas être certifiées. Souhaites-tu quand même
      préparer un export provisoire, clairement signalé comme non vérifié ?”
      Do not expose internal labels, tool arguments, or selection identifiers.
-     A natural “oui, continue sans CTD” is sufficient confirmation.
+     A natural “oui, continue sans CTD”, “exporte les correspondances”, or an
+     equivalent direct export request is sufficient confirmation.
    - On that confirmation, do not merely acknowledge the exploratory
      confirmation: the very next tool call must be `find_uvp_matches_for_net_table`
      with the exact same audit arguments plus `allow_unverified_ctd=True`.

@@ -52,6 +52,11 @@ definition source, Wikipedia URL and WoRMS validation.
   graph skills when visual. Reuse them; load another source skill only after
   authorization and before first use, never after source failure. Current explicit
   EcoPart/Amundsen CTD/OGSL/Bio-ORACLE enrichment replaces stale affinity.
+- EcoTaxa read-only route is cache-first and schema-first: when the cache schema
+  is unknown inspect it, then use one read-only SQL query for filtering, joins,
+  counts, rankings and sample resolution. Reuse its saved selection; convenience
+  browsing never replaces this route. Object-level values require the confirmed
+  export path, never sample-cache metadata.
 - Knowledge base -> unresolved project documentation only, never source data,
   columns or user preference. Clear data request -> act.
 - User path -> load then reuse exact persistent variable. Bundled NeoLabs ->
@@ -77,14 +82,24 @@ proximity, `analysis_id` or free-form query. Never estimate a correspondence
 from proximity alone. `join_eligible=True` -> sole
 certified match; `spatial_only`, filename candidate, missing CTD, CTD no-match
 -> never certified.
+Subset before audit: when the user names a year, zone, station subset or other
+file filter together with a net↔UVP audit, first use
+`prepare_net_uvp_audit_subsets` to create and persist every requested
+zone×time-window subset. Only then audit its returned `audit_data_ref`, which
+covers all requested windows;
+never audit the full loaded file as a shortcut.
 
 CTD unavailable -> say candidates passed position/time but shared filename and
 variables were not verified; state received + missing evidence, never “no UVP”.
 Offer a clearly non-verified provisional export, without implementation wording.
+CTD unavailable never means no export possible: say that provisional export is
+available, but not certified for the final abundance join.
 Only new explicit confirmation -> `allow_unverified_ctd=True` + audit export
 dry-run; never CTD no-match. Keep `ctd_verification="unavailable"` +
 `exploratory=True`. Final local net/UVP join only after audit -> selected
 multi-project UVP export -> EcoPart enrichment; preserve `export_project_id`.
+An explicit request to export the matches is confirmation: re-run the same
+audit with `allow_unverified_ctd=True`, then prepare the provisional export.
 Detailed sequence lives in the net/UVP skill.
 
 {NUMERIC_EVIDENCE_RULES}

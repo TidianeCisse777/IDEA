@@ -1953,9 +1953,13 @@ def test_net_uvp_match_tool_requires_explicit_call_and_matches_by_deployment(tmp
         item for item in source_module.make_source_tools(thread_id)
         if item.name == "find_uvp_matches_for_net_table"
     )
-    result = tool.invoke({"date_from": "2023-01-01"})
+    assert tool.args_schema.model_fields["max_time_gap_days"].default == 0.5
+    result = tool.invoke({"date_from": "2023-01-01", "max_time_gap_days": 1.0})
 
-    assert "1 `matched`" in result
+    assert "jointures certifiées : 1." in result
+    assert "Station concordante : 1 déploiement(s) sur 1." in result
+    assert "net_sample_id" not in result
+    assert "Étape suivante" not in result
     matches = store.get(f"{thread_id}:dataset:df_net_uvp_matches")["df"]
     assert matches["net_sample_id"].tolist() == [101, 102]
     assert matches["net_deployment_id"].eq("7").all()
@@ -1974,12 +1978,42 @@ def test_net_uvp_match_tool_requires_explicit_call_and_matches_by_deployment(tmp
         unavailable_ctd_metadata,
         raising=False,
     )
-    unavailable_result = tool.invoke({"date_from": "2023-01-01"})
+    unavailable_result = tool.invoke({"date_from": "2023-01-01", "max_time_gap_days": 1.0})
     unavailable_matches = store.get(f"{thread_id}:dataset:df_net_uvp_matches")["df"]
-    assert "Validation CTD Amundsen indisponible" in unavailable_result
+    assert "CTD Amundsen indisponible : export provisoire possible" in unavailable_result
+    assert "variables CTD n'ont pas été reçus" not in unavailable_result
     assert "Aucune paire synchrone" not in unavailable_result
     assert unavailable_matches["ctd_filename_match_status"].eq("source_unavailable").all()
     assert not unavailable_matches["join_eligible"].any()
+
+
+def test_net_uvp_audit_rejects_loaded_file_after_scoped_subsets_exist(tmp_path, monkeypatch):
+    """Une préparation ciblée ne doit jamais retomber sur le fichier complet."""
+    import tools.copepod_sources as source_module
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    thread_id = "net-uvp-scoped-guard"
+    store = SessionStore(tmp_path / "sessions")
+    raw = pd.DataFrame({"station": ["A"], "latitude": [74.0], "longitude": [-68.0]})
+    store_dataset(
+        store, thread_id, raw, variable_name="df_file_net",
+        meta={"source": "file"}, is_loaded_file=True,
+    )
+    store_dataset(
+        store, thread_id, raw, variable_name="df_net_uvp_scope_baffin_2024",
+        meta={"source": "net_uvp_audit_subset"}, set_active=False,
+    )
+    monkeypatch.setattr(source_module, "_store", store)
+    tool = next(
+        item for item in source_module.make_source_tools(thread_id)
+        if item.name == "find_uvp_matches_for_net_table"
+    )
+
+    result = tool.invoke({"net_variable_name": "df_file_net"})
+
+    assert "sous-ensembles préparés" in result
+    assert "df_net_uvp_scope_baffin_2024" in result
 
 
 def _selection_name_from(result: str) -> str:
@@ -2084,7 +2118,7 @@ def test_audit_publishes_only_ctd_certified_selection(tmp_path, monkeypatch):
         tmp_path, monkeypatch, fetch_ctd_metadata
     )
 
-    result = tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+    result = tool.invoke({"net_variable_name": "df_file_baffin_2024", "max_time_gap_days": 1.0})
 
     name = _selection_name_from(result)
     meta = store.get(f"{thread_id}:selection:{name}")["meta"]
@@ -2130,6 +2164,7 @@ def test_audit_unavailable_ctd_opt_in_publishes_exploratory_selection(
         {
             "net_variable_name": "df_file_baffin_2024",
             "allow_unverified_ctd": True,
+            "max_time_gap_days": 1.0,
         }
     )
 
@@ -2199,6 +2234,29 @@ def test_empty_exploratory_audit_invalidates_latest_selection(
     assert latest["meta"]["sample_ids"] == []
 
 
+def test_export_after_empty_net_uvp_audit_explains_no_validated_match(
+    tmp_path, monkeypatch
+):
+    """An export request after a failed audit must explain the outcome plainly."""
+    import tools.copepod_sources as source_module
+
+    tool, _store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, lambda **_kwargs: pd.DataFrame()
+    )
+    tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+    latest = _store.get(f"{thread_id}:ecotaxa_selection_latest")
+    assert latest["meta"]["source"] == "net_uvp_empty_selection"
+
+    export = next(
+        item for item in source_module.make_source_tools(thread_id)
+        if item.name == "export_ecotaxa_samples"
+    )
+    result = export.invoke({"selection_name": "latest"})
+
+    assert "Aucune correspondance validée à exporter" in result
+    assert "Relance une recherche EcoTaxa" not in result
+
+
 def test_audit_selection_is_canonical_across_permuted_matches(tmp_path, monkeypatch):
     def fetch_ctd_metadata(**_kwargs):
         return pd.DataFrame(
@@ -2216,7 +2274,7 @@ def test_audit_selection_is_canonical_across_permuted_matches(tmp_path, monkeypa
         tmp_path / "first", monkeypatch, fetch_ctd_metadata
     )
     first_name = _selection_name_from(
-        first_tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+        first_tool.invoke({"net_variable_name": "df_file_baffin_2024", "max_time_gap_days": 1.0})
     )
     first_meta = first_store.get(f"{first_thread}:selection:{first_name}")["meta"]
 
@@ -2224,7 +2282,7 @@ def test_audit_selection_is_canonical_across_permuted_matches(tmp_path, monkeypa
         tmp_path / "second", monkeypatch, fetch_ctd_metadata, row_order=[2, 1, 0]
     )
     second_name = _selection_name_from(
-        second_tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+        second_tool.invoke({"net_variable_name": "df_file_baffin_2024", "max_time_gap_days": 1.0})
     )
     second_meta = second_store.get(f"{second_thread}:selection:{second_name}")["meta"]
 
@@ -2253,7 +2311,7 @@ def test_audit_selection_deduplicates_repeated_certified_project_sample_pair(
     )
 
     name = _selection_name_from(
-        tool.invoke({"net_variable_name": "df_file_baffin_2024"})
+        tool.invoke({"net_variable_name": "df_file_baffin_2024", "max_time_gap_days": 1.0})
     )
     meta = store.get(f"{thread_id}:selection:{name}")["meta"]
 
