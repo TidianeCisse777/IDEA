@@ -28,6 +28,12 @@ When the user asks to enrich a loaded sample, file, table, or its stations with
 Bio-ORACLE, call `enrich_with_bio_oracle` directly on the exact active variable.
 This is the only canonical loaded-table enrichment path.
 
+- Before calling the tool, propose the copépode variable preset and the complete
+  catalog, then wait for the user's explicit selections. The user must choose
+  one or more variables, one or more scenarios, a vertical layer, and a
+  statistic. Never apply a preset silently.
+- The canonical tool enriches every source row by latitude/longitude and keeps
+  the DataFrame grain. It does not aggregate rows by zone.
 - Do not preflight with discovery, zone, point-preview, or raw-query tools.
 - Do not construct or transcribe station rows in tool arguments.
 - Do not reuse an earlier assistant refusal or schema assessment.
@@ -42,10 +48,18 @@ persisted enriched table for any requested neutral aggregation.
 
 ## Variables and scenarios
 
-Friendly variables include `temperature`, `salinity`, `oxygen`, `chlorophyll`,
-`nitrate`, `ph`, and `iron`. Scenarios include `baseline`, `SSP1-2.6`,
-`SSP2-4.5`, and `SSP5-8.5`; treat `2.6`, `4.5`, `8.5`, `RCP4.5`, and the
-common `SSP4-4.5` typo as their standard SSP equivalents (`4.5` → `SSP2-4.5`).
+The proposed copépode variables include `temperature`, `salinity`, `oxygen`,
+`nitrate`, `phosphate`, `silicate`, `chlorophyll`, `primary_productivity`,
+`mixed_layer_depth`, `par`, and `diffuse_attenuation`. The full catalog also
+offers current, ice, atmospheric, and other environmental layers. Scenarios
+include `baseline`, `SSP1-1.9`, `SSP1-2.6`, `SSP2-4.5`, `SSP3-7.0`, `SSP4-6.0`,
+and `SSP5-8.5`; treat common numeric/RCP aliases as their standard SSP
+equivalents (`4.5` → `SSP2-4.5`).
+
+- The vertical layer is mandatory: choose `surface`, `benthic_min`,
+  `benthic_mean`, or `benthic_max`.
+- The statistic is mandatory and must be supported by the selected variables:
+  `mean`, `min`, `max`, `lt_min`, `lt_max`, or `range`.
 
 - Pass only variables/scenarios requested by the user; otherwise use canonical
   defaults.

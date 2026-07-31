@@ -11,6 +11,10 @@ import pandas as pd
 import requests
 from langchain_core.tools import tool
 
+from core.bio_oracle_catalog import (
+    list_catalog_variables,
+    validate_enrichment_selection,
+)
 from core.bio_oracle_client import (
     _ERDDAP_BASE,
     _find_dataset_id,
@@ -116,7 +120,12 @@ def _fetch_bio_oracle_bbox(
     many dispersed points, where one coarse download beats dozens of fine ones —
     fine for smooth fields such as climatological temperature.
     """
-    var = _resolve_var(variable)
+    try:
+        from core.bio_oracle_catalog import resolve_catalog_variable
+
+        var = resolve_catalog_variable(variable).erddap_var
+    except ValueError:
+        var = _resolve_var(variable)
     scen = _resolve_scenario(scenario)
     depth = _resolve_depth(depth_layer)
     stride = max(1, int(stride))
@@ -263,6 +272,7 @@ class BioOracleMatcher:
         *,
         variables: list[str],
         scenarios: list[str],
+        scenario_display_names: list[str] | None = None,
         depth_layer: str,
         target_year: int | None,
         statistic: str,
@@ -275,6 +285,7 @@ class BioOracleMatcher:
         # aliases (for example SSP4-4.5 -> ssp245) before the ERDDAP request.
         self.variables = variables
         self.scenarios = scenarios
+        self.scenario_display_names = scenario_display_names or list(scenarios)
         self.depth_layer = depth_layer
         self.target_year = target_year
         self.statistic = statistic
@@ -352,6 +363,9 @@ class BioOracleMatcher:
         tile_jobs: dict[tuple, dict] = {}
         point_to_tile_key: dict[tuple, tuple] = {}
         for (variable, scenario, layer, statistic, year), keys in by_layer.items():
+            scenario_display = self.scenario_display_names[
+                self.scenarios.index(scenario)
+            ]
             fine = {key: _canonical_tile_for(key[0], key[1]) for key in keys}
             distinct_fine = {
                 (t["lat_min"], t["lat_max"], t["lon_min"], t["lon_max"])
@@ -371,7 +385,7 @@ class BioOracleMatcher:
                     variable, scenario, layer, statistic, year, _REGION_STRIDE,
                 )
                 tile_jobs.setdefault(tile_key, {
-                    "tile": tile, "variable": variable, "scenario": scenario,
+                    "tile": tile, "variable": variable, "scenario": scenario_display,
                     "depth_layer": layer, "target_year": year, "statistic": statistic,
                     "stride": _REGION_STRIDE,
                 })
@@ -389,7 +403,7 @@ class BioOracleMatcher:
                     # Fine mode: omit `stride` (defaults to 1) so the payload stays
                     # backward-compatible with callers/mocks predating the stride arg.
                     tile_jobs.setdefault(tile_key, {
-                        "tile": tile, "variable": variable, "scenario": scenario,
+                        "tile": tile, "variable": variable, "scenario": scenario_display,
                         "depth_layer": layer, "target_year": year, "statistic": statistic,
                     })
 
@@ -441,7 +455,9 @@ class BioOracleMatcher:
         columns: dict[str, list] = {}
         point_has_value = [False] * n_unique
         for variable in self.variables:
-            for scenario in self.scenarios:
+            for scenario, display_scenario in zip(
+                self.scenarios, self.scenario_display_names
+            ):
                 values: list[object] = []
                 dataset_ids: list[object] = []
                 times: list[object] = []
@@ -459,7 +475,7 @@ class BioOracleMatcher:
                         point_has_value[i] = True
                 statistic_suffix = "" if self.statistic == "mean" else f"_{_clean_label(self.statistic)}"
                 stub = (
-                    f"bio_oracle_{_clean_label(variable)}_{_clean_label(scenario)}"
+                    f"bio_oracle_{_clean_label(variable)}_{_clean_label(display_scenario)}"
                     f"{statistic_suffix}"
                 )
                 columns[stub] = values
@@ -1179,7 +1195,8 @@ def make_bio_oracle_tools(thread_id: str) -> list:
     def enrich_with_bio_oracle(
         variables: list[str] | None = None,
         scenarios: list[str] | None = None,
-        depth_layer: str = "surface",
+        depth_layer: str | None = None,
+        statistic: str | None = None,
         target_year: int | None = None,
         latitude_column: str | None = None,
         longitude_column: str | None = None,
@@ -1191,27 +1208,55 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         zone_name: str | None = None,
         date_range: list | None = None,
     ) -> str:
-        """Enrichit la table chargée avec Bio-ORACLE par lat/lon.
+        """Enrichit chaque ligne d'un DataFrame chargé avec Bio-ORACLE.
 
-        Auto-détecte les colonnes latitude/longitude. Pour chaque (variable,
-        scenario), interroge Bio-ORACLE au point exact en parallèle, puis
-        recolle une valeur par ligne. Si plusieurs fichiers sont en session,
-        passe `source_variable` (par exemple `df_file_filet_arctic_2018`) pour
-        cibler un dataset précis au lieu du df actif.
+        Avant l'appel, proposer à l'utilisateur les variables du catalogue (la
+        présélection copépodes et le catalogue complet), puis attendre son choix
+        explicite. Variables, scénarios, couche verticale et statistique sont
+        obligatoires ; une année cible est obligatoire pour un scénario SSP.
+        Une sélection absente ou invalide est bloquée sans I/O distant. Le tool
+        conserve toutes les lignes et n'agrège jamais par zone. Auto-détecte les
+        colonnes latitude/longitude ; si plusieurs fichiers sont en session,
+        passe `source_variable` pour cibler un dataset précis.
         """
-        if not variables:
-            variables = [
-                "temperature", "salinity", "oxygen", "ph", "nitrate",
-                "chlorophyll", "iron",
+        selection = validate_enrichment_selection(
+            variables=variables,
+            scenarios=scenarios,
+            depth_layer=depth_layer,
+            statistic=statistic,
+            target_year=target_year,
+        )
+        if not selection["ok"]:
+            recommended = [
+                item["label"]
+                for item in list_catalog_variables()
+                if item["recommended_for_copepods"]
             ]
-        if not scenarios:
-            scenarios = ["baseline"]
+            choices = ", ".join(recommended)
+            missing = ", ".join(selection.get("missing") or [])
+            missing_line = f" Champs manquants : {missing}." if missing else ""
+            return _bio_blocked(
+                f"{selection['code']}: {selection['message']}{missing_line}\n"
+                f"Présélection copépodes à choisir : {choices}.\n"
+                "Couches : surface, benthic_min, benthic_mean, benthic_max. "
+                "Statistiques : mean, min, max, lt_min, lt_max, range."
+            )
+
+        variables = selection["variables"]
+        scenarios = selection["scenarios"]
+        scenario_display_names = selection["scenario_display_names"]
+        depth_layer = selection["depth_layer"]
+        depth_layer_display = selection["depth_layer_display"]
+        statistic = selection["statistic"]
+        target_year = selection["target_year"]
 
         matcher = BioOracleMatcher(
             variables=variables,
             scenarios=scenarios,
+            scenario_display_names=scenario_display_names,
             depth_layer=depth_layer,
             target_year=target_year,
+            statistic=statistic,
             coordinate_bin_degrees=coordinate_bin_degrees,
             max_unique_queries=max_unique_queries,
             confirmed=confirmed,
@@ -1254,10 +1299,12 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             ),
             (
                 "- Datasets Bio-ORACLE : un par (variable × scénario), "
-                f"depth_layer={depth_layer!r}, target_year={target_year!r}"
+                f"depth_layer={depth_layer_display!r} ({depth_layer!r}), "
+                f"statistic={statistic!r}, "
+                f"target_year={target_year!r}"
             ),
             f"- Variables : {', '.join(variables)}",
-            f"- Scénarios : {', '.join(scenarios)}",
+            f"- Scénarios : {', '.join(scenario_display_names)}",
             (
                 f"- Dédup par point unique sur grille "
                 f"{float(coordinate_bin_degrees):g}° pour économiser les appels ERDDAP"

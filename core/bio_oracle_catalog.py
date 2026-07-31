@@ -96,6 +96,16 @@ CATALOG_SCENARIOS: dict[str, str] = {
     "ssp585": "ssp585",
 }
 
+SCENARIO_DISPLAY_NAMES: dict[str, str] = {
+    "baseline": "baseline",
+    "ssp119": "ssp1_1_9",
+    "ssp126": "ssp1_2_6",
+    "ssp245": "ssp2_4_5",
+    "ssp370": "ssp3_7_0",
+    "ssp460": "ssp4_6_0",
+    "ssp585": "ssp5_8_5",
+}
+
 CATALOG_LAYERS: dict[str, str] = {
     "surface": "depthsurf",
     "surf": "depthsurf",
@@ -105,6 +115,13 @@ CATALOG_LAYERS: dict[str, str] = {
     "min": "depthmin",
     "mean": "depthmean",
     "max": "depthmax",
+}
+
+LAYER_DISPLAY_NAMES: dict[str, str] = {
+    "depthsurf": "surface",
+    "depthmin": "benthic_min",
+    "depthmean": "benthic_mean",
+    "depthmax": "benthic_max",
 }
 
 _STATISTIC_ALIASES = {
@@ -282,7 +299,11 @@ def validate_enrichment_selection(
         "variables": canonical_variables,
         "variable_specs": variable_specs,
         "scenarios": canonical_scenarios,
+        "scenario_display_names": [
+            SCENARIO_DISPLAY_NAMES[scenario] for scenario in canonical_scenarios
+        ],
         "depth_layer": canonical_layer,
+        "depth_layer_display": LAYER_DISPLAY_NAMES[canonical_layer],
         "statistic": canonical_statistic,
         "target_year": target_year if is_future else None,
         "remote_io": False,

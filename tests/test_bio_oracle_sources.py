@@ -1024,7 +1024,7 @@ def test_enrich_with_bio_oracle_attaches_value_to_each_source_row():
     )
     _store.set(thread_id, source, {"source": "file:bio.tsv"})
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
         return _bbox_tile_df(
             8.42,
             dataset_id="thetao_ssp585_2020_2100_depthsurf",
@@ -1045,6 +1045,8 @@ def test_enrich_with_bio_oracle_attaches_value_to_each_source_row():
             {
                 "variables": ["temperature"],
                 "scenarios": ["SSP5-8.5"],
+                "depth_layer": "surface",
+                "statistic": "mean",
                 "target_year": 2050,
             }
         )
@@ -1053,6 +1055,101 @@ def test_enrich_with_bio_oracle_attaches_value_to_each_source_row():
     enriched = _store.get(keys[-1])["df"]
     assert enriched["bio_oracle_temperature_ssp5_8_5"].tolist() == [8.42]
     assert enriched["bio_oracle_match_status"].tolist() == ["matched"]
+
+
+def test_enrich_with_bio_oracle_requires_explicit_catalog_selection_before_http():
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-explicit-selection"
+    _store.set(
+        thread_id,
+        pd.DataFrame({"latitude": [60.0], "longitude": [-65.0]}),
+        {"source": "file:selection.tsv"},
+    )
+    enrich = next(t for t in make_bio_oracle_tools(thread_id) if t.name == "enrich_with_bio_oracle")
+
+    with patch("tools.bio_oracle_sources._fetch_bio_oracle_bbox") as fetch:
+        result = enrich.invoke({})
+
+    fetch.assert_not_called()
+    assert "Choisis" in result or "sélection" in result.lower()
+    assert "température" in result.lower()
+
+
+def test_enrich_with_bio_oracle_requires_year_for_ssp_before_http():
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-explicit-ssp-year"
+    _store.set(
+        thread_id,
+        pd.DataFrame({"latitude": [60.0], "longitude": [-65.0]}),
+        {"source": "file:selection.tsv"},
+    )
+    enrich = next(t for t in make_bio_oracle_tools(thread_id) if t.name == "enrich_with_bio_oracle")
+
+    with patch("tools.bio_oracle_sources._fetch_bio_oracle_bbox") as fetch:
+        result = enrich.invoke({
+            "variables": ["temperature"],
+            "scenarios": ["SSP5-8.5"],
+            "depth_layer": "surface",
+            "statistic": "mean",
+        })
+
+    fetch.assert_not_called()
+    assert "année" in result.lower()
+    assert "target_year_required" in result.lower()
+
+
+def test_enrich_with_bio_oracle_valid_selection_preserves_rows_and_statistic_provenance():
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-explicit-valid"
+    source = pd.DataFrame({
+        "station": ["A", "B", "A"],
+        "latitude": [60.0, 61.0, 60.0],
+        "longitude": [-65.0, -66.0, -65.0],
+    })
+    _store.set(thread_id, source, {"source": "file:selection.tsv"})
+
+    def fake_fetch(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
+        frame = pd.DataFrame([{
+            "time": "2050-01-01T00:00:00Z",
+            "latitude": 60.0,
+            "longitude": -65.0,
+            "value": 12.5,
+        }])
+        frame.attrs["dataset_id"] = "thetao_ssp585_2020_2100_depthsurf"
+        return frame
+
+    with patch("tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch):
+        enrich = next(t for t in make_bio_oracle_tools(thread_id) if t.name == "enrich_with_bio_oracle")
+        result = enrich.invoke({
+            "variables": ["temperature"],
+            "scenarios": ["SSP5-8.5"],
+            "depth_layer": "surface",
+            "statistic": "max",
+            "target_year": 2050,
+        })
+
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    assert len(enriched) == len(source)
+    assert enriched["station"].tolist() == source["station"].tolist()
+    assert "bio_oracle_temperature_ssp5_8_5_max" in enriched.columns
+    assert "bio_oracle_temperature_ssp5_8_5_max_dataset_id" in enriched.columns
+    assert "max" in result.lower()
 
 
 def test_enrich_with_bio_oracle_deduplicates_points_to_minimize_http_calls():
@@ -1079,7 +1176,7 @@ def test_enrich_with_bio_oracle_deduplicates_points_to_minimize_http_calls():
     import pandas as pd_local
     counter = {"calls": 0}
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
         counter["calls"] += 1
         # tile DataFrame with one row per source point — lookup picks nearest
         df = pd_local.DataFrame([
@@ -1101,6 +1198,8 @@ def test_enrich_with_bio_oracle_deduplicates_points_to_minimize_http_calls():
             {
                 "variables": ["temperature"],
                 "scenarios": ["SSP5-8.5"],
+                "depth_layer": "surface",
+                "statistic": "mean",
                 "target_year": 2050,
             }
         )
@@ -1135,7 +1234,7 @@ def test_enrich_with_bio_oracle_collapses_dispersed_points_to_one_region_tile():
 
     calls = {"n": 0, "strides": []}
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, stride=1):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, stride=1, statistic="mean"):
         calls["n"] += 1
         calls["strides"].append(stride)
         # grille couvrant toute l'emprise, une valeur = latitude (déterministe)
@@ -1151,7 +1250,7 @@ def test_enrich_with_bio_oracle_collapses_dispersed_points_to_one_region_tile():
     with patch("tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox):
         enrich = next(t for t in make_bio_oracle_tools(thread_id)
                       if t.name == "enrich_with_bio_oracle")
-        enrich.invoke({"variables": ["temperature"], "scenarios": ["SSP5-8.5"], "target_year": 2050})
+        enrich.invoke({"variables": ["temperature"], "scenarios": ["SSP5-8.5"], "depth_layer": "surface", "statistic": "mean", "target_year": 2050})
 
     # UNE tuile région (1 variable × 1 scénario), pas ~45.
     assert calls["n"] == 1, f"attendu 1 fetch région, obtenu {calls['n']}"
@@ -1200,6 +1299,8 @@ def test_enrich_with_bio_oracle_snaps_to_grid_and_requires_confirmation_when_too
         refused = enrich.invoke({
             "variables": ["temperature"],
             "scenarios": ["baseline"],
+            "depth_layer": "surface",
+            "statistic": "mean",
             "max_unique_queries": 2,
         })
 
@@ -1209,7 +1310,7 @@ def test_enrich_with_bio_oracle_snaps_to_grid_and_requires_confirmation_when_too
 
     calls = []
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
         calls.append(tile)
         import pandas as pd_local
         df = pd_local.DataFrame([
@@ -1227,6 +1328,8 @@ def test_enrich_with_bio_oracle_snaps_to_grid_and_requires_confirmation_when_too
         enrich.invoke({
             "variables": ["temperature"],
             "scenarios": ["baseline"],
+            "depth_layer": "surface",
+            "statistic": "mean",
             "max_unique_queries": 2,
             "confirmed": True,
         })
@@ -1261,7 +1364,7 @@ def test_enrich_with_bio_oracle_combines_multiple_variables_and_scenarios():
     source = pd.DataFrame({"latitude": [60.0], "longitude": [-65.0]})
     _store.set(thread_id, source, {"source": "file:multi.tsv"})
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
         return _bbox_tile_df(
             hash((variable, scenario)) % 100 / 10.0,
             dataset_id=f"{variable}_{scenario}",
@@ -1282,6 +1385,9 @@ def test_enrich_with_bio_oracle_combines_multiple_variables_and_scenarios():
             {
                 "variables": ["temperature", "salinity"],
                 "scenarios": ["baseline", "SSP5-8.5"],
+                "depth_layer": "surface",
+                "statistic": "mean",
+                "target_year": 2050,
             }
         )
 
@@ -1311,7 +1417,7 @@ def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_none():
     source = pd.DataFrame({"latitude": [60.0, 0.0], "longitude": [-65.0, 0.0]})
     _store.set(thread_id, source, {"source": "file:nv.tsv"})
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
         import pandas as pd_local
         # Tile around the first source point only — second point (0, 0) gets
         # a tile fetch returning all-NaN → no_value.
@@ -1334,7 +1440,7 @@ def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_none():
             for tool in make_bio_oracle_tools(thread_id)
             if tool.name == "enrich_with_bio_oracle"
         )
-        enrich.invoke({"variables": ["temperature"], "scenarios": ["SSP5-8.5"]})
+        enrich.invoke({"variables": ["temperature"], "scenarios": ["SSP5-8.5"], "depth_layer": "surface", "statistic": "mean", "target_year": 2050})
 
     keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
     enriched = _store.get(keys[-1])["df"]
@@ -1362,7 +1468,7 @@ def test_enrich_with_bio_oracle_diagnoses_empty_coordinates_without_http():
             for tool in make_bio_oracle_tools(thread_id)
             if tool.name == "enrich_with_bio_oracle"
         )
-        result = enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"]})
+        result = enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"], "depth_layer": "surface", "statistic": "mean"})
 
     mock_fetch.assert_not_called()
     assert (
@@ -1389,7 +1495,7 @@ def test_enrich_with_bio_oracle_returns_method_block_and_traceability_columns():
     )
     _store.set(thread_id, source, {"source": "file:m.tsv"})
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
         import pandas as pd_local
         if tile["lat_min"] <= 0 <= tile["lat_max"]:
             df = pd_local.DataFrame([
@@ -1416,6 +1522,7 @@ def test_enrich_with_bio_oracle_returns_method_block_and_traceability_columns():
                 "variables": ["temperature"],
                 "scenarios": ["SSP5-8.5"],
                 "depth_layer": "surface",
+                "statistic": "mean",
                 "target_year": 2050,
             }
         )
@@ -1436,7 +1543,7 @@ def test_enrich_with_bio_oracle_returns_method_block_and_traceability_columns():
     time_col = "bio_oracle_temperature_ssp5_8_5_time"
     assert dataset_col in enriched.columns
     assert time_col in enriched.columns
-    assert enriched[dataset_col].iloc[0] == "temperature_SSP5-8.5_2020_2100_depthsurf"
+    assert enriched[dataset_col].iloc[0] == "temperature_ssp5_8_5_2020_2100_depthsurf"
     assert enriched[time_col].iloc[0] == "2050-01-01T00:00:00Z"
 
 
@@ -1465,7 +1572,7 @@ def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_nan_float():
     source = pd.DataFrame({"latitude": [49.5], "longitude": [-63.0]})
     _store.set(thread_id, source, {"source": "file:anticosti.tsv"})
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
         return _bbox_tile_df(
             math.nan,
             dataset_id="thetao_baseline_2000_2019_depthsurf",
@@ -1481,7 +1588,7 @@ def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_nan_float():
             t for t in make_bio_oracle_tools(thread_id)
             if t.name == "enrich_with_bio_oracle"
         )
-        enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"]})
+        enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"], "depth_layer": "surface", "statistic": "mean"})
 
     keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
     enriched = _store.get(keys[-1])["df"]
@@ -1510,7 +1617,7 @@ def test_enrich_with_bio_oracle_skips_out_of_range_coords_without_http():
 
     fetch_calls = []
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
         fetch_calls.append(tile)
         return _bbox_tile_df(
             8.0,
@@ -1527,7 +1634,7 @@ def test_enrich_with_bio_oracle_skips_out_of_range_coords_without_http():
             t for t in make_bio_oracle_tools(thread_id)
             if t.name == "enrich_with_bio_oracle"
         )
-        enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"]})
+        enrich.invoke({"variables": ["temperature"], "scenarios": ["baseline"], "depth_layer": "surface", "statistic": "mean"})
 
     # Only the 1st point (60, -65) generates a tile fetch — others are out-of-range
     assert len(fetch_calls) == 1
@@ -1570,7 +1677,7 @@ def test_enrich_with_bio_oracle_can_target_specific_dataset_via_source_variable(
     )
     _store.set(thread_id, uvp, {"source": "file:uvp.tsv"})
 
-    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile):
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
         return _bbox_tile_df(8.42, dataset_id="x", time="2050-01-01")
 
     with patch(
@@ -1584,6 +1691,9 @@ def test_enrich_with_bio_oracle_can_target_specific_dataset_via_source_variable(
             "source_variable": "df_file_filet",
             "variables": ["temperature"],
             "scenarios": ["SSP5-8.5"],
+            "depth_layer": "surface",
+            "statistic": "mean",
+            "target_year": 2050,
         })
 
     keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
