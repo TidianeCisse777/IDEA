@@ -102,6 +102,7 @@ def _fetch_bio_oracle_bbox(
     target_year: int | None,
     tile: dict,
     stride: int = 1,
+    statistic: str = "mean",
 ) -> pd.DataFrame:
     """Fetch all Bio-ORACLE grid points within a canonical tile (one HTTP call).
 
@@ -126,6 +127,7 @@ def _fetch_bio_oracle_bbox(
         "depth_layer": depth,
         "target_year": target_year,
         "stride": stride,
+        "statistic": statistic,
     }
     cached = cache_get("bio_oracle_bbox", cache_key)
     if cached is not None:
@@ -133,7 +135,7 @@ def _fetch_bio_oracle_bbox(
 
     dataset_id = _find_dataset_id(var, scen, depth)
     griddap_url = f"{_ERDDAP_BASE}/griddap/{dataset_id}"
-    query_var = f"{var}_mean"
+    query_var = f"{var}_{statistic}"
     time_sel = _time_selector({"target_year": target_year}, scenario=scen)
     url = (
         f"{griddap_url}.csv?{query_var}"
@@ -263,6 +265,7 @@ class BioOracleMatcher:
         scenarios: list[str],
         depth_layer: str,
         target_year: int | None,
+        statistic: str,
         coordinate_bin_degrees: float,
         max_unique_queries: int,
         confirmed: bool,
@@ -274,6 +277,7 @@ class BioOracleMatcher:
         self.scenarios = scenarios
         self.depth_layer = depth_layer
         self.target_year = target_year
+        self.statistic = statistic
         self.coordinate_bin_degrees = coordinate_bin_degrees
         self.max_unique_queries = max_unique_queries
         self.confirmed = confirmed
@@ -330,7 +334,7 @@ class BioOracleMatcher:
             for i in range(n_unique)
         ]
         unique_query_keys = {
-            (lat_f, lon_f, variable, scenario, self.depth_layer, self.target_year)
+            (lat_f, lon_f, variable, scenario, self.depth_layer, self.statistic, self.target_year)
             for lat_f, lon_f in snapped
             for variable in self.variables
             for scenario in self.scenarios
@@ -342,12 +346,12 @@ class BioOracleMatcher:
         # per group, between many fine 5° tiles or one coarse region tile.
         by_layer: dict[tuple, list[tuple]] = defaultdict(list)
         for key in unique_query_keys:
-            lat_f, lon_f, variable, scenario, layer, year = key
-            by_layer[(variable, scenario, layer, year)].append(key)
+            lat_f, lon_f, variable, scenario, layer, statistic, year = key
+            by_layer[(variable, scenario, layer, statistic, year)].append(key)
 
         tile_jobs: dict[tuple, dict] = {}
         point_to_tile_key: dict[tuple, tuple] = {}
-        for (variable, scenario, layer, year), keys in by_layer.items():
+        for (variable, scenario, layer, statistic, year), keys in by_layer.items():
             fine = {key: _canonical_tile_for(key[0], key[1]) for key in keys}
             distinct_fine = {
                 (t["lat_min"], t["lat_max"], t["lon_min"], t["lon_max"])
@@ -364,11 +368,12 @@ class BioOracleMatcher:
                 }
                 tile_key = (
                     tile["lat_min"], tile["lat_max"], tile["lon_min"], tile["lon_max"],
-                    variable, scenario, layer, year, _REGION_STRIDE,
+                    variable, scenario, layer, statistic, year, _REGION_STRIDE,
                 )
                 tile_jobs.setdefault(tile_key, {
                     "tile": tile, "variable": variable, "scenario": scenario,
-                    "depth_layer": layer, "target_year": year, "stride": _REGION_STRIDE,
+                    "depth_layer": layer, "target_year": year, "statistic": statistic,
+                    "stride": _REGION_STRIDE,
                 })
                 for key in keys:
                     point_to_tile_key[key] = tile_key
@@ -378,14 +383,14 @@ class BioOracleMatcher:
                     tile_key = (
                         tile["lat_min"], tile["lat_max"],
                         tile["lon_min"], tile["lon_max"],
-                        variable, scenario, layer, year, 1,
+                        variable, scenario, layer, statistic, year, 1,
                     )
                     point_to_tile_key[key] = tile_key
                     # Fine mode: omit `stride` (defaults to 1) so the payload stays
                     # backward-compatible with callers/mocks predating the stride arg.
                     tile_jobs.setdefault(tile_key, {
                         "tile": tile, "variable": variable, "scenario": scenario,
-                        "depth_layer": layer, "target_year": year,
+                        "depth_layer": layer, "target_year": year, "statistic": statistic,
                     })
 
         def _fetch_tile(args: tuple) -> tuple[tuple, pd.DataFrame | None, str | None]:
@@ -443,7 +448,7 @@ class BioOracleMatcher:
                 for i in range(n_unique):
                     lat_f, lon_f = snapped[i]
                     fetched = cache[
-                        (lat_f, lon_f, variable, scenario, self.depth_layer, self.target_year)
+                    (lat_f, lon_f, variable, scenario, self.depth_layer, self.statistic, self.target_year)
                     ]
                     value = fetched["value"]
                     is_real_value = value is not None and not pd.isna(value)
@@ -452,7 +457,11 @@ class BioOracleMatcher:
                     times.append(fetched.get("time") or pd.NA)
                     if is_real_value:
                         point_has_value[i] = True
-                stub = f"bio_oracle_{_clean_label(variable)}_{_clean_label(scenario)}"
+                statistic_suffix = "" if self.statistic == "mean" else f"_{_clean_label(self.statistic)}"
+                stub = (
+                    f"bio_oracle_{_clean_label(variable)}_{_clean_label(scenario)}"
+                    f"{statistic_suffix}"
+                )
                 columns[stub] = values
                 columns[f"{stub}_dataset_id"] = dataset_ids
                 columns[f"{stub}_time"] = times
@@ -464,7 +473,10 @@ class BioOracleMatcher:
             columns=pd.DataFrame(columns),
             statuses=statuses,
             n_matched=point_has_value.count(True),
-            diagnostics={"unique_query_count": unique_query_count},
+            diagnostics={
+                "unique_query_count": unique_query_count,
+                "statistic": self.statistic,
+            },
         )
 
 

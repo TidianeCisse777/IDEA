@@ -24,6 +24,72 @@ def _bbox_tile_df(value, *, dataset_id="ds_test", time="2010-01-01T00:00:00Z", l
     return df
 
 
+def test_fetch_bio_oracle_bbox_requests_selected_statistic_and_separates_cache():
+    from unittest.mock import MagicMock, patch
+
+    from tools.bio_oracle_sources import _fetch_bio_oracle_bbox
+
+    response = MagicMock()
+    response.text = (
+        "time,latitude,longitude,thetao_max\n"
+        "2050-01-01T00:00:00Z,60.0,-65.0,12.5\n"
+    )
+    tile = {"lat_min": 60.0, "lat_max": 65.0, "lon_min": -70.0, "lon_max": -65.0}
+
+    with patch("tools.bio_oracle_sources.cache_get", return_value=None), \
+         patch("tools.bio_oracle_sources.cache_set"), \
+         patch("tools.bio_oracle_sources._find_dataset_id", return_value="thetao_baseline_depthsurf"), \
+         patch("tools.bio_oracle_sources.requests.get", return_value=response) as get:
+        result = _fetch_bio_oracle_bbox(
+            variable="temperature",
+            scenario="baseline",
+            depth_layer="surface",
+            target_year=None,
+            tile=tile,
+            statistic="max",
+        )
+
+    assert "thetao_max" in get.call_args.args[0]
+    assert result["value"].tolist() == [12.5]
+
+
+def test_bio_oracle_matcher_keeps_selected_statistic_in_columns_and_fetch():
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import BioOracleMatcher
+    from tools.point_enrichment import QueryPoints
+
+    calls = []
+
+    def fake_fetch(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
+        calls.append(statistic)
+        return _bbox_tile_df(12.5, dataset_id="thetao_baseline_depthsurf")
+
+    matcher = BioOracleMatcher(
+        variables=["temperature"],
+        scenarios=["baseline"],
+        depth_layer="depthsurf",
+        statistic="max",
+        target_year=None,
+        coordinate_bin_degrees=1 / 12,
+        max_unique_queries=1000,
+        confirmed=True,
+        max_workers=1,
+    )
+
+    with patch("tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch):
+        result = matcher.match(
+            QueryPoints(
+                latitude=pd.Series([60.0]),
+                longitude=pd.Series([-65.0]),
+            )
+        )
+
+    assert calls == ["max"]
+    assert result.columns["bio_oracle_temperature_baseline_max"].tolist() == [12.5]
+
+
 def test_make_bio_oracle_tools_exposes_expected_tools():
     from tools.bio_oracle_sources import make_bio_oracle_tools
 
