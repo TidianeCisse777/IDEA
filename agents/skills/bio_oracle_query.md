@@ -32,19 +32,10 @@ This is the only canonical loaded-table enrichment path.
   catalog, then wait for the user's explicit selections. The user must choose
   one or more variables, one or more scenarios, a vertical layer, and a
   statistic. Never apply a preset silently.
-- The canonical tool enriches every source row by latitude/longitude and keeps
-  the DataFrame grain. It does not aggregate rows by zone.
-- Do not preflight with discovery, zone, point-preview, or raw-query tools.
-- Do not construct or transcribe station rows in tool arguments.
-- Do not reuse an earlier assistant refusal or schema assessment.
-- Do not demand station IDs: the canonical enrichment auto-detects supported
-  latitude/longitude aliases and preserves every source row.
+- The canonical tool enriches every source row by latitude/longitude and preserves every source row; it never aggregates rows by zone.
+- For « par station » or « les mêmes stations », enrich the source rows first.
 - Pass `source_variable` only when several live datasets make the target
   ambiguous.
-
-For an explicitly named zone, pass `zone_name` to the same canonical tool. For
-“par station” or “les mêmes stations”, enrich the source rows first and use the
-persisted enriched table for any requested neutral aggregation.
 
 ## Variables and scenarios
 
@@ -65,9 +56,8 @@ equivalents (`4.5` → `SSP2-4.5`).
   absent, stop and present the catalog instead of invoking the tool.
 - If the user specifies a future year or horizon, pass `target_year` (for
   example `target_year=2050`).
-- Baseline is historical. SSP values use the nearest available decadal slice.
-- Never reuse an older SSP value unless its persisted time metadata matches the
-  current target year.
+- Never reuse an older SSP value when its persisted time metadata misses target.
+- Baseline is historical; SSP values use decadal slices.
 
 ## Confirmation
 

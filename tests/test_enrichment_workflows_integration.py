@@ -521,13 +521,19 @@ def test_local_import_then_environmental_enrich(_isolated_store, tmp_path, monke
     # 2) Real enrich_with_bio_oracle on the imported file; ERDDAP fetch mocked.
     monkeypatch.setattr(
         "tools.bio_oracle_sources._fetch_bio_oracle_bbox",
-        lambda *, variable, scenario, depth_layer, target_year, tile: _bio_tile(8.42),
+        lambda *, variable, scenario, depth_layer, target_year, tile, statistic="mean": _bio_tile(8.42),
     )
     enrich = next(
         t for t in make_bio_oracle_tools("imp") if t.name == "enrich_with_bio_oracle"
     )
     result = enrich.invoke(
-        {"variables": ["temperature"], "scenarios": ["SSP5-8.5"], "target_year": 2050}
+        {
+            "variables": ["temperature"],
+            "scenarios": ["SSP5-8.5"],
+            "depth_layer": "surface",
+            "statistic": "mean",
+            "target_year": 2050,
+        }
     )
 
     # Provenance note names the imported file variable, and the value is attached.
