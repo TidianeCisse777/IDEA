@@ -47,8 +47,8 @@ attenuation are underwater light. Proposed scenarios are `baseline`,
 and SSP labels range from very low to very high emissions. Alias
 `SSP1-2.6` and numeric/RCP aliases (`4.5` → `SSP2-4.5`) remain accepted.
 Never turn a scenario label into an observed value or biological conclusion.
-For scenario comparisons, verify non-null overlap on the same rows first;
-report missing/no_value coverage and do not present an incomplete difference.
+If a scenario has no value on some rows, report its missing/no_value coverage
+alongside the comparison; never silently replace or invent it.
 
 - The vertical layer is mandatory: choose `surface`, `benthic_min`,
   `benthic_mean`, or `benthic_max`.

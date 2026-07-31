@@ -50,7 +50,6 @@ def test_system_prompt_exposes_the_selection_sequence_and_option_groups():
     assert "factual descriptions" in prompt
     assert "from the catalog" in prompt
     assert "very low emissions" in prompt
-    assert "non-null overlap" in prompt
     assert "missing/no_value" in prompt
 
 

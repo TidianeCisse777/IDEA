@@ -69,9 +69,8 @@ definition source, Wikipedia URL and WoRMS validation.
   is the historical reference; SSP1-1.9 is very low emissions, SSP2-4.5
   intermediate, SSP3-7.0 high, SSP4-6.0 intermediate-to-high, and SSP5-8.5
   very high emissions. These are scenario labels, not observed values.
-  For a scenario comparison, verify a non-null overlap on the same rows first;
-  report missing/no_value coverage explicitly and never present an incomplete
-  difference as a numeric result.
+  If a scenario has no value on some rows, report the missing/no_value coverage
+  explicitly alongside the comparison; never silently replace or invent it.
   If any choice is missing, ask one concise selection question and do not call
   the tool. Never apply a preset silently. Preserve every DataFrame row; never
   aggregate by zone.
