@@ -18,7 +18,7 @@ max_tokens: 850
 Apply only when the Source Selection Gateway authorizes Bio-ORACLE for the
 current request or active-source follow-up. Do not apply it to generic sample,
 station, zone, environment, map, scenario, or analysis requests. A loaded table
-remains primary; Bio-ORACLE is only the requested enrichment source.
+remains primary; Bio-ORACLE is the requested enrichment source.
 
 ## Current explicit enrichment request
 
@@ -32,8 +32,6 @@ This is the only canonical loaded-table enrichment path.
   statistic. Never apply a preset silently.
 - The canonical tool enriches every source row by latitude/longitude, preserves every source row, and never aggregates by zone.
 - For « par station » or « les mêmes stations », enrich the source rows first.
-- Pass `source_variable` only when several live datasets make the target
-  ambiguous.
 
 ## Variables and scenarios
 
@@ -49,6 +47,8 @@ attenuation are underwater light. Proposed scenarios are `baseline`,
 and SSP labels range from very low to very high emissions. Alias
 `SSP1-2.6` and numeric/RCP aliases (`4.5` → `SSP2-4.5`) remain accepted.
 Never turn a scenario label into an observed value or biological conclusion.
+For scenario comparisons, verify non-null overlap on the same rows first;
+report missing/no_value coverage and do not present an incomplete difference.
 
 - The vertical layer is mandatory: choose `surface`, `benthic_min`,
   `benthic_mean`, or `benthic_max`.
