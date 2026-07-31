@@ -62,16 +62,16 @@ CATALOG_VARIABLES: tuple[CatalogVariable, ...] = (
     _variable("silicate", "si", "Silicate", "chimique", "mmol m-3", aliases=("silicium", "si"), recommended_for_copepods=True),
     _variable("oxygen", "o2", "Oxygène dissous", "chimique", "mmol m-3", aliases=("oxygène", "oxygene", "o2"), recommended_for_copepods=True),
     _variable("iron", "dfe", "Fer dissous", "chimique", "mmol m-3", aliases=("fer", "dfe")),
-    _variable("primary_productivity", "pp", "Productivité primaire", "biologique", "mmol m-3", aliases=("productivité primaire", "pp"), recommended_for_copepods=True),
+    _variable("primary_productivity", "phyc", "Productivité primaire", "biologique", "mmol m-3", aliases=("productivité primaire", "phyc"), recommended_for_copepods=True),
     _variable("ph", "ph", "pH", "chimique", "-", aliases=("pH",), recommended_for_copepods=True),
     _variable("chlorophyll", "chl", "Chlorophylle", "biologique", "mg m-3", aliases=("chlorophylle", "chl"), recommended_for_copepods=True),
-    _variable("sea_ice_thickness", "sit", "Épaisseur de glace de mer", "glace", "m", aliases=("glace épaisseur",)),
-    _variable("sea_ice_cover", "sic", "Couverture de glace de mer", "glace", "fraction", aliases=("glace couverture",)),
-    _variable("cloud_cover", "cld", "Couverture nuageuse", "atmosphère", "%", aliases=("nébulosité", "nuages")),
-    _variable("mixed_layer_depth", "mld", "Profondeur de couche mélangée", "physique", "m", aliases=("couche mélangée", "mld"), recommended_for_copepods=True),
+    _variable("sea_ice_thickness", "sithick", "Épaisseur de glace de mer", "glace", "m", aliases=("glace épaisseur",)),
+    _variable("sea_ice_cover", "siconc", "Couverture de glace de mer", "glace", "fraction", aliases=("glace couverture",)),
+    _variable("cloud_cover", "clt", "Couverture nuageuse", "atmosphère", "%", aliases=("nébulosité", "nuages")),
+    _variable("mixed_layer_depth", "mlotst", "Profondeur de couche mélangée", "physique", "m", aliases=("couche mélangée", "mlotst"), recommended_for_copepods=True),
     _variable("air_temperature", "tas", "Température de l'air", "atmosphère", "°C", aliases=("température air",)),
     _variable("par", "par", "Rayonnement photosynthétiquement disponible", "lumière", "E m-2 jour-1", aliases=("rayonnement", "lumière disponible"), recommended_for_copepods=True),
-    _variable("diffuse_attenuation", "kd", "Atténuation lumineuse diffuse", "lumière", "m-1", aliases=("atténuation lumineuse", "kd"), recommended_for_copepods=True),
+    _variable("diffuse_attenuation", "kdpar_mean", "Atténuation lumineuse diffuse", "lumière", "m-1", aliases=("atténuation lumineuse", "kd", "kdpar"), recommended_for_copepods=True),
 )
 
 

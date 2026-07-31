@@ -21,6 +21,12 @@ def test_catalog_contains_copod_recommendation_and_extended_environmental_variab
     } <= variables.keys()
     assert variables["temperature"]["recommended_for_copepods"] is True
     assert variables["sea_water_speed"]["recommended_for_copepods"] is False
+    assert variables["primary_productivity"]["erddap_var"] == "phyc"
+    assert variables["mixed_layer_depth"]["erddap_var"] == "mlotst"
+    assert variables["cloud_cover"]["erddap_var"] == "clt"
+    assert variables["sea_ice_cover"]["erddap_var"] == "siconc"
+    assert variables["sea_ice_thickness"]["erddap_var"] == "sithick"
+    assert variables["diffuse_attenuation"]["erddap_var"] == "kdpar_mean"
     assert "surface" in variables["temperature"]["layers"]
     assert "mean" in variables["temperature"]["statistics"]
 
