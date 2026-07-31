@@ -19,6 +19,7 @@ def test_canonical_tool_description_requires_guided_explicit_selection():
     assert "ssp5-8.5" in description
     assert "benthic_mean" in description
     assert "lt_min" in description
+    assert "description factuelle" in description
 
 
 def test_prompt_and_skill_describe_the_same_guided_bio_oracle_contract():
@@ -46,6 +47,9 @@ def test_system_prompt_exposes_the_selection_sequence_and_option_groups():
     assert "scenarios" in prompt
     assert "vertical layer" in prompt
     assert "statistic" in prompt
+    assert "factual descriptions" in prompt
+    assert "from the catalog" in prompt
+    assert "very low emissions" in prompt
 
 
 def test_context_and_tools_document_row_preserving_canonical_enrichment():

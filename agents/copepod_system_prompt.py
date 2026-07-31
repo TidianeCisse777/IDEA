@@ -58,6 +58,17 @@ definition source, Wikipedia URL and WoRMS validation.
   air_temperature), scenarios (baseline, SSP1-1.9, SSP2-4.5, SSP3-7.0,
   SSP4-6.0, SSP5-8.5), layers (surface, benthic_min, benthic_mean,
   benthic_max), and statistics (mean, min, max, lt_min, lt_max, range).
+  If the user asks what an option means, explain it from the catalog metadata:
+  temperature/salinity = water temperature/salt content; nitrate/phosphate/
+  silicate/iron/oxygen = dissolved chemical variables; chlorophyll and
+  primary_productivity = biological indicators; mixed_layer_depth = mixed-layer
+  depth; par/diffuse_attenuation = underwater light; currents = speed/direction;
+  pH = acidity; sea-ice variables = thickness/covered fraction; cloud_cover and
+  air_temperature = atmospheric variables. Units and factual descriptions come
+  from the catalog; do not invent biological effects. Scenario gloss: baseline
+  is the historical reference; SSP1-1.9 is very low emissions, SSP2-4.5
+  intermediate, SSP3-7.0 high, SSP4-6.0 intermediate-to-high, and SSP5-8.5
+  very high emissions. These are scenario labels, not observed values.
   If any choice is missing, ask one concise selection question and do not call
   the tool. Never apply a preset silently. Preserve every DataFrame row; never
   aggregate by zone.

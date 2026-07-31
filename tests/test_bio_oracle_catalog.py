@@ -31,6 +31,24 @@ def test_catalog_contains_copod_recommendation_and_extended_environmental_variab
     assert "mean" in variables["temperature"]["statistics"]
 
 
+def test_catalog_exposes_variable_and_scenario_descriptions():
+    from core.bio_oracle_catalog import list_catalog_scenarios, list_catalog_variables
+
+    variables = {item["key"]: item for item in list_catalog_variables()}
+    assert variables["temperature"]["description"]
+    assert variables["temperature"]["unit"] == "°C"
+    assert variables["chlorophyll"]["description"]
+    assert variables["sea_ice_cover"]["description"]
+
+    scenarios = {item["key"]: item for item in list_catalog_scenarios()}
+    assert set(scenarios) == {
+        "baseline", "ssp119", "ssp245", "ssp370", "ssp460", "ssp585",
+    }
+    assert all(item["description"] for item in scenarios.values())
+    assert scenarios["ssp119"]["requires_target_year"] is True
+    assert scenarios["baseline"]["requires_target_year"] is False
+
+
 def test_catalog_resolves_french_alias_and_layer_statistics():
     from core.bio_oracle_catalog import (
         resolve_catalog_statistic,

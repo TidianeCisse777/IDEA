@@ -1078,6 +1078,9 @@ def test_enrich_with_bio_oracle_requires_explicit_catalog_selection_before_http(
     fetch.assert_not_called()
     assert "Choisis" in result or "sélection" in result.lower()
     assert "température" in result.lower()
+    assert "température de l'eau de mer" in result.lower()
+    assert "ssp1_1_9" in result.lower()
+    assert "émissions très faibles" in result.lower()
 
 
 def test_enrich_with_bio_oracle_requires_year_for_ssp_before_http():

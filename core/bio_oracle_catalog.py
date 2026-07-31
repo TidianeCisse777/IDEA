@@ -19,6 +19,7 @@ class CatalogVariable:
     label: str
     group: str
     unit: str
+    description: str
     layers: tuple[str, ...]
     statistics: tuple[str, ...]
     aliases: tuple[str, ...] = ()
@@ -35,6 +36,7 @@ def _variable(
     label: str,
     group: str,
     unit: str,
+    description: str,
     *,
     aliases: tuple[str, ...] = (),
     recommended_for_copepods: bool = False,
@@ -45,6 +47,7 @@ def _variable(
         label=label,
         group=group,
         unit=unit,
+        description=description,
         layers=_ALL_LAYERS,
         statistics=_CLIMATE_STATISTICS,
         aliases=aliases,
@@ -53,25 +56,25 @@ def _variable(
 
 
 CATALOG_VARIABLES: tuple[CatalogVariable, ...] = (
-    _variable("temperature", "thetao", "Température de l'eau", "physique", "°C", aliases=("temp", "température", "thetao"), recommended_for_copepods=True),
-    _variable("salinity", "so", "Salinité", "physique", "PSU", aliases=("salinité", "salinite", "so"), recommended_for_copepods=True),
-    _variable("sea_water_speed", "sws", "Vitesse du courant", "physique", "m s-1", aliases=("current_speed", "vitesse courant")),
-    _variable("sea_water_direction", "swd", "Direction du courant", "physique", "degrés", aliases=("current_direction", "direction courant")),
-    _variable("nitrate", "no3", "Nitrate", "chimique", "mmol m-3", aliases=("no3",), recommended_for_copepods=True),
-    _variable("phosphate", "po4", "Phosphate", "chimique", "mmol m-3", aliases=("po4",), recommended_for_copepods=True),
-    _variable("silicate", "si", "Silicate", "chimique", "mmol m-3", aliases=("silicium", "si"), recommended_for_copepods=True),
-    _variable("oxygen", "o2", "Oxygène dissous", "chimique", "mmol m-3", aliases=("oxygène", "oxygene", "o2"), recommended_for_copepods=True),
-    _variable("iron", "dfe", "Fer dissous", "chimique", "mmol m-3", aliases=("fer", "dfe")),
-    _variable("primary_productivity", "phyc", "Productivité primaire", "biologique", "mmol m-3", aliases=("productivité primaire", "phyc"), recommended_for_copepods=True),
-    _variable("ph", "ph", "pH", "chimique", "-", aliases=("pH",), recommended_for_copepods=True),
-    _variable("chlorophyll", "chl", "Chlorophylle", "biologique", "mg m-3", aliases=("chlorophylle", "chl"), recommended_for_copepods=True),
-    _variable("sea_ice_thickness", "sithick", "Épaisseur de glace de mer", "glace", "m", aliases=("glace épaisseur",)),
-    _variable("sea_ice_cover", "siconc", "Couverture de glace de mer", "glace", "fraction", aliases=("glace couverture",)),
-    _variable("cloud_cover", "clt", "Couverture nuageuse", "atmosphère", "%", aliases=("nébulosité", "nuages")),
-    _variable("mixed_layer_depth", "mlotst", "Profondeur de couche mélangée", "physique", "m", aliases=("couche mélangée", "mlotst"), recommended_for_copepods=True),
-    _variable("air_temperature", "tas", "Température de l'air", "atmosphère", "°C", aliases=("température air",)),
-    _variable("par", "par", "Rayonnement photosynthétiquement disponible", "lumière", "E m-2 jour-1", aliases=("rayonnement", "lumière disponible"), recommended_for_copepods=True),
-    _variable("diffuse_attenuation", "kdpar_mean", "Atténuation lumineuse diffuse", "lumière", "m-1", aliases=("atténuation lumineuse", "kd", "kdpar"), recommended_for_copepods=True),
+    _variable("temperature", "thetao", "Température de l'eau", "physique", "°C", "Température de l'eau de mer.", aliases=("temp", "température", "thetao"), recommended_for_copepods=True),
+    _variable("salinity", "so", "Salinité", "physique", "PSU", "Teneur en sels dissous de l'eau de mer.", aliases=("salinité", "salinite", "so"), recommended_for_copepods=True),
+    _variable("sea_water_speed", "sws", "Vitesse du courant", "physique", "m s-1", "Vitesse horizontale du courant marin.", aliases=("current_speed", "vitesse courant")),
+    _variable("sea_water_direction", "swd", "Direction du courant", "physique", "degrés", "Direction horizontale du courant marin.", aliases=("current_direction", "direction courant")),
+    _variable("nitrate", "no3", "Nitrate", "chimique", "mmol m-3", "Concentration de nitrate dissous.", aliases=("no3",), recommended_for_copepods=True),
+    _variable("phosphate", "po4", "Phosphate", "chimique", "mmol m-3", "Concentration de phosphate dissous.", aliases=("po4",), recommended_for_copepods=True),
+    _variable("silicate", "si", "Silicate", "chimique", "mmol m-3", "Concentration de silicate dissous.", aliases=("silicium", "si"), recommended_for_copepods=True),
+    _variable("oxygen", "o2", "Oxygène dissous", "chimique", "mmol m-3", "Concentration d'oxygène dissous.", aliases=("oxygène", "oxygene", "o2"), recommended_for_copepods=True),
+    _variable("iron", "dfe", "Fer dissous", "chimique", "mmol m-3", "Concentration de fer dissous.", aliases=("fer", "dfe")),
+    _variable("primary_productivity", "phyc", "Productivité primaire", "biologique", "mmol m-3", "Production de matière organique par les producteurs primaires.", aliases=("productivité primaire", "phyc"), recommended_for_copepods=True),
+    _variable("ph", "ph", "pH", "chimique", "-", "Mesure de l'acidité ou de l'alcalinité de l'eau de mer.", aliases=("pH",), recommended_for_copepods=True),
+    _variable("chlorophyll", "chl", "Chlorophylle", "biologique", "mg m-3", "Concentration de chlorophylle-a.", aliases=("chlorophylle", "chl"), recommended_for_copepods=True),
+    _variable("sea_ice_thickness", "sithick", "Épaisseur de glace de mer", "glace", "m", "Épaisseur de la glace de mer.", aliases=("glace épaisseur",)),
+    _variable("sea_ice_cover", "siconc", "Couverture de glace de mer", "glace", "fraction", "Fraction de la surface couverte par la glace de mer.", aliases=("glace couverture",)),
+    _variable("cloud_cover", "clt", "Couverture nuageuse", "atmosphère", "%", "Fraction de la couverture nuageuse.", aliases=("nébulosité", "nuages")),
+    _variable("mixed_layer_depth", "mlotst", "Profondeur de couche mélangée", "physique", "m", "Profondeur de la couche de mélange océanique.", aliases=("couche mélangée", "mlotst"), recommended_for_copepods=True),
+    _variable("air_temperature", "tas", "Température de l'air", "atmosphère", "°C", "Température de l'air au-dessus de la mer.", aliases=("température air",)),
+    _variable("par", "par", "Rayonnement photosynthétiquement disponible", "lumière", "E m-2 jour-1", "Rayonnement disponible pour la photosynthèse.", aliases=("rayonnement", "lumière disponible"), recommended_for_copepods=True),
+    _variable("diffuse_attenuation", "kdpar_mean", "Atténuation lumineuse diffuse", "lumière", "m-1", "Atténuation de la lumière dans la colonne d'eau.", aliases=("atténuation lumineuse", "kd", "kdpar"), recommended_for_copepods=True),
 )
 
 
@@ -105,6 +108,20 @@ SCENARIO_DISPLAY_NAMES: dict[str, str] = {
     "ssp460": "ssp4_6_0",
     "ssp585": "ssp5_8_5",
 }
+
+SCENARIO_DESCRIPTIONS: dict[str, str] = {
+    "baseline": "Référence historique utilisée par les jeux de données Bio-ORACLE.",
+    "ssp119": "Émissions très faibles, avec une forte atténuation du changement climatique.",
+    "ssp126": "Émissions faibles, avec une atténuation importante du changement climatique.",
+    "ssp245": "Émissions intermédiaires et trajectoire de développement intermédiaire.",
+    "ssp370": "Émissions élevées, avec des défis importants pour l'adaptation et l'atténuation.",
+    "ssp460": "Émissions intermédiaires à élevées, associées à la trajectoire SSP4.",
+    "ssp585": "Émissions très élevées, associées à une trajectoire fortement dépendante des énergies fossiles.",
+}
+
+SCENARIO_OPTIONS: tuple[str, ...] = (
+    "baseline", "ssp119", "ssp245", "ssp370", "ssp460", "ssp585",
+)
 
 CATALOG_LAYERS: dict[str, str] = {
     "surface": "depthsurf",
@@ -155,6 +172,19 @@ def list_catalog_variables() -> list[dict]:
             "aliases": list(entry.aliases),
         }
         for entry in CATALOG_VARIABLES
+    ]
+
+
+def list_catalog_scenarios() -> list[dict]:
+    """Return the six scenarios proposed for a guided enrichment selection."""
+    return [
+        {
+            "key": key,
+            "display_name": SCENARIO_DISPLAY_NAMES[key],
+            "description": SCENARIO_DESCRIPTIONS[key],
+            "requires_target_year": key != "baseline",
+        }
+        for key in SCENARIO_OPTIONS
     ]
 
 

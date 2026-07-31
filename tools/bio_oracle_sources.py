@@ -12,6 +12,7 @@ import requests
 from langchain_core.tools import tool
 
 from core.bio_oracle_catalog import (
+    list_catalog_scenarios,
     list_catalog_variables,
     validate_enrichment_selection,
 )
@@ -1227,7 +1228,10 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         absente ou invalide est bloquée sans I/O distant. Le tool conserve toutes
         les lignes et n'agrège jamais par zone. Auto-détecte les colonnes
         latitude/longitude ; si plusieurs fichiers sont en session, passe
-        `source_variable` pour cibler un dataset précis.
+        `source_variable` pour cibler un dataset précis. Chaque variable et
+        scénario possède un libellé, une unité ou un niveau d'émission et une
+        description factuelle dans le catalogue ; les expliquer sans inventer
+        d'effet biologique.
         """
         selection = validate_enrichment_selection(
             variables=variables,
@@ -1237,17 +1241,30 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             target_year=target_year,
         )
         if not selection["ok"]:
+            catalog = list_catalog_variables()
             recommended = [
-                item["label"]
-                for item in list_catalog_variables()
+                f"{item['key']} — {item['label']} ({item['unit']}) : {item['description']}"
+                for item in catalog
                 if item["recommended_for_copepods"]
             ]
-            choices = ", ".join(recommended)
+            extras = [
+                f"{item['key']} — {item['label']} ({item['unit']}) : {item['description']}"
+                for item in catalog
+                if not item["recommended_for_copepods"]
+            ]
+            scenarios = " ".join(
+                f"{item['display_name']} : {item['description']}"
+                for item in list_catalog_scenarios()
+            )
             missing = ", ".join(selection.get("missing") or [])
             missing_line = f" Champs manquants : {missing}." if missing else ""
             return _bio_blocked(
                 f"{selection['code']}: {selection['message']}{missing_line}\n"
-                f"Présélection copépodes à choisir : {choices}.\n"
+                "Variables copépodes recommandées à choisir : "
+                f"{' ; '.join(recommended)}.\n"
+                "Variables supplémentaires du catalogue : "
+                f"{' ; '.join(extras)}.\n"
+                f"Scénarios : {scenarios}.\n"
                 "Couches : surface, benthic_min, benthic_mean, benthic_max. "
                 "Statistiques : mean, min, max, lt_min, lt_max, range."
             )
