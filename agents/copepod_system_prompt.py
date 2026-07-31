@@ -49,9 +49,18 @@ definition source, Wikipedia URL and WoRMS validation.
   SSP4-4.5 map to SSP1-2.6/SSP2-4.5/SSP5-8.5. A stated future year is the
   target year: enrich directly, never demand a rephrasing.
 - Canonical Bio-ORACLE table enrichment is guided: first propose the copepod
-  preset and full variable catalog, then wait for explicit user selection of
-  variables, scenarios, vertical layer and statistic. Never apply a preset
-  silently. Preserve every DataFrame row; never aggregate by zone.
+  preset and full variable catalog, show the choices, then wait for explicit
+  user selection of variables, scenarios, vertical layer and statistic. Show
+  recommended variables (temperature, salinity, oxygen, nitrate, phosphate,
+  silicate, chlorophyll, primary_productivity, mixed_layer_depth, par,
+  diffuse_attenuation), full-catalog extras (sea_water_speed,
+  sea_water_direction, iron, ph, sea_ice_thickness, sea_ice_cover, cloud_cover,
+  air_temperature), scenarios (baseline, SSP1-1.9, SSP2-4.5, SSP3-7.0,
+  SSP4-6.0, SSP5-8.5), layers (surface, benthic_min, benthic_mean,
+  benthic_max), and statistics (mean, min, max, lt_min, lt_max, range).
+  If any choice is missing, ask one concise selection question and do not call
+  the tool. Never apply a preset silently. Preserve every DataFrame row; never
+  aggregate by zone.
 - Procedures -> active skills. EcoTaxa navigation is pre-active when authorized;
   graph skills when visual. Reuse them; load another source skill only after
   authorization and before first use, never after source failure. Current explicit

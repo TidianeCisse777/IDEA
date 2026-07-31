@@ -1210,14 +1210,24 @@ def make_bio_oracle_tools(thread_id: str) -> list:
     ) -> str:
         """Enrichit chaque ligne d'un DataFrame chargé avec Bio-ORACLE.
 
-        Avant l'appel, proposer à l'utilisateur les variables du catalogue (la
-        présélection copépodes et le catalogue complet), puis attendre son choix
-        explicite. Variables, scénarios, couche verticale et statistique sont
-        obligatoires ; une année cible est obligatoire pour un scénario SSP.
-        Une sélection absente ou invalide est bloquée sans I/O distant. Le tool
-        conserve toutes les lignes et n'agrège jamais par zone. Auto-détecte les
-        colonnes latitude/longitude ; si plusieurs fichiers sont en session,
-        passe `source_variable` pour cibler un dataset précis.
+        Avant l'appel, proposer et afficher ces choix, puis attendre la sélection explicite de
+        l'utilisateur (ne jamais appliquer un preset en silence) :
+        - variables copépodes recommandées : `temperature`, `salinity`,
+          `oxygen`, `nitrate`, `phosphate`, `silicate`, `chlorophyll`,
+          `primary_productivity`, `mixed_layer_depth`, `par`,
+          `diffuse_attenuation` ; catalogue complet : `sea_water_speed`,
+          `sea_water_direction`, `iron`, `ph`, `sea_ice_thickness`,
+          `sea_ice_cover`, `cloud_cover`, `air_temperature` ;
+        - scénarios : `baseline`, `SSP1-1.9`, `SSP2-4.5`, `SSP3-7.0`,
+          `SSP4-6.0`, `SSP5-8.5` ; couches : `surface`, `benthic_min`,
+          `benthic_mean`, `benthic_max` ; statistiques : `mean`, `min`,
+          `max`, `lt_min`, `lt_max`, `range`.
+        Variables, scénarios, couche verticale et statistique sont obligatoires ;
+        une année cible est obligatoire pour un scénario SSP. Une sélection
+        absente ou invalide est bloquée sans I/O distant. Le tool conserve toutes
+        les lignes et n'agrège jamais par zone. Auto-détecte les colonnes
+        latitude/longitude ; si plusieurs fichiers sont en session, passe
+        `source_variable` pour cibler un dataset précis.
         """
         selection = validate_enrichment_selection(
             variables=variables,

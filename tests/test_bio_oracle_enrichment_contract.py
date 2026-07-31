@@ -14,6 +14,11 @@ def test_canonical_tool_description_requires_guided_explicit_selection():
     assert "choix" in description
     assert "statistique" in description
     assert "n'agrège jamais" in description
+    assert "temperature" in description
+    assert "primary_productivity" in description
+    assert "ssp5-8.5" in description
+    assert "benthic_mean" in description
+    assert "lt_min" in description
 
 
 def test_prompt_and_skill_describe_the_same_guided_bio_oracle_contract():
@@ -28,6 +33,19 @@ def test_prompt_and_skill_describe_the_same_guided_bio_oracle_contract():
     assert "statistique" in combined or "statistic" in combined
     assert "ne l'applique jamais" in combined or "never apply a preset silently" in combined
     assert "otherwise use canonical" not in combined
+
+
+def test_system_prompt_exposes_the_selection_sequence_and_option_groups():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+
+    assert "propose" in prompt
+    assert "wait for explicit" in prompt
+    assert "variables" in prompt
+    assert "scenarios" in prompt
+    assert "vertical layer" in prompt
+    assert "statistic" in prompt
 
 
 def test_context_and_tools_document_row_preserving_canonical_enrichment():
