@@ -102,6 +102,12 @@ Ce geste a une **séquence unique** possédée par le module `run_point_enrichme
 
 Le **`PointMatcher`** est l'adapter au seam : un par source (`AmundsenMatcher`, `OgslMatcher`, `BioOracleMatcher`), défini près de sa source. Il ne porte que le cœur qui varie — la clé de dédup (`dedup_keys`) et le MATCH (`match`, où vit le batching ERDDAP / nearest-neighbour / grille). La séquence, les messages d'erreur, l'ordre des gardes et la règle de coverage-warning vivent **une seule fois**, dans le shell.
 
+Pour Bio-ORACLE, la voie canonique enrichit un **DataFrame** chargé ligne par
+ligne et conserve son grain : une ligne source reste une ligne de sortie. Avant
+toute requête distante, l'agent propose la présélection copépodes et le catalogue
+complet, puis attend la sélection explicite des variables, scénarios, couche
+verticale et statistique. Aucune présélection implicite n'est appliquée.
+
 ---
 
 ## Règles dures (extrait)

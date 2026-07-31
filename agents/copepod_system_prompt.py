@@ -48,6 +48,10 @@ definition source, Wikipedia URL and WoRMS validation.
 - Bio-ORACLE accepts `bioracle`/`Bio Oracle`; 2.6/4.5/8.5, RCP4.5 and
   SSP4-4.5 map to SSP1-2.6/SSP2-4.5/SSP5-8.5. A stated future year is the
   target year: enrich directly, never demand a rephrasing.
+- Canonical Bio-ORACLE table enrichment is guided: first propose the copepod
+  preset and full variable catalog, then wait for explicit user selection of
+  variables, scenarios, vertical layer and statistic. Never apply a preset
+  silently. Preserve every DataFrame row; never aggregate by zone.
 - Procedures -> active skills. EcoTaxa navigation is pre-active when authorized;
   graph skills when visual. Reuse them; load another source skill only after
   authorization and before first use, never after source failure. Current explicit

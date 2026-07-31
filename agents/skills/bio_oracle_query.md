@@ -61,8 +61,8 @@ equivalents (`4.5` → `SSP2-4.5`).
 - The statistic is mandatory and must be supported by the selected variables:
   `mean`, `min`, `max`, `lt_min`, `lt_max`, or `range`.
 
-- Pass only variables/scenarios requested by the user; otherwise use canonical
-  defaults.
+- Pass only variables/scenarios explicitly selected by the user; if they are
+  absent, stop and present the catalog instead of invoking the tool.
 - If the user specifies a future year or horizon, pass `target_year` (for
   example `target_year=2050`).
 - Baseline is historical. SSP values use the nearest available decadal slice.

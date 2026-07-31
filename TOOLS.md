@@ -203,6 +203,12 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ## 5. Bio-ORACLE — `tools/bio_oracle_sources.py` (7)
 
+La route canonique `enrich_with_bio_oracle` enrichit le DataFrame chargé ligne
+par ligne et conserve toutes ses lignes. Avant son appel, l'agent propose la
+présélection copépodes et le catalogue complet, puis attend le choix explicite
+des variables, scénarios, couche verticale et statistique ; aucun défaut n'est
+appliqué silencieusement.
+
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `list_bio_oracle_datasets` | Variables & scénarios disponibles | non |
