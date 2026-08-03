@@ -1235,6 +1235,61 @@ def test_slice3_export_ecotaxa_samples_dry_run_groups_by_project(seeded_cache):
     assert "confirm" in result.lower() or "dry" in result.lower()
 
 
+def test_export_ecotaxa_samples_dry_run_preflights_every_sample_and_blocks_empty_status(
+    seeded_cache,
+):
+    """Le plan distingue les projets réellement exportables pour le statut demandé."""
+    from tools.copepod_sources import make_source_tools
+
+    sample_ids = [14853000001, 14853000002, 2331000001]
+    stats = [
+        {
+            "sample_id": 14853000001,
+            "projid": 14853,
+            "nb_validated": 0,
+            "nb_predicted": 12,
+            "nb_dubious": 0,
+            "nb_unclassified": 0,
+            "per_taxon": [],
+        },
+        {
+            "sample_id": 14853000002,
+            "projid": 14853,
+            "nb_validated": 0,
+            "nb_predicted": 8,
+            "nb_dubious": 0,
+            "nb_unclassified": 0,
+            "per_taxon": [],
+        },
+        {
+            "sample_id": 2331000001,
+            "projid": 2331,
+            "nb_validated": 5,
+            "nb_predicted": 0,
+            "nb_dubious": 0,
+            "nb_unclassified": 0,
+            "per_taxon": [],
+        },
+    ]
+
+    with patch(
+        "tools.copepod_sources.summarize_samples", return_value=stats
+    ) as summarize, patch("tools.copepod_sources.EcotaxaClient") as client:
+        tool = next(
+            item for item in make_source_tools("thread-export-preflight")
+            if item.name == "export_ecotaxa_samples"
+        )
+        result = tool.invoke({"sample_ids": sample_ids, "status": "V"})
+
+    summarize.assert_called_once_with(sample_ids)
+    assert "Préflight" in result
+    assert "| 14853 | BLOQUÉ |" in result
+    assert "aucun objet validé" in result.lower()
+    assert "| 2331 | PRÊT |" in result
+    assert "1/2 projets exportables" in result
+    client.return_value.start_export.assert_not_called()
+
+
 def test_export_ecotaxa_samples_dry_run_derives_project_for_cache_miss(seeded_cache):
     from tools.copepod_sources import make_source_tools
     tools = make_source_tools("thread-slice3-derived")
@@ -1336,6 +1391,46 @@ def test_bulk_export_persists_a_consolidated_campaign_table_for_analysis(seeded_
     assert "object_id" in capsule
     assert "sample_id" in capsule
     assert "export_project_id" in capsule
+
+
+def test_bulk_export_reuses_exact_cached_campaign_without_redownload(
+    seeded_cache, monkeypatch, tmp_path
+):
+    """A repeated confirmed export restores every object row from the cache."""
+    monkeypatch.setenv("ERDDAP_CACHE_PATH", str(tmp_path / "remote-results.sqlite"))
+    exported = pd.DataFrame({
+        "object_id": ["a", "b"],
+        "sample_id": [14853000001, 14853000002],
+    })
+    client = _make_fake_client(exported)
+    thread_id = "thread-bulk-campaign-cache"
+
+    with patch("tools.copepod_sources.EcotaxaClient", return_value=client):
+        from tools.copepod_sources import make_source_tools
+
+        export = next(
+            tool for tool in make_source_tools(thread_id)
+            if tool.name == "export_ecotaxa_samples"
+        )
+        first = export.invoke({
+            "sample_ids": [14853000001, 14853000002],
+            "confirmed": True,
+        })
+        client.start_export.reset_mock()
+        client.download_tsv.reset_mock()
+        second = export.invoke({
+            "sample_ids": [14853000001, 14853000002],
+            "confirmed": True,
+        })
+
+    assert "cache" not in first.lower()
+    assert "cache" in second.lower()
+    client.start_export.assert_not_called()
+    client.download_tsv.assert_not_called()
+    active = _store.get(thread_id)
+    assert active["df"]["object_id"].tolist() == ["a", "b"]
+    assert active["meta"]["cache_hit"] is True
+    assert active["meta"]["n_rows"] == 2
 
 
 # ── SLICE 4 GATE ──────────────────────────────────────────────────────────────
@@ -2351,6 +2446,15 @@ def _net_uvp_enriched_tool(
     net_df = pd.DataFrame(
         {
             "SAMPLE_ID": [501, 502],
+            "ANALYSIS_ID": [9001, 9002],
+            "TAXON_ID": ["Calanus", "Oithona"],
+            "CLASS": ["Copepoda", "Copepoda"],
+            "MIN_SAMPLE_DEPTH": [0.0, 10.0],
+            "MAX_SAMPLE_DEPTH": [10.0, 20.0],
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [
+                net_density_first,
+                15.0,
+            ],
             "net_density_ind_m3": [net_density_first, 15.0],
         }
     )
@@ -2397,7 +2501,13 @@ def _net_uvp_enriched_tool(
     enriched = {
         "export_project_id": [10, 10, 20],
         "sample_profileid": ["uvp-101", "uvp-101", "uvp-203"],
-        "ecopart_Sampled volume [L]": [100.0, 100.0, 80.0],
+        "depth_bin": [2.5, 7.5, 12.5],
+        "object_annotation_hierarchy": [
+            "living>Crustacea>Copepoda",
+            "living>Crustacea>Copepoda",
+            "living>Crustacea>Copepoda",
+        ],
+        "ecopart_Sampled volume [L]": [100.0, 50.0, float("nan")],
     }
     if enriched_has_object_id:
         enriched["object_id"] = ["obj-1", "obj-2", "obj-3"]
@@ -2438,6 +2548,38 @@ def test_join_net_uvp_enriched_persists_certified_object_rows(
     assert stored["meta"]["net_variable_name"] == "df_file_baffin_2024"
     assert stored["meta"]["audit_variable_name"] == "df_net_uvp_matches"
     assert stored["meta"]["uvp_enriched_variable"] == "df_ecotaxa_ecopart_campaign"
+
+
+def test_join_net_uvp_enriched_also_prepares_calculable_and_excluded_strata(
+    tmp_path, monkeypatch
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+    audit_entry = store.get(f"{thread_id}:dataset:df_net_uvp_matches")
+    audit = audit_entry["df"].copy()
+    audit["join_eligible"] = True
+    audit["ctd_filename_join_eligible"] = True
+    store.set(
+        f"{thread_id}:dataset:df_net_uvp_matches",
+        audit,
+        audit_entry["meta"],
+    )
+
+    text = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    strata = store.get(f"{thread_id}:dataset:df_net_uvp_strata")["df"]
+    calculable = store.get(f"{thread_id}:dataset:df_net_uvp_calculable")["df"]
+    exclusions = store.get(f"{thread_id}:dataset:df_net_uvp_exclusions")["df"]
+    assert len(strata) == 2
+    assert len(calculable) == 1
+    assert len(exclusions) == 1
+    assert exclusions.iloc[0]["depth_match_status"] == "missing_volume"
+    assert "1/2" in text
+    assert "df_net_uvp_calculable" in text
 
 
 def test_join_net_uvp_enriched_requires_opt_in_for_unavailable_ctd_audit(

@@ -672,18 +672,60 @@ def _column_location_hint(error: Exception, local_vars: dict[str, Any]) -> str:
     missing = str(error.args[0]) if error.args else ""
     if not missing:
         return ""
+    canonical_aliases = {
+        "te90": ("amundsen_te90_degC", "temperature_degC"),
+        "temp": ("amundsen_te90_degC", "temperature_degC"),
+        "temperature": ("amundsen_te90_degC", "temperature_degC"),
+        "psal": ("amundsen_psal_psu", "salinity_psu"),
+        "sal": ("amundsen_psal_psu", "salinity_psu"),
+        "salinity": ("amundsen_psal_psu", "salinity_psu"),
+        "salinite": ("amundsen_psal_psu", "salinity_psu"),
+        "pres": ("amundsen_pres_dbar", "depth_m"),
+        "pressure": ("amundsen_pres_dbar", "depth_m"),
+        "pression": ("amundsen_pres_dbar", "depth_m"),
+        "sigt": ("amundsen_sigt", "density_sigt"),
+        "density": ("amundsen_sigt", "density_sigt"),
+        "densite": ("amundsen_sigt", "density_sigt"),
+        "oxym": ("amundsen_oxym", "oxygen_oxym"),
+        "oxygen": ("amundsen_oxym", "oxygen_oxym"),
+        "oxygene": ("amundsen_oxym", "oxygen_oxym"),
+        "ph": ("amundsen_ph", "ph"),
+        "ntra": ("amundsen_ntra", "nitrate_ntra"),
+        "nitrate": ("amundsen_ntra", "nitrate_ntra"),
+        "flor": ("amundsen_flor", "fluorescence_flor"),
+        "fluorescence": ("amundsen_flor", "fluorescence_flor"),
+    }
+    targets = canonical_aliases.get(missing.casefold(), (missing,))
+    target = next(
+        (
+            candidate
+            for candidate in targets
+            if any(
+                name.startswith("df_")
+                and isinstance(value, pd.DataFrame)
+                and candidate in value.columns
+                for name, value in local_vars.items()
+            )
+        ),
+        targets[0],
+    )
     holders = sorted(
         name
         for name, value in local_vars.items()
         if name.startswith("df_")
         and isinstance(value, pd.DataFrame)
-        and missing in value.columns
+        and target in value.columns
     )
     if not holders:
         return ""
+    alias_note = (
+        f" La colonne canonique correspondante est `{target}`."
+        if target != missing else ""
+    )
     return (
         f"\nLa colonne `{missing}` est absente de la table active `df` mais "
-        f"présente dans : {', '.join(holders)}. Cible la variable explicite."
+        f"sa donnée est présente dans : {', '.join(holders)}.{alias_note} "
+        "Cible la variable et la colonne explicites."
     )
 
 
@@ -857,6 +899,78 @@ def _is_neolabs_columns(columns) -> bool:
     )
 
 
+def _is_neolabs_sample_columns(columns) -> bool:
+    """True pour la table NeoLabs sample au grain filet/analyse."""
+    cols = set(columns)
+    return {
+        "sample_id",
+        "analysis_id",
+        "deployment_id",
+        "net_sampling_ids",
+        "tow_type",
+    }.issubset(cols)
+
+
+def _neolabs_join_guard(code: str, local_vars: dict[str, Any]) -> str | None:
+    """Refuse la conversion texte destructive des clés avant une jointure NeoLabs."""
+    if not _is_join_code(code):
+        return None
+    has_abundance = any(
+        isinstance(value, pd.DataFrame) and _is_neolabs_columns(value.columns)
+        for value in local_vars.values()
+    )
+    has_samples = any(
+        isinstance(value, pd.DataFrame)
+        and _is_neolabs_sample_columns(value.columns)
+        for value in local_vars.values()
+    )
+    if not (has_abundance and has_samples):
+        return None
+
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return None
+
+    key_columns = {"SAMPLE_ID", "ANALYSIS_ID", "sample_id", "analysis_id"}
+    unsafe_columns: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        call = node.value
+        if not isinstance(call.func, ast.Attribute) or call.func.attr != "astype":
+            continue
+        if not call.args:
+            continue
+        dtype = call.args[0]
+        is_string_cast = (
+            isinstance(dtype, ast.Name) and dtype.id == "str"
+        ) or (
+            isinstance(dtype, ast.Constant)
+            and str(dtype.value).casefold() in {"str", "string"}
+        )
+        if not is_string_cast:
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Subscript):
+                continue
+            column = target.slice
+            if isinstance(column, ast.Constant) and column.value in key_columns:
+                unsafe_columns.add(str(column.value))
+
+    if not unsafe_columns:
+        return None
+    return (
+        "run_pandas bloqué : ne convertis jamais les clés de jointure NeoLabs "
+        f"avec astype(str) ({', '.join(sorted(unsafe_columns))}). "
+        "`ANALYSIS_ID` est entier côté abondance tandis que `analysis_id` peut "
+        "être flottant côté sample : la conversion produit par exemple '2185' "
+        "contre '2185.0' et détruit tous les appariements. Utilise "
+        "`prepare_neolabs_analysis` avec les deux chemins chargés. Si une "
+        "jointure manuelle est indispensable, conserve les clés numériques."
+    )
+
+
 def _neolabs_copepod_guard(code: str, local_vars: dict[str, Any]) -> str | None:
     """Bloque une densité de copépodes NeoLabs calculée à la main.
 
@@ -987,6 +1101,197 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     _store = store or default_store
 
     @tool(response_format="content_and_artifact")
+    def prepare_neolabs_analysis(
+        abundance_path: str = "data/neolabs/neolabs_abundance.csv",
+        sample_path: str = "data/neolabs/neolabs_sample.csv",
+    ) -> str:
+        """Prépare en un appel le parcours local NeoLabs pour analyses et graphes.
+
+        Charge les deux fichiers officiels, effectue une jointure externe sur
+        sample + analyse, calcule la densité totale de copépodes uniquement pour
+        les couples calculables, puis persiste la couverture et une table prête
+        pour les cartes. Toutes les lignes sources restent traçables par leur
+        statut; une abondance absente n'est jamais remplacée par zéro.
+        """
+        from core.demo_workflows import (  # noqa: PLC0415
+            NEOLABS_COLUMN_DESCRIPTIONS,
+            NEOLABS_DEMO_METHOD_VERSION,
+            prepare_neolabs_tables,
+        )
+
+        try:
+            abundance, abundance_meta = _load_file(abundance_path)
+            samples, sample_meta = _load_file(sample_path)
+            tables = prepare_neolabs_tables(abundance, samples)
+        except (FileNotFoundError, ValueError) as exc:
+            return error(
+                f"Préparation NeoLabs impossible : {exc}",
+                provenance={"source": "file"},
+                retryable=isinstance(exc, FileNotFoundError),
+                method=NEOLABS_DEMO_METHOD_VERSION,
+            )
+
+        def _schema_metadata(frame: pd.DataFrame, description: str) -> dict:
+            descriptions = {
+                column: NEOLABS_COLUMN_DESCRIPTIONS[column]
+                for column in frame.columns
+                if column in NEOLABS_COLUMN_DESCRIPTIONS
+            }
+            return {
+                "n_rows": int(len(frame)),
+                "n_cols": int(len(frame.columns)),
+                "columns": [
+                    {"name": column, "dtype": str(frame[column].dtype)}
+                    for column in frame.columns
+                ],
+                "important_columns": list(descriptions),
+                "column_descriptions": descriptions,
+                "description": description,
+            }
+
+        shared_provenance = {
+            "source": "analysis:neolabs",
+            "abundance_path": str(abundance_meta["path"]),
+            "sample_path": str(sample_meta["path"]),
+            "method_version": NEOLABS_DEMO_METHOD_VERSION,
+        }
+        store_dataset(
+            _store,
+            thread_id,
+            abundance,
+            variable_name="df_file_neolabs_abundance",
+            meta={
+                **abundance_meta,
+                "source": f"file:{abundance_meta['path']}",
+                "method_version": NEOLABS_DEMO_METHOD_VERSION,
+                **_schema_metadata(
+                    abundance,
+                    "Table source NeoLabs au grain taxon × sample × analyse.",
+                ),
+            },
+            set_active=False,
+        )
+        store_dataset(
+            _store,
+            thread_id,
+            samples,
+            variable_name="df_file_neolabs_sample",
+            meta={
+                **sample_meta,
+                "source": f"file:{sample_meta['path']}",
+                "method_version": NEOLABS_DEMO_METHOD_VERSION,
+                **_schema_metadata(
+                    samples,
+                    "Table source NeoLabs des samples, déploiements et analyses.",
+                ),
+            },
+            set_active=False,
+        )
+        for name, frame, description in (
+            (
+                "df_neolabs_samples",
+                tables["samples"],
+                "Une ligne par couple sample-analyse avec densité et statut de calcul.",
+            ),
+            (
+                "df_neolabs_coverage",
+                tables["coverage"],
+                "Couverture groupée des jointures et des densités calculables ou manquantes.",
+            ),
+            (
+                "df_neolabs_graph",
+                tables["graph"],
+                "Couples calculables avec coordonnées, prêts pour cartes, profils et graphiques.",
+            ),
+        ):
+            store_dataset(
+                _store,
+                thread_id,
+                frame,
+                variable_name=name,
+                meta={
+                    **shared_provenance,
+                    **_schema_metadata(frame, description),
+                },
+                set_active=False,
+            )
+        working = tables["working"]
+        store_dataset(
+            _store,
+            thread_id,
+            working,
+            variable_name="df_neolabs_working",
+            meta={
+                **shared_provenance,
+                **_schema_metadata(
+                    working,
+                    "Jointure externe traçable de toutes les lignes NeoLabs source.",
+                ),
+            },
+            is_loaded_file=True,
+        )
+        from tools.source_scope import activate_file_source  # noqa: PLC0415
+
+        activate_file_source(
+            _store,
+            thread_id,
+            origin_user_text="NeoLabs abundance + sample",
+        )
+
+        join_counts = working["join_status"].value_counts().to_dict()
+        sample_summary = tables["samples"]
+        pair_join_counts = sample_summary["join_status"].value_counts().to_dict()
+        n_matched_pairs = int(pair_join_counts.get("matched", 0))
+        n_calculable = int(sample_summary["density_status"].eq("calculated").sum())
+        n_missing = int(sample_summary["density_status"].eq("no_value").sum())
+        n_not_applicable = int(
+            sample_summary["density_status"].eq("not_applicable").sum()
+        )
+        return success(
+            (
+                f"Préparation NeoLabs terminée : {len(abundance)} lignes abondance "
+                f"et {len(samples)} lignes sample; aucune ligne source écartée.\n"
+                f"Jointure des lignes d'abondance : {join_counts.get('matched', 0)} "
+                "appariées, "
+                f"{join_counts.get('abundance_without_sample', 0)} sans ligne sample.\n"
+                f"Couples uniques sample + analyse : {n_matched_pairs} appariés, "
+                f"{pair_join_counts.get('abundance_without_sample', 0)} avec abondance "
+                "sans sample, "
+                f"{pair_join_counts.get('sample_without_abundance', 0)} avec sample "
+                "sans abondance.\n"
+                f"Densité sur les couples appariés : {n_calculable}/{n_matched_pairs} "
+                f"calculable; valeurs manquantes : {n_missing}; "
+                f"non appariés (hors dénominateur) : {n_not_applicable}.\n"
+                "Définition obligatoire : une ligne appariée vérifie "
+                "`join_status == 'matched'`; ne l'infère jamais de la seule "
+                "présence d'identifiants non nuls.\n"
+                "Tables : `df_neolabs_working`, `df_neolabs_samples`, "
+                "`df_neolabs_coverage`, `df_neolabs_graph`."
+            ),
+            data_ref="df_neolabs_working",
+            provenance=shared_provenance,
+            persisted=True,
+            method=NEOLABS_DEMO_METHOD_VERSION,
+            metrics={
+                "abundance_rows": int(len(abundance)),
+                "sample_rows": int(len(samples)),
+                "working_rows": int(len(working)),
+                "matched_rows": int(join_counts.get("matched", 0)),
+                "matched_pairs": n_matched_pairs,
+                "abundance_without_sample_rows": int(
+                    join_counts.get("abundance_without_sample", 0)
+                ),
+                "sample_without_abundance_rows": int(
+                    join_counts.get("sample_without_abundance", 0)
+                ),
+                "calculable": n_calculable,
+                "missing": n_missing,
+                "density_denominator": n_matched_pairs,
+                "not_applicable": n_not_applicable,
+            },
+        )
+
+    @tool(response_format="content_and_artifact")
     def load_file(path: str) -> str:
         """Charge un fichier de données (CSV, TSV, Excel, JSON, Parquet) pour l'analyser.
 
@@ -1058,6 +1363,30 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 "\nRoute de jointure locale : `join_ecotaxa_ecopart` sans "
                 "`project_id` si EcoTaxa est déjà chargé ; passe les variables "
                 "de fichiers explicites si plusieurs datasets sont présents."
+            )
+
+        neolabs_abundance = _store.get(
+            f"{thread_id}:dataset:df_file_neolabs_abundance"
+        )
+        neolabs_sample = _store.get(
+            f"{thread_id}:dataset:df_file_neolabs_sample"
+        )
+        if neolabs_abundance is not None and neolabs_sample is not None:
+            abundance_meta = neolabs_abundance.get("meta") or {}
+            sample_meta = neolabs_sample.get("meta") or {}
+            abundance_source_path = abundance_meta.get("path") or str(
+                abundance_meta.get("source", "")
+            ).removeprefix("file:")
+            sample_source_path = sample_meta.get("path") or str(
+                sample_meta.get("source", "")
+            ).removeprefix("file:")
+            route_note += (
+                "\nRoute NeoLabs obligatoire : appelle "
+                "`prepare_neolabs_analysis` avec "
+                f"`abundance_path={abundance_source_path!r}` et "
+                f"`sample_path={sample_source_path!r}`. Ne reconstruis pas cette "
+                "jointure avec `run_pandas` et ne convertis jamais "
+                "`ANALYSIS_ID`/`analysis_id` avec `astype(str)`."
             )
 
         enc_note = f" (encodage : {meta['encoding']})" if meta.get("encoding") else ""
@@ -1193,6 +1522,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             local_vars = _dataframe_vars(_store, thread_id, df)
             local_vars["plt"] = plt
             injected_keys = set(local_vars) | {"__builtins__"}
+
+            guard = _neolabs_join_guard(code, local_vars)
+            if guard:
+                return blocked(guard, method="controlled pandas execution")
 
             guard = _neolabs_copepod_guard(code, local_vars)
             if guard:
@@ -1770,4 +2103,4 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 method="controlled matplotlib execution",
             )
 
-    return [load_file, run_pandas, run_graph]
+    return [load_file, prepare_neolabs_analysis, run_pandas, run_graph]

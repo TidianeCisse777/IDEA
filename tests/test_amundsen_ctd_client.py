@@ -127,6 +127,33 @@ def test_preview_amundsen_profile_returns_raw_rows_and_join_aliases():
     ]
 
 
+def test_preview_amundsen_profile_requests_every_selected_ctd_variable():
+    from unittest.mock import MagicMock, patch
+
+    from core.amundsen_ctd_client import preview_amundsen_profile
+
+    search_response = MagicMock()
+    search_response.json.return_value = {"table": {
+        "columnNames": ["Dataset ID", "Title", "griddap", "tabledap"],
+        "rows": [["amundsen12713", "CTD", "", "https://example.test/amundsen12713"]],
+    }}
+    query_response = MagicMock(text="PRES,OXYM,pH,NTRA,FLOR,SIGT\n")
+
+    with patch(
+        "core.amundsen_ctd_client.requests.get",
+        side_effect=[search_response, query_response],
+    ) as get:
+        preview_amundsen_profile({
+            "station": "A",
+            "cast_number": 1,
+            "variables": ["PRES", "OXYM", "pH", "NTRA", "FLOR", "SIGT"],
+        })
+
+    url = get.call_args_list[1].args[0]
+    for variable in ("PRES", "OXYM", "pH", "NTRA", "FLOR", "SIGT"):
+        assert variable in url
+
+
 def test_query_amundsen_ctd_writes_tsv_and_returns_download_url(tmp_path):
     from unittest.mock import MagicMock, patch
 

@@ -1405,6 +1405,109 @@ def test_enrich_with_bio_oracle_combines_multiple_variables_and_scenarios():
     assert expected_cols.issubset(set(enriched.columns))
 
 
+def test_enrich_with_bio_oracle_reports_partial_scenario_delta_without_dropping_no_value_rows():
+    """A scenario delta is only present where both selected scenarios have values."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-bio-scenario-delta"
+    source = pd.DataFrame(
+        {"latitude": [60.0, 0.0], "longitude": [-65.0, 0.0]}
+    )
+    _store.set(thread_id, source, {"source": "file:scenario-delta.tsv"})
+
+    def fake_fetch_bbox(*, variable, scenario, depth_layer, target_year, tile, statistic="mean"):
+        if tile["lat_min"] <= 0 <= tile["lat_max"]:
+            return _bbox_tile_df(None, dataset_id=f"{variable}_{scenario}", latitude=0.0, longitude=0.0)
+        value = 8.0 if scenario == "baseline" else 10.5
+        return _bbox_tile_df(
+            value,
+            dataset_id=f"{variable}_{scenario}",
+            latitude=60.0,
+            longitude=-65.0,
+        )
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox", side_effect=fake_fetch_bbox
+    ):
+        enrich = next(
+            tool
+            for tool in make_bio_oracle_tools(thread_id)
+            if tool.name == "enrich_with_bio_oracle"
+        )
+        text = enrich.invoke(
+            {
+                "variables": ["temperature"],
+                "scenarios": ["baseline", "SSP5-8.5"],
+                "depth_layer": "surface",
+                "statistic": "mean",
+                "target_year": 2050,
+            }
+        )
+
+    keys = _store.keys(f"{thread_id}:dataset:df_bio_oracle_enriched_")
+    enriched = _store.get(keys[-1])["df"]
+    delta_column = "bio_oracle_temperature_ssp5_8_5_minus_baseline"
+    assert enriched["bio_oracle_match_status"].tolist() == ["matched", "no_value"]
+    assert enriched[delta_column].tolist()[0] == pytest.approx(2.5)
+    assert pd.isna(enriched[delta_column].tolist()[1])
+    assert "delta" in text.lower()
+    assert "1/2" in text
+    assert "1 valeur manquante" in text
+
+
+def test_enrich_with_bio_oracle_reuses_complete_result_with_visible_cache_provenance(
+    tmp_path, monkeypatch
+):
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.bio_oracle_sources import make_bio_oracle_tools
+    from tools.session_store import default_store as _store
+
+    monkeypatch.setenv("ERDDAP_CACHE_PATH", str(tmp_path / "bio-cache.sqlite"))
+    thread_id = "thread-bio-complete-result-cache"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+    source = pd.DataFrame({"latitude": [60.0], "longitude": [-65.0]})
+    _store.set(thread_id, source, {"source": "file:cache.tsv"})
+    enrich = next(
+        tool
+        for tool in make_bio_oracle_tools(thread_id)
+        if tool.name == "enrich_with_bio_oracle"
+    )
+    args = {
+        "variables": ["temperature"],
+        "scenarios": ["baseline", "SSP5-8.5"],
+        "depth_layer": "surface",
+        "statistic": "mean",
+        "target_year": 2050,
+    }
+
+    with patch(
+        "tools.bio_oracle_sources._fetch_bio_oracle_bbox",
+        side_effect=lambda **kwargs: _bbox_tile_df(
+            8.0 if kwargs["scenario"] == "baseline" else 10.0,
+            dataset_id=f"temperature_{kwargs['scenario']}",
+            latitude=60.0,
+            longitude=-65.0,
+        ),
+    ):
+        enrich.invoke(args)
+
+    _store.set(thread_id, source, {"source": "file:cache.tsv"})
+    text = enrich.invoke(args)
+    latest = _store.get(thread_id)
+
+    assert "cache" in text.casefold()
+    assert latest["meta"]["cache_hit"] is True
+    assert latest["meta"]["cached_at"]
+    assert len(latest["df"]) == len(source)
+
+
 def test_enrich_with_bio_oracle_marks_no_value_when_grid_returns_none():
     """Point hors grille / pas de valeur → statut `no_value`, valeur NaN propagée."""
     import pandas as pd

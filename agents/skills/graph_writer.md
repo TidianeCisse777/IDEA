@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "intent:visual"
 next_tool: run_graph
-max_tokens: 11500
+max_tokens: 11750
 size_exemption: The writer owns one executable graph-contract vocabulary shared by runtime validation across all chart families; its full body is delivered with a manifest-governed cap instead of the generic tool truncation.
 ---
 
@@ -155,12 +155,13 @@ graph_contract = {
 }
 ```
 
-### Vertical abundance profile
+### Vertical profiles
 
-Invert only depth y. `vertical_profile` requires ind./L or ind./m³; raw counts
-use `generic` with real fields and units. For a French abundance column, keep
-the real name in `source_variables` but declare `abundance_ind_L` or
-`abundance_ind_m3` in the contract.
+`vertical_profile` accepts any measured variable on x and depth on y, including
+abundance, temperature, salinity, oxygen or fluorescence. It supports one or
+several panels. Invert only the depth y axis on every panel. Keep the real
+plotted column names and units in `axes` and `source_variables`; abundance may
+still use the canonical roles `abundance_ind_L` or `abundance_ind_m3`.
 When a prior calculation produced a persistent table, use that exact named table
 instead of recalculating abundance inside the graph code. For 16–30 profiles,
 use a compact multi-column legend; do not create a one-column legend.
@@ -175,6 +176,25 @@ graph_contract = {
     "mappings": {},
     "zero_policy": {"mode": "include", "artist_gid": None},
     "source_variables": ["abundance_ind_L", "depth_m"],
+}
+```
+
+Matched points use `amundsen_te90_degC`, `amundsen_psal_psu`, and
+`amundsen_pres_dbar`. Never call them a complete CTD profile or use NeoLabs
+`max_sample_depth` as its axis. Retrieve every matched cast; rename raw
+`TE90`/`PSAL`/`PRES` to `temperature_degC`/`salinity_psu`/`depth_m`.
+
+```python
+graph_contract = {
+    "kind": "vertical_profile",
+    "axes": [
+        {"axis_index": 0, "x": "temperature_degC", "y": "depth_m"},
+        {"axis_index": 1, "x": "salinity_psu", "y": "depth_m"},
+    ],
+    "inverted_axes": [{"axis_index": 0, "axis": "y"}, {"axis_index": 1, "axis": "y"}],
+    "mappings": {},
+    "zero_policy": {"mode": "include", "artist_gid": None},
+    "source_variables": ["temperature_degC", "salinity_psu", "depth_m"],
 }
 ```
 
@@ -595,9 +615,10 @@ plt.tight_layout()
 
 ---
 
-### Climate delta map template
+### Bio-ORACLE scenario delta map template
 
-Use when the plan says Type: climate delta map. Stations coloured by warming delta (Bio-ORACLE SSP − CTD current).
+Use the exact persisted Bio-ORACLE delta column (Bio-ORACLE SSP − Bio-ORACLE
+baseline), never CTD. Keep `no_value` rows in grey.
 
 ```python
 import matplotlib
@@ -606,14 +627,13 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import numpy as np
+import pandas as pd
 
-plt.rcParams.update({{"figure.facecolor": "#ffffff", "axes.facecolor": "#f8fafc",
-                     "axes.edgecolor": "#94a3b8", "axes.labelcolor": "#0f172a",
-                     "xtick.color": "#334155", "ytick.color": "#334155", "text.color": "#0f172a"}})
-
-# --- prepare data ---
-# delta_df must have: latitude, longitude, delta_rechauffement_degC
-map_df = delta_df.dropna(subset=['latitude', 'longitude', 'delta_rechauffement_degC'])
+delta_col = '<exact persisted Bio-ORACLE delta column>'
+map_df = delta_df.dropna(subset=['latitude', 'longitude']).copy()
+map_df['_scenario_delta'] = pd.to_numeric(map_df[delta_col], errors='coerce')
+calculable_df = map_df.loc[map_df['_scenario_delta'].notna()].copy()
+missing_df = map_df.loc[map_df['_scenario_delta'].isna()].copy()
 
 central_lon = float(map_df['longitude'].mean())
 proj = ccrs.LambertConformal(central_longitude=central_lon, central_latitude=float(map_df['latitude'].mean()))
@@ -632,22 +652,30 @@ ax.add_feature(cfeature.COASTLINE, linewidth=0.8, edgecolor='#475569', zorder=2)
 gl = ax.gridlines(draw_labels=True, linewidth=0.4, color='#94a3b8', alpha=0.45, linestyle='--')
 gl.top_labels = False; gl.right_labels = False
 
-vmax = float(map_df['delta_rechauffement_degC'].abs().quantile(0.95)) or 5
-sc = ax.scatter(
-    map_df['longitude'], map_df['latitude'],
-    c=map_df['delta_rechauffement_degC'],
-    cmap='coolwarm', vmin=-vmax, vmax=vmax,
-    s=60, alpha=0.9,
-    transform=ccrs.PlateCarree(), zorder=3,
-)
-cbar = plt.colorbar(sc, ax=ax, label='Δ température (°C)', shrink=0.6, pad=0.02)
-cbar.ax.yaxis.label.set_color('#0f172a')
-cbar.ax.tick_params(colors='#334155')
+if not missing_df.empty:
+    ax.scatter(
+        missing_df['longitude'], missing_df['latitude'],
+        c='#94a3b8', marker='x', s=55, alpha=0.9,
+        transform=ccrs.PlateCarree(), zorder=3, label='Sans valeur de scénario',
+    )
 
-ax.set_title("<titre — ex: Delta réchauffement Bio-ORACLE SSP5-8.5 2100 vs CTD actuel>", fontsize=13, color='#0f172a')
+if not calculable_df.empty:
+    vmax = float(calculable_df['_scenario_delta'].abs().quantile(0.95)) or 5
+    sc = ax.scatter(
+        calculable_df['longitude'], calculable_df['latitude'],
+        c=calculable_df['_scenario_delta'],
+        cmap='coolwarm', vmin=-vmax, vmax=vmax,
+        s=60, alpha=0.9,
+        transform=ccrs.PlateCarree(), zorder=4,
+    )
+    cbar = plt.colorbar(sc, ax=ax, label='Δ température (°C)', shrink=0.6, pad=0.02)
+if not missing_df.empty:
+    ax.legend(loc='best', frameon=True)
+
+ax.set_title("<titre — ex: Bio-ORACLE SSP5-8.5 2050 − baseline>", fontsize=13, color='#0f172a')
 plt.tight_layout()
 
-graph_explanation = "Carte du delta de température par station. Axes : longitude × latitude. Couleur : Δ°C (Bio-ORACLE SSP5-8.5 2100 − CTD actuel), coolwarm centrée sur 0. Source : run_pandas sur delta_df."
+graph_explanation = "Δ°C Bio-ORACLE SSP5-8.5 2050 − baseline; croix grises = lignes no_value conservées."
 ```
 
 ---

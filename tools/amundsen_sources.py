@@ -17,6 +17,11 @@ from tools.tool_result import blocked, empty, error, success
 
 from core.canonical_grid import canonicalize_amundsen_query
 from core.erddap_cache import cache_get, cache_set
+from core.scientific_result_cache import (
+    build_result_cache_key,
+    load_result as load_scientific_result,
+    save_result as save_scientific_result,
+)
 
 _AMUNDSEN_DATASET_ID = "amundsen12713"
 # Friendly-name → ERDDAP-native mapping so the agent can call this tool
@@ -35,6 +40,14 @@ _AMUNDSEN_FRIENDLY_VARS: dict[str, str] = {
     "fluorescence": "FLOR", "flor": "FLOR",
     "density": "SIGT", "densité": "SIGT", "sigma": "SIGT", "sigt": "SIGT",
     "pressure": "PRES", "pression": "PRES", "pres": "PRES",
+    "depth_m": "PRES", "amundsen_pres_dbar": "PRES",
+    "temperature_degc": "TE90", "amundsen_te90_degc": "TE90",
+    "salinity_psu": "PSAL", "amundsen_psal_psu": "PSAL",
+    "density_sigt": "SIGT", "amundsen_sigt": "SIGT",
+    "oxygen_oxym": "OXYM", "amundsen_oxym": "OXYM",
+    "amundsen_ph": "pH",
+    "nitrate_ntra": "NTRA", "amundsen_ntra": "NTRA",
+    "fluorescence_flor": "FLOR", "amundsen_flor": "FLOR",
     "iron": "FLOR",  # Amundsen has no iron — fall back to chlorophyll proxy
     "dfe": "FLOR",
 }
@@ -68,6 +81,71 @@ _AMUNDSEN_CORE_COLUMNS = (
 _AMUNDSEN_CTD_MATCH_METADATA_COLUMNS = (
     "filename", "time", "latitude", "longitude", "station", "cast_number"
 )
+_AMUNDSEN_ENRICHED_COLUMN_DESCRIPTIONS = {
+    "amundsen_match_status": "Statut explicite de l'appariement CTD.",
+    "amundsen_station": "Station du profil Amundsen apparié.",
+    "amundsen_cast_number": "Numéro du cast Amundsen apparié.",
+    "amundsen_filename": "Fichier source du profil Amundsen apparié.",
+    "amundsen_pres_dbar": "Pression du point CTD apparié (dbar); profondeur CTD de référence.",
+    "amundsen_te90_degC": "Température TE90 du point CTD apparié (°C).",
+    "amundsen_psal_psu": "Salinité pratique PSAL du point CTD apparié (PSU).",
+    "amundsen_sigt": "Valeur SIGT du point CTD apparié.",
+    "amundsen_oxym": "Valeur OXYM du point CTD apparié.",
+    "amundsen_ph": "Valeur pH du point CTD apparié.",
+    "amundsen_ntra": "Valeur NTRA du point CTD apparié.",
+    "amundsen_flor": "Valeur FLOR du point CTD apparié.",
+}
+_AMUNDSEN_ENRICHED_VALUE_COLUMNS = {
+    "PRES": "amundsen_pres_dbar",
+    "TE90": "amundsen_te90_degC",
+    "PSAL": "amundsen_psal_psu",
+    "SIGT": "amundsen_sigt",
+    "OXYM": "amundsen_oxym",
+    "pH": "amundsen_ph",
+    "NTRA": "amundsen_ntra",
+    "FLOR": "amundsen_flor",
+}
+_AMUNDSEN_PROFILE_COLUMN_DESCRIPTIONS = {
+    "source_station_labels": "Station(s) de la table source associée(s) au profil.",
+    "amundsen_station": "Station Amundsen interrogée.",
+    "amundsen_cast_number": "Numéro du cast Amundsen interrogé.",
+    "profile_status": "Statut explicite du profil: loaded, no_profile ou source_unavailable.",
+    "depth_m": "Profondeur du profil, issue de PRES (dbar, approximation 1 dbar ≈ 1 m).",
+    "temperature_degC": "Température du profil, issue de TE90 (°C).",
+    "salinity_psu": "Salinité pratique du profil, issue de PSAL (PSU).",
+    "density_sigt": "Valeur SIGT du profil.",
+    "oxygen_oxym": "Valeur OXYM du profil.",
+    "ph": "Valeur pH du profil.",
+    "nitrate_ntra": "Valeur NTRA du profil.",
+    "fluorescence_flor": "Valeur FLOR du profil.",
+}
+_AMUNDSEN_PROFILE_VALUE_COLUMNS = {
+    "PRES": ("depth_m", ("PRES", "Pres", "pres", "depth")),
+    "TE90": ("temperature_degC", ("TE90", "Temp", "temperature")),
+    "PSAL": ("salinity_psu", ("PSAL", "Sal", "salinity")),
+    "SIGT": ("density_sigt", ("SIGT", "Sigt", "density")),
+    "OXYM": ("oxygen_oxym", ("OXYM", "Oxym", "oxygen")),
+    "pH": ("ph", ("pH", "PH", "ph")),
+    "NTRA": ("nitrate_ntra", ("NTRA", "Ntra", "nitrate")),
+    "FLOR": ("fluorescence_flor", ("FLOR", "Flor", "fluorescence")),
+}
+_AMUNDSEN_VARIABLE_CATALOG = (
+    ("PRES", "pression / profondeur", "amundsen_pres_dbar", "profondeur CTD du point apparié"),
+    ("TE90", "température", "amundsen_te90_degC", "température de l'eau"),
+    ("PSAL", "salinité", "amundsen_psal_psu", "salinité pratique"),
+    ("SIGT", "densité", "amundsen_sigt", "anomalie de densité SIGT"),
+    ("OXYM", "oxygène", "amundsen_oxym", "mesure d'oxygène dissous"),
+    ("pH", "pH", "amundsen_ph", "acidité; valeur sans unité"),
+    ("NTRA", "nitrate", "amundsen_ntra", "mesure de nitrate"),
+    ("FLOR", "fluorescence", "amundsen_flor", "signal de fluorescence"),
+)
+
+
+def _format_amundsen_variable_catalog() -> str:
+    return "\n".join(
+        f"- {label} — `{raw}` → `{canonical}` : {description}"
+        for raw, label, canonical, description in _AMUNDSEN_VARIABLE_CATALOG
+    )
 _CTD_FILENAME_CANDIDATES = (
     "sample_ctdrosettefilename",
     "ctdrosettefilename",
@@ -403,11 +481,21 @@ class AmundsenMatcher(CtdProfileMatcher):
             station[position] = best.get("station")
             cast[position] = best.get("cast_number")
             filename[position] = best.get("filename")
-        return {
+        columns = {
             "amundsen_station": station,
             "amundsen_cast_number": cast,
             "amundsen_filename": filename,
         }
+        for variable in self.selected_variables:
+            output_column = _AMUNDSEN_ENRICHED_VALUE_COLUMNS.get(variable)
+            if not output_column or variable in {"PRES", "TE90", "PSAL"}:
+                continue
+            values: list = [pd.NA] * n_unique
+            for position, item in enumerate(matched):
+                if item is not None:
+                    values[position] = item[0].get(variable, pd.NA)
+            columns[output_column] = values
+        return columns
 
     def _extra_diagnostics(self, points, candidate_positions):
         return {"query_unique_count": len(candidate_positions or [])}
@@ -595,6 +683,10 @@ def _run_filename_enrichment(
         "amundsen_cast_number": [],
         "amundsen_filename": [],
     }
+    for variable in selected_variables:
+        output_column = _AMUNDSEN_ENRICHED_VALUE_COLUMNS.get(variable)
+        if output_column:
+            values.setdefault(output_column, [])
     n_matched = 0
 
     for position, aliases in enumerate(source_aliases.tolist()):
@@ -673,6 +765,10 @@ def _run_filename_enrichment(
             "amundsen_cast_number": best.get("cast_number", pd.NA),
             "amundsen_filename": best.get("filename", pd.NA),
         }
+        for variable in selected_variables:
+            output_column = _AMUNDSEN_ENRICHED_VALUE_COLUMNS.get(variable)
+            if output_column:
+                row_values[output_column] = best.get(variable, pd.NA)
         for key, column in values.items():
             column.append(row_values[key])
 
@@ -747,6 +843,14 @@ def make_amundsen_tools(thread_id: str) -> list:
         nearest_index = (depth_values - float(target_depth)).abs().idxmin()
         return ctd.loc[nearest_index]
 
+    def _numeric_profile_column(
+        dataframe: pd.DataFrame, candidates: tuple[str, ...]
+    ) -> pd.Series:
+        column = next((name for name in candidates if name in dataframe.columns), None)
+        if column is None:
+            return pd.Series(float("nan"), index=dataframe.index, dtype="float64")
+        return pd.to_numeric(dataframe[column], errors="coerce")
+
     @tool(response_format="content_and_artifact")
     def list_amundsen_datasets() -> str:
         """Liste les datasets CTD Amundsen disponibles dans ERDDAP."""
@@ -763,7 +867,19 @@ def make_amundsen_tools(thread_id: str) -> list:
 
     @tool(response_format="content_and_artifact")
     def preview_amundsen_profile(station: str | None = None, cast_number: int | None = None) -> str:
-        """Prévisualise un profil CTD Amundsen avec des alias de jointure."""
+        """Prévisualise un profil CTD avec des identifiants Amundsen déjà résolus.
+
+        Pour une table NeoLabs, appeler d'abord ``find_amundsen_data_for_table``
+        puis l'enrichissement canonique : un cast NeoLabs n'est pas un cast
+        Amundsen. Une requête sans station ni cast est refusée.
+        """
+        if station is None and cast_number is None:
+            return _am_blocked(
+                "Requête Amundsen non bornée refusée : préciser une station ou "
+                "un cast Amundsen déjà résolu. Pour une table NeoLabs, commencer "
+                "par `find_amundsen_data_for_table`, puis utiliser les identifiants "
+                "Amundsen retournés par l'enrichissement canonique."
+            )
         try:
             preview = _preview_amundsen_profile({"station": station, "cast_number": cast_number})
             rows = preview["rows"]
@@ -778,7 +894,18 @@ def make_amundsen_tools(thread_id: str) -> list:
 
     @tool(response_format="content_and_artifact")
     def query_amundsen_ctd(station: str | None = None, cast_number: int | None = None) -> str:
-        """Extrait un profil CTD Amundsen complet et écrit un TSV téléchargeable."""
+        """Extrait un profil CTD complet avec des identifiants Amundsen résolus.
+
+        Refuse une extraction non bornée. Pour NeoLabs, apparier d'abord par
+        latitude/longitude/temps et ne jamais réutiliser directement son cast.
+        """
+        if station is None and cast_number is None:
+            return _am_blocked(
+                "Requête Amundsen non bornée refusée : préciser une station ou "
+                "un cast Amundsen déjà résolu. Pour une table NeoLabs, commencer "
+                "par `find_amundsen_data_for_table`, puis utiliser les identifiants "
+                "Amundsen retournés par l'enrichissement canonique."
+            )
         try:
             file_id = uuid.uuid4().hex
             output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
@@ -821,6 +948,350 @@ def make_amundsen_tools(thread_id: str) -> list:
             )
         except Exception as exc:
             return _am_error(f"Erreur lors de l'accès à Amundsen : {exc}", retryable=True)
+
+    @tool(response_format="content_and_artifact")
+    def query_amundsen_profiles_for_table(
+        source_variable: str | None = None,
+        source_station_values: list[str] | None = None,
+        variables: list[str] | None = None,
+        max_profiles: int = 12,
+    ) -> str:
+        """Charge tous les profils complets déjà appariés dans une table Amundsen.
+
+        La table doit contenir ``amundsen_station`` et
+        ``amundsen_cast_number`` produits par l'enrichissement canonique. Chaque
+        paire unique station/cast est interrogée une fois. Si la table active
+        est une sélection dérivée sans ces identifiants, le tool retrouve
+        l'unique table enrichie compatible et la filtre exactement avec
+        ``source_station_values`` (par exemple les stations sélectionnées).
+        Aucun profil au-delà
+        de la limite n'est choisi ou supprimé: l'opération entière est refusée
+        avec le dénominateur exact. Les profils absents ou indisponibles restent
+        représentés par une ligne de statut dans la table persistée.
+        """
+        requested_variables = variables or list(_AMUNDSEN_PROFILE_VALUE_COLUMNS)
+        selected_variables: list[str] = []
+        unsupported_variables: list[str] = []
+        for variable in requested_variables:
+            normalized = _normalize_amundsen_var(variable)
+            if (
+                normalized in _AMUNDSEN_PROFILE_VALUE_COLUMNS
+                and normalized not in selected_variables
+            ):
+                selected_variables.append(normalized)
+            elif normalized not in _AMUNDSEN_PROFILE_VALUE_COLUMNS:
+                unsupported_variables.append(str(variable))
+        if "PRES" in selected_variables:
+            selected_variables.remove("PRES")
+        selected_variables.insert(0, "PRES")
+        source = _source_dataframe(source_variable)
+        if source is None:
+            return _am_blocked(
+                "Table source introuvable ou vide; fournir le nom exact d’une "
+                "table Amundsen enrichie persistée."
+            )
+        required = ("amundsen_station", "amundsen_cast_number")
+        resolved_source_variable = source_variable
+        if resolved_source_variable is None:
+            active_entry = _store.get(thread_id) or {}
+            resolved_source_variable = (active_entry.get("meta") or {}).get(
+                "variable_name"
+            )
+
+        station_candidates = ("station", "station_name", "STATION", "STATION_NAME")
+        requested_station_labels = [
+            str(value).strip()
+            for value in (source_station_values or [])
+            if str(value).strip()
+        ]
+        if not requested_station_labels and not all(
+            column in source.columns for column in required
+        ):
+            active_station_column = next(
+                (column for column in station_candidates if column in source.columns),
+                None,
+            )
+            if active_station_column:
+                requested_station_labels = list(
+                    dict.fromkeys(
+                        source[active_station_column]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .loc[lambda values: values.ne("")]
+                        .tolist()
+                    )
+                )
+                if len(requested_station_labels) > 12:
+                    return _am_blocked(
+                        "La sélection active contient plus de 12 stations; fournir "
+                        "explicitement `source_station_values` pour éviter toute "
+                        "sélection implicite."
+                    )
+
+        if not all(column in source.columns for column in required):
+            requested_keys = {
+                value.casefold() for value in requested_station_labels
+            }
+            compatible_sources: list[tuple[str, pd.DataFrame]] = []
+            for key in _store.keys(f"{thread_id}:dataset:"):
+                entry = _store.get(key) or {}
+                candidate = entry.get("df")
+                if not isinstance(candidate, pd.DataFrame) or candidate.empty:
+                    continue
+                if not all(column in candidate.columns for column in required):
+                    continue
+                if requested_keys:
+                    candidate_station_column = next(
+                        (
+                            column
+                            for column in station_candidates
+                            if column in candidate.columns
+                        ),
+                        None,
+                    )
+                    if candidate_station_column is None:
+                        continue
+                    candidate_values = set(
+                        candidate[candidate_station_column]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .str.casefold()
+                    )
+                    if not requested_keys.intersection(candidate_values):
+                        continue
+                candidate_name = (entry.get("meta") or {}).get(
+                    "variable_name"
+                ) or key.rsplit(":", 1)[-1]
+                compatible_sources.append((str(candidate_name), candidate))
+
+            if len(compatible_sources) != 1:
+                names = ", ".join(name for name, _ in compatible_sources) or "aucune"
+                return _am_blocked(
+                    "Impossible de retrouver sans ambiguïté la table Amundsen "
+                    f"enrichie compatible (candidates: {names}). Fournir son nom "
+                    "exact dans `source_variable`."
+                )
+            resolved_source_variable, source = compatible_sources[0]
+
+        missing_columns = [column for column in required if column not in source.columns]
+        if missing_columns:
+            return _am_blocked(
+                "Identifiants de profils complets absents: "
+                + ", ".join(missing_columns)
+                + ". Utiliser d’abord l’enrichissement Amundsen canonique."
+            )
+        original_source_rows = len(source)
+        missing_station_labels: list[str] = []
+        if requested_station_labels:
+            source_station_column = next(
+                (column for column in station_candidates if column in source.columns),
+                None,
+            )
+            if source_station_column is None:
+                return _am_blocked(
+                    "La table Amundsen enrichie ne contient aucune colonne de "
+                    "station source permettant d'appliquer la sélection demandée."
+                )
+            normalized_source_labels = (
+                source[source_station_column].astype("string").str.strip().str.casefold()
+            )
+            requested_keys = {
+                label.casefold(): label for label in requested_station_labels
+            }
+            present_keys = set(normalized_source_labels.dropna())
+            missing_station_labels = [
+                label for key, label in requested_keys.items() if key not in present_keys
+            ]
+            source = source.loc[
+                normalized_source_labels.isin(requested_keys)
+            ].copy()
+            if source.empty:
+                return _am_blocked(
+                    "Aucune ligne ne correspond aux stations demandées; aucune "
+                    "station de remplacement n'a été choisie. Stations absentes: "
+                    + ", ".join(missing_station_labels or requested_station_labels)
+                    + "."
+                )
+
+        try:
+            limit = int(max_profiles)
+        except (TypeError, ValueError):
+            limit = 12
+        if limit < 1:
+            return _am_blocked("`max_profiles` doit être supérieur ou égal à 1.")
+
+        pair_rows = source.loc[:, list(required)].copy()
+        valid_mask = pair_rows[required[0]].notna() & pair_rows[required[1]].notna()
+        n_missing_identifiers = int((~valid_mask).sum())
+        valid_pairs = pair_rows.loc[valid_mask].copy()
+        valid_pairs[required[0]] = valid_pairs[required[0]].astype(str)
+        valid_pairs[required[1]] = pd.to_numeric(
+            valid_pairs[required[1]], errors="coerce"
+        )
+        n_invalid_cast = int(valid_pairs[required[1]].isna().sum())
+        valid_pairs = valid_pairs.dropna(subset=[required[1]])
+        valid_pairs[required[1]] = valid_pairs[required[1]].astype(int)
+        unique_pairs = valid_pairs.drop_duplicates().reset_index(drop=True)
+        n_requested = len(unique_pairs)
+        duplicate_source_rows = len(valid_pairs) - n_requested
+        if n_requested == 0:
+            return _am_blocked(
+                "Aucun profil calculable: 0 paire station/cast valide; "
+                f"{n_missing_identifiers + n_invalid_cast} ligne(s) sans identifiants."
+            )
+        if n_requested > limit:
+            return _am_blocked(
+                f"La table référence {n_requested} profils uniques, au-dessus de la "
+                f"limite {limit}; aucun profil n’a été écarté ni interrogé. "
+                "Augmenter explicitement `max_profiles` pour charger l’ensemble."
+            )
+
+        source_label_column = next(
+            (column for column in station_candidates if column in source.columns),
+            None,
+        )
+        frames: list[pd.DataFrame] = []
+        loaded_profiles = 0
+        unavailable_profiles = 0
+        no_profiles = 0
+        cache_hits = 0
+        for pair in unique_pairs.to_dict(orient="records"):
+            station = str(pair["amundsen_station"])
+            cast_number = int(pair["amundsen_cast_number"])
+            source_labels = ""
+            if source_label_column:
+                pair_mask = (
+                    source["amundsen_station"].astype(str).eq(station)
+                    & pd.to_numeric(source["amundsen_cast_number"], errors="coerce").eq(cast_number)
+                )
+                source_labels = " | ".join(
+                    dict.fromkeys(
+                        source.loc[pair_mask, source_label_column].dropna().astype(str).tolist()
+                    )
+                )
+            output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
+            status = "loaded"
+            profile_cache_key = {
+                "dataset_id": _AMUNDSEN_DATASET_ID,
+                "station": station,
+                "cast_number": cast_number,
+                "variables": selected_variables,
+            }
+            try:
+                cached_profile = cache_get(
+                    "amundsen_full_profile", profile_cache_key
+                )
+                if isinstance(cached_profile, pd.DataFrame):
+                    profile = cached_profile.copy(deep=True)
+                    cache_hits += 1
+                else:
+                    result = _query_amundsen_ctd(
+                        {
+                            "station": station,
+                            "cast_number": cast_number,
+                            "variables": selected_variables,
+                        },
+                        output_path=output_path,
+                    )
+                    profile = pd.read_csv(
+                        result.get("file_path", output_path), sep="\t"
+                    )
+                    cache_set(
+                        "amundsen_full_profile", profile_cache_key, profile
+                    )
+                if profile.empty:
+                    status = "no_profile"
+                    no_profiles += 1
+                else:
+                    loaded_profiles += 1
+            except Exception:
+                profile = pd.DataFrame()
+                status = "source_unavailable"
+                unavailable_profiles += 1
+
+            if profile.empty:
+                profile = pd.DataFrame([{}])
+            profile["source_station_labels"] = source_labels
+            profile["amundsen_station"] = station
+            profile["amundsen_cast_number"] = cast_number
+            profile["profile_status"] = status
+            for variable in selected_variables:
+                output_column, candidates = _AMUNDSEN_PROFILE_VALUE_COLUMNS[variable]
+                profile[output_column] = _numeric_profile_column(profile, candidates)
+            frames.append(profile)
+
+        combined = pd.concat(frames, ignore_index=True, sort=False)
+        fingerprint = hashlib.sha256(
+            unique_pairs.to_json(orient="records").encode("utf-8")
+        ).hexdigest()[:12]
+        variable_name = dataset_variable_name("amundsen_profiles", fingerprint)
+        download_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
+        combined.to_csv(download_path, sep="\t", index=False)
+        metadata = {
+            "source": "amundsen_profiles",
+            "source_variable": resolved_source_variable,
+            "n_rows": len(combined),
+            "n_cols": len(combined.columns),
+            "n_source_rows": original_source_rows,
+            "n_selected_source_rows": len(source),
+            "missing_requested_station_labels": missing_station_labels,
+            "n_requested_profiles": n_requested,
+            "n_loaded_profiles": loaded_profiles,
+            "n_no_profile": no_profiles,
+            "n_unavailable_profiles": unavailable_profiles,
+            "n_missing_identifier_rows": n_missing_identifiers + n_invalid_cast,
+            "duplicate_source_rows": duplicate_source_rows,
+            "cache_hits": cache_hits,
+            "important_columns": list(_AMUNDSEN_PROFILE_COLUMN_DESCRIPTIONS),
+            "column_descriptions": _AMUNDSEN_PROFILE_COLUMN_DESCRIPTIONS,
+            "profile_depth_column": "depth_m",
+            "requested_variables": selected_variables,
+            "unsupported_requested_variables": unsupported_variables,
+        }
+        store_dataset(
+            _store,
+            thread_id,
+            combined,
+            variable_name=variable_name,
+            meta=metadata,
+            latest_alias=CTD,
+        )
+        summary = (
+            f"Profils Amundsen complets — {n_requested} profil(s) demandé(s), "
+            f"{loaded_profiles} chargé(s), {no_profiles} absent(s), "
+            f"{unavailable_profiles} indisponible(s).\n"
+            f"Table source résolue : `{resolved_source_variable}`. "
+            f"Lignes source : {original_source_rows}; lignes sélectionnées : "
+            f"{len(source)}; doublons station/cast regroupés : "
+            f"{duplicate_source_rows}; identifiants manquants : "
+            f"{n_missing_identifiers + n_invalid_cast}.\n"
+            f"Stations demandées absentes : {len(missing_station_labels)}"
+            + (f" ({', '.join(missing_station_labels)})" if missing_station_labels else "")
+            + ".\n"
+            + "Variables non mesurées ignorées : "
+            + (", ".join(unsupported_variables) if unsupported_variables else "aucune")
+            + ".\n"
+            f"Profils réutilisés depuis le cache exact : {cache_hits}.\n"
+            f"Données disponibles dans `{variable_name}` et `df_ctd`.\n"
+            f"Profondeur du profil : `depth_m` issue de `PRES`, jamais `max_sample_depth`.\n"
+            f"Télécharger : {download_url(download_path.name)}"
+        )
+        return _am_success(
+            summary,
+            data_ref=variable_name,
+            artifact_refs=(download_url(download_path.name),),
+            persisted=True,
+            method="Amundsen full profiles by resolved station/cast",
+            metrics={
+                "requested_profiles": n_requested,
+                "loaded_profiles": loaded_profiles,
+                "no_profile": no_profiles,
+                "source_unavailable": unavailable_profiles,
+                "cache_hits": cache_hits,
+            },
+        )
 
     @tool(response_format="content_and_artifact")
     def enrich_loaded_table_with_amundsen_ctd(
@@ -1155,21 +1626,117 @@ def make_amundsen_tools(thread_id: str) -> list:
         `filter_dataframe_by_zone` puis enrich avec source_variable=filtré).
         Si `date_range=[start_iso, end_iso]` est fourni, un filtre date est
         appliqué sur la colonne time détectée. Les deux peuvent être combinés.
+
+        ``variables`` est obligatoire pour lancer l'accès distant. Si la liste
+        est absente ou vide, retourne le catalogue complet et attend le choix
+        explicite de l'utilisateur. Pour « toutes les variables », fournir les
+        huit noms CTD du catalogue.
         """
-        raw_variables = list(
-            variables or ["TE90", "PSAL", "SIGT", "OXYM", "pH", "NTRA", "FLOR"]
-        )
+        if not variables:
+            return _am_blocked(
+                "Choisir une ou plusieurs variables CTD avant l’enrichissement :\n"
+                f"{_format_amundsen_variable_catalog()}\n"
+                "Répondre avec les noms lisibles, les codes CTD, ou « toutes les "
+                "variables »; aucune requête Amundsen n’a été lancée."
+            )
+
+        raw_variables = list(variables)
         selected_variables: list[str] = []
+        unsupported_variables: list[str] = []
         for v in raw_variables:
             translated = _normalize_amundsen_var(v)
-            if translated not in selected_variables:
+            if translated not in _AMUNDSEN_ENRICHED_VALUE_COLUMNS:
+                unsupported_variables.append(str(v))
+            elif translated not in selected_variables:
                 selected_variables.append(translated)
+        if unsupported_variables:
+            return _am_blocked(
+                "Variables CTD non prises en charge : "
+                + ", ".join(unsupported_variables)
+                + ". Aucune requête Amundsen n’a été lancée. Choisir parmi :\n"
+                + _format_amundsen_variable_catalog()
+            )
 
         source = resolve_source_dataframe(_store, thread_id, source_variable)
         filename_col = (
             detect_column(source.columns, _CTD_FILENAME_CANDIDATES)
             if source is not None else None
         )
+        cache_parameters = {
+            "variables": selected_variables,
+            "latitude_column": latitude_column,
+            "longitude_column": longitude_column,
+            "time_column": time_column,
+            "depth_column": depth_column,
+            "spatial_tolerance_km": spatial_tolerance_km,
+            "time_tolerance_hours": time_tolerance_hours,
+            "initial_batch_spatial_degrees": initial_batch_spatial_degrees,
+            "batch_spatial_degrees": batch_spatial_degrees,
+            "max_source_points_per_batch": max_source_points_per_batch,
+            "max_ctd_rows_per_batch": max_ctd_rows_per_batch,
+            "depth_padding_dbar": depth_padding_dbar,
+            "zone_name": zone_name,
+            "date_range": date_range,
+            "match_route": "ctd_filename" if filename_col is not None else "spatiotemporal",
+        }
+        cache_key = (
+            build_result_cache_key(source, cache_parameters)
+            if source is not None
+            else None
+        )
+        if cache_key is not None:
+            cached = load_scientific_result("amundsen_enrichment", cache_key)
+            if cached is not None:
+                enriched = cached.dataframe
+                status_counts = enriched[
+                    "amundsen_match_status"
+                ].value_counts().to_dict()
+                n_matched = int(status_counts.get("matched", 0))
+                n_no_value = int(status_counts.get("matched_no_value", 0))
+                n_no_match = int(status_counts.get("no_match", 0))
+                variable_name = dataset_variable_name(
+                    "amundsen_enriched", uuid.uuid4().hex[:12]
+                )
+                output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
+                enriched.to_csv(output_path, sep="\t", index=False)
+                store_dataset(
+                    _store,
+                    thread_id,
+                    enriched,
+                    variable_name=variable_name,
+                    meta={
+                        "source": "amundsen_enrichment",
+                        "n_rows": len(enriched),
+                        "matched_rows": n_matched,
+                        "cache_hit": True,
+                        "cached_at": cached.cached_at,
+                        "cache_provenance": cached.provenance,
+                        "important_columns": list(_AMUNDSEN_ENRICHED_COLUMN_DESCRIPTIONS),
+                        "column_descriptions": _AMUNDSEN_ENRICHED_COLUMN_DESCRIPTIONS,
+                        "matched_ctd_depth_column": "amundsen_pres_dbar",
+                    },
+                    latest_alias=CTD_ENRICHED,
+                )
+                return _am_success(
+                    f"Enrichissement Amundsen réutilisé depuis le cache exact "
+                    f"({cached.cached_at}) : {len(enriched)} ligne(s), "
+                    f"matched={n_matched}, matched_no_value={n_no_value}, "
+                    f"no_match={n_no_match}.\n"
+                    f"Données disponibles dans `{variable_name}`. Toutes les "
+                    "lignes du résultat original sont conservées.\n"
+                    f"Télécharger : {download_url(output_path.name)}",
+                    data_ref=variable_name,
+                    artifact_refs=(download_url(output_path.name),),
+                    persisted=True,
+                    method="Amundsen exact scientific result cache",
+                    metrics={
+                        "rows": len(enriched),
+                        "matched": n_matched,
+                        "matched_no_value": n_no_value,
+                        "no_match": n_no_match,
+                        "cache_hit": True,
+                    },
+                )
         if filename_col is not None:
             outcome = _run_filename_enrichment(
                 thread_id=thread_id,
@@ -1271,6 +1838,19 @@ def make_amundsen_tools(thread_id: str) -> list:
                 "status_counts": status_counts,
             },
         )
+        cached_at = None
+        if cache_key is not None and not fetch_failures and not n_source_unavailable:
+            cached_at = save_scientific_result(
+                "amundsen_enrichment",
+                cache_key,
+                enriched,
+                provenance={
+                    **cache_parameters,
+                    "dataset_id": _AMUNDSEN_DATASET_ID,
+                    "status_counts": status_counts,
+                    "provenance": provenance,
+                },
+            ).cached_at
 
         # Epilogue (source-specific): the exact provenance object rendered
         # below is persisted with the enriched dataset.
@@ -1288,6 +1868,11 @@ def make_amundsen_tools(thread_id: str) -> list:
                 "unique_source_points": n_unique,
                 "matched_rows": n_matched,
                 "provenance": provenance,
+                "cache_hit": False,
+                "cached_at": cached_at,
+                "important_columns": list(_AMUNDSEN_ENRICHED_COLUMN_DESCRIPTIONS),
+                "column_descriptions": _AMUNDSEN_ENRICHED_COLUMN_DESCRIPTIONS,
+                "matched_ctd_depth_column": "amundsen_pres_dbar",
             },
             latest_alias=CTD_ENRICHED,
         )
@@ -1444,6 +2029,7 @@ def make_amundsen_tools(thread_id: str) -> list:
         list_amundsen_datasets,
         preview_amundsen_profile,
         query_amundsen_ctd,
+        query_amundsen_profiles_for_table,
         find_amundsen_data_for_table,
         enrich_loaded_table_with_amundsen_ctd,
         enrich_with_amundsen_ctd,

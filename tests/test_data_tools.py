@@ -124,6 +124,38 @@ def test_second_loaded_file_invites_the_user_to_name_its_table(tmp_path):
     assert "Table à citer dans une prochaine demande" in result
 
 
+def test_loading_both_neolabs_files_routes_join_to_deterministic_preparation(tmp_path):
+    abundance_path = tmp_path / "neolabs_abundance.csv"
+    sample_path = tmp_path / "neolabs_sample.csv"
+    pd.DataFrame(
+        {
+            "SAMPLE_ID": [1],
+            "ANALYSIS_ID": [10],
+            "TAXON_ID": ["Calanus"],
+            "CLASS": ["Copepoda"],
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [12.0],
+        }
+    ).to_csv(abundance_path, index=False)
+    pd.DataFrame(
+        {
+            "sample_id": [1],
+            "analysis_id": [10],
+            "deployment_id": ["D1"],
+            "net_sampling_ids": ["N1"],
+            "tow_type": ["V-Tow"],
+        }
+    ).to_csv(sample_path, index=False)
+
+    load = next(t for t in make_tools("thread-neolabs-pair") if t.name == "load_file")
+    load.invoke({"path": str(abundance_path)})
+    result = load.invoke({"path": str(sample_path)})
+
+    assert "prepare_neolabs_analysis" in result
+    assert str(abundance_path) in result
+    assert str(sample_path) in result
+    assert "astype(str)" in result
+
+
 def test_run_pandas_marks_truncated_dataframe_preview():
     """Le modèle ne doit pas compléter une table au-delà des lignes visibles."""
     from tools.dataset_registry import store_dataset
@@ -180,6 +212,73 @@ def test_run_pandas_exposes_loaded_file_after_ecotaxa_result():
     assert "A" in result
     assert "B" in result
     assert "_merge" in result
+
+
+def test_run_pandas_blocks_string_casts_on_neolabs_join_keys():
+    """Casting nullable NeoLabs ids to str must not persist a zero-match join."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-neolabs-unsafe-string-join"
+    abundance = pd.DataFrame(
+        {
+            "SAMPLE_ID": pd.Series([1], dtype="int64"),
+            "ANALYSIS_ID": pd.Series([10], dtype="int64"),
+            "TAXON_ID": ["Calanus"],
+            "CLASS": ["Copepoda"],
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [12.0],
+        }
+    )
+    samples = pd.DataFrame(
+        {
+            "sample_id": pd.Series([1, 2], dtype="int64"),
+            "analysis_id": pd.Series([10.0, pd.NA], dtype="Float64"),
+            "deployment_id": ["D1", "D2"],
+            "net_sampling_ids": ["N1", "N2"],
+            "tow_type": ["V-Tow", "V-Tow"],
+        }
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        abundance,
+        variable_name="df_file_neolabs_abundance",
+        meta={"source": "file:neolabs_abundance.csv"},
+        is_loaded_file=True,
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        samples,
+        variable_name="df_file_neolabs_sample",
+        meta={"source": "file:neolabs_sample.csv"},
+        is_loaded_file=True,
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke(
+        {
+            "code": """
+ab = df_file_neolabs_abundance.copy()
+sm = df_file_neolabs_sample.copy()
+ab['ANALYSIS_ID'] = ab['ANALYSIS_ID'].astype(str)
+sm['analysis_id'] = sm['analysis_id'].astype(str)
+result = ab.merge(
+    sm,
+    left_on=['SAMPLE_ID', 'ANALYSIS_ID'],
+    right_on=['sample_id', 'analysis_id'],
+    how='left',
+)
+""",
+            "persist_as": "df_derived_bad_neolabs_join",
+        }
+    )
+
+    assert "bloqué" in result.casefold()
+    assert "astype(str)" in result
+    assert "prepare_neolabs_analysis" in result
+    assert _store.get(
+        f"{thread_id}:dataset:df_derived_bad_neolabs_join"
+    ) is None
 
 
 def test_run_pandas_persists_join_with_readable_description():
@@ -614,6 +713,40 @@ def test_run_pandas_keyerror_points_to_variable_holding_the_column(tsv_path):
     assert "amundsen_te90_degC" in out
 
 
+@pytest.mark.parametrize(
+    ("requested", "canonical"),
+    [
+        ("TE90", "amundsen_te90_degC"),
+        ("PSAL", "amundsen_psal_psu"),
+        ("PRES", "amundsen_pres_dbar"),
+        ("SIGT", "amundsen_sigt"),
+        ("OXYM", "amundsen_oxym"),
+        ("pH", "amundsen_ph"),
+        ("NTRA", "amundsen_ntra"),
+        ("FLOR", "amundsen_flor"),
+    ],
+)
+def test_run_pandas_keyerror_suggests_canonical_amundsen_column(
+    tsv_path, requested, canonical
+):
+    thread_id = f"thread-amundsen-alias-{requested.lower()}"
+    tools = make_tools(thread_id)
+    next(t for t in tools if t.name == "load_file").invoke({"path": tsv_path})
+    _store.set(
+        f"{thread_id}:dataset:df_amundsen_enriched_exact",
+        pd.DataFrame({canonical: [1.0]}),
+        {"variable_name": "df_amundsen_enriched_exact"},
+    )
+
+    out = next(t for t in tools if t.name == "run_pandas").invoke(
+        {"code": f"result = df[{requested!r}].mean()"}
+    )
+
+    assert f"`{requested}`" in out
+    assert f"`{canonical}`" in out
+    assert "df_amundsen_enriched_exact" in out
+
+
 def test_run_pandas_persists_canonical_intermediate_carrying_env(tsv_path):
     """A canonical table built as an intermediate (result is something else)
     must still be persisted, with its environmental columns retained."""
@@ -996,6 +1129,46 @@ graph_contract = {
 """
 
     result = run_graph.invoke({"code": code})
+
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
+
+
+def test_run_graph_renders_two_panel_temperature_salinity_profile(tmp_path):
+    thread_id = "thread-environmental-vertical-contract"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({
+            "depth_m": [0.0, 10.0, 20.0],
+            "temperature_degC": [-0.8, -1.0, -1.3],
+            "salinity_psu": [30.1, 30.7, 31.2],
+        }),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    result = run_graph.invoke({"code": """
+fig, axes = plt.subplots(1, 2, sharey=True)
+axes[0].plot(df['temperature_degC'], df['depth_m'])
+axes[1].plot(df['salinity_psu'], df['depth_m'])
+axes[0].set_xlabel('Température (°C)'); axes[0].set_ylabel('Profondeur (m)')
+axes[1].set_xlabel('Salinité (PSU)')
+axes[0].invert_yaxis()
+graph_contract = {
+    'kind': 'vertical_profile',
+    'axes': [
+        {'axis_index': 0, 'x': 'temperature_degC', 'y': 'depth_m'},
+        {'axis_index': 1, 'x': 'salinity_psu', 'y': 'depth_m'},
+    ],
+    'inverted_axes': [
+        {'axis_index': 0, 'axis': 'y'},
+        {'axis_index': 1, 'axis': 'y'},
+    ],
+    'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['temperature_degC', 'salinity_psu', 'depth_m'],
+}
+"""})
 
     assert "/graphs/" in result
     assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False

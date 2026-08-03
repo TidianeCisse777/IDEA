@@ -17,6 +17,10 @@ _CORE_TOOL_NAMES = (
     "query_copepod_knowledge_base",
     "run_pandas",
 )
+_NEOLABS_PREPARATION_PATTERN = re.compile(
+    r"\bneo[- ]?labs?\b|\bneolabs_(?:abundance|sample)\.(?:csv|tsv)\b",
+    re.IGNORECASE,
+)
 _ENRICHMENT_GROUP_BY_SOURCE: dict[str, ToolExposureGroup] = {
     "ecopart": "enrichment_ecopart",
     "amundsen": "enrichment_amundsen",
@@ -37,6 +41,24 @@ _AMUNDSEN_ENVIRONMENT_PATTERN = re.compile(
     r"oxyg[eè]ne|oxygen|o2|oxym|nitrates?|no3|ntra|chlorophylle|chlorophyll|"
     r"fluorescen\w*|flor|densit[eé]|density|sigt|pression|pressure|pres|ph)\b",
     re.IGNORECASE,
+)
+_AMUNDSEN_MATCH_PATTERN = re.compile(
+    r"\b(?:profil\w*|correspond\w*|appariement\w*|match\w*)\b",
+    re.IGNORECASE,
+)
+_AMUNDSEN_VARIABLE_SELECTION_PATTERN = re.compile(
+    r"\b(?:toutes?\s+les\s+(?:huit\s+)?variables?|all\s+(?:eight\s+)?variables?|"
+    r"temp(?:[eé]rature)?s?|te90|salinit[eé]|salinity|psal|"
+    r"oxyg[eè]ne|oxygen|o2|oxym|nitrates?|no3|ntra|"
+    r"fluorescen\w*|flor|densit[eé]|density|sigt|"
+    r"pression|pressure|pres|ph)\b",
+    re.IGNORECASE,
+)
+_AMUNDSEN_VERTICAL_PROFILE_PATTERN = re.compile(
+    r"(?=.*\bprofil\w*\s+vertic\w*\b)"
+    r"(?=.*\b(?:ctd|variables?\s+ctd|env(?:iron\w*)?|temp(?:[eé]rature)?s?|te90|salinit[eé]|salinity|psal|"
+    r"oxyg[eè]ne|oxygen|oxym|fluorescen\w*|flor|pression|pressure|pres)\b)",
+    re.IGNORECASE | re.DOTALL,
 )
 _CONFIRMATION_PATTERN = re.compile(
     r"\b(?:confirm(?:e|é|ée|er|ation)?|yes|oui)\b",
@@ -110,11 +132,17 @@ _ECOTAXA_GEO_TERMS = (
     "geographique", "labrador", "baffin", "ungava", "hudson",
 )
 _NET_UVP_AUDIT_PATTERN = re.compile(
-    r"\b(?:audit\w*|correspond\w*|appariement\w*|match\w*|compar\w*)\b.*"
-    r"\b(?:uvp|filet|neolab)\b|\b(?:uvp|filet|neolab)\b.*"
-    r"\b(?:audit\w*|correspond\w*|appariement\w*|match\w*|compar\w*)\b",
-    re.IGNORECASE,
+    r"(?=.*\b(?:uvp|eco[- ]?taxa)\b)"
+    r"(?=.*\b(?:filet\w*|nets?|neo[- ]?labs?)\b)"
+    r"(?=.*\b(?:audit\w*|correspond\w*|appariement\w*|match\w*|compar\w*|"
+    r"pr[eé]par\w*|reli\w*|join\w*)\b)",
+    re.IGNORECASE | re.DOTALL,
 )
+_NET_UVP_TOOL_NAMES = {
+    "prepare_net_uvp_audit_subsets",
+    "find_uvp_matches_for_net_table",
+    "join_net_uvp_enriched",
+}
 _TIME_SCOPE_PATTERN = re.compile(
     r"\b(?:20\d{2}|ann[eé]e?|p[eé]riode|fen[eê]tre|date|mois|saison|"
     r"janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|"
@@ -123,7 +151,7 @@ _TIME_SCOPE_PATTERN = re.compile(
 )
 _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     "file_analysis": (
-        "prepare_net_uvp_audit_subsets", "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
+        "prepare_neolabs_analysis", "prepare_net_uvp_audit_subsets", "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
         "split_dataframe_by_zone",
     ),
     "ecotaxa_discovery": (
@@ -138,6 +166,10 @@ _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     ),
     "ecotaxa_samples": (
         "summarize_ecotaxa_sample_deployment",
+    ),
+    "enrichment_amundsen": (
+        "query_amundsen_profiles_for_table",
+        "enrich_with_amundsen_ctd",
     ),
 }
 _GROUP_ORDER: tuple[ToolExposureGroup, ...] = (
@@ -180,6 +212,7 @@ class TurnSignals:
     regional_ranking_requested: bool
     multi_zone_requested: bool
     cross_source_compare_requested: bool
+    neolabs_preparation_requested: bool
 
 
 @dataclass(frozen=True)
@@ -258,6 +291,7 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         regional_ranking_requested=regional_ranking_requested,
         multi_zone_requested=multi_zone_requested,
         cross_source_compare_requested=cross_source_compare_requested,
+        neolabs_preparation_requested=bool(_NEOLABS_PREPARATION_PATTERN.search(text)),
     )
 
 
@@ -308,12 +342,22 @@ def decide_tool_exposure(
 
     names = tuple(dict.fromkeys(str(name) for name in available_names if name in policies))
     signals = build_turn_signals(messages)
+    net_uvp_audit_requested = bool(
+        _NET_UVP_AUDIT_PATTERN.search(signals.latest_user_text)
+    )
+    if not net_uvp_audit_requested:
+        names = tuple(name for name in names if name not in _NET_UVP_TOOL_NAMES)
+    if not signals.neolabs_preparation_requested:
+        names = tuple(name for name in names if name != "prepare_neolabs_analysis")
     groups: list[ToolExposureGroup] = ["core", "geography"]
     reasons = ["permanent core", "permanent geographic capabilities"]
 
     if turn_context.file_loaded:
         groups.append("file_analysis")
         reasons.append("active dataset")
+    elif signals.neolabs_preparation_requested:
+        groups.append("file_analysis")
+        reasons.append("explicit NeoLabs preparation")
     if signals.taxonomy_requested and "ecotaxa" not in source_decision.authorized_sources:
         groups.append("taxonomy")
         reasons.append("taxonomy requested")
@@ -339,12 +383,48 @@ def decide_tool_exposure(
         if source in source_decision.explicit_sources
     )
     has_active_table = bool(turn_context.active_variable)
+    full_amundsen_profile_requested = bool(
+        "amundsen" in authorized
+        and has_active_table
+        and (
+            str(turn_context.active_variable).startswith("df_amundsen_enriched_")
+            or str(turn_context.active_source).startswith("amundsen")
+            or re.search(r"\bamundsen\b", signals.latest_user_text, re.IGNORECASE)
+        )
+        and _AMUNDSEN_VERTICAL_PROFILE_PATTERN.search(signals.latest_user_text)
+    )
+    if full_amundsen_profile_requested:
+        names = tuple(
+            name for name in names if name != "enrich_with_amundsen_ctd"
+        )
+    else:
+        names = tuple(
+            name for name in names
+            if name != "query_amundsen_profiles_for_table"
+        )
     named_amundsen_environment_request = bool(
         "amundsen" in source_decision.explicit_sources
-        and _AMUNDSEN_ENVIRONMENT_PATTERN.search(signals.latest_user_text)
+        and (
+            _AMUNDSEN_ENVIRONMENT_PATTERN.search(signals.latest_user_text)
+            or _AMUNDSEN_MATCH_PATTERN.search(signals.latest_user_text)
+        )
+    )
+    amundsen_variable_choice_required = bool(
+        has_active_table
+        and "amundsen" in source_decision.explicit_sources
+        and not full_amundsen_profile_requested
+        and (
+            signals.enrichment_requested
+            or named_amundsen_environment_request
+        )
+        and not _AMUNDSEN_VARIABLE_SELECTION_PATTERN.search(
+            signals.latest_user_text
+        )
     )
     enrichment_requested = (
-        signals.enrichment_requested or named_amundsen_environment_request
+        signals.enrichment_requested
+        or named_amundsen_environment_request
+        or full_amundsen_profile_requested
     )
     focused_enrichment = bool(
         has_active_table
@@ -375,9 +455,14 @@ def decide_tool_exposure(
         )
         for source in enrichment_sources:
             if source in authorized:
+                if source == "amundsen" and amundsen_variable_choice_required:
+                    reasons.append("Amundsen variable selection required")
+                    continue
                 groups.append(_ENRICHMENT_GROUP_BY_SOURCE[source])
                 if source == "amundsen" and named_amundsen_environment_request:
                     reasons.append("explicit Amundsen environmental variables")
+                elif source == "amundsen" and full_amundsen_profile_requested:
+                    reasons.append("complete Amundsen vertical profiles requested")
                 else:
                     reasons.append(f"current explicit {source} enrichment")
 
@@ -478,7 +563,6 @@ def decide_tool_exposure(
     # A scoped net↔UVP audit has a strict state progression. Keeping only the
     # next valid capability prevents concurrent load/filter/audit calls, where
     # the audit would otherwise see the wrong table.
-    net_uvp_audit_requested = bool(_NET_UVP_AUDIT_PATTERN.search(signals.latest_user_text))
     scoped_net_uvp_request = net_uvp_audit_requested and (
         signals.geographic_requested or bool(_TIME_SCOPE_PATTERN.search(signals.latest_user_text))
     )

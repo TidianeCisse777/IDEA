@@ -334,6 +334,54 @@ def test_enrich_remote_uses_session_project_id_when_query_ecotaxa_was_run():
     assert merged.loc[0, "ecopart_Sampled volume [L]"] == 100.0
 
 
+def test_enrich_remote_reuses_exact_cached_join_without_redownload(
+    monkeypatch, tmp_path
+):
+    """The confirmed retry restores the complete graph-ready joined table."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    monkeypatch.setenv("ERDDAP_CACHE_PATH", str(tmp_path / "remote-results.sqlite"))
+    thread_id = "thread-remote-exact-cache"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["ips_007_1", "ips_007_2"],
+            "object_depth_min": [3.0, 8.0],
+        }),
+        {"source": "ecotaxa:1165", "project_id": 1165},
+    )
+    client = MagicMock()
+    client.start_export.return_value = ["/Task/Show/42"]
+    client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["ips_007", "ips_007"],
+        "Depth [m]": [2.5, 7.5],
+        "Sampled volume [L]": [100.0, 110.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client):
+        enrich = next(
+            tool for tool in make_ecopart_tools(thread_id)
+            if tool.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        first = enrich.invoke({"confirmed": True})
+        client.start_export.reset_mock()
+        client.download_tsv.reset_mock()
+        second = enrich.invoke({"confirmed": True})
+
+    assert "cache" not in first.lower()
+    assert "cache" in second.lower()
+    client.start_export.assert_not_called()
+    client.download_tsv.assert_not_called()
+    joined = _store.get(f"{thread_id}:ecotaxa_ecopart")
+    assert len(joined["df"]) == 2
+    assert joined["meta"]["cache_hit"] is True
+    assert joined["meta"]["n_rows"] == 2
+
+
 def test_remote_enrichment_partitions_campaign_by_ecotaxa_project():
     """Each project in a consolidated campaign resolves and joins independently."""
     from unittest.mock import MagicMock, patch
@@ -397,6 +445,64 @@ def test_remote_enrichment_partitions_campaign_by_ecotaxa_project():
     assert "2/2 projets enrichis" in result
 
 
+def test_remote_campaign_reuses_exact_cached_join_before_resolving_projects(
+    monkeypatch, tmp_path
+):
+    """A repeated campaign run does no project lookup or remote export."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    monkeypatch.setenv("ERDDAP_CACHE_PATH", str(tmp_path / "remote-results.sqlite"))
+    thread_id = "thread-remote-campaign-cache"
+    campaign = pd.DataFrame({
+        "obj_orig_id": ["alpha_1", "beta_1"],
+        "object_depth_min": [2.5, 2.5],
+        "export_project_id": [101, 202],
+    })
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        campaign,
+        {"source": "ecotaxa_export_campaign", "export_project_ids": [101, 202]},
+    )
+    client = MagicMock()
+    client.start_export.side_effect = lambda **kwargs: [
+        f"/Task/Show/{kwargs['project_id']}"
+    ]
+    client.download_tsv.side_effect = lambda links: pd.DataFrame({
+        "Profile": ["alpha" if links == ["/Task/Show/301"] else "beta"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [100.0],
+    })
+    resolver = MagicMock(side_effect=lambda _frame, *, known_ecotaxa_pid=None, **_kw: {
+        "project_id": {101: 301, 202: 302}[known_ecotaxa_pid],
+        "resolution": "lien certifié",
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa", resolver
+    ):
+        enrich = next(
+            tool for tool in make_ecopart_tools(thread_id)
+            if tool.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        enrich.invoke({"confirmed": True})
+        resolver.reset_mock()
+        client.start_export.reset_mock()
+        client.download_tsv.reset_mock()
+        second = enrich.invoke({"confirmed": True})
+
+    assert "cache" in second.lower()
+    resolver.assert_not_called()
+    client.start_export.assert_not_called()
+    client.download_tsv.assert_not_called()
+    joined = _store.get(f"{thread_id}:ecotaxa_ecopart")
+    assert len(joined["df"]) == 2
+    assert joined["meta"]["cache_hit"] is True
+
+
 def test_remote_campaign_dry_run_resolves_every_partition_without_download():
     """Campaign planning exposes every project mapping before heavy exports."""
     from unittest.mock import MagicMock, patch
@@ -439,6 +545,59 @@ def test_remote_campaign_dry_run_resolves_every_partition_without_download():
     client.start_export.assert_not_called()
     client.download_tsv.assert_not_called()
     assert _store.get(f"{thread_id}:ecotaxa_ecopart") is None
+
+
+def test_remote_campaign_dry_run_preflights_exportability_and_join_columns():
+    """Le dry-run refuse un lien EcoPart dont tous les samples sont non validés."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-remote-campaign-preflight"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["alpha_1", "beta_1"],
+            "object_depth_min": [2.5, 7.5],
+            "export_project_id": [101, 202],
+        }),
+        {"source": "ecotaxa_export_campaign", "export_project_ids": [101, 202]},
+    )
+    client = MagicMock()
+
+    def resolve_partition(_frame, *, known_ecotaxa_pid=None, **_kwargs):
+        return {
+            "project_id": {101: 301, 202: 302}[known_ecotaxa_pid],
+            "resolution": "lien serveur",
+        }
+
+    def linked_samples(*, project_id=None, ecotaxa_project_id=None, timeout=None):
+        assert timeout == 5.0
+        assert project_id == {101: 301, 202: 302}[ecotaxa_project_id]
+        if ecotaxa_project_id == 101:
+            return [{"id": 1, "name": "alpha", "visibility": "VN"}]
+        return [{"id": 2, "name": "beta", "visibility": "YY"}]
+
+    client.search_samples.side_effect = linked_samples
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
+        side_effect=resolve_partition,
+    ):
+        tool = next(
+            item for item in make_ecopart_tools(thread_id)
+            if item.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({"confirmed": False})
+
+    assert "Préflight" in result
+    assert "EcoTaxa 101 → EcoPart 301 : BLOQUÉ" in result
+    assert "VN" in result
+    assert "EcoTaxa 202 → EcoPart 302 : PRÊT" in result
+    assert "1/2 projets prêts" in result
+    client.start_export.assert_not_called()
+    client.download_tsv.assert_not_called()
 
 
 def test_remote_campaign_reports_invalid_export_project_id_rows():
@@ -563,9 +722,55 @@ def test_enrich_remote_dry_run_by_default_does_not_download():
     mock_client.start_export.assert_not_called()
     mock_client.download_tsv.assert_not_called()
     assert "dry-run" in result.lower()
-    assert "confirmed=True" in result
+    assert "BLOQUÉ" in result
+    assert "Aucune donnée téléchargée" in result
+    assert "confirmed=True" not in result
     # No enrichment/join table was stored in dry-run.
     assert _store.get("thread-dry") is None
+
+
+def test_enrich_remote_single_project_dry_run_reports_non_exportable_vn():
+    """Le préflight mono-projet détecte aussi les samples EcoPart non validés."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-dry-single-vn"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["ips_007_1"],
+            "object_depth_min": [3.0],
+        }),
+        {"source": "ecotaxa:1165", "project_id": 1165},
+    )
+    client = MagicMock()
+    client.search_samples.return_value = [
+        {"id": 42, "name": "ips_007", "visibility": "VN"}
+    ]
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
+        return_value={
+            "project_id": 301,
+            "project_name": "campagne récente",
+            "resolution": "lien serveur",
+        },
+    ):
+        tool = next(
+            item for item in make_ecopart_tools(thread_id)
+            if item.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke({"confirmed": False})
+
+    assert "Préflight" in result
+    assert "EcoTaxa 1165 → EcoPart 301" in result
+    assert "BLOQUÉ" in result
+    assert "VN" in result
+    client.start_export.assert_not_called()
+    client.download_tsv.assert_not_called()
 
 
 def test_enrich_remote_dry_run_with_project_does_not_auto_load_ecotaxa():
@@ -598,7 +803,9 @@ def test_enrich_remote_dry_run_with_project_does_not_auto_load_ecotaxa():
     assert _store.get(thread_id) is None
     assert _store.get(f"{thread_id}:ecotaxa") is None
     assert "dry-run" in result.lower()
-    assert "sera exporté après confirmation" in result
+    assert "BLOQUÉ" in result
+    assert "charge d'abord" in result.lower()
+    assert "sera exporté après confirmation" not in result
 
 
 def test_enrich_remote_auto_loads_ecotaxa_when_project_named_but_not_in_session():
@@ -966,8 +1173,221 @@ def test_lookup_ecopart_uses_filt_proj_fast_path_and_caches():
         "tools.ecopart_sources.EcopartClient",
         side_effect=AssertionError("resolution should be cached"),
     ):
-        res2 = es._lookup_ecopart_project_for_ecotaxa(df_et, known_ecotaxa_pid=14853)
+        res2 = es._lookup_ecopart_project_for_ecotaxa(
+            df_et, known_ecotaxa_pid=14853
+        )
     assert res2["project_id"] == 1063
+
+
+def test_lookup_ecopart_persists_resolution_for_same_thread():
+    """La correspondance survit au vidage du cache mémoire dans la conversation."""
+    from unittest.mock import MagicMock
+
+    import pandas as pd
+    import tools.ecopart_sources as es
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-persistent-ecopart-resolution"
+    _store.clear_conversation(thread_id)
+    es._ECOPART_RESOLUTION_CACHE.clear()
+    dataframe = pd.DataFrame({"object_lat": [72.7], "object_lon": [-70.1]})
+    client = MagicMock()
+    client.search_samples.return_value = [
+        {"id": 58321, "name": "profile-a", "visibility": "YY"}
+    ]
+    client.get_sample_metadata.return_value = {
+        "profile_id": "profile-a",
+        "ecopart_project_id": 1063,
+        "ecotaxa_project_id": 14853,
+    }
+
+    first = es._lookup_ecopart_project_for_ecotaxa(
+        dataframe,
+        known_ecotaxa_pid=14853,
+        client=client,
+        thread_id=thread_id,
+        request_timeout=5.0,
+    )
+    es._ECOPART_RESOLUTION_CACHE.clear()
+    client.search_samples.reset_mock()
+    client.get_sample_metadata.reset_mock()
+    second = es._lookup_ecopart_project_for_ecotaxa(
+        dataframe,
+        known_ecotaxa_pid=14853,
+        client=client,
+        thread_id=thread_id,
+        request_timeout=5.0,
+    )
+
+    assert first["project_id"] == second["project_id"] == 1063
+    assert second["cache_hit"] is True
+    client.search_samples.assert_not_called()
+    client.get_sample_metadata.assert_not_called()
+
+
+def test_lookup_ecopart_uses_explicit_id_in_ecotaxa_project_title():
+    """Un titre ``(Ecopart id N)`` résout le projet sans scan géographique."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    import tools.ecopart_sources as es
+
+    es._ECOPART_RESOLUTION_CACHE.clear()
+    dataframe = pd.DataFrame({
+        "obj_orig_id": ["greenedge_001_1"],
+        "object_depth_min": [2.5],
+    })
+    ecopart_client = MagicMock()
+    ecopart_client.search_samples.side_effect = [
+        [],
+        [{"id": 91, "name": "greenedge_001", "visibility": "YY"}],
+    ]
+    ecotaxa_client = MagicMock()
+    ecotaxa_client.get_project.return_value = {
+        "projid": 20880,
+        "title": "UVP5hd GreenEdge 2016 (Ecopart id 86)",
+    }
+
+    with patch(
+        "tools.ecopart_sources.EcotaxaClient", return_value=ecotaxa_client
+    ):
+        result = es._lookup_ecopart_project_for_ecotaxa(
+            dataframe,
+            known_ecotaxa_pid=20880,
+            client=ecopart_client,
+            thread_id="thread-title-resolution",
+            request_timeout=5.0,
+        )
+
+    assert result["project_id"] == 86
+    assert "titre EcoTaxa" in result["resolution"]
+    assert result["linked_samples"][0]["visibility"] == "YY"
+    ecotaxa_client.login.assert_called_once_with()
+    ecotaxa_client.get_project.assert_called_once_with(20880, timeout=5.0)
+    assert ecopart_client.search_samples.call_args_list[-1].kwargs == {
+        "project_id": 86,
+        "timeout": 5.0,
+    }
+
+
+def test_lookup_ecopart_caches_timeout_briefly_for_same_thread():
+    """Un timeout de résolution ne relance pas immédiatement le serveur lent."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    import requests
+    import tools.ecopart_sources as es
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-transient-ecopart-timeout"
+    _store.clear_conversation(thread_id)
+    es._ECOPART_RESOLUTION_CACHE.clear()
+    dataframe = pd.DataFrame({"obj_orig_id": ["profile-a_1"]})
+    ecopart_client = MagicMock()
+    ecopart_client.search_samples.side_effect = requests.Timeout("slow EcoPart")
+    ecotaxa_client = MagicMock()
+    ecotaxa_client.get_project.return_value = {
+        "projid": 14853,
+        "title": "uvp6_sn000006hf_2024_am_leg5",
+    }
+
+    with patch(
+        "tools.ecopart_sources.EcotaxaClient", return_value=ecotaxa_client
+    ):
+        first = es._lookup_ecopart_project_for_ecotaxa(
+            dataframe,
+            known_ecotaxa_pid=14853,
+            client=ecopart_client,
+            thread_id=thread_id,
+            request_timeout=5.0,
+        )
+        ecopart_client.search_samples.reset_mock()
+        ecotaxa_client.get_project.reset_mock()
+        second = es._lookup_ecopart_project_for_ecotaxa(
+            dataframe,
+            known_ecotaxa_pid=14853,
+            client=ecopart_client,
+            thread_id=thread_id,
+            request_timeout=5.0,
+        )
+
+    assert first["verdict"] == second["verdict"] == "PARTIEL"
+    assert second["cache_hit"] is True
+    ecopart_client.search_samples.assert_not_called()
+    ecotaxa_client.get_project.assert_not_called()
+
+
+def test_ecopart_preflight_caches_verdict_and_uses_short_timeout():
+    """Un second dry-run identique est local et le premier plafonne ses lectures."""
+    from unittest.mock import MagicMock
+
+    import pandas as pd
+    import tools.ecopart_sources as es
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-persistent-ecopart-preflight"
+    _store.clear_conversation(thread_id)
+    dataframe = pd.DataFrame({
+        "obj_orig_id": ["profile-a_1"],
+        "object_depth_min": [2.5],
+    })
+    client = MagicMock()
+    client.search_samples.return_value = [
+        {"id": 1, "name": "profile-a", "visibility": "YY"}
+    ]
+
+    first = es._preflight_ecopart_partition(
+        dataframe,
+        client=client,
+        ecotaxa_project_id=14853,
+        ecopart_project_id=1063,
+        thread_id=thread_id,
+        request_timeout=5.0,
+    )
+    client.search_samples.reset_mock()
+    second = es._preflight_ecopart_partition(
+        dataframe.copy(),
+        client=client,
+        ecotaxa_project_id=14853,
+        ecopart_project_id=1063,
+        thread_id=thread_id,
+        request_timeout=5.0,
+    )
+
+    assert first["verdict"] == second["verdict"] == "PRÊT"
+    assert second["cache_hit"] is True
+    client.search_samples.assert_not_called()
+
+
+def test_ecopart_preflight_timeout_is_partial_not_a_long_block():
+    """Une source lente produit un verdict explicite sans autoriser l'export."""
+    from unittest.mock import MagicMock
+
+    import pandas as pd
+    import requests
+    import tools.ecopart_sources as es
+
+    client = MagicMock()
+    client.search_samples.side_effect = requests.Timeout("slow EcoPart")
+    result = es._preflight_ecopart_partition(
+        pd.DataFrame({
+            "obj_orig_id": ["profile-a_1"],
+            "object_depth_min": [2.5],
+        }),
+        client=client,
+        ecotaxa_project_id=14853,
+        ecopart_project_id=1063,
+        thread_id="thread-ecopart-timeout",
+        request_timeout=3.0,
+    )
+
+    assert result["verdict"] == "PARTIEL"
+    assert "slow EcoPart" in result["reason"]
+    client.search_samples.assert_called_once_with(
+        project_id=1063,
+        ecotaxa_project_id=14853,
+        timeout=3.0,
+    )
 
 
 def test_join_ecotaxa_ecopart_produces_merged_dataframe():

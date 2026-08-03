@@ -219,6 +219,12 @@ def _source(
 TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     # Local workspace and analysis.
     "load_file": _presentation("Chargement de fichier", "File loading", "data", slow=True),
+    "prepare_neolabs_analysis": _presentation(
+        "Préparation complète NeoLabs",
+        "Complete NeoLabs preparation",
+        "data",
+        slow=True,
+    ),
     "run_pandas": _presentation("Analyse du tableau", "Table analysis", "data"),
     "run_graph": _presentation("Génération du graphique", "Chart generation", "data"),
     # EcoTaxa.
@@ -270,6 +276,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "list_amundsen_datasets": _source("Amundsen · jeux de données CTD", "Amundsen · CTD datasets", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap"),
     "preview_amundsen_profile": _source("Amundsen · aperçu du profil CTD", "Amundsen · CTD profile preview", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap"),
     "query_amundsen_ctd": _source("Amundsen · extraction CTD", "Amundsen · CTD extraction", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Extraction Amundsen CTD en cours — cela peut prendre 1–2 minutes", progress_en="Amundsen CTD extraction in progress — this may take 1–2 minutes"),
+    "query_amundsen_profiles_for_table": _source("Amundsen · profils complets appariés", "Amundsen · complete matched profiles", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Chargement des profils Amundsen complets", progress_en="Loading complete Amundsen profiles"),
     "find_amundsen_data_for_table": _source("Amundsen · disponibilité pour le tableau", "Amundsen · availability for table", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap"),
     "enrich_loaded_table_with_amundsen_ctd": _source("Amundsen · enrichissement du tableau chargé", "Amundsen · loaded table enrichment", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Préparation de l’enrichissement CTD", progress_en="Preparing CTD enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     "enrich_with_amundsen_ctd": _source("Amundsen · enrichissement CTD", "Amundsen · CTD enrichment", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Préparation de l’enrichissement CTD", progress_en="Preparing CTD enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
@@ -336,6 +343,7 @@ _POLICY_PROFILES: Mapping[str, _PolicyProfile] = MappingProxyType({
 _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     # Local data/code execution.
     "load_file": "local_session",
+    "prepare_neolabs_analysis": "local_session",
     "run_pandas": "local_session",
     "run_graph": "local_artifact",
     "join_net_uvp_enriched": "local_low_session",
@@ -393,6 +401,7 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "enrich_loaded_table_with_amundsen_ctd": "remote_heavy",
     "enrich_with_amundsen_ctd": "remote_heavy",
     "query_amundsen_ctd": "remote_heavy",
+    "query_amundsen_profiles_for_table": "remote_heavy",
     # OGSL.
     "enrich_with_ogsl": "remote_heavy",
     "query_ogsl": "remote_heavy",
@@ -441,6 +450,7 @@ _CORE_SOURCE_BY_NAME: Mapping[str, ToolSource] = MappingProxyType({
 _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # Permanent core and state-gated local tools.
     "load_file": "core",
+    "prepare_neolabs_analysis": "file_analysis",
     "load_skill": "core",
     "query_copepod_knowledge_base": "core",
     "run_pandas": "file_analysis",
@@ -457,6 +467,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # Canonical enrichment-only external paths.
     "enrich_ecotaxa_with_ecopart_remote": "enrichment_ecopart",
     "enrich_with_amundsen_ctd": "enrichment_amundsen",
+    "query_amundsen_profiles_for_table": "enrichment_amundsen",
     "enrich_with_bio_oracle": "enrichment_bio_oracle",
     "enrich_with_ogsl": "enrichment_ogsl",
     # EcoTaxa discovery is cache-first. The former project/sample convenience

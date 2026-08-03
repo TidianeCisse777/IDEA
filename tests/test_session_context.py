@@ -76,6 +76,62 @@ def test_capsule_is_deterministic_and_contains_no_row_values(tmp_path):
     assert "ACTIVE DATASET STATE" in first
 
 
+def test_neolabs_schema_keeps_taxonomy_and_abundance_out_of_environment(tmp_path):
+    store = SessionStore(tmp_path)
+    frame = pd.DataFrame({
+        "sample_id": [1],
+        "max_sample_depth": [100.0],
+        "MIN_SAMPLE_DEPTH": [0.0],
+        "PHYLUM": ["Arthropoda"],
+        "CLASS": ["Copepoda"],
+        "C1_SAMPLE_ABUND (nbr of ind.)": [4.0],
+        "ALL_STAGES_ABUND (ind./m3 depth vol.)": [12.5],
+    })
+    store_dataset(
+        store,
+        "neolabs-schema",
+        frame,
+        variable_name="df_neolabs_working",
+        meta={"source": "file:neolabs", "n_rows": 1, "n_cols": 7},
+    )
+
+    capsule = build_dataset_state_capsule(store, "neolabs-schema")
+
+    schema = capsule.split("SCHEMA BY TYPE: ", 1)[1].splitlines()[0]
+    assert "environment=[max_sample_depth,MIN_SAMPLE_DEPTH]" in schema
+    assert "taxon=[PHYLUM,CLASS]" in schema
+    assert (
+        "measures=[C1_SAMPLE_ABUND (nbr of ind.),"
+        "ALL_STAGES_ABUND (ind./m3 depth vol.)]"
+    ) in schema
+
+
+def test_neolabs_capsule_prioritizes_year_and_source_date(tmp_path):
+    store = SessionStore(tmp_path)
+    frame = pd.DataFrame({
+        "SAMPLE_ID": [1],
+        "ANALYSIS_ID": [10],
+        "sampling_year": [2025],
+        "DEPLOYMENT_DATE_START": ["2025-10-14"],
+        "deployment_datetime_start": [pd.NA],
+        "STATION_NAME": ["115"],
+    })
+    store_dataset(
+        store,
+        "neolabs-time-priority",
+        frame,
+        variable_name="df_join_neolabs_abundance_sample",
+        meta={"source": "analysis:join", "n_rows": 1, "n_cols": 6},
+    )
+
+    capsule = build_dataset_state_capsule(store, "neolabs-time-priority")
+
+    assert "environment_columns=" in capsule
+    assert "time:sampling_year" in capsule
+    schema = capsule.split("SCHEMA BY TYPE: ", 1)[1].splitlines()[0]
+    assert "time=[sampling_year,DEPLOYMENT_DATE_START,deployment_datetime_start]" in schema
+
+
 def test_dataset_capsule_includes_active_skill_rules(tmp_path):
     store = SessionStore(tmp_path)
     thread_id = "skill-capsule-context"
@@ -124,6 +180,42 @@ def test_capsule_surfaces_environment_columns_recognized_by_enrichment(tmp_path)
     assert "object_depth_min" in capsule
     assert "environment_columns=latitude:object_lat,longitude:object_lon" in capsule
     assert "direct station/cast identifiers are not required" in capsule
+
+
+def test_capsule_surfaces_persisted_amundsen_column_roles(tmp_path):
+    store = SessionStore(tmp_path)
+    thread_id = "amundsen-column-roles"
+    frame = pd.DataFrame({
+        "max_sample_depth": [50.0],
+        "amundsen_pres_dbar": [49.8],
+        "amundsen_te90_degC": [-1.2],
+        "amundsen_psal_psu": [31.4],
+    })
+    descriptions = {
+        "amundsen_pres_dbar": "Profondeur CTD de référence.",
+        "amundsen_te90_degC": "Température TE90 (°C).",
+        "amundsen_psal_psu": "Salinité pratique (PSU).",
+    }
+    store_dataset(
+        store,
+        thread_id,
+        frame,
+        variable_name="df_amundsen_enriched_exact",
+        meta={
+            "source": "amundsen_enrichment",
+            "n_rows": 1,
+            "n_cols": 4,
+            "important_columns": list(descriptions),
+            "column_descriptions": descriptions,
+            "matched_ctd_depth_column": "amundsen_pres_dbar",
+        },
+    )
+
+    capsule = build_dataset_state_capsule(store, thread_id)
+
+    assert "important_columns=amundsen_pres_dbar,amundsen_te90_degC,amundsen_psal_psu" in capsule
+    assert "matched_ctd_depth_column=amundsen_pres_dbar" in capsule
+    assert "amundsen_te90_degC:Température TE90 (°C)." in capsule
 
 
 def test_capsule_surfaces_active_ecotaxa_selection_context(tmp_path):

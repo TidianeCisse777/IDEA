@@ -118,7 +118,10 @@ class EcopartClient:
         ]
 
     def search_samples(
-        self, project_id: int | None = None, ecotaxa_project_id: int | None = None
+        self,
+        project_id: int | None = None,
+        ecotaxa_project_id: int | None = None,
+        timeout: float | None = None,
     ) -> list[dict]:
         """Search accessible EcoPart samples.
 
@@ -132,7 +135,11 @@ class EcopartClient:
             params["filt_uproj"] = str(project_id)
         if ecotaxa_project_id is not None:
             params["filt_proj"] = str(ecotaxa_project_id)
-        resp = self._session.get(f"{_BASE_URL}/searchsample", params=params or None, timeout=_TIMEOUT)
+        resp = self._session.get(
+            f"{_BASE_URL}/searchsample",
+            params=params or None,
+            timeout=_TIMEOUT if timeout is None else float(timeout),
+        )
         resp.raise_for_status()
         raw = resp.json() or []
         return [
@@ -151,7 +158,12 @@ class EcopartClient:
         return {"sample_id": sample_id, "accessible": resp.ok, "text": text}
 
     def search_samples_by_bbox(
-        self, north: float, south: float, west: float, east: float
+        self,
+        north: float,
+        south: float,
+        west: float,
+        east: float,
+        timeout: float | None = None,
     ) -> list[dict]:
         """Return EcoPart samples whose coordinates fall in the bbox (degrees)."""
         resp = self._session.get(
@@ -162,7 +174,7 @@ class EcopartClient:
                 "MapW": str(west),
                 "MapE": str(east),
             },
-            timeout=_TIMEOUT,
+            timeout=_TIMEOUT if timeout is None else float(timeout),
         )
         resp.raise_for_status()
         return [
@@ -176,9 +188,14 @@ class EcopartClient:
             if "id" in s
         ]
 
-    def get_sample_metadata(self, psampleid: int) -> dict:
+    def get_sample_metadata(
+        self, psampleid: int, timeout: float | None = None
+    ) -> dict:
         """Parse /getsamplepopover/<id> for the EcoPart and EcoTaxa project ids."""
-        resp = self._session.get(f"{_BASE_URL}/getsamplepopover/{psampleid}", timeout=_TIMEOUT)
+        resp = self._session.get(
+            f"{_BASE_URL}/getsamplepopover/{psampleid}",
+            timeout=_TIMEOUT if timeout is None else float(timeout),
+        )
         resp.raise_for_status()
         text = BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True)
         out: dict = {"psampleid": psampleid, "raw": text}

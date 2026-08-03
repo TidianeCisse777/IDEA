@@ -158,6 +158,31 @@ def normalize_graph_contract(contract: dict | None, figure: Any) -> dict | None:
         )
         if axis_is_single_profile and shorthand_depth_inversion:
             normalized["inverted_axes"] = [{"axis_index": 0, "axis": "y"}]
+
+        # Multiple profile panels commonly share the same rendered depth axis.
+        # Matplotlib propagates the inversion to every shared y-axis, although
+        # the model often declares it only once. Recover that bookkeeping from
+        # the actual figure instead of rejecting a scientifically valid plot.
+        if all(
+            isinstance(axis, dict) and axis.get("y") == "depth_m"
+            for axis in axes
+        ):
+            rendered_depth_inversions = []
+            for axis in axes:
+                axis_index = axis.get("axis_index")
+                if (
+                    isinstance(axis_index, int)
+                    and 0 <= axis_index < len(figure.axes)
+                    and figure.axes[axis_index].yaxis_inverted()
+                ):
+                    rendered_depth_inversions.append(
+                        {"axis_index": axis_index, "axis": "y"}
+                    )
+            if rendered_depth_inversions:
+                normalized["inverted_axes"] = sorted(
+                    rendered_depth_inversions,
+                    key=lambda item: item["axis_index"],
+                )
         return normalized
 
     if normalized.get("kind") != "station_map":
@@ -291,17 +316,16 @@ def validate_graph_contract(contract: dict | None, figure: Any) -> str | None:
         axes_by_index[axis_index] = axis_contract
 
     if contract["kind"] == "vertical_profile":
-        if len(axes_by_index) != 1:
-            return _blocked("vertical profile requires exactly one data axis")
-        axis_index, axis_contract = next(iter(axes_by_index.items()))
-        if axis_contract["x"] not in _ABUNDANCE_ROLES:
-            return _blocked("vertical profile x-axis must be abundance_ind_L or abundance_ind_m3")
-        if axis_contract["y"] != "depth_m":
-            return _blocked("vertical profile y-axis must be depth_m")
-        if figure.axes[axis_index].xaxis_inverted():
-            return _blocked("abundance x-axis must remain normal")
-        if declared.difference({(axis_index, "y")}):
-            return _blocked("only the depth y-axis may be inverted")
+        allowed_inversions = {(axis_index, "y") for axis_index in axes_by_index}
+        for axis_index, axis_contract in axes_by_index.items():
+            if axis_contract["y"] != "depth_m":
+                return _blocked("vertical profile y-axis must be depth_m")
+            if figure.axes[axis_index].xaxis_inverted():
+                if axis_contract["x"] in _ABUNDANCE_ROLES:
+                    return _blocked("abundance x-axis must remain normal")
+                return _blocked("vertical profile x-axis must remain normal")
+        if declared.difference(allowed_inversions):
+            return _blocked("only depth y-axes may be inverted")
 
     if contract["kind"] == "environment_relationships":
         panel_indexes = list(axes_by_index)

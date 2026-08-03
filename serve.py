@@ -1058,19 +1058,36 @@ def _remove_graph_markdown_images(text: str, urls: set[str]) -> str:
 
 
 def _append_generated_graph_images(text: str, messages: list) -> str:
-    """Keep graph artifacts visible for non-streaming OpenAI clients too."""
-    seen_urls = _graph_image_urls(text)
-    images: list[str] = []
-    for message in messages:
+    """Keep only graph artifacts generated after the latest user message."""
+    turn_start = 0
+    for index, message in enumerate(messages):
+        if getattr(message, "type", None) == "human":
+            turn_start = index + 1
+
+    current_images: list[str] = []
+    current_urls: set[str] = set()
+    for message in messages[turn_start:]:
         if getattr(message, "name", None) != "run_graph":
             continue
         hosted = _extract_and_host_images(str(getattr(message, "content", "") or ""))
         for match in re.finditer(r"!\[[^\]]*\]\(([^\)]*/graphs/[^\)]*\.png)\)", hosted):
             url = match.group(1)
-            if url not in seen_urls:
-                seen_urls.add(url)
-                images.append(match.group(0))
-    return f"{text.rstrip()}\n\n{'\n\n'.join(images)}" if images else text
+            if url not in current_urls:
+                current_urls.add(url)
+                current_images.append(match.group(0))
+
+    stale_urls = _graph_image_urls(text).difference(current_urls)
+    sanitized = _remove_graph_markdown_images(text, stale_urls)
+    seen_urls = _graph_image_urls(sanitized)
+    missing_images = [
+        image
+        for image in current_images
+        if next(iter(_graph_image_urls(image)), "") not in seen_urls
+    ]
+    return (
+        f"{sanitized.rstrip()}\n\n{'\n\n'.join(missing_images)}"
+        if missing_images else sanitized
+    )
 
 
 async def _stream_agent_sse(
@@ -1116,6 +1133,14 @@ async def _stream_agent_sse(
                         tool_calls = getattr(last_msg, "tool_calls", []) or []
 
                         if content and not tool_calls:
+                            # A URL written by the model can refer to an old
+                            # artifact from history. Only tool output (handled
+                            # below) or a fresh inline/local image may create a
+                            # graph in this turn.
+                            content = _remove_graph_markdown_images(
+                                content,
+                                _graph_image_urls(content),
+                            )
                             content = _extract_and_host_images(content)
                             content = _remove_graph_markdown_images(
                                 content,

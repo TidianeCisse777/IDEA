@@ -32,6 +32,11 @@ from core.canonical_grid import snap_bbox
 from core.enrich_scoping import scope_dataframe
 from core.environment_resolver import DEFAULT_TIME_CANDIDATES
 from core.erddap_cache import cache_get, cache_set
+from core.scientific_result_cache import (
+    build_result_cache_key,
+    load_result as load_scientific_result,
+    save_result as save_scientific_result,
+)
 from core.environment_resolver import (
     DEFAULT_LAT_CANDIDATES,
     DEFAULT_LON_CANDIDATES,
@@ -482,6 +487,43 @@ class BioOracleMatcher:
                 columns[stub] = values
                 columns[f"{stub}_dataset_id"] = dataset_ids
                 columns[f"{stub}_time"] = times
+
+        # The first explicitly selected scenario is the reference.  Each later
+        # scenario receives its own row-level delta, but only where both
+        # scenario values exist on that same source row.  This preserves every
+        # row and makes missing coverage visible as a null delta instead of a
+        # substituted value.
+        if len(self.scenarios) > 1:
+            reference_display = self.scenario_display_names[0]
+            for variable in self.variables:
+                statistic_suffix = (
+                    "" if self.statistic == "mean"
+                    else f"_{_clean_label(self.statistic)}"
+                )
+                reference_stub = (
+                    f"bio_oracle_{_clean_label(variable)}_"
+                    f"{_clean_label(reference_display)}{statistic_suffix}"
+                )
+                reference_values = pd.to_numeric(
+                    pd.Series(columns[reference_stub]), errors="coerce"
+                )
+                for target_display in self.scenario_display_names[1:]:
+                    target_stub = (
+                        f"bio_oracle_{_clean_label(variable)}_"
+                        f"{_clean_label(target_display)}{statistic_suffix}"
+                    )
+                    target_values = pd.to_numeric(
+                        pd.Series(columns[target_stub]), errors="coerce"
+                    )
+                    calculable = reference_values.notna() & target_values.notna()
+                    delta_stub = (
+                        f"bio_oracle_{_clean_label(variable)}_"
+                        f"{_clean_label(target_display)}_minus_"
+                        f"{_clean_label(reference_display)}{statistic_suffix}"
+                    )
+                    columns[delta_stub] = target_values.sub(reference_values).where(
+                        calculable, pd.NA
+                    ).tolist()
 
         statuses = pd.Series(
             ["matched" if has_value else "no_value" for has_value in point_has_value]
@@ -1231,7 +1273,10 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         `source_variable` pour cibler un dataset précis. Chaque variable et
         scénario possède un libellé, une unité ou un niveau d'émission et une
         description factuelle dans le catalogue ; les expliquer sans inventer
-        d'effet biologique.
+        d'effet biologique. Avec plusieurs scénarios, le premier est la
+        référence : le tool ajoute un delta (scénario suivant − référence) sur
+        les seules lignes où les deux valeurs sont numériques, et rapporte le
+        dénominateur calculable ainsi que les valeurs manquantes.
         """
         selection = validate_enrichment_selection(
             variables=variables,
@@ -1277,6 +1322,83 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         statistic = selection["statistic"]
         target_year = selection["target_year"]
 
+        source_for_cache = resolve_source_dataframe(
+            _store, thread_id, source_variable
+        )
+        cache_key = None
+        cache_parameters = {
+            "variables": variables,
+            "scenarios": scenarios,
+            "scenario_display_names": scenario_display_names,
+            "depth_layer": depth_layer,
+            "statistic": statistic,
+            "target_year": target_year,
+            "latitude_column": latitude_column,
+            "longitude_column": longitude_column,
+            "coordinate_bin_degrees": coordinate_bin_degrees,
+            "zone_name": zone_name,
+            "date_range": date_range,
+        }
+        # Conservative upper bound: never let a cache hit bypass the existing
+        # high-volume confirmation gate. Duplicate coordinates may make the
+        # real query smaller; in that case the normal matcher remains the
+        # authority and can still accept the request.
+        cache_gate_safe = bool(
+            source_for_cache is not None
+            and (
+                confirmed
+                or len(source_for_cache) * len(variables) * len(scenarios)
+                <= int(max_unique_queries)
+            )
+        )
+        if cache_gate_safe:
+            cache_key = build_result_cache_key(
+                source_for_cache,
+                cache_parameters,
+            )
+            cached = load_scientific_result(
+                "bio_oracle_enrichment", cache_key
+            )
+            if cached is not None:
+                enriched = cached.dataframe
+                variable_name = dataset_variable_name(
+                    "bio_oracle_enriched", uuid.uuid4().hex[:12]
+                )
+                store_dataset(
+                    _store,
+                    thread_id,
+                    enriched,
+                    variable_name=variable_name,
+                    meta={
+                        "source": "bio_oracle_enrichment",
+                        "n_rows": len(enriched),
+                        "cache_hit": True,
+                        "cached_at": cached.cached_at,
+                        "cache_provenance": cached.provenance,
+                    },
+                )
+                status_counts = enriched[
+                    "bio_oracle_match_status"
+                ].value_counts().to_dict()
+                n_matched = int(status_counts.get("matched", 0))
+                n_no_value = int(status_counts.get("no_value", 0))
+                return _bio_success(
+                    f"Enrichissement Bio-ORACLE réutilisé depuis le cache exact "
+                    f"({cached.cached_at}) : {len(enriched)} ligne(s), "
+                    f"{n_matched} matchée(s), {n_no_value} no_value.\n"
+                    f"Données disponibles dans `{variable_name}`. Toutes les "
+                    "lignes du résultat original sont conservées.",
+                    data_ref=variable_name,
+                    persisted=True,
+                    method="Bio-ORACLE exact scientific result cache",
+                    metrics={
+                        "rows": len(enriched),
+                        "matched": n_matched,
+                        "no_value": n_no_value,
+                        "cache_hit": True,
+                    },
+                )
+
         matcher = BioOracleMatcher(
             variables=variables,
             scenarios=scenarios,
@@ -1303,6 +1425,28 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             return _bio_blocked(outcome.error)
 
         enriched = outcome.enriched
+        cache_provenance = {
+            **cache_parameters,
+            "match_status_counts": enriched[
+                "bio_oracle_match_status"
+            ].value_counts().to_dict(),
+            "dataset_ids": sorted(
+                {
+                    str(value)
+                    for column in enriched.columns
+                    if str(column).endswith("_dataset_id")
+                    for value in enriched[column].dropna().unique()
+                }
+            ),
+        }
+        cached_at = None
+        if cache_key is not None:
+            cached_at = save_scientific_result(
+                "bio_oracle_enrichment",
+                cache_key,
+                enriched,
+                provenance=cache_provenance,
+            ).cached_at
         variable_name = dataset_variable_name(
             "bio_oracle_enriched", uuid.uuid4().hex[:12]
         )
@@ -1311,12 +1455,38 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             thread_id,
             enriched,
             variable_name=variable_name,
-            meta={"source": "bio_oracle_enrichment", "n_rows": len(enriched)},
+            meta={
+                "source": "bio_oracle_enrichment",
+                "n_rows": len(enriched),
+                "cache_hit": False,
+                "cached_at": cached_at,
+                "cache_provenance": cache_provenance,
+            },
         )
         status_counts = enriched["bio_oracle_match_status"].value_counts().to_dict()
         n_matched = int(status_counts.get("matched", 0))
         n_no_value = int(status_counts.get("no_value", 0))
         unique_query_count = outcome.diagnostics.get("unique_query_count", 0)
+        scenario_delta_lines: list[str] = []
+        if len(scenarios) > 1:
+            reference_display = scenario_display_names[0]
+            statistic_suffix = "" if statistic == "mean" else f"_{_clean_label(statistic)}"
+            denominator = len(enriched)
+            for variable in variables:
+                for target_display in scenario_display_names[1:]:
+                    delta_column = (
+                        f"bio_oracle_{_clean_label(variable)}_"
+                        f"{_clean_label(target_display)}_minus_"
+                        f"{_clean_label(reference_display)}{statistic_suffix}"
+                    )
+                    calculable = int(enriched[delta_column].notna().sum())
+                    missing = denominator - calculable
+                    scenario_delta_lines.append(
+                        f"- Delta {variable} ({target_display} − {reference_display}) : "
+                        f"calculable={calculable}/{denominator}; "
+                        f"{missing} valeur manquante"
+                        f"{'s' if missing != 1 else ''}."
+                    )
         method_lines = [
             "Méthode :",
             *outcome.scoping_lines,
@@ -1342,6 +1512,7 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                 f"confirmed={bool(confirmed)})"
             ),
             f"- Statuts : matched={n_matched}, no_value={n_no_value}",
+            *scenario_delta_lines,
         ]
         if n_no_value:
             method_lines.append(

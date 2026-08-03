@@ -88,6 +88,14 @@ def test_no_state_exposes_permanent_core_and_geographic_capabilities():
     assert decision.policy_overflow is False
 
 
+def test_neolabs_preparation_is_exposed_only_for_an_explicit_neolabs_request():
+    ordinary = _decision("Bonjour")
+    neolabs = _decision("Prépare les deux fichiers NeoLabs pour l'analyse")
+
+    assert "prepare_neolabs_analysis" not in ordinary.tool_names
+    assert "prepare_neolabs_analysis" in neolabs.tool_names
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -161,6 +169,26 @@ def test_scoped_net_uvp_audit_is_exposed_in_strict_stages():
     ])
     completed = _decision(text, file_loaded=True, sources=("file",), messages=history)
     assert completed.tool_names == ()
+
+
+def test_amundsen_correspondence_request_does_not_trigger_net_uvp_audit():
+    text = (
+        "À partir des prélèvements NeoLabs calculables de 2016, cherche les "
+        "correspondances CTD Amundsen par position et par date."
+    )
+
+    decision = _decision(
+        text,
+        file_loaded=True,
+        sources=("amundsen", "file"),
+    )
+
+    assert "enrich_with_amundsen_ctd" not in decision.tool_names
+    assert not {
+        "prepare_net_uvp_audit_subsets",
+        "find_uvp_matches_for_net_table",
+        "join_net_uvp_enriched",
+    }.intersection(decision.tool_names)
 
 
 def test_explicit_visual_intent_exposes_graph_workflow_before_graph_skills():
@@ -264,7 +292,7 @@ def test_graph_writer_is_not_reexposed_after_it_succeeds_in_the_same_turn():
     ("source", "text", "expected"),
     [
         ("ecopart", "Enrichis mon fichier avec EcoPart", "enrich_ecotaxa_with_ecopart_remote"),
-        ("amundsen", "Enrichis mon fichier avec Amundsen CTD", "enrich_with_amundsen_ctd"),
+        ("amundsen", "Enrichis mon fichier avec la température Amundsen CTD", "enrich_with_amundsen_ctd"),
         ("bio_oracle", "Enrichis mon fichier avec Bio-ORACLE", "enrich_with_bio_oracle"),
         ("ogsl", "Enrichis mon fichier avec OGSL", "enrich_with_ogsl"),
     ],
@@ -285,9 +313,8 @@ def test_explicit_enrichment_exposes_one_canonical_source_tool(source, text, exp
     "text",
     [
         "Avec Amundsen CTD, ajoute la température et la salinité à mon fichier",
-        "Donne les données environnementales Amundsen CTD pour le tableau chargé",
-        "Donne-moi les données Amundsen CTD associées à ce fichier",
         "Complète ce fichier avec l'oxygène et les nitrates Amundsen",
+        "Enrichis cette table avec toutes les variables CTD Amundsen",
     ],
 )
 def test_named_amundsen_environment_request_exposes_canonical_enrichment(text):
@@ -295,6 +322,59 @@ def test_named_amundsen_environment_request_exposes_canonical_enrichment(text):
     decision = _decision(text, file_loaded=True, sources=("file", "amundsen"))
 
     assert "enrich_with_amundsen_ctd" in decision.tool_names
+    assert "enrichment_amundsen" in decision.active_groups
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Enrichis cette table avec les données CTD Amundsen",
+        "Donne les données environnementales Amundsen CTD pour le tableau chargé",
+        "Donne-moi les données Amundsen CTD associées à ce fichier",
+    ],
+)
+def test_vague_amundsen_request_hides_remote_enrichment_until_variable_choice(text):
+    decision = _decision(text, file_loaded=True, sources=("file", "amundsen"))
+
+    assert "enrich_with_amundsen_ctd" not in decision.tool_names
+    assert "enrichment_amundsen" not in decision.active_groups
+
+
+def test_environmental_vertical_profile_followup_exposes_full_profile_retrieval():
+    """An enriched Amundsen table must retain a route to full casts on a visual follow-up."""
+    from tools.tool_catalog import TOOL_POLICIES
+    from tools.tool_exposure import decide_tool_exposure
+
+    source_decision = SourceDecision(
+        primary_source="file",
+        authorized_sources=("file", "amundsen"),
+        explicit_sources=(),
+        evidence="session_affinity",
+        needs_clarification=False,
+        reason="fixture",
+    )
+    turn = TurnContext(
+        thread_id="tool-exposure",
+        file_loaded=True,
+        active_variable="df_derived_top3_station_ctd_profiles",
+        active_source="analysis:explicit-derived",
+        derived_zone_subsets=(),
+        authorized_sources=("file", "amundsen"),
+        primary_source="file",
+        explicit_sources=(),
+        capsule="",
+        output_intent="visual",
+    )
+    decision = decide_tool_exposure(
+        tuple(TOOL_POLICIES),
+        TOOL_POLICIES,
+        turn,
+        source_decision,
+        [HumanMessage(content="Trace les profils verticaux complets de toutes les variables CTD Amundsen pour ces stations")],
+    )
+
+    assert "query_amundsen_profiles_for_table" in decision.tool_names
+    assert "run_graph" in decision.tool_names
     assert "enrichment_amundsen" in decision.active_groups
 
 
@@ -322,15 +402,20 @@ def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
     )
 
     assert decision.policy_overflow is False
-    assert "enrich_with_amundsen_ctd" in decision.tool_names
+    assert "enrich_with_amundsen_ctd" not in decision.tool_names
     assert "enrich_ecotaxa_with_ecopart_remote" not in decision.tool_names
     assert not any(group.startswith("ecotaxa_") for group in decision.active_groups)
-    # file_analysis actif (fichier chargé) → analyse locale, audit/jointure
-    # certifiés et découpage géographique.
+    # file_analysis actif (fichier chargé) → analyse locale et découpage
+    # géographique. Les outils filet↔UVP restent cachés sans demande explicite.
     assert "split_dataframe_by_zone" in decision.tool_names
-    # Direct enrichment keeps the local sandbox available for the resulting
-    # table; it must not collapse to the canonical enrichment tool alone.
-    assert len(decision.tool_names) == 11
+    assert not {
+        "prepare_net_uvp_audit_subsets",
+        "find_uvp_matches_for_net_table",
+        "join_net_uvp_enriched",
+    }.intersection(decision.tool_names)
+    # The vague Amundsen request waits for a CTD variable choice while keeping
+    # the local sandbox available; stale sources must remain hidden.
+    assert len(decision.tool_names) == 7
 
 
 @pytest.mark.parametrize(

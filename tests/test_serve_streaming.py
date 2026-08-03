@@ -14,7 +14,7 @@ import pytest
 from fastapi import Request
 from core.runtime_paths import graphs_dir
 from unittest.mock import MagicMock
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
 # ── helpers purs ───────────────────────────────────────────────────────────────
@@ -30,6 +30,40 @@ def test_non_stream_response_keeps_graph_returned_by_graph_tool():
     )
 
     assert response == f"Voici la carte.\n\n{image}"
+
+
+def test_non_stream_response_removes_stale_graph_from_previous_turn():
+    from serve import _append_generated_graph_images
+
+    old_image = "![graph](http://localhost:8000/graphs/old.png)"
+    response = _append_generated_graph_images(
+        f"Impossible pour ce tour.\n\n{old_image}",
+        [
+            ToolMessage(content=old_image, name="run_graph", tool_call_id="old"),
+            HumanMessage(content="Fais un nouveau profil"),
+            AIMessage(content=f"Impossible.\n\n{old_image}"),
+        ],
+    )
+
+    assert "/graphs/old.png" not in response
+
+
+def test_non_stream_response_appends_only_current_turn_graph():
+    from serve import _append_generated_graph_images
+
+    old_image = "![graph](http://localhost:8000/graphs/old.png)"
+    new_image = "![graph](http://localhost:8000/graphs/new.png)"
+    response = _append_generated_graph_images(
+        "Graphique prêt.",
+        [
+            ToolMessage(content=old_image, name="run_graph", tool_call_id="old"),
+            HumanMessage(content="Refais le profil"),
+            ToolMessage(content=new_image, name="run_graph", tool_call_id="new"),
+        ],
+    )
+
+    assert "/graphs/old.png" not in response
+    assert new_image in response
 
 
 def test_compose_persists_graphs_in_a_dedicated_named_volume():
@@ -719,6 +753,27 @@ async def test_stream_image_in_agent_response_replaced():
 
     assert "data:image/png;base64," not in full
     assert "/graphs/" in full
+
+
+@pytest.mark.asyncio
+async def test_stream_removes_graph_url_not_generated_by_current_tool():
+    from serve import _stream_agent_sse
+
+    stale = "![graph](http://localhost:8000/graphs/old.png)"
+    updates = [
+        {"model": {"messages": [AIMessage(
+            content=f"Aucun graphe généré dans ce tour.\n\n{stale}",
+            tool_calls=[],
+        )]}},
+    ]
+
+    full = "".join([
+        chunk async for chunk in _stream_agent_sse(
+            _make_mock_agent(updates), {}, {}, "tid-stale-graph"
+        )
+    ])
+
+    assert "/graphs/old.png" not in full
 
 
 @pytest.mark.asyncio

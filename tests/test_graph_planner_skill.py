@@ -3,6 +3,7 @@
 from pathlib import Path
 
 SKILL_PATH = Path(__file__).parent.parent / "agents" / "skills" / "graph_planner.md"
+WRITER_PATH = Path(__file__).parent.parent / "agents" / "skills" / "graph_writer.md"
 
 
 def _skill() -> str:
@@ -52,3 +53,15 @@ def test_graph_planner_does_not_render_object_analysis_from_ecotaxa_cache():
     planner = _skill()
 
     assert "do not plan or render it from a cache-only table" in planner
+
+
+def test_bio_oracle_scenario_delta_map_uses_scenario_baseline_and_keeps_no_value_rows():
+    planner = _skill()
+    writer = WRITER_PATH.read_text(encoding="utf-8")
+    contract = f"{planner}\n{writer}"
+
+    assert "Bio-ORACLE SSP − Bio-ORACLE baseline" in contract
+    assert "Bio-ORACLE SSP − CTD current" not in contract
+    assert "exact persisted Bio-ORACLE delta column" in contract
+    assert "no_value" in contract
+    assert "grey" in contract

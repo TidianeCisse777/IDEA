@@ -129,6 +129,12 @@ _ABUNDANCE_MARKERS = (
     "count",
 )
 
+_NEOLABS_TIME_CANDIDATES = (
+    "sampling_year",
+    "DEPLOYMENT_DATE_START",
+    "deployment_datetime_start",
+)
+
 _PROJECT_KEY_MARKERS = ("project", "campaign", "cruise")
 _SAMPLE_MARKERS = (
     "sample", "profile", "station", "deployment", "net", "cast", "analysis",
@@ -137,6 +143,18 @@ _ENVIRONMENT_MARKERS = (
     "depth", "pres", "temperature", "temp", "salin", "oxygen", "conduct",
     "fluor", "chlorophyll", "ph", "turbid", "volume", "flowmeter",
 )
+
+
+def _time_candidates_for(columns: Iterable[object]) -> tuple[str, ...]:
+    """Prefer NeoLabs' explicit year/source date in dataset orientation only."""
+    normalized = {normalize_column_name(column) for column in columns}
+    is_neolabs = (
+        normalize_column_name("sampling_year") in normalized
+        and normalize_column_name("DEPLOYMENT_DATE_START") in normalized
+    )
+    if not is_neolabs:
+        return DEFAULT_TIME_CANDIDATES
+    return tuple(dict.fromkeys((*_NEOLABS_TIME_CANDIDATES, *DEFAULT_TIME_CANDIDATES)))
 
 
 def _prioritized_columns(
@@ -176,7 +194,7 @@ def _prioritized_columns(
         and (str(column).lower().endswith("_id") or str(column).lower() == "id")
     )
 
-    time_cols = candidates((*DEFAULT_TIME_CANDIDATES, *DEFAULT_TIME_END_CANDIDATES))
+    time_cols = candidates((*_time_candidates_for(columns), *DEFAULT_TIME_END_CANDIDATES))
     position_cols = candidates((*DEFAULT_LAT_CANDIDATES, *DEFAULT_LON_CANDIDATES))
     depth_cols = candidates(DEFAULT_DEPTH_CANDIDATES)
     taxonomy_cols = candidates(_TAXONOMY_PRIORITY)
@@ -247,7 +265,7 @@ def _schema_by_type(
     time_names = {
         normalize_column_name(name)
         for name in (
-            *DEFAULT_TIME_CANDIDATES,
+            *_time_candidates_for(dataframe.columns),
             *DEFAULT_TIME_END_CANDIDATES,
         )
     }
@@ -279,21 +297,20 @@ def _schema_by_type(
             groups["space"].append(name)
         elif normalized_name in time_names:
             groups["time"].append(name)
-        elif (
-            normalized_name in environment_names
-            or any(marker in normalized_name for marker in _ENVIRONMENT_MARKERS)
-        ):
-            groups["environment"].append(name)
         elif normalized_name in taxon_names:
             groups["taxon"].append(name)
+        elif normalized_name in environment_names:
+            groups["environment"].append(name)
+        elif any(marker in normalized_name for marker in _ABUNDANCE_MARKERS):
+            groups["measures"].append(name)
+        elif any(marker in normalized_name for marker in _ENVIRONMENT_MARKERS):
+            groups["environment"].append(name)
         elif (
             any(marker in normalized_name for marker in _SAMPLE_MARKERS)
             or normalized_name in {"object", "objectid"}
         ):
             groups["sample"].append(name)
-        elif name in numeric_names or any(
-            marker in normalized_name for marker in _ABUNDANCE_MARKERS
-        ):
+        elif name in numeric_names:
             groups["measures"].append(name)
         else:
             groups["other"].append(name)
@@ -487,7 +504,7 @@ def build_dataset_state_capsule(
     environment_columns = {
         "latitude": detect_column(dataframe.columns, DEFAULT_LAT_CANDIDATES),
         "longitude": detect_column(dataframe.columns, DEFAULT_LON_CANDIDATES),
-        "time": detect_column(dataframe.columns, DEFAULT_TIME_CANDIDATES),
+        "time": detect_column(dataframe.columns, _time_candidates_for(dataframe.columns)),
         "depth": detect_column(dataframe.columns, DEFAULT_DEPTH_CANDIDATES),
     }
 
@@ -507,6 +524,30 @@ def build_dataset_state_capsule(
         ),
         "all_columns=" + _prioritized_columns(dataframe, environment_columns),
     ]
+    important_columns = [
+        str(column)
+        for column in (meta.get("important_columns") or [])
+        if str(column) in dataframe.columns
+    ][:12]
+    if important_columns:
+        fields.append("important_columns=" + ",".join(important_columns))
+        descriptions = meta.get("column_descriptions") or {}
+        meanings = [
+            f"{column}:{_clean(descriptions[column], limit=90)}"
+            for column in important_columns
+            if descriptions.get(column)
+        ]
+        if meanings:
+            fields.append("column_meanings=" + " | ".join(meanings))
+    if meta.get("matched_ctd_depth_column"):
+        fields.append(
+            "matched_ctd_depth_column="
+            + _clean(meta["matched_ctd_depth_column"], limit=80)
+        )
+    if meta.get("profile_depth_column"):
+        fields.append(
+            "profile_depth_column=" + _clean(meta["profile_depth_column"], limit=80)
+        )
     active_join_note = ""
     if source == "analysis:join":
         active_join_note = (

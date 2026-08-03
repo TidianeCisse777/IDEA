@@ -20,6 +20,14 @@ def test_system_prompt_keeps_canonical_join_policy_and_accepts_any_loaded_file()
     assert "never ask whether it concerns copepods" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_system_prompt_requires_neolabs_to_amundsen_matching_before_profile_read():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = " ".join(COPEPOD_SYSTEM_PROMPT.split())
+    assert "never copy a NeoLabs cast into an Amundsen profile call" in prompt
+    assert "match by latitude/longitude/time first" in prompt
+
+
 def test_system_prompt_requires_comparable_abundance_before_cross_instrument_comparison():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -50,6 +58,18 @@ def test_net_uvp_skill_requires_stratum_matched_and_explained_profiles():
     assert "sum of sampled volumes" in normalized
     assert "method disclosure" in normalized
     assert "user may change" in normalized
+
+
+def test_net_uvp_skill_routes_depth_comparison_through_canonical_builder():
+    from pathlib import Path
+
+    skill = Path("agents/skills/net_uvp_abundance_comparison.md").read_text()
+
+    assert "from core.net_uvp_comparison import build_paired_depth_strata" in skill
+    assert "paired_strata = build_paired_depth_strata(" in skill
+    assert "comparison_calculable" in skill
+    assert "depth_match_status" in skill
+    assert "df_net_uvp_strata" in skill
 
 
 def test_generated_gateway_documents_persistent_affinity_and_bare_ids():
@@ -94,7 +114,6 @@ def test_cross_source_analysis_uses_generic_run_pandas_sandbox():
 
 
 def test_ecotaxa_cache_prompt_does_not_impose_an_implicit_limit():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
     from pathlib import Path
 
     navigation = Path("agents/skills/ecotaxa_navigation.md").read_text()

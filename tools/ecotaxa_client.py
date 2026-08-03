@@ -103,8 +103,10 @@ class EcotaxaClient:
         resp.raise_for_status()
         return resp.json()
 
-    def get_project(self, project_id: int) -> dict:
-        return self._get_json(f"/projects/{project_id}")
+    def get_project(self, project_id: int, timeout: float | None = None) -> dict:
+        """Return project metadata, optionally with a caller-bounded timeout."""
+        kwargs = {} if timeout is None else {"timeout": float(timeout)}
+        return self._get_json(f"/projects/{project_id}", **kwargs)
 
     def get_project_stats(self, project_id: int) -> list[str]:
         return self._get_json(f"/projects/{project_id}/stats", timeout=10)

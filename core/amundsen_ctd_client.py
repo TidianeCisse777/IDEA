@@ -12,6 +12,7 @@ from tools.public_url import download_url
 
 
 _DATASETS_CACHE: dict[str, object] = {"datasets": None, "expires_at": 0.0}
+_PROFILE_VARIABLES = ("PRES", "TE90", "PSAL", "SIGT", "OXYM", "pH", "NTRA", "FLOR")
 
 
 def _dataset_cache_ttl() -> float:
@@ -83,7 +84,16 @@ def preview_amundsen_profile(parameters: dict) -> dict:
     if not tabledap_url:
         raise RuntimeError(f"Dataset {chosen['dataset_id']} has no tabledap endpoint")
 
-    variables = "time,latitude,longitude,station,cast_number,PRES,depth,TE90,PSAL"
+    requested = parameters.get("variables") or _PROFILE_VARIABLES
+    selected = [
+        variable for variable in dict.fromkeys(map(str, requested))
+        if variable in _PROFILE_VARIABLES
+    ]
+    if not selected:
+        selected = list(_PROFILE_VARIABLES)
+    variables = ",".join(
+        ["time", "latitude", "longitude", "station", "cast_number", *selected]
+    )
     constraints = ""
     if station is not None:
         constraints += f'&station="{station}"'

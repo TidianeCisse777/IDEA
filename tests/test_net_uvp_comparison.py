@@ -7,12 +7,167 @@ import pytest
 from core.net_uvp_comparison import (
     NET_UVP_COMPARE_METHOD_VERSION,
     NET_UVP_MATCH_METHOD_VERSION,
+    build_paired_depth_strata,
     compare_paired_density,
     haversine_km,
     join_certified_net_uvp_enriched,
     match_net_to_uvp,
     to_ind_per_m3,
 )
+
+
+def _object_expanded_strata_rows() -> pd.DataFrame:
+    """Deux strates filet répétées par quatre objets issus d'un même profil UVP."""
+    net_rows = pd.DataFrame(
+        {
+            "SAMPLE_ID": [501, 501, 502, 502],
+            "ANALYSIS_ID": [9001, 9001, 9002, 9002],
+            "TAXON_ID": [11, 12, 11, 12],
+            "CLASS": ["Copepoda"] * 4,
+            "STATION_NAME": ["S1"] * 4,
+            "MIN_SAMPLE_DEPTH": [0.0, 0.0, 10.0, 10.0],
+            "MAX_SAMPLE_DEPTH": [10.0, 10.0, 20.0, 20.0],
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [10.0, 20.0, 40.0, 10.0],
+            "export_project_id": [10] * 4,
+            "uvp_profile_str": ["profile-1"] * 4,
+            "ctd_verification": ["verified"] * 4,
+            "exploratory": [False] * 4,
+        }
+    )
+    uvp_objects = pd.DataFrame(
+        {
+            "object_id": ["o-1", "o-2", "o-3", "o-4"],
+            "depth_bin": [2.5, 7.5, 12.5, 17.5],
+            "object_annotation_hierarchy": [
+                "living>Crustacea>Copepoda",
+                "living>Crustacea>Copepoda",
+                "living>Crustacea>Copepoda",
+                "living>Chaetognatha",
+            ],
+            "ecopart_Sampled volume [L]": [100.0, 50.0, 80.0, 20.0],
+        }
+    )
+    return net_rows.merge(uvp_objects, how="cross")
+
+
+def test_build_paired_depth_strata_deduplicates_join_expansion_at_same_depth():
+    rows = _object_expanded_strata_rows()
+
+    result = build_paired_depth_strata(rows)
+
+    assert result[
+        ["net_sample_id", "net_depth_min_m", "net_depth_max_m"]
+    ].to_records(index=False).tolist() == [
+        (501, 0.0, 10.0),
+        (502, 10.0, 20.0),
+    ]
+    assert result["net_abundance_ind_m3"].tolist() == pytest.approx([30.0, 50.0])
+    assert result["uvp_target_count"].tolist() == [2, 1]
+    assert result["uvp_sampled_volume_L"].tolist() == pytest.approx([150.0, 100.0])
+    assert result["uvp_abundance_ind_m3"].tolist() == pytest.approx(
+        [2000.0 / 150.0, 10.0]
+    )
+    assert result["depth_match_status"].tolist() == ["matched", "matched"]
+    assert result["comparison_calculable"].tolist() == [True, True]
+
+
+def test_build_paired_depth_strata_keeps_stratum_with_missing_volume():
+    rows = _object_expanded_strata_rows()
+    rows.loc[rows["depth_bin"].eq(7.5), "ecopart_Sampled volume [L]"] = np.nan
+
+    result = build_paired_depth_strata(rows)
+    incomplete = result.loc[result["net_sample_id"].eq(501)].iloc[0]
+
+    assert incomplete["depth_match_status"] == "missing_volume"
+    assert not incomplete["comparison_calculable"]
+    assert incomplete["uvp_depth_bin_count"] == 2
+    assert incomplete["uvp_missing_volume_bins"] == 1
+    assert np.isnan(incomplete["uvp_sampled_volume_L"])
+    assert np.isnan(incomplete["uvp_abundance_ind_m3"])
+    assert np.isnan(incomplete["abundance_delta_ind_m3"])
+    assert "volume" in incomplete["exclusion_reason"].casefold()
+
+
+def test_build_paired_depth_strata_keeps_stratum_without_depth_coverage():
+    rows = _object_expanded_strata_rows()
+    rows.loc[rows["SAMPLE_ID"].eq(502), ["MIN_SAMPLE_DEPTH", "MAX_SAMPLE_DEPTH"]] = [
+        30.0,
+        40.0,
+    ]
+
+    result = build_paired_depth_strata(rows)
+    uncovered = result.loc[result["net_sample_id"].eq(502)].iloc[0]
+
+    assert uncovered["depth_match_status"] == "no_depth_coverage"
+    assert not uncovered["comparison_calculable"]
+    assert uncovered["uvp_depth_bin_count"] == 0
+    assert np.isnan(uncovered["uvp_sampled_volume_L"])
+    assert np.isnan(uncovered["uvp_abundance_ind_m3"])
+    assert "profondeur" in uncovered["exclusion_reason"].casefold()
+
+
+def test_build_paired_depth_strata_flags_incompatible_volume_without_using_first_value():
+    rows = _object_expanded_strata_rows()
+    first_duplicate = rows.index[
+        rows["SAMPLE_ID"].eq(501) & rows["depth_bin"].eq(2.5)
+    ][0]
+    rows.loc[first_duplicate, "ecopart_Sampled volume [L]"] = 120.0
+
+    result = build_paired_depth_strata(rows)
+    incompatible = result.loc[result["net_sample_id"].eq(501)].iloc[0]
+
+    assert incompatible["depth_match_status"] == "incompatible_volume"
+    assert not incompatible["comparison_calculable"]
+    assert incompatible["uvp_incompatible_volume_bins"] == 1
+    assert np.isnan(incompatible["uvp_sampled_volume_L"])
+    assert np.isnan(incompatible["uvp_abundance_ind_m3"])
+
+
+def test_build_paired_depth_strata_refuses_partial_net_abundance():
+    rows = _object_expanded_strata_rows()
+    rows.loc[
+        rows["SAMPLE_ID"].eq(501) & rows["TAXON_ID"].eq(12),
+        "ALL_STAGES_ABUND (ind./m3 depth vol.)",
+    ] = np.nan
+
+    result = build_paired_depth_strata(rows)
+    incomplete = result.loc[result["net_sample_id"].eq(501)].iloc[0]
+
+    assert incomplete["depth_match_status"] == "missing_net_abundance"
+    assert not incomplete["comparison_calculable"]
+    assert incomplete["net_missing_abundance_rows"] == 1
+    assert np.isnan(incomplete["net_abundance_ind_m3"])
+    assert np.isnan(incomplete["abundance_delta_ind_m3"])
+
+
+def test_build_paired_depth_strata_uses_exact_copepoda_hierarchy_node():
+    rows = _object_expanded_strata_rows()
+    rows.loc[rows["object_id"].eq("o-1"), "object_annotation_hierarchy"] = (
+        "living>NonCopepoda"
+    )
+
+    result = build_paired_depth_strata(rows)
+
+    first_stratum = result.loc[result["net_sample_id"].eq(501)].iloc[0]
+    assert first_stratum["uvp_target_count"] == 1
+
+
+def test_build_paired_depth_strata_flags_conflicting_repeated_net_abundance():
+    rows = _object_expanded_strata_rows()
+    repeated_taxon_row = rows.index[
+        rows["SAMPLE_ID"].eq(501) & rows["TAXON_ID"].eq(11)
+    ][0]
+    rows.loc[
+        repeated_taxon_row, "ALL_STAGES_ABUND (ind./m3 depth vol.)"
+    ] = 99.0
+
+    result = build_paired_depth_strata(rows)
+    incompatible = result.loc[result["net_sample_id"].eq(501)].iloc[0]
+
+    assert incompatible["depth_match_status"] == "incompatible_net_abundance"
+    assert not incompatible["comparison_calculable"]
+    assert incompatible["net_incompatible_abundance_rows"] == 1
+    assert np.isnan(incompatible["net_abundance_ind_m3"])
 
 
 def _net():

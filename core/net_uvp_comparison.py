@@ -9,9 +9,10 @@ jointure ou compare des unités incompatibles :
    proche dans l'espace (haversine), avec l'écart temporel calculé et exposé.
    Le rapprochement est SPATIAL (stations de monitoring revisitées) : l'écart de
    temps n'est jamais masqué, il devient une colonne + un statut.
-2. `to_ind_per_m3` — aligne une densité `ind./L` (UVP) sur `ind./m³` (filet)
-   avant toute comparaison, unité rendue explicite dans le nom de colonne.
-3. `compare_paired_density` — pose delta, ratio et log2-ratio sur une table déjà
+2. `to_ind_per_m3` — aligne une densité `ind./L` (UVP) sur `ind./m³` (filet).
+3. `build_paired_depth_strata` — déduplique la jointure objet×taxon et construit
+   une ligne par intervalle filet avec les seuls bins UVP de ce même intervalle.
+4. `compare_paired_density` — pose delta, ratio et log2-ratio sur une table déjà
    appariée à un grain commun (station ou sample), sans réordonner ni inventer.
 
 Ce module ne lit aucune source ni session : il opère sur des DataFrames déjà
@@ -23,6 +24,8 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from core.copepod_taxonomy import copepod_hierarchy_mask
 
 
 NET_UVP_MATCH_METHOD_VERSION = "net-uvp-deployment-spatiotemporal-match-v3"
@@ -40,6 +43,7 @@ def _normalize_station(name: str | None) -> str:
     s = re.sub(r"^(?:[a-z]{1,6}\d{0,4}_(?:leg\d+_)?)", "", str(name), flags=re.IGNORECASE)
     return re.sub(r"[-_\s]", "", s).lower()
 NET_UVP_COMPARE_METHOD_VERSION = "net-uvp-density-compare-v1"
+NET_UVP_DEPTH_METHOD_VERSION = "net-uvp-depth-strata-v1"
 
 _EARTH_RADIUS_KM = 6371.0
 _MATCH_COLUMNS = [
@@ -398,6 +402,207 @@ def to_ind_per_m3(density: pd.Series, *, from_unit: str) -> pd.Series:
     raise ValueError(
         f"Unité `{from_unit}` inconnue : attendu `ind_per_m3` ou `ind_per_L`."
     )
+
+
+def build_paired_depth_strata(
+    joined: pd.DataFrame,
+    *,
+    net_sample_col: str = "SAMPLE_ID",
+    net_analysis_col: str = "ANALYSIS_ID",
+    net_taxon_col: str = "TAXON_ID",
+    net_class_col: str = "CLASS",
+    net_depth_min_col: str = "MIN_SAMPLE_DEPTH",
+    net_depth_max_col: str = "MAX_SAMPLE_DEPTH",
+    net_abundance_col: str = "ALL_STAGES_ABUND (ind./m3 depth vol.)",
+    uvp_depth_col: str = "depth_bin",
+    uvp_object_col: str = "object_id",
+    uvp_taxonomy_col: str = "object_annotation_hierarchy",
+    uvp_volume_col: str = "ecopart_Sampled volume [L]",
+) -> pd.DataFrame:
+    """Construit une ligne comparable par tranche de filet certifiée.
+
+    La table d'entrée est la jointure objet EcoTaxa–EcoPart ↔ lignes taxonomiques
+    NeoLabs. Le produit cartésien de cette jointure est dédupliqué aux deux grains
+    légitimes : taxon filet pour le numérateur NeoLabs, puis objet et bin UVP pour
+    le numérateur et le dénominateur UVP. Seuls les bins dont le centre appartient
+    à l'intervalle du filet contribuent à la tranche.
+    """
+    required = {
+        net_sample_col,
+        net_analysis_col,
+        net_taxon_col,
+        net_class_col,
+        net_depth_min_col,
+        net_depth_max_col,
+        net_abundance_col,
+        uvp_depth_col,
+        uvp_object_col,
+        uvp_taxonomy_col,
+        uvp_volume_col,
+    }
+    missing = sorted(required.difference(joined.columns))
+    if missing:
+        raise ValueError(
+            "Comparaison filet↔UVP par tranche refusée : colonne(s) absente(s) : "
+            + ", ".join(f"`{column}`" for column in missing)
+            + "."
+        )
+
+    work = joined.copy()
+    for column in (net_depth_min_col, net_depth_max_col, net_abundance_col, uvp_depth_col, uvp_volume_col):
+        work[column] = pd.to_numeric(work[column], errors="coerce")
+
+    rows: list[dict[str, object]] = []
+    stratum_key = [net_sample_col, net_depth_min_col, net_depth_max_col]
+    for (sample_id, depth_min, depth_max), group in work.groupby(
+        stratum_key, sort=True, dropna=False
+    ):
+        net_taxa = group.loc[
+            group[net_class_col].astype("string").str.casefold().eq("copepoda")
+        ]
+        net_taxon_key = [
+            net_sample_col,
+            net_analysis_col,
+            net_taxon_col,
+            net_depth_min_col,
+            net_depth_max_col,
+        ]
+        net_missing = 0
+        net_incompatible = 0
+        canonical_net_values: list[float] = []
+        for _, taxon_rows in net_taxa.groupby(net_taxon_key, sort=True, dropna=False):
+            values = taxon_rows[net_abundance_col].to_numpy(dtype=float)
+            finite = values[np.isfinite(values)]
+            if len(finite) == 0 or len(finite) != len(values):
+                net_missing += 1
+                continue
+            candidate = float(finite[0])
+            if not np.allclose(finite, candidate, rtol=1e-6, atol=1e-9):
+                net_incompatible += 1
+                continue
+            canonical_net_values.append(candidate)
+        net_abundance = (
+            float(sum(canonical_net_values))
+            if not net_taxa.empty and net_missing == 0 and net_incompatible == 0
+            else np.nan
+        )
+
+        valid_depth_interval = bool(
+            np.isfinite(depth_min)
+            and np.isfinite(depth_max)
+            and float(depth_max) > float(depth_min)
+        )
+        in_interval = (
+            group.loc[
+                group[uvp_depth_col].between(
+                    float(depth_min), float(depth_max), inclusive="both"
+                )
+            ]
+            if valid_depth_interval
+            else group.iloc[0:0]
+        )
+        object_ids = in_interval[uvp_object_col].astype("string").str.strip()
+        unique_objects = in_interval.loc[
+            object_ids.notna() & object_ids.ne("")
+        ].drop_duplicates(uvp_object_col)
+        if uvp_taxonomy_col != "object_annotation_hierarchy":
+            raise ValueError(
+                "Comparaison filet↔UVP par tranche refusée : la taxonomie UVP "
+                "doit provenir de `object_annotation_hierarchy`."
+            )
+        target_count = int(copepod_hierarchy_mask(unique_objects).sum())
+        bin_count = int(in_interval[uvp_depth_col].dropna().nunique())
+        missing_volume_bins = 0
+        incompatible_volume_bins = 0
+        canonical_volumes: list[float] = []
+        for _, depth_rows in in_interval.groupby(uvp_depth_col, sort=True):
+            raw_volumes = depth_rows[uvp_volume_col].to_numpy(dtype=float)
+            finite = raw_volumes[np.isfinite(raw_volumes)]
+            if len(finite) == 0 or len(finite) != len(raw_volumes):
+                missing_volume_bins += 1
+                continue
+            candidate = float(finite[0])
+            if candidate <= 0 or not np.allclose(
+                finite, candidate, rtol=1e-6, atol=1e-9
+            ):
+                incompatible_volume_bins += 1
+                continue
+            canonical_volumes.append(candidate)
+
+        if not valid_depth_interval:
+            status = "invalid_net_depth"
+            reason = "Intervalle de profondeur du filet absent ou invalide."
+        elif net_taxa.empty:
+            status = "missing_net_target"
+            reason = "Aucune ligne d'abondance de copépodes pour cette tranche de filet."
+        elif net_incompatible:
+            status = "incompatible_net_abundance"
+            reason = "Abondances filet contradictoires pour une même ligne taxonomique."
+        elif net_missing:
+            status = "missing_net_abundance"
+            reason = "Au moins une abondance filet requise est manquante."
+        elif bin_count == 0:
+            status = "no_depth_coverage"
+            reason = "Aucun bin UVP dans la même tranche de profondeur que le filet."
+        elif incompatible_volume_bins:
+            status = "incompatible_volume"
+            reason = "Valeurs de volume EcoPart contradictoires ou non positives dans un bin."
+        elif missing_volume_bins:
+            status = "missing_volume"
+            reason = "Volume EcoPart manquant pour au moins un bin de profondeur."
+        else:
+            status = "matched"
+            reason = pd.NA
+
+        calculable = status == "matched"
+        sampled_volume = float(sum(canonical_volumes)) if calculable else np.nan
+        uvp_abundance = (
+            target_count / sampled_volume * 1000.0 if calculable else np.nan
+        )
+        abundance_delta = (
+            uvp_abundance - net_abundance if calculable else np.nan
+        )
+        abundance_ratio = (
+            uvp_abundance / net_abundance
+            if calculable and net_abundance != 0
+            else np.nan
+        )
+
+        row: dict[str, object] = {
+            "net_sample_id": sample_id,
+            "net_depth_min_m": float(depth_min),
+            "net_depth_max_m": float(depth_max),
+            "net_abundance_ind_m3": net_abundance,
+            "net_missing_abundance_rows": net_missing,
+            "net_incompatible_abundance_rows": net_incompatible,
+            "uvp_target_count": target_count,
+            "uvp_depth_bin_count": bin_count,
+            "uvp_missing_volume_bins": missing_volume_bins,
+            "uvp_incompatible_volume_bins": incompatible_volume_bins,
+            "uvp_sampled_volume_L": sampled_volume,
+            "uvp_abundance_ind_m3": uvp_abundance,
+            "abundance_delta_ind_m3": abundance_delta,
+            "abundance_ratio": abundance_ratio,
+            "depth_match_status": status,
+            "comparison_calculable": calculable,
+            "exclusion_reason": reason,
+            "method_version": NET_UVP_DEPTH_METHOD_VERSION,
+        }
+        for source, target in (
+            ("STATION_NAME", "station"),
+            ("export_project_id", "uvp_project_id"),
+            ("uvp_profile_str", "uvp_profile"),
+            ("ctd_verification", "ctd_verification"),
+            ("exploratory", "exploratory"),
+            ("latitude", "latitude"),
+            ("longitude", "longitude"),
+        ):
+            if source in group.columns:
+                values = group[source].dropna()
+                row[target] = values.iloc[0] if not values.empty else pd.NA
+        rows.append(row)
+
+    return pd.DataFrame(rows)
 
 
 def compare_paired_density(

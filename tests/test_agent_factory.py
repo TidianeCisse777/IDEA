@@ -1700,3 +1700,34 @@ def test_graph_writer_defines_all_executable_contract_families():
     assert 'set_gid("zero_abundance")' in skill
     assert 'set_gid("abundance_size_legend")' in skill
     assert 'set_gid("environment_color_legend")' in skill
+
+
+def test_graph_writer_supports_multi_panel_environmental_vertical_profiles():
+    skill = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    assert "amundsen_te90_degC" in skill
+    assert "amundsen_psal_psu" in skill
+    assert "amundsen_pres_dbar" in skill
+    assert '"x": "temperature_degC", "y": "depth_m"' in skill
+    assert '"x": "salinity_psu", "y": "depth_m"' in skill
+    assert '{"axis_index": 1, "axis": "y"}' in skill
+
+
+def test_amundsen_skill_uses_resolved_casts_for_complete_vertical_profiles():
+    skill = Path("agents/skills/amundsen_ctd_query.md").read_text(encoding="utf-8")
+
+    assert "query_amundsen_profiles_for_table" in skill
+    assert "amundsen_station" in skill
+    assert "amundsen_cast_number" in skill
+    assert "max_sample_depth" in skill
+    assert "amundsen_pres_dbar" in skill
+    assert "Do not rename raw `PRES`, `TE90`, or `PSAL`" in skill
+
+
+def test_amundsen_skill_waits_for_variable_choice_on_vague_ctd_request():
+    skill = Path("agents/skills/amundsen_ctd_query.md").read_text(encoding="utf-8")
+
+    assert "present all eight supported CTD variables" in skill
+    assert "wait for the user's selection" in skill
+    assert "all variables" in skill
+    assert "State the catalog exactly once" in skill

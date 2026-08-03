@@ -34,8 +34,35 @@ def test_make_amundsen_tools_exposes_expected_tools():
     assert "list_amundsen_datasets" in tool_names
     assert "preview_amundsen_profile" in tool_names
     assert "query_amundsen_ctd" in tool_names
+    assert "query_amundsen_profiles_for_table" in tool_names
     assert "enrich_loaded_table_with_amundsen_ctd" in tool_names
     assert "find_amundsen_data_for_table" in tool_names
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["preview_amundsen_profile", "query_amundsen_ctd"],
+)
+def test_amundsen_profile_tools_reject_an_unbounded_request(tool_name):
+    """A profile read without any Amundsen identifier must never hit ERDDAP."""
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+
+    target = (
+        "tools.amundsen_sources._preview_amundsen_profile"
+        if tool_name == "preview_amundsen_profile"
+        else "tools.amundsen_sources._query_amundsen_ctd"
+    )
+    with patch(target, side_effect=AssertionError("unbounded ERDDAP request")):
+        selected = next(
+            tool for tool in make_amundsen_tools("thread-unbounded-amundsen")
+            if tool.name == tool_name
+        )
+        result = selected.invoke({})
+
+    assert "requête amundsen non bornée refusée" in result.casefold()
+    assert "find_amundsen_data_for_table" in result
 
 
 def test_find_amundsen_data_reports_availability_without_enriching():
@@ -189,6 +216,274 @@ def test_query_amundsen_ctd_preserves_distinct_profiles():
     assert name_8 in result_8
 
 
+def test_query_amundsen_profiles_for_table_keeps_every_resolved_cast_and_status():
+    """The batch path loads every unique matched cast and records failures."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-full-profiles"
+    source_name = "df_amundsen_enriched_selection"
+    source = pd.DataFrame(
+        {
+            "station": ["314", "314", "Allen Bay", "QMG-3"],
+            "amundsen_station": ["A", "A", "B", "C"],
+            "amundsen_cast_number": [107, 107, 90, 83],
+        }
+    )
+    _store.set(
+        f"{thread_id}:dataset:{source_name}",
+        source,
+        {"variable_name": source_name},
+    )
+
+    def fake_query(parameters, output_path=None):
+        station = parameters["station"]
+        cast = parameters["cast_number"]
+        assert parameters["variables"] == [
+            "PRES", "TE90", "PSAL", "SIGT", "OXYM", "pH", "NTRA", "FLOR"
+        ]
+        if station == "B":
+            raise RuntimeError("temporary upstream error")
+        frame = pd.DataFrame(
+            {
+                "station": [station, station],
+                "cast_number": [cast, cast],
+                "PRES": [0.0, 10.0],
+                "TE90": [-1.0, -1.2],
+                "PSAL": [30.0, 31.0],
+                "SIGT": [24.0, 24.5],
+                "OXYM": [280.0, 275.0],
+                "pH": [8.1, 8.0],
+                "NTRA": [1.0, 1.5],
+                "FLOR": [0.2, 0.3],
+            }
+        )
+        frame.to_csv(output_path, sep="\t", index=False)
+        return {
+            "dataset_id": "amundsen12713",
+            "file_path": str(output_path),
+            "download_url": "unused",
+            "row_count": len(frame),
+        }
+
+    with patch("tools.amundsen_sources._query_amundsen_ctd", side_effect=fake_query) as query, patch(
+        "tools.amundsen_sources.cache_get", return_value=None
+    ), patch("tools.amundsen_sources.cache_set"):
+        batch = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "query_amundsen_profiles_for_table"
+        )
+        result = batch.invoke({"source_variable": source_name, "max_profiles": 6})
+
+    assert query.call_count == 3  # duplicate A/107 queried once, explicitly counted
+    assert "3 profil(s) demandé(s)" in result
+    assert "2 chargé(s)" in result
+    assert "1 indisponible(s)" in result
+    stored_keys = _store.keys(f"{thread_id}:dataset:df_amundsen_profiles_")
+    assert len(stored_keys) == 1
+    stored = _store.get(stored_keys[0])
+    full = stored["df"]
+    assert set(zip(full["amundsen_station"], full["amundsen_cast_number"])) == {
+        ("A", 107), ("B", 90), ("C", 83)
+    }
+    assert full.loc[full["amundsen_station"].eq("B"), "profile_status"].tolist() == [
+        "source_unavailable"
+    ]
+    assert {
+        "depth_m", "temperature_degC", "salinity_psu", "density_sigt",
+        "oxygen_oxym", "ph", "nitrate_ntra", "fluorescence_flor",
+    }.issubset(full.columns)
+    assert stored["meta"]["n_requested_profiles"] == 3
+    assert stored["meta"]["n_loaded_profiles"] == 2
+    assert stored["meta"]["n_unavailable_profiles"] == 1
+    assert stored["meta"]["duplicate_source_rows"] == 1
+
+
+def test_query_amundsen_profiles_for_table_refuses_to_drop_profiles_over_limit():
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-profile-limit"
+    source_name = "df_many_profiles"
+    _store.set(
+        f"{thread_id}:dataset:{source_name}",
+        pd.DataFrame({
+            "amundsen_station": ["A", "B", "C"],
+            "amundsen_cast_number": [1, 2, 3],
+        }),
+        {"variable_name": source_name},
+    )
+    with patch("tools.amundsen_sources._query_amundsen_ctd") as query:
+        batch = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "query_amundsen_profiles_for_table"
+        )
+        result = batch.invoke({"source_variable": source_name, "max_profiles": 2})
+
+    query.assert_not_called()
+    assert "3 profils" in result
+    assert "limite 2" in result
+    assert "aucun profil n’a été écarté" in result
+
+
+def test_query_amundsen_profiles_for_table_recovers_enriched_source_for_derived_selection():
+    """A selected station table may omit cast ids; one compatible enriched table is reused."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-derived-stations"
+    _store.set(
+        thread_id,
+        pd.DataFrame({"station_name": ["314", "Allen Bay", "QMG-3"]}),
+        {
+            "source": "analysis:explicit-derived",
+            "variable_name": "df_derived_top3_station_ctd_profiles",
+        },
+    )
+    enriched_name = "df_amundsen_enriched_resolved"
+    _store.set(
+        f"{thread_id}:dataset:{enriched_name}",
+        pd.DataFrame({
+            "station_name": ["314", "314", "Allen Bay", "QMG-3", "Other"],
+            "amundsen_station": ["A", "A", "B", "C", "D"],
+            "amundsen_cast_number": [107, 81, 90, 83, 1],
+        }),
+        {"source": "amundsen_enrichment", "variable_name": enriched_name},
+    )
+
+    def fake_query(parameters, output_path=None):
+        pd.DataFrame({
+            "PRES": [0.0, 10.0],
+            "TE90": [-1.0, -1.1],
+            "PSAL": [30.0, 31.0],
+        }).to_csv(output_path, sep="\t", index=False)
+        return {"file_path": str(output_path), "row_count": 2, "dataset_id": "amundsen12713"}
+
+    with patch("tools.amundsen_sources._query_amundsen_ctd", side_effect=fake_query) as query, patch(
+        "tools.amundsen_sources.cache_get", return_value=None
+    ), patch("tools.amundsen_sources.cache_set"):
+        batch = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "query_amundsen_profiles_for_table"
+        )
+        result = batch.invoke({
+            "source_station_values": ["314", "Allen Bay", "QMG-3"],
+            "max_profiles": 6,
+        })
+
+    assert query.call_count == 4
+    assert enriched_name in result
+    assert "4 profil(s) demandé(s)" in result
+    assert "Other" not in _store.get(f"{thread_id}:ctd")["df"]["source_station_labels"].tolist()
+
+
+def test_query_amundsen_profiles_accepts_canonical_enrichment_column_names():
+    """Canonical columns from the active enriched table map back to ERDDAP variables."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-canonical-profile-columns"
+    source_name = "df_amundsen_enriched_canonical"
+    _store.set(
+        f"{thread_id}:dataset:{source_name}",
+        pd.DataFrame({
+            "amundsen_station": ["A"],
+            "amundsen_cast_number": [107],
+        }),
+        {"variable_name": source_name},
+    )
+
+    def fake_query(parameters, output_path=None):
+        assert parameters["variables"] == ["PRES", "TE90", "PSAL"]
+        pd.DataFrame({
+            "PRES": [0.0, 10.0],
+            "TE90": [-1.0, -1.1],
+            "PSAL": [30.0, 31.0],
+        }).to_csv(output_path, sep="\t", index=False)
+        return {"file_path": str(output_path), "row_count": 2}
+
+    with patch("tools.amundsen_sources._query_amundsen_ctd", side_effect=fake_query), patch(
+        "tools.amundsen_sources.cache_get", return_value=None
+    ), patch("tools.amundsen_sources.cache_set"):
+        batch = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "query_amundsen_profiles_for_table"
+        )
+        result = batch.invoke({
+            "source_variable": source_name,
+            "variables": [
+                "amundsen_te90_degC",
+                "amundsen_psal_psu",
+                "amundsen_pres_dbar",
+                "amundsen_match_status",
+            ],
+        })
+
+    profile = _store.get(f"{thread_id}:ctd")["df"]
+    assert profile["temperature_degC"].notna().all()
+    assert profile["salinity_psu"].notna().all()
+    assert "Variables non mesurées ignorées : amundsen_match_status" in result
+
+
+def test_query_amundsen_profiles_for_table_reuses_exact_profile_cache():
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-profile-cache"
+    source_name = "df_cached_profile_selection"
+    _store.set(
+        f"{thread_id}:dataset:{source_name}",
+        pd.DataFrame({"amundsen_station": ["CACHE"], "amundsen_cast_number": [7]}),
+        {"variable_name": source_name},
+    )
+    cache = {}
+
+    def fake_query(parameters, output_path=None):
+        pd.DataFrame({
+            "Pres": [0.0, 10.0], "Temp": [-1.0, -1.1], "Sal": [30.0, 31.0]
+        }).to_csv(output_path, sep="\t", index=False)
+        return {"file_path": str(output_path), "row_count": 2, "dataset_id": "amundsen12713"}
+
+    def fake_get(namespace, key):
+        return cache.get((namespace, repr(sorted(key.items()))))
+
+    def fake_set(namespace, key, value):
+        cache[(namespace, repr(sorted(key.items())))] = value.copy()
+
+    with patch("tools.amundsen_sources._query_amundsen_ctd", side_effect=fake_query) as query, patch(
+        "tools.amundsen_sources.cache_get", side_effect=fake_get
+    ), patch("tools.amundsen_sources.cache_set", side_effect=fake_set):
+        batch = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "query_amundsen_profiles_for_table"
+        )
+        first = batch.invoke({"source_variable": source_name})
+        second = batch.invoke({"source_variable": source_name})
+
+    assert query.call_count == 1
+    assert "cache exact : 0" in first
+    assert "cache exact : 1" in second
+    stored = _store.get(f"{thread_id}:ctd")["df"]
+    assert stored["depth_m"].tolist() == [0.0, 10.0]
+    assert stored["temperature_degC"].tolist() == [-1.0, -1.1]
+    assert stored["salinity_psu"].tolist() == [30.0, 31.0]
+
+
 def test_enrich_loaded_table_with_amundsen_ctd_reports_missing_metadata_for_ecopart_file():
     import pandas as pd
 
@@ -317,6 +612,70 @@ def test_enrich_loaded_table_with_amundsen_ctd_matches_by_station_cast_and_depth
     assert enriched["amundsen_nearest_lat"].tolist() == [54.2, 54.2]
 
 
+def test_enrich_with_amundsen_ctd_requires_explicit_variable_selection():
+    """A vague enrichment request lists every CTD choice without remote work."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-variable-choice"
+    _store.set(
+        thread_id,
+        pd.DataFrame({
+            "latitude": [74.0],
+            "longitude": [-80.0],
+            "deployment_datetime_start": ["2022-08-01"],
+        }),
+        {"source": "file:choice.csv"},
+    )
+
+    with patch("tools.amundsen_sources._fetch_amundsen_bbox") as fetch:
+        enrich = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({})
+
+    fetch.assert_not_called()
+    assert "Choisir une ou plusieurs variables" in result
+    for raw_name in ("PRES", "TE90", "PSAL", "SIGT", "OXYM", "pH", "NTRA", "FLOR"):
+        assert raw_name in result
+    assert "aucune requête Amundsen n’a été lancée" in result
+
+
+def test_enrich_with_amundsen_ctd_rejects_unsupported_variables_before_remote_call():
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-invalid-variable-choice"
+    _store.set(
+        thread_id,
+        pd.DataFrame({
+            "latitude": [74.0],
+            "longitude": [-80.0],
+            "deployment_datetime_start": ["2022-08-01"],
+        }),
+        {"source": "file:choice.csv"},
+    )
+
+    with patch("tools.amundsen_sources._fetch_amundsen_bbox") as fetch:
+        enrich = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({"variables": ["TEMP", "DOXY", "PHOS"]})
+
+    fetch.assert_not_called()
+    assert "Variables CTD non prises en charge" in result
+    assert "DOXY, PHOS" in result
+    assert "TE90" in result and "OXYM" in result
+
+
 def test_enrich_with_amundsen_ctd_matches_by_lat_lon_time():
     """Tracer bullet — fichier avec seulement lat/lon/time doit s'enrichir Amundsen.
 
@@ -367,7 +726,7 @@ def test_enrich_with_amundsen_ctd_matches_by_lat_lon_time():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
+        result = enrich.invoke({"variables": ["temperature", "salinity"], "initial_batch_spatial_degrees": 30})
 
     assert "1 matchée" in result
     assert "Télécharger :" in result
@@ -380,6 +739,13 @@ def test_enrich_with_amundsen_ctd_matches_by_lat_lon_time():
     assert enriched["amundsen_station"].tolist() == ["BRK-15"]
     assert enriched["amundsen_dataset_id"].tolist() == ["amundsen12713"]
     metadata = _store.get(keys[0])["meta"]
+    assert metadata["matched_ctd_depth_column"] == "amundsen_pres_dbar"
+    assert metadata["column_descriptions"]["amundsen_te90_degC"].endswith("(°C).")
+    assert {
+        "amundsen_pres_dbar",
+        "amundsen_te90_degC",
+        "amundsen_psal_psu",
+    }.issubset(metadata["important_columns"])
     provenance = metadata["provenance"]
     assert provenance["source"] == "Amundsen Science CTD"
     assert provenance["dataset_id"] == "amundsen12713"
@@ -426,7 +792,7 @@ def test_enrich_with_amundsen_ctd_reports_upstream_outage_without_claiming_no_ct
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
+        result = enrich.invoke({"variables": ["temperature", "salinity"], "initial_batch_spatial_degrees": 30})
 
     assert "temporairement indisponible" in result.lower()
     assert "ne permet pas de conclure à l'absence" in result.lower()
@@ -456,7 +822,7 @@ def test_enrich_with_amundsen_ctd_refuses_absent_override_before_fetch():
             tool for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({"time_column": "sampledatetime"})
+        result = enrich.invoke({"variables": ["temperature", "salinity"], "time_column": "sampledatetime"})
 
     fetch.assert_not_called()
     assert "sampledatetime" in result
@@ -518,7 +884,7 @@ def test_enrich_with_amundsen_ctd_matches_each_row_to_its_nearest_profile():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        enrich.invoke({})
+        enrich.invoke({"variables": ["temperature", "salinity"]})
 
     keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
     enriched = _store.get(keys[-1])["df"]
@@ -571,7 +937,7 @@ def test_enrich_with_amundsen_ctd_reports_no_match_when_point_is_far():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        enrich.invoke({"spatial_tolerance_km": 25})
+        enrich.invoke({"variables": ["temperature", "salinity"], "spatial_tolerance_km": 25})
 
     keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
     enriched = _store.get(keys[-1])["df"]
@@ -603,7 +969,7 @@ def test_enrich_with_amundsen_ctd_diagnoses_missing_coordinates():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
+        result = enrich.invoke({"variables": ["temperature", "salinity"], "initial_batch_spatial_degrees": 30})
 
     mock_fetch.assert_not_called()
     assert "coordonnées" in result.lower() or "latitude" in result.lower()
@@ -657,7 +1023,7 @@ def test_enrich_with_amundsen_ctd_emits_single_bbox_call_for_n_points():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        enrich.invoke({})
+        enrich.invoke({"variables": ["temperature", "salinity"]})
 
     assert fetch_mock.call_count == 1
     kwargs = fetch_mock.call_args.kwargs
@@ -731,7 +1097,7 @@ def test_enrich_with_amundsen_ctd_batches_large_spatiotemporal_sources():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
+        result = enrich.invoke({"variables": ["temperature", "salinity"], "initial_batch_spatial_degrees": 30})
 
     assert len(calls) == 2
     assert "2 matchées" in result
@@ -816,7 +1182,7 @@ def test_enrich_with_amundsen_ctd_splits_only_failed_month_batches():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({"initial_batch_spatial_degrees": 30})
+        result = enrich.invoke({"variables": ["temperature", "salinity"], "initial_batch_spatial_degrees": 30})
 
     assert len(calls) == 3
     assert "1 mois splitté" in result
@@ -882,7 +1248,7 @@ def test_enrich_with_amundsen_ctd_deduplicates_repeated_source_coordinates():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({})
+        result = enrich.invoke({"variables": ["temperature", "salinity"]})
 
     assert fetch_mock.call_count == 2
     assert "Points source uniques interrogés : 2 sur 2 point(s) unique(s)" in result
@@ -938,7 +1304,7 @@ def test_enrich_with_amundsen_ctd_caps_source_points_per_batch():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({"max_source_points_per_batch": 1})
+        result = enrich.invoke({"variables": ["temperature", "salinity"], "max_source_points_per_batch": 1})
 
     assert fetch_mock.call_count == 3
     assert "max_source_points=1" in result
@@ -1101,7 +1467,7 @@ def test_enrich_with_amundsen_ctd_matches_depth_within_profile():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        enrich.invoke({})
+        enrich.invoke({"variables": ["temperature", "salinity"]})
 
     keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
     enriched = _store.get(keys[-1])["df"]
@@ -1178,6 +1544,7 @@ def test_enrich_with_amundsen_ctd_prefers_sample_ctd_filename_over_spatial_batch
         "1601002.int.nc", "1601002.int.nc", "1601076.int.nc",
     ]
     assert enriched["amundsen_te90_degC"].tolist() == [-1.0, 1.5, 0.5]
+    assert enriched["amundsen_oxym"].tolist() == [280.0, 275.0, 270.0]
 
 
 def test_filename_enrichment_reports_upstream_failure_without_crashing():
@@ -1353,7 +1720,7 @@ def test_enrich_with_amundsen_ctd_filters_candidates_outside_time_tolerance():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        enrich.invoke({"time_tolerance_hours": 24})
+        enrich.invoke({"variables": ["temperature", "salinity"], "time_tolerance_hours": 24})
 
     keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
     enriched = _store.get(keys[-1])["df"]
@@ -1419,7 +1786,7 @@ def test_enrich_with_amundsen_ctd_exposes_distance_and_time_delta_columns():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        enrich.invoke({"spatial_tolerance_km": 200})
+        enrich.invoke({"variables": ["temperature", "salinity"], "spatial_tolerance_km": 200})
 
     keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
     enriched = _store.get(keys[-1])["df"]
@@ -1474,7 +1841,7 @@ def test_enrich_with_amundsen_ctd_reports_matched_no_value_when_variables_are_na
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        enrich.invoke({})
+        enrich.invoke({"variables": ["temperature", "salinity"]})
 
     keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")
     enriched = _store.get(keys[-1])["df"]
@@ -1538,7 +1905,7 @@ def test_enrich_with_amundsen_ctd_returns_method_transparency_block():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        text = enrich.invoke({})
+        text = enrich.invoke({"variables": ["temperature", "salinity"]})
 
     lowered = text.lower()
     # Bloc "Méthode" présent
@@ -1582,7 +1949,7 @@ def test_enrich_with_amundsen_ctd_diagnoses_all_empty_coordinates_without_erddap
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({})
+        result = enrich.invoke({"variables": ["temperature", "salinity"]})
 
     mock_fetch.assert_not_called()
     assert (
@@ -1590,6 +1957,62 @@ def test_enrich_with_amundsen_ctd_diagnoses_all_empty_coordinates_without_erddap
         or "empty" in result.lower()
         or "aucune coordonnée" in result.lower()
     )
+
+
+def test_enrich_with_amundsen_ctd_reuses_complete_result_with_visible_cache_provenance(
+    tmp_path, monkeypatch
+):
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    monkeypatch.setenv("ERDDAP_CACHE_PATH", str(tmp_path / "amundsen-cache.sqlite"))
+    thread_id = "thread-amundsen-complete-result-cache"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+    source = pd.DataFrame(
+        {
+            "latitude": [60.0],
+            "longitude": [-65.0],
+            "object_date": ["2018-05-31T12:00:00Z"],
+            "object_depth_min": [5.0],
+        }
+    )
+    _store.set(thread_id, source, {"source": "file:amundsen-cache.tsv"})
+    enrich = next(
+        tool
+        for tool in make_amundsen_tools(thread_id)
+        if tool.name == "enrich_with_amundsen_ctd"
+    )
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_bbox",
+        return_value=pd.DataFrame(
+            [
+                {
+                    "time": "2018-05-31T12:00:00Z",
+                    "latitude": 60.0,
+                    "longitude": -65.0,
+                    "station": "S1",
+                    "cast_number": 1,
+                    "PRES": 5.0,
+                    "TE90": -1.0,
+                }
+            ]
+        ),
+    ):
+        enrich.invoke({"variables": ["temperature"]})
+
+    _store.set(thread_id, source, {"source": "file:amundsen-cache.tsv"})
+    text = enrich.invoke({"variables": ["temperature"]})
+    latest = _store.get(f"{thread_id}:ctd_enriched")
+
+    assert "cache" in text.casefold()
+    assert latest["meta"]["cache_hit"] is True
+    assert latest["meta"]["cached_at"]
+    assert len(latest["df"]) == len(source)
 
 
 def test_enrich_with_amundsen_ctd_skips_rows_outside_amundsen_time_range():
@@ -1623,7 +2046,7 @@ def test_enrich_with_amundsen_ctd_skips_rows_outside_amundsen_time_range():
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        result = enrich.invoke({})
+        result = enrich.invoke({"variables": ["temperature", "salinity"]})
 
     mock_fetch.assert_not_called()
     enriched = _store.get(f"{thread_id}:ctd_enriched")["df"]
@@ -1697,7 +2120,7 @@ def test_enrich_with_amundsen_ctd_can_target_specific_dataset_via_source_variabl
             for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
-        enrich.invoke({"source_variable": "df_file_filet"})
+        enrich.invoke({"source_variable": "df_file_filet", "variables": ["temperature", "salinity"]})
 
     # L'enrichissement doit avoir ciblé le FILET, pas l'UVP
     keys = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")

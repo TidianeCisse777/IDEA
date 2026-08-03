@@ -1,6 +1,6 @@
 ---
 name: net_uvp_abundance_comparison
-version: 2.1.3
+version: 2.2.0
 triggers:
   - User asks to compare net (NeoLabs) abundance against UVP (EcoTaxa/EcoPart) abundance
   - User asks to join net and UVP data, compute density, make comparisons by taxon or stage
@@ -240,54 +240,38 @@ result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m
 
 ## Stratified vertical profile (mandatory for filet ↔ UVP)
 
-Use this procedure when the user asks for a vertical profile or a comparison by
-depth stratum. It is an analytical calculation, then the already-active graph
-rules render its exact persisted result.
+For depth profiles/comparisons, start from `df_net_uvp_ecopart`. The audited
+filet table must already join NeoLabs abundance and sample metadata on
+`SAMPLE_ID + ANALYSIS_ID`. Otherwise rebuild and re-audit it. If the abundance
+metric or stages are ambiguous, ask once; the wide-file default is
+`ALL_STAGES_ABUND (ind./m3 depth vol.)` with `CLASS == Copepoda`.
 
-1. Start from the canonical final object table, never from a whole UVP profile
-   or from an unaudited candidate. A profile can serve several net strata.
-2. Inspect the available net abundance fields. If more than one metric or stage
-   scope is plausible, name the choices and ask the user. For the chosen field,
-   remove object-expanded duplicates at the net taxon-row grain, then **sum**
-   taxon rows once per `net_sample_id` and `[min_sample_depth,
-   max_sample_depth]`. Never average taxon rows and never sum their copies
-   repeated by the object join.
-3. For each audited net stratum, retain UVP records from the same project and
-   profile whose depth bin lies in that **same depth interval**. Count unique
-   target object identifiers for the numerator. For the denominator, take the
-   sampled volume once per depth bin and use the **sum of sampled volumes**.
-   Convert the resulting UVP density to `ind./m³` before comparison.
-4. Retain a zero UVP abundance only when the selected interval has a positive,
-   documented sampled volume. If volume coverage for a bin or interval cannot
-   be established, mark that stratum incomplete and exclude it rather than
-   treating it as zero.
-5. Never compare a full UVP profile with one net stratum. A profile plot uses
-   one paired UVP value and one paired net value per common interval. Draw the
-   net interval itself (its lower and upper depth), not only a point detached
-   from the sampled stratum.
+Never hand-write deduplication, bin selection, counts, sum of sampled volumes,
+conversion, delta, or ratio. Run:
 
-Persist the prepared comparison table. It must retain at least: net sample,
-station, project, UVP profile, lower and upper depth, net abundance in
-`ind./m³`, UVP target-object count, UVP sampled volume in L, UVP abundance in
-`ind./m³`, and the CTD/exploratory status.
+```python
+from core.net_uvp_comparison import build_paired_depth_strata
+
+paired_strata = build_paired_depth_strata(
+    df_net_uvp_ecopart,
+    net_abundance_col="ALL_STAGES_ABUND (ind./m3 depth vol.)",
+)
+result = paired_strata
+```
+
+Persist with `persist_as="df_net_uvp_strata"`. The builder deduplicates net
+taxa and UVP objects, retains bins in the **same depth interval**, and returns
+one row per filet stratum. Keep all rows. Only `comparison_calculable=True` may
+feed numeric comparisons; preserve every `depth_match_status` and
+`exclusion_reason`. Never convert missing coverage or volume to zero. Never compare a full UVP profile with one net stratum; draw each interval's bounds.
 
 ### Method disclosure
 
-With every such graph, state concisely:
-
-- **Filet** — selected abundance field, taxon/stage scope, and aggregation by
-  depth stratum;
-- **UVP** — target annotation criterion, same depth interval, unique-object
-  numerator, and sampled-volume denominator;
-- **Common unit** — `ind./m³` and any conversion used;
-- **Zeros and coverage** — whether a zero has documented volume coverage or a
-  stratum was excluded as incomplete;
-- **Validation** — certified or exploratory, with the reason when exploratory.
-
-The user may change the net metric or stages, taxon criterion, depth interval,
-binning, volume basis, zero policy, or graph scale. On a requested change,
-rebuild the named comparison table and repeat this disclosure; never silently
-keep the old parameters.
+With every graph, disclose the filet field/stages, UVP annotation criterion,
+same-depth numerator and denominator, common `ind./m³` unit, coverage/zero
+policy, and certified/exploratory status. The user may change metric, stages,
+taxon, interval, bins, volume, zeros, or scale; rebuild the named table and
+repeat the method disclosure instead of keeping old parameters silently.
 
 ## Graphs
 

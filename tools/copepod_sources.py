@@ -50,6 +50,11 @@ from core.ecotaxa_browser.cache.repo import (
 from core.ecotaxa_browser.cache import sql_explorer as _sql_explorer
 from core.geo import audit_zone_coverage, load_registry
 from core.environment_resolver.column_detection import detect_column
+from core.scientific_result_cache import (
+    build_result_cache_key,
+    load_result,
+    save_result,
+)
 
 _ZONES_REGISTRY_PATH = (
     Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
@@ -1174,6 +1179,100 @@ def make_source_tools(thread_id: str) -> list:
                 "n_cols": len(joined.columns),
             },
         )
+        comparison_refs: list[str] = []
+        comparison_metrics: dict[str, object] = {}
+        comparison_note = ""
+        object_column = next(
+            (
+                column
+                for column in ("object_id", "obj_orig_id", "obj_id", "objid")
+                if column in joined.columns
+            ),
+            None,
+        )
+        comparison_required = {
+            "SAMPLE_ID",
+            "ANALYSIS_ID",
+            "TAXON_ID",
+            "CLASS",
+            "MIN_SAMPLE_DEPTH",
+            "MAX_SAMPLE_DEPTH",
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)",
+            "depth_bin",
+            "object_annotation_hierarchy",
+            "ecopart_Sampled volume [L]",
+        }
+        missing_comparison = sorted(comparison_required.difference(joined.columns))
+        if object_column is None:
+            missing_comparison.append("object_id")
+        if not missing_comparison:
+            from core.net_uvp_comparison import (  # noqa: PLC0415
+                NET_UVP_DEPTH_METHOD_VERSION,
+                build_paired_depth_strata,
+            )
+
+            try:
+                strata = build_paired_depth_strata(
+                    joined,
+                    uvp_object_col=object_column,
+                )
+            except ValueError as exc:
+                comparison_note = (
+                    "\nPréparation par tranche non produite : " + str(exc)
+                )
+            else:
+                calculable = strata.loc[strata["comparison_calculable"]].copy()
+                exclusions = strata.loc[~strata["comparison_calculable"]].copy()
+                comparison_provenance = {
+                    "source": "net_uvp_depth_comparison",
+                    "joined_variable": variable_name,
+                    "method_version": NET_UVP_DEPTH_METHOD_VERSION,
+                    "ctd_verification": ctd_verification,
+                    "exploratory": joined_exploratory,
+                }
+                for output_name, output_frame in (
+                    ("df_net_uvp_strata", strata),
+                    ("df_net_uvp_calculable", calculable),
+                    ("df_net_uvp_exclusions", exclusions),
+                ):
+                    store_dataset(
+                        _store,
+                        thread_id,
+                        output_frame,
+                        variable_name=output_name,
+                        meta={
+                            **comparison_provenance,
+                            "n_rows": int(len(output_frame)),
+                            "n_cols": int(len(output_frame.columns)),
+                        },
+                        set_active=output_name == "df_net_uvp_strata",
+                    )
+                    comparison_refs.append(output_name)
+                exclusion_counts = {
+                    str(status): int(count)
+                    for status, count in exclusions["depth_match_status"]
+                    .value_counts()
+                    .items()
+                }
+                comparison_metrics = {
+                    "total_strata": int(len(strata)),
+                    "calculable_strata": int(len(calculable)),
+                    "missing_strata": int(len(exclusions)),
+                    "exclusions_by_status": exclusion_counts,
+                }
+                comparison_note = (
+                    f"\nComparaison par tranche prête : {len(calculable)}/{len(strata)} "
+                    "tranche(s) calculable(s), "
+                    f"{len(exclusions)} avec valeur manquante ou exclusion. "
+                    "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
+                    "`df_net_uvp_exclusions`."
+                )
+        else:
+            comparison_note = (
+                "\nPréparation par tranche non produite; colonnes absentes : "
+                + ", ".join(sorted(set(missing_comparison)))
+                + ". La jointure objet complète reste disponible."
+            )
         return success(
             (
                 "Table filet↔UVP enrichie EcoPart exploratoire créée avec CTD "
@@ -1182,11 +1281,16 @@ def make_source_tools(thread_id: str) -> list:
                 else "Table filet↔UVP enrichie EcoPart créée à partir des seules "
                 "correspondances certifiées"
             )
-            + f" : {len(joined)} ligne(s) objet.",
+            + f" : {len(joined)} ligne(s) objet."
+            + comparison_note,
             provenance={"source": "net_uvp_ecopart_certified"},
-            data_ref=variable_name,
+            data_ref=("df_net_uvp_strata" if comparison_refs else variable_name),
             persisted=True,
-            metrics={"rows": len(joined), "columns": len(joined.columns)},
+            metrics={
+                "rows": len(joined),
+                "columns": len(joined.columns),
+                **comparison_metrics,
+            },
         )
 
     def _normalize_sample_ids(sample_ids) -> list[int]:
@@ -3995,9 +4099,10 @@ def make_source_tools(thread_id: str) -> list:
         reprend la dernière sélection EcoTaxa du fil.
 
         **Confirmation obligatoire (CT-AG-06)** : `confirmed=False` par
-        défaut → renvoie un dry-run montrant le grouping projet → samples
-        et demande confirmation. Pour exécuter réellement les exports,
-        rappeler avec `confirmed=True`.
+        défaut → préflight complet de tous les samples, avec un verdict
+        PRÊT / PARTIEL / BLOQUÉ par projet selon la présence d'objets du statut
+        demandé; aucune tâche d'export n'est créée. Pour exécuter réellement
+        les exports, rappeler avec `confirmed=True`.
 
         `status` : statut des annotations à exporter — `"V"` (validé),
         `"P"` (prédit), `""` (tous).
@@ -4054,9 +4159,63 @@ def make_source_tools(thread_id: str) -> list:
         # Dry-run : montrer le plan, ne pas exécuter.
         if not confirmed:
             try:
-                sample_stats = summarize_samples(normalized[:3])
+                # One light batch request covers the complete selection.  A
+                # three-sample preview cannot certify that every requested
+                # project actually contains objects for the requested status.
+                sample_stats = summarize_samples(normalized)
             except Exception:
                 sample_stats = []
+            stats_by_sample = {
+                int(item["sample_id"]): item for item in sample_stats
+                if item.get("sample_id") is not None
+            }
+            status_code = str(status or "").strip().upper()
+            status_field = {
+                "V": "nb_validated",
+                "P": "nb_predicted",
+                "D": "nb_dubious",
+                "U": "nb_unclassified",
+                "N": "nb_unclassified",
+            }.get(status_code)
+            status_label = {
+                "V": "validé",
+                "P": "prédit",
+                "D": "douteux",
+                "U": "non classé",
+                "N": "non classé",
+            }.get(status_code, "tous statuts")
+            project_preflight: dict[int, dict[str, object]] = {}
+            for pid, sids in groups.items():
+                available = [stats_by_sample[sid] for sid in sids if sid in stats_by_sample]
+                if status_field is None:
+                    object_count = sum(
+                        int(item.get(field) or 0)
+                        for item in available
+                        for field in (
+                            "nb_validated", "nb_predicted", "nb_dubious",
+                            "nb_unclassified",
+                        )
+                    )
+                else:
+                    object_count = sum(
+                        int(item.get(status_field) or 0) for item in available
+                    )
+                if len(available) != len(sids):
+                    verdict = "PARTIEL"
+                    diagnostic = (
+                        f"statut vérifié pour {len(available)}/{len(sids)} samples"
+                    )
+                elif object_count <= 0:
+                    verdict = "BLOQUÉ"
+                    diagnostic = f"aucun objet {status_label} à exporter"
+                else:
+                    verdict = "PRÊT"
+                    diagnostic = f"{object_count} objet(s) {status_label}(s) exportable(s)"
+                project_preflight[int(pid)] = {
+                    "verdict": verdict,
+                    "object_count": int(object_count),
+                    "diagnostic": diagnostic,
+                }
             _store.update_meta(
                 thread_id,
                 {
@@ -4068,12 +4227,12 @@ def make_source_tools(thread_id: str) -> list:
                 },
             )
             lines = [
-                f"# Plan d'export — {len(normalized)} samples sur {len(groups)} projets",
+                f"# Préflight d'export — {len(normalized)} samples sur {len(groups)} projets",
             ]
             if resolved_selection_name:
                 lines.extend(["", f"Sélection : `{resolved_selection_name}`"])
             if sample_stats:
-                lines.extend(["", "Aperçu représentatif de 3 samples ; l'export portera sur toute la sélection.", "", "| sample_id | projet | V | P | D | U | total | taxons dominants |", "|---:|---:|---:|---:|---:|---:|---:|---|"])
+                lines.extend(["", "Contrôle de tous les samples de la sélection.", "", "| sample_id | projet | V | P | D | U | total | taxons dominants |", "|---:|---:|---:|---:|---:|---:|---:|---|"])
                 grand = {"V": 0, "P": 0, "D": 0, "U": 0}
                 for item in sample_stats:
                     values = {"V": item["nb_validated"], "P": item["nb_predicted"], "D": item["nb_dubious"], "U": item["nb_unclassified"]}
@@ -4084,30 +4243,127 @@ def make_source_tools(thread_id: str) -> list:
                 lines.append(f"| **TOTAL** | — | **{grand['V']}** | **{grand['P']}** | **{grand['D']}** | **{grand['U']}** | **{sum(grand.values())}** | — |")
             lines.extend([
                 "",
-                "| project_id | nb_samples | sample_ids |",
-                "|---:|---:|---|",
+                "| project_id | statut | nb_samples | objets demandés | diagnostic | sample_ids |",
+                "|---:|---|---:|---:|---|---|",
             ])
             for pid in sorted(groups):
                 sids = groups[pid]
+                preflight = project_preflight[pid]
                 preview = ", ".join(str(s) for s in sids[:5])
                 if len(sids) > 5:
                     preview += f", … (+{len(sids) - 5})"
-                lines.append(f"| {pid} | {len(sids)} | {preview} |")
+                lines.append(
+                    f"| {pid} | {preflight['verdict']} | {len(sids)} | "
+                    f"{preflight['object_count']} | {preflight['diagnostic']} | {preview} |"
+                )
             if unresolved:
                 lines.append("")
                 lines.append(f"⚠️ {len(unresolved)} samples absents du cache : {unresolved}")
             lines.append("")
-            lines.append(
-                "Confirmez pour lancer l'export de cette sélection."
+            ready_projects = sum(
+                item["verdict"] == "PRÊT" for item in project_preflight.values()
             )
+            lines.append(
+                f"Préflight : {ready_projects}/{len(groups)} projets exportables."
+            )
+            if ready_projects:
+                lines.append("Confirmez pour lancer l'export des projets indiqués.")
+            else:
+                lines.append("Export non confirmable : aucun projet n'est prêt.")
             return _eco_blocked(
                 "\n".join(lines),
                 provenance={"sample_ids": normalized},
-                metrics={"projects": len(groups), "samples": len(normalized)},
+                metrics={
+                    "projects": len(groups),
+                    "projects_ready": ready_projects,
+                    "projects_blocked": sum(
+                        item["verdict"] == "BLOQUÉ"
+                        for item in project_preflight.values()
+                    ),
+                    "samples": len(normalized),
+                },
             )
 
         # Exécution réelle.
         _store.update_meta(thread_id, {"pending_ecotaxa_export_plan": None})
+        cache_source = pd.DataFrame(
+            [
+                {
+                    "sample_id": int(sample_id),
+                    "project_id": int(mapping[sample_id]) if sample_id in mapping else None,
+                    "resolved": sample_id in mapping,
+                }
+                for sample_id in normalized
+            ]
+        )
+        cache_key = build_result_cache_key(
+            cache_source,
+            {
+                "status": status,
+                "taxon": taxon,
+                "selection_name": resolved_selection_name,
+                "selection_filters": selection_meta.get("filters") or {},
+                "requested_projects": sorted(groups),
+            },
+        )
+        cached = load_result("ecotaxa_export", cache_key)
+        if cached is not None:
+            campaign_label = resolved_selection_name or "samples_" + "_".join(
+                str(sample_id) for sample_id in normalized[:3]
+            )
+            campaign_variable = dataset_variable_name(
+                "ecotaxa", "campaign", campaign_label, uuid.uuid4().hex[:8]
+            )
+            cached_df = cached.dataframe
+            meta = {
+                "source": "ecotaxa_export_campaign",
+                "selection_name": resolved_selection_name,
+                "selection_filters": selection_meta.get("filters") or {},
+                "export_project_ids": sorted(groups),
+                "requested_project_ids": sorted(groups),
+                "failed_project_ids": [],
+                "requested_samples": len(normalized),
+                "exported_samples": len(normalized),
+                "partial_export": False,
+                "raw_export_variables": [],
+                "n_rows": len(cached_df),
+                "n_cols": len(cached_df.columns),
+                "n_projects": len(groups),
+                "cache_hit": True,
+                "cached_at": cached.cached_at,
+                "cache_provenance": cached.provenance,
+                "description": (
+                    "Export EcoTaxa complet restauré depuis le cache exact; "
+                    f"statut={status or 'tous'}, taxon={taxon or 'tous'}"
+                ),
+            }
+            store_dataset(
+                _store,
+                thread_id,
+                cached_df,
+                variable_name=campaign_variable,
+                latest_alias=ECOTAXA,
+                meta=meta,
+            )
+            return _eco_success(
+                "Export EcoTaxa restauré depuis le cache exact — "
+                f"{len(cached_df)} lignes, {len(normalized)} samples et "
+                f"{len(groups)} projets; aucune ligne écartée. "
+                f"Table active : `{campaign_variable}` (récupérée le {cached.cached_at}).",
+                data_ref=campaign_variable,
+                provenance={"sample_ids": normalized, **cached.provenance},
+                persisted=True,
+                method="Cached exact EcoTaxa bulk export",
+                metrics={
+                    "projects_succeeded": len(groups),
+                    "projects_failed": 0,
+                    "samples_requested": len(normalized),
+                    "samples_exported": len(normalized),
+                    "partial_export": False,
+                    "rows": len(cached_df),
+                    "cache_hit": True,
+                },
+            )
         successes: list[str] = []
         failures: list[str] = []
         artifact_refs: list[str] = []
@@ -4205,6 +4461,8 @@ def make_source_tools(thread_id: str) -> list:
                 "n_rows": len(campaign_df),
                 "n_cols": len(campaign_df.columns),
                 "n_projects": len(campaign_frames),
+                "cache_hit": False,
+                "cached_at": None,
                 "description": (
                     coverage + "; "
                     f"statut={status or 'tous'}, "
@@ -4216,6 +4474,30 @@ def make_source_tools(thread_id: str) -> list:
                 ),
             },
         )
+        if not partial_export:
+            saved = save_result(
+                "ecotaxa_export",
+                cache_key,
+                campaign_df,
+                provenance={
+                    "source": "EcoTaxa",
+                    "project_ids": succeeded_project_ids,
+                    "sample_ids": normalized,
+                    "status": status,
+                    "taxon": taxon,
+                },
+            )
+            cache_meta = {
+                "cache_hit": False,
+                "cached_at": saved.cached_at,
+                "cache_provenance": saved.provenance,
+            }
+            for store_key in (
+                thread_id,
+                f"{thread_id}:{ECOTAXA}",
+                f"{thread_id}:dataset:{campaign_variable}",
+            ):
+                _store.update_meta(store_key, cache_meta)
         summary += (
             f"\n\nTable de campagne consolidée : `{campaign_variable}` "
             f"({len(campaign_df)} lignes, {len(campaign_frames)}/{len(groups)} projets réussis) — "

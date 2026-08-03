@@ -329,6 +329,53 @@ def test_vertical_profile_accepts_only_inverted_depth_y_axis():
     plt.close(fig)
 
 
+def test_vertical_profile_accepts_temperature_on_a_single_axis():
+    fig, ax = plt.subplots()
+    ax.invert_yaxis()
+    contract = {
+        "kind": "vertical_profile",
+        "axes": [{"axis_index": 0, "x": "temperature_degC", "y": "depth_m"}],
+        "inverted_axes": [{"axis_index": 0, "axis": "y"}],
+        "mappings": {},
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": ["amundsen_te90_degC", "amundsen_pres_dbar"],
+    }
+
+    assert validate_graph_contract(contract, fig) is None
+    plt.close(fig)
+
+
+def test_vertical_profile_accepts_multiple_environmental_panels_with_shared_depth():
+    fig, axes = plt.subplots(1, 2, sharey=True)
+    axes[0].invert_yaxis()
+    contract = {
+        "kind": "vertical_profile",
+        "axes": [
+            {"axis_index": 0, "x": "temperature_degC", "y": "depth_m"},
+            {"axis_index": 1, "x": "salinity_psu", "y": "depth_m"},
+        ],
+        # A shared y axis is one visual inversion; normalization must not force
+        # the model to duplicate bookkeeping for every panel.
+        "inverted_axes": [{"axis_index": 0, "axis": "y"}],
+        "mappings": {},
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": [
+            "amundsen_te90_degC",
+            "amundsen_psal_psu",
+            "amundsen_pres_dbar",
+        ],
+    }
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["inverted_axes"] == [
+        {"axis_index": 0, "axis": "y"},
+        {"axis_index": 1, "axis": "y"},
+    ]
+    assert validate_graph_contract(normalized, fig) is None
+    plt.close(fig)
+
+
 def test_vertical_profile_normalizes_french_total_abundance_alias():
     fig, ax = plt.subplots()
     ax.invert_yaxis()

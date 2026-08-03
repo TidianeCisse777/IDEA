@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +30,12 @@ from core.ecotaxa_ecopart_join import (
     depth_bin_5m,
 )
 from core.environment_resolver import build_enrichment_provenance
+from core.scientific_result_cache import (
+    build_result_cache_key,
+    dataframe_fingerprint,
+    load_result,
+    save_result,
+)
 from tools.source_renderer import render_sources, source_urls
 from tools.dataset_registry import (
     ECOPART,
@@ -52,6 +61,21 @@ _RECOVERABLE_PARTITION_ERRORS = (
     pd.errors.MergeError,
     pd.errors.ParserError,
 ) + _SQLALCHEMY_OPERATIONAL_ERRORS
+
+
+def _ecopart_preflight_timeout() -> float:
+    return max(1.0, float(os.getenv("ECOPART_PREFLIGHT_TIMEOUT_SECONDS", "5")))
+
+
+def _ecopart_cache_ttl() -> float:
+    return max(60.0, float(os.getenv("ECOPART_PREFLIGHT_CACHE_TTL_SECONDS", "86400")))
+
+
+def _fresh_cache_meta(meta: dict) -> bool:
+    try:
+        return float(meta.get("expires_at", 0)) > time.time()
+    except (TypeError, ValueError):
+        return False
 
 
 def _ep_result(factory, summary: str, **fields):
@@ -460,10 +484,160 @@ def _candidate_ecotaxa_profile_labels(df_et: pd.DataFrame) -> list[str]:
     return labels
 
 
+def _preflight_ecopart_partition(
+    dataframe: pd.DataFrame,
+    *,
+    client: EcopartClient,
+    ecotaxa_project_id: int,
+    ecopart_project_id: int,
+    thread_id: str | None = None,
+    request_timeout: float | None = None,
+    linked_samples: list[dict] | None = None,
+) -> dict[str, object]:
+    """Check remote exportability and local join prerequisites without export."""
+    fingerprint = dataframe_fingerprint(dataframe)
+    cache_key = (
+        f"{thread_id}:ecopart_preflight:{ecotaxa_project_id}:{ecopart_project_id}"
+        if thread_id else None
+    )
+    if cache_key:
+        cached = _store.get(cache_key)
+        cached_meta = dict((cached or {}).get("meta") or {})
+        if (
+            _fresh_cache_meta(cached_meta)
+            and cached_meta.get("partition_fingerprint") == fingerprint
+            and isinstance(cached_meta.get("result"), dict)
+        ):
+            return {**cached_meta["result"], "cache_hit": True}
+
+    reasons: list[str] = []
+    uncertain: list[str] = []
+
+    key_columns = (
+        "sample_id", "obj_orig_id", "sample_profileid", "sample_stationid",
+        "sample_station_name", "sample_cruise",
+    )
+    if not any(
+        column in dataframe.columns and dataframe[column].notna().any()
+        for column in key_columns
+    ):
+        reasons.append("aucun identifiant de profil exploitable dans EcoTaxa")
+
+    depth_column = next(
+        (
+            column for column in (
+                "object_depth_min", "obj_depth_min", "depth_min", "depth"
+            )
+            if column in dataframe.columns
+        ),
+        None,
+    )
+    if depth_column is None:
+        reasons.append("colonne de profondeur EcoTaxa absente")
+    elif not pd.to_numeric(dataframe[depth_column], errors="coerce").notna().any():
+        reasons.append(f"colonne `{depth_column}` sans profondeur numérique")
+
+    if linked_samples is not None:
+        linked = list(linked_samples)
+    else:
+        try:
+            search_kwargs = {
+                "project_id": int(ecopart_project_id),
+                "ecotaxa_project_id": int(ecotaxa_project_id),
+            }
+            if request_timeout is not None:
+                search_kwargs["timeout"] = float(request_timeout)
+            linked = client.search_samples(**search_kwargs)
+        except Exception as exc:
+            linked = []
+            uncertain.append(f"vérification EcoPart impossible : {exc}")
+
+    if not linked and not uncertain:
+        reasons.append("aucun sample EcoPart lié et accessible")
+
+    visibility = [
+        str(sample.get("visibility") or "").strip().upper()
+        for sample in linked
+    ]
+    known_visibility = [value for value in visibility if value]
+    exportable = [value for value in known_visibility if value.endswith("Y")]
+    if known_visibility and not exportable:
+        reasons.append(
+            "aucun sample EcoPart exportable; statuts="
+            + ",".join(sorted(set(known_visibility)))
+        )
+    elif linked and not known_visibility:
+        uncertain.append("statut de validation EcoPart non communiqué")
+
+    # A zero profile overlap predicts the same deterministic join refusal as
+    # _perform_enrichment, without downloading the EcoPart TSV.
+    remote_profiles = {
+        str(sample.get("name") or "").strip() for sample in linked
+        if str(sample.get("name") or "").strip()
+    }
+    local_profiles: set[str] = set(_candidate_ecotaxa_profile_labels(dataframe))
+    if "sample_id" in dataframe.columns:
+        local_profiles.update(
+            dataframe["sample_id"].dropna().astype("string")
+            .str.replace(r"_\d+$", "", regex=True).astype(str)
+        )
+    if "obj_orig_id" in dataframe.columns:
+        local_profiles.update(
+            dataframe["obj_orig_id"].dropna().astype("string")
+            .str.replace(r"_\d+$", "", regex=True).astype(str)
+        )
+    if remote_profiles and local_profiles and not remote_profiles.intersection(local_profiles):
+        reasons.append("aucun identifiant de profil commun pour la jointure")
+
+    if reasons:
+        verdict = "BLOQUÉ"
+    elif uncertain:
+        verdict = "PARTIEL"
+    else:
+        verdict = "PRÊT"
+    result = {
+        "verdict": verdict,
+        "reason": "; ".join([*reasons, *uncertain]) or "export et jointure prévalidés",
+        "linked_samples": len(linked),
+        "exportable_samples": len(exportable),
+        "cache_hit": False,
+    }
+    if cache_key:
+        ttl = _ecopart_cache_ttl() if verdict != "PARTIEL" else 60.0
+        _store.set(
+            cache_key,
+            None,
+            {
+                "source": "ecopart_preflight_cache",
+                "partition_fingerprint": fingerprint,
+                "cached_at": time.time(),
+                "expires_at": time.time() + ttl,
+                "result": result,
+            },
+        )
+    return result
+
+
 # Global cache of resolved EcoTaxa project id -> resolution dict. The link is a
 # stable server-side fact, so it is shared across threads/sessions. The user's
 # workflow (find -> enrich -> density) otherwise re-resolves 2-3 times.
 _ECOPART_RESOLUTION_CACHE: dict[int, dict] = {}
+
+
+def _ecopart_id_from_project_title(title: object) -> int | None:
+    """Extract only an explicitly labelled EcoPart id from an EcoTaxa title."""
+    text = str(title or "").strip()
+    if not text:
+        return None
+    match = re.search(
+        r"\beco[\s_-]*part\b[^0-9]{0,24}(?:id|project|projet|#)\s*[:=#-]?\s*(\d+)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    project_id = int(match.group(1))
+    return project_id if project_id > 0 else None
 
 
 def _ensure_ecotaxa_project_loaded(thread_id: str, project_id: int) -> None:
@@ -499,6 +673,8 @@ def _lookup_ecopart_project_for_ecotaxa(
     bbox_margin: float = 0.05,
     max_candidates: int = 30,
     client: EcopartClient | None = None,
+    thread_id: str | None = None,
+    request_timeout: float | None = None,
 ) -> dict:
     """Resolve the EcoPart project matching an EcoTaxa dataframe **without** starting
     any export. Returns a dict `{project_id, project_name, resolution, error}`.
@@ -512,13 +688,64 @@ def _lookup_ecopart_project_for_ecotaxa(
          geographic majority with a lowest-id tie-break.
     """
     if known_ecotaxa_pid is not None:
+        persistent_key = (
+            f"{thread_id}:ecopart_resolution:{int(known_ecotaxa_pid)}"
+            if thread_id else None
+        )
+        if persistent_key:
+            persisted = _store.get(persistent_key)
+            persisted_meta = dict((persisted or {}).get("meta") or {})
+            if (
+                _fresh_cache_meta(persisted_meta)
+                and isinstance(persisted_meta.get("result"), dict)
+            ):
+                result = dict(persisted_meta["result"])
+                _ECOPART_RESOLUTION_CACHE[int(known_ecotaxa_pid)] = dict(result)
+                return {**result, "cache_hit": True}
         cached = _ECOPART_RESOLUTION_CACHE.get(int(known_ecotaxa_pid))
         if cached is not None:
-            return dict(cached)
+            if persistent_key:
+                _store.set(
+                    persistent_key,
+                    None,
+                    {
+                        "source": "ecopart_resolution_cache",
+                        "cached_at": time.time(),
+                        "expires_at": time.time() + _ecopart_cache_ttl(),
+                        "result": dict(cached),
+                    },
+                )
+            return {**cached, "cache_hit": True}
 
     def _cache_and_return(result: dict) -> dict:
         if known_ecotaxa_pid is not None and "project_id" in result:
             _ECOPART_RESOLUTION_CACHE[int(known_ecotaxa_pid)] = dict(result)
+            if thread_id:
+                _store.set(
+                    f"{thread_id}:ecopart_resolution:{int(known_ecotaxa_pid)}",
+                    None,
+                    {
+                        "source": "ecopart_resolution_cache",
+                        "cached_at": time.time(),
+                        "expires_at": time.time() + _ecopart_cache_ttl(),
+                        "result": dict(result),
+                    },
+                )
+        return result
+
+    def _cache_transient_error(message: str) -> dict:
+        result = {"error": message, "verdict": "PARTIEL"}
+        if known_ecotaxa_pid is not None and thread_id:
+            _store.set(
+                f"{thread_id}:ecopart_resolution:{int(known_ecotaxa_pid)}",
+                None,
+                {
+                    "source": "ecopart_resolution_cache",
+                    "cached_at": time.time(),
+                    "expires_at": time.time() + 60.0,
+                    "result": result,
+                },
+            )
         return result
 
     lat_col = next(
@@ -542,12 +769,25 @@ def _lookup_ecopart_project_for_ecotaxa(
     # EcoPart project id. Avoids the bbox scan and its per-sample popovers.
     if known_ecotaxa_pid is not None:
         try:
-            linked = client.search_samples(ecotaxa_project_id=int(known_ecotaxa_pid))
-        except Exception:
+            search_kwargs = {"ecotaxa_project_id": int(known_ecotaxa_pid)}
+            if request_timeout is not None:
+                search_kwargs["timeout"] = float(request_timeout)
+            linked = client.search_samples(**search_kwargs)
+        except Exception as exc:
+            if request_timeout is not None:
+                return _cache_transient_error(
+                    f"préflight EcoPart interrompu : {exc}"
+                )
             linked = []
-        for cand in sorted(linked, key=lambda c: int(c.get("id", 0))):
+        ordered_linked = sorted(linked, key=lambda c: int(c.get("id", 0)))
+        if request_timeout is not None:
+            ordered_linked = ordered_linked[:3]
+        for cand in ordered_linked:
             try:
-                meta = client.get_sample_metadata(cand["id"])
+                metadata_kwargs = {}
+                if request_timeout is not None:
+                    metadata_kwargs["timeout"] = float(request_timeout)
+                meta = client.get_sample_metadata(cand["id"], **metadata_kwargs)
             except Exception:
                 continue
             ep_pid = meta.get("ecopart_project_id")
@@ -560,7 +800,51 @@ def _lookup_ecopart_project_for_ecotaxa(
                     f"lien serveur EcoTaxa↔EcoPart (filt_proj, projet EcoTaxa "
                     f"{known_ecotaxa_pid}, profil `{meta.get('profile_id') or '?'}`)"
                 ),
+                "linked_samples": linked,
             })
+
+        # Some EcoTaxa projects publish the corresponding EcoPart id directly
+        # in their title, e.g. ``(Ecopart id 86)``. This remains deterministic:
+        # only an explicitly labelled id is accepted, and its accessibility is
+        # verified on EcoPart before it is returned or cached.
+        try:
+            ecotaxa_client = EcotaxaClient()
+            ecotaxa_client.login()
+            project_kwargs = (
+                {"timeout": float(request_timeout)}
+                if request_timeout is not None else {}
+            )
+            project = ecotaxa_client.get_project(
+                int(known_ecotaxa_pid), **project_kwargs
+            )
+            project_title = project.get("title") or project.get("name")
+            titled_ep_pid = _ecopart_id_from_project_title(project_title)
+        except Exception:
+            project_title = None
+            titled_ep_pid = None
+        if titled_ep_pid is not None:
+            try:
+                titled_search_kwargs = {"project_id": int(titled_ep_pid)}
+                if request_timeout is not None:
+                    titled_search_kwargs["timeout"] = float(request_timeout)
+                titled_samples = client.search_samples(**titled_search_kwargs)
+            except Exception:
+                titled_samples = []
+            if titled_samples:
+                return _cache_and_return({
+                    "project_id": int(titled_ep_pid),
+                    "project_name": None,
+                    "resolution": (
+                        "ID EcoPart explicite dans le titre EcoTaxa "
+                        f"`{project_title}`; accessibilité vérifiée"
+                    ),
+                    "linked_samples": titled_samples,
+                })
+        if request_timeout is not None:
+            return _cache_transient_error(
+                    f"aucun lien EcoTaxa→EcoPart vérifiable pour "
+                    f"{known_ecotaxa_pid} dans le délai de {request_timeout:g} s"
+            )
 
     profile_labels = set(_candidate_ecotaxa_profile_labels(df_et))
 
@@ -693,12 +977,65 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             f"identifiant de projet exploitable.{invalid_note}"
         )
 
-    resolved: list[tuple[int, int, pd.DataFrame, str]] = []
+    campaign_cache_key = build_result_cache_key(
+        campaign_df,
+        {
+            "ecotaxa_project_ids": normalized_project_ids,
+            "operation": "ecotaxa_campaign_ecopart_join",
+        },
+    )
+    if confirmed:
+        cached = load_result("ecopart_campaign_enrichment", campaign_cache_key)
+        if cached is not None:
+            campaign_variable = dataset_variable_name(
+                "ecotaxa_ecopart", "campaign", "cached", uuid.uuid4().hex[:8]
+            )
+            cached_df = cached.dataframe
+            meta = {
+                "source": "join:ecotaxa_campaign+ecopart",
+                "partial_enrichment": False,
+                "project_failures": [],
+                "failed_project_ids": [],
+                "projects_failed": 0,
+                "invalid_export_project_rows": 0,
+                "n_rows": len(cached_df),
+                "cache_hit": True,
+                "cached_at": cached.cached_at,
+                "cache_provenance": cached.provenance,
+            }
+            store_dataset(
+                _store,
+                thread_id,
+                cached_df,
+                variable_name=campaign_variable,
+                meta=meta,
+                latest_alias=ECOTAXA_ECOPART,
+            )
+            return _ep_success(
+                "Enrichissement EcoTaxa–EcoPart de campagne restauré depuis le "
+                f"cache exact — {len(cached_df)} lignes et "
+                f"{len(normalized_project_ids)} projets; aucune ligne écartée. "
+                f"Table active : `{campaign_variable}` (récupérée le {cached.cached_at}).",
+                data_ref=campaign_variable,
+                persisted=True,
+                provenance=cached.provenance,
+                method="Cached exact partitioned EcoTaxa-EcoPart enrichment",
+                metrics={
+                    "rows": len(cached_df),
+                    "projects": len(normalized_project_ids),
+                    "projects_succeeded": len(normalized_project_ids),
+                    "projects_failed": 0,
+                    "cache_hit": True,
+                },
+            )
+
+    resolved: list[tuple[int, int, pd.DataFrame, str, list[dict] | None]] = []
     failures: list[str] = []
     failed_project_ids: set[int] = set()
+    resolution_partial_count = 0
     if n_invalid_project_rows:
         failures.append(
-            f"{n_invalid_project_rows} ligne(s) avec `export_project_id` invalide "
+            f"BLOQUÉ — {n_invalid_project_rows} ligne(s) avec `export_project_id` invalide "
             "ignorée(s)."
         )
     for ecotaxa_pid in normalized_project_ids:
@@ -707,12 +1044,19 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             partition,
             known_ecotaxa_pid=ecotaxa_pid,
             client=client,
+            thread_id=thread_id,
+            request_timeout=(
+                _ecopart_preflight_timeout() if not confirmed else None
+            ),
         )
         if "error" in resolution:
             failed_project_ids.add(ecotaxa_pid)
+            is_partial = resolution.get("verdict") == "PARTIEL"
+            resolution_partial_count += int(is_partial)
+            cache_note = " (cache court)" if resolution.get("cache_hit") else ""
             failures.append(
-                f"EcoTaxa {ecotaxa_pid} — résolution EcoPart impossible : "
-                f"{resolution['error']}"
+                f"{'PARTIEL' if is_partial else 'BLOQUÉ'} — EcoTaxa "
+                f"{ecotaxa_pid} : {resolution['error']}{cache_note}"
             )
             continue
         ecopart_pid = int(resolution["project_id"])
@@ -721,30 +1065,64 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             ecopart_pid,
             partition,
             str(resolution.get("resolution") or "lien résolu"),
+            resolution.get("linked_samples"),
         ))
 
     if not confirmed:
-        mappings = [
-            f"- EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} ({resolution})"
-            for ecotaxa_pid, ecopart_pid, _partition, resolution in resolved
+        preflights = [
+            (
+                ecotaxa_pid,
+                ecopart_pid,
+                resolution,
+                _preflight_ecopart_partition(
+                    partition,
+                    client=client,
+                    ecotaxa_project_id=ecotaxa_pid,
+                    ecopart_project_id=ecopart_pid,
+                    thread_id=thread_id,
+                    request_timeout=_ecopart_preflight_timeout(),
+                    linked_samples=linked_samples,
+                ),
+            )
+            for ecotaxa_pid, ecopart_pid, partition, resolution, linked_samples in resolved
         ]
-        failure_lines = [f"- Échec : {failure}" for failure in failures]
-        coverage = (
-            f"{len(resolved)}/{len(normalized_project_ids)} projets résolus"
+        mappings = [
+            f"- EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} : "
+            f"{preflight['verdict']} — {preflight['reason']} "
+            f"({preflight['exportable_samples']}/{preflight['linked_samples']} "
+            f"samples exportables; {resolution})"
+            for ecotaxa_pid, ecopart_pid, resolution, preflight in preflights
+        ]
+        failure_lines = [f"- {failure}" for failure in failures]
+        ready_count = sum(
+            preflight["verdict"] == "PRÊT"
+            for _ecotaxa_pid, _ecopart_pid, _resolution, preflight in preflights
         )
+        partial_count = resolution_partial_count + sum(
+            preflight["verdict"] == "PARTIEL"
+            for _ecotaxa_pid, _ecopart_pid, _resolution, preflight in preflights
+        )
+        blocked_count = len(normalized_project_ids) - ready_count - partial_count
+        coverage = f"{ready_count}/{len(normalized_project_ids)} projets prêts"
         return _ep_blocked(
-            "Plan d'enrichissement EcoPart de campagne (dry-run) — "
+            "Préflight d'enrichissement EcoPart de campagne (dry-run) — "
             f"{coverage}.\n"
             + "\n".join([*mappings, *failure_lines])
             + "\nOpération lourde : un export EcoPart et une jointure "
             "(sample_id, depth_bin) seront exécutés par projet. "
             "Aucune donnée téléchargée pour l'instant.\n"
-            "Confirme pour lancer : rappelle "
-            "`enrich_ecotaxa_with_ecopart_remote` avec `confirmed=True`.",
+            + (
+                "Confirme pour lancer avec `confirmed=True`."
+                if ready_count == len(normalized_project_ids)
+                else "Ne confirme pas tant que les verdicts PARTIEL/BLOQUÉ ne sont pas résolus."
+            ),
             metrics={
                 "projects": len(normalized_project_ids),
                 "projects_resolved": len(resolved),
                 "projects_failed": len(failed_project_ids),
+                "projects_ready": ready_count,
+                "projects_partial": partial_count,
+                "projects_blocked": blocked_count,
                 "invalid_export_project_rows": n_invalid_project_rows,
             },
         )
@@ -755,7 +1133,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
     successful_pairs: list[tuple[int, int]] = []
     partition_provenance: dict[str, dict] = {}
     n_matched = 0
-    for ecotaxa_pid, ecopart_pid, partition, _resolution in resolved:
+    for ecotaxa_pid, ecopart_pid, partition, _resolution, _linked_samples in resolved:
         try:
             links = client.start_export(
                 project_id=ecopart_pid,
@@ -897,6 +1275,29 @@ def _enrich_ecotaxa_campaign_with_ecopart(
         meta=meta,
         latest_alias=ECOTAXA_ECOPART,
     )
+    if not partial:
+        cache_provenance = {
+            "source": "EcoPart",
+            "project_pairs": project_pairs,
+            "join_method": "partitioned sample_id+depth_bin",
+        }
+        saved = save_result(
+            "ecopart_campaign_enrichment",
+            campaign_cache_key,
+            combined,
+            provenance=cache_provenance,
+        )
+        cache_meta = {
+            "cache_hit": False,
+            "cached_at": saved.cached_at,
+            "cache_provenance": cache_provenance,
+        }
+        for store_key in (
+            thread_id,
+            f"{thread_id}:{ECOTAXA_ECOPART}",
+            f"{thread_id}:dataset:{campaign_variable}",
+        ):
+            _store.update_meta(store_key, cache_meta)
 
     status = "partiel" if partial else "terminé"
     lines = [
@@ -1097,9 +1498,11 @@ def make_ecopart_tools(thread_id: str) -> list:
         Si aucun n'est fourni, l'outil tente de lire `meta.project_id` posé par `query_ecotaxa`.
 
         **Confirmation obligatoire (CT-AG-06)** : `confirmed=False` par défaut →
-        renvoie un dry-run montrant le projet EcoPart résolu et le plan de
-        jointure, sans rien télécharger. Pour lancer réellement le téléchargement
-        et la jointure, rappeler avec `confirmed=True`.
+        préflight sans téléchargement : lien EcoTaxa→EcoPart, accessibilité et
+        validation des samples EcoPart, identifiant de profil et profondeur
+        nécessaires à la jointure, avec verdict PRÊT / PARTIEL / BLOQUÉ par
+        projet. Pour lancer réellement le téléchargement et la jointure,
+        rappeler avec `confirmed=True`.
         """
         session_et = _ecotaxa_session_for_project(thread_id, ecotaxa_project_id)
         if session_et is None:
@@ -1110,14 +1513,11 @@ def make_ecopart_tools(thread_id: str) -> list:
                         "(`load_file`) ou `query_ecotaxa`."
                     )
                 return _ep_blocked(
-                    "Plan d'enrichissement EcoPart (dry-run) — projet EcoTaxa "
-                    f"{ecotaxa_project_id}.\n"
-                    f"Le projet EcoTaxa {ecotaxa_project_id} sera exporté après "
-                    "confirmation, puis le projet EcoPart correspondant sera "
-                    "téléchargé et joint sur (sample_id, depth_bin). "
-                    "Aucune donnée téléchargée pour l'instant.\n"
-                    "Confirme pour lancer : rappelle "
-                    "`enrich_ecotaxa_with_ecopart_remote` avec `confirmed=True`."
+                    "Préflight d'enrichissement EcoPart (dry-run) — BLOQUÉ.\n"
+                    f"Le projet EcoTaxa {ecotaxa_project_id} n'est pas chargé : "
+                    "impossible de vérifier les objets, les profondeurs et la clé "
+                    "de jointure. Charge d'abord le projet EcoTaxa, puis relance "
+                    "le dry-run. Aucune donnée téléchargée."
                 )
             # Guard: the caller named an EcoTaxa project but no EcoTaxa is loaded
             # (query_ecotaxa was skipped). Auto-load it so this confirmed
@@ -1198,24 +1598,104 @@ def make_ecopart_tools(thread_id: str) -> list:
             )
 
         if not confirmed:
-            scope = (
-                f"projet EcoTaxa {ecotaxa_project_id}"
-                if ecotaxa_project_id is not None
-                else f"projet EcoPart {ecopart_project_id}"
+            resolved_linked_samples = None
+            if ecopart_project_id is None and ecotaxa_project_id is not None:
+                resolution = _lookup_ecopart_project_for_ecotaxa(
+                    session_et["df"],
+                    known_ecotaxa_pid=int(ecotaxa_project_id),
+                    client=client,
+                    thread_id=thread_id,
+                    request_timeout=_ecopart_preflight_timeout(),
+                )
+                if "error" in resolution:
+                    return _ep_blocked(
+                        "Préflight d'enrichissement EcoPart (dry-run) — BLOQUÉ.\n"
+                        f"Projet EcoTaxa {ecotaxa_project_id} : "
+                        f"{resolution['error']}\nAucune donnée téléchargée."
+                    )
+                ecopart_project_id = int(resolution["project_id"])
+                resolution_note = str(resolution.get("resolution") or "lien résolu")
+                resolved_linked_samples = resolution.get("linked_samples")
+
+            if ecotaxa_project_id is None or ecopart_project_id is None:
+                return _ep_blocked(
+                    "Préflight d'enrichissement EcoPart (dry-run) — PARTIEL.\n"
+                    "La paire EcoTaxa→EcoPart n'a pas pu être résolue avec certitude. "
+                    "Aucune donnée téléchargée."
+                )
+
+            preflight = _preflight_ecopart_partition(
+                session_et["df"],
+                client=client,
+                ecotaxa_project_id=int(ecotaxa_project_id),
+                ecopart_project_id=int(ecopart_project_id),
+                thread_id=thread_id,
+                request_timeout=_ecopart_preflight_timeout(),
+                linked_samples=resolved_linked_samples,
             )
-            ep_target = (
-                str(ecopart_project_id)
-                if ecopart_project_id is not None
-                else "(résolu au lancement)"
-            )
-            prefix = f"{resolution_note}\n" if resolution_note else ""
             return _ep_blocked(
-                f"{prefix}Plan d'enrichissement EcoPart (dry-run) — {scope} → "
-                f"EcoPart {ep_target}.\n"
-                "Opération lourde : téléchargement de l'EcoPart puis jointure sur "
-                "(sample_id, depth_bin). Aucune donnée téléchargée pour l'instant.\n"
-                "Confirme pour lancer : rappelle `enrich_ecotaxa_with_ecopart_remote` "
-                "avec `confirmed=True`."
+                "Préflight d'enrichissement EcoPart (dry-run).\n"
+                f"EcoTaxa {ecotaxa_project_id} → EcoPart {ecopart_project_id} : "
+                f"{preflight['verdict']} — {preflight['reason']} "
+                f"({preflight['exportable_samples']}/{preflight['linked_samples']} "
+                "samples exportables).\n"
+                f"Résolution : {resolution_note or 'identifiants explicites'}.\n"
+                "Aucune donnée téléchargée. "
+                + (
+                    "Confirme pour lancer l'export et la jointure."
+                    if preflight["verdict"] == "PRÊT"
+                    else "Ne confirme pas tant que le blocage n'est pas résolu."
+                ),
+                metrics={
+                    "projects": 1,
+                    "projects_ready": int(preflight["verdict"] == "PRÊT"),
+                    "projects_partial": int(preflight["verdict"] == "PARTIEL"),
+                    "projects_blocked": int(preflight["verdict"] == "BLOQUÉ"),
+                    "linked_samples": preflight["linked_samples"],
+                    "exportable_samples": preflight["exportable_samples"],
+                },
+            )
+
+        cache_key = build_result_cache_key(
+            session_et["df"],
+            {
+                "ecotaxa_project_id": ecotaxa_project_id,
+                "ecopart_project_id": ecopart_project_id,
+                "operation": "ecotaxa_ecopart_join",
+            },
+        )
+        cached = load_result("ecopart_enrichment", cache_key)
+        if cached is not None:
+            cached_df = cached.dataframe
+            variable_name = dataset_variable_name(
+                "ecotaxa_ecopart", "cached", uuid.uuid4().hex[:8]
+            )
+            meta = {
+                "source": "join:ecotaxa+ecopart",
+                "ecotaxa_project_id": ecotaxa_project_id,
+                "ecopart_project_id": ecopart_project_id,
+                "n_rows": len(cached_df),
+                "cache_hit": True,
+                "cached_at": cached.cached_at,
+                "cache_provenance": cached.provenance,
+            }
+            store_dataset(
+                _store,
+                thread_id,
+                cached_df,
+                variable_name=variable_name,
+                meta=meta,
+                latest_alias=ECOTAXA_ECOPART,
+            )
+            return _ep_success(
+                "Enrichissement EcoTaxa–EcoPart restauré depuis le cache exact — "
+                f"{len(cached_df)} lignes; aucune ligne écartée. "
+                f"Table active : `{variable_name}` (récupérée le {cached.cached_at}).",
+                data_ref=variable_name,
+                persisted=True,
+                provenance=cached.provenance,
+                method="Cached exact EcoTaxa-EcoPart enrichment",
+                metrics={"rows": len(cached_df), "cache_hit": True},
             )
 
         try:
@@ -1290,6 +1770,30 @@ def make_ecopart_tools(thread_id: str) -> list:
                 "cancelled": _ep_blocked,
             }[join_artifact.status]
             return factory(summary, retryable=join_artifact.retryable)
+        joined_session = _session_for_variable(thread_id, join_artifact.data_ref)
+        if joined_session is not None and isinstance(joined_session.get("df"), pd.DataFrame):
+            saved = save_result(
+                "ecopart_enrichment",
+                cache_key,
+                joined_session["df"],
+                provenance={
+                    "source": "EcoPart",
+                    "ecotaxa_project_id": ecotaxa_project_id,
+                    "ecopart_project_id": ecopart_project_id,
+                    "join_method": "sample_id+depth_bin",
+                },
+            )
+            cache_meta = {
+                "cache_hit": False,
+                "cached_at": saved.cached_at,
+                "cache_provenance": saved.provenance,
+            }
+            for store_key in (
+                thread_id,
+                f"{thread_id}:{ECOTAXA_ECOPART}",
+                f"{thread_id}:dataset:{join_artifact.data_ref}",
+            ):
+                _store.update_meta(store_key, cache_meta)
         return _ep_success(
             summary,
             data_ref=join_artifact.data_ref,
@@ -1323,7 +1827,12 @@ def make_ecopart_tools(thread_id: str) -> list:
         if df_et is None or getattr(df_et, "empty", True):
             return _ep_empty("Le dataset EcoTaxa en session est vide.")
         known_pid = session_et.get("meta", {}).get("project_id")
-        result = _lookup_ecopart_project_for_ecotaxa(df_et, known_ecotaxa_pid=known_pid)
+        result = _lookup_ecopart_project_for_ecotaxa(
+            df_et,
+            known_ecotaxa_pid=known_pid,
+            thread_id=thread_id,
+            request_timeout=_ecopart_preflight_timeout(),
+        )
         if "error" in result:
             return _ep_empty(f"Aucun projet EcoPart associé trouvé — {result['error']}")
         pid = result["project_id"]

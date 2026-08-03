@@ -136,7 +136,7 @@ the requested graph.
    - If the format is genuinely ambiguous, prefer the minimal non-visual answer and do not load this skill. Ask only when the format would materially change the requested result.
 5. If visual output: choose the graph type:
    - **map**: spatial distribution of stations or observations
-   - **climate delta map**: stations coloured by delta (Bio-ORACLE projected − CTD current) — use when the user asks about warming, SSP projections, or climate change impact by zone. Use a diverging colormap (coolwarm), centre at 0.
+   - **Bio-ORACLE scenario delta map**: use the exact persisted Bio-ORACLE delta column (Bio-ORACLE SSP − Bio-ORACLE baseline), `coolwarm` centred at 0; keep `no_value` rows in grey. Projection-minus-CTD is different and needs an explicit calculation.
    - **geo scatter**: variable as a function of latitude or longitude
    - **bar by station**: comparison across named stations
    - **bar**: compare categories without geo component (e.g. abundance by taxon)
