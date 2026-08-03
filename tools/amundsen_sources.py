@@ -1627,20 +1627,15 @@ def make_amundsen_tools(thread_id: str) -> list:
         Si `date_range=[start_iso, end_iso]` est fourni, un filtre date est
         appliqué sur la colonne time détectée. Les deux peuvent être combinés.
 
-        ``variables`` est obligatoire pour lancer l'accès distant. Si la liste
-        est absente ou vide, retourne le catalogue complet et attend le choix
-        explicite de l'utilisateur. Pour « toutes les variables », fournir les
-        huit noms CTD du catalogue.
+        Si ``variables`` est absente ou vide, l'enrichissement utilise directement
+        les huit variables CTD prises en charge. Une liste explicite limite le
+        résultat aux variables demandées.
         """
-        if not variables:
-            return _am_blocked(
-                "Choisir une ou plusieurs variables CTD avant l’enrichissement :\n"
-                f"{_format_amundsen_variable_catalog()}\n"
-                "Répondre avec les noms lisibles, les codes CTD, ou « toutes les "
-                "variables »; aucune requête Amundsen n’a été lancée."
-            )
-
-        raw_variables = list(variables)
+        raw_variables = (
+            list(variables)
+            if variables
+            else [raw for raw, _label, _canonical, _description in _AMUNDSEN_VARIABLE_CATALOG]
+        )
         selected_variables: list[str] = []
         unsupported_variables: list[str] = []
         for v in raw_variables:

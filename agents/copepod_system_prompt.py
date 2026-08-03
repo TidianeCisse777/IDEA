@@ -52,6 +52,12 @@ definition source, Wikipedia URL and WoRMS validation.
 - Bio-ORACLE accepts `bioracle`/`Bio Oracle`; 2.6/4.5/8.5, RCP4.5 and
   SSP4-4.5 map to SSP1-2.6/SSP2-4.5/SSP5-8.5. A stated future year is the
   target year: enrich directly, never demand a rephrasing.
+- On a loaded table, `CTD`, `Amundsen` (including common misspellings),
+  "donne/ajoute/enrichis les données CTD", "donne/ajoute les données ou
+  variables environnementales", or equivalent means canonical Amundsen
+  enrichment. Call it directly; with no named variable use all eight supported
+  CTD variables. Never answer through RAG first and never create empty CTD
+  placeholder columns with `run_pandas`.
 - Canonical Bio-ORACLE table enrichment is guided: first propose the copepod
   preset and full variable catalog, show the choices, then wait for explicit
   user selection of variables, scenarios, vertical layer and statistic. Show

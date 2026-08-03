@@ -612,12 +612,13 @@ def test_enrich_loaded_table_with_amundsen_ctd_matches_by_station_cast_and_depth
     assert enriched["amundsen_nearest_lat"].tolist() == [54.2, 54.2]
 
 
-def test_enrich_with_amundsen_ctd_requires_explicit_variable_selection():
-    """A vague enrichment request lists every CTD choice without remote work."""
+def test_enrich_with_amundsen_ctd_defaults_to_all_variables():
+    """A broad CTD enrichment request immediately uses all supported variables."""
     import pandas as pd
     from unittest.mock import patch
 
     from tools.amundsen_sources import make_amundsen_tools
+    from tools.point_enrichment import EnrichmentOutcome
     from tools.session_store import default_store as _store
 
     thread_id = "thread-amundsen-variable-choice"
@@ -631,18 +632,21 @@ def test_enrich_with_amundsen_ctd_requires_explicit_variable_selection():
         {"source": "file:choice.csv"},
     )
 
-    with patch("tools.amundsen_sources._fetch_amundsen_bbox") as fetch:
+    selected = []
+
+    def observe(_store_arg, _thread_id, *, matcher, **_kwargs):
+        selected.extend(matcher.selected_variables)
+        return EnrichmentOutcome(enriched=None, error="sentinel")
+
+    with patch("tools.amundsen_sources.run_point_enrichment", side_effect=observe):
         enrich = next(
             tool for tool in make_amundsen_tools(thread_id)
             if tool.name == "enrich_with_amundsen_ctd"
         )
         result = enrich.invoke({})
 
-    fetch.assert_not_called()
-    assert "Choisir une ou plusieurs variables" in result
-    for raw_name in ("PRES", "TE90", "PSAL", "SIGT", "OXYM", "pH", "NTRA", "FLOR"):
-        assert raw_name in result
-    assert "aucune requête Amundsen n’a été lancée" in result
+    assert selected == ["PRES", "TE90", "PSAL", "SIGT", "OXYM", "pH", "NTRA", "FLOR"]
+    assert "sentinel" in result
 
 
 def test_enrich_with_amundsen_ctd_rejects_unsupported_variables_before_remote_call():

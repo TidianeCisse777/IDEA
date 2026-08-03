@@ -80,7 +80,14 @@ Mots-clés : EcoPart, profils UVP, bins de profondeur, volume échantillonné, p
 
 # Comment accéder à une CTD externe ?
 
-Mots-clés : CTD externe, Amundsen ERDDAP, température, salinité, oxygène, fluorescence, nitrate, cast, station, profondeur
+Mots-clés : CTD, CTD externe, Amundsen, Amudnsen, données environnementales, variables environnementales, donne env, enrichis CTD, Amundsen ERDDAP, température, salinité, oxygène, fluorescence, nitrate, cast, station, profondeur
+
+**Routage sur une table chargée :** les formulations `CTD`, `Amundsen`,
+`donne les données CTD`, `donne les données environnementales`, `ajoute les
+variables environnementales` et `enrichis avec Amundsen` déclenchent directement
+l'enrichissement canonique Amundsen. Si aucune variable n'est précisée, utiliser
+les huit variables prises en charge : `PRES`, `TE90`, `PSAL`, `SIGT`, `OXYM`,
+`pH`, `NTRA` et `FLOR`. Ne jamais simuler cette opération avec des colonnes vides.
 
 **Ce que ça contient :** température, salinité, oxygène, fluorescence, nitrate et autres variables physico-chimiques mesurées indépendamment.
 

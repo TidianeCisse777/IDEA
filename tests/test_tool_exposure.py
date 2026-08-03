@@ -331,13 +331,16 @@ def test_named_amundsen_environment_request_exposes_canonical_enrichment(text):
         "Enrichis cette table avec les données CTD Amundsen",
         "Donne les données environnementales Amundsen CTD pour le tableau chargé",
         "Donne-moi les données Amundsen CTD associées à ce fichier",
+        "CTD",
+        "Amundsen",
+        "Donne les données environnementales",
     ],
 )
-def test_vague_amundsen_request_hides_remote_enrichment_until_variable_choice(text):
+def test_broad_amundsen_request_exposes_direct_enrichment(text):
     decision = _decision(text, file_loaded=True, sources=("file", "amundsen"))
 
-    assert "enrich_with_amundsen_ctd" not in decision.tool_names
-    assert "enrichment_amundsen" not in decision.active_groups
+    assert "enrich_with_amundsen_ctd" in decision.tool_names
+    assert "enrichment_amundsen" in decision.active_groups
 
 
 def test_environmental_vertical_profile_followup_exposes_full_profile_retrieval():
@@ -402,7 +405,7 @@ def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
     )
 
     assert decision.policy_overflow is False
-    assert "enrich_with_amundsen_ctd" not in decision.tool_names
+    assert "enrich_with_amundsen_ctd" in decision.tool_names
     assert "enrich_ecotaxa_with_ecopart_remote" not in decision.tool_names
     assert not any(group.startswith("ecotaxa_") for group in decision.active_groups)
     # file_analysis actif (fichier chargé) → analyse locale et découpage
@@ -413,16 +416,15 @@ def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
         "find_uvp_matches_for_net_table",
         "join_net_uvp_enriched",
     }.intersection(decision.tool_names)
-    # The vague Amundsen request waits for a CTD variable choice while keeping
-    # the local sandbox available; stale sources must remain hidden.
-    assert len(decision.tool_names) == 7
+    # The named enrichment routes directly to the canonical Amundsen tool;
+    # stale external sources remain hidden.
+    assert "enrichment_amundsen" in decision.active_groups
 
 
 @pytest.mark.parametrize(
     ("source", "text", "canonical"),
     [
         ("ecopart", "Utilise EcoPart", "enrich_ecotaxa_with_ecopart_remote"),
-        ("amundsen", "Utilise Amundsen CTD", "enrich_with_amundsen_ctd"),
         ("bio_oracle", "Utilise Bio-ORACLE", "enrich_with_bio_oracle"),
         ("ogsl", "Utilise OGSL", "enrich_with_ogsl"),
     ],

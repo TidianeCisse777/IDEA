@@ -31,11 +31,12 @@ _ENRICHMENT_PATTERN = re.compile(
     r"\b(?:enrich\w*|enrichis\w*|enrichir|enrichment|coupl\w*|compl[eè]te\w*)\b",
     re.IGNORECASE,
 )
-# A request for CTD/environmental variables is an Amundsen enrichment only
-# when Amundsen is explicitly named in the same turn.  Generic mentions of
-# temperature or salinity must remain local-data requests.
+# Inside an Amundsen-authorized turn, CTD, Amundsen, environmental data and
+# measured-variable wording all request the canonical enrichment. Generic
+# temperature/salinity mentions remain local unless source_scope authorized
+# Amundsen explicitly.
 _AMUNDSEN_ENVIRONMENT_PATTERN = re.compile(
-    r"\b(?:donn[eé]es?|mesures?|param[eè]tres?|"
+    r"\b(?:amundsen|amudnsen|amdunsen|amudnsne|amdunse|ctd|donn[eé]es?|mesures?|param[eè]tres?|"
     r"variables?\s+(?:env(?:iron\w*)?|hydrographi\w*|physico[- ]?chimi\w*|ctd)|"
     r"env(?:iron\w*)?|temp(?:[eé]rature)?s?|te90|salinit[eé]|salinity|psal|"
     r"oxyg[eè]ne|oxygen|o2|oxym|nitrates?|no3|ntra|chlorophylle|chlorophyll|"
@@ -409,18 +410,6 @@ def decide_tool_exposure(
             or _AMUNDSEN_MATCH_PATTERN.search(signals.latest_user_text)
         )
     )
-    amundsen_variable_choice_required = bool(
-        has_active_table
-        and "amundsen" in source_decision.explicit_sources
-        and not full_amundsen_profile_requested
-        and (
-            signals.enrichment_requested
-            or named_amundsen_environment_request
-        )
-        and not _AMUNDSEN_VARIABLE_SELECTION_PATTERN.search(
-            signals.latest_user_text
-        )
-    )
     enrichment_requested = (
         signals.enrichment_requested
         or named_amundsen_environment_request
@@ -455,9 +444,6 @@ def decide_tool_exposure(
         )
         for source in enrichment_sources:
             if source in authorized:
-                if source == "amundsen" and amundsen_variable_choice_required:
-                    reasons.append("Amundsen variable selection required")
-                    continue
                 groups.append(_ENRICHMENT_GROUP_BY_SOURCE[source])
                 if source == "amundsen" and named_amundsen_environment_request:
                     reasons.append("explicit Amundsen environmental variables")

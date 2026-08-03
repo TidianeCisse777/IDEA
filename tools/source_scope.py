@@ -81,7 +81,12 @@ _SOURCE_PATTERNS: dict[SourceName, re.Pattern[str]] = {
         r"\beco[\s-]*part\b|ecopart\.obs-vlfr\.fr",
         re.IGNORECASE,
     ),
-    "amundsen": re.compile(r"\bamundsen(?:\s+ctd)?\b", re.IGNORECASE),
+    "amundsen": re.compile(
+        r"\b(?:amundsen|amudnsen|amdunsen|amudnsne|amdunse)(?:\s+ctd)?\b|\bctd\b|"
+        r"\b(?:donn\w*|ajout\w*|enrich\w*|compl[eè]t\w*)\b.{0,45}"
+        r"\b(?:donn[eé]es?\s+)?(?:env(?:iron\w*)?|hydrographi\w*|physico[- ]?chimi\w*)\b",
+        re.IGNORECASE,
+    ),
     # Accept the common one-o typo ``bioracle`` as an explicit source choice.
     "bio_oracle": re.compile(r"\bbio(?:[\s-]*oracle|racle)\b", re.IGNORECASE),
     "ogsl": re.compile(r"\bogsl\b", re.IGNORECASE),

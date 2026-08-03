@@ -109,6 +109,18 @@ def test_bioracle_typo_is_an_explicit_bio_oracle_selection():
     assert parse_explicit_sources("enrichis avec bioracle") == ("bio_oracle",)
 
 
+def test_ctd_and_common_amundsen_typo_select_amundsen():
+    from tools.source_scope import parse_explicit_sources
+
+    assert parse_explicit_sources("enrichi avec donnée ctd") == ("amundsen",)
+    assert parse_explicit_sources("enrichis avec données amudnsen ctd") == (
+        "amundsen",
+    )
+    assert parse_explicit_sources("donne les données environnementales") == (
+        "amundsen",
+    )
+
+
 def test_comparison_combines_active_and_new_source():
     from tools.source_scope import SourceAffinity, decide_source
 

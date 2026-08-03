@@ -374,7 +374,9 @@ Feedback si le calcul n'est pas possible :
 - Si `profile_id` ne peut pas être extrait ou associé, proposer une vérification par date/heure, station et position.
 - Si aucune profondeur n'est disponible, expliquer que la CTD ne peut pas être associée à l'échelle individuelle.
 - Si le delta de profondeur est trop grand pour l'analyse demandee, retourner le meilleur match avec `depth_delta_m` et signaler la faible fiabilite.
-- Si la source CTD n'est pas citee, demander de choisir entre EcoPart et Amundsen officiel.
+- Sur une table chargée, une demande de données CTD ou environnementales sans
+  autre source nommée utilise Amundsen officiel par défaut. EcoPart reste réservé
+  aux demandes explicites EcoPart/UVP avec volume échantillonné.
 
 ---
 # Comment joindre les abondances NeoLabs avec une CTD Amundsen ?

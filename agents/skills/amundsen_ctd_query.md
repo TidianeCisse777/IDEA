@@ -15,26 +15,25 @@ max_tokens: 1050
 
 ## Activation
 
-Use only when the Source Selection Gateway authorizes Amundsen CTD. A generic
-temperature, salinity, or environment request without an explicit current
-Amundsen CTD mention concerns the active table; it does not authorize Amundsen.
-The loaded table stays primary and Amundsen is only its requested enrichment.
+Use when the Source Selection Gateway authorizes Amundsen CTD. On a loaded
+table, `CTD`, `Amundsen` (including common misspellings), `donne les données
+environnementales`, `ajoute les variables environnementales`, or equivalent
+authorize the canonical Amundsen enrichment. A bare local temperature or
+salinity analysis without these source/enrichment signals remains local. The
+loaded table stays primary and Amundsen is only its requested enrichment.
 
 ## Enrichment
 
 When an Amundsen/CTD data or enrichment request names no measured variable,
-present all eight supported CTD variables and wait for the user's selection;
-do not call the remote enrichment yet:
+call the canonical enrichment immediately with all eight supported variables:
 
 - pressure/depth (`PRES`), temperature (`TE90`), salinity (`PSAL`),
   density (`SIGT`), oxygen (`OXYM`), pH (`pH`), nitrate (`NTRA`), and
   fluorescence (`FLOR`).
 
-Show the readable name, CTD code, canonical output column, and short factual
-description. A request for **all variables** is an explicit selection: call
-the enrichment with all eight codes. A request naming one or more variables
-proceeds directly with only those variables. Never choose a default subset for
-the user. State the catalog exactly once, then stop and wait for the answer.
+A request naming one or more variables proceeds directly with only those
+variables. Never replace the remote call with placeholder columns or a local
+`run_pandas` simulation.
 
 Call `enrich_with_amundsen_ctd` directly on the exact active variable for
 “enrichis avec Amundsen”, “ajoute le CTD Amundsen”, or equivalent. The same
@@ -44,10 +43,11 @@ parameters, or CTD/environmental variables: “donne les données Amundsen”,
 *enrichir* is not required. This is the only canonical loaded-table enrichment
 path.
 
-Pass only variables requested by the user: `temperature`/`température`,
+Pass only variables requested by the user when they name a subset:
+`temperature`/`température`,
 `salinité`/`salinity`, `oxygène`/`oxygen`, `nitrate`, `chlorophylle`,
-`fluorescence`, `densité`, or `pression`. Do not infer a default set from a
-broad environmental request; apply the selection rule above.
+`fluorescence`, `densité`, or `pression`. For a broad request, omit `variables`
+or pass all eight CTD codes; both mean the complete supported set.
 
 For an EcoTaxa export with `sample_ctdrosettefilename` (or an equivalent CTD
 filename column), the tool automatically fetches the matching CTD profile by
