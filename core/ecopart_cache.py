@@ -42,6 +42,14 @@ class CachedEcopartResolution:
     expires_at: float
 
 
+@dataclass(frozen=True)
+class CachedEcopartSamplePreview:
+    sample_id: int
+    accessible: bool
+    text: str
+    cached_at: float
+
+
 def cache_root() -> Path:
     return Path(os.getenv("ECOPART_CACHE_DIR", "data/ecopart_cache"))
 
@@ -71,6 +79,11 @@ def _connection() -> sqlite3.Connection:
         "ecotaxa_project_id INTEGER PRIMARY KEY, ecopart_project_id INTEGER, "
         "resolution TEXT NOT NULL, status TEXT NOT NULL, cached_at REAL NOT NULL, "
         "expires_at REAL NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sample_previews ("
+        "sample_id INTEGER PRIMARY KEY, accessible INTEGER NOT NULL, text TEXT NOT NULL, "
+        "cached_at REAL NOT NULL)"
     )
     return conn
 
@@ -245,4 +258,39 @@ def load_resolution(
         status=str(row["status"]),
         cached_at=float(row["cached_at"]),
         expires_at=float(row["expires_at"]),
+    )
+
+
+def save_sample_preview(sample_id: int, *, accessible: bool, text: str) -> None:
+    """Persist the text shown by an already-authorized EcoPart sample preview."""
+    conn = _connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO sample_previews (sample_id,accessible,text,cached_at) "
+            "VALUES (?,?,?,?)",
+            (int(sample_id), int(bool(accessible)), str(text), time.time()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_sample_preview(sample_id: int) -> CachedEcopartSamplePreview | None:
+    """Return an existing durable preview without an EcoPart network request."""
+    if not _manifest_path().exists():
+        return None
+    conn = _connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM sample_previews WHERE sample_id=?", (int(sample_id),)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return CachedEcopartSamplePreview(
+        sample_id=int(row["sample_id"]),
+        accessible=bool(row["accessible"]),
+        text=str(row["text"]),
+        cached_at=float(row["cached_at"]),
     )

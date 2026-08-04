@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -27,11 +28,18 @@ from core.ecopart_client import (
 )
 from core.ecopart_cache import (
     CachedEcopartTsv,
+    cache_root,
     find_ecopart_tsv,
     import_ecopart_tsv,
     load_ecopart_tsv,
     load_resolution,
+    load_sample_preview,
     save_resolution,
+    save_sample_preview,
+)
+from core.ecopart_cache_distribution import (
+    CacheBundleValidationError,
+    bootstrap_consumer_cache,
 )
 from core.ecotaxa_ecopart_join import (
     audit_ecotaxa_ecopart_dataframe,
@@ -59,6 +67,7 @@ from tools.tool_result import blocked, empty, error, success, validate_tool_arti
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
+_LOGGER = logging.getLogger(__name__)
 
 _RECOVERABLE_PARTITION_ERRORS = (
     EcopartDownloadError,
@@ -1404,6 +1413,10 @@ def _enrich_ecotaxa_campaign_with_ecopart(
 
 def make_ecopart_tools(thread_id: str) -> list:
     """Create LangChain EcoPart tools for one thread."""
+    try:
+        bootstrap_consumer_cache(cache_root())
+    except CacheBundleValidationError as exc:
+        _LOGGER.warning("Cache EcoPart partagé indisponible : %s", exc)
 
     @tool(response_format="content_and_artifact")
     def list_ecopart_samples(project_id: int) -> str:
@@ -1424,13 +1437,27 @@ def make_ecopart_tools(thread_id: str) -> list:
 
     @tool(response_format="content_and_artifact")
     def preview_ecopart_sample(sample_id: int) -> str:
-        """Prévisualise un échantillon EcoPart (popover texte)."""
+        """Prévisualise un échantillon EcoPart, depuis le cache si disponible."""
+        cached_preview = load_sample_preview(sample_id)
+        if cached_preview is not None:
+            if not cached_preview.accessible:
+                return _ep_blocked(f"Échantillon {sample_id} non accessible (cache local).")
+            summary = cached_preview.text or f"Échantillon {sample_id} — aucun texte disponible."
+            return _ep_success(
+                f"{summary}\n\n_Aperçu issu du cache local partagé._",
+                provenance={"sample_id": int(sample_id), "cache_hit": True},
+            )
         try:
             client = EcopartClient()
             client.login()
             preview = client.preview_sample(sample_id)
         except Exception as exc:
             return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
+        save_sample_preview(
+            sample_id,
+            accessible=bool(preview["accessible"]),
+            text=str(preview.get("text") or ""),
+        )
         if not preview["accessible"]:
             return _ep_blocked(f"Échantillon {sample_id} non accessible.")
         summary = preview["text"] or f"Échantillon {sample_id} — aucun texte disponible."

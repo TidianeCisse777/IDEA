@@ -38,6 +38,18 @@ def test_make_ecopart_tools_exposes_expected_tools():
     assert "audit_ecotaxa_ecopart_join" in tool_names
 
 
+def test_make_ecopart_tools_bootstraps_shared_cache(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
+    with patch("tools.ecopart_sources.bootstrap_consumer_cache", return_value=True) as bootstrap:
+        make_ecopart_tools("thread-bootstrap")
+
+    bootstrap.assert_called_once_with(tmp_path / "cache")
+
+
 def test_confirmed_enrichment_reuses_compatible_persistent_tsv(
     tmp_path, monkeypatch, _isolated_store
 ):
@@ -177,10 +189,12 @@ def test_list_ecopart_samples_returns_markdown_table():
     assert "ips_008" in result
 
 
-def test_preview_ecopart_sample_returns_text():
+def test_preview_ecopart_sample_returns_text(tmp_path, monkeypatch):
     from unittest.mock import MagicMock, patch
 
     from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
 
     mock_client = MagicMock()
     mock_client.preview_sample.return_value = {
@@ -200,10 +214,34 @@ def test_preview_ecopart_sample_returns_text():
     assert "120 profils" in result
 
 
-def test_preview_ecopart_sample_inaccessible():
+def test_preview_ecopart_sample_reuses_persistent_cache(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock, patch
+
+    from core.ecopart_cache import save_sample_preview
+    from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
+    save_sample_preview(42, accessible=True, text="Station ips_007 — cache partagé")
+    mock_client = MagicMock()
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        preview_tool = next(
+            tool for tool in make_ecopart_tools("thread-preview-cache")
+            if tool.name == "preview_ecopart_sample"
+        )
+        result = preview_tool.invoke({"sample_id": 42})
+
+    mock_client.login.assert_not_called()
+    assert "cache partagé" in result
+    assert "cache" in result.lower()
+
+
+def test_preview_ecopart_sample_inaccessible(tmp_path, monkeypatch):
     from unittest.mock import MagicMock, patch
 
     from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
 
     mock_client = MagicMock()
     mock_client.preview_sample.return_value = {"sample_id": 99, "accessible": False, "text": ""}
