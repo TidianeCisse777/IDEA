@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -24,6 +25,21 @@ from core.ecopart_client import (
     EcopartClient,
     EcopartDownloadError,
     EcopartExportError,
+)
+from core.ecopart_cache import (
+    CachedEcopartTsv,
+    cache_root,
+    find_ecopart_tsv,
+    import_ecopart_tsv,
+    load_ecopart_tsv,
+    load_resolution,
+    load_sample_preview,
+    save_resolution,
+    save_sample_preview,
+)
+from core.ecopart_cache_distribution import (
+    CacheBundleValidationError,
+    bootstrap_consumer_cache,
 )
 from core.ecotaxa_ecopart_join import (
     audit_ecotaxa_ecopart_dataframe,
@@ -51,6 +67,7 @@ from tools.tool_result import blocked, empty, error, success, validate_tool_arti
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
+_LOGGER = logging.getLogger(__name__)
 
 _RECOVERABLE_PARTITION_ERRORS = (
     EcopartDownloadError,
@@ -69,6 +86,10 @@ def _ecopart_preflight_timeout() -> float:
 
 def _ecopart_cache_ttl() -> float:
     return max(60.0, float(os.getenv("ECOPART_PREFLIGHT_CACHE_TTL_SECONDS", "86400")))
+
+
+def _ecopart_resolution_cache_ttl() -> float:
+    return max(60.0, float(os.getenv("ECOPART_RESOLUTION_CACHE_TTL_SECONDS", "2592000")))
 
 
 def _fresh_cache_meta(meta: dict) -> bool:
@@ -166,6 +187,40 @@ def _session_for_variable(thread_id: str, variable_name: str | None) -> dict | N
     if variable_name is None:
         return None
     return _store.get(f"{thread_id}:dataset:{variable_name}")
+
+
+def _store_cached_ecopart_dataset(
+    thread_id: str,
+    entry: CachedEcopartTsv,
+    *,
+    ecotaxa_project_id: int | None,
+    ecopart_project_id: int | None,
+) -> str:
+    """Load a durable EcoPart TSV into the current session for local joining."""
+    dataframe = load_ecopart_tsv(entry)
+    ep_key = ecopart_project_id or entry.ecopart_project_id or "cached"
+    variable_name = dataset_variable_name("ecopart", ep_key)
+    meta = {
+        "source": f"ecopart_cache:{entry.provenance}",
+        "project_id": ecopart_project_id or entry.ecopart_project_id,
+        "ecotaxa_project_id": ecotaxa_project_id or entry.ecotaxa_project_id,
+        "n_rows": len(dataframe),
+        "cache_hit": True,
+        "cache_path": str(entry.path),
+        "content_sha256": entry.content_sha256,
+        "cache_provenance": entry.provenance,
+    }
+    store_dataset(
+        _store,
+        thread_id,
+        dataframe,
+        variable_name=variable_name,
+        meta=meta,
+        latest_alias=ECOPART,
+    )
+    if ep_key != "cached":
+        _store.set(f"{thread_id}:ecopart:{ep_key}", dataframe, meta)
+    return variable_name
 
 
 def _perform_enrichment(
@@ -464,7 +519,10 @@ def _perform_enrichment(
 def _candidate_ecotaxa_profile_labels(df_et: pd.DataFrame) -> list[str]:
     """Collect plausible profile/station labels from an EcoTaxa export."""
     labels: list[str] = []
-    for col in ("sample_profileid", "sample_stationid", "sample_station_name", "sample_cruise"):
+    for col in (
+        "sample_profileid", "sample_stationid", "sample_station_name", "sample_cruise",
+        "sample_id", "obj_orig_id",
+    ):
         if col not in df_et.columns:
             continue
         values = (
@@ -479,8 +537,12 @@ def _candidate_ecotaxa_profile_labels(df_et: pd.DataFrame) -> list[str]:
             .tolist()
         )
         for value in values:
-            if value not in labels:
-                labels.append(value)
+            candidates = [value]
+            if col in {"sample_id", "obj_orig_id"}:
+                candidates.append(re.sub(r"_\d+$", "", value))
+            for candidate in candidates:
+                if candidate and candidate not in labels:
+                    labels.append(candidate)
     return labels
 
 
@@ -688,6 +750,14 @@ def _lookup_ecopart_project_for_ecotaxa(
          geographic majority with a lowest-id tie-break.
     """
     if known_ecotaxa_pid is not None:
+        durable = load_resolution(int(known_ecotaxa_pid))
+        if durable is not None and durable.status == "resolved" and durable.ecopart_project_id:
+            result = {
+                "project_id": durable.ecopart_project_id,
+                "resolution": durable.resolution,
+            }
+            _ECOPART_RESOLUTION_CACHE[int(known_ecotaxa_pid)] = dict(result)
+            return {**result, "cache_hit": True}
         persistent_key = (
             f"{thread_id}:ecopart_resolution:{int(known_ecotaxa_pid)}"
             if thread_id else None
@@ -719,6 +789,13 @@ def _lookup_ecopart_project_for_ecotaxa(
 
     def _cache_and_return(result: dict) -> dict:
         if known_ecotaxa_pid is not None and "project_id" in result:
+            save_resolution(
+                int(known_ecotaxa_pid),
+                ecopart_project_id=int(result["project_id"]),
+                resolution=str(result.get("resolution") or "lien résolu"),
+                status="resolved",
+                ttl_seconds=_ecopart_resolution_cache_ttl(),
+            )
             _ECOPART_RESOLUTION_CACHE[int(known_ecotaxa_pid)] = dict(result)
             if thread_id:
                 _store.set(
@@ -774,10 +851,6 @@ def _lookup_ecopart_project_for_ecotaxa(
                 search_kwargs["timeout"] = float(request_timeout)
             linked = client.search_samples(**search_kwargs)
         except Exception as exc:
-            if request_timeout is not None:
-                return _cache_transient_error(
-                    f"préflight EcoPart interrompu : {exc}"
-                )
             linked = []
         ordered_linked = sorted(linked, key=lambda c: int(c.get("id", 0)))
         if request_timeout is not None:
@@ -840,13 +913,19 @@ def _lookup_ecopart_project_for_ecotaxa(
                     ),
                     "linked_samples": titled_samples,
                 })
-        if request_timeout is not None:
-            return _cache_transient_error(
-                    f"aucun lien EcoTaxa→EcoPart vérifiable pour "
-                    f"{known_ecotaxa_pid} dans le délai de {request_timeout:g} s"
-            )
+        # A timed-out project-wide lookup must not prevent the much smaller
+        # profile/position fallback below.  This matters for large UVP projects:
+        # the exact profile is a stronger join key than a slow project listing.
 
     profile_labels = set(_candidate_ecotaxa_profile_labels(df_et))
+    station_labels = set()
+    for station_column in ("sample_stationid", "sample_station_name", "station_id"):
+        if station_column in df_et.columns:
+            station_labels.update(
+                str(value).strip()
+                for value in df_et[station_column].dropna().tolist()
+                if str(value).strip()
+            )
 
     if lat_col is None or lon_col is None:
         if not profile_labels:
@@ -912,6 +991,7 @@ def _lookup_ecopart_project_for_ecotaxa(
             continue
         ep_pid = int(ep_pid)
         pf = str(meta.get("profile_id") or "").strip()
+        station = str(meta.get("station_id") or "").strip()
         et_pid = meta.get("ecotaxa_project_id")
         # Authoritative EcoTaxa↔EcoPart link: definitive — return immediately.
         if known_ecotaxa_pid is not None and et_pid is not None and int(et_pid) == int(known_ecotaxa_pid):
@@ -922,10 +1002,12 @@ def _lookup_ecopart_project_for_ecotaxa(
                     f"lien EcoTaxa↔EcoPart (projet EcoTaxa {known_ecotaxa_pid}, profil `{pf}`)"
                 ),
             })
-        tally = votes.setdefault(ep_pid, [0, 0])
+        tally = votes.setdefault(ep_pid, [0, 0, 0])
         if pf and pf in profile_labels:
-            tally[0] += 1
-        tally[1] += 1
+            tally[1] += 1
+            if station and station in station_labels:
+                tally[0] += 1
+        tally[2] += 1
         names.setdefault(ep_pid, meta.get("ecopart_project_name") or "")
 
     if not votes:
@@ -933,10 +1015,14 @@ def _lookup_ecopart_project_for_ecotaxa(
 
     # No authoritative link found: prefer profile matches, then candidate count;
     # lowest project id breaks ties so the result is stable across runs.
-    best_pid = max(votes, key=lambda pid: (votes[pid][0], votes[pid][1], -pid))
-    mid, weak = votes[best_pid]
+    best_pid = max(votes, key=lambda pid: (votes[pid][0], votes[pid][1], votes[pid][2], -pid))
+    exact, mid, weak = votes[best_pid]
     if mid:
-        how = f"correspondance de profil ({mid} sample(s) sur {weak})"
+        how = (
+            f"correspondance profil+station ({exact} sample(s))"
+            if exact
+            else f"correspondance de profil ({mid} sample(s) sur {weak})"
+        )
     else:
         how = f"proximité géographique par {search_note} ({weak} sample(s), aucun lien EcoTaxa direct)"
     return _cache_and_return({
@@ -1327,6 +1413,10 @@ def _enrich_ecotaxa_campaign_with_ecopart(
 
 def make_ecopart_tools(thread_id: str) -> list:
     """Create LangChain EcoPart tools for one thread."""
+    try:
+        bootstrap_consumer_cache(cache_root())
+    except CacheBundleValidationError as exc:
+        _LOGGER.warning("Cache EcoPart partagé indisponible : %s", exc)
 
     @tool(response_format="content_and_artifact")
     def list_ecopart_samples(project_id: int) -> str:
@@ -1347,13 +1437,27 @@ def make_ecopart_tools(thread_id: str) -> list:
 
     @tool(response_format="content_and_artifact")
     def preview_ecopart_sample(sample_id: int) -> str:
-        """Prévisualise un échantillon EcoPart (popover texte)."""
+        """Prévisualise un échantillon EcoPart, depuis le cache si disponible."""
+        cached_preview = load_sample_preview(sample_id)
+        if cached_preview is not None:
+            if not cached_preview.accessible:
+                return _ep_blocked(f"Échantillon {sample_id} non accessible (cache local).")
+            summary = cached_preview.text or f"Échantillon {sample_id} — aucun texte disponible."
+            return _ep_success(
+                f"{summary}\n\n_Aperçu issu du cache local partagé._",
+                provenance={"sample_id": int(sample_id), "cache_hit": True},
+            )
         try:
             client = EcopartClient()
             client.login()
             preview = client.preview_sample(sample_id)
         except Exception as exc:
             return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
+        save_sample_preview(
+            sample_id,
+            accessible=bool(preview["accessible"]),
+            text=str(preview.get("text") or ""),
+        )
         if not preview["accessible"]:
             return _ep_blocked(f"Échantillon {sample_id} non accessible.")
         summary = preview["text"] or f"Échantillon {sample_id} — aucun texte disponible."
@@ -1374,11 +1478,27 @@ def make_ecopart_tools(thread_id: str) -> list:
             file_id = uuid.uuid4().hex
             output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
             df.to_csv(output_path, sep="\t", index=False)
+            try:
+                cached_export = import_ecopart_tsv(
+                    output_path,
+                    provenance="remote_export",
+                    ecopart_project_id=project_id,
+                )
+            except ValueError:
+                cached_export = None
             variable_name = dataset_variable_name("ecopart", project_id)
             meta = {
                 "source": f"ecopart:{project_id}",
                 "project_id": project_id,
                 "n_rows": len(df),
+                **(
+                    {
+                        "content_sha256": cached_export.content_sha256,
+                        "cache_provenance": cached_export.provenance,
+                    }
+                    if cached_export is not None
+                    else {}
+                ),
             }
             store_dataset(
                 _store,
@@ -1698,6 +1818,49 @@ def make_ecopart_tools(thread_id: str) -> list:
                 metrics={"rows": len(cached_df), "cache_hit": True},
             )
 
+        cached_tsv = find_ecopart_tsv(
+            ecopart_project_id=ecopart_project_id,
+            profile_labels=set(_candidate_ecotaxa_profile_labels(session_et["df"])),
+        )
+        if cached_tsv is not None:
+            cached_variable = _store_cached_ecopart_dataset(
+                thread_id,
+                cached_tsv,
+                ecotaxa_project_id=ecotaxa_project_id,
+                ecopart_project_id=ecopart_project_id,
+            )
+            join_result = _perform_enrichment(
+                thread_id,
+                ecopart_project_id,
+                ecotaxa_session=session_et,
+            )
+            join_artifact = validate_tool_artifact(join_result[1])
+            cache_summary = (
+                "EcoPart restauré depuis le cache local — "
+                f"{cached_tsv.n_rows} lignes (`{cached_variable}`).\n\n{join_result[0]}"
+            )
+            if join_artifact.status != "success":
+                factory = {
+                    "empty": _ep_empty,
+                    "blocked": _ep_blocked,
+                    "error": _ep_error,
+                    "cancelled": _ep_blocked,
+                }[join_artifact.status]
+                return factory(cache_summary, retryable=join_artifact.retryable)
+            return _ep_success(
+                cache_summary,
+                data_ref=join_artifact.data_ref,
+                persisted=True,
+                provenance={
+                    "source": "ecopart_persistent_cache",
+                    "cache_hit": True,
+                    "content_sha256": cached_tsv.content_sha256,
+                    "cache_provenance": cached_tsv.provenance,
+                },
+                method="Persistent EcoPart TSV cache and local join",
+                metrics={"ecopart_rows": cached_tsv.n_rows, **dict(join_artifact.metrics)},
+            )
+
         try:
             links = client.start_export(
                 project_id=ecopart_project_id,
@@ -1725,6 +1888,18 @@ def make_ecopart_tools(thread_id: str) -> list:
         file_id = uuid.uuid4().hex
         output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
         df_ep.to_csv(output_path, sep="\t", index=False)
+        try:
+            import_ecopart_tsv(
+                output_path,
+                provenance="remote_export",
+                ecopart_project_id=ecopart_project_id,
+                ecotaxa_project_id=ecotaxa_project_id,
+            )
+        except ValueError:
+            # A caller may deliberately request a reduced EcoPart export without
+            # the sampled-volume field; it remains usable for inspection but not
+            # for the abundance cache.
+            pass
 
         ep_key = ecopart_project_id if ecopart_project_id is not None else f"via_ecotaxa_{ecotaxa_project_id}"
         variable_name = dataset_variable_name("ecopart", ep_key)

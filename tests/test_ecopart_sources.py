@@ -38,6 +38,97 @@ def test_make_ecopart_tools_exposes_expected_tools():
     assert "audit_ecotaxa_ecopart_join" in tool_names
 
 
+def test_make_ecopart_tools_bootstraps_shared_cache(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
+    with patch("tools.ecopart_sources.bootstrap_consumer_cache", return_value=True) as bootstrap:
+        make_ecopart_tools("thread-bootstrap")
+
+    bootstrap.assert_called_once_with(tmp_path / "cache")
+
+
+def test_confirmed_enrichment_reuses_compatible_persistent_tsv(
+    tmp_path, monkeypatch, _isolated_store
+):
+    import pandas as pd
+    from unittest.mock import MagicMock, patch
+
+    from core.ecopart_cache import import_ecopart_tsv
+    from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
+    tsv = tmp_path / "part.tsv"
+    tsv.write_text(
+        "Profile\tDepth [m]\tSampled volume [L]\nips_007\t2.5\t111.0\n",
+        encoding="utf-8",
+    )
+    entry = import_ecopart_tsv(
+        tsv,
+        provenance="remote_export",
+        ecopart_project_id=1063,
+        ecotaxa_project_id=17498,
+    )
+    _isolated_store.set(
+        "thread-cache:ecotaxa",
+        pd.DataFrame({"obj_orig_id": ["ips_007_1"], "object_depth_min": [2.5]}),
+        {"project_id": 17498},
+    )
+    client = MagicMock()
+    client.start_export.side_effect = AssertionError("cache should avoid export")
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client):
+        tool = next(
+            item for item in make_ecopart_tools("thread-cache")
+            if item.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke(
+            {"ecotaxa_project_id": 17498, "ecopart_project_id": 1063, "confirmed": True}
+        )
+
+    assert "cache local" in result.lower()
+    assert _isolated_store.get("thread-cache:ecopart")["meta"]["content_sha256"] == entry.content_sha256
+
+
+def test_resolution_falls_back_to_exact_profile_after_project_search_timeout(tmp_path, monkeypatch):
+    import pandas as pd
+    from unittest.mock import MagicMock
+
+    import requests
+    import tools.ecopart_sources as sources
+    from tools.ecopart_sources import _lookup_ecopart_project_for_ecotaxa
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
+    sources._ECOPART_RESOLUTION_CACHE.clear()
+
+    dataframe = pd.DataFrame({
+        "sample_profileid": ["20240925-123056"],
+        "sample_stationid": ["RA62"],
+        "object_lat": [76.2638],
+        "object_lon": [-74.5992],
+    })
+    client = MagicMock()
+    client.search_samples.side_effect = requests.ReadTimeout("project lookup timed out")
+    client.search_samples_by_bbox.return_value = [{"id": 91, "lat": 76.2638, "lon": -74.5992}]
+    client.get_sample_metadata.return_value = {
+        "profile_id": "20240925-123056",
+        "ecopart_project_id": 1063,
+        "ecotaxa_project_id": 17498,
+    }
+
+    result = _lookup_ecopart_project_for_ecotaxa(
+        dataframe,
+        known_ecotaxa_pid=17498,
+        client=client,
+        request_timeout=5.0,
+    )
+
+    assert result["project_id"] == 1063
+    assert "profil" in result["resolution"]
+
+
 def test_audit_ecotaxa_ecopart_join_reads_persisted_join(_isolated_store):
     import pandas as pd
 
@@ -98,10 +189,12 @@ def test_list_ecopart_samples_returns_markdown_table():
     assert "ips_008" in result
 
 
-def test_preview_ecopart_sample_returns_text():
+def test_preview_ecopart_sample_returns_text(tmp_path, monkeypatch):
     from unittest.mock import MagicMock, patch
 
     from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
 
     mock_client = MagicMock()
     mock_client.preview_sample.return_value = {
@@ -121,10 +214,34 @@ def test_preview_ecopart_sample_returns_text():
     assert "120 profils" in result
 
 
-def test_preview_ecopart_sample_inaccessible():
+def test_preview_ecopart_sample_reuses_persistent_cache(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock, patch
+
+    from core.ecopart_cache import save_sample_preview
+    from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
+    save_sample_preview(42, accessible=True, text="Station ips_007 — cache partagé")
+    mock_client = MagicMock()
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=mock_client):
+        preview_tool = next(
+            tool for tool in make_ecopart_tools("thread-preview-cache")
+            if tool.name == "preview_ecopart_sample"
+        )
+        result = preview_tool.invoke({"sample_id": 42})
+
+    mock_client.login.assert_not_called()
+    assert "cache partagé" in result
+    assert "cache" in result.lower()
+
+
+def test_preview_ecopart_sample_inaccessible(tmp_path, monkeypatch):
     from unittest.mock import MagicMock, patch
 
     from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
 
     mock_client = MagicMock()
     mock_client.preview_sample.return_value = {"sample_id": 99, "accessible": False, "text": ""}
