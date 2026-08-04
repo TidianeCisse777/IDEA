@@ -237,7 +237,10 @@ def test_capsule_surfaces_active_ecotaxa_selection_context(tmp_path):
             "selection_name": "selection_baie_de_baffin",
             "sample_ids": [101, 102, 103],
             "project_ids": [10, 11],
-            "filters": {"zone_name": "Baie de Baffin"},
+            "filters": {
+                "zone_name": "Baie de Baffin",
+                "date_range": {"from": "2024-01-01", "to": "2024-12-31"},
+            },
             "n_rows": 3,
             "n_cols": 4,
         },
@@ -250,6 +253,8 @@ def test_capsule_surfaces_active_ecotaxa_selection_context(tmp_path):
     assert "sample_ids=" not in capsule
     assert "project_ids=10,11" in capsule
     assert "zone_name=Baie de Baffin" in capsule
+    assert "date_range={'from': '2024-01-01', 'to': '2024-12-31'}" in capsule
+    assert "preserve every listed filter" in capsule
     assert "df_ecotaxa_selection_baie_de_baffin" in capsule
 
 

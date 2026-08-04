@@ -119,6 +119,10 @@ def test_ctd_and_common_amundsen_typo_select_amundsen():
     assert parse_explicit_sources("donne les données environnementales") == (
         "amundsen",
     )
+    assert parse_explicit_sources("Append environmental measurements to my file") == (
+        "file",
+        "amundsen",
+    )
 
 
 def test_comparison_combines_active_and_new_source():

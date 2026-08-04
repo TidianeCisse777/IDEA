@@ -579,7 +579,8 @@ def build_dataset_state_capsule(
             f"- project_ids={project_id_text or 'not listed'}\n"
             f"- filters={filter_text or 'not listed'}\n"
             "- Reuse this selection for follow-up tables, SQL, pandas, and graphs; "
-            "do not ask for the geographic scope again."
+            "preserve every listed filter (including dates) unless the user "
+            "explicitly requests a wider or different scope."
         )
 
     campaigns: list[str] = []

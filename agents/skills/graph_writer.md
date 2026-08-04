@@ -81,6 +81,7 @@ plt.tight_layout()
 - After every filtering step that creates `plot_df`, validate that rows remain before plotting:
   `if plot_df.empty: raise ValueError("No rows remain after filtering; check identifier type normalization and filter criteria.")`
 - Before plotting numeric axes, coerce only the plotted measurement columns with `pd.to_numeric(..., errors="coerce")`, then drop missing values from all plotted columns. Validate again that `plot_df` is not empty after this drop.
+- For direct value labels/annotations, use a single `plot_df` row per visual mark: never sort labels, values, and annotations separately. Build the marks and their annotations from the same row order, for example `for _, row in plot_df.iterrows(): ...`; if values are sorted, sort `plot_df` once before both operations.
 
 ## Clarté et information visuelle (priorité)
 

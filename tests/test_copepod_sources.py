@@ -1077,6 +1077,37 @@ def test_export_ecotaxa_samples_uses_named_selection_for_dry_run(seeded_cache):
     assert "2331000001" in result
 
 
+def test_export_ecotaxa_samples_uses_derived_sample_table_for_dry_run(seeded_cache):
+    """A persisted pandas subset with sample_id is a reusable export scope."""
+    import pandas as pd
+
+    from tools.copepod_sources import make_source_tools
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import default_store
+
+    thread_id = "thread-export-derived-selection"
+    store_dataset(
+        default_store,
+        thread_id,
+        pd.DataFrame({
+            "sample_id": [14853000001, 2331000001],
+            "station_id": ["RA25", "RA27"],
+        }),
+        variable_name="df_derived_baffin_samples",
+        meta={"source": "analysis:derived", "description": "Subset Baffin"},
+    )
+
+    fn = next(
+        tool for tool in make_source_tools(thread_id)
+        if tool.name == "export_ecotaxa_samples"
+    )
+    result = fn.invoke({"selection_name": "df_derived_baffin_samples"})
+
+    assert "df_derived_baffin_samples" in result
+    assert "14853000001" in result
+    assert "2331000001" in result
+
+
 def test_summarize_ecotaxa_samples_uses_latest_selection(monkeypatch):
     from tools.copepod_sources import make_source_tools
     from tools.session_store import default_store

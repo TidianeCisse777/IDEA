@@ -1513,6 +1513,14 @@ def make_source_tools(thread_id: str) -> list:
                 if latest_name.removeprefix("selection_") == key:
                     session = latest
         if not session:
+            # A transparent pandas subset is a valid export scope when it
+            # explicitly carries EcoTaxa sample identifiers.  This keeps a
+            # user-selected/derived subset reusable without requiring a second
+            # source search merely to turn it back into a named selection.
+            dataset = _store.get(f"{thread_id}:dataset:{key}")
+            dataframe = (dataset or {}).get("df")
+            if isinstance(dataframe, pd.DataFrame) and "sample_id" in dataframe.columns:
+                return key, _normalize_sample_ids(dataframe["sample_id"].tolist())
             return key, []
         meta = session.get("meta") or {}
         resolved_name = str(meta.get("selection_name") or key)

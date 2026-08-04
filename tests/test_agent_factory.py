@@ -1170,6 +1170,14 @@ def test_graph_writer_treats_user_framing_as_the_graph_contract():
     assert "make the requested state of the data visible" in writer
 
 
+def test_graph_writer_keeps_annotations_bound_to_their_plot_rows():
+    writer = Path("agents/skills/graph_writer.md").read_text(encoding="utf-8")
+
+    assert "single `plot_df` row per visual mark" in writer
+    assert "never sort labels, values, and annotations separately" in writer
+    assert "plot_df.iterrows()" in writer
+
+
 
 
 def test_biodiversity_graph_plan_is_frozen_in_docs():

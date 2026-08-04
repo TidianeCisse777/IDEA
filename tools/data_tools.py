@@ -1992,10 +1992,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 plotted_df = local_vars.get("plot_df")
                 if isinstance(plotted_df, pd.DataFrame):
                     # A graph is often refined over several user turns (labels,
-                    # colour, contour, filters). Keep the exact rows that were
-                    # rendered as the active table, rather than leaving the
-                    # older input/query active and forcing the model to guess or
-                    # repeat a broader source query on the next iteration.
+                    # colour, contour, filters). Keep the exact rendered rows
+                    # under their own stable name.  It must not replace the
+                    # active analysis table: a follow-up calculation should
+                    # still start from the source/derived table selected before
+                    # the visual was rendered.
                     parent_variable = ((session or {}).get("meta") or {}).get(
                         "variable_name"
                     )
@@ -2013,6 +2014,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                             "n_rows": len(rendered_df),
                             "n_cols": len(rendered_df.columns),
                         },
+                        set_active=False,
                     )
                     _store.set(
                         f"{thread_id}:last_plot_df",

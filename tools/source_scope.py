@@ -83,8 +83,11 @@ _SOURCE_PATTERNS: dict[SourceName, re.Pattern[str]] = {
     ),
     "amundsen": re.compile(
         r"\b(?:amundsen|amudnsen|amdunsen|amudnsne|amdunse)(?:\s+ctd)?\b|\bctd\b|"
-        r"\b(?:donn\w*|ajout\w*|enrich\w*|compl[eè]t\w*)\b.{0,45}"
-        r"\b(?:donn[eé]es?\s+)?(?:env(?:iron\w*)?|hydrographi\w*|physico[- ]?chimi\w*)\b",
+        r"\b(?:donn\w*|ajout\w*|enrich\w*|compl[eè]t\w*|int[eé]gr\w*|"
+        r"assoc\w*|reli\w*|fusion\w*|add\w*|append\w*|augment\w*|"
+        r"attach\w*|merge\w*|join\w*|populate\w*|fill\w*)\b.{0,45}"
+        r"\b(?:donn[eé]es?|data|measurements?\s+)?(?:env(?:iron\w*)?|"
+        r"environmental\w*|hydrographi\w*|physico[- ]?chimi\w*)\b",
         re.IGNORECASE,
     ),
     # Accept the common one-o typo ``bioracle`` as an explicit source choice.

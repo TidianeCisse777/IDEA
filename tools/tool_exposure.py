@@ -29,13 +29,21 @@ _ENRICHMENT_GROUP_BY_SOURCE: dict[str, ToolExposureGroup] = {
 }
 _ENRICHMENT_PATTERN = re.compile(
     r"\b(?:enrich\w*|enrichis\w*|enrichir|enrichment|coupl\w*|"
-    r"compl[eè]te\w*|pr[eé][ -]?flight)\b",
+    r"compl[eè]te\w*|ajout\w*|int[eé]gr\w*|assoc\w*|reli\w*|"
+    r"fusion\w*|add\w*|append\w*|augment\w*|attach\w*|"
+    r"merge\w*|join\w*|populate\w*|fill\w*|pr[eé][ -]?flight)\b",
+    re.IGNORECASE,
+)
+_PREVIEW_PATTERN = re.compile(
+    r"\b(?:aper[cç]u\w*|pr[eé]visuali[sz]\w*|preview\w*|"
+    r"quick\s+(?:look|view)|overview\w*|d[eé]tails?|inspect\w*|"
+    r"examin\w*)\b",
     re.IGNORECASE,
 )
 # Inside an Amundsen-authorized turn, CTD, Amundsen, environmental data and
-# measured-variable wording all request the canonical enrichment. Generic
-# temperature/salinity mentions remain local unless source_scope authorized
-# Amundsen explicitly.
+# measured-variable wording request the canonical enrichment. A request for
+# correspondences alone is not an enrichment request: it must not expose the
+# potentially remote route before the user names a variable or asks to enrich.
 _AMUNDSEN_ENVIRONMENT_PATTERN = re.compile(
     r"\b(?:amundsen|amudnsen|amdunsen|amudnsne|amdunse|ctd|donn[eé]es?|mesures?|param[eè]tres?|"
     r"variables?\s+(?:env(?:iron\w*)?|hydrographi\w*|physico[- ]?chimi\w*|ctd)|"
@@ -44,8 +52,8 @@ _AMUNDSEN_ENVIRONMENT_PATTERN = re.compile(
     r"fluorescen\w*|flor|densit[eé]|density|sigt|pression|pressure|pres|ph)\b",
     re.IGNORECASE,
 )
-_AMUNDSEN_MATCH_PATTERN = re.compile(
-    r"\b(?:profil\w*|correspond\w*|appariement\w*|match\w*)\b",
+_AMUNDSEN_CORRESPONDENCE_PATTERN = re.compile(
+    r"\b(?:correspond\w*|appariement\w*|match\w*)\b",
     re.IGNORECASE,
 )
 _AMUNDSEN_VARIABLE_SELECTION_PATTERN = re.compile(
@@ -63,7 +71,8 @@ _AMUNDSEN_VERTICAL_PROFILE_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _CONFIRMATION_PATTERN = re.compile(
-    r"\b(?:confirm(?:e|é|ée|er|ation)?|yes|oui)\b",
+    r"\b(?:confirm(?:e|é|ée|er|ation)?|yes|oui|go|vas[- ]?y|"
+    r"proceed\w*|continue\w*|lance\w*|d[eé]marr\w*)\b",
     re.IGNORECASE,
 )
 _TAXONOMY_PATTERN = re.compile(
@@ -74,12 +83,13 @@ _SQL_COPY_PATTERN = re.compile(
     r"\b(?:copie\w*|copy|export\w*|analyse\w*|analy[sz]\w*)\b",
     re.IGNORECASE,
 )
-# A negated export ("sans l'exporter", "ne pas exporter", "without exporting")
-# must NOT trigger the export intent — otherwise object-browse requests that
-# explicitly refuse export get routed to the heavy export path.
+# A negated retrieval ("sans l'exporter", "ne pas récupérer", "without
+# downloading") must NOT trigger the export intent — otherwise object-browse
+# requests that explicitly refuse export get routed to the heavy export path.
 _EXPORT_NEGATION = re.compile(
     r"\b(?:sans|pas|non|jamais|without|no)\b[^.]{0,25}?"
-    r"\b(?:export\w*|t[eé]l[eé]charg\w*|download\w*)\b",
+    r"\b(?:export\w*|t[eé]l[eé]charg\w*|download\w*|extra\w*|"
+    r"r[eé]cup[eè]r\w*|fetch\w*|retriev\w*)\b",
     re.IGNORECASE,
 )
 # "Prépare l'export ... sans télécharger" is a safe dry-run request, not a
@@ -93,14 +103,18 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
     (
         "ecotaxa_export",
         re.compile(
-            r"\b(?:export\w*|t[eé]l[eé]charg\w*|download\w*|extra\w*|charge\s+les\s+donn[eé]es)\b",
+            r"\b(?:export\w*|t[eé]l[eé]charg\w*|download\w*|extra\w*|"
+            r"r[eé]cup[eè]r\w*|fetch\w*|retriev\w*|"
+            r"save\b[^.]{0,80}?\b(?:as|to)\s+(?:csv|tsv|file)\w*|"
+            r"charge\s+les\s+donn[eé]es)\b",
             re.IGNORECASE,
         ),
     ),
     (
         "ecotaxa_schema",
         re.compile(
-            r"\b(?:sch[eé]ma|schema|colonne\w*|column\w*|type\w*|compatib\w*)\b",
+            r"\b(?:sch[eé]ma|schema|structure\w*|colonne\w*|column\w*|"
+            r"champ\w*|field\w*|type\w*|compatib\w*)\b",
             re.IGNORECASE,
         ),
     ),
@@ -115,7 +129,8 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
         "ecotaxa_audit",
         re.compile(
             r"\b(?:audit\w*|couverture|coverage|disponibilit[eé]|availability|"
-            r"synth[eè]se\w*|r[eé]sum\w*|summar\w*)\b",
+            r"synth[eè]se\w*|r[eé]sum\w*|summar\w*|valid\w*|verify\w*|"
+            r"verif\w*|contr[oô]l\w*)\b",
             re.IGNORECASE,
         ),
     ),
@@ -123,6 +138,7 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
         "ecotaxa_taxonomy",
         re.compile(
             r"\b(?:taxon\w*|taxa|taxonomi\w*|esp[eè]ce\w*|species|"
+            r"organism\w*|organisme\w*|copepod\w*|cop[eé]pod\w*|"
             r"compte\w*|combien|how\s+many)\b",
             re.IGNORECASE,
         ),
@@ -131,8 +147,10 @@ _ECOTAXA_INTENT_PATTERNS: tuple[tuple[ToolExposureGroup, re.Pattern[str]], ...] 
 _ECOTAXA_GEO_TERMS = (
     "zone", "région", "region", "baie", "bassin", "station", "carte",
     "latitude", "longitude", "coordonnée", "coordonne", "géographique",
-    "geographique", "labrador", "baffin", "ungava", "hudson",
+    "geographique", "localisation", "location",
+    "labrador", "baffin", "ungava", "hudson",
 )
+_GEOGRAPHIC_QUESTION_PATTERN = re.compile(r"\b(?:o[uù]|where)\b", re.IGNORECASE)
 _NET_UVP_AUDIT_PATTERN = re.compile(
     r"(?=.*\b(?:uvp|eco[- ]?taxa)\b)"
     r"(?=.*\b(?:filet\w*|nets?|neo[- ]?labs?)\b)"
@@ -182,11 +200,13 @@ _GROUP_ORDER: tuple[ToolExposureGroup, ...] = (
     "visualization",
     "deliverable",
     "enrichment_ecopart",
+    "ecopart_preview",
     "enrichment_amundsen",
     "enrichment_bio_oracle",
     "enrichment_ogsl",
     "sql_workspace",
     "ecotaxa_discovery",
+    "ecotaxa_preview",
     "ecotaxa_export",
     "ecotaxa_samples",
     "ecotaxa_objects",
@@ -203,6 +223,7 @@ class TurnSignals:
 
     latest_user_text: str
     enrichment_requested: bool
+    preview_requested: bool
     confirmation_requested: bool
     taxonomy_requested: bool
     sql_copy_requested: bool
@@ -282,10 +303,14 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
     return TurnSignals(
         latest_user_text=text,
         enrichment_requested=bool(_ENRICHMENT_PATTERN.search(text)),
+        preview_requested=bool(_PREVIEW_PATTERN.search(text)),
         confirmation_requested=bool(_CONFIRMATION_PATTERN.search(text)),
         taxonomy_requested=bool(_TAXONOMY_PATTERN.search(text)),
         sql_copy_requested=bool(_SQL_COPY_PATTERN.search(text)),
-        geographic_requested=any(term in normalized_text for term in _ECOTAXA_GEO_TERMS),
+        geographic_requested=(
+            any(term in normalized_text for term in _ECOTAXA_GEO_TERMS)
+            or bool(_GEOGRAPHIC_QUESTION_PATTERN.search(text))
+        ),
         successful_tools_this_turn=tuple(call.name for call in calls),
         successful_skills_this_turn=skills,
         ecotaxa_intents=ecotaxa_intents,
@@ -406,9 +431,11 @@ def decide_tool_exposure(
         )
     named_amundsen_environment_request = bool(
         "amundsen" in source_decision.explicit_sources
-        and (
-            _AMUNDSEN_ENVIRONMENT_PATTERN.search(signals.latest_user_text)
-            or _AMUNDSEN_MATCH_PATTERN.search(signals.latest_user_text)
+        and _AMUNDSEN_ENVIRONMENT_PATTERN.search(signals.latest_user_text)
+        and not (
+            _AMUNDSEN_CORRESPONDENCE_PATTERN.search(signals.latest_user_text)
+            and not signals.enrichment_requested
+            and not _AMUNDSEN_VARIABLE_SELECTION_PATTERN.search(signals.latest_user_text)
         )
     )
     enrichment_requested = (
@@ -458,6 +485,14 @@ def decide_tool_exposure(
         reasons.append(
             "explicit SQL copy" if signals.sql_copy_requested else "authorized SQL workspace"
         )
+
+    if signals.preview_requested:
+        if "ecotaxa" in authorized:
+            groups.append("ecotaxa_preview")
+            reasons.append("explicit EcoTaxa preview")
+        if "ecopart" in authorized:
+            groups.append("ecopart_preview")
+            reasons.append("explicit EcoPart preview")
 
     if "ecotaxa" in authorized and not focused_enrichment:
         ecotaxa_groups = ["ecotaxa_discovery"]

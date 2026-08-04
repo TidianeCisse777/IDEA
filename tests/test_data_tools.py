@@ -1851,11 +1851,15 @@ def test_run_graph_can_access_plot_df_persisted_by_run_pandas(tmp_path):
     )
     result = run_graph_tool.invoke({"code": graph_code})
     assert "error" not in result.lower() or "name 'plot_df'" not in result
-    rendered = store.get(tid)
-    assert rendered["meta"]["variable_name"] == "df_graph_plot"
+    # The graph payload must remain addressable for a later edit, but it must
+    # not replace the loaded source table as the next analysis target.
+    active = store.get(tid)
+    assert active["meta"]["variable_name"] == "df_file_taxa"
+    assert list(active["df"].columns) == ["taxon", "abundance"]
+    rendered = store.get(f"{tid}:dataset:df_graph_plot")
+    assert rendered is not None
     assert list(rendered["df"].columns) == ["taxon", "abundance"]
     assert len(rendered["df"]) == 2
-    assert store.get(f"{tid}:dataset:df_graph_plot") is not None
 
 
 def test_run_graph_does_not_materialize_unreferenced_session_datasets(tmp_path):

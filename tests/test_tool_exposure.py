@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -94,6 +96,20 @@ def test_neolabs_preparation_is_exposed_only_for_an_explicit_neolabs_request():
 
     assert "prepare_neolabs_analysis" not in ordinary.tool_names
     assert "prepare_neolabs_analysis" in neolabs.tool_names
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Prépare mon jeu de données Neo Lab",
+        "Prepare my NeoLab dataset",
+    ],
+)
+def test_neolabs_bilingual_variants_expose_preparation(text):
+    """Common NeoLab spellings must keep the local preparation route visible."""
+    decision = _decision(text)
+
+    assert "prepare_neolabs_analysis" in decision.tool_names
 
 
 @pytest.mark.parametrize(
@@ -320,6 +336,118 @@ def test_explicit_enrichment_exposes_one_canonical_source_tool(source, text, exp
     ]
     assert expected in decision.tool_names
     assert source_tools == [expected]
+
+
+@pytest.mark.parametrize(
+    ("source", "text", "expected"),
+    [
+        ("ecotaxa", "Montre un aperçu du projet EcoTaxa 17498", "preview_ecotaxa_project"),
+        ("ecotaxa", "Preview EcoTaxa project 17498", "preview_ecotaxa_project"),
+        ("ecopart", "Prévisualise le sample EcoPart 14844", "preview_ecopart_sample"),
+        ("ecopart", "Show me a preview of EcoPart sample 14844", "preview_ecopart_sample"),
+    ],
+)
+def test_explicit_source_preview_exposes_only_the_lightweight_preview(source, text, expected):
+    """French and English preview wording must expose the read-only preview."""
+    decision = _decision(text, sources=(source,))
+
+    assert expected in decision.tool_names
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Récupère les annotations validées EcoTaxa dans un fichier",
+        "Extrais les données EcoTaxa sélectionnées",
+        "Fetch the selected EcoTaxa records",
+        "Retrieve the validated EcoTaxa data as CSV",
+        "Save selected EcoTaxa data as CSV",
+    ],
+)
+def test_french_and_english_export_synonyms_expose_the_canonical_export(text):
+    """Explicit retrieval wording must expose the confirmation-gated export."""
+    decision = _decision(text, sources=("ecotaxa",))
+
+    assert "query_ecotaxa" in decision.tool_names
+
+
+def test_negated_retrieval_does_not_expose_ecotaxa_export():
+    """A request to browse without retrieving data remains non-exporting."""
+    decision = _decision(
+        "Montre les objets EcoTaxa sans récupérer les données",
+        sources=("ecotaxa",),
+    )
+
+    assert "query_ecotaxa" not in decision.tool_names
+
+
+@pytest.mark.parametrize(
+    ("source", "text", "expected"),
+    [
+        ("ecotaxa", "Show EcoTaxa project 17498 details", "preview_ecotaxa_project"),
+        ("ecotaxa", "Inspecte le projet EcoTaxa 17498", "preview_ecotaxa_project"),
+        ("ecopart", "Show EcoPart sample 14844 details", "preview_ecopart_sample"),
+        ("ecopart", "Examine le sample EcoPart 14844", "preview_ecopart_sample"),
+    ],
+)
+def test_bilingual_preview_synonyms_expose_only_lightweight_preview(source, text, expected):
+    """Detail and inspection wording stays on the lightweight preview route."""
+    decision = _decision(text, sources=(source,))
+
+    assert expected in decision.tool_names
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_group", "expected_tool"),
+    [
+        ("Check the EcoTaxa field structure", "ecotaxa_schema", "inspect_ecotaxa_project_schema"),
+        ("Quels organismes sont présents dans EcoTaxa ?", "ecotaxa_taxonomy", "count_ecotaxa_taxa"),
+        ("Validate EcoTaxa coverage", "ecotaxa_audit", "query_ecotaxa_cache"),
+        ("Where are the EcoTaxa samples?", "ecotaxa_geo_time", "summarize_ecotaxa_profiles_for_map"),
+    ],
+)
+def test_bilingual_ecotaxa_intent_synonyms_select_the_expected_group(text, expected_group, expected_tool):
+    """The named source makes expanded intent wording safe and deterministic."""
+    decision = _decision(text, sources=("ecotaxa",))
+
+    assert expected_group in decision.active_groups
+    assert expected_tool in decision.tool_names
+
+
+@pytest.mark.parametrize("text", ["go", "vas-y", "proceed", "lance l'export"])
+def test_bilingual_confirmation_synonyms_keep_pending_export_reachable(text):
+    """Explicit confirmation variants must continue a pending, gated export."""
+    from tools.tool_catalog import TOOL_POLICIES
+    from tools.tool_exposure import decide_tool_exposure
+
+    turn = replace(
+        _turn(file_loaded=False, sources=("ecotaxa",)),
+        pending_ecotaxa_export=True,
+    )
+    decision = decide_tool_exposure(
+        tuple(TOOL_POLICIES),
+        TOOL_POLICIES,
+        turn,
+        _source_decision("ecotaxa"),
+        [HumanMessage(content=text)],
+    )
+
+    assert "query_ecotaxa" in decision.tool_names
+
+
+@pytest.mark.parametrize(
+    ("source", "text", "expected"),
+    [
+        ("ecopart", "Add EcoPart sampled volumes to my loaded table", "enrich_ecotaxa_with_ecopart_remote"),
+        ("bio_oracle", "Append Bio-ORACLE data to this dataset", "enrich_with_bio_oracle"),
+        ("ogsl", "Merge OGSL measurements into the current file", "enrich_with_ogsl"),
+    ],
+)
+def test_english_enrichment_synonyms_expose_the_canonical_tool(source, text, expected):
+    """Common English verbs must activate the same source enrichment route."""
+    decision = _decision(text, file_loaded=True, sources=("file", source))
+
+    assert expected in decision.tool_names
 
 
 @pytest.mark.parametrize(
