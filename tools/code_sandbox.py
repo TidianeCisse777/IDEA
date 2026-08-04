@@ -33,6 +33,7 @@ ALLOWED_ROOT_MODULES = frozenset(
         "numpy",
         "math",
         "statistics",
+        "time",
         "datetime",
         "calendar",
         "decimal",

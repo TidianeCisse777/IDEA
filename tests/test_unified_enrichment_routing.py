@@ -38,7 +38,8 @@ def test_explicit_enrichment_replaces_polluted_affinity_for_every_source(
         file_loaded=True,
     )
 
-    assert decision.authorized_sources == ("file", source)
+    assert decision.primary_source == source
+    assert decision.authorized_sources == (source, "file")
     assert decision.explicit_sources == (source,)
 
 

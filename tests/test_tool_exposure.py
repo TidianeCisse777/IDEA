@@ -159,6 +159,21 @@ def test_ecopart_preflight_exposes_remote_enrichment_for_active_selection():
     assert "enrich_ecotaxa_with_ecopart_remote" in decision.tool_names
 
 
+def test_external_search_is_not_suppressed_by_environmental_enrichment_wording():
+    """A new EcoTaxa query must precede enrichment of the export it creates."""
+    decision = _decision(
+        "Cherche dans EcoTaxa tous les casts disponibles en mer de Beaufort, "
+        "exporte-les et enrichis-les avec les données environnementales.",
+        file_loaded=True,
+        sources=("ecotaxa", "amundsen", "file"),
+    )
+
+    assert "ecotaxa_discovery" in decision.active_groups
+    assert "ecotaxa_export" in decision.active_groups
+    assert "query_ecotaxa_cache" in decision.tool_names
+    assert "query_ecotaxa" in decision.tool_names
+
+
 def test_scoped_net_uvp_audit_is_exposed_in_strict_stages():
     """Le chargement, le sous-ensemble et l'audit ne doivent jamais coexister.
 

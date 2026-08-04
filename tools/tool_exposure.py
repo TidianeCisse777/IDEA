@@ -445,6 +445,7 @@ def decide_tool_exposure(
     )
     focused_enrichment = bool(
         has_active_table
+        and source_decision.primary_source == "file"
         and enrichment_requested
         and explicit_enrichment_sources
     )

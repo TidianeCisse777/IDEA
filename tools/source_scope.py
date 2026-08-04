@@ -156,9 +156,11 @@ Apply before any domain/graph/source rule.
 - New file -> sole source for implicit follow-ups. External access resumes only
   when explicitly named. Active source changes when the user names another source,
   explicitly combines sources, or a newly loaded file becomes the active source.
-- File + named external source -> file stays primary; use external only for the
-  requested secondary operation. An enrichment request replaces stale external
-  affinity with its named source(s).
+- A source explicitly named in the current request is primary. If a file is
+  already loaded, it remains available as a secondary source; it does not
+  shadow a new external search. The file is primary only when it is named in
+  the request, or when the request is implicit. An enrichment request replaces
+  stale external affinity with its named source(s).
 - A project number alone is not an EcoTaxa signal. With no owning source, ask.
   With no file, affinity or named source, ask for a file or source; never choose
   an online source.
@@ -236,10 +238,12 @@ def decide_source(
 
     if file_loaded:
         if explicit:
-            # A source named in the current turn is an explicit secondary
-            # operation on the loaded file. Keep both sources available.
+            # A named source is the user's current focus. Keep a loaded file
+            # available for a later comparison/enrichment, but append it so it
+            # cannot shadow a new external search (for example a new region
+            # after an earlier export remains in the session).
             if "file" not in selected:
-                selected = ("file", *selected)
+                selected = (*selected, "file")
         else:
             # A file loaded *after* an external exploration takes over as
             # usual. Conversely, ``("file", external)`` records an external
@@ -256,7 +260,7 @@ def decide_source(
                 selected = ("file",)
                 evidence = "loaded_file_default"
     selected = tuple(source for source in selected if source not in excluded)
-    primary = "file" if "file" in selected else (selected[0] if selected else None)
+    primary = selected[0] if selected else None
     return SourceDecision(
         primary_source=primary,
         authorized_sources=selected,

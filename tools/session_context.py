@@ -613,11 +613,26 @@ def build_dataset_state_capsule(
     )
 
     # When the active df is a derived subset, surface the loaded file as the
-    # canonical source so a new geographic/zone request re-anchors on the full
-    # file instead of a subset of a different zone (docs/e2e/cartes-samples-labrador-2026).
+    # canonical source so an *implicit* geographic/zone request re-anchors on
+    # the full file instead of a subset of a different zone. A source explicitly
+    # selected for this turn has priority: sending the opposite instruction in
+    # the capsule would make a new remote search reuse a stale local export.
+    external_primary = False
+    if messages:
+        try:
+            from tools.source_scope import source_decision_for_turn  # noqa: PLC0415
+
+            external_primary = (
+                source_decision_for_turn(
+                    store, thread_id, list(messages), persist=False
+                ).primary_source
+                not in (None, "file")
+            )
+        except Exception:
+            pass
     anchor_note = ""
     loaded = store.get(f"{thread_id}:loaded_file")
-    if loaded and loaded.get("df") is not None:
+    if loaded and loaded.get("df") is not None and not external_primary:
         loaded_variable = _clean((loaded.get("meta") or {}).get("variable_name") or "")
         if loaded_variable and loaded_variable != variable:
             anchor_note = (

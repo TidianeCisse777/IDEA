@@ -143,7 +143,7 @@ def test_comparison_combines_active_and_new_source():
     assert decision.authorized_sources == ("ecotaxa", "ecopart")
 
 
-def test_explicit_enrichment_replaces_stale_external_affinity_but_keeps_file():
+def test_explicit_enrichment_replaces_stale_external_affinity_and_prioritizes_source():
     from tools.source_scope import SourceAffinity, decide_source
 
     affinity = SourceAffinity(
@@ -158,8 +158,24 @@ def test_explicit_enrichment_replaces_stale_external_affinity_but_keeps_file():
         file_loaded=True,
     )
 
-    assert decision.authorized_sources == ("file", "amundsen")
+    assert decision.primary_source == "amundsen"
+    assert decision.authorized_sources == ("amundsen", "file")
     assert decision.explicit_sources == ("amundsen",)
+
+
+def test_explicit_external_search_precedes_a_loaded_export():
+    """A named remote search must not be shadowed by an older local export."""
+    from tools.source_scope import decide_source
+
+    decision = decide_source(
+        "Cherche dans EcoTaxa tous les casts disponibles en mer de Beaufort, "
+        "puis enrichis-les avec les données environnementales.",
+        affinity=None,
+        file_loaded=True,
+    )
+
+    assert decision.primary_source == "ecotaxa"
+    assert decision.authorized_sources == ("ecotaxa", "amundsen", "file")
 
 
 def test_loaded_file_takes_over_inherited_ecotaxa_for_implicit_followup():

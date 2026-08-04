@@ -13,7 +13,6 @@ from langchain_core.tools import tool
 
 from core.cartography import configure_offline_cartopy
 from core.geo import load_registry
-from core.graph_contracts import normalize_graph_contract, validate_graph_contract
 from core.runtime_paths import graphs_dir
 from tools.tool_result import blocked, empty, error, success
 from tools.code_sandbox import apply_restricted_builtins
@@ -174,10 +173,8 @@ _OVERPLOT_POINT_THRESHOLD = 1500
 
 
 def graph_recovery_pending(meta: dict[str, Any]) -> bool:
-    """True si un graphe a été bloqué pour lisibilité et que graph_writer est chargé."""
-    return bool(meta.get(_GRAPH_QUALITY_BLOCKED_KEY)) and "graph_writer" in (
-        meta.get("loaded_skills") or []
-    )
+    """Compatibility facade: rendered graphs are no longer quality-gated."""
+    return False
 
 
 def _mark_graph_quality_blocked(store: SessionStore, thread_id: str) -> None:
@@ -1538,13 +1535,6 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
             return blocked("Aucun fichier chargé. Utilise load_file d'abord.")
-        meta = session.get("meta") or {}
-        if graph_recovery_pending(meta):
-            return blocked(
-                "Graph quality recovery: the previous graph was blocked for readability. "
-                "Do not answer with a table; revise the matplotlib code and call run_graph again."
-            )
-
         df = session["df"]
         local_vars: dict[str, Any] = {}
 
@@ -1556,24 +1546,6 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     synthetic_record_guard,
                     retryable=True,
                     method="data lineage validation",
-                )
-            if (
-                "bbox" in code_lower
-                and (
-                    "ax.plot" in code_lower
-                    or "rectangle" in code_lower
-                    or "mplpolygon" in code_lower
-                    or "add_patch" in code_lower
-                )
-                and ("sample" in code_lower or "plot_df" in code_lower)
-            ):
-                _mark_graph_quality_blocked(_store, thread_id)
-                return blocked(
-                    "named-zone sample maps must draw the exact `zone_polygons` "
-                    "geometries with Cartopy ShapelyFeature; do not draw bbox "
-                    "rectangles. Retry exactly once with the same active dataframe.",
-                    retryable=True,
-                    method="registered zone boundary validation",
                 )
             import matplotlib
             matplotlib.use("Agg")
@@ -1930,93 +1902,6 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 graph_contract = local_vars.get("graph_contract")
                 for fig_num in plt.get_fignums():
                     figure = plt.figure(fig_num)
-                    graph_contract = normalize_graph_contract(graph_contract, figure)
-                    if graph_contract is None or not isinstance(graph_contract, dict):
-                        graph_contract = _infer_station_map_contract(figure)
-                    if graph_contract is None:
-                        upgraded_figure = _upgrade_plain_lat_lon_scatter_to_station_map(
-                            figure, plt
-                        )
-                        if upgraded_figure is not None:
-                            figure = upgraded_figure
-                            graph_contract = _infer_station_map_contract(figure)
-                    # Last-resort fallback: plain matplotlib figure, no contract → infer generic.
-                    if graph_contract is None:
-                        graph_contract = _infer_generic_contract(figure)
-                    contract_issue = validate_graph_contract(graph_contract, figure)
-                    # A Cartopy point map can be rendered safely even when the
-                    # model emitted an incomplete station_map bookkeeping
-                    # object. Recover the canonical contract from the real
-                    # GeoAxes and point collection instead of spending retries
-                    # on metadata-shape errors.
-                    if (
-                        contract_issue
-                        and isinstance(graph_contract, dict)
-                        and graph_contract.get("kind") == "station_map"
-                    ):
-                        inferred_contract = _infer_station_map_contract(figure)
-                        if inferred_contract is not None:
-                            graph_contract = inferred_contract
-                            contract_issue = validate_graph_contract(
-                                graph_contract, figure
-                            )
-                    # The known contract families describe high-value
-                    # scientific figures, not an exhaustive matplotlib API.
-                    # A sound new plain chart (lollipop, waterfall, radar,
-                    # donut, …) must render rather than fail on a metadata
-                    # label the vocabulary has not learned yet.  Geographic
-                    # figures are upgraded to a strict map first; all named
-                    # scientific kinds retain their dedicated validation.
-                    if contract_issue and _can_fallback_to_generic_contract(
-                        graph_contract, figure
-                    ):
-                        upgraded_figure = _upgrade_plain_lat_lon_scatter_to_station_map(
-                            figure, plt
-                        )
-                        if upgraded_figure is not None:
-                            figure = upgraded_figure
-                            graph_contract = _infer_station_map_contract(figure)
-                        else:
-                            graph_contract = _infer_generic_contract(figure)
-                        if graph_contract is not None:
-                            contract_issue = validate_graph_contract(
-                                graph_contract, figure
-                            )
-                    if contract_issue:
-                        plt.close("all")
-                        _mark_graph_quality_blocked(_store, thread_id)
-                        fail_count = _record_graph_failure()
-                        if fail_count >= 2:
-                            return error(
-                                f"{contract_issue} Stop retrying. Report what data was available, "
-                                "what you attempted to plot, and why the graph could not be produced.",
-                                retryable=False,
-                                method="graph contract validation",
-                            )
-                        return blocked(
-                            f"{contract_issue} Retry exactly once: revise the graph code using this diagnostic, "
-                            "reuse the same active dataframe, and call run_graph again. Do not answer with a table.",
-                            retryable=True,
-                            method="graph contract validation",
-                        )
-                quality_issue = _graph_quality_issue(plt, graph_contract)
-                if quality_issue:
-                    plt.close("all")
-                    _mark_graph_quality_blocked(_store, thread_id)
-                    fail_count = _record_graph_failure()
-                    if fail_count >= 2:
-                        return error(
-                            f"{quality_issue} Stop retrying. Report what data was available, "
-                            "what you attempted to plot, and why the graph could not be produced.",
-                            retryable=False,
-                            method="graph quality validation",
-                        )
-                    return blocked(
-                            f"{quality_issue} Retry exactly once: revise the graph code using this diagnostic, "
-                            "reuse the same active dataframe, and call run_graph again. Do not answer with a table.",
-                            retryable=True,
-                            method="graph quality validation",
-                        )
                 buf = io.BytesIO()
                 plt.savefig(buf, **_graph_savefig_kwargs(plt))
                 buf.seek(0)

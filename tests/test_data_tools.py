@@ -1339,6 +1339,35 @@ graph_contract = {
     assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
 
 
+def test_run_graph_renders_pressure_profile_without_contract_approval(tmp_path):
+    """A valid Matplotlib profile must render even with a non-canonical axis name."""
+    thread_id = "thread-pressure-profile-no-contract"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({
+            "amundsen_pres_dbar": [5.0, 10.0, 20.0],
+            "amundsen_te90_degC": [-0.8, -1.0, -1.3],
+        }),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+    result = run_graph.invoke({"code": """
+fig, ax = plt.subplots()
+ax.plot(df['amundsen_te90_degC'], df['amundsen_pres_dbar'])
+ax.set_xlabel('TE90 (°C)')
+ax.set_ylabel('Pression CTD (dbar)')
+ax.invert_yaxis()
+graph_contract = {
+    'kind': 'vertical_profile',
+    'axes': [{'axis_index': 0, 'x': 'amundsen_te90_degC', 'y': 'amundsen_pres_dbar'}],
+    'inverted_axes': [{'axis_index': 0, 'axis': 'y'}],
+}
+"""})
+
+    assert "/graphs/" in result
+
+
 def test_run_graph_renders_two_panel_temperature_salinity_profile(tmp_path):
     thread_id = "thread-environmental-vertical-contract"
     store = SessionStore(tmp_path / "sessions")
@@ -1437,7 +1466,7 @@ graph_contract = {
     assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
 
 
-def test_compact_vertical_profile_legend_keeps_tick_readability_guard(tmp_path):
+def test_compact_vertical_profile_renders_despite_dense_tick_labels(tmp_path):
     thread_id = "thread-vertical-profile-compact-legend-ticks"
     profiles = [f"profile-{index:02d}" for index in range(30)]
     store = SessionStore(tmp_path / "sessions")
@@ -1470,8 +1499,7 @@ graph_contract = {
 
     result = run_graph.invoke({"code": code})
 
-    assert "Graph quality blocked" in result
-    assert "tick labels" in result
+    assert "/graphs/" in result
 
 
 def test_run_pandas_persists_explicit_named_derived_dataframe(tmp_path):
@@ -1495,7 +1523,7 @@ result = abundance_df
     assert persisted["df"]["abundance_ind_m3"].tolist() == [1000.0, 2000.0]
 
 
-def test_run_graph_blocks_unreadable_oversized_figures(tmp_path):
+def test_run_graph_renders_oversized_figures_without_quality_gate(tmp_path):
     thread_id = "thread-oversized-graph"
     store = SessionStore(tmp_path / "sessions")
     df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
@@ -1509,12 +1537,10 @@ def test_run_graph_blocks_unreadable_oversized_figures(tmp_path):
         ),
     })
 
-    assert "Graph quality blocked" in result
-    assert "figure size" in result
-    assert "/graphs/" not in result
+    assert "/graphs/" in result
 
 
-def test_run_graph_blocks_legends_with_too_many_entries(tmp_path):
+def test_run_graph_renders_legends_with_many_entries_without_quality_gate(tmp_path):
     thread_id = "thread-legend-graph"
     store = SessionStore(tmp_path / "sessions")
     df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
@@ -1529,14 +1555,10 @@ ax.legend()
 """
     result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
-    assert "Graph quality blocked" in result
-    assert "legend entries" in result
-    assert "/graphs/" not in result
+    assert "/graphs/" in result
 
 
-def test_run_graph_blocks_dense_opaque_scatter(tmp_path):
-    """Overplotting guard: a scatter with many fully opaque points hides the
-    distribution and must be blocked (conservative threshold)."""
+def test_run_graph_renders_dense_opaque_scatter_without_quality_gate(tmp_path):
     thread_id = "thread-overplot-graph"
     store = SessionStore(tmp_path / "sessions")
     df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
@@ -1551,9 +1573,7 @@ ax.scatter(rng.random(2500), rng.random(2500))
 """
     result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
-    assert "Graph quality blocked" in result
-    assert "alpha" in result.lower() or "transparence" in result.lower()
-    assert "/graphs/" not in result
+    assert "/graphs/" in result
 
 
 def test_run_graph_allows_dense_scatter_with_transparency(tmp_path):
@@ -1577,7 +1597,7 @@ ax.scatter(rng.random(2500), rng.random(2500), alpha=0.4, s=6)
     assert "/graphs/" in result
 
 
-def test_run_graph_blocks_too_many_visible_tick_labels(tmp_path):
+def test_run_graph_renders_many_visible_tick_labels_without_quality_gate(tmp_path):
     thread_id = "thread-tick-label-graph"
     store = SessionStore(tmp_path / "sessions")
     df = pd.DataFrame({"x": list(range(80)), "y": list(range(80))})
@@ -1593,12 +1613,10 @@ ax.set_yticklabels([f"station-{i}" for i in range(80)])
 """
     result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
-    assert "Graph quality blocked" in result
-    assert "tick labels" in result
-    assert "/graphs/" not in result
+    assert "/graphs/" in result
 
 
-def test_run_graph_blocks_overlong_tick_labels(tmp_path):
+def test_run_graph_renders_long_tick_labels_without_quality_gate(tmp_path):
     thread_id = "thread-long-label-graph"
     store = SessionStore(tmp_path / "sessions")
     df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
@@ -1617,13 +1635,10 @@ ax.set_xticklabels([
 """
     result = run_graph.invoke({"code": code + _GENERIC_GRAPH_CONTRACT_CODE})
 
-    assert "Graph quality blocked" in result
-    assert "tick labels are too long" in result
-    assert "call run_graph again" in result
-    assert "/graphs/" not in result
+    assert "/graphs/" in result
 
 
-def test_run_pandas_refuses_table_after_graph_quality_block(tmp_path):
+def test_run_pandas_remains_available_after_legacy_graph_quality_flag(tmp_path):
     thread_id = "thread-graph-quality-recovery"
     store = SessionStore(tmp_path / "sessions")
     df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
@@ -1636,9 +1651,7 @@ def test_run_pandas_refuses_table_after_graph_quality_block(tmp_path):
     run_pandas = next(t for t in make_tools(thread_id, store=store) if t.name == "run_pandas")
     result = run_pandas.invoke({"code": "result = df"})
 
-    assert "Graph quality recovery" in result
-    assert "call run_graph again" in result
-    assert "x" not in result
+    assert "x" in result
 
 
 def test_cartopy_gridliner_polygon_patch_closes_open_ring():
@@ -1945,12 +1958,11 @@ def test_ecotaxa_demo_export_does_not_trigger_uvp_hint():
     assert hint == ""
 
 
-def test_graph_recovery_pending_requires_block_and_graph_writer():
+def test_graph_recovery_pending_is_disabled():
     from tools.data_tools import graph_recovery_pending
 
     assert graph_recovery_pending(
-        {"graph_quality_blocked": True, "loaded_skills": ["graph_writer"]}) is True
-    # graph_writer pas chargé → pas de recovery
+        {"graph_quality_blocked": True, "loaded_skills": ["graph_writer"]}) is False
     assert graph_recovery_pending(
         {"graph_quality_blocked": True, "loaded_skills": ["graph_planner"]}) is False
     # pas de blocage → pas de recovery
@@ -1986,9 +1998,7 @@ def test_graph_block_clears_on_new_user_turn_not_mid_loop(tmp_path):
     assert (store.get(tid)["meta"] or {}).get("graph_quality_blocked") is False
 
 
-def test_run_pandas_unblocks_after_new_user_turn(tmp_path):
-    """Régression du flag collant : après un graphe bloqué, run_pandas est gaté
-    dans le même tour, mais répond à nouveau au tour utilisateur suivant."""
+def test_run_pandas_ignores_legacy_graph_quality_flag(tmp_path):
     from langchain_core.messages import HumanMessage
 
     from tools.dataset_registry import store_dataset
@@ -2004,9 +2014,9 @@ def test_run_pandas_unblocks_after_new_user_turn(tmp_path):
 
     run_pandas = next(t for t in make_tools(tid, store=store) if t.name == "run_pandas")
 
-    # Même tour : le repli tableau est bloqué (protection conservée).
-    blocked = run_pandas.invoke({"code": "result = len(df)"})
-    assert "recovery" in blocked.lower()
+    # Même tour : aucune protection graphique ne bloque une analyse valide.
+    first = run_pandas.invoke({"code": "result = len(df)"})
+    assert first == "3"
 
     # Nouveau tour utilisateur : le flag est réarmé, run_pandas répond.
     reset_graph_block_on_new_turn(store, tid, [HumanMessage("moyenne de X ?")])

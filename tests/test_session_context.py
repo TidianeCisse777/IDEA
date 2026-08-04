@@ -396,6 +396,33 @@ def test_capsule_omits_loaded_file_note_when_active_is_the_file(tmp_path):
     assert "CANONICAL SOURCE" not in capsule
 
 
+def test_capsule_does_not_redirect_an_explicit_external_search_to_loaded_file(tmp_path):
+    """An old local export is secondary when the user names EcoTaxa."""
+    store = SessionStore(tmp_path)
+    thread_id = "external-search-context"
+    loaded = pd.DataFrame({"sample_id": [1], "latitude": [74.0], "longitude": [-68.0]})
+    store_dataset(
+        store, thread_id, loaded,
+        variable_name="df_file_old_export",
+        meta={"source": "file:/data/old.tsv", "n_rows": 1, "n_cols": 3},
+        is_loaded_file=True,
+    )
+    store_dataset(
+        store, thread_id, loaded,
+        variable_name="df_in_baffin_old_export",
+        meta={"source": "filter_by_zone:Baie de Baffin", "n_rows": 1},
+    )
+
+    capsule = build_dataset_state_capsule(
+        store,
+        thread_id,
+        [{"role": "user", "content": "Cherche dans EcoTaxa les casts de la mer de Beaufort."}],
+    )
+
+    assert "primary=ecotaxa" in capsule
+    assert "Only for a NEW zone/geographic filter" not in capsule
+
+
 def test_capsule_lists_live_zone_subsets_with_their_zone(tmp_path):
     """The capsule must name each live derived zone subset with its zone.
 
