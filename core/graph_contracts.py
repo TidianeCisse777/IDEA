@@ -121,6 +121,38 @@ def normalize_graph_contract(contract: dict | None, figure: Any) -> dict | None:
     if not isinstance(contract, dict):
         return contract
     normalized = deepcopy(contract)
+    # A panel per measured variable against a common depth coordinate is a
+    # vertical profile, even when the model labels it as an environmental
+    # relationship.  Recover the semantic kind from the declared axes before
+    # validating inversions so shared depth axes remain scientifically usable.
+    declared_axes = normalized.get("axes")
+    if (
+        normalized.get("kind") in {"generic", "environment_relationships"}
+        and isinstance(declared_axes, list)
+        and declared_axes
+        and all(
+            isinstance(axis, dict) and axis.get("y") == "depth_m"
+            for axis in declared_axes
+        )
+    ):
+        normalized["kind"] = "vertical_profile"
+    # For a generic chart, axis direction is visible in the rendered figure and
+    # has no domain-specific semantic contract.  Recover it from Matplotlib so
+    # a correct sorted bar/histogram/scatter plot is not rejected solely because
+    # generated metadata omitted an inversion.  Maps, profiles and specialised
+    # environmental charts keep their stricter validation below.
+    if normalized.get("kind") == "generic" and isinstance(declared_axes, list):
+        rendered_inversions: list[dict[str, int | str]] = []
+        for axis_spec in declared_axes:
+            axis_index = axis_spec.get("axis_index") if isinstance(axis_spec, dict) else None
+            if not isinstance(axis_index, int) or not 0 <= axis_index < len(figure.axes):
+                continue
+            axis = figure.axes[axis_index]
+            if axis.xaxis_inverted():
+                rendered_inversions.append({"axis_index": axis_index, "axis": "x"})
+            if axis.yaxis_inverted():
+                rendered_inversions.append({"axis_index": axis_index, "axis": "y"})
+        normalized["inverted_axes"] = rendered_inversions
     if normalized.get("kind") == "vertical_profile":
         axes = normalized.get("axes")
         if not isinstance(axes, list):

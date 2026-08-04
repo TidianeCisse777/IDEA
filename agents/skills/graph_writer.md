@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "intent:visual"
 next_tool: run_graph
-max_tokens: 11750
+max_tokens: 11800
 size_exemption: The writer owns one executable graph-contract vocabulary shared by runtime validation across all chart families; its full body is delivered with a manifest-governed cap instead of the generic tool truncation.
 ---
 
@@ -163,6 +163,10 @@ abundance, temperature, salinity, oxygen or fluorescence. It supports one or
 several panels. Invert only the depth y axis on every panel. Keep the real
 plotted column names and units in `axes` and `source_variables`; abundance may
 still use the canonical roles `abundance_ind_L` or `abundance_ind_m3`.
+Any multi-panel figure with depth on the y axis must use `vertical_profile`,
+including a biology–CTD comparison; do not classify it as
+`environment_relationships`. Declare every rendered depth-axis inversion in
+`inverted_axes`, including every panel receiving inversion through `sharey`.
 When a prior calculation produced a persistent table, use that exact named table
 instead of recalculating abundance inside the graph code. For 16–30 profiles,
 use a compact multi-column legend; do not create a one-column legend.

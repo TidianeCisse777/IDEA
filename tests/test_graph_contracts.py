@@ -376,6 +376,61 @@ def test_vertical_profile_accepts_multiple_environmental_panels_with_shared_dept
     plt.close(fig)
 
 
+def test_normalize_recovers_depth_panels_misclassified_as_environment_relationships():
+    """Depth-aligned biology/CTD panels are vertical profiles, not relationships."""
+    fig, axes = plt.subplots(1, 4, sharey=True)
+    axes[0].invert_yaxis()
+    contract = {
+        "kind": "environment_relationships",
+        "axes": [
+            {"axis_index": 0, "x": "copepod_density_ind_m3", "y": "depth_m"},
+            {"axis_index": 1, "x": "temperature_degC", "y": "depth_m"},
+            {"axis_index": 2, "x": "salinity_psu", "y": "depth_m"},
+            {"axis_index": 3, "x": "oxygen_oxym", "y": "depth_m"},
+        ],
+        "inverted_axes": [],
+        "mappings": {},
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": [
+            "copepod_density_ind_m3", "temperature_degC", "salinity_psu",
+            "oxygen_oxym", "depth_m",
+        ],
+    }
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["kind"] == "vertical_profile"
+    assert normalized["inverted_axes"] == [
+        {"axis_index": 0, "axis": "y"},
+        {"axis_index": 1, "axis": "y"},
+        {"axis_index": 2, "axis": "y"},
+        {"axis_index": 3, "axis": "y"},
+    ]
+    assert validate_graph_contract(normalized, fig) is None
+    plt.close(fig)
+
+
+def test_generic_contract_recovers_a_visible_sorted_bar_axis_inversion():
+    """A readable sorted bar chart must not fail on metadata-only inversion drift."""
+    fig, ax = plt.subplots()
+    ax.barh(["A", "B"], [2, 1])
+    ax.invert_yaxis()  # Highest category deliberately displayed first.
+    contract = {
+        "kind": "generic",
+        "axes": [{"axis_index": 0, "x": "value", "y": "category"}],
+        "inverted_axes": [],
+        "mappings": {},
+        "zero_policy": {"mode": "include", "artist_gid": None},
+        "source_variables": ["category", "value"],
+    }
+
+    normalized = normalize_graph_contract(contract, fig)
+
+    assert normalized["inverted_axes"] == [{"axis_index": 0, "axis": "y"}]
+    assert validate_graph_contract(normalized, fig) is None
+    plt.close(fig)
+
+
 def test_vertical_profile_normalizes_french_total_abundance_alias():
     fig, ax = plt.subplots()
     ax.invert_yaxis()

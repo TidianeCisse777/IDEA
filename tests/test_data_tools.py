@@ -1075,6 +1075,211 @@ def test_run_graph_infers_generic_contract_when_missing(tmp_path):
     assert "/graphs/" in result
 
 
+@pytest.mark.parametrize(
+    ("family", "code"),
+    [
+        (
+            "bar",
+            """
+fig, ax = plt.subplots()
+ax.bar(df['category'], df['value'])
+ax.set_title('Barres'); ax.set_xlabel('Catégorie'); ax.set_ylabel('Valeur')
+graph_contract = {
+    'kind': 'generic', 'axes': [{'axis_index': 0, 'x': 'category', 'y': 'value'}],
+    'inverted_axes': [], 'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['category', 'value'],
+}
+""",
+        ),
+        (
+            "histogram",
+            """
+fig, ax = plt.subplots()
+ax.hist(df['value'], bins=3)
+ax.set_title('Histogramme'); ax.set_xlabel('Valeur'); ax.set_ylabel('Effectif')
+graph_contract = {
+    'kind': 'generic', 'axes': [{'axis_index': 0, 'x': 'value', 'y': 'effectif'}],
+    'inverted_axes': [], 'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['value'],
+}
+""",
+        ),
+        (
+            "pie",
+            """
+fig, ax = plt.subplots()
+ax.pie(df['value'], labels=df['category'], autopct='%1.0f%%')
+ax.set_title('Composition'); ax.set_xlabel('Catégorie'); ax.set_ylabel('Proportion')
+graph_contract = {
+    'kind': 'generic', 'axes': [{'axis_index': 0, 'x': 'category', 'y': 'proportion'}],
+    'inverted_axes': [], 'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['category', 'value'],
+}
+""",
+        ),
+        (
+            "scatter",
+            """
+fig, ax = plt.subplots()
+ax.scatter(df['x'], df['value'])
+ax.set_title('Nuage'); ax.set_xlabel('x'); ax.set_ylabel('Valeur')
+graph_contract = {
+    'kind': 'generic', 'axes': [{'axis_index': 0, 'x': 'x', 'y': 'value'}],
+    'inverted_axes': [], 'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['x', 'value'],
+}
+""",
+        ),
+        (
+            "vertical_profile",
+            """
+fig, ax = plt.subplots()
+ax.plot(df['value'], df['depth_m'])
+ax.invert_yaxis()
+ax.set_title('Profil'); ax.set_xlabel('Valeur'); ax.set_ylabel('Profondeur (m)')
+graph_contract = {
+    'kind': 'vertical_profile',
+    'axes': [{'axis_index': 0, 'x': 'value', 'y': 'depth_m'}],
+    'inverted_axes': [{'axis_index': 0, 'axis': 'y'}], 'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['value', 'depth_m'],
+}
+""",
+        ),
+    ],
+)
+def test_run_graph_smoke_renders_common_graph_families(tmp_path, family, code):
+    """Every graph family used in demos must render through the real sandbox."""
+    thread_id = f"thread-graph-smoke-{family}"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({
+            "category": ["A", "B", "C"],
+            "value": [1.0, 2.0, 3.0],
+            "x": [1.0, 2.0, 3.0],
+            "depth_m": [5.0, 20.0, 50.0],
+        }),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(
+        tool for tool in make_tools(thread_id, store=store)
+        if tool.name == "run_graph"
+    )
+
+    result = run_graph.invoke({"code": code})
+
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
+
+
+def test_run_graph_renders_sorted_horizontal_bars_with_omitted_inversion_metadata(tmp_path):
+    """Visible generic ordering takes precedence over stale contract bookkeeping."""
+    thread_id = "thread-sorted-bar-contract"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({"category": ["A", "B"], "value": [2.0, 1.0]}),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(
+        tool for tool in make_tools(thread_id, store=store)
+        if tool.name == "run_graph"
+    )
+
+    result = run_graph.invoke({"code": """
+fig, ax = plt.subplots()
+ax.barh(df['category'], df['value'])
+ax.invert_yaxis()
+ax.set_title('Classement'); ax.set_xlabel('Valeur'); ax.set_ylabel('Catégorie')
+graph_contract = {
+    'kind': 'generic', 'axes': [{'axis_index': 0, 'x': 'value', 'y': 'category'}],
+    'inverted_axes': [], 'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['category', 'value'],
+}
+"""})
+
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
+
+
+def test_run_graph_falls_back_to_generic_for_a_new_visual_family(tmp_path):
+    """A valid new chart must not require a pre-enumerated contract kind."""
+    thread_id = "thread-new-chart-family"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({"category": ["A", "B", "C"], "value": [3.0, 2.0, 1.0]}),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(
+        tool for tool in make_tools(thread_id, store=store)
+        if tool.name == "run_graph"
+    )
+
+    result = run_graph.invoke({"code": """
+fig, ax = plt.subplots()
+ax.stem(df['category'], df['value'])
+ax.set_title('Classement lollipop'); ax.set_xlabel('Catégorie'); ax.set_ylabel('Valeur')
+graph_contract = {
+    'kind': 'lollipop', 'axes': [{'axis_index': 0, 'x': 'category', 'y': 'value'}],
+    'inverted_axes': [], 'mappings': {},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['category', 'value'],
+}
+"""})
+
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
+
+
+def test_run_graph_falls_back_when_ts_contract_uses_real_ctd_column_names(tmp_path):
+    """A correctly labelled T–S plot must not depend on canonical metadata aliases."""
+    thread_id = "thread-ts-real-columns"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({
+            "amundsen_psal_psu": [30.5, 31.0],
+            "amundsen_te90_degC": [-1.2, -0.8],
+            "amundsen_pres_dbar": [10.0, 50.0],
+            "copepod_density_ind_m3": [12.0, 25.0],
+        }),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(
+        tool for tool in make_tools(thread_id, store=store)
+        if tool.name == "run_graph"
+    )
+
+    result = run_graph.invoke({"code": """
+fig, ax = plt.subplots()
+points = ax.scatter(df['amundsen_psal_psu'], df['amundsen_te90_degC'],
+                    c=df['amundsen_pres_dbar'], s=df['copepod_density_ind_m3'])
+points.set_gid('ts_points')
+ax.set_title('Diagramme température-salinité')
+ax.set_xlabel('Salinité CTD (PSU)'); ax.set_ylabel('Température CTD (°C)')
+graph_contract = {
+    'kind': 'temperature_salinity',
+    'axes': [{'axis_index': 0, 'x': 'amundsen_psal_psu', 'y': 'amundsen_te90_degC'}],
+    'inverted_axes': [],
+    'mappings': {'size': {'variable': 'copepod_density_ind_m3', 'artist_gid': 'ts_points'},
+                 'color': {'variable': 'amundsen_pres_dbar', 'artist_gid': 'ts_points'}},
+    'zero_policy': {'mode': 'include', 'artist_gid': None},
+    'source_variables': ['amundsen_psal_psu', 'amundsen_te90_degC',
+                         'amundsen_pres_dbar', 'copepod_density_ind_m3'],
+}
+"""})
+
+    assert "/graphs/" in result
+    assert store.get(thread_id)["meta"]["graph_quality_blocked"] is False
+
+
 def test_run_graph_upgrades_an_unambiguous_lat_lon_scatter_to_station_map(tmp_path):
     """A model omission must not turn a valid cast map into a blocked turn."""
     pytest.importorskip("cartopy.crs")

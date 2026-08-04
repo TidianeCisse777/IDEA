@@ -1719,6 +1719,8 @@ def test_graph_writer_supports_multi_panel_environmental_vertical_profiles():
     assert '"x": "temperature_degC", "y": "depth_m"' in skill
     assert '"x": "salinity_psu", "y": "depth_m"' in skill
     assert '{"axis_index": 1, "axis": "y"}' in skill
+    assert "must use `vertical_profile`" in skill
+    assert "including a biology–CTD comparison" in skill
 
 
 def test_amundsen_skill_uses_resolved_casts_for_complete_vertical_profiles():
@@ -1732,10 +1734,10 @@ def test_amundsen_skill_uses_resolved_casts_for_complete_vertical_profiles():
     assert "Do not rename raw `PRES`, `TE90`, or `PSAL`" in skill
 
 
-def test_amundsen_skill_waits_for_variable_choice_on_vague_ctd_request():
+def test_amundsen_skill_enriches_all_variables_on_broad_ctd_request():
     skill = Path("agents/skills/amundsen_ctd_query.md").read_text(encoding="utf-8")
 
-    assert "present all eight supported CTD variables" in skill
-    assert "wait for the user's selection" in skill
+    assert "call the canonical enrichment immediately with all eight supported variables" in skill
+    assert "A request naming one or more variables proceeds directly with only those" in skill
     assert "all variables" in skill
-    assert "State the catalog exactly once" in skill
+    assert "For a broad request, omit `variables`" in skill

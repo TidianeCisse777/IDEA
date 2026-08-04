@@ -622,6 +622,28 @@ def _infer_generic_contract(figure: Any) -> dict[str, Any] | None:
     }
 
 
+def _can_fallback_to_generic_contract(contract: Any, figure: Any) -> bool:
+    """Whether malformed metadata may safely yield to a rendered generic chart.
+
+    The contract vocabulary is deliberately finite, whereas legitimate
+    matplotlib chart families are not.  Keep strict semantic validation for
+    geographic maps and depth profiles; for other plain non-geographic figures,
+    the visible axes and quality guards are the authoritative truth.
+    """
+    if any(
+        axis.__class__.__module__.startswith("cartopy.")
+        for axis in getattr(figure, "axes", [])
+    ):
+        return False
+    if not isinstance(contract, dict):
+        return True
+    return contract.get("kind") not in {
+        "vertical_profile",
+        "station_map",
+        "abundance_environment_map",
+    }
+
+
 def _upgrade_plain_lat_lon_scatter_to_station_map(figure: Any, plt: Any) -> Any | None:
     """Convert an unambiguous longitude/latitude scatter into a safe map.
 
@@ -1935,6 +1957,28 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         inferred_contract = _infer_station_map_contract(figure)
                         if inferred_contract is not None:
                             graph_contract = inferred_contract
+                            contract_issue = validate_graph_contract(
+                                graph_contract, figure
+                            )
+                    # The known contract families describe high-value
+                    # scientific figures, not an exhaustive matplotlib API.
+                    # A sound new plain chart (lollipop, waterfall, radar,
+                    # donut, …) must render rather than fail on a metadata
+                    # label the vocabulary has not learned yet.  Geographic
+                    # figures are upgraded to a strict map first; all named
+                    # scientific kinds retain their dedicated validation.
+                    if contract_issue and _can_fallback_to_generic_contract(
+                        graph_contract, figure
+                    ):
+                        upgraded_figure = _upgrade_plain_lat_lon_scatter_to_station_map(
+                            figure, plt
+                        )
+                        if upgraded_figure is not None:
+                            figure = upgraded_figure
+                            graph_contract = _infer_station_map_contract(figure)
+                        else:
+                            graph_contract = _infer_generic_contract(figure)
+                        if graph_contract is not None:
                             contract_issue = validate_graph_contract(
                                 graph_contract, figure
                             )
