@@ -1856,3 +1856,55 @@ def test_run_graph_can_access_plot_df_persisted_by_run_pandas(tmp_path):
     assert list(rendered["df"].columns) == ["taxon", "abundance"]
     assert len(rendered["df"]) == 2
     assert store.get(f"{tid}:dataset:df_graph_plot") is not None
+
+
+def test_run_graph_does_not_materialize_unreferenced_session_datasets(tmp_path):
+    """A graph using one persisted table must not load every table in the session.
+
+    In production a certified Net–UVP join can be several GB.  Reloading that
+    join merely to render a graph based on a small derived table exhausts the
+    worker before matplotlib runs.
+    """
+    from tools.dataset_registry import store_dataset
+
+    class TrackingStore(SessionStore):
+        def __init__(self, storage_dir):
+            super().__init__(storage_dir)
+            self.read_keys: list[str] = []
+
+        def get(self, thread_id):
+            self.read_keys.append(thread_id)
+            return super().get(thread_id)
+
+    store = TrackingStore(tmp_path / "sessions")
+    tid = "thread-graph-minimal-load"
+    small_key = f"{tid}:dataset:df_small_plot"
+    large_key = f"{tid}:dataset:df_large_unreferenced"
+    store_dataset(
+        store,
+        tid,
+        pd.DataFrame({"x": [1, 2], "y": [3, 4]}),
+        variable_name="df_small_plot",
+        meta={"source": "analysis:small"},
+    )
+    store_dataset(
+        store,
+        tid,
+        pd.DataFrame({"x": range(1000), "y": range(1000)}),
+        variable_name="df_large_unreferenced",
+        meta={"source": "analysis:large"},
+        set_active=False,
+    )
+    store.update_meta(tid, {"loaded_skills": ["graph_writer"]})
+    store.read_keys.clear()
+
+    run_graph = next(t for t in make_tools(tid, store=store) if t.name == "run_graph")
+    result = run_graph.invoke({"code": (
+        _GENERIC_GRAPH_CONTRACT_CODE
+        + "\nfig, ax = plt.subplots()\n"
+        "ax.plot(df_small_plot['x'], df_small_plot['y'])\n"
+    )})
+
+    assert "![graph]" in result
+    assert small_key in store.read_keys
+    assert large_key not in store.read_keys

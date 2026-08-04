@@ -7,6 +7,11 @@ Lancer avec :
 from __future__ import annotations
 
 import os
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 import pandas as pd
 
@@ -202,6 +207,66 @@ def test_persists_across_instances(tmp_path):
     assert session is not None
     assert session["df"].equals(df)
     assert session["meta"]["source"] == "amundsen"
+
+
+@_skip
+def test_persists_across_process_working_directories(tmp_path, monkeypatch):
+    """A stored dataframe remains readable when a worker has another CWD.
+
+    PostgreSQL metadata are shared by all workers, so ``storage_path`` must not
+    be relative to the process that produced the dataframe.
+    """
+    from tools.session_store_pg import SessionStorePG
+
+    producer_cwd = tmp_path / "producer"
+    consumer_cwd = tmp_path / "consumer"
+    producer_cwd.mkdir()
+    consumer_cwd.mkdir()
+    key = _key("audit_cross_cwd")
+    expected = pd.DataFrame({"profile_id": ["20240925-123056"], "matched": [True]})
+
+    monkeypatch.chdir(producer_cwd)
+    producer = SessionStorePG(_TEST_DSN, storage_dir="session_data")
+    try:
+        producer.set(key, expected, {"source": "net_uvp_audit"})
+
+        child = """
+import json
+import os
+from tools.session_store_pg import SessionStorePG
+
+store = SessionStorePG(
+    os.environ["SESSION_STORE_CHILD_DSN"],
+    storage_dir="another_worker_store",
+)
+session = store.get(os.environ["SESSION_STORE_CHILD_KEY"])
+if session is None or session["df"] is None:
+    raise SystemExit("DataFrame absent dans le worker consommateur")
+print(json.dumps({"meta": session["meta"], "df": session["df"].to_dict(orient="list")}))
+"""
+        child_env = dict(os.environ)
+        child_env.update(
+            {
+                "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+                "SESSION_STORE_CHILD_DSN": _TEST_DSN,
+                "SESSION_STORE_CHILD_KEY": key,
+            }
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", child],
+            cwd=consumer_cwd,
+            env=child_env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        persisted = json.loads(result.stdout)
+        assert persisted["df"] == expected.to_dict(orient="list")
+        assert persisted["meta"] == {"source": "net_uvp_audit"}
+    finally:
+        producer.clear(key)
 
 
 @_skip

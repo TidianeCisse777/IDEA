@@ -8,6 +8,7 @@ from core.net_uvp_comparison import (
     NET_UVP_COMPARE_METHOD_VERSION,
     NET_UVP_MATCH_METHOD_VERSION,
     build_paired_depth_strata,
+    build_paired_depth_strata_from_certified_inputs,
     compare_paired_density,
     haversine_km,
     join_certified_net_uvp_enriched,
@@ -69,6 +70,50 @@ def test_build_paired_depth_strata_deduplicates_join_expansion_at_same_depth():
     )
     assert result["depth_match_status"].tolist() == ["matched", "matched"]
     assert result["comparison_calculable"].tolist() == [True, True]
+
+
+def test_compact_certified_strata_matches_cartesian_fanout_without_materializing_it():
+    """A many-taxa × many-objects profile must retain the legacy strata result."""
+    net = pd.DataFrame(
+        {
+            "SAMPLE_ID": [501] * 40,
+            "ANALYSIS_ID": [9001] * 40,
+            "TAXON_ID": list(range(40)),
+            "CLASS": ["Copepoda"] * 40,
+            "MIN_SAMPLE_DEPTH": [0.0] * 40,
+            "MAX_SAMPLE_DEPTH": [10.0] * 40,
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [1.0] * 40,
+        }
+    )
+    audit = pd.DataFrame(
+        {
+            "net_sample_id": [501],
+            "uvp_project_id": [10],
+            "uvp_profile_str": ["profile-1"],
+            "join_eligible": [True],
+            "ctd_verification": ["verified"],
+        }
+    )
+    enriched = pd.DataFrame(
+        {
+            "export_project_id": [10] * 250,
+            "sample_profileid": ["profile-1"] * 250,
+            "object_id": [f"object-{index}" for index in range(250)],
+            "depth_bin": [5.0] * 250,
+            "object_annotation_hierarchy": ["living>Crustacea>Copepoda"] * 250,
+            "ecopart_Sampled volume [L]": [100.0] * 250,
+        }
+    )
+
+    expanded = join_certified_net_uvp_enriched(net, audit, enriched)
+    compact = build_paired_depth_strata_from_certified_inputs(net, audit, enriched)
+
+    assert len(expanded) == 10_000
+    pd.testing.assert_frame_equal(
+        compact.reset_index(drop=True),
+        build_paired_depth_strata(expanded).reset_index(drop=True),
+        check_dtype=False,
+    )
 
 
 def test_build_paired_depth_strata_keeps_stratum_with_missing_volume():

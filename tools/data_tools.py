@@ -459,41 +459,80 @@ def _file_variable_name(path: str) -> str:
     return dataset_variable_name("file", Path(path).stem)
 
 
+def _referenced_names(code: str) -> set[str]:
+    """Return identifiers explicitly read by a user-provided Python snippet.
+
+    ``run_graph`` executes one isolated snippet, so its DataFrame namespace can
+    be limited to the names that snippet actually reads.  This avoids eagerly
+    unpickling every historical dataset in a session just to draw a figure from
+    a small derived table.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()
+    return {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+
+
 def _dataframe_vars(
     store: SessionStore,
     thread_id: str,
     df: pd.DataFrame,
+    required_names: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Build the DataFrame namespace shared by pandas and graph tools."""
+    """Build the DataFrame namespace shared by pandas and graph tools.
+
+    ``run_pandas`` keeps the historical all-datasets namespace so analysis can
+    freely combine persisted inputs.  ``run_graph`` supplies its parsed names:
+    only the explicitly referenced DataFrames are then materialised.
+    """
+    def required(name: str) -> bool:
+        return required_names is None or name in required_names
+
     local_vars: dict[str, Any] = {"df": df, "pd": pd}
-    loaded = loaded_file_dataset(store, thread_id)
-    if loaded and loaded.get("df") is not None:
-        # Stable left-hand side for cross-source analysis. This does not
-        # replace the active ``df`` after a remote query.
-        local_vars["loaded_file"] = loaded["df"]
-        loaded_variable = (loaded.get("meta") or {}).get("variable_name")
-        if loaded_variable:
-            local_vars["loaded_file_variable"] = loaded_variable
+    if required("loaded_file") or required("loaded_file_variable"):
+        loaded = loaded_file_dataset(store, thread_id)
+        if loaded and loaded.get("df") is not None:
+            # Stable left-hand side for cross-source analysis. This does not
+            # replace the active ``df`` after a remote query.
+            local_vars["loaded_file"] = loaded["df"]
+            loaded_variable = (loaded.get("meta") or {}).get("variable_name")
+            if loaded_variable:
+                local_vars["loaded_file_variable"] = loaded_variable
     for alias in SOURCE_ALIASES:
+        variable_name = source_variable(alias)
+        if not required(variable_name):
+            continue
         named = store.get(f"{thread_id}:{alias}")
         if named and named.get("df") is not None:
-            local_vars[source_variable(alias)] = named["df"]
+            local_vars[variable_name] = named["df"]
 
     for key in store.keys(f"{thread_id}:dataset:"):
+        variable_name = key.removeprefix(f"{thread_id}:dataset:")
+        if not required(variable_name):
+            continue
         named = store.get(key)
-        variable_name = (named or {}).get("meta", {}).get("variable_name")
-        if variable_name and named.get("df") is not None:
-            local_vars[variable_name] = named["df"]
+        persisted_name = (named or {}).get("meta", {}).get("variable_name")
+        if persisted_name and named.get("df") is not None:
+            local_vars[persisted_name] = named["df"]
 
     for key in store.keys(f"{thread_id}:ecopart:"):
         project_id = key.rsplit(":", 1)[-1]
+        variable_name = f"df_ecopart_{project_id}"
+        if not required(variable_name):
+            continue
         named = store.get(key)
         if project_id.isdigit() and named and named.get("df") is not None:
-            local_vars.setdefault(f"df_ecopart_{project_id}", named["df"])
+            local_vars.setdefault(variable_name, named["df"])
 
-    last_plot = store.get(f"{thread_id}:last_plot_df")
-    if last_plot and last_plot.get("df") is not None:
-        local_vars.setdefault("plot_df", last_plot["df"])
+    if required("plot_df"):
+        last_plot = store.get(f"{thread_id}:last_plot_df")
+        if last_plot and last_plot.get("df") is not None:
+            local_vars.setdefault("plot_df", last_plot["df"])
 
     return local_vars
 
@@ -1854,7 +1893,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             _patch_cartopy_gridliner_polygon()
 
             if df is not None:
-                local_vars = _dataframe_vars(_store, thread_id, df)
+                local_vars = _dataframe_vars(
+                    _store, thread_id, df, _referenced_names(code)
+                )
             else:
                 local_vars = {"pd": pd}
             local_vars.update(_zone_geometry_vars())

@@ -574,7 +574,7 @@ def test_remote_campaign_dry_run_preflights_exportability_and_join_columns():
         }
 
     def linked_samples(*, project_id=None, ecotaxa_project_id=None, timeout=None):
-        assert timeout == 5.0
+        assert timeout == 60.0
         assert project_id == {101: 301, 202: 302}[ecotaxa_project_id]
         if ecotaxa_project_id == 101:
             return [{"id": 1, "name": "alpha", "visibility": "VN"}]
@@ -1357,6 +1357,15 @@ def test_ecopart_preflight_caches_verdict_and_uses_short_timeout():
     assert first["verdict"] == second["verdict"] == "PRÊT"
     assert second["cache_hit"] is True
     client.search_samples.assert_not_called()
+
+
+def test_ecopart_preflight_uses_a_60_second_default_timeout(monkeypatch):
+    """A remote preflight gets enough time for normal HTTPS latency."""
+    import tools.ecopart_sources as es
+
+    monkeypatch.delenv("ECOPART_PREFLIGHT_TIMEOUT_SECONDS", raising=False)
+
+    assert es._ecopart_preflight_timeout() == 60.0
 
 
 def test_ecopart_preflight_timeout_is_partial_not_a_long_block():

@@ -130,6 +130,19 @@ def test_join_net_uvp_enriched_is_exposed_for_file_analysis():
     assert "join_net_uvp_enriched" in decision.tool_names
 
 
+def test_ecopart_preflight_exposes_remote_enrichment_for_active_selection():
+    """A remote EcoPart preflight must not be mistaken for local-only analysis."""
+    decision = _decision(
+        "Lance le préflight canonique EcoPart sur le projet 14844 pour "
+        "vérifier l’accès distant, les volumes et les classes de profondeur.",
+        file_loaded=True,
+        sources=("file", "ecopart"),
+    )
+
+    assert "enrichment_ecopart" in decision.active_groups
+    assert "enrich_ecotaxa_with_ecopart_remote" in decision.tool_names
+
+
 def test_scoped_net_uvp_audit_is_exposed_in_strict_stages():
     """Le chargement, le sous-ensemble et l'audit ne doivent jamais coexister.
 

@@ -28,7 +28,8 @@ _ENRICHMENT_GROUP_BY_SOURCE: dict[str, ToolExposureGroup] = {
     "ogsl": "enrichment_ogsl",
 }
 _ENRICHMENT_PATTERN = re.compile(
-    r"\b(?:enrich\w*|enrichis\w*|enrichir|enrichment|coupl\w*|compl[eè]te\w*)\b",
+    r"\b(?:enrich\w*|enrichis\w*|enrichir|enrichment|coupl\w*|"
+    r"compl[eè]te\w*|pr[eé][ -]?flight)\b",
     re.IGNORECASE,
 )
 # Inside an Amundsen-authorized turn, CTD, Amundsen, environmental data and

@@ -64,7 +64,7 @@ _RECOVERABLE_PARTITION_ERRORS = (
 
 
 def _ecopart_preflight_timeout() -> float:
-    return max(1.0, float(os.getenv("ECOPART_PREFLIGHT_TIMEOUT_SECONDS", "5")))
+    return max(1.0, float(os.getenv("ECOPART_PREFLIGHT_TIMEOUT_SECONDS", "60")))
 
 
 def _ecopart_cache_ttl() -> float:

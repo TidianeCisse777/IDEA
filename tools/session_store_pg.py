@@ -53,9 +53,12 @@ class SessionStorePG:
         storage_dir: str | Path | None = None,
     ) -> None:
         self._engine = create_engine(dsn, pool_pre_ping=True)
+        # ``storage_path`` is shared through PostgreSQL and can therefore be
+        # read by another worker with a different current directory.  Resolve
+        # it once here so the persisted path is never process-relative.
         self._storage_dir = Path(
             storage_dir or os.getenv("SESSION_STORE_DIR", "data/session_store")
-        )
+        ).resolve()
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, dict[str, Any]] = {}
         self._ensure_schema()

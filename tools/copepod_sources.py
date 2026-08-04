@@ -1020,7 +1020,10 @@ def make_source_tools(thread_id: str) -> list:
         et une preuve d'opt-in exploratoire persistée par l'audit; un no-match
         reste toujours refusé.
         """
-        from core.net_uvp_comparison import join_certified_net_uvp_enriched
+        from core.net_uvp_comparison import (
+            build_paired_depth_strata_from_certified_inputs,
+            join_certified_net_uvp_enriched,
+        )
 
         variable_names = {
             "table filet": net_variable_name,
@@ -1132,6 +1135,102 @@ def make_source_tools(thread_id: str) -> list:
                 retryable=False,
             )
 
+        # The scientific calculation is always performed at the two native
+        # grains (net taxa and UVP objects/bins), never on their cartesian
+        # product.  A small legacy object table may be persisted afterwards
+        # solely for inspection/backwards compatibility.
+        compact_join_upper_bound = len(datasets["table filet"]) * len(enriched)
+        object_column = next(
+            (
+                column
+                for column in ("object_id", "obj_orig_id", "obj_id", "objid")
+                if column in enriched.columns
+            ),
+            None,
+        )
+        try:
+            compact_strata = build_paired_depth_strata_from_certified_inputs(
+                datasets["table filet"],
+                datasets["audit certifié"],
+                enriched,
+                allow_unverified_ctd=exploratory_override,
+                uvp_object_col=object_column or "object_id",
+            )
+        except ValueError as exc:
+            return blocked(
+                str(exc),
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        if compact_strata.empty:
+            return empty(
+                "Aucune ligne objet ne relie l'audit certifié à l'export UVP "
+                "enrichi EcoPart ; aucune table finale n'a été créée.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+            )
+        if compact_join_upper_bound > 100_000:
+            strata = compact_strata
+
+            joined_exploratory = bool(
+                "exploratory" in strata.columns
+                and strata["exploratory"].fillna(False).astype(bool).any()
+            )
+            ctd_verification = "unavailable" if joined_exploratory else "verified"
+            calculable = strata.loc[strata["comparison_calculable"]].copy()
+            exclusions = strata.loc[~strata["comparison_calculable"]].copy()
+            from core.net_uvp_comparison import NET_UVP_DEPTH_METHOD_VERSION  # noqa: PLC0415
+
+            comparison_provenance = {
+                "source": "net_uvp_depth_comparison",
+                "joined_variable": "compact_certified_inputs",
+                "method_version": NET_UVP_DEPTH_METHOD_VERSION,
+                "ctd_verification": ctd_verification,
+                "exploratory": joined_exploratory,
+                "materialization": "avoided_taxa_x_objects",
+            }
+            for output_name, output_frame in (
+                ("df_net_uvp_strata", strata),
+                ("df_net_uvp_calculable", calculable),
+                ("df_net_uvp_exclusions", exclusions),
+            ):
+                store_dataset(
+                    _store,
+                    thread_id,
+                    output_frame,
+                    variable_name=output_name,
+                    meta={
+                        **comparison_provenance,
+                        "n_rows": int(len(output_frame)),
+                        "n_cols": int(len(output_frame.columns)),
+                    },
+                    set_active=output_name == "df_net_uvp_strata",
+                )
+            exclusion_counts = {
+                str(status): int(count)
+                for status, count in exclusions["depth_match_status"].value_counts().items()
+            }
+            return success(
+                "Comparaison filet↔UVP par tranche créée sans matérialiser la "
+                "jointure taxons×objets : "
+                f"{len(calculable)}/{len(strata)} tranche(s) calculable(s), "
+                f"{len(exclusions)} avec valeur manquante ou exclusion. "
+                "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
+                "`df_net_uvp_exclusions`.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                data_ref="df_net_uvp_strata",
+                persisted=True,
+                metrics={
+                    "rows": len(strata),
+                    "columns": len(strata.columns),
+                    "materialization_avoided": True,
+                    "estimated_join_rows": compact_join_upper_bound,
+                    "total_strata": int(len(strata)),
+                    "calculable_strata": int(len(calculable)),
+                    "missing_strata": int(len(exclusions)),
+                    "exclusions_by_status": exclusion_counts,
+                },
+            )
+
         try:
             joined = join_certified_net_uvp_enriched(
                 datasets["table filet"],
@@ -1182,97 +1281,56 @@ def make_source_tools(thread_id: str) -> list:
         comparison_refs: list[str] = []
         comparison_metrics: dict[str, object] = {}
         comparison_note = ""
-        object_column = next(
-            (
-                column
-                for column in ("object_id", "obj_orig_id", "obj_id", "objid")
-                if column in joined.columns
-            ),
-            None,
-        )
-        comparison_required = {
-            "SAMPLE_ID",
-            "ANALYSIS_ID",
-            "TAXON_ID",
-            "CLASS",
-            "MIN_SAMPLE_DEPTH",
-            "MAX_SAMPLE_DEPTH",
-            "ALL_STAGES_ABUND (ind./m3 depth vol.)",
-            "depth_bin",
-            "object_annotation_hierarchy",
-            "ecopart_Sampled volume [L]",
-        }
-        missing_comparison = sorted(comparison_required.difference(joined.columns))
-        if object_column is None:
-            missing_comparison.append("object_id")
-        if not missing_comparison:
-            from core.net_uvp_comparison import (  # noqa: PLC0415
-                NET_UVP_DEPTH_METHOD_VERSION,
-                build_paired_depth_strata,
-            )
+        # Reuse the compact result calculated above; the persisted object table
+        # is an inspection artefact only and never drives the science.
+        strata = compact_strata
+        calculable = strata.loc[strata["comparison_calculable"]].copy()
+        exclusions = strata.loc[~strata["comparison_calculable"]].copy()
+        from core.net_uvp_comparison import NET_UVP_DEPTH_METHOD_VERSION  # noqa: PLC0415
 
-            try:
-                strata = build_paired_depth_strata(
-                    joined,
-                    uvp_object_col=object_column,
-                )
-            except ValueError as exc:
-                comparison_note = (
-                    "\nPréparation par tranche non produite : " + str(exc)
-                )
-            else:
-                calculable = strata.loc[strata["comparison_calculable"]].copy()
-                exclusions = strata.loc[~strata["comparison_calculable"]].copy()
-                comparison_provenance = {
-                    "source": "net_uvp_depth_comparison",
-                    "joined_variable": variable_name,
-                    "method_version": NET_UVP_DEPTH_METHOD_VERSION,
-                    "ctd_verification": ctd_verification,
-                    "exploratory": joined_exploratory,
-                }
-                for output_name, output_frame in (
-                    ("df_net_uvp_strata", strata),
-                    ("df_net_uvp_calculable", calculable),
-                    ("df_net_uvp_exclusions", exclusions),
-                ):
-                    store_dataset(
-                        _store,
-                        thread_id,
-                        output_frame,
-                        variable_name=output_name,
-                        meta={
-                            **comparison_provenance,
-                            "n_rows": int(len(output_frame)),
-                            "n_cols": int(len(output_frame.columns)),
-                        },
-                        set_active=output_name == "df_net_uvp_strata",
-                    )
-                    comparison_refs.append(output_name)
-                exclusion_counts = {
-                    str(status): int(count)
-                    for status, count in exclusions["depth_match_status"]
-                    .value_counts()
-                    .items()
-                }
-                comparison_metrics = {
-                    "total_strata": int(len(strata)),
-                    "calculable_strata": int(len(calculable)),
-                    "missing_strata": int(len(exclusions)),
-                    "exclusions_by_status": exclusion_counts,
-                }
-                comparison_note = (
-                    f"\nComparaison par tranche prête : {len(calculable)}/{len(strata)} "
-                    "tranche(s) calculable(s), "
-                    f"{len(exclusions)} avec valeur manquante ou exclusion. "
-                    "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
-                    "`df_net_uvp_exclusions`."
-                )
-        else:
-            comparison_note = (
-                "\nPréparation par tranche non produite; colonnes absentes : "
-                + ", ".join(sorted(set(missing_comparison)))
-                + ". La jointure objet complète reste disponible."
+        comparison_provenance = {
+            "source": "net_uvp_depth_comparison",
+            "joined_variable": "compact_certified_inputs",
+            "method_version": NET_UVP_DEPTH_METHOD_VERSION,
+            "ctd_verification": ctd_verification,
+            "exploratory": joined_exploratory,
+            "materialization": "legacy_object_table_inspection_only",
+        }
+        for output_name, output_frame in (
+            ("df_net_uvp_strata", strata),
+            ("df_net_uvp_calculable", calculable),
+            ("df_net_uvp_exclusions", exclusions),
+        ):
+            store_dataset(
+                _store,
+                thread_id,
+                output_frame,
+                variable_name=output_name,
+                meta={
+                    **comparison_provenance,
+                    "n_rows": int(len(output_frame)),
+                    "n_cols": int(len(output_frame.columns)),
+                },
+                set_active=output_name == "df_net_uvp_strata",
             )
+            comparison_refs.append(output_name)
+        exclusion_counts = {
+            str(status): int(count)
+            for status, count in exclusions["depth_match_status"].value_counts().items()
+        }
+        comparison_metrics = {
+            "total_strata": int(len(strata)),
+            "calculable_strata": int(len(calculable)),
+            "missing_strata": int(len(exclusions)),
+            "exclusions_by_status": exclusion_counts,
+        }
+        comparison_note = (
+            f"\nComparaison par tranche prête : {len(calculable)}/{len(strata)} "
+            "tranche(s) calculable(s), "
+            f"{len(exclusions)} avec valeur manquante ou exclusion. "
+            "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
+            "`df_net_uvp_exclusions`."
+        )
         return success(
             (
                 "Table filet↔UVP enrichie EcoPart exploratoire créée avec CTD "

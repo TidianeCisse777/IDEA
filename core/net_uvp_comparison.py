@@ -387,6 +387,343 @@ def join_certified_net_uvp_enriched(
     )
 
 
+def build_paired_depth_strata_from_certified_inputs(
+    net_df: pd.DataFrame,
+    audit_df: pd.DataFrame,
+    uvp_enriched_df: pd.DataFrame,
+    *,
+    allow_unverified_ctd: bool = False,
+    net_sample_col: str = "SAMPLE_ID",
+    net_analysis_col: str = "ANALYSIS_ID",
+    net_taxon_col: str = "TAXON_ID",
+    net_class_col: str = "CLASS",
+    net_depth_min_col: str = "MIN_SAMPLE_DEPTH",
+    net_depth_max_col: str = "MAX_SAMPLE_DEPTH",
+    net_abundance_col: str = "ALL_STAGES_ABUND (ind./m3 depth vol.)",
+    uvp_depth_col: str = "depth_bin",
+    uvp_object_col: str = "object_id",
+    uvp_taxonomy_col: str = "object_annotation_hierarchy",
+    uvp_volume_col: str = "ecopart_Sampled volume [L]",
+) -> pd.DataFrame:
+    """Construit les strates certifiées sans matérialiser taxons × objets.
+
+    Le contrat scientifique est identique à
+    :func:`join_certified_net_uvp_enriched` suivi de
+    :func:`build_paired_depth_strata`, mais chaque numérateur est calculé à son
+    grain natif : lignes taxonomiques NeoLabs d'un côté et objets/bins UVP de
+    l'autre. Ainsi, un profil très dense ne crée jamais une table intermédiaire
+    de taille ``n_taxons × n_objets``.
+    """
+    def require_columns(frame: pd.DataFrame, columns: tuple[str, ...], label: str) -> None:
+        missing = [column for column in columns if column not in frame.columns]
+        if missing:
+            raise ValueError(
+                f"Comparaison filet↔UVP par tranche refusée : colonne(s) {label} absente(s) : "
+                + ", ".join(f"`{column}`" for column in missing)
+                + "."
+            )
+
+    def normalized_id(values: pd.Series) -> pd.Series:
+        return values.astype("string").str.strip().replace("", pd.NA)
+
+    def explicitly_certified(value: object) -> bool:
+        if isinstance(value, (bool, np.bool_)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1"}
+        return False
+
+    require_columns(
+        net_df,
+        (
+            net_sample_col,
+            net_analysis_col,
+            net_taxon_col,
+            net_class_col,
+            net_depth_min_col,
+            net_depth_max_col,
+            net_abundance_col,
+        ),
+        "filet",
+    )
+    require_columns(
+        audit_df,
+        ("net_sample_id", "uvp_project_id", "uvp_profile_str", "join_eligible"),
+        "audit",
+    )
+    require_columns(
+        uvp_enriched_df,
+        (
+            "export_project_id",
+            uvp_depth_col,
+            uvp_object_col,
+            uvp_taxonomy_col,
+            uvp_volume_col,
+        ),
+        "export UVP",
+    )
+    if uvp_taxonomy_col != "object_annotation_hierarchy":
+        raise ValueError(
+            "Comparaison filet↔UVP par tranche refusée : la taxonomie UVP "
+            "doit provenir de `object_annotation_hierarchy`."
+        )
+
+    certified = audit_df["join_eligible"].map(explicitly_certified)
+    if "ctd_verification" in audit_df.columns:
+        certified &= audit_df["ctd_verification"].astype("string").str.strip().eq("verified")
+    elif "ctd_filename_join_eligible" in audit_df.columns:
+        certified &= audit_df["ctd_filename_join_eligible"].map(explicitly_certified)
+    elif "ctd_filename_match_status" in audit_df.columns:
+        certified &= audit_df["ctd_filename_match_status"].astype("string").str.strip().eq("matched")
+    accepted = certified
+    if (
+        allow_unverified_ctd
+        and "ctd_verification" in audit_df.columns
+        and "exploratory" in audit_df.columns
+    ):
+        accepted |= (
+            audit_df["ctd_verification"].astype("string").str.strip().eq("unavailable")
+            & audit_df["exploratory"].map(explicitly_certified)
+        )
+    audit = audit_df.loc[accepted].copy()
+    if audit.empty:
+        return pd.DataFrame()
+    audit["_net_sample_key"] = normalized_id(audit["net_sample_id"])
+    audit["_audit_project_key"] = normalized_id(audit["uvp_project_id"])
+    audit["_audit_profile_key"] = normalized_id(audit["uvp_profile_str"])
+    if audit[["_net_sample_key", "_audit_project_key", "_audit_profile_key"]].isna().any().any():
+        raise ValueError("Jointure filet↔UVP refusée : clé d'audit certifiée absente.")
+    audit = audit.drop_duplicates(
+        subset=["_net_sample_key", "_audit_project_key", "_audit_profile_key"]
+    )
+    if audit.duplicated("_net_sample_key", keep=False).any():
+        raise ValueError("Jointure filet↔UVP refusée : clé de profil audit ambiguë.")
+
+    enriched = uvp_enriched_df.copy()
+    profile_candidates: dict[str, pd.Series] = {}
+    for column in ("sample_profileid", "sample_id", "obj_orig_id"):
+        if column in enriched.columns:
+            candidate = normalized_id(enriched[column])
+            if column != "sample_profileid":
+                candidate = candidate.str.replace(r"_\d+$", "", regex=True)
+            profile_candidates[column] = candidate
+    if not profile_candidates:
+        raise ValueError(
+            "Jointure filet↔UVP refusée : aucune clé de profil exportée "
+            "(`sample_profileid`, `sample_id` ou `obj_orig_id`) n'est présente."
+        )
+    fallback_values = (
+        pd.concat(
+            [
+                profile_candidates[column]
+                for column in ("sample_id", "obj_orig_id")
+                if column in profile_candidates
+            ],
+            axis=1,
+        )
+        if any(column in profile_candidates for column in ("sample_id", "obj_orig_id"))
+        else None
+    )
+    if fallback_values is not None and fallback_values.nunique(axis=1, dropna=True).gt(1).any():
+        fallback_conflict = fallback_values.nunique(axis=1, dropna=True).gt(1)
+        explicit_profile = profile_candidates.get("sample_profileid")
+        if explicit_profile is None or explicit_profile[fallback_conflict].isna().any():
+            raise ValueError("Jointure filet↔UVP refusée : clé de profil exportée ambiguë.")
+    if "sample_profileid" in profile_candidates:
+        profile_key = profile_candidates["sample_profileid"].copy()
+        if fallback_values is not None:
+            profile_key = profile_key.fillna(fallback_values.bfill(axis=1).iloc[:, 0])
+    else:
+        assert fallback_values is not None
+        profile_key = fallback_values.bfill(axis=1).iloc[:, 0]
+    if profile_key.isna().any():
+        raise ValueError("Jointure filet↔UVP refusée : clé de profil exportée absente.")
+    enriched["_export_profile_key"] = profile_key
+    enriched["_export_project_key"] = normalized_id(enriched["export_project_id"])
+    if enriched["_export_project_key"].isna().any():
+        raise ValueError("Jointure filet↔UVP refusée : clé de projet exportée absente.")
+
+    net = net_df.copy()
+    net["_net_sample_key"] = normalized_id(net[net_sample_col])
+    net = net.merge(audit, on="_net_sample_key", how="inner", suffixes=("", "_audit"))
+    if net.empty:
+        return pd.DataFrame()
+    # The audit is authoritative for the profile/project shown in the result.
+    net["export_project_id"] = net["uvp_project_id"]
+    available_profiles = enriched[["_export_project_key", "_export_profile_key"]].drop_duplicates()
+    net = net.merge(
+        available_profiles,
+        left_on=["_audit_project_key", "_audit_profile_key"],
+        right_on=["_export_project_key", "_export_profile_key"],
+        how="inner",
+    )
+    if net.empty:
+        return pd.DataFrame()
+
+    profile_rows = {
+        key: group
+        for key, group in enriched.groupby(
+            ["_export_project_key", "_export_profile_key"], sort=False, dropna=False
+        )
+    }
+    for frame in (net, enriched):
+        for column in (
+            net_depth_min_col,
+            net_depth_max_col,
+            net_abundance_col,
+            uvp_depth_col,
+            uvp_volume_col,
+        ):
+            if column in frame.columns:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+    rows: list[dict[str, object]] = []
+    stratum_key = [net_sample_col, net_depth_min_col, net_depth_max_col]
+    for (sample_id, depth_min, depth_max), net_group in net.groupby(
+        stratum_key, sort=True, dropna=False
+    ):
+        profile_keys = net_group[["_audit_project_key", "_audit_profile_key"]].drop_duplicates()
+        if len(profile_keys) != 1:
+            raise ValueError("Jointure filet↔UVP refusée : clé de profil audit ambiguë.")
+        profile_key_tuple = tuple(profile_keys.iloc[0])
+        uvp_group = profile_rows[profile_key_tuple]
+
+        net_taxa = net_group.loc[
+            net_group[net_class_col].astype("string").str.casefold().eq("copepoda")
+        ]
+        net_taxon_key = [
+            net_sample_col,
+            net_analysis_col,
+            net_taxon_col,
+            net_depth_min_col,
+            net_depth_max_col,
+        ]
+        net_missing = 0
+        net_incompatible = 0
+        canonical_net_values: list[float] = []
+        for _, taxon_rows in net_taxa.groupby(net_taxon_key, sort=True, dropna=False):
+            values = taxon_rows[net_abundance_col].to_numpy(dtype=float)
+            finite = values[np.isfinite(values)]
+            if len(finite) == 0 or len(finite) != len(values):
+                net_missing += 1
+                continue
+            candidate = float(finite[0])
+            if not np.allclose(finite, candidate, rtol=1e-6, atol=1e-9):
+                net_incompatible += 1
+                continue
+            canonical_net_values.append(candidate)
+        net_abundance = (
+            float(sum(canonical_net_values))
+            if not net_taxa.empty and net_missing == 0 and net_incompatible == 0
+            else np.nan
+        )
+
+        valid_depth_interval = bool(
+            np.isfinite(depth_min)
+            and np.isfinite(depth_max)
+            and float(depth_max) > float(depth_min)
+        )
+        in_interval = (
+            uvp_group.loc[
+                uvp_group[uvp_depth_col].between(
+                    float(depth_min), float(depth_max), inclusive="both"
+                )
+            ]
+            if valid_depth_interval
+            else uvp_group.iloc[0:0]
+        )
+        object_ids = in_interval[uvp_object_col].astype("string").str.strip()
+        unique_objects = in_interval.loc[
+            object_ids.notna() & object_ids.ne("")
+        ].drop_duplicates(uvp_object_col)
+        target_count = int(copepod_hierarchy_mask(unique_objects).sum())
+        bin_count = int(in_interval[uvp_depth_col].dropna().nunique())
+        missing_volume_bins = 0
+        incompatible_volume_bins = 0
+        canonical_volumes: list[float] = []
+        for _, depth_rows in in_interval.groupby(uvp_depth_col, sort=True):
+            raw_volumes = depth_rows[uvp_volume_col].to_numpy(dtype=float)
+            finite = raw_volumes[np.isfinite(raw_volumes)]
+            if len(finite) == 0 or len(finite) != len(raw_volumes):
+                missing_volume_bins += 1
+                continue
+            candidate = float(finite[0])
+            if candidate <= 0 or not np.allclose(finite, candidate, rtol=1e-6, atol=1e-9):
+                incompatible_volume_bins += 1
+                continue
+            canonical_volumes.append(candidate)
+
+        if not valid_depth_interval:
+            status = "invalid_net_depth"
+            reason = "Intervalle de profondeur du filet absent ou invalide."
+        elif net_taxa.empty:
+            status = "missing_net_target"
+            reason = "Aucune ligne d'abondance de copépodes pour cette tranche de filet."
+        elif net_incompatible:
+            status = "incompatible_net_abundance"
+            reason = "Abondances filet contradictoires pour une même ligne taxonomique."
+        elif net_missing:
+            status = "missing_net_abundance"
+            reason = "Au moins une abondance filet requise est manquante."
+        elif bin_count == 0:
+            status = "no_depth_coverage"
+            reason = "Aucun bin UVP dans la même tranche de profondeur que le filet."
+        elif incompatible_volume_bins:
+            status = "incompatible_volume"
+            reason = "Valeurs de volume EcoPart contradictoires ou non positives dans un bin."
+        elif missing_volume_bins:
+            status = "missing_volume"
+            reason = "Volume EcoPart manquant pour au moins un bin de profondeur."
+        else:
+            status = "matched"
+            reason = pd.NA
+
+        calculable = status == "matched"
+        sampled_volume = float(sum(canonical_volumes)) if calculable else np.nan
+        uvp_abundance = target_count / sampled_volume * 1000.0 if calculable else np.nan
+        abundance_delta = uvp_abundance - net_abundance if calculable else np.nan
+        abundance_ratio = (
+            uvp_abundance / net_abundance
+            if calculable and net_abundance != 0
+            else np.nan
+        )
+        row: dict[str, object] = {
+            "net_sample_id": sample_id,
+            "net_depth_min_m": float(depth_min),
+            "net_depth_max_m": float(depth_max),
+            "net_abundance_ind_m3": net_abundance,
+            "net_missing_abundance_rows": net_missing,
+            "net_incompatible_abundance_rows": net_incompatible,
+            "uvp_target_count": target_count,
+            "uvp_depth_bin_count": bin_count,
+            "uvp_missing_volume_bins": missing_volume_bins,
+            "uvp_incompatible_volume_bins": incompatible_volume_bins,
+            "uvp_sampled_volume_L": sampled_volume,
+            "uvp_abundance_ind_m3": uvp_abundance,
+            "abundance_delta_ind_m3": abundance_delta,
+            "abundance_ratio": abundance_ratio,
+            "depth_match_status": status,
+            "comparison_calculable": calculable,
+            "exclusion_reason": reason,
+            "method_version": NET_UVP_DEPTH_METHOD_VERSION,
+        }
+        for source, target in (
+            ("STATION_NAME", "station"),
+            ("export_project_id", "uvp_project_id"),
+            ("uvp_profile_str", "uvp_profile"),
+            ("ctd_verification", "ctd_verification"),
+            ("exploratory", "exploratory"),
+            ("latitude", "latitude"),
+            ("longitude", "longitude"),
+        ):
+            if source in net_group.columns:
+                values = net_group[source].dropna()
+                row[target] = values.iloc[0] if not values.empty else pd.NA
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
 def to_ind_per_m3(density: pd.Series, *, from_unit: str) -> pd.Series:
     """Convertit une densité vers `ind./m³` (base filet) avant comparaison.
 

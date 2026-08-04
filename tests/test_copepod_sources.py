@@ -2550,6 +2550,65 @@ def test_join_net_uvp_enriched_persists_certified_object_rows(
     assert stored["meta"]["uvp_enriched_variable"] == "df_ecotaxa_ecopart_campaign"
 
 
+def test_join_net_uvp_enriched_avoids_materializing_large_taxa_object_fanout(
+    tmp_path, monkeypatch
+):
+    """The tool must persist strates, not a huge taxon×object inspection table."""
+    import tools.copepod_sources as source_module
+
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+    net_entry = store.get(f"{thread_id}:dataset:df_file_baffin_2024")
+    net = pd.DataFrame(
+        {
+            "SAMPLE_ID": [501] * 401,
+            "ANALYSIS_ID": [9001] * 401,
+            "TAXON_ID": list(range(401)),
+            "CLASS": ["Copepoda"] * 401,
+            "MIN_SAMPLE_DEPTH": [0.0] * 401,
+            "MAX_SAMPLE_DEPTH": [10.0] * 401,
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [1.0] * 401,
+        }
+    )
+    store.set(f"{thread_id}:dataset:df_file_baffin_2024", net, net_entry["meta"])
+    audit_entry = store.get(f"{thread_id}:dataset:df_net_uvp_matches")
+    audit_meta = dict(audit_entry["meta"])
+    audit_meta["net_dataframe_fingerprint"] = source_module._net_dataframe_fingerprint(net)
+    store.set(
+        f"{thread_id}:dataset:df_net_uvp_matches",
+        audit_entry["df"],
+        audit_meta,
+    )
+    enriched_entry = store.get(f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign")
+    enriched = pd.DataFrame(
+        {
+            "export_project_id": [10] * 251,
+            "sample_profileid": ["uvp-101"] * 251,
+            "object_id": [f"object-{index}" for index in range(251)],
+            "depth_bin": [5.0] * 251,
+            "object_annotation_hierarchy": ["living>Crustacea>Copepoda"] * 251,
+            "ecopart_Sampled volume [L]": [100.0] * 251,
+        }
+    )
+    store.set(
+        f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign",
+        enriched,
+        enriched_entry["meta"],
+    )
+
+    text = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    strata = store.get(f"{thread_id}:dataset:df_net_uvp_strata")["df"]
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is None
+    assert "sans matérialiser" in text
+    assert strata["net_abundance_ind_m3"].tolist() == pytest.approx([401.0])
+    assert strata["uvp_target_count"].tolist() == [251]
+
+
 def test_join_net_uvp_enriched_also_prepares_calculable_and_excluded_strata(
     tmp_path, monkeypatch
 ):
