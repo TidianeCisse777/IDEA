@@ -80,6 +80,43 @@ def test_confirmed_enrichment_reuses_compatible_persistent_tsv(
     assert _isolated_store.get("thread-cache:ecopart")["meta"]["content_sha256"] == entry.content_sha256
 
 
+def test_resolution_falls_back_to_exact_profile_after_project_search_timeout(tmp_path, monkeypatch):
+    import pandas as pd
+    from unittest.mock import MagicMock
+
+    import requests
+    import tools.ecopart_sources as sources
+    from tools.ecopart_sources import _lookup_ecopart_project_for_ecotaxa
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
+    sources._ECOPART_RESOLUTION_CACHE.clear()
+
+    dataframe = pd.DataFrame({
+        "sample_profileid": ["20240925-123056"],
+        "sample_stationid": ["RA62"],
+        "object_lat": [76.2638],
+        "object_lon": [-74.5992],
+    })
+    client = MagicMock()
+    client.search_samples.side_effect = requests.ReadTimeout("project lookup timed out")
+    client.search_samples_by_bbox.return_value = [{"id": 91, "lat": 76.2638, "lon": -74.5992}]
+    client.get_sample_metadata.return_value = {
+        "profile_id": "20240925-123056",
+        "ecopart_project_id": 1063,
+        "ecotaxa_project_id": 17498,
+    }
+
+    result = _lookup_ecopart_project_for_ecotaxa(
+        dataframe,
+        known_ecotaxa_pid=17498,
+        client=client,
+        request_timeout=5.0,
+    )
+
+    assert result["project_id"] == 1063
+    assert "profil" in result["resolution"]
+
+
 def test_audit_ecotaxa_ecopart_join_reads_persisted_join(_isolated_store):
     import pandas as pd
 

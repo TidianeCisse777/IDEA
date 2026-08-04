@@ -202,6 +202,9 @@ class EcopartClient:
         m = re.search(r"Profile ID\s*:\s*([^\s]+)", text)
         if m:
             out["profile_id"] = m.group(1)
+        m = re.search(r"Station(?:\s+ID)?\s*:\s*([^\s]+)", text, re.IGNORECASE)
+        if m:
+            out["station_id"] = m.group(1)
         m = re.search(r"Project\s*:\s*(.+?)\((\d+)\)", text)
         if m:
             out["ecopart_project_name"] = m.group(1).strip()

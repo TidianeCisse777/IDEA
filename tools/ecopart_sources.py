@@ -842,10 +842,6 @@ def _lookup_ecopart_project_for_ecotaxa(
                 search_kwargs["timeout"] = float(request_timeout)
             linked = client.search_samples(**search_kwargs)
         except Exception as exc:
-            if request_timeout is not None:
-                return _cache_transient_error(
-                    f"préflight EcoPart interrompu : {exc}"
-                )
             linked = []
         ordered_linked = sorted(linked, key=lambda c: int(c.get("id", 0)))
         if request_timeout is not None:
@@ -908,13 +904,19 @@ def _lookup_ecopart_project_for_ecotaxa(
                     ),
                     "linked_samples": titled_samples,
                 })
-        if request_timeout is not None:
-            return _cache_transient_error(
-                    f"aucun lien EcoTaxa→EcoPart vérifiable pour "
-                    f"{known_ecotaxa_pid} dans le délai de {request_timeout:g} s"
-            )
+        # A timed-out project-wide lookup must not prevent the much smaller
+        # profile/position fallback below.  This matters for large UVP projects:
+        # the exact profile is a stronger join key than a slow project listing.
 
     profile_labels = set(_candidate_ecotaxa_profile_labels(df_et))
+    station_labels = set()
+    for station_column in ("sample_stationid", "sample_station_name", "station_id"):
+        if station_column in df_et.columns:
+            station_labels.update(
+                str(value).strip()
+                for value in df_et[station_column].dropna().tolist()
+                if str(value).strip()
+            )
 
     if lat_col is None or lon_col is None:
         if not profile_labels:
@@ -980,6 +982,7 @@ def _lookup_ecopart_project_for_ecotaxa(
             continue
         ep_pid = int(ep_pid)
         pf = str(meta.get("profile_id") or "").strip()
+        station = str(meta.get("station_id") or "").strip()
         et_pid = meta.get("ecotaxa_project_id")
         # Authoritative EcoTaxa↔EcoPart link: definitive — return immediately.
         if known_ecotaxa_pid is not None and et_pid is not None and int(et_pid) == int(known_ecotaxa_pid):
@@ -990,10 +993,12 @@ def _lookup_ecopart_project_for_ecotaxa(
                     f"lien EcoTaxa↔EcoPart (projet EcoTaxa {known_ecotaxa_pid}, profil `{pf}`)"
                 ),
             })
-        tally = votes.setdefault(ep_pid, [0, 0])
+        tally = votes.setdefault(ep_pid, [0, 0, 0])
         if pf and pf in profile_labels:
-            tally[0] += 1
-        tally[1] += 1
+            tally[1] += 1
+            if station and station in station_labels:
+                tally[0] += 1
+        tally[2] += 1
         names.setdefault(ep_pid, meta.get("ecopart_project_name") or "")
 
     if not votes:
@@ -1001,10 +1006,14 @@ def _lookup_ecopart_project_for_ecotaxa(
 
     # No authoritative link found: prefer profile matches, then candidate count;
     # lowest project id breaks ties so the result is stable across runs.
-    best_pid = max(votes, key=lambda pid: (votes[pid][0], votes[pid][1], -pid))
-    mid, weak = votes[best_pid]
+    best_pid = max(votes, key=lambda pid: (votes[pid][0], votes[pid][1], votes[pid][2], -pid))
+    exact, mid, weak = votes[best_pid]
     if mid:
-        how = f"correspondance de profil ({mid} sample(s) sur {weak})"
+        how = (
+            f"correspondance profil+station ({exact} sample(s))"
+            if exact
+            else f"correspondance de profil ({mid} sample(s) sur {weak})"
+        )
     else:
         how = f"proximité géographique par {search_note} ({weak} sample(s), aucun lien EcoTaxa direct)"
     return _cache_and_return({
