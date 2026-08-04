@@ -28,6 +28,12 @@ def test_system_prompt_requires_neolabs_to_amundsen_matching_before_profile_read
     assert "match by latitude/longitude/time first" in prompt
 
 
+def test_system_prompt_routes_a_bare_amundsen_enrichment_directly():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "A bare « enrichissement Amundsen » is sufficient" in COPEPOD_SYSTEM_PROMPT
+
+
 def test_system_prompt_requires_comparable_abundance_before_cross_instrument_comparison():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 
@@ -70,6 +76,13 @@ def test_net_uvp_skill_routes_depth_comparison_through_canonical_builder():
     assert "comparison_calculable" in skill
     assert "depth_match_status" in skill
     assert "df_net_uvp_strata" in skill
+
+
+def test_net_uvp_prompt_forbids_manual_final_join_before_canonical_tool():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "join_net_uvp_enriched` directly" in COPEPOD_SYSTEM_PROMPT
+    assert "never use\n`run_pandas` to merge" in COPEPOD_SYSTEM_PROMPT
 
 
 def test_generated_gateway_documents_persistent_affinity_and_bare_ids():

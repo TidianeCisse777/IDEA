@@ -9,7 +9,7 @@ forbidden_when:
   - df_net_uvp_matches does not exist yet — call find_uvp_matches_for_net_table first
 requires:
   - "file:loaded"
-next_tool: run_pandas
+next_tool: join_net_uvp_enriched
 max_tokens: 3500
 size_exemption: The certified net↔UVP chain and the stratum-matched profile method share one mandatory procedure; the size allowance prevents those safeguards from diverging.
 description: >

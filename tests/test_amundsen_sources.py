@@ -1551,6 +1551,64 @@ def test_enrich_with_amundsen_ctd_prefers_sample_ctd_filename_over_spatial_batch
     assert enriched["amundsen_oxym"].tolist() == [280.0, 275.0, 270.0]
 
 
+def test_filename_enrichment_batches_repeated_export_objects():
+    """A large object export is assigned by CTD profile, not one Python loop per object."""
+    from time import perf_counter
+    from unittest.mock import patch
+
+    import pandas as pd
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-filename-vectorized-export"
+    n_objects = 20_000
+    source = pd.DataFrame(
+        {
+            "sample_ctdrosettefilename": ["1601002"] * n_objects,
+            "object_depth_min": ([5.0, 50.0] * (n_objects // 2)),
+            "object_lat": [58.55] * n_objects,
+            "object_lon": [-52.84] * n_objects,
+            "object_date": ["2016-06-07T12:00:00Z"] * n_objects,
+        }
+    )
+    _store.set(thread_id, source, {"source": "ecotaxa_export_campaign"})
+    ctd = pd.DataFrame(
+        [
+            {
+                "filename": "1601002.int.nc", "time": "2016-06-07T12:00:00Z",
+                "latitude": 58.55, "longitude": -52.84, "station": "G320",
+                "cast_number": 2, "PRES": 5.0, "TE90": -1.0, "PSAL": 31.0,
+            },
+            {
+                "filename": "1601002.int.nc", "time": "2016-06-07T12:00:00Z",
+                "latitude": 58.55, "longitude": -52.84, "station": "G320",
+                "cast_number": 2, "PRES": 50.0, "TE90": 1.5, "PSAL": 33.0,
+            },
+        ]
+    )
+
+    with patch(
+        "tools.amundsen_sources._fetch_amundsen_ctd_profile_rows_by_filename",
+        return_value=ctd,
+    ):
+        enrich = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        started = perf_counter()
+        enrich.invoke({"variables": ["temperature", "salinity"]})
+        elapsed = perf_counter() - started
+
+    enriched_key = _store.keys(f"{thread_id}:dataset:df_amundsen_enriched_")[-1]
+    enriched = _store.get(enriched_key)["df"]
+    assert elapsed < 2.0
+    assert len(enriched) == n_objects
+    assert enriched["amundsen_match_status"].eq("matched").all()
+    assert enriched["amundsen_te90_degC"].iloc[::2].eq(-1.0).all()
+    assert enriched["amundsen_te90_degC"].iloc[1::2].eq(1.5).all()
+
+
 def test_filename_enrichment_reports_upstream_failure_without_crashing():
     """A failed filename lookup remains a structured Amundsen result."""
     import pandas as pd

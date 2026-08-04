@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
+import numpy as np
 import pandas as pd
 import requests
 from langchain_core.tools import tool
@@ -625,6 +626,7 @@ def _run_filename_enrichment(
                 ),
             )
 
+    working = working.reset_index(drop=True)
     source_aliases = working[filename_col].map(ctd_filename_aliases)
     requested_aliases = set().union(*source_aliases.tolist()) if len(source_aliases) else set()
     n_rows = len(working)
@@ -642,7 +644,7 @@ def _run_filename_enrichment(
         )
         fetch_failures = [str(exc)]
 
-    ctd = ctd.copy()
+    ctd = ctd.copy().reset_index(drop=True)
     ctd_aliases = (
         ctd["filename"].map(ctd_filename_aliases)
         if "filename" in ctd.columns
@@ -658,7 +660,8 @@ def _run_filename_enrichment(
     )
     source_time = (
         pd.to_datetime(working[schema.time_column], errors="coerce", utc=True)
-        if schema.time_column else pd.Series([pd.NaT] * n_rows)
+        if schema.time_column
+        else pd.Series(pd.NaT, index=range(n_rows), dtype="datetime64[ns, UTC]")
     )
     source_depth = (
         pd.to_numeric(working[schema.depth_column], errors="coerce")
@@ -670,107 +673,159 @@ def _run_filename_enrichment(
     )
     ctd_pres = pd.to_numeric(ctd.get("PRES"), errors="coerce") if "PRES" in ctd.columns else pd.Series(dtype=float)
 
-    statuses: list[str] = []
-    values: dict[str, list] = {
-        "amundsen_dataset_id": [],
-        "amundsen_time": [],
-        "amundsen_distance_km": [],
-        "amundsen_time_delta_min": [],
-        "amundsen_pres_dbar": [],
-        "amundsen_te90_degC": [],
-        "amundsen_psal_psu": [],
-        "amundsen_station": [],
-        "amundsen_cast_number": [],
-        "amundsen_filename": [],
-    }
+    value_columns = [
+        "amundsen_dataset_id",
+        "amundsen_time",
+        "amundsen_distance_km",
+        "amundsen_time_delta_min",
+        "amundsen_pres_dbar",
+        "amundsen_te90_degC",
+        "amundsen_psal_psu",
+        "amundsen_station",
+        "amundsen_cast_number",
+        "amundsen_filename",
+    ]
     for variable in selected_variables:
         output_column = _AMUNDSEN_ENRICHED_VALUE_COLUMNS.get(variable)
         if output_column:
-            values.setdefault(output_column, [])
-    n_matched = 0
+            if output_column not in value_columns:
+                value_columns.append(output_column)
 
-    for position, aliases in enumerate(source_aliases.tolist()):
-        default = {key: pd.NA for key in values}
-        default["amundsen_dataset_id"] = _AMUNDSEN_DATASET_ID
-        if not aliases:
-            statuses.append("missing_ctd_filename")
-            for key, column in values.items():
-                column.append(default[key])
-            continue
-        if fetch_failures:
-            statuses.append("source_unavailable")
-            for key, column in values.items():
-                column.append(default[key])
-            continue
-        candidates = ctd.loc[ctd_aliases.map(lambda ctd_set: bool(aliases & ctd_set))]
-        if candidates.empty:
-            statuses.append("no_match")
-            for key, column in values.items():
-                column.append(default[key])
-            continue
+    # Build CTD profiles once, choose a profile once per distinct source
+    # signature, then choose the closest pressure vectorially for all objects.
+    # EcoTaxa exports contain one row per object, so the former row-by-row
+    # implementation repeated this exact work hundreds of thousands of times.
+    profile_columns = [
+        column for column in ("filename", "station", "cast_number", "time")
+        if column in ctd.columns
+    ]
+    raw_profiles = (
+        [group for _, group in ctd.groupby(profile_columns, dropna=False, sort=False)]
+        if profile_columns else ([ctd] if not ctd.empty else [])
+    )
+    profile_rows = [group.index.to_numpy(dtype=int) for group in raw_profiles]
+    profile_first = [group.iloc[0] for group in raw_profiles]
+    alias_to_profiles: dict[str, set[int]] = {}
+    for profile_id, rows in enumerate(profile_rows):
+        aliases = set().union(*(ctd_aliases.iloc[index] for index in rows))
+        for alias in aliases:
+            alias_to_profiles.setdefault(alias, set()).add(profile_id)
 
-        profile_columns = [
-            column for column in ("filename", "station", "cast_number", "time")
-            if column in candidates.columns
-        ]
-        profiles = [group for _, group in candidates.groupby(profile_columns, dropna=False, sort=False)]
+    source_alias_key = source_aliases.map(lambda aliases: "\x1f".join(sorted(aliases)))
+    source_signatures = pd.DataFrame(
+        {
+            "aliases": source_alias_key,
+            "latitude": source_lat.to_numpy(),
+            "longitude": source_lon.to_numpy(),
+            "time": source_time.to_numpy(),
+        }
+    )
+    grouped_positions = source_signatures.groupby(
+        ["aliases", "latitude", "longitude", "time"], dropna=False, sort=False
+    ).indices
+    selected_profiles = np.full(n_rows, -1, dtype=int)
 
-        def profile_score(profile: pd.DataFrame) -> tuple[float, float, str]:
-            first = profile.iloc[0]
-            time_delta = float("inf")
-            if pd.notna(source_time.iloc[position]) and not ctd_time.empty:
+    if not fetch_failures:
+        for positions in grouped_positions.values():
+            position = int(positions[0])
+            aliases = source_aliases.iloc[position]
+            if not aliases:
+                continue
+            candidate_ids = set().union(*(alias_to_profiles.get(alias, set()) for alias in aliases))
+            if not candidate_ids:
+                continue
+
+            def profile_score(profile_id: int) -> tuple[float, float, str]:
+                first = profile_first[profile_id]
                 profile_time = pd.to_datetime(first.get("time"), errors="coerce", utc=True)
-                if pd.notna(profile_time):
-                    time_delta = abs((profile_time - source_time.iloc[position]).total_seconds())
-            distance = float("inf")
-            lat = pd.to_numeric(pd.Series([first.get("latitude")]), errors="coerce").iloc[0]
-            lon = pd.to_numeric(pd.Series([first.get("longitude")]), errors="coerce").iloc[0]
-            if pd.notna(source_lat.iloc[position]) and pd.notna(source_lon.iloc[position]) and pd.notna(lat) and pd.notna(lon):
-                distance = haversine_km(float(source_lat.iloc[position]), float(source_lon.iloc[position]), float(lat), float(lon))
-            return (time_delta, distance, str(first.get("filename", "")))
+                time_delta = (
+                    abs((profile_time - source_time.iloc[position]).total_seconds())
+                    if pd.notna(profile_time) and pd.notna(source_time.iloc[position])
+                    else float("inf")
+                )
+                lat = pd.to_numeric(pd.Series([first.get("latitude")]), errors="coerce").iloc[0]
+                lon = pd.to_numeric(pd.Series([first.get("longitude")]), errors="coerce").iloc[0]
+                distance = (
+                    haversine_km(float(source_lat.iloc[position]), float(source_lon.iloc[position]), float(lat), float(lon))
+                    if pd.notna(source_lat.iloc[position]) and pd.notna(source_lon.iloc[position]) and pd.notna(lat) and pd.notna(lon)
+                    else float("inf")
+                )
+                return time_delta, distance, str(first.get("filename", ""))
 
-        profile = min(profiles, key=profile_score)
-        profile_indices = profile.index
-        if pd.notna(source_depth.iloc[position]) and "PRES" in profile.columns:
-            depth_delta = (ctd_pres.loc[profile_indices] - source_depth.iloc[position]).abs()
-            best_index = depth_delta.idxmin()
-        else:
-            best_index = profile_indices[0]
-        best = ctd.loc[best_index]
+            selected_profiles[positions] = min(candidate_ids, key=profile_score)
+
+    best_indices = np.full(n_rows, -1, dtype=int)
+    for profile_id in np.unique(selected_profiles[selected_profiles >= 0]):
+        positions = np.flatnonzero(selected_profiles == profile_id)
+        rows = profile_rows[int(profile_id)]
+        best_indices[positions] = rows[0]
+        if "PRES" not in ctd.columns:
+            continue
+        pressures = ctd_pres.iloc[rows].to_numpy(dtype=float)
+        valid_pressures = ~np.isnan(pressures)
+        source_depths = source_depth.iloc[positions].to_numpy(dtype=float)
+        valid_depths = ~np.isnan(source_depths)
+        if not valid_pressures.any() or not valid_depths.any():
+            continue
+        ordered = np.argsort(pressures[valid_pressures], kind="stable")
+        ordered_rows = rows[valid_pressures][ordered]
+        ordered_pressures = pressures[valid_pressures][ordered]
+        target_positions = positions[valid_depths]
+        target_depths = source_depths[valid_depths]
+        right = np.searchsorted(ordered_pressures, target_depths, side="left")
+        left = np.clip(right - 1, 0, len(ordered_pressures) - 1)
+        right = np.clip(right, 0, len(ordered_pressures) - 1)
+        use_left = np.abs(target_depths - ordered_pressures[left]) <= np.abs(target_depths - ordered_pressures[right])
+        best_indices[target_positions] = ordered_rows[np.where(use_left, left, right)]
+
+    statuses = np.full(n_rows, "no_match", dtype=object)
+    missing_filename = source_aliases.map(lambda aliases: not aliases).to_numpy()
+    statuses[missing_filename] = "missing_ctd_filename"
+    if fetch_failures:
+        statuses[~missing_filename] = "source_unavailable"
+
+    values = {column: pd.Series(pd.NA, index=range(n_rows), dtype="object") for column in value_columns}
+    values["amundsen_dataset_id"][:] = _AMUNDSEN_DATASET_ID
+    matched_positions = np.flatnonzero(best_indices >= 0)
+    if len(matched_positions):
+        best = ctd.iloc[best_indices[matched_positions]].reset_index(drop=True)
+        status_values = np.full(len(best), "matched", dtype=object)
+        requested = best.reindex(columns=selected_variables)
+        if selected_variables:
+            status_values[requested.isna().all(axis=1).to_numpy()] = "matched_no_value"
+        statuses[matched_positions] = status_values
+        source_lat_values = source_lat.iloc[matched_positions].to_numpy(dtype=float)
+        source_lon_values = source_lon.iloc[matched_positions].to_numpy(dtype=float)
+        best_lat = pd.to_numeric(best.get("latitude"), errors="coerce").to_numpy(dtype=float)
+        best_lon = pd.to_numeric(best.get("longitude"), errors="coerce").to_numpy(dtype=float)
+        valid_coordinates = ~(np.isnan(source_lat_values) | np.isnan(source_lon_values) | np.isnan(best_lat) | np.isnan(best_lon))
+        distance = np.full(len(best), np.nan)
+        lat1, lon1, lat2, lon2 = map(np.radians, (source_lat_values, source_lon_values, best_lat, best_lon))
+        haversine_a = np.sin((lat2 - lat1) / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin((lon2 - lon1) / 2) ** 2
+        distance[valid_coordinates] = np.round(6371.0088 * 2 * np.arcsin(np.sqrt(haversine_a[valid_coordinates])), 3)
         best_time = pd.to_datetime(best.get("time"), errors="coerce", utc=True)
-        best_lat = pd.to_numeric(pd.Series([best.get("latitude")]), errors="coerce").iloc[0]
-        best_lon = pd.to_numeric(pd.Series([best.get("longitude")]), errors="coerce").iloc[0]
-        distance = (
-            round(haversine_km(float(source_lat.iloc[position]), float(source_lon.iloc[position]), float(best_lat), float(best_lon)), 3)
-            if pd.notna(source_lat.iloc[position]) and pd.notna(source_lon.iloc[position]) and pd.notna(best_lat) and pd.notna(best_lon)
-            else pd.NA
-        )
-        time_delta = (
-            round(abs((best_time - source_time.iloc[position]).total_seconds()) / 60.0, 1)
-            if pd.notna(best_time) and pd.notna(source_time.iloc[position]) else pd.NA
-        )
-        requested_values = [best.get(variable) for variable in selected_variables if variable in best.index]
-        status = "matched_no_value" if requested_values and all(pd.isna(value) for value in requested_values) else "matched"
-        statuses.append(status)
-        n_matched += int(status == "matched")
+        source_time_values = source_time.iloc[matched_positions].reset_index(drop=True)
+        time_delta = (best_time - source_time_values).abs().dt.total_seconds().div(60).round(1)
         row_values = {
-            "amundsen_dataset_id": _AMUNDSEN_DATASET_ID,
-            "amundsen_time": best.get("time", pd.NA),
+            "amundsen_time": best.get("time"),
             "amundsen_distance_km": distance,
-            "amundsen_time_delta_min": time_delta,
-            "amundsen_pres_dbar": best.get("PRES", pd.NA),
-            "amundsen_te90_degC": best.get("TE90", pd.NA),
-            "amundsen_psal_psu": best.get("PSAL", pd.NA),
-            "amundsen_station": best.get("station", pd.NA),
-            "amundsen_cast_number": best.get("cast_number", pd.NA),
-            "amundsen_filename": best.get("filename", pd.NA),
+            "amundsen_time_delta_min": time_delta.to_numpy(),
+            "amundsen_pres_dbar": best.get("PRES"),
+            "amundsen_te90_degC": best.get("TE90"),
+            "amundsen_psal_psu": best.get("PSAL"),
+            "amundsen_station": best.get("station"),
+            "amundsen_cast_number": best.get("cast_number"),
+            "amundsen_filename": best.get("filename"),
         }
         for variable in selected_variables:
             output_column = _AMUNDSEN_ENRICHED_VALUE_COLUMNS.get(variable)
             if output_column:
-                row_values[output_column] = best.get(variable, pd.NA)
-        for key, column in values.items():
-            column.append(row_values[key])
+                row_values[output_column] = best.get(variable)
+        for column, data in row_values.items():
+            if data is not None:
+                values[column].iloc[matched_positions] = data
+
+    n_matched = int((statuses == "matched").sum())
 
     enriched = working.copy(deep=True).reset_index(drop=True)
     enriched[status_col] = statuses

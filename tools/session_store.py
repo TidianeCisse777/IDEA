@@ -72,7 +72,11 @@ class SessionStore:
         except Exception:
             return None
 
-        return {"df": df, "meta": meta}
+        return {
+            "df": df,
+            "meta": meta,
+            "data_ref": payload.get("data_ref"),
+        }
 
     def _remove_matching_legacy_entry(self, thread_id: str) -> None:
         legacy_meta_path = self._legacy_meta_path(thread_id)
@@ -112,6 +116,25 @@ class SessionStore:
         self._store[thread_id] = session
         self._persist(thread_id, df, meta)
 
+    def set_reference(self, thread_id: str, data_ref: str, meta: dict) -> None:
+        """Persist a lightweight alias to another session dataframe.
+
+        A single EcoTaxa export can be hundreds of megabytes.  Active and
+        source-alias keys therefore point to its canonical dataset entry
+        instead of serialising identical pickles for each name.
+        """
+        session = {"df": None, "meta": meta, "data_ref": data_ref}
+        self._store[thread_id] = session
+        with contextlib.suppress(FileNotFoundError):
+            self._data_path(thread_id).unlink()
+        self._meta_path(thread_id).write_text(
+            json.dumps(
+                {"session_key": thread_id, "meta": meta, "data_ref": data_ref},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
     def update_meta(self, thread_id: str, meta_updates: dict) -> None:
         session = self.get(thread_id) or {"df": None, "meta": {}}
         meta = dict(session.get("meta") or {})
@@ -120,9 +143,17 @@ class SessionStore:
 
     def get(self, thread_id: str) -> dict[str, Any] | None:
         session = self._store.get(thread_id)
-        if session is not None:
+        if session is None:
+            session = self._load_from_disk(thread_id)
+        if session is None:
+            return None
+        data_ref = session.get("data_ref")
+        if not data_ref:
             return session
-        return self._load_from_disk(thread_id)
+        target = self.get(str(data_ref))
+        if target is None or target.get("df") is None:
+            return {"df": None, "meta": session.get("meta") or {}}
+        return {"df": target["df"], "meta": session.get("meta") or {}}
 
     def keys(self, prefix: str | None = None) -> list[str]:
         """List known session keys, including entries persisted on disk."""

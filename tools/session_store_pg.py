@@ -119,6 +119,34 @@ class SessionStorePG:
             with contextlib.suppress(FileNotFoundError):
                 Path(stale_path).unlink()
 
+    def set_reference(self, session_key: str, data_ref: str, meta: dict) -> None:
+        """Store an alias row which reuses another canonical dataframe file."""
+        stale_path: str | None = None
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT storage_path FROM sessions WHERE session_key = :key"),
+                {"key": session_key},
+            ).fetchone()
+            conn.execute(
+                _UPSERT,
+                {
+                    "key": session_key,
+                    "path": None,
+                    "meta": json.dumps({**meta, "data_ref": data_ref}),
+                },
+            )
+            old_path = row[0] if row is not None else None
+            if old_path and not self._path_is_referenced(conn, old_path):
+                stale_path = old_path
+        self._cache[session_key] = {
+            "df": None,
+            "meta": meta,
+            "data_ref": data_ref,
+        }
+        if stale_path:
+            with contextlib.suppress(FileNotFoundError):
+                Path(stale_path).unlink()
+
     def update_meta(self, session_key: str, meta_updates: dict) -> None:
         session = self.get(session_key) or {"df": None, "meta": {}}
         meta = dict(session.get("meta") or {})
@@ -178,25 +206,33 @@ class SessionStorePG:
 
     def get(self, session_key: str) -> dict[str, Any] | None:
         if session_key in self._cache:
-            return self._cache[session_key]
-        with self._engine.connect() as conn:
-            row = conn.execute(
-                text("SELECT storage_path, meta FROM sessions WHERE session_key = :key"),
-                {"key": session_key},
-            ).fetchone()
-        if row is None:
-            return None
-        storage_path, meta_raw = row
-        meta = meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw)
-        df: pd.DataFrame | None = None
-        if storage_path:
-            pkl = Path(storage_path)
-            if pkl.exists():
-                with contextlib.suppress(Exception):
-                    df = pd.read_pickle(pkl)
-        session = {"df": df, "meta": meta}
-        self._cache[session_key] = session
-        return session
+            session = self._cache[session_key]
+        else:
+            with self._engine.connect() as conn:
+                row = conn.execute(
+                    text("SELECT storage_path, meta FROM sessions WHERE session_key = :key"),
+                    {"key": session_key},
+                ).fetchone()
+            if row is None:
+                return None
+            storage_path, meta_raw = row
+            meta = meta_raw if isinstance(meta_raw, dict) else json.loads(meta_raw)
+            df: pd.DataFrame | None = None
+            if storage_path:
+                pkl = Path(storage_path)
+                if pkl.exists():
+                    with contextlib.suppress(Exception):
+                        df = pd.read_pickle(pkl)
+            session = {"df": df, "meta": meta, "data_ref": meta.get("data_ref")}
+            self._cache[session_key] = session
+
+        data_ref = session.get("data_ref")
+        if not data_ref:
+            return session
+        target = self.get(str(data_ref))
+        if target is None or target.get("df") is None:
+            return {"df": None, "meta": session.get("meta") or {}}
+        return {"df": target["df"], "meta": session.get("meta") or {}}
 
     def has(self, session_key: str) -> bool:
         if session_key in self._cache:

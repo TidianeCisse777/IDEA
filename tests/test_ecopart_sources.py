@@ -562,6 +562,60 @@ def test_remote_enrichment_partitions_campaign_by_ecotaxa_project():
     assert "2/2 projets enrichis" in result
 
 
+def test_remote_campaign_reuses_persistent_tsvs_before_remote_export(
+    tmp_path, monkeypatch, _isolated_store
+):
+    """A confirmed campaign joins cached project TSVs without remote exports."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from core.ecopart_cache import import_ecopart_tsv
+    from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
+    for ecotaxa_id, ecopart_id, profile in ((101, 301, "alpha"), (202, 302, "beta")):
+        tsv = tmp_path / f"{ecopart_id}.tsv"
+        pd.DataFrame({
+            "Profile": [profile], "Depth [m]": [2.5], "Sampled volume [L]": [100.0],
+        }).to_csv(tsv, sep="\t", index=False)
+        import_ecopart_tsv(
+            tsv,
+            provenance="remote_export",
+            ecopart_project_id=ecopart_id,
+            ecotaxa_project_id=ecotaxa_id,
+        )
+
+    thread_id = "thread-remote-campaign-persistent-tsv"
+    _isolated_store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["alpha_1", "beta_1"],
+            "object_depth_min": [2.5, 2.5],
+            "export_project_id": [101, 202],
+        }),
+        {"source": "ecotaxa_export_campaign", "export_project_ids": [101, 202]},
+    )
+    client = MagicMock()
+    client.start_export.side_effect = AssertionError("persistent cache must avoid remote export")
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
+        side_effect=lambda _frame, *, known_ecotaxa_pid=None, **_kwargs: {
+            "project_id": {101: 301, 202: 302}[known_ecotaxa_pid],
+            "resolution": "lien certifié",
+        },
+    ):
+        enrich = next(
+            tool for tool in make_ecopart_tools(thread_id)
+            if tool.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = enrich.invoke({"confirmed": True})
+
+    assert "2/2 projets enrichis" in result
+    assert "cache local" in result.lower()
+    client.start_export.assert_not_called()
+
+
 def test_remote_campaign_reuses_exact_cached_join_before_resolving_projects(
     monkeypatch, tmp_path
 ):
@@ -1634,6 +1688,7 @@ def test_join_ecotaxa_ecopart_normalizes_raw_ecopart_depth_to_5m_bin():
     assert "1 matchées" in result
     assert merged.loc[0, "depth_bin"] == 12.5
     assert merged.loc[0, "ecopart_Sampled volume [L]"] == 5.3
+    assert "comparaison filet↔uvp auditée" in result.lower()
 
 
 def test_join_ecotaxa_ecopart_preserves_sampled_bins_without_objects():
@@ -1651,7 +1706,7 @@ def test_join_ecotaxa_ecopart_preserves_sampled_bins_without_objects():
             "object_depth_min": [12.5],
             "object_annotation_hierarchy": ["Biota>Animalia>Copepoda"],
         }),
-        {"source": "file:ecotaxa.tsv"},
+        {"source": "ecotaxa:17498", "project_id": 17498},
     )
     _store.set(
         f"{thread_id}:ecopart",
@@ -1676,6 +1731,8 @@ def test_join_ecotaxa_ecopart_preserves_sampled_bins_without_objects():
     assert pd.isna(zero_bin["object_id"])
     assert zero_bin["sample_id"] == "hc_02"
     assert zero_bin["ecopart_Sampled volume [L]"] == 37.8
+    assert set(merged["export_project_id"].dropna()) == {17498}
+    assert merged["export_project_id"].notna().all()
     assert "1 bin EcoPart sans objet conservé" in result
 
 

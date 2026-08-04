@@ -2113,6 +2113,56 @@ def test_net_uvp_match_tool_requires_explicit_call_and_matches_by_deployment(tmp
     assert not unavailable_matches["join_eligible"].any()
 
 
+def test_net_uvp_audit_prefers_station_id_over_station_name_when_both_exist(
+    tmp_path, monkeypatch
+):
+    """La clé stable station_id prime sur un libellé de station affiché."""
+    from tools.dataset_registry import store_dataset
+
+    def fetch_ctd_metadata(**_kwargs):
+        return pd.DataFrame(
+            {
+                "filename": ["2406_062.int.nc"],
+                "station": ["ST-101"],
+                "cast_number": [62],
+                "latitude": [67.5],
+                "longitude": [-63.8],
+                "time": ["2024-06-02T00:00:00Z"],
+            }
+        )
+
+    tool, store, thread_id = _net_uvp_certification_tool(
+        tmp_path, monkeypatch, fetch_ctd_metadata
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "Sample ID": [501],
+                "Deployment ID": [1],
+                "Station Name": ["Nom lisible différent"],
+                "Station ID": ["ST-101"],
+                "Latitude": [67.5],
+                "Longitude": [-63.8],
+                "Deployment Datetime Start": ["2024-06-01"],
+            }
+        ),
+        variable_name="df_file_baffin_2024",
+        meta={"source": "file"},
+        is_loaded_file=True,
+    )
+
+    result = tool.invoke(
+        {"net_variable_name": "df_file_baffin_2024", "max_time_gap_days": 1.0}
+    )
+
+    assert "jointures certifiées : 1." in result
+    audit = store.get(f"{thread_id}:dataset:df_net_uvp_matches")["df"]
+    assert audit["station"].tolist() == ["ST-101"]
+    assert audit["station_name_match"].all()
+
+
 def test_net_uvp_audit_rejects_loaded_file_after_scoped_subsets_exist(tmp_path, monkeypatch):
     """Une préparation ciblée ne doit jamais retomber sur le fichier complet."""
     import tools.copepod_sources as source_module
@@ -2581,6 +2631,48 @@ def test_join_net_uvp_enriched_persists_certified_object_rows(
     assert stored["meta"]["uvp_enriched_variable"] == "df_ecotaxa_ecopart_campaign"
 
 
+def test_join_net_uvp_enriched_keeps_available_subset_of_certified_audit(
+    tmp_path, monkeypatch
+):
+    """A density extract may cover only part of a certified metadata audit."""
+    from tools.dataset_registry import store_dataset
+
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+    net = store.get(f"{thread_id}:dataset:df_file_baffin_2024")["df"].iloc[[0]].copy()
+    store_dataset(
+        store,
+        thread_id,
+        net,
+        variable_name="df_file_baffin_2024_abundance",
+        meta={"source": "file:abundance"},
+        set_active=False,
+    )
+    audit_entry = store.get(f"{thread_id}:dataset:df_net_uvp_matches")
+    audit = audit_entry["df"].copy()
+    audit["join_eligible"] = True
+    audit["ctd_filename_join_eligible"] = True
+    store_dataset(
+        store,
+        thread_id,
+        audit,
+        variable_name="df_net_uvp_matches",
+        meta=audit_entry["meta"],
+        set_active=False,
+    )
+
+    result = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024_abundance",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert "df_net_uvp_strata" in result
+    assert "1/2 prélèvement(s) certifié(s)" in result
+    strata = store.get(f"{thread_id}:dataset:df_net_uvp_strata")["df"]
+    assert strata["net_sample_id"].tolist() == [501]
+
+
 def test_join_net_uvp_enriched_avoids_materializing_large_taxa_object_fanout(
     tmp_path, monkeypatch
 ):
@@ -2638,6 +2730,57 @@ def test_join_net_uvp_enriched_avoids_materializing_large_taxa_object_fanout(
     assert "sans matérialiser" in text
     assert strata["net_abundance_ind_m3"].tolist() == pytest.approx([401.0])
     assert strata["uvp_target_count"].tolist() == [251]
+
+
+def test_join_net_uvp_enriched_discards_irrelevant_profiles_before_sizing_fanout(
+    tmp_path, monkeypatch
+):
+    """Unrelated enriched profiles must not turn a small certified join into a large one."""
+    import tools.copepod_sources as source_module
+
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+    net_entry = store.get(f"{thread_id}:dataset:df_file_baffin_2024")
+    net = pd.DataFrame(
+        {
+            "SAMPLE_ID": [501] * 300,
+            "ANALYSIS_ID": [9001] * 300,
+            "TAXON_ID": list(range(300)),
+            "CLASS": ["Copepoda"] * 300,
+            "MIN_SAMPLE_DEPTH": [0.0] * 300,
+            "MAX_SAMPLE_DEPTH": [10.0] * 300,
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [1.0] * 300,
+        }
+    )
+    store.set(f"{thread_id}:dataset:df_file_baffin_2024", net, net_entry["meta"])
+    audit_entry = store.get(f"{thread_id}:dataset:df_net_uvp_matches")
+    audit_meta = dict(audit_entry["meta"])
+    audit_meta["net_dataframe_fingerprint"] = source_module._net_dataframe_fingerprint(net)
+    store.set(f"{thread_id}:dataset:df_net_uvp_matches", audit_entry["df"], audit_meta)
+    enriched_entry = store.get(f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign")
+    enriched = pd.DataFrame(
+        {
+            "export_project_id": [10] * 600,
+            "sample_profileid": ["uvp-101"] * 300 + ["unrelated"] * 300,
+            "object_id": [f"object-{index}" for index in range(600)],
+            "depth_bin": [5.0] * 600,
+            "object_annotation_hierarchy": ["living>Crustacea>Copepoda"] * 600,
+            "ecopart_Sampled volume [L]": [100.0] * 600,
+        }
+    )
+    store.set(
+        f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign",
+        enriched,
+        enriched_entry["meta"],
+    )
+
+    join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+        }
+    )
+
+    assert store.get(f"{thread_id}:dataset:df_net_uvp_ecopart") is not None
 
 
 def test_join_net_uvp_enriched_also_prepares_calculable_and_excluded_strata(

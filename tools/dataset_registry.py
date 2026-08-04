@@ -87,13 +87,17 @@ def store_dataset(
     canonical source after later subsets take over the active slot.
     """
     dataset_meta = {**meta, "variable_name": variable_name}
+    dataset_key = f"{thread_id}:dataset:{variable_name}"
+    # Write the payload once.  The active table and convenient source aliases
+    # are durable references to that canonical entry, avoiding several full
+    # pickle writes for the same large export.
+    store.set(dataset_key, dataframe, dataset_meta)
     if set_active:
-        store.set(thread_id, dataframe, dataset_meta)
+        store.set_reference(thread_id, dataset_key, dataset_meta)
     if latest_alias:
-        store.set(f"{thread_id}:{latest_alias}", dataframe, dataset_meta)
-    store.set(f"{thread_id}:dataset:{variable_name}", dataframe, dataset_meta)
+        store.set_reference(f"{thread_id}:{latest_alias}", dataset_key, dataset_meta)
     if is_loaded_file:
-        store.set(f"{thread_id}:{LOADED_FILE_KEY}", dataframe, dataset_meta)
+        store.set_reference(f"{thread_id}:{LOADED_FILE_KEY}", dataset_key, dataset_meta)
 
 
 def loaded_file_dataset(store: SessionStore, thread_id: str) -> dict | None:

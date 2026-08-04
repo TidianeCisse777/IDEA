@@ -652,7 +652,7 @@ def make_source_tools(thread_id: str) -> list:
         ) or net_df.columns[0]
         station_col = detect_column(
             net_df.columns,
-            ("station_name", "station", "station_id"),
+            ("station_id", "station_name", "station"),
         )
         deployment_col = detect_column(
             net_df.columns, ("deployment_id", "deployment", "deploymentid")
@@ -1058,13 +1058,62 @@ def make_source_tools(thread_id: str) -> list:
                 provenance={"source": "net_uvp_ecopart_certified"},
                 retryable=False,
             )
-        if audit_meta.get("net_variable_name") != net_variable_name:
-            return blocked(
-                "Jointure filet↔UVP enrichie refusée : l'audit certifié ne "
-                "correspond pas à la table filet demandée.",
-                provenance={"source": "net_uvp_ecopart_certified"},
-                retryable=False,
+
+        def _canonical_sample_series(values: pd.Series) -> pd.Series:
+            """Normalize numeric-looking IDs without losing text identifiers."""
+            return values.astype("string").str.strip().str.replace(
+                r"^([+-]?\d+)\.0+$", r"\1", regex=True
             )
+
+        def _canonical_sample_keys(values: pd.Series) -> set[str]:
+            normalized = _canonical_sample_series(values)
+            return set(normalized.dropna().loc[normalized.notna() & normalized.ne("")])
+
+        def _explicitly_true(value: object) -> bool:
+            return bool(value) if isinstance(value, (bool, np.bool_)) else str(value).strip().lower() in {"true", "1"}
+
+        audit_frame = datasets["audit certifié"]
+        certified_audit = audit_frame["join_eligible"].map(_explicitly_true)
+        if "ctd_verification" in audit_frame.columns:
+            certified_audit &= audit_frame["ctd_verification"].astype("string").str.strip().eq("verified")
+        elif "ctd_filename_join_eligible" in audit_frame.columns:
+            certified_audit &= audit_frame["ctd_filename_join_eligible"].map(_explicitly_true)
+        elif "ctd_filename_match_status" in audit_frame.columns:
+            certified_audit &= audit_frame["ctd_filename_match_status"].astype("string").str.strip().eq("matched")
+        audit_sample_keys = _canonical_sample_keys(
+            audit_frame.loc[certified_audit, "net_sample_id"]
+        )
+        net_id_column = next(
+            (column for column in ("SAMPLE_ID", "sample_id", "net_sample_id")
+            if column in datasets["table filet"].columns),
+            None,
+        )
+        net_sample_keys = (
+            _canonical_sample_keys(datasets["table filet"][net_id_column])
+            if net_id_column is not None else set()
+        )
+        available_audit_samples = audit_sample_keys.intersection(net_sample_keys)
+        coverage_note = (
+            f"Couverture filet disponible : {len(available_audit_samples)}/"
+            f"{len(audit_sample_keys)} prélèvement(s) certifié(s)."
+        )
+        audit_reused_for_available_samples = False
+        if audit_meta.get("net_variable_name") != net_variable_name:
+            if not audit_meta.get("net_dataframe_fingerprint"):
+                return blocked(
+                    "Jointure filet↔UVP enrichie refusée : la provenance de "
+                    "la table filet auditée est incomplète.",
+                    provenance={"source": "net_uvp_ecopart_certified"},
+                    retryable=False,
+                )
+            if not available_audit_samples:
+                return blocked(
+                    "Jointure filet↔UVP enrichie refusée : l'audit certifié ne "
+                    "partage aucun prélèvement avec la table filet demandée.",
+                    provenance={"source": "net_uvp_ecopart_certified"},
+                    retryable=False,
+                )
+            audit_reused_for_available_samples = True
         if "ctd_filename_verified" not in audit_meta:
             return blocked(
                 "Jointure filet↔UVP enrichie refusée : la provenance de "
@@ -1101,7 +1150,10 @@ def make_source_tools(thread_id: str) -> list:
         current_net_fingerprint = _net_dataframe_fingerprint(
             datasets["table filet"]
         )
-        if audit_meta.get("net_dataframe_fingerprint") != current_net_fingerprint:
+        if (
+            audit_meta.get("net_dataframe_fingerprint") != current_net_fingerprint
+            and not audit_reused_for_available_samples
+        ):
             return blocked(
                 "Jointure filet↔UVP enrichie refusée : la table filet a changé "
                 "depuis l'audit certifié.",
@@ -1135,11 +1187,63 @@ def make_source_tools(thread_id: str) -> list:
                 retryable=False,
             )
 
+        # Only profiles authorized by the certified audit and samples carrying
+        # a net abundance can affect the comparison.  Restrict before the
+        # calculation so an unrelated campaign export neither slows down nor
+        # changes the apparent size of the canonical join.
+        accepted_audit = certified_audit.copy()
+        if exploratory_override:
+            accepted_audit |= (
+                audit_frame["ctd_verification"].astype("string").str.strip().eq("unavailable")
+                & audit_frame["exploratory"].map(_explicitly_true)
+            )
+        comparison_sample_keys = _canonical_sample_keys(
+            audit_frame.loc[accepted_audit, "net_sample_id"]
+        )
+        comparison_audit = audit_frame.loc[
+            accepted_audit
+            & _canonical_sample_series(audit_frame["net_sample_id"]).isin(net_sample_keys)
+        ].copy()
+        net_for_comparison = datasets["table filet"].loc[
+            _canonical_sample_series(datasets["table filet"][net_id_column]).isin(
+                comparison_sample_keys
+            )
+        ].copy()
+
+        audit_profile_pairs = set(
+            zip(
+                _canonical_sample_series(comparison_audit["uvp_project_id"]),
+                _canonical_sample_series(comparison_audit["uvp_profile_str"]),
+            )
+        )
+        profile_candidates = []
+        for column in ("sample_profileid", "sample_id", "obj_orig_id"):
+            if column not in enriched.columns:
+                continue
+            candidate = _canonical_sample_series(enriched[column])
+            if column != "sample_profileid":
+                candidate = candidate.str.replace(r"_\d+$", "", regex=True)
+            profile_candidates.append(candidate)
+        if audit_profile_pairs and profile_candidates:
+            project_keys = _canonical_sample_series(enriched["export_project_id"])
+            relevant_mask = pd.Series(False, index=enriched.index)
+            for profile_keys in profile_candidates:
+                relevant_mask |= pd.Series(
+                    [
+                        (project_key, profile_key) in audit_profile_pairs
+                        for project_key, profile_key in zip(project_keys, profile_keys)
+                    ],
+                    index=enriched.index,
+                )
+            enriched_for_comparison = enriched.loc[relevant_mask].copy()
+        else:
+            enriched_for_comparison = enriched
+
         # The scientific calculation is always performed at the two native
         # grains (net taxa and UVP objects/bins), never on their cartesian
         # product.  A small legacy object table may be persisted afterwards
         # solely for inspection/backwards compatibility.
-        compact_join_upper_bound = len(datasets["table filet"]) * len(enriched)
+        compact_join_upper_bound = len(net_for_comparison) * len(enriched_for_comparison)
         object_column = next(
             (
                 column
@@ -1150,9 +1254,9 @@ def make_source_tools(thread_id: str) -> list:
         )
         try:
             compact_strata = build_paired_depth_strata_from_certified_inputs(
-                datasets["table filet"],
-                datasets["audit certifié"],
-                enriched,
+                net_for_comparison,
+                comparison_audit,
+                enriched_for_comparison,
                 allow_unverified_ctd=exploratory_override,
                 uvp_object_col=object_column or "object_id",
             )
@@ -1187,6 +1291,9 @@ def make_source_tools(thread_id: str) -> list:
                 "ctd_verification": ctd_verification,
                 "exploratory": joined_exploratory,
                 "materialization": "avoided_taxa_x_objects",
+                "audit_reused_for_available_samples": audit_reused_for_available_samples,
+                "certified_audit_samples": len(audit_sample_keys),
+                "available_net_samples": len(available_audit_samples),
             }
             for output_name, output_frame in (
                 ("df_net_uvp_strata", strata),
@@ -1214,6 +1321,7 @@ def make_source_tools(thread_id: str) -> list:
                 "jointure taxons×objets : "
                 f"{len(calculable)}/{len(strata)} tranche(s) calculable(s), "
                 f"{len(exclusions)} avec valeur manquante ou exclusion. "
+                f"{coverage_note} "
                 "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
                 "`df_net_uvp_exclusions`.",
                 provenance={"source": "net_uvp_ecopart_certified"},
@@ -1228,14 +1336,16 @@ def make_source_tools(thread_id: str) -> list:
                     "calculable_strata": int(len(calculable)),
                     "missing_strata": int(len(exclusions)),
                     "exclusions_by_status": exclusion_counts,
+                    "certified_audit_samples": len(audit_sample_keys),
+                    "available_net_samples": len(available_audit_samples),
                 },
             )
 
         try:
             joined = join_certified_net_uvp_enriched(
-                datasets["table filet"],
-                datasets["audit certifié"],
-                datasets["export UVP enrichi EcoPart"],
+                net_for_comparison,
+                comparison_audit,
+                enriched_for_comparison,
                 allow_unverified_ctd=exploratory_override,
             )
         except ValueError as exc:
@@ -1274,6 +1384,8 @@ def make_source_tools(thread_id: str) -> list:
                 "ctd_verification": ctd_verification,
                 "exploratory": joined_exploratory,
                 "allow_unverified_ctd": exploratory_override,
+                "certified_audit_samples": len(audit_sample_keys),
+                "available_net_samples": len(available_audit_samples),
                 "n_rows": len(joined),
                 "n_cols": len(joined.columns),
             },
@@ -1295,6 +1407,8 @@ def make_source_tools(thread_id: str) -> list:
             "ctd_verification": ctd_verification,
             "exploratory": joined_exploratory,
             "materialization": "legacy_object_table_inspection_only",
+            "certified_audit_samples": len(audit_sample_keys),
+            "available_net_samples": len(available_audit_samples),
         }
         for output_name, output_frame in (
             ("df_net_uvp_strata", strata),
@@ -1340,6 +1454,7 @@ def make_source_tools(thread_id: str) -> list:
                 "correspondances certifiées"
             )
             + f" : {len(joined)} ligne(s) objet."
+            + f"\n{coverage_note}"
             + comparison_note,
             provenance={"source": "net_uvp_ecopart_certified"},
             data_ref=("df_net_uvp_strata" if comparison_refs else variable_name),
@@ -1347,6 +1462,8 @@ def make_source_tools(thread_id: str) -> list:
             metrics={
                 "rows": len(joined),
                 "columns": len(joined.columns),
+                "certified_audit_samples": len(audit_sample_keys),
+                "available_net_samples": len(available_audit_samples),
                 **comparison_metrics,
             },
         )

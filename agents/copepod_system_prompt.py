@@ -55,9 +55,12 @@ definition source, Wikipedia URL and WoRMS validation.
 - On a loaded table, `CTD`, `Amundsen` (including common misspellings),
   "donne/ajoute/enrichis les données CTD", "donne/ajoute les données ou
   variables environnementales", or equivalent means canonical Amundsen
-  enrichment. Call it directly; with no named variable use all eight supported
-  CTD variables. Never answer through RAG first and never create empty CTD
-  placeholder columns with `run_pandas`.
+  enrichment. A bare « enrichissement Amundsen » is sufficient: call it
+  directly on the active table, automatically use its CTD filename when it
+  exists, and never ask the user to name a column, profile or matching method.
+  With no named variable use all eight supported CTD variables. Never answer
+  through RAG first and never create empty CTD placeholder columns with
+  `run_pandas`.
 - Canonical Bio-ORACLE table enrichment is guided: first propose the copepod
   preset and full variable catalog, show the choices, then wait for explicit
   user selection of variables, scenarios, vertical layer and statistic. Show
@@ -136,6 +139,9 @@ Only new explicit confirmation -> `allow_unverified_ctd=True` + audit export
 dry-run; never CTD no-match. Keep `ctd_verification="unavailable"` +
 `exploratory=True`. Final local net/UVP join only after audit -> selected
 multi-project UVP export -> EcoPart enrichment; preserve `export_project_id`.
+Once those three persisted inputs exist, call `join_net_uvp_enriched` directly
+with their exact names. It is the only permitted final bridge: never use
+`run_pandas` to merge, cast, or normalize net/UVP keys before that call.
 An explicit request to export the matches is confirmation: re-run the same
 audit with `allow_unverified_ctd=True`, then prepare the provisional export.
 Detailed sequence lives in the net/UVP skill.

@@ -409,6 +409,24 @@ def _perform_enrichment(
     merged = merged.rename(columns={"_join_depth_bin": "depth_bin"})
     merged = merged.drop(columns=["_join_sample_id"], errors="ignore")
 
+    # A direct, mono-project enrichment can synthesize EcoPart bins with no
+    # object row.  Those rows cannot inherit the export project from EcoTaxa,
+    # yet they must remain attributable to the same project for the canonical
+    # Filet↔UVP join.
+    ecotaxa_project_id = (session_et.get("meta") or {}).get("project_id")
+    if ecotaxa_project_id is not None:
+        try:
+            ecotaxa_project_id = int(ecotaxa_project_id)
+        except (TypeError, ValueError):
+            ecotaxa_project_id = None
+    if ecotaxa_project_id is not None:
+        if "export_project_id" in merged.columns:
+            merged["export_project_id"] = pd.to_numeric(
+                merged["export_project_id"], errors="coerce"
+            ).fillna(ecotaxa_project_id).astype("Int64")
+        else:
+            merged["export_project_id"] = ecotaxa_project_id
+
     source = "join:ecotaxa+ecopart"
     if selected_project_id is not None:
         source = f"{source}:{selected_project_id}"
@@ -473,6 +491,7 @@ def _perform_enrichment(
         meta={
             "source": source,
             "ecopart_project_id": selected_project_id,
+            "ecotaxa_project_id": ecotaxa_project_id,
             "n_rows": len(merged),
             "n_matched": n_matched,
             "n_zero_object_bins": n_zero_object_bins,
@@ -506,7 +525,8 @@ def _perform_enrichment(
         f"(`sample_id`, `depth_bin`) : densité = nb objets du bin / volume du bin, jamais "
         f"sum(objets)/sum(volume) global — voir skill `uvp_ecotaxa`.\n"
         f"Données disponibles dans `{joined_variable_name}` et `df_ecotaxa_ecopart` — "
-        f"appelle run_pandas directement pour analyser."
+        "une comparaison filet↔UVP auditée passe maintenant par la jointure "
+        "certifiée locale ; les autres analyses peuvent continuer sur cette table."
         f"{sources_block}{canonical_source_line}\n"
         "Provenance : "
         + json.dumps(provenance, ensure_ascii=False, sort_keys=True),
@@ -1226,11 +1246,41 @@ def _enrich_ecotaxa_campaign_with_ecopart(
     n_matched = 0
     for ecotaxa_pid, ecopart_pid, partition, _resolution, _linked_samples in resolved:
         try:
-            links = client.start_export(
-                project_id=ecopart_pid,
-                ecotaxa_project_id=ecotaxa_pid,
+            cached_tsv = find_ecopart_tsv(
+                ecopart_project_id=ecopart_pid,
+                profile_labels=set(_candidate_ecotaxa_profile_labels(partition)),
             )
-            df_ep = client.download_tsv(links)
+            artifact_url: str | None = None
+            if cached_tsv is not None:
+                df_ep = load_ecopart_tsv(cached_tsv)
+                source_label = "cache local"
+            else:
+                links = client.start_export(
+                    project_id=ecopart_pid,
+                    ecotaxa_project_id=ecotaxa_pid,
+                )
+                df_ep = client.download_tsv(links)
+                if df_ep.empty:
+                    failed_project_ids.add(ecotaxa_pid)
+                    failures.append(
+                        f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
+                        "aucun sample EcoPart exporté."
+                    )
+                    continue
+                file_id = uuid.uuid4().hex
+                output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
+                df_ep.to_csv(output_path, sep="\t", index=False)
+                artifact_url = download_url(output_path.name)
+                try:
+                    import_ecopart_tsv(
+                        output_path,
+                        provenance="remote_export",
+                        ecopart_project_id=ecopart_pid,
+                        ecotaxa_project_id=ecotaxa_pid,
+                    )
+                except ValueError:
+                    pass
+                source_label = "export EcoPart"
             if df_ep.empty:
                 failed_project_ids.add(ecotaxa_pid)
                 failures.append(
@@ -1239,17 +1289,19 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                 )
                 continue
 
-            file_id = uuid.uuid4().hex
-            output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
-            df_ep.to_csv(output_path, sep="\t", index=False)
-            artifact_url = download_url(output_path.name)
-
             variable_name = dataset_variable_name("ecopart", ecopart_pid)
             meta = {
-                "source": f"ecopart:{ecopart_pid}",
+                "source": (
+                    f"ecopart_cache:{cached_tsv.provenance}"
+                    if cached_tsv is not None else f"ecopart:{ecopart_pid}"
+                ),
                 "project_id": ecopart_pid,
                 "ecotaxa_project_id": ecotaxa_pid,
                 "n_rows": len(df_ep),
+                "cache_hit": cached_tsv is not None,
+                "content_sha256": (
+                    cached_tsv.content_sha256 if cached_tsv is not None else None
+                ),
             }
             store_dataset(
                 _store,
@@ -1297,12 +1349,13 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             partition_provenance[f"{ecotaxa_pid}:{ecopart_pid}"] = dict(
                 (joined_session.get("meta") or {}).get("provenance") or {}
             )
-            artifact_refs.append(artifact_url)
+            if artifact_url:
+                artifact_refs.append(artifact_url)
             partition_matched = int(join_artifact.metrics.get("matched", 0))
             n_matched += partition_matched
             successes.append(
                 f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} : "
-                f"{len(joined)} lignes, {partition_matched} matchées"
+                f"{len(joined)} lignes, {partition_matched} matchées ({source_label})"
             )
         except EcopartExportError as exc:
             failed_project_ids.add(ecotaxa_pid)

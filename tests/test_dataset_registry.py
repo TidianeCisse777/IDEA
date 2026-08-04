@@ -41,6 +41,29 @@ def test_store_dataset_preserves_stable_entry_and_updates_alias(tmp_path):
     assert stable["meta"]["variable_name"] == "df_ecotaxa_1165"
 
 
+def test_store_dataset_persists_one_dataframe_for_active_and_aliases(tmp_path):
+    """Active and source aliases are references, not duplicate large exports."""
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    storage_dir = tmp_path / "sessions"
+    store = SessionStore(storage_dir=storage_dir)
+    df = pd.DataFrame({"value": range(10)})
+    store_dataset(
+        store,
+        "thread-1",
+        df,
+        variable_name="df_amundsen_enriched_demo",
+        meta={"source": "amundsen_enrichment"},
+        latest_alias="ctd_enriched",
+    )
+
+    assert len(list(storage_dir.glob("*.pkl"))) == 1
+    restarted = SessionStore(storage_dir=storage_dir)
+    assert restarted.get("thread-1")["df"].equals(df)
+    assert restarted.get("thread-1:ctd_enriched")["df"].equals(df)
+
+
 def test_enrichment_source_note_uses_explicit_variable_and_lists_prior_enrichments(tmp_path):
     from tools.dataset_registry import enrichment_source_note
     from tools.session_store import SessionStore
@@ -112,4 +135,3 @@ def test_no_raw_latest_alias_literals_remain_in_tools():
         "latest_alias en dur (utilise les constantes de dataset_registry) : "
         + ", ".join(offenders)
     )
-
