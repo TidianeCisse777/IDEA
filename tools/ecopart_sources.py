@@ -339,7 +339,12 @@ def _perform_enrichment(
     depth_numeric = pd.to_numeric(df_et[depth_col], errors="coerce")
     df_et["_join_depth_bin"] = depth_bin_5m(depth_numeric)
 
-    df_ep = df_ep.rename(columns={"Profile": "_join_sample_id", "Depth [m]": "_join_depth_bin"})
+    df_ep = df_ep.rename(columns={"Profile": "_join_sample_id"})
+    # EcoPart can expose raw depth edges (e.g. 10 m) while EcoTaxa objects are
+    # normalized to documented 5 m bin centres (12.5 m). Apply the same contract
+    # on both sides before merging; pre-binned centres remain unchanged.
+    df_ep["_join_depth_bin"] = depth_bin_5m(df_ep["Depth [m]"])
+    df_ep = df_ep.drop(columns=["Depth [m]"])
     # Match the stringified EcoTaxa key so an int/str dtype mismatch never silently
     # zeroes the join.
     df_ep["_join_sample_id"] = df_ep["_join_sample_id"].astype("string")

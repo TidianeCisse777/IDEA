@@ -1601,6 +1601,41 @@ def test_join_ecotaxa_ecopart_produces_merged_dataframe():
     assert json.dumps(provenance, ensure_ascii=False, sort_keys=True) in result
 
 
+def test_join_ecotaxa_ecopart_normalizes_raw_ecopart_depth_to_5m_bin():
+    """Un export EcoPart à 10 m rejoint un objet UVP du bin 12,5 m."""
+    import pandas as pd
+
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-raw-ecopart-depth"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({"obj_orig_id": ["ips_007_1"], "object_depth_min": [12.0]}),
+        {"source": "ecotaxa:17498"},
+    )
+    _store.set(
+        f"{thread_id}:ecopart",
+        pd.DataFrame({
+            "Profile": ["ips_007"],
+            "Depth [m]": [10.0],
+            "Sampled volume [L]": [5.3],
+        }),
+        {"source": "ecopart:105", "project_id": 105},
+    )
+
+    join_tool = next(
+        tool for tool in make_ecopart_tools(thread_id)
+        if tool.name == "join_ecotaxa_ecopart"
+    )
+    result = join_tool.invoke({})
+    merged = _store.get(f"{thread_id}:ecotaxa_ecopart")['df']
+
+    assert "1 matchées" in result
+    assert merged.loc[0, "depth_bin"] == 12.5
+    assert merged.loc[0, "ecopart_Sampled volume [L]"] == 5.3
+
+
 def test_join_ecotaxa_ecopart_preserves_sampled_bins_without_objects():
     import pandas as pd
 
