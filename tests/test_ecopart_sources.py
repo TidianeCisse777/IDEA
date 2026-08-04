@@ -38,6 +38,48 @@ def test_make_ecopart_tools_exposes_expected_tools():
     assert "audit_ecotaxa_ecopart_join" in tool_names
 
 
+def test_confirmed_enrichment_reuses_compatible_persistent_tsv(
+    tmp_path, monkeypatch, _isolated_store
+):
+    import pandas as pd
+    from unittest.mock import MagicMock, patch
+
+    from core.ecopart_cache import import_ecopart_tsv
+    from tools.ecopart_sources import make_ecopart_tools
+
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "cache"))
+    tsv = tmp_path / "part.tsv"
+    tsv.write_text(
+        "Profile\tDepth [m]\tSampled volume [L]\nips_007\t2.5\t111.0\n",
+        encoding="utf-8",
+    )
+    entry = import_ecopart_tsv(
+        tsv,
+        provenance="remote_export",
+        ecopart_project_id=1063,
+        ecotaxa_project_id=17498,
+    )
+    _isolated_store.set(
+        "thread-cache:ecotaxa",
+        pd.DataFrame({"obj_orig_id": ["ips_007_1"], "object_depth_min": [2.5]}),
+        {"project_id": 17498},
+    )
+    client = MagicMock()
+    client.start_export.side_effect = AssertionError("cache should avoid export")
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client):
+        tool = next(
+            item for item in make_ecopart_tools("thread-cache")
+            if item.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        result = tool.invoke(
+            {"ecotaxa_project_id": 17498, "ecopart_project_id": 1063, "confirmed": True}
+        )
+
+    assert "cache local" in result.lower()
+    assert _isolated_store.get("thread-cache:ecopart")["meta"]["content_sha256"] == entry.content_sha256
+
+
 def test_audit_ecotaxa_ecopart_join_reads_persisted_join(_isolated_store):
     import pandas as pd
 
