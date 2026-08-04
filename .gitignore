@@ -130,6 +130,7 @@ docs/_build/
 !/docs/superpowers/specs/2026-07-16-semantic-graph-routing-design.md
 !/docs/superpowers/specs/2026-07-16-executable-graph-intent-guard-design.md
 !/docs/superpowers/specs/2026-07-27-shared-ecotaxa-cache-design.md
+!/docs/superpowers/specs/2026-08-04-ecopart-persistent-demo-cache-design.md
 
 # Claude Code / assistant session transcripts accidentally dumped in the repo
 *local-command-caveat*.txt
