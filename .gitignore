@@ -123,6 +123,7 @@ docs/_build/
 !/docs/superpowers/plans/2026-07-16-semantic-graph-routing.md
 !/docs/superpowers/plans/2026-07-16-executable-graph-intent-guard.md
 !/docs/superpowers/plans/2026-07-27-shared-ecotaxa-cache.md
+!/docs/superpowers/plans/2026-08-04-ecopart-persistent-demo-cache.md
 !/docs/superpowers/specs/
 /docs/superpowers/specs/*
 !/docs/superpowers/specs/2026-07-15-source-policy-design.md
