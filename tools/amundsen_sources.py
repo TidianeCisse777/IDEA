@@ -431,6 +431,71 @@ def _format_table(rows: list[dict], columns: list[str]) -> str:
     return dataframe.to_markdown(index=False)
 
 
+_SOURCE_IDENTIFIER_CANDIDATES = (
+    "sample_id",
+    "sample_profileid",
+    "profile_id",
+    "deployment_id",
+    "station_id",
+)
+
+
+def _coverage_granularity_lines(enriched: pd.DataFrame) -> list[str]:
+    """Expose row and distinct source-identifier coverage separately.
+
+    EcoTaxa exports are commonly object-grain, so a match status count is a
+    count of rows, not necessarily a count of casts or samples. Keeping this
+    distinction in the tool result prevents a downstream answer from calling
+    hundreds of object rows "hundreds of casts".
+    """
+    status_col = "amundsen_match_status"
+    if status_col not in enriched.columns:
+        return []
+
+    statuses = (
+        enriched[status_col].astype("string").fillna("missing_status")
+    )
+    status_order = (
+        "matched",
+        "matched_no_value",
+        "no_match",
+        "source_unavailable",
+        "outside_amundsen_ctd_range",
+        "missing_ctd_filename",
+        "no_coordinates",
+        "missing_status",
+    )
+    row_bits = [
+        f"{status}={int((statuses == status).sum())}"
+        for status in status_order
+        if (statuses == status).any()
+    ]
+    lines = [f"Lignes source : total={len(enriched)}, " + ", ".join(row_bits) + "."]
+
+    identifier = detect_column(enriched.columns, _SOURCE_IDENTIFIER_CANDIDATES)
+    if identifier is None:
+        return lines
+    entities = enriched.loc[enriched[identifier].notna(), [identifier, status_col]].copy()
+    if entities.empty:
+        return lines
+    entity_status = (
+        entities.assign(_status=entities[status_col].astype("string").fillna("missing_status"))
+        .groupby(identifier, dropna=True)["_status"]
+        .agg(lambda values: "matched" if (values == "matched").any() else values.iloc[0])
+    )
+    entity_bits = [
+        f"{status}={int((entity_status == status).sum())}"
+        for status in status_order
+        if (entity_status == status).any()
+    ]
+    lines.append(
+        f"Identifiants source distincts (`{identifier}`) : total={len(entity_status)}, "
+        + ", ".join(entity_bits)
+        + "."
+    )
+    return lines
+
+
 class AmundsenMatcher(CtdProfileMatcher):
     """CTD nearest-profile matcher for Amundsen ERDDAP.
 
@@ -2054,6 +2119,8 @@ def make_amundsen_tools(thread_id: str) -> list:
         summary = (
             f"Enrichissement Amundsen — {n} ligne(s), {n_matched} {plural}.\n"
             f"{outcome.source_note}\n"
+            + "\n".join(_coverage_granularity_lines(enriched))
+            + "\n"
             f"Données disponibles dans `{variable_name}`.\n"
             f"Télécharger : {download_url(output_path.name)}\n\n"
             + "\n".join(method_lines)

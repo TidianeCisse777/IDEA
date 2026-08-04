@@ -35,6 +35,12 @@ A request naming one or more variables proceeds directly with only those
 variables. Never replace the remote call with placeholder columns or a local
 `run_pandas` simulation.
 
+`acq_*` fields already present in an export are acquisition metadata. They are
+not an Amundsen enrichment and must not be used as evidence that a remote CTD
+match has been executed. Only the canonical result columns
+`amundsen_match_status` and `amundsen_dataset_id`, with their returned
+provenance, establish an Amundsen match.
+
 Call `enrich_with_amundsen_ctd` directly on the exact active variable for
 “enrichis avec Amundsen”, “ajoute le CTD Amundsen”, or equivalent. The same
 path applies when Amundsen CTD is named with a request for its data, measures,

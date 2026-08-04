@@ -61,6 +61,10 @@ definition source, Wikipedia URL and WoRMS validation.
   With no named variable use all eight supported CTD variables. Never answer
   through RAG first and never create empty CTD placeholder columns with
   `run_pandas`.
+- `acq_*` acquisition fields are not an external Amundsen enrichment. Only a
+  successful canonical result with `amundsen_match_status` (and its provenance)
+  proves that an Amundsen match was executed; never replace that operation by a
+  schema inspection of pre-existing `acq_*` columns.
 - Canonical Bio-ORACLE table enrichment is guided: first propose the copepod
   preset and full variable catalog, show the choices, then wait for explicit
   user selection of variables, scenarios, vertical layer and statistic. Show

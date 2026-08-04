@@ -34,6 +34,20 @@ def test_system_prompt_routes_a_bare_amundsen_enrichment_directly():
     assert "A bare « enrichissement Amundsen » is sufficient" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_amundsen_skill_does_not_confuse_acquisition_columns_with_remote_matching():
+    from pathlib import Path
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    skill = Path("agents/skills/amundsen_ctd_query.md").read_text().lower()
+
+    assert "acq_*" in skill
+    assert "not an amundsen enrichment" in skill
+    assert "amundsen_match_status" in skill
+    assert "`acq_*` acquisition fields are not an external amundsen enrichment" in (
+        " ".join(COPEPOD_SYSTEM_PROMPT.lower().split())
+    )
+
+
 def test_system_prompt_requires_comparable_abundance_before_cross_instrument_comparison():
     from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 

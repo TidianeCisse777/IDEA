@@ -766,6 +766,50 @@ def test_enrich_with_amundsen_ctd_matches_by_lat_lon_time():
     assert json.dumps(provenance, ensure_ascii=False, sort_keys=True) in result
 
 
+def test_enrich_with_amundsen_ctd_reports_distinct_source_identifier_coverage():
+    """Object-row counts must not be presented as a count of casts/samples."""
+    import pandas as pd
+    from unittest.mock import patch
+
+    from tools.amundsen_sources import make_amundsen_tools
+    from tools.session_store import default_store as _store
+
+    thread_id = "thread-amundsen-distinct-source-coverage"
+    for key in _store.keys(thread_id):
+        _store.clear(key)
+    _store.set(
+        thread_id,
+        pd.DataFrame(
+            {
+                "sample_id": ["matched-cast", "matched-cast", "old-cast", "old-cast"],
+                "latitude": [74.1, 74.1, 70.0, 70.0],
+                "longitude": [-80.2, -80.2, -135.0, -135.0],
+                "object_date": ["2018-08-01", "2018-08-01", "2010-08-01", "2010-08-01"],
+            }
+        ),
+        {"source": "file:object_rows.tsv"},
+    )
+
+    def fake_fetch_bbox(*, bbox, time_window, variables):
+        return pd.DataFrame(
+            [{
+                "time": "2018-08-01T12:00:00Z", "latitude": 74.1,
+                "longitude": -80.2, "station": "S1", "cast_number": 1,
+                "PRES": 5.0, "TE90": -1.0,
+            }]
+        )
+
+    with patch("tools.amundsen_sources._fetch_amundsen_bbox", side_effect=fake_fetch_bbox):
+        enrich = next(
+            tool for tool in make_amundsen_tools(thread_id)
+            if tool.name == "enrich_with_amundsen_ctd"
+        )
+        result = enrich.invoke({"variables": ["temperature"]})
+
+    assert "Lignes source : total=4, matched=2, outside_amundsen_ctd_range=2." in result
+    assert "Identifiants source distincts (`sample_id`) : total=2, matched=1, outside_amundsen_ctd_range=1." in result
+
+
 def test_enrich_with_amundsen_ctd_reports_upstream_outage_without_claiming_no_ctd():
     """A total ERDDAP outage is retryable, not an ecological no-match result."""
     import pandas as pd
