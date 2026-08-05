@@ -14,6 +14,7 @@ from langchain_core.tools import tool
 from core.cartography import configure_offline_cartopy
 from core.geo import load_registry
 from core.runtime_paths import graphs_dir
+from tools.domain_profile import detect_domain_profile
 from tools.tool_result import blocked, empty, error, success
 from tools.code_sandbox import apply_restricted_builtins
 
@@ -1131,6 +1132,8 @@ def _reuse_loaded_file(
     activate_file_source(store, thread_id, origin_user_text=str(resolved_path))
     n_rows = meta.get("n_rows", len(df))
     n_cols = meta.get("n_cols", len(col_names))
+    profile = (meta.get("domain_profile") or {}).get("name")
+    profile_note = "\nProfil biologique : larves de poissons." if profile == "fish_larvae" else ""
     alias_note = f"\nAlias de session : `{source_alias}`" if source_alias else ""
     reference_note = (
         f"\nTable à citer dans une prochaine demande : `{variable_name}`"
@@ -1141,7 +1144,7 @@ def _reuse_loaded_file(
         f"{n_rows} lignes × {n_cols} colonnes\n"
         f"Table de session disponible : `{variable_name}`\n"
         f"Colonnes : {', '.join(map(str, col_names))}"
-        f"{alias_note}{reference_note}",
+        f"{alias_note}{reference_note}{profile_note}",
         data_ref=variable_name,
         provenance={"source": "file", "path": str(resolved_path)},
         persisted=True,
@@ -1384,6 +1387,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             )
 
         col_names = [c["name"] for c in meta["columns"]]
+        domain = detect_domain_profile(col_names)
         source_alias = _source_alias_for_loaded_file(meta["path"], col_names)
         preview_cols = ", ".join(col_names[:6]) + ("…" if len(col_names) > 6 else "")
         file_description = (
@@ -1395,7 +1399,12 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             thread_id,
             df,
             variable_name=variable_name,
-            meta={**meta, "source": f"file:{meta['path']}", "description": file_description},
+            meta={
+                **meta,
+                "source": f"file:{meta['path']}",
+                "description": file_description,
+                "domain_profile": domain.as_metadata(),
+            },
             latest_alias=source_alias,
             is_loaded_file=True,
         )
@@ -1409,6 +1418,12 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         cols = ", ".join(col_names)
 
         hint = _uvp_skill_hint(col_names)
+        domain_note = ""
+        if domain.domain == "fish_larvae":
+            domain_note = (
+                "\nProfil biologique : larves de poissons. Colonnes utiles : "
+                "taxon, stade larvaire, trait/filet, volume et abondance."
+            )
         alias_note = f"\nAlias de session : `{source_alias}`" if source_alias else ""
         route_note = ""
         if source_alias == "ecotaxa":
@@ -1461,6 +1476,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             f"{alias_note}"
             f"{route_note}"
             f"{reference_note}"
+            f"{domain_note}"
             + (f"\n\n{hint}" if hint else "")
         )
         return success(

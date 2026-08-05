@@ -38,6 +38,7 @@ class TurnContext:
     capsule: str
     output_intent: Literal["visual", "non_visual", "ambiguous"] = "ambiguous"
     pending_ecotaxa_export: bool = False
+    domain_profile: str | None = None
 
 
 def build_turn_context(
@@ -57,6 +58,9 @@ def build_turn_context(
     meta = (active or {}).get("meta") or {}
     active_variable = meta.get("variable_name") if has_active else None
     active_source = meta.get("source") if has_active else None
+    domain_profile = (meta.get("domain_profile") or {}).get("name")
+    if domain_profile not in {"copepods", "fish_larvae", "generic"}:
+        domain_profile = None
 
     subsets = tuple(_live_zone_subsets(store, thread_id))
 
@@ -81,6 +85,7 @@ def build_turn_context(
         file_loaded=is_file_loaded(store, thread_id),
         active_variable=active_variable,
         active_source=active_source,
+        domain_profile=domain_profile,
         derived_zone_subsets=subsets,
         authorized_sources=authorized,
         primary_source=primary,

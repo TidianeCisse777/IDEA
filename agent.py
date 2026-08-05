@@ -756,7 +756,9 @@ class _ContextMiddleware(AgentMiddleware):
         # spending a load_skill round-trip first (the cache query itself is ~0.1ms).
         preseeded_source_skills: list[str] = []
         source_reference_block = ""
-        if "ecotaxa" in source_decision.authorized_sources and os.getenv(
+        active_before_context = session_store.get(self.thread_id) or {}
+        active_profile = ((active_before_context.get("meta") or {}).get("domain_profile") or {}).get("name")
+        if active_profile != "fish_larvae" and "ecotaxa" in source_decision.authorized_sources and os.getenv(
             "DISABLE_SOURCE_PRESEED", ""
         ).lower() not in ("1", "true", "yes"):
             from tools.skill_tool import source_navigation_reference
@@ -906,6 +908,16 @@ class _ContextMiddleware(AgentMiddleware):
         )
 
         audit_entry = {
+        from agents.domain_profiles import domain_profile_prompt
+
+        domain_profile_block = domain_profile_prompt(turn_ctx.domain_profile)
+        fish_larvae_reference_block = ""
+        if turn_ctx.domain_profile == "fish_larvae":
+            from tools.skill_tool import dataset_analysis_reference
+
+            fish_larvae_reference_block = dataset_analysis_reference(
+                ("fish_larvae_analysis",)
+            )
             "ts": datetime.now(timezone.utc).isoformat(),
             "thread_id": self.thread_id,
             "user_id": self.user_id,
@@ -951,10 +963,12 @@ class _ContextMiddleware(AgentMiddleware):
             **truncate_metrics,
             **compact_metrics,
             "max_total_tool_result_chars": _MAX_TOTAL_TOOL_CHARS,
+            + fish_larvae_reference_block
             **metrics,
             "dataset_capsule_injected": bool(dataset_block),
             "dataset_capsule_chars": len(dataset_block),
             "turn_active_variable": turn_ctx.active_variable,
+            + domain_profile_block
             "turn_authorized_sources": list(turn_ctx.authorized_sources),
             "turn_derived_subsets": len(turn_ctx.derived_zone_subsets),
             "turn_output_intent": output_intent.intent,
@@ -1091,6 +1105,7 @@ class _ContextMiddleware(AgentMiddleware):
         )
         available_names = self.catalog_names or tuple(TOOL_POLICIES)
         decision = decide_tool_exposure(
+            "turn_domain_profile": turn_ctx.domain_profile,
             available_names,
             TOOL_POLICIES,
             turn_ctx,
@@ -1100,6 +1115,7 @@ class _ContextMiddleware(AgentMiddleware):
         name = str(request.tool_call.get("name") or "")
         if name in decision.tool_names:
             return None
+            "fish_larvae_reference_chars": len(fish_larvae_reference_block),
         return (
             "Action unavailable in the current turn of the workflow. "
             "Continue with the visible actions or request the missing "

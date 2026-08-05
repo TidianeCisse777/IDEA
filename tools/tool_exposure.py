@@ -388,6 +388,11 @@ def decide_tool_exposure(
     if signals.taxonomy_requested and "ecotaxa" not in source_decision.authorized_sources:
         groups.append("taxonomy")
         reasons.append("taxonomy requested")
+    if turn_context.domain_profile == "fish_larvae":
+        disabled_sources = {"ecotaxa", "ecopart", "ogsl", "sql"}
+        names = tuple(
+            name for name in names if policies[name].source not in disabled_sources
+        )
 
     skills = signals.successful_skills_this_turn
     if turn_context.output_intent == "visual":
@@ -398,6 +403,8 @@ def decide_tool_exposure(
         reasons.append("graph planner and writer succeeded this turn")
     elif signals.previous_visual_artifact:
         groups.append("visualization")
+    if turn_context.domain_profile == "fish_larvae":
+        reasons.append("fish-larvae profile limits external sources")
         reasons.append("previous visual artifact available for follow-up")
     if skills and skills[-1] == "deliverable_writer":
         groups.append("deliverable")

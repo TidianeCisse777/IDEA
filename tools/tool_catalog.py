@@ -778,7 +778,7 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
         *make_ogsl_tools(thread_id),
         *make_ecopart_tools(thread_id),
         *make_geo_tools(thread_id),
-        make_rag_tool(),
+        make_rag_tool(thread_id),
         make_taxonomy_tool(),
         make_skill_tool(thread_id=thread_id),
         export_deliverable,

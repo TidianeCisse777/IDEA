@@ -86,7 +86,15 @@ def store_dataset(
     stable ``{thread_id}:loaded_file`` key so it stays reachable as the
     canonical source after later subsets take over the active slot.
     """
-    dataset_meta = {**meta, "variable_name": variable_name}
+    inherited_profile = None
+    if "domain_profile" not in meta:
+        active = store.get(thread_id)
+        inherited_profile = ((active or {}).get("meta") or {}).get("domain_profile")
+    dataset_meta = {
+        **meta,
+        **({"domain_profile": inherited_profile} if inherited_profile else {}),
+        "variable_name": variable_name,
+    }
     dataset_key = f"{thread_id}:dataset:{variable_name}"
     # Write the payload once.  The active table and convenient source aliases
     # are durable references to that canonical entry, avoiding several full

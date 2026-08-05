@@ -1,0 +1,62 @@
+[
+  {
+    "chunk_id": "fish-larvae-calcofi-grain",
+    "doc": "calcofi_schema.md",
+    "title": "Grain d'une table CalCOFI de larves",
+    "content": "Une ligne de CalCOFI Larvae Stages décrit un taxon et un stade larvaire observés dans un trait de filet. Les identifiants de trait incluent cruise, ship, order_occupied, tow_number, tow_type, net_type, latitude, longitude et time. Avant une carte ou une synthèse par trait, agréger les lignes taxon × stade à ce grain. Source : NOAA CalCOFI Larvae Stages, https://catalog.data.gov/dataset/california-cooperative-oceanic-fisheries-investigations-calcofidatabase."
+  },
+  {
+    "chunk_id": "fish-larvae-stages",
+    "doc": "calcofi_schema.md",
+    "title": "Stades larvaires",
+    "content": "Les libellés preflexion, flexion et postflexion sont des stades de développement larvaire. Ils doivent rester séparés lors d'une analyse par stade. Les oeufs, lorsqu'ils sont présents, ne doivent pas être fusionnés aux larves sans une demande explicite d'ichtyoplancton combiné."
+  },
+  {
+    "chunk_id": "fish-larvae-abundance-units",
+    "doc": "calcofi_schema.md",
+    "title": "Comptages, surface et volume",
+    "content": "larvae_stage_count est un comptage du matériel traité. larvae_10m2 est une abondance standardisée par 10 mètres carrés. larvae_1000m3 est une abondance par 1 000 mètres cubes uniquement lorsqu'elle est numérique. volume_sampled décrit le volume filtré. Une cellule vide est une valeur manquante, pas un zéro ; ne jamais comparer directement une abondance surfacique et une abondance volumique sans conversion explicitée."
+  },
+  {
+    "chunk_id": "fish-larvae-analysis",
+    "doc": "analysis_guidance.md",
+    "title": "Analyses et graphiques adaptés",
+    "content": "Les analyses descriptives adaptées aux larves de poissons incluent composition taxonomique, répartition des stades, abondance par trait ou période et cartes d'abondance agrégées par station ou trait. Toujours annoncer le taxon, le stade, la période et l'unité retenus. L'absence de valeur ne doit pas être interprétée comme absence biologique."
+  },
+  {
+    "chunk_id": "fish-larvae-environment",
+    "doc": "analysis_guidance.md",
+    "title": "Enrichissement environnemental",
+    "content": "Les données de larves de poissons peuvent être enrichies par des variables CTD ou Bio-ORACLE lorsque les coordonnées et le contexte temporel sont disponibles. Une association observée avec une variable environnementale est descriptive : elle ne démontre ni préférence d'habitat ni causalité écologique."
+  },
+  {
+    "chunk_id": "fish-larvae-stage-definitions",
+    "doc": "state_of_the_art.md",
+    "title": "Développement larvaire et stades",
+    "content": "Les stades préflexion, flexion et postflexion décrivent la morphologie et le développement, pas des classes taxonomiques. La préflexion va après la résorption complète du sac vitellin jusqu'au début de la flexion de la notochorde ; la flexion couvre la courbure dorsale de son extrémité avec la formation de la nageoire caudale ; la postflexion va de la fin de cette flexion au début de la métamorphose. Ces stades ne doivent pas être fusionnés par défaut. Source : NOAA Alaska Fisheries Science Center, Stage Definitions, https://apps-afsc.fisheries.noaa.gov/ichthyo/StageDefPage.php."
+  },
+  {
+    "chunk_id": "fish-larvae-sampling-comparability",
+    "doc": "state_of_the_art.md",
+    "title": "Ce que mesure un trait de filet",
+    "content": "Un trait d'ichtyoplancton mesure les organismes retenus par un protocole donné. La comparabilité dépend notamment du type de filet, du mode de trait, du volume filtré et de la qualité du prélèvement. Les filets doivent être équipés d'un débitmètre pour calculer un volume filtré quantitatif ; sans cette information, la comparaison est qualitative ou semi-quantitative. Les traits verticaux et obliques n'échantillonnent pas exactement la même variabilité spatiale. Sources : FAO, Manual of Fisheries Science, https://www.fao.org/4/F0752E/F0752E07.HTM ; NOAA Fisheries, Ichthyoplankton FAQ, https://www.fisheries.noaa.gov/west-coast/science-data/frequently-asked-questions-about-ichthyoplankton."
+  },
+  {
+    "chunk_id": "fish-larvae-quality-control",
+    "doc": "state_of_the_art.md",
+    "title": "Qualité, sous-échantillonnage et taxonomie",
+    "content": "Dans une table CalCOFI, percent_sorted, sample_quality et standard_haul_factor doivent accompagner les analyses de comptages. Ils qualifient le traitement ou la standardisation et ne doivent pas être ignorés ni utilisés pour recomposer une abondance déjà fournie. La résolution taxonomique peut varier selon les stades et l'état des spécimens : conserver le rang effectivement identifié et annoncer toute agrégation de taxons. Source du schéma : NOAA CalCOFI, https://catalog.data.gov/dataset/california-cooperative-oceanic-fisheries-investigations-calcofidatabase."
+  },
+  {
+    "chunk_id": "fish-larvae-state-of-art-ecology",
+    "doc": "state_of_the_art.md",
+    "title": "Écologie larvaire : ce qui peut et ne peut pas être conclu",
+    "content": "L'écologie larvaire relie le développement précoce aux processus de recrutement, mais les distributions et abondances observées dépendent conjointement de l'advection, de la rétention, de la disponibilité des proies, de la prédation, des conditions hydrographiques et du comportement. Les effets de la turbulence, des fronts ou de l'environnement peuvent être contrastés selon les espèces, stades et contextes. Une corrélation avec une variable CTD ou climatologique est donc descriptive, non causale, sauf plan d'étude et preuves complémentaires. Sources : Arevalo et al. 2023, Fish and Fisheries, doi:10.1111/faf.12740 ; MacKenzie 2000, Oceanologica Acta, doi:10.1016/S0399-1784(00)00142-0."
+  },
+  {
+    "chunk_id": "fish-larvae-recruitment-limit",
+    "doc": "state_of_the_art.md",
+    "title": "Abondance larvaire et recrutement",
+    "content": "Les œufs et larves peuvent renseigner la phénologie de ponte, la composition de communauté et certains indicateurs de populations reproductrices. Une abondance observée dans un jeu de traits n'est toutefois pas, à elle seule, une estimation de survie, de recrutement futur ou de taille de stock adulte. Ces inférences exigent une conception spatio-temporelle explicite, des variables complémentaires et une analyse d'incertitude. Source : NOAA Fisheries, Ichthyoplankton FAQ, https://www.fisheries.noaa.gov/west-coast/science-data/frequently-asked-questions-about-ichthyoplankton."
+  }
+]

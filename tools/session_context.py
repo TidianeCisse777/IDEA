@@ -509,9 +509,12 @@ def build_dataset_state_capsule(
     }
 
     description = _clean(meta.get("description") or "", limit=140)
+    domain_profile = meta.get("domain_profile") or {}
+    domain_name = _clean(domain_profile.get("name") or "", limit=40)
     fields = [
         f"variable={variable}",
         f"source={source}",
+        *([f"biological_profile={domain_name}"] if domain_name else []),
         *( [f"description={description}"] if description else [] ),
         f"shape={rows}x{columns}",
         "aliases=" + (",".join(aliases) if aliases else "none"),
