@@ -72,6 +72,17 @@ def test_build_paired_depth_strata_deduplicates_join_expansion_at_same_depth():
     assert result["comparison_calculable"].tolist() == [True, True]
 
 
+def test_compare_paired_density_rejects_descriptive_all_stages_table():
+    paired = pd.DataFrame({
+        "net_ind_m3": [20.0],
+        "uvp_ind_m3": [5.0],
+        "instrument_comparable": [False],
+    })
+
+    with pytest.raises(ValueError, match="descriptive"):
+        compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m3")
+
+
 def test_compact_certified_strata_matches_cartesian_fanout_without_materializing_it():
     """A many-taxa × many-objects profile must retain the legacy strata result."""
     net = pd.DataFrame(

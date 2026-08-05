@@ -6,6 +6,7 @@ import pytest
 from core.neolabs_abundance import (
     NEOLABS_COPEPOD_METHOD_VERSION,
     neolabs_copepod_density,
+    resolve_neolabs_stage_abundance,
 )
 
 _ABUND = "Total abundance (ind./m3 depth vol)"
@@ -60,3 +61,54 @@ def test_rejects_missing_class_column():
     })
     with pytest.raises(ValueError, match="CLASS"):
         neolabs_copepod_density(df)
+
+
+def test_resolve_late_stages_excludes_small_stages_from_selected_abundance():
+    df = pd.DataFrame({
+        "C1_ABUND (ind./m3 depth vol.)": [100.0],
+        "C4_ABUND (ind./m3 depth vol.)": [4.0],
+        "C5_ABUND (ind./m3 depth vol.)": [5.0],
+        "M_ABUND (ind./m3 depth vol.)": [2.0],
+        "F_ABUND (ind./m3 depth vol.)": [3.0],
+        "ALL_STAGES_ABUND (ind./m3 depth vol.)": [114.0],
+    })
+
+    selected, stages = resolve_neolabs_stage_abundance(
+        df, stages="late_stages"
+    )
+
+    assert stages == ["C4", "C5", "M", "F"]
+    assert selected["_selected_net_abundance_ind_m3"].tolist() == [14.0]
+
+
+def test_resolve_stage_selection_accepts_natural_custom_separators_and_case():
+    df = pd.DataFrame({
+        "C4_ABUND (ind./m3 depth vol.)": [4.0],
+        "C5_ABUND (ind./m3 depth vol.)": [5.0],
+        "M_ABUND (ind./m3 depth vol.)": [2.0],
+        "F_ABUND (ind./m3 depth vol.)": [3.0],
+    })
+
+    selected, stages = resolve_neolabs_stage_abundance(
+        df, stages="c4 + c5; m, f"
+    )
+
+    assert stages == ["C4", "C5", "M", "F"]
+    assert selected["_selected_net_abundance_ind_m3"].tolist() == [14.0]
+
+
+def test_density_accepts_natural_stage_selection_syntax():
+    df = pd.DataFrame({
+        "CLASS": ["Copepoda"],
+        "SAMPLE_ID": ["sample-1"],
+        "STATION_NAME": ["station-1"],
+        "C4_ABUND (ind./m3 depth vol.)": [4.0],
+        "C5_ABUND (ind./m3 depth vol.)": [5.0],
+        "M_ABUND (ind./m3 depth vol.)": [2.0],
+        "F_ABUND (ind./m3 depth vol.)": [3.0],
+    })
+
+    result = neolabs_copepod_density(df, stages="c4 + c5; m, f")
+
+    assert result.iloc[0]["stages_used"] == "C4+C5+M+F"
+    assert result.iloc[0]["copepod_density_ind_m3"] == 14.0

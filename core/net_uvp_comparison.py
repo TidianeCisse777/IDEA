@@ -964,6 +964,16 @@ def compare_paired_density(
             + ", ".join(f"`{c}`" for c in missing)
             + "."
         )
+    if (
+        "instrument_comparable" in paired.columns
+        and not paired["instrument_comparable"].fillna(False).astype(bool).all()
+    ):
+        raise ValueError(
+            "Comparaison d'abondance refusée : cette table est explicitement "
+            "descriptive (`ALL_STAGES` filet inclut des organismes hors fenêtre "
+            "de détection UVP). Sélectionner des stades ou une taille comparables "
+            "avant de calculer delta ou ratio."
+        )
     out = paired.copy()
     net = pd.to_numeric(out[net_col], errors="coerce")
     uvp = pd.to_numeric(out[uvp_col], errors="coerce")

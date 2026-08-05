@@ -80,13 +80,14 @@ def test_net_uvp_skill_requires_stratum_matched_and_explained_profiles():
     assert "user may change" in normalized
 
 
-def test_net_uvp_skill_routes_depth_comparison_through_canonical_builder():
+def test_net_uvp_skill_routes_depth_comparison_through_stage_aware_join():
     from pathlib import Path
 
     skill = Path("agents/skills/net_uvp_abundance_comparison.md").read_text()
 
-    assert "from core.net_uvp_comparison import build_paired_depth_strata" in skill
-    assert "paired_strata = build_paired_depth_strata(" in skill
+    assert "join_net_uvp_enriched" in skill
+    assert "net_stages=\"late_stages\"" in skill
+    assert "comparison_mode=\"descriptive\"" in skill
     assert "comparison_calculable" in skill
     assert "depth_match_status" in skill
     assert "df_net_uvp_strata" in skill

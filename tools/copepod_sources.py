@@ -1027,6 +1027,8 @@ def make_source_tools(thread_id: str) -> list:
         uvp_enriched_variable: str,
         audit_variable_name: str = "df_net_uvp_matches",
         allow_unverified_ctd: bool = False,
+        net_stages: str = "late_stages",
+        comparison_mode: str = "comparable",
     ) -> str:
         """Joint localement un filet à des objets UVP enrichis EcoPart certifiés.
 
@@ -1040,6 +1042,14 @@ def make_source_tools(thread_id: str) -> list:
         indisponible peut être jointe seulement avec `allow_unverified_ctd=True`
         et une preuve d'opt-in exploratoire persistée par l'audit; un no-match
         reste toujours refusé.
+
+        `net_stages` sélectionne le filet avant toute comparaison :
+        `late_stages` (C4+C5+M+F) est le défaut recommandé pour l'UVP ;
+        `adults`, `copepodites`, `nauplii` ou une liste personnalisée (ex.
+        `C5,M,F` ou `C4+C5; M; F`) sont acceptés. La sélection est toujours
+        restituée dans le résultat et la table de strates. `ALL_STAGES` inclut les petits stades : il
+        exige `comparison_mode="descriptive"` et ne produit alors aucun ratio
+        d'accord entre les instruments.
         """
         from core.net_uvp_comparison import (
             build_paired_depth_strata_from_certified_inputs,
@@ -1067,6 +1077,70 @@ def make_source_tools(thread_id: str) -> list:
                 f"introuvable(s) : {', '.join(missing)}.",
                 provenance={"source": "net_uvp_ecopart_certified"},
                 retryable=False,
+            )
+
+        normalized_mode = comparison_mode.strip().lower()
+        if normalized_mode not in {"comparable", "descriptive"}:
+            return blocked(
+                "Comparaison filet↔UVP refusée : `comparison_mode` doit être "
+                "`comparable` ou `descriptive`.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        try:
+            from core.neolabs_abundance import resolve_neolabs_stage_abundance
+
+            selected_net, selected_stages = resolve_neolabs_stage_abundance(
+                datasets["table filet"],
+                stages=net_stages,
+                output_column="_net_uvp_selected_abundance_ind_m3",
+            )
+        except ValueError as exc:
+            return blocked(
+                str(exc),
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        all_stages_selected = selected_stages == ["ALL_STAGES"]
+        if all_stages_selected and normalized_mode != "descriptive":
+            return blocked(
+                "Le total filet `ALL_STAGES` inclut des stades trop petits pour "
+                "une comparaison d'abondance UVP. Utiliser `net_stages="
+                "`late_stages` (recommandé), un filtre explicite, ou "
+                "`comparison_mode=\"descriptive\"` pour un contraste sans ratio.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        recommended_uvp_proxy = selected_stages == ["C4", "C5", "M", "F"]
+        net_stage_basis = (
+            "all_stages_descriptive"
+            if all_stages_selected
+            else (
+                "stage_proxy_for_uvp_size_window"
+                if recommended_uvp_proxy
+                else "user_selected_stages"
+            )
+        )
+        instrument_comparable = normalized_mode == "comparable"
+        if all_stages_selected:
+            stage_selection_note = (
+                "Base filet retenue : ALL_STAGES (tous les stades). "
+                "C'est un contraste descriptif : les ratios et écarts filet–UVP "
+                "sont désactivés."
+            )
+        elif recommended_uvp_proxy:
+            stage_selection_note = (
+                "Base filet retenue : C4+C5+M+F, le proxy de stades recommandé "
+                "pour la fenêtre de taille UVP. Les ratios et écarts par tranche "
+                "peuvent être calculés."
+            )
+        else:
+            stage_selection_note = (
+                "Base filet retenue : "
+                + "+".join(selected_stages)
+                + ". Sélection personnalisée appliquée telle quelle ; les ratios "
+                "sont calculés à la demande, sans validation automatique de son "
+                "équivalence de taille avec l'UVP."
             )
 
         audit_meta = dict(
@@ -1126,19 +1200,19 @@ def make_source_tools(thread_id: str) -> list:
             if net_id_column is not None else set()
         )
         available_audit_samples = audit_sample_keys.intersection(net_sample_keys)
-        net_abundance_column = "ALL_STAGES_ABUND (ind./m3 depth vol.)"
+        net_abundance_column = "_net_uvp_selected_abundance_ind_m3"
         net_abundance_sample_keys: set[str] = set()
-        if net_id_column is not None and net_abundance_column in datasets["table filet"].columns:
+        if net_id_column is not None and net_abundance_column in selected_net.columns:
             net_abundance = pd.to_numeric(
-                datasets["table filet"][net_abundance_column], errors="coerce"
+                selected_net[net_abundance_column], errors="coerce"
             )
             has_abundance = net_abundance.notna()
-            if "CLASS" in datasets["table filet"].columns:
-                has_abundance &= datasets["table filet"]["CLASS"].astype(
+            if "CLASS" in selected_net.columns:
+                has_abundance &= selected_net["CLASS"].astype(
                     "string"
                 ).str.casefold().eq("copepoda")
             net_abundance_sample_keys = _canonical_sample_keys(
-                datasets["table filet"].loc[has_abundance, net_id_column]
+                selected_net.loc[has_abundance, net_id_column]
             )
         net_abundance_available_count = int(
             certified_pair_frame["net_sample_id"].isin(
@@ -1252,8 +1326,8 @@ def make_source_tools(thread_id: str) -> list:
             accepted_audit
             & _canonical_sample_series(audit_frame["net_sample_id"]).isin(net_sample_keys)
         ].copy()
-        net_for_comparison = datasets["table filet"].loc[
-            _canonical_sample_series(datasets["table filet"][net_id_column]).isin(
+        net_for_comparison = selected_net.loc[
+            _canonical_sample_series(selected_net[net_id_column]).isin(
                 comparison_sample_keys
             )
         ].copy()
@@ -1389,6 +1463,7 @@ def make_source_tools(thread_id: str) -> list:
                 enriched_for_comparison,
                 allow_unverified_ctd=exploratory_override,
                 uvp_object_col=object_column or "object_id",
+                net_abundance_col=net_abundance_column,
             )
         except ValueError as exc:
             return blocked(
@@ -1400,6 +1475,8 @@ def make_source_tools(thread_id: str) -> list:
             return empty(
                 "Aucune ligne objet ne relie l'audit certifié à l'export UVP "
                 "enrichi EcoPart ; aucune table finale n'a été créée. "
+                + stage_selection_note
+                + " "
                 + coverage_note,
                 provenance={"source": "net_uvp_ecopart_certified"},
                 metrics={
@@ -1411,6 +1488,18 @@ def make_source_tools(thread_id: str) -> list:
                     "comparison_readiness": "not_calculable",
                 },
             )
+        compact_strata["net_stages_used"] = "+".join(selected_stages)
+        compact_strata["net_size_matching_basis"] = net_stage_basis
+        compact_strata["comparison_mode"] = normalized_mode
+        compact_strata["instrument_comparable"] = instrument_comparable
+        if not instrument_comparable:
+            for column in (
+                "abundance_delta_ind_m3",
+                "abundance_ratio",
+                "abundance_log2_ratio",
+            ):
+                if column in compact_strata.columns:
+                    compact_strata[column] = np.nan
         calculable_strata_count = int(
             compact_strata["comparison_calculable"].sum()
         )
@@ -1475,6 +1564,10 @@ def make_source_tools(thread_id: str) -> list:
                 "audit_reused_for_available_samples": audit_reused_for_available_samples,
                 "certified_audit_samples": len(audit_sample_keys),
                 "available_net_samples": len(available_audit_samples),
+                "net_stages_used": "+".join(selected_stages),
+                "net_size_matching_basis": net_stage_basis,
+                "comparison_mode": normalized_mode,
+                "instrument_comparable": instrument_comparable,
             }
             for output_name, output_frame in (
                 ("df_net_uvp_strata", strata),
@@ -1498,11 +1591,16 @@ def make_source_tools(thread_id: str) -> list:
                 for status, count in exclusions["depth_match_status"].value_counts().items()
             }
             return success(
-                "Comparaison filet↔UVP par tranche créée sans matérialiser la "
-                "jointure taxons×objets : "
+                (
+                    "Contraste descriptif filet↔UVP par tranche créé sans ratio "
+                    "inter-instrument : "
+                    if not instrument_comparable
+                    else "Comparaison filet↔UVP par tranche créée sans matérialiser la "
+                )
+                + "jointure taxons×objets : "
                 f"{len(calculable)}/{len(strata)} tranche(s) calculable(s), "
                 f"{len(exclusions)} avec valeur manquante ou exclusion. "
-                f"{coverage_note} {pair_readiness_note} "
+                f"{stage_selection_note} {coverage_note} {pair_readiness_note} "
                 "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
                 "`df_net_uvp_exclusions`.",
                 provenance={"source": "net_uvp_ecopart_certified"},
@@ -1525,6 +1623,9 @@ def make_source_tools(thread_id: str) -> list:
                     "calculable_strata_count": calculable_strata_count,
                     "calculable_pair_count": calculable_pair_count,
                     "comparison_readiness": comparison_readiness,
+                    "net_stages_used": "+".join(selected_stages),
+                    "comparison_mode": normalized_mode,
+                    "instrument_comparable": instrument_comparable,
                 },
             )
 
@@ -1596,6 +1697,10 @@ def make_source_tools(thread_id: str) -> list:
             "materialization": "legacy_object_table_inspection_only",
             "certified_audit_samples": len(audit_sample_keys),
             "available_net_samples": len(available_audit_samples),
+            "net_stages_used": "+".join(selected_stages),
+            "net_size_matching_basis": net_stage_basis,
+            "comparison_mode": normalized_mode,
+            "instrument_comparable": instrument_comparable,
         }
         for output_name, output_frame in (
             ("df_net_uvp_strata", strata),
@@ -1630,9 +1735,17 @@ def make_source_tools(thread_id: str) -> list:
             "calculable_strata_count": calculable_strata_count,
             "calculable_pair_count": calculable_pair_count,
             "comparison_readiness": comparison_readiness,
+            "net_stages_used": "+".join(selected_stages),
+            "comparison_mode": normalized_mode,
+            "instrument_comparable": instrument_comparable,
         }
         comparison_note = (
-            f"\nComparaison par tranche prête : {len(calculable)}/{len(strata)} "
+            (
+                "\nContraste descriptif par tranche prêt (sans ratio inter-instrument) : "
+                if not instrument_comparable
+                else "\nComparaison par tranche prête : "
+            )
+            + f"{len(calculable)}/{len(strata)} "
             "tranche(s) calculable(s), "
             f"{len(exclusions)} avec valeur manquante ou exclusion. "
             + pair_readiness_note
@@ -1649,7 +1762,7 @@ def make_source_tools(thread_id: str) -> list:
                 "correspondances certifiées"
             )
             + f" : {len(joined)} ligne(s) objet."
-            + f"\n{coverage_note}"
+            + f"\n{stage_selection_note}\n{coverage_note}"
             + comparison_note,
             provenance={"source": "net_uvp_ecopart_certified"},
             data_ref=("df_net_uvp_strata" if comparison_refs else variable_name),

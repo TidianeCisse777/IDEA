@@ -2536,6 +2536,10 @@ def _net_uvp_enriched_tool(
                 net_density_first,
                 15.0,
             ],
+            "C4_ABUND (ind./m3 depth vol.)": [3.0, 4.0],
+            "C5_ABUND (ind./m3 depth vol.)": [4.0, 5.0],
+            "M_ABUND (ind./m3 depth vol.)": [2.0, 3.0],
+            "F_ABUND (ind./m3 depth vol.)": [3.0, 3.0],
             "net_density_ind_m3": [net_density_first, 15.0],
         }
     )
@@ -2632,6 +2636,10 @@ def _net_uvp_enriched_tool_with_two_of_five_abundance_rows(tmp_path, monkeypatch
             "MIN_SAMPLE_DEPTH": [0.0, 0.0],
             "MAX_SAMPLE_DEPTH": [10.0, 10.0],
             "ALL_STAGES_ABUND (ind./m3 depth vol.)": [12.0, 15.0],
+            "C4_ABUND (ind./m3 depth vol.)": [3.0, 4.0],
+            "C5_ABUND (ind./m3 depth vol.)": [4.0, 5.0],
+            "M_ABUND (ind./m3 depth vol.)": [2.0, 3.0],
+            "F_ABUND (ind./m3 depth vol.)": [3.0, 3.0],
         }
     )
     store_dataset(
@@ -2785,6 +2793,10 @@ def test_join_net_uvp_keeps_pair_readiness_partial_when_one_pair_has_five_strata
             "MIN_SAMPLE_DEPTH": [0.0, 10.0, 20.0, 30.0, 40.0],
             "MAX_SAMPLE_DEPTH": [10.0, 20.0, 30.0, 40.0, 50.0],
             "ALL_STAGES_ABUND (ind./m3 depth vol.)": [12.0] * 5,
+            "C4_ABUND (ind./m3 depth vol.)": [3.0] * 5,
+            "C5_ABUND (ind./m3 depth vol.)": [4.0] * 5,
+            "M_ABUND (ind./m3 depth vol.)": [2.0] * 5,
+            "F_ABUND (ind./m3 depth vol.)": [3.0] * 5,
         }
     )
     store.set(
@@ -2956,6 +2968,10 @@ def test_join_net_uvp_enriched_avoids_materializing_large_taxa_object_fanout(
             "MIN_SAMPLE_DEPTH": [0.0] * 401,
             "MAX_SAMPLE_DEPTH": [10.0] * 401,
             "ALL_STAGES_ABUND (ind./m3 depth vol.)": [1.0] * 401,
+            "C4_ABUND (ind./m3 depth vol.)": [0.25] * 401,
+            "C5_ABUND (ind./m3 depth vol.)": [0.25] * 401,
+            "M_ABUND (ind./m3 depth vol.)": [0.25] * 401,
+            "F_ABUND (ind./m3 depth vol.)": [0.25] * 401,
         }
     )
     store.set(f"{thread_id}:dataset:df_file_baffin_2024", net, net_entry["meta"])
@@ -3015,6 +3031,10 @@ def test_join_net_uvp_enriched_discards_irrelevant_profiles_before_sizing_fanout
             "MIN_SAMPLE_DEPTH": [0.0] * 300,
             "MAX_SAMPLE_DEPTH": [10.0] * 300,
             "ALL_STAGES_ABUND (ind./m3 depth vol.)": [1.0] * 300,
+            "C4_ABUND (ind./m3 depth vol.)": [0.25] * 300,
+            "C5_ABUND (ind./m3 depth vol.)": [0.25] * 300,
+            "M_ABUND (ind./m3 depth vol.)": [0.25] * 300,
+            "F_ABUND (ind./m3 depth vol.)": [0.25] * 300,
         }
     )
     store.set(f"{thread_id}:dataset:df_file_baffin_2024", net, net_entry["meta"])
@@ -3077,8 +3097,40 @@ def test_join_net_uvp_enriched_also_prepares_calculable_and_excluded_strata(
     assert len(calculable) == 1
     assert len(exclusions) == 1
     assert exclusions.iloc[0]["depth_match_status"] == "missing_volume"
+    assert strata["net_stages_used"].eq("C4+C5+M+F").all()
+    assert strata["instrument_comparable"].all()
+    assert "Base filet retenue : C4+C5+M+F" in text
     assert "1/2" in text
     assert "df_net_uvp_calculable" in text
+
+
+def test_join_net_uvp_enriched_marks_all_stages_as_descriptive_only(
+    tmp_path, monkeypatch
+):
+    join_tool, store, thread_id = _net_uvp_enriched_tool(tmp_path, monkeypatch)
+
+    refused = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+            "net_stages": "ALL_STAGES",
+        }
+    )
+    assert "trop petits" in refused
+
+    text = join_tool.invoke(
+        {
+            "net_variable_name": "df_file_baffin_2024",
+            "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+            "net_stages": "ALL_STAGES",
+            "comparison_mode": "descriptive",
+        }
+    )
+    strata = store.get(f"{thread_id}:dataset:df_net_uvp_strata")["df"]
+    assert strata["comparison_mode"].eq("descriptive").all()
+    assert not strata["instrument_comparable"].any()
+    assert strata["abundance_ratio"].isna().all()
+    assert "Base filet retenue : ALL_STAGES" in text
 
 
 def test_join_net_uvp_enriched_requires_opt_in_for_unavailable_ctd_audit(

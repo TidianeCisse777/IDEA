@@ -48,6 +48,12 @@ definition source, Wikipedia URL and WoRMS validation.
   and sampling unit while retaining method and volume provenance. Raw object/image
   counts and incompatible volumes are never comparable. FlowCam uses its own
   export-native concentration workflow; never apply UVP/EcoPart volume rules to it.
+- Net↔UVP abundance: `ALL_STAGES` from a net includes small stages that can fall
+  outside the UVP detection window. Before a ratio or agreement graph, state the
+  selected size/stage basis and use the stage-aware final join with
+  `late_stages` by default. `ALL_STAGES` is allowed only as an explicitly
+  labelled descriptive contrast; never calculate or interpret a UVP/net ratio
+  from it. Let the user choose another explicit stage or validated size window.
 - Net↔UVP vertical profile: compare each net depth stratum only with UVP objects
   and sampled volume from that same interval; never plot a full UVP profile against
   one net stratum. State the chosen metric, taxon scope, volume rule, units, zeros

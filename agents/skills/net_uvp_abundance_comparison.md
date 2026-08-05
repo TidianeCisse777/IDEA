@@ -1,6 +1,6 @@
 ---
 name: net_uvp_abundance_comparison
-version: 2.2.0
+version: 2.3.0
 triggers:
   - User asks to compare net (NeoLabs) abundance against UVP (EcoTaxa/EcoPart) abundance
   - User asks to join net and UVP data, compute density, make comparisons by taxon or stage
@@ -104,6 +104,32 @@ or accompanying audit: `distance_km`, `time_gap_days`, `uvp_ctd_filename`,
 `amundsen_filename`, `station_match`, `ctd_filename_distance_km`,
 `ctd_filename_time_delta_min`, and `match_status`.
 
+## Fenêtre de taille et stades : condition de comparabilité
+
+Le filet capture une part importante des petits copépodes et nauplii que l'UVP
+ne détecte pas de manière fiable. **Ne jamais présenter `ALL_STAGES` du filet
+comme l'équivalent de l'abondance totale UVP.** Dans l'étude Beaufort UVP5–filet,
+la fenêtre commune était environ 1–6 mm ESD ; les copépodes <1 mm représentaient
+77–89 % de l'abondance filet. Le seuil exact dépend de l'instrument, du réglage
+et de la validation locale : le dire, ne pas l'inventer.
+Référence de méthode : Forest et al. (2012), *Biogeosciences* 9, 1301–1320,
+https://bg.copernicus.org/articles/9/1301/2012/.
+
+Avant un ratio, un delta ou un graphe d'accord inter-instrument, annoncer en
+langage simple la base retenue et offrir, si le choix n'est pas déjà explicite :
+
+1. **Stades tardifs C4+C5+M+F** — défaut recommandé ; proxy de taille quand le
+   filet ne fournit pas la taille individuelle.
+2. **Tous stades** — contraste descriptif seulement : montrer les deux densités
+   est permis, mais pas de ratio/delta présenté comme un accord UVP–filet.
+3. **Filtre personnalisé** — stades nommés ou fenêtre de taille validée par
+   l'utilisateur; l'annoncer comme un choix, pas comme une détection UVP prouvée.
+
+La jointure finale porte `net_stages_used`, `net_size_matching_basis`,
+`comparison_mode` et `instrument_comparable`. Réutiliser ces champs dans tout
+graphe et toute réponse. `instrument_comparable=False` interdit les ratios et
+leurs interprétations.
+
 ## How to compute UVP density (run_pandas)
 
 ```python
@@ -147,8 +173,8 @@ bins = canonical[(canonical["depth_bin"] >= 0) & (canonical["depth_bin"] <= 200)
 from core.neolabs_abundance import neolabs_copepod_density, STAGE_GROUPS
 
 # stages presets:
-#   "ALL_STAGES"   → all stages combined (default)
-#   "late_stages"  → C4+C5+M+F  (comparable to UVP, >~600 µm)
+#   "ALL_STAGES"   → all stages combined (descriptive only against UVP)
+#   "late_stages"  → C4+C5+M+F  (recommended UVP size proxy)
 #   "adults"       → M+F only
 #   "copepodites"  → C1 to C5
 #   "nauplii"      → N1 to N6
@@ -157,7 +183,7 @@ from core.neolabs_abundance import neolabs_copepod_density, STAGE_GROUPS
 # taxon_filter matches the CLASS column (or pass taxon_column="FAMILY" for family-level)
 net_density = neolabs_copepod_density(
     df_file_neolabs_abundance,
-    stages="late_stages",            # ← user's choice
+    stages="late_stages",            # ← default recommended or user's choice
     taxon_filter="Copepoda",         # ← user's choice
     taxon_column="CLASS",
 )
@@ -218,8 +244,10 @@ result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m
 - `abundance_ratio` near 1 = concordant; >> 1 = UVP reads higher; << 1 = net reads higher.
 - Net tows and UVP are not expected to give identical numbers: different sampling volumes,
   size selectivity, detection thresholds. Never present one as "more correct".
-- UVP detects organisms reliably above ~600 µm → compare `late_stages` (C4+C5+M+F)
-  on the net side when comparing totals, not `ALL_STAGES` which includes nauplii.
+- State the validated UVP size window when it is known. `late_stages`
+  (C4+C5+M+F) is the recommended stage proxy for a normalized comparison; it is
+  not an exact size measurement. `ALL_STAGES` includes small stages/nauplii and
+  may only support a clearly labelled descriptive contrast.
 - Always keep the CTD audit fields named above visible in the paired table or
   accompanying audit; never reduce them to a station name or a distance alone.
 - No causal or biological interpretation: describe the numbers, state the comparison basis.
@@ -228,24 +256,18 @@ result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m
 
 For depth profiles/comparisons, start from `df_net_uvp_ecopart`. The audited
 filet table must already join NeoLabs abundance and sample metadata on
-`SAMPLE_ID + ANALYSIS_ID`. Otherwise rebuild and re-audit it. If the abundance
-metric or stages are ambiguous, ask once; the wide-file default is
-`ALL_STAGES_ABUND (ind./m3 depth vol.)` with `CLASS == Copepoda`.
+`SAMPLE_ID + ANALYSIS_ID`. Otherwise rebuild and re-audit it. If the stages are
+ambiguous, ask once; the normalized default is `late_stages`, never the silent
+wide-file `ALL_STAGES_ABUND` total.
 
 Never hand-write deduplication, bin selection, counts, sum of sampled volumes,
-conversion, delta, or ratio. Run:
+conversion, delta, or ratio. Call `join_net_uvp_enriched` with the chosen
+`net_stages` **before** graphing; it persists `df_net_uvp_strata` with that
+selection. For example, use `net_stages="late_stages"` for the normalized
+default, or `net_stages="ALL_STAGES", comparison_mode="descriptive"` only
+when the user explicitly requests the descriptive all-stage contrast.
 
-```python
-from core.net_uvp_comparison import build_paired_depth_strata
-
-paired_strata = build_paired_depth_strata(
-    df_net_uvp_ecopart,
-    net_abundance_col="ALL_STAGES_ABUND (ind./m3 depth vol.)",
-)
-result = paired_strata
-```
-
-Persist with `persist_as="df_net_uvp_strata"`. The builder deduplicates net
+The builder behind this tool deduplicates net
 taxa and UVP objects, retains bins in the **same depth interval**, and returns
 one row per filet stratum. Keep all rows. Only `comparison_calculable=True` may
 feed numeric comparisons; preserve every `depth_match_status` and
@@ -261,10 +283,14 @@ repeat the method disclosure instead of keeping old parameters silently.
 
 ## Graphs
 
-After building `result`, use the already-active graph rules, then call `run_graph` for:
-- Scatter: `net_ind_m3` vs `uvp_ind_m3` per station (1:1 line reference)
-- Bar: `abundance_log2_ratio` per station (0 = perfect agreement)
-- Map: station bubbles coloured by ratio (needs lat/lon from `df_file_neolabs_sample`)
+After selecting `df_net_uvp_strata`, use the already-active graph rules, then call `run_graph` for:
+- Scatter: `net_ind_m3` vs `uvp_ind_m3` per station (1:1 line reference), only
+  when `instrument_comparable=True`
+- Bar: `abundance_log2_ratio` per station (0 = perfect agreement), only when
+  `instrument_comparable=True`
+- Map: station bubbles coloured by ratio only when `instrument_comparable=True`
+  (needs lat/lon from `df_file_neolabs_sample`); a descriptive all-stage map
+  must use two clearly separated abundance series instead
 - Vertical profile: paired net and UVP values by the same net stratum. Use a
   segment spanning each net interval for both methods; a connector may show the
   within-stratum comparison. Keep exploratory and certified series visually
