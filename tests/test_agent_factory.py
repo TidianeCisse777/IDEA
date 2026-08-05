@@ -627,6 +627,7 @@ def test_context_compaction_keeps_tool_nectar_not_only_its_prefix():
     assert "Selection persisted: uvp_baffin_2024" in summary
     assert "Coverage: projects=2; samples=8" in summary
     assert "Faits: status=success; persisted=True; rows=8; projects=2" in summary
+    assert len(summary) <= agent_module._MAX_STALE_TOOL_RESULT_CHARS
 
 
 def test_context_preparation_keeps_current_turn_tool_result_full():
@@ -922,11 +923,11 @@ def test_context_middleware_places_static_references_before_turn_state(
         def override(self, **kwargs):
             return kwargs
 
-    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
-    monkeypatch.setattr("tools.skill_tool.preseed_capsule_skills", lambda *_: [])
-    monkeypatch.setattr(
-        "tools.skill_tool.graph_rendering_reference", lambda: "\nSTATIC-REFERENCE"
-    )
+        monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+        monkeypatch.setattr("tools.skill_tool.preseed_capsule_skills", lambda *_: [])
+        monkeypatch.setattr(
+            "tools.skill_tool.graph_planning_reference", lambda: "\nSTATIC-REFERENCE"
+        )
     middleware = agent_module._ContextMiddleware(
         thread_id="cache-prefix-thread", output_intent_classifier=VisualClassifier()
     )
@@ -940,6 +941,45 @@ def test_context_middleware_places_static_references_before_turn_state(
     assert system.index("STATIC-REFERENCE") < system.index("DYNAMIC-MEMORY")
     assert audit["static_reference_chars"] > 0
     assert audit["dynamic_context_chars"] > 0
+
+
+def test_graph_reference_phase_keeps_full_guidance_at_each_step():
+    import agent as agent_module
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    first = [HumanMessage(content="Fais un profil vertical")]
+    prepared = [
+        *first,
+        AIMessage(content="", tool_calls=[{
+            "name": "run_pandas", "args": {"code": "result = df"},
+            "id": "pandas-1", "type": "tool_call",
+        }]),
+        ToolMessage(
+            content="ok", name="run_pandas", tool_call_id="pandas-1",
+            artifact={"status": "success"},
+        ),
+    ]
+    rendered = [
+        *prepared,
+        AIMessage(content="", tool_calls=[{
+            "name": "run_graph", "args": {"code": "..."},
+            "id": "graph-1", "type": "tool_call",
+        }]),
+        ToolMessage(
+            content="![graph](/graphs/profile.png)", name="run_graph",
+            tool_call_id="graph-1", artifact={"status": "success"},
+        ),
+    ]
+
+    assert agent_module._graph_reference_phase(
+        first, active_variable="df_source", has_graph_edit=False
+    ) == "planner"
+    assert agent_module._graph_reference_phase(
+        prepared, active_variable="df_source", has_graph_edit=False
+    ) == "writer"
+    assert agent_module._graph_reference_phase(
+        rendered, active_variable="df_graph_plot", has_graph_edit=False
+    ) == "none"
 
 
 def test_context_middleware_injects_last_graph_script_for_an_edit(monkeypatch, tmp_path):

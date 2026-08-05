@@ -22,6 +22,23 @@ def test_tool_schema_tokens_are_counted():
     assert _tool_schema_tokens([example_tool]) > 0
 
 
+def test_prior_user_instruction_ledger_keeps_older_directives_verbatim():
+    from langchain_core.messages import AIMessage, HumanMessage
+    from agent import _build_prior_user_instruction_ledger
+
+    older_directive = "Utilise des bins de 20 m et garde station_id comme clé."
+    block, metrics = _build_prior_user_instruction_ledger([
+        HumanMessage(content=older_directive),
+        AIMessage(content="D'accord."),
+        HumanMessage(content="Trace maintenant le profil vertical."),
+    ])
+
+    assert older_directive in block
+    assert "Trace maintenant" not in block
+    assert metrics["prior_user_instruction_count"] == 1
+    assert metrics["prior_user_instruction_injected"] is True
+
+
 def test_context_audit_total_respects_configured_input_budget(monkeypatch):
     from langchain.agents import create_agent
     from langchain_core.messages import AIMessage, HumanMessage
@@ -31,6 +48,7 @@ def test_context_audit_total_respects_configured_input_budget(monkeypatch):
 
     monkeypatch.setattr(agent_module, "_MAX_CONTEXT_TOKENS", 2000)
     monkeypatch.setattr(agent_module, "_CONTEXT_RESERVE_TOKENS", 200)
+    monkeypatch.setattr(agent_module, "_MAX_HISTORY_TOKENS", 800)
     agent_module.clear_context_audit()
 
     def model(request):
@@ -44,12 +62,17 @@ def test_context_audit_total_respects_configured_input_budget(monkeypatch):
     )
     graph.invoke({
         "messages": [
-            HumanMessage(content=(f"ancien-{index} " * 400))
-            for index in range(8)
+            message
+            for index in range(4)
+            for message in (
+                HumanMessage(content=f"consigne-{index}"),
+                AIMessage(content=(f"ancien-{index} " * 400)),
+            )
         ]
     })
 
     audit = agent_module.get_context_audit("budget-thread")
-    assert audit["history_budget_tokens"] < 2000
+    assert audit["history_budget_tokens"] == 800
+    assert audit["history_budget_capped"] is True
     assert audit["approx_tokens_model_request"] <= 2000
     assert audit["approx_tokens_tool_schemas"] == 0

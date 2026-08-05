@@ -165,6 +165,24 @@ def graph_rendering_reference() -> str:
     )
 
 
+def graph_planning_reference() -> str:
+    """Full reviewed planner guidance for the data-selection phase of a graph."""
+    return _full_skill_reference(
+        ("graph_planner",),
+        "## GRAPH PLANNING REFERENCE (authoritative reviewed procedure; "
+        "prepare the exact plotting data before rendering)",
+    )
+
+
+def graph_writing_reference() -> str:
+    """Full reviewed writer guidance once plotting data or an edit is ready."""
+    return _full_skill_reference(
+        ("graph_writer",),
+        "## GRAPH WRITING REFERENCE (authoritative reviewed procedure; "
+        "render or correct the graph from the exact prepared data)",
+    )
+
+
 def source_navigation_reference(skill_names: tuple[str, ...]) -> str:
     """Full reviewed body of an already-active source-procedure skill (e.g. EcoTaxa)."""
     return _full_skill_reference(

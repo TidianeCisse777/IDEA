@@ -53,7 +53,7 @@ Pass only variables requested by the user when they name a subset:
 `temperature`/`température`,
 `salinité`/`salinity`, `oxygène`/`oxygen`, `nitrate`, `chlorophylle`,
 `fluorescence`, `densité`, or `pression`. For a broad request, omit `variables`
-or pass all eight CTD codes; both mean the complete supported set.
+or pass all eight CTD codes; both mean all variables.
 
 For an EcoTaxa export with `sample_ctdrosettefilename` (or an equivalent CTD
 filename column), the tool automatically fetches the matching CTD profile by

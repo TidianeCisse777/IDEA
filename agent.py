@@ -84,6 +84,11 @@ _SYSTEM_PROMPT = _load_system_prompt()
 # evaluations that need a larger window.
 _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "100000"))
 _CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
+# Raw ReAct history is useful only for the immediately preceding work.  Older
+# user choices are carried separately below, while dataset/source/graph facts
+# are restored from the persisted session state.  This is deliberately below
+# the quality ceiling so a long conversation cannot consume it by itself.
+_MAX_HISTORY_TOKENS = int(os.getenv("MAX_HISTORY_TOKENS", "16000"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 # A manifest may budget a substantial skill, but it must not override the
@@ -93,7 +98,8 @@ _MAX_SKILL_RESULT_CHARS = int(os.getenv("MAX_SKILL_RESULT_CHARS", "12000"))
 _KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "1"))
 # Second-pass budget: if total tool-result chars after first compaction exceeds
 # this, oldest eligible messages are compacted further (never the current turn).
-_MAX_TOTAL_TOOL_CHARS = int(os.getenv("MAX_TOTAL_TOOL_RESULT_CHARS", "40000"))
+_MAX_TOTAL_TOOL_CHARS = int(os.getenv("MAX_TOTAL_TOOL_RESULT_CHARS", "16000"))
+_MAX_STALE_TOOL_RESULT_CHARS = 700
 _context_audit_by_thread: dict[str, dict] = {}
 _harness_trace_by_thread: dict[str, dict] = {}
 _harness_trace_lock = threading.Lock()
@@ -504,7 +510,12 @@ def _compact_old_tool_results(
         metrics["old_tool_result_chars_before"] += before
         metrics["old_tool_result_chars_after"] += len(compact)
 
-    def _semantic_tool_summary(message, *, reason: str, limit: int = 1200) -> str:
+    def _semantic_tool_summary(
+        message,
+        *,
+        reason: str,
+        limit: int = _MAX_STALE_TOOL_RESULT_CHARS,
+    ) -> str:
         """Keep durable facts rather than an arbitrary leading excerpt."""
         raw = str(message.content or "")
         lines = [" ".join(line.split()) for line in raw.splitlines()]
@@ -615,7 +626,7 @@ def _compact_old_tool_results(
                     continue  # Already compacted or inherently short
                 before = len(m.content)
                 compact = _semantic_tool_summary(
-                    m, reason="budget global", limit=700
+                    m, reason="budget global", limit=480
                 )
                 output[i] = m.model_copy(update={"content": compact})
                 total_chars -= before - len(compact)
@@ -745,6 +756,99 @@ def _trim_request_messages(messages, *, max_tokens: int | None = None):
     return list(messages[last_human_index:])
 
 
+def _graph_reference_phase(
+    messages,
+    *,
+    active_variable: str | None,
+    has_graph_edit: bool,
+) -> str:
+    """Choose the full graph skill needed for the current ReAct phase.
+
+    The skill text is authoritative and must not be summarised away.  The
+    phase selector merely stops planner and writer manuals from being repeated
+    together after a graph has already been rendered.
+    """
+    last_human = max(
+        (index for index, message in enumerate(messages) if isinstance(message, HumanMessage)),
+        default=-1,
+    )
+    current_tools = [
+        message for message in messages[last_human + 1:]
+        if isinstance(message, ToolMessage)
+    ]
+
+    graph_results = [message for message in current_tools if message.name == "run_graph"]
+    if graph_results:
+        latest = graph_results[-1]
+        artifact = latest.artifact if isinstance(latest.artifact, dict) else {}
+        if artifact.get("status") == "success":
+            return "none"
+        return "writer"
+
+    if any(message.name == "run_pandas" for message in current_tools):
+        return "writer"
+    if has_graph_edit or active_variable == "df_graph_plot":
+        return "writer"
+    return "planner"
+
+
+def _message_text_content(message) -> str:
+    """Return the textual portion of a LangChain message without inventing it."""
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        fragments: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                fragments.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                fragments.append(part["text"])
+        return "\n".join(fragments)
+    return str(content or "")
+
+
+def _build_prior_user_instruction_ledger(messages) -> tuple[str, dict]:
+    """Preserve prior user choices when raw history is capped.
+
+    This is a deterministic, verbatim projection of older HumanMessages, not
+    an LLM-generated summary.  The active dataset, source scope and graph
+    facts stay in their dedicated persisted capsules; this ledger covers the
+    remaining user directives.  The current user message remains in normal
+    history, so it is never duplicated and always takes precedence.
+    """
+    human_messages = [
+        message for message in messages if isinstance(message, HumanMessage)
+    ]
+    prior_messages = human_messages[:-1]
+    entries = [
+        _message_text_content(message).strip()
+        for message in prior_messages
+    ]
+    entries = [entry for entry in entries if entry]
+    if not entries:
+        return "", {
+            "prior_user_instruction_count": 0,
+            "prior_user_instruction_chars": 0,
+            "prior_user_instruction_injected": False,
+        }
+
+    rendered_entries = "\n".join(
+        f"{index}. {entry}" for index, entry in enumerate(entries, start=1)
+    )
+    block = (
+        "\n\n## PRIOR USER INSTRUCTIONS (verbatim)\n"
+        "Use these as continuity only. Later entries and the current user "
+        "message override earlier ones.\n"
+        f"{rendered_entries}"
+    )
+    return block, {
+        "prior_user_instruction_count": len(entries),
+        "prior_user_instruction_chars": len(block),
+        "prior_user_instruction_injected": True,
+    }
+
+
 def _build_memory_block(memories) -> tuple[str, dict]:
     """Construit le bloc mémoire long-terme à ajouter au system prompt.
 
@@ -840,19 +944,14 @@ class _ContextMiddleware(AgentMiddleware):
 
         preseeded_graph_skills: list[str] = []
         graph_reference_block = ""
+        graph_reference_phase = "none"
         visual_turn = output_intent.intent == "visual" and os.getenv(
             "DISABLE_GRAPH_PRESEED", ""
         ).lower() not in ("1", "true", "yes")
         if visual_turn:
-            from tools.skill_tool import graph_rendering_reference
-
             preseeded_graph_skills = preseed_capsule_skills(
                 session_store, self.thread_id, ("graph_planner", "graph_writer")
             )
-            # Inject the full reviewed graph templates directly (not through the
-            # compact state capsule, which would truncate them). Tokens are
-            # near-free for latency; round-trips are the cost we removed.
-            graph_reference_block = graph_rendering_reference()
 
         # EcoTaxa's read procedure lives in ecotaxa_navigation, whose full rules
         # are captured by a runtime capsule. When EcoTaxa is authorized this turn,
@@ -898,10 +997,24 @@ class _ContextMiddleware(AgentMiddleware):
             except Exception:
                 pass
 
+        # Do not inject a runtime capsule when the same skill's complete,
+        # authoritative reference is already injected for this request. The
+        # persisted capsule remains intact for later turns where no full guide
+        # is needed; this only removes duplicated prompt text.
+        excluded_capsule_skills: set[str] = set()
+        if visual_turn:
+            excluded_capsule_skills.update(("graph_planner", "graph_writer"))
+        if source_reference_block:
+            excluded_capsule_skills.add("ecotaxa_navigation")
+
         # Rebuild the typed turn state once; the model-facing capsule (active
         # dataset, live zone subsets, authorized source scope) is its projection.
         turn_ctx = build_turn_context(
-            session_store, self.thread_id, original_messages, persist_source=False
+            session_store,
+            self.thread_id,
+            original_messages,
+            persist_source=False,
+            exclude_skill_names=excluded_capsule_skills,
         )
         # Keep the decision local to this model request as well as persisted in
         # session metadata. This avoids a race with a store reload and makes
@@ -942,6 +1055,18 @@ class _ContextMiddleware(AgentMiddleware):
                 graph_edit_block = graph_edit_reference(session_store, self.thread_id)
         except Exception:
             pass
+        if visual_turn:
+            from tools.skill_tool import graph_planning_reference, graph_writing_reference
+
+            graph_reference_phase = _graph_reference_phase(
+                original_messages,
+                active_variable=turn_ctx.active_variable,
+                has_graph_edit=bool(graph_edit_block),
+            )
+            if graph_reference_phase == "planner":
+                graph_reference_block = graph_planning_reference()
+            elif graph_reference_phase == "writer":
+                graph_reference_block = graph_writing_reference()
         net_uvp_progress_block = ""
         try:
             from tools.net_uvp_workflow import resolve_net_uvp_progress
@@ -965,8 +1090,12 @@ class _ContextMiddleware(AgentMiddleware):
             + neolabs_reference_block
             + fish_larvae_reference_block
         )
+        user_instruction_block, user_instruction_metrics = (
+            _build_prior_user_instruction_ledger(original_messages)
+        )
         dynamic_context_block = (
             block
+            + user_instruction_block
             + dataset_block
             + domain_profile_block
             + graph_grounding_block
@@ -1032,13 +1161,14 @@ class _ContextMiddleware(AgentMiddleware):
         tool_schema_tokens_before = _tool_schema_tokens(original_tools)
         tool_schema_tokens_after_source = _tool_schema_tokens(scoped_tools)
         tool_schema_tokens = _tool_schema_tokens(exposed_tools)
-        history_budget = compute_history_budget(
+        available_history_budget = compute_history_budget(
             max_input_tokens=_MAX_CONTEXT_TOKENS,
             system_tokens=base_system_tokens,
             tool_tokens=tool_schema_tokens,
             memory_tokens=memory_tokens,
             reserve_tokens=_CONTEXT_RESERVE_TOKENS,
         )
+        history_budget = min(_MAX_HISTORY_TOKENS, available_history_budget)
         trimmed_messages = _trim_request_messages(
             truncated_messages,
             max_tokens=history_budget,
@@ -1081,6 +1211,9 @@ class _ContextMiddleware(AgentMiddleware):
                 0, tool_schema_tokens_before - tool_schema_tokens
             ),
             "history_budget_tokens": history_budget,
+            "history_budget_available_tokens": available_history_budget,
+            "max_history_tokens": _MAX_HISTORY_TOKENS,
+            "history_budget_capped": history_budget < available_history_budget,
             "context_reserve_tokens": _CONTEXT_RESERVE_TOKENS,
             "approx_tokens_model_request": (
                 base_system_tokens + memory_tokens + tool_schema_tokens + final_tokens
@@ -1112,12 +1245,14 @@ class _ContextMiddleware(AgentMiddleware):
             "turn_output_intent_confidence": output_intent.confidence,
             "preseeded_graph_skills": list(preseeded_graph_skills),
             "preseeded_source_skills": list(preseeded_source_skills),
+            "graph_reference_phase": graph_reference_phase,
             "graph_reference_chars": len(graph_reference_block),
             "source_reference_chars": len(source_reference_block),
             "neolabs_reference_chars": len(neolabs_reference_block),
             "fish_larvae_reference_chars": len(fish_larvae_reference_block),
             "static_reference_chars": len(static_reference_block),
             "dynamic_context_chars": len(dynamic_context_block),
+            **user_instruction_metrics,
             "tools_before_policy": [
                 getattr(item, "name", "") for item in original_tools
             ],

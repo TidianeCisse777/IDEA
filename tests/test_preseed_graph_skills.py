@@ -105,3 +105,15 @@ def test_graph_reference_delivers_full_reviewed_templates():
         + Path("agents/skills/graph_planner.md").read_text()
     )
     assert len(reference) > 0.8 * len(full)
+
+
+def test_phase_references_keep_the_full_relevant_skill():
+    from tools.skill_tool import graph_planning_reference, graph_writing_reference
+
+    planner = graph_planning_reference()
+    writer = graph_writing_reference()
+
+    assert "Skill: graph_planner" in planner
+    assert "Skill: graph_writer" not in planner
+    assert "Skill: graph_writer" in writer
+    assert "Skill: graph_planner" not in writer

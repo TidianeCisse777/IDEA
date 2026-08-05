@@ -459,12 +459,20 @@ def _source_scope_line(store: SessionStore, thread_id: str, messages: object) ->
     )
 
 
-def _active_skill_rules(store: SessionStore, thread_id: str) -> str:
+def _active_skill_rules(
+    store: SessionStore,
+    thread_id: str,
+    *,
+    exclude_skill_names: Iterable[str] = (),
+) -> str:
     """Render bounded, versioned rules retained after tool-history compaction."""
     meta = (store.get(thread_id) or {}).get("meta") or {}
     capsules = meta.get("active_skill_capsules") or {}
+    excluded = set(exclude_skill_names)
     lines: list[str] = []
     for name, capsule in sorted(capsules.items()):
+        if name in excluded:
+            continue
         if not isinstance(capsule, dict):
             continue
         content = _clean(capsule.get("content") or "", limit=_MAX_SINGLE_SKILL_RULE_CHARS)
@@ -477,7 +485,11 @@ def _active_skill_rules(store: SessionStore, thread_id: str) -> str:
 
 
 def build_dataset_state_capsule(
-    store: SessionStore, thread_id: str, messages: object = None
+    store: SessionStore,
+    thread_id: str,
+    messages: object = None,
+    *,
+    exclude_skill_names: Iterable[str] = (),
 ) -> str:
     """Describe only the active dataset using registry metadata, never row values.
 
@@ -694,7 +706,11 @@ def build_dataset_state_capsule(
         )
 
     scope_line = _source_scope_line(store, thread_id, messages)
-    skill_rules = _active_skill_rules(store, thread_id)
+    skill_rules = _active_skill_rules(
+        store,
+        thread_id,
+        exclude_skill_names=exclude_skill_names,
+    )
 
     loaded_files_block = ""
     files = _loaded_files(store, thread_id)

@@ -154,6 +154,39 @@ def test_dataset_capsule_includes_active_skill_rules(tmp_path):
     assert "Render the active table exactly once." in capsule
 
 
+def test_capsule_omits_runtime_skill_duplicated_by_full_reference(tmp_path):
+    store = SessionStore(tmp_path)
+    thread_id = "dedup-runtime-skill"
+    frame = pd.DataFrame({"sample_id": ["s1"]})
+    store_dataset(
+        store,
+        thread_id,
+        frame,
+        variable_name="df_active",
+        meta={"source": "file:demo", "n_rows": 1, "n_cols": 1},
+    )
+    store.update_meta(thread_id, {"active_skill_capsules": {
+        "graph_writer": {
+            "version": "1",
+            "content": "Render the active table exactly once.",
+        },
+        "ecotaxa_navigation": {
+            "version": "1",
+            "content": "Inspect the EcoTaxa cache first.",
+        },
+    }})
+
+    capsule = build_dataset_state_capsule(
+        store,
+        thread_id,
+        exclude_skill_names=("graph_writer",),
+    )
+
+    assert "graph_writer" not in capsule
+    assert "Render the active table exactly once." not in capsule
+    assert "ecotaxa_navigation" in capsule
+
+
 def test_capsule_surfaces_environment_columns_recognized_by_enrichment(tmp_path):
     store = SessionStore(tmp_path)
     thread_id = "ecotaxa-enrichment-context"

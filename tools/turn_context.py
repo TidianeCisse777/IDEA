@@ -13,6 +13,7 @@ into the system message by the middleware.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Literal
 
 from tools.session_context import (
@@ -47,6 +48,7 @@ def build_turn_context(
     messages: object,
     *,
     persist_source: bool = False,
+    exclude_skill_names: Iterable[str] = (),
 ) -> TurnContext:
     """Reconstruct the typed turn state from the store and current messages.
 
@@ -74,7 +76,12 @@ def build_turn_context(
     except Exception:
         authorized, primary, explicit = (), None, ()
 
-    capsule = build_dataset_state_capsule(store, thread_id, messages)
+    capsule = build_dataset_state_capsule(
+        store,
+        thread_id,
+        messages,
+        exclude_skill_names=exclude_skill_names,
+    )
     output_intent = meta.get("output_intent_decision", {}).get("intent", "ambiguous")
     if output_intent not in {"visual", "non_visual", "ambiguous"}:
         output_intent = "ambiguous"
