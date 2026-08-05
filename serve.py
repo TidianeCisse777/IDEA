@@ -13,6 +13,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
+from urllib.parse import quote
+from urllib.request import Request as UrlRequest, urlopen
 
 import uvicorn
 from contextlib import asynccontextmanager
@@ -70,12 +72,59 @@ FEEDBACK_LOGS_DIR = Path(os.getenv("FEEDBACK_LOGS_DIR", "logs/feedback"))
 FEEDBACK_LOGS_DIR.mkdir(parents=True, exist_ok=True)
 _OWUI_POLL_STATE = FEEDBACK_LOGS_DIR / "owui_seen_ids.json"
 _OWUI_POLL_INTERVAL = int(os.getenv("OWUI_FEEDBACK_POLL_INTERVAL", "60"))
+_openwebui_user_email_cache: dict[str, str] = {}
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("copepod.serve")
+
+
+def _openwebui_user_lookup_token() -> str | None:
+    """Use the API key rotated for this instance before legacy admin tokens."""
+    return (
+        os.getenv("OPENWEBUI_API_KEY")
+        or os.getenv("OPENWEBUI_ADMIN_TOKEN")
+        or os.getenv("OPENWEBUI_TOKEN")
+    )
+
+
+def _fetch_openwebui_user_email(user_id: str) -> str | None:
+    """Read one user's email from Open WebUI for trace attribution."""
+    base_url = os.getenv("OPENWEBUI_URL", "").rstrip("/")
+    token = _openwebui_user_lookup_token()
+    if not base_url or not token:
+        return None
+    request = UrlRequest(
+        f"{base_url}/api/v1/users/{quote(user_id, safe='')}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urlopen(request, timeout=3) as response:
+            email = json.loads(response.read()).get("email")
+    except Exception:  # The request must never delay or fail an agent turn.
+        return None
+    return email.strip() if isinstance(email, str) and email.strip() else None
+
+
+async def _resolve_openwebui_user_email(
+    user_id: str, header_email: str | None
+) -> str | None:
+    """Prefer the forwarded email, then resolve and cache it once per user."""
+    if isinstance(header_email, str) and header_email.strip():
+        email = header_email.strip()
+        _openwebui_user_email_cache[user_id] = email
+        return email
+    if not user_id or user_id == "anonymous":
+        return None
+    cached = _openwebui_user_email_cache.get(user_id)
+    if cached:
+        return cached
+    email = await asyncio.to_thread(_fetch_openwebui_user_email, user_id)
+    if email:
+        _openwebui_user_email_cache[user_id] = email
+    return email
 
 
 def _try_fast_ecotaxa_cast_map(thread_id: str, text: str) -> str | None:
@@ -1423,6 +1472,7 @@ async def chat_completions(
             return StreamingResponse(_quick_sse_response(""), media_type="text/event-stream")
         return _quick_response("")
 
+    user_email = await _resolve_openwebui_user_email(user_id, x_openwebui_user_email)
     agent = make_agent(tid, user_id=user_id)
     config = {
         "configurable": {"thread_id": tid, "langgraph_user_id": user_id},
@@ -1433,7 +1483,7 @@ async def chat_completions(
             "message_id": openwebui_message_id,
             "user_id": user_id,
             "user_name": x_openwebui_user_name,
-            "user_email": x_openwebui_user_email,
+            "user_email": user_email,
             "user_role": x_openwebui_user_role,
             "language": language,
         },
@@ -1442,7 +1492,7 @@ async def chat_completions(
             openwebui_message_id,
             chat_id=x_openwebui_chat_id or req.chat_id,
             user_id=user_id,
-            user_email=x_openwebui_user_email,
+            user_email=user_email,
         ),
     }
     messages = {"messages": [{"role": "user", "content": last_user_content}]}

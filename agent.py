@@ -1621,8 +1621,10 @@ def _make_tracer(thread_id: str, user_id: str = "anonymous", user_email: str | N
     if os.getenv("LANGCHAIN_TRACING_V2", "false").lower() != "true":
         return None
     project = os.getenv("LANGCHAIN_PROJECT", "copepod-agent")
-    user_tag = f"user:{user_email or user_id}"
-    return LangChainTracer(project_name=project, tags=["copepod", thread_id[:8], user_tag])
+    tags = ["copepod", thread_id[:8], f"user_id:{user_id}", f"user:{user_email or user_id}"]
+    if user_email:
+        tags.append(f"user_email:{user_email}")
+    return LangChainTracer(project_name=project, tags=tags)
 
 
 def invoke_verbose(agent, messages: dict, config: dict) -> dict:

@@ -1,5 +1,6 @@
 """TDD — user_id dans les logs de conversation locaux."""
 
+import asyncio
 import inspect
 import json
 
@@ -51,6 +52,35 @@ def test_log_turn_defaults_user_id_to_anonymous(tmp_path, monkeypatch):
     log_file = tmp_path / "thread-xyz.jsonl"
     entry = json.loads(log_file.read_text())
     assert entry["user_id"] == "anonymous"
+
+
+def test_resolve_user_email_fetches_once_when_openwebui_header_is_absent(monkeypatch):
+    import serve as serve_module
+
+    serve_module._openwebui_user_email_cache.clear()
+    fetched = []
+    monkeypatch.setattr(
+        serve_module,
+        "_fetch_openwebui_user_email",
+        lambda user_id: fetched.append(user_id) or "alice@ulaval.ca",
+    )
+
+    assert asyncio.run(
+        serve_module._resolve_openwebui_user_email("user-alice", None)
+    ) == "alice@ulaval.ca"
+    assert asyncio.run(
+        serve_module._resolve_openwebui_user_email("user-alice", None)
+    ) == "alice@ulaval.ca"
+    assert fetched == ["user-alice"]
+
+
+def test_openwebui_user_lookup_prefers_the_current_api_key(monkeypatch):
+    import serve as serve_module
+
+    monkeypatch.setenv("OPENWEBUI_ADMIN_TOKEN", "stale-admin-token")
+    monkeypatch.setenv("OPENWEBUI_API_KEY", "current-api-key")
+
+    assert serve_module._openwebui_user_lookup_token() == "current-api-key"
 
 
 def test_log_turn_includes_context_audit_metrics(tmp_path, monkeypatch):
