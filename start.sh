@@ -260,6 +260,18 @@ echo ""
 echo "  Cache EcoTaxa : OK (verification en ${preflight_elapsed}s — total ${total_cache_elapsed}s)"
 echo ""
 
+# EcoPart ships as a shared bundle in consumer clones. Bootstrap that bundle
+# before the agent starts, then validate its manifest and every indexed TSV.
+# Amundsen uses the persistent ERDDAP cache: it is valid when readable even on
+# a first boot, where it has not yet received a requested profile.
+echo "[start] Checking EcoPart and Amundsen caches..."
+if ! python3 scripts/check_source_caches.py --bootstrap-ecopart; then
+  echo "[start] EcoPart/Amundsen cache preflight FAILED — agent will NOT start."
+  echo "[start] Check the configured EcoPart release and the local ERDDAP cache file."
+  exit 1
+fi
+echo ""
+
 if [ "$AGENT_MODE" = "local" ]; then
   LOCAL_AGENT_PID=""
   LOCAL_AGENT_LOG="${TMPDIR:-/tmp}/copepod-agent-local.log"
