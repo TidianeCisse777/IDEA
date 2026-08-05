@@ -122,6 +122,19 @@ if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>
   exit 1
 fi
 
+# A prior demo stack may have been started with ``docker compose -p …``. Reuse
+# that project's name when it belongs to this checkout, otherwise Compose
+# would try to create duplicate fixed-name containers and the startup would
+# fail before Cloudflare can be opened.
+if [ -z "${COMPOSE_PROJECT_NAME:-}" ] && docker inspect copepod_agent >/dev/null 2>&1; then
+  EXISTING_COMPOSE_PROJECT="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' copepod_agent 2>/dev/null || true)"
+  EXISTING_COMPOSE_WORKDIR="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' copepod_agent 2>/dev/null || true)"
+  if [ -n "$EXISTING_COMPOSE_PROJECT" ] && [ "$EXISTING_COMPOSE_WORKDIR" = "$SCRIPT_DIR" ]; then
+    export COMPOSE_PROJECT_NAME="$EXISTING_COMPOSE_PROJECT"
+    echo "[start] Reusing existing Compose project: ${COMPOSE_PROJECT_NAME}"
+  fi
+fi
+
 # The compose file bind-mounts the clone into the container (.:/app): the code
 # that runs is THIS checkout, not the published image. Warn when it lags main.
 if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -138,6 +151,11 @@ fi
 # the local origin explicitly so a stale value in .env can never be inherited
 # while the new tunnel is being created.
 LOCAL_SERVE_BASE_URL="http://localhost:8000"
+PUBLIC_ORIGIN_FILE="${SERVE_PUBLIC_ORIGIN_FILE:-data/public_origin.txt}"
+mkdir -p "$(dirname "$PUBLIC_ORIGIN_FILE")"
+# The quick-tunnel URL dies when this script exits. Never let an agent emit a
+# stale public link while the next tunnel is still being created.
+rm -f "$PUBLIC_ORIGIN_FILE"
 
 if [ "$AGENT_MODE" = "local" ]; then
   export OPENWEBUI_AGENT_BASE_URL="http://host.docker.internal:8000/v1"
@@ -188,10 +206,17 @@ echo "[start] MCP EcoTaxa OK"
 # A populated cache is released only when its schema is also current: an old
 # "ok" sync from a v2 cache must not race the v3 metadata refresh.
 SYNC_WAIT_MAX="${ECOTAXA_SYNC_WAIT_SECONDS:-600}"
+CACHE_ALREADY_USABLE=false
+if docker compose exec -T mcp-ecotaxa sh -c \
+     'curl -sf http://localhost:8001/health | python3 scripts/check_ecotaxa_cache.py' \
+     >/dev/null 2>&1; then
+  CACHE_ALREADY_USABLE=true
+  echo "[start] Existing EcoTaxa cache is valid; skipping refresh wait."
+fi
 echo "[start] Waiting for the initial EcoTaxa cache sync (up to ${SYNC_WAIT_MAX}s)..."
 sync_waited=0
 sync_start=$(date +%s)
-while [ "$sync_waited" -lt "$SYNC_WAIT_MAX" ]; do
+while [ "$CACHE_ALREADY_USABLE" = false ] && [ "$sync_waited" -lt "$SYNC_WAIT_MAX" ]; do
   SYNC_HEALTH="$(docker compose exec -T mcp-ecotaxa curl -sf http://localhost:8001/health 2>/dev/null || true)"
   if [[ "$SYNC_HEALTH" == *'"schema_current":true'* ]] && \
      { [[ "$SYNC_HEALTH" == *'"last_sync_status":"ok"'* ]] || \
@@ -209,7 +234,7 @@ while [ "$sync_waited" -lt "$SYNC_WAIT_MAX" ]; do
   sleep 5
   sync_waited=$((sync_waited + 5))
 done
-if [ "$sync_waited" -ge "$SYNC_WAIT_MAX" ]; then
+if [ "$CACHE_ALREADY_USABLE" = false ] && [ "$sync_waited" -ge "$SYNC_WAIT_MAX" ]; then
   echo "[start] WARNING: sync did not finish within ${SYNC_WAIT_MAX}s — running the cache check anyway."
 fi
 
@@ -311,45 +336,20 @@ if command -v cloudflared >/dev/null 2>&1; then
   done
 
   if [ -n "$SERVE_TUNNEL_URL" ]; then
-    if [ "$AGENT_MODE" = "local" ]; then
-      echo "[start] Agent API public URL: ${SERVE_TUNNEL_URL}"
-      if [ -n "$LOCAL_AGENT_PID" ]; then
-        echo "[start] Updating locally started agent public file URL..."
-        kill "$LOCAL_AGENT_PID" 2>/dev/null || true
-        wait "$LOCAL_AGENT_PID" 2>/dev/null || true
-        SERVE_BASE_URL="$SERVE_TUNNEL_URL" "${AGENT_PYTHON}" serve.py > "${LOCAL_AGENT_LOG}" 2>&1 &
-        LOCAL_AGENT_PID=$!
-        until curl -sf http://localhost:8000/ >/dev/null 2>&1; do
-          if ! kill -0 "$LOCAL_AGENT_PID" 2>/dev/null; then
-            echo "[start] Local agent died while applying the public URL. Last log lines:"
-            tail -20 "${LOCAL_AGENT_LOG}" || true
-            exit 1
-          fi
-          sleep 1
-        done
-        echo "[start] Agent public file URL updated."
-      else
-        echo "[start] A local agent was already running; restart it with SERVE_BASE_URL=${SERVE_TUNNEL_URL} to publish its graphs."
-      fi
-    else
-      echo "[start] Updating agent public file URL..."
-      if [ "$BUILD_MODE" = "build" ]; then
-        SERVE_BASE_URL="$SERVE_TUNNEL_URL" docker compose up -d --no-deps --force-recreate copepod-agent
-      else
-        SERVE_BASE_URL="$SERVE_TUNNEL_URL" docker compose up -d --no-build --no-deps --force-recreate copepod-agent
-      fi
-      echo "[start] Waiting for agent restart with the current public URL..."
-      until docker compose exec -T copepod-agent curl -sf http://localhost:8000/ >/dev/null 2>&1; do
-        sleep 1
-      done
-      echo "[start] Agent public file URL updated."
-    fi
+    PUBLIC_ORIGIN_TEMP_FILE="${PUBLIC_ORIGIN_FILE}.tmp.$$"
+    printf '%s\n' "$SERVE_TUNNEL_URL" > "$PUBLIC_ORIGIN_TEMP_FILE"
+    mv "$PUBLIC_ORIGIN_TEMP_FILE" "$PUBLIC_ORIGIN_FILE"
+    echo "[start] Agent API public URL: ${SERVE_TUNNEL_URL}"
+    echo "[start] Graph and download links now use this URL without restarting the agent."
+  else
+    echo "[start] WARNING: agent tunnel was not created; generated links stay local."
   fi
 fi
 
 cleanup() {
   echo ""
   echo "[start] Stopping containers..."
+  rm -f "$PUBLIC_ORIGIN_FILE"
   for pid in "$TUNNEL_PID" "$SERVE_TUNNEL_PID" "${LOCAL_AGENT_PID:-}"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       kill "$pid" 2>/dev/null || true

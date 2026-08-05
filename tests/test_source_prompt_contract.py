@@ -99,6 +99,26 @@ def test_net_uvp_prompt_forbids_manual_final_join_before_canonical_tool():
     assert "never use\n`run_pandas` to merge" in COPEPOD_SYSTEM_PROMPT
 
 
+def test_prompt_keeps_only_net_uvp_invariants_and_route():
+    """The permanent kernel keeps safety invariants, not remote procedure details."""
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    assert "normalized station match is mandatory" in COPEPOD_SYSTEM_PROMPT
+    assert "join_net_uvp_enriched` directly" in COPEPOD_SYSTEM_PROMPT
+    assert "allow_unverified_ctd=True" not in COPEPOD_SYSTEM_PROMPT
+
+
+def test_skill_explains_two_remote_confirmations_in_plain_language():
+    """Remote actions are confirmed by users, without exposing tool arguments."""
+    from pathlib import Path
+
+    text = Path("agents/skills/net_uvp_abundance_comparison.md").read_text()
+
+    assert "confirme l’export UVP" in text
+    assert "confirme l’enrichissement EcoPart" in text
+    assert "allow_unverified_ctd" not in text
+
+
 def test_generated_gateway_documents_persistent_affinity_and_bare_ids():
     from tools.source_scope import render_source_selection_gateway
 

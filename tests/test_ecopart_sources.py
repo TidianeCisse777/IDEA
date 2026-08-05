@@ -462,6 +462,7 @@ def test_enrich_remote_reuses_exact_cached_join_without_redownload(
     from tools.session_store import default_store as _store
 
     monkeypatch.setenv("ERDDAP_CACHE_PATH", str(tmp_path / "remote-results.sqlite"))
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "ecopart-cache"))
     thread_id = "thread-remote-exact-cache"
     _store.set(
         f"{thread_id}:ecotaxa",
@@ -674,6 +675,59 @@ def test_remote_campaign_reuses_exact_cached_join_before_resolving_projects(
     assert joined["meta"]["cache_hit"] is True
 
 
+def test_campaign_ecopart_enrichment_records_exact_input_export_variable(
+    monkeypatch, tmp_path
+):
+    """Campaign joins retain the persisted export variable across cache restores."""
+    from unittest.mock import MagicMock, patch
+
+    import pandas as pd
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.session_store import default_store as _store
+
+    monkeypatch.setenv("ERDDAP_CACHE_PATH", str(tmp_path / "remote-results.sqlite"))
+    thread_id = "thread-remote-campaign-source-variable"
+    _store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "obj_orig_id": ["alpha_1"],
+            "object_depth_min": [2.5],
+            "export_project_id": [101],
+        }),
+        {
+            "source": "ecotaxa_export_campaign",
+            "variable_name": "df_uvp_export_current",
+            "export_project_ids": [101],
+        },
+    )
+    client = MagicMock()
+    client.start_export.return_value = ["/Task/Show/301"]
+    client.download_tsv.return_value = pd.DataFrame({
+        "Profile": ["alpha"],
+        "Depth [m]": [2.5],
+        "Sampled volume [L]": [100.0],
+    })
+
+    with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
+        "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
+        return_value={"project_id": 301, "resolution": "lien certifié"},
+    ):
+        enrich = next(
+            tool
+            for tool in make_ecopart_tools(thread_id)
+            if tool.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        enrich.invoke({"confirmed": True})
+        fresh_meta = _store.get(f"{thread_id}:ecotaxa_ecopart")["meta"]
+
+        enrich.invoke({"confirmed": True})
+        cached_meta = _store.get(f"{thread_id}:ecotaxa_ecopart")["meta"]
+
+    assert fresh_meta["source_variable"] == "df_uvp_export_current"
+    assert cached_meta["source_variable"] == "df_uvp_export_current"
+    assert cached_meta["cache_hit"] is True
+
+
 def test_remote_campaign_dry_run_resolves_every_partition_without_download():
     """Campaign planning exposes every project mapping before heavy exports."""
     from unittest.mock import MagicMock, patch
@@ -817,7 +871,7 @@ def test_remote_campaign_reports_invalid_export_project_id_rows():
     assert meta["projects_failed"] == 0
 
 
-def test_remote_explicit_projects_bypass_campaign_partitioning():
+def test_remote_explicit_projects_bypass_campaign_partitioning(tmp_path, monkeypatch):
     """Explicit project IDs use only their campaign partition and no lookup."""
     from unittest.mock import MagicMock, patch
 
@@ -825,6 +879,7 @@ def test_remote_explicit_projects_bypass_campaign_partitioning():
     from tools.ecopart_sources import make_ecopart_tools
     from tools.session_store import default_store as _store
 
+    monkeypatch.setenv("ECOPART_CACHE_DIR", str(tmp_path / "ecopart-cache"))
     thread_id = "thread-remote-campaign-explicit"
     _store.set(
         f"{thread_id}:ecotaxa",

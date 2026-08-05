@@ -155,32 +155,36 @@ et non une conclusion sur la campagne complète.
 
 ### Conversation OpenWebUI — 10 tours
 
-1. « Prépare les données NeoLabs de 2024 pour une comparaison entre le filet et
-   l'imagerie UVP. Montre d'abord les déploiements sur une carte. »
-2. « Cherche les profils UVP correspondant à ces déploiements et vérifie les
-   stations, les dates, les positions et les fichiers CTD communs. »
-3. « Montre les paires certifiées sur une carte et indique combien de
-   prélèvements filet disposent aussi d'une abondance comparable. »
-4. « Prépare l'export EcoTaxa des profils certifiés avec les annotations
-   validées. »
-5. « Oui, lance cet export EcoTaxa. »
-6. « Enrichis maintenant cette sélection avec EcoPart pour obtenir les volumes
-   échantillonnés et les classes de profondeur. »
-7. « Oui, lance l'enrichissement EcoPart. »
-8. « Relie maintenant les abondances filet et UVP seulement dans les mêmes
-   tranches de profondeur. Donne le nombre de paires disponibles et explique
-   clairement si certaines métadonnées filet n'ont pas d'abondance associée. »
-9. « Fais un visuel en deux panneaux : abondance normalisée filet contre UVP
-   par tranche de profondeur, puis ratio UVP/filet. Indique le nombre de paires
-   comparables dans le titre. »
+1. « Prépare le sous-ensemble NeoLabs de 2024 en baie de Baffin pour une
+   comparaison filet–UVP. Vérifie les stations, les dates, les positions et les
+   fichiers CTD communs. »
+2. « Affiche les **paires certifiées (métadonnées)** et distingue-les du nombre
+   de prélèvements pour lesquels une abondance filet est réellement disponible. »
+3. « Prépare ce qui serait extrait des profils certifiés, avec les annotations
+   validées, puis demande confirmation avant le téléchargement. »
+4. « Oui, je confirme l'**export UVP confirmé**. »
+5. « Prépare l'ajout des volumes EcoPart et des classes de profondeur, puis
+   demande confirmation avant le téléchargement. »
+6. « Oui, je confirme l'enrichissement EcoPart. »
+7. « Montre les **volumes EcoPart reçus**, les intervalles de profondeur communs
+   et les profils qui restent sans volume. »
+8. « Relie seulement les mêmes tranches de profondeur. Affiche les **strates
+   calculables / couverture manquante**, avec la raison de chaque exclusion. »
+9. « Fais la **comparaison ind./m³** en deux panneaux : abondance filet contre
+   UVP par tranche commune, puis ratio UVP/filet. Indique le nombre de paires
+   calculables dans le titre. »
 10. « Si plusieurs stations ou profils sont comparables, ajoute un nuage de
-    points avec ligne d'égalité et un profil vertical. Sinon, conserve les
-    deux panneaux descriptifs et précise la limite de couverture. »
+    points avec ligne d'égalité ou un profil vertical; sinon conserve les deux
+    panneaux descriptifs et la limite de couverture. »
+
+La création de carte est facultative : elle peut servir à situer les paires
+certifiées, mais ne bloque jamais la comparaison d'abondance après l'audit.
 
 ### Visuels à conserver
 
-- Carte des déploiements NeoLabs 2024.
-- Carte des correspondances certifiées et de leur couverture d'abondance.
+- Carte facultative des déploiements NeoLabs 2024 ou des paires certifiées.
+- Tableau ou visuel des paires certifiées (métadonnées), de la couverture
+  d'abondance filet et des volumes EcoPart reçus.
 - Comparaison d'abondance filet–UVP par tranche commune, en ind./m³.
 - Ratio UVP/filet par tranche commune.
 - Profil vertical et nuage de points avec ligne d'égalité seulement lorsque le
@@ -189,11 +193,13 @@ et non une conclusion sur la campagne complète.
 ### Message clé
 
 Une proximité géographique n'est pas transformée en correspondance certaine.
-La comparaison finale utilise les correspondances certifiées, le volume EcoPart
-comme dénominateur et les mêmes intervalles de profondeur. Elle affiche aussi
-sa couverture : une correspondance certifiée dans `neolabs_sample` ne garantit
-pas qu'une abondance soit disponible dans `neolabs_abundance`. Les tranches
-incomplètes restent visibles avec leur raison, sans être remplacées par zéro.
+Les paires certifiées décrivent d'abord des métadonnées; la comparaison finale
+ne commence qu'après l'export UVP confirmé, les volumes EcoPart reçus et la
+vérification des mêmes intervalles de profondeur. Elle affiche les strates
+calculables et la couverture manquante : une correspondance certifiée dans
+`neolabs_sample` ne garantit pas qu'une abondance soit disponible dans
+`neolabs_abundance`. Les tranches incomplètes restent visibles avec leur
+raison, sans être remplacées par zéro.
 
 ---
 

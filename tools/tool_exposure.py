@@ -169,6 +169,25 @@ _TIME_SCOPE_PATTERN = re.compile(
     r"octobre|novembre|d[eé]cembre)\b",
     re.IGNORECASE,
 )
+
+
+def _keep(selected: Collection[str], *allowed_names: str) -> tuple[str, ...]:
+    """Keep only policy-authorized tools from one workflow stage."""
+    allowed = set(allowed_names)
+    return tuple(name for name in selected if name in allowed)
+
+
+def _drop_completed_protocol_steps(
+    selected: Collection[str],
+    progress: Any,
+) -> tuple[str, ...]:
+    """Keep normal routing after persisted Net↔UVP protocol completion."""
+    completed_steps = {
+        "load_file",
+        "prepare_net_uvp_audit_subsets",
+        "find_uvp_matches_for_net_table",
+    }
+    return tuple(name for name in selected if name not in completed_steps)
 _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     "file_analysis": (
         "prepare_neolabs_analysis", "prepare_net_uvp_audit_subsets", "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
@@ -364,10 +383,16 @@ def decide_tool_exposure(
     messages: list[Any],
     *,
     max_tools: int = 15,
+    store: Any | None = None,
 ) -> ToolExposureDecision:
     """Return the deterministic tool allowlist for the current model call."""
 
     names = tuple(dict.fromkeys(str(name) for name in available_names if name in policies))
+    if turn_context.domain_profile == "fish_larvae":
+        disabled_sources = {"ecotaxa", "ecopart", "ogsl", "sql"}
+        names = tuple(
+            name for name in names if policies[name].source not in disabled_sources
+        )
     signals = build_turn_signals(messages)
     net_uvp_audit_requested = bool(
         _NET_UVP_AUDIT_PATTERN.search(signals.latest_user_text)
@@ -378,6 +403,8 @@ def decide_tool_exposure(
         names = tuple(name for name in names if name != "prepare_neolabs_analysis")
     groups: list[ToolExposureGroup] = ["core", "geography"]
     reasons = ["permanent core", "permanent geographic capabilities"]
+    if turn_context.domain_profile == "fish_larvae":
+        reasons.append("fish-larvae profile limits external sources")
 
     if turn_context.file_loaded:
         groups.append("file_analysis")
@@ -388,11 +415,6 @@ def decide_tool_exposure(
     if signals.taxonomy_requested and "ecotaxa" not in source_decision.authorized_sources:
         groups.append("taxonomy")
         reasons.append("taxonomy requested")
-    if turn_context.domain_profile == "fish_larvae":
-        disabled_sources = {"ecotaxa", "ecopart", "ogsl", "sql"}
-        names = tuple(
-            name for name in names if policies[name].source not in disabled_sources
-        )
 
     skills = signals.successful_skills_this_turn
     if turn_context.output_intent == "visual":
@@ -403,8 +425,6 @@ def decide_tool_exposure(
         reasons.append("graph planner and writer succeeded this turn")
     elif signals.previous_visual_artifact:
         groups.append("visualization")
-    if turn_context.domain_profile == "fish_larvae":
-        reasons.append("fish-larvae profile limits external sources")
         reasons.append("previous visual artifact available for follow-up")
     if skills and skills[-1] == "deliverable_writer":
         groups.append("deliverable")
@@ -590,28 +610,38 @@ def decide_tool_exposure(
         reasons.append("policy overflow fallback")
 
     selected_set = set(selected)
-    # A scoped net↔UVP audit has a strict state progression. Keeping only the
-    # next valid capability prevents concurrent load/filter/audit calls, where
-    # the audit would otherwise see the wrong table.
+    # A scoped net↔UVP audit advances from persisted evidence, never from the
+    # last tool call in the model history.  This lets a later visual/export
+    # request retain its normal capabilities after a completed audit.
     scoped_net_uvp_request = net_uvp_audit_requested and (
         signals.geographic_requested or bool(_TIME_SCOPE_PATTERN.search(signals.latest_user_text))
     )
     if scoped_net_uvp_request:
-        completed = set(signals.successful_tools_this_turn)
-        if "find_uvp_matches_for_net_table" in completed:
-            next_names = ()
-            reasons.append("scoped net/UVP audit complete")
-        elif "prepare_net_uvp_audit_subsets" in completed:
-            next_names = ("find_uvp_matches_for_net_table",)
-            reasons.append("prepared net/UVP subsets: audit stage")
-        elif turn_context.file_loaded:
-            next_names = ("prepare_net_uvp_audit_subsets",)
-            reasons.append("scoped net/UVP request: subset preparation stage")
+        from tools.net_uvp_workflow import resolve_net_uvp_progress
+
+        if store is None:
+            from tools.session_store import default_store
+
+            store = default_store
+        progress = resolve_net_uvp_progress(store, turn_context.thread_id)
+        if progress.phase == "no_file":
+            selected = _keep(selected, "load_file")
+        elif progress.phase == "needs_subset":
+            selected = _keep(
+                selected,
+                "prepare_net_uvp_audit_subsets",
+                "run_pandas",
+            )
+        elif progress.phase == "needs_audit":
+            selected = _keep(
+                selected,
+                "find_uvp_matches_for_net_table",
+                "run_pandas",
+            )
         else:
-            next_names = ("load_file",)
-            reasons.append("scoped net/UVP request: file loading stage")
-        selected = tuple(name for name in next_names if name in names)
+            selected = _drop_completed_protocol_steps(selected, progress)
         selected_set = set(selected)
+        reasons.append(f"persisted net/UVP workflow: {progress.phase}")
     # An enrichment tool is available for a direct enrichment request, but it
     # must not suppress the local sandbox.  A table may be *described* as
     # already enriched while the user is asking for an analysis or a graph;

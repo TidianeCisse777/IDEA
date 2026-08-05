@@ -53,6 +53,34 @@ def test_fetch_bio_oracle_bbox_requests_selected_statistic_and_separates_cache()
     assert result["value"].tolist() == [12.5]
 
 
+def test_fetch_bio_oracle_bbox_clamps_tile_to_erddap_coordinate_bounds():
+    from unittest.mock import MagicMock, patch
+
+    from tools.bio_oracle_sources import _fetch_bio_oracle_bbox
+
+    response = MagicMock()
+    response.text = (
+        "time,latitude,longitude,thetao_mean\n"
+        "2010-01-01T00:00:00Z,18.0,-180.0,12.5\n"
+    )
+    tile = {"lat_min": 17.5, "lat_max": 52.0833, "lon_min": -180.8333, "lon_max": -114.8333}
+
+    with patch("tools.bio_oracle_sources.cache_get", return_value=None), \
+         patch("tools.bio_oracle_sources.cache_set"), \
+         patch("tools.bio_oracle_sources._find_dataset_id", return_value="thetao_baseline_depthsurf"), \
+         patch("tools.bio_oracle_sources.requests.get", return_value=response) as get:
+        _fetch_bio_oracle_bbox(
+            variable="temperature",
+            scenario="baseline",
+            depth_layer="surface",
+            target_year=None,
+            tile=tile,
+        )
+
+    assert "(-180.0000)" in get.call_args.args[0]
+    assert "(-180.8333)" not in get.call_args.args[0]
+
+
 def test_bio_oracle_matcher_keeps_selected_statistic_in_columns_and_fetch():
     import pandas as pd
     from unittest.mock import patch

@@ -339,6 +339,109 @@ def _approx_tokens(messages) -> int:
     return count_tokens_approximately(messages)
 
 
+_CODE_RETRY_TOOL_NAMES = frozenset({"run_pandas", "run_graph"})
+
+
+def _code_retry_plan(messages: Sequence) -> tuple[str, str] | None:
+    """Return the one permitted deterministic retry for local code execution.
+
+    The agent may repair one retryable code failure per user turn.  The failed
+    ``ToolMessage`` stays in the model history and its full diagnostic is also
+    injected into the forced retry instruction.  A second code failure ends the
+    retry budget and lets the model report its final diagnostic normally.
+    """
+    last_human_index = max(
+        (index for index, message in enumerate(messages)
+         if isinstance(message, HumanMessage)),
+        default=-1,
+    )
+    current_turn = list(messages[last_human_index + 1:])
+    code_errors = [
+        message
+        for message in current_turn
+        if isinstance(message, ToolMessage)
+        and message.name in _CODE_RETRY_TOOL_NAMES
+        and isinstance(message.artifact, dict)
+        and message.artifact.get("status") == "error"
+        and message.artifact.get("retryable") is True
+    ]
+    if len(code_errors) != 1 or not current_turn or current_turn[-1] is not code_errors[0]:
+        return None
+    failed = code_errors[0]
+    diagnostic = str(failed.content or "").strip()
+    if not diagnostic:
+        return None
+    return str(failed.name), diagnostic
+
+
+def _render_net_uvp_progress_context(progress) -> str:
+    """Return one human-facing Filet–UVP readiness line for the model.
+
+    Persisted variable names and implementation handles are deliberately not
+    projected here: the model only needs the scientific workflow readiness.
+    """
+    if progress.phase == "no_file":
+        return ""
+    exploratory_notice = (
+        " Cette chaîne reste exploratoire et exige un accord explicite."
+        if progress.ctd_status == "unavailable"
+        else ""
+    )
+    if progress.phase == "needs_subset":
+        return (
+            "\n\nComparaison filet–UVP : table filet disponible; "
+            "préparer le sous-ensemble d’audit avant la vérification UVP."
+            + exploratory_notice
+        )
+    if progress.phase == "needs_audit":
+        return (
+            "\n\nComparaison filet–UVP : sous-ensemble d’audit disponible; "
+            "la vérification UVP reste à effectuer."
+            + exploratory_notice
+        )
+    if progress.phase == "audited":
+        if progress.ctd_status == "unavailable":
+            return (
+                "\n\nComparaison filet–UVP : audit disponible, mais la "
+                "vérification CTD est indisponible; toute suite est exploratoire "
+                "et exige un accord explicite."
+            )
+        if progress.ctd_status == "no_match":
+            return (
+                "\n\nComparaison filet–UVP : audit disponible, sans "
+                "correspondance CTD certifiée; ne pas présenter de comparaison "
+                "d’abondance comme validée."
+            )
+        if progress.ctd_status != "verified":
+            return (
+                "\n\nComparaison filet–UVP : audit disponible, mais le statut "
+                "CTD reste à confirmer; ne pas présenter de comparaison "
+                "d’abondance comme validée."
+            )
+        return (
+            "\n\nComparaison filet–UVP : audit certifié disponible; les actions "
+            "d’analyse, de graphique et de préparation d’export restent possibles. "
+            "La comparaison d’abondance attend encore l’export UVP puis les volumes EcoPart."
+        )
+    if progress.phase == "exported":
+        return (
+            "\n\nComparaison filet–UVP : export UVP disponible; l’enrichissement "
+            "par les volumes EcoPart reste à préparer avant la comparaison d’abondance."
+            + exploratory_notice
+        )
+    if progress.phase == "enriched":
+        return (
+            "\n\nComparaison filet–UVP : données UVP enrichies disponibles; "
+            "la comparaison finale par strate de profondeur peut continuer."
+            + exploratory_notice
+        )
+    return (
+        "\n\nComparaison filet–UVP : comparaison finale disponible; analyses, "
+        "graphiques et export restent possibles."
+        + exploratory_notice
+    )
+
+
 def _compact_old_tool_results(
     messages,
     *,
@@ -687,6 +790,7 @@ class _ContextMiddleware(AgentMiddleware):
 
     def _prepare_request(self, request, memories):
         original_messages = list(request.messages)
+        code_retry = _code_retry_plan(original_messages)
         _begin_harness_turn(self.thread_id, original_messages)
         try:
             from tools.data_tools import reset_graph_block_on_new_turn
@@ -804,6 +908,16 @@ class _ContextMiddleware(AgentMiddleware):
         # first-call visual exposure independent of an active dataframe.
         turn_ctx = replace(turn_ctx, output_intent=output_intent.intent)
         dataset_block = turn_ctx.capsule
+        from agents.domain_profiles import domain_profile_prompt
+
+        domain_profile_block = domain_profile_prompt(turn_ctx.domain_profile)
+        fish_larvae_reference_block = ""
+        if turn_ctx.domain_profile == "fish_larvae":
+            from tools.skill_tool import dataset_analysis_reference
+
+            fish_larvae_reference_block = dataset_analysis_reference(
+                ("fish_larvae_analysis",)
+            )
         system_message = request.system_message
         base = system_message.content if system_message is not None else ""
         # Surface the last render's verified facts so the answer's `Données`
@@ -828,6 +942,17 @@ class _ContextMiddleware(AgentMiddleware):
                 graph_edit_block = graph_edit_reference(session_store, self.thread_id)
         except Exception:
             pass
+        net_uvp_progress_block = ""
+        try:
+            from tools.net_uvp_workflow import resolve_net_uvp_progress
+
+            net_uvp_progress_block = _render_net_uvp_progress_context(
+                resolve_net_uvp_progress(session_store, self.thread_id)
+            )
+        except Exception:
+            # Workflow context is a convenience for recovery, never a reason
+            # to prevent a regular request from reaching the model.
+            pass
 
         # Cache-stable prefix first: the permanent kernel is already ``base``;
         # append every invariant reference before anything that can vary with a
@@ -838,13 +963,25 @@ class _ContextMiddleware(AgentMiddleware):
             graph_reference_block
             + source_reference_block
             + neolabs_reference_block
+            + fish_larvae_reference_block
         )
         dynamic_context_block = (
             block
             + dataset_block
+            + domain_profile_block
             + graph_grounding_block
             + graph_edit_block
+            + net_uvp_progress_block
         )
+        if code_retry is not None:
+            retry_tool, diagnostic = code_retry
+            dynamic_context_block += (
+                "\n\nDÉTERMINISTIC CODE RETRY — the immediately preceding "
+                f"`{retry_tool}` call failed with this diagnostic:\n{diagnostic[:4_000]}"
+                "\nIssue exactly one corrected call to that same tool now, "
+                "using the same DataFrame scope. Do not answer the user before "
+                "that call. A second code failure must be reported without another retry."
+            )
         injected_context = static_reference_block + dynamic_context_block
         base_system_tokens = (
             _approx_tokens([SystemMessage(content=base)]) if base else 0
@@ -881,6 +1018,17 @@ class _ContextMiddleware(AgentMiddleware):
             for name in exposure_decision.tool_names
             if name in scoped_by_name
         ]
+        retry_tool_choice = None
+        if code_retry is not None:
+            retry_tool = code_retry[0]
+            retry_tool_instance = scoped_by_name.get(retry_tool)
+            if retry_tool_instance is not None:
+                if retry_tool_instance not in exposed_tools:
+                    exposed_tools.append(retry_tool_instance)
+                retry_tool_choice = {
+                    "type": "function",
+                    "function": {"name": retry_tool},
+                }
         tool_schema_tokens_before = _tool_schema_tokens(original_tools)
         tool_schema_tokens_after_source = _tool_schema_tokens(scoped_tools)
         tool_schema_tokens = _tool_schema_tokens(exposed_tools)
@@ -908,16 +1056,6 @@ class _ContextMiddleware(AgentMiddleware):
         )
 
         audit_entry = {
-        from agents.domain_profiles import domain_profile_prompt
-
-        domain_profile_block = domain_profile_prompt(turn_ctx.domain_profile)
-        fish_larvae_reference_block = ""
-        if turn_ctx.domain_profile == "fish_larvae":
-            from tools.skill_tool import dataset_analysis_reference
-
-            fish_larvae_reference_block = dataset_analysis_reference(
-                ("fish_larvae_analysis",)
-            )
             "ts": datetime.now(timezone.utc).isoformat(),
             "thread_id": self.thread_id,
             "user_id": self.user_id,
@@ -963,12 +1101,11 @@ class _ContextMiddleware(AgentMiddleware):
             **truncate_metrics,
             **compact_metrics,
             "max_total_tool_result_chars": _MAX_TOTAL_TOOL_CHARS,
-            + fish_larvae_reference_block
             **metrics,
             "dataset_capsule_injected": bool(dataset_block),
             "dataset_capsule_chars": len(dataset_block),
             "turn_active_variable": turn_ctx.active_variable,
-            + domain_profile_block
+            "turn_domain_profile": turn_ctx.domain_profile,
             "turn_authorized_sources": list(turn_ctx.authorized_sources),
             "turn_derived_subsets": len(turn_ctx.derived_zone_subsets),
             "turn_output_intent": output_intent.intent,
@@ -978,6 +1115,7 @@ class _ContextMiddleware(AgentMiddleware):
             "graph_reference_chars": len(graph_reference_block),
             "source_reference_chars": len(source_reference_block),
             "neolabs_reference_chars": len(neolabs_reference_block),
+            "fish_larvae_reference_chars": len(fish_larvae_reference_block),
             "static_reference_chars": len(static_reference_block),
             "dynamic_context_chars": len(dynamic_context_block),
             "tools_before_policy": [
@@ -993,14 +1131,20 @@ class _ContextMiddleware(AgentMiddleware):
             "tool_exposure_reasons": list(exposure_decision.reasons),
             "tools_dropped": list(exposure_decision.dropped_tool_names),
             "policy_overflow": exposure_decision.policy_overflow,
+            "code_retry_forced_tool": code_retry[0] if code_retry else None,
         }
         _context_audit_by_thread[self.thread_id] = audit_entry
         _append_harness_model_call(self.thread_id, audit_entry)
         try:
+            overrides = {
+                "messages": trimmed_messages,
+                "system_message": prepared_system_message,
+                "tools": exposed_tools,
+            }
+            if retry_tool_choice is not None:
+                overrides["tool_choice"] = retry_tool_choice
             prepared = request.override(
-                messages=trimmed_messages,
-                system_message=prepared_system_message,
-                tools=exposed_tools,
+                **overrides,
             )
             _context_audit_by_thread[self.thread_id][
                 "tool_filter_override_supported"
@@ -1012,10 +1156,13 @@ class _ContextMiddleware(AgentMiddleware):
             _context_audit_by_thread[self.thread_id][
                 "tool_filter_override_supported"
             ] = False
-            return request.override(
-                messages=trimmed_messages,
-                system_message=prepared_system_message,
-            )
+            fallback_overrides = {
+                "messages": trimmed_messages,
+                "system_message": prepared_system_message,
+            }
+            if retry_tool_choice is not None:
+                fallback_overrides["tool_choice"] = retry_tool_choice
+            return request.override(**fallback_overrides)
 
     def _source_scope_rejection(self, request) -> str | None:
         from tools.session_store import default_store as session_store
@@ -1105,7 +1252,6 @@ class _ContextMiddleware(AgentMiddleware):
         )
         available_names = self.catalog_names or tuple(TOOL_POLICIES)
         decision = decide_tool_exposure(
-            "turn_domain_profile": turn_ctx.domain_profile,
             available_names,
             TOOL_POLICIES,
             turn_ctx,
@@ -1115,7 +1261,9 @@ class _ContextMiddleware(AgentMiddleware):
         name = str(request.tool_call.get("name") or "")
         if name in decision.tool_names:
             return None
-            "fish_larvae_reference_chars": len(fish_larvae_reference_block),
+        retry = _code_retry_plan(messages)
+        if retry is not None and retry[0] == name:
+            return None
         return (
             "Action unavailable in the current turn of the workflow. "
             "Continue with the visible actions or request the missing "
@@ -1222,6 +1370,9 @@ class _ContextMiddleware(AgentMiddleware):
         if not graph_attempt(name, args):
             return None
         messages = list(request.state.get("messages") or [])
+        retry = _code_retry_plan(messages)
+        if retry is not None and retry[0] == name:
+            return None
         decision = self._output_intent_decision(messages)
         return self._decision_rejection(decision) or graph_workflow_rejection(
             name, args, messages
@@ -1236,6 +1387,9 @@ class _ContextMiddleware(AgentMiddleware):
         if not graph_attempt(name, args):
             return None
         messages = list(request.state.get("messages") or [])
+        retry = _code_retry_plan(messages)
+        if retry is not None and retry[0] == name:
+            return None
         decision = await self._aoutput_intent_decision(messages)
         return self._decision_rejection(decision) or graph_workflow_rejection(
             name, args, messages

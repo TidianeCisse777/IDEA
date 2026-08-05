@@ -944,6 +944,20 @@ def make_source_tools(thread_id: str) -> list:
         n_matched = int(by_deployment["join_eligible"].sum())
         n_spatial = int((~by_deployment["join_eligible"]).sum())
         n_proj = int(matches["uvp_project_id"].nunique())
+        candidate_pair_count = int(
+            len(
+                matches.drop_duplicates(
+                    ["net_sample_id", "uvp_project_id", "uvp_sample_id"]
+                )
+            )
+        )
+        certified_pair_count = int(
+            len(
+                matches.loc[matches["join_eligible"]].drop_duplicates(
+                    ["net_sample_id", "uvp_project_id", "uvp_sample_id"]
+                )
+            )
+        )
         time_tolerance = (
             f"{max_time_gap_days * 24:g} h"
             if max_time_gap_days is not None and max_time_gap_days < 1
@@ -952,7 +966,10 @@ def make_source_tools(thread_id: str) -> list:
         lines = [
             "## Audit filet ↔ UVP",
             f"Station concordante : {n_station_matched} déploiement(s) sur {n_deployments}.",
-            f"Temps : tolérance {time_tolerance} ; jointures certifiées : {n_matched}.",
+            (
+                f"Temps : tolérance {time_tolerance} ; "
+                f"paires de métadonnées certifiées : {certified_pair_count}."
+            ),
         ]
         if date_from or date_to:
             lines.insert(1, f"Période : {date_from or 'sans borne initiale'} → {date_to or 'sans borne finale'}.")
@@ -986,7 +1003,7 @@ def make_source_tools(thread_id: str) -> list:
         elif n_matched == 0 and n_spatial > 0:
             lines += [
                 "",
-                "⚠ Aucune jointure certifiée avec ces seuils.",
+                "⚠ Aucune paire de métadonnées certifiée avec ces seuils.",
             ]
         return _eco_success(
             "\n".join(lines),
@@ -997,6 +1014,10 @@ def make_source_tools(thread_id: str) -> list:
                 "matched": n_matched,
                 "spatial_only": n_spatial,
                 "uvp_projects": n_proj,
+                "candidate_pair_count": candidate_pair_count,
+                "certified_pair_count": certified_pair_count,
+                "ctd_status": audit_ctd_verification,
+                "comparison_readiness": "metadata_only",
             },
         )
 
@@ -1083,6 +1104,18 @@ def make_source_tools(thread_id: str) -> list:
         audit_sample_keys = _canonical_sample_keys(
             audit_frame.loc[certified_audit, "net_sample_id"]
         )
+        certified_pair_frame = audit_frame.loc[
+            certified_audit,
+            ["net_sample_id", "uvp_project_id", "uvp_profile_str"],
+        ].copy()
+        for column in certified_pair_frame.columns:
+            certified_pair_frame[column] = _canonical_sample_series(
+                certified_pair_frame[column]
+            )
+        certified_pair_frame = certified_pair_frame.loc[
+            certified_pair_frame.notna().all(axis=1)
+        ].drop_duplicates()
+        certified_pair_count = int(len(certified_pair_frame))
         net_id_column = next(
             (column for column in ("SAMPLE_ID", "sample_id", "net_sample_id")
             if column in datasets["table filet"].columns),
@@ -1093,9 +1126,24 @@ def make_source_tools(thread_id: str) -> list:
             if net_id_column is not None else set()
         )
         available_audit_samples = audit_sample_keys.intersection(net_sample_keys)
-        coverage_note = (
-            f"Couverture filet disponible : {len(available_audit_samples)}/"
-            f"{len(audit_sample_keys)} prélèvement(s) certifié(s)."
+        net_abundance_column = "ALL_STAGES_ABUND (ind./m3 depth vol.)"
+        net_abundance_sample_keys: set[str] = set()
+        if net_id_column is not None and net_abundance_column in datasets["table filet"].columns:
+            net_abundance = pd.to_numeric(
+                datasets["table filet"][net_abundance_column], errors="coerce"
+            )
+            has_abundance = net_abundance.notna()
+            if "CLASS" in datasets["table filet"].columns:
+                has_abundance &= datasets["table filet"]["CLASS"].astype(
+                    "string"
+                ).str.casefold().eq("copepoda")
+            net_abundance_sample_keys = _canonical_sample_keys(
+                datasets["table filet"].loc[has_abundance, net_id_column]
+            )
+        net_abundance_available_count = int(
+            certified_pair_frame["net_sample_id"].isin(
+                net_abundance_sample_keys
+            ).sum()
         )
         audit_reused_for_available_samples = False
         if audit_meta.get("net_variable_name") != net_variable_name:
@@ -1216,25 +1264,107 @@ def make_source_tools(thread_id: str) -> list:
                 _canonical_sample_series(comparison_audit["uvp_profile_str"]),
             )
         )
-        profile_candidates = []
+        profile_candidates: dict[str, pd.Series] = {}
         for column in ("sample_profileid", "sample_id", "obj_orig_id"):
             if column not in enriched.columns:
                 continue
-            candidate = _canonical_sample_series(enriched[column])
+            candidate = _canonical_sample_series(enriched[column]).replace(
+                "", pd.NA
+            )
             if column != "sample_profileid":
                 candidate = candidate.str.replace(r"_\d+$", "", regex=True)
-            profile_candidates.append(candidate)
-        if audit_profile_pairs and profile_candidates:
-            project_keys = _canonical_sample_series(enriched["export_project_id"])
-            relevant_mask = pd.Series(False, index=enriched.index)
-            for profile_keys in profile_candidates:
-                relevant_mask |= pd.Series(
-                    [
-                        (project_key, profile_key) in audit_profile_pairs
-                        for project_key, profile_key in zip(project_keys, profile_keys)
-                    ],
-                    index=enriched.index,
+            profile_candidates[column] = candidate
+        if not profile_candidates:
+            return blocked(
+                "Jointure filet↔UVP refusée : aucune clé de profil exportée "
+                "(`sample_profileid`, `sample_id` ou `obj_orig_id`) n'est présente.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        fallback_columns = [
+            column
+            for column in ("sample_id", "obj_orig_id")
+            if column in profile_candidates
+        ]
+        fallback_values = (
+            pd.concat(
+                [profile_candidates[column] for column in fallback_columns], axis=1
+            )
+            if fallback_columns
+            else None
+        )
+        if (
+            fallback_values is not None
+            and fallback_values.nunique(axis=1, dropna=True).gt(1).any()
+        ):
+            fallback_conflict = fallback_values.nunique(axis=1, dropna=True).gt(1)
+            explicit_profile = profile_candidates.get("sample_profileid")
+            if explicit_profile is None or explicit_profile[fallback_conflict].isna().any():
+                return blocked(
+                    "Jointure filet↔UVP refusée : clé de profil exportée ambiguë.",
+                    provenance={"source": "net_uvp_ecopart_certified"},
+                    retryable=False,
                 )
+        if "sample_profileid" in profile_candidates:
+            enriched_profile_keys = profile_candidates["sample_profileid"].copy()
+            if fallback_values is not None:
+                enriched_profile_keys = enriched_profile_keys.fillna(
+                    fallback_values.bfill(axis=1).iloc[:, 0]
+                )
+        else:
+            assert fallback_values is not None
+            enriched_profile_keys = fallback_values.bfill(axis=1).iloc[:, 0]
+        if enriched_profile_keys.isna().any():
+            return blocked(
+                "Jointure filet↔UVP refusée : clé de profil exportée absente.",
+                provenance={"source": "net_uvp_ecopart_certified"},
+                retryable=False,
+            )
+        project_keys = _canonical_sample_series(enriched["export_project_id"])
+        certified_profile_pairs = set(
+            certified_pair_frame[["uvp_project_id", "uvp_profile_str"]].itertuples(
+                index=False, name=None
+            )
+        )
+        profiles_with_ecopart_volume: set[tuple[str, str]] = set()
+        if "ecopart_Sampled volume [L]" in enriched.columns:
+            available_volume = pd.to_numeric(
+                enriched["ecopart_Sampled volume [L]"], errors="coerce"
+            ).gt(0)
+            profiles_with_ecopart_volume.update(
+                (project_key, profile_key)
+                for project_key, profile_key, has_volume in zip(
+                    project_keys, enriched_profile_keys, available_volume
+                )
+                if has_volume
+                and (project_key, profile_key) in certified_profile_pairs
+            )
+        ecopart_volume_available_count = int(
+            sum(
+                (project_id, profile_id) in profiles_with_ecopart_volume
+                for project_id, profile_id in certified_pair_frame[
+                    ["uvp_project_id", "uvp_profile_str"]
+                ].itertuples(index=False, name=None)
+            )
+        )
+        coverage_note = (
+            f"Couverture filet disponible : {len(available_audit_samples)}/"
+            f"{len(audit_sample_keys)} prélèvement(s) certifié(s). "
+            "Couverture d'abondance disponible : "
+            f"filet {net_abundance_available_count}/{certified_pair_count} paire(s) "
+            f"certifiée(s) ; volume EcoPart {ecopart_volume_available_count}/"
+            f"{certified_pair_count}."
+        )
+        if audit_profile_pairs:
+            relevant_mask = pd.Series(
+                [
+                    (project_key, profile_key) in audit_profile_pairs
+                    for project_key, profile_key in zip(
+                        project_keys, enriched_profile_keys
+                    )
+                ],
+                index=enriched.index,
+            )
             enriched_for_comparison = enriched.loc[relevant_mask].copy()
         else:
             enriched_for_comparison = enriched
@@ -1269,9 +1399,60 @@ def make_source_tools(thread_id: str) -> list:
         if compact_strata.empty:
             return empty(
                 "Aucune ligne objet ne relie l'audit certifié à l'export UVP "
-                "enrichi EcoPart ; aucune table finale n'a été créée.",
+                "enrichi EcoPart ; aucune table finale n'a été créée. "
+                + coverage_note,
                 provenance={"source": "net_uvp_ecopart_certified"},
+                metrics={
+                    "certified_pair_count": certified_pair_count,
+                    "net_abundance_available_count": net_abundance_available_count,
+                    "ecopart_volume_available_count": ecopart_volume_available_count,
+                    "calculable_strata_count": 0,
+                    "calculable_pair_count": 0,
+                    "comparison_readiness": "not_calculable",
+                },
             )
+        calculable_strata_count = int(
+            compact_strata["comparison_calculable"].sum()
+        )
+        certified_pair_identities = set(
+            certified_pair_frame[
+                ["net_sample_id", "uvp_project_id", "uvp_profile_str"]
+            ].itertuples(index=False, name=None)
+        )
+        calculable_pair_frame = compact_strata.loc[
+            compact_strata["comparison_calculable"],
+            ["net_sample_id", "uvp_project_id", "uvp_profile"],
+        ].copy()
+        calculable_pair_frame.columns = [
+            "net_sample_id",
+            "uvp_project_id",
+            "uvp_profile_str",
+        ]
+        for column in calculable_pair_frame.columns:
+            calculable_pair_frame[column] = _canonical_sample_series(
+                calculable_pair_frame[column]
+            )
+        calculable_pair_count = int(
+            len(
+                set(
+                    calculable_pair_frame.loc[
+                        calculable_pair_frame.notna().all(axis=1)
+                    ].drop_duplicates().itertuples(index=False, name=None)
+                ).intersection(certified_pair_identities)
+            )
+        )
+        comparison_readiness = (
+            "not_calculable"
+            if not calculable_pair_count
+            else (
+                "partial"
+                if calculable_pair_count < certified_pair_count
+                else "calculable"
+            )
+        )
+        pair_readiness_note = (
+            f"Paires calculables : {calculable_pair_count}/{certified_pair_count}."
+        )
         if compact_join_upper_bound > 100_000:
             strata = compact_strata
 
@@ -1321,7 +1502,7 @@ def make_source_tools(thread_id: str) -> list:
                 "jointure taxons×objets : "
                 f"{len(calculable)}/{len(strata)} tranche(s) calculable(s), "
                 f"{len(exclusions)} avec valeur manquante ou exclusion. "
-                f"{coverage_note} "
+                f"{coverage_note} {pair_readiness_note} "
                 "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
                 "`df_net_uvp_exclusions`.",
                 provenance={"source": "net_uvp_ecopart_certified"},
@@ -1338,6 +1519,12 @@ def make_source_tools(thread_id: str) -> list:
                     "exclusions_by_status": exclusion_counts,
                     "certified_audit_samples": len(audit_sample_keys),
                     "available_net_samples": len(available_audit_samples),
+                    "certified_pair_count": certified_pair_count,
+                    "net_abundance_available_count": net_abundance_available_count,
+                    "ecopart_volume_available_count": ecopart_volume_available_count,
+                    "calculable_strata_count": calculable_strata_count,
+                    "calculable_pair_count": calculable_pair_count,
+                    "comparison_readiness": comparison_readiness,
                 },
             )
 
@@ -1437,11 +1624,19 @@ def make_source_tools(thread_id: str) -> list:
             "calculable_strata": int(len(calculable)),
             "missing_strata": int(len(exclusions)),
             "exclusions_by_status": exclusion_counts,
+            "certified_pair_count": certified_pair_count,
+            "net_abundance_available_count": net_abundance_available_count,
+            "ecopart_volume_available_count": ecopart_volume_available_count,
+            "calculable_strata_count": calculable_strata_count,
+            "calculable_pair_count": calculable_pair_count,
+            "comparison_readiness": comparison_readiness,
         }
         comparison_note = (
             f"\nComparaison par tranche prête : {len(calculable)}/{len(strata)} "
             "tranche(s) calculable(s), "
             f"{len(exclusions)} avec valeur manquante ou exclusion. "
+            + pair_readiness_note
+            + " "
             "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
             "`df_net_uvp_exclusions`."
         )

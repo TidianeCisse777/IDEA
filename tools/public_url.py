@@ -6,6 +6,7 @@ from contextvars import ContextVar
 import os
 import re
 from typing import Iterator, Protocol
+from urllib.parse import urlsplit
 
 
 class _RequestLike(Protocol):
@@ -23,6 +24,7 @@ _SAFE_HOST = re.compile(
     r"\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?$"
 )
 _INTERNAL_AGENT_HOSTS = frozenset({"copepod-agent", "copepod_agent"})
+_DEFAULT_RUNTIME_ORIGIN_FILE = "data/public_origin.txt"
 
 
 def _first_header_value(request: _RequestLike, name: str) -> str:
@@ -41,6 +43,45 @@ def _is_internal_agent_host(host: str) -> bool:
     return hostname in _INTERNAL_AGENT_HOSTS
 
 
+def _valid_public_origin(value: str) -> str | None:
+    """Validate a complete public origin read from local runtime state."""
+    candidate = value.strip().rstrip("/")
+    if not candidate:
+        return None
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not _safe_host(parsed.netloc)
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _runtime_public_origin() -> str | None:
+    """Return the current tunnel origin when ``start.sh`` has published one.
+
+    Quick-tunnel hostnames change at every launch.  Reading this tiny file for
+    each generated URL lets a containerized or pre-existing local agent use
+    the current public hostname without a restart.
+    """
+    path = os.getenv("SERVE_PUBLIC_ORIGIN_FILE", _DEFAULT_RUNTIME_ORIGIN_FILE)
+    try:
+        with open(path, encoding="utf-8") as origin_file:
+            return _valid_public_origin(origin_file.readline())
+    except OSError:
+        return None
+
+
+def _configured_origin() -> str:
+    return (os.getenv("SERVE_BASE_URL") or "http://localhost:8000").rstrip("/")
+
+
 def request_public_origin(request: _RequestLike) -> str:
     """Derive the browser-facing origin for one HTTP request.
 
@@ -57,7 +98,7 @@ def request_public_origin(request: _RequestLike) -> str:
     scheme = str(getattr(request.url, "scheme", "http")).lower()
     if host and not _is_internal_agent_host(host) and scheme in {"http", "https"}:
         return f"{scheme}://{host}"
-    return (os.getenv("SERVE_BASE_URL") or "http://localhost:8000").rstrip("/")
+    return _runtime_public_origin() or _configured_origin()
 
 
 @contextmanager
@@ -71,11 +112,11 @@ def activate_request_origin(origin: str) -> Iterator[None]:
 
 
 def serve_base_url() -> str:
-    """Return the request origin, then the configured/default API origin."""
+    """Return request, current-tunnel, then configured/default API origin."""
     active_origin = _request_origin.get()
     if active_origin:
         return active_origin
-    return (os.getenv("SERVE_BASE_URL") or "http://localhost:8000").rstrip("/")
+    return _runtime_public_origin() or _configured_origin()
 
 
 def download_url(filename: str) -> str:

@@ -10,6 +10,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 from core.runtime_paths import graphs_dir
+from tools.public_url import download_url
 from tools.source_renderer import render_sources, source_urls
 from tools.tool_result import blocked, error, success
 
@@ -94,8 +95,10 @@ def _configure_weasyprint_library_path() -> None:
 def _write_html_fallback(downloads: Path, safe: str, html: str) -> str:
     html_path = downloads / f"{safe}.html"
     html_path.write_text(html, encoding="utf-8")
-    base = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
-    return f"WeasyPrint non disponible — HTML disponible : {base}/downloads/{safe}.html"
+    return (
+        "WeasyPrint non disponible — HTML disponible : "
+        f"{download_url(f'{safe}.html')}"
+    )
 
 
 def _replace_graph_urls(markdown: str) -> str:
@@ -414,7 +417,7 @@ def export_deliverable(
         summary = _write_html_fallback(downloads, safe, html)
         return success(
             summary,
-            artifact_refs=(f"/downloads/{safe}.html",),
+            artifact_refs=(download_url(f"{safe}.html"),),
             provenance={"source": "conversation traceability manifest"},
             persisted=True,
             method="HTML fallback export",
@@ -427,8 +430,7 @@ def export_deliverable(
             method="WeasyPrint PDF export",
         )
 
-    base = os.getenv("SERVE_BASE_URL", "http://localhost:8000")
-    url = f"{base}/downloads/{safe}.pdf"
+    url = download_url(f"{safe}.pdf")
     return success(
         f"PDF généré : {url}",
         artifact_refs=(url,),

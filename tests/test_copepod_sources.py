@@ -2082,7 +2082,7 @@ def test_net_uvp_match_tool_requires_explicit_call_and_matches_by_deployment(tmp
     assert tool.args_schema.model_fields["max_time_gap_days"].default == 0.5
     result = tool.invoke({"date_from": "2023-01-01", "max_time_gap_days": 1.0})
 
-    assert "jointures certifiées : 1." in result
+    assert "paires de métadonnées certifiées : 2." in result
     assert "Station concordante : 1 déploiement(s) sur 1." in result
     assert "net_sample_id" not in result
     assert "Étape suivante" not in result
@@ -2157,7 +2157,7 @@ def test_net_uvp_audit_prefers_station_id_over_station_name_when_both_exist(
         {"net_variable_name": "df_file_baffin_2024", "max_time_gap_days": 1.0}
     )
 
-    assert "jointures certifiées : 1." in result
+    assert "paires de métadonnées certifiées : 1." in result
     audit = store.get(f"{thread_id}:dataset:df_net_uvp_matches")["df"]
     assert audit["station"].tolist() == ["ST-101"]
     assert audit["station_name_match"].all()
@@ -2607,6 +2607,272 @@ def _net_uvp_enriched_tool(
         if item.name == "join_net_uvp_enriched"
     )
     return join_tool, store, thread_id
+
+
+def _content_and_artifact(tool, arguments):
+    """Unpack the public content-and-artifact contract of a source tool."""
+    content, artifact = tool.func(**arguments)
+    return content, artifact
+
+
+def _net_uvp_enriched_tool_with_two_of_five_abundance_rows(tmp_path, monkeypatch):
+    """Five CTD-certified pairs, but abundance evidence for only two of them."""
+    import tools.copepod_sources as source_module
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    thread_id = "net-uvp-partial-coverage-thread"
+    store = SessionStore(tmp_path / "sessions")
+    net = pd.DataFrame(
+        {
+            "SAMPLE_ID": [501, 502],
+            "ANALYSIS_ID": [9001, 9002],
+            "TAXON_ID": ["Calanus", "Oithona"],
+            "CLASS": ["Copepoda", "Copepoda"],
+            "MIN_SAMPLE_DEPTH": [0.0, 0.0],
+            "MAX_SAMPLE_DEPTH": [10.0, 10.0],
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [12.0, 15.0],
+        }
+    )
+    store_dataset(
+        store,
+        thread_id,
+        net,
+        variable_name="df_file_net_abundance",
+        meta={"source": "file:abundance"},
+        is_loaded_file=True,
+    )
+    audit = pd.DataFrame(
+        {
+            "net_sample_id": [501, 502, 503, 504, 505],
+            "uvp_project_id": [10, 20, 30, 40, 50],
+            "uvp_profile_str": ["uvp-101", "uvp-203", "uvp-304", "uvp-405", "uvp-506"],
+            "join_eligible": [True] * 5,
+            "ctd_verification": ["verified"] * 5,
+        }
+    )
+    store_dataset(
+        store,
+        thread_id,
+        audit,
+        variable_name="df_net_uvp_matches",
+        meta={
+            "source": "net_uvp_match",
+            "net_variable_name": "df_file_original_metadata",
+            "net_dataframe_fingerprint": source_module._net_dataframe_fingerprint(net),
+            "ctd_filename_verified": 5,
+            "ctd_verification": "verified",
+            "exploratory": False,
+            "allow_unverified_ctd": False,
+        },
+        set_active=False,
+    )
+    enriched = pd.DataFrame(
+        {
+            "export_project_id": [10, 20],
+            "sample_profileid": ["uvp-101", "uvp-203"],
+            "object_id": ["obj-1", "obj-2"],
+            "depth_bin": [2.5, 2.5],
+            "object_annotation_hierarchy": ["living>Crustacea>Copepoda"] * 2,
+            "ecopart_Sampled volume [L]": [100.0, 100.0],
+        }
+    )
+    store_dataset(
+        store,
+        thread_id,
+        enriched,
+        variable_name="df_ecotaxa_ecopart_campaign",
+        meta={"source": "join:ecotaxa_campaign+ecopart"},
+        set_active=False,
+    )
+    monkeypatch.setattr(source_module, "_store", store)
+    tool = next(
+        item for item in source_module.make_source_tools(thread_id)
+        if item.name == "join_net_uvp_enriched"
+    )
+    return tool, store, thread_id
+
+
+def _join_args():
+    return {
+        "net_variable_name": "df_file_net_abundance",
+        "uvp_enriched_variable": "df_ecotaxa_ecopart_campaign",
+    }
+
+
+def test_audit_never_labels_metadata_certification_as_abundance_comparison(
+    tmp_path, monkeypatch
+):
+    def verified_ctd(**_kwargs):
+        return pd.DataFrame(
+            {
+                "filename": ["2406_062.int.nc", "2406_063.int.nc"],
+                "station": ["ST-101", "ST-203"],
+                "cast_number": [62, 63],
+                "latitude": [67.5, 68.0],
+                "longitude": [-63.8, -64.0],
+                "time": ["2024-06-02T00:00:00Z", "2024-06-03T00:00:00Z"],
+            }
+        )
+
+    tool, _, _ = _net_uvp_certification_tool(tmp_path, monkeypatch, verified_ctd)
+
+    content, artifact = _content_and_artifact(
+        tool,
+        {"net_variable_name": "df_file_baffin_2024", "max_time_gap_days": 1.0},
+    )
+
+    assert artifact["metrics"]["comparison_readiness"] == "metadata_only"
+    assert artifact["metrics"]["certified_pair_count"] == 2
+    assert artifact["metrics"]["candidate_pair_count"] == 3
+    assert artifact["metrics"]["ctd_status"] == "verified"
+    assert "paires de métadonnées certifiées" in content.casefold()
+    assert "jointures certifiées" not in content.casefold()
+    assert "comparaison prête" not in content.casefold()
+    assert "abondance comparable" not in content.casefold()
+
+
+def test_join_reports_partial_abundance_coverage_before_any_graph(tmp_path, monkeypatch):
+    tool, _, _ = _net_uvp_enriched_tool_with_two_of_five_abundance_rows(
+        tmp_path, monkeypatch
+    )
+
+    _, artifact = _content_and_artifact(tool, _join_args())
+
+    assert artifact["metrics"]["certified_pair_count"] == 5
+    assert artifact["metrics"]["net_abundance_available_count"] == 2
+    assert artifact["metrics"]["ecopart_volume_available_count"] == 2
+    assert artifact["metrics"]["calculable_strata_count"] == 2
+    assert artifact["metrics"]["comparison_readiness"] == "partial"
+
+
+def test_join_reports_not_calculable_coverage_when_no_enriched_profile_remains(
+    tmp_path, monkeypatch
+):
+    tool, store, thread_id = _net_uvp_enriched_tool_with_two_of_five_abundance_rows(
+        tmp_path, monkeypatch
+    )
+    enriched_entry = store.get(f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign")
+    store.set(
+        f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign",
+        enriched_entry["df"].iloc[0:0],
+        enriched_entry["meta"],
+    )
+
+    _, artifact = _content_and_artifact(tool, _join_args())
+
+    assert artifact["metrics"]["certified_pair_count"] == 5
+    assert artifact["metrics"]["calculable_strata_count"] == 0
+    assert artifact["metrics"]["comparison_readiness"] == "not_calculable"
+
+
+def test_join_net_uvp_keeps_pair_readiness_partial_when_one_pair_has_five_strata(
+    tmp_path, monkeypatch
+):
+    """Several depth strata for one pair cannot satisfy five certified pairs."""
+    import tools.copepod_sources as source_module
+
+    tool, store, thread_id = _net_uvp_enriched_tool_with_two_of_five_abundance_rows(
+        tmp_path, monkeypatch
+    )
+    net_entry = store.get(f"{thread_id}:dataset:df_file_net_abundance")
+    multi_strata_net = pd.DataFrame(
+        {
+            "SAMPLE_ID": [501] * 5,
+            "ANALYSIS_ID": [9001] * 5,
+            "TAXON_ID": ["Calanus"] * 5,
+            "CLASS": ["Copepoda"] * 5,
+            "MIN_SAMPLE_DEPTH": [0.0, 10.0, 20.0, 30.0, 40.0],
+            "MAX_SAMPLE_DEPTH": [10.0, 20.0, 30.0, 40.0, 50.0],
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [12.0] * 5,
+        }
+    )
+    store.set(
+        f"{thread_id}:dataset:df_file_net_abundance",
+        multi_strata_net,
+        net_entry["meta"],
+    )
+    audit_entry = store.get(f"{thread_id}:dataset:df_net_uvp_matches")
+    store.set(
+        f"{thread_id}:dataset:df_net_uvp_matches",
+        audit_entry["df"],
+        {
+            **audit_entry["meta"],
+            "net_dataframe_fingerprint": source_module._net_dataframe_fingerprint(
+                multi_strata_net
+            ),
+        },
+    )
+    enriched_entry = store.get(f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign")
+    multi_strata_enriched = pd.DataFrame(
+        {
+            "export_project_id": [10] * 5,
+            "sample_profileid": ["uvp-101"] * 5,
+            "object_id": [f"obj-{index}" for index in range(5)],
+            "depth_bin": [2.5, 12.5, 22.5, 32.5, 42.5],
+            "object_annotation_hierarchy": ["living>Crustacea>Copepoda"] * 5,
+            "ecopart_Sampled volume [L]": [100.0] * 5,
+        }
+    )
+    store.set(
+        f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign",
+        multi_strata_enriched,
+        enriched_entry["meta"],
+    )
+
+    _, artifact = _content_and_artifact(tool, _join_args())
+
+    assert artifact["metrics"]["certified_pair_count"] == 5
+    assert artifact["metrics"]["calculable_strata_count"] == 5
+    assert artifact["metrics"]["calculable_pair_count"] == 1
+    assert artifact["metrics"]["comparison_readiness"] == "partial"
+
+
+def test_join_net_uvp_does_not_credit_ecopart_volume_from_rejected_fallback_profile_key(
+    tmp_path, monkeypatch
+):
+    """An explicit exported profile key overrides a contradictory fallback key."""
+    tool, store, thread_id = _net_uvp_enriched_tool_with_two_of_five_abundance_rows(
+        tmp_path, monkeypatch
+    )
+    enriched_entry = store.get(f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign")
+    enriched = enriched_entry["df"].copy()
+    enriched["sample_profileid"] = ["wrong-1", "wrong-2"]
+    enriched["sample_id"] = ["uvp-101_1", "uvp-203_1"]
+    store.set(
+        f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign",
+        enriched,
+        enriched_entry["meta"],
+    )
+
+    _, artifact = _content_and_artifact(tool, _join_args())
+
+    assert artifact["metrics"]["ecopart_volume_available_count"] == 0
+    assert artifact["metrics"]["comparison_readiness"] == "not_calculable"
+
+
+def test_join_net_uvp_uses_fallback_profile_for_blank_explicit_profile_key(
+    tmp_path, monkeypatch
+):
+    """Whitespace explicit keys are missing, so the canonical fallback applies."""
+    tool, store, thread_id = _net_uvp_enriched_tool_with_two_of_five_abundance_rows(
+        tmp_path, monkeypatch
+    )
+    enriched_entry = store.get(f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign")
+    enriched = enriched_entry["df"].copy()
+    enriched["sample_profileid"] = ["", "   "]
+    enriched["sample_id"] = ["uvp-101_1", "uvp-203_1"]
+    store.set(
+        f"{thread_id}:dataset:df_ecotaxa_ecopart_campaign",
+        enriched,
+        enriched_entry["meta"],
+    )
+
+    _, artifact = _content_and_artifact(tool, _join_args())
+
+    assert artifact["metrics"]["ecopart_volume_available_count"] == 2
+    assert artifact["metrics"]["calculable_pair_count"] == 2
+    assert artifact["metrics"]["comparison_readiness"] == "partial"
 
 
 def test_join_net_uvp_enriched_persists_certified_object_rows(

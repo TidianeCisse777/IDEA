@@ -50,11 +50,9 @@ All of these are automatically injected into every `run_pandas` call — no relo
    subset, or other filter: create that subset first.
    If an audit rejects a reference, read its available persistent variables and
    retry the audit with that exact name; never guess one.
-2. Run `find_uvp_matches_for_net_table` on that exact table. A normalized
-   station match is mandatory; spatial and temporal information only choose
-   among candidates from that same station. The certified export scope is only
-   the rows where `join_eligible=True` and
-   `ctd_filename_match_status="matched"`.
+2. Run `find_uvp_matches_for_net_table` on that exact table. Follow the
+   permanent route's station, time and CTD validity rules; the tool returns the
+   certified scope and any auditable candidates.
    - If the audit says the CTD source is unavailable, ask in plain language:
      “La vérification CTD n’est pas accessible pour le moment : ces
      correspondances ne peuvent pas être certifiées. Souhaites-tu quand même
@@ -62,52 +60,40 @@ All of these are automatically injected into every `run_pandas` call — no relo
      Do not expose internal labels, tool arguments, or selection identifiers.
      A natural “oui, continue sans CTD”, “exporte les correspondances”, or an
      equivalent direct export request is sufficient confirmation.
-   - On that confirmation, do not merely acknowledge the exploratory
-     confirmation: the very next tool call must be `find_uvp_matches_for_net_table`
-     with the exact same audit arguments plus `allow_unverified_ctd=True`.
-   - That re-audit makes its exact selection the active selection. Call
-     `export_ecotaxa_samples(selection_name="latest", confirmed=False)` in the
-     same turn: it cannot accidentally use a guessed selection identifier.
-     This dry-run downloads nothing. Then wait for a separate explicit export confirmation
-     before calling `confirmed=True`.
+   - On that confirmation, immediately re-run the audit through its
+     explicitly labelled exploratory route, using the same scope. Its returned
+     selection becomes active, then prepare the UVP export dry-run. This
+     dry-run downloads nothing.
    - **Never use the exploratory override for a CTD no match.** For a no-match,
      stop before `export_ecotaxa_samples`, keep the audit visible, and do not
      create an export plan.
 3. Reuse the **exact certified selection identifier returned by the audit**, or
-   the exact exploratory selection identifier returned by the re-audit.
-   For the certified path, call `export_ecotaxa_samples(confirmed=False)` for
-   the project-by-project dry-run. For the exploratory path, that dry-run was
-   already performed in step 2: do not repeat it. Wait for the separate export
-   confirmation, then call the same selection with `confirmed=True`. Never
-   rebuild its sample IDs manually.
-4. On the consolidated multi-project EcoTaxa table, call
-   `enrich_ecotaxa_with_ecopart_remote(confirmed=False)`. Present the EcoPart
-   project-by-project plan, wait for a new explicit confirmation, then call
-   `confirmed=True`. Keep partial-project coverage visible.
+   the exact exploratory selection identifier returned by the re-audit. For the
+   certified path, prepare the project-by-project UVP export dry-run. For the
+   exploratory path, it was already prepared in step 2: do not repeat it.
+   Present the plan, then ask exactly: “confirme l’export UVP ?” Only after that
+   confirmation, run the remote UVP export. Never rebuild sample IDs manually.
+4. On the consolidated multi-project EcoTaxa table, prepare the EcoPart
+   project-by-project enrichment plan. Keep partial-project coverage visible,
+   then ask exactly: “confirme l’enrichissement EcoPart ?” Only after that new
+   confirmation, call `enrich_ecotaxa_with_ecopart_remote` to run the remote
+   EcoPart enrichment.
 5. Call `join_net_uvp_enriched` with the exact persisted filet, audit, and
    enriched-campaign variable names. This local tool is the only final bridge.
-   Pass `allow_unverified_ctd=True` when the persisted audit and selection are
-   marked `ctd_verification="unavailable"` and `exploratory=True`.
    Continue calculations only from its canonical `df_net_uvp_ecopart` result.
    Keep `export_project_id` in every canonical aggregation and pair it with
    `uvp_profile_str`; profile labels are not globally unique across projects.
 
-The exploratory override, EcoTaxa object export, and later EcoPart downloads
-each require their own distinct confirmation.
+The exploratory choice, UVP export and later EcoPart enrichment each require a
+distinct confirmation. Tool results decide whether the requested operation is
+accepted, refused or remains blocked.
 
 ## Non-negotiable validation gate
 
-An audit row can authorize a certified filet↔UVP abundance comparison only when
-`join_eligible=True` and `ctd_filename_match_status="matched"`. This proves a
-normalized station match, the net↔UVP position and time checks **and** a shared
-CTD-rosette file validated in Amundsen against its station, time, and
-coordinates. A differently named station is excluded before the spatial/time
-comparison. A `spatial_only`,
-`filename_candidate`, missing CTD evidence, or station-name resemblance remains
-an auditable candidate, never an export or analysis row. The sole exception is
-the confirmed source-unavailable path above; its rows must retain
-`ctd_verification="unavailable"` and `exploratory=True`. A CTD no-match is never
-eligible. Do not fall back to a station-, zone-, or spatial-only comparison.
+Use the permanent prompt's validation gate as the authority for certified and
+exploratory scope. Do not fall back to a station-, zone-, or spatial-only
+comparison; the audit output remains visible whenever the route cannot certify
+or proceed.
 
 The certification call is filename-led and metadata-only. Retrieve `PRES` or
 other vertical CTD variables only after validation, when the user explicitly

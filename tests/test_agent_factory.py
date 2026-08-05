@@ -60,6 +60,254 @@ def test_skill_result_has_a_context_safety_ceiling():
     assert metrics["tool_messages_truncated"] == 1
 
 
+def test_retryable_code_error_forces_one_same_tool_retry_with_its_diagnostic(
+    monkeypatch, tmp_path
+):
+    """La reprise de code est un contrôle du middleware, pas une suggestion LLM."""
+    from langchain.agents.middleware.types import ModelRequest
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+    from langchain_core.tools import tool
+
+    import agent as agent_module
+    from tools.session_store import SessionStore
+
+    @tool
+    def run_pandas(code: str) -> str:
+        """Execute local analysis code."""
+        return code
+
+    diagnostic = "Error: ValueError: The truth value of a Series is ambiguous"
+    messages = [
+        HumanMessage(content="Fais une carte des paires certifiées."),
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "run_pandas",
+                "args": {"code": "bad code"},
+                "id": "pandas-1",
+                "type": "tool_call",
+            }],
+        ),
+        ToolMessage(
+            content=diagnostic,
+            name="run_pandas",
+            tool_call_id="pandas-1",
+            artifact={"status": "error", "retryable": True},
+        ),
+    ]
+    monkeypatch.setattr("tools.session_store.default_store", SessionStore(tmp_path))
+    middleware = agent_module._ContextMiddleware(thread_id="code-retry-thread")
+    request = ModelRequest(
+        model=MagicMock(),
+        messages=messages,
+        system_message=SystemMessage(content="BASE"),
+        tools=[run_pandas],
+    )
+
+    retry = agent_module._code_retry_plan(messages)
+    assert retry == ("run_pandas", diagnostic)
+    prepared = middleware._prepare_request(request, memories=[])
+    assert prepared.tool_choice == {
+        "type": "function",
+        "function": {"name": "run_pandas"},
+    }
+    assert diagnostic in prepared.system_message.content
+
+    second_failure = [
+        *messages,
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "run_pandas",
+                "args": {"code": "still bad"},
+                "id": "pandas-2",
+                "type": "tool_call",
+            }],
+        ),
+        ToolMessage(
+            content=diagnostic,
+            name="run_pandas",
+            tool_call_id="pandas-2",
+            artifact={"status": "error", "retryable": True},
+        ),
+    ]
+    assert agent_module._code_retry_plan(second_failure) is None
+
+
+@pytest.mark.parametrize("tool_name", ["run_pandas", "run_graph"])
+def test_code_retry_plan_covers_each_local_code_tool(tool_name):
+    from langchain_core.messages import HumanMessage, ToolMessage
+
+    import agent as agent_module
+
+    messages = [
+        HumanMessage(content="Produis le résultat demandé."),
+        ToolMessage(
+            content="Error: recoverable local code failure",
+            name=tool_name,
+            tool_call_id="code-failure",
+            artifact={"status": "error", "retryable": True},
+        ),
+    ]
+
+    assert agent_module._code_retry_plan(messages) == (
+        tool_name,
+        "Error: recoverable local code failure",
+    )
+
+
+def test_context_adds_net_uvp_progress_after_audit(monkeypatch, tmp_path):
+    """Persisted audit readiness is concise and never prescribes one tool."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from tools.session_store import SessionStore
+
+    import agent as agent_module
+
+    class Request:
+        messages = [HumanMessage(content="Poursuis la comparaison filet UVP.")]
+        tools = []
+        system_message = SystemMessage(content="BASE")
+
+        def override(self, **kwargs):
+            return kwargs
+
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        "net-uvp-context:dataset:net",
+        None,
+        {"source": "file:net.tsv", "variable_name": "df_file_net"},
+    )
+    store.set(
+        "net-uvp-context:dataset:audit",
+        None,
+        {
+            "source": "net_uvp_match",
+            "variable_name": "df_audit_interne",
+            "net_variable_name": "df_file_net",
+            "ctd_verification": "verified",
+        },
+    )
+    store.set(
+        "net-uvp-context:selection:certified",
+        None,
+        {
+            "source": "net_uvp_certified_selection",
+            "selection_name": "selection:interne",
+            "audit_variable": "df_audit_interne",
+            "ctd_verification": "verified",
+        },
+    )
+    monkeypatch.setattr("tools.session_store.default_store", store)
+
+    prepared = agent_module._ContextMiddleware(
+        thread_id="net-uvp-context"
+    )._prepare_request(Request(), memories=[])
+    system = prepared["system_message"].content
+
+    assert "Comparaison filet–UVP : audit certifié disponible" in system
+    assert "outil suivant obligatoire" not in system.casefold()
+    assert "df_audit_interne" not in system
+    assert "selection:interne" not in system
+    assert "find_uvp_matches_for_net_table" not in system
+
+
+def test_context_labels_unavailable_ctd_progress_as_opt_in_exploratory(
+    monkeypatch, tmp_path
+):
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from tools.session_store import SessionStore
+
+    import agent as agent_module
+
+    class Request:
+        messages = [HumanMessage(content="Poursuis la comparaison filet UVP.")]
+        tools = []
+        system_message = SystemMessage(content="BASE")
+
+        def override(self, **kwargs):
+            return kwargs
+
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        "net-uvp-exploratory:dataset:net",
+        None,
+        {"source": "file:net.tsv", "variable_name": "df_file_net"},
+    )
+    store.set(
+        "net-uvp-exploratory:dataset:audit",
+        None,
+        {
+            "source": "net_uvp_match",
+            "variable_name": "df_audit_interne",
+            "net_variable_name": "df_file_net",
+            "ctd_verification": "unavailable",
+            "exploratory": True,
+        },
+    )
+    store.set(
+        "net-uvp-exploratory:selection:exploratory",
+        None,
+        {
+            "source": "net_uvp_exploratory_selection",
+            "selection_name": "selection:interne",
+            "audit_variable": "df_audit_interne",
+            "ctd_verification": "unavailable",
+            "exploratory": True,
+        },
+    )
+    monkeypatch.setattr("tools.session_store.default_store", store)
+
+    prepared = agent_module._ContextMiddleware(
+        thread_id="net-uvp-exploratory"
+    )._prepare_request(Request(), memories=[])
+    system = prepared["system_message"].content.casefold()
+
+    assert "exploratoire" in system
+    assert "accord explicite" in system
+
+
+@pytest.mark.parametrize("phase", ["exported", "joined"])
+def test_context_keeps_unavailable_ctd_progress_exploratory_after_audit(phase):
+    from tools.net_uvp_workflow import NetUvpWorkflowProgress
+
+    import agent as agent_module
+
+    progress = NetUvpWorkflowProgress(
+        phase=phase,
+        audit_ref="internal-audit",
+        selection_name="internal-selection",
+        ctd_status="unavailable",
+        allowed_capabilities=frozenset(),
+        message="internal workflow state",
+    )
+
+    context = agent_module._render_net_uvp_progress_context(progress).casefold()
+
+    assert "exploratoire" in context
+    assert "accord explicite" in context
+    assert "certifié" not in context
+
+
+def test_context_does_not_call_unknown_ctd_audit_certified():
+    from tools.net_uvp_workflow import NetUvpWorkflowProgress
+
+    import agent as agent_module
+
+    progress = NetUvpWorkflowProgress(
+        phase="audited",
+        audit_ref="internal-audit",
+        selection_name=None,
+        ctd_status="unknown",
+        allowed_capabilities=frozenset(),
+        message="internal workflow state",
+    )
+
+    context = agent_module._render_net_uvp_progress_context(progress).casefold()
+
+    assert "certifié" not in context
+    assert "à confirmer" in context
+
+
 # --- Comportement 0 : _make_tracer inclut user_id ---
 
 def test_make_tracer_uses_email_as_tag_when_provided(monkeypatch):
@@ -1604,6 +1852,15 @@ def test_bio_oracle_skill_requires_target_year_for_year_specific_requests():
     assert "2050" in skill
     assert "baseline is historical" in skill
     assert "persisted time metadata" in skill
+
+
+def test_bio_oracle_skill_keeps_baseline_window_out_of_source_date_filter():
+    skill = " ".join(
+        Path("agents/skills/bio_oracle_query.md").read_text(encoding="utf-8").lower().split()
+    )
+
+    assert "never pass the baseline period as date_range" in skill
+    assert "only use date_range when the user explicitly asks to filter source rows" in skill
 
 
 

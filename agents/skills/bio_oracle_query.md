@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "source:bio_oracle"
 next_tool: enrich_with_bio_oracle
-max_tokens: 850
+max_tokens: 950
 ---
 
 # Skill: bio_oracle_query
@@ -50,6 +50,11 @@ Never turn a scenario label into an observed value or biological conclusion.
 Scenario delta: only where both row values are numeric. Report the calculable
 denominator and missing/no_value count; retain all rows without replacement or
 discard.
+
+The baseline period is metadata of the Bio-ORACLE dataset, not a temporal
+filter on the loaded observations: **never pass the baseline period as
+date_range**. Only use date_range when the user explicitly asks to filter
+source rows, and pass a pair of ISO dates for that source scope.
 
 - The vertical layer is mandatory: choose `surface`, `benthic_min`,
   `benthic_mean`, or `benthic_max`.

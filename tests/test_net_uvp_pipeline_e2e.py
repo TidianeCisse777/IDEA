@@ -222,3 +222,100 @@ def test_certified_core_rejects_ctd_without_match_or_opt_in(ctd_verification):
     )
 
     assert join_certified_net_uvp_enriched(net, audit, enriched).empty
+
+
+def test_partial_abundance_coverage_limits_density_comparison_to_calculable_pairs(
+    tmp_path, monkeypatch
+):
+    """Five certified metadata pairs do not make five abundance comparisons."""
+    import tools.copepod_sources as source_module
+    from tools.dataset_registry import store_dataset
+    from tools.session_store import SessionStore
+
+    thread_id = "net-uvp-five-certified-two-abundance"
+    store = SessionStore(tmp_path / "sessions")
+    net = pd.DataFrame(
+        {
+            "SAMPLE_ID": [501, 502],
+            "ANALYSIS_ID": [9001, 9002],
+            "TAXON_ID": ["Calanus", "Oithona"],
+            "CLASS": ["Copepoda", "Copepoda"],
+            "MIN_SAMPLE_DEPTH": [0.0, 0.0],
+            "MAX_SAMPLE_DEPTH": [10.0, 10.0],
+            "ALL_STAGES_ABUND (ind./m3 depth vol.)": [12.0, 15.0],
+        }
+    )
+    store_dataset(
+        store,
+        thread_id,
+        net,
+        variable_name="df_file_net_abundance",
+        meta={"source": "file:abundance"},
+        is_loaded_file=True,
+    )
+    audit = pd.DataFrame(
+        {
+            "net_sample_id": [501, 502, 503, 504, 505],
+            "uvp_project_id": [10, 20, 30, 40, 50],
+            "uvp_profile_str": ["uvp-101", "uvp-203", "uvp-304", "uvp-405", "uvp-506"],
+            "join_eligible": [True] * 5,
+            "ctd_verification": ["verified"] * 5,
+        }
+    )
+    store_dataset(
+        store,
+        thread_id,
+        audit,
+        variable_name="df_net_uvp_matches",
+        meta={
+            "source": "net_uvp_match",
+            "net_variable_name": "df_file_original_metadata",
+            "net_dataframe_fingerprint": source_module._net_dataframe_fingerprint(net),
+            "ctd_filename_verified": 5,
+            "ctd_verification": "verified",
+            "exploratory": False,
+            "allow_unverified_ctd": False,
+        },
+        set_active=False,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "export_project_id": [10, 20],
+                "sample_profileid": ["uvp-101", "uvp-203"],
+                "object_id": ["obj-1", "obj-2"],
+                "depth_bin": [2.5, 2.5],
+                "object_annotation_hierarchy": ["living>Crustacea>Copepoda"] * 2,
+                "ecopart_Sampled volume [L]": [100.0, 100.0],
+            }
+        ),
+        variable_name="df_ecotaxa_ecopart_campaign",
+        meta={"source": "join:ecotaxa_campaign+ecopart"},
+        set_active=False,
+    )
+    monkeypatch.setattr(source_module, "_store", store)
+    join_tool = next(
+        tool
+        for tool in source_module.make_source_tools(thread_id)
+        if tool.name == "join_net_uvp_enriched"
+    )
+
+    _, artifact = join_tool.func(
+        net_variable_name="df_file_net_abundance",
+        uvp_enriched_variable="df_ecotaxa_ecopart_campaign",
+    )
+    calculable = store.get(f"{thread_id}:dataset:df_net_uvp_calculable")["df"]
+    density_comparison = compare_paired_density(
+        calculable,
+        net_col="net_abundance_ind_m3",
+        uvp_col="uvp_abundance_ind_m3",
+    )
+
+    assert artifact["metrics"]["certified_pair_count"] == 5
+    assert artifact["metrics"]["net_abundance_available_count"] == 2
+    assert artifact["metrics"]["ecopart_volume_available_count"] == 2
+    assert artifact["metrics"]["calculable_strata_count"] == 2
+    assert artifact["metrics"]["comparison_readiness"] == "partial"
+    assert density_comparison["net_sample_id"].tolist() == [501, 502]

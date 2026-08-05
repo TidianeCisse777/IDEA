@@ -135,8 +135,17 @@ def _fetch_bio_oracle_bbox(
     scen = _resolve_scenario(scenario)
     depth = _resolve_depth(depth_layer)
     stride = max(1, int(stride))
+    # Canonical tiles can extend one grid step beyond the antimeridian for
+    # points close to -180°/180°. ERDDAP rejects those out-of-range bounds
+    # with 404 instead of clipping them, so bound the request explicitly.
+    query_tile = {
+        "lat_min": max(-90.0, min(90.0, float(tile["lat_min"]))),
+        "lat_max": max(-90.0, min(90.0, float(tile["lat_max"]))),
+        "lon_min": max(-180.0, min(180.0, float(tile["lon_min"]))),
+        "lon_max": max(-180.0, min(180.0, float(tile["lon_max"]))),
+    }
     cache_key = {
-        "tile": tile,
+        "tile": query_tile,
         "variable": var,
         "scenario": scen,
         "depth_layer": depth,
@@ -155,8 +164,8 @@ def _fetch_bio_oracle_bbox(
     url = (
         f"{griddap_url}.csv?{query_var}"
         f"[({time_sel})]"
-        f"[({tile['lat_min']:.4f}):{stride}:({tile['lat_max']:.4f})]"
-        f"[({tile['lon_min']:.4f}):{stride}:({tile['lon_max']:.4f})]"
+        f"[({query_tile['lat_min']:.4f}):{stride}:({query_tile['lat_max']:.4f})]"
+        f"[({query_tile['lon_min']:.4f}):{stride}:({query_tile['lon_max']:.4f})]"
     )
     response = requests.get(url, timeout=120)
     response.raise_for_status()

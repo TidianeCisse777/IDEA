@@ -111,7 +111,8 @@ to the tool when the target samples are known.
 
 ## Download link
 
-The summary returned by `query_ecotaxa` contains a link `http://localhost:8000/downloads/<id>.tsv`.
+The summary returned by `query_ecotaxa` contains a public download link ending
+with `/downloads/<id>.tsv`.
 **Include this link in your response** — the user can click it to download the full file.
 
 ---

@@ -51,6 +51,20 @@ def test_export_deliverable_returns_download_url(tmp_path, monkeypatch):
     assert "http" in result or "/downloads/" in result
 
 
+def test_html_fallback_uses_current_cloudflare_origin(tmp_path, monkeypatch):
+    """Deliverables use the same public URL resolver as graphs and exports."""
+    origin_file = tmp_path / "public_origin.txt"
+    origin_file.write_text("https://current.trycloudflare.com\n", encoding="utf-8")
+    monkeypatch.setenv("SERVE_PUBLIC_ORIGIN_FILE", str(origin_file))
+    monkeypatch.setenv("SERVE_BASE_URL", "http://localhost:8000")
+
+    from tools.deliverable_tool import _write_html_fallback
+
+    result = _write_html_fallback(tmp_path, "rapport_test", "<p>rapport</p>")
+
+    assert result.endswith("https://current.trycloudflare.com/downloads/rapport_test.html")
+
+
 # --- Comportement 2 : le fichier est bien écrit sur disque ---
 
 def test_export_deliverable_writes_file(tmp_path, monkeypatch):

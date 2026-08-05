@@ -78,24 +78,40 @@ def test_start_script_does_not_build_by_default():
     assert "--build: allow Docker Compose to build images if needed." in script
 
 
-def test_start_script_replaces_any_stale_public_agent_url_with_its_tunnel_url():
-    """Quick-tunnel URLs are ephemeral: every start must replace the old one."""
+def test_start_script_reuses_the_running_compose_project_for_this_checkout():
+    """A demo restart must target the existing stack, not collide with it."""
     script = Path("start.sh").read_text(encoding="utf-8")
 
-    # The agent never boots from a stale SERVE_BASE_URL left in .env.
-    assert 'LOCAL_SERVE_BASE_URL="http://localhost:8000"' in script
-    assert (
-        'SERVE_BASE_URL="$LOCAL_SERVE_BASE_URL" docker compose up -d '
-        '--no-deps --force-recreate copepod-agent'
-    ) in script
+    assert "docker inspect copepod_agent" in script
+    assert 'com.docker.compose.project' in script
+    assert 'com.docker.compose.project.working_dir' in script
+    assert 'export COMPOSE_PROJECT_NAME="$EXISTING_COMPOSE_PROJECT"' in script
 
-    # Once start.sh has obtained its *current* quick tunnel, it recreates the
-    # agent with that exact URL instead of relying on Compose's old container.
-    assert (
-        'SERVE_BASE_URL="$SERVE_TUNNEL_URL" docker compose up -d '
-        '--no-build --no-deps --force-recreate copepod-agent'
-    ) in script
-    assert 'SERVE_BASE_URL="$SERVE_TUNNEL_URL" "${AGENT_PYTHON}" serve.py' in script
+
+def test_start_script_does_not_wait_for_an_async_refresh_of_a_valid_cache():
+    """A published, schema-current cache is usable before its refresh ends."""
+    script = Path("start.sh").read_text(encoding="utf-8")
+
+    assert 'CACHE_ALREADY_USABLE=false' in script
+    assert 'CACHE_ALREADY_USABLE=true' in script
+    assert 'Existing EcoTaxa cache is valid; skipping refresh wait.' in script
+    assert '"$CACHE_ALREADY_USABLE" = false' in script
+
+
+def test_start_script_publishes_current_tunnel_url_without_restarting_agent():
+    """Quick-tunnel URLs are ephemeral and must reach already-running agents."""
+    script = Path("start.sh").read_text(encoding="utf-8")
+
+    # The agent still starts locally while the current quick tunnel is created.
+    assert 'LOCAL_SERVE_BASE_URL="http://localhost:8000"' in script
+
+    # A small shared state file updates URL generation dynamically for both a
+    # containerized agent and one that was already running locally.
+    assert 'PUBLIC_ORIGIN_FILE="${SERVE_PUBLIC_ORIGIN_FILE:-data/public_origin.txt}"' in script
+    assert 'rm -f "$PUBLIC_ORIGIN_FILE"' in script
+    assert 'printf \'%s\\n\' "$SERVE_TUNNEL_URL" > "$PUBLIC_ORIGIN_TEMP_FILE"' in script
+    assert 'mv "$PUBLIC_ORIGIN_TEMP_FILE" "$PUBLIC_ORIGIN_FILE"' in script
+    assert "without restarting the agent" in script
 
 
 def test_openwebui_supports_container_and_local_agent_modes():

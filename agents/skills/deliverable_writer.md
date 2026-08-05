@@ -23,6 +23,11 @@ You are about to produce a structured scientific report from this session.
 ## Usage rule
 
 - After loading this skill, compile the full document and a `traceability_manifest` from the conversation history, then call `export_deliverable(content=..., filename=..., traceability_manifest=...)` in the same turn.
+- **Hard completion rule:** after this skill is loaded, `export_deliverable` is the
+  only valid next action. A PDF request is incomplete until that call returns an
+  artifact URL. Never stop after drafting, explaining, listing planned sections,
+  or returning an empty response. On successful export, reply only with the
+  download link and any material generation limit.
 - Do NOT ask the user to provide the content — extract it yourself from the session.
 - Write the document in the language of the conversation.
 - The manifest is the source of truth. Include only facts visible in user messages,
@@ -173,7 +178,8 @@ when its corresponding source appears in the current conversation and in
 ## Figure extraction rules
 
 - Include EVERY figure produced via `run_graph` in this session.
-- Use the graph URL exactly as it appeared in the assistant response (e.g. `http://localhost:8000/graphs/abc123.png`).
+- Use the graph URL exactly as it appeared in the assistant response (it ends
+  with `/graphs/abc123.png`).
 - Title must describe what the figure shows: species, variable, axis, period, zone.
 - Never write "Figure 1 — graphique" — always be descriptive.
 

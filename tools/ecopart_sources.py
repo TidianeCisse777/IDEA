@@ -1066,6 +1066,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
 ) -> tuple:
     """Resolve and enrich each project partition of a consolidated campaign."""
     campaign_df = session_et["df"]
+    source_variable = (session_et.get("meta") or {}).get("variable_name")
     numeric_project_ids = pd.to_numeric(
         campaign_df["export_project_id"], errors="coerce"
     )
@@ -1104,6 +1105,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             cached_df = cached.dataframe
             meta = {
                 "source": "join:ecotaxa_campaign+ecopart",
+                "source_variable": source_variable,
                 "partial_enrichment": False,
                 "project_failures": [],
                 "failed_project_ids": [],
@@ -1401,6 +1403,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
     partial = bool(failures)
     meta = {
         "source": "join:ecotaxa_campaign+ecopart",
+        "source_variable": source_variable,
         "project_pairs": project_pairs,
         "partial_enrichment": partial,
         "project_failures": failures,
