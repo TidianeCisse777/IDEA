@@ -81,7 +81,8 @@ _RECOVERABLE_PARTITION_ERRORS = (
 
 
 def _ecopart_preflight_timeout() -> float:
-    return max(1.0, float(os.getenv("ECOPART_PREFLIGHT_TIMEOUT_SECONDS", "60")))
+    """Keep a dry-run responsive when the remote EcoPart search is saturated."""
+    return max(1.0, float(os.getenv("ECOPART_PREFLIGHT_TIMEOUT_SECONDS", "8")))
 
 
 def _ecopart_cache_ttl() -> float:
@@ -583,7 +584,7 @@ def _preflight_ecopart_partition(
     """Check EcoPart exportability at the profile grain without exporting."""
     fingerprint = dataframe_fingerprint(dataframe)
     cache_key = (
-        f"{thread_id}:ecopart_preflight:v2-profile:{ecotaxa_project_id}:{ecopart_project_id}"
+        f"{thread_id}:ecopart_preflight:v4-profile:{ecotaxa_project_id}:{ecopart_project_id}"
         if thread_id else None
     )
     if cache_key:
@@ -627,6 +628,7 @@ def _preflight_ecopart_partition(
     # turn a profile match into a requirement for ``filt_proj``: that endpoint
     # only returns samples explicitly linked to the EcoTaxa project and can be
     # empty for a valid profile-based campaign.
+    profiles_checked = True
     try:
         search_kwargs = {"project_id": int(ecopart_project_id)}
         if request_timeout is not None:
@@ -634,7 +636,11 @@ def _preflight_ecopart_partition(
         project_profiles = client.search_samples(**search_kwargs)
     except Exception as exc:
         project_profiles = []
-        uncertain.append(f"vérification EcoPart impossible : {exc}")
+        profiles_checked = False
+        uncertain.append(
+            "liste des profils EcoPart indisponible "
+            f"après {request_timeout or _ecopart_preflight_timeout():g} s : {type(exc).__name__}"
+        )
 
     local_profiles: set[str] = set(_candidate_ecotaxa_profile_labels(dataframe))
     if "sample_id" in dataframe.columns:
@@ -652,7 +658,19 @@ def _preflight_ecopart_partition(
         if str(profile.get("name") or "").strip() in local_profiles
     ]
     if not matching_profiles and not uncertain:
-        reasons.append("aucun profil EcoPart correspondant et accessible")
+        if project_profiles:
+            reasons.append(
+                "aucun profil EcoPart correspondant : "
+                f"0/{len(local_profiles)} identifiant(s) de profil EcoTaxa "
+                f"retrouvé(s) parmi {len(project_profiles)} profil(s) accessibles "
+                f"du projet EcoPart {ecopart_project_id}; cette paire de projets "
+                "ne partage pas de profil et ne peut pas être jointe"
+            )
+        else:
+            reasons.append(
+                f"le projet EcoPart {ecopart_project_id} ne retourne aucun profil "
+                "accessible pour le compte configuré"
+            )
 
     visibility = [
         str(profile.get("visibility") or "").strip().upper()
@@ -679,6 +697,9 @@ def _preflight_ecopart_partition(
         "reason": "; ".join([*reasons, *uncertain]) or "export et jointure prévalidés",
         "matching_profiles": len(matching_profiles),
         "exportable_profiles": len(exportable),
+        "ecotaxa_profile_candidates": len(local_profiles),
+        "ecopart_project_profiles": len(project_profiles),
+        "profiles_checked": profiles_checked,
         "cache_hit": False,
     }
     if cache_key:
@@ -695,6 +716,17 @@ def _preflight_ecopart_partition(
             },
         )
     return result
+
+
+def _preflight_profile_status(preflight: dict[str, object]) -> str:
+    """Describe profile availability without mistaking a timeout for zero rows."""
+    if not bool(preflight.get("profiles_checked", True)):
+        return "liste des profils EcoPart non obtenue (préflight non conclusif)"
+    return (
+        f"{preflight['exportable_profiles']}/{preflight['matching_profiles']} "
+        "profils EcoPart correspondants exportables; "
+        f"{preflight.get('ecopart_project_profiles', '?')} profils EcoPart examinés"
+    )
 
 
 # Global cache of resolved EcoTaxa project id -> resolution dict. The link is a
@@ -868,6 +900,14 @@ def _lookup_ecopart_project_for_ecotaxa(
                 search_kwargs["timeout"] = float(request_timeout)
             linked = client.search_samples(**search_kwargs)
         except Exception as exc:
+            # A dry-run must not turn one unavailable remote endpoint into a
+            # long fallback chain (EcoTaxa title, bbox scan, multiple popovers).
+            # The caller can retry later; no export has started at this stage.
+            if request_timeout is not None:
+                return _cache_transient_error(
+                    "EcoPart n'a pas répondu pendant la vérification du lien "
+                    f"après {request_timeout:g} s ({type(exc).__name__})"
+                )
             linked = []
         ordered_linked = sorted(linked, key=lambda c: int(c.get("id", 0)))
         if request_timeout is not None:
@@ -1192,8 +1232,8 @@ def _enrich_ecotaxa_campaign_with_ecopart(
         mappings = [
             f"- EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} : "
             f"{preflight['verdict']} — {preflight['reason']} "
-            f"({preflight['exportable_profiles']}/{preflight['matching_profiles']} "
-            f"profils EcoPart exportables; {resolution})"
+            f"({_preflight_profile_status(preflight)}; "
+            f"{resolution})"
             for ecotaxa_pid, ecopart_pid, resolution, preflight in preflights
         ]
         failure_lines = [f"- {failure}" for failure in failures]
@@ -1755,11 +1795,18 @@ def make_ecopart_tools(thread_id: str) -> list:
         if ecotaxa_project_id is None and ecopart_project_id is None:
             # Same deterministic resolver as find_ecopart_project_for_ecotaxa, so
             # the preview and the actual enrichment always agree on the project.
-            result = _lookup_ecopart_project_for_ecotaxa(session_et["df"])
+            result = _lookup_ecopart_project_for_ecotaxa(
+                session_et["df"],
+                thread_id=thread_id,
+                request_timeout=_ecopart_preflight_timeout(),
+            )
             if "error" in result:
-                return _ep_blocked(
-                    f"Résolution EcoPart automatique impossible — {result['error']} "
-                    "Fournis `ecotaxa_project_id` ou `ecopart_project_id`."
+                transient = result.get("verdict") == "PARTIEL"
+                factory = _ep_error if transient else _ep_blocked
+                return factory(
+                    f"Résolution EcoPart automatique {'PARTIEL' if transient else 'BLOQUÉ'} — "
+                    f"{result['error']}\nAucune donnée téléchargée.",
+                    retryable=transient,
                 )
             ecopart_project_id = result["project_id"]
             resolution_note = (
@@ -1777,10 +1824,14 @@ def make_ecopart_tools(thread_id: str) -> list:
                     request_timeout=_ecopart_preflight_timeout(),
                 )
                 if "error" in resolution:
-                    return _ep_blocked(
-                        "Préflight d'enrichissement EcoPart (dry-run) — BLOQUÉ.\n"
+                    transient = resolution.get("verdict") == "PARTIEL"
+                    factory = _ep_error if transient else _ep_blocked
+                    return factory(
+                        "Préflight d'enrichissement EcoPart (dry-run) — "
+                        f"{'PARTIEL' if transient else 'BLOQUÉ'}.\n"
                         f"Projet EcoTaxa {ecotaxa_project_id} : "
-                        f"{resolution['error']}\nAucune donnée téléchargée."
+                        f"{resolution['error']}\nAucune donnée téléchargée.",
+                        retryable=transient,
                     )
                 ecopart_project_id = int(resolution["project_id"])
                 resolution_note = str(resolution.get("resolution") or "lien résolu")
@@ -1804,8 +1855,7 @@ def make_ecopart_tools(thread_id: str) -> list:
                 "Préflight d'enrichissement EcoPart (dry-run).\n"
                 f"EcoTaxa {ecotaxa_project_id} → EcoPart {ecopart_project_id} : "
                 f"{preflight['verdict']} — {preflight['reason']} "
-                f"({preflight['exportable_profiles']}/{preflight['matching_profiles']} "
-                "profils EcoPart exportables).\n"
+                f"({_preflight_profile_status(preflight)}).\n"
                 f"Résolution : {resolution_note or 'identifiants explicites'}.\n"
                 "Aucune donnée téléchargée. "
                 + (

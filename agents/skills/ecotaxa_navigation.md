@@ -1,6 +1,6 @@
 ---
 name: ecotaxa_navigation
-version: 3.0.0
+version: 3.1.0
 triggers:
   - Explicit EcoTaxa discovery, sample-level exploration, read-only inspection, or export planning intent
 forbidden_when:
@@ -54,7 +54,7 @@ Never use a plain longitude/latitude scatter or artificial lines as a coastline.
 | Discover the actual cache | `list_ecotaxa_cache_tables` |
 | Inspect one cache table | `describe_ecotaxa_cache_table` |
 | Filter, join, count, group, rank, or resolve samples | `query_ecotaxa_cache` |
-| Map profiles/casts, with point size = samples per profile | `summarize_ecotaxa_profiles_for_map` |
+| Prepare a map-ready profile/cast table | `query_ecotaxa_cache` using the canonical query below |
 | Complete one partially cached sample | `summarize_ecotaxa_sample_deployment` |
 | Resolve a taxon name | `search_ecotaxa_taxa` |
 | Count V/P/D/U for project × taxon | `count_ecotaxa_taxa` |
@@ -117,18 +117,41 @@ with `COUNT(DISTINCT profile_id)`.
 
 ### Profile / cast maps
 
-For profile/cast maps, call `summarize_ecotaxa_profiles_for_map` directly.
-Pass `zone_name` for one zone; for a global map omit it and pass one
-`zone_reference` (`IHO`, or `MEOW` on request). Global
-output `df_ecotaxa_profile_map` has `profile_id`, `n_samples`, `lat_avg`,
-`lon_avg`, and categorical `zone`. Never combine IHO and MEOW in one figure.
+For a requested profile/cast map, use this cache query route. It is the
+model-visible canonical route: the former convenience map tool is intentionally
+hidden, so never plan or call it.
 
-One row is one point and one non-empty `profile_id`. `n_samples` is the count
-of distinct sample IDs for that profile. Never group a profile map by sample_id,
-never use `station_id` as a profile surrogate, and never replace this route
-with a handwritten cache SQL aggregation. If the result is empty, report its
-coverage diagnostic: it describes the exact shared-cache coverage only, not
-global EcoTaxa absence.
+One result row is one non-empty `profile_id` within one project. `n_samples` is
+the count of distinct sample IDs for that profile; `lat_avg` and `lon_avg` are
+the verified coordinates retained for the map. Never make a profile map from
+raw sample rows, group by `sample_id`, or use `station_id` as a profile
+surrogate. Keep one `zone_reference` per figure; never combine IHO and MEOW.
+
+```sql
+SELECT profile_id,
+       project_id,
+       MIN(station_id) AS station_id,
+       COUNT(DISTINCT sample_id) AS n_samples,
+       AVG(lat_avg) AS lat_avg,
+       AVG(lon_avg) AS lon_avg,
+       MIN(date_min) AS date_min,
+       MAX(date_max) AS date_max,
+       MIN(iho_zone) AS iho_zone,
+       zone_reference
+FROM samples_cache
+WHERE iho_zone = :zone_name
+  AND zone_reference = 'IHO'
+  AND profile_id IS NOT NULL AND TRIM(profile_id) <> ''
+  AND lat_avg IS NOT NULL AND lon_avg IS NOT NULL
+GROUP BY profile_id, project_id, zone_reference
+ORDER BY project_id, profile_id;
+```
+
+Use a descriptive `selection_name` such as `davis_profiles_map`. The persisted
+`df_ecotaxa_selection_davis_profiles_map_*` is the only named source passed to
+`run_graph`. If the user requested MEOW, replace the exact zone predicate and
+reference together. If this query is empty, report that it describes this
+shared-cache selection only, not global EcoTaxa absence.
 
 Never derive V/P/D/U from `object_count`. Never sum a sample-level count after
 joining samples to multiple object rows; pre-aggregate objects by `sample_id`
@@ -315,9 +338,11 @@ GROUP BY zone_reference, iho_zone
 ORDER BY zone_reference, n_samples DESC;
 ```
 
-For a map, return `sample_id`, `lat_avg`, `lon_avg`, `iho_zone`, and the metric
-to encode, then use `run_graph` on the persisted result. Aggregate coincident
-coordinates so overlapping samples remain countable.
+For a **sample** map, return `sample_id`, `lat_avg`, `lon_avg`, `iho_zone`, and
+the metric to encode, then use `run_graph` on the persisted result. Aggregate
+coincident coordinates so overlapping samples remain countable. For a
+**profile/cast** map, use the canonical profile query above instead; it keeps
+the coordinates through the required profile aggregation.
 
 ### SQL prohibitions
 

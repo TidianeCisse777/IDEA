@@ -2,12 +2,14 @@
 import ast
 import contextlib
 import json
+import math
 import re
 import uuid
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from cycler import cycler
 from langchain_core.tools import tool
 
 from core.environment_resolver.column_detection import (
@@ -23,6 +25,111 @@ from tools.persistent_executor import default_executor
 
 
 _GRAPHS_DIR = graphs_dir()
+
+
+# Charte visuelle appliquée par l'exécuteur, jamais laissée à la mémoire du LLM.
+# Les palettes scientifiques choisies explicitement dans le code (notamment
+# cmocean) restent intactes ; cette charte normalise la typographie, le fond et
+# les éléments éditoriaux communs à toutes les figures NeoLab.
+_NEOLAB_CATEGORICAL_COLORS = (
+    "#0072B2",  # blue
+    "#D55E00",  # vermilion
+    "#009E73",  # green
+    "#CC79A7",  # purple
+    "#E69F00",  # orange
+    "#56B4E9",  # sky blue
+    "#6C757D",  # neutral grey
+)
+_NEOLAB_REPORT_RCPARAMS = {
+    "figure.facecolor": "#FFFFFF",
+    "axes.facecolor": "#FFFFFF",
+    "savefig.facecolor": "#FFFFFF",
+    "font.family": "DejaVu Sans",
+    "font.size": 10,
+    "axes.titlesize": 13,
+    "axes.titleweight": "semibold",
+    "axes.labelsize": 11,
+    "axes.labelcolor": "#243447",
+    "axes.edgecolor": "#52616B",
+    "axes.linewidth": 0.75,
+    "axes.grid": True,
+    "axes.axisbelow": True,
+    "grid.color": "#D9E2E8",
+    "grid.linewidth": 0.6,
+    "grid.alpha": 0.75,
+    "xtick.color": "#3E4C59",
+    "ytick.color": "#3E4C59",
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "legend.fontsize": 9,
+    "legend.frameon": True,
+    "legend.framealpha": 0.94,
+    "legend.facecolor": "#FFFFFF",
+    "legend.edgecolor": "#C8D2D8",
+    "figure.dpi": 150,
+    "savefig.dpi": 220,
+    "savefig.bbox": "tight",
+    "lines.linewidth": 1.8,
+    "lines.markersize": 5.0,
+}
+
+
+def _apply_neolab_report_theme(plt: Any) -> None:
+    """Install the non-optional NeoLab scientific-report visual baseline."""
+    plt.rcParams.update(_NEOLAB_REPORT_RCPARAMS)
+    # This cycle applies only when the analysis did not select a semantic
+    # colour explicitly. It remains distinct in print and for common colour
+    # vision deficiencies, unlike the default red/green pair.
+    plt.rcParams["axes.prop_cycle"] = cycler(color=_NEOLAB_CATEGORICAL_COLORS)
+
+
+def _finalize_neolab_report_figures(plt: Any) -> None:
+    """Normalize created figures after agent code without changing their science.
+
+    The model still controls the analytical grain, variables, scales and
+    scientific palettes.  This pass makes the publication/report presentation
+    deterministic, including figures whose code manually changed rcParams.
+    """
+    for figure_number in plt.get_fignums():
+        figure = plt.figure(figure_number)
+        figure.set_facecolor("#FFFFFF")
+        for axis in figure.axes:
+            is_geoaxes = axis.__class__.__module__.startswith("cartopy.")
+            axis.set_facecolor("#EDF5F7" if is_geoaxes else "#FFFFFF")
+            axis.tick_params(colors="#3E4C59", labelsize=9, width=0.7)
+            axis.xaxis.label.set_color("#243447")
+            axis.yaxis.label.set_color("#243447")
+            axis.xaxis.label.set_size(11)
+            axis.yaxis.label.set_size(11)
+            axis.title.set_color("#172B3A")
+            axis.title.set_size(13)
+            axis.title.set_weight("semibold")
+            if not is_geoaxes:
+                axis.grid(True, color="#D9E2E8", linewidth=0.6, alpha=0.75)
+                for spine_name in ("top", "right"):
+                    spine = axis.spines.get(spine_name)
+                    if spine is not None:
+                        spine.set_visible(False)
+                for spine_name in ("bottom", "left"):
+                    spine = axis.spines.get(spine_name)
+                    if spine is not None:
+                        spine.set_color("#52616B")
+                        spine.set_linewidth(0.75)
+            else:
+                # Cartopy keeps its geographic frame.  A restrained blue water
+                # background lets observations, coastlines and zone contours
+                # carry the visual hierarchy without altering their geometry.
+                geo_spine = axis.spines.get("geo")
+                if geo_spine is not None:
+                    geo_spine.set_color("#52616B")
+                    geo_spine.set_linewidth(0.75)
+            legend = axis.get_legend()
+            if legend is not None:
+                frame = legend.get_frame()
+                frame.set_facecolor("#FFFFFF")
+                frame.set_edgecolor("#C8D2D8")
+                frame.set_alpha(0.94)
+                frame.set_linewidth(0.7)
 
 
 def _synthetic_record_table_guard(code: str) -> str | None:
@@ -530,6 +637,161 @@ def _normalize_abstract_cartopy_crs(code: str) -> str:
     if not re.search(r"^\s*import\s+cartopy\.crs\s+as\s+ccrs\s*$", repaired, re.MULTILINE):
         repaired = "import cartopy.crs as ccrs\n" + repaired
     return repaired
+
+
+def _normalize_cartopy_map_projection(code: str, local_vars: dict[str, Any]) -> str:
+    """Choose a geographic projection from the plotted coordinates.
+
+    Generated snippets routinely choose ``PlateCarree`` because it is the
+    shortest valid Cartopy axis.  It is technically correct, but makes broad
+    Arctic panels look flat and makes IHO/MEOW boundaries visually misleading.
+    Only the *GeoAxes* projection is normalised here: point and geometry
+    transforms remain PlateCarree because their source coordinates are lon/lat.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+
+    referenced = _referenced_names(code)
+    coordinates: list[tuple[float, float]] = []
+    for name, frame in local_vars.items():
+        if name not in referenced or not isinstance(frame, pd.DataFrame):
+            continue
+        columns = _map_coordinate_columns(frame)
+        if columns is None:
+            continue
+        latitude, longitude = columns
+        values = pd.DataFrame(
+            {
+                "lat": pd.to_numeric(frame[latitude], errors="coerce"),
+                "lon": pd.to_numeric(frame[longitude], errors="coerce"),
+            }
+        ).dropna()
+        coordinates.extend(
+            (float(row.lon), float(row.lat))
+            for row in values.itertuples(index=False)
+            if -180 <= row.lon <= 180 and -90 <= row.lat <= 90
+        )
+    if not coordinates:
+        return code
+
+    longitudes, latitudes = zip(*coordinates, strict=True)
+    # Circular mean avoids making a Chukchi/Bering map centre on Greenwich
+    # merely because the source selection crosses the antimeridian.
+    sin_mean = sum(math.sin(math.radians(lon)) for lon in longitudes) / len(longitudes)
+    cos_mean = sum(math.cos(math.radians(lon)) for lon in longitudes) / len(longitudes)
+    central_longitude = math.degrees(math.atan2(sin_mean, cos_mean))
+    longitude_offsets = [
+        ((lon - central_longitude + 180.0) % 360.0) - 180.0
+        for lon in longitudes
+    ]
+    latitude_span = max(latitudes) - min(latitudes)
+    longitude_span = max(longitude_offsets) - min(longitude_offsets)
+    central_latitude = (max(latitudes) + min(latitudes)) / 2.0
+
+    if central_latitude >= 60.0 and (latitude_span >= 8.0 or longitude_span >= 28.0):
+        projection = f"ccrs.NorthPolarStereo(central_longitude={central_longitude:.3f})"
+    elif latitude_span <= 18.0 and longitude_span <= 45.0:
+        projection = (
+            "ccrs.LambertConformal("
+            f"central_longitude={central_longitude:.3f}, "
+            f"central_latitude={central_latitude:.3f})"
+        )
+    else:
+        return code
+
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+
+    line_offsets = [0]
+    for line in code.splitlines(keepends=True):
+        line_offsets.append(line_offsets[-1] + len(line))
+    replacements: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        is_plate_carree = (
+            isinstance(node, ast.Call)
+            and not node.args
+            and not node.keywords
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "PlateCarree"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "ccrs"
+        )
+        if not is_plate_carree:
+            continue
+        parent = parents.get(node)
+        is_projection_keyword = isinstance(parent, ast.keyword) and parent.arg == "projection"
+        is_projection_dict_value = (
+            isinstance(parent, ast.Dict)
+            and any(
+                value is node
+                and isinstance(key, ast.Constant)
+                and key.value == "projection"
+                for key, value in zip(parent.keys, parent.values, strict=False)
+            )
+        )
+        if is_projection_keyword or is_projection_dict_value:
+            if (
+                hasattr(node, "end_lineno")
+                and node.end_lineno is not None
+                and node.end_col_offset is not None
+            ):
+                start = line_offsets[node.lineno - 1] + node.col_offset
+                end = line_offsets[node.end_lineno - 1] + node.end_col_offset
+                replacements.append((start, end))
+
+    if not replacements:
+        return code
+    normalised = code
+    for start, end in sorted(replacements, reverse=True):
+        normalised = normalised[:start] + projection + normalised[end:]
+    return normalised
+
+
+def _all_missing_scatter_colour_issue(code: str, local_vars: dict[str, Any]) -> str | None:
+    """Reject a scatter whose colour field became entirely missing in ``plot_df``.
+
+    Matplotlib accepts an all-NaN ``c=`` array and can return an apparently blank
+    image.  This happens often with cache samples that have positions but no
+    object depth.  Inspect the materialised plotting table after execution so
+    derived columns such as ``depth_mid`` are covered without guessing.
+    """
+    plot_df = local_vars.get("plot_df")
+    if not isinstance(plot_df, pd.DataFrame):
+        return None
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "scatter"
+        ):
+            continue
+        colour = next((item.value for item in node.keywords if item.arg in {"c", "color"}), None)
+        if not (
+            isinstance(colour, ast.Subscript)
+            and isinstance(colour.value, ast.Name)
+            and colour.value.id == "plot_df"
+            and isinstance(colour.slice, ast.Constant)
+            and isinstance(colour.slice.value, str)
+        ):
+            continue
+        column = colour.slice.value
+        if column in plot_df.columns and not plot_df[column].notna().any():
+            return (
+                "Graph blocked: the requested scatter colour field "
+                f"`plot_df[{column!r}]` is entirely missing after preparation. "
+                "Do not return a blank map: use a fixed colour or choose a real "
+                "non-missing field after inspecting `plot_df`."
+            )
+    return None
 
 
 _MAP_LATITUDE_CANDIDATES = (*DEFAULT_LAT_CANDIDATES, "lat_avg", "latitude_avg")
@@ -2221,6 +2483,9 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 local_vars = {}
                 map_candidates = []
                 named_tables = ()
+            effective_code = _normalize_cartopy_map_projection(
+                effective_code, local_vars
+            )
             cartopy_preflight = _cartopy_preflight_issue(
                 effective_code,
                 local_vars,
@@ -2241,6 +2506,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             if execution.error:
                 raise RuntimeError(execution.error)
             local_vars.update(execution.dataframes or {})
+
+            missing_colour = _all_missing_scatter_colour_issue(
+                effective_code, local_vars
+            )
+            if missing_colour:
+                return error(
+                    missing_colour,
+                    retryable=True,
+                    method="graph encoding preflight",
+                )
 
             if execution.image_png:
                 graph_contract = execution.graph_contract

@@ -133,6 +133,33 @@ données et toute limite de couverture, de valeur manquante ou de validation.
 
 ---
 
+# Charte NeoLab Ocean — rendu de rapport scientifique
+
+Mots-clés : style, rapport, publication, lisibilité, cartographie, CTD, profils, palettes
+
+Le moteur de rendu applique une charte NeoLab Ocean à toute figure : fond blanc,
+typographie homogène, titres et axes hiérarchisés, grille légère, résolution
+élevée et légende encadrée lorsqu'elle est pertinente. Ce style est imposé par
+l'exécuteur ; le code ne doit pas réinitialiser le style global.
+
+La figure conserve une hiérarchie scientifique : données et incertitudes au
+premier plan, repères géographiques ou grille au second plan, sans effets
+décoratifs. Les catégories utilisent une palette contrastée et accessible ; une
+variable physique continue conserve une palette océanographique appropriée.
+Une anomalie ou un écart par rapport à une référence exige une palette
+divergente centrée sur cette référence, généralement zéro.
+
+Pour une carte, employer une projection adaptée, un fond marin discret, des
+traits de côte fins et des contours de zone seulement lorsqu'ils apportent une
+information. Pour un profil CTD, inverser l'axe profondeur/pression, aligner les
+panneaux et conserver la même convention entre variables. Pour une section,
+marquer les stations et rendre visibles les unités, la direction du transect et
+les isolignes réellement pertinentes. Pour un diagramme T-S, les isopycnes
+restent fines et neutres afin que les observations et groupes documentés restent
+lisibles.
+
+---
+
 # Bibliothèques océanographiques pour une figure
 
 Mots-clés : cmocean, gsw, xarray, TEOS-10, densité, palette thermique, salinité, oxygène, NetCDF
@@ -153,3 +180,167 @@ profondeur et la zone nécessaires, puis transmettre la coupe ou grille à
 Matplotlib/Cartopy. Les tableaux ordinaires EcoTaxa, EcoPart et NeoLab restent
 traités avec pandas. L'autorisation d'importer xarray ne crée pas, à elle seule,
 un chargeur NetCDF.
+
+---
+
+# Règle de départ pour toute figure océanographique
+
+Mots-clés : océanographie, CTD, figure, graphique, RAG obligatoire, plan, unités, contrôle qualité
+
+Consulter cette référence une seule fois lorsqu'une recette océanographique ou
+une convention peut changer le résultat : T-S/densité, section, anomalie,
+courant, Hovmöller ou variable inconnue. La consultation contient les variables,
+le type de figure visé et les unités connues. Un profil, une comparaison ou une
+carte directe déjà maîtrisés passent directement à l'inspection puis au tracé.
+Le RAG détermine la recette et les prérequis ; la table active détermine les
+valeurs, le périmètre et les unités effectivement affichées.
+
+Ne pas faire plusieurs consultations documentaires ni attendre une confirmation
+après le RAG : poursuivre directement avec le graphe si les colonnes requises
+sont présentes. Si elles ne le sont pas, annoncer précisément ce qui manque et
+ne pas substituer une autre variable.
+
+---
+
+# Catalogue de figures océanographiques
+
+Mots-clés : catalogue, profil, T-S, section, carte, série temporelle, Hovmöller, courant, CTD, biogéochimie
+
+| Dimensions et question | Figure adaptée | Prérequis |
+|---|---|---|
+| variable + profondeur, un profil/cast | profil vertical | pression ou profondeur avec unité |
+| température + salinité | diagramme T-S / SA-CT | nature et unité exactes des variables |
+| variable + distance/latitude + profondeur | section verticale | ordre réel du transect et couverture suffisante |
+| variable + latitude/longitude à un niveau/date | carte ou carte d'anomalie | mêmes niveau et période comparés |
+| variable + date | série temporelle | dates valides et grain annoncé |
+| variable + temps + profondeur | Hovmöller | couverture régulière ou binning annoncé |
+| deux propriétés au même sample/cast | nuage propriété-propriété | co-localisation des mesures |
+| plusieurs casts | profils superposés ou facettes | légende lisible et même convention verticale |
+| composantes u + v | vecteurs de courant, couleur vitesse | même repère, unité, temps et profondeur |
+| abondance + contexte physique | relation exploratoire | grain biologique correct et co-localisation |
+
+Une grille incomplète ne justifie pas une interpolation silencieuse : préférer
+points, profils ou facettes et signaler la couverture.
+
+---
+
+# Profils CTD et contrôle qualité visuel
+
+Mots-clés : CTD, profil vertical, température, salinité, oxygène, nitrate, fluorescence, pression, profondeur, qualité
+
+Les profils de température, salinité, oxygène, nitrate ou fluorescence contre
+pression/profondeur sont la première figure à produire pour vérifier une
+campagne. Un seul cast peut être une ligne ou des points ; plusieurs casts
+demandent des facettes ou une couleur/une légende par station, jamais une ligne
+reliant des stations différentes.
+
+La variable verticale doit être nommée exactement : `Pression (dbar)` si la
+colonne est une pression, `Profondeur (m)` si elle est une profondeur. Inverser
+l'axe vertical pour une profondeur ou une pression croissante vers le bas. Les
+profils servent à repérer des valeurs aberrantes ; un point isolé n'est pas
+automatiquement supprimé ou corrigé.
+
+---
+
+# Diagramme T-S et isopycnes TEOS-10
+
+Mots-clés : T-S, diagramme température salinité, SA CT, isopycnes, sigma0, densité, TEOS-10, masse d'eau
+
+Pour un diagramme densité rigoureux, exiger salinité pratique SP (PSS-78),
+température in situ ITS-90, pression (dbar), longitude et latitude. Calculer
+SA à partir de SP, pression et position, puis CT à partir de SA, température et
+pression. Tracer **SA (g/kg)** en abscisse et **CT (°C)** en ordonnée ; calculer
+les isopycnes sigma0 directement sur une grille SA × CT.
+
+Ne pas appeler « exactes » des isopycnes calculées sur des axes SP × température
+in situ avec une pression/position moyenne : elles sont une approximation et
+doivent être libellées ainsi. La couleur peut représenter `Pression (dbar)`,
+jamais « profondeur / pression » si seule la pression a été fournie. Un T-S
+décrit des regroupements et mélanges possibles ; il ne prouve pas seul une masse
+d'eau ou un mécanisme.
+
+Référence : TEOS-10, norme distinguant SA de SP et CT de la température in situ :
+https://www.teos-10.org/index.htm
+
+---
+
+# Sections verticales et transects
+
+Mots-clés : section verticale, transect, coupe, distance, latitude, longitude, profondeur, contourf, CTD
+
+Une section représente une variable continue le long d'un transect : abscisse =
+distance cumulée, latitude ou longitude ; verticale = profondeur ; couleur =
+variable avec unité. Trier les stations dans l'ordre réel du transect avant toute
+coupe et marquer leurs positions. Ne pas trier uniquement par numéro de station
+sans vérifier qu'il représente bien l'ordre spatial.
+
+Utiliser une section colorée/contourée seulement si les stations et niveaux
+couvrent suffisamment le plan distance-profondeur. Sinon tracer les points ou
+les profils en facettes. Toute interpolation, grille ou lissage doit être nommé,
+limité à l'enveloppe échantillonnée, et ne doit pas créer d'information derrière
+la côte ou sous le fond. Les sections sont adaptées à température, salinité,
+densité, oxygène, nutriments et fluorescence.
+
+Les atlas WOCE utilisent des sections verticales et des graphiques
+propriété-propriété pour les propriétés hydrographiques :
+https://woceatlas.ucsd.edu/
+
+---
+
+# Cartes, anomalies et vecteurs de courant
+
+Mots-clés : carte océanographique, surface, profondeur standard, anomalie, courant, u v, vitesse, direction, bathymétrie
+
+Une carte compare des observations au même horizon : même date/période et même
+profondeur, ou couche explicitement agrégée. Pour une variable mesurée à de
+nombreuses profondeurs, sélectionner une profondeur/couche avant de cartographier
+plutôt que mélanger toute la colonne d'eau. Une anomalie exige une référence
+calculée et affichée (moyenne de campagne, climatologie ou baseline documentée) ;
+sans référence, produire une carte de valeurs observées.
+
+Pour les courants, utiliser u et v seulement lorsqu'ils ont le même repère, la
+même unité et le même temps/profondeur. Les flèches donnent la direction ; la
+couleur ou la longueur peut donner la vitesse. Sous-échantillonner des flèches
+trop nombreuses de façon annoncée. La bathymétrie ou la côte est un contexte ;
+ne pas interpréter une frontière de zone comme une frontière physique dynamique.
+
+---
+
+# Séries temporelles et diagrammes Hovmöller
+
+Mots-clés : série temporelle, Hovmöller, temps profondeur, saisonnalité, anomalie, moyenne mobile, incertitude
+
+Une série temporelle montre une mesure à grain constant : observation, moyenne
+journalière, mensuelle ou campagne. Le grain choisi, les agrégations et le
+nombre d'observations par période doivent être visibles ou rapportés. Ne pas
+relier par une ligne de longues lacunes temporelles ; utiliser points ou segments
+séparés. Une moyenne mobile ne remplace jamais les observations et doit être
+étiquetée avec sa fenêtre.
+
+Un Hovmöller temps-profondeur exige un échantillonnage assez régulier pour une
+grille. Sinon utiliser un nuage temps-profondeur ou des profils répétés. Les
+anomalies temporelles doivent nommer leur baseline et leur période de référence ;
+elles ne sont pas calculables si la référence manque.
+
+---
+
+# Relations biogéochimiques et distributions
+
+Mots-clés : oxygène, nitrate, fluorescence, chlorophylle, relation, distribution, histogramme, boîte, corrélation, copépodes
+
+Les profils et sections d'oxygène, nitrate, fluorescence ou chlorophylle sont
+les figures de base. Les nuages nitrate-oxygène, fluorescence-nitrate,
+température-oxygène ou abondance-variable environnementale sont exploratoires :
+les deux variables doivent être co-localisées au même sample/profil et à une
+profondeur/période compatible. Afficher les points et, si utile, une tendance
+descriptive ; ne pas conclure à une causalité.
+
+Histogrammes, densités, boîtes/violons et ECDF décrivent la distribution d'une
+variable par station, campagne, strate ou taxon une fois le grain fixé. Ne pas
+appliquer une échelle logarithmique à des zéros ou valeurs négatives sans une
+politique explicite. Les concentrations et abondances biologiques doivent être
+normalisées et comparables avant toute comparaison avec l'environnement.
+
+Les manuels GO-SHIP recommandent notamment de comparer les profils de nutriments
+aux profils de salinité, température et oxygène lors du contrôle qualité :
+https://www.ioccp.org/images/06Nutrients/GO-SHIPRepeatHydrographyNutrientManual_August2019_Finalv2.pdf

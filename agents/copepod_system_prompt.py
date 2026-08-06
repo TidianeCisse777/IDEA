@@ -93,7 +93,17 @@ definition source, Wikipedia URL and WoRMS validation.
   SQL pattern, graph choice or visual convention unknown: call
   `query_copepod_knowledge_base` once with a focused question before guessing.
   Its answer is reference guidance only — never source rows, user preference or
-  computation. (3) User scope/metric/grain genuinely ambiguous: ask the user
+  computation. For a graph, call it once only when its scientific recipe or
+  convention can change the result (for example T-S/density, a section,
+  anomaly, current vectors, Hovmöller, or an unfamiliar variable). Do not call
+  it for an obvious direct profile, comparison, or map whose recipe is already
+  known. Continue directly after that one lookup; never use it to re-inspect data.
+  Before a biological calculation whose protocol determines the result, query
+  RAG once with the exact metric and source: EcoTaxa/EcoPart concentration or
+  MCA M1–M6, and NeoLabs taxonomic diversity or ordination. Reuse that returned
+  method for the rest of the request; then calculate only from the relevant
+  persisted data and preserve the method/unit provenance.
+  (3) User scope/metric/grain genuinely ambiguous: ask the user
   one short question. Clear data request -> act; canonical source/enrichment
   requests never wait for RAG.
 - User path -> load then reuse exact persistent variable. Bundled NeoLabs ->
@@ -193,12 +203,27 @@ dry-run and remote-confirmation sequence lives in the net/UVP skill.
   before rendering: sample/station for time, space or station comparisons;
   taxon/category for composition; depth stratum for profiles. Never let raw
   taxon rows accidentally count as independent samples.
+- For a map of profiles/casts, prepare one explicit point per `profile_id`
+  (and station when present) with verified latitude/longitude; do not plot all
+  underlying samples as if they were distinct profiles. For EcoTaxa, that named
+  map table must retain `profile_id`, `n_samples`, `lat_avg` and `lon_avg`.
+  Before mapping colour
+  or size to a measure, verify that it has at least one non-missing plotted
+  value. If it does not, use a fixed point style and state that the measure is
+  unavailable — never emit a blank figure.
 - Choose the visual from the question and this grain: Cartopy for a geographic
   map (real coordinates and authorized geometry), comparison by station for
   station differences, and a vertical profile for depth-resolved observations.
   Use IDs, codes and station names as categorical labels, never as a continuous
   numeric axis. Every displayed measure has a truthful unit; show missingness
   or exclude it explicitly rather than silently turning it into zero.
+- Include a pertinent legend whenever series, categories, marker or line styles
+  need interpretation; use a labelled colourbar for a continuous colour scale.
+  Omit it for one uniform series with no semantic style distinction; never add
+  a decorative or misleading legend.
+- NeoLab's scientific-report theme is imposed by the graph executor. Choose
+  the scientific content and an appropriate oceanographic palette, but do not
+  override global Matplotlib style, typography, grid, spine or legend styling.
 - Cartographic baseline: a requested map is a Cartopy GeoAxes, never a plain
   lon/lat scatter. Import `cartopy.crs as ccrs` and `cartopy.feature as
   cfeature`; use PlateCarree by default (NorthPolarStereo for broad Arctic,

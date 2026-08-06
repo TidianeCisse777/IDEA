@@ -184,7 +184,9 @@ def _worker_main(connection) -> None:
                 # reachable through the generated snippet's import surface.
                 from core.cartography import configure_offline_cartopy
                 from tools.data_tools import (
+                    _apply_neolab_report_theme,
                     _cartopy_safe_tight_layout,
+                    _finalize_neolab_report_figures,
                     _graph_savefig_kwargs,
                     _patch_cartopy_gridliner_polygon,
                     _zone_geometry_vars,
@@ -192,12 +194,14 @@ def _worker_main(connection) -> None:
 
                 configure_offline_cartopy()
                 _patch_cartopy_gridliner_polygon()
+                _apply_neolab_report_theme(plt)
                 zone_geometry_loaded = _uses_zone_geometry(code)
                 if zone_geometry_loaded:
                     namespace.update(
                         _zone_geometry_vars(_referenced_zone_names(code) or None)
                     )
             else:
+                _finalize_neolab_report_figures = None
                 _cartopy_safe_tight_layout = contextlib.nullcontext
                 _graph_savefig_kwargs = None
                 zone_geometry_loaded = False
@@ -236,6 +240,7 @@ def _worker_main(connection) -> None:
             if not isinstance(contract, dict):
                 contract = None
             if mode == "graph" and plt.get_fignums():
+                _finalize_neolab_report_figures(plt)
                 buffer = io.BytesIO()
                 plt.savefig(buffer, **_graph_savefig_kwargs(plt))
                 image_png = buffer.getvalue()
