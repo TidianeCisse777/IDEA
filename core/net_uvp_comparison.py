@@ -1,7 +1,7 @@
 """Contrat déterministe : correspondance et comparaison filet ↔ UVP.
 
-Pont entre l'abondance filet (NeoLabs, `core.neolabs_abundance`) et l'abondance
-UVP (EcoTaxa/EcoPart, `core.copepod_sample_depth` → densité copépode). Trois
+Pont entre l'abondance filet Calanus (NeoLabs/Hydrobios) et les images UVP6
+curées (EcoTaxa/EcoPart). Trois
 étapes, chacune imposée pour éviter qu'un `run_pandas` libre invente une
 jointure ou compare des unités incompatibles :
 
@@ -17,16 +17,15 @@ jointure ou compare des unités incompatibles :
 
 Ce module ne lit aucune source ni session : il opère sur des DataFrames déjà
 résolus par les tools. Il lève `ValueError` sur entrée incomplète plutôt que de
-produire une comparaison fausse.
+produire une comparaison fausse. La sélection finale suit le protocole
+Calanus UVP6–Hydrobios : C4+C5+M+F au filet (sans *C. finmarchicus* C4) et
+images UVP candidates ≥3 mm avec calibration documentée.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-
-from core.copepod_taxonomy import copepod_hierarchy_mask
-
 
 NET_UVP_MATCH_METHOD_VERSION = "net-uvp-deployment-spatiotemporal-match-v3"
 
@@ -43,7 +42,33 @@ def _normalize_station(name: str | None) -> str:
     s = re.sub(r"^(?:[a-z]{1,6}\d{0,4}_(?:leg\d+_)?)", "", str(name), flags=re.IGNORECASE)
     return re.sub(r"[-_\s]", "", s).lower()
 NET_UVP_COMPARE_METHOD_VERSION = "net-uvp-density-compare-v1"
-NET_UVP_DEPTH_METHOD_VERSION = "net-uvp-depth-strata-v1"
+NET_UVP_DEPTH_METHOD_VERSION = "net-uvp-calanus-uvp6-hydrobios-v1"
+NET_UVP_PROFILE_METHOD_VERSION = "net-uvp-calanus-uvp6-hydrobios-profile-v1"
+
+_CALANUS_LATE_STAGES = frozenset({"C4", "C5", "M", "F"})
+_CALANUS_STAGE_COLUMNS = (
+    "C4_ABUND (ind./m3 depth vol.)",
+    "C5_ABUND (ind./m3 depth vol.)",
+    "M_ABUND (ind./m3 depth vol.)",
+    "F_ABUND (ind./m3 depth vol.)",
+)
+_UVP_NON_CALANUS_TOKENS = (
+    "antenna", "with-eggs", "copepoda eggs", "dead", "part<", "cyclopoida",
+    "harpacticoida", "heterorhab", "paraeuchaeta", "metridia",
+)
+
+
+def normalize_target_stages(value: str | tuple[str, ...] = "C4,C5,M,F") -> tuple[str, ...]:
+    """Parse a declared late-stage selection; never silently change it."""
+    raw = value.split(",") if isinstance(value, str) else value
+    stages = tuple(dict.fromkeys(str(stage).strip().upper() for stage in raw if str(stage).strip()))
+    unsupported = sorted(set(stages).difference(_CALANUS_LATE_STAGES))
+    if not stages or unsupported:
+        raise ValueError(
+            "Stades filet non pris en charge : " + ", ".join(unsupported or ["aucun"])
+            + ". Choisir parmi C4, C5, M, F."
+        )
+    return stages
 
 _EARTH_RADIUS_KM = 6371.0
 _MATCH_COLUMNS = [
@@ -53,6 +78,174 @@ _MATCH_COLUMNS = [
     "station_name_match", "candidate_count", "match_status", "join_eligible",
     "match_method", "method_version",
 ]
+
+
+def _calanus_net_density(
+    net_group: pd.DataFrame,
+    *,
+    sample_col: str,
+    analysis_col: str,
+    taxon_col: str,
+    depth_min_col: str,
+    depth_max_col: str,
+    abundance_col: str,
+    taxon_filter: str = "Calanus",
+    stages: str | tuple[str, ...] = "C4,C5,M,F",
+) -> tuple[float, int, int, int]:
+    """Declared taxon/stage density from long Hydrobios or wide NeoLabs rows."""
+    taxon_filter = str(taxon_filter).strip()
+    if not taxon_filter:
+        raise ValueError("Comparaison refusée : taxon cible vide.")
+    selected_stages = normalize_target_stages(stages)
+    is_calanus_protocol = taxon_filter.casefold() == "calanus"
+    if taxon_col not in net_group.columns:
+        raise ValueError(f"Comparaison Calanus refusée : colonne filet `{taxon_col}` absente.")
+    taxon = net_group[taxon_col].astype("string").str.strip()
+    selected = net_group.loc[
+        taxon.str.contains(taxon_filter, case=False, na=False, regex=False)
+        & (~taxon.str.casefold().eq("calanus spp.") if is_calanus_protocol else True)
+    ].copy()
+    if selected.empty:
+        return np.nan, 0, 0, 0
+
+    stage_col = next(
+        (column for column in ("TAXON_LIFE_DEV_STAGE", "stage", "STAGE") if column in selected.columns),
+        None,
+    )
+    if stage_col is not None:
+        stages = selected[stage_col].astype("string").str.strip().str.upper()
+        selected = selected.loc[stages.isin(selected_stages)].copy()
+        selected_stages = stages.loc[selected.index]
+        finmarchicus_c4 = (
+            is_calanus_protocol
+            & selected[taxon_col].astype("string").str.contains(
+                "calanus finmarchicus", case=False, na=False
+            )
+            & selected_stages.eq("C4")
+        )
+        selected = selected.loc[~finmarchicus_c4]
+        if abundance_col not in selected.columns:
+            raise ValueError(
+                f"Comparaison Calanus refusée : colonne d'abondance filet `{abundance_col}` absente."
+            )
+        selected["_calanus_net_value"] = pd.to_numeric(
+            selected[abundance_col], errors="coerce"
+        )
+    else:
+        stage_columns = {
+            stage: f"{stage}_ABUND (ind./m3 depth vol.)" for stage in selected_stages
+        }
+        missing_stages = [column for column in stage_columns.values() if column not in selected.columns]
+        if missing_stages:
+            raise ValueError(
+                "(ni colonne de stade, ni colonnes wide complètes)."
+                "Comparaison refusée : stades demandés absents du filet "
+                "(ni colonne de stade, ni colonnes wide complètes)."
+                "(ni colonne de stade, ni colonnes wide complètes)."
+            )
+        values = selected.loc[:, list(stage_columns.values())].apply(
+            pd.to_numeric, errors="coerce"
+        )
+        # In the NeoLabs wide format, a blank stage cell represents no
+        # individual in this stage, while the taxon row itself is measured.
+        selected["_calanus_net_value"] = values.fillna(0.0).sum(axis=1)
+        finmarchicus = is_calanus_protocol & selected[taxon_col].astype("string").str.contains(
+            "calanus finmarchicus", case=False, na=False
+        )
+        if "C4" in selected_stages:
+            selected.loc[finmarchicus, "_calanus_net_value"] -= values.loc[
+                finmarchicus, stage_columns["C4"]
+            ].fillna(0.0)
+
+    if selected.empty:
+        return np.nan, 0, 0, 0
+    keys = [sample_col, analysis_col, taxon_col, depth_min_col, depth_max_col]
+    if stage_col is not None:
+        # A long Hydrobios export has one abundance per taxon *and* stage:
+        # C4, C5, M and F are therefore distinct legitimate contributions.
+        keys.append(stage_col)
+    missing = 0
+    incompatible = 0
+    canonical: list[float] = []
+    for _, rows in selected.groupby(keys, sort=True, dropna=False):
+        candidate_values = rows["_calanus_net_value"].to_numpy(dtype=float)
+        finite = candidate_values[np.isfinite(candidate_values)]
+        if len(finite) == 0 or len(finite) != len(candidate_values):
+            missing += 1
+            continue
+        candidate = float(finite[0])
+        if not np.allclose(finite, candidate, rtol=1e-6, atol=1e-9):
+            incompatible += 1
+            continue
+        canonical.append(candidate)
+    density = float(sum(canonical)) if not missing and not incompatible else np.nan
+    return density, missing, incompatible, len(selected)
+
+
+def _calanus_uvp6_count(
+    frame: pd.DataFrame,
+    *,
+    object_col: str,
+    taxonomy_col: str,
+    taxon_filter: str = "Calanus",
+    min_size_mm: float = 3.0,
+) -> tuple[int, int]:
+    """Count curated target images using the declared calibrated size threshold."""
+    taxon_filter = str(taxon_filter).strip()
+    if not taxon_filter or not np.isfinite(min_size_mm) or float(min_size_mm) <= 0:
+        raise ValueError("Comparaison refusée : taxon ou seuil de taille invalide.")
+    is_calanus_protocol = taxon_filter.casefold() == "calanus"
+    required = (object_col, taxonomy_col, "object_major", "acq_pixel")
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise ValueError(
+            "Comparaison Calanus UVP6 refusée : champs image/calibration absents : "
+            + ", ".join(f"`{column}`" for column in missing)
+            + "."
+        )
+    taxonomy = frame[taxonomy_col].astype("string")
+    category = (
+        frame["object_annotation_category"].astype("string")
+        if "object_annotation_category" in frame.columns
+        else taxonomy
+    )
+    # The Calanus source protocol first keeps Copepoda / Copepoda-lipidsac,
+    # groups, then removes taxa which are certainly not Calanus.  A confirmed
+    # Calanus annotation remains sufficient when the export lacks `taxagroup`.
+    if is_calanus_protocol and "taxagroup" in frame.columns:
+        image_group = frame["taxagroup"].astype("string").str.casefold().str.strip()
+        candidate = image_group.isin({"copepoda", "copepoda-lipidsac"})
+    elif is_calanus_protocol:
+        candidate = taxonomy.str.contains("copepoda", case=False, na=False, regex=False)
+        candidate |= category.str.contains("copepoda", case=False, na=False, regex=False)
+    else:
+        candidate = taxonomy.str.contains(taxon_filter, case=False, na=False, regex=False)
+        candidate |= category.str.contains(taxon_filter, case=False, na=False, regex=False)
+    if is_calanus_protocol:
+        candidate |= taxonomy.str.contains("calanus", case=False, na=False, regex=False)
+        candidate |= category.str.casefold().isin(
+            {"calanus", "side<with visible lipid sac", "top-bottom<with visible lipid sac"}
+        )
+    labels = (taxonomy.fillna("") + " " + category.fillna("")).str.casefold()
+    if is_calanus_protocol:
+        for token in _UVP_NON_CALANUS_TOKENS:
+            candidate &= ~labels.str.contains(token, regex=False, na=False)
+    object_ids = frame[object_col].astype("string").str.strip()
+    major_mm = (
+        pd.to_numeric(frame["object_major"], errors="coerce")
+        * pd.to_numeric(frame["acq_pixel"], errors="coerce")
+        / 1000.0
+    )
+    manual = pd.Series(False, index=frame.index)
+    for column in ("segmentation_source", "trait_source", "source"):
+        if column in frame.columns:
+            manual |= frame[column].astype("string").str.contains(
+                "manual", case=False, na=False, regex=False
+            )
+    retained = frame.loc[
+        candidate & object_ids.notna() & object_ids.ne("") & (major_mm.ge(float(min_size_mm)) | manual)
+    ].drop_duplicates(object_col)
+    return int(len(retained)), int(candidate.sum())
 
 
 def haversine_km(
@@ -404,8 +597,13 @@ def build_paired_depth_strata_from_certified_inputs(
     uvp_object_col: str = "object_id",
     uvp_taxonomy_col: str = "object_annotation_hierarchy",
     uvp_volume_col: str = "ecopart_Sampled volume [L]",
+    taxon_filter: str = "Calanus",
+    net_stages: str = "C4,C5,M,F",
+    uvp_min_size_mm: float = 3.0,
+    depth_window_min_m: float | None = None,
+    depth_window_max_m: float | None = None,
 ) -> pd.DataFrame:
-    """Construit les strates certifiées sans matérialiser taxons × objets.
+    """Construit les strates Calanus certifiées sans matérialiser taxons × objets.
 
     Le contrat scientifique est identique à
     :func:`join_certified_net_uvp_enriched` suivi de
@@ -439,7 +637,6 @@ def build_paired_depth_strata_from_certified_inputs(
             net_sample_col,
             net_analysis_col,
             net_taxon_col,
-            net_class_col,
             net_depth_min_col,
             net_depth_max_col,
             net_abundance_col,
@@ -459,6 +656,8 @@ def build_paired_depth_strata_from_certified_inputs(
             uvp_object_col,
             uvp_taxonomy_col,
             uvp_volume_col,
+            "object_major",
+            "acq_pixel",
         ),
         "export UVP",
     )
@@ -467,6 +666,15 @@ def build_paired_depth_strata_from_certified_inputs(
             "Comparaison filet↔UVP par tranche refusée : la taxonomie UVP "
             "doit provenir de `object_annotation_hierarchy`."
         )
+    normalize_target_stages(net_stages)
+    if not np.isfinite(uvp_min_size_mm) or float(uvp_min_size_mm) <= 0:
+        raise ValueError("Comparaison refusée : seuil UVP de taille invalide.")
+    if (
+        depth_window_min_m is not None
+        and depth_window_max_m is not None
+        and float(depth_window_min_m) > float(depth_window_max_m)
+    ):
+        raise ValueError("Comparaison refusée : fenêtre verticale inversée.")
 
     certified = audit_df["join_eligible"].map(explicitly_certified)
     if "ctd_verification" in audit_df.columns:
@@ -582,40 +790,27 @@ def build_paired_depth_strata_from_certified_inputs(
     for (sample_id, depth_min, depth_max), net_group in net.groupby(
         stratum_key, sort=True, dropna=False
     ):
+        if (
+            (depth_window_min_m is not None and (not np.isfinite(depth_min) or depth_min < float(depth_window_min_m)))
+            or (depth_window_max_m is not None and (not np.isfinite(depth_max) or depth_max > float(depth_window_max_m)))
+        ):
+            continue
         profile_keys = net_group[["_audit_project_key", "_audit_profile_key"]].drop_duplicates()
         if len(profile_keys) != 1:
             raise ValueError("Jointure filet↔UVP refusée : clé de profil audit ambiguë.")
         profile_key_tuple = tuple(profile_keys.iloc[0])
         uvp_group = profile_rows[profile_key_tuple]
 
-        net_taxa = net_group.loc[
-            net_group[net_class_col].astype("string").str.casefold().eq("copepoda")
-        ]
-        net_taxon_key = [
-            net_sample_col,
-            net_analysis_col,
-            net_taxon_col,
-            net_depth_min_col,
-            net_depth_max_col,
-        ]
-        net_missing = 0
-        net_incompatible = 0
-        canonical_net_values: list[float] = []
-        for _, taxon_rows in net_taxa.groupby(net_taxon_key, sort=True, dropna=False):
-            values = taxon_rows[net_abundance_col].to_numpy(dtype=float)
-            finite = values[np.isfinite(values)]
-            if len(finite) == 0 or len(finite) != len(values):
-                net_missing += 1
-                continue
-            candidate = float(finite[0])
-            if not np.allclose(finite, candidate, rtol=1e-6, atol=1e-9):
-                net_incompatible += 1
-                continue
-            canonical_net_values.append(candidate)
-        net_abundance = (
-            float(sum(canonical_net_values))
-            if not net_taxa.empty and net_missing == 0 and net_incompatible == 0
-            else np.nan
+        net_abundance, net_missing, net_incompatible, net_target_rows = _calanus_net_density(
+            net_group,
+            sample_col=net_sample_col,
+            analysis_col=net_analysis_col,
+            taxon_col=net_taxon_col,
+            depth_min_col=net_depth_min_col,
+            depth_max_col=net_depth_max_col,
+            abundance_col=net_abundance_col,
+            taxon_filter=taxon_filter,
+            stages=net_stages,
         )
 
         valid_depth_interval = bool(
@@ -632,11 +827,13 @@ def build_paired_depth_strata_from_certified_inputs(
             if valid_depth_interval
             else uvp_group.iloc[0:0]
         )
-        object_ids = in_interval[uvp_object_col].astype("string").str.strip()
-        unique_objects = in_interval.loc[
-            object_ids.notna() & object_ids.ne("")
-        ].drop_duplicates(uvp_object_col)
-        target_count = int(copepod_hierarchy_mask(unique_objects).sum())
+        target_count, uvp_calanus_candidate_images = _calanus_uvp6_count(
+            in_interval,
+            object_col=uvp_object_col,
+            taxonomy_col=uvp_taxonomy_col,
+            taxon_filter=taxon_filter,
+            min_size_mm=uvp_min_size_mm,
+        )
         bin_count = int(in_interval[uvp_depth_col].dropna().nunique())
         missing_volume_bins = 0
         incompatible_volume_bins = 0
@@ -656,9 +853,9 @@ def build_paired_depth_strata_from_certified_inputs(
         if not valid_depth_interval:
             status = "invalid_net_depth"
             reason = "Intervalle de profondeur du filet absent ou invalide."
-        elif net_taxa.empty:
+        elif net_target_rows == 0:
             status = "missing_net_target"
-            reason = "Aucune ligne d'abondance de copépodes pour cette tranche de filet."
+            reason = f"Aucune ligne {taxon_filter} {net_stages} comparable pour cette tranche de filet."
         elif net_incompatible:
             status = "incompatible_net_abundance"
             reason = "Abondances filet contradictoires pour une même ligne taxonomique."
@@ -692,9 +889,15 @@ def build_paired_depth_strata_from_certified_inputs(
             "net_depth_min_m": float(depth_min),
             "net_depth_max_m": float(depth_max),
             "net_abundance_ind_m3": net_abundance,
+            "net_calanus_target_rows": net_target_rows,
             "net_missing_abundance_rows": net_missing,
             "net_incompatible_abundance_rows": net_incompatible,
             "uvp_target_count": target_count,
+            "uvp_calanus_candidate_images": uvp_calanus_candidate_images,
+            "uvp_size_threshold_mm": float(uvp_min_size_mm),
+            "taxon_scope": f"{taxon_filter}; stades filet {net_stages}",
+            "depth_window_min_m": depth_window_min_m,
+            "depth_window_max_m": depth_window_max_m,
             "uvp_depth_bin_count": bin_count,
             "uvp_missing_volume_bins": missing_volume_bins,
             "uvp_incompatible_volume_bins": incompatible_volume_bins,
@@ -721,6 +924,72 @@ def build_paired_depth_strata_from_certified_inputs(
                 row[target] = values.iloc[0] if not values.empty else pd.NA
         rows.append(row)
 
+    return pd.DataFrame(rows)
+
+
+def integrate_paired_depth_strata(strata: pd.DataFrame) -> pd.DataFrame:
+    """Integrate same-depth Calanus strata to one net–UVP profile in ind./m².
+
+    This is the profile-level comparison used by the Calanus UVP6–Hydrobios
+    workflow: each native density is multiplied by the corresponding net depth
+    interval, then summed.  Missing/excluded strata are never converted to zero;
+    their depth coverage is retained and the profile is labelled partial.
+    """
+    required = {
+        "net_sample_id", "net_depth_min_m", "net_depth_max_m",
+        "net_abundance_ind_m3", "uvp_abundance_ind_m3", "comparison_calculable",
+    }
+    missing = sorted(required.difference(strata.columns))
+    if missing:
+        raise ValueError(
+            "Intégration filet↔UVP refusée : colonne(s) de strate absente(s) : "
+            + ", ".join(f"`{column}`" for column in missing) + "."
+        )
+
+    work = strata.copy()
+    work["_depth_min"] = pd.to_numeric(work["net_depth_min_m"], errors="coerce")
+    work["_depth_max"] = pd.to_numeric(work["net_depth_max_m"], errors="coerce")
+    work["_thickness_m"] = work["_depth_max"] - work["_depth_min"]
+    if (~np.isfinite(work["_thickness_m"]) | work["_thickness_m"].le(0)).any():
+        raise ValueError("Intégration filet↔UVP refusée : tranche de profondeur invalide.")
+    for column in ("net_abundance_ind_m3", "uvp_abundance_ind_m3"):
+        work[column] = pd.to_numeric(work[column], errors="coerce")
+    work["_calculable"] = work["comparison_calculable"].fillna(False).astype(bool)
+    group_columns = ["net_sample_id"]
+    for column in ("uvp_project_id", "uvp_profile", "station"):
+        if column in work.columns:
+            group_columns.append(column)
+
+    rows: list[dict[str, object]] = []
+    for key, group in work.groupby(group_columns, sort=True, dropna=False):
+        if not isinstance(key, tuple):
+            key = (key,)
+        result = dict(zip(group_columns, key, strict=True))
+        total_depth_m = float(group["_thickness_m"].sum())
+        used = group.loc[group["_calculable"]].copy()
+        used_depth_m = float(used["_thickness_m"].sum())
+        missing_count = int((~group["_calculable"]).sum())
+        if used.empty:
+            net_ind_m2 = np.nan
+            uvp_ind_m2 = np.nan
+            status = "not_calculable"
+        else:
+            net_ind_m2 = float((used["net_abundance_ind_m3"] * used["_thickness_m"]).sum())
+            uvp_ind_m2 = float((used["uvp_abundance_ind_m3"] * used["_thickness_m"]).sum())
+            status = "integrated" if missing_count == 0 else "partial_depth_coverage"
+        result.update({
+            "net_integrated_ind_m2": net_ind_m2,
+            "uvp_integrated_ind_m2": uvp_ind_m2,
+            "integrated_delta_ind_m2": uvp_ind_m2 - net_ind_m2 if np.isfinite(net_ind_m2) and np.isfinite(uvp_ind_m2) else np.nan,
+            "integrated_ratio": uvp_ind_m2 / net_ind_m2 if np.isfinite(net_ind_m2) and net_ind_m2 != 0 else np.nan,
+            "depth_coverage_m": used_depth_m,
+            "total_requested_depth_m": total_depth_m,
+            "depth_coverage_fraction": used_depth_m / total_depth_m if total_depth_m else np.nan,
+            "excluded_strata_count": missing_count,
+            "profile_comparison_status": status,
+            "method_version": NET_UVP_PROFILE_METHOD_VERSION,
+        })
+        rows.append(result)
     return pd.DataFrame(rows)
 
 
@@ -755,8 +1024,13 @@ def build_paired_depth_strata(
     uvp_object_col: str = "object_id",
     uvp_taxonomy_col: str = "object_annotation_hierarchy",
     uvp_volume_col: str = "ecopart_Sampled volume [L]",
+    taxon_filter: str = "Calanus",
+    net_stages: str = "C4,C5,M,F",
+    uvp_min_size_mm: float = 3.0,
+    depth_window_min_m: float | None = None,
+    depth_window_max_m: float | None = None,
 ) -> pd.DataFrame:
-    """Construit une ligne comparable par tranche de filet certifiée.
+    """Construit une ligne Calanus comparable par tranche de filet certifiée.
 
     La table d'entrée est la jointure objet EcoTaxa–EcoPart ↔ lignes taxonomiques
     NeoLabs. Le produit cartésien de cette jointure est dédupliqué aux deux grains
@@ -768,7 +1042,6 @@ def build_paired_depth_strata(
         net_sample_col,
         net_analysis_col,
         net_taxon_col,
-        net_class_col,
         net_depth_min_col,
         net_depth_max_col,
         net_abundance_col,
@@ -776,6 +1049,8 @@ def build_paired_depth_strata(
         uvp_object_col,
         uvp_taxonomy_col,
         uvp_volume_col,
+        "object_major",
+        "acq_pixel",
     }
     missing = sorted(required.difference(joined.columns))
     if missing:
@@ -784,6 +1059,16 @@ def build_paired_depth_strata(
             + ", ".join(f"`{column}`" for column in missing)
             + "."
         )
+
+    normalize_target_stages(net_stages)
+    if not np.isfinite(uvp_min_size_mm) or float(uvp_min_size_mm) <= 0:
+        raise ValueError("Comparaison refusée : seuil UVP de taille invalide.")
+    if (
+        depth_window_min_m is not None
+        and depth_window_max_m is not None
+        and float(depth_window_min_m) > float(depth_window_max_m)
+    ):
+        raise ValueError("Comparaison refusée : fenêtre verticale inversée.")
 
     work = joined.copy()
     for column in (net_depth_min_col, net_depth_max_col, net_abundance_col, uvp_depth_col, uvp_volume_col):
@@ -794,34 +1079,21 @@ def build_paired_depth_strata(
     for (sample_id, depth_min, depth_max), group in work.groupby(
         stratum_key, sort=True, dropna=False
     ):
-        net_taxa = group.loc[
-            group[net_class_col].astype("string").str.casefold().eq("copepoda")
-        ]
-        net_taxon_key = [
-            net_sample_col,
-            net_analysis_col,
-            net_taxon_col,
-            net_depth_min_col,
-            net_depth_max_col,
-        ]
-        net_missing = 0
-        net_incompatible = 0
-        canonical_net_values: list[float] = []
-        for _, taxon_rows in net_taxa.groupby(net_taxon_key, sort=True, dropna=False):
-            values = taxon_rows[net_abundance_col].to_numpy(dtype=float)
-            finite = values[np.isfinite(values)]
-            if len(finite) == 0 or len(finite) != len(values):
-                net_missing += 1
-                continue
-            candidate = float(finite[0])
-            if not np.allclose(finite, candidate, rtol=1e-6, atol=1e-9):
-                net_incompatible += 1
-                continue
-            canonical_net_values.append(candidate)
-        net_abundance = (
-            float(sum(canonical_net_values))
-            if not net_taxa.empty and net_missing == 0 and net_incompatible == 0
-            else np.nan
+        if (
+            (depth_window_min_m is not None and (not np.isfinite(depth_min) or depth_min < float(depth_window_min_m)))
+            or (depth_window_max_m is not None and (not np.isfinite(depth_max) or depth_max > float(depth_window_max_m)))
+        ):
+            continue
+        net_abundance, net_missing, net_incompatible, net_target_rows = _calanus_net_density(
+            group,
+            sample_col=net_sample_col,
+            analysis_col=net_analysis_col,
+            taxon_col=net_taxon_col,
+            depth_min_col=net_depth_min_col,
+            depth_max_col=net_depth_max_col,
+            abundance_col=net_abundance_col,
+            taxon_filter=taxon_filter,
+            stages=net_stages,
         )
 
         valid_depth_interval = bool(
@@ -838,16 +1110,18 @@ def build_paired_depth_strata(
             if valid_depth_interval
             else group.iloc[0:0]
         )
-        object_ids = in_interval[uvp_object_col].astype("string").str.strip()
-        unique_objects = in_interval.loc[
-            object_ids.notna() & object_ids.ne("")
-        ].drop_duplicates(uvp_object_col)
         if uvp_taxonomy_col != "object_annotation_hierarchy":
             raise ValueError(
                 "Comparaison filet↔UVP par tranche refusée : la taxonomie UVP "
                 "doit provenir de `object_annotation_hierarchy`."
             )
-        target_count = int(copepod_hierarchy_mask(unique_objects).sum())
+        target_count, uvp_calanus_candidate_images = _calanus_uvp6_count(
+            in_interval,
+            object_col=uvp_object_col,
+            taxonomy_col=uvp_taxonomy_col,
+            taxon_filter=taxon_filter,
+            min_size_mm=uvp_min_size_mm,
+        )
         bin_count = int(in_interval[uvp_depth_col].dropna().nunique())
         missing_volume_bins = 0
         incompatible_volume_bins = 0
@@ -869,9 +1143,9 @@ def build_paired_depth_strata(
         if not valid_depth_interval:
             status = "invalid_net_depth"
             reason = "Intervalle de profondeur du filet absent ou invalide."
-        elif net_taxa.empty:
+        elif net_target_rows == 0:
             status = "missing_net_target"
-            reason = "Aucune ligne d'abondance de copépodes pour cette tranche de filet."
+            reason = f"Aucune ligne {taxon_filter} {net_stages} comparable pour cette tranche de filet."
         elif net_incompatible:
             status = "incompatible_net_abundance"
             reason = "Abondances filet contradictoires pour une même ligne taxonomique."
@@ -910,9 +1184,15 @@ def build_paired_depth_strata(
             "net_depth_min_m": float(depth_min),
             "net_depth_max_m": float(depth_max),
             "net_abundance_ind_m3": net_abundance,
+            "net_calanus_target_rows": net_target_rows,
             "net_missing_abundance_rows": net_missing,
             "net_incompatible_abundance_rows": net_incompatible,
             "uvp_target_count": target_count,
+            "uvp_calanus_candidate_images": uvp_calanus_candidate_images,
+            "uvp_size_threshold_mm": float(uvp_min_size_mm),
+            "taxon_scope": f"{taxon_filter}; stades filet {net_stages}",
+            "depth_window_min_m": depth_window_min_m,
+            "depth_window_max_m": depth_window_max_m,
             "uvp_depth_bin_count": bin_count,
             "uvp_missing_volume_bins": missing_volume_bins,
             "uvp_incompatible_volume_bins": incompatible_volume_bins,

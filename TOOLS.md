@@ -19,7 +19,7 @@
 - Les capacités géographiques `get_zone_info` et `filter_dataframe_by_zone` sont toujours visibles : le modèle principal comprend l'intention sans regex ni second modèle. Après chargement d'un fichier, `run_pandas` et `split_dataframe_by_zone` (découpage par mers/baies/détroits) deviennent visibles; taxonomie, graphe et livrable suivent leurs intentions/préconditions.
 - Dès qu'EcoTaxa est autorisé, son groupe zone/période reste visible avec au plus un autre groupe d'intention, pour un total maximal de 15 tools.
 - EcoTaxa active au plus deux de ses huit groupes : découverte, samples, objets, géo/temps, taxonomie, schéma, audit, export.
-- EcoPart, Amundsen, Bio-ORACLE et OGSL sont limités aux enrichissements canoniques `enrich_ecotaxa_with_ecopart_remote`, `enrich_with_amundsen_ctd`, `enrich_with_bio_oracle` et `enrich_with_ogsl`. Ils ne deviennent visibles que pour une demande explicite d'enrichissement d'un fichier avec la source nommée.
+- EcoPart expose aussi `find_ecopart_project_for_ecotaxa` pour une demande explicite de correspondance EcoTaxa–EcoPart ; ce lookup léger ne lance aucun export. Les enrichissements canoniques `enrich_ecotaxa_with_ecopart_remote`, `enrich_with_amundsen_ctd`, `enrich_with_bio_oracle` et `enrich_with_ogsl` restent réservés à une demande explicite d'enrichissement.
 - Les 18 autres tools de ces quatre familles restent enregistrés pour compatibilité, mais appartiennent au groupe `hidden_legacy` : ils ne sont jamais présentés au modèle et sont bloqués avant exécution.
 
 <!-- TOOL-INVENTORY:START -->
@@ -52,6 +52,7 @@ Inventaire généré : **68 tools obligatoires**, **71 avec SQL**.
 | `find_ecotaxa_projects_in_region` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `find_ecotaxa_samples_in_region` | ecotaxa | ecotaxa | medium | non | non | oui | oui |
 | `find_uvp_matches_for_net_table` | data | file | low | non | non | oui | non |
+| `compare_local_net_uvp_profiles` | data | file | low | non | non | non | oui |
 | `get_ecotaxa_object` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `get_ecotaxa_sample` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `get_zone_info` | geography | geography | low | non | non | non | non |
@@ -105,7 +106,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 
 ---
 
-## 1. Données & analyse — `tools/data_tools.py`, `tools/copepod_sources.py` (5)
+## 1. Données & analyse — `tools/data_tools.py`, `tools/copepod_sources.py` (6)
 
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
@@ -113,7 +114,8 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 | `run_pandas` | Exécute du pandas contrôlé dans un worker persistant par conversation (namespace restreint, imports allowlistés) ; source de toute valeur numérique. Les intermédiaires restent chauds pour le graphe suivant, les tables nommées restent la source durable. Un résultat de jointure (`merge`/`join`/`concat`) est persisté comme nouveau df `df_join_*` réutilisable ; une copie modifiée d'une table nommée, de même granularité, devient `df_derived_*` réutilisable ; une agrégation simple reste éphémère | non |
 | `run_graph` | Exécute du code matplotlib/Cartopy dans le même worker persistant, utilise les fonds Natural Earth 110m embarqués hors ligne et héberge le PNG persistant (`/graphs/{file}`) | non |
 | `find_uvp_matches_for_net_table` | Audite une table filet persistée contre les samples UVP du cache puis certifie le fichier CTD partagé avec Amundsen ; publie une sélection exportable seulement pour `join_eligible=True` et CTD `matched` | non |
-| `join_net_uvp_enriched` | Joint localement la table filet, l'audit certifié et la campagne UVP enrichie EcoPart sur `(export_project_id, profil UVP)` ; exclut les candidats non certifiés et persiste `df_net_uvp_ecopart` | non |
+| `join_net_uvp_enriched` | Joint localement la table filet, l'audit certifié et la campagne UVP enrichie EcoPart sur `(export_project_id, profil UVP)` ; applique le protocole Calanus et persiste les strates et l'intégrale profil en `ind./m²` | non |
+| `compare_local_net_uvp_profiles` | Compare deux fichiers locaux sur une clé de profil explicite, applique le protocole Calanus UVP6–Hydrobios et persiste strates et intégrale profil sans prétendre à une certification CTD | non |
 
 ---
 
@@ -184,7 +186,7 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 | `query_ecopart` | Export d'un projet EcoPart | **oui** |
 | `join_ecotaxa_ecopart` | Join local `(sample_id, depth_bin 5m)`, préfixe `ecopart_*`, stocke `df_ecotaxa_ecopart` | non |
 | `audit_ecotaxa_ecopart_join` | Audite la jointure persistée : provenance profondeur, unicité objets, volumes et bins | non |
-| `enrich_ecotaxa_with_ecopart_remote` | Fetch EcoPart distant (auto-résolution projet) puis join | **oui** |
+| `enrich_ecotaxa_with_ecopart_remote` | Fetch EcoPart distant (auto-résolution projet) puis join ; `confirmed=False` seulement pour un préflight demandé | **oui** |
 
 ---
 

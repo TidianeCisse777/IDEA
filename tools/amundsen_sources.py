@@ -1647,9 +1647,10 @@ def make_amundsen_tools(thread_id: str) -> list:
         « est-ce qu'il existe des données Amundsen pour ce fichier ? », « est-ce
         possible d'enrichir avec Amundsen (CTD) ? », « y a-t-il de la CTD Amundsen
         dans ma zone / ma période ? », « avant d'enrichir, dis-moi si ça existe ».
-        Lecture seule : calcule l'emprise (bbox + période) de la table chargée et
-        compte les profils CTD Amundsen dans cette emprise via ERDDAP. Ne
-        télécharge ni ne stocke aucune donnée enrichie. Si des profils existent,
+        Lecture seule : utilise d'abord un nom de fichier CTD déjà présent,
+        sinon calcule l'emprise (bbox + période) de la table chargée et compte
+        les profils CTD Amundsen via ERDDAP. Ne stocke aucune donnée enrichie.
+        Si des profils existent,
         proposer d'enrichir avec `enrich_with_amundsen_ctd` ; sinon dire clairement
         qu'il n'y a rien à enrichir.
         """
@@ -1660,6 +1661,52 @@ def make_amundsen_tools(thread_id: str) -> list:
             return _am_blocked(
                 "Aucune table chargée. Charge d'abord un fichier avec des colonnes "
                 "latitude/longitude/date (`load_file`)."
+            )
+
+        # A CTD rosette filename is the strongest available link and does not
+        # need coordinates or time merely to check whether its CTD exists.
+        # This mirrors the canonical enrichment route: a valid EcoTaxa export
+        # must not be rejected by an availability check just because its
+        # geographic metadata was not included in the current subset.
+        filename_col = detect_column(source.columns, _CTD_FILENAME_CANDIDATES)
+        if filename_col is not None:
+            aliases_by_row = source[filename_col].map(ctd_filename_aliases)
+            aliases = set().union(*aliases_by_row.tolist()) if len(aliases_by_row) else set()
+            if not aliases:
+                return _am_empty(
+                    f"La colonne CTD `{filename_col}` est présente mais ne contient "
+                    "aucun nom de fichier exploitable."
+                )
+            try:
+                ctd = _fetch_amundsen_ctd_profile_rows_by_filename(
+                    filename_aliases=aliases,
+                    variables=["TE90"],
+                )
+            except Exception as exc:
+                return _am_error(
+                    f"Erreur lors de l'accès à Amundsen : {exc}", retryable=True
+                )
+            if ctd.empty:
+                return _am_empty(
+                    f"Aucun profil CTD Amundsen trouvé pour les {len(aliases)} "
+                    f"alias de fichier issus de `{filename_col}`."
+                )
+            returned_aliases = set().union(
+                *ctd["filename"].map(ctd_filename_aliases).tolist()
+            ) if "filename" in ctd.columns else set()
+            matched_aliases = len(aliases.intersection(returned_aliases))
+            n_profiles = int(ctd["filename"].nunique()) if "filename" in ctd.columns else 0
+            return _am_success(
+                f"Données Amundsen disponibles : {n_profiles} profil(s) CTD, "
+                f"{matched_aliases}/{len(aliases)} alias de fichier CTD retrouvés "
+                f"via `{filename_col}`. Enrichissement possible directement ; "
+                "la profondeur sera appariée dans chaque profil identifié.",
+                metrics={
+                    "rows": len(ctd),
+                    "profiles": n_profiles,
+                    "requested_filename_aliases": len(aliases),
+                    "matched_filename_aliases": matched_aliases,
+                },
             )
 
         lat_col = latitude_column or detect_column(source.columns, DEFAULT_LAT_CANDIDATES)

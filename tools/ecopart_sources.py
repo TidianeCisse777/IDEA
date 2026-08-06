@@ -45,6 +45,7 @@ from core.ecotaxa_ecopart_join import (
     audit_ecotaxa_ecopart_dataframe,
     depth_bin_5m,
 )
+from core.ecotaxa_browser.cache.repo import open_readonly_connection
 from core.environment_resolver import build_enrichment_provenance
 from core.scientific_result_cache import (
     build_result_cache_key,
@@ -584,7 +585,7 @@ def _preflight_ecopart_partition(
     """Check EcoPart exportability at the profile grain without exporting."""
     fingerprint = dataframe_fingerprint(dataframe)
     cache_key = (
-        f"{thread_id}:ecopart_preflight:v4-profile:{ecotaxa_project_id}:{ecopart_project_id}"
+        f"{thread_id}:ecopart_preflight:v5-profile:{ecotaxa_project_id}:{ecopart_project_id}"
         if thread_id else None
     )
     if cache_key:
@@ -659,12 +660,17 @@ def _preflight_ecopart_partition(
     ]
     if not matching_profiles and not uncertain:
         if project_profiles:
-            reasons.append(
-                "aucun profil EcoPart correspondant : "
+            # A profile label is a useful fast signal, but it is not the data
+            # itself.  EcoTaxa and EcoPart can expose the same acquisition
+            # under differently formatted identifiers.  Keep the check visible
+            # without declaring the whole pair impossible before the actual
+            # EcoPart table has been read and the canonical join attempted.
+            uncertain.append(
+                "aucun libellé de profil strictement identique au préflight : "
                 f"0/{len(local_profiles)} identifiant(s) de profil EcoTaxa "
                 f"retrouvé(s) parmi {len(project_profiles)} profil(s) accessibles "
-                f"du projet EcoPart {ecopart_project_id}; cette paire de projets "
-                "ne partage pas de profil et ne peut pas être jointe"
+                f"du projet EcoPart {ecopart_project_id}; les données EcoPart "
+                "restent accessibles et la jointure réelle vérifiera les clés"
             )
         else:
             reasons.append(
@@ -1695,7 +1701,7 @@ def make_ecopart_tools(thread_id: str) -> list:
     def enrich_ecotaxa_with_ecopart_remote(
         ecotaxa_project_id: int | None = None,
         ecopart_project_id: int | None = None,
-        confirmed: bool = False,
+        confirmed: bool = True,
     ) -> str:
         """Enrichit l'EcoTaxa en session avec les variables EcoPart téléchargées **à distance**.
 
@@ -1707,12 +1713,11 @@ def make_ecopart_tools(thread_id: str) -> list:
         Pré-requis ID : passer `ecotaxa_project_id` (recommandé) OU `ecopart_project_id`.
         Si aucun n'est fourni, l'outil tente de lire `meta.project_id` posé par `query_ecotaxa`.
 
-        **Confirmation obligatoire (CT-AG-06)** : `confirmed=False` par défaut →
-        préflight sans téléchargement : lien EcoTaxa→EcoPart, accessibilité et
+        L'enrichissement démarre directement par défaut. `confirmed=False` →
+        préflight explicite sans téléchargement : lien EcoTaxa→EcoPart, accessibilité et
         validation des profils EcoPart, identifiant de profil et profondeur
         nécessaires à la jointure, avec verdict PRÊT / PARTIEL / BLOQUÉ par
-        projet. Pour lancer réellement le téléchargement et la jointure,
-        rappeler avec `confirmed=True`.
+        projet.
         """
         session_et = _ecotaxa_session_for_project(thread_id, ecotaxa_project_id)
         if session_et is None:
@@ -2077,29 +2082,62 @@ def make_ecopart_tools(thread_id: str) -> list:
         )
 
     @tool(response_format="content_and_artifact")
-    def find_ecopart_project_for_ecotaxa() -> str:
-        """Vérifie si un projet EcoPart correspond à l'EcoTaxa en session, sans télécharger.
+    def find_ecopart_project_for_ecotaxa(
+        ecotaxa_project_id: int | None = None,
+    ) -> str:
+        """Vérifie un lien EcoTaxa→EcoPart et la disponibilité des profils, sans exporter les objets.
 
         Utiliser cet outil quand l'utilisateur pose une question de type
         « est-ce qu'il existe un EcoPart pour ce fichier ? », « à quel projet
         EcoPart ce fichier est-il lié ? », « y a-t-il un EcoPart associé ? » —
         c'est-à-dire une question de disponibilité, PAS une demande
-        d'enrichissement ou d'export. Utilise uniquement
-        `search_samples_by_bbox` + `get_sample_metadata` sur quelques
-        candidats : lecture seule, ~2-5s, aucune tâche serveur créée.
+        d'enrichissement ou d'export. Vérifie ensuite les profils accessibles
+        du projet EcoPart résolu : lecture seule, aucune tâche serveur créée.
+        Avec `ecotaxa_project_id`, lit les profils et positions depuis le cache
+        EcoTaxa local : aucun export EcoTaxa n'est requis.
         Si l'utilisateur demande ensuite l'enrichissement, router alors vers
         `enrich_ecotaxa_with_ecopart_remote`.
         """
-        session_et = _store.get(f"{thread_id}:ecotaxa")
-        if session_et is None:
+        session_et = _ecotaxa_session_for_project(thread_id, ecotaxa_project_id)
+        if session_et is not None:
+            df_et = session_et.get("df")
+            known_pid = (session_et.get("meta") or {}).get("project_id")
+        elif ecotaxa_project_id is not None:
+            cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+            try:
+                conn = open_readonly_connection(cache_db)
+                df_et = pd.read_sql_query(
+                    """
+                    SELECT sample_id, original_id, station_id,
+                           profile_id AS sample_profileid,
+                           lat_avg AS object_lat, lon_avg AS object_lon
+                    FROM samples_cache
+                    WHERE project_id = ?
+                    """,
+                    conn,
+                    params=(int(ecotaxa_project_id),),
+                )
+            except Exception as exc:
+                return _ep_error(
+                    f"Lecture du cache EcoTaxa impossible pour le projet "
+                    f"{ecotaxa_project_id} : {exc}",
+                    retryable=True,
+                )
+            finally:
+                if "conn" in locals():
+                    conn.close()
+            if df_et.empty:
+                return _ep_empty(
+                    f"Aucun profil EcoTaxa en cache pour le projet {ecotaxa_project_id}."
+                )
+            known_pid = int(ecotaxa_project_id)
+        else:
             return _ep_blocked(
-                "Aucun fichier EcoTaxa en session — charge d'abord un fichier "
-                "UVP (`load_file`) ou lance `query_ecotaxa`."
+                "Indiquer `ecotaxa_project_id` ou charger une table EcoTaxa. "
+                "Aucun export n'est nécessaire pour ce lookup."
             )
-        df_et = session_et.get("df")
         if df_et is None or getattr(df_et, "empty", True):
             return _ep_empty("Le dataset EcoTaxa en session est vide.")
-        known_pid = session_et.get("meta", {}).get("project_id")
         result = _lookup_ecopart_project_for_ecotaxa(
             df_et,
             known_ecotaxa_pid=known_pid,
@@ -2111,10 +2149,74 @@ def make_ecopart_tools(thread_id: str) -> list:
         pid = result["project_id"]
         name = result.get("project_name") or "?"
         how = result.get("resolution", "?")
+        linked_profiles = result.get("linked_samples") or []
+        availability_note = (
+            f"Données EcoPart liées au projet EcoTaxa : {len(linked_profiles)} "
+            "profil(s) signalé(s) directement par le serveur."
+            if linked_profiles
+            else (
+                "Lien EcoTaxa→EcoPart déjà vérifié côté serveur (cache de résolution) ; "
+                "rafraîchissement de la liste des profils en cours."
+                if result.get("cache_hit")
+                else "Disponibilité des profils EcoPart non vérifiée."
+            )
+        )
+        try:
+            # ``filt_proj`` already returned real, server-linked EcoPart
+            # profiles on the authoritative path.  Reuse that evidence rather
+            # than making a second project-wide request just to prove data
+            # exists.  Only a fallback resolution needs the bounded listing.
+            if linked_profiles:
+                profiles = linked_profiles
+            else:
+                client = EcopartClient()
+                client.login()
+                # When an EcoTaxa project id is known, ``filt_proj`` asks for
+                # its directly linked profiles.  It is both more relevant and
+                # markedly smaller than scanning the whole EcoPart project.
+                search_kwargs = (
+                    {"ecotaxa_project_id": int(known_pid)}
+                    if known_pid is not None
+                    else {"project_id": int(pid)}
+                )
+                profiles = client.search_samples(
+                    timeout=min(3.0, _ecopart_preflight_timeout()),
+                    **search_kwargs,
+                )
+            exportable = sum(
+                str(profile.get("visibility") or "").strip().upper().endswith("Y")
+                for profile in profiles
+            )
+            local_labels = set(_candidate_ecotaxa_profile_labels(df_et))
+            matching_names = sum(
+                str(profile.get("name") or "").strip() in local_labels
+                for profile in profiles
+            )
+            if profiles:
+                availability_note = (
+                    f"Données EcoPart accessibles : {len(profiles)} profil(s) "
+                    f"listé(s), dont {exportable} exportable(s). "
+                    + (
+                        f"{matching_names} nom(s) de profil déjà identique(s) côté EcoTaxa."
+                        if matching_names
+                        else "Aucun nom de profil identique à ce stade ; "
+                        "ce n'est pas un refus, la jointure réelle vérifiera les clés."
+                    )
+                )
+            else:
+                availability_note = (
+                    "Le projet EcoPart est résolu mais ne retourne actuellement "
+                    "aucun profil accessible pour le compte configuré."
+                )
+        except Exception as exc:
+            availability_note += (
+                " La liste actuelle des profils EcoPart liés n'a pas pu être lue "
+                f"maintenant ({type(exc).__name__})."
+            )
         return _ep_success(
             f"Projet EcoPart associé trouvé : **{pid}**"
             f"{f' (« {name} »)' if name and name != '?' else ''}.\n"
-            f"Résolution : {how}. "
+            f"Résolution : {how}.\n{availability_note}\n"
             "Aucun export n'a été lancé — c'est juste un lookup. "
             "Pour enrichir, utiliser `enrich_ecotaxa_with_ecopart_remote`.\n\n"
             f"Source EcoPart : https://ecopart.obs-vlfr.fr/prj/{pid}",

@@ -1255,15 +1255,15 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         source_variable: str | None = None,
         coordinate_bin_degrees: float = 1 / 12,
         max_unique_queries: int = 1000,
-        confirmed: bool = False,
+        confirmed: bool = True,
         max_workers: int = 8,
         zone_name: str | None = None,
         date_range: list | None = None,
     ) -> str:
         """Enrichit chaque ligne d'un DataFrame chargé avec Bio-ORACLE.
 
-        Avant l'appel, proposer et afficher ces choix, puis attendre la sélection explicite de
-        l'utilisateur (ne jamais appliquer un preset en silence) :
+        Si un paramètre scientifique n'est pas précisé, le preset direct est
+        `temperature`, `baseline`, `surface`, `mean` :
         - variables copépodes recommandées : `temperature`, `salinity`,
           `oxygen`, `nitrate`, `phosphate`, `silicate`, `chlorophyll`,
           `primary_productivity`, `mixed_layer_depth`, `par`,
@@ -1274,10 +1274,9 @@ def make_bio_oracle_tools(thread_id: str) -> list:
           `SSP4-6.0`, `SSP5-8.5` ; couches : `surface`, `benthic_min`,
           `benthic_mean`, `benthic_max` ; statistiques : `mean`, `min`,
           `max`, `lt_min`, `lt_max`, `range`.
-        Variables, scénarios, couche verticale et statistique sont obligatoires ;
-        une année cible est obligatoire pour un scénario SSP. Une sélection
-        absente ou invalide est bloquée sans I/O distant. Le tool conserve toutes
-        les lignes et n'agrège jamais par zone. Auto-détecte les colonnes
+        Une année cible reste obligatoire pour un scénario SSP. Une sélection
+        invalide est bloquée sans I/O distant. Le tool conserve toutes les lignes
+        et n'agrège jamais par zone. Auto-détecte les colonnes
         latitude/longitude ; si plusieurs fichiers sont en session, passe
         `source_variable` pour cibler un dataset précis. Chaque variable et
         scénario possède un libellé, une unité ou un niveau d'émission et une
@@ -1287,6 +1286,10 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         les seules lignes où les deux valeurs sont numériques, et rapporte le
         dénominateur calculable ainsi que les valeurs manquantes.
         """
+        variables = variables or ["temperature"]
+        scenarios = scenarios or ["baseline"]
+        depth_layer = depth_layer or "surface"
+        statistic = statistic or "mean"
         selection = validate_enrichment_selection(
             variables=variables,
             scenarios=scenarios,

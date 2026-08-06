@@ -218,38 +218,32 @@ result = compare_paired_density(paired, net_col="net_ind_m3", uvp_col="uvp_ind_m
 - `abundance_ratio` near 1 = concordant; >> 1 = UVP reads higher; << 1 = net reads higher.
 - Net tows and UVP are not expected to give identical numbers: different sampling volumes,
   size selectivity, detection thresholds. Never present one as "more correct".
-- UVP detects organisms reliably above ~600 µm → compare `late_stages` (C4+C5+M+F)
-  on the net side when comparing totals, not `ALL_STAGES` which includes nauplii.
+- The final comparison is deliberately not a generic “all Copepoda” total.
+  The trusted bridge retains Calanus C4+C5+M+F on the net side (excluding
+  *Calanus finmarchicus* C4) and curated UVP6 Calanus images ≥3 mm using the
+  per-image `object_major × acq_pixel` calibration. It rejects missing stages,
+  image size or calibration; never substitute a static pixel size or a generic
+  copepod count.
 - Always keep the CTD audit fields named above visible in the paired table or
   accompanying audit; never reduce them to a station name or a distance alone.
 - No causal or biological interpretation: describe the numbers, state the comparison basis.
 
 ## Stratified vertical profile (mandatory for filet ↔ UVP)
 
-For depth profiles/comparisons, start from `df_net_uvp_ecopart`. The audited
-filet table must already join NeoLabs abundance and sample metadata on
-`SAMPLE_ID + ANALYSIS_ID`. Otherwise rebuild and re-audit it. If the abundance
-metric or stages are ambiguous, ask once; the wide-file default is
-`ALL_STAGES_ABUND (ind./m3 depth vol.)` with `CLASS == Copepoda`.
+For depth profiles/comparisons, call `join_net_uvp_enriched`; it persists its
+strict result as `df_net_uvp_strata`. Do not import or call a comparison builder
+from `run_pandas`. The tool deduplicates net taxa and UVP objects, retains bins
+in the **same depth interval**, and returns one row per filet stratum. Keep all
+rows. Only `comparison_calculable=True` may feed numeric comparisons; preserve
+every `depth_match_status` and `exclusion_reason`. Never convert missing
+coverage or volume to zero. Never compare a full UVP profile with one net
+stratum; draw each interval's bounds.
 
-Never hand-write deduplication, bin selection, counts, sum of sampled volumes,
-conversion, delta, or ratio. Run:
-
-```python
-from core.net_uvp_comparison import build_paired_depth_strata
-
-paired_strata = build_paired_depth_strata(
-    df_net_uvp_ecopart,
-    net_abundance_col="ALL_STAGES_ABUND (ind./m3 depth vol.)",
-)
-result = paired_strata
-```
-
-Persist with `persist_as="df_net_uvp_strata"`. The builder deduplicates net
-taxa and UVP objects, retains bins in the **same depth interval**, and returns
-one row per filet stratum. Keep all rows. Only `comparison_calculable=True` may
-feed numeric comparisons; preserve every `depth_match_status` and
-`exclusion_reason`. Never convert missing coverage or volume to zero. Never compare a full UVP profile with one net stratum; draw each interval's bounds.
+For a profile-level result, use the tool-produced `df_net_uvp_profiles`, not a
+mean of strata: it integrates each matched density over its net depth interval
+to `ind./m²`, and exposes the fraction of requested depth actually covered.
+`partial_depth_coverage` is descriptive only and must never be reported as a
+complete profile integral.
 
 ### Method disclosure
 

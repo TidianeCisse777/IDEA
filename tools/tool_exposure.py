@@ -53,6 +53,12 @@ _AMUNDSEN_CORRESPONDENCE_PATTERN = re.compile(
     r"\b(?:correspond\w*|appariement\w*|match\w*)\b",
     re.IGNORECASE,
 )
+_AMUNDSEN_AVAILABILITY_PATTERN = re.compile(
+    r"(?=.*\b(?:amundsen|amudnsen|amdunsen|ctd)\b)"
+    r"(?=.*\b(?:disponibilit[eé]|existe|pr[eé]sent|couverture|possible|"
+    r"y\s+a[- ]?t[- ]?il|donn[eé]es?\s+(?:ctd|amundsen))\b)",
+    re.IGNORECASE | re.DOTALL,
+)
 _AMUNDSEN_VARIABLE_SELECTION_PATTERN = re.compile(
     r"\b(?:toutes?\s+les\s+(?:huit\s+)?variables?|all\s+(?:eight\s+)?variables?|"
     r"temp(?:[eé]rature)?s?|te90|salinit[eé]|salinity|psal|"
@@ -75,6 +81,12 @@ _CONFIRMATION_PATTERN = re.compile(
 _TAXONOMY_PATTERN = re.compile(
     r"\b(?:taxon\w*|taxa|taxonomi\w*|esp[eè]ce\w*|species)\b",
     re.IGNORECASE,
+)
+_ECOPART_LOOKUP_PATTERN = re.compile(
+    r"(?=.*\beco[\s-]*part\b)"
+    r"(?=.*\b(?:correspond\w*|appariem\w*|associ\w*|li[eé]\w*|"
+    r"lien\w*|disponibilit[eé]\w*|compatib\w*|projet\w*)\b)",
+    re.IGNORECASE | re.DOTALL,
 )
 _SQL_COPY_PATTERN = re.compile(
     r"\b(?:copie\w*|copy|export\w*|analyse\w*|analy[sz]\w*)\b",
@@ -187,7 +199,10 @@ def _drop_completed_protocol_steps(
     return tuple(name for name in selected if name not in completed_steps)
 _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     "file_analysis": (
-        "prepare_net_uvp_audit_subsets", "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
+        # A local Filet↔UVP request must reach the dedicated calculator before
+        # generic pandas.  Otherwise a constrained fallback exposes only
+        # run_pandas and invites the model to fabricate an object-count proxy.
+        "compare_local_net_uvp_profiles", "prepare_net_uvp_audit_subsets", "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
         "split_dataframe_by_zone",
     ),
     "ecotaxa_discovery": (
@@ -207,6 +222,12 @@ _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
         "query_amundsen_profiles_for_table",
         "enrich_with_amundsen_ctd",
     ),
+    "amundsen_preview": (
+        "find_amundsen_data_for_table",
+    ),
+    "ecopart_preview": (
+        "find_ecopart_project_for_ecotaxa", "preview_ecopart_sample",
+    ),
 }
 _GROUP_ORDER: tuple[ToolExposureGroup, ...] = (
     "core",
@@ -218,6 +239,7 @@ _GROUP_ORDER: tuple[ToolExposureGroup, ...] = (
     "enrichment_ecopart",
     "ecopart_preview",
     "enrichment_amundsen",
+    "amundsen_preview",
     "enrichment_bio_oracle",
     "enrichment_ogsl",
     "sql_workspace",
@@ -242,6 +264,8 @@ class TurnSignals:
     preview_requested: bool
     confirmation_requested: bool
     taxonomy_requested: bool
+    ecopart_lookup_requested: bool
+    amundsen_availability_requested: bool
     sql_copy_requested: bool
     geographic_requested: bool
     successful_tools_this_turn: tuple[str, ...]
@@ -321,6 +345,10 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         preview_requested=bool(_PREVIEW_PATTERN.search(text)),
         confirmation_requested=bool(_CONFIRMATION_PATTERN.search(text)),
         taxonomy_requested=bool(_TAXONOMY_PATTERN.search(text)),
+        ecopart_lookup_requested=bool(_ECOPART_LOOKUP_PATTERN.search(text)),
+        amundsen_availability_requested=bool(
+            _AMUNDSEN_AVAILABILITY_PATTERN.search(text)
+        ),
         sql_copy_requested=bool(_SQL_COPY_PATTERN.search(text)),
         geographic_requested=(
             any(term in normalized_text for term in _ECOTAXA_GEO_TERMS)
@@ -450,6 +478,7 @@ def decide_tool_exposure(
     named_amundsen_environment_request = bool(
         "amundsen" in source_decision.explicit_sources
         and _AMUNDSEN_ENVIRONMENT_PATTERN.search(signals.latest_user_text)
+        and not signals.amundsen_availability_requested
         and not (
             _AMUNDSEN_CORRESPONDENCE_PATTERN.search(signals.latest_user_text)
             and not signals.enrichment_requested
@@ -503,6 +532,14 @@ def decide_tool_exposure(
         if "ecopart" in authorized:
             groups.append("ecopart_preview")
             reasons.append("explicit EcoPart preview")
+
+    if signals.ecopart_lookup_requested and "ecopart" in authorized:
+        groups.append("ecopart_preview")
+        reasons.append("explicit EcoTaxa–EcoPart correspondence lookup")
+
+    if signals.amundsen_availability_requested and "amundsen" in authorized:
+        groups.append("amundsen_preview")
+        reasons.append("explicit Amundsen availability lookup")
 
     if "ecotaxa" in authorized and not focused_enrichment:
         ecotaxa_groups = ["ecotaxa_discovery"]

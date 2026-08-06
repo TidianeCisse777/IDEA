@@ -56,6 +56,7 @@ ToolExposureGroup: TypeAlias = Literal[
     "enrichment_ecopart",
     "ecopart_preview",
     "enrichment_amundsen",
+    "amundsen_preview",
     "enrichment_bio_oracle",
     "enrichment_ogsl",
     "sql_workspace",
@@ -260,6 +261,7 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "summarize_ecotaxa_profiles_for_map": _source("EcoTaxa · profils pour carte", "EcoTaxa · map-ready profiles", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "find_uvp_matches_for_net_table": _presentation("Correspondances filet↔UVP (cache local)", "Net↔UVP matches (local cache)", "data"),
     "join_net_uvp_enriched": _presentation("Jointure filet↔UVP enrichie certifiée", "Certified enriched net↔UVP join", "data"),
+    "compare_local_net_uvp_profiles": _presentation("Comparaison fichier filet↔UVP6", "Local net↔UVP6 profile comparison", "data"),
     # Bio-ORACLE.
     "list_bio_oracle_datasets": _source("Bio-ORACLE · jeux de données", "Bio-ORACLE · datasets", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
     "preview_bio_oracle_point": _source("Bio-ORACLE · aperçu ponctuel", "Bio-ORACLE · point preview", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
@@ -342,6 +344,7 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "run_pandas": "local_session",
     "run_graph": "local_artifact",
     "join_net_uvp_enriched": "local_low_session",
+    "compare_local_net_uvp_profiles": "local_low_session",
     # EcoTaxa read-only/cache navigation.
     "audit_ecotaxa_spatial_coverage": "remote_read",
     "list_ecotaxa_cache_tables": "local_source_read",
@@ -462,6 +465,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "enrich_ecotaxa_with_ecopart_remote": "enrichment_ecopart",
     "enrich_with_amundsen_ctd": "enrichment_amundsen",
     "query_amundsen_profiles_for_table": "enrichment_amundsen",
+    "find_amundsen_data_for_table": "amundsen_preview",
     "enrich_with_bio_oracle": "enrichment_bio_oracle",
     "enrich_with_ogsl": "enrichment_ogsl",
     # EcoTaxa discovery is cache-first. The former project/sample convenience
@@ -506,6 +510,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "summarize_ecotaxa_profiles_for_map": "hidden_legacy",
     "find_uvp_matches_for_net_table": "file_analysis",
     "join_net_uvp_enriched": "file_analysis",
+    "compare_local_net_uvp_profiles": "file_analysis",
     "summarize_ecotaxa_project": "hidden_legacy",
     "summarize_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa exports.
@@ -516,16 +521,16 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "list_sql_tables": "sql_workspace",
     "preview_sql_table": "sql_workspace",
     "copy_sql_query_to_workspace": "sql_workspace",
-    # Registered for compatibility, never advertised by step 6.
+    # Read-only EcoTaxa↔EcoPart correspondence lookup.  It is distinct from
+    # enrichment and must remain available before any export.
     "list_ecopart_samples": "hidden_legacy",
     "preview_ecopart_sample": "ecopart_preview",
-    "find_ecopart_project_for_ecotaxa": "hidden_legacy",
+    "find_ecopart_project_for_ecotaxa": "ecopart_preview",
     "query_ecopart": "hidden_legacy",
     "join_ecotaxa_ecopart": "hidden_legacy",
     "audit_ecotaxa_ecopart_join": "hidden_legacy",
     "list_amundsen_datasets": "hidden_legacy",
     "preview_amundsen_profile": "hidden_legacy",
-    "find_amundsen_data_for_table": "hidden_legacy",
     "enrich_loaded_table_with_amundsen_ctd": "hidden_legacy",
     "query_amundsen_ctd": "hidden_legacy",
     "list_bio_oracle_datasets": "hidden_legacy",

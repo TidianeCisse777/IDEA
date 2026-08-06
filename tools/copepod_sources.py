@@ -1027,8 +1027,14 @@ def make_source_tools(thread_id: str) -> list:
         uvp_enriched_variable: str,
         audit_variable_name: str = "df_net_uvp_matches",
         allow_unverified_ctd: bool = False,
+        taxon_filter: str = "Calanus",
+        net_stages: str = "C4,C5,M,F",
+        uvp_min_size_mm: float = 3.0,
+        depth_window_min_m: float | None = None,
+        depth_window_max_m: float | None = None,
+        comparison_level: str = "both",
     ) -> str:
-        """Joint localement un filet à des objets UVP enrichis EcoPart certifiés.
+        """Produit la comparaison filet–UVP6 Calanus à partir d'objets EcoPart certifiés.
 
         Utiliser seulement après l'audit filet↔UVP
         `find_uvp_matches_for_net_table` et après l'enrichissement EcoPart de
@@ -1036,14 +1042,34 @@ def make_source_tools(thread_id: str) -> list:
         persistés en session. L'audit est l'unique autorité de jointure : seules
         ses lignes `join_eligible=True`, déjà validées par le fichier CTD
         Amundsen, peuvent atteindre la table finale. Ce tool ne télécharge rien
-        et ne calcule aucune interprétation scientifique. Une ligne CTD
+        et ne calcule aucune interprétation scientifique. Le calcul applique
+        automatiquement le protocole Calanus UVP6–Hydrobios : au filet C4+C5+M+F
+        (avec exclusion de *C. finmarchicus* C4) ; côté UVP, images Calanus
+        conservées seulement à partir de 3 mm (`object_major × acq_pixel`) ou
+        d'une segmentation manuelle explicitement documentée. Il refuse les
+        exports sans taille ou calibration image, au lieu de comparer tous les
+        copépodes. Les paramètres `taxon_filter`, `net_stages`,
+        `uvp_min_size_mm` et fenêtre verticale rendent ce protocole modifiable,
+        avec leur valeur conservée dans chaque résultat. `comparison_level` vaut
+        `strata`, `profile` ou `both`. Une ligne CTD
         indisponible peut être jointe seulement avec `allow_unverified_ctd=True`
         et une preuve d'opt-in exploratoire persistée par l'audit; un no-match
         reste toujours refusé.
         """
         from core.net_uvp_comparison import (
             build_paired_depth_strata_from_certified_inputs,
+            integrate_paired_depth_strata,
             join_certified_net_uvp_enriched,
+        )
+
+        if comparison_level not in {"strata", "profile", "both"}:
+            return blocked(
+                "Comparaison filet↔UVP refusée : `comparison_level` doit être "
+                "`strata`, `profile` ou `both`.",
+                provenance={"source": "net_uvp_ecopart_certified"}, retryable=False,
+            )
+        primary_data_ref = (
+            "df_net_uvp_profiles" if comparison_level == "profile" else "df_net_uvp_strata"
         )
 
         variable_names = {
@@ -1126,19 +1152,52 @@ def make_source_tools(thread_id: str) -> list:
             if net_id_column is not None else set()
         )
         available_audit_samples = audit_sample_keys.intersection(net_sample_keys)
-        net_abundance_column = "ALL_STAGES_ABUND (ind./m3 depth vol.)"
         net_abundance_sample_keys: set[str] = set()
-        if net_id_column is not None and net_abundance_column in datasets["table filet"].columns:
-            net_abundance = pd.to_numeric(
-                datasets["table filet"][net_abundance_column], errors="coerce"
+        net_table = datasets["table filet"]
+        net_taxon_column = next(
+            (column for column in ("TAXON_ID", "taxon_id") if column in net_table.columns),
+            None,
+        )
+        if net_id_column is not None and net_taxon_column is not None:
+            taxa = net_table[net_taxon_column].astype("string").str.strip()
+            has_abundance = (
+                taxa.str.contains("calanus", case=False, na=False, regex=False)
+                & ~taxa.str.casefold().eq("calanus spp.")
             )
-            has_abundance = net_abundance.notna()
-            if "CLASS" in datasets["table filet"].columns:
-                has_abundance &= datasets["table filet"]["CLASS"].astype(
-                    "string"
-                ).str.casefold().eq("copepoda")
+            stage_column = next(
+                (column for column in ("TAXON_LIFE_DEV_STAGE", "stage", "STAGE") if column in net_table.columns),
+                None,
+            )
+            if stage_column is not None:
+                stages = net_table[stage_column].astype("string").str.strip().str.upper()
+                has_abundance &= stages.isin({"C4", "C5", "M", "F"})
+                has_abundance &= ~(
+                    taxa.str.contains("calanus finmarchicus", case=False, na=False)
+                    & stages.eq("C4")
+                )
+                abundance_column = "ALL_STAGES_ABUND (ind./m3 depth vol.)"
+                if abundance_column in net_table.columns:
+                    has_abundance &= pd.to_numeric(
+                        net_table[abundance_column], errors="coerce"
+                    ).notna()
+                else:
+                    has_abundance &= False
+            else:
+                stage_columns = (
+                    "C4_ABUND (ind./m3 depth vol.)",
+                    "C5_ABUND (ind./m3 depth vol.)",
+                    "M_ABUND (ind./m3 depth vol.)",
+                    "F_ABUND (ind./m3 depth vol.)",
+                )
+                if all(column in net_table.columns for column in stage_columns):
+                    stage_values = net_table.loc[:, list(stage_columns)].apply(
+                        pd.to_numeric, errors="coerce"
+                    )
+                    has_abundance &= stage_values.notna().any(axis=1)
+                else:
+                    has_abundance &= False
             net_abundance_sample_keys = _canonical_sample_keys(
-                datasets["table filet"].loc[has_abundance, net_id_column]
+                net_table.loc[has_abundance, net_id_column]
             )
         net_abundance_available_count = int(
             certified_pair_frame["net_sample_id"].isin(
@@ -1350,7 +1409,7 @@ def make_source_tools(thread_id: str) -> list:
         coverage_note = (
             f"Couverture filet disponible : {len(available_audit_samples)}/"
             f"{len(audit_sample_keys)} prélèvement(s) certifié(s). "
-            "Couverture d'abondance disponible : "
+            "Couverture Calanus C4+C5+M+F disponible : "
             f"filet {net_abundance_available_count}/{certified_pair_count} paire(s) "
             f"certifiée(s) ; volume EcoPart {ecopart_volume_available_count}/"
             f"{certified_pair_count}."
@@ -1389,6 +1448,11 @@ def make_source_tools(thread_id: str) -> list:
                 enriched_for_comparison,
                 allow_unverified_ctd=exploratory_override,
                 uvp_object_col=object_column or "object_id",
+                taxon_filter=taxon_filter,
+                net_stages=net_stages,
+                uvp_min_size_mm=uvp_min_size_mm,
+                depth_window_min_m=depth_window_min_m,
+                depth_window_max_m=depth_window_max_m,
             )
         except ValueError as exc:
             return blocked(
@@ -1463,12 +1527,23 @@ def make_source_tools(thread_id: str) -> list:
             ctd_verification = "unavailable" if joined_exploratory else "verified"
             calculable = strata.loc[strata["comparison_calculable"]].copy()
             exclusions = strata.loc[~strata["comparison_calculable"]].copy()
-            from core.net_uvp_comparison import NET_UVP_DEPTH_METHOD_VERSION  # noqa: PLC0415
+            profiles = integrate_paired_depth_strata(strata)
+            from core.net_uvp_comparison import (  # noqa: PLC0415
+                NET_UVP_DEPTH_METHOD_VERSION,
+                NET_UVP_PROFILE_METHOD_VERSION,
+            )
 
             comparison_provenance = {
                 "source": "net_uvp_depth_comparison",
                 "joined_variable": "compact_certified_inputs",
                 "method_version": NET_UVP_DEPTH_METHOD_VERSION,
+                "profile_method_version": NET_UVP_PROFILE_METHOD_VERSION,
+                "taxon_filter": taxon_filter,
+                "net_stages": net_stages,
+                "uvp_min_size_mm": uvp_min_size_mm,
+                "depth_window_min_m": depth_window_min_m,
+                "depth_window_max_m": depth_window_max_m,
+                "comparison_level": comparison_level,
                 "ctd_verification": ctd_verification,
                 "exploratory": joined_exploratory,
                 "materialization": "avoided_taxa_x_objects",
@@ -1480,6 +1555,7 @@ def make_source_tools(thread_id: str) -> list:
                 ("df_net_uvp_strata", strata),
                 ("df_net_uvp_calculable", calculable),
                 ("df_net_uvp_exclusions", exclusions),
+                ("df_net_uvp_profiles", profiles),
             ):
                 store_dataset(
                     _store,
@@ -1504,9 +1580,9 @@ def make_source_tools(thread_id: str) -> list:
                 f"{len(exclusions)} avec valeur manquante ou exclusion. "
                 f"{coverage_note} {pair_readiness_note} "
                 "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
-                "`df_net_uvp_exclusions`.",
+                "`df_net_uvp_exclusions`, `df_net_uvp_profiles`.",
                 provenance={"source": "net_uvp_ecopart_certified"},
-                data_ref="df_net_uvp_strata",
+                data_ref=primary_data_ref,
                 persisted=True,
                 metrics={
                     "rows": len(strata),
@@ -1516,6 +1592,7 @@ def make_source_tools(thread_id: str) -> list:
                     "total_strata": int(len(strata)),
                     "calculable_strata": int(len(calculable)),
                     "missing_strata": int(len(exclusions)),
+                    "profile_comparisons": int(len(profiles)),
                     "exclusions_by_status": exclusion_counts,
                     "certified_audit_samples": len(audit_sample_keys),
                     "available_net_samples": len(available_audit_samples),
@@ -1585,12 +1662,23 @@ def make_source_tools(thread_id: str) -> list:
         strata = compact_strata
         calculable = strata.loc[strata["comparison_calculable"]].copy()
         exclusions = strata.loc[~strata["comparison_calculable"]].copy()
-        from core.net_uvp_comparison import NET_UVP_DEPTH_METHOD_VERSION  # noqa: PLC0415
+        profiles = integrate_paired_depth_strata(strata)
+        from core.net_uvp_comparison import (  # noqa: PLC0415
+            NET_UVP_DEPTH_METHOD_VERSION,
+            NET_UVP_PROFILE_METHOD_VERSION,
+        )
 
         comparison_provenance = {
             "source": "net_uvp_depth_comparison",
             "joined_variable": "compact_certified_inputs",
             "method_version": NET_UVP_DEPTH_METHOD_VERSION,
+            "profile_method_version": NET_UVP_PROFILE_METHOD_VERSION,
+            "taxon_filter": taxon_filter,
+            "net_stages": net_stages,
+            "uvp_min_size_mm": uvp_min_size_mm,
+            "depth_window_min_m": depth_window_min_m,
+            "depth_window_max_m": depth_window_max_m,
+            "comparison_level": comparison_level,
             "ctd_verification": ctd_verification,
             "exploratory": joined_exploratory,
             "materialization": "legacy_object_table_inspection_only",
@@ -1601,6 +1689,7 @@ def make_source_tools(thread_id: str) -> list:
             ("df_net_uvp_strata", strata),
             ("df_net_uvp_calculable", calculable),
             ("df_net_uvp_exclusions", exclusions),
+            ("df_net_uvp_profiles", profiles),
         ):
             store_dataset(
                 _store,
@@ -1623,6 +1712,7 @@ def make_source_tools(thread_id: str) -> list:
             "total_strata": int(len(strata)),
             "calculable_strata": int(len(calculable)),
             "missing_strata": int(len(exclusions)),
+            "profile_comparisons": int(len(profiles)),
             "exclusions_by_status": exclusion_counts,
             "certified_pair_count": certified_pair_count,
             "net_abundance_available_count": net_abundance_available_count,
@@ -1638,7 +1728,7 @@ def make_source_tools(thread_id: str) -> list:
             + pair_readiness_note
             + " "
             "Tables : `df_net_uvp_strata`, `df_net_uvp_calculable`, "
-            "`df_net_uvp_exclusions`."
+            "`df_net_uvp_exclusions`, `df_net_uvp_profiles`."
         )
         return success(
             (
@@ -1652,7 +1742,7 @@ def make_source_tools(thread_id: str) -> list:
             + f"\n{coverage_note}"
             + comparison_note,
             provenance={"source": "net_uvp_ecopart_certified"},
-            data_ref=("df_net_uvp_strata" if comparison_refs else variable_name),
+            data_ref=(primary_data_ref if comparison_refs else variable_name),
             persisted=True,
             metrics={
                 "rows": len(joined),
@@ -1660,6 +1750,354 @@ def make_source_tools(thread_id: str) -> list:
                 "certified_audit_samples": len(audit_sample_keys),
                 "available_net_samples": len(available_audit_samples),
                 **comparison_metrics,
+            },
+        )
+
+    @tool(response_format="content_and_artifact")
+    def compare_local_net_uvp_profiles(
+        net_variable_name: str,
+        uvp_variable_name: str,
+        net_profile_column: str | None = None,
+        uvp_profile_column: str = "sample_profileid",
+        correspondence_variable_name: str | None = None,
+        taxon_filter: str = "Calanus",
+        net_stages: str = "C4,C5,M,F",
+        uvp_min_size_mm: float = 3.0,
+        depth_window_min_m: float | None = None,
+        depth_window_max_m: float | None = None,
+        comparison_level: str = "both",
+    ) -> str:
+        """Compare deux fichiers locaux filet et UVP6 par profil/cast exact.
+
+        À utiliser quand les deux sources ont été chargées comme fichiers locaux,
+        déjà avec les objets UVP, profondeur, volume échantillonné et calibration
+        image. Les deux colonnes de profil doivent désigner le même déploiement
+        exact (ID de profil ou de cast), jamais seulement un nom de station si ce
+        nom est réutilisé. Sans `net_profile_column`, le tool détecte une clé
+        profil/cast partagée non ambiguë. Si le fichier filet n'a pas cet ID, passer
+        `correspondence_variable_name` : une table locale explicite
+        `net_sample_id` → `uvp_profile_id` est alors appliquée par le tool. Le
+        tool détecte les colonnes usuelles, applique le
+        protocole Calanus UVP6–Hydrobios et persiste une table distincte
+        `df_local_net_uvp_strata`. Aucun appel EcoTaxa/EcoPart, audit CTD ou
+        métadonnée distante n'est simulé : le résultat est marqué appariement
+        local explicite, non certifié CTD. `taxon_filter`, `net_stages`,
+        `uvp_min_size_mm`, la fenêtre verticale et `comparison_level`
+        (`strata`, `profile`, `both`) sont des choix explicites conservés avec
+        le résultat.
+        """
+        from core.net_uvp_comparison import (
+            build_paired_depth_strata_from_certified_inputs,
+            integrate_paired_depth_strata,
+        )
+        if comparison_level not in {"strata", "profile", "both"}:
+            return blocked(
+                "Comparaison locale refusée : `comparison_level` doit être "
+                "`strata`, `profile` ou `both`.",
+                provenance={"source": "local_net_uvp_profiles"}, retryable=False,
+            )
+        primary_data_ref = (
+            "df_local_net_uvp_profiles"
+            if comparison_level == "profile"
+            else "df_local_net_uvp_strata"
+        )
+
+        entries: dict[str, dict[str, object]] = {}
+        frames: dict[str, pd.DataFrame] = {}
+        for label, variable_name in (("filet", net_variable_name), ("UVP", uvp_variable_name)):
+            entry = _store.get(f"{thread_id}:dataset:{variable_name}")
+            if not entry or entry.get("df") is None:
+                return blocked(
+                    f"Comparaison locale refusée : table {label} `{variable_name}` introuvable.",
+                    provenance={"source": "local_net_uvp_profiles"},
+                    retryable=False,
+                )
+            entries[label] = entry
+            frames[label] = entry["df"].copy()
+
+        net = frames["filet"]
+        uvp = frames["UVP"]
+        if uvp_profile_column not in uvp.columns:
+            return blocked(
+                "Comparaison locale refusée : clé de profil UVP absente : "
+                f"`UVP.{uvp_profile_column}`.",
+                provenance={"source": "local_net_uvp_profiles"},
+                retryable=False,
+            )
+
+        def resolve(frame: pd.DataFrame, label: str, *candidates: str) -> str:
+            column = next((candidate for candidate in candidates if candidate in frame.columns), None)
+            if column is None:
+                raise ValueError(
+                    f"Comparaison locale refusée : colonne {label} absente "
+                    f"(candidates : {', '.join(candidates)})."
+                )
+            return column
+
+        def canonical(values: pd.Series) -> pd.Series:
+            return values.astype("string").str.strip().str.replace(
+                r"^([+-]?\d+)\.0+$", r"\1", regex=True
+            ).replace("", pd.NA)
+
+        # A generic `sample_id` is deliberately not a candidate: only an exact
+        # profile/cast/deployment identifier can bridge two local instruments.
+        if correspondence_variable_name is None and net_profile_column is None:
+            profile_candidates = (
+                "sample_profileid", "uvp_profile_id", "profile_id", "profileid",
+                "cast_id", "cast", "deployment_id", "deployment",
+            )
+            uvp_keys = set(canonical(uvp[uvp_profile_column]).dropna())
+            matches = [
+                candidate for candidate in profile_candidates
+                if candidate in net.columns
+                and bool(set(canonical(net[candidate]).dropna()).intersection(uvp_keys))
+            ]
+            if len(matches) == 1:
+                net_profile_column = matches[0]
+            elif not matches:
+                return blocked(
+                    "Comparaison locale refusée : aucune clé profil/cast exacte commune. "
+                    "Fournir une table `net_sample_id → uvp_profile_id` ou une colonne "
+                    "de profil explicite; un nom de station seul n'est pas accepté.",
+                    provenance={"source": "local_net_uvp_profiles"}, retryable=False,
+                )
+            else:
+                return blocked(
+                    "Comparaison locale refusée : plusieurs clés profil/cast communes sont "
+                    f"possibles ({', '.join('`' + value + '`' for value in matches)}). "
+                    "Indiquer `net_profile_column` pour choisir explicitement.",
+                    provenance={"source": "local_net_uvp_profiles"}, retryable=False,
+                )
+        if correspondence_variable_name is None and (
+            not net_profile_column or net_profile_column not in net.columns
+        ):
+            return blocked(
+                "Comparaison locale refusée : clé de profil Filet absente : "
+                f"`filet.{net_profile_column or 'ID de profil'}`.",
+                provenance={"source": "local_net_uvp_profiles"}, retryable=False,
+            )
+
+        try:
+            net_sample = resolve(net, "identifiant filet", "SAMPLE_ID", "sample_id", "net_sample_id")
+            net_taxon = resolve(net, "taxon filet", "TAXON_ID", "taxon_id", "taxon")
+            net_depth_min = resolve(net, "profondeur minimale filet", "MIN_SAMPLE_DEPTH", "min_sample_depth", "depth_min")
+            net_depth_max = resolve(net, "profondeur maximale filet", "MAX_SAMPLE_DEPTH", "max_sample_depth", "depth_max")
+            net_abundance = next(
+                (
+                    candidate for candidate in (
+                        "ALL_STAGES_ABUND (ind./m3 depth vol.)",
+                        "ABUND (ind./m3 depth vol.)",
+                        "abundance_m3", "abundance_ind_m3",
+                    ) if candidate in net.columns
+                ),
+                None,
+            )
+            # NeoLabs-wide rows hold one column per stage.  The native
+            # calculator uses those columns directly, but still requires an
+            # abundance column to validate the table shape.
+            requested_stages = tuple(
+                stage.strip().upper() for stage in str(net_stages).split(",") if stage.strip()
+            )
+            wide_stage_columns = [
+                f"{stage}_ABUND (ind./m3 depth vol.)" for stage in requested_stages
+            ]
+            if net_abundance is None and all(column in net.columns for column in wide_stage_columns):
+                net_abundance = wide_stage_columns[0]
+            if net_abundance is None:
+                raise ValueError(
+                    "Comparaison locale refusée : colonne d'abondance Filet absente "
+                    "(attendue en ind./m³, ou colonnes de stades C4/C5/M/F)."
+                )
+            uvp_object = resolve(uvp, "identifiant objet UVP", "object_id", "obj_orig_id", "obj_id")
+            uvp_taxonomy = resolve(uvp, "taxonomie UVP", "object_annotation_hierarchy", "annotation_hierarchy")
+            uvp_depth = resolve(uvp, "bin de profondeur UVP", "depth_bin", "depth_mid", "depth")
+            uvp_volume = resolve(
+                uvp, "volume UVP",
+                "ecopart_Sampled volume [L]", "sampled_volume_L", "sampled_volume_l",
+            )
+            uvp_major = resolve(uvp, "grand axe UVP", "object_major", "fre_major")
+            uvp_pixel = resolve(uvp, "calibration UVP", "acq_pixel", "acq_pixel_um_size")
+        except ValueError as exc:
+            return blocked(str(exc), provenance={"source": "local_net_uvp_profiles"}, retryable=False)
+
+        # Canonical input names let the native-grain builder serve both the
+        # external and file-only routes without a dataframe cartesian product.
+        net["__local_sample_id"] = canonical(net[net_sample])
+        if correspondence_variable_name is None:
+            assert net_profile_column is not None
+            net["__local_profile_key"] = canonical(net[net_profile_column])
+        else:
+            correspondence_entry = _store.get(
+                f"{thread_id}:dataset:{correspondence_variable_name}"
+            )
+            if not correspondence_entry or correspondence_entry.get("df") is None:
+                return blocked(
+                    "Comparaison locale refusée : table de correspondance "
+                    f"`{correspondence_variable_name}` introuvable.",
+                    provenance={"source": "local_net_uvp_profiles"}, retryable=False,
+                )
+            correspondence = correspondence_entry["df"].copy()
+            try:
+                correspondence_net = resolve(
+                    correspondence, "sample filet de correspondance",
+                    "net_sample_id", "SAMPLE_ID", "sample_id",
+                )
+                correspondence_profile = resolve(
+                    correspondence, "profil UVP de correspondance",
+                    "uvp_profile_id", "uvp_profile_str", "sample_profileid",
+                )
+            except ValueError as exc:
+                return blocked(str(exc), provenance={"source": "local_net_uvp_profiles"}, retryable=False)
+            pairs = pd.DataFrame({
+                "__local_sample_id": canonical(correspondence[correspondence_net]),
+                "__local_profile_key": canonical(correspondence[correspondence_profile]),
+            }).dropna().drop_duplicates()
+            if pairs.duplicated("__local_sample_id", keep=False).any():
+                return blocked(
+                    "Comparaison locale refusée : la table de correspondance associe "
+                    "un même sample filet à plusieurs profils UVP.",
+                    provenance={"source": "local_net_uvp_profiles"}, retryable=False,
+                )
+            net = net.merge(pairs, on="__local_sample_id", how="left")
+        net["__local_analysis_id"] = (
+            canonical(net["ANALYSIS_ID"])
+            if "ANALYSIS_ID" in net.columns
+            else "local"
+        )
+        net["__local_taxon"] = net[net_taxon]
+        net["__local_depth_min"] = net[net_depth_min]
+        net["__local_depth_max"] = net[net_depth_max]
+        net["__local_abundance"] = net[net_abundance]
+        uvp["__local_profile_key"] = canonical(uvp[uvp_profile_column])
+        uvp["export_project_id"] = "local_file"
+        uvp["sample_profileid"] = uvp["__local_profile_key"]
+        uvp["__local_object_id"] = uvp[uvp_object]
+        uvp["object_annotation_hierarchy"] = uvp[uvp_taxonomy]
+        uvp["__local_depth"] = uvp[uvp_depth]
+        uvp["__local_volume"] = uvp[uvp_volume]
+        uvp["object_major"] = uvp[uvp_major]
+        uvp["acq_pixel"] = uvp[uvp_pixel]
+
+        net_pairs = net[["__local_sample_id", "__local_profile_key"]].dropna().drop_duplicates()
+        if net_pairs.empty:
+            return blocked(
+                "Comparaison locale refusée : aucune clé de profil filet exploitable.",
+                provenance={"source": "local_net_uvp_profiles"}, retryable=False,
+            )
+        if net_pairs.duplicated("__local_sample_id", keep=False).any():
+            return blocked(
+                "Comparaison locale refusée : un même sample filet pointe vers plusieurs profils. "
+                "Choisir une clé de profil exacte plutôt qu'une station réutilisée.",
+                provenance={"source": "local_net_uvp_profiles"}, retryable=False,
+            )
+        uvp_profiles = set(uvp["__local_profile_key"].dropna())
+        matched_pairs = net_pairs.loc[net_pairs["__local_profile_key"].isin(uvp_profiles)].copy()
+        if matched_pairs.empty:
+            return blocked(
+                "Comparaison locale refusée : aucune valeur commune entre les clés de profil "
+                f"`{net_profile_column}` et `{uvp_profile_column}`.",
+                provenance={"source": "local_net_uvp_profiles"}, retryable=False,
+            )
+
+        audit = pd.DataFrame({
+            "net_sample_id": matched_pairs["__local_sample_id"],
+            "uvp_project_id": "local_file",
+            "uvp_profile_str": matched_pairs["__local_profile_key"],
+            # Internal routing flag only; the persisted result is explicitly
+            # marked local/non-CTD-certified below.
+            "join_eligible": True,
+        })
+        net_for_comparison = net.loc[
+            net["__local_sample_id"].isin(set(matched_pairs["__local_sample_id"]))
+        ].copy()
+        try:
+            strata = build_paired_depth_strata_from_certified_inputs(
+                net_for_comparison,
+                audit,
+                uvp,
+                net_sample_col="__local_sample_id",
+                net_analysis_col="__local_analysis_id",
+                net_taxon_col="__local_taxon",
+                net_depth_min_col="__local_depth_min",
+                net_depth_max_col="__local_depth_max",
+                net_abundance_col="__local_abundance",
+                uvp_depth_col="__local_depth",
+                uvp_object_col="__local_object_id",
+                uvp_taxonomy_col="object_annotation_hierarchy",
+                uvp_volume_col="__local_volume",
+                taxon_filter=taxon_filter,
+                net_stages=net_stages,
+                uvp_min_size_mm=uvp_min_size_mm,
+                depth_window_min_m=depth_window_min_m,
+                depth_window_max_m=depth_window_max_m,
+            )
+        except ValueError as exc:
+            return blocked(str(exc), provenance={"source": "local_net_uvp_profiles"}, retryable=False)
+        if strata.empty:
+            return empty(
+                "Aucune strate commune après appariement local explicite des profils.",
+                provenance={"source": "local_net_uvp_profiles"},
+            )
+        strata["pairing_provenance"] = "explicit_local_profile_key"
+        strata["ctd_verification"] = "not_available_local_files"
+        strata["exploratory"] = True
+        calculable = strata.loc[strata["comparison_calculable"]].copy()
+        exclusions = strata.loc[~strata["comparison_calculable"]].copy()
+        profiles = integrate_paired_depth_strata(strata)
+        profiles["pairing_provenance"] = "explicit_local_profile_key"
+        profiles["ctd_verification"] = "not_available_local_files"
+        profiles["exploratory"] = True
+        from core.net_uvp_comparison import (  # noqa: PLC0415
+            NET_UVP_DEPTH_METHOD_VERSION,
+            NET_UVP_PROFILE_METHOD_VERSION,
+        )
+
+        provenance = {
+            "source": "local_net_uvp_profiles",
+            "method_version": NET_UVP_DEPTH_METHOD_VERSION,
+            "profile_method_version": NET_UVP_PROFILE_METHOD_VERSION,
+            "taxon_filter": taxon_filter,
+            "net_stages": net_stages,
+            "uvp_min_size_mm": uvp_min_size_mm,
+            "depth_window_min_m": depth_window_min_m,
+            "depth_window_max_m": depth_window_max_m,
+            "comparison_level": comparison_level,
+            "pairing_provenance": "explicit_local_profile_key",
+            "ctd_verification": "not_available_local_files",
+            "exploratory": True,
+            "net_variable_name": net_variable_name,
+            "uvp_variable_name": uvp_variable_name,
+            "net_profile_column": net_profile_column,
+            "uvp_profile_column": uvp_profile_column,
+            "correspondence_variable_name": correspondence_variable_name,
+        }
+        for name, frame in (
+            ("df_local_net_uvp_strata", strata),
+            ("df_local_net_uvp_calculable", calculable),
+            ("df_local_net_uvp_exclusions", exclusions),
+            ("df_local_net_uvp_profiles", profiles),
+        ):
+            store_dataset(
+                _store, thread_id, frame, variable_name=name,
+                meta={**provenance, "n_rows": int(len(frame)), "n_cols": int(len(frame.columns))},
+                set_active=name == "df_local_net_uvp_strata",
+            )
+        return success(
+            "Comparaison locale filet–UVP6 créée par clé de profil explicite : "
+            f"{len(calculable)}/{len(strata)} strate(s) calculable(s). "
+            "Résultat exploratoire : aucune certification CTD n'est disponible pour deux fichiers locaux. "
+            "Tables : `df_local_net_uvp_strata`, `df_local_net_uvp_calculable`, "
+            "`df_local_net_uvp_exclusions`, `df_local_net_uvp_profiles`.",
+            provenance={"source": "local_net_uvp_profiles"},
+            data_ref=primary_data_ref,
+            persisted=True,
+            metrics={
+                "matched_profile_pairs": int(len(matched_pairs)),
+                "total_strata": int(len(strata)),
+                "calculable_strata": int(len(calculable)),
+                "excluded_strata": int(len(exclusions)),
+                "profile_comparisons": int(len(profiles)),
+                "comparison_readiness": "local_explicit_pairing",
             },
         )
 
@@ -5485,4 +5923,5 @@ def make_source_tools(thread_id: str) -> list:
         query_ecotaxa_cache,
         find_uvp_matches_for_net_table,
         join_net_uvp_enriched,
+        compare_local_net_uvp_profiles,
     ]
