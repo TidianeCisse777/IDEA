@@ -16,7 +16,6 @@ _CORE_TOOL_NAMES = (
     "load_skill",
     "query_copepod_knowledge_base",
     "run_pandas",
-    "export_ecotaxa_samples",
 )
 _ENRICHMENT_GROUP_BY_SOURCE: dict[str, ToolExposureGroup] = {
     "ecopart": "enrichment_ecopart",
@@ -90,6 +89,11 @@ _ECOPART_LOOKUP_PATTERN = re.compile(
 )
 _SQL_COPY_PATTERN = re.compile(
     r"\b(?:copie\w*|copy|export\w*|analyse\w*|analy[sz]\w*)\b",
+    re.IGNORECASE,
+)
+_DELIVERABLE_REQUEST_PATTERN = re.compile(
+    r"\b(?:pdf|livrable|rapport|document\s+(?:scientifique|pdf)|"
+    r"r[eé]sum[eé]\s+pdf|synth[eè]se\s+(?:pdf|document))\b",
     re.IGNORECASE,
 )
 # A negated retrieval ("sans l'exporter", "ne pas récupérer", "without
@@ -171,6 +175,7 @@ _NET_UVP_TOOL_NAMES = {
     "prepare_net_uvp_audit_subsets",
     "find_uvp_matches_for_net_table",
     "join_net_uvp_enriched",
+    "compare_local_net_uvp_profiles",
 }
 _TIME_SCOPE_PATTERN = re.compile(
     r"\b(?:20\d{2}|ann[eé]e?|p[eé]riode|fen[eê]tre|date|mois|saison|"
@@ -275,6 +280,7 @@ class TurnSignals:
     regional_ranking_requested: bool
     multi_zone_requested: bool
     cross_source_compare_requested: bool
+    deliverable_requested: bool
 
 
 @dataclass(frozen=True)
@@ -361,6 +367,7 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         regional_ranking_requested=regional_ranking_requested,
         multi_zone_requested=multi_zone_requested,
         cross_source_compare_requested=cross_source_compare_requested,
+        deliverable_requested=bool(_DELIVERABLE_REQUEST_PATTERN.search(text)),
     )
 
 
@@ -405,7 +412,7 @@ def decide_tool_exposure(
     source_decision: SourceDecision,
     messages: list[Any],
     *,
-    max_tools: int = 15,
+    max_tools: int = 20,
     store: Any | None = None,
 ) -> ToolExposureDecision:
     """Return the deterministic tool allowlist for the current model call."""
@@ -423,8 +430,74 @@ def decide_tool_exposure(
     net_uvp_audit_requested = bool(
         _NET_UVP_AUDIT_PATTERN.search(signals.latest_user_text)
     )
-    if not net_uvp_audit_requested:
+    net_uvp_progress = None
+    if turn_context.file_loaded:
+        from tools.net_uvp_workflow import resolve_net_uvp_progress
+
+        if store is None:
+            from tools.session_store import default_store
+
+            store = default_store
+        net_uvp_progress = resolve_net_uvp_progress(store, turn_context.thread_id)
+
+    # Keep this branch narrow. A plain local file analysis must not pay for four
+    # Filet↔UVP schemas. The exact next tool is exposed from the persisted
+    # workflow; only the final calculator survives a generic follow-up after
+    # EcoPart enrichment, where the user may simply say “continue”.
+    if not turn_context.file_loaded:
         names = tuple(name for name in names if name not in _NET_UVP_TOOL_NAMES)
+    elif net_uvp_progress is not None and net_uvp_progress.phase == "enriched":
+        names = tuple(
+            name
+            for name in names
+            if name not in _NET_UVP_TOOL_NAMES or name == "join_net_uvp_enriched"
+        )
+    elif not net_uvp_audit_requested:
+        names = tuple(name for name in names if name not in _NET_UVP_TOOL_NAMES)
+    elif net_uvp_progress is not None and net_uvp_progress.phase == "needs_subset":
+        # A bare Filet–UVP comparison can be two local files. A subset is only
+        # needed for a remote cache audit with an explicit zone/time scope.
+        if signals.geographic_requested or bool(_TIME_SCOPE_PATTERN.search(signals.latest_user_text)):
+            next_net_tool = "prepare_net_uvp_audit_subsets"
+        elif re.search(r"\beco[- ]?taxa\b", signals.latest_user_text, re.IGNORECASE):
+            next_net_tool = "find_uvp_matches_for_net_table"
+        else:
+            next_net_tool = "compare_local_net_uvp_profiles"
+        names = tuple(
+            name
+            for name in names
+            if name not in _NET_UVP_TOOL_NAMES or name == next_net_tool
+        )
+    elif net_uvp_progress is not None and net_uvp_progress.phase == "needs_audit":
+        names = tuple(
+            name
+            for name in names
+            if name not in _NET_UVP_TOOL_NAMES
+            or name == "find_uvp_matches_for_net_table"
+        )
+    elif net_uvp_progress is not None and net_uvp_progress.phase in {"audited", "exported", "joined"}:
+        names = tuple(name for name in names if name not in _NET_UVP_TOOL_NAMES)
+    elif signals.geographic_requested or bool(_TIME_SCOPE_PATTERN.search(signals.latest_user_text)):
+        names = tuple(
+            name
+            for name in names
+            if name not in _NET_UVP_TOOL_NAMES
+            or name == "prepare_net_uvp_audit_subsets"
+        )
+    elif re.search(r"\beco[- ]?taxa\b", signals.latest_user_text, re.IGNORECASE):
+        names = tuple(
+            name
+            for name in names
+            if name not in _NET_UVP_TOOL_NAMES
+            or name == "find_uvp_matches_for_net_table"
+        )
+    else:
+        names = tuple(
+            name
+            for name in names
+            if name not in _NET_UVP_TOOL_NAMES
+            or name == "compare_local_net_uvp_profiles"
+        )
     # Graphing is a normal workspace capability, not a separately classified
     # intent.  Keeping its compact schema visible lets the primary agent decide
     # directly and removes one LLM classification call per user turn.
@@ -445,9 +518,14 @@ def decide_tool_exposure(
         reasons.append("taxonomy requested")
 
     skills = signals.successful_skills_this_turn
-    if skills and skills[-1] == "deliverable_writer":
+    deliverable_skill_loaded = "deliverable_writer" in skills
+    if signals.deliverable_requested or deliverable_skill_loaded:
         groups.append("deliverable")
-        reasons.append("deliverable writer succeeded this turn")
+        reasons.append(
+            "explicit deliverable request"
+            if signals.deliverable_requested
+            else "deliverable writer succeeded this turn"
+        )
 
     authorized = set(source_decision.authorized_sources)
     explicit_enrichment_sources = tuple(
@@ -536,6 +614,15 @@ def decide_tool_exposure(
     if signals.ecopart_lookup_requested and "ecopart" in authorized:
         groups.append("ecopart_preview")
         reasons.append("explicit EcoTaxa–EcoPart correspondence lookup")
+    elif "ecopart" in authorized and has_active_table:
+        # EcoPart is profile-level context for an active EcoTaxa table.  Its
+        # lightweight correspondence check must remain reachable even when the
+        # user merely says “explore EcoPart”: that wording is neither a heavy
+        # enrichment request nor one of the narrowly named lookup synonyms.
+        # The remote export/enrichment tool itself is still exposed only when
+        # the user asks to enrich.
+        groups.append("ecopart_preview")
+        reasons.append("active table with authorized EcoPart preflight")
 
     if signals.amundsen_availability_requested and "amundsen" in authorized:
         groups.append("amundsen_preview")
@@ -565,6 +652,7 @@ def decide_tool_exposure(
                 "core",
                 "file_analysis" if signals.cross_source_compare_requested else "geography",
                 "geography", "visualization", "ecotaxa_discovery",
+                *(("deliverable",) if "deliverable" in active_groups else ()),
                 *geo_visual_fallback,
                 *ecotaxa_intents,
             )
@@ -573,6 +661,7 @@ def decide_tool_exposure(
             fallback_groups = tuple(
                 group for group in (
                     "core", "file_analysis", "geography", "ecotaxa_discovery",
+                    "deliverable",
                     *geo_fallback,
                     *ecotaxa_intents,
                 )
@@ -587,7 +676,9 @@ def decide_tool_exposure(
             "ecotaxa_discovery": 3,
         }
         if turn_context.file_loaded:
-            # Always guarantee local analysis plus the certified audit/join route.
+            # At most one Filet↔UVP operation is retained above, next to normal
+            # local analysis. This keeps a mixed source turn compact without
+            # hiding the calculator after the enrichment is complete.
             fallback_limits["file_analysis"] = 3
         if signals.cross_source_compare_requested:
             fallback_limits["file_analysis"] = max(fallback_limits.get("file_analysis", 0), 3)
@@ -641,7 +732,12 @@ def decide_tool_exposure(
             store = default_store
         progress = resolve_net_uvp_progress(store, turn_context.thread_id)
         if progress.phase == "no_file":
-            selected = _keep(selected, "load_file")
+            # ``TurnContext`` is built from the active session record.  If it
+            # already confirms a loaded file, a missing auxiliary workflow
+            # record must not hide all local tools and force a needless reload.
+            # Reserve the load-only state for a genuinely empty workspace.
+            if not turn_context.file_loaded:
+                selected = _keep(selected, "load_file")
         elif progress.phase == "needs_subset":
             selected = _keep(
                 selected,
@@ -671,6 +767,14 @@ def decide_tool_exposure(
         selected = tuple(name for name in selected if name != "load_skill")
         selected_set = set(selected)
         reasons.append("graph writer already loaded this turn")
+
+    # A deliverable request is terminal: after the writer skill succeeds the
+    # only useful next action is the actual export.  Do this after overflow
+    # handling so a busy EcoTaxa/file context can never hide the PDF tool.
+    if deliverable_skill_loaded:
+        selected = _keep(selected, "export_deliverable")
+        selected_set = set(selected)
+        reasons.append("deliverable writer loaded; export is the required next action")
 
     return ToolExposureDecision(
         tool_names=selected,

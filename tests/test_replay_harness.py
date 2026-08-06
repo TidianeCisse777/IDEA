@@ -55,8 +55,8 @@ def test_offline_replay_records_dynamic_tool_policy_under_the_per_call_cap():
     ]
 
     assert turns
-    assert all(len(turn["tools_exposed"]) <= 15 for turn in turns)
-    assert all(turn["context"]["tool_exposure_count"] <= 15 for turn in turns)
+    assert all(len(turn["tools_exposed"]) <= 20 for turn in turns)
+    assert all(turn["context"]["tool_exposure_count"] <= 20 for turn in turns)
     assert all("tool_exposure_alert" in turn["context"] for turn in turns)
     assert all("tool_exposure_groups" in turn["context"] for turn in turns)
     assert all("policy_overflow" in turn["context"] for turn in turns)

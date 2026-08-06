@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import requests
@@ -15,6 +17,7 @@ load_dotenv()
 
 _BASE_URL = "https://ecotaxa.obs-vlfr.fr/api"
 _TIMEOUT = 60
+_DOWNLOAD_ATTEMPTS = 2
 
 
 class EcotaxaExportError(RuntimeError):
@@ -321,23 +324,62 @@ class EcotaxaClient:
         raise RuntimeError(f"EcoTaxa job {job_id} did not finish after {max_polls} polls")
 
     def download_tsv(self, job_id: int) -> "pd.DataFrame":
-        import pandas as pd
+        """Download an already-finished export without materialising its raw bytes.
 
-        resp = self._session.get(f"{_BASE_URL}/jobs/{job_id}/file", timeout=_TIMEOUT)
-        resp.raise_for_status()
-        import io, zipfile
-        if resp.content[:4] == b"PK\x03\x04":
-            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
-                tsv_name = next(
-                    (n for n in z.namelist() if n.endswith(".tsv") or n.endswith(".csv")),
-                    None,
-                )
-                if tsv_name is None:
-                    raise RuntimeError(
-                        f"EcoTaxa job {job_id} — aucun objet ne correspond aux filtres "
-                        "(le ZIP renvoyé ne contient qu'un log, pas de TSV). "
-                        "Élargis les filtres (taxon, sample_ids, status) et réessaie."
-                    )
-                with z.open(tsv_name) as f:
-                    return pd.read_csv(f, sep="\t", low_memory=False)
-        return pd.read_csv(io.BytesIO(resp.content), sep="\t", low_memory=False)
+        Large object exports previously used ``resp.content``.  That retains the
+        whole ZIP/TSV alongside the parsed DataFrame and can make the agent
+        container run out of memory before the result reaches the session store.
+        The job file is immutable once finished, so a short retry of a truncated
+        transfer is safe.
+        """
+        import pandas as pd
+        import zipfile
+
+        last_error: Exception | None = None
+        for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+            temp_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    prefix=f"ecotaxa_job_{job_id}_", suffix=".download", delete=False
+                ) as handle:
+                    temp_path = Path(handle.name)
+                    with self._session.get(
+                        f"{_BASE_URL}/jobs/{job_id}/file",
+                        timeout=_TIMEOUT,
+                        stream=True,
+                    ) as resp:
+                        resp.raise_for_status()
+                        for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                handle.write(chunk)
+
+                with temp_path.open("rb") as handle:
+                    is_zip = handle.read(4) == b"PK\x03\x04"
+                if is_zip:
+                    with zipfile.ZipFile(temp_path) as archive:
+                        tsv_name = next(
+                            (name for name in archive.namelist()
+                             if name.endswith(".tsv") or name.endswith(".csv")),
+                            None,
+                        )
+                        if tsv_name is None:
+                            raise RuntimeError(
+                                f"EcoTaxa job {job_id} — aucun objet ne correspond aux filtres "
+                                "(le ZIP renvoyé ne contient qu'un log, pas de TSV). "
+                                "Élargis les filtres (taxon, sample_ids, status) et réessaie."
+                            )
+                        with archive.open(tsv_name) as handle:
+                            return pd.read_csv(handle, sep="\t", low_memory=False)
+                return pd.read_csv(temp_path, sep="\t", low_memory=False)
+            except (requests.RequestException, OSError, zipfile.BadZipFile) as exc:
+                last_error = exc
+                if attempt == _DOWNLOAD_ATTEMPTS:
+                    break
+                time.sleep(attempt)
+            finally:
+                if temp_path is not None:
+                    temp_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"Téléchargement EcoTaxa interrompu après {_DOWNLOAD_ATTEMPTS} tentatives "
+            f"pour le job {job_id} : {last_error}"
+        )

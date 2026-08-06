@@ -251,11 +251,21 @@ def _worker_main(connection) -> None:
                 produced_figure = True
 
             try:
+                # A Matplotlib Figure, especially a Cartopy GeoAxes figure,
+                # cannot reliably cross the multiprocessing pipe: pickling its
+                # CRS can fail *after* the PNG has rendered successfully.
+                # Graph callers only consume `image_png`; retain the Figure in
+                # the warm worker namespace but never serialize it.
+                transport_result = result
+                transport_result_available = "result" in namespace
+                if mode == "graph" and image_png is not None:
+                    transport_result = None
+                    transport_result_available = False
                 connection.send(
                     {
                         "ok": True,
-                        "result": result,
-                        "result_available": "result" in namespace,
+                        "result": transport_result,
+                        "result_available": transport_result_available,
                         "dataframes": frames,
                         "stdout": stdout.getvalue().strip(),
                         "image_png": image_png,

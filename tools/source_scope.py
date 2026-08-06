@@ -130,7 +130,10 @@ _SOURCE_SKILLS: dict[str, SourceName] = {
     "ogsl_query": "ogsl",
     "sql_workspace_query": "sql",
 }
-_ALWAYS_EXPOSED_SOURCE_TOOLS = frozenset({"export_ecotaxa_samples"})
+# Source tools are visible only when their source is active.  A persisted
+# EcoTaxa selection keeps that source affinity for a follow-up export; a plain
+# local-file turn must not carry an unrelated remote export schema.
+_ALWAYS_EXPOSED_SOURCE_TOOLS = frozenset()
 _SOURCE_LABELS: dict[SourceName, str] = {
     "file": "fichier",
     "ecotaxa": "EcoTaxa",

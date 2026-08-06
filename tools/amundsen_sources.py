@@ -106,6 +106,26 @@ _AMUNDSEN_ENRICHED_VALUE_COLUMNS = {
     "NTRA": "amundsen_ntra",
     "FLOR": "amundsen_flor",
 }
+_AMUNDSEN_NUMERIC_ENRICHED_COLUMNS = frozenset(
+    {
+        "amundsen_distance_km",
+        "amundsen_time_delta_min",
+        *_AMUNDSEN_ENRICHED_VALUE_COLUMNS.values(),
+    }
+)
+
+
+def coerce_amundsen_numeric_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Return CTD enrichment values with their physical numeric dtypes restored.
+
+    The row matcher starts with nullable object series because an unmatched
+    object needs an explicit missing value.  Without this normalization,
+    numeric CTD values remain ``object`` after a successful enrichment and
+    generic dataframe inspections wrongly exclude them as non-numeric.
+    """
+    for column in _AMUNDSEN_NUMERIC_ENRICHED_COLUMNS.intersection(dataframe.columns):
+        dataframe[column] = pd.to_numeric(dataframe[column], errors="coerce")
+    return dataframe
 _AMUNDSEN_PROFILE_COLUMN_DESCRIPTIONS = {
     "source_station_labels": "Station(s) de la table source associée(s) au profil.",
     "amundsen_station": "Station Amundsen interrogée.",
@@ -1849,7 +1869,7 @@ def make_amundsen_tools(thread_id: str) -> list:
         if cache_key is not None:
             cached = load_scientific_result("amundsen_enrichment", cache_key)
             if cached is not None:
-                enriched = cached.dataframe
+                enriched = coerce_amundsen_numeric_columns(cached.dataframe.copy())
                 status_counts = enriched[
                     "amundsen_match_status"
                 ].value_counts().to_dict()
@@ -1938,7 +1958,7 @@ def make_amundsen_tools(thread_id: str) -> list:
         if outcome.error:
             return _am_blocked(outcome.error)
 
-        enriched = outcome.enriched
+        enriched = coerce_amundsen_numeric_columns(outcome.enriched)
         n = outcome.n_rows
         n_unique = outcome.n_unique
         diag = outcome.diagnostics

@@ -122,7 +122,7 @@ flowchart LR
   changent pas.
 - **Présentation dynamique au modèle** : le catalogue complet reste enregistré
   auprès de LangGraph, puis `tools/tool_exposure.py` produit une allowlist
-  déterministe de **15 tools maximum par appel modèle** à partir du
+  déterministe de **20 tools maximum par appel modèle** à partir du
   `TurnContext`, de la `SourceDecision`, des intentions non géographiques et
   des tools/skills réussis dans le tour. Le noyau permanent contient
   `load_file`, `load_skill` et le RAG. Les deux capacités géographiques sont
@@ -166,7 +166,7 @@ dont la **docstring** est lue par le LLM pour décider quand l'appeler.
 | Module | Famille | Détail SPEC |
 |---|---|---|
 | `tool_catalog.py` | Composition, validation, groupes d'exposition et présentation bilingue des 59/62 tools | §3, §4 |
-| `tool_exposure.py` | Allowlist déterministe par appel modèle (maximum 15) | §3 |
+| `tool_exposure.py` | Allowlist déterministe par appel modèle (maximum 20) | §3 |
 | `data_tools.py` | Fichier & analyse & graphe | §4.1 |
 | `copepod_sources.py` | EcoTaxa (read-only + export) | §4.2 |
 | `ecopart_sources.py` | EcoPart + join/enrichissement | §4.3 |

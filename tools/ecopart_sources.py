@@ -58,6 +58,7 @@ from tools.dataset_registry import (
     ECOPART,
     ECOTAXA,
     ECOTAXA_ECOPART,
+    CTD_ENRICHED,
     dataset_variable_name,
     store_dataset,
 )
@@ -82,8 +83,8 @@ _RECOVERABLE_PARTITION_ERRORS = (
 
 
 def _ecopart_preflight_timeout() -> float:
-    """Keep a dry-run responsive when the remote EcoPart search is saturated."""
-    return max(1.0, float(os.getenv("ECOPART_PREFLIGHT_TIMEOUT_SECONDS", "8")))
+    """Allow EcoPart's slow profile registry to return a real availability result."""
+    return max(1.0, float(os.getenv("ECOPART_PREFLIGHT_TIMEOUT_SECONDS", "60")))
 
 
 def _ecopart_cache_ttl() -> float:
@@ -133,12 +134,38 @@ def _ecotaxa_session_for_project(
     thread_id: str,
     project_id: int | None,
 ) -> dict | None:
-    """Resolve the EcoTaxa dataset requested by project, not just the latest alias."""
+    """Resolve an EcoTaxa project while preserving a compatible CTD enrichment."""
     latest = _store.get(f"{thread_id}:ecotaxa")
     if project_id is None:
         return latest
 
     requested = int(project_id)
+
+    # Chained enrichments must be cumulative.  When Amundsen has already
+    # enriched the same EcoTaxa export, start the EcoPart join from that table
+    # rather than silently returning to the raw ``ecotaxa`` alias.  A campaign
+    # may contain several projects, hence the explicit line-level partition.
+    ctd_enriched = _store.get(f"{thread_id}:{CTD_ENRICHED}")
+    ctd_df = (ctd_enriched or {}).get("df")
+    if (
+        isinstance(ctd_df, pd.DataFrame)
+        and "amundsen_match_status" in ctd_df.columns
+        and "export_project_id" in ctd_df.columns
+    ):
+        ctd_projects = pd.to_numeric(
+            ctd_df["export_project_id"], errors="coerce"
+        )
+        ctd_partition = ctd_df.loc[ctd_projects == requested].copy()
+        if not ctd_partition.empty:
+            return {
+                "df": ctd_partition,
+                "meta": {
+                    **dict((ctd_enriched or {}).get("meta") or {}),
+                    "project_id": requested,
+                    "upstream_enrichment": "amundsen",
+                },
+            }
+
     if latest is not None:
         latest_project = (latest.get("meta") or {}).get("project_id")
         if latest_project is not None and int(latest_project) == requested:
@@ -1717,7 +1744,8 @@ def make_ecopart_tools(thread_id: str) -> list:
         préflight explicite sans téléchargement : lien EcoTaxa→EcoPart, accessibilité et
         validation des profils EcoPart, identifiant de profil et profondeur
         nécessaires à la jointure, avec verdict PRÊT / PARTIEL / BLOQUÉ par
-        projet.
+        projet. La vérification distante de la liste des profils peut prendre
+        jusqu'à 60 secondes.
         """
         session_et = _ecotaxa_session_for_project(thread_id, ecotaxa_project_id)
         if session_et is None:
@@ -1857,7 +1885,8 @@ def make_ecopart_tools(thread_id: str) -> list:
                 request_timeout=_ecopart_preflight_timeout(),
             )
             return _ep_blocked(
-                "Préflight d'enrichissement EcoPart (dry-run).\n"
+                "Préflight d'enrichissement EcoPart (dry-run ; la vérification des "
+                "profils peut prendre jusqu'à 60 s).\n"
                 f"EcoTaxa {ecotaxa_project_id} → EcoPart {ecopart_project_id} : "
                 f"{preflight['verdict']} — {preflight['reason']} "
                 f"({_preflight_profile_status(preflight)}).\n"

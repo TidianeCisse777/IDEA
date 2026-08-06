@@ -1053,13 +1053,48 @@ def _dataframe_vars(
     def required(name: str) -> bool:
         return required_names is None or name in required_names
 
-    local_vars: dict[str, Any] = {"df": df, "pd": pd}
+    normalized_frames: dict[int, pd.DataFrame] = {}
+
+    def analysis_frame(frame: pd.DataFrame) -> pd.DataFrame:
+        """Expose legacy CTD tables with physical columns typed as numeric.
+
+        Older persisted Amundsen enrichments used nullable object columns.  A
+        copy is made only for those legacy frames; current enrichments already
+        carry the correct dtypes.
+        """
+        frame_id = id(frame)
+        if frame_id in normalized_frames:
+            return normalized_frames[frame_id]
+        numeric_ctd = (
+            "amundsen_distance_km",
+            "amundsen_time_delta_min",
+            "amundsen_pres_dbar",
+            "amundsen_te90_degC",
+            "amundsen_psal_psu",
+            "amundsen_sigt",
+            "amundsen_oxym",
+            "amundsen_ph",
+            "amundsen_ntra",
+            "amundsen_flor",
+        )
+        needs_normalization = any(
+            column in frame.columns and not pd.api.types.is_numeric_dtype(frame[column])
+            for column in numeric_ctd
+        )
+        if needs_normalization:
+            from tools.amundsen_sources import coerce_amundsen_numeric_columns
+
+            frame = coerce_amundsen_numeric_columns(frame.copy())
+        normalized_frames[frame_id] = frame
+        return frame
+
+    local_vars: dict[str, Any] = {"df": analysis_frame(df), "pd": pd}
     if required("loaded_file") or required("loaded_file_variable"):
         loaded = loaded_file_dataset(store, thread_id)
         if loaded and loaded.get("df") is not None:
             # Stable left-hand side for cross-source analysis. This does not
             # replace the active ``df`` after a remote query.
-            local_vars["loaded_file"] = loaded["df"]
+            local_vars["loaded_file"] = analysis_frame(loaded["df"])
             loaded_variable = (loaded.get("meta") or {}).get("variable_name")
             if loaded_variable:
                 local_vars["loaded_file_variable"] = loaded_variable
@@ -1069,7 +1104,7 @@ def _dataframe_vars(
             continue
         named = store.get(f"{thread_id}:{alias}")
         if named and named.get("df") is not None:
-            local_vars[variable_name] = named["df"]
+            local_vars[variable_name] = analysis_frame(named["df"])
 
     for key in store.keys(f"{thread_id}:dataset:"):
         variable_name = key.removeprefix(f"{thread_id}:dataset:")
@@ -1078,7 +1113,7 @@ def _dataframe_vars(
         named = store.get(key)
         persisted_name = (named or {}).get("meta", {}).get("variable_name")
         if persisted_name and named.get("df") is not None:
-            local_vars[persisted_name] = named["df"]
+            local_vars[persisted_name] = analysis_frame(named["df"])
 
     for key in store.keys(f"{thread_id}:ecopart:"):
         project_id = key.rsplit(":", 1)[-1]
@@ -1087,12 +1122,12 @@ def _dataframe_vars(
             continue
         named = store.get(key)
         if project_id.isdigit() and named and named.get("df") is not None:
-            local_vars.setdefault(variable_name, named["df"])
+            local_vars.setdefault(variable_name, analysis_frame(named["df"]))
 
     if required("plot_df"):
         last_plot = store.get(f"{thread_id}:last_plot_df")
         if last_plot and last_plot.get("df") is not None:
-            local_vars.setdefault("plot_df", last_plot["df"])
+            local_vars.setdefault("plot_df", analysis_frame(last_plot["df"]))
 
     return local_vars
 
@@ -2329,8 +2364,22 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 )
             if isinstance(result, pd.DataFrame):
                 n_rows, n_cols = result.shape
-                preview = result.head(20).to_markdown(index=False)
-                suffix = " (aperçu 20 premières)" if n_rows > 20 else ""
+                # A wide result (for example one CTD statistic per variable and
+                # depth bin) used to render every column as Markdown.  That
+                # pushed the code's explicit diagnostic prints past the model
+                # tool-result cap, which made a successful inspection look like
+                # missing data.  Keep the evidence-first output compact.
+                preview_column_limit = 20
+                preview_frame = result.head(20)
+                preview_note = ""
+                if n_cols > preview_column_limit:
+                    preview_frame = preview_frame.iloc[:, :preview_column_limit]
+                    preview_note = (
+                        f"\nAperçu limité aux {preview_column_limit} premières colonnes sur "
+                        f"{n_cols}; utilise une inspection ciblée pour les autres."
+                    )
+                preview = preview_frame.to_markdown(index=False)
+                suffix = " (aperçu 20 premières lignes)" if n_rows > 20 else ""
 
                 persisted_variable = (
                     "df_canonical_sample_depth"
@@ -2376,10 +2425,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 summary = (
                     f"{n_rows} lignes × {n_cols} colonnes{suffix}"
                     f"{canonical_note}{persistence_note}{persistence_contract}{attrs_note}"
-                    f"\n\n{preview}"
                 )
                 if printed_output:
                     summary += "\n\nSortie contrôlée du code :\n" + printed_output
+                summary += "\n\nAperçu du résultat :\n" + preview + preview_note
                 if n_rows > 20:
                     summary += (
                         "\n\nAttention : ce tableau est un aperçu des 20 premières "

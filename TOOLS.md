@@ -6,7 +6,7 @@
 >
 > **68 tools obligatoires, 71 avec SQL** (les 3 tools SQL ne sont ajoutés que si
 > `DATABASE_URL` est résolvable). Ce total est le catalogue enregistré; le modèle
-> voit une allowlist déterministe de **15 tools maximum par appel**, calculée par
+> voit une allowlist déterministe de **20 tools maximum par appel**, calculée par
 > `tools/tool_exposure.py` sous l'autorité de `tools/source_scope.py`. Le prompt
 > conserve les principes de routage métier; l'autorisation et la visibilité sont
 > exécutables en Python.
@@ -17,7 +17,7 @@
 
 - Noyau permanent : `load_file`, `load_skill`, `query_copepod_knowledge_base`.
 - Les capacités géographiques `get_zone_info` et `filter_dataframe_by_zone` sont toujours visibles : le modèle principal comprend l'intention sans regex ni second modèle. Après chargement d'un fichier, `run_pandas` et `split_dataframe_by_zone` (découpage par mers/baies/détroits) deviennent visibles; taxonomie, graphe et livrable suivent leurs intentions/préconditions.
-- Dès qu'EcoTaxa est autorisé, son groupe zone/période reste visible avec au plus un autre groupe d'intention, pour un total maximal de 15 tools.
+- Dès qu'EcoTaxa est autorisé, son groupe zone/période reste visible avec au plus un autre groupe d'intention, pour un total maximal de 20 tools.
 - EcoTaxa active au plus deux de ses huit groupes : découverte, samples, objets, géo/temps, taxonomie, schéma, audit, export.
 - EcoPart expose aussi `find_ecopart_project_for_ecotaxa` pour une demande explicite de correspondance EcoTaxa–EcoPart ; ce lookup léger ne lance aucun export. Les enrichissements canoniques `enrich_ecotaxa_with_ecopart_remote`, `enrich_with_amundsen_ctd`, `enrich_with_bio_oracle` et `enrich_with_ogsl` restent réservés à une demande explicite d'enrichissement.
 - Les 18 autres tools de ces quatre familles restent enregistrés pour compatibilité, mais appartiennent au groupe `hidden_legacy` : ils ne sont jamais présentés au modèle et sont bloqués avant exécution.

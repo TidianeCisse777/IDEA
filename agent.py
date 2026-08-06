@@ -1,5 +1,7 @@
 """Agent factory + CLI copépodes (slices 4-5)."""
+import base64
 import copy
+import io
 import os
 import sys
 import threading
@@ -96,6 +98,17 @@ _KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "1"))
 # Second-pass budget: if total tool-result chars after first compaction exceeds
 # this, oldest eligible messages are compacted further (never the current turn).
 _MAX_TOTAL_TOOL_CHARS = int(os.getenv("MAX_TOTAL_TOOL_RESULT_CHARS", "40000"))
+# A successful plot normally needs one more model call for its user-facing
+# caption.  Give that already-required call a bounded thumbnail so the model
+# can check the *actual* image, not merely assume that a PNG means a good plot.
+# GPT-5.4-mini accepts image input through the current OpenRouter route.  This
+# can be disabled for a text-only provider without changing graph execution.
+_GRAPH_VISION_REVIEW_ENABLED = os.getenv(
+    "GRAPH_VISION_REVIEW_ENABLED", "true"
+).lower() in {"1", "true", "yes", "on"}
+_GRAPH_VISION_REVIEW_MAX_EDGE = max(
+    256, int(os.getenv("GRAPH_VISION_REVIEW_MAX_EDGE", "768"))
+)
 _context_audit_by_thread: dict[str, dict] = {}
 _harness_trace_by_thread: dict[str, dict] = {}
 _harness_trace_lock = threading.Lock()
@@ -342,15 +355,17 @@ def _approx_tokens(messages) -> int:
 
 
 _CODE_RETRY_TOOL_NAMES = frozenset({"run_pandas", "run_graph"})
+_SAFE_TRANSIENT_RETRY_TOOL_NAMES = frozenset({"find_uvp_matches_for_net_table"})
 
 
 def _code_retry_plan(messages: Sequence) -> tuple[str, str] | None:
-    """Return the one permitted deterministic retry for local code execution.
+    """Return the one permitted deterministic repair for local execution.
 
-    The agent may repair one retryable code failure per user turn.  The failed
-    ``ToolMessage`` stays in the model history and its full diagnostic is also
-    injected into the forced retry instruction.  A second code failure ends the
-    retry budget and lets the model report its final diagnostic normally.
+    The agent may repair one retryable failed/empty local execution per user
+    turn. The failed ``ToolMessage`` stays in the model history and its full
+    diagnostic is also injected into the forced retry instruction. A second
+    failed execution ends the retry budget and lets the model report its final
+    diagnostic normally.
     """
     last_human_index = max(
         (index for index, message in enumerate(messages)
@@ -364,7 +379,7 @@ def _code_retry_plan(messages: Sequence) -> tuple[str, str] | None:
         if isinstance(message, ToolMessage)
         and message.name in _CODE_RETRY_TOOL_NAMES
         and isinstance(message.artifact, dict)
-        and message.artifact.get("status") == "error"
+        and message.artifact.get("status") in {"error", "empty"}
         and message.artifact.get("retryable") is True
     ]
     if len(code_errors) != 1 or not current_turn or current_turn[-1] is not code_errors[0]:
@@ -374,6 +389,18 @@ def _code_retry_plan(messages: Sequence) -> tuple[str, str] | None:
     if not diagnostic:
         return None
     return str(failed.name), diagnostic
+
+
+def _is_safe_transient_tool_failure(tool_name: str, result: object) -> bool:
+    """Allow one transparent retry for a read-only audit access failure only."""
+    if tool_name not in _SAFE_TRANSIENT_RETRY_TOOL_NAMES:
+        return False
+    artifact = getattr(result, "artifact", None)
+    return bool(
+        isinstance(artifact, dict)
+        and artifact.get("status") == "error"
+        and artifact.get("retryable") is True
+    )
 
 
 def _render_net_uvp_progress_context(progress) -> str:
@@ -391,39 +418,35 @@ def _render_net_uvp_progress_context(progress) -> str:
     )
     if progress.phase == "needs_subset":
         return (
-            "\n\nComparaison filet–UVP : table filet disponible; "
-            "préparer le sous-ensemble d’audit avant la vérification UVP."
+            "\n\nComparaison filet–UVP : la table filet est prête; "
+            "préparer le sous-ensemble demandé avant de chercher les profils UVP."
             + exploratory_notice
         )
     if progress.phase == "needs_audit":
         return (
-            "\n\nComparaison filet–UVP : sous-ensemble d’audit disponible; "
-            "la vérification UVP reste à effectuer."
+            "\n\nComparaison filet–UVP : le sous-ensemble demandé est prêt; "
+            "chercher maintenant les profils UVP associés."
             + exploratory_notice
         )
     if progress.phase == "audited":
         if progress.ctd_status == "unavailable":
             return (
-                "\n\nComparaison filet–UVP : audit disponible, mais la "
-                "vérification CTD est indisponible; toute suite est exploratoire "
-                "et exige un accord explicite."
+                "\n\nComparaison filet–UVP : des candidats UVP existent, mais "
+                "la vérification CTD est indisponible; une suite provisoire est possible."
             )
         if progress.ctd_status == "no_match":
             return (
-                "\n\nComparaison filet–UVP : audit disponible, sans "
-                "correspondance CTD certifiée; ne pas présenter de comparaison "
-                "d’abondance comme validée."
+                "\n\nComparaison filet–UVP : des candidats UVP existent, mais "
+                "aucun lien CTD commun n'est confirmé; ne pas lancer la comparaison finale."
             )
         if progress.ctd_status != "verified":
             return (
-                "\n\nComparaison filet–UVP : audit disponible, mais le statut "
-                "CTD reste à confirmer; ne pas présenter de comparaison "
-                "d’abondance comme validée."
+                "\n\nComparaison filet–UVP : des candidats UVP existent, mais "
+                "leur validation reste incomplète; ne pas lancer la comparaison finale."
             )
         return (
-            "\n\nComparaison filet–UVP : audit certifié disponible; les actions "
-            "d’analyse, de graphique et de préparation d’export restent possibles. "
-            "La comparaison d’abondance attend encore l’export UVP puis les volumes EcoPart."
+            "\n\nComparaison filet–UVP : les profils UVP associés sont prêts. "
+            "Exporter ces profils puis récupérer leurs volumes avant le calcul d’abondance."
         )
     if progress.phase == "exported":
         return (
@@ -770,6 +793,68 @@ def _build_memory_block(memories) -> tuple[str, dict]:
     }
 
 
+def _graph_vision_review_message(messages, thread_id: str) -> HumanMessage | None:
+    """Create one transient, bounded visual review after a successful graph.
+
+    The graph tool stores a local PNG and returns Markdown, which lets the UI
+    render it but does not let the model inspect its pixels.  IDEA feeds plotted
+    images back into a vision-capable model; do the same only for the response
+    call immediately following ``run_graph``.  The review message is injected
+    into the outgoing request only, never checkpointed as a user message.
+    """
+    if not _GRAPH_VISION_REVIEW_ENABLED or not messages:
+        return None
+    last = messages[-1]
+    if not isinstance(last, ToolMessage) or last.name != "run_graph":
+        return None
+    if "/graphs/" not in str(last.content or ""):
+        return None
+
+    try:
+        from PIL import Image
+        from tools.data_tools import _GRAPHS_DIR
+        from tools.session_store import default_store as session_store
+
+        state = session_store.get(f"{thread_id}:last_graph_state") or {}
+        graph_id = str((state.get("meta") or {}).get("graph_id") or "")
+        path = _GRAPHS_DIR / f"{graph_id}.png"
+        if not graph_id or not path.is_file():
+            return None
+        with Image.open(path) as source:
+            image = source.convert("RGB")
+            image.thumbnail(
+                (_GRAPH_VISION_REVIEW_MAX_EDGE, _GRAPH_VISION_REVIEW_MAX_EDGE)
+            )
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=82, optimize=True)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    except Exception:
+        # A failed review must never hide a graph that was otherwise produced.
+        return None
+
+    return HumanMessage(
+        name="graph_render_review",
+        content=[
+            {
+                "type": "text",
+                "text": (
+                    "Internal render review, not a user request: inspect the graph image "
+                    "before replying. If it is unreadable, visually misleading, has a wrong "
+                    "axis/legend/projection, or does not answer the request, correct it with "
+                    "run_graph before answering. Otherwise give only the grounded concise result."
+                ),
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{encoded}",
+                    "detail": "low",
+                },
+            },
+        ],
+    )
+
+
 class _ContextMiddleware(AgentMiddleware):
     """Prepare the exact request seen by the model without mutating checkpoints."""
 
@@ -1047,8 +1132,22 @@ class _ContextMiddleware(AgentMiddleware):
         _context_audit_by_thread[self.thread_id] = audit_entry
         _append_harness_model_call(self.thread_id, audit_entry)
         try:
+            # This is deliberately appended only to the provider request.  It
+            # must not become a fabricated persistent HumanMessage in the
+            # checkpoint, nor inflate the text-history budget with base64.
+            graph_vision_review = _graph_vision_review_message(
+                trimmed_messages, self.thread_id
+            )
+            outgoing_messages = (
+                [*trimmed_messages, graph_vision_review]
+                if graph_vision_review is not None
+                else trimmed_messages
+            )
+            _context_audit_by_thread[self.thread_id]["graph_vision_review"] = bool(
+                graph_vision_review
+            )
             overrides = {
-                "messages": trimmed_messages,
+                "messages": outgoing_messages,
                 "system_message": prepared_system_message,
                 "tools": exposed_tools,
             }
@@ -1068,7 +1167,7 @@ class _ContextMiddleware(AgentMiddleware):
                 "tool_filter_override_supported"
             ] = False
             fallback_overrides = {
-                "messages": trimmed_messages,
+                "messages": outgoing_messages,
                 "system_message": prepared_system_message,
             }
             if retry_tool_choice is not None:
@@ -1195,6 +1294,13 @@ class _ContextMiddleware(AgentMiddleware):
             return result
         try:
             result = handler(request)
+            if _is_safe_transient_tool_failure(
+                str(request.tool_call.get("name") or ""), result
+            ):
+                # The Filet–UVP lookup is a read-only cache/CTD audit. A
+                # transient access failure should not make the model restart a
+                # valid persisted workflow or surface a debugging detour.
+                result = handler(request)
         except Exception as exc:
             _finish_harness_tool_call(self.thread_id, trace_id, error_text=str(exc))
             raise
@@ -1220,6 +1326,10 @@ class _ContextMiddleware(AgentMiddleware):
             return result
         try:
             result = await handler(request)
+            if _is_safe_transient_tool_failure(
+                str(request.tool_call.get("name") or ""), result
+            ):
+                result = await handler(request)
         except Exception as exc:
             _finish_harness_tool_call(self.thread_id, trace_id, error_text=str(exc))
             raise

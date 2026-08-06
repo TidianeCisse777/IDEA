@@ -45,7 +45,7 @@ def _turn(*, file_loaded: bool, sources: tuple[str, ...] = (), output_intent: st
     )
 
 
-def _decision(text: str, *, file_loaded: bool = False, sources: tuple[str, ...] = (), messages=None, max_tools: int = 15, output_intent: str = "ambiguous", store=None):
+def _decision(text: str, *, file_loaded: bool = False, sources: tuple[str, ...] = (), messages=None, max_tools: int = 20, output_intent: str = "ambiguous", store=None):
     from tools.tool_catalog import TOOL_POLICIES
     from tools.tool_exposure import decide_tool_exposure
 
@@ -789,7 +789,7 @@ def test_ecotaxa_selects_only_the_requested_subtoolset(text, expected_group, exp
 
     assert expected_group in decision.active_groups
     assert expected_tool in decision.tool_names
-    assert len(decision.tool_names) <= 15
+    assert len(decision.tool_names) <= 20
 
 
 def test_object_pagination_is_not_exposed_to_the_agent():
@@ -832,7 +832,7 @@ def test_ecotaxa_does_not_always_include_geo_time_for_a_project_audit():
 
     assert "ecotaxa_geo_time" not in decision.active_groups
     assert "ecotaxa_audit" in decision.active_groups
-    assert len(decision.tool_names) <= 15
+    assert len(decision.tool_names) <= 20
 
 
 def test_ecotaxa_exploration_keeps_discovery_and_multiple_intents():

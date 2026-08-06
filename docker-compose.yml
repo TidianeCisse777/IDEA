@@ -42,7 +42,10 @@ services:
       # the agent reads an empty one it creates at boot, and every EcoTaxa
       # query returns "no data" even though the sync succeeded.
       - ECOTAXA_CACHE_DB=/app/data/ecotaxa_cache.sqlite
-    command: uvicorn serve:app --host 0.0.0.0 --port 8000 --reload
+    # A code watcher restarts Uvicorn immediately when a file changes. That
+    # terminates active SSE replies in Open WebUI and surfaces as a misleading
+    # TransferEncodingError. Restart this service explicitly after a change.
+    command: uvicorn serve:app --host 0.0.0.0 --port 8000
     volumes:
       - .:/app
       - ./data:/app/data

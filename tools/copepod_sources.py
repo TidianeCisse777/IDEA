@@ -519,33 +519,22 @@ def make_source_tools(thread_id: str) -> list:
         max_time_gap_days: float | None = 0.5,
         allow_unverified_ctd: bool = False,
     ) -> str:
-        """Cherche à la demande les correspondances filet ↔ UVP dans le cache EcoTaxa.
+        """Trouve les profils UVP associés à une table filet, à la demande.
 
-        Utiliser seulement si l'utilisateur demande explicitement une recherche ou
-        une comparaison UVP/EcoTaxa pour un fichier de filet. Ne jamais l'appeler
-        automatiquement au chargement du fichier. Lecture seule : pour chaque
-        déploiement, exige d'abord un nom de station normalisé identique, puis
-        sélectionne un sample UVP dans le rayon demandé et vérifie l'écart
-        temporel ainsi que le fichier CTD-rosette commun avec les métadonnées
-        Amundsen. Position et temps ne servent qu'à départager les candidats de
-        cette même station. Un résultat `matched` est compatible par station,
-        position et temps, avec le CTD commun vérifié, et peut être joint; tout
-        autre statut reste auditable, sans droit de jointure d'abondance.
+        Utiliser seulement pour une recherche ou comparaison filet–UVP/EcoTaxa
+        explicitement demandée. L'outil lit le cache : même station obligatoire,
+        puis position/date pour choisir le candidat; il vérifie ensuite le lien
+        CTD commun quand la source est disponible. Il enregistre l'audit et la
+        sélection UVP réutilisable; seules les paires prêtes à comparer peuvent
+        alimenter la comparaison d'abondance.
 
-        `net_variable_name` : nom de la variable en session à utiliser comme table
-        de filet (ex. `df_file_neolabs_sample`). Si absent, utilise le dernier
-        fichier chargé. Utile quand plusieurs fichiers sont en session.
-        Après `prepare_net_uvp_audit_subsets`, utiliser exclusivement l'un des
-        `data_ref` retournés, jamais le fichier chargé complet.
-
-        `date_from` / `date_to` : bornes ISO facultatives. Quand l'utilisateur
-        demande une période, les passer ici : la vérification ignore alors toutes
-        les lignes filet hors période.
-
-        `allow_unverified_ctd` : dérogation exploratoire, désactivée par défaut.
-        Ne la passer à vrai qu'après confirmation explicite de l'utilisateur et
-        seulement après un audit ayant signalé la source CTD indisponible. Elle ne
-        contourne jamais une absence de correspondance CTD.
+        `net_variable_name` est la table filet de session (par exemple
+        `df_file_neolabs_sample`); préciser son nom si plusieurs tables existent.
+        Après une préparation par période/zone, fournir le sous-ensemble créé.
+        `date_from`/`date_to` sont des bornes ISO facultatives. Mettre
+        `allow_unverified_ctd=True` seulement si l'utilisateur demande
+        explicitement une suite provisoire après une indisponibilité CTD; cela ne
+        rend jamais valide une paire dont le lien CTD est absent.
         """
         from core.net_uvp_comparison import match_net_to_uvp
 
@@ -940,7 +929,6 @@ def make_source_tools(thread_id: str) -> list:
             )
 
         by_deployment = matches.drop_duplicates("net_deployment_id")
-        n_station_matched = int(by_deployment["station_name_match"].sum())
         n_matched = int(by_deployment["join_eligible"].sum())
         n_spatial = int((~by_deployment["join_eligible"]).sum())
         n_proj = int(matches["uvp_project_id"].nunique())
@@ -958,52 +946,28 @@ def make_source_tools(thread_id: str) -> list:
                 )
             )
         )
-        time_tolerance = (
-            f"{max_time_gap_days * 24:g} h"
-            if max_time_gap_days is not None and max_time_gap_days < 1
-            else f"{max_time_gap_days:g} j" if max_time_gap_days is not None else "sans limite"
-        )
-        lines = [
-            "## Audit filet ↔ UVP",
-            f"Station concordante : {n_station_matched} déploiement(s) sur {n_deployments}.",
-            (
-                f"Temps : tolérance {time_tolerance} ; "
-                f"paires de métadonnées certifiées : {certified_pair_count}."
-            ),
-        ]
-        if date_from or date_to:
-            lines.insert(1, f"Période : {date_from or 'sans borne initiale'} → {date_to or 'sans borne finale'}.")
-        if certified_selection_name:
-            lines.insert(
-                5,
-                (
-                    "Sélection UVP exploratoire publiée (CTD non vérifié) : "
-                    if exploratory_override
-                    else "Sélection UVP certifiée publiée : "
-                )
-                + f"`selection:{certified_selection_name}` ({len(selected_matches)} sample(s)).",
-            )
-        if ctd_source_unavailable:
-            if exploratory_override:
-                lines += [
-                    "",
-                    "⚠ Données CTD Amundsen indisponibles : les correspondances "
-                    "de position et de temps ci-dessus ont bien été reçues, mais "
-                    "ni le fichier CTD commun ni les variables CTD n'ont pu être "
-                    "vérifiés. La sélection reste donc provisoire (CTD non vérifié) et ne prouve pas "
-                    "l'absence de données CTD.",
-                ]
-            else:
-                lines += [
-                    "",
-                    "⚠ CTD Amundsen indisponible : export provisoire possible "
-                    "pour les correspondances station/position/temps, avec CTD non vérifié. "
-                    "Une confirmation explicite reste requise.",
-                ]
-        elif n_matched == 0 and n_spatial > 0:
+        # Keep the detailed rows/statuses in the persisted audit.  The model only
+        # needs the next scientifically meaningful state, not the audit jargon.
+        lines = ["## Correspondance filet–UVP"]
+        if certified_pair_count:
             lines += [
-                "",
-                "⚠ Aucune paire de métadonnées certifiée avec ces seuils.",
+                f"{certified_pair_count} paire(s) prête(s) à comparer, pour "
+                f"{len(selected_matches)} sample(s) UVP.",
+                "La sélection UVP est prête pour l'export et l'enrichissement.",
+            ]
+        elif ctd_source_unavailable:
+            lines += [
+                "Des profils UVP compatibles par station, position et date ont été trouvés.",
+                "La vérification CTD est indisponible : la sélection reste provisoire.",
+            ]
+            if exploratory_override:
+                lines.append("La suite provisoire demandée est prête.")
+            else:
+                lines.append("Une suite provisoire reste possible sur demande explicite.")
+        else:
+            lines += [
+                "Des profils UVP candidats ont été trouvés, mais aucun n'est prêt à comparer.",
+                "Le lien CTD commun n'a pas pu être confirmé pour cette sélection.",
             ]
         return _eco_success(
             "\n".join(lines),

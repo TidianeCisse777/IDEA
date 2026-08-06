@@ -21,25 +21,25 @@ def test_fixed_model_request_cost_stays_below_forty_percent(monkeypatch):
     report = build_offline_report(runs=1)
     turns = [turn for run in report["scenarios"] for turn in run["turns"]]
     assert turns
-    assert all(len(turn["tools_exposed"]) <= 15 for turn in turns)
+    assert all(len(turn["tools_exposed"]) <= 20 for turn in turns)
 
     fixed = max(turn["context"]["fixed_tokens"] for turn in turns)
     ceiling = int(_MAX_CONTEXT_TOKENS * 0.40)
     assert fixed <= ceiling, f"coût fixe {fixed} tokens > plafond {ceiling}"
 
-    # Preuve conservatrice : même les 15 schémas les plus lourds du catalogue
+    # Preuve conservatrice : même les 20 schémas les plus lourds du catalogue
     # respectent le budget, quelle que soit la combinaison choisie par la policy.
     catalog = build_tool_catalog("redteam-dynamic-budget")
     largest = sorted(
         catalog.tools,
         key=lambda tool: _tool_schema_tokens([tool]),
         reverse=True,
-    )[:15]
+    )[:20]
     worst_case = _approx_tokens(
         [SystemMessage(content=_SYSTEM_PROMPT)]
     ) + _tool_schema_tokens(largest)
     assert worst_case <= ceiling, (
-        f"pire combinaison de 15 tools {worst_case} tokens > plafond {ceiling}"
+        f"pire combinaison de 20 tools {worst_case} tokens > plafond {ceiling}"
     )
 
 
