@@ -22,11 +22,18 @@ class Filter:
             return body
 
         metadata = body.get("metadata")
-        if not isinstance(metadata, dict) or not metadata.get("files"):
+        has_metadata_files = isinstance(metadata, dict) and bool(metadata.get("files"))
+        has_top_level_files = bool(body.get("files"))
+        if not has_metadata_files and not has_top_level_files:
             return body
 
         clean_body = dict(body)
-        clean_metadata = dict(metadata)
-        clean_metadata.pop("files", None)
-        clean_body["metadata"] = clean_metadata
+        if isinstance(metadata, dict):
+            clean_metadata = dict(metadata)
+            clean_metadata.pop("files", None)
+            clean_body["metadata"] = clean_metadata
+        # Open WebUI 0.9 keeps the same transient attachments in either shape
+        # depending on the chat path.  Strip both before its file-RAG handler;
+        # IDEA resolves the durable chat attachments itself from the chat id.
+        clean_body.pop("files", None)
         return clean_body

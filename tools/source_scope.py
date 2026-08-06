@@ -90,8 +90,9 @@ _SOURCE_PATTERNS: dict[SourceName, re.Pattern[str]] = {
         r"environmental\w*|hydrographi\w*|physico[- ]?chimi\w*)\b",
         re.IGNORECASE,
     ),
-    # Accept the common one-o typo ``bioracle`` as an explicit source choice.
-    "bio_oracle": re.compile(r"\bbio(?:[\s-]*oracle|racle)\b", re.IGNORECASE),
+    # Accept common compact spellings/typos as an explicit source choice:
+    # ``bioracle`` and ``bioroacle`` both mean Bio-ORACLE.
+    "bio_oracle": re.compile(r"\bbio(?:[\s-]*oracle|r(?:o)?acle)\b", re.IGNORECASE),
     "ogsl": re.compile(r"\bogsl\b", re.IGNORECASE),
     "sql": re.compile(r"\bsql\b|\b(?:workspace|espace)\s+sql\b", re.IGNORECASE),
 }
@@ -129,6 +130,7 @@ _SOURCE_SKILLS: dict[str, SourceName] = {
     "ogsl_query": "ogsl",
     "sql_workspace_query": "sql",
 }
+_ALWAYS_EXPOSED_SOURCE_TOOLS = frozenset({"export_ecotaxa_samples"})
 _SOURCE_LABELS: dict[SourceName, str] = {
     "file": "fichier",
     "ecotaxa": "EcoTaxa",
@@ -446,7 +448,8 @@ def filter_tools_for_decision(
         item
         for item in tools
         if (
-            (source := source_for_tool_call(getattr(item, "name", ""), {}, policies))
+            getattr(item, "name", "") in _ALWAYS_EXPOSED_SOURCE_TOOLS
+            or (source := source_for_tool_call(getattr(item, "name", ""), {}, policies))
             is None
             or source in authorized
         )
@@ -460,6 +463,8 @@ def source_rejection_for_call(
     policies: Any,
 ) -> str | None:
     """Return a clinical refusal for an unauthorized external source call."""
+    if name in _ALWAYS_EXPOSED_SOURCE_TOOLS:
+        return None
     source = source_for_tool_call(name, args, policies)
     if source is None or source in decision.authorized_sources:
         return None

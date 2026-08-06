@@ -17,6 +17,8 @@ def make_rag_tool(thread_id: str | None = None):
         - la signification des colonnes et unités
         - les méthodes d'analyse et de collecte
         - la taxonomie et les protocoles documentés
+        - le choix et la préparation d'un graphique scientifique
+        - les règles et la sémantique documentées du cache EcoTaxa
         Ne remplace pas l'analyse de données réelles — utilise run_pandas pour ça.
         """
         try:

@@ -13,10 +13,11 @@ paths by:
 
 It is *not* a security boundary against a determined adversary crafting Python
 introspection escapes (`().__class__.__bases__…`); the threat model here is the
-model's own generated code taking an obvious dangerous path. True process-level
-isolation (separate worker, no network, FS quotas) remains the Step 9 goal and
-is tracked as such. Notably, library-level egress such as `pd.read_csv(url)` is
-NOT blocked by this layer.
+model's own generated code taking an obvious dangerous path. A separate,
+environment-cleared worker process now keeps that code out of the agent process,
+but network blocking and filesystem quotas still require deployment-level
+container isolation. Notably, library-level egress such as `pd.read_csv(url)`
+is NOT blocked by this layer.
 """
 
 from __future__ import annotations
@@ -52,8 +53,11 @@ ALLOWED_ROOT_MODULES = frozenset(
         "matplotlib",
         "mpl_toolkits",
         "cartopy",
+        "cmocean",
+        "gsw",
         "shapely",
         "pyproj",
+        "xarray",
         "scipy",
         "sklearn",
         "statsmodels",

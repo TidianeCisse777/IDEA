@@ -110,8 +110,8 @@ Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `load_file` | Charge CSV/TSV/Excel/JSON/Parquet, inspecte colonnes/types/manquants/plages, détecte les exports UVP EcoTaxa/EcoPart (hint `load_skill`) | non |
-| `run_pandas` | Exécute du pandas contrôlé sur les DataFrames de session (namespace restreint : imports allowlistés, pas de secrets/réseau/FS) ; source de toute valeur numérique. Un résultat de jointure (`merge`/`join`/`concat`) est persisté comme nouveau df `df_join_*` réutilisable ; une copie modifiée d'une table nommée, de même granularité, devient `df_derived_*` réutilisable ; une agrégation simple reste éphémère | non |
-| `run_graph` | Exécute du code matplotlib/Cartopy après un `graph_writer` autorisé, utilise les fonds Natural Earth 110m embarqués hors ligne et héberge le PNG persistant (`/graphs/{file}`) | non |
+| `run_pandas` | Exécute du pandas contrôlé dans un worker persistant par conversation (namespace restreint, imports allowlistés) ; source de toute valeur numérique. Les intermédiaires restent chauds pour le graphe suivant, les tables nommées restent la source durable. Un résultat de jointure (`merge`/`join`/`concat`) est persisté comme nouveau df `df_join_*` réutilisable ; une copie modifiée d'une table nommée, de même granularité, devient `df_derived_*` réutilisable ; une agrégation simple reste éphémère | non |
+| `run_graph` | Exécute du code matplotlib/Cartopy dans le même worker persistant, utilise les fonds Natural Earth 110m embarqués hors ligne et héberge le PNG persistant (`/graphs/{file}`) | non |
 | `find_uvp_matches_for_net_table` | Audite une table filet persistée contre les samples UVP du cache puis certifie le fichier CTD partagé avec Amundsen ; publie une sélection exportable seulement pour `join_eligible=True` et CTD `matched` | non |
 | `join_net_uvp_enriched` | Joint localement la table filet, l'audit certifié et la campagne UVP enrichie EcoPart sur `(export_project_id, profil UVP)` ; exclut les candidats non certifiés et persiste `df_net_uvp_ecopart` | non |
 

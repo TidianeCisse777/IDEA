@@ -385,6 +385,55 @@
     "char_count": 4775
   },
   {
+    "doc": "ecotaxa_cache_sql.md",
+    "chunk_id": "ecotaxa_cache_sql_000",
+    "title": "Ce que le cache EcoTaxa permet, et sa limite objet",
+    "content": "# Ce que le cache EcoTaxa permet, et sa limite objet\n\nMots-clés : EcoTaxa, cache SQLite, SQL, sample, objet, export, granularité, échantillon\n\nLe cache EcoTaxa est une source locale en lecture seule, organisée au niveau\néchantillon. Il répond directement aux questions de découverte, filtre, jointure,\ncompte, regroupement, zone, date, profondeur, station, cast et instrument. La\nsource de vérité immédiate reste son schéma réel : si une table ou colonne est\nincertaine, l’inspecter avant d’écrire SQL.\n\nLe cache ne fournit pas les valeurs individuelles d’objet nécessaires à une\nabondance taxonomique exacte, une morphométrie, un score de classification ou\nune analyse par bande de profondeur objet. Dans ce cas, résoudre d’abord la\nsélection d’échantillons avec SQL, puis préparer l’export objet confirmé. Ne\njamais remplacer des valeurs objet manquantes par les compteurs d’enveloppe du\ncache.",
+    "char_count": 896
+  },
+  {
+    "doc": "ecotaxa_cache_sql.md",
+    "chunk_id": "ecotaxa_cache_sql_001",
+    "title": "Tables centrales et grain d’analyse EcoTaxa",
+    "content": "# Tables centrales et grain d’analyse EcoTaxa\n\nMots-clés : samples_cache, projects_cache, sample_id, project_id, station, profile, cast, colonnes EcoTaxa\n\n`samples_cache` contient une ligne par échantillon EcoTaxa. Ses identifiants\nstables sont `sample_id` et `project_id`. Les principaux champs de contexte\nsont `original_id`, `station_id`, `profile_id` (cast/profil), `cruise_id`,\n`ctd_rosette_filename`, `instrument`, `lat_avg`, `lon_avg`, `iho_zone` et\n`zone_reference`.\n\nLes statistiques au niveau sample sont `object_count`, `nb_validated`,\n`nb_predicted`, `nb_dubious` et `nb_unclassified`. Elles sont autoritatives à\nce niveau, mais ne deviennent pas des comptages taxonomiques individuels.\n`used_taxa` est une liste JSON d’identifiants taxonomiques observés.\n\n`projects_cache` contient une ligne par projet synchronisé : `project_id`,\n`title`, `instrument`, `description`, `status`, `contact_name`, `objcount`,\n`pctvalidated`, `pctclassified` et `last_synced`. Joindre cette table par\n`project_id` dès qu’un libellé ou une métadonnée de projet est demandé.\n\nCompter les samples par `COUNT(DISTINCT sample_id)` et les casts par\n`COUNT(DISTINCT profile_id)`. Une station est une localisation : elle ne doit\nni devenir un cast, ni être traitée comme une mesure numérique.",
+    "char_count": 1277
+  },
+  {
+    "doc": "ecotaxa_cache_sql.md",
+    "chunk_id": "ecotaxa_cache_sql_002",
+    "title": "Route SQL cache et tables persistantes",
+    "content": "# Route SQL cache et tables persistantes\n\nMots-clés : SELECT, WITH, CTE, schema, SQL EcoTaxa, selection_name, table persistante, requête lecture seule\n\nLa route normale est : découvrir les tables si le schéma est inconnu, décrire\nune table si les types/index sont nécessaires, puis lancer un unique `SELECT`\nou `WITH`/CTE read-only. Les jointures, sous-requêtes, agrégations et filtres\nsont autorisés. Ne pas ajouter `LIMIT` sauf demande explicite d’aperçu, top ou\npagination.\n\nUne requête renvoyant `sample_id` devient une sélection persistante ; lui donner\nun nom descriptif afin de réutiliser exactement le même périmètre pour une\nanalyse, une carte ou un export. Ne pas rejouer une requête identique à la\nsuite : réutiliser sa table persistante. Les résultats SQL servent de base à\npandas pour les dérivations et à Matplotlib/Cartopy pour les visuels.\n\nExemple de sélection d’une zone et période :\n\n```sql\nSELECT sample_id, project_id, original_id, profile_id, station_id,\n       lat_avg, lon_avg, iho_zone, date_min, date_max, instrument\nFROM samples_cache\nWHERE iho_zone = 'Baie de Baffin'\n  AND metadata_complete = 1\n  AND date_min <= '2024-12-31'\n  AND date_max >= '2024-01-01';\n```",
+    "char_count": 1190
+  },
+  {
+    "doc": "ecotaxa_cache_sql.md",
+    "chunk_id": "ecotaxa_cache_sql_003",
+    "title": "Zones, temps, profondeur et données incomplètes",
+    "content": "# Zones, temps, profondeur et données incomplètes\n\nMots-clés : iho_zone, zone_reference, IHO, MEOW, OUTSIDE, coordonnées manquantes, date, profondeur, couverture\n\n`iho_zone` est le libellé géographique mis en cache et `zone_reference` indique\nson système : `IHO`, `MEOW`, `OUTSIDE` ou `MISSING_COORDINATES`. Toute\nagrégation par zone sélectionne et groupe les deux colonnes. Ne jamais mélanger\nIHO et MEOW dans un même total, classement ou encodage de légende.\n\nPour une zone explicitement nommée, utiliser l’égalité sur le libellé canonique,\npas `LIKE`. Dans une vue globale, ne pas éliminer les lignes où `iho_zone` est\nNULL : elles correspondent à de vrais samples sans coordonnées utilisables et\ndoivent apparaître comme telles.\n\nLes dates et profondeurs sont des enveloppes dérivées d’objets :\n`date_min`/`date_max` et `depth_min`/`depth_max`. Une intersection d’intervalle\nutilise `minimum <= borne_fin AND maximum >= borne_début`. Toute affirmation\nexacte vérifie la complétude appropriée : `metadata_complete`, `depth_complete`\net, pour l’heure, `missing_time_count = 0`. Les exclusions pour incomplétude\nsont rapportées comme inconnues, jamais comme absentes.",
+    "char_count": 1168
+  },
+  {
+    "doc": "ecotaxa_cache_sql.md",
+    "chunk_id": "ecotaxa_cache_sql_004",
+    "title": "Joindre les projets et résumer le cache sans double compte",
+    "content": "# Joindre les projets et résumer le cache sans double compte\n\nMots-clés : jointure projects_cache, project_id, projet, titre, V P D U, object_count, group by, EcoTaxa\n\nPour afficher des métadonnées de projet, joindre `samples_cache` à\n`projects_cache` par `project_id`. Préserver le grain sample avant de sommer\ndes compteurs : une jointure vers plusieurs lignes objet peut sinon multiplier\nartificiellement `object_count` et les compteurs V/P/D/U.\n\nExemple de résumé par projet :\n\n```sql\nSELECT sc.project_id, p.title,\n       COUNT(DISTINCT sc.sample_id) AS n_samples,\n       SUM(sc.object_count) AS n_objects,\n       SUM(sc.nb_validated) AS n_validated,\n       SUM(sc.nb_predicted) AS n_predicted,\n       SUM(sc.nb_dubious) AS n_dubious,\n       SUM(sc.nb_unclassified) AS n_unclassified\nFROM samples_cache AS sc\nLEFT JOIN projects_cache AS p USING (project_id)\nGROUP BY sc.project_id, p.title\nORDER BY n_samples DESC;\n```\n\nLes compteurs V/P/D/U proviennent de statistiques autoritatives EcoTaxa ; ne\npas les déduire de `object_count`, ni les employer comme abondance biologique\npar taxon.",
+    "char_count": 1090
+  },
+  {
+    "doc": "ecotaxa_cache_sql.md",
+    "chunk_id": "ecotaxa_cache_sql_005",
+    "title": "Taxons dans le cache et frontière vers l’export objet",
+    "content": "# Taxons dans le cache et frontière vers l’export objet\n\nMots-clés : used_taxa, json_each, taxon_id, Copepoda, taxonomie EcoTaxa, objets, export confirmé\n\nLe cache stocke les identifiants taxonomiques observés dans `used_taxa`, pas un\ndictionnaire complet de noms. Résoudre d’abord un nom taxonomique avec l’outil\nde taxonomie dédié, puis trouver les samples concernés avec `json_each` :\n\n```sql\nSELECT s.sample_id, s.project_id, s.original_id, s.iho_zone\nFROM samples_cache AS s\nWHERE EXISTS (\n  SELECT 1 FROM json_each(s.used_taxa)\n  WHERE CAST(value AS INTEGER) = :taxon_id\n);\n```\n\nCette requête indique la présence d’un taxon dans un sample. Elle ne donne ni\nabondance par taxon, ni morphométrie, ni statut objet exact. Ces demandes\nnécessitent l’export objet du périmètre SQL déjà résolu, avec confirmation.\nAprès l’export, conserver `export_project_id` et la provenance lors des calculs\nou graphes multi-projets.",
+    "char_count": 918
+  },
+  {
+    "doc": "ecotaxa_cache_sql.md",
+    "chunk_id": "ecotaxa_cache_sql_006",
+    "title": "Carte EcoTaxa à partir du résultat SQL",
+    "content": "# Carte EcoTaxa à partir du résultat SQL\n\nMots-clés : carte EcoTaxa, Cartopy, profile_id, station, échantillon, coordonnées, map\n\nUne carte EcoTaxa part d’une requête SQL ramenant au minimum `sample_id`,\n`lat_avg`, `lon_avg`, `iho_zone` et la mesure demandée. Le résultat est ensuite\npréparé au bon grain : une marque par sample, station ou cast/profil selon la\nquestion ; agréger les coordonnées coïncidentes quand elles représenteraient\nautrement un empilement illisible. Une ligne taxonomique ou un objet n’est pas\nautomatiquement une station.\n\nLa figure est une carte Cartopy avec coordonnées réelles et géométrie autorisée.\nNe pas substituer un nuage longitude–latitude à une carte. Si une mesure est\nencodée par taille ou couleur, elle doit provenir de la table SQL et conserver\nson unité ; les identifiants de sample/profil/station restent des libellés.",
+    "char_count": 860
+  },
+  {
     "doc": "geographie_nord_quebec.md",
     "chunk_id": "geographie_nord_quebec_000",
     "title": "Géographie du Nord québécois — contexte scientifique NeoLab",
@@ -782,6 +831,62 @@
     "title": "Quand utiliser le RAG et quand utiliser le tool WoRMS ?",
     "content": "# Quand utiliser le RAG et quand utiliser le tool WoRMS ?\n\n| Situation | Source recommandée |\n|-----------|-------------------|\n| Espèces documentées : *C. hyperboreus*, *C. glacialis*, *C. finmarchicus*, *Oithona similis*, *Metridia longa*, *Pseudocalanus minutus* | RAG (`query_copepod_knowledge_base`) |\n| Hiérarchie des taxons courants du labo | RAG |\n| Décoder une annotation EcoTaxa (Calanus_CV) | RAG |\n| Espèce non documentée dans le RAG | Tool WoRMS (`lookup_worms_taxonomy`) |\n| Liste live de toutes les espèces d'un genre | Tool WoRMS avec `include_children=True` |\n| Vérifier si un nom est accepté ou synonyme | Tool WoRMS |\n| AphiaID d'une espèce rare ou nouvelle | Tool WoRMS |\n\n*Dernière mise à jour : juin 2026 — recalibration complète des AphiaID contre WoRMS live ; révision Pseudocalanidae → Clausocalanidae.*",
     "char_count": 828
+  },
+  {
+    "doc": "visualisation_graphes.md",
+    "chunk_id": "visualisation_graphes_000",
+    "title": "Quand consulter cette référence pour un graphique",
+    "content": "# Quand consulter cette référence pour un graphique\n\nMots-clés : graphique, tracé, carte, profil, comparaison station, choix de figure, plot_df, unité, données manquantes\n\nCette référence aide à choisir et préparer une visualisation lorsque la règle\nmétier ou graphique n'est pas déjà certaine. Elle ne remplace jamais les\ndonnées réellement chargées : les colonnes, types, valeurs manquantes et unités\ndoivent venir de la table active. Elle ne remplace pas non plus les outils de\nsource, de jointure certifiée ou d'enrichissement.\n\nQuestion RAG utile : « avec une table d'abondance par taxon, comment préparer\nune comparaison entre stations ? ». Question RAG inutile : « quelles sont les\nvaleurs de température de mes stations ? » — cela demande les données et un\noutil d'analyse, pas une réponse documentaire.",
+    "char_count": 811
+  },
+  {
+    "doc": "visualisation_graphes.md",
+    "chunk_id": "visualisation_graphes_001",
+    "title": "Préparer `plot_df` avant tout tracé",
+    "content": "# Préparer `plot_df` avant tout tracé\n\nMots-clés : plot_df, filtrer, valeurs manquantes, NaN, conversion numérique, identifiant, unité, grain, agrégation\n\n`plot_df` est la table explicite effectivement dessinée. Elle doit contenir le\npérimètre demandé, les colonnes vraiment représentées et au moins une ligne\ncomplète après filtrage. Convertir seulement les mesures et coordonnées utilisées\nen numérique, puis exclure ou signaler les valeurs manquantes ; une absence de\nmesure ne devient jamais zéro.\n\nLes identifiants (`sample_id`, station, cast, profil, analyse, projet, taxon)\nsont des libellés catégoriels. Ne pas les transformer artificiellement en axes\nnumériques ou en valeurs de mesure. Chaque axe ou échelle de couleur doit donner\nle nom de la mesure et son unité réelle.\n\nAvant de tracer, placer les données au bon grain : une ligne par échantillon ou\nstation pour les comparaisons spatiales/temporelles ; une ligne par taxon ou\ncatégorie pour une composition ; une ligne par strate de profondeur pour un\nprofil. Des lignes taxonomiques brutes ne sont pas automatiquement des\néchantillons indépendants.",
+    "char_count": 1113
+  },
+  {
+    "doc": "visualisation_graphes.md",
+    "chunk_id": "visualisation_graphes_002",
+    "title": "Choisir le type de figure à partir de la question",
+    "content": "# Choisir le type de figure à partir de la question\n\nMots-clés : carte, station, profil vertical, composition taxonomique, série temporelle, comparaison, graphique approprié\n\n| Question | Grain de `plot_df` | Figure adaptée |\n|---|---|---|\n| Où sont les observations ? Quelle est leur distribution géographique ? | position de sample, profil ou station | carte Cartopy |\n| Les stations diffèrent-elles pour une mesure ? | une ligne par station ou station × période | comparaison par station (barres, points ou boîte selon la distribution) |\n| Comment une mesure change-t-elle avec la profondeur ? | une ligne par profondeur/strate et profil | profil vertical |\n| Quels taxons composent les échantillons ? | taxon × échantillon/station | barres empilées ou heatmap après agrégation |\n| Comment une mesure évolue-t-elle dans le temps ? | date/période × groupe | série temporelle |\n\nLe format suit la question et les données, non un template imposé. Si le choix\nchange le sens scientifique — par exemple somme versus moyenne, ou station\nversus échantillon — expliciter l'hypothèse ou poser une seule question courte.",
+    "char_count": 1113
+  },
+  {
+    "doc": "visualisation_graphes.md",
+    "chunk_id": "visualisation_graphes_003",
+    "title": "Carte géographique : coordonnées réelles et Cartopy",
+    "content": "# Carte géographique : coordonnées réelles et Cartopy\n\nMots-clés : carte, Cartopy, latitude, longitude, station_map, projection, polygone, zone marine, distribution spatiale\n\nUne demande de carte géographique utilise Cartopy avec latitude/longitude\nréelles, projection, côtes et géométrie de zone autorisée quand une zone est\nrequise. Un simple nuage longitude–latitude ne remplace pas une carte. Les\nmarques représentent le grain choisi : position de station/sample/profil ou\nagrégat spatial clairement défini ; ne pas montrer chaque objet taxonomique\nbrut comme s'il était une station indépendante.\n\nL'étendue doit couvrir les données et la zone demandée, sans géométrie inventée.\nLes couleurs, tailles ou formes encodent seulement une variable réellement\nprésente et expliquée. Pour des points très denses, préférer transparence,\nmarqueurs petits ou agrégation plutôt qu'un amas opaque.",
+    "char_count": 889
+  },
+  {
+    "doc": "visualisation_graphes.md",
+    "chunk_id": "visualisation_graphes_004",
+    "title": "Comparer correctement les stations",
+    "content": "# Comparer correctement les stations\n\nMots-clés : station, comparaison, barplot, boîte, moyenne, médiane, réplication, catégories, abondance\n\nUne comparaison par station commence par une table au grain station ou\nstation × période/réplicat, selon la question. Agréger les lignes d'objets ou\nde taxons avant le graphique lorsque l'objectif est une mesure d'échantillon\nou de station. Conserver les réplications si elles sont nécessaires pour montrer\nla variabilité ; ne pas masquer plusieurs stations ou dates sous une moyenne non\nannoncée.\n\nTraiter le nom ou l'ID de station comme une catégorie ordonnée, avec des labels\nlisibles. Choisir barres/points/boîtes selon ce qui est disponible : une seule\nvaleur agrégée par station peut être montrée par barres ou points ; plusieurs\nréplicats appellent plutôt des points ou une boîte. L'axe de mesure conserve son\nunité et la politique des zéros est annoncée si elle influe sur la comparaison.",
+    "char_count": 938
+  },
+  {
+    "doc": "visualisation_graphes.md",
+    "chunk_id": "visualisation_graphes_005",
+    "title": "Profil vertical : profondeur orientée correctement",
+    "content": "# Profil vertical : profondeur orientée correctement\n\nMots-clés : profil vertical, profondeur, CTD, strate, depth, vertical_profile, inversion axe, filet UVP\n\nUn profil vertical relie une mesure à la profondeur, avec profondeur sur l'axe\nvertical inversé : les faibles profondeurs en haut, les grandes en bas. Utiliser\ndes observations ou agrégats appartenant aux mêmes strates de profondeur et\nindiquer les unités des deux axes.\n\nPour une comparaison filet ↔ UVP, ne comparer que des concentrations et volumes\nvalidés dans le même intervalle de profondeur, le même périmètre taxonomique et\nla même unité normalisée. Un profil UVP complet ne peut pas être opposé à une\nseule strate de filet. Les statuts de validation ou d'incertitude doivent rester\nvisibles lorsqu'ils déterminent quels points sont comparables.",
+    "char_count": 812
+  },
+  {
+    "doc": "visualisation_graphes.md",
+    "chunk_id": "visualisation_graphes_006",
+    "title": "Lisibilité minimale d'une figure scientifique",
+    "content": "# Lisibilité minimale d'une figure scientifique\n\nMots-clés : titre, axes, unités, légende, couleur, lisibilité, labels, ticks, valeurs manquantes, incertitude\n\nUne figure répond à une question identifiable : titre concis, axes nommés avec\nunités, légende ou barre de couleur seulement si elle explique un encodage réel.\nRéduire, agréger ou espacer les catégories avant que les labels ne se\nchevauchent. Les taxons à nom long peuvent être raccourcis au nom terminal ;\nles catégories nombreuses peuvent être limitées aux principales avec « Autres »\nsi cette réduction est annoncée.\n\nLa couleur ne doit pas être l'unique moyen de distinguer un statut important :\nassocier libellé, forme, style ou hachure lorsque nécessaire. Ne pas tirer de\nconclusion biologique depuis l'apparence de la figure ; la figure décrit les\ndonnées et toute limite de couverture, de valeur manquante ou de validation.",
+    "char_count": 891
+  },
+  {
+    "doc": "visualisation_graphes.md",
+    "chunk_id": "visualisation_graphes_007",
+    "title": "Bibliothèques océanographiques pour une figure",
+    "content": "# Bibliothèques océanographiques pour une figure\n\nMots-clés : cmocean, gsw, xarray, TEOS-10, densité, palette thermique, salinité, oxygène, NetCDF\n\n`cmocean` sert aux échelles continues de variables physiques : `thermal` pour\nla température, `haline` pour la salinité, `oxy` pour l'oxygène et `speed` pour\nla vitesse. Toujours conserver une barre de couleur libellée avec l'unité de\nla mesure source.\n\n`gsw` permet un calcul TEOS-10, par exemple une variable physique dérivée de\nmesures CTD. Ne l'utiliser que lorsque toutes les entrées requises et leurs\nunités sont réellement disponibles ; aucune entrée manquante n'est devinée et\nle calcul ne constitue pas une interprétation biologique.\n\n`xarray` sert aux jeux de données déjà disponibles sous forme de grille ou de\ndimensions multiples, notamment NetCDF : sélectionner d'abord le temps, la\nprofondeur et la zone nécessaires, puis transmettre la coupe ou grille à\nMatplotlib/Cartopy. Les tableaux ordinaires EcoTaxa, EcoPart et NeoLab restent\ntraités avec pandas. L'autorisation d'importer xarray ne crée pas, à elle seule,\nun chargeur NetCDF.",
+    "char_count": 1097
   },
   {
     "doc": "zones_geographiques.md",

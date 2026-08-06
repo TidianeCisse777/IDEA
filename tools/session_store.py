@@ -185,6 +185,13 @@ class SessionStore:
         ]
         for key in family:
             self.clear(key)
+        # The execution worker is intentionally only a hot cache.  Dropping a
+        # conversation must also drop its in-memory intermediates so a new
+        # conversation can never inherit a previous table or variable.
+        with contextlib.suppress(Exception):
+            from tools.persistent_executor import default_executor
+
+            default_executor.close(thread_id)
 
     def has(self, thread_id: str) -> bool:
         if thread_id in self._store or self._data_path(thread_id).exists():

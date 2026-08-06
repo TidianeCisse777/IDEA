@@ -214,6 +214,37 @@ def test_run_pandas_exposes_loaded_file_after_ecotaxa_result():
     assert "_merge" in result
 
 
+def test_run_pandas_requires_named_operands_for_a_multitable_join():
+    """An active alias must not silently decide the left side of a join."""
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-explicit-join-operands"
+    store_dataset(
+        _store,
+        thread_id,
+        pd.DataFrame({"sample_id": ["A"]}),
+        variable_name="df_left_source",
+        meta={"source": "file:left.csv"},
+        is_loaded_file=True,
+    )
+    store_dataset(
+        _store,
+        thread_id,
+        pd.DataFrame({"sample_id": ["A"], "temperature": [2.0]}),
+        variable_name="df_right_source",
+        meta={"source": "ctd"},
+        set_active=False,
+    )
+
+    run_pandas = next(t for t in make_tools(thread_id) if t.name == "run_pandas")
+    result = run_pandas.invoke(
+        {"code": "result = df.merge(df_right_source, on='sample_id', how='left')"}
+    )
+
+    assert "Multi-table join blocked" in result
+    assert "df_left_source" in result
+
+
 def test_run_pandas_blocks_string_casts_on_neolabs_join_keys():
     """Casting nullable NeoLabs ids to str must not persist a zero-match join."""
     from tools.dataset_registry import store_dataset
@@ -1688,6 +1719,118 @@ def test_cartopy_gridliner_polygon_patch_turns_all_nan_ring_into_empty_polygon()
     )
 
     assert poly.is_empty
+
+
+def test_run_graph_blocks_cartopy_point_map_without_coordinate_columns(tmp_path):
+    """A station summary is not a map-ready table without its coordinates."""
+    pytest.importorskip("cartopy.crs")
+    thread_id = "thread-cartopy-missing-coordinates"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({"station_name": ["A", "B"], "n_rows": [4, 7]}),
+        {"loaded_skills": ["graph_writer"], "variable_name": "df_station_counts"},
+    )
+    from tools.dataset_registry import store_dataset
+
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "station_name": ["A", "B"],
+                "lat_avg": [61.0, 62.0],
+                "lon_avg": [-65.0, -64.0],
+            }
+        ),
+        variable_name="df_source_positions",
+        meta={"source": "ecotaxa_selection"},
+        set_active=False,
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+
+    result = run_graph.invoke({"code": """
+import cartopy.crs as ccrs
+fig, ax = plt.subplots(subplot_kw={'projection': ccrs.PlateCarree()})
+ax.scatter(df['n_rows'], df['n_rows'], transform=ccrs.PlateCarree())
+"""})
+
+    assert "latitude/longitude" in result
+    assert "df_source_positions" in result
+    assert "![graph]" not in result
+
+
+def test_run_graph_requires_named_table_for_a_multitable_map(tmp_path):
+    """A map may not silently use whichever table currently aliases to df."""
+    pytest.importorskip("cartopy.crs")
+    from tools.dataset_registry import store_dataset
+
+    thread_id = "thread-explicit-map-table"
+    store = SessionStore(tmp_path / "sessions")
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({"station_name": ["A", "B"], "n_rows": [4, 7]}),
+        variable_name="df_station_counts",
+        meta={"source": "analysis:station-counts"},
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame(
+            {
+                "station_name": ["A", "B"],
+                "latitude": [61.0, 62.0],
+                "longitude": [-65.0, -64.0],
+            }
+        ),
+        variable_name="df_station_positions",
+        meta={"source": "file:positions.csv"},
+        set_active=False,
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+
+    result = run_graph.invoke({"code": """
+import cartopy.crs as ccrs
+fig, ax = plt.subplots(subplot_kw={'projection': ccrs.PlateCarree()})
+ax.scatter(df['n_rows'], df['n_rows'], transform=ccrs.PlateCarree())
+"""})
+
+    assert "`df` is only a compatibility alias" in result
+    assert "df_station_positions" in result
+    assert "![graph]" not in result
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        """
+import cartopy.crs as ccrs
+fig, ax = plt.subplots(subplot_kw={'projection': ccrs.CRS()})
+ax.scatter(df['longitude'], df['latitude'], transform=ccrs.PlateCarree())
+""",
+        """
+from cartopy.crs import CRS
+fig, ax = plt.subplots(subplot_kw={'projection': CRS()})
+ax.scatter(df['longitude'], df['latitude'], transform=ccrs.PlateCarree())
+""",
+    ],
+)
+def test_run_graph_repairs_abstract_cartopy_crs_to_default_projection(tmp_path, code):
+    """Known CRS slip renders with the standard geographic projection."""
+    pytest.importorskip("cartopy.crs")
+    thread_id = "thread-cartopy-default-projection"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        thread_id,
+        pd.DataFrame({"latitude": [61.0], "longitude": [-65.0]}),
+        {"loaded_skills": ["graph_writer"]},
+    )
+    run_graph = next(t for t in make_tools(thread_id, store=store) if t.name == "run_graph")
+
+    result = run_graph.invoke({"code": code})
+
+    assert "![graph]" in result
 
 
 def test_cartopy_graphs_skip_tight_bbox_but_regular_graphs_keep_it():

@@ -96,7 +96,7 @@ independently in a later code block, and never add sampled volume to the group
 key. If metadata or environmental columns are needed downstream, pass their
 names through `stable_columns=(...)` when building the table.
 
-Because analysis calls are isolated, the first call MUST return
+Because analysis state is only a hot cache and can be reset, the first call MUST return
 `result = canonical_bins`. The analysis tool then persists it as
 `df_canonical_sample_depth`. Every later analysis or graph MUST read
 `df_canonical_sample_depth` directly and MUST NOT call the constructor again.

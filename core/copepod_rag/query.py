@@ -15,44 +15,6 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from core.llm_config import chat_openai_connection_kwargs
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
-
-def _generate_alternative_queries(question: str) -> list[str]:
-    """Génère des reformulations via LLM pour couvrir le vocabulaire non-canonique."""
-    try:
-        from langchain_openai import ChatOpenAI
-        from langchain_core.output_parsers import StrOutputParser
-        from langchain_core.prompts import ChatPromptTemplate
-
-        prompt = ChatPromptTemplate.from_template(
-            "Tu es un assistant scientifique spécialisé en océanographie et copépodes marins.\n"
-            "Génère 3 reformulations différentes de cette question pour améliorer la recherche documentaire.\n"
-            "Retourne uniquement les 3 reformulations, une par ligne, sans numérotation.\n\n"
-            "Question originale : {question}"
-        )
-        llm = ChatOpenAI(
-            model=os.getenv("LLM_MODEL", "openai/gpt-4.1-mini"),
-            temperature=_env_float("LLM_RAG_TEMPERATURE", 0.3),
-            **chat_openai_connection_kwargs(),
-        )
-        chain = prompt | llm | StrOutputParser()
-        output = chain.invoke({"question": question})
-        alternatives = [q.strip() for q in output.strip().splitlines() if q.strip()]
-        return alternatives[:3]
-    except Exception:
-        return []
-
-
 def _routing_guidance_bonus(question: str, chunk: dict) -> float:
     """Prioritize the RAG decision section for explicit source-route questions.
 
@@ -175,8 +137,8 @@ def query_copepod_rag(
     try:
         candidate_count = max(top_k, min(100, top_k * 5))
 
-        # Multi-query : on interroge avec la question originale + les reformulations LLM
-        queries = [question] + _generate_alternative_queries(question)
+        # Retrieval stays local: a RAG lookup must not add a hidden model call.
+        queries = [question]
 
         seen_ids: set[str] = set()
         chunks: list[dict] = []

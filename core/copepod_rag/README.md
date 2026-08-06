@@ -32,6 +32,8 @@ core/copepod_rag/
 | `taxonomie_worms.md` | Référence WoRMS (Aphia IDs, rangs, hiérarchie) |
 | `copepodes_domaine.md` | Vocabulaire métier copépode (groupes, niveaux trophiques) |
 | `sources_en_ligne.md` | Catalogues distants : Bio-Oracle layers, ERDDAP OGSL datasets |
+| `visualisation_graphes.md` | Choix de figure, grain, `plot_df`, Cartopy, profils et lisibilité |
+| `ecotaxa_cache_sql.md` | Tables, grain, SQL cache, zones, taxons, exports et cartes EcoTaxa |
 
 ---
 

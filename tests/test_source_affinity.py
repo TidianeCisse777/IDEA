@@ -75,6 +75,34 @@ def test_explicit_switch_replaces_persisted_source(tmp_path):
     assert read_source_affinity(store, "thread").active_sources == ("ecopart",)
 
 
+def test_bioroacle_typo_activates_bio_oracle_and_persists_to_confirmation(tmp_path):
+    """A compact Bio-ORACLE typo must not leave a stale source active."""
+    from tools.source_scope import read_source_affinity, source_decision_for_turn
+
+    store = SessionStore(tmp_path)
+    source_decision_for_turn(
+        store,
+        "thread",
+        [HumanMessage(content="cherche dans EcoTaxa avec le CTD Amundsen")],
+    )
+
+    selected = source_decision_for_turn(
+        store,
+        "thread",
+        [HumanMessage(content="ok, enrichis avec les donnees bioroacle")],
+    )
+    confirmed = source_decision_for_turn(
+        store,
+        "thread",
+        [HumanMessage(content="1")],
+    )
+
+    assert selected.authorized_sources == ("bio_oracle",)
+    assert read_source_affinity(store, "thread").active_sources == ("bio_oracle",)
+    assert confirmed.authorized_sources == ("bio_oracle",)
+    assert confirmed.evidence == "inherited_affinity"
+
+
 def test_file_activation_replaces_external_affinity(tmp_path):
     from tools.source_scope import (
         activate_file_source,

@@ -16,10 +16,7 @@ _CORE_TOOL_NAMES = (
     "load_skill",
     "query_copepod_knowledge_base",
     "run_pandas",
-)
-_NEOLABS_PREPARATION_PATTERN = re.compile(
-    r"\bneo[- ]?labs?\b|\bneolabs_(?:abundance|sample)\.(?:csv|tsv)\b",
-    re.IGNORECASE,
+    "export_ecotaxa_samples",
 )
 _ENRICHMENT_GROUP_BY_SOURCE: dict[str, ToolExposureGroup] = {
     "ecopart": "enrichment_ecopart",
@@ -190,7 +187,7 @@ def _drop_completed_protocol_steps(
     return tuple(name for name in selected if name not in completed_steps)
 _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     "file_analysis": (
-        "prepare_neolabs_analysis", "prepare_net_uvp_audit_subsets", "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
+        "prepare_net_uvp_audit_subsets", "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
         "split_dataframe_by_zone",
     ),
     "ecotaxa_discovery": (
@@ -254,7 +251,6 @@ class TurnSignals:
     regional_ranking_requested: bool
     multi_zone_requested: bool
     cross_source_compare_requested: bool
-    neolabs_preparation_requested: bool
 
 
 @dataclass(frozen=True)
@@ -337,7 +333,6 @@ def build_turn_signals(messages: list[Any]) -> TurnSignals:
         regional_ranking_requested=regional_ranking_requested,
         multi_zone_requested=multi_zone_requested,
         cross_source_compare_requested=cross_source_compare_requested,
-        neolabs_preparation_requested=bool(_NEOLABS_PREPARATION_PATTERN.search(text)),
     )
 
 
@@ -391,7 +386,10 @@ def decide_tool_exposure(
     if turn_context.domain_profile == "fish_larvae":
         disabled_sources = {"ecotaxa", "ecopart", "ogsl", "sql"}
         names = tuple(
-            name for name in names if policies[name].source not in disabled_sources
+            name
+            for name in names
+            if name == "export_ecotaxa_samples"
+            or policies[name].source not in disabled_sources
         )
     signals = build_turn_signals(messages)
     net_uvp_audit_requested = bool(
@@ -399,33 +397,26 @@ def decide_tool_exposure(
     )
     if not net_uvp_audit_requested:
         names = tuple(name for name in names if name not in _NET_UVP_TOOL_NAMES)
-    if not signals.neolabs_preparation_requested:
-        names = tuple(name for name in names if name != "prepare_neolabs_analysis")
-    groups: list[ToolExposureGroup] = ["core", "geography"]
-    reasons = ["permanent core", "permanent geographic capabilities"]
+    # Graphing is a normal workspace capability, not a separately classified
+    # intent.  Keeping its compact schema visible lets the primary agent decide
+    # directly and removes one LLM classification call per user turn.
+    groups: list[ToolExposureGroup] = ["core", "geography", "visualization"]
+    reasons = [
+        "permanent core",
+        "permanent geographic capabilities",
+        "agent-decided visualization",
+    ]
     if turn_context.domain_profile == "fish_larvae":
         reasons.append("fish-larvae profile limits external sources")
 
     if turn_context.file_loaded:
         groups.append("file_analysis")
         reasons.append("active dataset")
-    elif signals.neolabs_preparation_requested:
-        groups.append("file_analysis")
-        reasons.append("explicit NeoLabs preparation")
     if signals.taxonomy_requested and "ecotaxa" not in source_decision.authorized_sources:
         groups.append("taxonomy")
         reasons.append("taxonomy requested")
 
     skills = signals.successful_skills_this_turn
-    if turn_context.output_intent == "visual":
-        groups.append("visualization")
-        reasons.append("semantic visual output requested")
-    elif len(skills) >= 2 and skills[-2:] == ("graph_planner", "graph_writer"):
-        groups.append("visualization")
-        reasons.append("graph planner and writer succeeded this turn")
-    elif signals.previous_visual_artifact:
-        groups.append("visualization")
-        reasons.append("previous visual artifact available for follow-up")
     if skills and skills[-1] == "deliverable_writer":
         groups.append("deliverable")
         reasons.append("deliverable writer succeeded this turn")
@@ -482,16 +473,7 @@ def decide_tool_exposure(
         and "bio_oracle" in authorized
         and _bio_oracle_confirmation_plan_pending(messages)
     )
-    ecotaxa_export_confirmation_followup = bool(
-        turn_context.pending_ecotaxa_export and signals.confirmation_requested
-    )
-    ecotaxa_intents = tuple(
-        dict.fromkeys(
-            (*signals.ecotaxa_intents,)
-            if not ecotaxa_export_confirmation_followup
-            else (*signals.ecotaxa_intents, "ecotaxa_export")
-        )
-    )
+    ecotaxa_intents = signals.ecotaxa_intents
     if has_active_table and (
         enrichment_requested or bio_oracle_confirmation_followup
     ):
@@ -529,9 +511,6 @@ def decide_tool_exposure(
         ecotaxa_groups.extend(ecotaxa_intents)
         groups.extend(ecotaxa_groups)
         reasons.append("authorized EcoTaxa intent")
-    elif ecotaxa_export_confirmation_followup and not focused_enrichment:
-        groups.append("ecotaxa_export")
-        reasons.append("pending EcoTaxa export confirmation")
     # Keep the dedicated comparison route visible from the wording itself. A
     # file may be present in the session capsule even when the active source
     # snapshot was replaced by a preceding EcoTaxa query.
@@ -565,7 +544,7 @@ def decide_tool_exposure(
         else:
             fallback_groups = ("core",)
         fallback_limits: dict[ToolExposureGroup, int] = {
-            # Always keep all 3 ecotaxa_discovery tools — schema-first rule
+            # Always keep the cache SQL triplet — schema-first rule
             # requires list_ecotaxa_cache_tables and describe_ecotaxa_cache_table
             # to be reachable whenever the agent may need to verify a column.
             "ecotaxa_discovery": 3,

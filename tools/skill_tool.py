@@ -17,11 +17,11 @@ except ImportError:
 
 SKILLS_DIR = Path(__file__).parent.parent / "agents" / "skills"
 
-_RUNTIME_CAPSULES = {
-    "graph_planner": """Plan before code. Stop on an empty selected table. Use only the explicit source variable and never invent an artifact URL. For a named geographic request, resolve/filter the exact zone first; maps use Cartopy `station_map` or `abundance_environment_map`, never `kind:\"map\"`/`kind:\"scatter\"`. Aggregate NeoLabs taxon rows to samples before station/sample plots. graph_writer is already active — go straight to run_graph, never call load_skill.""",
-    "graph_writer": """Stop on empty data; use only the named active table and validate plot_df after filtering. Use Agg matplotlib, readable labelled axes/units, legend or labelled colourbar, and never invent an artifact URL. Define graph_contract and neutral graph_explanation. Keep identifiers as strings. Never produce a graph where exploratory and confirmed values are visually indistinguishable. Maps use Cartopy GeoAxes, longitude/latitude position mapping, coastlines, aggregation of coincident points, and the exact zone polygon from `zone_polygons` via Cartopy ShapelyFeature; never draw a bbox rectangle. Vertical profiles invert only depth. Return only the image emitted by run_graph.""",
-    "ecotaxa_navigation": """EcoTaxa is authorized: use the local SQLite cache at sample level unless objects are explicitly requested. Inspect available cache schema before relying on a column; issue one read-only SELECT statement without a semicolon. Reuse the active selection/table for follow-ups. Never infer missing identifiers or use an external source unless explicitly requested. For maps, use the exact persisted query result and the active graph rules.""",
-}
+# Skill bodies are loaded on demand, IDEA-style.  A compact excerpt is retained
+# in session only after a skill has actually been loaded; no source procedure is
+# pre-injected merely because a source is authorized.
+_RUNTIME_CAPSULES: dict[str, str] = {}
+_RETIRED_RUNTIME_SKILLS = frozenset({"graph_planner", "graph_writer"})
 
 
 def _runtime_capsule(skill_name: str, document: SkillDocument) -> str:
@@ -192,19 +192,21 @@ def dataset_analysis_reference(skill_names: tuple[str, ...]) -> str:
 
 def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = None):
     _store = store or default_store
-    skills = _discover_skill_documents()
+    skills = {
+        name: document
+        for name, document in _discover_skill_documents().items()
+        if name not in _RETIRED_RUNTIME_SKILLS
+    }
     activation_catalog = "; ".join(
-        f"{name}: {document.manifest.triggers[0]}"
+        f"{name} ({SKILLS_DIR / (name + '.md')}): "
+        f"{document.manifest.description or document.manifest.triggers[0]}"
         for name, document in skills.items()
     ) or "none"
     description = (
         "Load one manifest-validated specialized skill only when its semantic "
         "activation intent matches. Available skills and primary triggers: "
-        f"{activation_catalog}. "
-        "For visualization tasks graph_planner and graph_writer are pre-activated "
-        "automatically: reuse the ACTIVE SKILL RULES capsule and call run_graph "
-        "directly. Do not spend a load_skill call on them when those rules are "
-        "already present."
+        f"{activation_catalog}. Visualization uses run_graph directly; graph "
+        "planning and writing skills are not part of the runtime."
     )
 
     @tool(description=description, response_format="content_and_artifact")
@@ -216,6 +218,12 @@ def make_skill_tool(thread_id: str | None = None, store: SessionStore | None = N
         local version (same manifest and SHA-256), and can never introduce a
         skill name or content absent from the local allowlist.
         """
+        if skill_name in _RETIRED_RUNTIME_SKILLS:
+            return blocked(
+                "Graph planning and writing skills are retired. Use run_graph directly.",
+                provenance={"source": "runtime policy", "skill": skill_name},
+                method="skill loader",
+            )
         current_skills = _discover_skill_documents()
         if skill_name not in current_skills:
             available = ", ".join(current_skills.keys()) or "none"

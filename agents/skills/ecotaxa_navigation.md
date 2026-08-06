@@ -8,7 +8,7 @@ forbidden_when:
 requires:
   - "source:ecotaxa"
 next_tool: null
-max_tokens: 4500
+max_tokens: 4800
 size_exemption: ecotaxa_navigation owns the complete cache SQL vocabulary including table schema, join patterns, and SQL prohibitions shared by all EcoTaxa cache queries; its full body is delivered with a manifest-governed cap instead of the generic tool truncation.
 ---
 
@@ -19,10 +19,19 @@ size_exemption: ecotaxa_navigation owns the complete cache SQL vocabulary includ
 Use this skill only when the Source Selection Gateway authorizes EcoTaxa.
 Stay at sample level unless the user explicitly needs individual objects.
 
+## Runtime route
+
+This runtime exposes only the cache SQL triplet — discover tables, describe one
+table, then issue one read-only SQL query — plus explicit confirmed object
+exports. For cache exploration, maps, counts, filters, taxonomy IDs, zones and
+project metadata, write SQL and then use the persisted result with local
+analysis or graphing. The legacy convenience tools mentioned later in this
+historical reference are not model-visible and must not be called.
+
 - Sample-level questions use the local SQLite cache.
 - One incomplete sample may use the targeted live deployment fallback.
 - Taxon names/counts and project export schemas use the dedicated read-only API tools.
-- Individual objects require an export plan and explicit confirmation.
+- Individual objects require an export from the resolved sample scope.
 - Object-grain analysis (profile, depth band, taxon abundance, morphology, or
   score) cannot use cache metadata alone. Resolve its samples in the cache,
   then propose exporting that exact saved selection. Do not replace object
@@ -399,16 +408,10 @@ Choose the narrowest export:
 | One project or selected samples in one project | `query_ecotaxa` |
 | Saved selection or samples spanning projects | `export_ecotaxa_samples` |
 
-Every object export follows two turns:
-
-1. Resolve the scope from the cache and present project/sample scope, status,
-   taxon and depth filters. For saved/multi-project selections, call
-   `export_ecotaxa_samples(selection_name="latest", confirmed=False)` to
-   obtain the dry-run. A textual “selection ready” is not a plan.
-2. Wait for a new explicit confirmation referring to that plan, then execute
-   exactly that scope with
-   `export_ecotaxa_samples(selection_name="latest", confirmed=True)`.
-   Never reconstruct a generated selection identifier from a previous result.
+For a saved or multi-project selection, call
+`export_ecotaxa_samples(selection_name="latest")` directly. A dry-run remains
+available only when it is explicitly requested with `confirmed=False`. Never
+reconstruct a generated selection identifier from a previous result.
 
 If the scope changes, prepare a new plan. Never export merely for a sample-level
 count, summary, preview, or graph.

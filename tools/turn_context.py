@@ -13,7 +13,6 @@ into the system message by the middleware.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 from tools.session_context import (
     _live_zone_subsets,
@@ -36,7 +35,9 @@ class TurnContext:
     primary_source: str | None
     explicit_sources: tuple[str, ...]
     capsule: str
-    output_intent: Literal["visual", "non_visual", "ambiguous"] = "ambiguous"
+    # The main agent chooses whether a graph is useful.  This is deliberately
+    # not pre-classified by a second LLM call before every user turn.
+    output_intent: str = "agent_decides"
     pending_ecotaxa_export: bool = False
     domain_profile: str | None = None
 
@@ -75,9 +76,6 @@ def build_turn_context(
         authorized, primary, explicit = (), None, ()
 
     capsule = build_dataset_state_capsule(store, thread_id, messages)
-    output_intent = meta.get("output_intent_decision", {}).get("intent", "ambiguous")
-    if output_intent not in {"visual", "non_visual", "ambiguous"}:
-        output_intent = "ambiguous"
     pending_ecotaxa_export = bool(meta.get("pending_ecotaxa_export_plan"))
 
     return TurnContext(
@@ -91,6 +89,6 @@ def build_turn_context(
         primary_source=primary,
         explicit_sources=explicit,
         capsule=capsule,
-        output_intent=output_intent,
+        output_intent="agent_decides",
         pending_ecotaxa_export=pending_ecotaxa_export,
     )

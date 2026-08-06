@@ -825,10 +825,10 @@ def _format_tool_line(
 
 def _format_tool_call_details(label: str, body: str) -> str:
     return (
-        "\n<details>\n"
+        "\n\n<details>\n"
         f"<summary>{label}</summary>\n\n"
         f"{body}\n\n"
-        "</details>\n"
+        "</details>\n\n"
     )
 
 
@@ -1181,11 +1181,14 @@ async def _stream_agent_sse(
                         content = getattr(last_msg, "content", "") or ""
                         tool_calls = getattr(last_msg, "tool_calls", []) or []
 
-                        if content and not tool_calls:
-                            # A URL written by the model can refer to an old
-                            # artifact from history. Only tool output (handled
-                            # below) or a fresh inline/local image may create a
-                            # graph in this turn.
+                        if content:
+                            # The first model message may carry the compact
+                            # execution plan together with tool calls. Stream
+                            # it before the tool panel so Open WebUI can show
+                            # the plan without a second model pass. A URL
+                            # written by the model can still refer to an old
+                            # artifact from history, so it never creates a
+                            # graph in the stream.
                             content = _remove_graph_markdown_images(
                                 content,
                                 _graph_image_urls(content),

@@ -159,13 +159,16 @@ rm -f "$PUBLIC_ORIGIN_FILE"
 
 if [ "$AGENT_MODE" = "local" ]; then
   export OPENWEBUI_AGENT_BASE_URL="http://host.docker.internal:8000/v1"
-  SERVICES=(postgres mcp-ecotaxa open-webui)
+  # Install the scoped Open WebUI inlet filter on every startup. Without this
+  # one-shot service, Open WebUI performs its own file RAG and emits
+  # `sources_retrieved` before every IDEA request.
+  SERVICES=(postgres mcp-ecotaxa open-webui open-webui-bootstrap)
   echo "[start] Starting containers without copepod-agent..."
   echo "[start] Open WebUI will use the local agent at http://localhost:8000."
 else
   # copepod-agent is started only AFTER the EcoTaxa cache preflight passes, so
   # the agent never comes up on top of an empty or broken cache.
-  SERVICES=(postgres mcp-ecotaxa open-webui)
+  SERVICES=(postgres mcp-ecotaxa open-webui open-webui-bootstrap)
   echo "[start] Starting containers (agent starts after the cache check)..."
 fi
 

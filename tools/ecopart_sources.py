@@ -579,12 +579,11 @@ def _preflight_ecopart_partition(
     ecopart_project_id: int,
     thread_id: str | None = None,
     request_timeout: float | None = None,
-    linked_samples: list[dict] | None = None,
 ) -> dict[str, object]:
-    """Check remote exportability and local join prerequisites without export."""
+    """Check EcoPart exportability at the profile grain without exporting."""
     fingerprint = dataframe_fingerprint(dataframe)
     cache_key = (
-        f"{thread_id}:ecopart_preflight:{ecotaxa_project_id}:{ecopart_project_id}"
+        f"{thread_id}:ecopart_preflight:v2-profile:{ecotaxa_project_id}:{ecopart_project_id}"
         if thread_id else None
     )
     if cache_key:
@@ -624,44 +623,19 @@ def _preflight_ecopart_partition(
     elif not pd.to_numeric(dataframe[depth_column], errors="coerce").notna().any():
         reasons.append(f"colonne `{depth_column}` sans profondeur numérique")
 
-    if linked_samples is not None:
-        linked = list(linked_samples)
-    else:
-        try:
-            search_kwargs = {
-                "project_id": int(ecopart_project_id),
-                "ecotaxa_project_id": int(ecotaxa_project_id),
-            }
-            if request_timeout is not None:
-                search_kwargs["timeout"] = float(request_timeout)
-            linked = client.search_samples(**search_kwargs)
-        except Exception as exc:
-            linked = []
-            uncertain.append(f"vérification EcoPart impossible : {exc}")
+    # The actual join is EcoPart Profile ↔ EcoTaxa profile + depth bin.  Do not
+    # turn a profile match into a requirement for ``filt_proj``: that endpoint
+    # only returns samples explicitly linked to the EcoTaxa project and can be
+    # empty for a valid profile-based campaign.
+    try:
+        search_kwargs = {"project_id": int(ecopart_project_id)}
+        if request_timeout is not None:
+            search_kwargs["timeout"] = float(request_timeout)
+        project_profiles = client.search_samples(**search_kwargs)
+    except Exception as exc:
+        project_profiles = []
+        uncertain.append(f"vérification EcoPart impossible : {exc}")
 
-    if not linked and not uncertain:
-        reasons.append("aucun sample EcoPart lié et accessible")
-
-    visibility = [
-        str(sample.get("visibility") or "").strip().upper()
-        for sample in linked
-    ]
-    known_visibility = [value for value in visibility if value]
-    exportable = [value for value in known_visibility if value.endswith("Y")]
-    if known_visibility and not exportable:
-        reasons.append(
-            "aucun sample EcoPart exportable; statuts="
-            + ",".join(sorted(set(known_visibility)))
-        )
-    elif linked and not known_visibility:
-        uncertain.append("statut de validation EcoPart non communiqué")
-
-    # A zero profile overlap predicts the same deterministic join refusal as
-    # _perform_enrichment, without downloading the EcoPart TSV.
-    remote_profiles = {
-        str(sample.get("name") or "").strip() for sample in linked
-        if str(sample.get("name") or "").strip()
-    }
     local_profiles: set[str] = set(_candidate_ecotaxa_profile_labels(dataframe))
     if "sample_id" in dataframe.columns:
         local_profiles.update(
@@ -673,8 +647,26 @@ def _preflight_ecopart_partition(
             dataframe["obj_orig_id"].dropna().astype("string")
             .str.replace(r"_\d+$", "", regex=True).astype(str)
         )
-    if remote_profiles and local_profiles and not remote_profiles.intersection(local_profiles):
-        reasons.append("aucun identifiant de profil commun pour la jointure")
+    matching_profiles = [
+        profile for profile in project_profiles
+        if str(profile.get("name") or "").strip() in local_profiles
+    ]
+    if not matching_profiles and not uncertain:
+        reasons.append("aucun profil EcoPart correspondant et accessible")
+
+    visibility = [
+        str(profile.get("visibility") or "").strip().upper()
+        for profile in matching_profiles
+    ]
+    known_visibility = [value for value in visibility if value]
+    exportable = [value for value in known_visibility if value.endswith("Y")]
+    if known_visibility and not exportable:
+        reasons.append(
+            "aucun sample EcoPart exportable; statuts="
+            + ",".join(sorted(set(known_visibility)))
+        )
+    elif matching_profiles and not known_visibility:
+        uncertain.append("statut de validation EcoPart non communiqué")
 
     if reasons:
         verdict = "BLOQUÉ"
@@ -685,8 +677,8 @@ def _preflight_ecopart_partition(
     result = {
         "verdict": verdict,
         "reason": "; ".join([*reasons, *uncertain]) or "export et jointure prévalidés",
-        "linked_samples": len(linked),
-        "exportable_samples": len(exportable),
+        "matching_profiles": len(matching_profiles),
+        "exportable_profiles": len(exportable),
         "cache_hit": False,
     }
     if cache_key:
@@ -1142,7 +1134,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                 },
             )
 
-    resolved: list[tuple[int, int, pd.DataFrame, str, list[dict] | None]] = []
+    resolved: list[tuple[int, int, pd.DataFrame, str]] = []
     failures: list[str] = []
     failed_project_ids: set[int] = set()
     resolution_partial_count = 0
@@ -1178,7 +1170,6 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             ecopart_pid,
             partition,
             str(resolution.get("resolution") or "lien résolu"),
-            resolution.get("linked_samples"),
         ))
 
     if not confirmed:
@@ -1194,16 +1185,15 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                     ecopart_project_id=ecopart_pid,
                     thread_id=thread_id,
                     request_timeout=_ecopart_preflight_timeout(),
-                    linked_samples=linked_samples,
                 ),
             )
-            for ecotaxa_pid, ecopart_pid, partition, resolution, linked_samples in resolved
+            for ecotaxa_pid, ecopart_pid, partition, resolution in resolved
         ]
         mappings = [
             f"- EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} : "
             f"{preflight['verdict']} — {preflight['reason']} "
-            f"({preflight['exportable_samples']}/{preflight['linked_samples']} "
-            f"samples exportables; {resolution})"
+            f"({preflight['exportable_profiles']}/{preflight['matching_profiles']} "
+            f"profils EcoPart exportables; {resolution})"
             for ecotaxa_pid, ecopart_pid, resolution, preflight in preflights
         ]
         failure_lines = [f"- {failure}" for failure in failures]
@@ -1246,7 +1236,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
     successful_pairs: list[tuple[int, int]] = []
     partition_provenance: dict[str, dict] = {}
     n_matched = 0
-    for ecotaxa_pid, ecopart_pid, partition, _resolution, _linked_samples in resolved:
+    for ecotaxa_pid, ecopart_pid, partition, _resolution in resolved:
         try:
             cached_tsv = find_ecopart_tsv(
                 ecopart_project_id=ecopart_pid,
@@ -1257,16 +1247,15 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                 df_ep = load_ecopart_tsv(cached_tsv)
                 source_label = "cache local"
             else:
-                links = client.start_export(
-                    project_id=ecopart_pid,
-                    ecotaxa_project_id=ecotaxa_pid,
-                )
+                # A resolved EcoPart project is exported at its profile grain;
+                # the local canonical join keeps only matching EcoTaxa profiles.
+                links = client.start_export(project_id=ecopart_pid)
                 df_ep = client.download_tsv(links)
                 if df_ep.empty:
                     failed_project_ids.add(ecotaxa_pid)
                     failures.append(
                         f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
-                        "aucun sample EcoPart exporté."
+                        "aucun profil EcoPart exporté."
                     )
                     continue
                 file_id = uuid.uuid4().hex
@@ -1287,7 +1276,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                 failed_project_ids.add(ecotaxa_pid)
                 failures.append(
                     f"EcoTaxa {ecotaxa_pid} → EcoPart {ecopart_pid} — "
-                    "aucun sample EcoPart exporté."
+                    "aucun profil EcoPart exporté."
                 )
                 continue
 
@@ -1670,9 +1659,9 @@ def make_ecopart_tools(thread_id: str) -> list:
     ) -> str:
         """Enrichit l'EcoTaxa en session avec les variables EcoPart téléchargées **à distance**.
 
-        Workflow : (1) télécharge les samples EcoPart liés au projet EcoTaxa donné via
-        `filt_proj` (ou directement par `ecopart_project_id` via `filt_uproj`), (2) joint sur
-        (sample_id, depth_bin) avec l'EcoTaxa déjà en session.
+        Workflow : (1) résout puis télécharge le projet EcoPart au grain profil,
+        (2) joint les profils communs sur (sample_id, depth_bin) avec l'EcoTaxa
+        déjà en session.
 
         Pré-requis : un EcoTaxa doit être en session (load_file UVP ou query_ecotaxa).
         Pré-requis ID : passer `ecotaxa_project_id` (recommandé) OU `ecopart_project_id`.
@@ -1680,7 +1669,7 @@ def make_ecopart_tools(thread_id: str) -> list:
 
         **Confirmation obligatoire (CT-AG-06)** : `confirmed=False` par défaut →
         préflight sans téléchargement : lien EcoTaxa→EcoPart, accessibilité et
-        validation des samples EcoPart, identifiant de profil et profondeur
+        validation des profils EcoPart, identifiant de profil et profondeur
         nécessaires à la jointure, avec verdict PRÊT / PARTIEL / BLOQUÉ par
         projet. Pour lancer réellement le téléchargement et la jointure,
         rappeler avec `confirmed=True`.
@@ -1779,7 +1768,6 @@ def make_ecopart_tools(thread_id: str) -> list:
             )
 
         if not confirmed:
-            resolved_linked_samples = None
             if ecopart_project_id is None and ecotaxa_project_id is not None:
                 resolution = _lookup_ecopart_project_for_ecotaxa(
                     session_et["df"],
@@ -1796,7 +1784,6 @@ def make_ecopart_tools(thread_id: str) -> list:
                     )
                 ecopart_project_id = int(resolution["project_id"])
                 resolution_note = str(resolution.get("resolution") or "lien résolu")
-                resolved_linked_samples = resolution.get("linked_samples")
 
             if ecotaxa_project_id is None or ecopart_project_id is None:
                 return _ep_blocked(
@@ -1812,14 +1799,13 @@ def make_ecopart_tools(thread_id: str) -> list:
                 ecopart_project_id=int(ecopart_project_id),
                 thread_id=thread_id,
                 request_timeout=_ecopart_preflight_timeout(),
-                linked_samples=resolved_linked_samples,
             )
             return _ep_blocked(
                 "Préflight d'enrichissement EcoPart (dry-run).\n"
                 f"EcoTaxa {ecotaxa_project_id} → EcoPart {ecopart_project_id} : "
                 f"{preflight['verdict']} — {preflight['reason']} "
-                f"({preflight['exportable_samples']}/{preflight['linked_samples']} "
-                "samples exportables).\n"
+                f"({preflight['exportable_profiles']}/{preflight['matching_profiles']} "
+                "profils EcoPart exportables).\n"
                 f"Résolution : {resolution_note or 'identifiants explicites'}.\n"
                 "Aucune donnée téléchargée. "
                 + (
@@ -1832,8 +1818,8 @@ def make_ecopart_tools(thread_id: str) -> list:
                     "projects_ready": int(preflight["verdict"] == "PRÊT"),
                     "projects_partial": int(preflight["verdict"] == "PARTIEL"),
                     "projects_blocked": int(preflight["verdict"] == "BLOQUÉ"),
-                    "linked_samples": preflight["linked_samples"],
-                    "exportable_samples": preflight["exportable_samples"],
+                    "matching_profiles": preflight["matching_profiles"],
+                    "exportable_profiles": preflight["exportable_profiles"],
                 },
             )
 
@@ -1923,10 +1909,12 @@ def make_ecopart_tools(thread_id: str) -> list:
             )
 
         try:
-            links = client.start_export(
-                project_id=ecopart_project_id,
-                ecotaxa_project_id=ecotaxa_project_id,
-            )
+            export_kwargs: dict[str, int] = {}
+            if ecopart_project_id is not None:
+                export_kwargs["project_id"] = int(ecopart_project_id)
+            else:
+                export_kwargs["ecotaxa_project_id"] = int(ecotaxa_project_id)
+            links = client.start_export(**export_kwargs)
             df_ep = client.download_tsv(links)
         except EcopartExportError as exc:
             return _ep_error(
@@ -1942,8 +1930,7 @@ def make_ecopart_tools(thread_id: str) -> list:
 
         if df_ep.empty:
             return _ep_empty(
-                f"Aucun sample EcoPart trouvé pour le projet EcoTaxa {ecotaxa_project_id} "
-                f"— vérifie l'ID ou utilise `ecopart_project_id` directement."
+                f"Aucun profil EcoPart trouvé pour le projet {ecopart_project_id or ecotaxa_project_id}."
             )
 
         file_id = uuid.uuid4().hex
@@ -1988,9 +1975,9 @@ def make_ecopart_tools(thread_id: str) -> list:
         )
         artifact_url = download_url(output_path.name)
         scope = (
-            f"projet EcoTaxa {ecotaxa_project_id}"
-            if ecotaxa_project_id is not None
-            else f"projet EcoPart {ecopart_project_id}"
+            f"projet EcoPart {ecopart_project_id} (jointure sur profils)"
+            if ecopart_project_id is not None
+            else f"projet EcoTaxa {ecotaxa_project_id}"
         )
         prefix = f"{resolution_note}\n" if resolution_note else ""
         join_artifact = validate_tool_artifact(join_result[1])

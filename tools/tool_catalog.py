@@ -221,12 +221,6 @@ def _source(
 TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     # Local workspace and analysis.
     "load_file": _presentation("Chargement de fichier", "File loading", "data", slow=True),
-    "prepare_neolabs_analysis": _presentation(
-        "Préparation complète NeoLabs",
-        "Complete NeoLabs preparation",
-        "data",
-        slow=True,
-    ),
     "run_pandas": _presentation("Analyse du tableau", "Table analysis", "data"),
     "run_graph": _presentation("Génération du graphique", "Chart generation", "data"),
     # EcoTaxa.
@@ -345,7 +339,6 @@ _POLICY_PROFILES: Mapping[str, _PolicyProfile] = MappingProxyType({
 _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     # Local data/code execution.
     "load_file": "local_session",
-    "prepare_neolabs_analysis": "local_session",
     "run_pandas": "local_session",
     "run_graph": "local_artifact",
     "join_net_uvp_enriched": "local_low_session",
@@ -452,7 +445,6 @@ _CORE_SOURCE_BY_NAME: Mapping[str, ToolSource] = MappingProxyType({
 _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # Permanent core and state-gated local tools.
     "load_file": "core",
-    "prepare_neolabs_analysis": "file_analysis",
     "load_skill": "core",
     "query_copepod_knowledge_base": "core",
     "run_pandas": "file_analysis",
@@ -478,7 +470,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "list_ecotaxa_projects": "hidden_legacy",
     "find_ecotaxa_projects": "hidden_legacy",
     "list_ecotaxa_campaigns": "hidden_legacy",
-    "preview_ecotaxa_project": "ecotaxa_preview",
+    "preview_ecotaxa_project": "hidden_legacy",
     "list_ecotaxa_cache_tables": "ecotaxa_discovery",
     "describe_ecotaxa_cache_table": "ecotaxa_discovery",
     "describe_ecotaxa_project_coverage": "hidden_legacy",
@@ -490,7 +482,7 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "get_ecotaxa_object": "hidden_legacy",
     "summarize_ecotaxa_sample": "hidden_legacy",
     "summarize_ecotaxa_samples": "hidden_legacy",
-    "summarize_ecotaxa_sample_deployment": "ecotaxa_samples",
+    "summarize_ecotaxa_sample_deployment": "hidden_legacy",
     # EcoTaxa geography and time — replaced by query_ecotaxa_cache SQL.
     "find_ecotaxa_samples_in_region": "hidden_legacy",
     "combine_ecotaxa_selections": "hidden_legacy",
@@ -498,25 +490,27 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "find_ecotaxa_projects_in_region": "hidden_legacy",
     "group_ecotaxa_project_samples_by_region": "hidden_legacy",
     "rank_ecotaxa_samples_by_region": "hidden_legacy",
-    # EcoTaxa taxonomy.
-    "search_ecotaxa_taxa": "ecotaxa_taxonomy",
-    "count_ecotaxa_taxa": "ecotaxa_taxonomy",
+    # EcoTaxa taxonomy — cached taxon counts/searches go through cache SQL;
+    # marine-name resolution is handled by the dedicated taxonomy tool.
+    "search_ecotaxa_taxa": "hidden_legacy",
+    "count_ecotaxa_taxa": "hidden_legacy",
     "find_ecotaxa_observations": "hidden_legacy",
-    # EcoTaxa schema.
-    "inspect_ecotaxa_project_schema": "ecotaxa_schema",
-    "inspect_ecotaxa_column": "ecotaxa_schema",
-    "compare_ecotaxa_projects": "ecotaxa_schema",
+    # EcoTaxa schema — cache table description plus one SQL query is the
+    # normal route; project wrappers remain registered only for compatibility.
+    "inspect_ecotaxa_project_schema": "hidden_legacy",
+    "inspect_ecotaxa_column": "hidden_legacy",
+    "compare_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa audit — cache-only tools replaced by query_ecotaxa_cache SQL.
     "audit_ecotaxa_spatial_coverage": "hidden_legacy",
     "query_ecotaxa_cache": "ecotaxa_discovery",
-    "summarize_ecotaxa_profiles_for_map": "ecotaxa_discovery",
+    "summarize_ecotaxa_profiles_for_map": "hidden_legacy",
     "find_uvp_matches_for_net_table": "file_analysis",
     "join_net_uvp_enriched": "file_analysis",
     "summarize_ecotaxa_project": "hidden_legacy",
     "summarize_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa exports.
     "query_ecotaxa": "ecotaxa_export",
-    "query_ecotaxa_sample": "ecotaxa_export",
+    "query_ecotaxa_sample": "hidden_legacy",
     "export_ecotaxa_samples": "ecotaxa_export",
     # Optional SQL workspace.
     "list_sql_tables": "sql_workspace",
@@ -556,9 +550,7 @@ def _build_policy(name: str, profile_name: str) -> ToolPolicy:
     profile = _POLICY_PROFILES[profile_name]
     source = _CORE_SOURCE_BY_NAME.get(name) or _SOURCE_BY_FAMILY[presentation.family]
     required_skill = _REQUIRED_SKILL_BY_FAMILY.get(presentation.family)
-    if name == "run_graph":
-        required_skill = "graph_writer"
-    elif name == "export_deliverable":
+    if name == "export_deliverable":
         required_skill = "deliverable_writer"
     workflows = (
         ("visualization",)

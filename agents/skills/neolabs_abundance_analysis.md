@@ -179,10 +179,9 @@ Adjust column names to the actual file after inspection.
 
 ## Visual output routing
 
-This skill is not a graph_writer replacement. For any visual request on a
-NeoLabs abundance file, use this skill only to choose the correct ecological
-working table and transformations, then render with the pre-activated graph
-rules (`graph_planner`/`graph_writer`); the next execution call is `run_graph`.
+For any visual request on a NeoLabs abundance file, use this skill only to
+choose the correct ecological working table and transformations, then render
+directly with `run_graph` under the kernel graph rules.
 
 Recommended levels:
 
@@ -343,4 +342,4 @@ Each taxon row now has env columns; THEN continue with the standard workflow
 ## Runtime routing contract
 
 - This skill is pre-activated whenever a NeoLabs abundance table is the active dataset — apply its rules directly; do not spend a `load_skill` call on it.
-- It is not a replacement for the graph skills: `graph_planner`/`graph_writer` are pre-activated on visual turns; build the correct working table here, then call `run_graph` directly.
+- Build the correct working table here, then call `run_graph` directly.

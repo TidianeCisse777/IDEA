@@ -203,6 +203,12 @@ class SessionStorePG:
         for storage_path in stale_paths:
             with contextlib.suppress(FileNotFoundError):
                 Path(storage_path).unlink()
+        # Match the file-backed store: worker variables are a hot cache only
+        # and must disappear with the conversation's durable state.
+        with contextlib.suppress(Exception):
+            from tools.persistent_executor import default_executor
+
+            default_executor.close(session_key)
 
     def get(self, session_key: str) -> dict[str, Any] | None:
         if session_key in self._cache:

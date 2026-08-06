@@ -1,7 +1,6 @@
 """Tools LangChain pour l'analyse de données — slice 2."""
 import ast
 import contextlib
-import io
 import json
 import re
 import uuid
@@ -11,12 +10,16 @@ from typing import Any
 import pandas as pd
 from langchain_core.tools import tool
 
-from core.cartography import configure_offline_cartopy
+from core.environment_resolver.column_detection import (
+    DEFAULT_LAT_CANDIDATES,
+    DEFAULT_LON_CANDIDATES,
+    detect_column,
+)
 from core.geo import load_registry
 from core.runtime_paths import graphs_dir
 from tools.domain_profile import detect_domain_profile
 from tools.tool_result import blocked, empty, error, success
-from tools.code_sandbox import apply_restricted_builtins
+from tools.persistent_executor import default_executor
 
 
 _GRAPHS_DIR = graphs_dir()
@@ -390,9 +393,9 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
         return (
             "→ Fichier NeoLabs ABONDANCE chargé (1 ligne par taxon×analyse).\n\n"
             + _NEOLABS_ARCHITECTURE
-            + "\n\nCharge `neolabs_abundance_analysis` ; pour une densité de "
-            "copépodes utilise le contrat `neolabs_copepod_density` — ne fais pas "
-            "une moyenne tous-taxons sur les lignes brutes."
+            + "\n\nInspecte d'abord le schéma effectivement chargé. Si la sémantique "
+            "d'un champ, d'un stade ou d'une métrique reste inconnue, interroge la "
+            "documentation locale ciblée avant de conclure."
         )
     if is_neolabs_sample:
         return (
@@ -460,10 +463,9 @@ def _file_variable_name(path: str) -> str:
 def _referenced_names(code: str) -> set[str]:
     """Return identifiers explicitly read by a user-provided Python snippet.
 
-    ``run_graph`` executes one isolated snippet, so its DataFrame namespace can
-    be limited to the names that snippet actually reads.  This avoids eagerly
-    unpickling every historical dataset in a session just to draw a figure from
-    a small derived table.
+    ``run_graph`` synchronises only the named DataFrames into its persistent
+    worker. This avoids eagerly materialising every historical dataset just to
+    draw a figure from a small derived table.
     """
     try:
         tree = ast.parse(code)
@@ -474,6 +476,304 @@ def _referenced_names(code: str) -> set[str]:
         for node in ast.walk(tree)
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
     }
+
+
+def _normalize_abstract_cartopy_crs(code: str) -> str:
+    """Repair Cartopy's unusable no-argument CRS constructor.
+
+    ``CRS()`` is an abstract base requiring PROJ parameters, while a plain
+    station map has an unambiguous safe default: ``PlateCarree()``. Repair only
+    the exact zero-argument misuse; every explicit projection and every CRS
+    with parameters remains model-authored code.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+
+    module_aliases: set[str] = set()
+    direct_crs_aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "cartopy.crs":
+                    module_aliases.add(alias.asname or "cartopy")
+        elif isinstance(node, ast.ImportFrom) and node.module == "cartopy.crs":
+            for alias in node.names:
+                if alias.name == "CRS":
+                    direct_crs_aliases.add(alias.asname or "CRS")
+        elif isinstance(node, ast.ImportFrom) and node.module == "cartopy":
+            for alias in node.names:
+                if alias.name == "crs":
+                    module_aliases.add(alias.asname or "crs")
+
+    replacements: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or node.args or node.keywords:
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id in direct_crs_aliases:
+            replacements.append(ast.get_source_segment(code, node) or "")
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "CRS"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in module_aliases
+        ):
+            replacements.append(ast.get_source_segment(code, node) or "")
+
+    replacements = [segment for segment in replacements if segment]
+    if not replacements:
+        return code
+    repaired = code
+    for segment in set(replacements):
+        repaired = repaired.replace(segment, "ccrs.PlateCarree()")
+    if not re.search(r"^\s*import\s+cartopy\.crs\s+as\s+ccrs\s*$", repaired, re.MULTILINE):
+        repaired = "import cartopy.crs as ccrs\n" + repaired
+    return repaired
+
+
+_MAP_LATITUDE_CANDIDATES = (*DEFAULT_LAT_CANDIDATES, "lat_avg", "latitude_avg")
+_MAP_LONGITUDE_CANDIDATES = (*DEFAULT_LON_CANDIDATES, "lon_avg", "longitude_avg")
+_MAP_STATION_CANDIDATES = (
+    "station_name",
+    "station",
+    "station_id",
+    "sample_stationid",
+    "sample_station_id",
+)
+
+
+def _map_coordinate_columns(frame: pd.DataFrame) -> tuple[str, str] | None:
+    """Return an explicit latitude/longitude pair, never inferred from values."""
+    latitude = detect_column(frame.columns, _MAP_LATITUDE_CANDIDATES)
+    longitude = detect_column(frame.columns, _MAP_LONGITUDE_CANDIDATES)
+    if latitude is None or longitude is None:
+        return None
+    return str(latitude), str(longitude)
+
+
+def _map_ready_candidates(
+    store: SessionStore,
+    thread_id: str,
+    summary: pd.DataFrame,
+) -> list[tuple[float, str]]:
+    """Find persisted coordinate tables compatible with a station summary.
+
+    This runs only after a rejected map attempt. It ranks candidates by exact
+    station-key coverage so the model can target a known table instead of
+    guessing from every historical session variable.
+    """
+    summary_station = detect_column(summary.columns, _MAP_STATION_CANDIDATES)
+    if summary_station is None:
+        return []
+    summary_keys = {
+        " ".join(str(value).casefold().split())
+        for value in summary[summary_station].dropna()
+        if str(value).strip()
+    }
+    if not summary_keys:
+        return []
+
+    candidates: list[tuple[float, str]] = []
+    prefix = f"{thread_id}:dataset:"
+    for key in store.keys(prefix):
+        entry = store.get(key)
+        frame = (entry or {}).get("df")
+        meta = (entry or {}).get("meta") or {}
+        if not isinstance(frame, pd.DataFrame):
+            continue
+        coordinates = _map_coordinate_columns(frame)
+        station = detect_column(frame.columns, _MAP_STATION_CANDIDATES)
+        variable = str(meta.get("variable_name") or key.removeprefix(prefix))
+        if coordinates is None or station is None:
+            continue
+        source_keys = {
+            " ".join(str(value).casefold().split())
+            for value in frame[station].dropna()
+            if str(value).strip()
+        }
+        overlap = len(summary_keys & source_keys)
+        if not overlap:
+            continue
+        coverage = overlap / len(summary_keys)
+        latitude, longitude = coordinates
+        candidates.append(
+            (
+                coverage,
+                f"`{variable}` (station={station}, latitude={latitude}, "
+                f"longitude={longitude}; couverture stations={overlap}/{len(summary_keys)})",
+            )
+        )
+    return sorted(candidates, reverse=True)
+
+
+def _named_dataset_variables(store: SessionStore, thread_id: str) -> tuple[str, ...]:
+    """Return the durable table names that a multi-source operation must name."""
+    prefix = f"{thread_id}:dataset:"
+    names = []
+    for key in store.keys(prefix):
+        entry = store.get(key) or {}
+        if not isinstance(entry.get("df"), pd.DataFrame):
+            continue
+        meta = entry.get("meta") or {}
+        names.append(str(meta.get("variable_name") or key.removeprefix(prefix)))
+    return tuple(sorted(set(names)))
+
+
+def _implicit_df_join_issue(code: str, named_tables: tuple[str, ...]) -> str | None:
+    """Require both inputs to a multi-table join to be named explicitly."""
+    if len(named_tables) < 2 or "df" not in _referenced_names(code):
+        return None
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    uses_df_in_join = any(
+        isinstance(node, ast.Call)
+        and (
+            (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"merge", "join"}
+                and any(
+                    isinstance(child, ast.Name) and child.id == "df"
+                    for child in ast.walk(node)
+                )
+            )
+            or (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "pd"
+                and node.func.attr in {"merge", "concat"}
+                and any(
+                    isinstance(child, ast.Name) and child.id == "df"
+                    for child in ast.walk(node)
+                )
+            )
+        )
+        for node in ast.walk(tree)
+    )
+    if not uses_df_in_join:
+        return None
+    return (
+        "Multi-table join blocked: `df` is only a compatibility alias and may "
+        "not select a join input when several persisted tables exist. Name both "
+        "operands explicitly from: " + ", ".join(f"`{name}`" for name in named_tables) + "."
+    )
+
+
+def _cartopy_preflight_issue(
+    code: str,
+    local_vars: dict[str, Any],
+    *,
+    map_ready_candidates: list[tuple[float, str]] | None = None,
+    named_tables: tuple[str, ...] = (),
+) -> tuple[str, bool] | None:
+    """Reject impossible Cartopy point maps before the isolated worker runs.
+
+    The model can safely correct a precise preflight result in the same ReAct
+    turn. Letting Cartopy execute first instead produces an opaque CRS error or
+    a geographically meaningless plot when a station aggregation discarded its
+    coordinates.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+
+    cartopy_used = any(
+        (
+            isinstance(node, ast.Import)
+            and any(
+                alias.name == "cartopy" or alias.name.startswith("cartopy.")
+                for alias in node.names
+            )
+        )
+        or (
+            isinstance(node, ast.ImportFrom)
+            and (node.module == "cartopy" or str(node.module or "").startswith("cartopy."))
+        )
+        or (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "ccrs"
+        )
+        for node in ast.walk(tree)
+    )
+    if not cartopy_used:
+        return None
+
+    referenced = _referenced_names(code)
+    frames = {
+        name: value
+        for name, value in local_vars.items()
+        if name in referenced and isinstance(value, pd.DataFrame)
+    }
+    if not frames:
+        return None  # Boundary-only Cartopy maps legitimately have no table.
+
+    if "df" in referenced and len(named_tables) > 1:
+        complete_candidates = [
+            description
+            for coverage, description in (map_ready_candidates or [])
+            if coverage == 1.0
+        ]
+        candidate_note = (
+            " The only full-coverage map source is " + complete_candidates[0]
+            + "; name it explicitly in the graph code."
+            if len(complete_candidates) == 1
+            else " Available persisted tables: "
+            + ", ".join(f"`{name}`" for name in named_tables)
+            + ". Choose by provenance and requested scope; do not use `df`."
+        )
+        return (
+            "Cartopy map blocked: `df` is only a compatibility alias when "
+            "several persisted tables exist. Name the exact map source "
+            "DataFrame in the graph code."
+            + candidate_note,
+            len(complete_candidates) == 1,
+        )
+
+    has_coordinates = any(_map_coordinate_columns(frame) is not None for frame in frames.values())
+    if has_coordinates:
+        return None
+
+    schemas = "; ".join(
+        f"{name}=[{', '.join(map(str, frame.columns))}]"
+        for name, frame in frames.items()
+    )
+    complete_candidates = [
+        description
+        for coverage, description in (map_ready_candidates or [])
+        if coverage == 1.0
+    ]
+    if len(complete_candidates) == 1:
+        candidate_note = (
+            " Exact map-ready source: "
+            + complete_candidates[0]
+            + ". Use that named source table, retain/merge its verified coordinates "
+            "with the station summary into `plot_df`, then render."
+        )
+        retryable = True
+    elif map_ready_candidates:
+        candidate_note = (
+            " Several coordinate tables overlap these stations: "
+            + "; ".join(description for _, description in map_ready_candidates[:3])
+            + ". Do not select one automatically: inspect their provenance and "
+            "the requested scope before rebuilding `plot_df`."
+        )
+        retryable = False
+    else:
+        candidate_note = ""
+        retryable = False
+    return (
+        "Cartopy point map blocked: the referenced table has no usable "
+        f"latitude/longitude pair ({schemas}). A station summary such as "
+        "`station_name, n_rows` is not map-ready. Rebuild `plot_df` from the "
+        "source rows, retaining one verified latitude and longitude per station, "
+        "then render that table."
+        + candidate_note,
+        retryable,
+    )
 
 
 def _dataframe_vars(
@@ -535,16 +835,39 @@ def _dataframe_vars(
     return local_vars
 
 
-def _zone_geometry_vars() -> dict[str, Any]:
+def _zone_geometry_vars(zone_names: set[str] | None = None) -> dict[str, Any]:
     """Expose the registered zone geometries to graph code without serialising WKT.
 
     Zone polygons are local, trusted registry data. Keeping them out of the
     model-visible tool result avoids sending hundreds of KB of WKT through the
     context while allowing ``run_graph`` to draw the exact registered outlines.
+    A literal zone reference lets the worker materialise only that geometry;
+    dynamic code falls back to the full registry for correctness.
     """
-    registry = load_registry(
+    registry_path = (
         Path(__file__).parent.parent / "data" / "geo" / "zones_registry.geojson"
     )
+    if zone_names:
+        from shapely.geometry import shape
+
+        raw = json.loads(registry_path.read_text(encoding="utf-8"))
+        selected = [
+            feature
+            for feature in raw["features"]
+            if feature.get("properties", {}).get("canonical") in zone_names
+        ]
+        return {
+            "zone_polygons": {
+                feature["properties"]["canonical"]: shape(feature["geometry"])
+                for feature in selected
+            },
+            "zone_sources": {
+                feature["properties"]["canonical"]: feature["properties"]["source"]
+                for feature in selected
+            },
+        }
+
+    registry = load_registry(registry_path)
     return {
         "zone_polygons": {zone.canonical: zone.polygon for zone in registry.zones},
         "zone_sources": {zone.canonical: zone.source for zone in registry.zones},
@@ -1024,9 +1347,9 @@ def _neolabs_join_guard(code: str, local_vars: dict[str, Any]) -> str | None:
         f"avec astype(str) ({', '.join(sorted(unsafe_columns))}). "
         "`ANALYSIS_ID` est entier côté abondance tandis que `analysis_id` peut "
         "être flottant côté sample : la conversion produit par exemple '2185' "
-        "contre '2185.0' et détruit tous les appariements. Utilise "
-        "`prepare_neolabs_analysis` avec les deux chemins chargés. Si une "
-        "jointure manuelle est indispensable, conserve les clés numériques."
+        "contre '2185.0' et détruit tous les appariements. Conserve les clés "
+        "numériques, normalise-les au besoin avec `pd.to_numeric`, puis joins "
+        "sur les deux clés sample + analyse."
     )
 
 
@@ -1438,28 +1761,14 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 "de fichiers explicites si plusieurs datasets sont présents."
             )
 
-        neolabs_abundance = _store.get(
-            f"{thread_id}:dataset:df_file_neolabs_abundance"
-        )
-        neolabs_sample = _store.get(
-            f"{thread_id}:dataset:df_file_neolabs_sample"
-        )
+        neolabs_abundance = _store.get(f"{thread_id}:dataset:df_file_neolabs_abundance")
+        neolabs_sample = _store.get(f"{thread_id}:dataset:df_file_neolabs_sample")
         if neolabs_abundance is not None and neolabs_sample is not None:
-            abundance_meta = neolabs_abundance.get("meta") or {}
-            sample_meta = neolabs_sample.get("meta") or {}
-            abundance_source_path = abundance_meta.get("path") or str(
-                abundance_meta.get("source", "")
-            ).removeprefix("file:")
-            sample_source_path = sample_meta.get("path") or str(
-                sample_meta.get("source", "")
-            ).removeprefix("file:")
             route_note += (
-                "\nRoute NeoLabs obligatoire : appelle "
-                "`prepare_neolabs_analysis` avec "
-                f"`abundance_path={abundance_source_path!r}` et "
-                f"`sample_path={sample_source_path!r}`. Ne reconstruis pas cette "
-                "jointure avec `run_pandas` et ne convertis jamais "
-                "`ANALYSIS_ID`/`analysis_id` avec `astype(str)`."
+                "\nTables NeoLabs abundance et sample disponibles : utilise "
+                "`run_pandas`, normalise les clés numériquement si nécessaire, "
+                "puis joins `SAMPLE_ID` + `ANALYSIS_ID` avec `sample_id` + "
+                "`analysis_id`."
             )
 
         enc_note = f" (encodage : {meta['encoding']})" if meta.get("encoding") else ""
@@ -1529,10 +1838,12 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         `source_variable` de l'outil d'enrichissement ; ne réutilise pas le
         fichier complet par défaut.
 
-        IMPORTANT: each call to run_pandas is isolated — variables computed in a
-        previous call (e.g. `station_stats`, `delta_df`) are NOT available in the
-        next call. Exceptions persisted automatically and reusable by their exact
-        name in later turns:
+        The controlled worker persists variables computed in this conversation
+        (e.g. `station_stats`, `delta_df`) so a following graph can reuse them.
+        Durable/reusable results still need an explicit table name: after a
+        restart, only the persisted tables below are restored automatically.
+        Exceptions persisted automatically and reusable by their exact name in
+        later turns:
         - a canonical sample-depth DataFrame → `df_canonical_sample_depth`;
         - a join/merge/concat result → a new `df_join_*` table (reuse it instead
           of re-joining the source files).
@@ -1563,14 +1874,14 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     retryable=True,
                     method="data lineage validation",
                 )
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            plt.close("all")
-
             local_vars = _dataframe_vars(_store, thread_id, df)
-            local_vars["plt"] = plt
             injected_keys = set(local_vars) | {"__builtins__"}
+
+            implicit_join_issue = _implicit_df_join_issue(
+                code, _named_dataset_variables(_store, thread_id)
+            )
+            if implicit_join_issue:
+                return blocked(implicit_join_issue, method="explicit dataframe selection")
 
             guard = _neolabs_join_guard(code, local_vars)
             if guard:
@@ -1580,14 +1891,17 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             if guard:
                 return blocked(guard, method="controlled pandas execution")
 
-            apply_restricted_builtins(local_vars)
-            stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout):
-                exec(code, local_vars)  # noqa: S102
-            printed_output = stdout.getvalue().strip()
+            execution = default_executor.execute(
+                thread_id, "pandas", code, local_vars
+            )
+            if execution.error:
+                raise RuntimeError(execution.error)
+            printed_output = execution.stdout
+            local_vars.update(execution.dataframes or {})
+            if execution.result_available:
+                local_vars["result"] = execution.result
 
-            if plt.get_fignums():
-                plt.close("all")
+            if execution.produced_figure:
                 return blocked(
                     "Error: run_pandas produced a matplotlib figure. "
                     "Use run_graph instead to execute visualization code."
@@ -1857,7 +2171,23 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         `df_ecopart`, `df_ctd`, `df_bio_oracle`, `df_ogsl`, `df_sql`,
         joined source aliases such as `df_ecotaxa_ecopart`, and
         project-specific variables such as `df_ecopart_105`.
-        Write complete matplotlib code using the graph_writer skill template.
+        In the same live conversation, named DataFrame intermediates created
+        by `run_pandas` (for example `plot_df` or `station_stats`) remain
+        available. Persisted `loaded_file`, `df_file_*`, `df_derived_*` and
+        named source selections are also available by their exact names; after
+        a worker restart, rely on those persisted names rather than a transient
+        intermediate. `pd` and `plt` are preloaded; Cartopy/scientific imports
+        allowed by the prompt can be imported normally.
+        When code explicitly references `zone_polygons` or `zone_sources`, they
+        are supplied as trusted local Shapely geometries from the IHO/NeoLab/
+        MEOW registry, keyed by canonical zone name. For an IHO/MEOW zone map,
+        draw the represented `zone_polygons` with Cartopy `ShapelyFeature`.
+        They are loaded only for that call, not serialised in the session
+        capsule. Do not claim that a zone contour is unavailable unless a direct
+        lookup in `zone_polygons` actually fails.
+        Write complete matplotlib code using the compact graph contract already
+        active in the session. Server-side validation enforces provenance,
+        uncertainty markers, readable output and map/profile safety.
         Do NOT call plt.show() or plt.savefig().
 
         The return value is the graph image — include it verbatim in your response.
@@ -1867,21 +2197,6 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         """
         session = _store.get(thread_id)
         df = session.get("df") if session else None
-        loaded_skills = ((session or {}).get("meta") or {}).get("loaded_skills") or []
-        if "graph_writer" not in loaded_skills:
-            # Recover the common model-routing slip locally. The model already
-            # supplied executable graph code; activating the reviewed writer
-            # skill lets the render attempt continue instead of ending the
-            # whole user turn on a recoverable sequencing error.
-            from tools.skill_manifest import load_skill_document
-            from tools.skill_tool import SKILLS_DIR, _record_loaded_skill
-
-            _record_loaded_skill(
-                _store, thread_id, "graph_writer",
-                load_skill_document(SKILLS_DIR / "graph_writer.md"),
-            )
-            loaded_skills = [*loaded_skills, "graph_writer"]
-
         _fail_key = f"{thread_id}:run_graph_fail_count"
 
         def _record_graph_failure() -> int:
@@ -1895,35 +2210,42 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             _store.set(_fail_key, None, {"count": 0})
 
         try:
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            plt.close("all")
-            configure_offline_cartopy()
-            _patch_cartopy_gridliner_polygon()
-
+            effective_code = _normalize_abstract_cartopy_crs(code)
             if df is not None:
                 local_vars = _dataframe_vars(
-                    _store, thread_id, df, _referenced_names(code)
+                    _store, thread_id, df, _referenced_names(effective_code)
                 )
+                map_candidates = _map_ready_candidates(_store, thread_id, df)
+                named_tables = _named_dataset_variables(_store, thread_id)
             else:
-                local_vars = {"pd": pd}
-            local_vars.update(_zone_geometry_vars())
-            local_vars["plt"] = plt
-            apply_restricted_builtins(local_vars)
-            with _cartopy_safe_tight_layout(plt):
-                exec(code, local_vars)  # noqa: S102
+                local_vars = {}
+                map_candidates = []
+                named_tables = ()
+            cartopy_preflight = _cartopy_preflight_issue(
+                effective_code,
+                local_vars,
+                map_ready_candidates=map_candidates,
+                named_tables=named_tables,
+            )
+            if cartopy_preflight:
+                cartopy_issue, retryable = cartopy_preflight
+                factory = error if retryable else blocked
+                return factory(
+                    cartopy_issue,
+                    retryable=retryable,
+                    method="cartography preflight",
+                )
+            execution = default_executor.execute(
+                thread_id, "graph", effective_code, local_vars
+            )
+            if execution.error:
+                raise RuntimeError(execution.error)
+            local_vars.update(execution.dataframes or {})
 
-            if plt.get_fignums():
-                graph_contract = local_vars.get("graph_contract")
-                for fig_num in plt.get_fignums():
-                    figure = plt.figure(fig_num)
-                buf = io.BytesIO()
-                plt.savefig(buf, **_graph_savefig_kwargs(plt))
-                buf.seek(0)
-                plt.close("all")
+            if execution.image_png:
+                graph_contract = execution.graph_contract
                 graph_id = uuid.uuid4().hex[:12]
-                (_GRAPHS_DIR / f"{graph_id}.png").write_bytes(buf.read())
+                (_GRAPHS_DIR / f"{graph_id}.png").write_bytes(execution.image_png)
                 _clear_graph_quality_block(_store, thread_id)
                 _clear_graph_failure()
                 image_markdown = f"![graph]({graph_url(f'{graph_id}.png')})"
@@ -1994,7 +2316,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     f"{thread_id}:last_graph_state",
                     None,
                     {
-                        "code": code,
+                        "code": effective_code,
                         "graph_id": graph_id,
                         "plot_data_ref": (
                             "df_graph_plot"
@@ -2091,4 +2413,4 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 method="controlled matplotlib execution",
             )
 
-    return [load_file, prepare_neolabs_analysis, run_pandas, run_graph]
+    return [load_file, run_pandas, run_graph]

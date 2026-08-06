@@ -1,5 +1,4 @@
 """Agent factory + CLI copépodes (slices 4-5)."""
-import asyncio
 import copy
 import os
 import sys
@@ -89,7 +88,10 @@ _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 # A manifest may budget a substantial skill, but it must not override the
 # context safety ceiling.  A single 40k-character skill body repeatedly fed to
 # a ReAct loop is enough to drown out both the user request and tool results.
-_MAX_SKILL_RESULT_CHARS = int(os.getenv("MAX_SKILL_RESULT_CHARS", "12000"))
+# A selected EcoTaxa/NeoLabs procedure is roughly 15–19k characters. It is
+# admitted in full for the one turn that selected it, then compacted normally;
+# truncating it here would defeat IDEA-style on-demand reading.
+_MAX_SKILL_RESULT_CHARS = int(os.getenv("MAX_SKILL_RESULT_CHARS", "20000"))
 _KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "1"))
 # Second-pass budget: if total tool-result chars after first compaction exceeds
 # this, oldest eligible messages are compacted further (never the current turn).
@@ -775,18 +777,12 @@ class _ContextMiddleware(AgentMiddleware):
         self,
         user_id: str = "anonymous",
         thread_id: str = "unknown",
-        output_intent_classifier=None,
         catalog_names=None,
     ):
         super().__init__()
         self.user_id = user_id
         self.thread_id = thread_id
-        self.output_intent_classifier = output_intent_classifier
         self.catalog_names = tuple(catalog_names or ())
-        self._output_intent_cache = {}
-        self._output_intent_classifier_calls = {}
-        self._output_intent_sync_lock = threading.Lock()
-        self._output_intent_async_lock = asyncio.Lock()
 
     def _prepare_request(self, request, memories):
         original_messages = list(request.messages)
@@ -802,11 +798,6 @@ class _ContextMiddleware(AgentMiddleware):
         except Exception:
             pass
 
-        # Resolve output format before exposing tools.  A visual request must
-        # expose the graph workflow on its first model call; waiting for a
-        # graph skill to be loaded first makes the workflow impossible.
-        output_intent = self._output_intent_decision(original_messages)
-
         original_tokens = _approx_tokens(original_messages)
         compacted_messages, compact_metrics = _compact_old_tool_results(
             original_messages,
@@ -820,104 +811,33 @@ class _ContextMiddleware(AgentMiddleware):
         block, metrics = _build_memory_block(memories)
         from tools.session_store import default_store as session_store
         from tools.turn_context import build_turn_context
-        from dataclasses import replace
 
-        # A visual turn always ends in run_graph, whose Cartopy/matplotlib
-        # contracts live in graph_planner + graph_writer. Both are represented
-        # by static runtime capsules, so seeding them here — before the capsule
-        # is projected — lets the model render directly instead of spending one
-        # model round-trip per skill on load_skill. run_graph already self-heals
-        # the same capsule, so this only removes latency, never changes output.
-        from tools.skill_tool import preseed_capsule_skills
+        # Rendering quality, provenance and safety are enforced by run_graph;
+        # graph planning/writing skills are deliberately outside the runtime.
         from tools.source_scope import source_decision_for_turn
 
-        # Resolve the turn's authorized sources up front so a source-procedure
-        # skill can be pre-activated before the capsule is projected (same
-        # round-trip saving as graph skills). Reused below for tool scoping.
+        # Resolve the turn's authorized sources before projecting the source
+        # capsule. Reused below for tool scoping.
         source_decision = source_decision_for_turn(
             session_store, self.thread_id, original_messages
         )
 
-        preseeded_graph_skills: list[str] = []
-        graph_reference_block = ""
-        visual_turn = output_intent.intent == "visual" and os.getenv(
-            "DISABLE_GRAPH_PRESEED", ""
-        ).lower() not in ("1", "true", "yes")
-        if visual_turn:
-            from tools.skill_tool import graph_rendering_reference
+        graph_reference_phase = "none"
 
-            preseeded_graph_skills = preseed_capsule_skills(
-                session_store, self.thread_id, ("graph_planner", "graph_writer")
-            )
-            # Inject the full reviewed graph templates directly (not through the
-            # compact state capsule, which would truncate them). Tokens are
-            # near-free for latency; round-trips are the cost we removed.
-            graph_reference_block = graph_rendering_reference()
-
-        # EcoTaxa's read procedure lives in ecotaxa_navigation, whose full rules
-        # are captured by a runtime capsule. When EcoTaxa is authorized this turn,
-        # pre-activate it so the model queries the cache directly instead of
-        # spending a load_skill round-trip first (the cache query itself is ~0.1ms).
+        # Source and dataset skills are catalogued in the lightweight
+        # `load_skill` tool description. Their full bodies are loaded only when
+        # the model selects one for the current task, never pre-injected.
         preseeded_source_skills: list[str] = []
-        source_reference_block = ""
-        active_before_context = session_store.get(self.thread_id) or {}
-        active_profile = ((active_before_context.get("meta") or {}).get("domain_profile") or {}).get("name")
-        if active_profile != "fish_larvae" and "ecotaxa" in source_decision.authorized_sources and os.getenv(
-            "DISABLE_SOURCE_PRESEED", ""
-        ).lower() not in ("1", "true", "yes"):
-            from tools.skill_tool import source_navigation_reference
-
-            preseeded_source_skills = preseed_capsule_skills(
-                session_store, self.thread_id, ("ecotaxa_navigation",)
-            )
-            # Inject the full reviewed ecotaxa_navigation body (not just the
-            # capsule), same rationale as the graph templates.
-            source_reference_block = source_navigation_reference(
-                ("ecotaxa_navigation",)
-            )
-
-        # Pre-activate the NeoLabs analysis skill when a NeoLabs abundance file is
-        # the active dataset. The model does not reliably load_skill it, and this
-        # file's column traps (aggregate double-counting, single-stratum
-        # "profiles") otherwise produce wrong numbers.
-        neolabs_reference_block = ""
-        if os.getenv("DISABLE_SOURCE_PRESEED", "").lower() not in (
-            "1", "true", "yes"
-        ):
-            try:
-                from tools.data_tools import _is_neolabs_columns
-
-                active = session_store.get(self.thread_id) or {}
-                active_df = active.get("df")
-                if active_df is not None and _is_neolabs_columns(active_df.columns):
-                    from tools.skill_tool import dataset_analysis_reference
-
-                    neolabs_reference_block = dataset_analysis_reference(
-                        ("neolabs_abundance_analysis",)
-                    )
-            except Exception:
-                pass
 
         # Rebuild the typed turn state once; the model-facing capsule (active
         # dataset, live zone subsets, authorized source scope) is its projection.
         turn_ctx = build_turn_context(
             session_store, self.thread_id, original_messages, persist_source=False
         )
-        # Keep the decision local to this model request as well as persisted in
-        # session metadata. This avoids a race with a store reload and makes
-        # first-call visual exposure independent of an active dataframe.
-        turn_ctx = replace(turn_ctx, output_intent=output_intent.intent)
         dataset_block = turn_ctx.capsule
         from agents.domain_profiles import domain_profile_prompt
 
         domain_profile_block = domain_profile_prompt(turn_ctx.domain_profile)
-        fish_larvae_reference_block = ""
-        if turn_ctx.domain_profile == "fish_larvae":
-            from tools.skill_tool import dataset_analysis_reference
-
-            fish_larvae_reference_block = dataset_analysis_reference(
-                ("fish_larvae_analysis",)
-            )
         system_message = request.system_message
         base = system_message.content if system_message is not None else ""
         # Surface the last render's verified facts so the answer's `Données`
@@ -935,13 +855,8 @@ class _ContextMiddleware(AgentMiddleware):
                 )
         except Exception:
             pass
-        try:
-            from tools.graph_state import graph_edit_reference
-
-            if visual_turn:
-                graph_edit_block = graph_edit_reference(session_store, self.thread_id)
-        except Exception:
-            pass
+        # The last graph code remains in normal short-term history. Do not
+        # inject it on every turn merely to predict a graph edit.
         net_uvp_progress_block = ""
         try:
             from tools.net_uvp_workflow import resolve_net_uvp_progress
@@ -959,12 +874,7 @@ class _ContextMiddleware(AgentMiddleware):
         # user, a thread or a turn.  Exact-prefix prompt caches can then reuse
         # this whole block. Session memory, active tables and graph facts must
         # remain at the tail.
-        static_reference_block = (
-            graph_reference_block
-            + source_reference_block
-            + neolabs_reference_block
-            + fish_larvae_reference_block
-        )
+        static_reference_block = ""
         dynamic_context_block = (
             block
             + dataset_block
@@ -1108,14 +1018,15 @@ class _ContextMiddleware(AgentMiddleware):
             "turn_domain_profile": turn_ctx.domain_profile,
             "turn_authorized_sources": list(turn_ctx.authorized_sources),
             "turn_derived_subsets": len(turn_ctx.derived_zone_subsets),
-            "turn_output_intent": output_intent.intent,
-            "turn_output_intent_confidence": output_intent.confidence,
-            "preseeded_graph_skills": list(preseeded_graph_skills),
+            "turn_output_intent": "agent_decides",
+            "turn_output_intent_confidence": "not_applicable",
+            "preseeded_graph_skills": [],
             "preseeded_source_skills": list(preseeded_source_skills),
-            "graph_reference_chars": len(graph_reference_block),
-            "source_reference_chars": len(source_reference_block),
-            "neolabs_reference_chars": len(neolabs_reference_block),
-            "fish_larvae_reference_chars": len(fish_larvae_reference_block),
+            "graph_reference_phase": graph_reference_phase,
+            "graph_reference_chars": 0,
+            "source_reference_chars": 0,
+            "neolabs_reference_chars": 0,
+            "fish_larvae_reference_chars": 0,
             "static_reference_chars": len(static_reference_block),
             "dynamic_context_chars": len(dynamic_context_block),
             "tools_before_policy": [
@@ -1231,7 +1142,6 @@ class _ContextMiddleware(AgentMiddleware):
         from tools.tool_catalog import TOOL_POLICIES
         from tools.tool_exposure import decide_tool_exposure
         from tools.turn_context import build_turn_context
-        from dataclasses import replace
 
         messages = list(request.state.get("messages") or [])
         source_decision = source_decision_for_turn(
@@ -1245,10 +1155,6 @@ class _ContextMiddleware(AgentMiddleware):
             self.thread_id,
             messages,
             persist_source=False,
-        )
-        turn_ctx = replace(
-            turn_ctx,
-            output_intent=self._output_intent_decision(messages).intent,
         )
         available_names = self.catalog_names or tuple(TOOL_POLICIES)
         decision = decide_tool_exposure(
@@ -1270,131 +1176,6 @@ class _ContextMiddleware(AgentMiddleware):
             "information before retrying."
         )
 
-    def _persist_output_intent(self, decision) -> None:
-        from tools.session_store import default_store as session_store
-
-        fingerprint = decision.turn_fingerprint
-        session_store.update_meta(
-            self.thread_id,
-            {
-                "output_intent_decision": decision.model_dump(mode="json"),
-                "output_intent_classifier_calls": self._output_intent_classifier_calls.get(
-                    fingerprint, 0
-                ),
-            },
-        )
-
-    def _output_intent_decision(self, messages):
-        from tools.output_intent import OutputIntentDecision, turn_fingerprint
-
-        fingerprint = turn_fingerprint(messages)
-        cached = self._output_intent_cache.get(fingerprint)
-        if cached is not None:
-            return cached
-        with self._output_intent_sync_lock:
-            cached = self._output_intent_cache.get(fingerprint)
-            if cached is not None:
-                return cached
-            try:
-                if self.output_intent_classifier is None:
-                    raise RuntimeError("output intent classifier unavailable")
-                decision = self.output_intent_classifier.classify(messages)
-                if decision.turn_fingerprint != fingerprint:
-                    raise ValueError("classifier returned a mismatched turn fingerprint")
-            except Exception:
-                decision = OutputIntentDecision(
-                    intent="ambiguous",
-                    confidence="low",
-                    reason="classifier unavailable",
-                    turn_fingerprint=fingerprint,
-                )
-            self._output_intent_classifier_calls[fingerprint] = (
-                self._output_intent_classifier_calls.get(fingerprint, 0) + 1
-            )
-            self._output_intent_cache[fingerprint] = decision
-            self._persist_output_intent(decision)
-            return decision
-
-    async def _aoutput_intent_decision(self, messages):
-        from tools.output_intent import OutputIntentDecision, turn_fingerprint
-
-        fingerprint = turn_fingerprint(messages)
-        cached = self._output_intent_cache.get(fingerprint)
-        if cached is not None:
-            return cached
-        async with self._output_intent_async_lock:
-            cached = self._output_intent_cache.get(fingerprint)
-            if cached is not None:
-                return cached
-            try:
-                if self.output_intent_classifier is None:
-                    raise RuntimeError("output intent classifier unavailable")
-                decision = await self.output_intent_classifier.aclassify(messages)
-                if decision.turn_fingerprint != fingerprint:
-                    raise ValueError("classifier returned a mismatched turn fingerprint")
-            except Exception:
-                decision = OutputIntentDecision(
-                    intent="ambiguous",
-                    confidence="low",
-                    reason="classifier unavailable",
-                    turn_fingerprint=fingerprint,
-                )
-            self._output_intent_classifier_calls[fingerprint] = (
-                self._output_intent_classifier_calls.get(fingerprint, 0) + 1
-            )
-            self._output_intent_cache[fingerprint] = decision
-            self._persist_output_intent(decision)
-            return decision
-
-    @staticmethod
-    def _decision_rejection(decision) -> str | None:
-        if decision.intent == "visual":
-            return None
-        if decision.intent == "non_visual":
-            return (
-                "Graph workflow blocked: the requested output is non-visual. "
-                "Return the requested number, calculation, ranking, summary, "
-                "coordinates, or table without graph skills."
-            )
-        return (
-            "Graph workflow blocked: the requested output format is ambiguous. "
-            "Clarify whether a visual figure is required before using graph skills."
-        )
-
-    def _output_intent_rejection(self, request) -> str | None:
-        from tools.output_intent import graph_attempt, graph_workflow_rejection
-
-        tool_call = request.tool_call
-        name = str(tool_call.get("name") or "")
-        args = dict(tool_call.get("args") or {})
-        if not graph_attempt(name, args):
-            return None
-        messages = list(request.state.get("messages") or [])
-        retry = _code_retry_plan(messages)
-        if retry is not None and retry[0] == name:
-            return None
-        decision = self._output_intent_decision(messages)
-        return self._decision_rejection(decision) or graph_workflow_rejection(
-            name, args, messages
-        )
-
-    async def _aoutput_intent_rejection(self, request) -> str | None:
-        from tools.output_intent import graph_attempt, graph_workflow_rejection
-
-        tool_call = request.tool_call
-        name = str(tool_call.get("name") or "")
-        args = dict(tool_call.get("args") or {})
-        if not graph_attempt(name, args):
-            return None
-        messages = list(request.state.get("messages") or [])
-        retry = _code_retry_plan(messages)
-        if retry is not None and retry[0] == name:
-            return None
-        decision = await self._aoutput_intent_decision(messages)
-        return self._decision_rejection(decision) or graph_workflow_rejection(
-            name, args, messages
-        )
-
     def wrap_tool_call(self, request, handler):
         trace_id = _start_harness_tool_call(self.thread_id, request.tool_call)
         rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
@@ -1411,16 +1192,6 @@ class _ContextMiddleware(AgentMiddleware):
                 method="deterministic tool exposure guard",
             )
             _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="tool_exposure_policy")
-            return result
-        rejection = self._output_intent_rejection(request)
-        if rejection:
-            result = self._blocked_tool_message(
-                request,
-                rejection,
-                provenance_source="output_intent_guard",
-                method="typed output intent guard",
-            )
-            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="output_intent_guard")
             return result
         try:
             result = handler(request)
@@ -1446,16 +1217,6 @@ class _ContextMiddleware(AgentMiddleware):
                 method="deterministic tool exposure guard",
             )
             _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="tool_exposure_policy")
-            return result
-        rejection = await self._aoutput_intent_rejection(request)
-        if rejection:
-            result = self._blocked_tool_message(
-                request,
-                rejection,
-                provenance_source="output_intent_guard",
-                method="typed output intent guard",
-            )
-            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="output_intent_guard")
             return result
         try:
             result = await handler(request)
@@ -1595,10 +1356,6 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         **chat_openai_connection_kwargs(),
     )
     catalog = build_tool_catalog(thread_id)
-    from tools.output_intent import OpenAIOutputIntentClassifier
-
-    output_intent_classifier = OpenAIOutputIntentClassifier(llm)
-
     return create_agent(
         llm,
         list(catalog.tools),
@@ -1607,7 +1364,6 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
             _ContextMiddleware(
                 user_id=user_id,
                 thread_id=thread_id,
-                output_intent_classifier=output_intent_classifier,
                 catalog_names=catalog.names,
             )
         ],

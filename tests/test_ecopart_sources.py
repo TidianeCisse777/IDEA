@@ -50,6 +50,35 @@ def test_make_ecopart_tools_bootstraps_shared_cache(tmp_path, monkeypatch):
     bootstrap.assert_called_once_with(tmp_path / "cache")
 
 
+def test_ecopart_preflight_checks_matching_profiles_not_filt_proj_links():
+    """A valid profile join must not be blocked by an empty EcoTaxa sample link."""
+    from unittest.mock import MagicMock
+
+    import pandas as pd
+    from tools.ecopart_sources import _preflight_ecopart_partition
+
+    client = MagicMock()
+    client.search_samples.return_value = [
+        {"id": 1, "name": "profile_01", "visibility": "YY"},
+        {"id": 2, "name": "other_profile", "visibility": "YY"},
+    ]
+
+    result = _preflight_ecopart_partition(
+        pd.DataFrame({
+            "sample_profileid": ["profile_01"],
+            "object_depth_min": [5.0],
+        }),
+        client=client,
+        ecotaxa_project_id=17808,
+        ecopart_project_id=1235,
+    )
+
+    client.search_samples.assert_called_once_with(project_id=1235)
+    assert result["verdict"] == "PRÊT"
+    assert result["matching_profiles"] == 1
+    assert result["exportable_profiles"] == 1
+
+
 def test_confirmed_enrichment_reuses_compatible_persistent_tsv(
     tmp_path, monkeypatch, _isolated_store
 ):
@@ -773,7 +802,7 @@ def test_remote_campaign_dry_run_resolves_every_partition_without_download():
 
 
 def test_remote_campaign_dry_run_preflights_exportability_and_join_columns():
-    """Le dry-run refuse un lien EcoPart dont tous les samples sont non validés."""
+    """Le dry-run refuse des profils EcoPart correspondants non validés."""
     from unittest.mock import MagicMock, patch
 
     import pandas as pd
@@ -798,14 +827,14 @@ def test_remote_campaign_dry_run_preflights_exportability_and_join_columns():
             "resolution": "lien serveur",
         }
 
-    def linked_samples(*, project_id=None, ecotaxa_project_id=None, timeout=None):
+    def project_profiles(*, project_id=None, ecotaxa_project_id=None, timeout=None):
         assert timeout == 60.0
-        assert project_id == {101: 301, 202: 302}[ecotaxa_project_id]
-        if ecotaxa_project_id == 101:
+        assert ecotaxa_project_id is None
+        if project_id == 301:
             return [{"id": 1, "name": "alpha", "visibility": "VN"}]
         return [{"id": 2, "name": "beta", "visibility": "YY"}]
 
-    client.search_samples.side_effect = linked_samples
+    client.search_samples.side_effect = project_profiles
     with patch("tools.ecopart_sources.EcopartClient", return_value=client), patch(
         "tools.ecopart_sources._lookup_ecopart_project_for_ecotaxa",
         side_effect=resolve_partition,
@@ -919,7 +948,7 @@ def test_remote_explicit_projects_bypass_campaign_partitioning(tmp_path, monkeyp
     out = _store.get(f"{thread_id}:ecotaxa_ecopart")["df"]
     assert "Enrichissement terminé" in result
     assert set(out["obj_orig_id"].dropna()) == {"alpha_1"}
-    client.start_export.assert_called_once_with(project_id=901, ecotaxa_project_id=101)
+    client.start_export.assert_called_once_with(project_id=901)
 
 
 def test_enrich_remote_dry_run_by_default_does_not_download():

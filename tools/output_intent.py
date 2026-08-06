@@ -168,12 +168,8 @@ class OpenAIOutputIntentClassifier:
 
 
 def graph_attempt(name: str | None, args: dict[str, Any] | None) -> bool:
-    if name == "run_graph":
-        return True
-    return name == "load_skill" and str((args or {}).get("skill_name", "")) in {
-        "graph_planner",
-        "graph_writer",
-    }
+    """Only graph execution itself enters the visual-output guard."""
+    return name == "run_graph"
 
 
 def successful_calls_in_current_turn(messages: list[Any]) -> list[SuccessfulToolCall]:

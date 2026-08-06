@@ -1822,7 +1822,25 @@ def make_source_tools(thread_id: str) -> list:
                 latest = _store.get(f"{thread_id}:ecotaxa_selection_latest")
                 latest_meta = (latest or {}).get("meta") or {}
                 latest_name = str(latest_meta.get("selection_name") or "")
-                if latest_name.removeprefix("selection_") == key:
+                latest_alias = latest_name.removeprefix("selection_")
+                # The user-facing name is the stable slug.  The digest only
+                # disambiguates storage; requiring the model to reproduce it
+                # makes an otherwise valid current selection impossible to
+                # export.  Resolve a slug prefix only against *latest*, so it
+                # cannot select an older or unrelated scope.
+                if (
+                    latest_alias == key
+                    or latest_alias.startswith(f"{key}_")
+                ):
+                    session = latest
+            # A saved selection is the current export scope.  Do not make a
+            # generated storage name a user-facing precondition: when a name
+            # is stale, shortened or otherwise unresolvable, reuse `latest`.
+            # The returned resolved name still records exactly what was used.
+            if not session:
+                latest = _store.get(f"{thread_id}:ecotaxa_selection_latest")
+                latest_ids = ((latest or {}).get("meta") or {}).get("sample_ids")
+                if latest_ids:
                     session = latest
         if not session:
             # A transparent pandas subset is a valid export scope when it
@@ -1916,7 +1934,7 @@ def make_source_tools(thread_id: str) -> list:
     def _selection_actions(name: str, sample_count: int, project_count: int) -> list[str]:
         return [
             f"résume cette sélection : `summarize_ecotaxa_samples(selection_name=\"{name}\")`",
-            f"exporte cette sélection : d'abord `export_ecotaxa_samples(selection_name=\"{name}\", confirmed=false)`",
+            f"exporte cette sélection : `export_ecotaxa_samples(selection_name=\"{name}\")`",
             "export représentatif : demander `exporte 1 sample par projet`",
             "filtrer davantage : ajouter une profondeur, une période, un instrument ou des projets",
             f"contexte : {sample_count} samples sur {project_count} projets",
@@ -3402,7 +3420,7 @@ def make_source_tools(thread_id: str) -> list:
             "",
             "## Actions possibles",
             f"- exporter cette sélection multi-années : "
-            f"`export_ecotaxa_samples(selection_name=\"{selection_name}\", confirmed=false)`",
+            f"`export_ecotaxa_samples(selection_name=\"{selection_name}\")`",
             "- l'export consolide toutes les années ; regrouper ensuite par "
             "année avec `run_pandas` (colonne de date → année) pour l'analyse "
             "interannuelle",
@@ -4456,7 +4474,7 @@ def make_source_tools(thread_id: str) -> list:
     def export_ecotaxa_samples(
         sample_ids: list[int] | None = None,
         selection_name: str | None = None,
-        confirmed: bool = False,
+        confirmed: bool = True,
         status: str = "V",
         taxon: str | None = None,
     ) -> str:
@@ -4476,11 +4494,9 @@ def make_source_tools(thread_id: str) -> list:
         `find_ecotaxa_samples_in_region` ; `"latest"` / `"cette sélection"`
         reprend la dernière sélection EcoTaxa du fil.
 
-        **Confirmation obligatoire (CT-AG-06)** : `confirmed=False` par
-        défaut → préflight complet de tous les samples, avec un verdict
-        PRÊT / PARTIEL / BLOQUÉ par projet selon la présence d'objets du statut
-        demandé; aucune tâche d'export n'est créée. Pour exécuter réellement
-        les exports, rappeler avec `confirmed=True`.
+        L'export démarre directement par défaut. `confirmed=False` reste
+        disponible uniquement pour demander un préflight explicite, sans
+        télécharger les objets.
 
         `status` : statut des annotations à exporter — `"V"` (validé),
         `"P"` (prédit), `""` (tous).
