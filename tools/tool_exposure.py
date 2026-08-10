@@ -163,51 +163,15 @@ _ECOTAXA_GEO_TERMS = (
     "labrador", "baffin", "ungava", "hudson",
 )
 _GEOGRAPHIC_QUESTION_PATTERN = re.compile(r"\b(?:o[uù]|where)\b", re.IGNORECASE)
-_NET_UVP_AUDIT_PATTERN = re.compile(
-    r"(?=.*\b(?:uvp|eco[- ]?taxa)\b)"
-    r"(?=.*\b(?:filet\w*|nets?|neo[- ]?labs?)\b)"
-    r"(?=.*\b(?:audit\w*|correspond\w*|appariement\w*|match\w*|compar\w*|"
-    r"pr[eé]par\w*|reli\w*|join\w*)\b)",
-    re.IGNORECASE | re.DOTALL,
-)
-_NET_UVP_TOOL_NAMES = {
-    "prepare_net_uvp_audit_subsets",
-    "find_uvp_matches_for_net_table",
-    "join_net_uvp_enriched",
-    "compare_local_net_uvp_profiles",
-}
-_TIME_SCOPE_PATTERN = re.compile(
-    r"\b(?:20\d{2}|ann[eé]e?|p[eé]riode|fen[eê]tre|date|mois|saison|"
-    r"janvier|f[eé]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|"
-    r"octobre|novembre|d[eé]cembre)\b",
-    re.IGNORECASE,
-)
-
-
 def _keep(selected: Collection[str], *allowed_names: str) -> tuple[str, ...]:
     """Keep only policy-authorized tools from one workflow stage."""
     allowed = set(allowed_names)
     return tuple(name for name in selected if name in allowed)
 
 
-def _drop_completed_protocol_steps(
-    selected: Collection[str],
-    progress: Any,
-) -> tuple[str, ...]:
-    """Keep normal routing after persisted Net↔UVP protocol completion."""
-    completed_steps = {
-        "load_file",
-        "prepare_net_uvp_audit_subsets",
-        "find_uvp_matches_for_net_table",
-    }
-    return tuple(name for name in selected if name not in completed_steps)
 _GROUP_PRIORITY_NAMES: dict[ToolExposureGroup, tuple[str, ...]] = {
     "file_analysis": (
-        # A local Filet↔UVP request must reach the dedicated calculator before
-        # generic pandas.  Otherwise a constrained fallback exposes only
-        # run_pandas and invites the model to fabricate an object-count proxy.
-        "compare_local_net_uvp_profiles", "prepare_net_uvp_audit_subsets", "run_pandas", "find_uvp_matches_for_net_table", "join_net_uvp_enriched",
-        "split_dataframe_by_zone",
+        "run_pandas", "split_dataframe_by_zone",
     ),
     "ecotaxa_discovery": (
         "query_ecotaxa_cache", "list_ecotaxa_cache_tables",
@@ -412,7 +376,6 @@ def decide_tool_exposure(
     messages: list[Any],
     *,
     max_tools: int = 20,
-    store: Any | None = None,
 ) -> ToolExposureDecision:
     """Return the deterministic tool allowlist for the current model call."""
 
@@ -432,77 +395,6 @@ def decide_tool_exposure(
             or policies[name].source not in disabled_sources
         )
     signals = build_turn_signals(messages)
-    net_uvp_audit_requested = bool(
-        _NET_UVP_AUDIT_PATTERN.search(signals.latest_user_text)
-    )
-    net_uvp_progress = None
-    if turn_context.file_loaded:
-        from tools.net_uvp_workflow import resolve_net_uvp_progress
-
-        if store is None:
-            from tools.session_store import default_store
-
-            store = default_store
-        net_uvp_progress = resolve_net_uvp_progress(store, turn_context.thread_id)
-
-    # Keep this branch narrow. A plain local file analysis must not pay for four
-    # Filet↔UVP schemas. The exact next tool is exposed from the persisted
-    # workflow; only the final calculator survives a generic follow-up after
-    # EcoPart enrichment, where the user may simply say “continue”.
-    if not turn_context.file_loaded:
-        names = tuple(name for name in names if name not in _NET_UVP_TOOL_NAMES)
-    elif net_uvp_progress is not None and net_uvp_progress.phase == "enriched":
-        names = tuple(
-            name
-            for name in names
-            if name not in _NET_UVP_TOOL_NAMES or name == "join_net_uvp_enriched"
-        )
-    elif not net_uvp_audit_requested:
-        names = tuple(name for name in names if name not in _NET_UVP_TOOL_NAMES)
-    elif net_uvp_progress is not None and net_uvp_progress.phase == "needs_subset":
-        # A bare Filet–UVP comparison can be two local files. A subset is only
-        # needed for a remote cache audit with an explicit zone/time scope.
-        if signals.geographic_requested or bool(_TIME_SCOPE_PATTERN.search(signals.latest_user_text)):
-            next_net_tool = "prepare_net_uvp_audit_subsets"
-        elif re.search(r"\beco[- ]?taxa\b", signals.latest_user_text, re.IGNORECASE):
-            next_net_tool = "find_uvp_matches_for_net_table"
-        else:
-            next_net_tool = "compare_local_net_uvp_profiles"
-        names = tuple(
-            name
-            for name in names
-            if name not in _NET_UVP_TOOL_NAMES or name == next_net_tool
-        )
-    elif net_uvp_progress is not None and net_uvp_progress.phase == "needs_audit":
-        names = tuple(
-            name
-            for name in names
-            if name not in _NET_UVP_TOOL_NAMES
-            or name == "find_uvp_matches_for_net_table"
-        )
-    elif net_uvp_progress is not None and net_uvp_progress.phase in {"audited", "exported", "joined"}:
-        names = tuple(name for name in names if name not in _NET_UVP_TOOL_NAMES)
-    elif signals.geographic_requested or bool(_TIME_SCOPE_PATTERN.search(signals.latest_user_text)):
-        names = tuple(
-            name
-            for name in names
-            if name not in _NET_UVP_TOOL_NAMES
-            or name == "prepare_net_uvp_audit_subsets"
-        )
-    elif re.search(r"\beco[- ]?taxa\b", signals.latest_user_text, re.IGNORECASE):
-        names = tuple(
-            name
-            for name in names
-            if name not in _NET_UVP_TOOL_NAMES
-            or name == "find_uvp_matches_for_net_table"
-        )
-    else:
-        names = tuple(
-            name
-            for name in names
-            if name not in _NET_UVP_TOOL_NAMES
-            or name == "compare_local_net_uvp_profiles"
-        )
     # Graphing is a normal workspace capability, not a separately classified
     # intent.  Keeping its compact schema visible lets the primary agent decide
     # directly and removes one LLM classification call per user turn.
@@ -722,43 +614,6 @@ def decide_tool_exposure(
         reasons.append("policy overflow fallback")
 
     selected_set = set(selected)
-    # A scoped net↔UVP audit advances from persisted evidence, never from the
-    # last tool call in the model history.  This lets a later visual/export
-    # request retain its normal capabilities after a completed audit.
-    scoped_net_uvp_request = net_uvp_audit_requested and (
-        signals.geographic_requested or bool(_TIME_SCOPE_PATTERN.search(signals.latest_user_text))
-    )
-    if scoped_net_uvp_request:
-        from tools.net_uvp_workflow import resolve_net_uvp_progress
-
-        if store is None:
-            from tools.session_store import default_store
-
-            store = default_store
-        progress = resolve_net_uvp_progress(store, turn_context.thread_id)
-        if progress.phase == "no_file":
-            # ``TurnContext`` is built from the active session record.  If it
-            # already confirms a loaded file, a missing auxiliary workflow
-            # record must not hide all local tools and force a needless reload.
-            # Reserve the load-only state for a genuinely empty workspace.
-            if not turn_context.file_loaded:
-                selected = _keep(selected, "load_file")
-        elif progress.phase == "needs_subset":
-            selected = _keep(
-                selected,
-                "prepare_net_uvp_audit_subsets",
-                "run_pandas",
-            )
-        elif progress.phase == "needs_audit":
-            selected = _keep(
-                selected,
-                "find_uvp_matches_for_net_table",
-                "run_pandas",
-            )
-        else:
-            selected = _drop_completed_protocol_steps(selected, progress)
-        selected_set = set(selected)
-        reasons.append(f"persisted net/UVP workflow: {progress.phase}")
     # An enrichment tool is available for a direct enrichment request, but it
     # must not suppress the local sandbox.  A table may be *described* as
     # already enriched while the user is asking for an analysis or a graph;

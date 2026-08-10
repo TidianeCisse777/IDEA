@@ -25,14 +25,16 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain.agents import create_agent
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 from agents.exploration_middleware import ExplorationStateMiddleware
 from agents.exploration_state import (
     IdeaAgentState,
     recovery_tool_names,
-    render_exploration_context,
+    render_dataframe_context,
+    render_exploration_frontier,
+    render_task_context,
 )
 from core.llm_config import chat_openai_connection_kwargs
 from tools.tool_catalog import build_tool_catalog
@@ -91,6 +93,7 @@ _SYSTEM_PROMPT = _load_system_prompt()
 # evaluations that need a larger window.
 _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "100000"))
 _CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
+_MAX_MODEL_CALLS_PER_TURN = int(os.getenv("MAX_MODEL_CALLS_PER_TURN", "10"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 # A manifest may budget a substantial skill, but it must not override the
@@ -118,6 +121,30 @@ _GRAPH_VISION_REVIEW_MAX_EDGE = max(
 _context_audit_by_thread: dict[str, dict] = {}
 _harness_trace_by_thread: dict[str, dict] = {}
 _harness_trace_lock = threading.Lock()
+
+_RAG_TOOL_NAME = "query_copepod_knowledge_base"
+
+
+def _wait_for_rag_response(response):
+    """Keep only RAG calls when a model tries to launch them with other tools."""
+
+    changed = False
+    messages = []
+    for message in response.result:
+        calls = list(getattr(message, "tool_calls", None) or [])
+        rag_calls = [
+            call for call in calls
+            if str(call.get("name") or "") == _RAG_TOOL_NAME
+        ]
+        if rag_calls and len(rag_calls) != len(calls):
+            message = message.model_copy(update={"tool_calls": rag_calls})
+            changed = True
+        messages.append(message)
+    if not changed:
+        return response
+    updated = copy.copy(response)
+    updated.result = messages
+    return updated
 
 
 def get_context_audit(thread_id: str | None = None) -> dict:
@@ -239,6 +266,7 @@ def _append_harness_model_call(thread_id: str, audit: dict) -> None:
             "approx_tokens_tool_schemas": audit.get("approx_tokens_tool_schemas", 0),
             "approx_tokens_history": audit.get("approx_tokens_after_trim", 0),
             "approx_tokens_memory_and_capsule": audit.get("approx_tokens_memory_and_capsule", 0),
+            "approx_tokens_runtime_context": audit.get("approx_tokens_runtime_context", 0),
             "tool_messages_seen": audit.get("tool_messages_seen", 0),
             "tool_messages_truncated": audit.get("tool_messages_truncated", 0),
             "tools_exposed": list(audit.get("tools_exposed") or []),
@@ -361,7 +389,6 @@ def _approx_tokens(messages) -> int:
 
 
 _CODE_RETRY_TOOL_NAMES = frozenset({"run_pandas", "run_graph"})
-_SAFE_TRANSIENT_RETRY_TOOL_NAMES = frozenset({"find_uvp_matches_for_net_table"})
 
 
 def _has_dependency_recovery(artifact: object) -> bool:
@@ -436,82 +463,6 @@ def _code_retry_plan(messages: Sequence) -> tuple[str, str] | None:
     if not diagnostic:
         return None
     return str(failed.name), diagnostic
-
-
-def _is_safe_transient_tool_failure(tool_name: str, result: object) -> bool:
-    """Allow one transparent retry for a read-only audit access failure only."""
-    if tool_name not in _SAFE_TRANSIENT_RETRY_TOOL_NAMES:
-        return False
-    artifact = getattr(result, "artifact", None)
-    return bool(
-        isinstance(artifact, dict)
-        and artifact.get("status") == "error"
-        and artifact.get("retryable") is True
-    )
-
-
-def _render_net_uvp_progress_context(progress) -> str:
-    """Return one human-facing Filet–UVP readiness line for the model.
-
-    Persisted variable names and implementation handles are deliberately not
-    projected here: the model only needs the scientific workflow readiness.
-    """
-    if progress.phase == "no_file":
-        return ""
-    exploratory_notice = (
-        " Cette chaîne reste exploratoire et exige un accord explicite."
-        if progress.ctd_status == "unavailable"
-        else ""
-    )
-    if progress.phase == "needs_subset":
-        return (
-            "\n\nComparaison filet–UVP : la table filet est prête; "
-            "préparer le sous-ensemble demandé avant de chercher les profils UVP."
-            + exploratory_notice
-        )
-    if progress.phase == "needs_audit":
-        return (
-            "\n\nComparaison filet–UVP : le sous-ensemble demandé est prêt; "
-            "chercher maintenant les profils UVP associés."
-            + exploratory_notice
-        )
-    if progress.phase == "audited":
-        if progress.ctd_status == "unavailable":
-            return (
-                "\n\nComparaison filet–UVP : des candidats UVP existent, mais "
-                "la vérification CTD est indisponible; une suite provisoire est possible."
-            )
-        if progress.ctd_status == "no_match":
-            return (
-                "\n\nComparaison filet–UVP : des candidats UVP existent, mais "
-                "aucun lien CTD commun n'est confirmé; ne pas lancer la comparaison finale."
-            )
-        if progress.ctd_status != "verified":
-            return (
-                "\n\nComparaison filet–UVP : des candidats UVP existent, mais "
-                "leur validation reste incomplète; ne pas lancer la comparaison finale."
-            )
-        return (
-            "\n\nComparaison filet–UVP : les profils UVP associés sont prêts. "
-            "Exporter ces profils puis récupérer leurs volumes avant le calcul d’abondance."
-        )
-    if progress.phase == "exported":
-        return (
-            "\n\nComparaison filet–UVP : export UVP disponible; l’enrichissement "
-            "par les volumes EcoPart reste à préparer avant la comparaison d’abondance."
-            + exploratory_notice
-        )
-    if progress.phase == "enriched":
-        return (
-            "\n\nComparaison filet–UVP : données UVP enrichies disponibles; "
-            "la comparaison finale par strate de profondeur peut continuer."
-            + exploratory_notice
-        )
-    return (
-        "\n\nComparaison filet–UVP : comparaison finale disponible; analyses, "
-        "graphiques et export restent possibles."
-        + exploratory_notice
-    )
 
 
 def _compact_old_tool_results(
@@ -727,7 +678,13 @@ def _tool_schema_tokens(tools) -> int:
         if isinstance(item, dict):
             payload.append(item)
             continue
-        schema = getattr(item, "args_schema", None)
+        # Count the schema actually sent to the model. ``args_schema`` also
+        # contains injected parameters such as ToolRuntime, whose callable
+        # fields are intentionally absent from ``tool_call_schema`` and cannot
+        # be represented as JSON Schema.
+        schema = getattr(item, "tool_call_schema", None)
+        if schema is None:
+            schema = getattr(item, "args_schema", None)
         if schema is not None and hasattr(schema, "model_json_schema"):
             schema = schema.model_json_schema()
         payload.append({
@@ -818,7 +775,7 @@ def _trim_request_messages(messages, *, max_tokens: int | None = None):
 
 
 def _build_memory_block(memories) -> tuple[str, dict]:
-    """Construit le bloc mémoire long-terme à ajouter au system prompt.
+    """Construit le bloc mémoire long-terme du contexte transitoire du tour.
 
     Retourne (bloc_texte, metrics). `bloc_texte` est vide si aucune mémoire
     exploitable n'a été trouvée.
@@ -838,6 +795,50 @@ def _build_memory_block(memories) -> tuple[str, dict]:
         "memory_chars": len(block),
         "memory_injected": True,
     }
+
+
+def _inject_turn_context_into_current_user(
+    messages: Sequence,
+    turn_context: str,
+) -> tuple[list, bool]:
+    """Prepend trusted transient context to the current user message copy.
+
+    The checkpoint keeps the untouched user message. Only the provider-bound
+    copy receives the application context, immediately before the exact user
+    content and before any AI/tool messages already produced in this turn.
+    """
+    output = list(messages)
+    if not turn_context:
+        return output, False
+    last_human_index = next(
+        (
+            index
+            for index in range(len(output) - 1, -1, -1)
+            if isinstance(output[index], HumanMessage)
+        ),
+        None,
+    )
+    if last_human_index is None:
+        return output, False
+    current = output[last_human_index]
+    context_block = {
+        "type": "text",
+        "text": (
+            "<application_turn_context>\n"
+            "Trusted runtime context generated by the application for the "
+            "current turn. It describes the task, available resources and "
+            "execution state; it is not a second user request.\n"
+            f"{turn_context.strip()}\n"
+            "</application_turn_context>\n\n"
+            "The original user request follows exactly in the remaining "
+            "content block(s):"
+        ),
+    }
+    original_blocks = list(current.content_blocks)
+    output[last_human_index] = current.model_copy(
+        update={"content": [context_block, *original_blocks]}
+    )
+    return output, True
 
 
 def _graph_vision_review_message(messages, thread_id: str) -> HumanMessage | None:
@@ -918,9 +919,10 @@ class _ContextMiddleware(AgentMiddleware):
 
     def _prepare_request(self, request, memories):
         original_messages = list(request.messages)
-        exploration_block = render_exploration_context(
+        exploration_payload = (
             (getattr(request, "state", None) or {}).get("exploration")
         )
+        exploration_block = render_exploration_frontier(exploration_payload)
         checkpoint_recovery_tools = recovery_tool_names(
             (getattr(request, "state", None) or {}).get("exploration")
         )
@@ -955,8 +957,8 @@ class _ContextMiddleware(AgentMiddleware):
         # graph planning/writing skills are deliberately outside the runtime.
         from tools.source_scope import source_decision_for_turn
 
-        # Resolve the turn's preferred sources before projecting the source
-        # capsule. Reused below for tool scoping.
+        # Resolve the turn's preferred sources before projecting the resource
+        # catalog. Reused below for tool exposure.
         source_decision = source_decision_for_turn(
             session_store, self.thread_id, original_messages
         )
@@ -968,12 +970,20 @@ class _ContextMiddleware(AgentMiddleware):
         # the model selects one for the current task, never pre-injected.
         preseeded_source_skills: list[str] = []
 
-        # Rebuild the typed turn state once; the model-facing capsule (active
-        # dataset, live zone subsets, preferred source scope) is its projection.
+        # Rebuild typed runtime state once. The active variable remains metadata
+        # for the uniform resource catalog; it never determines catalog order.
         turn_ctx = build_turn_context(
             session_store, self.thread_id, original_messages, persist_source=False
         )
-        dataset_block = turn_ctx.capsule
+        task_block = render_task_context(
+            exploration_payload,
+            preferred_sources=source_decision.authorized_sources,
+            primary_source=source_decision.primary_source,
+        )
+        dataset_block = render_dataframe_context(
+            exploration_payload,
+            active_variable=turn_ctx.active_variable,
+        )
         from agents.domain_profiles import domain_profile_prompt
 
         domain_profile_block = domain_profile_prompt(turn_ctx.domain_profile)
@@ -981,7 +991,7 @@ class _ContextMiddleware(AgentMiddleware):
         base = system_message.content if system_message is not None else ""
         # Surface the last render's verified facts so the answer's `Données`
         # line reports real counts/encodings instead of fabricating them. Kept
-        # in the system context, never in the streamed tool output.
+        # in transient application context, never in the streamed tool output.
         graph_grounding_block = ""
         graph_edit_block = ""
         try:
@@ -989,38 +999,25 @@ class _ContextMiddleware(AgentMiddleware):
             facts = ((grounding or {}).get("meta") or {}).get("facts")
             if facts:
                 graph_grounding_block = (
-                    "\n\nDERNIER GRAPHIQUE — faits vérifiés pour la ligne Données "
-                    f"(reformuler, ne pas citer ce libellé) : {facts}"
+                    "\n\nLAST GRAPH — verified rendering facts for the response's "
+                    "data summary. Paraphrase these facts; never expose this "
+                    f"internal label: {facts}"
                 )
         except Exception:
             pass
         # The last graph code remains in normal short-term history. Do not
         # inject it on every turn merely to predict a graph edit.
-        net_uvp_progress_block = ""
-        try:
-            from tools.net_uvp_workflow import resolve_net_uvp_progress
-
-            net_uvp_progress_block = _render_net_uvp_progress_context(
-                resolve_net_uvp_progress(session_store, self.thread_id)
-            )
-        except Exception:
-            # Workflow context is a convenience for recovery, never a reason
-            # to prevent a regular request from reaching the model.
-            pass
-
-        # Cache-stable prefix first: the permanent kernel is already ``base``;
-        # append every invariant reference before anything that can vary with a
-        # user, a thread or a turn.  Exact-prefix prompt caches can then reuse
-        # this whole block. Session memory, active tables and graph facts must
-        # remain at the tail.
+        # Keep the permanent kernel byte-stable for prompt caching. Everything
+        # that varies by user/thread/turn is composed separately and injected
+        # into only the provider-bound copy of the current HumanMessage.
         static_reference_block = ""
         dynamic_context_block = (
             block
-            + dataset_block
+            + task_block
             + domain_profile_block
+            + dataset_block
             + graph_grounding_block
             + graph_edit_block
-            + net_uvp_progress_block
             + exploration_block
         )
         if dependency_recovery is not None:
@@ -1028,44 +1025,78 @@ class _ContextMiddleware(AgentMiddleware):
             missing_names = ", ".join(
                 f"`{name}`"
                 for name in recovery_metrics.get("missing_names", [])
-            ) or "la donnée demandée"
+            ) or "the requested data"
             recovery_tools = ", ".join(
                 f"`{name}`"
                 for name in recovery_metrics.get("recovery_tools", [])
-            ) or "le tool de récupération approprié"
+            ) or "the appropriate recovery tool"
             dynamic_context_block += (
-                "\n\nDATA DEPENDENCY RECOVERY — the preceding "
-                f"`{failed_tool}` call could not execute because {missing_names} "
-                "is missing or belongs to a different execution namespace. "
+                "\n\nDATA DEPENDENCY RECOVERY — REQUIRED NEXT ACTION\n"
+                "Failure class: missing data dependency.\n"
+                f"Failed tool: `{failed_tool}`.\n"
+                f"Missing data: {missing_names}.\n"
                 f"Diagnostic: {diagnostic[:4_000]}\n"
-                f"Do not repeat the same code and do not stop. Use {recovery_tools} "
-                "to retrieve or inspect the missing data, then run the local "
-                "analysis again with the returned persisted table. You may make "
-                "the necessary sequence of retrieval, schema inspection and "
-                "analysis calls before answering the user."
+                f"Allowed recovery tools: {recovery_tools}.\n"
+                "Recovery protocol:\n"
+                "1. Do not repeat the failed code unchanged.\n"
+                "2. Inspect the relevant schema or retrieve the missing table or "
+                "column with one of the allowed recovery tools.\n"
+                "3. Use the exact persisted DataFrame returned by that operation.\n"
+                "4. Rerun the blocked local analysis with the original user scope, "
+                "grain, filters and requested output unchanged.\n"
+                "5. Continue through the requested deliverable before answering.\n"
+                "Do not ask the user for data that is available through the listed "
+                "resources. Do not substitute a different metric or silently weaken "
+                "the scope.\n"
+                "Completion condition: the missing dependency is present, the failed "
+                "analytical step has succeeded, and its result is recorded as evidence."
             )
         elif checkpoint_recovery_tools:
             dynamic_context_block += (
-                "\n\nDATA DEPENDENCY RECOVERY — a missing table or column remains "
-                "recorded in the exploration checkpoint. Do not stop and do not ask "
-                "the user for data available through the available resources. Inspect "
-                "or retrieve it, then rerun the failed analytical step before answering."
+                "\n\nDATA DEPENDENCY RECOVERY — CHECKPOINT CONTINUATION\n"
+                "Failure class: unresolved data dependency from an earlier ReAct step.\n"
+                "The exploration checkpoint records a missing table or column that "
+                "still blocks the requested deliverable.\n"
+                "Recovery protocol:\n"
+                "1. Read the active dependency in EXPLORATION FRONTIER.\n"
+                "2. Inspect or retrieve it from the available resources; do not ask "
+                "the user when the application can access it.\n"
+                "3. Reuse the exact persisted result and rerun the blocked analytical "
+                "step.\n"
+                "4. Preserve the original scope, grain, filters and requested output.\n"
+                "5. Continue until the dependency is satisfied and the deliverable is "
+                "complete.\n"
+                "Do not restart completed steps, repeat identical calls, substitute "
+                "another metric or stop after retrieval.\n"
+                "Completion condition: EXPLORATION FRONTIER no longer contains an "
+                "active data dependency and the resumed analytical step has successful "
+                "evidence."
             )
         elif code_retry is not None:
             retry_tool, diagnostic = code_retry
             dynamic_context_block += (
-                "\n\nDÉTERMINISTIC CODE RETRY — the immediately preceding "
-                f"`{retry_tool}` call failed with this diagnostic:\n{diagnostic[:4_000]}"
-                "\nIssue exactly one corrected call to that same tool now, "
-                "using the same DataFrame scope. Do not answer the user before "
-                "that call. A second code failure must be reported without another retry."
+                "\n\nDETERMINISTIC CODE RETRY — ONE ATTEMPT ONLY\n"
+                "Failure class: retryable local code execution.\n"
+                f"Failed tool: `{retry_tool}`.\n"
+                f"Diagnostic:\n{diagnostic[:4_000]}\n"
+                "Retry protocol:\n"
+                "1. Identify the exact syntax, variable, dtype, column or plotting "
+                "error described by the diagnostic.\n"
+                "2. Issue exactly one corrected call to the same tool.\n"
+                "3. Keep the same DataFrame scope, grain, filters and analytical "
+                "intent; do not switch sources or weaken the request.\n"
+                "4. Do not answer the user before the corrected call returns.\n"
+                "5. If the corrected call also fails, stop retrying and report that "
+                "final diagnostic accurately.\n"
+                "Completion condition: the corrected call succeeds once, or the single "
+                "retry budget is exhausted and the second failure is reported."
             )
         injected_context = static_reference_block + dynamic_context_block
         base_system_tokens = (
             _approx_tokens([SystemMessage(content=base)]) if base else 0
         )
-        memory_tokens = (
-            _approx_tokens([SystemMessage(content=injected_context)])
+        runtime_context_tokens = (
+            _approx_tokens([HumanMessage(content=injected_context)])
             if injected_context
             else 0
         )
@@ -1117,6 +1148,9 @@ class _ContextMiddleware(AgentMiddleware):
                 recovery_tool = scoped_by_name.get(str(recovery_name))
                 if recovery_tool is not None and recovery_tool not in exposed_tools:
                     exposed_tools.append(recovery_tool)
+        effective_tool_names = [
+            getattr(item, "name", "") for item in exposed_tools
+        ]
         tool_schema_tokens_before = _tool_schema_tokens(original_tools)
         tool_schema_tokens_after_source = _tool_schema_tokens(scoped_tools)
         tool_schema_tokens = _tool_schema_tokens(exposed_tools)
@@ -1124,7 +1158,7 @@ class _ContextMiddleware(AgentMiddleware):
             max_input_tokens=_MAX_CONTEXT_TOKENS,
             system_tokens=base_system_tokens,
             tool_tokens=tool_schema_tokens,
-            memory_tokens=memory_tokens,
+            memory_tokens=runtime_context_tokens,
             reserve_tokens=_CONTEXT_RESERVE_TOKENS,
         )
         trimmed_messages = _trim_request_messages(
@@ -1132,11 +1166,7 @@ class _ContextMiddleware(AgentMiddleware):
             max_tokens=history_budget,
         )
         final_tokens = _approx_tokens(trimmed_messages)
-        prepared_system_message = (
-            SystemMessage(content=base + injected_context)
-            if injected_context
-            else system_message
-        )
+        prepared_system_message = system_message
         system_tokens = (
             _approx_tokens([prepared_system_message])
             if prepared_system_message is not None
@@ -1156,11 +1186,14 @@ class _ContextMiddleware(AgentMiddleware):
             ),
             "approx_tokens_before": original_tokens,
             "approx_tokens_after_tool_truncation": truncated_tokens,
-            "approx_tokens_after_memory": system_tokens + truncated_tokens,
+            "approx_tokens_after_memory": (
+                system_tokens + runtime_context_tokens + truncated_tokens
+            ),
             "approx_tokens_after_trim": final_tokens,
             "approx_tokens_system_message": system_tokens,
             "approx_tokens_base_system": base_system_tokens,
-            "approx_tokens_memory_and_capsule": memory_tokens,
+            "approx_tokens_memory_and_capsule": runtime_context_tokens,
+            "approx_tokens_runtime_context": runtime_context_tokens,
             "approx_tokens_tool_schemas": tool_schema_tokens,
             "approx_tokens_tool_schemas_before": tool_schema_tokens_before,
             "approx_tokens_tool_schemas_after_source": tool_schema_tokens_after_source,
@@ -1171,10 +1204,16 @@ class _ContextMiddleware(AgentMiddleware):
             "history_budget_tokens": history_budget,
             "context_reserve_tokens": _CONTEXT_RESERVE_TOKENS,
             "approx_tokens_model_request": (
-                base_system_tokens + memory_tokens + tool_schema_tokens + final_tokens
+                base_system_tokens
+                + runtime_context_tokens
+                + tool_schema_tokens
+                + final_tokens
             ),
             "total_estimated": (
-                base_system_tokens + memory_tokens + tool_schema_tokens + final_tokens
+                base_system_tokens
+                + runtime_context_tokens
+                + tool_schema_tokens
+                + final_tokens
             ),
             "approx_tokens_saved_by_tool_truncation": max(
                 0, original_tokens - truncated_tokens
@@ -1192,8 +1231,16 @@ class _ContextMiddleware(AgentMiddleware):
             **metrics,
             "dataset_capsule_injected": bool(dataset_block),
             "dataset_capsule_chars": len(dataset_block),
+            "dataframe_context_injected": bool(dataset_block),
+            "dataframe_context_chars": len(dataset_block),
+            "task_context_injected": bool(task_block),
+            "task_context_chars": len(task_block),
             "exploration_state_injected": bool(exploration_block),
             "exploration_state_chars": len(exploration_block),
+            "runtime_context_injected": bool(injected_context),
+            "runtime_context_chars": len(injected_context),
+            "runtime_context_position": "current_user_prefix",
+            "dynamic_context_in_system": False,
             "turn_active_variable": turn_ctx.active_variable,
             "turn_domain_profile": turn_ctx.domain_profile,
             "turn_authorized_sources": list(turn_ctx.authorized_sources),
@@ -1215,9 +1262,9 @@ class _ContextMiddleware(AgentMiddleware):
             "tools_after_source_scope": [
                 getattr(item, "name", "") for item in scoped_tools
             ],
-            "tools_exposed": list(exposure_decision.tool_names),
-            "tool_exposure_count": len(exposure_decision.tool_names),
-            "tool_exposure_alert": len(exposure_decision.tool_names) >= 12,
+            "tools_exposed": effective_tool_names,
+            "tool_exposure_count": len(effective_tool_names),
+            "tool_exposure_alert": len(effective_tool_names) >= 12,
             "tool_exposure_groups": list(exposure_decision.active_groups),
             "tool_exposure_reasons": list(exposure_decision.reasons),
             "tools_dropped": list(exposure_decision.dropped_tool_names),
@@ -1236,13 +1283,22 @@ class _ContextMiddleware(AgentMiddleware):
             # This is deliberately appended only to the provider request.  It
             # must not become a fabricated persistent HumanMessage in the
             # checkpoint, nor inflate the text-history budget with base64.
+            contextualized_messages, context_injected = (
+                _inject_turn_context_into_current_user(
+                    trimmed_messages,
+                    injected_context,
+                )
+            )
+            _context_audit_by_thread[self.thread_id][
+                "runtime_context_injected"
+            ] = context_injected
             graph_vision_review = _graph_vision_review_message(
                 trimmed_messages, self.thread_id
             )
             outgoing_messages = (
-                [*trimmed_messages, graph_vision_review]
+                [*contextualized_messages, graph_vision_review]
                 if graph_vision_review is not None
-                else trimmed_messages
+                else contextualized_messages
             )
             _context_audit_by_thread[self.thread_id]["graph_vision_review"] = bool(
                 graph_vision_review
@@ -1401,13 +1457,6 @@ class _ContextMiddleware(AgentMiddleware):
             return result
         try:
             result = handler(request)
-            if _is_safe_transient_tool_failure(
-                str(request.tool_call.get("name") or ""), result
-            ):
-                # The Filet–UVP lookup is a read-only cache/CTD audit. A
-                # transient access failure should not make the model restart a
-                # valid persisted workflow or surface a debugging detour.
-                result = handler(request)
         except Exception as exc:
             _finish_harness_tool_call(self.thread_id, trace_id, error_text=str(exc))
             raise
@@ -1433,10 +1482,6 @@ class _ContextMiddleware(AgentMiddleware):
             return result
         try:
             result = await handler(request)
-            if _is_safe_transient_tool_failure(
-                str(request.tool_call.get("name") or ""), result
-            ):
-                result = await handler(request)
         except Exception as exc:
             _finish_harness_tool_call(self.thread_id, trace_id, error_text=str(exc))
             raise
@@ -1451,7 +1496,8 @@ class _ContextMiddleware(AgentMiddleware):
                 memories = store.search((self.user_id, "memories"))
             except Exception:
                 memories = []
-        return handler(self._prepare_request(request, memories))
+        response = handler(self._prepare_request(request, memories))
+        return _wait_for_rag_response(response)
 
     async def awrap_model_call(self, request, handler):
         store = getattr(request.runtime, "store", None)
@@ -1461,7 +1507,8 @@ class _ContextMiddleware(AgentMiddleware):
                 memories = await store.asearch((self.user_id, "memories"))
             except Exception:
                 memories = []
-        return await handler(self._prepare_request(request, memories))
+        response = await handler(self._prepare_request(request, memories))
+        return _wait_for_rag_response(response)
 
 
 def _find_invalid_tool_history_cut_index(messages: Sequence) -> int | None:
@@ -1578,6 +1625,10 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         list(catalog.tools),
         system_prompt=_SYSTEM_PROMPT,
         middleware=[
+            ModelCallLimitMiddleware(
+                run_limit=_MAX_MODEL_CALLS_PER_TURN,
+                exit_behavior="end",
+            ),
             ExplorationStateMiddleware(thread_id=thread_id),
             _ContextMiddleware(
                 user_id=user_id,

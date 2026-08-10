@@ -6193,7 +6193,4 @@ def make_source_tools(thread_id: str) -> list:
         list_ecotaxa_cache_tables,
         describe_ecotaxa_cache_table,
         query_ecotaxa_cache,
-        find_uvp_matches_for_net_table,
-        join_net_uvp_enriched,
-        compare_local_net_uvp_profiles,
     ]

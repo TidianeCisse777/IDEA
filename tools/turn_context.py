@@ -6,8 +6,9 @@ history: the loaded/active dataset, the live zone-derived subsets, and the
 preferred source route for the turn. It is rebuilt every turn (ephemeral); the
 underlying data lives in the session store / checkpoint (persistent).
 
-The rendered `capsule` is the model-facing projection of this context, injected
-into the system message by the middleware.
+The legacy `capsule` remains available to compatibility callers. The production
+middleware now renders the checkpointed resource inventory into a uniform,
+transient `AVAILABLE DATAFRAMES` catalog placed next to the current request.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ class TurnContext:
     authorized_sources: tuple[str, ...]
     primary_source: str | None
     explicit_sources: tuple[str, ...]
-    capsule: str
+    capsule: str  # legacy compatibility projection; not injected by agent.py
     # The main agent chooses whether a graph is useful.  This is deliberately
     # not pre-classified by a second LLM call before every user turn.
     output_intent: str = "agent_decides"

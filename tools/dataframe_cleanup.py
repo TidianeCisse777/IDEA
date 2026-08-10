@@ -82,6 +82,42 @@ def _delete_family(store: SessionStore, thread_id: str, variable: str) -> None:
         store.clear(key)
 
 
+def _declared_parents(meta: dict[str, Any]) -> tuple[str, ...]:
+    """Return exact lineage parents declared by a producing operation."""
+    parents: list[str] = []
+    for key in ("parent_variable", "parent_variables", "source_variable"):
+        value = meta.get(key)
+        if isinstance(value, str) and value:
+            parents.append(value)
+        elif isinstance(value, (list, tuple, set)):
+            parents.extend(str(item) for item in value if item)
+    return tuple(dict.fromkeys(parents))
+
+
+def _visible_lineage_parents(
+    datasets: list[tuple[str, str, dict[str, Any]]],
+    stale: set[str],
+) -> set[str]:
+    """Return all ancestors required by a currently visible DataFrame."""
+    known = {variable for _key_name, variable, _meta in datasets}
+    parents_by_child = {
+        variable: tuple(
+            parent for parent in _declared_parents(meta) if parent in known
+        )
+        for _key_name, variable, meta in datasets
+    }
+    queue = [variable for variable in known if variable not in stale]
+    protected: set[str] = set()
+    while queue:
+        child = queue.pop()
+        for parent in parents_by_child.get(child, ()):
+            if parent in protected:
+                continue
+            protected.add(parent)
+            queue.append(parent)
+    return protected
+
+
 def advance_dataframe_cleanup(
     store: SessionStore,
     thread_id: str,
@@ -106,6 +142,14 @@ def advance_dataframe_cleanup(
         if variable in referenced_text:
             state["last_used"][variable] = turn
 
+    stale = {
+        variable
+        for variable in transient
+        if turn - int(state["last_used"].get(variable, turn)) >= 3
+    }
+    protected = _visible_lineage_parents(datasets, stale)
+    for variable in protected & stale:
+        state["last_used"][variable] = turn
     hidden = {
         variable
         for variable in transient

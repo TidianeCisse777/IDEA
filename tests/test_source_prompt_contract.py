@@ -58,65 +58,14 @@ def test_system_prompt_requires_comparable_abundance_before_cross_instrument_com
     assert "FlowCam uses its own export-native concentration workflow" in prompt
 
 
-def test_system_prompt_lists_french_net_uvp_audit_intents():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    prompt = " ".join(COPEPOD_SYSTEM_PROMPT.split())
-    assert "analyse les correspondances filet–UVP" in prompt
-    assert "cherche les profils UVP/EcoTaxa associés" in prompt
-    assert "prépare une comparaison d'abondance filet–UVP" in prompt
 
 
-def test_net_uvp_skill_requires_stratum_matched_and_explained_profiles():
-    from pathlib import Path
-
-    skill = Path("agents/skills/net_uvp_abundance_comparison.md").read_text()
-    normalized = skill.lower()
-
-    assert "never compare a full uvp profile with one net stratum" in normalized
-    assert "same depth interval" in normalized
-    assert "sum of sampled volumes" in normalized
-    assert "method disclosure" in normalized
-    assert "user may change" in normalized
 
 
-def test_net_uvp_skill_routes_depth_comparison_through_canonical_builder():
-    from pathlib import Path
-
-    skill = Path("agents/skills/net_uvp_abundance_comparison.md").read_text()
-
-    assert "from core.net_uvp_comparison import build_paired_depth_strata" in skill
-    assert "paired_strata = build_paired_depth_strata(" in skill
-    assert "comparison_calculable" in skill
-    assert "depth_match_status" in skill
-    assert "df_net_uvp_strata" in skill
 
 
-def test_net_uvp_prompt_forbids_manual_final_join_before_canonical_tool():
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    assert "join_net_uvp_enriched` directly" in COPEPOD_SYSTEM_PROMPT
-    assert "never use\n`run_pandas` to merge" in COPEPOD_SYSTEM_PROMPT
 
 
-def test_prompt_keeps_only_net_uvp_invariants_and_route():
-    """The permanent kernel keeps safety invariants, not remote procedure details."""
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    assert "normalized station match is mandatory" in COPEPOD_SYSTEM_PROMPT
-    assert "join_net_uvp_enriched` directly" in COPEPOD_SYSTEM_PROMPT
-    assert "allow_unverified_ctd=True" not in COPEPOD_SYSTEM_PROMPT
-
-
-def test_skill_explains_two_remote_confirmations_in_plain_language():
-    """Remote actions are confirmed by users, without exposing tool arguments."""
-    from pathlib import Path
-
-    text = Path("agents/skills/net_uvp_abundance_comparison.md").read_text()
-
-    assert "confirme l’export UVP" in text
-    assert "confirme l’enrichissement EcoPart" in text
-    assert "allow_unverified_ctd" not in text
 
 
 def test_generated_gateway_documents_persistent_affinity_and_bare_ids():

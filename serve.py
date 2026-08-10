@@ -810,6 +810,12 @@ def _format_tool_line(
             label, f"{_parameters_prefix(language)} skill_name=`{skill}`"
         )
 
+    if name == "query_copepod_knowledge_base" and "question" in args:
+        question = " ".join(str(args["question"]).split())
+        return _format_tool_call_details(
+            label, f"{_parameters_prefix(language)} question=`{question}`"
+        )
+
     params = _format_tool_call_params(args)
     parameters = _parameters_prefix(language)
     body = f"{parameters} {params}" if params else f"{parameters} —"

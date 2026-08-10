@@ -156,158 +156,6 @@ def test_code_retry_plan_covers_each_local_code_tool(tool_name):
     )
 
 
-def test_context_adds_net_uvp_progress_after_audit(monkeypatch, tmp_path):
-    """Persisted audit readiness is concise and never prescribes one tool."""
-    from langchain_core.messages import HumanMessage, SystemMessage
-    from tools.session_store import SessionStore
-
-    import agent as agent_module
-
-    class Request:
-        messages = [HumanMessage(content="Poursuis la comparaison filet UVP.")]
-        tools = []
-        system_message = SystemMessage(content="BASE")
-
-        def override(self, **kwargs):
-            return kwargs
-
-    store = SessionStore(tmp_path / "sessions")
-    store.set(
-        "net-uvp-context:dataset:net",
-        None,
-        {"source": "file:net.tsv", "variable_name": "df_file_net"},
-    )
-    store.set(
-        "net-uvp-context:dataset:audit",
-        None,
-        {
-            "source": "net_uvp_match",
-            "variable_name": "df_audit_interne",
-            "net_variable_name": "df_file_net",
-            "ctd_verification": "verified",
-        },
-    )
-    store.set(
-        "net-uvp-context:selection:certified",
-        None,
-        {
-            "source": "net_uvp_certified_selection",
-            "selection_name": "selection:interne",
-            "audit_variable": "df_audit_interne",
-            "ctd_verification": "verified",
-        },
-    )
-    monkeypatch.setattr("tools.session_store.default_store", store)
-
-    prepared = agent_module._ContextMiddleware(
-        thread_id="net-uvp-context"
-    )._prepare_request(Request(), memories=[])
-    system = prepared["system_message"].content
-
-    assert "Comparaison filet–UVP : audit certifié disponible" in system
-    assert "outil suivant obligatoire" not in system.casefold()
-    assert "df_audit_interne" not in system
-    assert "selection:interne" not in system
-    assert "find_uvp_matches_for_net_table" not in system
-
-
-def test_context_labels_unavailable_ctd_progress_as_opt_in_exploratory(
-    monkeypatch, tmp_path
-):
-    from langchain_core.messages import HumanMessage, SystemMessage
-    from tools.session_store import SessionStore
-
-    import agent as agent_module
-
-    class Request:
-        messages = [HumanMessage(content="Poursuis la comparaison filet UVP.")]
-        tools = []
-        system_message = SystemMessage(content="BASE")
-
-        def override(self, **kwargs):
-            return kwargs
-
-    store = SessionStore(tmp_path / "sessions")
-    store.set(
-        "net-uvp-exploratory:dataset:net",
-        None,
-        {"source": "file:net.tsv", "variable_name": "df_file_net"},
-    )
-    store.set(
-        "net-uvp-exploratory:dataset:audit",
-        None,
-        {
-            "source": "net_uvp_match",
-            "variable_name": "df_audit_interne",
-            "net_variable_name": "df_file_net",
-            "ctd_verification": "unavailable",
-            "exploratory": True,
-        },
-    )
-    store.set(
-        "net-uvp-exploratory:selection:exploratory",
-        None,
-        {
-            "source": "net_uvp_exploratory_selection",
-            "selection_name": "selection:interne",
-            "audit_variable": "df_audit_interne",
-            "ctd_verification": "unavailable",
-            "exploratory": True,
-        },
-    )
-    monkeypatch.setattr("tools.session_store.default_store", store)
-
-    prepared = agent_module._ContextMiddleware(
-        thread_id="net-uvp-exploratory"
-    )._prepare_request(Request(), memories=[])
-    system = prepared["system_message"].content.casefold()
-
-    assert "exploratoire" in system
-    assert "accord explicite" in system
-
-
-@pytest.mark.parametrize("phase", ["exported", "joined"])
-def test_context_keeps_unavailable_ctd_progress_exploratory_after_audit(phase):
-    from tools.net_uvp_workflow import NetUvpWorkflowProgress
-
-    import agent as agent_module
-
-    progress = NetUvpWorkflowProgress(
-        phase=phase,
-        audit_ref="internal-audit",
-        selection_name="internal-selection",
-        ctd_status="unavailable",
-        allowed_capabilities=frozenset(),
-        message="internal workflow state",
-    )
-
-    context = agent_module._render_net_uvp_progress_context(progress).casefold()
-
-    assert "exploratoire" in context
-    assert "accord explicite" in context
-    assert "certifié" not in context
-
-
-def test_context_does_not_call_unknown_ctd_audit_certified():
-    from tools.net_uvp_workflow import NetUvpWorkflowProgress
-
-    import agent as agent_module
-
-    progress = NetUvpWorkflowProgress(
-        phase="audited",
-        audit_ref="internal-audit",
-        selection_name=None,
-        ctd_status="unknown",
-        allowed_capabilities=frozenset(),
-        message="internal workflow state",
-    )
-
-    context = agent_module._render_net_uvp_progress_context(progress).casefold()
-
-    assert "certifié" not in context
-    assert "à confirmer" in context
-
-
 # --- Comportement 0 : _make_tracer inclut user_id ---
 
 def test_make_tracer_uses_email_as_tag_when_provided(monkeypatch):
@@ -501,40 +349,12 @@ def test_system_prompt_mentions_sources():
     assert "Amundsen" in COPEPOD_SYSTEM_PROMPT
 
 
-def test_system_prompt_requires_the_strict_net_uvp_match_route():
-    """A net↔UVP request cannot be answered by an ad-hoc spatial estimate."""
-    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-
-    assert "find_uvp_matches_for_net_table" in COPEPOD_SYSTEM_PROMPT
-    assert "Never estimate a correspondence" in COPEPOD_SYSTEM_PROMPT
-    assert "join_eligible=True" in COPEPOD_SYSTEM_PROMPT
-    assert "date_from" in COPEPOD_SYSTEM_PROMPT
-    assert "An explicit request to export the matches is confirmation" in COPEPOD_SYSTEM_PROMPT
-    assert "CTD unavailable never means no export possible" in COPEPOD_SYSTEM_PROMPT
-    assert "Subset before audit" in COPEPOD_SYSTEM_PROMPT
 
 
 
 
 
 
-def test_net_uvp_live_guidance_uses_the_certified_selection_and_final_join():
-    """Expected live route recovers safely and never exports candidates."""
-    contract = _routing_contract("net_uvp_abundance_comparison.md")
-
-    assert "exact persistent variable returned" in contract
-    assert "available persistent variables" in contract
-    assert "retry the audit with that exact name" in contract
-    assert "never audit the full loaded file" in contract
-    assert "exact certified selection identifier returned by the audit" in contract
-    assert "export_ecotaxa_samples" in contract
-    assert "enrich_ecotaxa_with_ecopart_remote" in contract
-    assert "join_net_uvp_enriched" in contract
-    assert "stop before `export_ecotaxa_samples`" in contract
-    assert "exporte les correspondances" in contract
-    assert "ctd_filename_match_status=\"matched\"" in contract
-    assert "keep `export_project_id` in every canonical aggregation" in contract
-    assert 'on=["export_project_id", "uvp_profile_str"]' in contract
 
 
 
@@ -599,8 +419,8 @@ def test_context_compaction_keeps_tool_nectar_not_only_its_prefix():
     import agent as agent_module
 
     old_content = "\n".join([
-        "# Audit UVP/filet",
-        "Candidates: 8; CTD status: unavailable",
+        "# Requête EcoTaxa",
+        "Candidates: 8; cache status: available",
         *("unimportant table cell" for _ in range(80)),
         "Selection persisted: uvp_baffin_2024",
         "Coverage: projects=2; samples=8",
@@ -610,8 +430,8 @@ def test_context_compaction_keeps_tool_nectar_not_only_its_prefix():
         AIMessage(content="audit"),
         ToolMessage(
             content=old_content,
-            name="find_uvp_matches_for_net_table",
-            tool_call_id="old-audit",
+            name="query_ecotaxa_cache",
+            tool_call_id="old-query",
             artifact={"status": "success", "persisted": True,
                       "metrics": {"rows": 8, "projects": 2}},
         ),

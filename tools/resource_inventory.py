@@ -36,6 +36,15 @@ _IDENTIFIER_TOKENS = (
     "longitude",
     "depth",
 )
+_SCIENTIFIC_TEXT_TOKENS = (
+    "taxon",
+    "species",
+    "genus",
+    "family",
+    "stage",
+    "instrument",
+    "category",
+)
 
 _PROFILE_CACHE: OrderedDict[
     str,
@@ -94,6 +103,7 @@ def _relations(meta: dict[str, Any]) -> tuple[str, ...]:
     for key in (
         "alias_of",
         "parent_variable",
+        "parent_variables",
         "source_variable",
         "net_variable_name",
         "audit_variable",
@@ -101,7 +111,9 @@ def _relations(meta: dict[str, Any]) -> tuple[str, ...]:
         "selection_name",
     ):
         value = meta.get(key)
-        if value:
+        if isinstance(value, (list, tuple, set)):
+            values.extend(f"{key}:{item}" for item in value if item)
+        elif value:
             values.append(f"{key}:{value}")
     return tuple(dict.fromkeys(values))
 
@@ -159,8 +171,30 @@ def _column_profiles(
     identifiers = list(_identifiers(columns))
     declared_names = {name.casefold() for name in _declared_keys(meta)}
     declared_columns = [name for name in columns if name.casefold() in declared_names]
+    scientific_text: list[str] = []
+    measures: list[str] = []
+    categories: list[str] = []
+    for name in columns:
+        series = dataframe[raw_by_name[name]]
+        lowered = name.casefold()
+        role = _semantic_role(name, series)
+        if any(token in lowered for token in _SCIENTIFIC_TEXT_TOKENS):
+            scientific_text.append(name)
+        elif role == "measure":
+            measures.append(name)
+        elif role == "category":
+            categories.append(name)
     selected = list(
-        dict.fromkeys([*columns[:60], *identifiers, *declared_columns])
+        dict.fromkeys(
+            [
+                *declared_columns,
+                *identifiers,
+                *scientific_text[:16],
+                *measures[:16],
+                *categories[:8],
+                *columns[:60],
+            ]
+        )
     )[:_MAX_PROFILED_COLUMNS]
     if not selected:
         return (), ()
@@ -253,7 +287,23 @@ def _scope(meta: dict[str, Any]) -> dict[str, Any]:
         "date_from",
         "date_to",
     )
-    return _clean_json_mapping({key: meta.get(key) for key in keys if meta.get(key) is not None})
+    scope = {key: meta.get(key) for key in keys if meta.get(key) is not None}
+    filters = meta.get("filters")
+    if isinstance(filters, dict):
+        scope.update({
+            f"filter.{key}": value
+            for key, value in filters.items()
+            if value is None
+            or isinstance(value, (str, int, float, bool))
+            or (
+                isinstance(value, (list, tuple))
+                and all(
+                    item is None or isinstance(item, (str, int, float, bool))
+                    for item in value
+                )
+            )
+        })
+    return _clean_json_mapping(scope)
 
 
 def _table_capabilities(dataframe: pd.DataFrame | None) -> tuple[ExplorationCapability, ...]:

@@ -8,15 +8,8 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from tools.source_scope import SourceDecision
-from tools.session_store import SessionStore
-from tools.tool_result import error, success
+from tools.tool_result import success
 from tools.turn_context import TurnContext
-
-
-DEMO_REQUEST = (
-    "Pour les déploiements NeoLabs de 2024 en baie de Baffin, compare le filet "
-    "et l'UVP par tranche de profondeur en ind./m³."
-)
 
 
 def _source_decision(*sources: str) -> SourceDecision:
@@ -45,7 +38,7 @@ def _turn(*, file_loaded: bool, sources: tuple[str, ...] = (), output_intent: st
     )
 
 
-def _decision(text: str, *, file_loaded: bool = False, sources: tuple[str, ...] = (), messages=None, max_tools: int = 20, output_intent: str = "ambiguous", store=None):
+def _decision(text: str, *, file_loaded: bool = False, sources: tuple[str, ...] = (), messages=None, max_tools: int = 20, output_intent: str = "ambiguous"):
     from tools.tool_catalog import TOOL_POLICIES
     from tools.tool_exposure import decide_tool_exposure
 
@@ -57,7 +50,6 @@ def _decision(text: str, *, file_loaded: bool = False, sources: tuple[str, ...] 
         _source_decision(*sources),
         history,
         max_tools=max_tools,
-        store=store,
     )
 
 
@@ -78,65 +70,6 @@ def _successful_skill_messages(text: str, *skills: str):
                 ToolMessage(content=content, artifact=artifact, tool_call_id=call_id),
             ]
         )
-    return messages
-
-
-def _audited_demo_store(tmp_path) -> SessionStore:
-    """Persist one certified audit so graph recovery cannot restart the audit."""
-    store = SessionStore(tmp_path / "sessions")
-    store.set(
-        "tool-exposure:dataset:net-table",
-        None,
-        {"source": "file:neolabs_2024.tsv", "variable_name": "net-table"},
-    )
-    store.set(
-        "tool-exposure:dataset:audit-table",
-        None,
-        {
-            "source": "net_uvp_match",
-            "variable_name": "audit-table",
-            "net_variable_name": "net-table",
-            "net_dataframe_fingerprint": "neolabs-2024",
-            "ctd_verification": "verified",
-            "exploratory": False,
-        },
-    )
-    store.set(
-        "tool-exposure:selection:certified-selection",
-        None,
-        {
-            "source": "net_uvp_certified_selection",
-            "selection_name": "certified-selection",
-            "audit_variable": "audit-table",
-            "net_variable_name": "net-table",
-            "net_dataframe_fingerprint": "neolabs-2024",
-            "ctd_verification": "verified",
-            "exploratory": False,
-        },
-    )
-    return store
-
-
-def _audited_history_with_retryable_graph_error():
-    """Model history for one failed render after the graph workflow succeeded."""
-    messages = _successful_skill_messages(DEMO_REQUEST, "graph_planner", "graph_writer")
-    call_id = "failed-graph"
-    failed_call = {
-        "name": "run_graph",
-        "args": {"code": "raise ValueError('colonne de profondeur absente')"},
-        "id": call_id,
-        "type": "tool_call",
-    }
-    content, artifact = error(
-        "Graphique non généré : colonne de profondeur absente.",
-        retryable=True,
-    )
-    messages.extend(
-        [
-            AIMessage(content="", tool_calls=[failed_call]),
-            ToolMessage(content=content, artifact=artifact, tool_call_id=call_id),
-        ]
-    )
     return messages
 
 
@@ -202,17 +135,6 @@ def test_run_pandas_is_permanent_sandbox_without_loaded_file():
     assert "run_graph" not in decision.tool_names
 
 
-def test_join_net_uvp_enriched_is_exposed_for_file_analysis():
-    decision = _decision(
-        "Prépare la table filet et UVP enrichie EcoPart déjà disponible.",
-        file_loaded=True,
-        sources=("file",),
-    )
-
-    assert "file_analysis" in decision.active_groups
-    assert "join_net_uvp_enriched" in decision.tool_names
-
-
 def test_ecopart_preflight_exposes_remote_enrichment_for_active_selection():
     """A remote EcoPart preflight must not be mistaken for local-only analysis."""
     decision = _decision(
@@ -241,150 +163,7 @@ def test_external_search_is_not_suppressed_by_environmental_enrichment_wording()
     assert "query_ecotaxa" in decision.tool_names
 
 
-def test_scoped_net_uvp_audit_is_exposed_in_strict_stages(tmp_path):
-    """Le chargement, le sous-ensemble et l'audit ne doivent jamais coexister.
-
-    Sinon le modèle les lance en parallèle et l'audit lit le fichier complet.
-    """
-    text = (
-        "Charge NeoLabs, prends 2024 en Baie de Baffin puis audite avec les "
-        "profils UVP et montre une carte des paires certifiées."
-    )
-    store = SessionStore(tmp_path / "sessions")
-    first = _decision(text, file_loaded=False, sources=("file",), store=store)
-    assert first.tool_names == ("load_file",)
-
-    store.set(
-        "tool-exposure:dataset:net-table",
-        None,
-        {"source": "file:net.tsv", "variable_name": "net-table"},
-    )
-    prepared = _decision(text, file_loaded=True, sources=("file",), store=store)
-    assert set(prepared.tool_names) == {
-        "prepare_net_uvp_audit_subsets",
-        "run_pandas",
-    }
-
-    store.set(
-        "tool-exposure:dataset:audit-input",
-        None,
-        {
-            "source": "net_uvp_audit_subset",
-            "variable_name": "audit-input",
-            "net_uvp_audit_input": True,
-            "parent_variable": "net-table",
-        },
-    )
-    audited = _decision(text, file_loaded=True, sources=("file",), store=store)
-    assert set(audited.tool_names) == {
-        "find_uvp_matches_for_net_table",
-        "run_pandas",
-    }
-
-    store.set(
-        "tool-exposure:dataset:audit-table",
-        None,
-        {
-            "source": "net_uvp_match",
-            "variable_name": "audit-table",
-            "net_variable_name": "audit-input",
-            "ctd_verification": "verified",
-            "exploratory": False,
-        },
-    )
-    store.set(
-        "tool-exposure:selection:certified-selection",
-        None,
-        {
-            "source": "net_uvp_certified_selection",
-            "selection_name": "certified-selection",
-            "audit_variable": "audit-table",
-            "net_variable_name": "audit-input",
-            "ctd_verification": "verified",
-            "exploratory": False,
-        },
-    )
-    completed = _decision(
-        text,
-        file_loaded=True,
-        sources=("file",),
-        output_intent="visual",
-        store=store,
-    )
-    assert "run_graph" in completed.tool_names
-    assert "run_pandas" in completed.tool_names
-    assert "prepare_net_uvp_audit_subsets" not in completed.tool_names
-    assert "find_uvp_matches_for_net_table" not in completed.tool_names
-
-
-def test_scoped_net_uvp_audit_uses_persisted_completion_for_visual_follow_up(tmp_path):
-    """A later request must not repeat completed Net↔UVP protocol steps."""
-    from tools.tool_catalog import TOOL_POLICIES
-    from tools.tool_exposure import decide_tool_exposure
-
-    store = SessionStore(tmp_path / "sessions")
-    store.set(
-        "tool-exposure:dataset:net-table",
-        None,
-        {"source": "file:net.tsv", "variable_name": "net-table"},
-    )
-    store.set(
-        "tool-exposure:dataset:audit-table",
-        None,
-        {
-            "source": "net_uvp_match",
-            "variable_name": "audit-table",
-            "net_variable_name": "net-table",
-            "ctd_verification": "verified",
-            "exploratory": False,
-        },
-    )
-    store.set(
-        "tool-exposure:selection:certified-selection",
-        None,
-        {
-            "source": "net_uvp_certified_selection",
-            "selection_name": "certified-selection",
-            "audit_variable": "audit-table",
-            "net_variable_name": "net-table",
-            "ctd_verification": "verified",
-            "exploratory": False,
-        },
-    )
-    text = "Montre une carte des correspondances filet UVP de 2024 en Baie de Baffin."
-
-    decision = decide_tool_exposure(
-        tuple(TOOL_POLICIES),
-        TOOL_POLICIES,
-        _turn(file_loaded=True, sources=("file",), output_intent="visual"),
-        _source_decision("file"),
-        [HumanMessage(content=text)],
-        store=store,
-    )
-
-    assert "run_graph" in decision.tool_names
-    assert "run_pandas" in decision.tool_names
-    assert "prepare_net_uvp_audit_subsets" not in decision.tool_names
-    assert "find_uvp_matches_for_net_table" not in decision.tool_names
-
-
-def test_net_uvp_demo_recovers_from_a_failed_local_graph_call(tmp_path):
-    """A retryable render error preserves both the graph and audited route."""
-    history = _audited_history_with_retryable_graph_error()
-
-    decision = _decision(
-        DEMO_REQUEST,
-        file_loaded=True,
-        sources=("file", "ecotaxa"),
-        messages=history,
-        store=_audited_demo_store(tmp_path),
-    )
-
-    assert "run_graph" in decision.tool_names
-    assert "find_uvp_matches_for_net_table" not in decision.tool_names
-
-
-def test_amundsen_correspondence_request_does_not_trigger_net_uvp_audit():
+def test_amundsen_correspondence_request_stays_on_amundsen_route():
     text = (
         "À partir des prélèvements NeoLabs calculables de 2016, cherche les "
         "correspondances CTD Amundsen par position et par date."
@@ -397,11 +176,6 @@ def test_amundsen_correspondence_request_does_not_trigger_net_uvp_audit():
     )
 
     assert "enrich_with_amundsen_ctd" not in decision.tool_names
-    assert not {
-        "prepare_net_uvp_audit_subsets",
-        "find_uvp_matches_for_net_table",
-        "join_net_uvp_enriched",
-    }.intersection(decision.tool_names)
 
 
 def test_explicit_visual_intent_exposes_graph_workflow_before_graph_skills():
@@ -734,13 +508,8 @@ def test_explicit_enrichment_source_wins_over_stale_authorized_sources():
     assert "enrich_ecotaxa_with_ecopart_remote" not in decision.tool_names
     assert not any(group.startswith("ecotaxa_") for group in decision.active_groups)
     # file_analysis actif (fichier chargé) → analyse locale et découpage
-    # géographique. Les outils filet↔UVP restent cachés sans demande explicite.
+    # géographique.
     assert "split_dataframe_by_zone" in decision.tool_names
-    assert not {
-        "prepare_net_uvp_audit_subsets",
-        "find_uvp_matches_for_net_table",
-        "join_net_uvp_enriched",
-    }.intersection(decision.tool_names)
     # The named enrichment routes directly to the canonical Amundsen tool;
     # stale external sources remain hidden.
     assert "enrichment_amundsen" in decision.active_groups

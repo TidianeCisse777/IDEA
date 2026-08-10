@@ -453,6 +453,24 @@ def test_format_tool_line_shows_generic_tool_parameters():
     assert "<summary>Information géographique</summary>" in line
 
 
+def test_format_tool_line_shows_full_rag_question():
+    from serve import _format_tool_line
+
+    question = (
+        "Contexte complet de la demande utilisateur avec toutes les contraintes, "
+        "les ressources disponibles et la méthode documentaire à rechercher avant "
+        "de poursuivre précisément le travail demandé."
+    )
+
+    line = _format_tool_line(
+        "query_copepod_knowledge_base",
+        {"question": question},
+    )
+
+    assert f"question=`{question}`" in line
+    assert "…" not in line
+
+
 def test_format_tool_line_shows_nested_ecotaxa_filters():
     from serve import _format_tool_line
 

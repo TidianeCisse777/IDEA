@@ -1,8 +1,8 @@
 """Checkpointed working state for adaptive data exploration.
 
-The graph stores plain JSON-compatible dictionaries.  Pydantic models define
-and validate the contract at the boundary, while the middleware owns all state
-updates so analytical tools do not need to know about LangGraph.
+The graph stores plain JSON-compatible dictionaries. Pydantic models define
+and validate the contract at the boundary. Middleware owns planning updates;
+data-producing tools can atomically merge compact resource metadata.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import json
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Literal, NotRequired
+from typing import Annotated, Any, Literal, NotRequired
 
 from langchain.agents import AgentState
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -48,10 +48,39 @@ StepStatus = Literal[
 ]
 
 
+def merge_exploration_state(
+    current: dict[str, Any] | None,
+    update: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Replace normal state updates; merge concurrent resource patches.
+
+    Data-producing tools publish only JSON-safe resource metadata. The real
+    DataFrames remain in ``SessionStore`` and never enter the checkpoint.
+    """
+    if not update:
+        return dict(current or {})
+    patch = update.get("__resource_patch__")
+    if patch is None:
+        return dict(update)
+    merged = dict(current or {})
+    resources = {
+        str(item.get("resource_id")): item
+        for item in merged.get("resources_available", [])
+        if isinstance(item, dict) and item.get("resource_id")
+    }
+    for item in patch:
+        if isinstance(item, dict) and item.get("resource_id"):
+            resources[str(item["resource_id"])] = item
+    merged["resources_available"] = list(resources.values())
+    return merged
+
+
 class IdeaAgentState(AgentState):
     """LangGraph state persisted by the configured checkpointer."""
 
-    exploration: NotRequired[dict[str, Any]]
+    exploration: NotRequired[
+        Annotated[dict[str, Any], merge_exploration_state]
+    ]
 
 
 class _StateModel(BaseModel):
@@ -1006,100 +1035,283 @@ def finish_exploration_run(payload: object, messages: list[Any]) -> dict[str, An
     ).model_dump(mode="json")
 
 
-def _resource_score(resource: ResourceRecord, objective: str) -> int:
-    text = objective.casefold()
-    score = 20 if resource.kind in {"table", "selection"} else 0
-    if resource.name.casefold() in text:
-        score += 100
-    score += sum(10 for column in resource.columns if column.casefold() in text)
-    return score
+_SCHEMA_GROUP_ORDER = (
+    "keys",
+    "sample",
+    "time",
+    "space",
+    "depth",
+    "taxon",
+    "measures",
+    "categories",
+    "text",
+    "other",
+)
+_SCHEMA_GROUP_LIMITS = {
+    "keys": 6,
+    "sample": 6,
+    "time": 4,
+    "space": 4,
+    "depth": 4,
+    "taxon": 5,
+    "measures": 6,
+    "categories": 4,
+    "text": 2,
+    "other": 2,
+}
+_SAMPLE_COLUMN_MARKERS = (
+    "sample",
+    "profile",
+    "station",
+    "deployment",
+    "cast",
+    "analysis",
+    "object",
+    "net",
+)
+_TAXON_COLUMN_MARKERS = (
+    "taxon",
+    "species",
+    "genus",
+    "family",
+    "stage",
+    "annotation_category",
+)
 
 
-def _shown_columns(
-    resource: ResourceRecord,
-    objective: str,
+def _schema_group(column: ResourceColumnProfile) -> str:
+    """Map one profiled column to a compact scientific role."""
+    name = column.name.casefold().replace("-", "_").replace(" ", "_")
+    if column.semantic_role == "identifier":
+        return "keys"
+    if column.semantic_role == "time":
+        return "time"
+    if column.semantic_role in {"latitude", "longitude"}:
+        return "space"
+    if column.semantic_role == "depth":
+        return "depth"
+    if any(marker in name for marker in _TAXON_COLUMN_MARKERS):
+        return "taxon"
+    if any(marker in name for marker in _SAMPLE_COLUMN_MARKERS):
+        return "sample"
+    if column.semantic_role == "measure":
+        return "measures"
+    if column.semantic_role == "category":
+        return "categories"
+    if column.semantic_role == "text":
+        return "text"
+    return "other"
+
+
+def _render_resource_schema(resource: ResourceRecord) -> tuple[str, int]:
+    """Render a bounded schema while retaining every useful column family."""
+    grouped: dict[str, list[str]] = {name: [] for name in _SCHEMA_GROUP_ORDER}
+    for column in resource.column_profiles:
+        group = _schema_group(column)
+        grouped[group].append(f"{column.name}:{column.dtype}")
+
+    rendered: list[str] = []
+    shown = 0
+    for group in _SCHEMA_GROUP_ORDER:
+        values = grouped[group][:_SCHEMA_GROUP_LIMITS[group]]
+        if not values:
+            continue
+        shown += len(values)
+        rendered.append(f"{group}=[{','.join(values)}]")
+
+    if not rendered and resource.columns:
+        fallback = list(resource.columns[:16])
+        shown = len(fallback)
+        rendered.append("columns=[" + ",".join(fallback) + "]")
+    return "; ".join(rendered) or "unknown", shown
+
+
+def _render_scope(scope: dict[str, Any]) -> str:
+    """Keep scope useful without injecting long identifier lists."""
+    if not scope:
+        return "not declared"
+    compact: dict[str, Any] = {}
+    for key, value in scope.items():
+        if isinstance(value, list):
+            if key in {"project_ids"} and len(value) <= 6:
+                compact[key] = value
+            else:
+                compact[key] = {"count": len(value)}
+        else:
+            compact[key] = value
+    return json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+
+
+def render_task_context(
+    payload: object,
     *,
-    limit: int = 10,
-) -> list[dict[str, Any]]:
-    """Show requested columns first, then keys and a short schema sample."""
-    text = objective.casefold()
-    objective_tokens = set(re.findall(r"[a-zà-ÿ0-9]+", text))
-    relevant = [
-        column
-        for column in resource.columns
-        if column.casefold() in text
-        or objective_tokens.intersection(re.findall(r"[a-zà-ÿ0-9]+", column.casefold()))
-    ]
-    names = list(
-        dict.fromkeys(
-            [*relevant, *resource.key_candidates, *resource.identifiers, *resource.columns[:6]]
-        )
-    )[:limit]
-    profiles = {column.name: column for column in resource.column_profiles}
-    return [
-        {
-            "name": name,
-            "type": profiles[name].dtype if name in profiles else "available",
-            "role": profiles[name].semantic_role if name in profiles else "unknown",
-        }
-        for name in names
-    ]
-
-
-def _columns_by_type(
-    resource: ResourceRecord,
-    objective: str,
-    *,
-    limit: int = 10,
-) -> dict[str, list[str]]:
-    """Reuse the inventory's existing semantic roles in a compact grouping."""
-    grouped: dict[str, list[str]] = {}
-    for column in _shown_columns(resource, objective, limit=limit):
-        role = str(column["role"])
-        grouped.setdefault(role, []).append(
-            f"{column['name']} ({column['type']})"
-        )
-    return grouped
-
-
-def render_exploration_context(payload: object, *, max_chars: int = 7_000) -> str:
+    preferred_sources: tuple[str, ...] = (),
+    primary_source: str | None = None,
+    max_chars: int = 2_500,
+) -> str:
+    """Render the current request before any resource is presented."""
     run = validate_exploration_run(payload)
     if run is None:
         return ""
     deliverables = ", ".join(item.kind for item in run.deliverables) or "answer"
-    ordered_resources = sorted(
-        run.resources_available,
-        key=lambda item: _resource_score(item, run.objective),
-        reverse=True,
+    source_line = ""
+    if preferred_sources or primary_source:
+        source_line = (
+            "\nPreferred source route: "
+            + (",".join(preferred_sources) or "none")
+            + f"; primary={primary_source or 'none'}. This is a starting hint, "
+            "never a DataFrame or tool restriction."
+        )
+    rendered = (
+        "\n\n## CURRENT TASK (authoritative for this turn)\n"
+        f"Objective: {run.objective}\n"
+        f"Required deliverables: {deliverables}\n"
+        "DATA SELECTION CONTRACT: before calculating or plotting, infer from the "
+        "objective the operation, requested grain/entity, required columns, scope, "
+        "filters and output. Compare that contract with the catalog below. Select "
+        "the exact capable DataFrame; active status and recency are metadata only. "
+        "If no single table is capable, use the nearest suitable ancestor, retrieve "
+        "the missing data, or combine verified resources."
+        + source_line
     )
-    resources = [
-        {
-            "name": item.name,
-            "kind": item.kind,
-            "source": item.source,
-            "rows": item.rows,
-            "description": item.description,
-            "grain": item.grain,
-            "keys": list(item.key_candidates[:8]),
-            "column_count": len(item.columns),
-            "columns_by_type": _columns_by_type(item, run.objective),
-            "columns_are_partial": len(item.columns) > 10 or item.columns_truncated,
-            "joins": [
-                {
-                    "target": relation.target_name,
-                    "columns": list(relation.columns),
-                    "coverage": [relation.left_coverage, relation.right_coverage],
-                    "confidence": relation.confidence,
-                }
-                for relation in item.join_candidates[:4]
-            ],
-            "freshness": item.freshness,
-            "scope": item.scope,
-            "provenance": item.provenance,
-            "capabilities": list(item.capabilities),
-        }
-        for item in ordered_resources[:5]
+    return rendered[:max_chars]
+
+
+def render_dataframe_context(
+    payload: object,
+    *,
+    active_variable: str | None = None,
+    max_chars: int = 12_000,
+) -> str:
+    """Present every live table by name, with bounded relevant details."""
+    run = validate_exploration_run(payload)
+    if run is None:
+        return ""
+    objective = run.objective.casefold()
+    tables = [
+        item
+        for item in run.resources_available
+        if item.kind in {"table", "selection"}
     ]
+    alphabetical_tables = sorted(
+        tables,
+        key=lambda item: (item.name.casefold(), item.source.casefold()),
+    )
+    objective_tokens = {
+        token
+        for token in re.findall(r"[a-zà-ÿ0-9_]+", objective)
+        if len(token) >= 3
+    }
+
+    def detail_priority(resource: ResourceRecord) -> tuple[int, int, int, str, str]:
+        searchable = " ".join([
+            resource.name,
+            resource.source,
+            resource.description or "",
+            resource.grain or "",
+            *resource.columns,
+        ]).casefold()
+        overlap = sum(token in searchable for token in objective_tokens)
+        return (
+            0 if resource.name.casefold() in objective else 1,
+            -overlap,
+            0 if resource.name == active_variable else 1,
+            resource.name.casefold(),
+            resource.source.casefold(),
+        )
+
+    detailed_tables = sorted(
+        tables,
+        key=detail_priority,
+    )[:8]
+
+    header_lines = [
+        "\n\n## AVAILABLE DATAFRAMES (current session)",
+        "The complete index keeps every live DataFrame name visible. Detailed "
+        "cards are a bounded expansion for this request, never an availability "
+        "restriction; any indexed DataFrame remains selectable by exact name.",
+        "DATAFRAME INDEX (all live resources):",
+    ]
+    full_index_lines = []
+    for resource in alphabetical_tables:
+        status = "active" if resource.name == active_variable else "available"
+        source = " ".join(resource.source.split())[:48]
+        grain = " ".join((resource.grain or "not established").split())[:64]
+        rows = resource.rows if resource.rows is not None else "unknown"
+        full_index_lines.append(
+            f"* {resource.name} | status={status}; source={source}; "
+            f"rows={rows}; grain={grain}"
+        )
+    rendered_blocks = [*header_lines, *full_index_lines]
+    if len("\n".join(rendered_blocks)) > max_chars - 600:
+        rendered_blocks = [
+            *header_lines,
+            "* " + " | ".join(resource.name for resource in alphabetical_tables),
+        ]
+    rendered_blocks.append("DATAFRAME DETAILS (expanded subset for this request):")
+
+    entry_blocks: list[str] = []
+    for resource in detailed_tables:
+        schema, shown = _render_resource_schema(resource)
+        total_columns = len(resource.columns)
+        partial = resource.columns_truncated or shown < total_columns
+        description = resource.description or (
+            f"Persisted {resource.kind} from {resource.source}; no richer "
+            "description was supplied by the producing operation."
+        )
+        status = "active" if resource.name == active_variable else "available"
+        entry_blocks.append(
+            "\n".join([
+                f"- {resource.name}",
+                f"  status={status}; kind={resource.kind}; source={resource.source}; "
+                f"rows={resource.rows if resource.rows is not None else 'unknown'}",
+                f"  description={description}",
+                f"  grain={resource.grain or 'not established'}",
+                f"  schema_by_role={schema}",
+                f"  schema_visibility={shown}/{total_columns}"
+                + (" (partial; inspect the persisted table for omitted columns)" if partial else " (complete)"),
+                "  keys=" + (",".join(resource.key_candidates[:8]) or "not established"),
+                f"  scope={_render_scope(resource.scope)}",
+                "  lineage=" + (" | ".join(resource.relations[:8]) or "not declared"),
+            ])
+        )
+
+    for block in entry_blocks:
+        candidate = "\n".join([*rendered_blocks, block])
+        if len(candidate) + 600 > max_chars:
+            break
+        rendered_blocks.append(block)
+
+    expanded_count = sum(block in rendered_blocks for block in entry_blocks)
+    if len(tables) > expanded_count:
+        rendered_blocks.append(
+            f"* {len(tables) - expanded_count} indexed DataFrames are not expanded; "
+            "their exact names above remain available."
+        )
+
+    other_resources = [
+        item
+        for item in run.resources_available
+        if item.kind not in {"table", "selection"}
+    ]
+    if other_resources:
+        other_lines = ["OTHER AVAILABLE RESOURCES:"]
+        for resource in other_resources[:12]:
+            other_lines.append(
+                f"- {resource.name}: kind={resource.kind}; source={resource.source}; "
+                f"capabilities={','.join(resource.capabilities) or 'not declared'}"
+            )
+        other_block = "\n".join(other_lines)
+        if len("\n".join([*rendered_blocks, other_block])) <= max_chars:
+            rendered_blocks.append(other_block)
+    return "\n".join(rendered_blocks)[:max_chars]
+
+
+def render_exploration_frontier(payload: object, *, max_chars: int = 4_500) -> str:
+    """Render only live progress, dependencies and evidence."""
+    run = validate_exploration_run(payload)
+    if run is None:
+        return ""
     steps = [
         {
             "id": item.step_id,
@@ -1140,50 +1352,32 @@ def render_exploration_context(payload: object, *, max_chars: int = 7_000) -> st
         }
         for item in run.dependencies
         if item.kind == "data"
+        and (item.status == "pending" or item.resume_required)
     ]
     rendered = (
-        "\n\n## EXPLORATION STATE (checkpointed working memory)\n"
-        f"Objective: {run.objective}\n"
-        f"Required deliverables: {deliverables}\n"
+        "\n\n## EXPLORATION FRONTIER (checkpointed working memory)\n"
         f"Run status: {run.status}; plan_revision={run.plan_revision}; "
         f"active_step={run.active_step_id or 'none'}\n"
-        "Available resources: "
-        + json.dumps(resources, ensure_ascii=False, separators=(",", ":"))
-        + "\nOther available DataFrames: "
-        + json.dumps(
-            [
-                {
-                    "name": item.name,
-                    "description": item.description,
-                    "rows": item.rows,
-                    "grain": item.grain,
-                    "columns_by_type": _columns_by_type(
-                        item, run.objective, limit=5
-                    ),
-                }
-                for item in ordered_resources[5:]
-                if item.kind in {"table", "selection"}
-            ][:20],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        + "\nSteps and dependencies: "
+        "Steps and dependencies: "
         + json.dumps(steps, ensure_ascii=False, separators=(",", ":"))
         + "\nEvidence collected: "
         + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
         + "\nData dependencies: "
         + json.dumps(data_dependencies, ensure_ascii=False, separators=(",", ":"))
-        + "\nUse this state as working memory. Reuse available resources, adapt the next "
-        "steps to observations, execute the ready planned frontier, and support requested "
-        "deliverables with recorded evidence. Join candidates are sampled hints: inspect "
-        "the exact key and coverage before merging. "
-        "A column absent from the selected table is not globally absent: search every "
-        "resource schema and the relevant source before concluding it is unavailable. "
-        "For every pending data dependency, inspect or retrieve it from the available "
-        "resources without asking the user. When candidate_resources are present and "
-        "resume_required=true, rerun the failed analytical step with that resource before answering."
-        " Every table is distinct: before calculating or plotting, name the exact DataFrame "
-        "and verify its shown columns, grain, scope and provenance. Never choose a table only "
-        "because it is the active `df` alias."
+    )
+    if data_dependencies:
+        rendered += (
+            "\nResolve every pending data dependency from the available resources, "
+            "then rerun the failed analytical step before answering."
+        )
+    return rendered[:max_chars]
+
+
+def render_exploration_context(payload: object, *, max_chars: int = 19_000) -> str:
+    """Compatibility renderer for callers that still need the complete projection."""
+    rendered = (
+        render_task_context(payload)
+        + render_dataframe_context(payload)
+        + render_exploration_frontier(payload)
     )
     return rendered[:max_chars]

@@ -259,9 +259,6 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "describe_ecotaxa_cache_table": _source("EcoTaxa · schéma d'une table cache", "EcoTaxa · cache table schema", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "query_ecotaxa_cache": _source("EcoTaxa · SQL cache", "EcoTaxa · SQL cache", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "summarize_ecotaxa_profiles_for_map": _source("EcoTaxa · profils pour carte", "EcoTaxa · map-ready profiles", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "find_uvp_matches_for_net_table": _presentation("Correspondances filet↔UVP (cache local)", "Net↔UVP matches (local cache)", "data"),
-    "join_net_uvp_enriched": _presentation("Jointure filet↔UVP enrichie certifiée", "Certified enriched net↔UVP join", "data"),
-    "compare_local_net_uvp_profiles": _presentation("Comparaison fichier filet↔UVP6", "Local net↔UVP6 profile comparison", "data"),
     # Bio-ORACLE.
     "list_bio_oracle_datasets": _source("Bio-ORACLE · jeux de données", "Bio-ORACLE · datasets", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
     "preview_bio_oracle_point": _source("Bio-ORACLE · aperçu ponctuel", "Bio-ORACLE · point preview", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
@@ -291,7 +288,6 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "audit_ecotaxa_ecopart_join": _source("EcoTaxa/EcoPart · audit de jumelage", "EcoTaxa/EcoPart · join audit", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     # Geography and core services.
     "filter_dataframe_by_zone": _presentation("Filtrage géographique", "Geographic filtering", "geography"),
-    "prepare_net_uvp_audit_subsets": _presentation("Préparation d'audit filet↔UVP", "Net↔UVP audit subset preparation", "geography"),
     "split_dataframe_by_zone": _presentation("Découpage géographique", "Geographic split", "geography"),
     "get_zone_info": _presentation("Information géographique", "Geographic information", "geography"),
     "query_copepod_knowledge_base": _presentation("Recherche documentaire", "Knowledge-base search", "core"),
@@ -343,17 +339,12 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "load_file": "local_session",
     "run_pandas": "local_session",
     "run_graph": "local_artifact",
-    "join_net_uvp_enriched": "local_low_session",
-    "compare_local_net_uvp_profiles": "local_low_session",
     # EcoTaxa read-only/cache navigation.
     "audit_ecotaxa_spatial_coverage": "remote_read",
     "list_ecotaxa_cache_tables": "local_source_read",
     "describe_ecotaxa_cache_table": "local_source_read",
     "query_ecotaxa_cache": "local_source_read",
     "summarize_ecotaxa_profiles_for_map": "local_source_session",
-    # Reads the local EcoTaxa cache then verifies the shared CTD-rosette file
-    # against Amundsen metadata; it is read-only but no longer purely local.
-    "find_uvp_matches_for_net_table": "remote_read",
     "compare_ecotaxa_projects": "remote_read",
     "count_ecotaxa_taxa": "remote_read",
     "describe_ecotaxa_project_coverage": "remote_read",
@@ -414,7 +405,6 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     # Geography and core services.
     "get_zone_info": "local_read",
     "filter_dataframe_by_zone": "local_session",
-    "prepare_net_uvp_audit_subsets": "local_session",
     "split_dataframe_by_zone": "local_session",
     "query_copepod_knowledge_base": "local_read",
     "lookup_marine_taxonomy": "remote_read",
@@ -454,7 +444,6 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "run_graph": "visualization",
     "get_zone_info": "geography",
     "filter_dataframe_by_zone": "geography",
-    "prepare_net_uvp_audit_subsets": "file_analysis",
     # Le découpage annote le DataFrame chargé : c'est une capacité d'analyse de
     # fichier, exposée seulement quand un fichier est chargé. La garder hors du
     # groupe permanent "geography" préserve le budget d'outils EcoTaxa.
@@ -508,9 +497,6 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "audit_ecotaxa_spatial_coverage": "hidden_legacy",
     "query_ecotaxa_cache": "ecotaxa_discovery",
     "summarize_ecotaxa_profiles_for_map": "hidden_legacy",
-    "find_uvp_matches_for_net_table": "file_analysis",
-    "join_net_uvp_enriched": "file_analysis",
-    "compare_local_net_uvp_profiles": "file_analysis",
     "summarize_ecotaxa_project": "hidden_legacy",
     "summarize_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa exports.
@@ -756,6 +742,8 @@ def validate_catalog(
         item.name
         for item in runtime_tools
         if getattr(item, "response_format", None) != "content_and_artifact"
+        and (getattr(item, "extras", None) or {}).get("command_result_schema")
+        != "tool_result_v1"
     )
     if result_format_issues:
         raise ValueError(

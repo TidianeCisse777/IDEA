@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, hook_config
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from agents.exploration_state import (
     IdeaAgentState,
@@ -74,21 +74,38 @@ class ExplorationStateMiddleware(AgentMiddleware):
         )
         current = validate_exploration_run(state.get("exploration"))
         fingerprint = request_fingerprint(objective)
+        inventory = self._inventory(messages)
         if current is not None and current.request_fingerprint == fingerprint:
-            return None
+            return {
+                "exploration": refresh_exploration_resources(
+                    state.get("exploration"), inventory
+                )
+            }
         return {
             "exploration": new_exploration_run(
                 objective,
-                self._inventory(messages),
+                inventory,
             )
         }
 
     def before_model(self, state: IdeaAgentState, runtime) -> dict[str, Any] | None:  # noqa: ANN001
         messages = list(state.get("messages") or [])
-        payload = refresh_exploration_resources(
-            state.get("exploration"),
-            self._inventory(messages),
+        trailing_tools: list[ToolMessage] = []
+        for message in reversed(messages):
+            if not isinstance(message, ToolMessage):
+                break
+            trailing_tools.append(message)
+        state_aware = {"load_file", "run_pandas"}
+        needs_legacy_refresh = bool(trailing_tools) and any(
+            message.name not in state_aware for message in trailing_tools
         )
+        if needs_legacy_refresh:
+            payload = refresh_exploration_resources(
+                state.get("exploration"),
+                self._inventory(messages),
+            )
+        else:
+            payload = state.get("exploration")
         if payload is None:
             return None
         payload = ingest_tool_evidence(payload, messages) or payload

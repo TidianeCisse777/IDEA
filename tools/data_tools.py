@@ -10,8 +10,12 @@ from typing import Any
 
 import pandas as pd
 from cycler import cycler
+from langchain.tools import ToolRuntime
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
+from langgraph.types import Command
 
+from agents.exploration_state import IdeaAgentState
 from core.environment_resolver.column_detection import (
     DEFAULT_LAT_CANDIDATES,
     DEFAULT_LON_CANDIDATES,
@@ -276,6 +280,60 @@ from tools.dataset_registry import (
 )
 from tools.public_url import graph_url
 from tools.session_store import SessionStore, default_store
+
+
+def _runtime_tool_output(
+    output: tuple[Any, dict[str, Any]],
+    *,
+    runtime: ToolRuntime[None, IdeaAgentState] | None,
+    store: SessionStore,
+    thread_id: str,
+    tool_name: str,
+) -> tuple[Any, dict[str, Any]] | ToolMessage | Command:
+    """Preserve tool artifacts and atomically publish persisted resources."""
+    if runtime is None or runtime.tool_call_id is None:
+        return output
+    content, artifact = output
+    message = ToolMessage(
+        content=content,
+        artifact=artifact,
+        tool_call_id=runtime.tool_call_id,
+        name=tool_name,
+        status="error" if artifact.get("status") == "error" else "success",
+    )
+    if not artifact.get("persisted"):
+        return message
+
+    from tools.dataframe_cleanup import hidden_dataframes  # noqa: PLC0415
+    from tools.resource_inventory import build_resource_inventory  # noqa: PLC0415
+    from tools.source_scope import source_decision_for_turn  # noqa: PLC0415
+
+    messages = list(runtime.state.get("messages") or [])
+    try:
+        authorized_sources = source_decision_for_turn(
+            store,
+            thread_id,
+            messages,
+            persist=False,
+        ).authorized_sources
+    except Exception:
+        authorized_sources = ()
+    resources = build_resource_inventory(
+        store,
+        thread_id,
+        authorized_sources=authorized_sources,
+        excluded_variables=hidden_dataframes(store, thread_id),
+    )
+    return Command(
+        update={
+            "messages": [message],
+            "exploration": {
+                "__resource_patch__": [
+                    resource.model_dump(mode="json") for resource in resources
+                ]
+            },
+        }
+    )
 
 # --- Cycle de vie du blocage qualité graphique ----------------------------
 # Quand run_graph bloque une figure pour lisibilité, il pose ce flag ; run_pandas
@@ -892,6 +950,100 @@ def _named_dataset_variables(store: SessionStore, thread_id: str) -> tuple[str, 
         if variable not in hidden:
             names.append(variable)
     return tuple(sorted(set(names)))
+
+
+def _referenced_dataframe_parents(
+    code: str,
+    local_vars: dict[str, Any],
+    persistent_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return exact persisted DataFrames actually read by pandas code.
+
+    Generic aliases such as ``df`` and ``loaded_file`` are normalized by
+    object identity to a durable session variable. Intermediate DataFrames
+    created by the code are not eligible parents because they are absent from
+    ``persistent_names``.
+    """
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return ()
+    loaded_names = sorted(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    persistent_frames = {
+        name: local_vars.get(name)
+        for name in persistent_names
+        if isinstance(local_vars.get(name), pd.DataFrame)
+    }
+    parents: list[str] = []
+    for node in loaded_names:
+        referenced_name = node.id
+        frame = local_vars.get(referenced_name)
+        if not isinstance(frame, pd.DataFrame):
+            continue
+        if referenced_name in persistent_frames:
+            canonical_name = referenced_name
+        else:
+            canonical_name = next(
+                (
+                    name
+                    for name, persisted_frame in persistent_frames.items()
+                    if persisted_frame is frame
+                ),
+                None,
+            )
+        if canonical_name and canonical_name not in parents:
+            parents.append(canonical_name)
+    return tuple(parents)
+
+
+def _clean_dataframe_filters(filters: object) -> dict[str, Any]:
+    """Keep only compact JSON-safe filter declarations."""
+    if not isinstance(filters, dict):
+        return {}
+    scalar_types = (str, int, float, bool)
+    clean: dict[str, Any] = {}
+    for raw_key, value in filters.items():
+        key = str(raw_key).strip()[:80]
+        if not key:
+            continue
+        if value is None or isinstance(value, scalar_types):
+            clean[key] = value
+        elif isinstance(value, (list, tuple)) and all(
+            item is None or isinstance(item, scalar_types) for item in value
+        ):
+            clean[key] = list(value)[:50]
+    return clean
+
+
+def _run_pandas_dataframe_metadata(
+    *,
+    description: str | None,
+    grain: str | None,
+    filters: object,
+    parent_variables: tuple[str, ...],
+    fallback_description: str,
+) -> dict[str, Any]:
+    """Build metadata shared by every run_pandas persistence path."""
+    clean_description = str(description or "").strip()[:500]
+    clean_grain = str(grain or "").strip()[:160]
+    clean_filters = _clean_dataframe_filters(filters)
+    return {
+        "description": clean_description or fallback_description,
+        **({"grain": clean_grain} if clean_grain else {}),
+        **({"filters": clean_filters} if clean_filters else {}),
+        **(
+            {"parent_variables": list(parent_variables)}
+            if parent_variables
+            else {}
+        ),
+    }
 
 
 def _implicit_df_join_issue(code: str, named_tables: tuple[str, ...]) -> str | None:
@@ -2135,8 +2287,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             },
         )
 
-    @tool(response_format="content_and_artifact")
-    def load_file(path: str) -> str:
+    def _load_file_result(path: str):
         """Charge un fichier de données (CSV, TSV, Excel, JSON, Parquet) pour l'analyser.
 
         Utilise cet outil quand l'utilisateur mentionne un fichier ou fournit un chemin.
@@ -2257,12 +2408,29 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
             metrics={"rows": int(meta["n_rows"]), "columns": int(meta["n_cols"])},
         )
 
-    @tool(response_format="content_and_artifact")
-    def run_pandas(
+    @tool(
+        description=_load_file_result.__doc__,
+        extras={"command_result_schema": "tool_result_v1"},
+    )
+    def load_file(
+        path: str,
+        runtime: ToolRuntime[None, IdeaAgentState] = None,
+    ):
+        return _runtime_tool_output(
+            _load_file_result(path),
+            runtime=runtime,
+            store=_store,
+            thread_id=thread_id,
+            tool_name="load_file",
+        )
+
+    def _run_pandas_result(
         code: str,
         persist_as: str | None = None,
         description: str | None = None,
-    ) -> str:
+        grain: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ):
         """Exécute du code Python/pandas sur le(s) DataFrame(s) chargés.
 
         Variables disponibles selon ce qui a été chargé dans la session :
@@ -2282,7 +2450,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         - `df_derived_*` : copies modifiées de tables de session, persistées sous
           le nom exact retourné par l'appel précédent
         - `df_ecotaxa_selection_*`: sélections cache EcoTaxa persistantes et
-          simultanément réutilisables par leur nom exact dans WORKING TABLES
+          simultanément réutilisables par leur nom exact dans AVAILABLE DATAFRAMES
         - `df_ecotaxa_cache_query`: alias de la dernière requête cache EcoTaxa
 
         Pour comparer un fichier et EcoTaxa, utilise `loaded_file` ou le
@@ -2302,9 +2470,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         `source_variable` de l'outil d'enrichissement ; ne réutilise pas le
         fichier complet par défaut.
 
-        Quand le code crée un DataFrame persistant, fournis `description` : une
-        phrase courte décrivant ses sources, son grain, sa transformation et ses
-        colonnes utiles. Cette description est conservée avec la table.
+        Quand le code crée un DataFrame persistant, renseigne toujours :
+        - `description` : phrase courte distinguant la table par ses sources,
+          sa transformation, son rôle et ses familles de colonnes utiles ;
+        - `grain` : unité exacte représentée par une ligne ;
+        - `filters` : objet JSON des filtres réellement appliqués par le code.
+        La lignée est détectée automatiquement depuis les DataFrames réellement
+        référencés : ne l'invente pas dans ces arguments.
 
         The controlled worker persists variables computed in this conversation
         (e.g. `station_stats`, `delta_df`) so a following graph can reuse them.
@@ -2344,6 +2516,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 )
             local_vars = _dataframe_vars(_store, thread_id, df)
             injected_keys = set(local_vars) | {"__builtins__"}
+            dataframe_parents = _referenced_dataframe_parents(
+                code,
+                local_vars,
+                _named_dataset_variables(_store, thread_id),
+            )
 
             implicit_join_issue = _implicit_df_join_issue(
                 code, _named_dataset_variables(_store, thread_id)
@@ -2426,9 +2603,14 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         "source": "analysis:explicit-derived",
                         "n_rows": int(result.shape[0]),
                         "n_cols": int(result.shape[1]),
-                        "description": (
-                            description
-                            or f"Table explicitement persistée : {explicit_variable}"
+                        **_run_pandas_dataframe_metadata(
+                            description=description,
+                            grain=grain,
+                            filters=filters,
+                            parent_variables=dataframe_parents,
+                            fallback_description=(
+                                f"Table explicitement persistée : {explicit_variable}"
+                            ),
                         ),
                     },
                     latest_alias=explicit_variable,
@@ -2460,12 +2642,18 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         thread_id,
                         join_frame,
                         variable_name=join_variable,
-                        meta={
-                            "source": "analysis:join",
-                            "n_rows": int(join_frame.shape[0]),
-                            "n_cols": int(join_frame.shape[1]),
-                            "description": description or _describe_join(code, join_frame),
-                        },
+                    meta={
+                        "source": "analysis:join",
+                        "n_rows": int(join_frame.shape[0]),
+                        "n_cols": int(join_frame.shape[1]),
+                        **_run_pandas_dataframe_metadata(
+                            description=description,
+                            grain=grain,
+                            filters=filters,
+                            parent_variables=dataframe_parents,
+                            fallback_description=_describe_join(code, join_frame),
+                        ),
+                    },
                         latest_alias=join_variable,
                     )
 
@@ -2502,10 +2690,15 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                             "source": "analysis:derived",
                             "n_rows": int(result.shape[0]),
                             "n_cols": int(result.shape[1]),
-                            "description": (
-                                description
-                                or derived_description
-                                or f"Table dérivée nommée {derived_name}"
+                            **_run_pandas_dataframe_metadata(
+                                description=description,
+                                grain=grain,
+                                filters=filters,
+                                parent_variables=dataframe_parents,
+                                fallback_description=(
+                                    derived_description
+                                    or f"Table dérivée nommée {derived_name}"
+                                ),
                             ),
                         },
                         latest_alias=derived_variable,
@@ -2660,6 +2853,26 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 method="controlled pandas execution",
                 metrics=recovery_metrics,
             )
+
+    @tool(
+        description=_run_pandas_result.__doc__,
+        extras={"command_result_schema": "tool_result_v1"},
+    )
+    def run_pandas(
+        code: str,
+        persist_as: str | None = None,
+        description: str | None = None,
+        grain: str | None = None,
+        filters: dict[str, Any] | None = None,
+        runtime: ToolRuntime[None, IdeaAgentState] = None,
+    ):
+        return _runtime_tool_output(
+            _run_pandas_result(code, persist_as, description, grain, filters),
+            runtime=runtime,
+            store=_store,
+            thread_id=thread_id,
+            tool_name="run_pandas",
+        )
 
     @tool(response_format="content_and_artifact")
     def run_graph(code: str) -> str:

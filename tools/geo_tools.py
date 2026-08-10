@@ -718,4 +718,4 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
             },
         )
 
-    return [filter_dataframe_by_zone, prepare_net_uvp_audit_subsets, split_dataframe_by_zone]
+    return [filter_dataframe_by_zone, split_dataframe_by_zone]

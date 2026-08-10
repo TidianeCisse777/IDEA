@@ -19,8 +19,6 @@ from core.environment_resolver.column_detection import (
 from tools.session_store import SessionStore
 
 _MAX_CAPSULE_CHARS = 12000
-_MAX_ACTIVE_SKILL_RULES_CHARS = 4000
-_MAX_SINGLE_SKILL_RULE_CHARS = 1600
 _IDENTITY_COLUMNS = tuple(dict.fromkeys((
     "project_id",
     "sample_id",
@@ -256,6 +254,8 @@ def _schema_by_type(
     limit: int,
 ) -> str:
     """Return a short schema grouped by scientific role, never every column."""
+    import pandas as pd
+
     selected = _prioritized_columns(
         dataframe, env_detected, limit=limit
     ).split(",")
@@ -285,6 +285,7 @@ def _schema_by_type(
         str(column)
         for column in dataframe.select_dtypes(include="number").columns
     }
+    raw_columns = {str(column): column for column in dataframe.columns}
     groups: dict[str, list[str]] = {
         "keys": [], "sample": [], "space": [], "time": [],
         "environment": [], "taxon": [], "measures": [], "other": [],
@@ -296,6 +297,18 @@ def _schema_by_type(
         elif normalized_name in space_names:
             groups["space"].append(name)
         elif normalized_name in time_names:
+            groups["time"].append(name)
+        elif any(
+            marker in normalized_name
+            for marker in ("date", "time", "datetime", "timestamp", "heure")
+        ):
+            groups["time"].append(name)
+        elif (
+            name in raw_columns
+            and pd.api.types.is_datetime64_any_dtype(
+                dataframe[raw_columns[name]].dtype
+            )
+        ):
             groups["time"].append(name)
         elif normalized_name in taxon_names:
             groups["taxon"].append(name)
@@ -332,7 +345,11 @@ _STALE_ID_KEYS = ("project_id", "sample_id", "sample_ids")
 
 
 def _working_tables(
-    store: SessionStore, thread_id: str, *, active_variable: str
+    store: SessionStore,
+    thread_id: str,
+    *,
+    active_variable: str,
+    excluded_variables: Iterable[str] = (),
 ) -> list[tuple[str, str, str, str, str]]:
     """Return (variable, source, rows, description, compact_schema).
 
@@ -345,6 +362,7 @@ def _working_tables(
     identifier is re-exposed.
     """
     found: list[tuple[str, str, str, str, str]] = []
+    excluded = {str(variable) for variable in excluded_variables}
     for key in store.keys(prefix=f"{thread_id}:dataset:"):
         entry = store.get(key)
         meta = (entry or {}).get("meta") or {}
@@ -359,8 +377,10 @@ def _working_tables(
         ):
             continue  # raw project/sample-keyed export — keep hidden
         variable = _clean(meta.get("variable_name") or key.rsplit(":", 1)[-1], limit=80)
-        if variable == active_variable and source != "ecotaxa_selection":
-            continue  # already the headline active dataset
+        if variable in excluded:
+            continue
+        if variable == active_variable:
+            continue  # already the headline active dataset / selection
         rows = meta.get("n_rows")
         rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
         description = _clean(meta.get("description") or "", limit=100)
@@ -389,14 +409,17 @@ def _working_tables(
     return sorted(set(found))
 
 
-def _loaded_files(store: SessionStore, thread_id: str) -> list[tuple[str, str, str]]:
-    """Return (variable, path, rows) for every loaded file in the session.
+def _loaded_files(
+    store: SessionStore,
+    thread_id: str,
+) -> list[tuple[str, str, str, str, str]]:
+    """Return variable, path, rows, description and schema for loaded files.
 
     Each `load_file` registers a distinct `df_file_*` variable. Surfacing the
     whole roster lets the agent target the right file by name across a
     multi-file session instead of reloading it or guessing from the transcript.
     """
-    found: list[tuple[str, str, str]] = []
+    found: list[tuple[str, str, str, str, str]] = []
     for key in store.keys(prefix=f"{thread_id}:dataset:"):
         entry = store.get(key)
         meta = (entry or {}).get("meta") or {}
@@ -408,7 +431,24 @@ def _loaded_files(store: SessionStore, thread_id: str) -> list[tuple[str, str, s
         rows = meta.get("n_rows")
         rows_text = str(int(rows)) if isinstance(rows, (int, float)) else "?"
         description = _clean(meta.get("description") or "", limit=100)
-        found.append((variable, path, rows_text, description))
+        dataframe = (entry or {}).get("df")
+        if dataframe is not None:
+            environment_columns = {
+                "latitude": detect_column(dataframe.columns, DEFAULT_LAT_CANDIDATES),
+                "longitude": detect_column(dataframe.columns, DEFAULT_LON_CANDIDATES),
+                "time": detect_column(
+                    dataframe.columns, _time_candidates_for(dataframe.columns)
+                ),
+                "depth": detect_column(dataframe.columns, DEFAULT_DEPTH_CANDIDATES),
+            }
+            schema = _schema_by_type(
+                dataframe,
+                environment_columns,
+                limit=_MAX_TABLE_SCHEMA_COLUMNS,
+            )
+        else:
+            schema = "unknown"
+        found.append((variable, path, rows_text, description, schema))
     return sorted(set(found))
 
 
@@ -457,23 +497,6 @@ def _source_scope_line(store: SessionStore, thread_id: str, messages: object) ->
     )
 
 
-def _active_skill_rules(store: SessionStore, thread_id: str) -> str:
-    """Render bounded, versioned rules retained after tool-history compaction."""
-    meta = (store.get(thread_id) or {}).get("meta") or {}
-    capsules = meta.get("active_skill_capsules") or {}
-    lines: list[str] = []
-    for name, capsule in sorted(capsules.items()):
-        if not isinstance(capsule, dict):
-            continue
-        content = _clean(capsule.get("content") or "", limit=_MAX_SINGLE_SKILL_RULE_CHARS)
-        if content:
-            lines.append(f"- {name}@{_clean(capsule.get('version') or '?', limit=20)}: {content}")
-    if not lines:
-        return ""
-    return ("\nACTIVE SKILL RULES (already loaded; reuse them, do not reload):\n"
-            + "\n".join(lines))[:_MAX_ACTIVE_SKILL_RULES_CHARS]
-
-
 def build_dataset_state_capsule(
     store: SessionStore, thread_id: str, messages: object = None
 ) -> str:
@@ -493,6 +516,9 @@ def build_dataset_state_capsule(
     dataframe = active["df"]
     meta = dict(active.get("meta") or {})
     variable = _clean(meta.get("variable_name") or "df")
+    from tools.dataframe_cleanup import hidden_dataframes  # noqa: PLC0415
+
+    hidden_variables = hidden_dataframes(store, thread_id)
     source = _clean(meta.get("source") or "unknown")
     physical_rows, physical_columns = dataframe.shape
     rows = int(meta.get("n_rows", physical_rows))
@@ -632,8 +658,14 @@ def build_dataset_state_capsule(
         except Exception:
             pass
     anchor_note = ""
+    loaded_files = _loaded_files(store, thread_id)
     loaded = store.get(f"{thread_id}:loaded_file")
-    if loaded and loaded.get("df") is not None and not external_primary:
+    if (
+        len(loaded_files) == 1
+        and loaded
+        and loaded.get("df") is not None
+        and not external_primary
+    ):
         loaded_variable = _clean((loaded.get("meta") or {}).get("variable_name") or "")
         if loaded_variable and loaded_variable != variable:
             anchor_note = (
@@ -666,7 +698,12 @@ def build_dataset_state_capsule(
         )
 
     working_block = ""
-    tables = _working_tables(store, thread_id, active_variable=variable)
+    tables = _working_tables(
+        store,
+        thread_id,
+        active_variable=variable,
+        excluded_variables=hidden_variables,
+    )
     if tables:
         # Every named EcoTaxa selection remains visible for the life of the
         # conversation. Only unrelated derived tables use the compact cap.
@@ -697,16 +734,14 @@ def build_dataset_state_capsule(
         )
 
     scope_line = _source_scope_line(store, thread_id, messages)
-    skill_rules = _active_skill_rules(store, thread_id)
-
     loaded_files_block = ""
-    files = _loaded_files(store, thread_id)
+    files = [item for item in loaded_files if item[0] != variable]
     if len(files) >= 1:
         listed = files[:_MAX_LOADED_FILES]
         lines = "\n".join(
-            f"- {variable}: path={path}, rows={rows}"
+            f"- {variable}: path={path}, rows={rows}, schema={schema}"
             + (f", desc={description}" if description else "")
-            for variable, path, rows, description in listed
+            for variable, path, rows, description, schema in listed
         )
         more = (
             f"\n- (+{len(files) - len(listed)} more)"
@@ -733,7 +768,6 @@ def build_dataset_state_capsule(
         "Identifiers absent from this capsule and the current user message are "
         "ungrounded; do not infer them from older conversation turns."
         + scope_line
-        + skill_rules
         + working_block
         + loaded_files_block
         + anchor_note
