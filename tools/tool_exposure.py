@@ -13,7 +13,6 @@ from tools.turn_context import TurnContext
 
 _CORE_TOOL_NAMES = (
     "load_file",
-    "load_skill",
     "query_copepod_knowledge_base",
     "run_pandas",
 )
@@ -417,7 +416,13 @@ def decide_tool_exposure(
 ) -> ToolExposureDecision:
     """Return the deterministic tool allowlist for the current model call."""
 
-    names = tuple(dict.fromkeys(str(name) for name in available_names if name in policies))
+    names = tuple(
+        dict.fromkeys(
+            str(name)
+            for name in available_names
+            if name in policies and name != "load_skill"
+        )
+    )
     if turn_context.domain_profile == "fish_larvae":
         disabled_sources = {"ecotaxa", "ecopart", "ogsl", "sql"}
         names = tuple(
@@ -670,9 +675,9 @@ def decide_tool_exposure(
         else:
             fallback_groups = ("core",)
         fallback_limits: dict[ToolExposureGroup, int] = {
-            # Always keep the cache SQL triplet — schema-first rule
-            # requires list_ecotaxa_cache_tables and describe_ecotaxa_cache_table
-            # to be reachable whenever the agent may need to verify a column.
+            # Always keep the cache SQL triplet — schema-first rule requires
+            # list_ecotaxa_cache_tables and describe_ecotaxa_cache_table to be
+            # reachable whenever the agent may need to verify a column.
             "ecotaxa_discovery": 3,
         }
         if turn_context.file_loaded:
@@ -688,8 +693,8 @@ def decide_tool_exposure(
             fallback_limits[intent] = 4
         selected = _ordered_names(names, policies, fallback_groups, fallback_limits)
         # Hard guarantee: schema inspection tools must survive any overflow when
-        # EcoTaxa is authorized — the schema-first rule requires them to be
-        # reachable without needing to load a skill first.
+        # EcoTaxa is authorized — the schema-first rule requires them to remain
+        # reachable whenever the source is active.
         if "ecotaxa" in authorized:
             _schema_tools = ("list_ecotaxa_cache_tables", "describe_ecotaxa_cache_table")
             for _st in _schema_tools:

@@ -17,7 +17,7 @@ max_tokens: 600
 
 Apply this skill only when the Source Selection Gateway authorizes OGSL, either
 by an explicit current request or an inherited active-source follow-up, and the
-active session does not forbid OGSL. Do not load or apply this skill for
+active session does not forbid OGSL. Do not apply this procedure for
 generic requests about samples, projects, stations, positions, zones,
 temperature, salinity, environment, maps, or analyses. A loaded table remains
 the primary source; OGSL is only the requested enrichment source.

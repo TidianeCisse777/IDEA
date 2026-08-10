@@ -2209,6 +2209,45 @@ def make_source_tools(thread_id: str) -> list:
         if not selection_name:
             return None, []
         key = str(selection_name).strip()
+
+        def _sample_ids_from_dataframe(dataframe: object) -> list[int]:
+            if not isinstance(dataframe, pd.DataFrame):
+                return []
+            if "sample_id" in dataframe.columns:
+                return _normalize_sample_ids(dataframe["sample_id"].tolist())
+            if "profile_id" not in dataframe.columns:
+                return []
+
+            profiles = [
+                str(value).strip()
+                for value in dataframe["profile_id"].dropna().tolist()
+                if str(value).strip()
+            ]
+            profiles = list(dict.fromkeys(profiles))
+            if not profiles:
+                return []
+
+            cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+            placeholders = ", ".join("?" for _ in profiles)
+            conn = None
+            try:
+                conn = open_readonly_connection(cache_db)
+                rows = conn.execute(
+                    f"SELECT sample_id FROM samples_cache "
+                    f"WHERE TRIM(profile_id) IN ({placeholders}) "
+                    "ORDER BY sample_id",
+                    profiles,
+                ).fetchall()
+                return _normalize_sample_ids([row["sample_id"] for row in rows])
+            except Exception:
+                return []
+            finally:
+                if conn is not None:
+                    conn.close()
+
+        def _dataset_sample_ids(dataframe: object) -> list[int]:
+            return _sample_ids_from_dataframe(dataframe)
+
         if key.lower() in {
             "latest", "last", "current", "cette sélection", "cette selection",
             "dernière sélection", "derniere selection",
@@ -2251,8 +2290,27 @@ def make_source_tools(thread_id: str) -> list:
             # source search merely to turn it back into a named selection.
             dataset = _store.get(f"{thread_id}:dataset:{key}")
             dataframe = (dataset or {}).get("df")
-            if isinstance(dataframe, pd.DataFrame) and "sample_id" in dataframe.columns:
-                return key, _normalize_sample_ids(dataframe["sample_id"].tolist())
+            dataset_ids = _dataset_sample_ids(dataframe)
+            if dataset_ids:
+                return key, dataset_ids
+
+            # A profile map or a pandas subset may be the current export scope
+            # even though the model supplied a display label rather than the
+            # generated dataframe variable.  Resolve it from the active table
+            # when it exposes EcoTaxa profile identifiers.
+            for active_key in (
+                f"{thread_id}:ecotaxa",
+                thread_id,
+                f"{thread_id}:last_plot_df",
+            ):
+                active = _store.get(active_key)
+                active_ids = _dataset_sample_ids((active or {}).get("df"))
+                if active_ids:
+                    active_name = str(
+                        ((active or {}).get("meta") or {}).get("variable_name")
+                        or key
+                    )
+                    return active_name, active_ids
             return key, []
         meta = session.get("meta") or {}
         resolved_name = str(meta.get("selection_name") or key)
@@ -4894,7 +4952,9 @@ def make_source_tools(thread_id: str) -> list:
 
         `selection_name` peut référencer une sélection mémorisée par
         `find_ecotaxa_samples_in_region` ; `"latest"` / `"cette sélection"`
-        reprend la dernière sélection EcoTaxa du fil.
+        reprend la dernière sélection EcoTaxa du fil. Un DataFrame persistant
+        contenant `sample_id` ou `profile_id` est également accepté ; les
+        profils sont résolus automatiquement vers leurs samples dans le cache.
 
         L'export démarre directement par défaut. `confirmed=False` reste
         disponible uniquement pour demander un préflight explicite, sans
@@ -4928,8 +4988,8 @@ def make_source_tools(thread_id: str) -> list:
                         "aucun match utilisable pour la jointure."
                     )
                 return _eco_blocked(
-                    f"Erreur : sélection `{selection_name}` introuvable ou vide. "
-                    "Relance une recherche EcoTaxa ou passe des sample_ids explicites."
+                    f"Erreur : la sélection `{selection_name}` ne contient aucun "
+                    "sample EcoTaxa exportable."
                 )
             return _eco_blocked("Erreur : sample_ids vide.")
 

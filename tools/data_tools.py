@@ -1343,58 +1343,64 @@ def _is_canonical_sample_depth(value: Any) -> bool:
     )
 
 
-def _column_location_hint(error: Exception, local_vars: dict[str, Any]) -> str:
-    """When a column is missing from the active df, name the df_* variables that
-    do carry it — so the agent retargets instead of concluding it is absent."""
-    if not isinstance(error, KeyError):
-        return ""
-    missing = str(error.args[0]) if error.args else ""
-    if not missing:
-        return ""
-    canonical_aliases = {
-        "te90": ("amundsen_te90_degC", "temperature_degC"),
-        "temp": ("amundsen_te90_degC", "temperature_degC"),
-        "temperature": ("amundsen_te90_degC", "temperature_degC"),
-        "psal": ("amundsen_psal_psu", "salinity_psu"),
-        "sal": ("amundsen_psal_psu", "salinity_psu"),
-        "salinity": ("amundsen_psal_psu", "salinity_psu"),
-        "salinite": ("amundsen_psal_psu", "salinity_psu"),
-        "pres": ("amundsen_pres_dbar", "depth_m"),
-        "pressure": ("amundsen_pres_dbar", "depth_m"),
-        "pression": ("amundsen_pres_dbar", "depth_m"),
-        "sigt": ("amundsen_sigt", "density_sigt"),
-        "density": ("amundsen_sigt", "density_sigt"),
-        "densite": ("amundsen_sigt", "density_sigt"),
-        "oxym": ("amundsen_oxym", "oxygen_oxym"),
-        "oxygen": ("amundsen_oxym", "oxygen_oxym"),
-        "oxygene": ("amundsen_oxym", "oxygen_oxym"),
-        "ph": ("amundsen_ph", "ph"),
-        "ntra": ("amundsen_ntra", "nitrate_ntra"),
-        "nitrate": ("amundsen_ntra", "nitrate_ntra"),
-        "flor": ("amundsen_flor", "fluorescence_flor"),
-        "fluorescence": ("amundsen_flor", "fluorescence_flor"),
-    }
-    targets = canonical_aliases.get(missing.casefold(), (missing,))
+_CANONICAL_COLUMN_ALIASES = {
+    "te90": ("amundsen_te90_degC", "temperature_degC"),
+    "temp": ("amundsen_te90_degC", "temperature_degC"),
+    "temperature": ("amundsen_te90_degC", "temperature_degC"),
+    "psal": ("amundsen_psal_psu", "salinity_psu"),
+    "sal": ("amundsen_psal_psu", "salinity_psu"),
+    "salinity": ("amundsen_psal_psu", "salinity_psu"),
+    "salinite": ("amundsen_psal_psu", "salinity_psu"),
+    "pres": ("amundsen_pres_dbar", "depth_m"),
+    "pressure": ("amundsen_pres_dbar", "depth_m"),
+    "pression": ("amundsen_pres_dbar", "depth_m"),
+    "sigt": ("amundsen_sigt", "density_sigt"),
+    "density": ("amundsen_sigt", "density_sigt"),
+    "densite": ("amundsen_sigt", "density_sigt"),
+    "oxym": ("amundsen_oxym", "oxygen_oxym"),
+    "oxygen": ("amundsen_oxym", "oxygen_oxym"),
+    "oxygene": ("amundsen_oxym", "oxygen_oxym"),
+    "ph": ("amundsen_ph", "ph"),
+    "ntra": ("amundsen_ntra", "nitrate_ntra"),
+    "nitrate": ("amundsen_ntra", "nitrate_ntra"),
+    "flor": ("amundsen_flor", "fluorescence_flor"),
+    "fluorescence": ("amundsen_flor", "fluorescence_flor"),
+}
+
+
+def _column_dependency_details(
+    missing: str,
+    local_vars: dict[str, Any],
+) -> tuple[str, tuple[str, ...]]:
+    targets = _CANONICAL_COLUMN_ALIASES.get(missing.casefold(), (missing,))
     target = next(
         (
             candidate
             for candidate in targets
             if any(
-                name.startswith("df_")
-                and isinstance(value, pd.DataFrame)
-                and candidate in value.columns
-                for name, value in local_vars.items()
+                isinstance(value, pd.DataFrame) and candidate in value.columns
+                for value in local_vars.values()
             )
         ),
         targets[0],
     )
-    holders = sorted(
-        name
-        for name, value in local_vars.items()
-        if name.startswith("df_")
-        and isinstance(value, pd.DataFrame)
-        and target in value.columns
+    holders = tuple(
+        sorted(
+            name
+            for name, value in local_vars.items()
+            if isinstance(value, pd.DataFrame) and target in value.columns
+        )
     )
+    return target, holders
+
+
+def _column_location_hint(error: Exception, local_vars: dict[str, Any]) -> str:
+    """When a column is missing from the active df, name the df_* variables that
+    do carry it — so the agent retargets instead of concluding it is absent."""
+    missing = _missing_column_name(error)
+    if not missing:
+        return ""
+    target, holders = _column_dependency_details(missing, local_vars)
     if not holders:
         return ""
     alias_note = (
@@ -1406,6 +1412,146 @@ def _column_location_hint(error: Exception, local_vars: dict[str, Any]) -> str:
         f"sa donnée est présente dans : {', '.join(holders)}.{alias_note} "
         "Cible la variable et la colonne explicites."
     )
+
+
+_UNDEFINED_NAME_PATTERN = re.compile(
+    r"NameError:.*?name [\"'](?P<name>[A-Za-z_][A-Za-z0-9_]*)[\"'] is not defined",
+    re.IGNORECASE | re.DOTALL,
+)
+_KEY_ERROR_PATTERN = re.compile(
+    r"KeyError:\s*[\"'](?P<name>[^\"']+)[\"']",
+    re.IGNORECASE,
+)
+_UNDEFINED_COLUMN_PATTERN = re.compile(
+    r"UndefinedVariableError:.*?name [\"'](?P<name>[^\"']+)[\"'] is not defined",
+    re.IGNORECASE | re.DOTALL,
+)
+_DATAFRAME_ATTRIBUTE_PATTERN = re.compile(
+    r"DataFrame[\"']? object has no attribute [\"'](?P<name>[A-Za-z_][A-Za-z0-9_]*)[\"']",
+    re.IGNORECASE,
+)
+_TABLEISH_NAME_PATTERN = re.compile(
+    r"(^df_|_df$|cache|table|samples?|projects?|profiles?|objects?)",
+    re.IGNORECASE,
+)
+
+
+def _missing_column_name(error: Exception) -> str:
+    if isinstance(error, KeyError) and error.args:
+        return str(error.args[0]).strip("'\"")
+    rendered = str(error)
+    for pattern in (
+        _KEY_ERROR_PATTERN,
+        _UNDEFINED_COLUMN_PATTERN,
+        _DATAFRAME_ATTRIBUTE_PATTERN,
+    ):
+        match = pattern.search(rendered)
+        if match:
+            return match.group("name").strip()
+    return ""
+
+
+def _source_family(source: object, missing_name: str = "") -> str | None:
+    normalized = str(source or "").casefold().replace("-", "_")
+    if "cache" in missing_name.casefold() and any(
+        token in missing_name.casefold()
+        for token in ("sample", "project", "profile", "object", "sync")
+    ):
+        return "ecotaxa"
+    for family in ("ecotaxa", "ecopart", "amundsen", "bio_oracle", "ogsl", "sql"):
+        if family in normalized:
+            return family
+    if normalized.startswith("file"):
+        return "file"
+    return None
+
+
+def _recovery_tools_for_source(source: str | None) -> tuple[str, ...]:
+    return {
+        "ecotaxa": (
+            "list_ecotaxa_cache_tables",
+            "describe_ecotaxa_cache_table",
+            "query_ecotaxa_cache",
+        ),
+        "sql": ("list_sql_tables", "preview_sql_table", "copy_sql_query_to_workspace"),
+        "ecopart": ("find_ecopart_project_for_ecotaxa", "preview_ecopart_sample"),
+        "amundsen": ("find_amundsen_data_for_table", "enrich_with_amundsen_ctd"),
+        "bio_oracle": ("enrich_with_bio_oracle",),
+        "ogsl": ("enrich_with_ogsl",),
+    }.get(source, ())
+
+
+def _data_dependency_recovery(
+    error: Exception,
+    local_vars: dict[str, Any],
+    active_source: object,
+    store: SessionStore,
+    thread_id: str,
+) -> dict[str, Any]:
+    """Normalize a missing table/column into a resumable data requirement."""
+    rendered = str(error)
+    missing_column = _missing_column_name(error)
+    undefined = _UNDEFINED_NAME_PATTERN.search(rendered)
+    missing_table = undefined.group("name") if undefined else ""
+    if missing_table and not _TABLEISH_NAME_PATTERN.search(missing_table):
+        missing_table = ""
+    if not missing_column and not missing_table:
+        return {}
+    kind = "column" if missing_column else "table"
+    missing_name = missing_column or missing_table
+    canonical_name = missing_name
+    holders: tuple[str, ...] = ()
+    if kind == "column":
+        canonical_name, holders = _column_dependency_details(missing_name, local_vars)
+        persisted_holders = list(holders)
+        for key in store.keys():
+            if key != thread_id and not key.startswith(f"{thread_id}:"):
+                continue
+            entry = store.get(key) or {}
+            dataframe = entry.get("df")
+            if not isinstance(dataframe, pd.DataFrame) or canonical_name not in dataframe.columns:
+                continue
+            meta = entry.get("meta") or {}
+            persisted_holders.append(
+                str(meta.get("variable_name") or key.rsplit(":", 1)[-1])
+            )
+        holders = tuple(dict.fromkeys(persisted_holders))
+    source = _source_family(active_source, missing_name)
+    if source in {None, "file"}:
+        session_sources = {
+            family
+            for key in store.keys()
+            if key == thread_id or key.startswith(f"{thread_id}:")
+            for entry in (store.get(key) or {},)
+            for family in (_source_family((entry.get("meta") or {}).get("source")),)
+            if family not in {None, "file"}
+        }
+        if len(session_sources) == 1:
+            source = next(iter(session_sources))
+    recovery_tools = _recovery_tools_for_source(source)
+    # A plain local-file column that exists nowhere in the workspace cannot be
+    # autonomously recovered. Keep ordinary code repair semantics in that case.
+    if not holders and source in {None, "file"}:
+        return {}
+    return {
+        "dependency_recovery": True,
+        "missing_names": [missing_name],
+        "recovery_source": source,
+        "recovery_tools": list(recovery_tools),
+        "dependency_requirement": {
+            "kind": kind,
+            "name": missing_name,
+            "canonical_name": canonical_name,
+            "source_hint": source,
+            "candidate_resources": list(holders),
+            "diagnostic": rendered[:2_000],
+            "description": (
+                f"La colonne `{missing_name}` est nécessaire pour reprendre l'analyse."
+                if kind == "column"
+                else f"La table `{missing_name}` est nécessaire pour reprendre l'analyse."
+            ),
+        },
+    }
 
 
 _JOIN_CODE_PATTERN = re.compile(
@@ -2464,11 +2610,26 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         except Exception as e:
             cols_info = df.dtypes.to_string()
             hint = _column_location_hint(e, local_vars)
+            active_source = ((session or {}).get("meta") or {}).get("source")
+            recovery_metrics = _data_dependency_recovery(
+                e,
+                local_vars,
+                active_source,
+                _store,
+                thread_id,
+            )
+            recovery_hint = (
+                "\nUne dépendance de données récupérable a été enregistrée. "
+                "Inspecte les ressources disponibles ou récupère la table/colonne "
+                "depuis la source autorisée, puis reprends cette analyse."
+                if recovery_metrics else ""
+            )
             return error(
                 f"Erreur : {type(e).__name__}: {e}{hint}"
-                f"\n\nColonnes disponibles :\n{cols_info}",
+                f"\n\nColonnes disponibles :\n{cols_info}{recovery_hint}",
                 retryable=True,
                 method="controlled pandas execution",
+                metrics=recovery_metrics,
             )
 
     @tool(response_format="content_and_artifact")

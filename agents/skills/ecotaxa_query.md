@@ -19,7 +19,7 @@ max_tokens: 1700
 Apply this skill only when the current user request explicitly names EcoTaxa
 and the active session does not forbid EcoTaxa, or immediately after a
 successful EcoTaxa extraction that was explicitly authorized in the current
-source scope. Do not load or apply this skill for generic requests about
+source scope. Do not apply this procedure for generic requests about
 samples, projects, stations, positions, zones, maps, counts, or analyses. A
 loaded file remains the default source unless the user explicitly requests
 EcoTaxa.
@@ -105,7 +105,8 @@ to the tool when the target samples are known.
    result = [c for c in df.columns if c.startswith("fre_") or c.startswith("object_")]
    ```
 
-3. **If UVP columns detected** → load skill `uvp_ecotaxa` for m5/m6 calculation methods.
+3. **If UVP columns are detected** → apply the `uvp_ecotaxa` m5/m6 calculation
+   procedure.
 
 ---
 
@@ -153,6 +154,7 @@ enrichment, or metrics derived from it, as a success.
 
 ## Runtime routing contract
 
-- Only if `query_ecotaxa` succeeds, call `load_skill("ecotaxa_query")`. Do not call `load_skill("ecotaxa_query")` after an error.
+- Only after `query_ecotaxa` succeeds, apply the object-level EcoTaxa query
+  procedure. After an error, report the diagnostic and do not infer object data.
 - Do not call `query_ecotaxa` for preview-only requests such as "présente-moi"; reserve it for explicit "charge" or "exporte" requests.
 - Preserve EcoTaxa source links and do not remove links from copied EcoTaxa tables.

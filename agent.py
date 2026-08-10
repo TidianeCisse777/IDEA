@@ -28,6 +28,12 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+from agents.exploration_middleware import ExplorationStateMiddleware
+from agents.exploration_state import (
+    IdeaAgentState,
+    recovery_tool_names,
+    render_exploration_context,
+)
 from core.llm_config import chat_openai_connection_kwargs
 from tools.tool_catalog import build_tool_catalog
 
@@ -358,6 +364,47 @@ _CODE_RETRY_TOOL_NAMES = frozenset({"run_pandas", "run_graph"})
 _SAFE_TRANSIENT_RETRY_TOOL_NAMES = frozenset({"find_uvp_matches_for_net_table"})
 
 
+def _has_dependency_recovery(artifact: object) -> bool:
+    """Return whether a tool failure needs another tool, not the same code."""
+    if not isinstance(artifact, dict):
+        return False
+    metrics = artifact.get("metrics")
+    return bool(
+        isinstance(metrics, dict)
+        and metrics.get("dependency_recovery") is True
+    )
+
+
+def _dependency_recovery_plan(messages: Sequence) -> tuple[str, dict] | None:
+    """Describe the latest missing-data dependency that needs tool recovery."""
+    last_human_index = max(
+        (index for index, message in enumerate(messages)
+         if isinstance(message, HumanMessage)),
+        default=-1,
+    )
+    current_turn = list(messages[last_human_index + 1:])
+    dependency_errors = [
+        message
+        for message in current_turn
+        if isinstance(message, ToolMessage)
+        and message.name == "run_pandas"
+        and _has_dependency_recovery(message.artifact)
+    ]
+    if len(dependency_errors) != 1 or not current_turn:
+        return None
+    failed = dependency_errors[0]
+    if current_turn[-1] is not failed:
+        return None
+    artifact = failed.artifact if isinstance(failed.artifact, dict) else {}
+    metrics = artifact.get("metrics")
+    if not isinstance(metrics, dict):
+        return None
+    diagnostic = str(failed.content or "").strip()
+    if not diagnostic:
+        return None
+    return diagnostic, metrics
+
+
 def _code_retry_plan(messages: Sequence) -> tuple[str, str] | None:
     """Return the one permitted deterministic repair for local execution.
 
@@ -381,6 +428,7 @@ def _code_retry_plan(messages: Sequence) -> tuple[str, str] | None:
         and isinstance(message.artifact, dict)
         and message.artifact.get("status") in {"error", "empty"}
         and message.artifact.get("retryable") is True
+        and not _has_dependency_recovery(message.artifact)
     ]
     if len(code_errors) != 1 or not current_turn or current_turn[-1] is not code_errors[0]:
         return None
@@ -871,6 +919,13 @@ class _ContextMiddleware(AgentMiddleware):
 
     def _prepare_request(self, request, memories):
         original_messages = list(request.messages)
+        exploration_block = render_exploration_context(
+            (getattr(request, "state", None) or {}).get("exploration")
+        )
+        checkpoint_recovery_tools = recovery_tool_names(
+            (getattr(request, "state", None) or {}).get("exploration")
+        )
+        dependency_recovery = _dependency_recovery_plan(original_messages)
         code_retry = _code_retry_plan(original_messages)
         _begin_harness_turn(self.thread_id, original_messages)
         try:
@@ -967,8 +1022,36 @@ class _ContextMiddleware(AgentMiddleware):
             + graph_grounding_block
             + graph_edit_block
             + net_uvp_progress_block
+            + exploration_block
         )
-        if code_retry is not None:
+        if dependency_recovery is not None:
+            diagnostic, recovery_metrics = dependency_recovery
+            missing_names = ", ".join(
+                f"`{name}`"
+                for name in recovery_metrics.get("missing_names", [])
+            ) or "la donnée demandée"
+            recovery_tools = ", ".join(
+                f"`{name}`"
+                for name in recovery_metrics.get("recovery_tools", [])
+            ) or "le tool de récupération approprié"
+            dynamic_context_block += (
+                "\n\nDATA DEPENDENCY RECOVERY — the preceding `run_pandas` call "
+                f"could not execute because {missing_names} is not loaded. "
+                f"Diagnostic: {diagnostic[:4_000]}\n"
+                f"Do not repeat the same code and do not stop. Use {recovery_tools} "
+                "to retrieve or inspect the missing data, then run the local "
+                "analysis again with the returned persisted table. You may make "
+                "the necessary sequence of retrieval, schema inspection and "
+                "analysis calls before answering the user."
+            )
+        elif checkpoint_recovery_tools:
+            dynamic_context_block += (
+                "\n\nDATA DEPENDENCY RECOVERY — a missing table or column remains "
+                "recorded in the exploration checkpoint. Do not stop and do not ask "
+                "the user for data available through the authorized resources. Inspect "
+                "or retrieve it, then rerun the failed analytical step before answering."
+            )
+        elif code_retry is not None:
             retry_tool, diagnostic = code_retry
             dynamic_context_block += (
                 "\n\nDÉTERMINISTIC CODE RETRY — the immediately preceding "
@@ -1024,6 +1107,16 @@ class _ContextMiddleware(AgentMiddleware):
                     "type": "function",
                     "function": {"name": retry_tool},
                 }
+        if dependency_recovery is not None or checkpoint_recovery_tools:
+            recovery_names = (
+                dependency_recovery[1].get("recovery_tools", [])
+                if dependency_recovery is not None
+                else checkpoint_recovery_tools
+            )
+            for recovery_name in recovery_names:
+                recovery_tool = scoped_by_name.get(str(recovery_name))
+                if recovery_tool is not None and recovery_tool not in exposed_tools:
+                    exposed_tools.append(recovery_tool)
         tool_schema_tokens_before = _tool_schema_tokens(original_tools)
         tool_schema_tokens_after_source = _tool_schema_tokens(scoped_tools)
         tool_schema_tokens = _tool_schema_tokens(exposed_tools)
@@ -1099,6 +1192,8 @@ class _ContextMiddleware(AgentMiddleware):
             **metrics,
             "dataset_capsule_injected": bool(dataset_block),
             "dataset_capsule_chars": len(dataset_block),
+            "exploration_state_injected": bool(exploration_block),
+            "exploration_state_chars": len(exploration_block),
             "turn_active_variable": turn_ctx.active_variable,
             "turn_domain_profile": turn_ctx.domain_profile,
             "turn_authorized_sources": list(turn_ctx.authorized_sources),
@@ -1128,6 +1223,12 @@ class _ContextMiddleware(AgentMiddleware):
             "tools_dropped": list(exposure_decision.dropped_tool_names),
             "policy_overflow": exposure_decision.policy_overflow,
             "code_retry_forced_tool": code_retry[0] if code_retry else None,
+            "dependency_recovery": bool(dependency_recovery),
+            "dependency_recovery_tools": (
+                list(dependency_recovery[1].get("recovery_tools", []))
+                if dependency_recovery is not None else []
+            ),
+            "checkpoint_dependency_recovery_tools": list(checkpoint_recovery_tools),
         }
         _context_audit_by_thread[self.thread_id] = audit_entry
         _append_harness_model_call(self.thread_id, audit_entry)
@@ -1265,6 +1366,12 @@ class _ContextMiddleware(AgentMiddleware):
         )
         name = str(request.tool_call.get("name") or "")
         if name in decision.tool_names:
+            return None
+        if name in recovery_tool_names(request.state.get("exploration")):
+            # Source authorization already ran immediately before this guard;
+            # this exception only keeps a checkpointed recovery capability
+            # reachable after the original user wording is no longer enough
+            # for keyword-based exposure.
             return None
         retry = _code_retry_plan(messages)
         if retry is not None and retry[0] == name:
@@ -1471,12 +1578,14 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         list(catalog.tools),
         system_prompt=_SYSTEM_PROMPT,
         middleware=[
+            ExplorationStateMiddleware(thread_id=thread_id),
             _ContextMiddleware(
                 user_id=user_id,
                 thread_id=thread_id,
                 catalog_names=catalog.names,
             )
         ],
+        state_schema=IdeaAgentState,
         checkpointer=_checkpointer,
         store=_store,
     )

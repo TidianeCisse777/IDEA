@@ -22,7 +22,10 @@ You are about to produce a structured scientific report from this session.
 
 ## Usage rule
 
-- After loading this skill, compile the full document and a `traceability_manifest` from the conversation history, then call `export_deliverable(content=..., filename=..., traceability_manifest=...)` in the same turn.
+- When this procedure is selected, compile the full document and a
+  `traceability_manifest` from the conversation history, then call
+  `export_deliverable(content=..., filename=..., traceability_manifest=...)`
+  in the same turn.
 - **Hard completion rule:** after this skill is loaded, `export_deliverable` is the
   only valid next action. A PDF request is incomplete until that call returns an
   artifact URL. Never stop after drafting, explaining, listing planned sections,

@@ -40,9 +40,8 @@ historical reference are not model-visible and must not be called.
 ## Mandatory map workflow
 
 For every EcoTaxa map request, including a follow-up edit to an existing map,
-this navigation skill and the graph workflow are already active in the
-session. Reuse their active rules directly. Never reload either skill in a later turn
-before querying or rendering.
+apply the navigation and graph workflow rules directly before querying or
+rendering.
 
 The finished figure must be a Cartopy GeoAxes with real Natural Earth coastlines.
 Never use a plain longitude/latitude scatter or artificial lines as a coastline.

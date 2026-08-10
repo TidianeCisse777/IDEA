@@ -341,5 +341,5 @@ Each taxon row now has env columns; THEN continue with the standard workflow
 
 ## Runtime routing contract
 
-- This skill is pre-activated whenever a NeoLabs abundance table is the active dataset — apply its rules directly; do not spend a `load_skill` call on it.
+- Apply this procedure whenever a NeoLabs abundance table is the active dataset.
 - Build the correct working table here, then call `run_graph` directly.

@@ -17,7 +17,7 @@ max_tokens: 700
 
 Apply this skill only when the Source Selection Gateway authorizes EcoPart,
 either by an explicit current request or an inherited active-source follow-up,
-and the active session does not forbid EcoPart. Do not load or apply this skill
+and the active session does not forbid EcoPart. Do not apply this procedure
 for generic requests about samples, projects, stations, positions, zones, maps,
 counts, environmental variables, or analyses. A loaded EcoTaxa-derived table
 remains primary; EcoPart is only the requested enrichment source.

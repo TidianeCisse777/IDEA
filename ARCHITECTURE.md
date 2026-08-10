@@ -92,18 +92,20 @@ flowchart LR
     IN[Message utilisateur] --> HOOK
 
     subgraph Agent["create_agent"]
+        STATE["ExplorationStateMiddleware<br/>objective + deliverables + resources<br/>steps + dependencies + evidence"]
         HOOK["_ContextMiddleware<br/>prepare model request : trim + audit<br/>inject memory"]
         MODEL["LLM<br/>ChatOpenAI"]
         TOOLS["Tools node<br/>59 tools (+3 SQL optionnels)"]
+        STATE --> HOOK
         HOOK --> MODEL
         MODEL -->|tool call| TOOLS
-        TOOLS -->|observation| MODEL
+        TOOLS -->|observation| STATE
         MODEL -->|réponse finale| OUT[Réponse]
     end
 
     CKPT[("AsyncSqliteSaver<br/>data/checkpoints.sqlite")]
     STORE[("Store<br/>mémoire long terme")]
-    MODEL <--> CKPT
+    STATE <--> CKPT
     HOOK <--> STORE
 ```
 
@@ -142,7 +144,10 @@ flowchart LR
   - Ils reconstruisent aussi un `TurnContext` typé (`tools/turn_context.py`) en début de tour et injectent sa projection — la **carte d'état de session** (`build_dataset_state_capsule`) : dataset actif, roster `LOADED FILES` (tous les fichiers chargés par nom), `DERIVED ZONE SUBSETS` (variable↔zone), et `ACTIVE SOURCE SCOPE` (sources autorisées). L'agent lit son état au lieu de le ré-inférer de l'historique.
   - L'audit `/debug/context-audit` décrit la requête préparée, avec les tokens du system prompt, le total modèle, les champs `TurnContext` (variable active, sources autorisées, nb de dérivés), les groupes/noms de tools exposés, les schémas économisés, l'alerte à 12 et un indicateur explicite lorsque le dernier tour complet dépasse à lui seul la limite.
   - `wrap_tool_call` / `awrap_tool_call` appliquent aussi la garde graphique. Elle n'appelle le classifieur structuré qu'à la première tentative graphique du tour, partage la décision par un verrou single-flight sync/async, puis autorise uniquement une intention `visual`. La progression planner → writer → rendu est reconstruite depuis les ToolMessages `success` postérieurs au dernier message humain; les anciennes activations et les lots parallèles ne donnent aucune autorisation.
-- **Checkpointer** : `AsyncSqliteSaver` sur `CHECKPOINTS_DB` (`data/checkpoints.sqlite`), clé par `thread_id`. Fallback `MemorySaver` selon le contexte.
+- **`ExplorationStateMiddleware`** (`agents/exploration_middleware.py`) : maintient sans appel LLM un `exploration_run_v1` dans l'état LangGraph. Un nouveau tour initialise l'objectif et les livrables. Le bloc `### Plan` que le modèle produit déjà avec son premier appel est capturé comme frontière prospective (`planned`), sans tool de planification ni appel modèle supplémentaire; les appels réels sont ensuite rapprochés de la première étape compatible, tandis qu'une action imprévue reste une étape `observed`. Une nouvelle version du plan conserve les étapes terminées et marque seulement le suffixe non exécuté `superseded`. Chaque `ToolResult` est normalisé en preuve avec statut, `data_ref`, artefacts, provenance, métriques et validations.
+- **Inventaire de ressources** (`tools/resource_inventory.py`) : reconstruit après chaque observation les tables, sélections, sources autorisées et le RAG disponibles. Pour les tables, il conserve un profil borné et mis en cache : types, manque, rôles sémantiques, clés déclarées ou probables, grain, périmètre, fraîcheur et relations de jointure candidates. La couverture des clés est estimée sur au plus 5 000 lignes et reste explicitement une indication à vérifier avant jointure. La projection modèle privilégie les tables et reste compacte; l'inventaire complet demeure dans le checkpoint.
+- **Récupération exploratoire** : une erreur de table ou colonne devient une dépendance de données persistante. Le middleware recherche les tables candidates, conserve les capacités de récupération déjà autorisées, puis exige la reprise du calcul. Une étape planifiée échouée peut être reprise par un appel compatible et n'est complétée qu'après une nouvelle preuve réussie. Deux tentatives de réponse prématurée au maximum sont automatiquement renvoyées vers le modèle; les limites des tools, les confirmations lourdes et `SourceDecision` restent applicables. `_ContextMiddleware` injecte une projection compacte de l'état au modèle pour qu'il puisse adapter la suite de l'exploration.
+- **Checkpointer** : `AsyncSqliteSaver` sur `CHECKPOINTS_DB` (`data/checkpoints.sqlite`), clé par `thread_id`. Il conserve l'historique des messages et l'état d'exploration (`objective`, `deliverables`, `resources_available`, `steps`, `dependencies`, `evidence`, `completion`). Fallback `MemorySaver` selon le contexte.
 - **Store** : mémoire long terme (`InMemoryStore` ou store persistant).
 
 ### Boucle ReAct

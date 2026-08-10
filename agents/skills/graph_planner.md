@@ -133,7 +133,7 @@ the requested graph.
 4. Decide from the requested output intent, not from a closed list of words:
    - A request for or clear implication of a visual representation of the data is a **visual output**. This includes a map or a plotted profil vertical even when the user does not explicitly say "graph".
    - A number, calculation, ranking, summary, coordinates, or table is **non-visual** unless the user also asks for a graphical representation. General presentation verbs such as "show", "display", or "present" do not make it visual by themselves.
-   - If the format is genuinely ambiguous, prefer the minimal non-visual answer and do not load this skill. Ask only when the format would materially change the requested result.
+   - If the format is genuinely ambiguous, prefer the minimal non-visual answer. Ask only when the format would materially change the requested result.
 5. If visual output: choose the graph type:
    - **map**: spatial distribution of stations or observations
    - **Bio-ORACLE scenario delta map**: use the exact persisted Bio-ORACLE delta column (Bio-ORACLE SSP − Bio-ORACLE baseline), `coolwarm` centred at 0; keep `no_value` rows in grey. Projection-minus-CTD is different and needs an explicit calculation.
