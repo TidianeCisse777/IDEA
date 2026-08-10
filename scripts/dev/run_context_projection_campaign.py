@@ -74,6 +74,23 @@ CURRENT_QUESTION = (
     "Donne, pour chaque station, le nombre de profils UVP associés à un "
     "prélèvement et le delta temporel moyen."
 )
+LONG_TURN_COUNT = 50
+PENDING_WINDOW_QUESTION = (
+    "Tours 20–25 — reprends la même analyse avec la dépendance en cours."
+)
+LONG_TURN_GRAPH_FACT = (
+    "lignes tracées=50 · colonnes utilisées=station,value · "
+    "table de rendu=df_long_turn_added · encodages=x=station;y=value"
+)
+
+
+def _long_turn_questions(count: int = LONG_TURN_COUNT) -> tuple[str, ...]:
+    return tuple(
+        PENDING_WINDOW_QUESTION
+        if 20 <= turn <= 25
+        else f"Tour {turn:02d} — décris les ressources pertinentes pour l’analyse {turn}."
+        for turn in range(1, count + 1)
+    )
 
 
 @dataclass(frozen=True)
@@ -286,9 +303,9 @@ class CheckpointedProjectionSession:
                 config=self.config,
             )
         new_calls = self.spy.calls[calls_before:]
-        if len(new_calls) != 1:
+        if not new_calls:
             raise AssertionError(
-                f"Expected one model call on turn {self.turn}, got {len(new_calls)}"
+                f"Expected at least one model call on turn {self.turn}, got none"
             )
         checkpoint_messages = tuple(result.get("messages") or ())
         capture = replace(
@@ -317,7 +334,7 @@ def run_checkpointed_projection(
     session = CheckpointedProjectionSession(
         store,
         thread_id,
-        response_count=len(questions),
+        response_count=len(questions) * agent_module._MAX_MODEL_CALLS_PER_TURN,
         answer_chars=answer_chars,
     )
     return [
@@ -866,82 +883,257 @@ def campaign_history(store: SessionStore) -> list[CampaignCheck]:
     ]
 
 
+def _mutate_long_turn_context(thread_id: str) -> TurnMutation:
+    """Return the deterministic state transitions for the long-turn campaign."""
+
+    pending_payload: dict[str, Any] | None = None
+    pending_messages: list[BaseMessage] = []
+
+    def mutate(
+        turn: int,
+        store: SessionStore,
+        graph: Any,
+        config: dict[str, Any],
+    ) -> None:
+        nonlocal pending_payload, pending_messages
+        if turn == 5:
+            store.set(
+                f"{thread_id}:last_graph_grounding",
+                None,
+                {"facts": LONG_TURN_GRAPH_FACT},
+            )
+        elif turn == 10:
+            store_dataset(
+                store,
+                thread_id,
+                pd.DataFrame({
+                    "sample_id": ["LT-001", "LT-002"],
+                    "station": ["Hebron", "Sentinel"],
+                    "value": [12.5, 8.0],
+                }),
+                variable_name="df_long_turn_added",
+                meta={
+                    "source": "campaign:long-turn-context",
+                    "description": (
+                        "Long-turn campaign table with station-level sample values."
+                    ),
+                    "grain": "one row per sample",
+                    "primary_key": "sample_id",
+                },
+            )
+        elif turn == 20:
+            pending_payload, pending_messages = build_frontier_payload(
+                store,
+                thread_id,
+                PENDING_WINDOW_QUESTION,
+            )
+            graph.update_state(config, {"exploration": pending_payload})
+        elif turn == 25:
+            if pending_payload is None:
+                raise AssertionError("Long-turn frontier payload was never created")
+            pending_payload = resolve_frontier_payload(
+                pending_payload,
+                pending_messages,
+            )
+            graph.update_state(config, {"exploration": pending_payload})
+
+    return mutate
+
+
 def campaign_long_turns(store: SessionStore) -> list[CampaignCheck]:
-    scenario = "three-turn-checkpointed-context"
-    questions = (
-        "Tour 01 — inspecte les ressources.",
-        "Tour 02 — résume les DataFrames.",
-        "Tour 03 — rappelle la demande courante.",
-    )
+    scenario = "fifty-turn-checkpointed-context"
+    thread_id = f"{BASE_THREAD}-long-turns"
+    seed_six_dataframes(store, thread_id)
+    questions = _long_turn_questions()
     snapshots = run_checkpointed_projection(
         store,
-        f"{BASE_THREAD}-long-turns",
+        thread_id,
         questions,
+        answer_chars=800,
+        mutate_before_turn=_mutate_long_turn_context(thread_id),
     )
-    snapshot_turns = tuple(snapshot.turn for snapshot in snapshots)
-    turn_range = (
-        f"turns {snapshot_turns[0]}-{snapshot_turns[-1]}"
-        if snapshot_turns
-        else "none"
-    )
-    checkpoint_humans = [
-        message
-        for message in (snapshots[-1].checkpoint_messages if snapshots else ())
-        if message.type == "human"
-    ]
-    checkpoint_human_contents = tuple(
-        _content_text(message) for message in checkpoint_humans
-    )
+    snapshots_by_turn = {snapshot.turn: snapshot for snapshot in snapshots}
     systems = tuple(snapshot.capture.system for snapshot in snapshots)
-    first_system = systems[0] if systems else None
-    unstable_turns = tuple(
-        snapshot.turn
+    checkpoint_human_counts = {
+        turn: sum(
+            message.type == "human"
+            for message in snapshots_by_turn[turn].checkpoint_messages
+        )
+        for turn in (1, 10, 25, 50)
+        if turn in snapshots_by_turn
+    }
+    checkpoint_context_is_transient = all(
+        "<application_turn_context>" not in _content_text(message)
         for snapshot in snapshots
-        if snapshot.capture.system != first_system
+        for message in snapshot.checkpoint_messages
     )
-    system_turn_range = (
-        ", ".join(str(turn) for turn in unstable_turns)
-        if unstable_turns
-        else turn_range
+    provider_context_is_current_only = all(
+        bool(humans := _human_messages(snapshot.capture))
+        and sum(
+            _content_text(message).count("<application_turn_context>")
+            for message in snapshot.capture.messages
+        ) == 1
+        and _content_text(humans[-1]).count("<application_turn_context>") == 1
+        and all(
+            "<application_turn_context>" not in _content_text(message)
+            for message in humans[:-1]
+        )
+        for snapshot in snapshots
+    )
+    last_checkpoint = snapshots_by_turn[50].checkpoint_messages
+    last_checkpoint_humans = tuple(
+        message for message in last_checkpoint if message.type == "human"
+    )
+    last_checkpoint_types = tuple(message.type for message in last_checkpoint)
+    last_checkpoint_human_ids = tuple(
+        message.id for message in last_checkpoint_humans
+    )
+    expected_human_ids = tuple(
+        f"{thread_id}-human-{turn:03d}"
+        for turn in range(1, LONG_TURN_COUNT + 1)
+    )
+    chronology_is_valid = (
+        bool(last_checkpoint_types)
+        and last_checkpoint_types[0] == "human"
+        and last_checkpoint_types[-1] == "ai"
+        and all(
+            message_type in {"human", "ai"}
+            for message_type in last_checkpoint_types
+        )
+        and all(
+            index == 0 or last_checkpoint_types[index - 1] == "ai"
+            for index, message_type in enumerate(last_checkpoint_types)
+            if message_type == "human"
+        )
+        and all(
+            index + 1 < len(last_checkpoint_types)
+            and last_checkpoint_types[index + 1] == "ai"
+            for index, message_type in enumerate(last_checkpoint_types)
+            if message_type == "human"
+        )
+        and last_checkpoint_human_ids == expected_human_ids
+        and tuple(_content_text(message) for message in last_checkpoint_humans)
+        == questions
+        and _content_text(last_checkpoint_humans[-1]) == questions[-1]
     )
     return [
         _check(
             scenario,
             "long_turns",
-            "three snapshots preserve sequential turns",
-            len(snapshots) == 3
-            and snapshot_turns == (1, 2, 3)
+            "fifty snapshots preserve the deterministic turn sequence",
+            len(snapshots) == LONG_TURN_COUNT
             and tuple(snapshot.question for snapshot in snapshots) == questions,
-            f"snapshots={len(snapshots)}; turns="
-            f"{snapshot_turns}",
-            turn_range=turn_range,
-            violated_contract="three sequential checkpointed turns are captured",
-        ),
-        _check(
-            scenario,
-            "long_turns",
-            "checkpointed Human contents preserve all original questions",
-            snapshot_turns == (1, 2, 3)
-            and checkpoint_human_contents == questions,
-            f"checkpoint_human_contents={checkpoint_human_contents!r}; "
-            f"expected={questions!r}",
-            turn_range=turn_range,
-            violated_contract=(
-                "checkpointed Human contents equal the original questions "
-                "byte-for-byte and in order"
-            ),
+            f"snapshots={len(snapshots)}; pending_window={questions[19:25]!r}",
+            turn_range="turns 1-50",
+            violated_contract="fifty sequential checkpointed turns are captured",
         ),
         _check(
             scenario,
             "long_turns",
             "permanent system message is byte-stable across turns",
-            bool(systems) and all(system == first_system for system in systems),
-            f"system_message_count={len(systems)}; "
-            f"unstable_turns={unstable_turns}",
-            turn_range=system_turn_range,
-            violated_contract=(
-                "permanent system message is exactly equal across every turn"
+            len(set(systems)) == 1,
+            f"unique_system_messages={len(set(systems))}",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "each provider request preserves its exact current objective",
+            all(
+                snapshot.capture.exact_user_request == snapshot.question
+                and f"Objective: {snapshot.question}" in snapshot.capture.task_context
+                for snapshot in snapshots
             ),
+            "all exact user requests and task objectives match their turn question",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "checkpoint Human counts grow through the required milestones",
+            checkpoint_human_counts == {1: 1, 10: 10, 25: 25, 50: 50},
+            f"checkpoint_human_counts={checkpoint_human_counts}",
+            turn_range="turns 1, 10, 25, 50",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "application turn context is never checkpointed",
+            checkpoint_context_is_transient,
+            "application_turn_context absent from every checkpoint message",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "provider context is injected once on each current Human message",
+            provider_context_is_current_only,
+            "one application_turn_context marker per model request, on its final Human",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "added dataframe persists from turn 10 onward",
+            "df_long_turn_added" not in snapshots_by_turn[9].capture.dataset_context
+            and all(
+                "df_long_turn_added" in snapshot.capture.dataset_context
+                for snapshot in snapshots[9:]
+            ),
+            "turn 9 absent; turns 10-50 contain df_long_turn_added",
+            turn_range="turns 9-50",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "last graph facts persist from turn 5 onward",
+            not snapshots_by_turn[4].capture.graph_facts_context
+            and all(
+                LONG_TURN_GRAPH_FACT in snapshot.capture.graph_facts_context
+                for snapshot in snapshots[4:]
+            ),
+            "turn 4 has no graph facts; turns 5-50 contain LONG_TURN_GRAPH_FACT",
+            turn_range="turns 4-50",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "pending frontier persists before resolving on turn 25",
+            all(
+                "Resolve every pending data dependency"
+                in snapshots_by_turn[turn].capture.exploration_context
+                for turn in range(20, 25)
+            )
+            and "Data dependencies: []"
+            in snapshots_by_turn[25].capture.exploration_context,
+            "turns 20-24 pending; turn 25 Data dependencies: []",
+            turn_range="turns 20-25",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "dataframe and frontier contexts remain within their budgets",
+            all(
+                len(snapshot.capture.dataset_context) <= 12_000
+                and len(snapshot.capture.exploration_context) <= 4_500
+                for snapshot in snapshots
+            ),
+            "max_dataset_chars="
+            f"{max(len(snapshot.capture.dataset_context) for snapshot in snapshots)}; "
+            "max_frontier_chars="
+            f"{max(len(snapshot.capture.exploration_context) for snapshot in snapshots)}",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "turn 50 checkpoint chronology remains valid",
+            chronology_is_valid,
+            "message_count="
+            f"{len(last_checkpoint)}; human_count={len(last_checkpoint_humans)}; "
+            f"ai_count={sum(message.type == 'ai' for message in last_checkpoint)}; "
+            f"last_human={_content_text(last_checkpoint_humans[-1])!r}",
+            turn_range="turn 50",
         ),
     ]
 
