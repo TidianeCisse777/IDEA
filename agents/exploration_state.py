@@ -1142,6 +1142,57 @@ def _render_scope(scope: dict[str, Any]) -> str:
     return json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
 
 
+def _is_file_backed_resource(resource: ResourceRecord) -> bool:
+    """Return whether a table is a canonical DataFrame loaded from a file."""
+    source = resource.source.casefold()
+    provenance_source = str(resource.provenance.get("source") or "").casefold()
+    return (
+        resource.name.casefold().startswith("df_file_")
+        or source == "file"
+        or source.startswith("file:")
+        or provenance_source == "file"
+        or provenance_source.startswith("file:")
+    )
+
+
+def _bounded_inline(value: object, limit: int) -> str:
+    """Render one compact single-line value within a strict character budget."""
+    text = " ".join(str(value or "not established").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)].rstrip() + "…"
+
+
+def _render_file_resource_block(
+    resource: ResourceRecord,
+    *,
+    active_variable: str | None,
+    max_chars: int,
+) -> str:
+    """Render a bounded but useful card for a canonical uploaded-file table."""
+    schema, shown = _render_resource_schema(resource)
+    total_columns = len(resource.columns)
+    partial = resource.columns_truncated or shown < total_columns
+    value_budget = max(40, max_chars - len(resource.name) - 165)
+    source_budget = max(12, value_budget * 18 // 100)
+    grain_budget = max(16, value_budget * 20 // 100)
+    description_budget = max(20, value_budget * 28 // 100)
+    schema_budget = max(24, value_budget - source_budget - grain_budget - description_budget)
+    status = "active" if resource.name == active_variable else "available"
+    return "\n".join([
+        f"- {resource.name}",
+        "  file_source="
+        f"{_bounded_inline(resource.source, source_budget)}; status={status}; "
+        f"rows={resource.rows if resource.rows is not None else 'unknown'}; "
+        f"grain={_bounded_inline(resource.grain, grain_budget)}; "
+        f"description={_bounded_inline(resource.description, description_budget)}; "
+        f"schema_by_role={_bounded_inline(schema, schema_budget)}; "
+        f"schema_visibility={shown}/{total_columns}"
+        f"{' partial' if partial else ' complete'}; "
+        f"keys={','.join(resource.key_candidates[:8]) or 'not established'}",
+    ])
+
+
 def render_task_context(
     payload: object,
     *,
@@ -1220,16 +1271,20 @@ def render_dataframe_context(
             resource.source.casefold(),
         )
 
-    detailed_tables = sorted(
-        tables,
+    file_tables = sorted(
+        (resource for resource in tables if _is_file_backed_resource(resource)),
+        key=detail_priority,
+    )
+    request_relevant_tables = sorted(
+        (resource for resource in tables if not _is_file_backed_resource(resource)),
         key=detail_priority,
     )[:8]
-
     header_lines = [
         "\n\n## AVAILABLE DATAFRAMES (current session)",
-        "The complete index keeps every live DataFrame name visible. Detailed "
-        "cards are a bounded expansion for this request, never an availability "
-        "restriction; any indexed DataFrame remains selectable by exact name.",
+        "The complete index keeps every live DataFrame name visible. Every "
+        "file-backed DataFrame is always expanded as a canonical source anchor; "
+        "the bounded request-relevant expansion applies only to non-file tables. "
+        "Any indexed DataFrame remains selectable by exact name.",
         "DATAFRAME INDEX (all live resources):",
     ]
     full_index_lines = []
@@ -1248,10 +1303,27 @@ def render_dataframe_context(
             *header_lines,
             "* " + " | ".join(resource.name for resource in alphabetical_tables),
         ]
-    rendered_blocks.append("DATAFRAME DETAILS (expanded subset for this request):")
+    rendered_blocks.append(
+        "DATAFRAME DETAILS (all file sources, then a request-relevant non-file subset):"
+    )
 
     entry_blocks: list[str] = []
-    for resource in detailed_tables:
+    remaining_for_cards = max_chars - len("\n".join(rendered_blocks)) - 600
+    file_card_budget = (
+        max(180, min(900, remaining_for_cards // len(file_tables)))
+        if file_tables
+        else 0
+    )
+    for resource in file_tables:
+        entry_blocks.append(
+            _render_file_resource_block(
+                resource,
+                active_variable=active_variable,
+                max_chars=file_card_budget,
+            )
+        )
+
+    for resource in request_relevant_tables:
         schema, shown = _render_resource_schema(resource)
         total_columns = len(resource.columns)
         partial = resource.columns_truncated or shown < total_columns

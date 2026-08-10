@@ -499,15 +499,16 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "six-dataframes-misleading-active",
             "dataframes",
-            "request-relevant station summary is expanded first",
-            bool(details) and details[0] == "df_station_summary",
-            f"first_detail={details[0] if details else 'none'}",
+            "file sources precede request-relevant non-file details",
+            set(details[:2]) == {"df_neolabs_abundance", "df_neolabs_sample"}
+            and details[2] == "df_station_summary",
+            f"details={details}",
         ),
         _check(
             "six-dataframes-misleading-active",
             "dataframes",
             "wide schema keeps useful roles and declares truncation",
-            "schema_visibility=10/78 (partial" in six.dataset_context
+            "schema_visibility=10/78 partial" in six.dataset_context
             and "DEPLOYMENT_DATE_START:object" in six.dataset_context
             and "DEPLOYMENT_TIME_START:object" in six.dataset_context
             and "volume_m3:float64" in six.dataset_context,
@@ -536,11 +537,74 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "explicit-dataframe-reference",
             "dataframes",
-            "explicit dataframe receives first detailed card",
-            bool(explicit_details) and explicit_details[0] == "df_old_plot",
-            f"first_detail={explicit_details[0] if explicit_details else 'none'}",
+            "explicit non-file dataframe leads the non-file subset",
+            len(explicit_details) >= 3 and explicit_details[2] == "df_old_plot",
+            f"details={explicit_details}",
         )
     )
+
+    mixed_thread = f"{BASE_THREAD}-df-mixed"
+    mixed_file_names = ("df_file_abundance", "df_file_samples")
+    mixed_derived_names = tuple(
+        f"df_derived_candidate_{index:02d}" for index in range(10)
+    )
+    mixed_frame = pd.DataFrame({"sample_id": [1], "value": [2.0]})
+    for name in mixed_file_names:
+        store_dataset(
+            store,
+            mixed_thread,
+            mixed_frame,
+            variable_name=name,
+            meta={
+                "source": f"file:/uploads/{name}.csv",
+                "description": f"Canonical uploaded source {name}.",
+                "grain": "one row per sample",
+                "primary_key": "sample_id",
+            },
+            set_active=False,
+        )
+    for name in mixed_derived_names:
+        store_dataset(
+            store,
+            mixed_thread,
+            mixed_frame.copy(),
+            variable_name=name,
+            meta={
+                "source": "analysis:explicit-derived",
+                "description": f"Reusable derived candidate {name}.",
+                "grain": "one row per sample",
+                "primary_key": "sample_id",
+            },
+            set_active=name == mixed_derived_names[0],
+        )
+    mixed_target = mixed_derived_names[-1]
+    mixed = _capture(
+        store,
+        mixed_thread,
+        f"Analyse précisément {mixed_target}.",
+        "df-mixed",
+    )
+    mixed_details = _detail_names(mixed.dataset_context)
+    mixed_non_file_details = tuple(
+        name for name in mixed_details if name not in mixed_file_names
+    )
+    checks.extend([
+        _check(
+            "mixed-file-and-derived-dataframes",
+            "dataframes",
+            "file sources are always expanded before derived candidates",
+            mixed_details[:2] == mixed_file_names,
+            f"details={mixed_details}",
+        ),
+        _check(
+            "mixed-file-and-derived-dataframes",
+            "dataframes",
+            "file cards do not consume the non-file detail quota",
+            len(mixed_non_file_details) == 8
+            and mixed_non_file_details[0] == mixed_target,
+            f"non_file_details={mixed_non_file_details}",
+        ),
+    ])
 
     many_thread = f"{BASE_THREAD}-df-many"
     many_names = seed_many_dataframes(store, many_thread)
@@ -565,16 +629,17 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "twenty-six-dataframes",
             "dataframes",
-            "detailed cards are bounded",
-            1 <= len(many_details) <= 8,
+            "all file-backed dataframes remain expanded",
+            set(many_details) == set(many_names)
+            and len(many_details) == MANY_DATAFRAME_COUNT,
             f"expanded={len(many_details)}",
         ),
         _check(
             "twenty-six-dataframes",
             "dataframes",
-            "explicit target remains expanded",
-            bool(many_details) and many_details[0] == target,
-            f"target={target}; first_detail={many_details[0] if many_details else 'none'}",
+            "explicit file target remains expanded",
+            target in many_details,
+            f"target={target}; expanded={target in many_details}",
         ),
         _check(
             "twenty-six-dataframes",
@@ -1469,10 +1534,17 @@ def _dataframe_lifecycle_checks(
     )
     if revival_violation is None:
         turn_8_details = _detail_names(context(8))
-        if not turn_8_details or turn_8_details[0] != LIFECYCLE_REVIVABLE:
+        turn_8_non_file_details = tuple(
+            name for name in turn_8_details if not name.startswith("df_neolabs_")
+        )
+        if (
+            not turn_8_non_file_details
+            or turn_8_non_file_details[0] != LIFECYCLE_REVIVABLE
+        ):
             revival_violation = (
                 8,
-                f"first_detail={turn_8_details[0] if turn_8_details else 'none'}",
+                "first_non_file_detail="
+                f"{turn_8_non_file_details[0] if turn_8_non_file_details else 'none'}",
             )
 
     lineage_violation = first_presence_violation(
@@ -1536,7 +1608,7 @@ def _dataframe_lifecycle_checks(
         result(
             "explicit reference revives and prioritizes a hidden dataframe",
             revival_violation,
-            f"{LIFECYCLE_REVIVABLE} hidden on 4-7 and detailed first on turn 8",
+            f"{LIFECYCLE_REVIVABLE} hidden on 4-7 and leads non-file details on turn 8",
         ),
         result(
             "visible child preserves its transient lineage parent",

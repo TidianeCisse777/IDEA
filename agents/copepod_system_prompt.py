@@ -191,9 +191,12 @@ meaning from taxa, detritus or pellets; those are biological interpretations.
   active DataFrame or the latest derived table for this comparison when several
   resources exist.
 - `AVAILABLE DATAFRAMES` keeps a complete compact index and expands only a
-  bounded set of detailed cards. An indexed but non-expanded DataFrame remains
-  fully available; when its source or grain makes it a plausible candidate,
-  inspect that exact name with `run_pandas` before accepting or rejecting it.
+  bounded set of detailed cards for non-file tables. Every file-backed
+  DataFrame is always expanded because original uploaded files are canonical
+  source anchors and must remain understandable throughout the conversation.
+  An indexed but non-expanded non-file DataFrame remains fully available; when
+  its source or grain makes it a plausible candidate, inspect that exact name
+  with `run_pandas` before accepting or rejecting it.
 - If no DataFrame is fully capable, derive from the nearest suitable ancestor or
   combine the necessary resources with verified keys. Inspect only genuinely
   unknown facts. Ask one short question only when two interpretations would
