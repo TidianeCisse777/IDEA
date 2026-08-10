@@ -1087,32 +1087,6 @@ def _format_tool_result_details(
     )
 
 
-def _format_visible_analysis_result(
-    name: str,
-    content: str,
-    *,
-    language: str = "fr",
-) -> str:
-    """Render computed tabular output directly in the assistant message.
-
-    Unlike source-query diagnostics, a ``run_pandas`` result is the requested
-    answer itself.  Keeping it only in the LangGraph ToolMessage makes tables
-    disappear whenever the final model merely says that the table is ready.
-    """
-    display = re.sub(
-        r"data:image/[a-z]+;base64,[A-Za-z0-9+/=]+",
-        "[image data]",
-        content,
-    )
-    presentation = get_tool_presentation(name)
-    label = (
-        presentation.label.for_language(language)
-        if presentation is not None
-        else _ui(language, "Résultat de l'analyse", "Analysis result")
-    )
-    return f"\n\n### {label}\n\n{display}\n"
-
-
 def _has_graph_markdown_image(text: str) -> bool:
     return bool(re.search(r"!\[[^\]]*\]\([^\)]*/graphs/[^\)]*\.png\)", text))
 
@@ -1267,16 +1241,7 @@ async def _stream_agent_sse(
                                 if img_match:
                                     shared["streamed_graph_urls"].update(_graph_image_urls(img_match.group(0)))
                                     await chunk_queue.put(_make_sse_chunk(completion_id, f"\n{img_match.group(0)}\n"))
-                            if tool_name == "run_pandas" and tool_content:
-                                await chunk_queue.put(_make_sse_chunk(
-                                    completion_id,
-                                    _format_visible_analysis_result(
-                                        tool_name,
-                                        tool_content,
-                                        language=language,
-                                    ),
-                                ))
-                            elif tool_name and tool_content and _is_data_source_tool(tool_name):
+                            if tool_name and tool_content and _is_data_source_tool(tool_name):
                                 await chunk_queue.put(_make_sse_chunk(
                                     completion_id,
                                     _format_tool_result_details(

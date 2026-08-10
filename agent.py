@@ -375,7 +375,7 @@ def _has_dependency_recovery(artifact: object) -> bool:
     )
 
 
-def _dependency_recovery_plan(messages: Sequence) -> tuple[str, dict] | None:
+def _dependency_recovery_plan(messages: Sequence) -> tuple[str, str, dict] | None:
     """Describe the latest missing-data dependency that needs tool recovery."""
     last_human_index = max(
         (index for index, message in enumerate(messages)
@@ -387,7 +387,6 @@ def _dependency_recovery_plan(messages: Sequence) -> tuple[str, dict] | None:
         message
         for message in current_turn
         if isinstance(message, ToolMessage)
-        and message.name == "run_pandas"
         and _has_dependency_recovery(message.artifact)
     ]
     if len(dependency_errors) != 1 or not current_turn:
@@ -402,7 +401,7 @@ def _dependency_recovery_plan(messages: Sequence) -> tuple[str, dict] | None:
     diagnostic = str(failed.content or "").strip()
     if not diagnostic:
         return None
-    return diagnostic, metrics
+    return str(failed.name or "tool"), diagnostic, metrics
 
 
 def _code_retry_plan(messages: Sequence) -> tuple[str, str] | None:
@@ -956,7 +955,7 @@ class _ContextMiddleware(AgentMiddleware):
         # graph planning/writing skills are deliberately outside the runtime.
         from tools.source_scope import source_decision_for_turn
 
-        # Resolve the turn's authorized sources before projecting the source
+        # Resolve the turn's preferred sources before projecting the source
         # capsule. Reused below for tool scoping.
         source_decision = source_decision_for_turn(
             session_store, self.thread_id, original_messages
@@ -970,7 +969,7 @@ class _ContextMiddleware(AgentMiddleware):
         preseeded_source_skills: list[str] = []
 
         # Rebuild the typed turn state once; the model-facing capsule (active
-        # dataset, live zone subsets, authorized source scope) is its projection.
+        # dataset, live zone subsets, preferred source scope) is its projection.
         turn_ctx = build_turn_context(
             session_store, self.thread_id, original_messages, persist_source=False
         )
@@ -1025,7 +1024,7 @@ class _ContextMiddleware(AgentMiddleware):
             + exploration_block
         )
         if dependency_recovery is not None:
-            diagnostic, recovery_metrics = dependency_recovery
+            failed_tool, diagnostic, recovery_metrics = dependency_recovery
             missing_names = ", ".join(
                 f"`{name}`"
                 for name in recovery_metrics.get("missing_names", [])
@@ -1035,8 +1034,9 @@ class _ContextMiddleware(AgentMiddleware):
                 for name in recovery_metrics.get("recovery_tools", [])
             ) or "le tool de récupération approprié"
             dynamic_context_block += (
-                "\n\nDATA DEPENDENCY RECOVERY — the preceding `run_pandas` call "
-                f"could not execute because {missing_names} is not loaded. "
+                "\n\nDATA DEPENDENCY RECOVERY — the preceding "
+                f"`{failed_tool}` call could not execute because {missing_names} "
+                "is missing or belongs to a different execution namespace. "
                 f"Diagnostic: {diagnostic[:4_000]}\n"
                 f"Do not repeat the same code and do not stop. Use {recovery_tools} "
                 "to retrieve or inspect the missing data, then run the local "
@@ -1048,7 +1048,7 @@ class _ContextMiddleware(AgentMiddleware):
             dynamic_context_block += (
                 "\n\nDATA DEPENDENCY RECOVERY — a missing table or column remains "
                 "recorded in the exploration checkpoint. Do not stop and do not ask "
-                "the user for data available through the authorized resources. Inspect "
+                "the user for data available through the available resources. Inspect "
                 "or retrieve it, then rerun the failed analytical step before answering."
             )
         elif code_retry is not None:
@@ -1109,7 +1109,7 @@ class _ContextMiddleware(AgentMiddleware):
                 }
         if dependency_recovery is not None or checkpoint_recovery_tools:
             recovery_names = (
-                dependency_recovery[1].get("recovery_tools", [])
+                dependency_recovery[2].get("recovery_tools", [])
                 if dependency_recovery is not None
                 else checkpoint_recovery_tools
             )
@@ -1225,7 +1225,7 @@ class _ContextMiddleware(AgentMiddleware):
             "code_retry_forced_tool": code_retry[0] if code_retry else None,
             "dependency_recovery": bool(dependency_recovery),
             "dependency_recovery_tools": (
-                list(dependency_recovery[1].get("recovery_tools", []))
+                list(dependency_recovery[2].get("recovery_tools", []))
                 if dependency_recovery is not None else []
             ),
             "checkpoint_dependency_recovery_tools": list(checkpoint_recovery_tools),

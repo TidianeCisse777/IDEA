@@ -29,6 +29,44 @@ def _routing_guidance_bonus(question: str, chunk: dict) -> float:
     source_names = ("ecotaxa", "ecopart", "amundsen", "bio-oracle", "ogsl")
     named_sources = sum(name in q for name in source_names)
 
+    net_uvp_match_question = (
+        any(term in q for term in ("filet", "neolabs", "net sample"))
+        and any(term in q for term in ("uvp", "ecotaxa"))
+        and any(
+            term in q
+            for term in (
+                "appari",
+                "correspond",
+                "match",
+                "profil",
+                "fenêtre temporelle",
+                "delta",
+            )
+        )
+    )
+    if net_uvp_match_question:
+        if "présélectionner les profils uvp" in title:
+            return 0.18
+        if "correspondance filet ↔ uvp" in title:
+            return 0.08
+
+    dataframe_cache_bridge_question = (
+        "ecotaxa" in q
+        and (
+            "dataframe_refs" in q
+            or (
+                "dataframe" in q
+                and any(term in q for term in ("sql", "join", "joindre", "jointure"))
+            )
+        )
+    )
+    if dataframe_cache_bridge_question:
+        if (
+            chunk.get("doc") == "ecotaxa_cache_sql.md"
+            and "route sql cache et tables persistantes" in title
+        ):
+            return 0.22
+
     if named_sources >= 2 and any(word in q for word in ("choisir", "quelle source", "source utiliser")):
         if "quelle source utiliser" in title:
             return 0.18
@@ -135,7 +173,11 @@ def query_copepod_rag(
     """
     _load()
     try:
-        candidate_count = max(top_k, min(100, top_k * 5))
+        # Retrieve a broad local candidate pool so narrow procedural chunks can
+        # be recovered by the transparent reranker even when a long general
+        # reference has slightly higher embedding similarity. The corpus is
+        # small and local, so 50 candidates add no provider call or token cost.
+        candidate_count = min(100, max(top_k, top_k * 5, 50))
 
         # Retrieval stays local: a RAG lookup must not add a hidden model call.
         queries = [question]

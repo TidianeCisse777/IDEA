@@ -212,6 +212,15 @@ Les DataFrames de session sont référencées par variables explicites
 `df_sql`, `df_in_<zone>_<source>`, …). `df` seul = dernière table active,
 instable en multi-source.
 
+`query_ecotaxa_cache(dataframe_refs=[...])` peut monter temporairement une ou
+plusieurs de ces variables comme tables SQLite sous leur nom exact. Une base en
+mémoire reçoit seulement les DataFrames explicitement cités et attache le cache
+EcoTaxa en `mode=ro`; des vues temporaires conservent les noms usuels
+`samples_cache`, `projects_cache`, etc. Après le `SELECT`, cette base disparaît
+et seul le DataFrame résultat, sa description SQL et sa lignée sont persistés
+dans le session store. Le fichier du cache et les DataFrames sources ne sont
+jamais modifiés.
+
 ---
 
 ## 6. Cœur métier (`core/`)

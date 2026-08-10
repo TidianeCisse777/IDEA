@@ -104,6 +104,7 @@ class ResourceRecord(_StateModel):
     source: str
     persisted: bool
     rows: int | None = None
+    description: str | None = None
     columns: tuple[str, ...] = ()
     columns_truncated: bool = False
     grain: str | None = None
@@ -1005,30 +1006,84 @@ def finish_exploration_run(payload: object, messages: list[Any]) -> dict[str, An
     ).model_dump(mode="json")
 
 
-def render_exploration_context(payload: object, *, max_chars: int = 6_000) -> str:
+def _resource_score(resource: ResourceRecord, objective: str) -> int:
+    text = objective.casefold()
+    score = 20 if resource.kind in {"table", "selection"} else 0
+    if resource.name.casefold() in text:
+        score += 100
+    score += sum(10 for column in resource.columns if column.casefold() in text)
+    return score
+
+
+def _shown_columns(
+    resource: ResourceRecord,
+    objective: str,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """Show requested columns first, then keys and a short schema sample."""
+    text = objective.casefold()
+    objective_tokens = set(re.findall(r"[a-zà-ÿ0-9]+", text))
+    relevant = [
+        column
+        for column in resource.columns
+        if column.casefold() in text
+        or objective_tokens.intersection(re.findall(r"[a-zà-ÿ0-9]+", column.casefold()))
+    ]
+    names = list(
+        dict.fromkeys(
+            [*relevant, *resource.key_candidates, *resource.identifiers, *resource.columns[:6]]
+        )
+    )[:limit]
+    profiles = {column.name: column for column in resource.column_profiles}
+    return [
+        {
+            "name": name,
+            "type": profiles[name].dtype if name in profiles else "available",
+            "role": profiles[name].semantic_role if name in profiles else "unknown",
+        }
+        for name in names
+    ]
+
+
+def _columns_by_type(
+    resource: ResourceRecord,
+    objective: str,
+    *,
+    limit: int = 10,
+) -> dict[str, list[str]]:
+    """Reuse the inventory's existing semantic roles in a compact grouping."""
+    grouped: dict[str, list[str]] = {}
+    for column in _shown_columns(resource, objective, limit=limit):
+        role = str(column["role"])
+        grouped.setdefault(role, []).append(
+            f"{column['name']} ({column['type']})"
+        )
+    return grouped
+
+
+def render_exploration_context(payload: object, *, max_chars: int = 7_000) -> str:
     run = validate_exploration_run(payload)
     if run is None:
         return ""
     deliverables = ", ".join(item.kind for item in run.deliverables) or "answer"
+    ordered_resources = sorted(
+        run.resources_available,
+        key=lambda item: _resource_score(item, run.objective),
+        reverse=True,
+    )
     resources = [
         {
             "name": item.name,
             "kind": item.kind,
             "source": item.source,
             "rows": item.rows,
+            "description": item.description,
             "grain": item.grain,
             "keys": list(item.key_candidates[:8]),
-            "schema": [
-                {
-                    "name": column.name,
-                    "type": column.dtype,
-                    "missing": column.missing_fraction,
-                    "role": column.semantic_role,
-                    "key": column.key_likelihood,
-                }
-                for column in item.column_profiles[:10]
-            ],
-            "schema_truncated": item.columns_truncated or len(item.column_profiles) > 10,
+            "column_count": len(item.columns),
+            "columns_by_type": _columns_by_type(item, run.objective),
+            "columns_are_partial": len(item.columns) > 10 or item.columns_truncated,
             "joins": [
                 {
                     "target": relation.target_name,
@@ -1040,9 +1095,10 @@ def render_exploration_context(payload: object, *, max_chars: int = 6_000) -> st
             ],
             "freshness": item.freshness,
             "scope": item.scope,
+            "provenance": item.provenance,
             "capabilities": list(item.capabilities),
         }
-        for item in run.resources_available[:12]
+        for item in ordered_resources[:5]
     ]
     steps = [
         {
@@ -1093,6 +1149,24 @@ def render_exploration_context(payload: object, *, max_chars: int = 6_000) -> st
         f"active_step={run.active_step_id or 'none'}\n"
         "Available resources: "
         + json.dumps(resources, ensure_ascii=False, separators=(",", ":"))
+        + "\nOther available DataFrames: "
+        + json.dumps(
+            [
+                {
+                    "name": item.name,
+                    "description": item.description,
+                    "rows": item.rows,
+                    "grain": item.grain,
+                    "columns_by_type": _columns_by_type(
+                        item, run.objective, limit=5
+                    ),
+                }
+                for item in ordered_resources[5:]
+                if item.kind in {"table", "selection"}
+            ][:20],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         + "\nSteps and dependencies: "
         + json.dumps(steps, ensure_ascii=False, separators=(",", ":"))
         + "\nEvidence collected: "
@@ -1104,9 +1178,12 @@ def render_exploration_context(payload: object, *, max_chars: int = 6_000) -> st
         "deliverables with recorded evidence. Join candidates are sampled hints: inspect "
         "the exact key and coverage before merging. "
         "A column absent from the selected table is not globally absent: search every "
-        "resource schema and the authorized source before concluding it is unavailable. "
-        "For every pending data dependency, inspect or retrieve it from the authorized "
+        "resource schema and the relevant source before concluding it is unavailable. "
+        "For every pending data dependency, inspect or retrieve it from the available "
         "resources without asking the user. When candidate_resources are present and "
         "resume_required=true, rerun the failed analytical step with that resource before answering."
+        " Every table is distinct: before calculating or plotting, name the exact DataFrame "
+        "and verify its shown columns, grain, scope and provenance. Never choose a table only "
+        "because it is the active `df` alias."
     )
     return rendered[:max_chars]

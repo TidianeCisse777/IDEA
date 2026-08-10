@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware, hook_config
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from agents.exploration_state import (
     IdeaAgentState,
@@ -34,6 +34,7 @@ class ExplorationStateMiddleware(AgentMiddleware):
         self.thread_id = thread_id
 
     def _inventory(self, messages: list[Any]):
+        from tools.dataframe_cleanup import hidden_dataframes
         from tools.resource_inventory import build_resource_inventory
         from tools.session_store import default_store
         from tools.source_scope import source_decision_for_turn
@@ -52,6 +53,7 @@ class ExplorationStateMiddleware(AgentMiddleware):
             default_store,
             self.thread_id,
             authorized_sources=authorized,
+            excluded_variables=hidden_dataframes(default_store, self.thread_id),
         )
 
     def before_agent(self, state: IdeaAgentState, runtime) -> dict[str, Any] | None:  # noqa: ANN001
@@ -59,6 +61,17 @@ class ExplorationStateMiddleware(AgentMiddleware):
         objective = latest_user_objective(messages)
         if not objective:
             return None
+        from tools.dataframe_cleanup import advance_dataframe_cleanup
+        from tools.session_store import default_store
+
+        humans = [message for message in messages if isinstance(message, HumanMessage)]
+        marker = str(getattr(humans[-1], "id", None) or f"human-{len(humans)}")
+        advance_dataframe_cleanup(
+            default_store,
+            self.thread_id,
+            marker=marker,
+            referenced_text=objective,
+        )
         current = validate_exploration_run(state.get("exploration"))
         fingerprint = request_fingerprint(objective)
         if current is not None and current.request_fingerprint == fingerprint:
@@ -96,6 +109,15 @@ class ExplorationStateMiddleware(AgentMiddleware):
             (message for message in reversed(messages) if isinstance(message, AIMessage)),
             None,
         )
+        if latest_ai is not None and (getattr(latest_ai, "tool_calls", None) or []):
+            from tools.dataframe_cleanup import touch_dataframes
+            from tools.session_store import default_store
+
+            touch_dataframes(
+                default_store,
+                self.thread_id,
+                str(latest_ai.tool_calls),
+            )
         run = validate_exploration_run(payload)
         attempted_final_answer = bool(
             latest_ai is not None

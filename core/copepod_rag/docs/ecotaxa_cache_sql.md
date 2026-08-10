@@ -64,6 +64,63 @@ analyse, une carte ou un export. Ne pas rejouer une requête identique à la
 suite : réutiliser sa table persistante. Les résultats SQL servent de base à
 pandas pour les dérivations et à Matplotlib/Cartopy pour les visuels.
 
+Pour joindre directement un DataFrame de session au cache, fournir son nom
+persistant exact dans `dataframe_refs` de `query_ecotaxa_cache`. Chaque référence
+déclarée devient une table de même nom dans une base SQLite en mémoire ; les
+tables EcoTaxa y sont attachées en lecture seule et gardent leurs noms usuels.
+Un `df_*` absent de `dataframe_refs` n'existe pas dans l'espace SQL.
+
+Exemple conceptuel :
+
+```sql
+SELECT net.sample_id AS net_sample_id,
+       uvp.sample_id AS uvp_sample_id,
+       uvp.profile_id,
+       net.station_name,
+       net.deployment_datetime_start,
+       uvp.datetime_min
+FROM df_file_neolabs_sample AS net
+JOIN samples_cache AS uvp
+  ON LOWER(TRIM(uvp.station_id)) = LOWER(TRIM(net.station_name))
+WHERE uvp.instrument LIKE 'UVP%';
+```
+
+Cet exemple exige
+`dataframe_refs=["df_file_neolabs_sample"]`. La base temporaire et les copies
+SQL disparaissent après la requête ; seul le résultat persistant conserve la
+description, le SQL et `input_dataframes`. Utiliser ce pont pour une vraie
+jointure tabulaire plutôt que sérialiser une longue liste de valeurs dans
+`IN (...)`.
+
+Workflow attendu de l'agent :
+
+1. lire l'inventaire des DataFrames et choisir la table exacte selon sa
+   description, son grain et ses colonnes ;
+2. déclarer dans `dataframe_refs` chaque table `df_*` mentionnée par le SQL ;
+3. préparer le grain source dans une CTE avec un identifiant réel. Une station
+   ou un numéro de cast réutilisable ne suffit pas à dédupliquer ;
+4. joindre directement la CTE aux tables EcoTaxa dans un unique SELECT ;
+5. retourner les identifiants locaux et EcoTaxa ainsi que les deltas/états de
+   correspondance. Pour créer une sélection EcoTaxa exportable, nommer
+   l'identifiant EcoTaxa `sample_id` ;
+6. fournir une `description` indiquant les DataFrames montés, filtres SQL, grain
+   de sortie, rôle analytique et familles de colonnes ;
+7. conserver tous les candidats ambigus et, pour un audit de couverture, les
+   lignes locales sans correspondance avec un `LEFT JOIN`.
+
+Pour filet/NeoLabs ↔ UVP, utiliser le fichier sample au grain prélèvement,
+normaliser la station, filtrer `instrument LIKE 'UVP%'`, puis calculer :
+
+```sql
+ABS((julianday(uvp.datetime_min) - julianday(net.net_datetime)) * 24.0)
+  AS time_delta_h
+```
+
+Appliquer ensuite `time_delta_h <= seuil_h`, avec le seuil demandé par
+l'utilisateur. La même station normalisée suffit : ne pas ajouter de seuil de
+distance. Une table abundance au grain taxon/analyse ne remplace jamais la
+table sample pour établir les déploiements.
+
 Exemple de sélection d’une zone et période :
 
 ```sql

@@ -48,6 +48,10 @@ from core.ecotaxa_browser.cache.repo import (
     resolve_samples,
 )
 from core.ecotaxa_browser.cache import sql_explorer as _sql_explorer
+from core.ecotaxa_browser.cache.dataframe_bridge import (
+    DATAFRAME_TABLE_PATTERN,
+    open_dataframe_cache_workspace,
+)
 from core.geo import audit_zone_coverage, load_registry
 from core.environment_resolver.column_detection import detect_column
 from core.scientific_result_cache import (
@@ -5532,6 +5536,8 @@ def make_source_tools(thread_id: str) -> list:
     def query_ecotaxa_cache(
         sql: str,
         selection_name: str | None = None,
+        description: str | None = None,
+        dataframe_refs: list[str] | None = None,
     ) -> str:
         """Exécute un SELECT ou WITH/CTE libre sur le cache SQLite EcoTaxa local.
 
@@ -5541,7 +5547,114 @@ def make_source_tools(thread_id: str) -> list:
                 retourne `sample_id` (ex. `baffin_2024`). Chaque sélection est
                 persistée sous un DataFrame unique et reste disponible dans le
                 sandbox pendant toute la conversation. Si absent, `samples`
-                est utilisé avec un identifiant stable dérivé du contenu.
+                est utilisé avec un identifiant stable dérivé du contenu. Ce
+                paramètre nomme le résultat produit : il ne charge ni ne filtre
+                une sélection existante et ne doit jamais être utilisé comme
+                table dans le SQL.
+            description: Phrase courte destinée à l'inventaire des DataFrames.
+                Décrire la source et les filtres SQL, le grain des lignes, le
+                rôle analytique du résultat et ses familles de colonnes utiles.
+                Ne décrire que ce que la requête établit. Si absent, une
+                description technique minimale est générée automatiquement.
+            dataframe_refs: Noms exacts des DataFrames persistants à monter
+                comme tables dans une base SQLite temporaire, par exemple
+                `["df_file_neolabs_sample"]`. Seuls ces DataFrames deviennent
+                accessibles dans le SQL, sous leur nom exact. Le cache EcoTaxa
+                reste attaché en lecture seule et les tables temporaires
+                disparaissent après la requête.
+
+        Un nom persistant `df_*` peut être utilisé dans `FROM` ou `JOIN`
+        uniquement s'il est également déclaré dans `dataframe_refs`. Sans cette
+        déclaration, il reste une variable Python invisible à SQLite. Utiliser
+        les noms exacts présentés dans l'inventaire des DataFrames ; ne jamais
+        inventer un alias de table de session.
+
+        ## Jointure directe DataFrame ↔ cache EcoTaxa
+
+        Utiliser `dataframe_refs` quand le résultat demandé dépend à la fois de
+        lignes d'un DataFrame de session et de tables du cache. C'est notamment
+        la route normale pour chercher des samples/profils EcoTaxa correspondant
+        à des stations, identifiants ou dates d'un fichier chargé. Ne pas
+        extraire une longue liste avec `run_pandas`, ne pas fabriquer un
+        `IN (...)` volumineux et ne pas refaire ensuite la même jointure dans
+        pandas : réaliser la jointure directement dans ce SELECT.
+
+        Procédure obligatoire :
+        1. choisir dans l'inventaire le DataFrame source exact d'après sa
+           description, son grain et ses colonnes ; ne jamais utiliser `df` ni
+           un ancien dérivé par commodité ;
+        2. vérifier les vrais noms de colonnes. Le montage conserve exactement
+           leur casse et leurs caractères ; entourer de guillemets doubles les
+           noms contenant espaces, parenthèses ou symboles ;
+        3. mettre chaque nom de table `df_*` utilisé par le SQL dans
+           `dataframe_refs`. Une référence déclarée mais inutilisée est inutile ;
+           une référence utilisée mais non déclarée produit `no such table` ;
+        4. établir le grain dans une CTE. Conserver une ligne par identifiant
+           réel (`sample_id`, déploiement, profil, etc.) et ne jamais dédupliquer
+           seulement sur station + cast si ces valeurs peuvent être réutilisées ;
+        5. joindre cette CTE aux vraies tables EcoTaxa (`samples_cache`,
+           `projects_cache`, etc.) avec une clé explicitement vérifiée ;
+        6. retourner les identifiants des deux côtés et les indicateurs de
+           qualité de jointure. Si le résultat doit devenir une sélection
+           EcoTaxa exportable, la colonne UVP/EcoTaxa doit être nommée exactement
+           `sample_id`; conserver l'identifiant local sous un autre nom comme
+           `net_sample_id` ;
+        7. fournir `description` avec les DataFrames montés, les filtres, le
+           grain de sortie, le rôle analytique et les familles de colonnes.
+
+        Pour une correspondance filet/NeoLabs ↔ UVP, utiliser la table sample au
+        grain prélèvement plutôt qu'une table abundance au grain taxon/analyse.
+        La même station normalisée est la condition spatiale ; aucun seuil de
+        distance n'est requis. La fenêtre temporelle vient de l'utilisateur et
+        se calcule en SQLite avec `julianday`. Exemple pour un seuil de 10 h :
+
+        ```sql
+        WITH net AS (
+          SELECT DISTINCT
+                 sample_id AS net_sample_id,
+                 TRIM(station_name) AS net_station,
+                 deployment_datetime_start AS net_datetime
+          FROM df_file_neolabs_sample
+          WHERE sample_id IS NOT NULL
+            AND station_name IS NOT NULL
+            AND deployment_datetime_start IS NOT NULL
+        ),
+        candidates AS (
+          SELECT net.net_sample_id,
+                 uvp.sample_id AS sample_id,
+                 uvp.project_id,
+                 uvp.profile_id,
+                 net.net_station,
+                 uvp.station_id AS uvp_station,
+                 net.net_datetime,
+                 uvp.datetime_min AS uvp_datetime,
+                 ABS(
+                   (julianday(uvp.datetime_min) - julianday(net.net_datetime))
+                   * 24.0
+                 ) AS time_delta_h
+          FROM net
+          JOIN samples_cache AS uvp
+            ON LOWER(TRIM(uvp.station_id)) = LOWER(net.net_station)
+          WHERE uvp.instrument LIKE 'UVP%'
+            AND uvp.datetime_min IS NOT NULL
+        )
+        SELECT *
+        FROM candidates
+        WHERE time_delta_h <= 10.0
+        ORDER BY net_sample_id, time_delta_h, sample_id
+        ```
+
+        Cet exemple exige
+        `dataframe_refs=["df_file_neolabs_sample"]`. Remplacer `10.0` par le
+        seuil demandé ; ne jamais en faire une constante globale. Plusieurs
+        candidats dans la fenêtre restent plusieurs lignes : ne pas choisir le
+        premier silencieusement. Préserver aussi les non-correspondances avec un
+        `LEFT JOIN` lorsque la demande porte sur la couverture complète.
+
+        La base en mémoire est un espace d'exécution éphémère : elle copie
+        uniquement les DataFrames déclarés, attache le cache en lecture seule,
+        puis disparaît. Les DataFrames sources et le cache ne sont jamais
+        modifiés. Seul le résultat et sa lignée persistent dans la session.
 
         EcoTaxa navigation is already pre-activated with this source family;
         call this tool directly rather than loading it again.
@@ -5721,21 +5834,107 @@ def make_source_tools(thread_id: str) -> list:
                 "Agrégation de zones refusée : groupe par zone_reference et iho_zone "
                 "pour garder les référentiels IHO et MEOW séparés."
             )
+        requested_dataframe_refs = tuple(
+            dict.fromkeys(str(name).strip() for name in (dataframe_refs or []))
+        )
+        mounted_dataframes: dict[str, pd.DataFrame] = {}
+        for variable_name in requested_dataframe_refs:
+            if not DATAFRAME_TABLE_PATTERN.fullmatch(variable_name):
+                return _eco_blocked(
+                    f"Référence DataFrame invalide : `{variable_name}`. "
+                    "Utilise un nom persistant exact commençant par `df_`."
+                )
+            entry = _store.get(f"{thread_id}:dataset:{variable_name}")
+            dataframe = (entry or {}).get("df")
+            if not isinstance(dataframe, pd.DataFrame):
+                available = []
+                for key in _store.keys(f"{thread_id}:dataset:"):
+                    candidate = _store.get(key) or {}
+                    if isinstance(candidate.get("df"), pd.DataFrame):
+                        available.append(key.rsplit(":", 1)[-1])
+                available_text = ", ".join(f"`{name}`" for name in sorted(available))
+                return _eco_error(
+                    f"DataFrame `{variable_name}` introuvable dans la session. "
+                    f"DataFrames disponibles : {available_text or 'aucun'}.",
+                    retryable=True,
+                    metrics={
+                        "dependency_recovery": True,
+                        "missing_names": [variable_name],
+                        "recovery_source": "dataframe",
+                        "recovery_tools": ["run_pandas", "load_file"],
+                    },
+                )
+            mounted_dataframes[variable_name] = dataframe
+
         cache_db = os.getenv("ECOTAXA_CACHE_DB", "data/ecotaxa_cache.sqlite")
+        conn = None
         try:
-            conn = open_readonly_connection(cache_db)
+            conn = (
+                open_dataframe_cache_workspace(cache_db, mounted_dataframes)
+                if mounted_dataframes
+                else open_readonly_connection(cache_db)
+            )
             # Keep the complete SELECT result in the persisted DataFrame. The
             # response below may show a compact preview, but it is not data loss.
             result = _sql_explorer.run_select(conn, sql, cap=None)
-            conn.close()
         except Exception as exc:
             return _eco_error(
                 f"Erreur lors de l'exécution SQL sur le cache EcoTaxa : {exc}",
                 retryable=False,
             )
+        finally:
+            if conn is not None:
+                conn.close()
 
         if not result.get("ok"):
-            return _eco_blocked(result["error"])
+            sql_error = str(result["error"])
+            dataframe_table = re.search(
+                r"no such table:\s*(?P<name>df_[A-Za-z0-9_]+)",
+                sql_error,
+                flags=re.IGNORECASE,
+            )
+            if dataframe_table:
+                variable_name = dataframe_table.group("name")
+                candidate = _store.get(
+                    f"{thread_id}:dataset:{variable_name}"
+                )
+                candidate_names = (
+                    [variable_name]
+                    if isinstance((candidate or {}).get("df"), pd.DataFrame)
+                    else []
+                )
+                diagnostic = (
+                    f"`{variable_name}` est un DataFrame de session qui n'a pas "
+                    "été monté dans cette requête SQLite. Ne change pas son nom "
+                    f"et relance `query_ecotaxa_cache` avec "
+                    f"`dataframe_refs=['{variable_name}']`. Le SQL pourra alors "
+                    "l'utiliser directement dans `FROM` ou `JOIN` avec les "
+                    "tables du cache comme `samples_cache`."
+                )
+                return _eco_error(
+                    diagnostic,
+                    retryable=True,
+                    metrics={
+                        "dependency_recovery": True,
+                        "execution_namespace_mismatch": True,
+                        "missing_names": [variable_name],
+                        "recovery_source": "ecotaxa",
+                        "recovery_tools": ["query_ecotaxa_cache"],
+                        "dependency_requirement": {
+                            "kind": "table",
+                            "name": variable_name,
+                            "canonical_name": variable_name,
+                            "source_hint": "ecotaxa",
+                            "candidate_resources": candidate_names,
+                            "diagnostic": sql_error[:2_000],
+                            "description": (
+                                "Monter le DataFrame de session dans la base "
+                                "SQLite temporaire via dataframe_refs."
+                            ),
+                        },
+                    },
+                )
+            return _eco_blocked(sql_error)
 
         rows = result["rows"]
         columns = result["columns"]
@@ -5746,24 +5945,50 @@ def make_source_tools(thread_id: str) -> list:
 
         dataframe = pd.DataFrame.from_records(rows, columns=columns)
         latest_variable = "df_ecotaxa_cache_query"
-        base_meta = {
-            "source": "ecotaxa_cache",
-            "sql": sql,
-            "n_rows": len(dataframe),
-            "n_cols": len(dataframe.columns),
-            "truncated": truncated,
-        }
-
-        # Every sample-level SQL result becomes its own persistent sandbox table.
-        # The legacy variable remains a moving alias to the latest query.
-        selection_note = ""
-        persisted_variable = latest_variable
+        provided_description = str(description or "").strip()[:500]
         id_series = (
             pd.to_numeric(dataframe["sample_id"], errors="coerce").dropna()
             if "sample_id" in dataframe.columns
             else pd.Series(dtype="int64")
         )
         sample_ids = [int(value) for value in dict.fromkeys(id_series.tolist())]
+        net_sample_count = (
+            int(dataframe["net_sample_id"].nunique(dropna=True))
+            if "net_sample_id" in dataframe.columns
+            else None
+        )
+        base_meta = {
+            "source": (
+                "ecotaxa_cache+session_dataframes"
+                if requested_dataframe_refs
+                else "ecotaxa_cache"
+            ),
+            "sql": sql,
+            "n_rows": len(dataframe),
+            "n_cols": len(dataframe.columns),
+            "truncated": truncated,
+            "input_dataframes": list(requested_dataframe_refs),
+            **(
+                {"n_ecotaxa_samples": len(sample_ids)}
+                if "sample_id" in dataframe.columns
+                else {}
+            ),
+            **(
+                {"n_net_samples": net_sample_count}
+                if net_sample_count is not None
+                else {}
+            ),
+            **(
+                {"description": provided_description}
+                if provided_description
+                else {}
+            ),
+        }
+
+        # Every sample-level SQL result becomes its own persistent sandbox table.
+        # The legacy variable remains a moving alias to the latest query.
+        selection_note = ""
+        persisted_variable = latest_variable
         if sample_ids:
             project_ids: list[int] = []
             if "project_id" in dataframe.columns:
@@ -5787,10 +6012,12 @@ def make_source_tools(thread_id: str) -> list:
                 )
             )
             compact_sql = " ".join(str(sql).split())
-            description = (
-                f"Sélection EcoTaxa « {label} » · {len(sample_ids)} samples · "
+            generated_description = (
+                f"Sélection EcoTaxa « {label} » · {len(sample_ids)} samples "
+                "EcoTaxa distincts (`sample_id`) · "
                 f"{len(project_ids)} projets · SQL: {compact_sql[:180]}"
             )
+            dataset_description = provided_description or generated_description
             selection_meta = {
                 **base_meta,
                 "source": "ecotaxa_selection",
@@ -5799,7 +6026,7 @@ def make_source_tools(thread_id: str) -> list:
                 "project_ids": project_ids,
                 "n_samples": len(sample_ids),
                 "filters": {"sql": sql},
-                "description": description,
+                "description": dataset_description,
             }
             store_dataset(
                 _store,
@@ -5816,7 +6043,7 @@ def make_source_tools(thread_id: str) -> list:
                 meta={
                     **base_meta,
                     "alias_of": persisted_variable,
-                    "description": f"Alias vers la dernière sélection : {persisted_variable}",
+                    "description": dataset_description,
                 },
                 set_active=False,
             )
@@ -5835,7 +6062,8 @@ def make_source_tools(thread_id: str) -> list:
                 stored_selection_meta,
             )
             selection_note = (
-                f"\n\nLa sélection complète de {len(sample_ids)} samples est "
+                "\n\nLa sélection EcoTaxa complète de "
+                f"{len(sample_ids)} `sample_id` distincts est "
                 f"conservée dans `{persisted_variable}` sous le nom "
                 f"`{selection_key}` ; `latest` pointe vers cette sélection."
             )
@@ -5887,9 +6115,16 @@ def make_source_tools(thread_id: str) -> list:
             depths = pd.concat(depth_series).dropna() if depth_series else pd.Series(dtype=float)
             instruments = ", ".join(sorted(map(str, dataframe.get("instrument", pd.Series(dtype=str)).dropna().unique()))) or "—"
             zones = ", ".join(sorted(map(str, dataframe.get("iho_zone", pd.Series(dtype=str)).dropna().unique()))) or "—"
+            sample_count_parts = [
+                f"{len(sample_ids)} samples EcoTaxa distincts (`sample_id`)"
+            ]
+            if net_sample_count is not None:
+                sample_count_parts.append(
+                    f"{net_sample_count} net samples NeoLabs distincts (`net_sample_id`)"
+                )
             selection_overview = [
                 "## Synthèse de la sélection complète", "",
-                f"{dataframe['sample_id'].nunique()} samples · {projects} projets · zones : {zones}.",
+                f"{' · '.join(sample_count_parts)} · {projects} projets · zones : {zones}.",
                 f"Période : {dates.min().date() if not dates.dropna().empty else '—'} → {dates.max().date() if not dates.dropna().empty else '—'} · instruments : {instruments}.",
                 f"Profondeur couverte : {depths.min():.2f} → {depths.max():.2f} m." if not depths.empty else "Profondeur : —.",
                 "",
@@ -5907,7 +6142,20 @@ def make_source_tools(thread_id: str) -> list:
             body,
             data_ref=persisted_variable,
             persisted=True,
-            metrics={"rows": len(rows), "truncated": truncated},
+            metrics={
+                "rows": len(rows),
+                "truncated": truncated,
+                **(
+                    {"n_ecotaxa_samples": len(sample_ids)}
+                    if "sample_id" in dataframe.columns
+                    else {}
+                ),
+                **(
+                    {"n_net_samples": net_sample_count}
+                    if net_sample_count is not None
+                    else {}
+                ),
+            },
         )
 
     return [

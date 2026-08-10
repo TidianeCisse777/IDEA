@@ -49,7 +49,7 @@ class SourceAffinity:
 
 @dataclass(frozen=True)
 class SourceDecision:
-    """Executable source authorization for one user turn."""
+    """Preferred source route for one turn; never a tool authorization gate."""
 
     primary_source: SourceName | None
     authorized_sources: tuple[SourceName, ...]
@@ -156,8 +156,8 @@ Apply before any domain/graph/source rule.
 - A loaded file is the default source for generic sample, position, station,
   taxon, map, analysis or zone requests. Generic words are never external-source
   signals.
-- On first use, an external source must be named explicitly: {external_labels}.
-  Once selected, it remains active on following turns for grounded follow-ups.
+- Prefer an explicitly named external source: {external_labels}. Once selected,
+  it remains the preferred route on following turns for grounded follow-ups.
 - New file -> sole source for implicit follow-ups. External access resumes only
   when explicitly named. Active source changes when the user names another source,
   explicitly combines sources, or a newly loaded file becomes the active source.
@@ -169,10 +169,14 @@ Apply before any domain/graph/source rule.
 - A project number alone is not an EcoTaxa signal. With no owning source, ask.
   With no file, affinity or named source, ask for a file or source; never choose
   an online source.
-- Explicit exclusions remove a source. An explicit source restriction persists
+- This route is guidance, never a tool filter. If an analysis reveals that a
+  missing table or column belongs to another available source, retrieve it and
+  resume without asking the user to repeat the request.
+- Explicit exclusions remove a source from the preferred route. A restriction persists
   across turns until the user explicitly releases it; passive mentions, history
   and assistant text do not release it.
-- Source-specific rules apply only after this gateway authorizes their source."""
+- Source-specific rules apply when the source is selected or needed to satisfy
+  a verified data dependency."""
 
 
 SOURCE_SELECTION_GATEWAY = render_source_selection_gateway()
@@ -273,7 +277,7 @@ def decide_source(
         evidence=evidence,
         needs_clarification=not selected,
         reason=(
-            "Source autorisée par la sélection explicite ou son affinité."
+            "Source préférée par la sélection explicite ou son affinité."
             if selected
             else "Aucune source explicite, active ou fichier chargé."
         ),
@@ -445,18 +449,8 @@ def filter_tools_for_decision(
     decision: SourceDecision,
     policies: Any,
 ) -> list:
-    """Hide tools belonging to external sources not authorized this turn."""
-    authorized = set(decision.authorized_sources)
-    return [
-        item
-        for item in tools
-        if (
-            getattr(item, "name", "") in _ALWAYS_EXPOSED_SOURCE_TOOLS
-            or (source := source_for_tool_call(getattr(item, "name", ""), {}, policies))
-            is None
-            or source in authorized
-        )
-    ]
+    """Compatibility hook: source preference never removes tools."""
+    return list(tools)
 
 
 def source_rejection_for_call(
@@ -465,30 +459,8 @@ def source_rejection_for_call(
     args: dict | None,
     policies: Any,
 ) -> str | None:
-    """Return a clinical refusal for an unauthorized external source call."""
-    if name in _ALWAYS_EXPOSED_SOURCE_TOOLS:
-        return None
-    source = source_for_tool_call(name, args, policies)
-    if source is None or source in decision.authorized_sources:
-        return None
-    label = _SOURCE_LABELS[source]
-    # `load_skill` has a single generic schema, so source-specific skills
-    # cannot be removed independently from the tool list.  Keep this common
-    # wrong turn compact and actionable: the model sees the active file path
-    # instead of a long policy explanation that costs another completion.
-    if name == "load_skill" and decision.primary_source == "file":
-        return (
-            f"{label} non sélectionnée. Reprendre avec le fichier chargé "
-            "et ses outils d'analyse."
-        )
-    active = ", ".join(
-        _SOURCE_LABELS[item] for item in decision.authorized_sources
-    ) or "aucune"
-    return (
-        f"Source bloquée : {label} n'est pas autorisée pour ce tour. "
-        f"Source active : {active}. L'utilisateur doit nommer {label} "
-        "explicitement avant sa première utilisation."
-    )
+    """Compatibility hook: source preference never rejects a tool call."""
+    return None
 
 
 def ecotaxa_signal(text: str | None) -> bool:

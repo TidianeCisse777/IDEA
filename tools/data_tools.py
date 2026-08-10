@@ -878,14 +878,19 @@ def _map_ready_candidates(
 
 def _named_dataset_variables(store: SessionStore, thread_id: str) -> tuple[str, ...]:
     """Return the durable table names that a multi-source operation must name."""
+    from tools.dataframe_cleanup import hidden_dataframes
+
     prefix = f"{thread_id}:dataset:"
+    hidden = hidden_dataframes(store, thread_id)
     names = []
     for key in store.keys(prefix):
         entry = store.get(key) or {}
         if not isinstance(entry.get("df"), pd.DataFrame):
             continue
         meta = entry.get("meta") or {}
-        names.append(str(meta.get("variable_name") or key.removeprefix(prefix)))
+        variable = str(meta.get("variable_name") or key.removeprefix(prefix))
+        if variable not in hidden:
+            names.append(variable)
     return tuple(sorted(set(names)))
 
 
@@ -1057,6 +1062,10 @@ def _dataframe_vars(
     freely combine persisted inputs.  ``run_graph`` supplies its parsed names:
     only the explicitly referenced DataFrames are then materialised.
     """
+    from tools.dataframe_cleanup import hidden_dataframes
+
+    hidden = hidden_dataframes(store, thread_id)
+
     def required(name: str) -> bool:
         return required_names is None or name in required_names
 
@@ -1115,7 +1124,7 @@ def _dataframe_vars(
 
     for key in store.keys(f"{thread_id}:dataset:"):
         variable_name = key.removeprefix(f"{thread_id}:dataset:")
-        if not required(variable_name):
+        if variable_name in hidden or not required(variable_name):
             continue
         named = store.get(key)
         persisted_name = (named or {}).get("meta", {}).get("variable_name")
@@ -1133,7 +1142,8 @@ def _dataframe_vars(
 
     if required("plot_df"):
         last_plot = store.get(f"{thread_id}:last_plot_df")
-        if last_plot and last_plot.get("df") is not None:
+        plot_variable = str(((last_plot or {}).get("meta") or {}).get("variable_name") or "")
+        if plot_variable not in hidden and last_plot and last_plot.get("df") is not None:
             local_vars.setdefault("plot_df", analysis_frame(last_plot["df"]))
 
     return local_vars
@@ -2248,7 +2258,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         )
 
     @tool(response_format="content_and_artifact")
-    def run_pandas(code: str, persist_as: str | None = None) -> str:
+    def run_pandas(
+        code: str,
+        persist_as: str | None = None,
+        description: str | None = None,
+    ) -> str:
         """Exécute du code Python/pandas sur le(s) DataFrame(s) chargés.
 
         Variables disponibles selon ce qui a été chargé dans la session :
@@ -2287,6 +2301,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         persistée exactement sous ce nom. Utilise ensuite ce même nom dans
         `source_variable` de l'outil d'enrichissement ; ne réutilise pas le
         fichier complet par défaut.
+
+        Quand le code crée un DataFrame persistant, fournis `description` : une
+        phrase courte décrivant ses sources, son grain, sa transformation et ses
+        colonnes utiles. Cette description est conservée avec la table.
 
         The controlled worker persists variables computed in this conversation
         (e.g. `station_stats`, `delta_df`) so a following graph can reuse them.
@@ -2408,7 +2426,10 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         "source": "analysis:explicit-derived",
                         "n_rows": int(result.shape[0]),
                         "n_cols": int(result.shape[1]),
-                        "description": f"Table explicitement persistée : {explicit_variable}",
+                        "description": (
+                            description
+                            or f"Table explicitement persistée : {explicit_variable}"
+                        ),
                     },
                     latest_alias=explicit_variable,
                 )
@@ -2443,7 +2464,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                             "source": "analysis:join",
                             "n_rows": int(join_frame.shape[0]),
                             "n_cols": int(join_frame.shape[1]),
-                            "description": _describe_join(code, join_frame),
+                            "description": description or _describe_join(code, join_frame),
                         },
                         latest_alias=join_variable,
                     )
@@ -2482,7 +2503,8 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                             "n_rows": int(result.shape[0]),
                             "n_cols": int(result.shape[1]),
                             "description": (
-                                derived_description
+                                description
+                                or derived_description
                                 or f"Table dérivée nommée {derived_name}"
                             ),
                         },

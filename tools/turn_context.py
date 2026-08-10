@@ -3,7 +3,7 @@
 `TurnContext` is the single, typed snapshot of the conversation state the agent
 should read at the start of a turn instead of re-inferring it from the message
 history: the loaded/active dataset, the live zone-derived subsets, and the
-authorized source scope for the turn. It is rebuilt every turn (ephemeral); the
+preferred source route for the turn. It is rebuilt every turn (ephemeral); the
 underlying data lives in the session store / checkpoint (persistent).
 
 The rendered `capsule` is the model-facing projection of this context, injected

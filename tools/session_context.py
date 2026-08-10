@@ -434,11 +434,9 @@ def _live_zone_subsets(store: SessionStore, thread_id: str) -> list[tuple[str, s
 
 
 def _source_scope_line(store: SessionStore, thread_id: str, messages: object) -> str:
-    """Render the authorized source scope for this turn as readable state.
+    """Render the preferred source route for this turn as readable state.
 
-    Makes the executable source decision (explicit source / persisted restriction)
-    visible to the model instead of being enforced silently, so the agent reads
-    which sources are active this turn rather than re-deriving them.
+    Makes the preferred route visible without restricting later tool choices.
     """
     if not messages:
         return ""
@@ -450,12 +448,12 @@ def _source_scope_line(store: SessionStore, thread_id: str, messages: object) ->
         )
     except Exception:
         return ""
-    authorized = ",".join(decision.authorized_sources) or "none"
+    preferred = ",".join(decision.authorized_sources) or "none"
     primary = decision.primary_source or "none"
     return (
-        f"\nACTIVE SOURCE SCOPE: authorized={authorized}; primary={primary}. "
-        "Only these sources are usable this turn; naming a new external source "
-        "switches scope, a loaded file resets it to the file."
+        f"\nPREFERRED SOURCE ROUTE: preferred={preferred}; primary={primary}. "
+        "This guides the first choice only; every relevant available source and "
+        "tool remains usable when needed to complete the request."
     )
 
 
@@ -641,7 +639,10 @@ def build_dataset_state_capsule(
             anchor_note = (
                 f"\nCANONICAL SOURCE: loaded_file={loaded_variable}. The active "
                 f"dataset above is a derived subset. "
-                f"To analyse, graph, or enrich the current subset, use {variable} directly — never re-filter from {loaded_variable}. "
+                f"An explicit follow-up about that subset should use {variable} "
+                "when it still contains the required columns, grain and scope. "
+                "If the request widens a filter or needs information removed by "
+                "an aggregation, return to the nearest capable ancestor instead. "
                 f"Only for a NEW zone/geographic filter, start from {loaded_variable} "
                 f"(or call filter_dataframe_by_zone without source_variable)."
             )
@@ -689,8 +690,10 @@ def build_dataset_state_capsule(
         )
         working_block = (
             "\nWORKING TABLES (derived results reusable by exact variable name — "
-            "pick the one whose source/scope matches the request; do not recompute "
-            "a result that already exists):\n" + lines + more
+            "start from the user's request; an explicit reference wins only if "
+            "that table remains capable, then compare columns, grain, scope, "
+            "filters and lineage; active status or recency alone never decides; "
+            "do not recompute a suitable existing result):\n" + lines + more
         )
 
     scope_line = _source_scope_line(store, thread_id, messages)

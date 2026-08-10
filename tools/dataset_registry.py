@@ -90,10 +90,18 @@ def store_dataset(
     if "domain_profile" not in meta:
         active = store.get(thread_id)
         inherited_profile = ((active or {}).get("meta") or {}).get("domain_profile")
+    source = str(meta.get("source") or "session")
+    grain = str(meta.get("grain") or meta.get("row_grain") or "grain non précisé")
+    columns = ", ".join(str(column) for column in dataframe.columns[:6])
+    fallback_description = (
+        f"Table {source}, {len(dataframe)} lignes × {len(dataframe.columns)} colonnes, "
+        f"au {grain}; colonnes repères : {columns or 'aucune'}."
+    )
     dataset_meta = {
         **meta,
         **({"domain_profile": inherited_profile} if inherited_profile else {}),
         "variable_name": variable_name,
+        "description": str(meta.get("description") or fallback_description)[:500],
     }
     dataset_key = f"{thread_id}:dataset:{variable_name}"
     # Write the payload once.  The active table and convenient source aliases

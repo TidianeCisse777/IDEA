@@ -81,6 +81,44 @@ Ne pas faire :
 
 ---
 
+# Comment présélectionner les profils UVP correspondant aux samples filet ?
+
+Mots-clés : NeoLabs, fichier sample, fichier abundance, SAMPLE_ID, filet, UVP,
+EcoTaxa, profil UVP, station, position, datetime, fenêtre temporelle, seuil_h,
+time_delta_h, delta 10 h, delta 12 h, correspondance, appariement
+
+La fenêtre temporelle est un paramètre de la demande, jamais une constante du
+RAG. Pour rechercher les profils UVP proches de samples filet :
+
+- utiliser la table locale au grain **sample/déploiement** comme source des
+  métadonnées de prélèvement (`SAMPLE_ID`, station, date/heure, position,
+  cast/profil et profondeur selon le schéma réel inspecté) ;
+- ne pas utiliser une table d'abondance au grain taxon/analyse comme table de
+  déploiements : elle répète les métadonnées de sample. Ne jamais la réduire
+  avec `drop_duplicates(station, cast)`, car un numéro de cast peut être
+  réutilisé entre plusieurs dates ou campagnes ;
+- construire un horodatage exact avec les colonnes de date et d'heure
+  effectivement observées dans la table sample, puis conserver une ligne par
+  `SAMPLE_ID` ou identifiant de déploiement vérifié ;
+- côté EcoTaxa, limiter les candidats aux instruments UVP et conserver au
+  minimum `sample_id`, `profile_id`, `station_id` et date/heure. Latitude et
+  longitude sont des informations facultatives de contexte ;
+- comparer uniquement les candidats de même station normalisée, puis calculer
+  `time_delta_h = abs(datetime_uvp - datetime_filet)` ;
+- filtrer avec `time_delta_h <= seuil_h`, où `seuil_h` vient de la demande de
+  l'utilisateur. Le seuil peut donc valoir 10 h, 12 h ou toute autre valeur
+  explicitement demandée ;
+- ne pas appliquer de seuil de distance lorsque la station correspond. Une
+  distance calculable peut être conservée comme diagnostic, mais elle ne doit
+  ni filtrer ni invalider la correspondance ;
+- conserver `time_delta_h`, les candidats multiples et les samples sans
+  correspondance afin que la couverture et les ambiguïtés restent visibles.
+
+Cette présélection produit des candidats traçables. Elle ne suffit pas, à elle
+seule, à certifier une correspondance filet–UVP pour une comparaison scientifique.
+
+---
+
 # Correspondance filet ↔ UVP/EcoTaxa certifiée par CTD Amundsen
 
 Mots-clés : filet, UVP, EcoTaxa, Amundsen, ctdrosettefilename, fichier CTD,
@@ -91,8 +129,9 @@ uniquement à établir qu'un fichier filet chargé correspond réellement à des
 samples UVP/EcoTaxa, avant toute comparaison ou calcul d'abondance croisé.
 
 Validation obligatoire, dans cet ordre :
-1. compatibilité de position et de temps entre le déploiement filet et le sample
-   UVP/EcoTaxa ;
+1. même station normalisée et compatibilité temporelle entre le déploiement
+   filet et le sample UVP/EcoTaxa ; les coordonnées ne constituent pas un filtre
+   supplémentaire lorsque la station correspond ;
 2. présence d'un même fichier CTD Amundsen (`ctdrosettefilename` ou son alias)
    côté UVP/EcoTaxa et côté Amundsen ;
 3. confirmation par Amundsen des métadonnées du fichier : station, heure et

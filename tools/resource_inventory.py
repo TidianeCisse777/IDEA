@@ -16,7 +16,7 @@ from agents.exploration_state import (
 )
 from tools.session_store import SessionStore
 
-_MAX_COLUMNS_PER_RESOURCE = 200
+_MAX_COLUMNS_PER_RESOURCE = 500
 _MAX_PROFILED_COLUMNS = 80
 _MAX_PROFILE_ROWS = 5_000
 _MAX_JOIN_CANDIDATES = 8
@@ -316,6 +316,7 @@ def _record_for_entry(key: str, entry: dict[str, Any]) -> ResourceRecord | None:
         source=source[:120],
         persisted=True,
         rows=row_count,
+        description=(str(meta.get("description"))[:300] if meta.get("description") else None),
         columns=columns[:_MAX_COLUMNS_PER_RESOURCE],
         columns_truncated=len(columns) > _MAX_COLUMNS_PER_RESOURCE,
         grain=_grain(meta, column_profiles),
@@ -431,9 +432,11 @@ def build_resource_inventory(
     thread_id: str,
     *,
     authorized_sources: Iterable[str] = (),
+    excluded_variables: Iterable[str] = (),
 ) -> tuple[ResourceRecord, ...]:
     """Return a compact, checkpoint-safe inventory for one conversation."""
     records: list[ResourceRecord] = []
+    excluded = {str(item) for item in excluded_variables}
     frames: dict[str, pd.DataFrame] = {}
     keys = [
         key for key in store.keys()
@@ -444,7 +447,7 @@ def build_resource_inventory(
         if not isinstance(entry, dict):
             continue
         record = _record_for_entry(key, entry)
-        if record is not None:
+        if record is not None and record.name not in excluded:
             records.append(record)
             dataframe = entry.get("df")
             if isinstance(dataframe, pd.DataFrame):
