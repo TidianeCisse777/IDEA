@@ -1838,8 +1838,14 @@ def test_cartopy_graphs_skip_tight_bbox_but_regular_graphs_keep_it():
     import matplotlib.pyplot as plt
 
     plt.close("all")
-    plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
-    assert _graph_savefig_kwargs(plt) == {"format": "png"}
+    figure, _ = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    cartopy_kwargs = _graph_savefig_kwargs(plt)
+    assert cartopy_kwargs["format"] == "png"
+    # Matplotlib 3.11 treats an omitted/None bbox_inches as "use the rcParam".
+    # The NeoLab theme sets that rcParam to "tight", which can crop a GeoAxes
+    # down to its colorbar.  Passing the original canvas bbox is the explicit
+    # opt-out that keeps the whole map visible.
+    assert cartopy_kwargs["bbox_inches"] is figure.bbox_inches
 
     plt.close("all")
     plt.subplots()

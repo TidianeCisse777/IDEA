@@ -232,7 +232,14 @@ def _graph_savefig_kwargs(plt) -> dict:
         for figure_number in plt.get_fignums()
         for axis in plt.figure(figure_number).axes
     )
-    return {"format": "png"} if has_geoaxes else {
+    # ``None`` and an omitted bbox both fall back to rcParams["savefig.bbox"]
+    # in Matplotlib 3.11.  The report theme sets that value to ``tight``;
+    # Cartopy can then crop the GeoAxes away and leave only its colorbar.  The
+    # figure's original canvas bbox is the explicit, version-stable opt-out.
+    return {
+        "format": "png",
+        "bbox_inches": plt.gcf().bbox_inches,
+    } if has_geoaxes else {
         "format": "png",
         "bbox_inches": "tight",
     }

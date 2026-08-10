@@ -881,6 +881,60 @@ async def test_stream_emits_keepalive_for_slow_tool(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stream_run_pandas_table_result_is_visible_without_final_repetition():
+    """The transport must expose the computed table even when the final model
+    only says that it is ready.  This reproduces Friday's invisible-table trace.
+    """
+    from serve import _stream_agent_sse
+
+    table = (
+        "| station | abundance |\n"
+        "|---|---:|\n"
+        "| A01 | 12.5 |"
+    )
+    updates = [
+        {"model": {"messages": [AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "run_pandas",
+                "args": {"code": "result = df.head()"},
+                "id": "tc1",
+                "type": "tool_call",
+            }],
+        )]}},
+        {"tools": {"messages": [ToolMessage(
+            content=table,
+            name="run_pandas",
+            tool_call_id="tc1",
+        )]}},
+        {"model": {"messages": [AIMessage(
+            content="Le tableau est prêt.",
+            tool_calls=[],
+        )]}},
+    ]
+
+    chunks = [
+        chunk async for chunk in _stream_agent_sse(
+            _make_mock_agent(updates), {}, {}, "tid-visible-pandas"
+        )
+    ]
+    full = "".join(chunks)
+    visible = "".join(
+        json.loads(line.removeprefix("data: "))["choices"][0]["delta"].get(
+            "content", ""
+        )
+        for chunk in chunks
+        for line in chunk.splitlines()
+        if line.startswith("data: {")
+    )
+
+    assert "Analyse du tableau" in full
+    assert table in visible
+    assert "run_pandas" not in full
+    assert "Le tableau est prêt." in full
+
+
+@pytest.mark.asyncio
 async def test_stream_run_graph_url_tool_result_is_printed():
     """run_graph retourne déjà une URL /graphs ; le stream doit l'afficher sans
     dépendre de la réponse finale de l'agent."""
