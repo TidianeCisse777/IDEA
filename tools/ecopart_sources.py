@@ -234,6 +234,10 @@ def _store_cached_ecopart_dataset(
         "project_id": ecopart_project_id or entry.ecopart_project_id,
         "ecotaxa_project_id": ecotaxa_project_id or entry.ecotaxa_project_id,
         "n_rows": len(dataframe),
+        "grain": "one row per EcoPart profile-depth bin",
+        "description": (
+            "Cached EcoPart export with profile, depth-bin and sampled-volume fields."
+        ),
         "cache_hit": True,
         "cache_path": str(entry.path),
         "content_sha256": entry.content_sha256,
@@ -519,6 +523,19 @@ def _perform_enrichment(
         variable_name=joined_variable_name,
         meta={
             "source": source,
+            "source_variable": (session_et.get("meta") or {}).get("variable_name"),
+            "parent_variables": [
+                value
+                for value in (
+                    (session_et.get("meta") or {}).get("variable_name"),
+                    (session_ep.get("meta") or {}).get("variable_name"),
+                )
+                if value
+            ],
+            "description": (
+                "EcoTaxa object rows enriched with EcoPart sampled-volume bins "
+                "through the audited sample and depth-bin join."
+            ),
             "ecopart_project_id": selected_project_id,
             "ecotaxa_project_id": ecotaxa_project_id,
             "n_rows": len(merged),
@@ -1362,6 +1379,11 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                 "project_id": ecopart_pid,
                 "ecotaxa_project_id": ecotaxa_pid,
                 "n_rows": len(df_ep),
+                "grain": "one row per EcoPart profile-depth bin",
+                "description": (
+                    f"EcoPart project {ecopart_pid} export with profile, depth-bin "
+                    "and sampled-volume fields."
+                ),
                 "cache_hit": cached_tsv is not None,
                 "content_sha256": (
                     cached_tsv.content_sha256 if cached_tsv is not None else None
@@ -1466,6 +1488,17 @@ def _enrich_ecotaxa_campaign_with_ecopart(
     meta = {
         "source": "join:ecotaxa_campaign+ecopart",
         "source_variable": source_variable,
+        "parent_variables": [
+            source_variable,
+            *sorted({
+                dataset_variable_name("ecopart", ecopart_pid)
+                for _ecotaxa_pid, ecopart_pid in successful_pairs
+            }),
+        ],
+        "description": (
+            "Multi-project EcoTaxa campaign enriched with EcoPart sampled-volume "
+            "bins while preserving project partitions and join coverage."
+        ),
         "project_pairs": project_pairs,
         "partial_enrichment": partial,
         "project_failures": failures,
@@ -1614,6 +1647,11 @@ def make_ecopart_tools(thread_id: str) -> list:
                 "source": f"ecopart:{project_id}",
                 "project_id": project_id,
                 "n_rows": len(df),
+                "grain": "one row per EcoPart profile-depth bin",
+                "description": (
+                    f"EcoPart project {project_id} export with profile, depth-bin "
+                    "and sampled-volume fields."
+                ),
                 **(
                     {
                         "content_sha256": cached_export.content_sha256,
@@ -2040,6 +2078,11 @@ def make_ecopart_tools(thread_id: str) -> list:
             "project_id": ecopart_project_id,
             "ecotaxa_project_id": ecotaxa_project_id,
             "n_rows": len(df_ep),
+            "grain": "one row per EcoPart profile-depth bin",
+            "description": (
+                f"EcoPart export {ep_key} with profile, depth-bin and "
+                "sampled-volume fields."
+            ),
         }
         store_dataset(
             _store,

@@ -1155,6 +1155,32 @@ def _is_file_backed_resource(resource: ResourceRecord) -> bool:
     )
 
 
+_SOURCE_ANCHOR_PREFIXES = (
+    "ecotaxa",
+    "ecopart",
+    "join:ecotaxa",
+    "amundsen",
+    "bio_oracle",
+    "ogsl",
+    "sql",
+)
+
+
+def _is_source_anchor_resource(resource: ResourceRecord) -> bool:
+    """Return whether a table must stay explicit for dataset selection."""
+    if _is_file_backed_resource(resource):
+        return True
+    source_values = (
+        resource.source.casefold(),
+        str(resource.provenance.get("source") or "").casefold(),
+    )
+    return any(
+        value.startswith(prefix)
+        for value in source_values
+        for prefix in _SOURCE_ANCHOR_PREFIXES
+    )
+
+
 def _bounded_inline(value: object, limit: int) -> str:
     """Render one compact single-line value within a strict character budget."""
     text = " ".join(str(value or "not established").split())
@@ -1193,6 +1219,40 @@ def _render_file_resource_block(
     ])
 
 
+def _render_source_anchor_block(
+    resource: ResourceRecord,
+    *,
+    active_variable: str | None,
+    max_chars: int,
+) -> str:
+    """Render one bounded export/cache/enrichment card used for selection."""
+    schema, shown = _render_resource_schema(resource)
+    total_columns = len(resource.columns)
+    partial = resource.columns_truncated or shown < total_columns
+    status = "active" if resource.name == active_variable else "available"
+    value_budget = max(100, max_chars - len(resource.name) - 230)
+    description_budget = max(28, value_budget * 28 // 100)
+    schema_budget = max(40, value_budget * 32 // 100)
+    lineage_budget = max(24, value_budget * 20 // 100)
+    scope_budget = max(
+        20,
+        value_budget - description_budget - schema_budget - lineage_budget,
+    )
+    return "\n".join([
+        f"- {resource.name}",
+        f"  source_anchor={_bounded_inline(resource.source, 90)}; "
+        f"status={status}; rows={resource.rows if resource.rows is not None else 'unknown'}; "
+        f"grain={_bounded_inline(resource.grain, 100)}",
+        f"  description={_bounded_inline(resource.description, description_budget)}",
+        f"  schema_by_role={_bounded_inline(schema, schema_budget)}; "
+        f"schema_visibility={shown}/{total_columns}"
+        f"{' partial' if partial else ' complete'}; "
+        f"keys={','.join(resource.key_candidates[:8]) or 'not established'}",
+        f"  scope={_bounded_inline(_render_scope(resource.scope), scope_budget)}; "
+        f"lineage={_bounded_inline(' | '.join(resource.relations[:8]), lineage_budget)}",
+    ])
+
+
 def render_task_context(
     payload: object,
     *,
@@ -1221,8 +1281,24 @@ def render_task_context(
         "objective the operation, requested grain/entity, required columns, scope, "
         "filters and output. Compare that contract with the catalog below. Select "
         "the exact capable DataFrame; active status and recency are metadata only. "
+        "Before any calculation, analysis or graph, bind the next operation to "
+        "that exact DataFrame name and verify its grain, required columns, scope "
+        "and lineage on the decision board. "
         "If no single table is capable, use the nearest suitable ancestor, retrieve "
         "the missing data, or combine verified resources."
+        "\n\n## PLANNER DATASET CHOICE\n"
+        "The application has not selected a DataFrame. The planner must choose. "
+        "Use only the objective and the decision board below for the initial "
+        "dataset choice; consult the exploration frontier only for unfinished "
+        "dependencies. The first plan item must name the candidate DataFrame(s) "
+        "and define pass/fail criteria for grain, required columns, scope, keys "
+        "and missingness. Before calculation or graphing, call run_pandas only "
+        "to evaluate those criteria on the real candidate, return a small "
+        "non-persisted result dictionary, and wait for its result. Accept or "
+        "reject the candidate from that evidence on the next ReAct step. Only "
+        "after acceptance may the plan continue with missing retrieval, "
+        "transformation and output. Reuse an unchanged qualification already "
+        "collected for the same request."
         + source_line
     )
     return rendered[:max_chars]
@@ -1271,32 +1347,24 @@ def render_dataframe_context(
             resource.source.casefold(),
         )
 
-    file_tables = sorted(
-        (resource for resource in tables if _is_file_backed_resource(resource)),
+    source_anchor_tables = sorted(
+        (resource for resource in tables if _is_source_anchor_resource(resource)),
         key=detail_priority,
     )
     request_relevant_tables = sorted(
-        (resource for resource in tables if not _is_file_backed_resource(resource)),
+        (resource for resource in tables if not _is_source_anchor_resource(resource)),
         key=detail_priority,
     )[:8]
     header_lines = [
         "\n\n## AVAILABLE DATAFRAMES (current session)",
         "The complete index keeps every live DataFrame name visible. Every "
-        "file-backed DataFrame is always expanded as a canonical source anchor; "
-        "the bounded request-relevant expansion applies only to non-file tables. "
+        "file, source export, cache result and enrichment DataFrame is always "
+        "expanded as a decision anchor; the bounded request-relevant expansion "
+        "applies only to intermediate analysis tables. "
         "Any indexed DataFrame remains selectable by exact name.",
         "DATAFRAME INDEX (all live resources):",
     ]
-    full_index_lines = []
-    for resource in alphabetical_tables:
-        status = "active" if resource.name == active_variable else "available"
-        source = " ".join(resource.source.split())[:48]
-        grain = " ".join((resource.grain or "not established").split())[:64]
-        rows = resource.rows if resource.rows is not None else "unknown"
-        full_index_lines.append(
-            f"* {resource.name} | status={status}; source={source}; "
-            f"rows={rows}; grain={grain}"
-        )
+    full_index_lines = [f"* {resource.name}" for resource in alphabetical_tables]
     rendered_blocks = [*header_lines, *full_index_lines]
     if len("\n".join(rendered_blocks)) > max_chars - 600:
         rendered_blocks = [
@@ -1304,24 +1372,27 @@ def render_dataframe_context(
             "* " + " | ".join(resource.name for resource in alphabetical_tables),
         ]
     rendered_blocks.append(
-        "DATAFRAME DETAILS (all file sources, then a request-relevant non-file subset):"
+        "DATAFRAME DECISION BOARD (all source anchors, then request-relevant intermediates):"
     )
 
     entry_blocks: list[str] = []
     remaining_for_cards = max_chars - len("\n".join(rendered_blocks)) - 600
-    file_card_budget = (
-        max(180, min(900, remaining_for_cards // len(file_tables)))
-        if file_tables
+    anchor_card_budget = (
+        max(220, min(900, remaining_for_cards // len(source_anchor_tables)))
+        if source_anchor_tables
         else 0
     )
-    for resource in file_tables:
-        entry_blocks.append(
-            _render_file_resource_block(
-                resource,
-                active_variable=active_variable,
-                max_chars=file_card_budget,
-            )
+    for resource in source_anchor_tables:
+        renderer = (
+            _render_file_resource_block
+            if _is_file_backed_resource(resource)
+            else _render_source_anchor_block
         )
+        entry_blocks.append(renderer(
+            resource,
+            active_variable=active_variable,
+            max_chars=anchor_card_budget,
+        ))
 
     for resource in request_relevant_tables:
         schema, shown = _render_resource_schema(resource)

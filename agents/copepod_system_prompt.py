@@ -163,6 +163,27 @@ meaning from taxa, detritus or pellets; those are biological interpretations.
   transformation and output, then calls the needed tool(s) in that same message.
   Skip this for a simple fact or lone file load; never add a planner or a
   separate model call only to produce a plan.
+- Dataset choice belongs to this planning step, not to the middleware, active
+  table or source routing. Build the plan in this fixed order: nominate the
+  most plausible exact `df_*` candidate(s) from the request and decision board;
+  define observable pass/fail criteria; qualify the candidate with one focused
+  `run_pandas`; then, only after reading that result, accept the starting table
+  and execute the minimum missing retrieval, transformation and output steps.
+  The first plan bullet names candidate(s), not a prematurely validated choice,
+  and states the expected grain, required columns, key uniqueness/cardinality,
+  scope checks and relevant missingness checks. For a join, name both candidate
+  parents and the key or matching rule to qualify. If no persisted candidate is
+  plausible, retrieve the nearest source result first and qualify it next.
+- DataFrame qualification is a real ReAct gate. The qualification call returns
+  a small `result` dictionary containing candidate name, row count, missing
+  required columns, key duplicate/cardinality evidence, relevant null counts,
+  scope evidence and `qualified: true|false`. It uses no `print`, `persist_as`,
+  graph or scientific calculation. Issue only that `run_pandas` call, wait for
+  its tool result, and do not batch the calculation or `run_graph` beside it.
+  If it passes, continue the existing plan on the next model step. If it fails,
+  qualify the next plausible candidate or retrieve the missing dependency; do
+  not weaken the criteria. Reuse a successful unchanged qualification within
+  the same request instead of repeating it.
 
 ### DataFrame selection policy — request, capability, appropriateness
 - Start from the user's actual request, not the active table. Translate it into
@@ -190,12 +211,20 @@ meaning from taxa, detritus or pellets; those are biological interpretations.
   provenance against the selection contract. Never substitute bare `df`, the
   active DataFrame or the latest derived table for this comparison when several
   resources exist.
-- `AVAILABLE DATAFRAMES` keeps a complete compact index and expands only a
-  bounded set of detailed cards for non-file tables. Every file-backed
-  DataFrame is always expanded because original uploaded files are canonical
-  source anchors and must remain understandable throughout the conversation.
-  An indexed but non-expanded non-file DataFrame remains fully available; when
-  its source or grain makes it a plausible candidate, inspect that exact name
+- Before every calculation, analysis or graph, perform the DataFrame choice
+  checkpoint inside the plan: identify the exact requested operation, grain,
+  required columns and scope; compare the plausible cards; qualify the leading
+  candidate on real data with `run_pandas`; then bind later tool calls to the
+  accepted persistent name. Select an enriched descendant when the requested
+  variables require that enrichment, but return to its closest valid parent
+  when the descendant has filtered, aggregated or otherwise narrowed away data
+  needed by the request. Do not choose from active status alone.
+- `AVAILABLE DATAFRAMES` keeps a complete compact index. Its decision board
+  always expands uploaded files, source exports, cache-query results and
+  enrichment results because they are durable source/lineage anchors. Only
+  intermediate calculation, join and plotting tables use a bounded
+  request-relevant expansion. Every indexed table remains available by exact
+  name; if a plausible intermediate is not expanded, inspect that exact name
   with `run_pandas` before accepting or rejecting it.
 - If no DataFrame is fully capable, derive from the nearest suitable ancestor or
   combine the necessary resources with verified keys. Inspect only genuinely

@@ -148,7 +148,7 @@ def _content_text(message: BaseMessage) -> str:
 
 
 def _index_names(context: str) -> tuple[str, ...]:
-    return tuple(re.findall(r"^\* (df_[A-Za-z0-9_]+) \|", context, re.MULTILINE))
+    return tuple(re.findall(r"^\* (df_[A-Za-z0-9_]+)(?: \||$)", context, re.MULTILINE))
 
 
 def _detail_names(context: str) -> tuple[str, ...]:
@@ -390,8 +390,23 @@ def campaign_current_task(store: SessionStore) -> list[CampaignCheck]:
             "deliverable and selection contract are projected",
             "Required deliverables: answer" in task
             and "DATA SELECTION CONTRACT:" in task
-            and "active status and recency are metadata only" in task,
+            and "active status and recency are metadata only" in task
+            and "Before any calculation, analysis or graph" in task
+            and "## PLANNER DATASET CHOICE" in task
+            and "The application has not selected a DataFrame" in task
+            and "The first plan item must name the candidate DataFrame" in task
+            and "call run_pandas only" in task
+            and "wait for its result" in task,
             task[:700],
+        ),
+        _check(
+            scenario,
+            "current_task",
+            "qualification is a sequential ReAct gate",
+            "DataFrame qualification is a real ReAct gate" in capture.system
+            and "do not batch the calculation or `run_graph` beside it" in capture.system
+            and "result` dictionary" in capture.system,
+            "plan -> run_pandas qualification -> wait -> calculate or graph",
         ),
         _check(
             scenario,
@@ -491,17 +506,21 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
             "six-dataframes-misleading-active",
             "dataframes",
             "active status does not hide alternatives",
-            "df_uvp_net_candidates | status=active" in six.dataset_context
-            and "df_station_summary | status=available" in six.dataset_context
+            "- df_uvp_net_candidates\n  status=active" in six.dataset_context
+            and "- df_station_summary\n  status=available" in six.dataset_context
             and set(details) == set(DATAFRAME_NAMES),
             f"expanded={details}",
         ),
         _check(
             "six-dataframes-misleading-active",
             "dataframes",
-            "file sources precede request-relevant non-file details",
-            set(details[:2]) == {"df_neolabs_abundance", "df_neolabs_sample"}
-            and details[2] == "df_station_summary",
+            "source anchors precede request-relevant intermediates",
+            set(details[:3]) == {
+                "df_ecotaxa_cache_query",
+                "df_neolabs_abundance",
+                "df_neolabs_sample",
+            }
+            and details[3] == "df_station_summary",
             f"details={details}",
         ),
         _check(
@@ -537,8 +556,8 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "explicit-dataframe-reference",
             "dataframes",
-            "explicit non-file dataframe leads the non-file subset",
-            len(explicit_details) >= 3 and explicit_details[2] == "df_old_plot",
+            "explicit intermediate leads the intermediate subset",
+            len(explicit_details) >= 4 and explicit_details[3] == "df_old_plot",
             f"details={explicit_details}",
         )
     )
@@ -647,6 +666,128 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
             "catalog remains within configured budget",
             len(many.dataset_context) <= 12_000,
             f"characters={len(many.dataset_context)}",
+        ),
+    ])
+
+    anchor_thread = f"{BASE_THREAD}-df-source-anchors"
+    anchor_names = (
+        "df_file_samples",
+        "df_ecotaxa_cache_query",
+        "df_ecotaxa_export_42",
+        "df_ecotaxa_ecopart_42",
+        "df_amundsen_enriched_42",
+        "df_bio_oracle_enriched_42",
+    )
+    anchor_frame = pd.DataFrame({
+        "sample_id": [1, 2],
+        "latitude": [60.0, 61.0],
+        "longitude": [-65.0, -64.0],
+        "value": [2.0, 3.0],
+    })
+    anchor_meta = (
+        {
+            "source": "file:/uploads/samples.csv",
+            "description": "Canonical uploaded sample table.",
+            "grain": "one row per sample",
+        },
+        {
+            "source": "ecotaxa_cache",
+            "description": "EcoTaxa cache selection at sample grain.",
+            "grain": "one row per EcoTaxa sample",
+            "input_dataframes": ["df_file_samples"],
+        },
+        {
+            "source": "ecotaxa:42",
+            "description": "Object-level EcoTaxa export.",
+            "grain": "one row per EcoTaxa object",
+            "source_variable": "df_ecotaxa_cache_query",
+        },
+        {
+            "source": "join:ecotaxa+ecopart:84",
+            "description": "EcoTaxa export enriched with EcoPart volume bins.",
+            "grain": "one row per EcoTaxa object",
+            "parent_variables": ["df_ecotaxa_export_42", "df_ecopart_84"],
+        },
+        {
+            "source": "amundsen_enrichment",
+            "description": "EcoPart-enriched rows matched to Amundsen CTD.",
+            "grain": "one row per EcoTaxa object",
+            "source_variable": "df_ecotaxa_ecopart_42",
+        },
+        {
+            "source": "bio_oracle_enrichment",
+            "description": "Amundsen-enriched rows coupled to Bio-ORACLE.",
+            "grain": "one row per EcoTaxa object",
+            "source_variable": "df_amundsen_enriched_42",
+        },
+    )
+    for name, meta in zip(anchor_names, anchor_meta, strict=True):
+        store_dataset(
+            store,
+            anchor_thread,
+            anchor_frame.copy(),
+            variable_name=name,
+            meta=meta,
+            set_active=False,
+        )
+    intermediate_names = tuple(
+        f"df_anchor_intermediate_{index:02d}" for index in range(10)
+    )
+    for name in intermediate_names:
+        store_dataset(
+            store,
+            anchor_thread,
+            anchor_frame.copy(),
+            variable_name=name,
+            meta={
+                "source": "analysis:derived",
+                "description": f"Intermediate calculation {name}.",
+                "grain": "one row per sample",
+            },
+            set_active=False,
+        )
+    anchor_target = intermediate_names[-1]
+    anchor_capture = _capture(
+        store,
+        anchor_thread,
+        f"Trace {anchor_target} en conservant les enrichissements disponibles.",
+        "df-source-anchors",
+    )
+    anchor_details = _detail_names(anchor_capture.dataset_context)
+    expanded_intermediates = tuple(
+        name for name in anchor_details if name in intermediate_names
+    )
+    checks.extend([
+        _check(
+            "source-export-enrichment-anchors",
+            "dataframes",
+            "files exports cache results and enrichments are all expanded",
+            set(anchor_details[:len(anchor_names)]) == set(anchor_names),
+            f"anchor_details={anchor_details[:len(anchor_names)]}",
+        ),
+        _check(
+            "source-export-enrichment-anchors",
+            "dataframes",
+            "intermediate expansion remains bounded and request-ranked",
+            len(expanded_intermediates) <= 8
+            and expanded_intermediates
+            and expanded_intermediates[0] == anchor_target,
+            f"intermediates={expanded_intermediates}",
+        ),
+        _check(
+            "source-export-enrichment-anchors",
+            "dataframes",
+            "enrichment lineage remains visible on the decision board",
+            "source_variable:df_ecotaxa_ecopart_42" in anchor_capture.dataset_context
+            and "source_variable:df_amundsen_enriched_42" in anchor_capture.dataset_context,
+            "Amundsen and Bio-ORACLE parent variables are visible",
+        ),
+        _check(
+            "source-export-enrichment-anchors",
+            "dataframes",
+            "decision board remains within configured budget",
+            len(anchor_capture.dataset_context) <= 12_000,
+            f"characters={len(anchor_capture.dataset_context)}",
         ),
     ])
     return checks
@@ -1534,17 +1675,19 @@ def _dataframe_lifecycle_checks(
     )
     if revival_violation is None:
         turn_8_details = _detail_names(context(8))
-        turn_8_non_file_details = tuple(
-            name for name in turn_8_details if not name.startswith("df_neolabs_")
+        turn_8_intermediate_details = tuple(
+            name for name in turn_8_details
+            if not name.startswith("df_neolabs_")
+            and name != "df_ecotaxa_cache_query"
         )
         if (
-            not turn_8_non_file_details
-            or turn_8_non_file_details[0] != LIFECYCLE_REVIVABLE
+            not turn_8_intermediate_details
+            or turn_8_intermediate_details[0] != LIFECYCLE_REVIVABLE
         ):
             revival_violation = (
                 8,
-                "first_non_file_detail="
-                f"{turn_8_non_file_details[0] if turn_8_non_file_details else 'none'}",
+                "first_intermediate_detail="
+                f"{turn_8_intermediate_details[0] if turn_8_intermediate_details else 'none'}",
             )
 
     lineage_violation = first_presence_violation(
@@ -1608,7 +1751,7 @@ def _dataframe_lifecycle_checks(
         result(
             "explicit reference revives and prioritizes a hidden dataframe",
             revival_violation,
-            f"{LIFECYCLE_REVIVABLE} hidden on 4-7 and leads non-file details on turn 8",
+            f"{LIFECYCLE_REVIVABLE} hidden on 4-7 and leads intermediate details on turn 8",
         ),
         result(
             "visible child preserves its transient lineage parent",

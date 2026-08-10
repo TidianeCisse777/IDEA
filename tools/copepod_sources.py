@@ -2465,7 +2465,17 @@ def make_source_tools(thread_id: str) -> list:
             thread_id,
             df,
             variable_name=variable_name,
-            meta={**meta, "source": f"ecotaxa:{project_id}", "project_id": project_id, "n_rows": len(df)},
+            meta={
+                **meta,
+                "source": f"ecotaxa:{project_id}",
+                "project_id": project_id,
+                "n_rows": len(df),
+                "grain": "one row per exported EcoTaxa object",
+                "description": (
+                    f"{label}: object-level EcoTaxa export preserving sample, "
+                    "profile, taxonomy and acquisition fields."
+                ),
+            },
             latest_alias=ECOTAXA,
         )
 
@@ -5189,6 +5199,7 @@ def make_source_tools(thread_id: str) -> list:
                 "n_rows": len(cached_df),
                 "n_cols": len(cached_df.columns),
                 "n_projects": len(groups),
+                "grain": "one row per exported EcoTaxa object",
                 "cache_hit": True,
                 "cached_at": cached.cached_at,
                 "cache_provenance": cached.provenance,
@@ -5321,6 +5332,7 @@ def make_source_tools(thread_id: str) -> list:
                 "n_rows": len(campaign_df),
                 "n_cols": len(campaign_df.columns),
                 "n_projects": len(campaign_frames),
+                "grain": "one row per exported EcoTaxa object",
                 "cache_hit": False,
                 "cached_at": None,
                 "description": (

@@ -2463,6 +2463,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         afin qu'un tableau de contrôle préparé explicitement ne soit pas perdu.
         Pour une jointure : result = df_ecotaxa.merge(df_ctd, on='station_id', how='left')
 
+        Pour qualifier un DataFrame candidat avant un calcul, une analyse ou un
+        graphique, fais un appel de contrôle ciblé avant l'opération finale.
+        Référence le nom `df_*` exact et assigne à `result` un petit dictionnaire
+        contenant : `candidate`, `rows`, `missing_required_columns`, preuve de
+        cardinalité/doublons des clés, nullité des colonnes pertinentes, preuve
+        de portée et `qualified`. N'utilise ni `print`, ni `persist_as`, ni
+        calcul scientifique, ni graphique dans cet appel. Attends son résultat
+        avant de poursuivre le plan. Une qualification inchangée déjà réussie
+        pour la même demande doit être réutilisée.
+
         Pour conserver explicitement n'importe quel sous-ensemble ou table
         dérivée pour une étape suivante (enrichissement, graphique, export),
         passe `persist_as="df_nom_explicite"`. La table `result` est alors

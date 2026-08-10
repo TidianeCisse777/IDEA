@@ -204,6 +204,7 @@ from tools.dataset_registry import (
     CTD_ENRICHED,
     dataset_variable_name,
     enrichment_source_note,
+    resolved_enrichment_source_variable,
     store_dataset,
 )
 from tools.public_url import download_url
@@ -1840,6 +1841,9 @@ def make_amundsen_tools(thread_id: str) -> list:
             )
 
         source = resolve_source_dataframe(_store, thread_id, source_variable)
+        resolved_source_variable = resolved_enrichment_source_variable(
+            _store, thread_id, source_variable
+        )
         filename_col = (
             detect_column(source.columns, _CTD_FILENAME_CANDIDATES)
             if source is not None else None
@@ -1888,6 +1892,11 @@ def make_amundsen_tools(thread_id: str) -> list:
                     variable_name=variable_name,
                     meta={
                         "source": "amundsen_enrichment",
+                        "source_variable": resolved_source_variable,
+                        "description": (
+                            f"Table {resolved_source_variable or 'active'} enriched "
+                            "with matched Amundsen CTD variables."
+                        ),
                         "n_rows": len(enriched),
                         "matched_rows": n_matched,
                         "cache_hit": True,
@@ -2046,6 +2055,11 @@ def make_amundsen_tools(thread_id: str) -> list:
             variable_name=variable_name,
             meta={
                 "source": "amundsen_enrichment",
+                "source_variable": resolved_source_variable,
+                "description": (
+                    f"Table {resolved_source_variable or 'active'} enriched with "
+                    "matched Amundsen CTD variables."
+                ),
                 "n_rows": n,
                 "unique_source_points": n_unique,
                 "matched_rows": n_matched,

@@ -105,6 +105,8 @@ def _relations(meta: dict[str, Any]) -> tuple[str, ...]:
         "parent_variable",
         "parent_variables",
         "source_variable",
+        "input_dataframes",
+        "raw_export_variables",
         "net_variable_name",
         "audit_variable",
         "uvp_enriched_variable",

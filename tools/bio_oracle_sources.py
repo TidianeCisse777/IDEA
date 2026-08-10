@@ -48,6 +48,7 @@ from tools.dataset_registry import (
     BIO_ORACLE,
     dataset_variable_name,
     enrichment_source_note,
+    resolved_enrichment_source_variable,
     store_dataset,
 )
 from tools.public_url import download_url
@@ -1337,6 +1338,9 @@ def make_bio_oracle_tools(thread_id: str) -> list:
         source_for_cache = resolve_source_dataframe(
             _store, thread_id, source_variable
         )
+        resolved_source_variable = resolved_enrichment_source_variable(
+            _store, thread_id, source_variable
+        )
         cache_key = None
         cache_parameters = {
             "variables": variables,
@@ -1383,6 +1387,11 @@ def make_bio_oracle_tools(thread_id: str) -> list:
                     variable_name=variable_name,
                     meta={
                         "source": "bio_oracle_enrichment",
+                        "source_variable": resolved_source_variable,
+                        "description": (
+                            f"Table {resolved_source_variable or 'active'} enriched "
+                            "with Bio-ORACLE variables and scenarios."
+                        ),
                         "n_rows": len(enriched),
                         "cache_hit": True,
                         "cached_at": cached.cached_at,
@@ -1469,6 +1478,11 @@ def make_bio_oracle_tools(thread_id: str) -> list:
             variable_name=variable_name,
             meta={
                 "source": "bio_oracle_enrichment",
+                "source_variable": resolved_source_variable,
+                "description": (
+                    f"Table {resolved_source_variable or 'active'} enriched with "
+                    "Bio-ORACLE variables and scenarios."
+                ),
                 "n_rows": len(enriched),
                 "cache_hit": False,
                 "cached_at": cached_at,

@@ -508,12 +508,12 @@ def validate_live_capture(capture: ModelCapture) -> list[ContractResult]:
     entry_markers = {name: f"- {name}\n" for name in DATAFRAME_NAMES}
     descriptions_complete = all(
         f"- {name}\n" in dataset
-        and "  description=" in dataset.split(f"- {name}\n", 1)[1].split("\n- ", 1)[0]
+        and "description=" in dataset.split(f"- {name}\n", 1)[1].split("\n- ", 1)[0]
         for name in DATAFRAME_NAMES
     )
     schema_complete = all(
         f"- {name}\n" in dataset
-        and "  schema_by_role=" in dataset.split(f"- {name}\n", 1)[1].split("\n- ", 1)[0]
+        and "schema_by_role=" in dataset.split(f"- {name}\n", 1)[1].split("\n- ", 1)[0]
         for name in DATAFRAME_NAMES
     )
     checkpoint_text = "\n".join(str(message.content) for message in capture.state_messages)
@@ -548,9 +548,9 @@ def validate_live_capture(capture: ModelCapture) -> list[ContractResult]:
         ),
         _check(
             "catalogue non hiérarchisé par DataFrame actif",
-            dataset.find("* df_ecotaxa_cache_query |")
-            < dataset.find(f"* {ACTIVE_VARIABLE} |")
-            and f"* {ACTIVE_VARIABLE} | status=active" in dataset,
+            dataset.find("* df_ecotaxa_cache_query\n")
+            < dataset.find(f"* {ACTIVE_VARIABLE}\n")
+            and f"- {ACTIVE_VARIABLE}\n  status=active" in dataset,
             "index alphabétique; le statut actif reste un simple attribut",
         ),
         _check(
@@ -573,7 +573,7 @@ def validate_live_capture(capture: ModelCapture) -> list[ContractResult]:
             "space=[latitude:float64,longitude:float64]" in dataset
             and "measures=[volume_m3:float64]" in dataset
             and "schema_visibility=" in dataset
-            and "(partial; inspect the persisted table for omitted columns)" in dataset,
+            and " partial; keys=" in dataset,
             "temps, position et mesure restent visibles parmi plus de 70 colonnes",
         ),
         _check(
@@ -618,6 +618,21 @@ def validate_live_capture(capture: ModelCapture) -> list[ContractResult]:
             < capture.runtime_context.find("## AVAILABLE DATAFRAMES")
             < capture.runtime_context.find("## EXPLORATION FRONTIER"),
             "le besoin précède le choix des ressources",
+        ),
+        _check(
+            "choix du DataFrame confié au planner",
+            "## PLANNER DATASET CHOICE" in capture.task_context
+            and "The application has not selected a DataFrame" in capture.task_context
+            and "The first plan item must name the candidate DataFrame" in capture.task_context
+            and "call run_pandas only" in capture.task_context
+            and "wait for its result" in capture.task_context,
+            "le plan qualifie un candidat avec run_pandas avant de choisir le départ",
+        ),
+        _check(
+            "qualification séquentielle avant calcul ou graphe",
+            "DataFrame qualification is a real ReAct gate" in capture.system
+            and "do not batch the calculation or `run_graph` beside it" in capture.system,
+            "run_pandas doit répondre avant la suite du plan",
         ),
         _check(
             "route de source visible mais non bloquante",
@@ -689,11 +704,21 @@ def validate_explicit_reference_capture(capture: ModelCapture) -> list[ContractR
         for line in capture.dataset_context.splitlines()
         if line.startswith("- df_")
     ]
+    anchor_names = {
+        "df_ecotaxa_cache_query",
+        "df_neolabs_abundance",
+        "df_neolabs_sample",
+    }
+    intermediate_entries = [
+        name for name in table_entries if name not in anchor_names
+    ]
     return [
         _check(
-            "référence DataFrame explicite présentée en premier",
-            bool(table_entries) and table_entries[0] == "df_station_summary",
-            f"première entrée={table_entries[0] if table_entries else 'aucune'}",
+            "référence DataFrame explicite en tête des intermédiaires",
+            bool(intermediate_entries)
+            and intermediate_entries[0] == "df_station_summary",
+            "premier intermédiaire="
+            f"{intermediate_entries[0] if intermediate_entries else 'aucun'}",
         ),
         _check(
             "promotion souple sans filtrage des alternatives",
@@ -775,7 +800,7 @@ def validate_many_dataframe_capture(
     capture: ModelCapture,
     names: tuple[str, ...],
 ) -> list[ContractResult]:
-    """Validate a complete index plus bounded detailed cards."""
+    """Validate that canonical file anchors all survive a large catalog."""
     dataset = capture.dataset_context
     missing = [name for name in names if name not in dataset]
     detailed = [name for name in names if f"- {name}\n" in dataset]
@@ -791,8 +816,8 @@ def validate_many_dataframe_capture(
             f"cible={names[-1]}",
         ),
         _check(
-            "fiches détaillées bornées",
-            len(detailed) <= 8,
+            "toutes les sources fichier restent détaillées",
+            len(detailed) == len(names),
             f"{len(detailed)} fiches détaillées pour {len(names)} ressources",
         ),
         _check(

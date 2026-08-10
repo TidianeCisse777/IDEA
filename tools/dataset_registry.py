@@ -91,7 +91,18 @@ def store_dataset(
         active = store.get(thread_id)
         inherited_profile = ((active or {}).get("meta") or {}).get("domain_profile")
     source = str(meta.get("source") or "session")
-    grain = str(meta.get("grain") or meta.get("row_grain") or "grain non précisé")
+    inherited_grain = None
+    source_parent = meta.get("source_variable")
+    if source_parent and not (meta.get("grain") or meta.get("row_grain")):
+        parent = store.get(f"{thread_id}:dataset:{source_parent}") or {}
+        parent_meta = parent.get("meta") or {}
+        inherited_grain = parent_meta.get("grain") or parent_meta.get("row_grain")
+    grain = str(
+        meta.get("grain")
+        or meta.get("row_grain")
+        or inherited_grain
+        or "grain non précisé"
+    )
     columns = ", ".join(str(column) for column in dataframe.columns[:6])
     fallback_description = (
         f"Table {source}, {len(dataframe)} lignes × {len(dataframe.columns)} colonnes, "
@@ -100,6 +111,7 @@ def store_dataset(
     dataset_meta = {
         **meta,
         **({"domain_profile": inherited_profile} if inherited_profile else {}),
+        **({"grain": inherited_grain} if inherited_grain else {}),
         "variable_name": variable_name,
         "description": str(meta.get("description") or fallback_description)[:500],
     }
@@ -161,3 +173,16 @@ def enrichment_source_note(
     if already:
         return f"Table enrichie : `{name}` (déjà présent : {', '.join(already)})."
     return f"Table enrichie : `{name}`."
+
+
+def resolved_enrichment_source_variable(
+    store: SessionStore,
+    thread_id: str,
+    source_variable: str | None,
+) -> str | None:
+    """Return the exact persisted parent selected for an enrichment."""
+    if source_variable:
+        return source_variable
+    active = store.get(thread_id) or {}
+    value = (active.get("meta") or {}).get("variable_name")
+    return str(value) if value else None
