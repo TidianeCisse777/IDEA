@@ -165,13 +165,20 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
 
     @tool(response_format="content_and_artifact")
     def filter_dataframe_by_zone(
-        zone_name: str,
+        zone_name: str | None = None,
+        zone_names: list[str] | None = None,
         lat_col: str = "latitude",
         lon_col: str = "longitude",
         source_variable: str | None = None,
     ) -> dict:
-        """Filtre le DataFrame chargé pour ne garder que les lignes dont
-        (lat, lon) tombent **strictement dans le polygone IHO** de la zone.
+        """Filtre le DataFrame chargé sur une ou plusieurs zones nommées.
+
+        Chaque ligne conservée tombe **strictement dans au moins un polygone**
+        demandé (point-in-polygon Shapely, jamais une simple bbox). Pour une
+        sélection multiple, l'outil persiste un seul DataFrame d'union, élimine
+        les doublons dus aux zones qui se chevauchent et ajoute une colonne
+        ``zone``. En cas de chevauchement, la première zone de ``zone_names``
+        qui contient la ligne devient son étiquette.
 
         Précision polygone (point-in-polygon shapely) — pas un filtre bbox.
         Utilise ce tool dès que l'utilisateur demande de filtrer / découper /
@@ -181,9 +188,13 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
 
         Parameters
         ----------
-        zone_name : str
-            Nom de la zone (FR/EN/alias). Mêmes zones supportées que
-            ``get_zone_info``.
+        zone_name : str, optional
+            Une seule zone (FR/EN/alias). Conserve la compatibilité avec les
+            appels existants.
+        zone_names : list[str], optional
+            Plusieurs zones à réunir dans un seul DataFrame. Les doublons dans
+            cette liste sont ignorés en conservant l'ordre. Fournir
+            ``zone_name`` ou ``zone_names``; les deux peuvent être combinés.
         lat_col, lon_col : str
             Noms des colonnes lat/lon dans le df. Défaut : 'latitude'
             / 'longitude' (convention NeoLab EcoTaxa/Amundsen).
@@ -196,11 +207,13 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
 
         Returns
         -------
-        dict : {zone_canonical, variable_name, n_in, n_out, lat_col, lon_col}
+        dict : {zone_canonical|zone_canonicals, variable_name, n_in, n_out,
+            lat_col, lon_col[, groups]}
             ``variable_name`` est le nom du df filtré dans la session
             (accessible via run_pandas / run_graph). ``rebased_on`` indique le
             nom de la variable réellement filtrée quand le défaut a re-ancré sur
-            le fichier chargé plutôt que sur le df actif.
+            le fichier chargé plutôt que sur le df actif. Pour plusieurs zones,
+            ``groups`` rapporte le nombre de lignes attribuées à chaque zone.
         """
         session = _store.get(thread_id)
         if not session or session.get("df") is None:
@@ -235,12 +248,27 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
                 source_session = loaded
         df = source_session["df"]
 
-        canonical = _match_canonical(zone_name)
-        if canonical is None:
+        requested_zones = []
+        if zone_name and str(zone_name).strip():
+            requested_zones.append(str(zone_name).strip())
+        requested_zones.extend(
+            str(item).strip() for item in (zone_names or []) if str(item).strip()
+        )
+        if not requested_zones:
             return blocked(
-                f"Zone '{zone_name}' inconnue du registry. "
-                f"Zones disponibles : {[z.canonical for z in _registry().zones]}"
+                "Indique au moins une zone avec `zone_name` ou `zone_names`."
             )
+
+        canonical_zones: list[str] = []
+        for requested in requested_zones:
+            canonical = _match_canonical(requested)
+            if canonical is None:
+                return blocked(
+                    f"Zone '{requested}' inconnue du registry. "
+                    f"Zones disponibles : {[z.canonical for z in _registry().zones]}"
+                )
+            if canonical not in canonical_zones:
+                canonical_zones.append(canonical)
 
         missing = [c for c in (lat_col, lon_col) if c not in df.columns]
         if missing:
@@ -250,23 +278,64 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
                 "Passe lat_col / lon_col explicites."
             )
 
-        kept = _core_filter_by_zone(
-            df, canonical, lat_col=lat_col, lon_col=lon_col, registry=_registry(),
-        )
+        multiple = zone_names is not None or len(canonical_zones) > 1
+        groups: list[dict[str, object]] = []
+        if not multiple:
+            kept = _core_filter_by_zone(
+                df,
+                canonical_zones[0],
+                lat_col=lat_col,
+                lon_col=lon_col,
+                registry=_registry(),
+            )
+        else:
+            marker = "__idea_geo_row_position__"
+            while marker in df.columns:
+                marker = f"_{marker}"
+            working = df.copy()
+            working[marker] = range(len(working))
+            assigned: dict[int, str] = {}
+            for canonical in canonical_zones:
+                zone_subset = _core_filter_by_zone(
+                    working,
+                    canonical,
+                    lat_col=lat_col,
+                    lon_col=lon_col,
+                    registry=_registry(),
+                )
+                for position in zone_subset[marker].astype(int):
+                    assigned.setdefault(int(position), canonical)
+            positions = sorted(assigned)
+            kept = df.iloc[positions].copy()
+            kept["zone"] = [assigned[position] for position in positions]
+            groups = [
+                {
+                    "zone": canonical,
+                    "n_rows": sum(label == canonical for label in assigned.values()),
+                }
+                for canonical in canonical_zones
+            ]
 
         source_details = source_session.get("meta") or {}
         source_meta = source_details.get("source", "df")
         source_stem = source_meta.split(":", 1)[-1]
         variable_name = dataset_variable_name(
-            "in", canonical, source_stem,
+            "in", *canonical_zones, source_stem,
         )
+        zone_meta = (
+            {"zone_canonicals": canonical_zones, "zone_column": "zone"}
+            if multiple
+            else {"zone_canonical": canonical_zones[0]}
+        )
+        parent_variable = source_details.get("variable_name") or source_variable
         store_dataset(
             _store, thread_id, kept,
             variable_name=variable_name,
             meta={
-                "source": f"filter_by_zone:{canonical}",
+                "source": f"filter_by_zone:{'|'.join(canonical_zones)}",
                 "parent_source": source_meta,
-                "zone_canonical": canonical,
+                "parent_variable": parent_variable,
+                **zone_meta,
                 "lat_col": lat_col,
                 "lon_col": lon_col,
                 "n_rows": int(len(kept)),
@@ -280,14 +349,19 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
         )
 
         result = {
-            "zone_canonical": canonical,
             "variable_name": variable_name,
             "n_in": int(len(kept)),
             "n_out": int(len(df) - len(kept)),
             "lat_col": lat_col,
             "lon_col": lon_col,
-            "source_variable": source_details.get("variable_name") or source_variable,
+            "source_variable": parent_variable,
         }
+        if multiple:
+            result["zone_canonicals"] = canonical_zones
+            result["zone_column"] = "zone"
+            result["groups"] = groups
+        else:
+            result["zone_canonical"] = canonical_zones[0]
         if rebased_from is not None:
             result["rebased_on"] = source_details.get("variable_name")
             result["note"] = (
@@ -297,13 +371,23 @@ def make_geo_tools(thread_id: str, *, store: SessionStore | None = None) -> list
                 f"de travail, jamais d'un sous-ensemble d'une autre zone."
             )
         return success(
-            f"{len(kept)} lignes conservées dans `{variable_name}` pour {canonical}.",
+            (
+                f"{len(kept)} lignes conservées dans `{variable_name}` pour "
+                f"{len(canonical_zones)} zones : {', '.join(canonical_zones)}."
+                if multiple
+                else f"{len(kept)} lignes conservées dans `{variable_name}` "
+                f"pour {canonical_zones[0]}."
+            ),
             content=result,
             data_ref=variable_name,
-            provenance={"source": str(source_meta), "zone": canonical},
+            provenance={"source": str(source_meta), "zones": canonical_zones},
             persisted=True,
             method="polygon point-in-polygon filter",
-            metrics={"rows_in": int(len(kept)), "rows_out": int(len(df) - len(kept))},
+            metrics={
+                "rows_in": int(len(kept)),
+                "rows_out": int(len(df) - len(kept)),
+                "zones": len(canonical_zones),
+            },
         )
 
     @tool(response_format="content_and_artifact")

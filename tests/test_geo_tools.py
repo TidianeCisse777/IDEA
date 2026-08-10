@@ -417,6 +417,83 @@ def test_filter_dataframe_by_zone_reanchors_even_when_subset_passed_explicitly(s
     assert out.get("rebased_on") == "df_file_original"
 
 
+def test_filter_dataframe_by_zone_unions_multiple_zones_without_duplicates(session_store):
+    """Several named zones produce one reusable union DataFrame."""
+    import json
+    import pandas as pd
+    from langchain_core.messages import ToolMessage
+    from tools.geo_tools import make_geo_tools
+    from tools.tool_result import validate_tool_artifact
+
+    df = pd.DataFrame({
+        "station_id": ["BAF", "LAB", "OUTSIDE"],
+        "latitude": [74.0, 55.0, -40.0],
+        "longitude": [-68.0, -55.0, 10.0],
+    })
+    thread = "thread-filter-multiple-zones"
+    _load_df_into_session(
+        session_store, thread, df, variable_name="df_file_original"
+    )
+    fn = next(
+        tool for tool in make_geo_tools(thread, store=session_store)
+        if tool.name == "filter_dataframe_by_zone"
+    )
+
+    message = fn.invoke({
+        "type": "tool_call",
+        "id": "multiple-zone-filter",
+        "name": fn.name,
+        "args": {
+            "zone_names": [
+                "Baie de Baffin",
+                "Mer du Labrador",
+                "Baie de Baffin",
+            ],
+        },
+    })
+    assert isinstance(message, ToolMessage)
+    out = json.loads(message.content)
+    artifact = validate_tool_artifact(message.artifact)
+
+    assert out["zone_canonicals"] == ["Baie de Baffin", "Mer du Labrador"]
+    assert out["n_in"] == 2
+    assert out["n_out"] == 1
+    assert out["groups"] == [
+        {"zone": "Baie de Baffin", "n_rows": 1},
+        {"zone": "Mer du Labrador", "n_rows": 1},
+    ]
+    kept = session_store.get(f"{thread}:dataset:{out['variable_name']}")["df"]
+    assert kept["station_id"].tolist() == ["BAF", "LAB"]
+    assert kept["zone"].tolist() == ["Baie de Baffin", "Mer du Labrador"]
+    assert kept.index.is_unique
+    assert session_store.get(thread)["meta"]["variable_name"] == "df_file_original"
+    assert artifact.status == "success"
+    assert artifact.data_ref == out["variable_name"]
+    assert artifact.persisted is True
+    assert artifact.provenance["zones"] == out["zone_canonicals"]
+    assert artifact.metrics == {"rows_in": 2, "rows_out": 1, "zones": 2}
+
+
+def test_filter_dataframe_by_zone_blocks_when_no_zone_is_provided(session_store):
+    import pandas as pd
+    from tools.geo_tools import make_geo_tools
+
+    thread = "thread-filter-no-zone"
+    _load_df_into_session(
+        session_store,
+        thread,
+        pd.DataFrame({"latitude": [74.0], "longitude": [-68.0]}),
+    )
+    fn = next(
+        tool for tool in make_geo_tools(thread, store=session_store)
+        if tool.name == "filter_dataframe_by_zone"
+    )
+
+    out = fn.invoke({"zone_names": []})
+
+    assert "au moins une zone" in out.lower()
+
+
 # --- Slice 4 : split_dataframe_by_zone (découpage auto mers/baies/détroits) --
 
 

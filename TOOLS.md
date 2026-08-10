@@ -254,7 +254,7 @@ Backends : SQLite, PostgreSQL, MySQL, MariaDB (protocole MySQL).
 | Tool | Rôle | Coûteux ? |
 |---|---|---|
 | `get_zone_info` | Résout une zone IHO/MEOW → `{canonical, source, bbox, polygon_wkt, aliases, pandas_filter}` | non |
-| `filter_dataframe_by_zone` | Filtre la df active par polygone (point-in-polygon shapely), persiste `df_in_<zone>_<source>` | non |
+| `filter_dataframe_by_zone` | Filtre une source par un polygone (`zone_name`) ou par l’union ordonnée de plusieurs polygones (`zone_names`). Le multi-zone persiste un seul `df_in_<zone…>_<source>`, sans lignes dupliquées, avec colonne `zone` et comptes par zone. | non |
 | `split_dataframe_by_zone` | Annote la df chargée d'une colonne `zone` (mers/baies/détroits IHO, ou `family=meow`/`composite`/`all`), regroupe par zone avec buckets `Hors zone référencée` / `Sans coordonnées`, persiste `df_zoned_<family>_<source>` | non |
 
 ---

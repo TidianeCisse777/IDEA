@@ -4,7 +4,7 @@
 The campaign uses the production middleware with a local spy model. It never
 calls an LLM, a source API, LangSmith, or the network. It validates only what
 the application places in the model request: task, DataFrames, exploration
-frontier, last-graph facts, and useful history.
+frontier, last-graph facts, useful history, and provider-visible tools.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ from scripts.dev.inspect_six_dataframe_context import (  # noqa: E402
     build_frontier_payload,
     capture_model_request,
     resolve_frontier_payload,
+    run_checkpointed_multiturn_harness,
     seed_many_dataframes,
     seed_six_dataframes,
 )
@@ -64,7 +65,7 @@ from tools.tool_catalog import build_tool_catalog  # noqa: E402
 
 FACETS = (
     "current_task", "dataframes", "frontier", "graph", "history",
-    "long_turns", "thread_isolation",
+    "tools", "long_turns", "thread_isolation",
 )
 DEFAULT_FACETS = FACETS
 BASE_THREAD = "context-projection-campaign"
@@ -2027,6 +2028,327 @@ def _seed_private_thread_dataframe(
     )
 
 
+def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
+    """Track the exact provider-visible tools across turns and ReAct steps."""
+
+    scenario = "seven-turn-tool-exposure"
+    thread_id = f"{BASE_THREAD}-tools"
+    seed_six_dataframes(store, thread_id)
+    questions = (
+        "Bonjour.",
+        "Inspecte les données EcoTaxa disponibles dans le cache.",
+        "Calcule la moyenne par station dans df_neolabs_sample.",
+        "Enrichis les profils avec EcoPart.",
+        "Enrichis les profils avec Bio-ORACLE.",
+        "Recherche dans la documentation la méthode de comparaison UVP-filet.",
+        "Fais un graphique de la moyenne par station.",
+    )
+    snapshots = run_checkpointed_projection(
+        store,
+        thread_id,
+        questions,
+    )
+    captures = tuple(snapshot.capture for snapshot in snapshots)
+    catalog = build_tool_catalog(thread_id)
+    catalog_names = set(catalog.names)
+    hidden_legacy = {
+        name
+        for name, policy in catalog.policies.items()
+        if policy.exposure_group == "hidden_legacy"
+    }
+
+    def first_call_violation(
+        predicate: Callable[[ModelCapture], bool],
+        detail: Callable[[ModelCapture], str],
+    ) -> tuple[int, str] | None:
+        for turn, capture in enumerate(captures, start=1):
+            if not predicate(capture):
+                return turn, detail(capture)
+        return None
+
+    parity_violation = first_call_violation(
+        lambda capture: tuple(capture.audit.get("tools_exposed") or ())
+        == capture.tool_names
+        and int(capture.audit.get("tool_exposure_count") or 0)
+        == len(capture.tool_names),
+        lambda capture: (
+            f"provider={capture.tool_names}; "
+            f"audit={tuple(capture.audit.get('tools_exposed') or ())}; "
+            f"audit_count={capture.audit.get('tool_exposure_count')}"
+        ),
+    )
+    integrity_violation = first_call_violation(
+        lambda capture: bool(capture.tool_names)
+        and len(capture.tool_names) == len(set(capture.tool_names))
+        and set(capture.tool_names) <= catalog_names,
+        lambda capture: (
+            f"count={len(capture.tool_names)}; "
+            f"unique={len(set(capture.tool_names))}; "
+            f"unknown={sorted(set(capture.tool_names) - catalog_names)}"
+        ),
+    )
+    hidden_violation = first_call_violation(
+        lambda capture: not (set(capture.tool_names) & hidden_legacy)
+        and "load_skill" not in capture.tool_names,
+        lambda capture: (
+            "forbidden="
+            f"{sorted((set(capture.tool_names) & hidden_legacy) | ({'load_skill'} & set(capture.tool_names)))}"
+        ),
+    )
+    permanent_local = {
+        "load_file",
+        "query_copepod_knowledge_base",
+        "run_pandas",
+        "run_graph",
+    }
+    core_violation = first_call_violation(
+        lambda capture: permanent_local <= set(capture.tool_names),
+        lambda capture: (
+            f"missing={sorted(permanent_local - set(capture.tool_names))}"
+        ),
+    )
+
+    ecotaxa_expected = {
+        "query_ecotaxa_cache",
+        "list_ecotaxa_cache_tables",
+        "describe_ecotaxa_cache_table",
+    }
+    ecotaxa_names = set(captures[1].tool_names)
+    ecopart_names = set(captures[3].tool_names)
+    bio_names = set(captures[4].tool_names)
+    after_bio_names = set(captures[5].tool_names)
+    graph_names = set(captures[6].tool_names)
+    distinct_lists = {capture.tool_names for capture in captures}
+
+    from tools.ecopart_sources import make_ecopart_tools
+    from tools.tool_result import validate_tool_artifact
+
+    ecopart_return_thread = f"{BASE_THREAD}-tools-ecopart-return"
+    with patch("tools.ecopart_sources._store", store):
+        ecopart_enrichment = next(
+            tool
+            for tool in make_ecopart_tools(ecopart_return_thread)
+            if tool.name == "enrich_ecotaxa_with_ecopart_remote"
+        )
+        ecopart_message = ecopart_enrichment.invoke({
+            "type": "tool_call",
+            "id": "ecopart-return-contract",
+            "name": ecopart_enrichment.name,
+            "args": {},
+        })
+    ecopart_artifact = validate_tool_artifact(ecopart_message.artifact)
+
+    with TemporaryDirectory(prefix="idea-tool-react-") as graph_directory:
+        react_thread = f"{BASE_THREAD}-tools-react"
+        seed_six_dataframes(store, react_thread)
+        react_calls, _turn_results = run_checkpointed_multiturn_harness(
+            store,
+            react_thread,
+            Path(graph_directory),
+        )
+    react_hidden = next(
+        (
+            (index, sorted(set(capture.tool_names) & hidden_legacy))
+            for index, capture in enumerate(react_calls, start=1)
+            if set(capture.tool_names) & hidden_legacy
+            or "load_skill" in capture.tool_names
+        ),
+        None,
+    )
+    react_integrity = next(
+        (
+            (
+                index,
+                f"count={len(capture.tool_names)}; "
+                f"unique={len(set(capture.tool_names))}; "
+                f"unknown={sorted(set(capture.tool_names) - catalog_names)}",
+            )
+            for index, capture in enumerate(react_calls, start=1)
+            if not capture.tool_names
+            or len(capture.tool_names) != len(set(capture.tool_names))
+            or not set(capture.tool_names) <= catalog_names
+        ),
+        None,
+    )
+    forced_calls = tuple(
+        capture for capture in react_calls if capture.tool_choice is not None
+    )
+    forced_choices_valid = bool(forced_calls) and all(
+        isinstance(capture.tool_choice, dict)
+        and str(
+            ((capture.tool_choice.get("function") or {}).get("name"))
+        ) in capture.tool_names
+        for capture in forced_calls
+    )
+    forced_tool_names = {
+        str(((capture.tool_choice.get("function") or {}).get("name")))
+        for capture in forced_calls
+        if isinstance(capture.tool_choice, dict)
+    }
+    turn_one_lists = {
+        capture.tool_names for capture in react_calls if capture.turn == 1
+    }
+
+    return [
+        _check(
+            scenario,
+            "tools",
+            "provider tools exactly match the runtime exposure audit",
+            parity_violation is None,
+            "all seven turns match"
+            if parity_violation is None
+            else f"turn {parity_violation[0]}: {parity_violation[1]}",
+            turn_range="turns 1-7",
+        ),
+        _check(
+            scenario,
+            "tools",
+            "every tool list is non-empty unique and catalog-backed",
+            integrity_violation is None,
+            "all visible names belong to the production catalog"
+            if integrity_violation is None
+            else f"turn {integrity_violation[0]}: {integrity_violation[1]}",
+            turn_range="turns 1-7",
+        ),
+        _check(
+            scenario,
+            "tools",
+            "hidden legacy and skill-loader tools never reach the provider",
+            hidden_violation is None,
+            "no hidden legacy tool and no load_skill"
+            if hidden_violation is None
+            else f"turn {hidden_violation[0]}: {hidden_violation[1]}",
+            turn_range="turns 1-7",
+        ),
+        _check(
+            scenario,
+            "tools",
+            "local analysis graph file and RAG capabilities remain reachable",
+            core_violation is None,
+            "load_file, RAG, run_pandas and run_graph visible on every turn"
+            if core_violation is None
+            else f"turn {core_violation[0]}: {core_violation[1]}",
+            turn_range="turns 1-7",
+        ),
+        _check(
+            scenario,
+            "tools",
+            "EcoTaxa requests expose only the canonical cache discovery route",
+            ecotaxa_expected <= ecotaxa_names
+            and not (ecotaxa_names & hidden_legacy),
+            f"turn_2={sorted(ecotaxa_names)}",
+            turn_range="turn 2",
+        ),
+        _check(
+            scenario,
+            "tools",
+            "explicit EcoPart enrichment exposes enrichment and preflight capabilities",
+            {
+                "enrich_ecotaxa_with_ecopart_remote",
+                "find_ecopart_project_for_ecotaxa",
+                "preview_ecopart_sample",
+                "run_pandas",
+                "run_graph",
+            } <= ecopart_names,
+            f"turn_4={sorted(ecopart_names)}",
+            turn_range="turn 4",
+        ),
+        _check(
+            scenario,
+            "tools",
+            "EcoPart return reaches the agent as visible content plus structured artifact",
+            isinstance(ecopart_message, ToolMessage)
+            and "Données EcoTaxa manquantes" in str(ecopart_message.content)
+            and ecopart_artifact.status == "blocked"
+            and ecopart_artifact.provenance.get("source") == "ecopart"
+            and ecopart_artifact.data_ref is None
+            and not ecopart_artifact.persisted,
+            f"message_type={type(ecopart_message).__name__}; "
+            f"status={ecopart_artifact.status}; "
+            f"provenance={ecopart_artifact.provenance}",
+            turn_range="offline tool call",
+        ),
+        _check(
+            scenario,
+            "tools",
+            "explicit Bio-ORACLE enrichment adds its canonical tool without losing local tools",
+            "enrich_with_bio_oracle" in bio_names
+            and {"run_pandas", "run_graph"} <= bio_names,
+            f"turn_5={sorted(bio_names)}",
+            turn_range="turn 5",
+        ),
+        _check(
+            scenario,
+            "tools",
+            "specialized enrichment does not leak into following unrelated turns",
+            "enrich_with_bio_oracle" not in after_bio_names
+            and "enrich_with_bio_oracle" not in graph_names,
+            f"turn_6={sorted(after_bio_names)}; turn_7={sorted(graph_names)}",
+            turn_range="turns 6-7",
+        ),
+        _check(
+            scenario,
+            "tools",
+            "tool exposure adapts rather than accumulating monotonically",
+            len(distinct_lists) >= 3,
+            f"distinct_provider_tool_lists={len(distinct_lists)}",
+            turn_range="turns 1-7",
+        ),
+        _check(
+            "three-turn-react-tool-exposure",
+            "tools",
+            "every ReAct provider call keeps a valid catalog-backed tool list",
+            react_integrity is None,
+            f"provider_calls={len(react_calls)}"
+            if react_integrity is None
+            else f"call {react_integrity[0]}: {react_integrity[1]}",
+            turn_range="7 provider calls across 3 turns",
+        ),
+        _check(
+            "three-turn-react-tool-exposure",
+            "tools",
+            "hidden legacy tools stay absent after tool results and retries",
+            react_hidden is None,
+            "no hidden legacy tool and no load_skill on all ReAct calls"
+            if react_hidden is None
+            else f"call {react_hidden[0]}: forbidden={react_hidden[1]}",
+            turn_range="7 provider calls across 3 turns",
+        ),
+        _check(
+            "three-turn-react-tool-exposure",
+            "tools",
+            "forced pandas recovery names a currently visible tool",
+            forced_choices_valid
+            and forced_tool_names == {"run_pandas"},
+            f"forced_tools={sorted(forced_tool_names)}; "
+            f"all_visible={forced_choices_valid}",
+            turn_range="turn 1",
+        ),
+        _check(
+            "three-turn-react-tool-exposure",
+            "tools",
+            "graph capability remains visible throughout the graph turn",
+            bool(tuple(capture for capture in react_calls if capture.turn == 2))
+            and all(
+                "run_graph" in capture.tool_names
+                for capture in react_calls
+                if capture.turn == 2
+            ),
+            "run_graph is provider-visible before and after graph execution",
+            turn_range="turn 2",
+        ),
+        _check(
+            "three-turn-react-tool-exposure",
+            "tools",
+            "tool schemas remain stable during the same-turn pandas recovery",
+            len(turn_one_lists) == 1,
+            f"turn_1_provider_calls={sum(capture.turn == 1 for capture in react_calls)}; "
+            f"distinct_tool_lists={len(turn_one_lists)}",
+            turn_range="turn 1",
+        ),
+    ]
+
+
 def campaign_thread_isolation(store: SessionStore) -> list[CampaignCheck]:
     """Interleave two checkpointed threads and reject context leakage."""
 
@@ -2204,6 +2526,7 @@ CAMPAIGNS: dict[str, Callable[[SessionStore], list[CampaignCheck]]] = {
     "frontier": campaign_frontier,
     "graph": campaign_graph,
     "history": campaign_history,
+    "tools": campaign_tools,
     "long_turns": campaign_long_turns,
     "thread_isolation": campaign_thread_isolation,
 }
