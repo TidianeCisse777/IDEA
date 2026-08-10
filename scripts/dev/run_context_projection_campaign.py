@@ -80,12 +80,20 @@ LONG_TURN_GRAPH_FACT = (
     "lignes tracées=50 · colonnes utilisées=station,value · "
     "table de rendu=df_long_turn_added · encodages=x=station;y=value"
 )
+LIFECYCLE_ORPHAN = "df_mt_orphan"
+LIFECYCLE_REVIVABLE = "df_mt_revivable"
+LIFECYCLE_PARENT = "df_mt_parent"
+LIFECYCLE_CHILD = "df_mt_child"
 
 
 def _long_turn_questions(count: int = LONG_TURN_COUNT) -> tuple[str, ...]:
     return tuple(
         PENDING_WINDOW_QUESTION
         if 20 <= turn <= 25
+        else f"Tour 08 — analyse précisément {LIFECYCLE_REVIVABLE}."
+        if turn == 8
+        else "Tour 12 — analyse précisément df_neolabs_sample."
+        if turn == 12
         else f"Tour {turn:02d} — décris les ressources pertinentes pour l’analyse {turn}."
         for turn in range(1, count + 1)
     )
@@ -886,6 +894,67 @@ def campaign_history(store: SessionStore) -> list[CampaignCheck]:
     ]
 
 
+def _seed_long_turn_dataframe_lifecycle(
+    store: SessionStore,
+    thread_id: str,
+) -> None:
+    """Seed source, stale, revived and lineage-protected lifecycle cases."""
+
+    frame = pd.DataFrame({"sample_id": [1], "value": [2.0]})
+    store_dataset(
+        store,
+        thread_id,
+        frame,
+        variable_name=LIFECYCLE_PARENT,
+        meta={
+            "source": "analysis:join",
+            "description": "Transient parent required by a persistent child.",
+            "grain": "one row per sample",
+            "primary_key": "sample_id",
+        },
+        set_active=False,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        frame.copy(),
+        variable_name=LIFECYCLE_CHILD,
+        meta={
+            "source": "analysis:explicit-derived",
+            "description": "Persistent child retaining its declared parent.",
+            "grain": "one row per sample",
+            "primary_key": "sample_id",
+            "parent_variables": [LIFECYCLE_PARENT],
+        },
+        set_active=False,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        frame.copy(),
+        variable_name=LIFECYCLE_REVIVABLE,
+        meta={
+            "source": "analysis:derived",
+            "description": "Transient table explicitly reused before deletion.",
+            "grain": "one row per sample",
+            "primary_key": "sample_id",
+        },
+        set_active=False,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        frame.copy(),
+        variable_name=LIFECYCLE_ORPHAN,
+        meta={
+            "source": "analysis:derived",
+            "description": "Unreferenced transient table eligible for cleanup.",
+            "grain": "one row per sample",
+            "primary_key": "sample_id",
+        },
+    )
+
+
 def _mutate_long_turn_context(thread_id: str) -> TurnMutation:
     """Return the deterministic state transitions for the long-turn campaign."""
 
@@ -1331,9 +1400,171 @@ def _long_turn_checks(
     ]
 
 
+def _dataframe_lifecycle_checks(
+    snapshots: Sequence[TurnSnapshot],
+    store: SessionStore,
+    thread_id: str,
+) -> list[CampaignCheck]:
+    """Validate real DataFrame aging, revival, ranking and lineage over 50 turns."""
+
+    scenario = "fifty-turn-dataframe-lifecycle"
+    by_turn = {snapshot.turn: snapshot for snapshot in snapshots}
+
+    def context(turn: int) -> str:
+        snapshot = by_turn.get(turn)
+        return snapshot.capture.dataset_context if snapshot is not None else ""
+
+    def first_presence_violation(
+        variable: str,
+        expectations: Sequence[tuple[range, bool]],
+    ) -> tuple[int, str] | None:
+        for turns, expected in expectations:
+            for turn in turns:
+                snapshot = by_turn.get(turn)
+                if snapshot is None:
+                    return turn, "missing snapshot"
+                present = variable in snapshot.capture.dataset_context
+                if present != expected:
+                    return (
+                        turn,
+                        f"variable={variable}; present={present}; expected={expected}",
+                    )
+        return None
+
+    def result(
+        name: str,
+        violation: tuple[int, str] | None,
+        success: str,
+    ) -> CampaignCheck:
+        return _check(
+            scenario,
+            "long_turns",
+            name,
+            violation is None,
+            success if violation is None else violation[1],
+            turn_range=("turns 1-50" if violation is None else f"turn {violation[0]}"),
+        )
+
+    orphan_violation = first_presence_violation(
+        LIFECYCLE_ORPHAN,
+        ((range(1, 4), True), (range(4, LONG_TURN_COUNT + 1), False)),
+    )
+    if (
+        orphan_violation is None
+        and store.get(f"{thread_id}:dataset:{LIFECYCLE_ORPHAN}") is not None
+    ):
+        orphan_violation = (
+            11,
+            f"{LIFECYCLE_ORPHAN} hidden but not deleted after ten unused turns",
+        )
+
+    revival_violation = first_presence_violation(
+        LIFECYCLE_REVIVABLE,
+        (
+            (range(1, 4), True),
+            (range(4, 8), False),
+            (range(8, 11), True),
+            (range(11, LONG_TURN_COUNT + 1), False),
+        ),
+    )
+    if revival_violation is None:
+        turn_8_details = _detail_names(context(8))
+        if not turn_8_details or turn_8_details[0] != LIFECYCLE_REVIVABLE:
+            revival_violation = (
+                8,
+                f"first_detail={turn_8_details[0] if turn_8_details else 'none'}",
+            )
+
+    lineage_violation = first_presence_violation(
+        LIFECYCLE_PARENT,
+        ((range(1, LONG_TURN_COUNT + 1), True),),
+    )
+    if lineage_violation is None:
+        parent_entry = store.get(f"{thread_id}:dataset:{LIFECYCLE_PARENT}")
+        child_entry = store.get(f"{thread_id}:dataset:{LIFECYCLE_CHILD}")
+        if parent_entry is None or child_entry is None:
+            lineage_violation = (
+                LONG_TURN_COUNT,
+                f"parent_persisted={parent_entry is not None}; "
+                f"child_persisted={child_entry is not None}",
+            )
+
+    source_violation: tuple[int, str] | None = None
+    source_names = (
+        "df_neolabs_sample",
+        "df_neolabs_abundance",
+        "df_ecotaxa_cache_query",
+    )
+    for turn in range(1, LONG_TURN_COUNT + 1):
+        missing = [name for name in source_names if name not in context(turn)]
+        if missing:
+            source_violation = (turn, f"missing source DataFrames={missing}")
+            break
+
+    ranking_violation: tuple[int, str] | None = None
+    turn_12_details = _detail_names(context(12))
+    if not turn_12_details or turn_12_details[0] != "df_neolabs_sample":
+        ranking_violation = (
+            12,
+            f"first_detail={turn_12_details[0] if turn_12_details else 'none'}",
+        )
+
+    active_violation: tuple[int, str] | None = None
+    turn_3 = by_turn.get(3)
+    turn_4 = by_turn.get(4)
+    active_at_3 = turn_3.capture.audit.get("turn_active_variable") if turn_3 else None
+    active_at_4 = turn_4.capture.audit.get("turn_active_variable") if turn_4 else None
+    if active_at_3 != LIFECYCLE_ORPHAN:
+        active_violation = (3, f"active={active_at_3!r}; expected={LIFECYCLE_ORPHAN}")
+    elif active_at_4 in {
+        LIFECYCLE_ORPHAN,
+        LIFECYCLE_REVIVABLE,
+        "df_uvp_net_candidates",
+        "df_station_summary",
+        "df_old_plot",
+    }:
+        active_violation = (4, f"active remained stale transient: {active_at_4!r}")
+    elif active_at_4 and active_at_4 not in _index_names(context(4)):
+        active_violation = (4, f"active={active_at_4!r} is absent from live index")
+
+    return [
+        result(
+            "unused transient is hidden after three turns and later deleted",
+            orphan_violation,
+            f"{LIFECYCLE_ORPHAN} visible on 1-3, hidden from 4, deleted by 11",
+        ),
+        result(
+            "explicit reference revives and prioritizes a hidden dataframe",
+            revival_violation,
+            f"{LIFECYCLE_REVIVABLE} hidden on 4-7 and detailed first on turn 8",
+        ),
+        result(
+            "visible child preserves its transient lineage parent",
+            lineage_violation,
+            f"{LIFECYCLE_PARENT} remains visible and persisted through turn 50",
+        ),
+        result(
+            "source dataframes remain available throughout cleanup",
+            source_violation,
+            "NeoLabs sample/abundance and EcoTaxa source remain indexed on all turns",
+        ),
+        result(
+            "explicit source reference controls detail ranking without filtering",
+            ranking_violation,
+            "df_neolabs_sample is detailed first on turn 12",
+        ),
+        result(
+            "active anchor leaves a dataframe when it becomes stale",
+            active_violation,
+            f"active changes from {active_at_3!r} to live {active_at_4!r}",
+        ),
+    ]
+
+
 def campaign_long_turns(store: SessionStore) -> list[CampaignCheck]:
     thread_id = f"{BASE_THREAD}-long-turns"
     seed_six_dataframes(store, thread_id)
+    _seed_long_turn_dataframe_lifecycle(store, thread_id)
     questions = _long_turn_questions()
     snapshots = run_checkpointed_projection(
         store,
@@ -1344,6 +1575,7 @@ def campaign_long_turns(store: SessionStore) -> list[CampaignCheck]:
     )
     return [
         *_long_turn_checks(snapshots, questions, thread_id),
+        *_dataframe_lifecycle_checks(snapshots, store, thread_id),
         *_history_pressure_checks(store),
     ]
 
