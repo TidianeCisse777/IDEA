@@ -143,6 +143,7 @@ class ResourceRecord(_StateModel):
     key_candidates: tuple[str, ...] = ()
     join_candidates: tuple[ResourceJoinCandidate, ...] = ()
     freshness: str | None = None
+    age_turns: int | None = None
     scope: dict[str, Any] = Field(default_factory=dict)
     capabilities: tuple[ExplorationCapability, ...] = ()
     provenance: dict[str, Any] = Field(default_factory=dict)
@@ -1189,6 +1190,14 @@ def _bounded_inline(value: object, limit: int) -> str:
     return text[: max(1, limit - 1)].rstrip() + "…"
 
 
+def _usage_label(resource: ResourceRecord) -> str:
+    if resource.age_turns is None:
+        return "unknown"
+    if resource.age_turns == 0:
+        return "current"
+    return f"{resource.age_turns}_turns_ago"
+
+
 def _render_file_resource_block(
     resource: ResourceRecord,
     *,
@@ -1209,6 +1218,7 @@ def _render_file_resource_block(
         f"- {resource.name}",
         "  file_source="
         f"{_bounded_inline(resource.source, source_budget)}; status={status}; "
+        f"last_used={_usage_label(resource)}; "
         f"rows={resource.rows if resource.rows is not None else 'unknown'}; "
         f"grain={_bounded_inline(resource.grain, grain_budget)}; "
         f"description={_bounded_inline(resource.description, description_budget)}; "
@@ -1241,7 +1251,8 @@ def _render_source_anchor_block(
     return "\n".join([
         f"- {resource.name}",
         f"  source_anchor={_bounded_inline(resource.source, 90)}; "
-        f"status={status}; rows={resource.rows if resource.rows is not None else 'unknown'}; "
+        f"status={status}; last_used={_usage_label(resource)}; "
+        f"rows={resource.rows if resource.rows is not None else 'unknown'}; "
         f"grain={_bounded_inline(resource.grain, 100)}",
         f"  description={_bounded_inline(resource.description, description_budget)}",
         f"  schema_by_role={_bounded_inline(schema, schema_budget)}; "
@@ -1330,7 +1341,9 @@ def render_dataframe_context(
         if len(token) >= 3
     }
 
-    def detail_priority(resource: ResourceRecord) -> tuple[int, int, int, str, str]:
+    def detail_priority(
+        resource: ResourceRecord,
+    ) -> tuple[int, int, int, int, str, str]:
         searchable = " ".join([
             resource.name,
             resource.source,
@@ -1343,12 +1356,59 @@ def render_dataframe_context(
             0 if resource.name.casefold() in objective else 1,
             -overlap,
             0 if resource.name == active_variable else 1,
+            resource.age_turns if resource.age_turns is not None else 0,
             resource.name.casefold(),
             resource.source.casefold(),
         )
 
+    file_tables = sorted(
+        (resource for resource in tables if _is_file_backed_resource(resource)),
+        key=detail_priority,
+    )
+    non_file_source_anchors = sorted(
+        (
+            resource
+            for resource in tables
+            if _is_source_anchor_resource(resource)
+            and not _is_file_backed_resource(resource)
+        ),
+        key=detail_priority,
+    )
+    anchors_by_name = {
+        resource.name: resource for resource in non_file_source_anchors
+    }
+
+    def declared_parent_names(resource: ResourceRecord) -> tuple[str, ...]:
+        names: list[str] = []
+        for relation in resource.relations:
+            _separator, _found, target = relation.partition(":")
+            if target.startswith("df_") and target in anchors_by_name:
+                names.append(target)
+        return tuple(dict.fromkeys(names))
+
+    selected_anchor_names: list[str] = []
+
+    def add_anchor_with_parents(name: str) -> None:
+        if name in selected_anchor_names or len(selected_anchor_names) >= 8:
+            return
+        selected_anchor_names.append(name)
+        for parent in declared_parent_names(anchors_by_name[name]):
+            add_anchor_with_parents(parent)
+
+    for resource in non_file_source_anchors:
+        add_anchor_with_parents(resource.name)
+        if len(selected_anchor_names) >= 8:
+            break
+    detailed_non_file_anchors = [
+        anchors_by_name[name] for name in selected_anchor_names
+    ]
+    archived_source_anchors = [
+        resource
+        for resource in non_file_source_anchors
+        if resource.name not in selected_anchor_names
+    ]
     source_anchor_tables = sorted(
-        (resource for resource in tables if _is_source_anchor_resource(resource)),
+        [*file_tables, *detailed_non_file_anchors],
         key=detail_priority,
     )
     request_relevant_tables = sorted(
@@ -1358,9 +1418,11 @@ def render_dataframe_context(
     header_lines = [
         "\n\n## AVAILABLE DATAFRAMES (current session)",
         "The complete index keeps every live DataFrame name visible. Every "
-        "file, source export, cache result and enrichment DataFrame is always "
-        "expanded as a decision anchor; the bounded request-relevant expansion "
-        "applies only to intermediate analysis tables. "
+        "file DataFrame is always expanded. Up to 8 recent, referenced or "
+        "request-relevant source exports, cache results and enrichments are "
+        "expanded with their lineage; older source anchors remain index-only "
+        "and are never automatically deleted. Up to 8 request-relevant "
+        "intermediate analysis tables are expanded. "
         "Any indexed DataFrame remains selectable by exact name.",
         "DATAFRAME INDEX (all live resources):",
     ]
@@ -1372,7 +1434,7 @@ def render_dataframe_context(
             "* " + " | ".join(resource.name for resource in alphabetical_tables),
         ]
     rendered_blocks.append(
-        "DATAFRAME DECISION BOARD (all source anchors, then request-relevant intermediates):"
+        "DATAFRAME DECISION BOARD (files + selected source anchors + relevant intermediates):"
     )
 
     entry_blocks: list[str] = []
@@ -1407,6 +1469,7 @@ def render_dataframe_context(
             "\n".join([
                 f"- {resource.name}",
                 f"  status={status}; kind={resource.kind}; source={resource.source}; "
+                f"last_used={_usage_label(resource)}; "
                 f"rows={resource.rows if resource.rows is not None else 'unknown'}",
                 f"  description={description}",
                 f"  grain={resource.grain or 'not established'}",
@@ -1426,6 +1489,11 @@ def render_dataframe_context(
         rendered_blocks.append(block)
 
     expanded_count = sum(block in rendered_blocks for block in entry_blocks)
+    if archived_source_anchors:
+        rendered_blocks.append(
+            f"* {len(archived_source_anchors)} durable source anchors are index-only "
+            "in this turn; cite an exact name to reactivate its detailed card."
+        )
     if len(tables) > expanded_count:
         rendered_blocks.append(
             f"* {len(tables) - expanded_count} indexed DataFrames are not expanded; "

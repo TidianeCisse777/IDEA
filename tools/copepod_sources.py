@@ -2138,6 +2138,25 @@ def make_source_tools(thread_id: str) -> list:
         )
         return selection_key, variable_name, label
 
+    def _persistent_cache_result_identity(
+        *,
+        sql: str,
+        requested_name: str | None,
+        description: str | None,
+        dataframe_refs: tuple[str, ...],
+    ) -> tuple[str, str]:
+        """Return a stable name for one non-exportable SQL result shape."""
+
+        compact_sql = " ".join(str(sql).split())
+        label = str(requested_name or description or "query").strip() or "query"
+        slug = _slug_part(label)[:48] or "query"
+        digest_source = compact_sql + "\n" + ",".join(dataframe_refs)
+        short_id = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:8]
+        variable_name = dataset_variable_name(
+            "ecotaxa", "cache", "result", slug, short_id
+        )
+        return variable_name, label
+
     def _store_sample_selection(
         *,
         name: str,
@@ -5555,14 +5574,14 @@ def make_source_tools(thread_id: str) -> list:
 
         Args:
             sql: Requête SQLite read-only à exécuter.
-            selection_name: Nom descriptif facultatif pour une requête qui
-                retourne `sample_id` (ex. `baffin_2024`). Chaque sélection est
-                persistée sous un DataFrame unique et reste disponible dans le
-                sandbox pendant toute la conversation. Si absent, `samples`
-                est utilisé avec un identifiant stable dérivé du contenu. Ce
-                paramètre nomme le résultat produit : il ne charge ni ne filtre
-                une sélection existante et ne doit jamais être utilisé comme
-                table dans le SQL.
+            selection_name: Nom descriptif facultatif du résultat
+                (ex. `baffin_2024` ou `station_counts`). Une requête retournant
+                `sample_id` devient une sélection exportable unique. Tout autre
+                SELECT devient aussi un DataFrame persistant unique, mais pas
+                une sélection exportable. Si absent, un nom stable est dérivé
+                du SQL et de la description. Ce paramètre nomme le résultat
+                produit : il ne charge ni ne filtre une sélection existante et
+                ne doit jamais être utilisé comme table dans le SQL.
             description: Phrase courte destinée à l'inventaire des DataFrames.
                 Décrire la source et les filtres SQL, le grain des lignes, le
                 rôle analytique du résultat et ses familles de colonnes utiles.
@@ -6080,12 +6099,46 @@ def make_source_tools(thread_id: str) -> list:
                 f"`{selection_key}` ; `latest` pointe vers cette sélection."
             )
         else:
+            persisted_variable, label = _persistent_cache_result_identity(
+                sql=sql,
+                requested_name=selection_name,
+                description=provided_description,
+                dataframe_refs=requested_dataframe_refs,
+            )
+            compact_sql = " ".join(str(sql).split())
+            dataset_description = provided_description or (
+                f"Résultat SQL EcoTaxa « {label} » · {len(dataframe)} lignes × "
+                f"{len(dataframe.columns)} colonnes · SQL: {compact_sql[:220]}"
+            )
+            store_dataset(
+                _store,
+                thread_id,
+                dataframe,
+                variable_name=persisted_variable,
+                meta={
+                    **base_meta,
+                    "source": "ecotaxa_cache_result",
+                    "result_name": label,
+                    "filters": {"sql": sql},
+                    "description": dataset_description,
+                },
+            )
             store_dataset(
                 _store,
                 thread_id,
                 dataframe,
                 variable_name=latest_variable,
-                meta=base_meta,
+                meta={
+                    **base_meta,
+                    "alias_of": persisted_variable,
+                    "description": dataset_description,
+                },
+                set_active=False,
+            )
+            selection_note = (
+                "\n\nLe résultat SQL complet est conservé dans "
+                f"`{persisted_variable}` ; `df_ecotaxa_cache_query` pointe "
+                "vers la dernière requête."
             )
 
         header = "| " + " | ".join(columns) + " |"

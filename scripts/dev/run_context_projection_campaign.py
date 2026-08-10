@@ -790,6 +790,97 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
             f"characters={len(anchor_capture.dataset_context)}",
         ),
     ])
+
+    history_thread = f"{BASE_THREAD}-df-anchor-history"
+    history_anchor_names = tuple(
+        f"df_ecotaxa_cache_result_history_{index:02d}"
+        for index in range(12)
+    )
+    for index, name in enumerate(history_anchor_names):
+        store_dataset(
+            store,
+            history_thread,
+            anchor_frame.copy(),
+            variable_name=name,
+            meta={
+                "source": "ecotaxa_cache_result",
+                "description": f"Durable EcoTaxa aggregate {index:02d}.",
+                "grain": "one row per station",
+            },
+            set_active=False,
+        )
+    aged_capture = None
+    for turn in range(1, 8):
+        aged_capture = _capture(
+            store,
+            history_thread,
+            "Décris les ressources générales de la session.",
+            f"df-anchor-history-{turn}",
+        )
+    assert aged_capture is not None
+    aged_details = tuple(
+        name
+        for name in _detail_names(aged_capture.dataset_context)
+        if name in history_anchor_names
+    )
+    archived_target = history_anchor_names[-1]
+    revived_capture = _capture(
+        store,
+        history_thread,
+        f"Utilise précisément {archived_target} pour la prochaine analyse.",
+        "df-anchor-history-revive",
+    )
+    revived_details = tuple(
+        name
+        for name in _detail_names(revived_capture.dataset_context)
+        if name in history_anchor_names
+    )
+    checks.extend([
+        _check(
+            "durable-anchor-history",
+            "dataframes",
+            "all durable source anchors remain indexed",
+            set(history_anchor_names).issubset(
+                set(_index_names(aged_capture.dataset_context))
+            ),
+            f"indexed={len(_index_names(aged_capture.dataset_context))}",
+        ),
+        _check(
+            "durable-anchor-history",
+            "dataframes",
+            "durable source detail cards are capped independently",
+            len(aged_details) == 8
+            and "durable source anchors are index-only"
+            in aged_capture.dataset_context,
+            f"expanded={aged_details}",
+        ),
+        _check(
+            "durable-anchor-history",
+            "dataframes",
+            "archived source anchors are retained in storage",
+            all(
+                store.get(f"{history_thread}:dataset:{name}") is not None
+                for name in history_anchor_names
+            ),
+            "12/12 durable anchors retained",
+        ),
+        _check(
+            "durable-anchor-history",
+            "dataframes",
+            "exact reference revives an archived source card",
+            archived_target in revived_details
+            and revived_details[0] == archived_target
+            and "last_used=current" in revived_capture.dataset_context,
+            f"revived_details={revived_details}",
+        ),
+        _check(
+            "durable-anchor-history",
+            "dataframes",
+            "history-managed catalog remains within budget",
+            len(revived_capture.dataset_context) <= 12_000,
+            f"characters={len(revived_capture.dataset_context)}",
+        ),
+    ])
     return checks
 
 
@@ -1653,24 +1744,24 @@ def _dataframe_lifecycle_checks(
 
     orphan_violation = first_presence_violation(
         LIFECYCLE_ORPHAN,
-        ((range(1, 4), True), (range(4, LONG_TURN_COUNT + 1), False)),
+        ((range(1, 7), True), (range(7, LONG_TURN_COUNT + 1), False)),
     )
     if (
         orphan_violation is None
         and store.get(f"{thread_id}:dataset:{LIFECYCLE_ORPHAN}") is not None
     ):
         orphan_violation = (
-            11,
-            f"{LIFECYCLE_ORPHAN} hidden but not deleted after ten unused turns",
+            21,
+            f"{LIFECYCLE_ORPHAN} hidden but not deleted after twenty unused turns",
         )
 
     revival_violation = first_presence_violation(
         LIFECYCLE_REVIVABLE,
         (
-            (range(1, 4), True),
-            (range(4, 8), False),
-            (range(8, 11), True),
-            (range(11, LONG_TURN_COUNT + 1), False),
+            (range(1, 7), True),
+            (range(7, 8), False),
+            (range(8, 14), True),
+            (range(14, LONG_TURN_COUNT + 1), False),
         ),
     )
     if revival_violation is None:
@@ -1725,33 +1816,33 @@ def _dataframe_lifecycle_checks(
         )
 
     active_violation: tuple[int, str] | None = None
-    turn_3 = by_turn.get(3)
-    turn_4 = by_turn.get(4)
-    active_at_3 = turn_3.capture.audit.get("turn_active_variable") if turn_3 else None
-    active_at_4 = turn_4.capture.audit.get("turn_active_variable") if turn_4 else None
-    if active_at_3 != LIFECYCLE_ORPHAN:
-        active_violation = (3, f"active={active_at_3!r}; expected={LIFECYCLE_ORPHAN}")
-    elif active_at_4 in {
+    turn_6 = by_turn.get(6)
+    turn_7 = by_turn.get(7)
+    active_at_6 = turn_6.capture.audit.get("turn_active_variable") if turn_6 else None
+    active_at_7 = turn_7.capture.audit.get("turn_active_variable") if turn_7 else None
+    if active_at_6 != LIFECYCLE_ORPHAN:
+        active_violation = (6, f"active={active_at_6!r}; expected={LIFECYCLE_ORPHAN}")
+    elif active_at_7 in {
         LIFECYCLE_ORPHAN,
         LIFECYCLE_REVIVABLE,
         "df_uvp_net_candidates",
         "df_station_summary",
         "df_old_plot",
     }:
-        active_violation = (4, f"active remained stale transient: {active_at_4!r}")
-    elif active_at_4 and active_at_4 not in _index_names(context(4)):
-        active_violation = (4, f"active={active_at_4!r} is absent from live index")
+        active_violation = (7, f"active remained stale transient: {active_at_7!r}")
+    elif active_at_7 and active_at_7 not in _index_names(context(7)):
+        active_violation = (7, f"active={active_at_7!r} is absent from live index")
 
     return [
         result(
-            "unused transient is hidden after three turns and later deleted",
+            "unused transient is hidden after six turns and later deleted",
             orphan_violation,
-            f"{LIFECYCLE_ORPHAN} visible on 1-3, hidden from 4, deleted by 11",
+            f"{LIFECYCLE_ORPHAN} visible on 1-6, hidden from 7, deleted by 21",
         ),
         result(
             "explicit reference revives and prioritizes a hidden dataframe",
             revival_violation,
-            f"{LIFECYCLE_REVIVABLE} hidden on 4-7 and leads intermediate details on turn 8",
+            f"{LIFECYCLE_REVIVABLE} hidden on 7 and leads intermediate details on turn 8",
         ),
         result(
             "visible child preserves its transient lineage parent",
@@ -1771,7 +1862,7 @@ def _dataframe_lifecycle_checks(
         result(
             "active anchor leaves a dataframe when it becomes stale",
             active_violation,
-            f"active changes from {active_at_3!r} to live {active_at_4!r}",
+            f"active changes from {active_at_6!r} to live {active_at_7!r}",
         ),
     ]
 

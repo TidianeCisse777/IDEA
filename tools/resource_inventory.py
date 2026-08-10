@@ -487,8 +487,11 @@ def build_resource_inventory(
     excluded_variables: Iterable[str] = (),
 ) -> tuple[ResourceRecord, ...]:
     """Return a compact, checkpoint-safe inventory for one conversation."""
+    from tools.dataframe_cleanup import dataframe_usage_ages
+
     records: list[ResourceRecord] = []
     excluded = {str(item) for item in excluded_variables}
+    usage_ages = dataframe_usage_ages(store, thread_id)
     frames: dict[str, pd.DataFrame] = {}
     keys = [
         key for key in store.keys()
@@ -500,6 +503,10 @@ def build_resource_inventory(
             continue
         record = _record_for_entry(key, entry)
         if record is not None and record.name not in excluded:
+            if record.name in usage_ages:
+                record = record.model_copy(
+                    update={"age_turns": usage_ages[record.name]}
+                )
             records.append(record)
             dataframe = entry.get("df")
             if isinstance(dataframe, pd.DataFrame):

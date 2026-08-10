@@ -141,7 +141,9 @@ flowchart LR
   - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : kernel système fixe et cacheable, allowlist dynamique des tools, troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 100000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`. Le budget des schémas est recalculé après filtrage.
   - Le trim utilise `request.override(messages=...)` : il borne le contexte du modèle sans supprimer l'historique complet conservé dans le checkpoint LangGraph.
   - Les mêmes wrappers composent un contexte transitoire non checkpointé : mémoire pertinente, `CURRENT TASK`, profil métier, `AVAILABLE DATAFRAMES`, faits du dernier artefact, `EXPLORATION FRONTIER`, puis récupération éventuelle. Ce bloc préfixe uniquement la copie provider du message humain courant ; le contenu utilisateur exact reste son dernier bloc et les appels/résultats de tools du tour conservent leur ordre.
-  - `AVAILABLE DATAFRAMES` projette l'inventaire checkpointé comme tableau de décision : l'index complet ne répète que les noms exacts; les fiches donnent statut actif comme simple métadonnée, source, description, grain, schéma groupé par rôle et dtype, clés, portée et lignée. Les fichiers chargés, exports de source, résultats de cache et enrichissements sont toujours développés comme ancres durables; seul le nombre de fiches détaillées des tables de calcul intermédiaires est borné. Le middleware ne présélectionne aucune table. La première étape du `### Plan` nomme le ou les candidats `df_*` et leurs critères de qualification; un `run_pandas` éphémère vérifie ensuite grain, colonnes, clés, portée et nullité sur les données réelles. Le modèle doit attendre ce résultat avant d'accepter le DataFrame puis de calculer ou tracer. Une référence `df_*` exacte dans la demande est promue sans masquer les alternatives. Les anciens dérivés masqués n'entrent pas dans l'inventaire.
+  - `AVAILABLE DATAFRAMES` projette l'inventaire checkpointé comme tableau de décision : l'index complet ne répète que les noms exacts; les fiches donnent statut actif comme simple métadonnée, dernier usage, source, description, grain, schéma groupé par rôle et dtype, clés, portée et lignée. Les fichiers chargés restent toujours détaillés. Les exports, résultats de cache et enrichissements sont des ancres durables jamais supprimées automatiquement : au plus huit fiches sont développées selon la demande, l'usage, le statut actif et la lignée; les autres restent indexées et une référence exacte les réactive. Les tables de calcul intermédiaires disposent de huit emplacements distincts. Le middleware ne présélectionne aucune table. La première étape du `### Plan` nomme le ou les candidats `df_*` et leurs critères de qualification; un `run_pandas` éphémère vérifie ensuite grain, colonnes, clés, portée et nullité sur les données réelles. Le modèle doit attendre ce résultat avant d'accepter le DataFrame puis de calculer ou tracer.
+  - Cycle de vie : un dérivé pandas automatique inutilisé est masqué après six tours et supprimé après vingt, sauf s'il reste parent d'une table visible. Les fichiers, exports, résultats de cache et enrichissements ne sont pas supprimés par ce nettoyage; ils passent seulement entre fiche détaillée et entrée d'index. Toute mention exacte dans la demande ou dans un appel de tool actualise leur dernier usage.
+  - Chaque résultat de `query_ecotaxa_cache` possède une identité durable. Un résultat contenant `sample_id` reste une `df_ecotaxa_selection_*` exportable; tout autre SELECT, y compris une agrégation, est conservé sous `df_ecotaxa_cache_result_<nom>_<hash>`. L'alias `df_ecotaxa_cache_query` pointe toujours vers la dernière requête, mais les résultats antérieurs restent accessibles par leur nom stable et conservent description, SQL, portée et lignage.
   - L'audit `/debug/context-audit` décrit la requête préparée, avec les tokens du kernel, du contexte transitoire et des tools, la position d'injection, les champs `TurnContext` (variable active, sources préférées, nb de dérivés), les groupes/noms de tools exposés, les schémas économisés et un indicateur explicite lorsque le dernier tour complet dépasse à lui seul la limite.
   - `wrap_tool_call` / `awrap_tool_call` appliquent aussi la garde graphique. Elle n'appelle le classifieur structuré qu'à la première tentative graphique du tour, partage la décision par un verrou single-flight sync/async, puis autorise uniquement une intention `visual`. La progression planner → writer → rendu est reconstruite depuis les ToolMessages `success` postérieurs au dernier message humain; les anciennes activations et les lots parallèles ne donnent aucune autorisation.
 - **`ExplorationStateMiddleware`** (`agents/exploration_middleware.py`) : maintient sans appel LLM un `exploration_run_v1` dans l'état LangGraph. Un nouveau tour initialise l'objectif et les livrables. Le bloc `### Plan` que le modèle produit déjà avec son premier appel est capturé comme frontière prospective (`planned`), sans tool de planification ni appel modèle supplémentaire; les appels réels sont ensuite rapprochés de la première étape compatible, tandis qu'une action imprévue reste une étape `observed`. Une nouvelle version du plan conserve les étapes terminées et marque seulement le suffixe non exécuté `superseded`. Chaque `ToolResult` est normalisé en preuve avec statut, `data_ref`, artefacts, provenance, métriques et validations.
@@ -149,6 +151,34 @@ flowchart LR
 - **Récupération exploratoire** : une erreur de table ou colonne devient une dépendance de données persistante. Le middleware recherche les tables candidates, conserve les capacités de récupération déjà autorisées, puis exige la reprise du calcul. Une étape planifiée échouée peut être reprise par un appel compatible et n'est complétée qu'après une nouvelle preuve réussie. Deux tentatives de réponse prématurée au maximum sont automatiquement renvoyées vers le modèle; les limites des tools, les confirmations lourdes et `SourceDecision` restent applicables. `_ContextMiddleware` injecte une projection compacte de l'état au modèle pour qu'il puisse adapter la suite de l'exploration.
 - **Checkpointer** : `AsyncSqliteSaver` sur `CHECKPOINTS_DB` (`data/checkpoints.sqlite`), clé par `thread_id`. Il conserve l'historique des messages et l'état d'exploration (`objective`, `deliverables`, `resources_available`, `steps`, `dependencies`, `evidence`, `completion`). Fallback `MemorySaver` selon le contexte.
 - **Store** : mémoire long terme (`InMemoryStore` ou store persistant).
+
+### Flux de sélection du DataFrame et d'exécution
+
+Pour une demande non triviale de calcul, d'analyse ou de graphique, le planner
+qualifie le DataFrame de départ avant l'opération finale. Le contrôle
+`run_pandas` est éphémère : il retourne un petit dictionnaire de preuve, sans
+`print`, sans `persist_as` et sans créer un DataFrame supplémentaire.
+
+```mermaid
+flowchart TD
+    A["Demande utilisateur"] --> B["Contexte injecté<br/>CURRENT TASK + DataFrame Decision Board + Frontier"]
+    B --> C["### Plan<br/>Définition du besoin et des critères du DataFrame"]
+    C --> D["Choix d'un candidat df_*"]
+    D --> E["run_pandas de qualification<br/>contrôle éphémère, sans calcul final"]
+    E --> F{"qualified ?"}
+    F -- "false" --> G["Essayer un autre df_*<br/>ou récupérer la donnée manquante"]
+    G --> E
+    F -- "true" --> H{"Méthode RAG nécessaire ?"}
+    H -- "oui" --> I["Appeler le RAG et attendre sa réponse"]
+    H -- "non" --> J["Exécution"]
+    I --> J
+    J --> K{"Livrable"}
+    K -- "Calcul/tableau" --> L["run_pandas sur le df_* validé"]
+    K -- "Graphique" --> M["Préparation éventuelle avec run_pandas"]
+    M --> N["run_graph sur le df_* validé ou préparé"]
+    L --> O["Réponse fondée sur le résultat"]
+    N --> O
+```
 
 ### Boucle ReAct
 Raisonnement → appel de tool → observation → raisonnement, jusqu'à la réponse

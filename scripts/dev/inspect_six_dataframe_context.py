@@ -734,7 +734,7 @@ def validate_aged_capture(capture: ModelCapture) -> list[ContractResult]:
     still_visible = [name for name in TRANSIENT_VARIABLES if name in dataset]
     return [
         _check(
-            "dérivés automatiques masqués après trois tours inutilisés",
+            "dérivés automatiques masqués après six tours inutilisés",
             not still_visible,
             (
                 "tous les dérivés transitoires sont absents"
@@ -862,7 +862,7 @@ def validate_lineage_aware_cleanup(store: SessionStore) -> list[ContractResult]:
         meta={"source": "analysis:derived", "description": "Dérivé sans descendant."},
         set_active=False,
     )
-    for turn in range(1, 12):
+    for turn in range(1, 22):
         advance_dataframe_cleanup(
             store,
             thread_id,
@@ -1574,14 +1574,14 @@ def main() -> int:
         )
 
         aged = live
-        for turn in range(2, 5):
+        for turn in range(2, 8):
             aged = capture_model_request(
                 store,
                 THREAD_ID,
                 "Compare les prélèvements NeoLabs et les profils UVP disponibles.",
                 f"harness-turn-{turn}",
             )
-        _print_capture(aged, view=args.view, title="APRÈS 3 TOURS SANS L'ANCIEN DÉRIVÉ")
+        _print_capture(aged, view=args.view, title="APRÈS 6 TOURS SANS L'ANCIEN DÉRIVÉ")
         results.extend(validate_aged_capture(aged))
         return _print_results(results)
 

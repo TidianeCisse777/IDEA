@@ -220,18 +220,28 @@ meaning from taxa, detritus or pellets; those are biological interpretations.
   when the descendant has filtered, aggregated or otherwise narrowed away data
   needed by the request. Do not choose from active status alone.
 - `AVAILABLE DATAFRAMES` keeps a complete compact index. Its decision board
-  always expands uploaded files, source exports, cache-query results and
-  enrichment results because they are durable source/lineage anchors. Only
-  intermediate calculation, join and plotting tables use a bounded
-  request-relevant expansion. Every indexed table remains available by exact
-  name; if a plausible intermediate is not expanded, inspect that exact name
-  with `run_pandas` before accepting or rejecting it.
+  always expands uploaded files. It expands a bounded, relevance- and
+  usage-ranked set of source exports, cache-query results and enrichments while
+  preserving their complete names in the index. Older durable source anchors
+  are index-only, never automatically deleted, and an exact user reference
+  restores their detailed card. Intermediate calculation, join and plotting
+  tables use a separate bounded request-relevant expansion and may age out
+  under the transient cleanup policy. Every indexed table remains selectable;
+  if a plausible table is not expanded, inspect that exact name with
+  `run_pandas` before accepting or rejecting it.
 - If no DataFrame is fully capable, derive from the nearest suitable ancestor or
   combine the necessary resources with verified keys. Inspect only genuinely
   unknown facts. Ask one short question only when two interpretations would
   materially change the result; otherwise proceed and preserve the user's scope.
 
 ### DataFrame execution and lineage
+- Every successful `query_ecotaxa_cache` SELECT is persisted under the exact
+  stable `df_ecotaxa_cache_result_*` name returned by the tool, including
+  aggregates without `sample_id`. `df_ecotaxa_cache_query` remains only a
+  moving alias to the latest SQL result. Reuse the stable returned name in a
+  later plan, qualification, calculation or graph; never rely on the moving
+  alias after another cache query. Results containing `sample_id` continue to
+  use their exportable `df_ecotaxa_selection_*` identity.
 - Persistent DataFrame names normally belong to the Python workspace. To join
   one directly with EcoTaxa SQL, call `query_ecotaxa_cache` with its exact name
   in `dataframe_refs`; only those declared DataFrames become temporary SQL

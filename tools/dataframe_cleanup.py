@@ -15,6 +15,8 @@ _TRANSIENT_SOURCES = {
     "analysis:graph-plot",
     "analysis:plot_df",
 }
+TRANSIENT_HIDE_AFTER_TURNS = 6
+TRANSIENT_DELETE_AFTER_TURNS = 20
 
 
 def _key(thread_id: str) -> str:
@@ -125,19 +127,20 @@ def advance_dataframe_cleanup(
     marker: str,
     referenced_text: str = "",
 ) -> set[str]:
-    """Hide automatic derivatives after 3 unused turns and delete after 10."""
+    """Hide automatic derivatives after 6 unused turns and delete after 20."""
     state = _load(store, thread_id)
     if marker != state["marker"]:
         state["turn"] += 1
         state["marker"] = marker
     turn = state["turn"]
     datasets = _datasets(store, thread_id)
+    known = {variable for _key_name, variable, _meta in datasets}
     transient = {
         variable
         for _key_name, variable, meta in datasets
         if str(meta.get("source") or "") in _TRANSIENT_SOURCES
     }
-    for variable in transient:
+    for variable in known:
         state["last_used"].setdefault(variable, turn)
         if variable in referenced_text:
             state["last_used"][variable] = turn
@@ -145,7 +148,8 @@ def advance_dataframe_cleanup(
     stale = {
         variable
         for variable in transient
-        if turn - int(state["last_used"].get(variable, turn)) >= 3
+        if turn - int(state["last_used"].get(variable, turn))
+        >= TRANSIENT_HIDE_AFTER_TURNS
     }
     protected = _visible_lineage_parents(datasets, stale)
     for variable in protected & stale:
@@ -153,11 +157,15 @@ def advance_dataframe_cleanup(
     hidden = {
         variable
         for variable in transient
-        if turn - int(state["last_used"].get(variable, turn)) >= 3
+        if turn - int(state["last_used"].get(variable, turn))
+        >= TRANSIENT_HIDE_AFTER_TURNS
     }
     _reanchor_if_needed(store, thread_id, hidden, datasets)
     for variable in tuple(hidden):
-        if turn - int(state["last_used"].get(variable, turn)) >= 10:
+        if (
+            turn - int(state["last_used"].get(variable, turn))
+            >= TRANSIENT_DELETE_AFTER_TURNS
+        ):
             _delete_family(store, thread_id, variable)
             state["last_used"].pop(variable, None)
             hidden.remove(variable)
@@ -179,8 +187,31 @@ def touch_dataframes(store: SessionStore, thread_id: str, text: str) -> None:
 def hidden_dataframes(store: SessionStore, thread_id: str) -> set[str]:
     state = _load(store, thread_id)
     turn = state["turn"]
+    transient = {
+        variable
+        for _key_name, variable, meta in _datasets(store, thread_id)
+        if str(meta.get("source") or "") in _TRANSIENT_SOURCES
+    }
     return {
         variable
         for variable, last_used in state["last_used"].items()
-        if turn - int(last_used) >= 3
+        if variable in transient
+        and turn - int(last_used) >= TRANSIENT_HIDE_AFTER_TURNS
+    }
+
+
+def dataframe_usage_ages(
+    store: SessionStore,
+    thread_id: str,
+) -> dict[str, int]:
+    """Return non-negative turns since each live DataFrame was referenced."""
+    state = _load(store, thread_id)
+    turn = state["turn"]
+    live = {
+        variable for _key_name, variable, _meta in _datasets(store, thread_id)
+    }
+    return {
+        variable: max(0, turn - int(last_used))
+        for variable, last_used in state["last_used"].items()
+        if variable in live
     }

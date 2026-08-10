@@ -2007,8 +2007,30 @@ def test_query_ecotaxa_cache_persists_select_as_dataframe(tmp_path, monkeypatch)
     assert "lignes retournées" in result
     assert "toutes les 1 lignes" in result
     assert "station_id" in result
-    assert session["meta"]["variable_name"] == "df_ecotaxa_cache_query"
+    first_variable = session["meta"]["variable_name"]
+    assert first_variable.startswith("df_ecotaxa_cache_result_query_")
     assert session["df"].to_dict("records") == [{"station_id": "ST-1", "n": 1}]
+    latest = store.get("sql-query-thread:dataset:df_ecotaxa_cache_query")
+    assert latest["meta"]["alias_of"] == first_variable
+    assert latest["df"].to_dict("records") == [{"station_id": "ST-1", "n": 1}]
+
+    second_result = tool.invoke({
+        "sql": "SELECT project_id, COUNT(*) AS n FROM samples_cache GROUP BY project_id",
+        "selection_name": "project_counts",
+    })
+    second_session = store.get("sql-query-thread")
+    second_variable = second_session["meta"]["variable_name"]
+    assert second_variable.startswith(
+        "df_ecotaxa_cache_result_project_counts_"
+    )
+    assert second_variable != first_variable
+    assert second_variable in second_result
+    assert store.get(
+        f"sql-query-thread:dataset:{first_variable}"
+    )["df"].to_dict("records") == [{"station_id": "ST-1", "n": 1}]
+    latest = store.get("sql-query-thread:dataset:df_ecotaxa_cache_query")
+    assert latest["meta"]["alias_of"] == second_variable
+    assert latest["df"].to_dict("records") == [{"project_id": 10, "n": 1}]
 
 
 def test_net_uvp_match_tool_requires_explicit_call_and_matches_by_deployment(tmp_path, monkeypatch):
