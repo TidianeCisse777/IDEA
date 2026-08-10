@@ -66,9 +66,7 @@ FACETS = (
     "current_task", "dataframes", "frontier", "graph", "history",
     "long_turns", "thread_isolation",
 )
-# Task 4 owns the thread-isolation campaign; keep it selectable without
-# making the default harness depend on that later campaign.
-DEFAULT_FACETS = FACETS[:-1]
+DEFAULT_FACETS = FACETS
 BASE_THREAD = "context-projection-campaign"
 CURRENT_QUESTION = (
     "Donne, pour chaque station, le nombre de profils UVP associés à un "
@@ -1344,7 +1342,322 @@ def campaign_long_turns(store: SessionStore) -> list[CampaignCheck]:
         answer_chars=800,
         mutate_before_turn=_mutate_long_turn_context(thread_id),
     )
-    return _long_turn_checks(snapshots, questions, thread_id)
+    return [
+        *_long_turn_checks(snapshots, questions, thread_id),
+        *_history_pressure_checks(store),
+    ]
+
+
+def _large_history(
+    turns: int = 120,
+    answer_chars: int = 5_000,
+) -> list[BaseMessage]:
+    """Build deterministic history large enough to exercise production trim."""
+
+    messages: list[BaseMessage] = []
+    for turn in range(1, turns + 1):
+        messages.extend([
+            HumanMessage(
+                content=f"Historique {turn:03d} — demande synthétique.",
+                id=f"pressure-human-{turn}",
+            ),
+            AIMessage(
+                content=f"Réponse {turn:03d} " + ("P" * answer_chars),
+                id=f"pressure-ai-{turn}",
+            ),
+        ])
+    messages.append(HumanMessage(
+        content="Demande actuelle sous forte pression de contexte.",
+        id="pressure-current-human",
+    ))
+    return messages
+
+
+def _history_pressure_checks(store: SessionStore) -> list[CampaignCheck]:
+    """Validate graceful context degradation under a very large history."""
+
+    scenario = "heavy-history-pressure"
+    thread_id = f"{BASE_THREAD}-history-pressure"
+    question = "Demande actuelle sous forte pression de contexte."
+    seed_six_dataframes(store, thread_id)
+    capture = _capture(
+        store,
+        thread_id,
+        question,
+        "pressure-current-human",
+        input_messages=_large_history(),
+    )
+    audit = capture.audit
+    humans = _human_messages(capture)
+    checkpoint_text = "\n".join(
+        _content_text(message) for message in capture.state_messages
+    )
+    non_system = tuple(
+        message for message in capture.messages if message.type != "system"
+    )
+    marker_count = sum(
+        _content_text(message).count("<application_turn_context>")
+        for message in capture.messages
+    )
+    return [
+        _check(
+            scenario,
+            "long_turns",
+            "current request and task survive history pressure",
+            capture.exact_user_request == question
+            and f"Objective: {question}" in capture.task_context,
+            f"exact_user_request={capture.exact_user_request!r}",
+            turn_range="current turn after 120 historical turns",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "production history trimming is activated and bounded",
+            int(audit.get("messages_trimmed", 0)) > 0
+            and int(audit.get("messages_after_trim", 0))
+            < int(audit.get("messages_before", 0))
+            and int(audit.get("approx_tokens_model_request", 0))
+            <= int(audit.get("max_context_tokens", 0)),
+            "messages="
+            f"{audit.get('messages_before')}->{audit.get('messages_after_trim')}; "
+            f"tokens={audit.get('approx_tokens_model_request')}/"
+            f"{audit.get('max_context_tokens')}",
+            turn_range="current turn after 120 historical turns",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "trimmed provider history starts safely and ends on current Human",
+            bool(non_system)
+            and non_system[0].type == "human"
+            and non_system[-1].type == "human"
+            and bool(humans)
+            and capture.exact_user_request == question,
+            f"message_types={tuple(message.type for message in capture.messages)}",
+            turn_range="current turn after 120 historical turns",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "all current dataframe resources survive history trimming",
+            set(DATAFRAME_NAMES).issubset(set(_index_names(capture.dataset_context))),
+            f"indexed={_index_names(capture.dataset_context)}",
+            turn_range="current turn after 120 historical turns",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "permanent system and transient context boundaries remain intact",
+            capture.system == agent_module._SYSTEM_PROMPT
+            and marker_count == 1
+            and bool(humans)
+            and _content_text(humans[-1]).count("<application_turn_context>") == 1
+            and all(
+                "<application_turn_context>" not in _content_text(message)
+                for message in humans[:-1]
+            )
+            and "<application_turn_context>" not in checkpoint_text,
+            f"marker_count={marker_count}; checkpoint_polluted="
+            f"{'<application_turn_context>' in checkpoint_text}",
+            turn_range="current turn after 120 historical turns",
+        ),
+    ]
+
+
+def _seed_private_thread_dataframe(
+    store: SessionStore,
+    thread_id: str,
+    variable_name: str,
+    description: str,
+) -> None:
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({
+            "sample_id": [f"{thread_id}-sample"],
+            "station": [f"{thread_id}-station"],
+            "value": [1.0],
+        }),
+        variable_name=variable_name,
+        meta={
+            "source": f"campaign:{thread_id}",
+            "description": description,
+            "grain": "one row per sample",
+            "primary_key": "sample_id",
+        },
+        set_active=False,
+    )
+
+
+def campaign_thread_isolation(store: SessionStore) -> list[CampaignCheck]:
+    """Interleave two checkpointed threads and reject context leakage."""
+
+    scenario = "two-interleaved-checkpointed-threads"
+    thread_a = f"{BASE_THREAD}-isolation-a"
+    thread_b = f"{BASE_THREAD}-isolation-b"
+    seed_six_dataframes(store, thread_a)
+    seed_six_dataframes(store, thread_b)
+    _seed_private_thread_dataframe(
+        store, thread_a, "df_thread_a_private", "THREAD_A_ONLY"
+    )
+    _seed_private_thread_dataframe(
+        store, thread_b, "df_thread_b_private", "THREAD_B_ONLY"
+    )
+    store.set(
+        f"{thread_a}:last_graph_grounding", None, {"facts": "GRAPH_A_ONLY"}
+    )
+    store.set(
+        f"{thread_b}:last_graph_grounding", None, {"facts": "GRAPH_B_ONLY"}
+    )
+    questions_a = tuple(
+        f"A{turn:02d} — inspecte df_thread_a_private dans ce fil."
+        for turn in range(1, 13)
+    )
+    questions_b = tuple(
+        f"B{turn:02d} — inspecte df_thread_b_private dans ce fil."
+        for turn in range(1, 13)
+    )
+    session_a = CheckpointedProjectionSession(
+        store,
+        thread_a,
+        response_count=12 * agent_module._MAX_MODEL_CALLS_PER_TURN,
+    )
+    session_b = CheckpointedProjectionSession(
+        store,
+        thread_b,
+        response_count=12 * agent_module._MAX_MODEL_CALLS_PER_TURN,
+    )
+    snapshots_a: list[TurnSnapshot] = []
+    snapshots_b: list[TurnSnapshot] = []
+    for question in questions_a[:6]:
+        snapshots_a.append(session_a.invoke(question))
+    for question in questions_b[:6]:
+        snapshots_b.append(session_b.invoke(question))
+    for question in questions_a[6:]:
+        snapshots_a.append(session_a.invoke(question))
+    for question in questions_b[6:]:
+        snapshots_b.append(session_b.invoke(question))
+
+    def first_leak(
+        snapshots: Sequence[TurnSnapshot],
+        required: Sequence[str],
+        forbidden: Sequence[str],
+    ) -> tuple[int, str] | None:
+        for snapshot in snapshots:
+            for call_index, capture in enumerate(snapshot.captures, start=1):
+                text = capture.runtime_context
+                missing = [marker for marker in required if marker not in text]
+                leaked = [marker for marker in forbidden if marker in text]
+                if missing or leaked:
+                    return (
+                        snapshot.turn,
+                        f"provider_call={call_index}; missing={missing}; leaked={leaked}",
+                    )
+        return None
+
+    def isolation_check(
+        name: str,
+        violation: tuple[int, str] | None,
+        success: str,
+    ) -> CampaignCheck:
+        return _check(
+            scenario,
+            "thread_isolation",
+            name,
+            violation is None,
+            success if violation is None else violation[1],
+            turn_range=("turns 1-12" if violation is None else f"turn {violation[0]}"),
+        )
+
+    leak_a = first_leak(
+        snapshots_a,
+        ("df_thread_a_private", "THREAD_A_ONLY", "GRAPH_A_ONLY"),
+        ("df_thread_b_private", "THREAD_B_ONLY", "GRAPH_B_ONLY"),
+    )
+    leak_b = first_leak(
+        snapshots_b,
+        ("df_thread_b_private", "THREAD_B_ONLY", "GRAPH_B_ONLY"),
+        ("df_thread_a_private", "THREAD_A_ONLY", "GRAPH_A_ONLY"),
+    )
+    sequence_violation: tuple[int, str] | None = None
+    if tuple(snapshot.turn for snapshot in snapshots_a) != tuple(range(1, 13)):
+        sequence_violation = (1, "thread A local turn sequence is not 1..12")
+    elif tuple(snapshot.turn for snapshot in snapshots_b) != tuple(range(1, 13)):
+        sequence_violation = (1, "thread B local turn sequence is not 1..12")
+
+    history_violation: tuple[int, str] | None = None
+    for label, thread_id, snapshots, questions in (
+        ("A", thread_a, snapshots_a, questions_a),
+        ("B", thread_b, snapshots_b, questions_b),
+    ):
+        if len(snapshots) != 12:
+            history_violation = (12, f"thread {label} snapshot_count={len(snapshots)}")
+            break
+        humans = tuple(
+            message
+            for message in snapshots[-1].checkpoint_messages
+            if message.type == "human"
+        )
+        contents = tuple(_content_text(message) for message in humans)
+        ids = tuple(message.id for message in humans)
+        expected_ids = tuple(
+            f"{thread_id}-human-{turn:03d}" for turn in range(1, 13)
+        )
+        if contents != questions or ids != expected_ids:
+            history_violation = (
+                12,
+                f"thread {label} human_count={len(humans)}; exact_history=False",
+            )
+            break
+
+    boundary_violation: tuple[int, str] | None = None
+    all_snapshots = (*snapshots_a, *snapshots_b)
+    systems = {
+        capture.system
+        for snapshot in all_snapshots
+        for capture in snapshot.captures
+    }
+    if len(systems) != 1:
+        boundary_violation = (1, f"permanent_system_variants={len(systems)}")
+    else:
+        for snapshot in all_snapshots:
+            checkpoint_text = "\n".join(
+                _content_text(message) for message in snapshot.checkpoint_messages
+            )
+            if "<application_turn_context>" in checkpoint_text:
+                boundary_violation = (
+                    snapshot.turn,
+                    f"thread={snapshot.thread_id}; checkpoint contains transient context",
+                )
+                break
+
+    return [
+        isolation_check(
+            "thread A exposes only its private dataframe and graph facts",
+            leak_a,
+            "A private markers present; B markers absent on all provider calls",
+        ),
+        isolation_check(
+            "thread B exposes only its private dataframe and graph facts",
+            leak_b,
+            "B private markers present; A markers absent on all provider calls",
+        ),
+        isolation_check(
+            "interleaving preserves independent local turn counters",
+            sequence_violation,
+            "both local turn sequences are exactly 1..12",
+        ),
+        isolation_check(
+            "each final checkpoint contains only its exact twelve Human turns",
+            history_violation,
+            "both final checkpoints contain exact thread-owned IDs and contents",
+        ),
+        isolation_check(
+            "system and transient checkpoint boundaries remain isolated",
+            boundary_violation,
+            "one permanent system; no checkpoint contains application context",
+        ),
+    ]
 
 
 CAMPAIGNS: dict[str, Callable[[SessionStore], list[CampaignCheck]]] = {
@@ -1354,6 +1667,7 @@ CAMPAIGNS: dict[str, Callable[[SessionStore], list[CampaignCheck]]] = {
     "graph": campaign_graph,
     "history": campaign_history,
     "long_turns": campaign_long_turns,
+    "thread_isolation": campaign_thread_isolation,
 }
 
 
@@ -1405,6 +1719,10 @@ def _print_json(results: Sequence[CampaignCheck]) -> None:
         "offline": True,
         "llm_calls": 0,
         "network_calls": 0,
+        "campaign": {
+            "long_turn_count": LONG_TURN_COUNT,
+            "offline": True,
+        },
         "summary": {
             "passed": sum(result.passed for result in results),
             "failed": sum(not result.passed for result in results),
