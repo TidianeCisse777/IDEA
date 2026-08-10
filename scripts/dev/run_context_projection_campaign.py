@@ -66,6 +66,9 @@ FACETS = (
     "current_task", "dataframes", "frontier", "graph", "history",
     "long_turns", "thread_isolation",
 )
+# Task 4 owns the thread-isolation campaign; keep it selectable without
+# making the default harness depend on that later campaign.
+DEFAULT_FACETS = FACETS[:-1]
 BASE_THREAD = "context-projection-campaign"
 CURRENT_QUESTION = (
     "Donne, pour chaque station, le nombre de profils UVP associés à un "
@@ -82,6 +85,12 @@ class CampaignCheck:
     name: str
     passed: bool
     evidence: str
+    turn_range: str = "not applicable"
+    violated_contract: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.violated_contract:
+            object.__setattr__(self, "violated_contract", self.name)
 
 
 def _check(
@@ -90,6 +99,9 @@ def _check(
     name: str,
     condition: bool,
     evidence: str,
+    *,
+    turn_range: str = "not applicable",
+    violated_contract: str | None = None,
 ) -> CampaignCheck:
     return CampaignCheck(
         scenario=scenario,
@@ -97,6 +109,8 @@ def _check(
         name=name,
         passed=bool(condition),
         evidence=evidence,
+        turn_range=turn_range,
+        violated_contract=violated_contract or name,
     )
 
 
@@ -864,30 +878,70 @@ def campaign_long_turns(store: SessionStore) -> list[CampaignCheck]:
         f"{BASE_THREAD}-long-turns",
         questions,
     )
+    snapshot_turns = tuple(snapshot.turn for snapshot in snapshots)
+    turn_range = (
+        f"turns {snapshot_turns[0]}-{snapshot_turns[-1]}"
+        if snapshot_turns
+        else "none"
+    )
     checkpoint_humans = [
         message
-        for message in snapshots[-1].checkpoint_messages
+        for message in (snapshots[-1].checkpoint_messages if snapshots else ())
         if message.type == "human"
     ]
+    checkpoint_human_contents = tuple(
+        _content_text(message) for message in checkpoint_humans
+    )
+    systems = tuple(snapshot.capture.system for snapshot in snapshots)
+    first_system = systems[0] if systems else None
+    unstable_turns = tuple(
+        snapshot.turn
+        for snapshot in snapshots
+        if snapshot.capture.system != first_system
+    )
+    system_turn_range = (
+        ", ".join(str(turn) for turn in unstable_turns)
+        if unstable_turns
+        else turn_range
+    )
     return [
         _check(
             scenario,
             "long_turns",
             "three snapshots preserve sequential turns",
             len(snapshots) == 3
-            and tuple(snapshot.turn for snapshot in snapshots) == (1, 2, 3)
+            and snapshot_turns == (1, 2, 3)
             and tuple(snapshot.question for snapshot in snapshots) == questions,
             f"snapshots={len(snapshots)}; turns="
-            f"{tuple(snapshot.turn for snapshot in snapshots)}",
+            f"{snapshot_turns}",
+            turn_range=turn_range,
+            violated_contract="three sequential checkpointed turns are captured",
         ),
         _check(
             scenario,
             "long_turns",
-            "turn three checkpoint retains three human messages",
-            snapshots[-1].turn == 3
-            and len(checkpoint_humans) == 3
-            and _content_text(checkpoint_humans[-1]) == questions[-1],
-            f"checkpoint_human_messages={len(checkpoint_humans)}",
+            "checkpointed Human contents preserve all original questions",
+            snapshot_turns == (1, 2, 3)
+            and checkpoint_human_contents == questions,
+            f"checkpoint_human_contents={checkpoint_human_contents!r}; "
+            f"expected={questions!r}",
+            turn_range=turn_range,
+            violated_contract=(
+                "checkpointed Human contents equal the original questions "
+                "byte-for-byte and in order"
+            ),
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "permanent system message is byte-stable across turns",
+            bool(systems) and all(system == first_system for system in systems),
+            f"system_message_count={len(systems)}; "
+            f"unstable_turns={unstable_turns}",
+            turn_range=system_turn_range,
+            violated_contract=(
+                "permanent system message is exactly equal across every turn"
+            ),
         ),
     ]
 
@@ -916,6 +970,13 @@ def run_campaign(facets: Iterable[str]) -> list[CampaignCheck]:
             ]
 
 
+_MAX_EVIDENCE_CHARS = 1_000
+
+
+def _bounded_evidence(evidence: str) -> str:
+    return evidence[:_MAX_EVIDENCE_CHARS]
+
+
 def _print_text(results: Sequence[CampaignCheck]) -> None:
     current_facet = None
     for result in results:
@@ -925,13 +986,20 @@ def _print_text(results: Sequence[CampaignCheck]) -> None:
         marker = "PASS" if result.passed else "FAIL"
         print(f"[{marker}] {result.scenario} :: {result.name}")
         if not result.passed:
-            print(f"       evidence: {result.evidence[:1_000]}")
+            print(f"       turn_range: {result.turn_range}")
+            print(f"       violated_contract: {result.violated_contract}")
+            print(f"       evidence: {_bounded_evidence(result.evidence)}")
     passed = sum(result.passed for result in results)
     failed = len(results) - passed
     print(f"\nSUMMARY: {passed} passed, {failed} failed, {len(results)} total")
 
 
 def _print_json(results: Sequence[CampaignCheck]) -> None:
+    checks = []
+    for result in results:
+        check = asdict(result)
+        check["evidence"] = _bounded_evidence(result.evidence)
+        checks.append(check)
     payload = {
         "offline": True,
         "llm_calls": 0,
@@ -941,7 +1009,7 @@ def _print_json(results: Sequence[CampaignCheck]) -> None:
             "failed": sum(not result.passed for result in results),
             "total": len(results),
         },
-        "checks": [asdict(result) for result in results],
+        "checks": checks,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -954,7 +1022,10 @@ def parse_args() -> argparse.Namespace:
         "--facet",
         action="append",
         choices=FACETS,
-        help="Run one facet; repeat the option to run several. Default: all.",
+        help=(
+            "Run one facet; repeat the option to run several. "
+            "Default: all executable facets."
+        ),
     )
     parser.add_argument(
         "--json",
@@ -966,7 +1037,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    results = run_campaign(args.facet or FACETS)
+    results = run_campaign(args.facet or DEFAULT_FACETS)
     if args.json:
         _print_json(results)
     else:

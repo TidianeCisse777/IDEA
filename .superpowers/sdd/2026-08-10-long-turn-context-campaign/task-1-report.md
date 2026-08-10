@@ -81,8 +81,118 @@ No network or LangSmith warning appeared.
 
 ## Concerns
 
-`thread_isolation` is intentionally included in `FACETS` per the brief but is
-not registered in `CAMPAIGNS`; its campaign is deferred to the later task that
-uses explicit interleaving of two persistent sessions. Running the default
-all-facets command before that task will therefore still fail on that missing
-entry.
+The original Task 1 implementation left `thread_isolation` intentionally
+unregistered in `CAMPAIGNS`; that sequencing concern is fixed in Fix round 1
+by excluding only the deferred facet from the default selection. Explicit
+`--facet thread_isolation` remains deferred to the later task.
+
+## Fix round 1
+
+### Exact changed behavior
+
+- Preserved the exact required `FACETS` tuple.
+- Added `DEFAULT_FACETS = FACETS[:-1]`, so the default command runs every
+  executable campaign, including `long_turns`, while leaving the future
+  `thread_isolation` selection available for its later task without adding
+  Task 4 early.
+- The long-turn smoke now compares the complete ordered tuple of checkpointed
+  Human contents to all three original questions using exact string equality.
+- The long-turn smoke now compares every captured permanent system message to
+  the first captured system message using exact equality and reports unstable
+  turns.
+- Added `turn_range` and `violated_contract` to `CampaignCheck`, with defaults
+  that preserve existing `_check(...)` call sites. Both text and JSON failure
+  output now include the fields; evidence is bounded to 1,000 characters in
+  both renderers.
+
+### Focused offline tests and commands
+
+No new test file was required; the amended campaign and an inline Python
+contract check were used.
+
+RED command before the fixes:
+
+```bash
+python - <<'PY'
+import subprocess
+import sys
+script = "scripts/dev/run_context_projection_campaign.py"
+full = subprocess.run([sys.executable, script], capture_output=True, text=True)
+assert full.returncode == 0, full.stderr
+PY
+```
+
+Result: exit code `1`; the default command raised `KeyError:
+'thread_isolation'`.
+
+GREEN commands:
+
+```bash
+python scripts/dev/run_context_projection_campaign.py
+```
+
+Output: exit code `0`; `41 passed, 0 failed, 41 total`.
+
+```bash
+python scripts/dev/run_context_projection_campaign.py --facet long_turns
+```
+
+Output: exit code `0`; `3 passed, 0 failed, 3 total`, including the complete
+checkpointed-Human and permanent-system checks.
+
+```bash
+python scripts/dev/run_context_projection_campaign.py --facet long_turns --json
+```
+
+Output: exit code `0`; JSON summary `{"passed": 3, "failed": 0, "total": 3}`.
+Each record contains `turn_range` and `violated_contract`.
+
+Inline reporting/default-facet contract command:
+
+```bash
+python - <<'PY'
+import contextlib
+import io
+import json
+from scripts.dev import run_context_projection_campaign as campaign
+
+assert campaign.FACETS == (
+    "current_task", "dataframes", "frontier", "graph", "history",
+    "long_turns", "thread_isolation",
+)
+assert campaign.DEFAULT_FACETS == campaign.FACETS[:-1]
+failed = campaign.CampaignCheck(
+    scenario="focused-reporting-test", facet="long_turns",
+    name="contract failure", passed=False, evidence="E" * 2_000,
+    turn_range="turns 2-3",
+    violated_contract="checkpoint messages remain exact",
+)
+text_buffer = io.StringIO()
+with contextlib.redirect_stdout(text_buffer):
+    campaign._print_text([failed])
+text_output = text_buffer.getvalue()
+assert "turn_range: turns 2-3" in text_output
+assert "violated_contract: checkpoint messages remain exact" in text_output
+assert len(text_output.split("evidence: ", 1)[1].splitlines()[0]) == 1_000
+json_buffer = io.StringIO()
+with contextlib.redirect_stdout(json_buffer):
+    campaign._print_json([failed])
+record = json.loads(json_buffer.getvalue())["checks"][0]
+assert record["turn_range"] == "turns 2-3"
+assert record["violated_contract"] == "checkpoint messages remain exact"
+assert len(record["evidence"]) == 1_000
+legacy = campaign._check("s", "f", "legacy contract", False, "evidence")
+assert legacy.turn_range == "not applicable"
+assert legacy.violated_contract == "legacy contract"
+print("focused reporting/default-facet assertions: PASS")
+PY
+```
+
+Output: exit code `0`; `focused reporting/default-facet assertions: PASS`.
+
+All commands were offline; no network or LangSmith warning appeared.
+
+### Fix round 1 concerns
+
+The default full harness is executable. Explicit `--facet thread_isolation`
+remains intentionally deferred until the task that implements that campaign.
