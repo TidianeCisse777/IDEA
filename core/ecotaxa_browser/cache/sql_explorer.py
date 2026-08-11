@@ -25,7 +25,8 @@ CACHE_TABLES: dict[str, str] = {
     ),
     "projects_cache": (
         "Référentiel projet — une ligne par projet EcoTaxa synced. "
-        "Colonnes : project_id, title, instrument, description, status, contact_name, "
+        "Colonnes : project_id, title, title_years, title_date_hint, "
+        "temporal_source, temporal_confidence, instrument, description, status, contact_name, "
         "objcount, pctvalidated, pctclassified, last_synced. "
         "JOIN avec samples_cache ON project_id pour enrichir n'importe quelle requête "
         "avec le nom du projet, l'instrument, le responsable scientifique et les stats de validation. "

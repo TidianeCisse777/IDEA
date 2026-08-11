@@ -94,6 +94,365 @@ def _zone_grouping_requires_reference(sql: str) -> bool:
     return "iho_zone" in grouped_columns and "zone_reference" not in grouped_columns
 
 
+_ANALYSIS_CONTEXT_CONTRACTS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "sample": (
+        ("sample_id", ("sample_id",)),
+        ("project_id", ("project_id",)),
+        ("project_title", ("project_title", "title")),
+        ("title_years", ("title_years",)),
+        ("title_date_hint", ("title_date_hint",)),
+        ("temporal_source", ("temporal_source",)),
+        ("temporal_confidence", ("temporal_confidence",)),
+        ("original_id", ("original_id",)),
+        ("station_id", ("station_id",)),
+        ("profile_id", ("profile_id", "cast_id")),
+        ("cruise_id", ("cruise_id",)),
+        ("latitude", ("latitude", "lat_avg")),
+        ("longitude", ("longitude", "lon_avg")),
+        ("zone_reference", ("zone_reference",)),
+        ("iho_zone", ("iho_zone",)),
+        ("instrument", ("instrument", "instruments")),
+        ("first_date", ("first_date", "date_min")),
+        ("last_date", ("last_date", "date_max")),
+        ("object_count", ("object_count",)),
+    ),
+    "profile": (
+        ("project_id", ("project_id",)),
+        ("project_title", ("project_title", "title")),
+        ("title_years", ("title_years",)),
+        ("title_date_hint", ("title_date_hint",)),
+        ("temporal_source", ("temporal_source",)),
+        ("temporal_confidence", ("temporal_confidence",)),
+        ("profile_id", ("profile_id", "cast_id")),
+        ("station_id", ("station_id",)),
+        ("latitude", ("latitude",)),
+        ("longitude", ("longitude",)),
+        ("zones", ("zones",)),
+        ("instruments", ("instruments", "instrument")),
+        ("first_date", ("first_date",)),
+        ("last_date", ("last_date",)),
+        ("n_samples", ("n_samples",)),
+    ),
+    "station": (
+        ("project_id", ("project_id",)),
+        ("project_title", ("project_title", "title")),
+        ("title_years", ("title_years",)),
+        ("title_date_hint", ("title_date_hint",)),
+        ("temporal_source", ("temporal_source",)),
+        ("temporal_confidence", ("temporal_confidence",)),
+        ("station_id", ("station_id",)),
+        ("latitude", ("latitude",)),
+        ("longitude", ("longitude",)),
+        ("zones", ("zones",)),
+        ("instruments", ("instruments", "instrument")),
+        ("first_date", ("first_date",)),
+        ("last_date", ("last_date",)),
+        ("n_samples", ("n_samples",)),
+        ("n_profiles", ("n_profiles",)),
+    ),
+    "cruise": (
+        ("project_id", ("project_id",)),
+        ("project_title", ("project_title", "title")),
+        ("title_years", ("title_years",)),
+        ("title_date_hint", ("title_date_hint",)),
+        ("temporal_source", ("temporal_source",)),
+        ("temporal_confidence", ("temporal_confidence",)),
+        ("cruise_id", ("cruise_id",)),
+        ("latitude", ("latitude",)),
+        ("longitude", ("longitude",)),
+        ("zones", ("zones",)),
+        ("instruments", ("instruments", "instrument")),
+        ("first_date", ("first_date",)),
+        ("last_date", ("last_date",)),
+        ("n_samples", ("n_samples",)),
+        ("n_profiles", ("n_profiles",)),
+        ("n_stations", ("n_stations",)),
+    ),
+    "zone": (
+        ("zone_reference", ("zone_reference",)),
+        ("iho_zone", ("iho_zone",)),
+        ("latitude", ("latitude",)),
+        ("longitude", ("longitude",)),
+        ("instruments", ("instruments", "instrument")),
+        ("first_date", ("first_date",)),
+        ("last_date", ("last_date",)),
+        ("n_samples", ("n_samples",)),
+        ("n_profiles", ("n_profiles",)),
+        ("n_stations", ("n_stations",)),
+        ("n_projects", ("n_projects",)),
+    ),
+    "project": (
+        ("project_id", ("project_id",)),
+        ("project_title", ("project_title", "title")),
+        ("title_years", ("title_years",)),
+        ("title_date_hint", ("title_date_hint",)),
+        ("temporal_source", ("temporal_source",)),
+        ("temporal_confidence", ("temporal_confidence",)),
+        ("latitude", ("latitude",)),
+        ("longitude", ("longitude",)),
+        ("zones", ("zones",)),
+        ("instruments", ("instruments", "instrument")),
+        ("first_date", ("first_date",)),
+        ("last_date", ("last_date",)),
+        ("n_samples", ("n_samples",)),
+        ("n_profiles", ("n_profiles",)),
+        ("n_stations", ("n_stations",)),
+    ),
+    "instrument": (
+        ("instrument", ("instrument",)),
+        ("latitude", ("latitude",)),
+        ("longitude", ("longitude",)),
+        ("zones", ("zones",)),
+        ("first_date", ("first_date",)),
+        ("last_date", ("last_date",)),
+        ("n_samples", ("n_samples",)),
+        ("n_profiles", ("n_profiles",)),
+        ("n_stations", ("n_stations",)),
+        ("n_projects", ("n_projects",)),
+    ),
+}
+
+
+def _analysis_context_gap(sql: str, columns: list[str]) -> tuple[str, list[str]] | None:
+    """Return missing reusable context for a sample-backed analytical result."""
+    if not re.search(r"\bsamples_cache\b", sql, flags=re.IGNORECASE):
+        return None
+    available = {str(column).casefold() for column in columns}
+    if "sample_id" in available:
+        grain = "sample"
+    elif available.intersection({"profile_id", "cast_id"}):
+        grain = "profile"
+    elif "station_id" in available:
+        grain = "station"
+    elif "cruise_id" in available:
+        grain = "cruise"
+    elif {"zone_reference", "iho_zone"}.issubset(available):
+        grain = "zone"
+    elif "project_id" in available:
+        grain = "project"
+    elif "instrument" in available:
+        grain = "instrument"
+    else:
+        return None
+    missing = [
+        label
+        for label, aliases in _ANALYSIS_CONTEXT_CONTRACTS[grain]
+        if not available.intersection(alias.casefold() for alias in aliases)
+    ]
+    return (grain, missing) if missing else None
+
+
+def _analysis_grain(sql: str, columns: list[str]) -> str | None:
+    gap = _analysis_context_gap(sql, columns)
+    if gap is not None:
+        return gap[0]
+    if not re.search(r"\bsamples_cache\b", sql, flags=re.IGNORECASE):
+        return None
+    available = {str(column).casefold() for column in columns}
+    for grain, identifiers in (
+        ("sample", {"sample_id"}),
+        ("profile", {"profile_id", "cast_id"}),
+        ("station", {"station_id"}),
+        ("cruise", {"cruise_id"}),
+        ("zone", {"zone_reference", "iho_zone"}),
+        ("project", {"project_id"}),
+        ("instrument", {"instrument"}),
+    ):
+        if available.intersection(identifiers):
+            return grain
+    return None
+
+
+def _top_level_sql_keyword(sql: str, keyword: str, start: int = 0) -> int:
+    """Locate a SQL keyword outside strings and parentheses."""
+    target = keyword.casefold()
+    lowered = sql.casefold()
+    depth = 0
+    quote: str | None = None
+    index = start
+    while index <= len(sql) - len(target):
+        char = sql[index]
+        if quote:
+            if char == quote:
+                if index + 1 < len(sql) and sql[index + 1] == quote:
+                    index += 2
+                    continue
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        elif depth == 0 and lowered.startswith(target, index):
+            before = lowered[index - 1] if index else " "
+            after_index = index + len(target)
+            after = lowered[after_index] if after_index < len(sql) else " "
+            if not (before.isalnum() or before == "_") and not (
+                after.isalnum() or after == "_"
+            ):
+                return index
+        index += 1
+    return -1
+
+
+def _sample_scope_from_sql(sql: str) -> tuple[str, str] | None:
+    """Return the original top-level FROM/WHERE scope and samples alias."""
+    from_index = _top_level_sql_keyword(sql, "from")
+    if from_index < 0:
+        return None
+    end_candidates = [
+        index
+        for keyword in ("group by", "having", "order by", "limit", "offset", "union")
+        if (index := _top_level_sql_keyword(sql, keyword, from_index + 4)) >= 0
+    ]
+    end_index = min(end_candidates) if end_candidates else len(sql)
+    scope = sql[from_index:end_index].strip().rstrip(";")
+    match = re.search(
+        r"\bsamples_cache\b(?:\s+(?:AS\s+)?([A-Za-z_][A-Za-z0-9_]*))?",
+        scope,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    alias = str(match.group(1) or "samples_cache")
+    if alias.casefold() in {
+        "where", "join", "left", "right", "inner", "outer", "cross", "group", "order"
+    }:
+        alias = "samples_cache"
+    return scope, alias
+
+
+def _analysis_context_sql(sql: str, grain: str) -> tuple[str, tuple[str, ...]] | None:
+    scope = _sample_scope_from_sql(sql)
+    if scope is None:
+        return None
+    from_where, source_alias = scope
+    common = """
+       AVG(ctx.lat_avg) AS latitude,
+       AVG(ctx.lon_avg) AS longitude,
+       GROUP_CONCAT(DISTINCT CASE
+           WHEN ctx.zone_reference IS NOT NULL AND ctx.iho_zone IS NOT NULL
+           THEN ctx.zone_reference || ':' || ctx.iho_zone END) AS zones,
+       GROUP_CONCAT(DISTINCT ctx.instrument) AS instruments,
+       MIN(ctx.date_min) AS first_date,
+       MAX(ctx.date_max) AS last_date
+    """.strip()
+    project_temporal = (
+        "MAX(project.title_years) AS title_years, "
+        "MAX(project.title_date_hint) AS title_date_hint, "
+        "MAX(project.temporal_source) AS temporal_source, "
+        "MAX(project.temporal_confidence) AS temporal_confidence"
+    )
+    specs = {
+        "sample": (
+            "ctx.sample_id, MIN(ctx.project_id) AS project_id, "
+            "MAX(project.title) AS project_title, " + project_temporal + ", "
+            "MIN(ctx.original_id) AS original_id, "
+            "MIN(ctx.station_id) AS station_id, MIN(ctx.profile_id) AS profile_id, "
+            "MIN(ctx.cruise_id) AS cruise_id, AVG(ctx.lat_avg) AS latitude, "
+            "AVG(ctx.lon_avg) AS longitude, MIN(ctx.zone_reference) AS zone_reference, "
+            "MIN(ctx.iho_zone) AS iho_zone, MIN(ctx.instrument) AS instrument, "
+            "MIN(ctx.date_min) AS first_date, MAX(ctx.date_max) AS last_date, "
+            "MAX(ctx.object_count) AS object_count",
+            "ctx.sample_id",
+            ("sample_id",),
+        ),
+        "profile": (
+            "ctx.project_id, MAX(project.title) AS project_title, "
+            + project_temporal + ", ctx.profile_id, "
+            "MIN(ctx.station_id) AS station_id, " + common + ", "
+            "COUNT(DISTINCT ctx.sample_id) AS n_samples",
+            "ctx.project_id, ctx.profile_id",
+            ("project_id", "profile_id"),
+        ),
+        "station": (
+            "ctx.project_id, MAX(project.title) AS project_title, "
+            + project_temporal + ", ctx.station_id, "
+            + common + ", COUNT(DISTINCT ctx.sample_id) AS n_samples, "
+            "COUNT(DISTINCT ctx.profile_id) AS n_profiles",
+            "ctx.project_id, ctx.station_id",
+            ("project_id", "station_id"),
+        ),
+        "cruise": (
+            "ctx.project_id, MAX(project.title) AS project_title, "
+            + project_temporal + ", ctx.cruise_id, "
+            + common + ", COUNT(DISTINCT ctx.sample_id) AS n_samples, "
+            "COUNT(DISTINCT ctx.profile_id) AS n_profiles, "
+            "COUNT(DISTINCT ctx.station_id) AS n_stations",
+            "ctx.project_id, ctx.cruise_id",
+            ("project_id", "cruise_id"),
+        ),
+        "zone": (
+            "ctx.zone_reference, ctx.iho_zone, AVG(ctx.lat_avg) AS latitude, "
+            "AVG(ctx.lon_avg) AS longitude, "
+            "GROUP_CONCAT(DISTINCT ctx.instrument) AS instruments, "
+            "MIN(ctx.date_min) AS first_date, MAX(ctx.date_max) AS last_date, "
+            "COUNT(DISTINCT ctx.sample_id) AS n_samples, "
+            "COUNT(DISTINCT ctx.profile_id) AS n_profiles, "
+            "COUNT(DISTINCT ctx.project_id || ':' || ctx.station_id) AS n_stations, "
+            "COUNT(DISTINCT ctx.project_id) AS n_projects",
+            "ctx.zone_reference, ctx.iho_zone",
+            ("zone_reference", "iho_zone"),
+        ),
+        "project": (
+            "ctx.project_id, MAX(project.title) AS project_title, "
+            + project_temporal + ", " + common + ", "
+            "COUNT(DISTINCT ctx.sample_id) AS n_samples, "
+            "COUNT(DISTINCT ctx.profile_id) AS n_profiles, "
+            "COUNT(DISTINCT ctx.station_id) AS n_stations",
+            "ctx.project_id",
+            ("project_id",),
+        ),
+        "instrument": (
+            "ctx.instrument, AVG(ctx.lat_avg) AS latitude, "
+            "AVG(ctx.lon_avg) AS longitude, "
+            "GROUP_CONCAT(DISTINCT ctx.zone_reference || ':' || ctx.iho_zone) AS zones, "
+            "MIN(ctx.date_min) AS first_date, MAX(ctx.date_max) AS last_date, "
+            "COUNT(DISTINCT ctx.sample_id) AS n_samples, "
+            "COUNT(DISTINCT ctx.profile_id) AS n_profiles, "
+            "COUNT(DISTINCT ctx.project_id || ':' || ctx.station_id) AS n_stations, "
+            "COUNT(DISTINCT ctx.project_id) AS n_projects",
+            "ctx.instrument",
+            ("instrument",),
+        ),
+    }
+    select_list, group_by, keys = specs[grain]
+    context_sql = f"""
+        WITH __analysis_scope AS (
+            SELECT DISTINCT {source_alias}.sample_id
+            {from_where}
+        )
+        SELECT {select_list}
+        FROM samples_cache AS ctx
+        JOIN __analysis_scope AS scope ON scope.sample_id = ctx.sample_id
+        LEFT JOIN projects_cache AS project ON project.project_id = ctx.project_id
+        GROUP BY {group_by}
+    """
+    return context_sql, keys
+
+
+def _merge_analysis_context(
+    dataframe: pd.DataFrame,
+    context: pd.DataFrame,
+    keys: tuple[str, ...],
+) -> tuple[pd.DataFrame, list[str]]:
+    if "profile_id" in keys and "profile_id" not in dataframe.columns and "cast_id" in dataframe.columns:
+        context = context.rename(columns={"profile_id": "cast_id"})
+        keys = tuple("cast_id" if key == "profile_id" else key for key in keys)
+    if any(key not in dataframe.columns for key in keys):
+        return dataframe, []
+    added = [column for column in context.columns if column not in dataframe.columns]
+    if not added:
+        return dataframe, []
+    enriched = dataframe.merge(context[[*keys, *added]], on=list(keys), how="left", validate="m:1")
+    return enriched, added
+
+
 def _ecotaxa_output(factory, summary: str, **fields):
     provenance = {"source": "ecotaxa", **dict(fields.pop("provenance", {}))}
     return factory(summary, provenance=provenance, **fields)
@@ -1376,6 +1735,36 @@ def make_source_tools(thread_id: str) -> list:
         les noms exacts présentés dans l'inventaire des DataFrames ; ne jamais
         inventer un alias de table de session.
 
+        ## Mandatory analysis/graph contract
+
+        Any analytical `samples_cache` result is made self-contained before it
+        is persisted. The tool derives missing context from the exact filtered
+        sample scope in the same call. Required aliases by grain:
+
+        - sample: `sample_id`, `project_id`, `project_title`, `original_id`,
+          `station_id`, `profile_id`, `cruise_id`, `latitude`, `longitude`,
+          `zone_reference`, `iho_zone`, `instrument`, `first_date`, `last_date`,
+          `object_count`;
+        - profile/station: `project_id`, `project_title`, `station_id`, plus
+          `profile_id` for profiles, `latitude`, `longitude`, `zones`,
+          `instruments`, date bounds, `n_samples`, and `n_profiles` for stations;
+        - cruise/project: `project_id`, `project_title`, plus `cruise_id` for cruises,
+          `latitude`, `longitude`, `zones`, `instruments`, `first_date`,
+          `last_date`, `n_samples`, `n_profiles`, `n_stations`;
+        - zone: `zone_reference`, `iho_zone`, `latitude`, `longitude`,
+          `instruments`, date bounds, `n_samples`, `n_profiles`, `n_stations`,
+          `n_projects`;
+        - instrument: `instrument`, `latitude`, `longitude`, `zones`, date
+          bounds, `n_samples`, `n_profiles`, `n_stations`, `n_projects`.
+
+        Grain keys must still be returned because they cannot be inferred
+        safely from reusable labels alone. Join `projects_cache` for
+        `project_title` and its exploratory `title_years`, `title_date_hint`,
+        `temporal_source`, `temporal_confidence`; use scoped `AVG(lat_avg)` /
+        `AVG(lon_avg)`, `MIN(date_min)` / `MAX(date_max)`, and distinct counts.
+        Keep `zone_reference:iho_zone` pairs in `zones`. Required columns may
+        contain NULL. Scalar, schema-inspection and sync queries are exempt.
+
         ## Jointure directe DataFrame ↔ cache EcoTaxa
 
         Utiliser `dataframe_refs` quand le résultat demandé dépend à la fois de
@@ -1535,6 +1924,10 @@ def make_source_tools(thread_id: str) -> list:
 
         **project_schemas_cache** — schémas JSON des projets
         | project_id PK | schema_json (title, instrument, levels, free fields) |
+
+        **projects_cache** — contexte projet et indices temporels du titre
+        | project_id PK | title | title_years | title_date_hint |
+        | temporal_source | temporal_confidence | instrument | status |
 
         **project_signatures_cache** — stats de classification
         | project_id PK | objcount | pctvalidated | pctclassified |
@@ -1751,6 +2144,47 @@ def make_source_tools(thread_id: str) -> list:
             return _eco_empty("La requête n'a retourné aucune ligne.")
 
         dataframe = pd.DataFrame.from_records(rows, columns=columns)
+        auto_context_columns: list[str] = []
+        grain = _analysis_grain(sql, list(dataframe.columns))
+        context_spec = _analysis_context_sql(sql, grain) if grain else None
+        if context_spec is not None:
+            context_sql, context_keys = context_spec
+            context_conn = None
+            try:
+                context_conn = (
+                    open_dataframe_cache_workspace(cache_db, mounted_dataframes)
+                    if mounted_dataframes
+                    else open_readonly_connection(cache_db)
+                )
+                context_result = _sql_explorer.run_select(
+                    context_conn, context_sql, cap=None
+                )
+                if context_result.get("ok") and context_result.get("rows"):
+                    context_df = pd.DataFrame.from_records(
+                        context_result["rows"], columns=context_result["columns"]
+                    )
+                    dataframe, auto_context_columns = _merge_analysis_context(
+                        dataframe, context_df, context_keys
+                    )
+            finally:
+                if context_conn is not None:
+                    context_conn.close()
+
+        context_gap = _analysis_context_gap(sql, list(dataframe.columns))
+        if context_gap is not None:
+            grain, missing = context_gap
+            return _eco_blocked(
+                f"Contexte analytique incomplet pour le grain `{grain}`. "
+                "L'enrichissement automatique n'a pas pu relier sûrement le "
+                "résultat au périmètre filtré. Conserve les clés stables du "
+                "grain dans le SELECT. Colonnes encore manquantes : "
+                + ", ".join(f"`{name}`" for name in missing)
+                + ".",
+                retryable=True,
+                method="EcoTaxa analysis-context contract",
+                metrics={"grain": grain, "missing_columns": missing},
+            )
+
         latest_variable = "df_ecotaxa_cache_query"
         provided_description = str(description or "").strip()[:500]
         id_series = (
@@ -1775,6 +2209,7 @@ def make_source_tools(thread_id: str) -> list:
             "n_cols": len(dataframe.columns),
             "truncated": truncated,
             "input_dataframes": list(requested_dataframe_refs),
+            "analysis_context_added": auto_context_columns,
             **(
                 {"n_ecotaxa_samples": len(sample_ids)}
                 if "sample_id" in dataframe.columns

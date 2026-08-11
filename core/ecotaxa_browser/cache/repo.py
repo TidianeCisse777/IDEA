@@ -8,8 +8,10 @@ extension required, bbox math is plain numeric SQL.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 from typing import Iterable, Iterator, Sequence
 from urllib.parse import quote
@@ -32,6 +34,51 @@ _geo_registry_loaded = False
 # from EcoTaxa, not a backfill). Stored in the SQLite user_version pragma so
 # the startup code can detect an old-format cache and trigger a resync.
 SCHEMA_VERSION = 6
+
+
+_TITLE_FULL_DATE_RE = re.compile(
+    r"(?<!\d)((?:19|20)\d{2})[-_]?((?:0[1-9]|1[0-2]))"
+    r"[-_]?((?:0[1-9]|[12]\d|3[01]))(?!\d)"
+)
+_TITLE_YEAR_MONTH_RE = re.compile(
+    r"(?<!\d)((?:19|20)\d{2})[-_]?((?:0[1-9]|1[0-2]))(?!\d)"
+)
+_TITLE_YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
+
+
+def project_title_temporal_hints(
+    title: object,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Extract exploratory year/date hints without fabricating sample dates."""
+    text = str(title or "")
+    years = {int(match.group(1)) for match in _TITLE_YEAR_RE.finditer(text)}
+    date_hints: set[str] = set()
+    full_spans: list[tuple[int, int]] = []
+    for match in _TITLE_FULL_DATE_RE.finditer(text):
+        year, month, day = map(int, match.groups())
+        try:
+            parsed = date(year, month, day)
+        except ValueError:
+            continue
+        years.add(year)
+        date_hints.add(parsed.isoformat())
+        full_spans.append(match.span())
+    for match in _TITLE_YEAR_MONTH_RE.finditer(text):
+        if any(start <= match.start() and match.end() <= end for start, end in full_spans):
+            continue
+        year, month = map(int, match.groups())
+        years.add(year)
+        date_hints.add(f"{year:04d}-{month:02d}")
+    ordered_years = sorted(years)
+    if not ordered_years:
+        return None, None, None, None
+    date_hint = next(iter(date_hints)) if len(date_hints) == 1 else None
+    return (
+        json.dumps(ordered_years),
+        date_hint,
+        "project_title",
+        "exploratory",
+    )
 
 
 def _load_geo_registry():
@@ -110,6 +157,10 @@ CREATE TABLE IF NOT EXISTS project_schemas_cache (
 CREATE TABLE IF NOT EXISTS projects_cache (
     project_id    INTEGER PRIMARY KEY,
     title         TEXT NOT NULL,
+    title_years   TEXT,
+    title_date_hint TEXT,
+    temporal_source TEXT,
+    temporal_confidence TEXT,
     instrument    TEXT,
     description   TEXT,
     status        TEXT,
@@ -210,6 +261,20 @@ def init_schema(conn: sqlite3.Connection) -> None:
     }
     for column_name, column_type in deployment_columns.items():
         _ensure_column(conn, "samples_cache", column_name, column_type)
+    for column_name in (
+        "title_years",
+        "title_date_hint",
+        "temporal_source",
+        "temporal_confidence",
+    ):
+        _ensure_column(conn, "projects_cache", column_name, "TEXT")
+    for row in conn.execute("SELECT project_id, title FROM projects_cache").fetchall():
+        hints = project_title_temporal_hints(row[1])
+        conn.execute(
+            "UPDATE projects_cache SET title_years = ?, title_date_hint = ?, "
+            "temporal_source = ?, temporal_confidence = ? WHERE project_id = ?",
+            (*hints, row[0]),
+        )
     create_secondary_indexes(conn)
     conn.commit()
 
@@ -603,14 +668,22 @@ def upsert_project(
     pctclassified: float | None = None,
     last_synced: str,
 ) -> None:
+    title_years, title_date_hint, temporal_source, temporal_confidence = (
+        project_title_temporal_hints(title)
+    )
     conn.execute(
         """
         INSERT INTO projects_cache
-            (project_id, title, instrument, description, status, contact_name,
+            (project_id, title, title_years, title_date_hint, temporal_source,
+             temporal_confidence, instrument, description, status, contact_name,
              objcount, pctvalidated, pctclassified, last_synced)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(project_id) DO UPDATE SET
             title         = excluded.title,
+            title_years   = excluded.title_years,
+            title_date_hint = excluded.title_date_hint,
+            temporal_source = excluded.temporal_source,
+            temporal_confidence = excluded.temporal_confidence,
             instrument    = excluded.instrument,
             description   = excluded.description,
             status        = excluded.status,
@@ -621,7 +694,8 @@ def upsert_project(
             last_synced   = excluded.last_synced
         """,
         (
-            project_id, title, instrument, description, status, contact_name,
+            project_id, title, title_years, title_date_hint, temporal_source,
+            temporal_confidence, instrument, description, status, contact_name,
             objcount, pctvalidated, pctclassified, last_synced,
         ),
     )

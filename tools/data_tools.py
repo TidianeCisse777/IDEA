@@ -852,13 +852,10 @@ def _all_missing_scatter_colour_issue(code: str, local_vars: dict[str, Any]) -> 
 
 _MAP_LATITUDE_CANDIDATES = (*DEFAULT_LAT_CANDIDATES, "lat_avg", "latitude_avg")
 _MAP_LONGITUDE_CANDIDATES = (*DEFAULT_LON_CANDIDATES, "lon_avg", "longitude_avg")
-_MAP_STATION_CANDIDATES = (
-    "station_name",
-    "station",
-    "station_id",
-    "sample_stationid",
-    "sample_station_id",
-)
+_MAP_LATITUDE_MIN_CANDIDATES = ("lat_min", "latitude_min")
+_MAP_LATITUDE_MAX_CANDIDATES = ("lat_max", "latitude_max")
+_MAP_LONGITUDE_MIN_CANDIDATES = ("lon_min", "longitude_min")
+_MAP_LONGITUDE_MAX_CANDIDATES = ("lon_max", "longitude_max")
 
 
 def _map_coordinate_columns(frame: pd.DataFrame) -> tuple[str, str] | None:
@@ -870,59 +867,83 @@ def _map_coordinate_columns(frame: pd.DataFrame) -> tuple[str, str] | None:
     return str(latitude), str(longitude)
 
 
-def _map_ready_candidates(
-    store: SessionStore,
-    thread_id: str,
-    summary: pd.DataFrame,
-) -> list[tuple[float, str]]:
-    """Find persisted coordinate tables compatible with a station summary.
+def _cartopy_coordinate_preflight_issue(
+    code: str,
+    local_vars: dict[str, Any],
+) -> str | None:
+    """Explain an impossible map without rejecting derived coordinates."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
 
-    This runs only after a rejected map attempt. It ranks candidates by exact
-    station-key coverage so the model can target a known table instead of
-    guessing from every historical session variable.
-    """
-    summary_station = detect_column(summary.columns, _MAP_STATION_CANDIDATES)
-    if summary_station is None:
-        return []
-    summary_keys = {
-        " ".join(str(value).casefold().split())
-        for value in summary[summary_station].dropna()
-        if str(value).strip()
-    }
-    if not summary_keys:
-        return []
-
-    candidates: list[tuple[float, str]] = []
-    prefix = f"{thread_id}:dataset:"
-    for key in store.keys(prefix):
-        entry = store.get(key)
-        frame = (entry or {}).get("df")
-        meta = (entry or {}).get("meta") or {}
-        if not isinstance(frame, pd.DataFrame):
-            continue
-        coordinates = _map_coordinate_columns(frame)
-        station = detect_column(frame.columns, _MAP_STATION_CANDIDATES)
-        variable = str(meta.get("variable_name") or key.removeprefix(prefix))
-        if coordinates is None or station is None:
-            continue
-        source_keys = {
-            " ".join(str(value).casefold().split())
-            for value in frame[station].dropna()
-            if str(value).strip()
-        }
-        overlap = len(summary_keys & source_keys)
-        if not overlap:
-            continue
-        coverage = overlap / len(summary_keys)
-        latitude, longitude = coordinates
-        candidates.append(
-            (
-                coverage,
-                f"`{variable}` (station={station}, latitude={latitude}, "
-                f"longitude={longitude}; couverture stations={overlap}/{len(summary_keys)})",
+    uses_cartopy = any(
+        (
+            isinstance(node, ast.Import)
+            and any(
+                alias.name == "cartopy" or alias.name.startswith("cartopy.")
+                for alias in node.names
             )
         )
-    return sorted(candidates, reverse=True)
+        or (
+            isinstance(node, ast.ImportFrom)
+            and (node.module == "cartopy" or str(node.module or "").startswith("cartopy."))
+        )
+        or (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "ccrs"
+        )
+        for node in ast.walk(tree)
+    )
+    uses_point_layer = any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "scatter"
+        for node in ast.walk(tree)
+    )
+    if not uses_cartopy or not uses_point_layer:
+        return None
+
+    referenced = _referenced_names(code)
+    frames = {
+        name: value
+        for name, value in local_vars.items()
+        if name in referenced and isinstance(value, pd.DataFrame)
+    }
+    if not frames:
+        return None
+    if any(_map_coordinate_columns(frame) is not None for frame in frames.values()):
+        return None
+
+    referenced_columns = {
+        node.value.casefold()
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    for frame in frames.values():
+        bounds = (
+            detect_column(frame.columns, _MAP_LATITUDE_MIN_CANDIDATES),
+            detect_column(frame.columns, _MAP_LATITUDE_MAX_CANDIDATES),
+            detect_column(frame.columns, _MAP_LONGITUDE_MIN_CANDIDATES),
+            detect_column(frame.columns, _MAP_LONGITUDE_MAX_CANDIDATES),
+        )
+        bounds_are_used = all(
+            str(column).casefold() in referenced_columns for column in bounds
+        )
+        if all(bounds) and bounds_are_used:
+            return None
+
+    schemas = "; ".join(
+        f"{name}=[{', '.join(map(str, frame.columns))}]"
+        for name, frame in frames.items()
+    )
+    return (
+        "Cartopy point map impossible: no usable or safely derivable "
+        "latitude/longitude columns were found in the referenced table(s): "
+        f"{schemas}. Use a persisted table containing latitude/longitude, or "
+        "derive them from verified latitude and longitude bounds before retrying."
+    )
 
 
 def _named_dataset_variables(store: SessionStore, thread_id: str) -> tuple[str, ...]:
@@ -1075,121 +1096,6 @@ def _implicit_df_join_issue(code: str, named_tables: tuple[str, ...]) -> str | N
         "Multi-table join blocked: `df` is only a compatibility alias and may "
         "not select a join input when several persisted tables exist. Name both "
         "operands explicitly from: " + ", ".join(f"`{name}`" for name in named_tables) + "."
-    )
-
-
-def _cartopy_preflight_issue(
-    code: str,
-    local_vars: dict[str, Any],
-    *,
-    map_ready_candidates: list[tuple[float, str]] | None = None,
-    named_tables: tuple[str, ...] = (),
-) -> tuple[str, bool] | None:
-    """Reject impossible Cartopy point maps before the isolated worker runs.
-
-    The model can safely correct a precise preflight result in the same ReAct
-    turn. Letting Cartopy execute first instead produces an opaque CRS error or
-    a geographically meaningless plot when a station aggregation discarded its
-    coordinates.
-    """
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return None
-
-    cartopy_used = any(
-        (
-            isinstance(node, ast.Import)
-            and any(
-                alias.name == "cartopy" or alias.name.startswith("cartopy.")
-                for alias in node.names
-            )
-        )
-        or (
-            isinstance(node, ast.ImportFrom)
-            and (node.module == "cartopy" or str(node.module or "").startswith("cartopy."))
-        )
-        or (
-            isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "ccrs"
-        )
-        for node in ast.walk(tree)
-    )
-    if not cartopy_used:
-        return None
-
-    referenced = _referenced_names(code)
-    frames = {
-        name: value
-        for name, value in local_vars.items()
-        if name in referenced and isinstance(value, pd.DataFrame)
-    }
-    if not frames:
-        return None  # Boundary-only Cartopy maps legitimately have no table.
-
-    if "df" in referenced and len(named_tables) > 1:
-        complete_candidates = [
-            description
-            for coverage, description in (map_ready_candidates or [])
-            if coverage == 1.0
-        ]
-        candidate_note = (
-            " The only full-coverage map source is " + complete_candidates[0]
-            + "; name it explicitly in the graph code."
-            if len(complete_candidates) == 1
-            else " Available persisted tables: "
-            + ", ".join(f"`{name}`" for name in named_tables)
-            + ". Choose by provenance and requested scope; do not use `df`."
-        )
-        return (
-            "Cartopy map blocked: `df` is only a compatibility alias when "
-            "several persisted tables exist. Name the exact map source "
-            "DataFrame in the graph code."
-            + candidate_note,
-            len(complete_candidates) == 1,
-        )
-
-    has_coordinates = any(_map_coordinate_columns(frame) is not None for frame in frames.values())
-    if has_coordinates:
-        return None
-
-    schemas = "; ".join(
-        f"{name}=[{', '.join(map(str, frame.columns))}]"
-        for name, frame in frames.items()
-    )
-    complete_candidates = [
-        description
-        for coverage, description in (map_ready_candidates or [])
-        if coverage == 1.0
-    ]
-    if len(complete_candidates) == 1:
-        candidate_note = (
-            " Exact map-ready source: "
-            + complete_candidates[0]
-            + ". Use that named source table, retain/merge its verified coordinates "
-            "with the station summary into `plot_df`, then render."
-        )
-        retryable = True
-    elif map_ready_candidates:
-        candidate_note = (
-            " Several coordinate tables overlap these stations: "
-            + "; ".join(description for _, description in map_ready_candidates[:3])
-            + ". Do not select one automatically: inspect their provenance and "
-            "the requested scope before rebuilding `plot_df`."
-        )
-        retryable = False
-    else:
-        candidate_note = ""
-        retryable = False
-    return (
-        "Cartopy point map blocked: the referenced table has no usable "
-        f"latitude/longitude pair ({schemas}). A station summary such as "
-        "`station_name, n_rows` is not map-ready. Rebuild `plot_df` from the "
-        "source rows, retaining one verified latitude and longitude per station, "
-        "then render that table."
-        + candidate_note,
-        retryable,
     )
 
 
@@ -2739,28 +2645,19 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 local_vars = _dataframe_vars(
                     _store, thread_id, df, _referenced_names(effective_code)
                 )
-                map_candidates = _map_ready_candidates(_store, thread_id, df)
-                named_tables = _named_dataset_variables(_store, thread_id)
             else:
                 local_vars = {}
-                map_candidates = []
-                named_tables = ()
             effective_code = _normalize_cartopy_map_projection(
                 effective_code, local_vars
             )
-            cartopy_preflight = _cartopy_preflight_issue(
-                effective_code,
-                local_vars,
-                map_ready_candidates=map_candidates,
-                named_tables=named_tables,
+            coordinate_issue = _cartopy_coordinate_preflight_issue(
+                effective_code, local_vars
             )
-            if cartopy_preflight:
-                cartopy_issue, retryable = cartopy_preflight
-                factory = error if retryable else blocked
-                return factory(
-                    cartopy_issue,
-                    retryable=retryable,
-                    method="cartography preflight",
+            if coordinate_issue:
+                return error(
+                    coordinate_issue,
+                    retryable=True,
+                    method="cartography coordinate preflight",
                 )
             execution = default_executor.execute(
                 thread_id, "graph", effective_code, local_vars

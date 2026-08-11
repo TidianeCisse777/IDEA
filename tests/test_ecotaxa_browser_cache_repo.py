@@ -87,6 +87,33 @@ def test_init_schema_migrates_existing_samples_cache_with_light_sample_metadata_
     assert DEPLOYMENT_COLUMNS <= columns
 
 
+def test_init_schema_backfills_project_title_temporal_hints(conn):
+    from core.ecotaxa_browser.cache.repo import init_schema
+
+    conn.execute(
+        "CREATE TABLE projects_cache ("
+        "project_id INTEGER PRIMARY KEY, title TEXT NOT NULL, instrument TEXT, "
+        "description TEXT, status TEXT, contact_name TEXT, objcount INTEGER, "
+        "pctvalidated REAL, pctclassified REAL, last_synced TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO projects_cache (project_id, title, last_synced) "
+        "VALUES (42, 'UVP5 GREEN EDGE Ice Camp 2015', 'ts')"
+    )
+    conn.commit()
+
+    init_schema(conn)
+
+    row = conn.execute(
+        "SELECT title_years, title_date_hint, temporal_source, "
+        "temporal_confidence FROM projects_cache WHERE project_id = 42"
+    ).fetchone()
+    assert row["title_years"] == "[2015]"
+    assert row["title_date_hint"] is None
+    assert row["temporal_source"] == "project_title"
+    assert row["temporal_confidence"] == "exploratory"
+
+
 def test_init_schema_migrates_sample_deployment_metadata_columns(conn):
     from core.ecotaxa_browser.cache.repo import init_schema
 
@@ -484,6 +511,42 @@ def test_upsert_project_schema_inserts_and_updates(conn):
     ).fetchone()
     assert row["schema_json"] == '{"title": "v2"}'
     assert row["last_synced"] == "2026-06-16T03:00:00Z"
+
+
+def test_upsert_project_derives_exploratory_temporal_hints_from_title(conn):
+    from core.ecotaxa_browser.cache.repo import init_schema, upsert_project
+
+    init_schema(conn)
+    upsert_project(
+        conn,
+        project_id=42,
+        title="uvp6_amundsen2023_20230809",
+        instrument="UVP6",
+        last_synced="2026-08-11T00:00:00Z",
+    )
+
+    row = conn.execute(
+        "SELECT title_years, title_date_hint, temporal_source, "
+        "temporal_confidence FROM projects_cache WHERE project_id = 42"
+    ).fetchone()
+    assert row["title_years"] == "[2023]"
+    assert row["title_date_hint"] == "2023-08-09"
+    assert row["temporal_source"] == "project_title"
+    assert row["temporal_confidence"] == "exploratory"
+
+    upsert_project(
+        conn,
+        project_id=42,
+        title="GreenEdge Ice Camp 2015 2016",
+        instrument="UVP5",
+        last_synced="2026-08-12T00:00:00Z",
+    )
+    row = conn.execute(
+        "SELECT title_years, title_date_hint FROM projects_cache "
+        "WHERE project_id = 42"
+    ).fetchone()
+    assert row["title_years"] == "[2015, 2016]"
+    assert row["title_date_hint"] is None
 
 
 def test_project_signature_inserts_updates_and_reads_rounded_tuple(conn):

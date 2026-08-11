@@ -22,3 +22,4 @@ def test_permanent_prompt_matches_current_harness():
     assert "wait for" in prompt and "tool result" in prompt
     assert "available dataframes" in prompt
     assert "rag" in prompt
+    assert "analysis-ready cache contract" in prompt

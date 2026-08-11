@@ -244,6 +244,17 @@ meaning from taxa, detritus or pellets; those are biological interpretations.
   materially change the result; otherwise proceed and preserve the user's scope.
 
 ### DataFrame execution and lineage
+- Analysis-ready cache contract: every `samples_cache` result that exposes an
+  analytical grain (sample, profile/cast, station, cruise, zone, project or
+  instrument) must return its stable grain keys. `query_ecotaxa_cache`
+  automatically adds any missing project title, central coordinates,
+  exploratory title-derived temporal hints, geographic scope, instruments,
+  observed temporal bounds and applicable distinct counts from the exact
+  filtered sample scope before persistence. Title hints never replace observed
+  sample dates. Required
+  columns remain present when their values are NULL. Scalar counts, schema
+  inspection and sync diagnostics are exempt. Never revisit the cache only to
+  recover analysis or mapping context already covered by this envelope.
 - Every successful `query_ecotaxa_cache` SELECT is persisted under the exact
   stable `df_ecotaxa_cache_result_*` name returned by the tool, including
   aggregates without `sample_id`. `df_ecotaxa_cache_query` remains only a
