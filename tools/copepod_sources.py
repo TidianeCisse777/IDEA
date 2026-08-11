@@ -115,11 +115,6 @@ def _eco_error(summary: str, **fields):
     return _ecotaxa_output(error, summary, **fields)
 
 
-def _fmt_coord(value) -> str:
-    """Format a latitude/longitude, tolerating NULL (coordinate-less samples)."""
-    return f"{value:.3f}" if isinstance(value, (int, float)) else "—"
-
-
 def _ecotaxa_project_url(project_id) -> str:
     """Return the canonical EcoTaxa project page URL, or empty if id missing."""
     try:
@@ -233,13 +228,6 @@ def _resolve_taxo_filter(taxon: str | int) -> dict:
 
 
 def make_source_tools(thread_id: str) -> list:
-    def _format_number(value) -> str:
-        if value is None:
-            return "—"
-        if isinstance(value, float) and not value.is_integer():
-            return f"{value:.2f}".rstrip("0").rstrip(".")
-        return f"{int(value):,}".replace(",", " ")
-
     def _format_export_failure(
         project_id: int | None,
         exc: Exception,
@@ -582,56 +570,6 @@ def make_source_tools(thread_id: str) -> list:
         resolved_name = str(meta.get("selection_name") or key)
         return resolved_name, _normalize_sample_ids(meta.get("sample_ids"))
 
-
-    def _selection_actions(name: str, sample_count: int, project_count: int) -> list[str]:
-        return [
-            f"analyse cette sélection persistée : `{name}`",
-            f"exporte cette sélection : `export_ecotaxa_samples(selection_name=\"{name}\")`",
-            "export représentatif : demander `exporte 1 sample par projet`",
-            "filtrer davantage : ajouter une profondeur, une période, un instrument ou des projets",
-            f"contexte : {sample_count} samples sur {project_count} projets",
-        ]
-
-    def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
-        try:
-            return max(minimum, int(os.getenv(name, str(default))))
-        except (TypeError, ValueError):
-            return default
-
-    def _compact_instruments(samples: list[dict]) -> str:
-        instruments = sorted({
-            str(sample.get("instrument"))
-            for sample in samples
-            if sample.get("instrument")
-        })
-        if not instruments:
-            return "—"
-        suffix = f", +{len(instruments) - 8}" if len(instruments) > 8 else ""
-        return ", ".join(instruments[:8]) + suffix
-
-    def _sample_project_counts(samples: list[dict]) -> str:
-        counts: dict[int, int] = {}
-        for sample in samples:
-            pid = int(sample["project_id"])
-            counts[pid] = counts.get(pid, 0) + 1
-        parts = [
-            f"{pid}: {count}"
-            for pid, count in sorted(
-                counts.items(), key=lambda item: (-item[1], item[0])
-            )[:8]
-        ]
-        if len(counts) > 8:
-            parts.append(f"+{len(counts) - 8} projets")
-        return ", ".join(parts) if parts else "—"
-
-    def _ecotaxa_partial_notice(result: dict) -> str:
-        if not result.get("partial"):
-            return ""
-        return (
-            "\n\nNote : sync EcoTaxa en cours, résultat partiel "
-            "(`partial=True`). Relancer la même question après la fin du sync "
-            "peut ajouter des samples/projets."
-        )
 
     def _download_ecotaxa_export(
         *,

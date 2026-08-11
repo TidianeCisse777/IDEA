@@ -70,9 +70,6 @@ ALLOWED_ROOT_MODULES = frozenset(
 # the executed code cannot pull a module that holds connection secrets.
 ALLOWED_CORE_MODULES = frozenset(
     {
-        "core.copepod_abundance_analysis",
-        "core.copepod_sample_depth",
-        "core.copepod_taxonomy",
         "core.neolabs_abundance",
     }
 )

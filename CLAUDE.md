@@ -179,10 +179,11 @@ pytest tests/                              # tous
 pytest tests/test_agent_harness.py -v      # construction et comportement permanent
 pytest tests/test_tool_catalog.py -v       # catalogue canonique
 pytest tests/test_context_projection_campaign.py -v  # harness multi-tour hors ligne
+pytest tests/test_serve_sse.py -v          # SSE et affichage Open WebUI
 ```
 
-La suite compacte contient 26 fichiers et 235 tests centrés sur les tools et le
-harness. Voir `assistant-copepodes-specs/` pour les scénarios comportementaux
+La suite compacte contient 27 fichiers et 248 tests centrés sur les tools, le
+harness et l’affichage. Voir `assistant-copepodes-specs/` pour les scénarios comportementaux
 détaillés (`TEST_SCENARIOS.md`).
 
 ---

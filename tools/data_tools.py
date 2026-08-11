@@ -348,15 +348,6 @@ _GRAPH_QUALITY_BLOCKED_KEY = "graph_quality_blocked"
 _OVERPLOT_POINT_THRESHOLD = 1500
 
 
-def graph_recovery_pending(meta: dict[str, Any]) -> bool:
-    """Compatibility facade: rendered graphs are no longer quality-gated."""
-    return False
-
-
-def _mark_graph_quality_blocked(store: SessionStore, thread_id: str) -> None:
-    store.update_meta(thread_id, {_GRAPH_QUALITY_BLOCKED_KEY: True})
-
-
 def _clear_graph_quality_block(store: SessionStore, thread_id: str) -> None:
     store.update_meta(thread_id, {_GRAPH_QUALITY_BLOCKED_KEY: False})
 

@@ -19,7 +19,7 @@ from tools.dataset_registry import (
 from tools.ctd_matcher import CtdProfileMatcher
 from tools.point_enrichment import format_method_block, run_point_enrichment
 from tools.session_store import default_store as _store
-from tools.tool_result import blocked, empty, error, success
+from tools.tool_result import blocked, success
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
@@ -31,9 +31,7 @@ def _ogsl_result(factory, summary: str, **fields):
 
 
 def _ogsl_success(summary: str, **fields): return _ogsl_result(success, summary, **fields)
-def _ogsl_empty(summary: str, **fields): return _ogsl_result(empty, summary, **fields)
 def _ogsl_blocked(summary: str, **fields): return _ogsl_result(blocked, summary, **fields)
-def _ogsl_error(summary: str, **fields): return _ogsl_result(error, summary, **fields)
 
 _OGSL_TABLEDAP_URL = (
     f"https://erddap.ogsl.ca/erddap/tabledap/{OGSL_DATASET_ID}.csvp"

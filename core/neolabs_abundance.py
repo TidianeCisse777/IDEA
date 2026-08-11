@@ -1,8 +1,7 @@
 """Contrat déterministe : densité par taxon/stade d'une table NeoLabs taxonomy.
 
-Équivalent NeoLab de `core.copepod_sample_depth` côté UVP : impose la bonne
-méthode (filtre taxon, choix des stades, somme par sample, moyenne par station)
-et refuse les entrées incomplètes.
+Impose la bonne méthode (filtre taxon, choix des stades, somme par sample,
+moyenne par station) et refuse les entrées incomplètes.
 """
 
 from __future__ import annotations

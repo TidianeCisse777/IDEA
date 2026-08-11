@@ -439,16 +439,6 @@ def _fetch_amundsen_ctd_profile_rows_by_filename(
     return result
 
 
-def _format_table(rows: list[dict], columns: list[str]) -> str:
-    if not rows:
-        return "Aucun résultat Amundsen."
-    dataframe = pd.DataFrame(rows)
-    available_columns = [column for column in columns if column in dataframe.columns]
-    if available_columns:
-        dataframe = dataframe.loc[:, available_columns]
-    return dataframe.to_markdown(index=False)
-
-
 _SOURCE_IDENTIFIER_CANDIDATES = (
     "sample_id",
     "sample_profileid",
@@ -960,22 +950,6 @@ def make_amundsen_tools(thread_id: str) -> list:
         session = _store.get(thread_id)
         dataframe = session.get("df") if session else None
         return dataframe if isinstance(dataframe, pd.DataFrame) and not dataframe.empty else None
-
-    def _nearest_ctd_row(ctd: pd.DataFrame, depth: object | None) -> pd.Series | None:
-        if ctd.empty:
-            return None
-        depth_col = next(
-            (column for column in ("Pres", "PRES", "depth") if column in ctd.columns),
-            None,
-        )
-        if depth is None or depth_col is None:
-            return ctd.iloc[0]
-        depth_values = pd.to_numeric(ctd[depth_col], errors="coerce")
-        target_depth = pd.to_numeric(pd.Series([depth]), errors="coerce").iloc[0]
-        if pd.isna(target_depth) or depth_values.notna().sum() == 0:
-            return ctd.iloc[0]
-        nearest_index = (depth_values - float(target_depth)).abs().idxmin()
-        return ctd.loc[nearest_index]
 
     def _numeric_profile_column(
         dataframe: pd.DataFrame, candidates: tuple[str, ...]

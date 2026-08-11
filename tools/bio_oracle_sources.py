@@ -22,7 +22,6 @@ from core.bio_oracle_client import (
     _resolve_scenario,
     _resolve_var,
     _time_selector,
-    preview_bio_oracle_point as _preview_bio_oracle_point,
 )
 from core.canonical_grid import snap_bbox
 from core.erddap_cache import cache_get, cache_set
@@ -46,7 +45,7 @@ from tools.point_enrichment import (
     run_point_enrichment,
 )
 from tools.session_store import default_store as _store
-from tools.tool_result import blocked, empty, error, success
+from tools.tool_result import blocked, success
 
 
 def _bio_result(factory, summary: str, **fields):
@@ -55,9 +54,7 @@ def _bio_result(factory, summary: str, **fields):
 
 
 def _bio_success(summary: str, **fields): return _bio_result(success, summary, **fields)
-def _bio_empty(summary: str, **fields): return _bio_result(empty, summary, **fields)
 def _bio_blocked(summary: str, **fields): return _bio_result(blocked, summary, **fields)
-def _bio_error(summary: str, **fields): return _bio_result(error, summary, **fields)
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
@@ -205,54 +202,6 @@ def _lookup_in_tile(
         "time": nearest.get("time"),
         "value": value,
     }
-
-
-def _fetch_bio_oracle_point(
-    *,
-    latitude: float,
-    longitude: float,
-    variable: str,
-    scenario: str,
-    depth_layer: str,
-    target_year: int | None,
-) -> dict:
-    """Fetch a single Bio-ORACLE value at one point.
-
-    Returns {"dataset_id", "time", "value"}.
-    """
-    preview = _preview_bio_oracle_point(
-        {
-            "latitude": latitude,
-            "longitude": longitude,
-            "variable": variable,
-            "scenario": scenario,
-            "depth_layer": depth_layer,
-            "target_year": target_year,
-        }
-    )
-    value_key = preview.get("variable", "")
-    rows = preview.get("rows") or []
-    first = rows[0] if rows else {}
-    raw_value = first.get(value_key)
-    try:
-        value = round(float(raw_value), 4) if raw_value is not None else None
-    except (TypeError, ValueError):
-        value = None
-    return {
-        "dataset_id": preview.get("dataset_id"),
-        "time": first.get("time"),
-        "value": value,
-    }
-
-
-def _format_table(rows: list[dict], columns: list[str]) -> str:
-    if not rows:
-        return "Aucun résultat Bio-ORACLE."
-    dataframe = pd.DataFrame(rows)
-    available_columns = [column for column in columns if column in dataframe.columns]
-    if available_columns:
-        dataframe = dataframe.loc[:, available_columns]
-    return dataframe.to_markdown(index=False)
 
 
 class BioOracleMatcher:
@@ -538,49 +487,6 @@ class BioOracleMatcher:
 
 def make_bio_oracle_tools(thread_id: str) -> list:
     """Create LangChain Bio-ORACLE tools for one thread."""
-
-    def _source_dataframe_with_columns(
-        latitude_column: str,
-        longitude_column: str,
-    ) -> tuple[pd.DataFrame | None, str | None]:
-        """Find the current or named source table that has the requested coords."""
-        session = _store.get(thread_id)
-        current = session.get("df") if session else None
-        if (
-            isinstance(current, pd.DataFrame)
-            and not current.empty
-            and latitude_column in current.columns
-            and longitude_column in current.columns
-        ):
-            return current, None
-
-        candidates: list[tuple[str, pd.DataFrame]] = []
-        for key in _store.keys(f"{thread_id}:dataset:"):
-            named = _store.get(key)
-            dataframe = named.get("df") if named else None
-            if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
-                continue
-            if latitude_column in dataframe.columns and longitude_column in dataframe.columns:
-                variable_name = (named.get("meta") or {}).get("variable_name") or key.rsplit(":", 1)[-1]
-                candidates.append((variable_name, dataframe))
-
-        if not candidates:
-            return current if isinstance(current, pd.DataFrame) else None, None
-
-        file_candidates = [
-            candidate
-            for candidate in candidates
-            if str(candidate[0]).startswith("df_file_")
-        ]
-        variable_name, dataframe = (file_candidates or candidates)[0]
-        return dataframe, variable_name
-
-
-
-
-
-
-
     @tool(response_format="content_and_artifact")
     def enrich_with_bio_oracle(
         variables: list[str] | None = None,

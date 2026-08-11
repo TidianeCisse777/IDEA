@@ -69,10 +69,6 @@ def error(summary: str, **fields: Any) -> ToolOutput:
     return _result("error", summary, **fields)
 
 
-def cancelled(summary: str, **fields: Any) -> ToolOutput:
-    return _result("cancelled", summary, **fields)
-
-
 def validate_tool_artifact(value: object) -> ToolResult:
     """Validate one artifact and reject legacy/unstructured outcomes."""
     if not isinstance(value, Mapping):
