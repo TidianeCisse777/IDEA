@@ -102,6 +102,12 @@ class ModelCapture:
     tool_definitions: tuple[Any, ...] = ()
 
     @property
+    def context_ledger(self) -> tuple[dict[str, Any], ...]:
+        """Structured projection accounting emitted by the runtime seam."""
+
+        return tuple(self.audit.get("context_projection_ledger") or ())
+
+    @property
     def runtime_context(self) -> str:
         for message in reversed(self.messages):
             if message.type != "human":

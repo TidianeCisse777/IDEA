@@ -1102,7 +1102,7 @@ def make_source_tools(thread_id: str) -> list:
     def export_ecotaxa_samples(
         sample_ids: list[int] | None = None,
         selection_name: str | None = None,
-        confirmed: bool = True,
+        confirmed: bool = False,
         status: str = "V",
         taxon: str | None = None,
     ) -> str:
@@ -1124,9 +1124,9 @@ def make_source_tools(thread_id: str) -> list:
         contenant `sample_id` ou `profile_id` est également accepté ; les
         profils sont résolus automatiquement vers leurs samples dans le cache.
 
-        L'export démarre directement par défaut. `confirmed=False` reste
-        disponible uniquement pour demander un préflight explicite, sans
-        télécharger les objets.
+        Le préflight est obligatoire et s'exécute par défaut sans télécharger
+        les objets. `confirmed=True` n'est accepté qu'après un préflight réussi
+        portant sur la même sélection, le même statut et le même taxon.
 
         `status` : statut des annotations à exporter — `"V"` (validé),
         `"P"` (prédit), `""` (tous).
@@ -1160,6 +1160,23 @@ def make_source_tools(thread_id: str) -> list:
                     "sample EcoTaxa exportable."
                 )
             return _eco_blocked("Erreur : sample_ids vide.")
+
+        requested_export_plan = {
+            "sample_ids": normalized,
+            "status": status,
+            "taxon": taxon,
+        }
+        if confirmed:
+            active_meta = dict((_store.get(thread_id) or {}).get("meta") or {})
+            pending_plan = active_meta.get("pending_ecotaxa_export_plan")
+            if pending_plan != requested_export_plan:
+                return _eco_blocked(
+                    "Préflight EcoTaxa obligatoire avant export. Relance exactement "
+                    "la même sélection avec `confirmed=False`, présente son plan "
+                    "et attends la confirmation explicite de l'utilisateur avant "
+                    "d'utiliser `confirmed=True`.",
+                    metrics={"preflight_required": True},
+                )
 
         try:
             mapping = resolve_sample_projects(normalized)
@@ -1244,9 +1261,7 @@ def make_source_tools(thread_id: str) -> list:
                 thread_id,
                 {
                     "pending_ecotaxa_export_plan": {
-                        "sample_ids": normalized,
-                        "status": status,
-                        "taxon": taxon,
+                        **requested_export_plan,
                     }
                 },
             )
@@ -2171,19 +2186,13 @@ def make_source_tools(thread_id: str) -> list:
                     context_conn.close()
 
         context_gap = _analysis_context_gap(sql, list(dataframe.columns))
-        if context_gap is not None:
-            grain, missing = context_gap
-            return _eco_blocked(
-                f"Contexte analytique incomplet pour le grain `{grain}`. "
-                "L'enrichissement automatique n'a pas pu relier sûrement le "
-                "résultat au périmètre filtré. Conserve les clés stables du "
-                "grain dans le SELECT. Colonnes encore manquantes : "
-                + ", ".join(f"`{name}`" for name in missing)
-                + ".",
-                retryable=True,
-                method="EcoTaxa analysis-context contract",
-                metrics={"grain": grain, "missing_columns": missing},
-            )
+        # Context enrichment is advisory. A valid SELECT that preserves a stable
+        # grain key remains useful even when the automatic scope reconstruction
+        # cannot add every reusable date/space/instrument column. In particular,
+        # CTEs backed by mounted session DataFrames are intentionally accepted:
+        # rejecting their aggregate would turn optional context into a hard gate
+        # and leave the agent retrying unrelated local analyses.
+        missing_context_columns = context_gap[1] if context_gap is not None else []
 
         latest_variable = "df_ecotaxa_cache_query"
         provided_description = str(description or "").strip()[:500]
@@ -2210,6 +2219,15 @@ def make_source_tools(thread_id: str) -> list:
             "truncated": truncated,
             "input_dataframes": list(requested_dataframe_refs),
             "analysis_context_added": auto_context_columns,
+            **(
+                {
+                    "analysis_context_grain": grain,
+                    "analysis_context_complete": not missing_context_columns,
+                    "analysis_context_missing": missing_context_columns,
+                }
+                if grain is not None
+                else {}
+            ),
             **(
                 {"n_ecotaxa_samples": len(sample_ids)}
                 if "sample_id" in dataframe.columns
@@ -2421,6 +2439,15 @@ def make_source_tools(thread_id: str) -> list:
             metrics={
                 "rows": len(rows),
                 "truncated": truncated,
+                **(
+                    {
+                        "analysis_context_grain": grain,
+                        "analysis_context_complete": not missing_context_columns,
+                        "analysis_context_missing": missing_context_columns,
+                    }
+                    if grain is not None
+                    else {}
+                ),
                 **(
                     {"n_ecotaxa_samples": len(sample_ids)}
                     if "sample_id" in dataframe.columns

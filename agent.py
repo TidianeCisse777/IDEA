@@ -41,9 +41,11 @@ from core.llm_config import (
     cached_tokens_from_metadata,
     chat_openai_connection_kwargs,
     openai_explicit_prompt_cache_enabled,
+    openai_prompt_cache_key,
     openai_prompt_cache_settings,
     with_explicit_prompt_cache_breakpoint,
 )
+from core.context_projection import ContextBlock, project_context_blocks
 from tools.tool_catalog import build_tool_catalog
 
 load_dotenv()
@@ -77,7 +79,7 @@ _CHECKPOINTS_DB.parent.mkdir(parents=True, exist_ok=True)
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 _checkpointer = MemorySaver()
-_store = InMemoryStore()  # overridden by serve.py lifespan via AsyncPostgresStore
+_store = InMemoryStore()  # ephemeral LangGraph store; durable state uses the checkpointer
 
 
 def _load_system_prompt() -> str:
@@ -100,6 +102,12 @@ _SYSTEM_PROMPT = _load_system_prompt()
 # evaluations that need a larger window.
 _MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "100000"))
 _CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
+# Raw dialogue is only one input to the working context; ExplorationRun and the
+# resource inventory retain durable task state. Keep recent dialogue bounded,
+# while always allowing the complete current ReAct turn up to the global cap.
+_MAX_PROVIDER_HISTORY_TOKENS = int(
+    os.getenv("MAX_PROVIDER_HISTORY_TOKENS", "3000")
+)
 _MAX_MODEL_CALLS_PER_TURN = int(os.getenv("MAX_MODEL_CALLS_PER_TURN", "10"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
@@ -328,6 +336,16 @@ def _append_harness_model_call(thread_id: str, audit: dict) -> None:
             "approx_tokens_history": audit.get("approx_tokens_after_trim", 0),
             "approx_tokens_memory_and_capsule": audit.get("approx_tokens_memory_and_capsule", 0),
             "approx_tokens_runtime_context": audit.get("approx_tokens_runtime_context", 0),
+            "context_projection_ledger": copy.deepcopy(
+                audit.get("context_projection_ledger") or []
+            ),
+            "prompt_cache_contract_key": audit.get("prompt_cache_contract_key"),
+            "prompt_cache_contract_matches_configured": audit.get(
+                "prompt_cache_contract_matches_configured"
+            ),
+            "estimated_stable_prefix_share": audit.get(
+                "estimated_stable_prefix_share", 0.0
+            ),
             "tool_messages_seen": audit.get("tool_messages_seen", 0),
             "tool_messages_truncated": audit.get("tool_messages_truncated", 0),
             "tools_exposed": list(audit.get("tools_exposed") or []),
@@ -703,7 +721,7 @@ def compute_history_budget(
         - int(memory_tokens)
         - int(reserve_tokens)
     )
-    return min(maximum, max(1000, available))
+    return min(maximum, max(0, available))
 
 
 def _tool_schema_tokens(tools) -> int:
@@ -781,9 +799,12 @@ def _truncate_tool_results(messages):
 
 def _trim_request_messages(messages, *, max_tokens: int | None = None):
     """Keep a recent, valid conversation suffix for one model request."""
+    budget = _MAX_CONTEXT_TOKENS if max_tokens is None else max(0, int(max_tokens))
+    if budget <= 0:
+        return []
     trimmed = trim_messages(
         messages,
-        max_tokens=max_tokens or _MAX_CONTEXT_TOKENS,
+        max_tokens=budget,
         strategy="last",
         token_counter=_approx_tokens,
         start_on="human",
@@ -793,8 +814,8 @@ def _trim_request_messages(messages, *, max_tokens: int | None = None):
     if trimmed or not messages:
         return list(trimmed)
 
-    # A single current turn can exceed the budget. Keep it whole rather than
-    # sending orphaned ToolMessages or dropping the user's request entirely.
+    # A single current turn can exceed the budget. Preserve its leading text,
+    # but never allow that fallback to break the global request ceiling.
     last_human_index = next(
         (
             index
@@ -803,30 +824,103 @@ def _trim_request_messages(messages, *, max_tokens: int | None = None):
         ),
         len(messages) - 1,
     )
-    return list(messages[last_human_index:])
+    latest = messages[last_human_index]
+    if not isinstance(latest, HumanMessage) or not isinstance(latest.content, str):
+        return []
+    low, high = 0, len(latest.content)
+    while low < high:
+        middle = (low + high + 1) // 2
+        candidate = latest.model_copy(
+            update={"content": latest.content[:middle].rstrip()}
+        )
+        if _approx_tokens([candidate]) <= budget:
+            low = middle
+        else:
+            high = middle - 1
+    content = latest.content[:low].rstrip()
+    if low < len(latest.content) and content:
+        marker = "\n[…request truncated by global context budget]"
+        while content and _approx_tokens([
+            latest.model_copy(update={"content": content + marker})
+        ]) > budget:
+            content = content[:-1].rstrip()
+        if content:
+            content += marker
+    return [latest.model_copy(update={"content": content})] if content else []
 
 
-def _build_memory_block(memories) -> tuple[str, dict]:
-    """Construit le bloc mémoire long-terme du contexte transitoire du tour.
+def _latest_user_text(messages: Sequence) -> str:
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            if isinstance(message.content, str):
+                return message.content
+            return "\n".join(
+                str(block.get("text") or "")
+                for block in message.content
+                if isinstance(block, dict) and block.get("type") in {"text", "input_text"}
+            )
+    return ""
 
-    Retourne (bloc_texte, metrics). `bloc_texte` est vide si aucune mémoire
-    exploitable n'a été trouvée.
-    """
-    if not memories:
-        return "", {"memories_found": 0, "memory_chars": 0, "memory_injected": False}
-    mem_text = "\n".join(
-        f"- {item.value.get('content', '')}"
-        for item in memories
-        if item.value.get("content")
+
+def _is_display_only_followup(text: str) -> bool:
+    """Recognize a request to show an already-produced live table unchanged."""
+
+    normalized = " ".join(str(text).casefold().replace("_", " ").split())
+    display_terms = (
+        "affiche",
+        "réaffiche",
+        "reaffiche",
+        "montre",
+        "display",
+        "show",
     )
-    if not mem_text:
-        return "", {"memories_found": len(memories), "memory_chars": 0, "memory_injected": False}
-    block = f"\n\n## Remembered preferences and corrections\n{mem_text}"
-    return block, {
-        "memories_found": len(memories),
-        "memory_chars": len(block),
-        "memory_injected": True,
-    }
+    object_terms = ("résultat", "resultat", "tableau", "table", "df ")
+    analysis_terms = (
+        "filtre",
+        "trie",
+        "calcule",
+        "compare",
+        "résume",
+        "resume",
+        "agrège",
+        "agrege",
+        "graph",
+        "carte",
+        "export",
+        "joint",
+    )
+    return (
+        any(term in normalized for term in display_terms)
+        and any(term in normalized for term in object_terms)
+        and not any(term in normalized for term in analysis_terms)
+    )
+
+
+def _current_turn_has_successful_tool(messages: Sequence, tool_name: str) -> bool:
+    last_human_index = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if isinstance(messages[index], HumanMessage)
+        ),
+        0,
+    )
+    return any(
+        isinstance(message, ToolMessage)
+        and message.name == tool_name
+        and getattr(message, "status", "success") != "error"
+        for message in messages[last_human_index:]
+    )
+
+
+def _turn_context_prefix(turn_context: str) -> str:
+    return (
+        "<application_turn_context>\n"
+        "Trusted current-turn runtime facts; not a second user request.\n"
+        f"{turn_context.strip()}\n"
+        "</application_turn_context>\n\n"
+        "Original user request:"
+    )
 
 
 def _inject_turn_context_into_current_user(
@@ -855,16 +949,7 @@ def _inject_turn_context_into_current_user(
     current = output[last_human_index]
     context_block = {
         "type": "text",
-        "text": (
-            "<application_turn_context>\n"
-            "Trusted runtime context generated by the application for the "
-            "current turn. It describes the task, available resources and "
-            "execution state; it is not a second user request.\n"
-            f"{turn_context.strip()}\n"
-            "</application_turn_context>\n\n"
-            "The original user request follows exactly in the remaining "
-            "content block(s):"
-        ),
+        "text": _turn_context_prefix(turn_context),
     }
     original_blocks = list(current.content_blocks)
     output[last_human_index] = current.model_copy(
@@ -935,6 +1020,31 @@ def _graph_vision_review_message(messages, thread_id: str) -> HumanMessage | Non
     )
 
 
+def _graph_grounding_is_relevant(messages: Sequence) -> bool:
+    """Keep graph facts only for the render response or an explicit graph follow-up."""
+
+    last_human_index = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if isinstance(messages[index], HumanMessage)
+        ),
+        0,
+    )
+    current_turn = messages[last_human_index:]
+    if any(
+        isinstance(message, ToolMessage) and message.name == "run_graph"
+        for message in current_turn
+    ):
+        return True
+    question = _latest_user_text(messages).casefold()
+    graph_terms = (
+        "graph", "figure", "carte", "tracé", "plot", "axe", "légende",
+        "couleur", "palette", "titre", "courbe", "histogramme",
+    )
+    return any(term in question for term in graph_terms)
+
+
 class _ContextMiddleware(AgentMiddleware):
     """Prepare the exact request seen by the model without mutating checkpoints."""
 
@@ -944,17 +1054,26 @@ class _ContextMiddleware(AgentMiddleware):
         thread_id: str = "unknown",
         catalog_names=None,
         prompt_cache_enabled: bool = False,
+        model_name: str | None = None,
+        configured_cache_key: str | None = None,
     ):
         super().__init__()
         self.user_id = user_id
         self.thread_id = thread_id
         self.catalog_names = tuple(catalog_names or ())
         self.prompt_cache_enabled = prompt_cache_enabled
+        self.model_name = model_name or os.getenv("LLM_MODEL", "gpt-5.6-luna")
+        self.configured_cache_key = configured_cache_key
 
-    def _prepare_request(self, request, memories):
+    def _prepare_request(self, request):
         original_messages = list(request.messages)
         exploration_payload = (
             (getattr(request, "state", None) or {}).get("exploration")
+        )
+        exploration_work_complete = bool(
+            isinstance(exploration_payload, dict)
+            and exploration_payload.get("status") == "complete"
+            and not exploration_payload.get("active_step_id")
         )
         exploration_block = render_exploration_frontier(exploration_payload)
         checkpoint_recovery_tools = recovery_tool_names(
@@ -983,7 +1102,12 @@ class _ContextMiddleware(AgentMiddleware):
         )
         truncated_tokens = _approx_tokens(truncated_messages)
 
-        block, metrics = _build_memory_block(memories)
+        metrics = {
+            "memories_found": 0,
+            "memories_selected": 0,
+            "memory_chars": 0,
+            "memory_injected": False,
+        }
         from tools.session_store import default_store as session_store
         from tools.turn_context import build_turn_context
 
@@ -1002,13 +1126,30 @@ class _ContextMiddleware(AgentMiddleware):
         # Rebuild typed runtime state once. The active variable remains metadata
         # for the uniform resource catalog; it never determines catalog order.
         turn_ctx = build_turn_context(
-            session_store, self.thread_id, original_messages, persist_source=False
+            session_store,
+            self.thread_id,
+            original_messages,
+            persist_source=False,
+            include_legacy_capsule=False,
         )
         task_block = render_task_context(
             exploration_payload,
             preferred_sources=source_decision.authorized_sources,
             primary_source=source_decision.primary_source,
         )
+        display_only_followup = _is_display_only_followup(
+            _latest_user_text(original_messages)
+        )
+        display_tool_complete = display_only_followup and (
+            _current_turn_has_successful_tool(original_messages, "run_pandas")
+        )
+        if display_only_followup:
+            task_block += (
+                "\nDisplay-only follow-up: bind to the exact previously shown or "
+                "explicitly named live DataFrame. Do not qualify, recompute, sort or "
+                "convert it. If its rows must be emitted, make exactly one `run_pandas` "
+                "call with `result = <that_dataframe>`, then answer from that result."
+            )
         dataset_block = render_dataframe_context(
             exploration_payload,
             active_variable=turn_ctx.active_variable,
@@ -1026,7 +1167,7 @@ class _ContextMiddleware(AgentMiddleware):
         try:
             grounding = session_store.get(f"{self.thread_id}:last_graph_grounding")
             facts = ((grounding or {}).get("meta") or {}).get("facts")
-            if facts:
+            if facts and _graph_grounding_is_relevant(original_messages):
                 graph_grounding_block = (
                     "\n\nLAST GRAPH — verified rendering facts for the response's "
                     "data summary. Paraphrase these facts; never expose this "
@@ -1040,15 +1181,7 @@ class _ContextMiddleware(AgentMiddleware):
         # that varies by user/thread/turn is composed separately and injected
         # into only the provider-bound copy of the current HumanMessage.
         static_reference_block = ""
-        dynamic_context_block = (
-            block
-            + task_block
-            + domain_profile_block
-            + dataset_block
-            + graph_grounding_block
-            + graph_edit_block
-            + exploration_block
-        )
+        recovery_block = ""
         if dependency_recovery is not None:
             failed_tool, diagnostic, recovery_metrics = dependency_recovery
             missing_names = ", ".join(
@@ -1059,7 +1192,7 @@ class _ContextMiddleware(AgentMiddleware):
                 f"`{name}`"
                 for name in recovery_metrics.get("recovery_tools", [])
             ) or "the appropriate recovery tool"
-            dynamic_context_block += (
+            recovery_block = (
                 "\n\nDATA DEPENDENCY RECOVERY — REQUIRED NEXT ACTION\n"
                 "Failure class: missing data dependency.\n"
                 f"Failed tool: `{failed_tool}`.\n"
@@ -1081,7 +1214,7 @@ class _ContextMiddleware(AgentMiddleware):
                 "analytical step has succeeded, and its result is recorded as evidence."
             )
         elif checkpoint_recovery_tools:
-            dynamic_context_block += (
+            recovery_block = (
                 "\n\nDATA DEPENDENCY RECOVERY — CHECKPOINT CONTINUATION\n"
                 "Failure class: unresolved data dependency from an earlier ReAct step.\n"
                 "The exploration checkpoint records a missing table or column that "
@@ -1103,7 +1236,7 @@ class _ContextMiddleware(AgentMiddleware):
             )
         elif code_retry is not None:
             retry_tool, diagnostic = code_retry
-            dynamic_context_block += (
+            recovery_block = (
                 "\n\nDETERMINISTIC CODE RETRY — ONE ATTEMPT ONLY\n"
                 "Failure class: retryable local code execution.\n"
                 f"Failed tool: `{retry_tool}`.\n"
@@ -1120,14 +1253,8 @@ class _ContextMiddleware(AgentMiddleware):
                 "Completion condition: the corrected call succeeds once, or the single "
                 "retry budget is exhausted and the second failure is reported."
             )
-        injected_context = static_reference_block + dynamic_context_block
         base_system_tokens = (
             _approx_tokens([SystemMessage(content=base)]) if base else 0
-        )
-        runtime_context_tokens = (
-            _approx_tokens([HumanMessage(content=injected_context)])
-            if injected_context
-            else 0
         )
         # Build the provider-facing tool surface before pricing schemas or
         # assigning the remaining history budget. With OpenAI Tool Search the
@@ -1169,7 +1296,6 @@ class _ContextMiddleware(AgentMiddleware):
             tool_search_projection = build_openai_tool_search_projection(
                 original_tools,
                 TOOL_POLICIES,
-                force_immediate=tuple(forced_immediate_names),
             )
             exposed_tools = list(tool_search_projection.provider_tools)
         else:
@@ -1185,10 +1311,15 @@ class _ContextMiddleware(AgentMiddleware):
             if retry_tool_instance is not None:
                 if not tool_search_active and retry_tool_instance not in exposed_tools:
                     exposed_tools.append(retry_tool_instance)
-                retry_tool_choice = {
-                    "type": "function",
-                    "function": {"name": retry_tool},
-                }
+                if (
+                    not tool_search_active
+                    or tool_search_projection is not None
+                    and retry_tool in tool_search_projection.immediate_names
+                ):
+                    retry_tool_choice = {
+                        "type": "function",
+                        "function": {"name": retry_tool},
+                    }
         if dependency_recovery is not None or checkpoint_recovery_tools:
             for recovery_name in dependency_recovery_names:
                 recovery_tool = scoped_by_name.get(str(recovery_name))
@@ -1206,6 +1337,51 @@ class _ContextMiddleware(AgentMiddleware):
         tool_schema_tokens_before = _tool_schema_tokens(original_tools)
         tool_schema_tokens_after_source = _tool_schema_tokens(scoped_tools)
         tool_schema_tokens = _tool_schema_tokens(exposed_tools)
+        current_request_text = _latest_user_text(original_messages)
+        current_request_tokens = (
+            _approx_tokens([HumanMessage(content=current_request_text)])
+            if current_request_text
+            else 0
+        )
+        available_after_fixed = max(
+            0,
+            _MAX_CONTEXT_TOKENS
+            - base_system_tokens
+            - tool_schema_tokens
+            - _CONTEXT_RESERVE_TOKENS,
+        )
+        wrapper_tokens = _approx_tokens([
+            HumanMessage(content=_turn_context_prefix(""))
+        ])
+        dynamic_budget = max(
+            0,
+            available_after_fixed
+            - min(current_request_tokens, available_after_fixed)
+            - wrapper_tokens,
+        )
+        context_projection = project_context_blocks(
+            [
+                ContextBlock("current_task", task_block, priority=100, required=True),
+                ContextBlock("domain_profile", domain_profile_block, priority=60),
+                ContextBlock("available_dataframes", dataset_block, priority=90),
+                ContextBlock("last_graph", graph_grounding_block, priority=70),
+                ContextBlock("exploration_frontier", exploration_block, priority=80),
+                ContextBlock("recovery", recovery_block, priority=110, required=True),
+            ],
+            max_tokens=dynamic_budget,
+            count_tokens=lambda text: _approx_tokens([HumanMessage(content=text)]),
+        )
+        projected_blocks = {
+            item.name: item.text for item in context_projection.blocks
+        }
+        injected_context = context_projection.text
+        runtime_context_tokens = (
+            _approx_tokens([
+                HumanMessage(content=_turn_context_prefix(injected_context))
+            ])
+            if injected_context
+            else 0
+        )
         history_budget = compute_history_budget(
             max_input_tokens=_MAX_CONTEXT_TOKENS,
             system_tokens=base_system_tokens,
@@ -1213,6 +1389,22 @@ class _ContextMiddleware(AgentMiddleware):
             memory_tokens=runtime_context_tokens,
             reserve_tokens=_CONTEXT_RESERVE_TOKENS,
         )
+        last_human_index = next(
+            (
+                index
+                for index in range(len(truncated_messages) - 1, -1, -1)
+                if isinstance(truncated_messages[index], HumanMessage)
+            ),
+            len(truncated_messages),
+        )
+        current_react_turn_tokens = _approx_tokens(
+            truncated_messages[last_human_index:]
+        )
+        provider_history_cap = max(
+            _MAX_PROVIDER_HISTORY_TOKENS,
+            current_react_turn_tokens,
+        )
+        history_budget = min(history_budget, provider_history_cap)
         trimmed_messages = _trim_request_messages(
             truncated_messages,
             max_tokens=history_budget,
@@ -1228,14 +1420,44 @@ class _ContextMiddleware(AgentMiddleware):
             if prepared_system_message is not None
             else 0
         )
+        estimated_request_tokens = (
+            base_system_tokens
+            + runtime_context_tokens
+            + tool_schema_tokens
+            + final_tokens
+        )
+        if estimated_request_tokens > _MAX_CONTEXT_TOKENS:
+            history_budget = max(
+                0,
+                history_budget - (estimated_request_tokens - _MAX_CONTEXT_TOKENS),
+            )
+            trimmed_messages = _trim_request_messages(
+                truncated_messages,
+                max_tokens=history_budget,
+            )
+            final_tokens = _approx_tokens(trimmed_messages)
+            estimated_request_tokens = (
+                base_system_tokens
+                + runtime_context_tokens
+                + tool_schema_tokens
+                + final_tokens
+            )
+
+        cache_contract_key = openai_prompt_cache_key(
+            model=self.model_name,
+            system_prompt=str(base),
+            tools=exposed_tools,
+        )
 
         harness_context = {
-            "current_task": task_block.strip(),
-            "available_dataframes": dataset_block.strip(),
-            "domain_profile": domain_profile_block.strip(),
-            "last_graph": graph_grounding_block.strip(),
-            "exploration_frontier": exploration_block.strip(),
+            "current_task": projected_blocks.get("current_task", "").strip(),
+            "available_dataframes": projected_blocks.get("available_dataframes", "").strip(),
+            "domain_profile": projected_blocks.get("domain_profile", "").strip(),
+            "last_graph": projected_blocks.get("last_graph", "").strip(),
+            "exploration_frontier": projected_blocks.get("exploration_frontier", "").strip(),
+            "recovery": projected_blocks.get("recovery", "").strip(),
             "runtime_context": injected_context.strip(),
+            "context_ledger": context_projection.ledger,
             "history_shape": [
                 {
                     "type": getattr(message, "type", type(message).__name__),
@@ -1253,6 +1475,9 @@ class _ContextMiddleware(AgentMiddleware):
             "messages_after_old_tool_compaction": len(compacted_messages),
             "messages_after_trim": len(trimmed_messages),
             "messages_trimmed": max(
+                0, len(truncated_messages) - len(trimmed_messages)
+            ),
+            "history_offloaded_to_checkpoint": max(
                 0, len(truncated_messages) - len(trimmed_messages)
             ),
             "approx_tokens_before": original_tokens,
@@ -1273,19 +1498,11 @@ class _ContextMiddleware(AgentMiddleware):
                 0, tool_schema_tokens_before - tool_schema_tokens
             ),
             "history_budget_tokens": history_budget,
+            "provider_history_cap_tokens": provider_history_cap,
+            "current_react_turn_tokens": current_react_turn_tokens,
             "context_reserve_tokens": _CONTEXT_RESERVE_TOKENS,
-            "approx_tokens_model_request": (
-                base_system_tokens
-                + runtime_context_tokens
-                + tool_schema_tokens
-                + final_tokens
-            ),
-            "total_estimated": (
-                base_system_tokens
-                + runtime_context_tokens
-                + tool_schema_tokens
-                + final_tokens
-            ),
+            "approx_tokens_model_request": estimated_request_tokens,
+            "total_estimated": estimated_request_tokens,
             "approx_tokens_saved_by_tool_truncation": max(
                 0, original_tokens - truncated_tokens
             ),
@@ -1294,20 +1511,28 @@ class _ContextMiddleware(AgentMiddleware):
             ),
             "max_context_tokens": _MAX_CONTEXT_TOKENS,
             "context_limit_exceeded_by_latest_turn": (
-                final_tokens > _MAX_CONTEXT_TOKENS
+                estimated_request_tokens > _MAX_CONTEXT_TOKENS
             ),
             **truncate_metrics,
             **compact_metrics,
             "max_total_tool_result_chars": _MAX_TOTAL_TOOL_CHARS,
             **metrics,
-            "dataset_capsule_injected": bool(dataset_block),
-            "dataset_capsule_chars": len(dataset_block),
-            "dataframe_context_injected": bool(dataset_block),
-            "dataframe_context_chars": len(dataset_block),
-            "task_context_injected": bool(task_block),
-            "task_context_chars": len(task_block),
-            "exploration_state_injected": bool(exploration_block),
-            "exploration_state_chars": len(exploration_block),
+            "context_projection_budget_tokens": dynamic_budget,
+            "context_projection_original_tokens": context_projection.original_tokens,
+            "context_projection_tokens": context_projection.projected_tokens,
+            "context_projection_ledger": context_projection.ledger,
+            "dataset_capsule_injected": bool(projected_blocks.get("available_dataframes")),
+            "dataset_capsule_chars": len(projected_blocks.get("available_dataframes", "")),
+            "dataframe_context_injected": bool(projected_blocks.get("available_dataframes")),
+            "dataframe_context_chars": len(projected_blocks.get("available_dataframes", "")),
+            "task_context_injected": bool(projected_blocks.get("current_task")),
+            "task_context_chars": len(projected_blocks.get("current_task", "")),
+            "exploration_state_injected": bool(projected_blocks.get("exploration_frontier")),
+            "exploration_state_chars": len(projected_blocks.get("exploration_frontier", "")),
+            "memory_projected": bool(projected_blocks.get("memory")),
+            "display_only_followup": display_only_followup,
+            "display_tool_complete": display_tool_complete,
+            "exploration_work_complete": exploration_work_complete,
             "runtime_context_injected": bool(injected_context),
             "runtime_context_chars": len(injected_context),
             "runtime_context_position": "current_user_prefix",
@@ -1321,12 +1546,23 @@ class _ContextMiddleware(AgentMiddleware):
             "preseeded_graph_skills": [],
             "preseeded_source_skills": [],
             "graph_reference_phase": graph_reference_phase,
-            "graph_reference_chars": 0,
+            "graph_reference_chars": len(projected_blocks.get("last_graph", "")),
             "source_reference_chars": 0,
             "neolabs_reference_chars": 0,
             "fish_larvae_reference_chars": 0,
             "static_reference_chars": len(static_reference_block),
-            "dynamic_context_chars": len(dynamic_context_block),
+            "dynamic_context_chars": len(injected_context),
+            "prompt_cache_contract_key": cache_contract_key,
+            "prompt_cache_configured_key": self.configured_cache_key,
+            "prompt_cache_contract_matches_configured": (
+                self.configured_cache_key is None
+                or cache_contract_key == self.configured_cache_key
+            ),
+            "estimated_stable_prefix_tokens": base_system_tokens + tool_schema_tokens,
+            "estimated_stable_prefix_share": (
+                (base_system_tokens + tool_schema_tokens) / estimated_request_tokens
+                if estimated_request_tokens else 0.0
+            ),
             "tools_before_policy": [
                 getattr(item, "name", "") for item in original_tools
             ],
@@ -1363,6 +1599,10 @@ class _ContextMiddleware(AgentMiddleware):
                 list(tool_search_projection.excluded_names)
                 if tool_search_projection is not None
                 else []
+            ),
+            "openai_tool_search_surface_stable": bool(tool_search_projection),
+            "openai_tool_search_requested_immediate": sorted(
+                forced_immediate_names
             ),
             "code_retry_forced_tool": code_retry[0] if code_retry else None,
             "dependency_recovery": bool(dependency_recovery),
@@ -1408,6 +1648,8 @@ class _ContextMiddleware(AgentMiddleware):
             }
             if retry_tool_choice is not None:
                 overrides["tool_choice"] = retry_tool_choice
+            elif display_tool_complete or exploration_work_complete:
+                overrides["tool_choice"] = "none"
             prepared = request.override(
                 **overrides,
             )
@@ -1427,6 +1669,8 @@ class _ContextMiddleware(AgentMiddleware):
             }
             if retry_tool_choice is not None:
                 fallback_overrides["tool_choice"] = retry_tool_choice
+            elif display_tool_complete or exploration_work_complete:
+                fallback_overrides["tool_choice"] = "none"
             return request.override(**fallback_overrides)
 
     @staticmethod
@@ -1495,26 +1739,12 @@ class _ContextMiddleware(AgentMiddleware):
         return result
 
     def wrap_model_call(self, request, handler):
-        store = getattr(request.runtime, "store", None)
-        memories = []
-        if store is not None:
-            try:
-                memories = store.search((self.user_id, "memories"))
-            except Exception:
-                memories = []
-        response = handler(self._prepare_request(request, memories))
+        response = handler(self._prepare_request(request))
         _finish_harness_model_call(self.thread_id, response)
         return _wait_for_rag_response(response)
 
     async def awrap_model_call(self, request, handler):
-        store = getattr(request.runtime, "store", None)
-        memories = []
-        if store is not None:
-            try:
-                memories = await store.asearch((self.user_id, "memories"))
-            except Exception:
-                memories = []
-        response = await handler(self._prepare_request(request, memories))
+        response = await handler(self._prepare_request(request))
         _finish_harness_model_call(self.thread_id, response)
         return _wait_for_rag_response(response)
 
@@ -1695,6 +1925,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
         use_responses_api=tool_search_active,
     )
     prompt_cache_kwargs: dict = {}
+    configured_cache_key: str | None = None
     if prompt_cache_enabled:
         default_projection = build_openai_tool_search_projection(
             list(catalog.tools),
@@ -1705,6 +1936,9 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
             system_prompt=_SYSTEM_PROMPT,
             tools=default_projection.provider_tools,
         )
+        configured_cache_key = prompt_cache_kwargs["model_kwargs"][
+            "prompt_cache_key"
+        ]
     llm = ChatOpenAI(
         model=model_name,
         max_retries=2,
@@ -1728,6 +1962,8 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
                 thread_id=thread_id,
                 catalog_names=catalog.names,
                 prompt_cache_enabled=prompt_cache_enabled,
+                model_name=model_name,
+                configured_cache_key=configured_cache_key,
             )
         ],
         state_schema=IdeaAgentState,

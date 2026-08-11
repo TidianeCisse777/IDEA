@@ -62,7 +62,11 @@ Deux mécanismes préparent chaque appel modèle :
 - `ExplorationStateMiddleware` conserve objectif, livrables, ressources,
   étapes, dépendances et preuves dans le checkpoint LangGraph;
 - `_ContextMiddleware` construit le contexte transitoire, compacte l’historique,
-  borne les résultats de tools et choisit leur représentation côté provider.
+  borne les résultats de tools et choisit leur représentation côté provider;
+- `core/context_projection.py` reçoit les blocs nommés du tour et produit une
+  projection budgétée avec un ledger de tokens. Le plafond couvre ensemble le
+  système, les schémas de tools, le contexte transitoire, l’historique et la
+  réserve de sortie.
 
 Le contexte transitoire est organisé ainsi :
 
@@ -83,6 +87,11 @@ schémas de tools transmis séparément
 
 Le message système reste stable et cacheable. Les données propres au tour ne
 sont pas ajoutées durablement au checkpoint comme instructions système.
+Avec OpenAI compatible, un breakpoint explicite termine ce préfixe stable et
+la clé versionnée est calculée depuis le modèle, le system prompt et la surface
+de tools réellement déclarée. Les reprises ReAct conservent la même surface
+Tool Search; les tools différés sont retrouvés dans leur namespace au lieu de
+modifier le contrat cacheable.
 
 ### 3. Catalogue et exécution des tools
 
@@ -206,6 +215,7 @@ l’utilisateur, ni remplacer silencieusement la métrique ou le périmètre.
 |---|---|
 | `serve.py` | API, SSE, images et téléchargements |
 | `agent.py` | agent, contexte, modèle et guards |
+| `core/context_projection.py` | projection transitoire structurée, priorités et ledger de tokens |
 | `agents/copepod_system_prompt.py` | comportement permanent |
 | `agents/exploration_middleware.py` | état d’exploration |
 | `tools/tool_catalog.py` | catalogue exécutable et politiques |
@@ -239,6 +249,7 @@ l’utilisateur, ni remplacer silencieusement la métrique ou le périmètre.
 | `LLM_MODEL` | modèle OpenAI |
 | `OPENAI_TOOL_SEARCH_ENABLED` | namespaces différés compatibles OpenAI |
 | `MAX_CONTEXT_TOKENS` | plafond de contexte |
+| `MAX_PROVIDER_HISTORY_TOKENS` | plafond de l’historique brut ancien (le tour ReAct courant reste entier dans le plafond global) |
 | `MAX_TOOL_RESULT_CHARS` | borne des observations |
 | `HARNESS_TRACE_MAX_TURNS` | nombre de tours de monitoring conservés en mémoire |
 | `CHECKPOINTS_DB` | checkpoints SQLite |

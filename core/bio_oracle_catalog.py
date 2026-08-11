@@ -89,8 +89,6 @@ CATALOG_SCENARIOS: dict[str, str] = {
     "ssp126": "ssp126",
     "ssp2-4.5": "ssp245",
     "ssp245": "ssp245",
-    "4.5": "ssp245",
-    "rcp4.5": "ssp245",
     "ssp3-7.0": "ssp370",
     "ssp370": "ssp370",
     "ssp4-6.0": "ssp460",
@@ -120,7 +118,7 @@ SCENARIO_DESCRIPTIONS: dict[str, str] = {
 }
 
 SCENARIO_OPTIONS: tuple[str, ...] = (
-    "baseline", "ssp119", "ssp245", "ssp370", "ssp460", "ssp585",
+    "baseline", "ssp119", "ssp126", "ssp245", "ssp370", "ssp460", "ssp585",
 )
 
 CATALOG_LAYERS: dict[str, str] = {

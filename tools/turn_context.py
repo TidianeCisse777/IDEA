@@ -49,6 +49,7 @@ def build_turn_context(
     messages: object,
     *,
     persist_source: bool = False,
+    include_legacy_capsule: bool = True,
 ) -> TurnContext:
     """Reconstruct the typed turn state from the store and current messages.
 
@@ -76,7 +77,11 @@ def build_turn_context(
     except Exception:
         authorized, primary, explicit = (), None, ()
 
-    capsule = build_dataset_state_capsule(store, thread_id, messages)
+    capsule = (
+        build_dataset_state_capsule(store, thread_id, messages)
+        if include_legacy_capsule
+        else ""
+    )
     pending_ecotaxa_export = bool(meta.get("pending_ecotaxa_export_plan"))
 
     return TurnContext(

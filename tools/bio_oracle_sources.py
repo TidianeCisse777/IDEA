@@ -514,12 +514,13 @@ def make_bio_oracle_tools(thread_id: str) -> list:
           `diffuse_attenuation` ; catalogue complet : `sea_water_speed`,
           `sea_water_direction`, `iron`, `ph`, `sea_ice_thickness`,
           `sea_ice_cover`, `cloud_cover`, `air_temperature` ;
-        - scénarios : `baseline`, `SSP1-1.9`, `SSP2-4.5`, `SSP3-7.0`,
-          `SSP4-6.0`, `SSP5-8.5` ; couches : `surface`, `benthic_min`,
+        - scénarios : `baseline`, `SSP1-1.9`, `SSP1-2.6`, `SSP2-4.5`,
+          `SSP3-7.0`, `SSP4-6.0`, `SSP5-8.5` ; couches : `surface`, `benthic_min`,
           `benthic_mean`, `benthic_max` ; statistiques : `mean`, `min`,
           `max`, `lt_min`, `lt_max`, `range`.
-        Une année cible reste obligatoire pour un scénario SSP. Une sélection
-        invalide est bloquée sans I/O distant. Le tool conserve toutes les lignes
+        `target_year` est obligatoire pour un scénario SSP et accepte les
+        décennies 2020, 2030, ..., 2090. Une sélection invalide est bloquée sans
+        I/O distant. Le tool conserve toutes les lignes
         et n'agrège jamais par zone. Auto-détecte les colonnes
         latitude/longitude ; si plusieurs fichiers sont en session, passe
         `source_variable` pour cibler un dataset précis. Chaque variable et

@@ -106,13 +106,13 @@ def with_explicit_prompt_cache_breakpoint(
     )
 
 
-def openai_prompt_cache_settings(
+def openai_prompt_cache_key(
     *,
     model: str,
     system_prompt: str,
     tools: Sequence[Any],
-) -> dict[str, Any]:
-    """Build a privacy-safe cache key for one stable prompt/tool contract."""
+) -> str:
+    """Fingerprint one exact, privacy-safe provider prompt contract."""
 
     tool_schemas = [
         dict(item) if isinstance(item, Mapping) else convert_to_openai_tool(item)
@@ -131,9 +131,25 @@ def openai_prompt_cache_settings(
         separators=(",", ":"),
     ).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()[:24]
+    return f"idea-copepod-v1-{digest}"
+
+
+def openai_prompt_cache_settings(
+    *,
+    model: str,
+    system_prompt: str,
+    tools: Sequence[Any],
+) -> dict[str, Any]:
+    """Build explicit-cache settings for one stable prompt/tool contract."""
+
+    key = openai_prompt_cache_key(
+        model=model,
+        system_prompt=system_prompt,
+        tools=tools,
+    )
     return {
         "prompt_cache_options": {"mode": "explicit", "ttl": "30m"},
-        "model_kwargs": {"prompt_cache_key": f"idea-copepod-v1-{digest}"},
+        "model_kwargs": {"prompt_cache_key": key},
     }
 
 

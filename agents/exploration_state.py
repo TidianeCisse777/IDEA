@@ -716,14 +716,10 @@ def _next_active_step(steps: list[ExplorationStep]) -> ExplorationStep | None:
     )
     if ready is not None:
         return ready
-    return next(
-        (
-            step
-            for step in reversed(steps)
-            if step.status in {"failed", "blocked", "complete"}
-        ),
-        None,
-    )
+    # A finished or failed step is evidence, not work still to execute. Keeping
+    # the last completed step active made the model believe the plan was still
+    # running and every extra tool call then became a new observed step.
+    return None
 
 
 def ingest_tool_evidence(payload: object, messages: list[Any]) -> dict[str, Any] | None:
@@ -841,12 +837,16 @@ def ingest_tool_evidence(payload: object, messages: list[Any]) -> dict[str, Any]
         processed.add(message_key)
 
     active_step = _next_active_step(steps)
+    plan_complete = bool(steps) and all(
+        step.status in {"complete", "superseded"} for step in steps
+    )
     updated = run.model_copy(
         update={
             "steps": tuple(steps),
             "dependencies": tuple(dependencies),
             "evidence": tuple(evidence),
             "active_step_id": active_step.step_id if active_step else None,
+            "status": "complete" if plan_complete else run.status,
             "processed_tool_message_ids": tuple(sorted(processed)),
             "updated_at": _now(),
         }
@@ -1269,9 +1269,9 @@ def render_task_context(
     *,
     preferred_sources: tuple[str, ...] = (),
     primary_source: str | None = None,
-    max_chars: int = 2_500,
+    max_chars: int = 1_200,
 ) -> str:
-    """Render the current request before any resource is presented."""
+    """Render turn facts; permanent planning rules stay in the system prompt."""
     run = validate_exploration_run(payload)
     if run is None:
         return ""
@@ -1281,35 +1281,15 @@ def render_task_context(
         source_line = (
             "\nPreferred source route: "
             + (",".join(preferred_sources) or "none")
-            + f"; primary={primary_source or 'none'}. This is a starting hint, "
-            "never a DataFrame or tool restriction."
+            + f"; primary={primary_source or 'none'}."
         )
     rendered = (
         "\n\n## CURRENT TASK (authoritative for this turn)\n"
         f"Objective: {run.objective}\n"
         f"Required deliverables: {deliverables}\n"
-        "DATA SELECTION CONTRACT: before calculating or plotting, infer from the "
-        "objective the operation, requested grain/entity, required columns, scope, "
-        "filters and output. Compare that contract with the catalog below. Select "
-        "the exact capable DataFrame; active status and recency are metadata only. "
-        "Before any calculation, analysis or graph, bind the next operation to "
-        "that exact DataFrame name and verify its grain, required columns, scope "
-        "and lineage on the decision board. "
-        "If no single table is capable, use the nearest suitable ancestor, retrieve "
-        "the missing data, or combine verified resources."
         "\n\n## PLANNER DATASET CHOICE\n"
-        "The application has not selected a DataFrame. The planner must choose. "
-        "Use only the objective and the decision board below for the initial "
-        "dataset choice; consult the exploration frontier only for unfinished "
-        "dependencies. The first plan item must name the candidate DataFrame(s) "
-        "and define pass/fail criteria for grain, required columns, scope, keys "
-        "and missingness. Before calculation or graphing, call run_pandas only "
-        "to evaluate those criteria on the real candidate, return a small "
-        "non-persisted result dictionary, and wait for its result. Accept or "
-        "reject the candidate from that evidence on the next ReAct step. Only "
-        "after acceptance may the plan continue with missing retrieval, "
-        "transformation and output. Reuse an unchanged qualification already "
-        "collected for the same request."
+        "Application selection: none. Candidate choice and qualification remain "
+        "the planner's responsibility under the permanent DataFrame contract."
         + source_line
     )
     return rendered[:max_chars]
@@ -1417,13 +1397,7 @@ def render_dataframe_context(
     )[:8]
     header_lines = [
         "\n\n## AVAILABLE DATAFRAMES (current session)",
-        "The complete index keeps every live DataFrame name visible. Every "
-        "file DataFrame is always expanded. Up to 8 recent, referenced or "
-        "request-relevant source exports, cache results and enrichments are "
-        "expanded with their lineage; older source anchors remain index-only "
-        "and are never automatically deleted. Up to 8 request-relevant "
-        "intermediate analysis tables are expanded. "
-        "Any indexed DataFrame remains selectable by exact name.",
+        "All live names are indexed; detailed cards are relevance-bounded.",
         "DATAFRAME INDEX (all live resources):",
     ]
     full_index_lines = [f"* {resource.name}" for resource in alphabetical_tables]

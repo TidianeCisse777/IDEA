@@ -30,7 +30,6 @@ from pydantic import BaseModel
 from core.llm_config import (
     cache_creation_tokens_from_metadata,
     cached_tokens_from_metadata,
-    chat_openai_connection_kwargs,
 )
 from core.runtime_paths import graphs_dir
 from core.thread_run_coordinator import (
@@ -86,36 +85,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("copepod.serve")
-_background_tasks: set[asyncio.Task] = set()
-
-
-def _spawn_background_task(coro, *, label: str) -> asyncio.Task:  # noqa: ANN001
-    """Track detached work and always retrieve its terminal exception."""
-    task = asyncio.create_task(coro, name=f"copepod:{label}")
-    _background_tasks.add(task)
-
-    def _completed(done: asyncio.Task) -> None:
-        _background_tasks.discard(done)
-        if done.cancelled():
-            return
-        try:
-            exc = done.exception()
-        except asyncio.CancelledError:
-            return
-        if exc is not None:
-            logger.warning("background_task_failed label=%s err=%s", label, exc)
-
-    task.add_done_callback(_completed)
-    return task
-
-
-async def _cancel_background_tasks() -> None:
-    """Drain tracked detached work during an application shutdown/reload."""
-    tasks = list(_background_tasks)
-    for task in tasks:
-        task.cancel()
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _openwebui_user_lookup_token() -> str | None:
@@ -470,70 +439,24 @@ async def _open_checkpointer(pg_dsn: str):
 
 
 async def lifespan(app: FastAPI):
-    """Initialize checkpointer + long-term memory store + feedback polling."""
+    """Initialize the short-term checkpointer and feedback polling."""
     import agent as _agent_module
 
     await asyncio.get_event_loop().run_in_executor(None, _backfill_ecotaxa_cache)
     # Warm cartopy/matplotlib off the request path so the first graph is fast.
     asyncio.get_event_loop().run_in_executor(None, _warm_up_graphing)
 
-    async def _start_polling():
-        task = asyncio.create_task(_feedback_polling_loop())
-        try:
-            yield
-        finally:
-            task.cancel()
-
-    # ── PostgreSQL long-term memory store ──────────────────────────────────────
     pg_dsn_raw = os.getenv("SESSION_STORE_DATABASE_URL", "")
     pg_dsn = _normalize_postgres_dsn_for_langgraph(pg_dsn_raw)
     await default_thread_run_coordinator.configure_postgres(pg_dsn)
-    if pg_dsn:
+    async with _open_checkpointer(pg_dsn) as cp:
+        _agent_module._checkpointer = cp
+        poll_task = asyncio.create_task(_feedback_polling_loop())
         try:
-            from langgraph.store.postgres import AsyncPostgresStore
-            from langmem import create_memory_store_manager
-            async with AsyncPostgresStore.from_conn_string(pg_dsn) as pg_store:
-                await pg_store.setup()
-                _agent_module._store = pg_store
-                from langchain_openai import ChatOpenAI as _ChatOpenAI
-                _mem_llm = _ChatOpenAI(
-                    model=os.getenv("LLM_MODEL", "gpt-5.6-luna"),
-                    max_retries=1,
-                    **chat_openai_connection_kwargs(),
-                )
-                _agent_module._memory_manager = create_memory_store_manager(
-                    _mem_llm,
-                    store=pg_store,
-                    namespace=("memories", "{langgraph_user_id}"),
-                    enable_inserts=True,
-                    enable_deletes=False,
-                )
-                logger.info("AsyncPostgresStore ready (long-term memory)")
-                # ── Short-term checkpointer (Postgres-first, multi-worker safe) ──
-                async with _open_checkpointer(pg_dsn) as cp:
-                    _agent_module._checkpointer = cp
-                    poll_task = asyncio.create_task(_feedback_polling_loop())
-                    try:
-                        yield
-                    finally:
-                        poll_task.cancel()
-                        await asyncio.gather(poll_task, return_exceptions=True)
-                        await _cancel_background_tasks()
-        except Exception as e:
-            logger.warning("AsyncPostgresStore unavailable (%s) — memory disabled", e)
-            # Fall through to SQLite-only path
-            pg_dsn = ""
-
-    if not pg_dsn:
-        async with _open_checkpointer("") as cp:
-            _agent_module._checkpointer = cp
-            poll_task = asyncio.create_task(_feedback_polling_loop())
-            try:
-                yield
-            finally:
-                poll_task.cancel()
-                await asyncio.gather(poll_task, return_exceptions=True)
-                await _cancel_background_tasks()
+            yield
+        finally:
+            poll_task.cancel()
+            await asyncio.gather(poll_task, return_exceptions=True)
 
 
 app = FastAPI(title="Copepod Agent API", lifespan=lifespan)
@@ -1440,23 +1363,6 @@ async def _stream_agent_sse(
                     thread_id,
                     cached_tokens,
                     100 * cached_tokens / prompt_tokens if prompt_tokens else 0,
-                )
-
-            # ── long-term memory extraction (background, non-blocking) ────────
-            import agent as _agent_module
-
-            mgr = getattr(_agent_module, "_memory_manager", None)
-            if mgr and last_user_text and final_text:
-                from langchain_core.messages import AIMessage as _AI
-
-                mem_messages = [
-                    HumanMessage(content=last_user_text),
-                    _AI(content=final_text),
-                ]
-                mem_config = {"configurable": {"langgraph_user_id": user_id}}
-                _spawn_background_task(
-                    mgr.ainvoke({"messages": mem_messages}, config=mem_config),
-                    label=f"memory:{thread_id}",
                 )
 
         # Chunk final avec usage — Open WebUI l'affiche en bas du message

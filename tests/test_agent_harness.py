@@ -23,3 +23,16 @@ def test_permanent_prompt_matches_current_harness():
     assert "available dataframes" in prompt
     assert "rag" in prompt
     assert "analysis-ready cache contract" in prompt
+    assert "directly answers a simple list" in prompt
+    assert "exactly one `run_pandas` call" in prompt
+
+
+def test_display_only_followup_is_narrow_and_excludes_new_analysis():
+    from agent import _is_display_only_followup
+
+    assert _is_display_only_followup("affiche moi le resultat")
+    assert _is_display_only_followup("Réaffiche ce tableau")
+    assert _is_display_only_followup("show this table")
+    assert not _is_display_only_followup("affiche une carte du résultat")
+    assert not _is_display_only_followup("trie puis affiche le tableau")
+    assert not _is_display_only_followup("calcule le total")

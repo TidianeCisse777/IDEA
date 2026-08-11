@@ -65,7 +65,7 @@ from tools.tool_catalog import build_tool_catalog  # noqa: E402
 
 FACETS = (
     "current_task", "dataframes", "frontier", "graph", "history",
-    "tools", "long_turns", "thread_isolation",
+    "tools", "memory", "long_turns", "thread_isolation",
 )
 DEFAULT_FACETS = FACETS
 BASE_THREAD = "context-projection-campaign"
@@ -388,33 +388,30 @@ def campaign_current_task(store: SessionStore) -> list[CampaignCheck]:
         _check(
             scenario,
             "current_task",
-            "deliverable and selection contract are projected",
+            "turn facts are projected without duplicating permanent rules",
             "Required deliverables: answer" in task
-            and "DATA SELECTION CONTRACT:" in task
-            and "active status and recency are metadata only" in task
-            and "Before any calculation, analysis or graph" in task
             and "## PLANNER DATASET CHOICE" in task
-            and "The application has not selected a DataFrame" in task
-            and "The first plan item must name the candidate DataFrame" in task
-            and "call run_pandas only" in task
-            and "wait for its result" in task,
+            and "Application selection: none" in task
+            and "DATA SELECTION CONTRACT:" not in task
+            and "Qualification is conditional, not a ritual" in capture.system,
             task[:700],
         ),
         _check(
             scenario,
             "current_task",
-            "qualification is a sequential ReAct gate",
-            "DataFrame qualification is a real ReAct gate" in capture.system
-            and "do not batch the calculation or `run_graph` beside it" in capture.system
-            and "result` dictionary" in capture.system,
-            "plan -> run_pandas qualification -> wait -> calculate or graph",
+            "qualification is conditional and evidence-driven",
+            "Qualification is conditional, not a ritual" in capture.system
+            and "only for a material unknown" in capture.system
+            and "directly answers a simple list, lookup" in capture.system
+            and "wait for that tool result" in capture.system,
+            "known evidence -> operate; material uncertainty -> qualify once -> operate",
         ),
         _check(
             scenario,
             "current_task",
             "source route is a non-blocking hint",
             "Preferred source route:" in task
-            and "never a DataFrame or tool restriction" in task,
+            and "primary=file" in task,
             task[-350:],
         ),
         _check(
@@ -529,8 +526,14 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
             "dataframes",
             "wide schema keeps useful roles and declares truncation",
             "schema_visibility=10/78 partial" in six.dataset_context
-            and "DEPLOYMENT_DATE_START:object" in six.dataset_context
-            and "DEPLOYMENT_TIME_START:object" in six.dataset_context
+            and any(
+                f"DEPLOYMENT_DATE_START:{dtype}" in six.dataset_context
+                for dtype in ("object", "str", "string")
+            )
+            and any(
+                f"DEPLOYMENT_TIME_START:{dtype}" in six.dataset_context
+                for dtype in ("object", "str", "string")
+            )
             and "volume_m3:float64" in six.dataset_context,
             "wide sample card exposes time and measure columns",
         ),
@@ -1552,7 +1555,7 @@ def _long_turn_checks(
             graph_violation = (turn, "missing snapshot")
             break
         contains_graph_fact = LONG_TURN_GRAPH_FACT in snapshot.capture.graph_facts_context
-        if (turn == 4 and contains_graph_fact) or (turn >= 5 and not contains_graph_fact):
+        if contains_graph_fact:
             graph_violation = (
                 turn,
                 f"long_turn_graph_fact_present={contains_graph_fact}",
@@ -1583,10 +1586,27 @@ def _long_turn_checks(
             break
         dataframe_chars = len(snapshot.capture.dataset_context)
         frontier_chars = len(snapshot.capture.exploration_context)
-        if dataframe_chars > 12_000 or frontier_chars > 4_500:
+        audit = snapshot.capture.audit
+        ledger = snapshot.capture.context_ledger
+        ledger_names = tuple(item.get("name") for item in ledger)
+        projection_tokens = int(audit.get("context_projection_tokens") or 0)
+        projection_budget = int(
+            audit.get("context_projection_budget_tokens") or 0
+        )
+        request_tokens = int(audit.get("approx_tokens_model_request") or 0)
+        request_budget = int(audit.get("max_context_tokens") or 0)
+        if (
+            dataframe_chars > 12_000
+            or frontier_chars > 4_500
+            or projection_tokens > projection_budget
+            or request_tokens > request_budget
+            or len(ledger_names) != len(set(ledger_names))
+        ):
             budget_violation = (
                 turn,
-                f"dataset_chars={dataframe_chars}; frontier_chars={frontier_chars}",
+                f"dataset_chars={dataframe_chars}; frontier_chars={frontier_chars}; "
+                f"projection={projection_tokens}/{projection_budget}; "
+                f"request={request_tokens}/{request_budget}; ledger={ledger_names}",
             )
             break
 
@@ -1676,9 +1696,9 @@ def _long_turn_checks(
             success_evidence="turn 9 omits df_long_turn_added; turns 10-50 contain it",
         ),
         check(
-            "last graph facts persist from turn 5 onward",
+            "irrelevant last graph facts stay out of later turns",
             graph_violation,
-            success_evidence="turn 4 omits graph facts; turns 5-50 contain them",
+            success_evidence="turns 4-50 omit graph facts when no graph is referenced",
         ),
         check(
             "pending frontier persists before resolving on turn 25",
@@ -1686,9 +1706,12 @@ def _long_turn_checks(
             success_evidence="turns 20-24 pending; turn 25 has Data dependencies: []",
         ),
         check(
-            "dataframe and frontier contexts remain within their budgets",
+            "structured projection and complete request remain within budget",
             budget_violation,
-            success_evidence="all dataframe contexts <=12000 and frontier contexts <=4500 chars",
+            success_evidence=(
+                "all 50 calls have unique ledger entries, bounded blocks and a "
+                "complete request under MAX_CONTEXT_TOKENS"
+            ),
         ),
         check(
             "turn 50 checkpoint chronology remains valid",
@@ -2261,6 +2284,16 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         )
         for capture in turn_one_captures
     )
+    from core.llm_config import openai_prompt_cache_key
+
+    react_contract_keys = {
+        openai_prompt_cache_key(
+            model=os.getenv("LLM_MODEL", "gpt-5.6-luna"),
+            system_prompt=capture.system,
+            tools=capture.tool_definitions,
+        )
+        for capture in react_calls
+    }
 
     return [
         _check(
@@ -2423,9 +2456,9 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "three-turn-react-tool-exposure",
             "tools",
-            "same-turn recovery lifts only named tools without namespace duplication",
+            "same-turn recovery preserves the exact provider tool surface",
             (
-                recovery_lifts_are_bounded
+                len({capture.tool_names for capture in react_calls}) == 1
                 if tool_search_active
                 else len(turn_one_lists) == 1
             ),
@@ -2433,6 +2466,102 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
             f"distinct_tool_lists={len(turn_one_lists)}; "
             f"surfaces={sorted(turn_one_lists)}",
             turn_range="turn 1",
+        ),
+        _check(
+            "three-turn-react-tool-exposure",
+            "tools",
+            "cache contract fingerprint is stable across turns and ReAct recovery",
+            len(react_contract_keys) == 1 and "" not in react_contract_keys,
+            f"distinct_cache_contracts={len(react_contract_keys)}; "
+            f"keys={sorted(react_contract_keys)}",
+            turn_range="7 provider calls across 3 turns",
+        ),
+    ]
+
+
+def campaign_memory(store: SessionStore) -> list[CampaignCheck]:
+    """Validate that durable user memories are no longer read by the runtime."""
+
+    scenario = "long-term-memory-disabled"
+    thread_id = f"{BASE_THREAD}-memory"
+    user_id = "memory-user"
+    memory_store = InMemoryStore()
+    relevant = "LONG_TERM_MEMORY_MUST_NOT_APPEAR"
+    memory_store.put(
+        ("memories", user_id),
+        "relevant",
+        {"kind": "preference", "content": {"content": relevant}},
+    )
+    memory_store.put(
+        (user_id, "memories"),
+        "legacy-reversed",
+        {"content": "REVERSED_NAMESPACE_MUST_NOT_APPEAR"},
+    )
+    memory_store.put(
+        ("memories", "other-user"),
+        "private",
+        {"content": {"content": "OTHER_USER_MEMORY_MUST_NOT_APPEAR"}},
+    )
+    catalog = build_tool_catalog(thread_id)
+    spy = _SpyChatModel(responses=[AIMessage(content="Réponse hors ligne.")])
+    graph = create_agent(
+        spy,
+        list(catalog.tools),
+        system_prompt=agent_module._SYSTEM_PROMPT,
+        middleware=[
+            ExplorationStateMiddleware(thread_id=thread_id),
+            agent_module._ContextMiddleware(
+                user_id=user_id,
+                thread_id=thread_id,
+                catalog_names=catalog.names,
+            ),
+        ],
+        state_schema=IdeaAgentState,
+        store=memory_store,
+    )
+    with patch("tools.session_store.default_store", store):
+        graph.invoke({
+            "messages": [HumanMessage(
+                content="Crée un graphique avec un titre en français.",
+                id="memory-current-user",
+            )]
+        })
+    capture = replace(
+        _capture_from_model_call(spy.calls[-1]),
+        audit=agent_module.get_context_audit(thread_id),
+    )
+    runtime = capture.runtime_context
+    memory_ledger = next(
+        (item for item in capture.context_ledger if item.get("name") == "memory"),
+        {},
+    )
+    return [
+        _check(
+            scenario,
+            "memory",
+            "durable user memory is not injected into provider context",
+            relevant not in runtime
+            and int(capture.audit.get("memories_found") or 0) == 0
+            and int(capture.audit.get("memories_selected") or 0) == 0,
+            f"memories_found={capture.audit.get('memories_found')}; "
+            f"selected={capture.audit.get('memories_selected')}",
+        ),
+        _check(
+            scenario,
+            "memory",
+            "all user-memory namespaces are ignored",
+            "REVERSED_NAMESPACE_MUST_NOT_APPEAR" not in runtime
+            and "OTHER_USER_MEMORY_MUST_NOT_APPEAR" not in runtime,
+            "no durable-memory marker in provider context",
+        ),
+        _check(
+            scenario,
+            "memory",
+            "context ledger has no long-term-memory block",
+            not memory_ledger
+            and not capture.audit.get("memory_injected")
+            and int(capture.audit.get("memory_chars") or 0) == 0,
+            f"ledger={memory_ledger}; memory_chars={capture.audit.get('memory_chars')}",
         ),
     ]
 
@@ -2519,13 +2648,13 @@ def campaign_thread_isolation(store: SessionStore) -> list[CampaignCheck]:
 
     leak_a = first_leak(
         snapshots_a,
-        ("df_thread_a_private", "THREAD_A_ONLY", "GRAPH_A_ONLY"),
-        ("df_thread_b_private", "THREAD_B_ONLY", "GRAPH_B_ONLY"),
+        ("df_thread_a_private", "THREAD_A_ONLY"),
+        ("df_thread_b_private", "THREAD_B_ONLY", "GRAPH_A_ONLY", "GRAPH_B_ONLY"),
     )
     leak_b = first_leak(
         snapshots_b,
-        ("df_thread_b_private", "THREAD_B_ONLY", "GRAPH_B_ONLY"),
-        ("df_thread_a_private", "THREAD_A_ONLY", "GRAPH_A_ONLY"),
+        ("df_thread_b_private", "THREAD_B_ONLY"),
+        ("df_thread_a_private", "THREAD_A_ONLY", "GRAPH_A_ONLY", "GRAPH_B_ONLY"),
     )
     sequence_violation: tuple[int, str] | None = None
     if tuple(snapshot.turn for snapshot in snapshots_a) != tuple(range(1, 13)):
@@ -2581,12 +2710,12 @@ def campaign_thread_isolation(store: SessionStore) -> list[CampaignCheck]:
 
     return [
         isolation_check(
-            "thread A exposes only its private dataframe and graph facts",
+            "thread A exposes only its relevant private context",
             leak_a,
             "A private markers present; B markers absent on all provider calls",
         ),
         isolation_check(
-            "thread B exposes only its private dataframe and graph facts",
+            "thread B exposes only its relevant private context",
             leak_b,
             "B private markers present; A markers absent on all provider calls",
         ),
@@ -2615,6 +2744,7 @@ CAMPAIGNS: dict[str, Callable[[SessionStore], list[CampaignCheck]]] = {
     "graph": campaign_graph,
     "history": campaign_history,
     "tools": campaign_tools,
+    "memory": campaign_memory,
     "long_turns": campaign_long_turns,
     "thread_isolation": campaign_thread_isolation,
 }

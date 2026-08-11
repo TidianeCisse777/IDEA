@@ -435,22 +435,6 @@ async def test_closing_sse_stream_cancels_the_detached_agent_task():
     await asyncio.wait_for(agent_cancelled.wait(), timeout=0.2)
 
 
-@pytest.mark.asyncio
-async def test_background_task_exception_is_retrieved_and_logged(caplog):
-    from serve import _background_tasks, _spawn_background_task
-
-    async def _fails():
-        raise RuntimeError("memory provider failed")
-
-    task = _spawn_background_task(_fails(), label="memory:test")
-    await asyncio.gather(task, return_exceptions=True)
-    await asyncio.sleep(0)
-
-    assert task not in _background_tasks
-    assert "background_task_failed" in caplog.text
-    assert "memory provider failed" in caplog.text
-
-
 def test_non_stream_response_keeps_only_current_turn_graph():
     from serve import _append_generated_graph_images
 
