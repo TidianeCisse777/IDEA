@@ -146,6 +146,19 @@ python scripts/dev/run_context_projection_campaign.py --json
 Le harness de projection simule l’évolution du contexte sur plusieurs tours,
 sans réseau et sans crédit modèle.
 
+Pour inspecter les tours réels d’une conversation en cours :
+
+```bash
+curl -s "http://localhost:8000/debug/harness-turns?thread_id=THREAD_ID&limit=20" | jq
+curl -s "http://localhost:8000/debug/harness-turns?thread_id=THREAD_ID&turn_index=3" | jq
+```
+
+Chaque tour montre le contexte transmis au modèle (`CURRENT TASK`, DataFrames,
+frontier et dernier graphique), les tools visibles, les décisions du modèle,
+les appels de tools, leurs résultats bornés, la durée et les tokens. La trace
+complète du tour est également écrite dans `logs/conversations/THREAD_ID.jsonl`.
+Voir [`MONITORING.md`](MONITORING.md) pour la navigation locale pas à pas.
+
 ## Configuration utile
 
 | Variable | Rôle | Défaut |
@@ -156,6 +169,7 @@ sans réseau et sans crédit modèle.
 | `LLM_MAX_OUTPUT_TOKENS` | Plafond de sortie | `16000` |
 | `MAX_CONTEXT_TOKENS` | Budget du contexte modèle | `100000` |
 | `MAX_TOOL_RESULT_CHARS` | Troncature d’un résultat de tool | `8000` |
+| `HARNESS_TRACE_MAX_TURNS` | Tours de monitoring gardés en mémoire par conversation | `50` |
 | `CHECKPOINTS_DB` | Checkpoints LangGraph | `data/checkpoints.sqlite` |
 | `SESSION_STORE_DATABASE_URL` | Métadonnées/DataFrames persistants | fichiers locaux si absent |
 | `DATABASE_URL` | Workspace SQL read-only | optionnel |

@@ -42,6 +42,8 @@ dans la boucle ReAct, puis vérifié par les résultats des tools.
 | `GET /graphs/{filename}` | graphiques PNG |
 | `GET /downloads/{filename}` | exports et livrables |
 | `GET /debug/context-audit` | dernière projection du contexte modèle |
+| `GET /debug/harness-trace` | trace du tour courant |
+| `GET /debug/harness-turns` | chronologie bornée des contextes, décisions et tools par tour |
 
 La couche transport traduit les messages Open WebUI, diffuse les appels et
 résultats de tools, puis héberge les artefacts locaux.
@@ -238,6 +240,7 @@ l’utilisateur, ni remplacer silencieusement la métrique ou le périmètre.
 | `OPENAI_TOOL_SEARCH_ENABLED` | namespaces différés compatibles OpenAI |
 | `MAX_CONTEXT_TOKENS` | plafond de contexte |
 | `MAX_TOOL_RESULT_CHARS` | borne des observations |
+| `HARNESS_TRACE_MAX_TURNS` | nombre de tours de monitoring conservés en mémoire |
 | `CHECKPOINTS_DB` | checkpoints SQLite |
 | `SESSION_STORE_DATABASE_URL` | session store PostgreSQL optionnel |
 | `DATABASE_URL` | workspace SQL read-only optionnel |

@@ -1,6 +1,6 @@
 """Observabilité du harness curl, appel modèle par appel modèle."""
 
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
 def test_harness_trace_exposes_model_tools_provenance_and_usage():
@@ -70,3 +70,61 @@ def test_harness_trace_records_running_tools_before_completion():
     )
 
     assert agent.get_harness_trace(thread_id)["tool_calls"][0]["status"] == "running"
+
+
+def test_harness_monitor_preserves_context_and_model_decisions_by_turn():
+    import agent
+    from serve import debug_harness_turns
+
+    thread_id = "harness-turn-history"
+    agent.clear_harness_trace(thread_id)
+
+    agent._begin_harness_turn(
+        thread_id,
+        [HumanMessage(content="Choisis le meilleur tableau", id="user-turn-1")],
+    )
+    agent._append_harness_model_call(
+        thread_id,
+        {
+            "approx_tokens_model_request": 900,
+            "tools_exposed": ["run_pandas"],
+            "harness_context": {
+                "current_task": "## CURRENT TASK\nChoisir un tableau",
+                "available_dataframes": "## AVAILABLE DATAFRAMES\n- df_summary",
+                "last_graph": "",
+                "exploration_frontier": "",
+            },
+        },
+    )
+    agent._finish_harness_model_call(
+        thread_id,
+        AIMessage(
+            content="Je choisis df_summary.",
+            usage_metadata={
+                "input_tokens": 900,
+                "output_tokens": 20,
+                "total_tokens": 920,
+            },
+        ),
+    )
+    agent.record_harness_usage(
+        thread_id,
+        {"prompt_tokens": 900, "completion_tokens": 20, "total_tokens": 920},
+        assistant_response="Je choisis df_summary.",
+    )
+
+    agent._begin_harness_turn(
+        thread_id,
+        [HumanMessage(content="Trace-le", id="user-turn-2")],
+    )
+
+    turns = agent.get_harness_turns(thread_id)
+    assert [turn["turn_index"] for turn in turns] == [1, 2]
+    assert turns[0]["model_calls"][0]["response_preview"] == "Je choisis df_summary."
+    assert "df_summary" in turns[0]["model_calls"][0]["context"]["available_dataframes"]
+    assert turns[0]["assistant_response"] == "Je choisis df_summary."
+    assert turns[1]["user_message"] == "Trace-le"
+
+    first_turn = debug_harness_turns(thread_id, turn_index=1)
+    assert first_turn["turn"]["turn_index"] == 1
+    assert first_turn["total_turns"] == 2

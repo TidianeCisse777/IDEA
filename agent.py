@@ -113,7 +113,11 @@ _GRAPH_VISION_REVIEW_MAX_EDGE = max(
 )
 _context_audit_by_thread: dict[str, dict] = {}
 _harness_trace_by_thread: dict[str, dict] = {}
+_harness_turns_by_thread: dict[str, list[dict]] = {}
 _harness_trace_lock = threading.Lock()
+_HARNESS_TRACE_MAX_TURNS = max(
+    1, int(os.getenv("HARNESS_TRACE_MAX_TURNS", "50"))
+)
 
 _RAG_TOOL_NAME = "query_copepod_knowledge_base"
 
@@ -164,17 +168,47 @@ def get_harness_trace(thread_id: str | None = None) -> dict:
         return copy.deepcopy(_harness_trace_by_thread)
 
 
+def get_harness_turns(thread_id: str | None = None) -> list[dict] | dict[str, list[dict]]:
+    """Return bounded turn-by-turn traces, including the current turn."""
+
+    with _harness_trace_lock:
+        if thread_id:
+            turns = list(_harness_turns_by_thread.get(thread_id, ()))
+            current = _harness_trace_by_thread.get(thread_id)
+            if current:
+                turns.append(current)
+            return copy.deepcopy(turns[-_HARNESS_TRACE_MAX_TURNS:])
+
+        thread_ids = set(_harness_turns_by_thread) | set(_harness_trace_by_thread)
+        return {
+            key: copy.deepcopy(
+                (
+                    list(_harness_turns_by_thread.get(key, ()))
+                    + ([current] if (current := _harness_trace_by_thread.get(key)) else [])
+                )[-_HARNESS_TRACE_MAX_TURNS:]
+            )
+            for key in thread_ids
+        }
+
+
 def clear_harness_trace(thread_id: str | None = None) -> None:
     """Clear curl-harness traces without touching conversation state."""
 
     with _harness_trace_lock:
         if thread_id:
             _harness_trace_by_thread.pop(thread_id, None)
+            _harness_turns_by_thread.pop(thread_id, None)
         else:
             _harness_trace_by_thread.clear()
+            _harness_turns_by_thread.clear()
 
 
-def record_harness_usage(thread_id: str, usage: dict) -> None:
+def record_harness_usage(
+    thread_id: str,
+    usage: dict,
+    *,
+    assistant_response: str | None = None,
+) -> None:
     """Attach provider-reported usage once the HTTP/SSE turn completes."""
 
     with _harness_trace_lock:
@@ -198,6 +232,19 @@ def record_harness_usage(thread_id: str, usage: dict) -> None:
                 "final_response_call": copy.deepcopy(usage),
             }
             trace["completed_at"] = datetime.now(timezone.utc).isoformat()
+            if assistant_response is not None:
+                trace["assistant_response"] = assistant_response[:8_000]
+
+
+def _archive_current_harness_turn_locked(thread_id: str) -> int:
+    """Archive the current turn and return the next monotonic turn index."""
+
+    current = _harness_trace_by_thread.pop(thread_id, None)
+    history = _harness_turns_by_thread.setdefault(thread_id, [])
+    if current:
+        history.append(current)
+        del history[:-_HARNESS_TRACE_MAX_TURNS]
+    return int(history[-1].get("turn_index", 0) if history else 0) + 1
 
 
 def record_harness_fast_route(
@@ -209,8 +256,10 @@ def record_harness_fast_route(
 ) -> None:
     """Record a deterministic response that intentionally made no model calls."""
     with _harness_trace_lock:
+        turn_index = _archive_current_harness_turn_locked(thread_id)
         _harness_trace_by_thread[thread_id] = {
             "thread_id": thread_id,
+            "turn_index": turn_index,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "completed_at": datetime.now(timezone.utc).isoformat(),
             "route": route,
@@ -234,11 +283,18 @@ def _begin_harness_turn(thread_id: str, messages: list) -> None:
     if not (messages and isinstance(messages[-1], HumanMessage)):
         return
     content = messages[-1].content
+    message_id = str(getattr(messages[-1], "id", "") or "")
     with _harness_trace_lock:
+        current = _harness_trace_by_thread.get(thread_id)
+        if current and message_id and current.get("user_message_id") == message_id:
+            return
+        turn_index = _archive_current_harness_turn_locked(thread_id)
         _harness_trace_by_thread[thread_id] = {
             "thread_id": thread_id,
+            "turn_index": turn_index,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "user_message": str(content),
+            "user_message_id": message_id,
             "model_calls": [],
             "tool_calls": [],
             "usage": {},
@@ -267,11 +323,15 @@ def _append_harness_model_call(thread_id: str, audit: dict) -> None:
             "authorized_sources": list(audit.get("turn_authorized_sources") or []),
             "active_variable": audit.get("turn_active_variable"),
             "policy_overflow": bool(audit.get("policy_overflow", False)),
+            "context": copy.deepcopy(audit.get("harness_context") or {}),
             "_started_epoch": time.time(),
         })
 
 
 def _finish_harness_model_call(thread_id: str, result) -> None:
+    if hasattr(result, "result"):
+        messages = list(getattr(result, "result", None) or [])
+        result = messages[-1] if messages else result
     with _harness_trace_lock:
         trace = _harness_trace_by_thread.get(thread_id)
         if trace is None or not trace.get("model_calls"):
@@ -301,6 +361,15 @@ def _finish_harness_model_call(thread_id: str, result) -> None:
             "cached_tokens": int(cached or 0),
         }
         call["duration_seconds"] = round(max(0.0, time.time() - started), 3)
+        content = getattr(result, "content", "")
+        if isinstance(content, str):
+            response_text = content
+        else:
+            response_text = json.dumps(content, ensure_ascii=False, default=str)
+        call["response_preview"] = response_text[:2_000]
+        call["requested_tools"] = _safe_trace_args(
+            list(getattr(result, "tool_calls", None) or [])
+        )
 
 
 def _safe_trace_args(value):
@@ -1145,6 +1214,21 @@ class _ContextMiddleware(AgentMiddleware):
             else 0
         )
 
+        harness_context = {
+            "current_task": task_block.strip(),
+            "available_dataframes": dataset_block.strip(),
+            "domain_profile": domain_profile_block.strip(),
+            "last_graph": graph_grounding_block.strip(),
+            "exploration_frontier": exploration_block.strip(),
+            "runtime_context": injected_context.strip(),
+            "history_shape": [
+                {
+                    "type": getattr(message, "type", type(message).__name__),
+                    "chars": len(str(getattr(message, "content", "") or "")),
+                }
+                for message in trimmed_messages
+            ],
+        }
         audit_entry = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "thread_id": self.thread_id,
@@ -1274,7 +1358,10 @@ class _ContextMiddleware(AgentMiddleware):
             "checkpoint_dependency_recovery_tools": list(checkpoint_recovery_tools),
         }
         _context_audit_by_thread[self.thread_id] = audit_entry
-        _append_harness_model_call(self.thread_id, audit_entry)
+        _append_harness_model_call(
+            self.thread_id,
+            {**audit_entry, "harness_context": harness_context},
+        )
         try:
             # This is deliberately appended only to the provider request.  It
             # must not become a fabricated persistent HumanMessage in the
@@ -1401,6 +1488,7 @@ class _ContextMiddleware(AgentMiddleware):
             except Exception:
                 memories = []
         response = handler(self._prepare_request(request, memories))
+        _finish_harness_model_call(self.thread_id, response)
         return _wait_for_rag_response(response)
 
     async def awrap_model_call(self, request, handler):
@@ -1412,6 +1500,7 @@ class _ContextMiddleware(AgentMiddleware):
             except Exception:
                 memories = []
         response = await handler(self._prepare_request(request, memories))
+        _finish_harness_model_call(self.thread_id, response)
         return _wait_for_rag_response(response)
 
 

@@ -38,6 +38,7 @@ from agent import (
     arepair_invalid_tool_history,
     get_context_audit,
     get_harness_trace,
+    get_harness_turns,
     record_harness_fast_route,
     record_harness_usage,
 )
@@ -273,7 +274,11 @@ def _request_callbacks(
 
 def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict, user_id: str = "anonymous") -> None:
     context_audit = get_context_audit(thread_id)
-    record_harness_usage(thread_id, usage)
+    record_harness_usage(
+        thread_id,
+        usage,
+        assistant_response=assistant_msg,
+    )
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "thread_id": thread_id,
@@ -282,6 +287,7 @@ def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict, us
         "assistant": assistant_msg,
         "usage": usage,
         "context_audit": context_audit,
+        "harness_turn": get_harness_trace(thread_id),
     }
     log_path = LOGS_DIR / f"{thread_id}.jsonl"
     with log_path.open("a", encoding="utf-8") as f:
@@ -660,6 +666,50 @@ def debug_harness_trace(thread_id: str | None = None):
         "thread_id": thread_id,
         "trace": get_harness_trace(thread_id),
         "latest_context": get_context_audit(thread_id),
+    }
+
+
+@app.get("/debug/harness-turns")
+def debug_harness_turns(
+    thread_id: str | None = None,
+    turn_index: int | None = None,
+    limit: int = 20,
+):
+    """Expose bounded model-visible context and decisions turn by turn."""
+
+    bounded_limit = max(1, min(int(limit), 200))
+    turns = get_harness_turns(thread_id)
+    if thread_id:
+        selected = list(turns)
+        if turn_index is not None:
+            turn = next(
+                (
+                    item
+                    for item in selected
+                    if int(item.get("turn_index", 0)) == int(turn_index)
+                ),
+                None,
+            )
+            return {
+                "thread_id": thread_id,
+                "turn_index": turn_index,
+                "total_turns": len(selected),
+                "turn": turn,
+            }
+        return {
+            "thread_id": thread_id,
+            "total_turns": len(selected),
+            "turns": selected[-bounded_limit:],
+        }
+
+    limited = {
+        key: value[-bounded_limit:]
+        for key, value in dict(turns).items()
+    }
+    return {
+        "thread_id": None,
+        "threads": limited,
+        "thread_count": len(limited),
     }
 
 
