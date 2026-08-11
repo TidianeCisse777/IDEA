@@ -17,13 +17,12 @@ Ce document définit l'identité métier de l'agent qui tourne dans ce repo et l
 ## Ce que l'agent fait
 
 - Inspecte des fichiers locaux (CSV, TSV, Excel, JSON, Parquet) via `load_file`.
-- Interroge cinq sources en ligne après une première sélection explicite : **EcoTaxa**, **EcoPart**, **Amundsen CTD**, **OGSL**, **Bio-ORACLE**. La source sélectionnée reste active pour les suivis jusqu'à une bascule explicite ou au chargement d'un fichier.
+- Interroge cinq sources : **EcoTaxa**, **EcoPart**, **Amundsen CTD**, **OGSL**, **Bio-ORACLE**. La route de source est une préférence contextuelle, jamais un verrou empêchant le modèle de choisir une ressource pertinente.
 - Exécute des calculs pandas via `run_pandas`.
-- Produit des graphiques matplotlib via `run_graph` après planification (`graph_planner` + `graph_writer`).
+- Produit des graphiques matplotlib via `run_graph` après qualification du DataFrame choisi dans son plan.
 - Interroge un workspace SQL en lecture seule via `list_sql_tables`, `preview_sql_table`, `copy_sql_query_to_workspace`.
-- Charge des skills à la demande pour les opérations spécialisées (`load_skill`).
 - Interroge la base de connaissances copépodes (11 docs RAG, ChromaDB) via `query_copepod_knowledge_base`.
-- Génère des livrables PDF via `deliverable_writer` + `export_deliverable`.
+- Génère des livrables PDF via `export_deliverable`.
 
 ## Ce que l'agent ne fait pas
 
@@ -38,14 +37,14 @@ Ce document définit l'identité métier de l'agent qui tourne dans ce repo et l
 
 ## Pilotage : un seul agent, pas de modes
 
-L'agent est un **LangGraph ReAct unique**. Tous les outils sont déclarés à la construction, mais une allowlist dynamique en expose au plus 15 par appel modèle selon l'intention, la source autorisée et l'état du tour. Il n'y a pas d'état de session « mode » à activer ou désactiver.
+L'agent est un **LangGraph ReAct unique**. Tous les outils exécutables restent déclarés dans le `ToolNode`. Avec OpenAI Tool Search, le modèle reçoit directement les capacités locales essentielles et quatre namespaces différés (`ecotaxa`, `ecopart`, `geography`, `environmental_enrichment`); OpenAI charge ensuite uniquement les schémas spécialisés utiles. Il n'y a pas d'état de session « mode » à activer ou désactiver.
 
-Le system prompt compact est lu localement depuis `agents/copepod_system_prompt.py`. Les procédures détaillées sont chargées à la demande depuis des skills manifestés; le Hub ne sert qu'une copie dont le hash correspond à la version locale revue.
+Le system prompt compact est lu localement depuis `agents/copepod_system_prompt.py`. Les anciens skills restent présents dans le dépôt pour compatibilité documentaire, mais `load_skill` n'est ni immédiatement exposé ni indexé par Tool Search.
 
 1. **File analysis** — quand l'utilisateur travaille un fichier chargé : `load_file`, `run_pandas`.
 2. **Knowledge base** — quand l'utilisateur pose une question sur colonnes, méthodes, taxonomie : `query_copepod_knowledge_base` d'abord, jamais de réponse de mémoire.
 
-La production graphique impose toujours la séquence : `load_skill("graph_planner")` → `load_skill("graph_writer")` → `run_graph` (visuel) ou `run_pandas` (tableau). Le choix reste sémantique, mais une garde exécutable classifie l'artefact au premier appel graphique et bloque les intentions non visuelles ou ambiguës. Planner et writer doivent réussir séquentiellement dans le tour courant; leur exécution en lot parallèle est refusée. Cette planification mécanique remplace l'ancien concept d'« étape de planification graphique » qui était un état de session — le plan est affiché dans un bloc `<details>`, pas validé par un dialogue.
+Pour un calcul ou un graphique, le plan nomme d'abord les DataFrames candidats et leurs critères de grain, colonnes, clés, portée et valeurs manquantes. Un petit contrôle `run_pandas` qualifie le candidat; après son résultat seulement, l'agent poursuit avec le calcul ou `run_graph`. `run_pandas` et `run_graph` restent visibles directement et ne passent jamais par Tool Search.
 
 **Confirmation utilisateur explicite avant opération coûteuse (CT-AG-06)** — le prompt impose un « oui / go / lance / confirme » avant : `query_ecotaxa` / `query_ecopart` / `query_amundsen_ctd` complets, l'enrichissement EcoPart distant, `query_bio_oracle` sur une région, `enrich_with_bio_oracle` au-delà de 10 lignes avec plusieurs variables × scénarios, `copy_sql_query_to_workspace` sans `LIMIT`, `export_deliverable`, tout calcul de variable dérivée et toute jointure non standard. Les opérations légères (load_file, list/preview, run_pandas sur données déjà chargées, run_graph après plan) restent immédiates.
 

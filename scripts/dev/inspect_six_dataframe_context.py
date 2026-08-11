@@ -99,6 +99,7 @@ class ModelCapture:
     audit: dict[str, Any]
     state_messages: tuple[BaseMessage, ...]
     turn: int = 0
+    tool_definitions: tuple[Any, ...] = ()
 
     @property
     def runtime_context(self) -> str:
@@ -190,9 +191,15 @@ class _SpyChatModel(FakeMessagesListChatModel):
         tool_choice: str | None = None,
         **kwargs: Any,
     ) -> "_SpyChatModel":
+        def provider_name(tool: Any) -> str:
+            if isinstance(tool, dict):
+                return str(tool.get("name") or tool.get("type") or "")
+            return str(getattr(tool, "name", ""))
+
         self.capture["tool_names"] = tuple(
-            getattr(tool, "name", str(tool)) for tool in tools
+            provider_name(tool) for tool in tools
         )
+        self.capture["tool_definitions"] = tuple(tools)
         self.capture["tool_choice"] = tool_choice
         return self
 
@@ -208,6 +215,9 @@ class _SpyChatModel(FakeMessagesListChatModel):
             "messages": tuple(messages),
             "system": self.capture["system"],
             "tool_names": tuple(self.capture.get("tool_names") or ()),
+            "tool_definitions": tuple(
+                self.capture.get("tool_definitions") or ()
+            ),
             "tool_choice": self.capture.get("tool_choice"),
         })
         return super()._generate(messages, *args, **kwargs)
@@ -462,6 +472,7 @@ def capture_model_request(
         tool_choice=spy.capture.get("tool_choice"),
         audit=agent_module.get_context_audit(thread_id),
         state_messages=tuple(result.get("messages") or ()),
+        tool_definitions=tuple(spy.capture.get("tool_definitions") or ()),
     )
 
 
@@ -1098,6 +1109,7 @@ def _capture_from_model_call(call: dict[str, Any]) -> ModelCapture:
         audit={},
         state_messages=(),
         turn=int(call.get("turn") or 0),
+        tool_definitions=tuple(call.get("tool_definitions") or ()),
     )
 
 

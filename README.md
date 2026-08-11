@@ -256,7 +256,9 @@ docker compose stop open-webui copepod-agent mcp-ecotaxa postgres
 
 ## Agent capabilities
 
-The agent exposes ~54 tools to the LLM, grouped by category:
+The LangGraph ToolNode keeps the full executable catalog. With OpenAI Tool
+Search enabled, the model initially sees the local analysis capabilities plus
+four searchable namespaces; specialized schemas are loaded only when relevant:
 
 - **Files & analysis** — load CSV/TSV/Excel, controlled pandas, graph production
 - **EcoTaxa** (read-only via MCP cache + confirmed exports) — catalogue, schema, taxa, zone/period search, summaries, export
@@ -264,6 +266,10 @@ The agent exposes ~54 tools to the LLM, grouped by category:
 - **Amundsen CTD / OGSL** — profile preview, per-row CTD enrichment
 - **Bio-ORACLE** — env variables & climate scenarios by point/zone/row
 - **SQL workspace** (read-only, optional), **named geography**, **taxonomy (WoRMS)**, **knowledge base (RAG)**, **deliverables (PDF)**
+
+`load_file`, RAG, `run_pandas`, and `run_graph` always remain directly visible.
+EcoTaxa, EcoPart, named geography, and environmental enrichments are discovered
+through deferred namespaces. Hidden legacy tools and `load_skill` are excluded.
 
 Full, up-to-date inventory and use cases → **[`SPEC.md`](SPEC.md)** (capabilities + UC-A…UC-J).
 Tool-by-tool reference → **[`TOOLS.md`](TOOLS.md)**.

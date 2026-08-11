@@ -111,7 +111,7 @@ flowchart LR
 
 ### Construction (`agent.py`)
 - **System prompt** : `COPEPOD_SYSTEM_PROMPT` local et permanent. Le runtime ne tire pas le prompt depuis le Hub. Les informations variables du tour n'y sont plus concaténées.
-- **LLM** : `ChatOpenAI(model=LLM_MODEL)`, `max_tokens=LLM_MAX_OUTPUT_TOKENS` (défaut 16000), `max_retries=2`.
+- **LLM** : `ChatOpenAI(model=LLM_MODEL)`, `max_tokens=LLM_MAX_OUTPUT_TOKENS` (défaut 16000), `max_retries=2`. Quand `OPENAI_TOOL_SEARCH_ENABLED=true`, avec l'endpoint OpenAI direct et un modèle `gpt-5.4+`, le runtime force la Responses API afin d'utiliser le Tool Search hébergé.
 - **Assemblage des tools** :
   ```python
   catalog = build_tool_catalog(thread_id)
@@ -123,19 +123,25 @@ flowchart LR
   utilisateur français/anglais. Les noms internes et les schémas LangChain ne
   changent pas.
 - **Présentation dynamique au modèle** : le catalogue complet reste enregistré
-  auprès de LangGraph, puis `tools/tool_exposure.py` produit une allowlist
-  déterministe de **20 tools maximum par appel modèle** à partir du
-  `TurnContext`, de la `SourceDecision`, des intentions non géographiques et
-  des tools/skills réussis dans le tour. Le noyau permanent contient
-  `load_file`, `load_skill` et le RAG. Les deux capacités géographiques sont
-  toujours visibles : le modèle principal choisit sémantiquement de les utiliser,
-  sans regex ni classifieur additionnel. EcoTaxa conserve toujours son groupe
-  zone/période et au plus un autre groupe d'intention; EcoPart, Amundsen,
-  Bio-ORACLE et OGSL n'exposent que leur route
-  d'enrichissement canonique lorsqu'un fichier actif doit explicitement être
-  enrichi avec la source nommée. Les routes legacy masquées restent dans le
-  catalogue pour compatibilité, mais la garde pré-tool applique la même
-  décision et les bloque fail-closed.
+  auprès du `ToolNode` LangGraph, qui continue donc d'exécuter les mêmes
+  `BaseTool`. Avec `OPENAI_TOOL_SEARCH_ENABLED=true`,
+  `tools/openai_tool_search.py` remplace uniquement leur déclaration côté
+  provider : les capacités locales (`load_file`, RAG, `run_pandas`,
+  `run_graph`, etc.) restent immédiatement visibles et les schémas spécialisés
+  sont rangés dans quatre namespaces recherchables : `ecotaxa`, `ecopart`,
+  `geography` et `environmental_enrichment` (Amundsen, Bio-ORACLE, OGSL).
+  Le modèle voit d'abord seulement le nom et la description de ces familles;
+  OpenAI ajoute un `tool_search_call`, charge les schémas pertinents à la fin du
+  contexte, puis peut appeler la fonction trouvée dans la même réponse. Aucune
+  étape utilisateur et aucun nouveau tool métier ne sont ajoutés. Les routes
+  `hidden_legacy` et `load_skill` sont exclues de l'index. Une récupération ou
+  un retry forcé sort temporairement la fonction concernée de son namespace
+  pour que `tool_choice` puisse la cibler directement. La garde d'exposition
+  lexicale est désactivée dans ce chemin, car elle contredirait la sélection
+  sémantique du Tool Search; les validations d'identifiants et les confirmations
+  des opérations lourdes restent appliquées. Si l'option, le provider ou le
+  modèle ne sont pas compatibles, l'allowlist déterministe historique de
+  `tools/tool_exposure.py` reste le fallback.
 - **Skills manifestés** : `tools/skill_manifest.py` valide les 15 manifests et leurs budgets. `load_skill` n'accepte une copie Hub que si son hash correspond au fichier local revu; version, environnement, hash et source sont renvoyés dans la provenance. Les résultats de skills utilisent leur plafond déclaré au lieu de la troncature générique à 8 000 caractères.
 - **`_ContextMiddleware`** (agent construit via `create_agent`, LangChain 1.x) :
   - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : kernel système fixe et cacheable, allowlist dynamique des tools, troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 100000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`. Le budget des schémas est recalculé après filtrage.
@@ -289,6 +295,7 @@ Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`
 |---|---|---|
 | `OPENAI_API_KEY` | Provider LLM | requis |
 | `LLM_MODEL` | Modèle | `gpt-5.4-mini` |
+| `OPENAI_TOOL_SEARCH_ENABLED` | Active les namespaces différés via OpenAI Responses API (`gpt-5.4+`, endpoint direct uniquement) | `false` |
 | `LLM_MAX_OUTPUT_TOKENS` | Tokens de sortie max | 16000 |
 | `MAX_CONTEXT_TOKENS` | Plafond de qualité et seuil de trim de l'historique | 100000 |
 | `MAX_TOOL_RESULT_CHARS` | Seuil de troncature des résultats de tools | 8000 |

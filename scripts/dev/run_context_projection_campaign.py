@@ -2056,6 +2056,40 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         for name, policy in catalog.policies.items()
         if policy.exposure_group == "hidden_legacy"
     }
+    tool_search_active = bool(
+        captures[0].audit.get("openai_tool_search_enabled")
+    )
+    namespace_names = {
+        "ecotaxa",
+        "ecopart",
+        "geography",
+        "environmental_enrichment",
+    }
+    provider_builtin_names = namespace_names | {"tool_search"}
+    valid_provider_names = catalog_names | (
+        provider_builtin_names if tool_search_active else set()
+    )
+
+    def namespace_members(capture: ModelCapture, namespace_name: str) -> set[str]:
+        for definition in capture.tool_definitions:
+            if not isinstance(definition, dict):
+                continue
+            if definition.get("type") != "namespace":
+                continue
+            if definition.get("name") != namespace_name:
+                continue
+            return {
+                str(member.get("name") or "")
+                for member in definition.get("tools") or []
+                if isinstance(member, dict)
+            }
+        return set()
+
+    def declared_function_names(capture: ModelCapture) -> set[str]:
+        names = set(capture.tool_names) & catalog_names
+        for namespace_name in namespace_names:
+            names.update(namespace_members(capture, namespace_name))
+        return names
 
     def first_call_violation(
         predicate: Callable[[ModelCapture], bool],
@@ -2080,19 +2114,20 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
     integrity_violation = first_call_violation(
         lambda capture: bool(capture.tool_names)
         and len(capture.tool_names) == len(set(capture.tool_names))
-        and set(capture.tool_names) <= catalog_names,
+        and set(capture.tool_names) <= valid_provider_names
+        and declared_function_names(capture) <= catalog_names,
         lambda capture: (
             f"count={len(capture.tool_names)}; "
             f"unique={len(set(capture.tool_names))}; "
-            f"unknown={sorted(set(capture.tool_names) - catalog_names)}"
+            f"unknown={sorted(set(capture.tool_names) - valid_provider_names)}"
         ),
     )
     hidden_violation = first_call_violation(
-        lambda capture: not (set(capture.tool_names) & hidden_legacy)
-        and "load_skill" not in capture.tool_names,
+        lambda capture: not (declared_function_names(capture) & hidden_legacy)
+        and "load_skill" not in declared_function_names(capture),
         lambda capture: (
             "forbidden="
-            f"{sorted((set(capture.tool_names) & hidden_legacy) | ({'load_skill'} & set(capture.tool_names)))}"
+            f"{sorted((declared_function_names(capture) & hidden_legacy) | ({'load_skill'} & declared_function_names(capture)))}"
         ),
     )
     permanent_local = {
@@ -2108,14 +2143,28 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         ),
     )
 
-    ecotaxa_expected = {
+    ecotaxa_cache_expected = {
         "query_ecotaxa_cache",
         "list_ecotaxa_cache_tables",
         "describe_ecotaxa_cache_table",
     }
-    ecotaxa_names = set(captures[1].tool_names)
-    ecopart_names = set(captures[3].tool_names)
-    bio_names = set(captures[4].tool_names)
+    ecotaxa_namespace_expected = {
+        "query_ecotaxa",
+        "export_ecotaxa_samples",
+        *ecotaxa_cache_expected,
+    }
+    ecotaxa_names = (
+        namespace_members(captures[1], "ecotaxa")
+        if tool_search_active else set(captures[1].tool_names)
+    )
+    ecopart_names = (
+        namespace_members(captures[3], "ecopart")
+        if tool_search_active else set(captures[3].tool_names)
+    )
+    bio_names = (
+        namespace_members(captures[4], "environmental_enrichment")
+        if tool_search_active else set(captures[4].tool_names)
+    )
     after_bio_names = set(captures[5].tool_names)
     graph_names = set(captures[6].tool_names)
     distinct_lists = {capture.tool_names for capture in captures}
@@ -2148,10 +2197,10 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         )
     react_hidden = next(
         (
-            (index, sorted(set(capture.tool_names) & hidden_legacy))
+            (index, sorted(declared_function_names(capture) & hidden_legacy))
             for index, capture in enumerate(react_calls, start=1)
-            if set(capture.tool_names) & hidden_legacy
-            or "load_skill" in capture.tool_names
+            if declared_function_names(capture) & hidden_legacy
+            or "load_skill" in declared_function_names(capture)
         ),
         None,
     )
@@ -2161,12 +2210,13 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
                 index,
                 f"count={len(capture.tool_names)}; "
                 f"unique={len(set(capture.tool_names))}; "
-                f"unknown={sorted(set(capture.tool_names) - catalog_names)}",
+                f"unknown={sorted(set(capture.tool_names) - valid_provider_names)}",
             )
             for index, capture in enumerate(react_calls, start=1)
             if not capture.tool_names
             or len(capture.tool_names) != len(set(capture.tool_names))
-            or not set(capture.tool_names) <= catalog_names
+            or not set(capture.tool_names) <= valid_provider_names
+            or not declared_function_names(capture) <= catalog_names
         ),
         None,
     )
@@ -2188,6 +2238,29 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
     turn_one_lists = {
         capture.tool_names for capture in react_calls if capture.turn == 1
     }
+    turn_one_captures = tuple(
+        capture for capture in react_calls if capture.turn == 1
+    )
+    shortest_turn_one_surface = set(
+        min(turn_one_lists, key=len) if turn_one_lists else ()
+    )
+    expected_recovery_lifts = {
+        "list_ecotaxa_cache_tables",
+        "describe_ecotaxa_cache_table",
+        "query_ecotaxa_cache",
+    }
+    recovery_lifts_are_bounded = bool(turn_one_captures) and all(
+        set(capture.tool_names) - shortest_turn_one_surface
+        <= expected_recovery_lifts
+        and not (
+            (set(capture.tool_names) & catalog_names)
+            & set().union(*(
+                namespace_members(capture, namespace_name)
+                for namespace_name in namespace_names
+            ))
+        )
+        for capture in turn_one_captures
+    )
 
     return [
         _check(
@@ -2203,9 +2276,9 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         _check(
             scenario,
             "tools",
-            "every tool list is non-empty unique and catalog-backed",
+            "every provider surface is unique and catalog or OpenAI backed",
             integrity_violation is None,
-            "all visible names belong to the production catalog"
+            "all functions are catalog-backed; namespaces and Tool Search are OpenAI built-ins"
             if integrity_violation is None
             else f"turn {integrity_violation[0]}: {integrity_violation[1]}",
             turn_range="turns 1-7",
@@ -2233,24 +2306,26 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         _check(
             scenario,
             "tools",
-            "EcoTaxa requests expose only the canonical cache discovery route",
-            ecotaxa_expected <= ecotaxa_names
+            "EcoTaxa exposes only its canonical route for the active strategy",
+            (
+                ecotaxa_namespace_expected == ecotaxa_names
+                if tool_search_active
+                else ecotaxa_cache_expected <= ecotaxa_names
+            )
             and not (ecotaxa_names & hidden_legacy),
-            f"turn_2={sorted(ecotaxa_names)}",
+            f"ecotaxa_members={sorted(ecotaxa_names)}",
             turn_range="turn 2",
         ),
         _check(
             scenario,
             "tools",
-            "explicit EcoPart enrichment exposes enrichment and preflight capabilities",
+            "EcoPart namespace contains enrichment and preflight capabilities",
             {
                 "enrich_ecotaxa_with_ecopart_remote",
                 "find_ecopart_project_for_ecotaxa",
                 "preview_ecopart_sample",
-                "run_pandas",
-                "run_graph",
             } <= ecopart_names,
-            f"turn_4={sorted(ecopart_names)}",
+            f"ecopart_members={sorted(ecopart_names)}",
             turn_range="turn 4",
         ),
         _check(
@@ -2271,33 +2346,40 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         _check(
             scenario,
             "tools",
-            "explicit Bio-ORACLE enrichment adds its canonical tool without losing local tools",
+            "environmental namespace includes canonical Bio-ORACLE enrichment",
             "enrich_with_bio_oracle" in bio_names
-            and {"run_pandas", "run_graph"} <= bio_names,
-            f"turn_5={sorted(bio_names)}",
+            and {"run_pandas", "run_graph"} <= set(captures[4].tool_names),
+            f"environmental_members={sorted(bio_names)}",
             turn_range="turn 5",
         ),
         _check(
             scenario,
             "tools",
-            "specialized enrichment does not leak into following unrelated turns",
+            "specialized schemas are deferred rather than top-level on unrelated turns",
             "enrich_with_bio_oracle" not in after_bio_names
-            and "enrich_with_bio_oracle" not in graph_names,
+            and "enrich_with_bio_oracle" not in graph_names
+            and (
+                not tool_search_active
+                or all(
+                    "environmental_enrichment" in capture.tool_names
+                    for capture in captures
+                )
+            ),
             f"turn_6={sorted(after_bio_names)}; turn_7={sorted(graph_names)}",
             turn_range="turns 6-7",
         ),
         _check(
             scenario,
             "tools",
-            "tool exposure adapts rather than accumulating monotonically",
-            len(distinct_lists) >= 3,
+            "provider surface stays cache-stable while specialized schemas stay deferred",
+            len(distinct_lists) == 1 if tool_search_active else len(distinct_lists) >= 3,
             f"distinct_provider_tool_lists={len(distinct_lists)}",
             turn_range="turns 1-7",
         ),
         _check(
             "three-turn-react-tool-exposure",
             "tools",
-            "every ReAct provider call keeps a valid catalog-backed tool list",
+            "every ReAct provider call keeps a valid searchable tool surface",
             react_integrity is None,
             f"provider_calls={len(react_calls)}"
             if react_integrity is None
@@ -2340,10 +2422,15 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "three-turn-react-tool-exposure",
             "tools",
-            "tool schemas remain stable during the same-turn pandas recovery",
-            len(turn_one_lists) == 1,
+            "same-turn recovery lifts only named tools without namespace duplication",
+            (
+                recovery_lifts_are_bounded
+                if tool_search_active
+                else len(turn_one_lists) == 1
+            ),
             f"turn_1_provider_calls={sum(capture.turn == 1 for capture in react_calls)}; "
-            f"distinct_tool_lists={len(turn_one_lists)}",
+            f"distinct_tool_lists={len(turn_one_lists)}; "
+            f"surfaces={sorted(turn_one_lists)}",
             turn_range="turn 1",
         ),
     ]

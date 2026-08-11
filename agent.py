@@ -676,7 +676,18 @@ def _tool_schema_tokens(tools) -> int:
     payload = []
     for item in tools or []:
         if isinstance(item, dict):
-            payload.append(item)
+            if item.get("type") == "namespace":
+                # OpenAI hosted Tool Search receives the full index, but the
+                # model's initial context contains only the namespace identity.
+                # Deferred member schemas are appended after a search result and
+                # must not evict useful history before they are selected.
+                payload.append({
+                    "type": "namespace",
+                    "name": item.get("name", ""),
+                    "description": item.get("description", ""),
+                })
+            else:
+                payload.append(item)
             continue
         # Count the schema actually sent to the model. ``args_schema`` also
         # contains injected parameters such as ToolRuntime, whose callable
@@ -1100,9 +1111,15 @@ class _ContextMiddleware(AgentMiddleware):
             if injected_context
             else 0
         )
-        # Apply the deterministic source and exposure policies before pricing
-        # tool schemas or assigning the remaining history budget.
+        # Build the provider-facing tool surface before pricing schemas or
+        # assigning the remaining history budget. With OpenAI Tool Search the
+        # provider sees compact namespaces and loads specialized schemas on
+        # demand; the LangGraph ToolNode still owns every executable BaseTool.
         from tools.source_scope import filter_tools_for_decision
+        from tools.openai_tool_search import (
+            build_openai_tool_search_projection,
+            openai_tool_search_enabled,
+        )
         from tools.tool_catalog import TOOL_POLICIES
         from tools.tool_exposure import decide_tool_exposure
 
@@ -1122,35 +1139,57 @@ class _ContextMiddleware(AgentMiddleware):
         scoped_by_name = {
             getattr(item, "name", ""): item for item in scoped_tools
         }
-        exposed_tools = [
-            scoped_by_name[name]
-            for name in exposure_decision.tool_names
-            if name in scoped_by_name
-        ]
+        dependency_recovery_names = (
+            dependency_recovery[2].get("recovery_tools", [])
+            if dependency_recovery is not None
+            else checkpoint_recovery_tools
+        )
+        forced_immediate_names = {
+            str(name) for name in dependency_recovery_names
+        }
+        if code_retry is not None:
+            forced_immediate_names.add(code_retry[0])
+
+        tool_search_active = openai_tool_search_enabled()
+        tool_search_projection = None
+        if tool_search_active:
+            tool_search_projection = build_openai_tool_search_projection(
+                original_tools,
+                TOOL_POLICIES,
+                force_immediate=tuple(forced_immediate_names),
+            )
+            exposed_tools = list(tool_search_projection.provider_tools)
+        else:
+            exposed_tools = [
+                scoped_by_name[name]
+                for name in exposure_decision.tool_names
+                if name in scoped_by_name
+            ]
         retry_tool_choice = None
         if code_retry is not None:
             retry_tool = code_retry[0]
             retry_tool_instance = scoped_by_name.get(retry_tool)
             if retry_tool_instance is not None:
-                if retry_tool_instance not in exposed_tools:
+                if not tool_search_active and retry_tool_instance not in exposed_tools:
                     exposed_tools.append(retry_tool_instance)
                 retry_tool_choice = {
                     "type": "function",
                     "function": {"name": retry_tool},
                 }
         if dependency_recovery is not None or checkpoint_recovery_tools:
-            recovery_names = (
-                dependency_recovery[2].get("recovery_tools", [])
-                if dependency_recovery is not None
-                else checkpoint_recovery_tools
-            )
-            for recovery_name in recovery_names:
+            for recovery_name in dependency_recovery_names:
                 recovery_tool = scoped_by_name.get(str(recovery_name))
-                if recovery_tool is not None and recovery_tool not in exposed_tools:
+                if (
+                    not tool_search_active
+                    and recovery_tool is not None
+                    and recovery_tool not in exposed_tools
+                ):
                     exposed_tools.append(recovery_tool)
-        effective_tool_names = [
-            getattr(item, "name", "") for item in exposed_tools
-        ]
+        effective_tool_names = (
+            list(tool_search_projection.provider_surface_names)
+            if tool_search_projection is not None
+            else [getattr(item, "name", "") for item in exposed_tools]
+        )
         tool_schema_tokens_before = _tool_schema_tokens(original_tools)
         tool_schema_tokens_after_source = _tool_schema_tokens(scoped_tools)
         tool_schema_tokens = _tool_schema_tokens(exposed_tools)
@@ -1269,6 +1308,30 @@ class _ContextMiddleware(AgentMiddleware):
             "tool_exposure_reasons": list(exposure_decision.reasons),
             "tools_dropped": list(exposure_decision.dropped_tool_names),
             "policy_overflow": exposure_decision.policy_overflow,
+            "openai_tool_search_enabled": tool_search_active,
+            "openai_tool_search_immediate": (
+                list(tool_search_projection.immediate_names)
+                if tool_search_projection is not None
+                else []
+            ),
+            "openai_tool_search_namespaces": (
+                {
+                    namespace.name: list(namespace.member_names)
+                    for namespace in tool_search_projection.namespaces
+                }
+                if tool_search_projection is not None
+                else {}
+            ),
+            "openai_tool_search_searchable_members": (
+                list(tool_search_projection.searchable_member_names)
+                if tool_search_projection is not None
+                else []
+            ),
+            "openai_tool_search_excluded": (
+                list(tool_search_projection.excluded_names)
+                if tool_search_projection is not None
+                else []
+            ),
             "code_retry_forced_tool": code_retry[0] if code_retry else None,
             "dependency_recovery": bool(dependency_recovery),
             "dependency_recovery_tools": (
@@ -1392,6 +1455,14 @@ class _ContextMiddleware(AgentMiddleware):
 
     def _tool_exposure_rejection(self, request) -> str | None:
         """Reject a tool absent from the deterministic allowlist for this turn."""
+
+        from tools.openai_tool_search import openai_tool_search_enabled
+
+        # When hosted Tool Search is active, OpenAI's loaded namespace member
+        # is the exposure decision. Reapplying the legacy keyword allowlist
+        # here would defeat dynamic discovery and block valid selected tools.
+        if openai_tool_search_enabled():
+            return None
 
         from tools.session_store import default_store as session_store
         from tools.source_scope import source_decision_for_turn
@@ -1613,10 +1684,14 @@ async def arepair_invalid_tool_history(agent, config: dict) -> bool:
 
 def make_agent(thread_id: str, user_id: str = "anonymous"):
     """Crée un agent ReAct copépodes pour un thread donné."""
+    from tools.openai_tool_search import openai_tool_search_enabled
+
+    tool_search_active = openai_tool_search_enabled()
     llm = ChatOpenAI(
         model=os.getenv("LLM_MODEL", "gpt-5.4-mini"),
         max_retries=2,
         max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "16000")),
+        use_responses_api=tool_search_active,
         **chat_openai_connection_kwargs(),
     )
     catalog = build_tool_catalog(thread_id)
