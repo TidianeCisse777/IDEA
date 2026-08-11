@@ -514,7 +514,7 @@ Deux fichiers, deux grains :
 
 
 def _uvp_skill_hint(col_names: list[str]) -> str:
-    """Retourne un hint load_skill si le fichier est un export UVP EcoTaxa ou EcoPart.
+    """Return a compact domain hint for recognized UVP and NeoLabs files.
 
     Détecte deux familles de fichiers via des signaux **spécifiques** :
 
@@ -559,7 +559,7 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
     if is_ecopart:
         return (
             "→ Fichier EcoPart UVP détecté. "
-            "Charge le skill `uvp_ecopart` pour les méthodes de calcul (m1-m3)."
+            "Interroge la documentation locale avant tout calcul UVP spécialisé."
         )
     if is_neolabs:
         return (
@@ -579,7 +579,7 @@ def _uvp_skill_hint(col_names: list[str]) -> str:
     if is_ecotaxa_uvp_raw:
         return (
             "→ Fichier EcoTaxa UVP détecté. "
-            "Charge le skill `uvp_ecotaxa` pour interpréter les colonnes et calculer m5/m6."
+            "Interroge la documentation locale avant d'interpréter les colonnes ou calculer m5/m6."
         )
     return ""
 
@@ -2096,196 +2096,6 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
     """
     _store = store or default_store
 
-    @tool(response_format="content_and_artifact")
-    def prepare_neolabs_analysis(
-        abundance_path: str = "data/neolabs/neolabs_abundance.csv",
-        sample_path: str = "data/neolabs/neolabs_sample.csv",
-    ) -> str:
-        """Prépare en un appel le parcours local NeoLabs pour analyses et graphes.
-
-        Charge les deux fichiers officiels, effectue une jointure externe sur
-        sample + analyse, calcule la densité totale de copépodes uniquement pour
-        les couples calculables, puis persiste la couverture et une table prête
-        pour les cartes. Toutes les lignes sources restent traçables par leur
-        statut; une abondance absente n'est jamais remplacée par zéro.
-        """
-        from core.demo_workflows import (  # noqa: PLC0415
-            NEOLABS_COLUMN_DESCRIPTIONS,
-            NEOLABS_DEMO_METHOD_VERSION,
-            prepare_neolabs_tables,
-        )
-
-        try:
-            abundance, abundance_meta = _load_file(abundance_path)
-            samples, sample_meta = _load_file(sample_path)
-            tables = prepare_neolabs_tables(abundance, samples)
-        except (FileNotFoundError, ValueError) as exc:
-            return error(
-                f"Préparation NeoLabs impossible : {exc}",
-                provenance={"source": "file"},
-                retryable=isinstance(exc, FileNotFoundError),
-                method=NEOLABS_DEMO_METHOD_VERSION,
-            )
-
-        def _schema_metadata(frame: pd.DataFrame, description: str) -> dict:
-            descriptions = {
-                column: NEOLABS_COLUMN_DESCRIPTIONS[column]
-                for column in frame.columns
-                if column in NEOLABS_COLUMN_DESCRIPTIONS
-            }
-            return {
-                "n_rows": int(len(frame)),
-                "n_cols": int(len(frame.columns)),
-                "columns": [
-                    {"name": column, "dtype": str(frame[column].dtype)}
-                    for column in frame.columns
-                ],
-                "important_columns": list(descriptions),
-                "column_descriptions": descriptions,
-                "description": description,
-            }
-
-        shared_provenance = {
-            "source": "analysis:neolabs",
-            "abundance_path": str(abundance_meta["path"]),
-            "sample_path": str(sample_meta["path"]),
-            "method_version": NEOLABS_DEMO_METHOD_VERSION,
-        }
-        store_dataset(
-            _store,
-            thread_id,
-            abundance,
-            variable_name="df_file_neolabs_abundance",
-            meta={
-                **abundance_meta,
-                "source": f"file:{abundance_meta['path']}",
-                "method_version": NEOLABS_DEMO_METHOD_VERSION,
-                **_schema_metadata(
-                    abundance,
-                    "Table source NeoLabs au grain taxon × sample × analyse.",
-                ),
-            },
-            set_active=False,
-        )
-        store_dataset(
-            _store,
-            thread_id,
-            samples,
-            variable_name="df_file_neolabs_sample",
-            meta={
-                **sample_meta,
-                "source": f"file:{sample_meta['path']}",
-                "method_version": NEOLABS_DEMO_METHOD_VERSION,
-                **_schema_metadata(
-                    samples,
-                    "Table source NeoLabs des samples, déploiements et analyses.",
-                ),
-            },
-            set_active=False,
-        )
-        for name, frame, description in (
-            (
-                "df_neolabs_samples",
-                tables["samples"],
-                "Une ligne par couple sample-analyse avec densité et statut de calcul.",
-            ),
-            (
-                "df_neolabs_coverage",
-                tables["coverage"],
-                "Couverture groupée des jointures et des densités calculables ou manquantes.",
-            ),
-            (
-                "df_neolabs_graph",
-                tables["graph"],
-                "Couples calculables avec coordonnées, prêts pour cartes, profils et graphiques.",
-            ),
-        ):
-            store_dataset(
-                _store,
-                thread_id,
-                frame,
-                variable_name=name,
-                meta={
-                    **shared_provenance,
-                    **_schema_metadata(frame, description),
-                },
-                set_active=False,
-            )
-        working = tables["working"]
-        store_dataset(
-            _store,
-            thread_id,
-            working,
-            variable_name="df_neolabs_working",
-            meta={
-                **shared_provenance,
-                **_schema_metadata(
-                    working,
-                    "Jointure externe traçable de toutes les lignes NeoLabs source.",
-                ),
-            },
-            is_loaded_file=True,
-        )
-        from tools.source_scope import activate_file_source  # noqa: PLC0415
-
-        activate_file_source(
-            _store,
-            thread_id,
-            origin_user_text="NeoLabs abundance + sample",
-        )
-
-        join_counts = working["join_status"].value_counts().to_dict()
-        sample_summary = tables["samples"]
-        pair_join_counts = sample_summary["join_status"].value_counts().to_dict()
-        n_matched_pairs = int(pair_join_counts.get("matched", 0))
-        n_calculable = int(sample_summary["density_status"].eq("calculated").sum())
-        n_missing = int(sample_summary["density_status"].eq("no_value").sum())
-        n_not_applicable = int(
-            sample_summary["density_status"].eq("not_applicable").sum()
-        )
-        return success(
-            (
-                f"Préparation NeoLabs terminée : {len(abundance)} lignes abondance "
-                f"et {len(samples)} lignes sample; aucune ligne source écartée.\n"
-                f"Jointure des lignes d'abondance : {join_counts.get('matched', 0)} "
-                "appariées, "
-                f"{join_counts.get('abundance_without_sample', 0)} sans ligne sample.\n"
-                f"Couples uniques sample + analyse : {n_matched_pairs} appariés, "
-                f"{pair_join_counts.get('abundance_without_sample', 0)} avec abondance "
-                "sans sample, "
-                f"{pair_join_counts.get('sample_without_abundance', 0)} avec sample "
-                "sans abondance.\n"
-                f"Densité sur les couples appariés : {n_calculable}/{n_matched_pairs} "
-                f"calculable; valeurs manquantes : {n_missing}; "
-                f"non appariés (hors dénominateur) : {n_not_applicable}.\n"
-                "Définition obligatoire : une ligne appariée vérifie "
-                "`join_status == 'matched'`; ne l'infère jamais de la seule "
-                "présence d'identifiants non nuls.\n"
-                "Tables : `df_neolabs_working`, `df_neolabs_samples`, "
-                "`df_neolabs_coverage`, `df_neolabs_graph`."
-            ),
-            data_ref="df_neolabs_working",
-            provenance=shared_provenance,
-            persisted=True,
-            method=NEOLABS_DEMO_METHOD_VERSION,
-            metrics={
-                "abundance_rows": int(len(abundance)),
-                "sample_rows": int(len(samples)),
-                "working_rows": int(len(working)),
-                "matched_rows": int(join_counts.get("matched", 0)),
-                "matched_pairs": n_matched_pairs,
-                "abundance_without_sample_rows": int(
-                    join_counts.get("abundance_without_sample", 0)
-                ),
-                "sample_without_abundance_rows": int(
-                    join_counts.get("sample_without_abundance", 0)
-                ),
-                "calculable": n_calculable,
-                "missing": n_missing,
-                "density_denominator": n_matched_pairs,
-                "not_applicable": n_not_applicable,
-            },
-        )
 
     def _load_file_result(path: str):
         """Charge un fichier de données (CSV, TSV, Excel, JSON, Parquet) pour l'analyser.
@@ -2516,7 +2326,6 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
         local_vars: dict[str, Any] = {}
 
         try:
-            code_lower = code.lower()
             synthetic_record_guard = _synthetic_record_table_guard(code)
             if synthetic_record_guard:
                 return blocked(

@@ -42,7 +42,6 @@ from core.ecopart_cache_distribution import (
     bootstrap_consumer_cache,
 )
 from core.ecotaxa_ecopart_join import (
-    audit_ecotaxa_ecopart_dataframe,
     depth_bin_5m,
 )
 from core.ecotaxa_browser.cache.repo import open_readonly_connection
@@ -1574,22 +1573,6 @@ def make_ecopart_tools(thread_id: str) -> list:
     except CacheBundleValidationError as exc:
         _LOGGER.warning("Cache EcoPart partagé indisponible : %s", exc)
 
-    @tool(response_format="content_and_artifact")
-    def list_ecopart_samples(project_id: int) -> str:
-        """Liste les échantillons EcoPart disponibles pour un projet."""
-        try:
-            client = EcopartClient()
-            client.login()
-            samples = client.list_samples(project_id)
-        except Exception as exc:
-            return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
-        if not samples:
-            return _ep_empty("Aucun échantillon EcoPart trouvé.")
-        return _ep_success(
-            pd.DataFrame(samples).to_markdown(index=False),
-            provenance={"project_id": int(project_id)},
-            metrics={"samples": len(samples)},
-        )
 
     @tool(response_format="content_and_artifact")
     def preview_ecopart_sample(sample_id: int) -> str:
@@ -1619,148 +1602,8 @@ def make_ecopart_tools(thread_id: str) -> list:
         summary = preview["text"] or f"Échantillon {sample_id} — aucun texte disponible."
         return _ep_success(summary, provenance={"sample_id": int(sample_id)})
 
-    @tool(response_format="content_and_artifact")
-    def query_ecopart(
-        project_id: int,
-        ctd_vars: list[str] | None = None,
-        gpr_vars: list[str] | None = None,
-    ) -> str:
-        """Exporte un projet EcoPart complet et écrit un TSV téléchargeable."""
-        try:
-            client = EcopartClient()
-            client.login()
-            links = client.start_export(project_id, ctd_vars, gpr_vars)
-            df = client.download_tsv(links)
-            file_id = uuid.uuid4().hex
-            output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
-            df.to_csv(output_path, sep="\t", index=False)
-            try:
-                cached_export = import_ecopart_tsv(
-                    output_path,
-                    provenance="remote_export",
-                    ecopart_project_id=project_id,
-                )
-            except ValueError:
-                cached_export = None
-            variable_name = dataset_variable_name("ecopart", project_id)
-            meta = {
-                "source": f"ecopart:{project_id}",
-                "project_id": project_id,
-                "n_rows": len(df),
-                "grain": "one row per EcoPart profile-depth bin",
-                "description": (
-                    f"EcoPart project {project_id} export with profile, depth-bin "
-                    "and sampled-volume fields."
-                ),
-                **(
-                    {
-                        "content_sha256": cached_export.content_sha256,
-                        "cache_provenance": cached_export.provenance,
-                    }
-                    if cached_export is not None
-                    else {}
-                ),
-            }
-            store_dataset(
-                _store,
-                thread_id,
-                df,
-                variable_name=variable_name,
-                meta=meta,
-                latest_alias=ECOPART,
-            )
-            # Keep the pre-registry project key readable by existing sessions/tools.
-            _store.set(f"{thread_id}:ecopart:{project_id}", df, meta)
-            artifact_url = download_url(output_path.name)
-            summary = (
-                f"EcoPart chargé — {len(df)} lignes.\n"
-                f"Données disponibles dans `{variable_name}` "
-                f"et `df_ecopart` (dernier projet chargé).\n"
-                f"Appelle run_pandas directement pour analyser.\n"
-                f"Télécharger : {artifact_url}"
-            )
-            return _ep_success(
-                summary,
-                data_ref=variable_name,
-                artifact_refs=(artifact_url,),
-                provenance={"project_id": int(project_id)},
-                persisted=True,
-                method="EcoPart export",
-                metrics={"rows": len(df)},
-            )
-        except EcopartExportError as exc:
-            return _ep_error(
-                _format_ecopart_export_error(exc, project_id=project_id),
-                provenance={"project_id": int(project_id)},
-                retryable=True,
-            )
-        except Exception as exc:
-            return _ep_error(f"Erreur EcoPart : {exc}", retryable=True)
 
-    @tool(response_format="content_and_artifact")
-    def join_ecotaxa_ecopart(
-        project_id: int | None = None,
-        ecotaxa_variable: str | None = None,
-        ecopart_variable: str | None = None,
-    ) -> str:
-        """Enrichit localement EcoTaxa avec EcoPart par (sample_id, depth_bin).
 
-        Les deux datasets doivent déjà être chargés. Pour deux fichiers locaux,
-        passe leurs variables persistées dans ``ecotaxa_variable`` et
-        ``ecopart_variable`` et omets ``project_id``. Utilise ``project_id``
-        seulement pour sélectionner un projet EcoPart numérique déjà chargé.
-        """
-        return _perform_enrichment(
-            thread_id,
-            project_id,
-            ecotaxa_variable=ecotaxa_variable,
-            ecopart_variable=ecopart_variable,
-        )
-
-    @tool(response_format="content_and_artifact")
-    def audit_ecotaxa_ecopart_join(
-        source_variable: str = "df_ecotaxa_ecopart",
-    ) -> str:
-        """Contrôle une jointure EcoTaxa–EcoPart persistée sans la reconstruire.
-
-        Utilise cet outil après ``join_ecotaxa_ecopart`` pour vérifier la colonne
-        de profondeur officielle, les identifiants objet, les volumes, les clés
-        sample–bin et la distance au centre des bins de 5 m.
-        """
-        session = _session_for_variable(thread_id, source_variable)
-        if session is None and source_variable == "df_ecotaxa_ecopart":
-            session = _store.get(f"{thread_id}:ecotaxa_ecopart")
-        if session is None:
-            return _ep_blocked(f"Variable de jointure introuvable : `{source_variable}`.")
-
-        audit = audit_ecotaxa_ecopart_dataframe(
-            session["df"], session.get("meta") or {}
-        )
-        verdict = "VALIDÉ" if audit["verdict"] == "validated" else "REFUSÉ"
-        anomalies = ", ".join(audit["anomalies"]) or "aucune"
-        summary = (
-            f"Verdict : {verdict}\n"
-            f"Variable contrôlée : `{source_variable}`\n"
-            f"Colonne de profondeur : `{audit['depth_column']}`\n"
-            f"Lignes : {audit['n_rows']} ; appariées : {audit['n_matched']}\n"
-            f"Clés sample–bin : {audit['n_sample_depth_bins']}\n"
-            f"Doublons object_id : {audit['duplicate_object_ids']}\n"
-            f"Bins échantillonnés sans objet : {audit['sampled_zero_object_bins']}\n"
-            f"Volumes manquants : {audit['missing_volume_rows']} ; "
-            f"non positifs : {audit['non_positive_volume_rows']} ; "
-            f"bins contradictoires : {audit['conflicting_volume_bins']}\n"
-            f"Objets hors bin 5 m : {audit['objects_outside_5m_bin']} ; "
-            f"écart maximal au centre : {audit['max_depth_distance_m']} m\n"
-            f"Anomalies : {anomalies}"
-        )
-        factory = _ep_success if audit["verdict"] == "validated" else _ep_blocked
-        return factory(
-            summary,
-            data_ref=source_variable,
-            persisted=True,
-            method="EcoTaxa-EcoPart join audit",
-            metrics={"rows": int(audit["n_rows"]), "matched": int(audit["n_matched"])},
-        )
 
     @tool(response_format="content_and_artifact")
     def enrich_ecotaxa_with_ecopart_remote(
@@ -2296,11 +2139,7 @@ def make_ecopart_tools(thread_id: str) -> list:
         )
 
     return [
-        list_ecopart_samples,
         preview_ecopart_sample,
-        query_ecopart,
-        join_ecotaxa_ecopart,
-        audit_ecotaxa_ecopart_join,
         enrich_ecotaxa_with_ecopart_remote,
         find_ecopart_project_for_ecotaxa,
     ]

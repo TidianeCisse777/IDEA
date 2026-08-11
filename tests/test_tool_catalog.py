@@ -126,8 +126,8 @@ def test_build_tool_catalog_has_exact_mandatory_tool_count(monkeypatch):
 
     catalog = build_tool_catalog("catalog-no-sql")
 
-    assert len(catalog.tools) == 71
-    assert len(catalog.names) == 71
+    assert len(catalog.tools) == 22
+    assert len(catalog.names) == 22
     assert {tool.name for tool in catalog.tools} == catalog.names
     assert all(catalog.presentation(name) for name in catalog.names)
 
@@ -143,8 +143,8 @@ def test_build_tool_catalog_adds_exactly_three_optional_sql_tools(tmp_path, monk
 
     catalog = build_tool_catalog("catalog-with-sql")
 
-    assert len(catalog.tools) == 74
-    assert len(catalog.names) == 74
+    assert len(catalog.tools) == 25
+    assert len(catalog.names) == 25
     assert {
         "list_sql_tables",
         "preview_sql_table",
@@ -190,12 +190,7 @@ FORMERLY_OMITTED_SOURCE_RESULTS = {
     "enrich_with_bio_oracle",
     "enrich_with_ogsl",
     "find_amundsen_data_for_table",
-    "find_bio_oracle_data_for_table",
     "find_ecopart_project_for_ecotaxa",
-    "group_ecotaxa_project_samples_by_region",
-    "group_ecotaxa_samples_by_year",
-    "rank_ecotaxa_samples_by_region",
-    "search_ecotaxa_taxa",
 }
 
 
@@ -209,20 +204,9 @@ def test_all_data_source_tools_have_explicit_visibility_decisions(monkeypatch):
         in {"ecotaxa", "ecopart", "amundsen", "bio_oracle", "ogsl"}
     ]
 
-    assert len(source_metadata) == 57
+    assert len(source_metadata) == 13
     assert all(item.source_label is not None for item in source_metadata)
     assert all(catalog.presentation(name).source_result for name in FORMERLY_OMITTED_SOURCE_RESULTS)
-
-
-def test_join_net_uvp_enriched_has_low_risk_local_session_policy():
-    policy = tool_catalog.TOOL_POLICIES["join_net_uvp_enriched"]
-
-    assert policy.risk == "low"
-    assert policy.source == "file"
-    assert policy.mutates_session is True
-    assert policy.remote_io is False
-    assert policy.requires_confirmation is False
-    assert policy.exposure_group == "file_analysis"
 
 
 def test_every_catalog_label_is_bilingual_and_hides_runtime_name(monkeypatch):

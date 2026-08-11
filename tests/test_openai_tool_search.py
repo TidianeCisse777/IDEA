@@ -46,15 +46,10 @@ def test_projection_keeps_core_immediate_and_defers_specialized_families():
         "environmental_enrichment",
     }
     assert all(len(namespace.member_names) < 10 for namespace in projection.namespaces)
-    assert "load_skill" in projection.excluded_names
-    assert not (
-        set(projection.searchable_member_names)
-        & {
-            name
-            for name, policy in catalog.policies.items()
-            if policy.exposure_group == "hidden_legacy"
-        }
-    )
+    assert projection.excluded_names == ()
+    assert set(projection.immediate_names) | set(
+        projection.searchable_member_names
+    ) == set(catalog.names)
 
     for namespace in projection.namespaces:
         assert namespace.schema["type"] == "namespace"

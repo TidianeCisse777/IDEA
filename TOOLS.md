@@ -1,14 +1,16 @@
-# TOOLS.md — Inventaire des tools exposés au LLM · IDEA
+# Catalogue des tools — IDEA
 
 > Catalogue technique des tools déclarés à la construction de l'agent
-> (`tools/tool_catalog.py` → `agent.py` → `create_agent`). Pour les use cases voir [`SPEC.md`](SPEC.md),
-> pour le câblage voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
+> (`tools/tool_catalog.py` → `agent.py` → `create_agent`). Pour comprendre
+> l’agent, voir [PRESENTATION.md](PRESENTATION.md); pour le câblage, voir
+> [ARCHITECTURE.md](ARCHITECTURE.md); pour les règles d’usage, voir
+> [BEST_PRACTICES.md](BEST_PRACTICES.md).
 >
 > Le total inventorié est le catalogue exécutable enregistré dans le `ToolNode`;
 > il ne correspond plus à la vue initiale du modèle. Avec
 > `OPENAI_TOOL_SEARCH_ENABLED=true`, OpenAI reçoit les capacités locales directes,
 > quatre namespaces différés et le Tool Search hébergé. Le fallback sans cette
-> option reste l'allowlist déterministe de `tools/tool_exposure.py`.
+> option expose directement les 25 tools canoniques sans filtrage lexical.
 > Les tools ont des entrées Pydantic strictes et renvoient un artefact `ToolResult`
 > structuré (`success`, `empty`, `blocked`, `error` ou `cancelled`) en plus du texte visible.
 
@@ -20,25 +22,36 @@
 - Namespace `geography` : description, filtrage multi-zone et découpe de DataFrame.
 - Namespace `environmental_enrichment` : Amundsen CTD, Bio-ORACLE et OGSL.
 - Chaque namespace contient moins de dix fonctions. Tous ses membres portent `defer_loading: true`; OpenAI charge leurs descriptions et schémas seulement après la recherche sémantique.
-- `hidden_legacy` et `load_skill` ne sont jamais indexés. Un retry ou une récupération forcée rend temporairement la fonction visée immédiatement visible, sans duplication dans son namespace.
+- Le catalogue ne contient que des tools canoniques exécutables. Un retry ou une récupération forcée rend temporairement la fonction visée immédiatement visible, sans duplication dans son namespace.
 - `run_pandas` et `run_graph` ne sont jamais différés : la qualification, le calcul et le rendu restent disponibles à chaque étape ReAct.
 
+## Choisir la bonne famille
+
+| Intention | Point de départ | Résultat attendu |
+|---|---|---|
+| Charger un fichier utilisateur | `load_file` | DataFrame persistant avec profil de ressource |
+| Vérifier ou transformer un DataFrame | `run_pandas` | preuve compacte ou nouveau DataFrame nommé |
+| Produire une figure | `run_graph` | PNG persistant et faits du graphique |
+| Consulter le savoir métier | `query_copepod_knowledge_base` | passages documentaires sourcés |
+| Explorer le cache EcoTaxa | inspection puis `query_ecotaxa_cache` | table SQL persistée et lignée connue |
+| Télécharger depuis EcoTaxa | `query_ecotaxa` ou `export_ecotaxa_samples` | export confirmé et DataFrame durable |
+| Ajouter une source externe | tool d’enrichissement correspondant | DataFrame enrichi conservant ses parents |
+| Situer ou découper des points | famille géographie | description, filtre ou tables par zone |
+| Résoudre un taxon | `lookup_marine_taxonomy` | correspondances et provenance taxonomique |
+| Créer un rapport | `export_deliverable` | artefact téléchargeable |
+
+Un tool de consultation ou d’aperçu ne remplace pas une preuve sur le DataFrame
+réel. Avant une analyse finale, le candidat doit toujours être qualifié selon la
+demande courante.
+
 <!-- TOOL-INVENTORY:START -->
-Inventaire généré : **68 tools obligatoires**, **71 avec SQL**.
+Inventaire généré : **22 tools obligatoires**, **25 avec SQL**.
 
 | Tool | Famille | Source | Risque | Confirmation | Optionnel | I/O distant | État de session |
 |---|---|---|---|---|---|---|---|
-| `audit_ecotaxa_ecopart_join` | ecopart | ecopart | low | non | non | non | non |
-| `audit_ecotaxa_spatial_coverage` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `combine_ecotaxa_selections` | ecotaxa | ecotaxa | medium | non | non | oui | oui |
-| `compare_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `copy_sql_query_to_workspace` | sql | sql | high | oui | oui | oui | oui |
-| `count_ecotaxa_taxa` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `couple_zooplankton_bio_oracle` | bio_oracle | bio_oracle | high | oui | non | oui | oui |
 | `describe_ecotaxa_cache_table` | ecotaxa | ecotaxa | low | non | non | non | non |
-| `describe_ecotaxa_project_coverage` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `enrich_ecotaxa_with_ecopart_remote` | ecopart | ecopart | high | oui | non | oui | oui |
-| `enrich_loaded_table_with_amundsen_ctd` | amundsen | amundsen | high | oui | non | oui | oui |
 | `enrich_with_amundsen_ctd` | amundsen | amundsen | high | oui | non | oui | oui |
 | `enrich_with_bio_oracle` | bio_oracle | bio_oracle | high | oui | non | oui | oui |
 | `enrich_with_ogsl` | ogsl | ogsl | high | oui | non | oui | oui |
@@ -46,251 +59,59 @@ Inventaire généré : **68 tools obligatoires**, **71 avec SQL**.
 | `export_ecotaxa_samples` | ecotaxa | ecotaxa | high | oui | non | oui | oui |
 | `filter_dataframe_by_zone` | geography | geography | medium | non | non | non | oui |
 | `find_amundsen_data_for_table` | amundsen | amundsen | low | non | non | oui | non |
-| `find_bio_oracle_data_for_table` | bio_oracle | bio_oracle | low | non | non | oui | non |
 | `find_ecopart_project_for_ecotaxa` | ecopart | ecopart | low | non | non | oui | non |
-| `find_ecotaxa_observations` | ecotaxa | ecotaxa | medium | non | non | oui | oui |
-| `find_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `find_ecotaxa_projects_in_region` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `find_ecotaxa_samples_in_region` | ecotaxa | ecotaxa | medium | non | non | oui | oui |
-| `find_uvp_matches_for_net_table` | data | file | low | non | non | oui | non |
-| `compare_local_net_uvp_profiles` | data | file | low | non | non | non | oui |
-| `get_ecotaxa_object` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `get_ecotaxa_sample` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `get_zone_info` | geography | geography | low | non | non | non | non |
-| `group_ecotaxa_project_samples_by_region` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `group_ecotaxa_samples_by_year` | ecotaxa | ecotaxa | medium | non | non | oui | oui |
-| `inspect_ecotaxa_column` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `inspect_ecotaxa_project_schema` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `join_ecotaxa_ecopart` | ecopart | ecopart | medium | non | non | non | oui |
-| `join_net_uvp_enriched` | data | file | low | non | non | non | oui |
-| `list_amundsen_datasets` | amundsen | amundsen | low | non | non | oui | non |
-| `list_bio_oracle_datasets` | bio_oracle | bio_oracle | low | non | non | oui | non |
-| `list_ecopart_samples` | ecopart | ecopart | low | non | non | oui | non |
 | `list_ecotaxa_cache_tables` | ecotaxa | ecotaxa | low | non | non | non | non |
-| `list_ecotaxa_campaigns` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `list_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `list_ecotaxa_sample_objects` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `list_sql_tables` | sql | sql | low | non | oui | oui | non |
 | `load_file` | data | file | medium | non | non | non | oui |
-| `load_skill` | core | skill | medium | non | non | oui | oui |
 | `lookup_marine_taxonomy` | core | taxonomy | low | non | non | oui | non |
-| `preview_amundsen_profile` | amundsen | amundsen | low | non | non | oui | non |
-| `preview_bio_oracle_point` | bio_oracle | bio_oracle | low | non | non | oui | non |
 | `preview_ecopart_sample` | ecopart | ecopart | low | non | non | oui | non |
-| `preview_ecotaxa_project` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `preview_sql_table` | sql | sql | low | non | oui | oui | non |
-| `query_amundsen_ctd` | amundsen | amundsen | high | oui | non | oui | oui |
-| `query_bio_oracle` | bio_oracle | bio_oracle | high | oui | non | oui | oui |
-| `query_bio_oracle_zones` | bio_oracle | bio_oracle | medium | non | non | oui | oui |
+| `query_amundsen_profiles_for_table` | amundsen | amundsen | high | oui | non | oui | oui |
 | `query_copepod_knowledge_base` | core | knowledge | low | non | non | non | non |
-| `query_ecopart` | ecopart | ecopart | high | oui | non | oui | oui |
 | `query_ecotaxa` | ecotaxa | ecotaxa | high | oui | non | oui | oui |
 | `query_ecotaxa_cache` | ecotaxa | ecotaxa | low | non | non | non | non |
-| `query_ecotaxa_sample` | ecotaxa | ecotaxa | high | oui | non | oui | oui |
-| `query_ogsl` | ogsl | ogsl | high | oui | non | oui | oui |
-| `rank_ecotaxa_samples_by_region` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `resolve_ecotaxa_sample` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `run_graph` | data | file | medium | non | non | non | oui |
 | `run_pandas` | data | file | medium | non | non | non | oui |
-| `search_ecotaxa_taxa` | ecotaxa | ecotaxa | low | non | non | oui | non |
 | `split_dataframe_by_zone` | geography | geography | medium | non | non | non | oui |
-| `summarize_ecotaxa_profiles_for_map` | ecotaxa | ecotaxa | medium | non | non | non | oui |
-| `summarize_ecotaxa_project` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `summarize_ecotaxa_projects` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `summarize_ecotaxa_sample` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `summarize_ecotaxa_sample_deployment` | ecotaxa | ecotaxa | low | non | non | oui | non |
-| `summarize_ecotaxa_samples` | ecotaxa | ecotaxa | low | non | non | oui | non |
 <!-- TOOL-INVENTORY:END -->
 
-Légende « Coûteux ? » : **oui** = franchit la porte de confirmation CT-AG-06
-(export/download/compute lourd) ; *cond.* = coûteux au-delà d'un seuil.
+## Familles actives
 
----
+| Famille | Tools | Nombre |
+|---|---|---:|
+| Fichier, analyse, graphe | `load_file`, `run_pandas`, `run_graph` | 3 |
+| EcoTaxa | cache SQL, export de projet et export de samples | 5 |
+| EcoPart | correspondance, aperçu, enrichissement distant | 3 |
+| Amundsen CTD | disponibilité, profils appariés, enrichissement | 3 |
+| Bio-ORACLE | enrichissement d'un DataFrame qualifié | 1 |
+| OGSL | enrichissement CTD d'un DataFrame qualifié | 1 |
+| Géographie | information, filtre multi-zone, découpage | 3 |
+| RAG et taxonomie | recherche documentaire, `lookup_marine_taxonomy` | 2 |
+| Livrable | export PDF | 1 |
+| SQL optionnel | liste, aperçu, copie vers le workspace | 3 |
+| **Total obligatoire** | | **22** |
+| **Total avec SQL** | | **25** |
 
-## 1. Données & analyse — `tools/data_tools.py`, `tools/copepod_sources.py` (6)
+## Contrats communs
 
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `load_file` | Charge CSV/TSV/Excel/JSON/Parquet, inspecte colonnes/types/manquants/plages, détecte les exports UVP EcoTaxa/EcoPart (hint `load_skill`) | non |
-| `run_pandas` | Exécute du pandas contrôlé dans un worker persistant par conversation (namespace restreint, imports allowlistés) ; source de toute valeur numérique. Les intermédiaires restent chauds pour le graphe suivant, les tables nommées restent la source durable. Un résultat de jointure (`merge`/`join`/`concat`) est persisté comme nouveau df `df_join_*` réutilisable ; une copie modifiée d'une table nommée, de même granularité, devient `df_derived_*` réutilisable ; une agrégation simple reste éphémère | non |
-| `run_graph` | Exécute du code matplotlib/Cartopy dans le même worker persistant, utilise les fonds Natural Earth 110m embarqués hors ligne et héberge le PNG persistant (`/graphs/{file}`) | non |
-| `find_uvp_matches_for_net_table` | Audite une table filet persistée contre les samples UVP du cache puis certifie le fichier CTD partagé avec Amundsen ; publie une sélection exportable seulement pour `join_eligible=True` et CTD `matched` | non |
-| `join_net_uvp_enriched` | Joint localement la table filet, l'audit certifié et la campagne UVP enrichie EcoPart sur `(export_project_id, profil UVP)` ; applique le protocole Calanus et persiste les strates et l'intégrale profil en `ind./m²` | non |
-| `compare_local_net_uvp_profiles` | Compare deux fichiers locaux sur une clé de profil explicite, applique le protocole Calanus UVP6–Hydrobios et persiste strates et intégrale profil sans prétendre à une certification CTD | non |
+- Les entrées sont des schémas Pydantic stricts; les champs inconnus sont refusés.
+- Chaque résultat porte un artefact `ToolResult` structuré en plus du texte affiché.
+- Les opérations lourdes conservent leur confirmation explicite.
+- `run_pandas`, `run_graph`, le RAG et `lookup_marine_taxonomy` restent directement visibles.
+- OpenAI Tool Search diffère seulement les familles EcoTaxa, EcoPart, géographie et enrichissement environnemental.
+- Sans Tool Search, les 25 tools canoniques sont tous exposés; aucune règle lexicale ne bloque une capacité valide.
 
----
+### États de résultat
 
-## 2. EcoTaxa — `tools/copepod_sources.py` (32)
+| État | Signification |
+|---|---|
+| `success` | opération terminée avec un résultat exploitable |
+| `empty` | opération valide, mais aucune ligne ne correspond |
+| `blocked` | confirmation ou dépendance requise avant exécution |
+| `error` | entrée, source ou exécution invalide; le diagnostic guide la récupération |
+| `cancelled` | opération explicitement abandonnée |
 
-### Catalogue & recherche
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_ecotaxa_projects` | Liste les projets accessibles | non |
-| `list_ecotaxa_project_samples` | Liste les samples d'un projet avec leurs identifiants et libellés | non |
-| `resolve_ecotaxa_sample` | Résout une référence de sample (ID, label, station, profil) dans tous les projets du cache | non |
-| `find_ecotaxa_projects` | Cherche des projets par `title` / `instrument` | non |
-| `list_ecotaxa_campaigns` | Groupe les projets par campagne / leg (`query` facultatif) | non |
-| `preview_ecotaxa_project` | Aperçu d'objets d'un projet | non |
-
-### Schéma & colonnes
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `inspect_ecotaxa_project_schema` | Colonnes par niveau (sample / acquisition / object ; `include_process`) | non |
-| `inspect_ecotaxa_column` | Distribution / stats / valeurs distinctes d'une colonne (`level` si ambigu) | non |
-| `compare_ecotaxa_projects` | Compatibilité de schémas avant merge (`common_columns`, `type_conflicts`, `severity`) | non |
-
-### Taxons
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `search_ecotaxa_taxa` | Résout les `taxon_id` candidats | non |
-| `count_ecotaxa_taxa` | Counts V/P/D/U par `project_ids` × `taxa` | non |
-| `find_ecotaxa_observations` | Samples dont le projet atteste un taxon (`bbox`, `date_range`, `status`) | non |
-
-### Zone & période
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `find_ecotaxa_samples_in_region` | Samples par `bbox`/`zone_name`/`date_range`/`instrument`/`project_ids` ; inclut station/profile si le cache a été resynchronisé ; crée une sélection nommée | non |
-| `summarize_ecotaxa_profiles_for_map` | Carte déterministe par profil/cast dans une zone nommée exacte : une ligne par `profile_id`, coordonnées agrégées et `n_samples` pour la taille des points ; explique distinctement les lacunes de couverture du cache | non |
-| `group_ecotaxa_samples_by_year` | Vue **interannuelle** d'un lieu (station ou zone, plusieurs stations possibles) : tableau année × (n_samples, n_stations, dates, instruments, projets) ; mémorise une sélection multi-années pour un export étalé sur les années | non |
-| `find_ecotaxa_projects_in_region` | Projets agrégés par zone/période (row/projet) | non |
-| `group_ecotaxa_project_samples_by_region` | Samples d'un projet groupés par zone | non |
-| `rank_ecotaxa_samples_by_region` | Classement global des samples cache par zone/mer/région (`sample_count`, `date_min`, `date_max`) | non |
-
-### Samples & résumés (sans export)
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `query_ecotaxa_cache` | Chemin local cache-first pour les requêtes cross-sample par date, heure, date-heure, profondeur, station ou cast. `dataframe_refs` monte explicitement des DataFrames persistants comme tables dans une base SQLite en mémoire afin de les joindre directement au cache EcoTaxa attaché en lecture seule. Le workspace disparaît après le SELECT ; seul le résultat persiste. Chaque résultat avec `sample_id` devient une sélection unique (`selection_name`) et `df_ecotaxa_cache_query` cible la requête la plus récente avec sa description et sa lignée | non |
-| `get_ecotaxa_sample` | Métadonnées + free fields d'un `sample_id` | non |
-| `summarize_ecotaxa_project` / `summarize_ecotaxa_projects` | Résumé(s) projet (dates, bbox, V/P/D/U, top taxa) | non |
-| `summarize_ecotaxa_sample` / `summarize_ecotaxa_samples` | Résumé(s) sample (`selection_name="latest"` possible) | non |
-| `summarize_ecotaxa_sample_deployment` | Fallback/detail live pour un sample résolu : position, date, heure/date-heure, profondeur, acquisition, free fields et signalement des enveloppes partielles avec leur couverture | non |
-| `get_ecotaxa_cache_status` | État du cache MCP (samples/projets indexés, dernier sync) | non |
-| `audit_ecotaxa_availability` | Audite la disponibilité taxonomique par projet dans le cache | non |
-| `audit_ecotaxa_spatial_coverage` | Audite la couverture spatiale des projets/samples du cache | non |
-
-### Export (opérations confirmées)
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `query_ecotaxa` | Export d'un projet (`project_id`, `sample_ids`, filtres taxon/statut/`obj_depth_*`) | **oui** |
-| `query_ecotaxa_sample` | Export d'un sample unique (résout le projet auto) | **oui** |
-| `export_ecotaxa_samples` | Export d'une sélection nommée de samples (`selection_name`, `confirmed`) | **oui** |
-
----
-
-## 3. EcoPart — `tools/ecopart_sources.py` (7)
-
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_ecopart_samples` | Liste les samples EcoPart d'un projet | non |
-| `preview_ecopart_sample` | Aperçu / détails d'un sample | non |
-| `find_ecopart_project_for_ecotaxa` | Vérifie la disponibilité d'un EcoPart lié (read-only, pas d'export) | non |
-| `query_ecopart` | Export d'un projet EcoPart | **oui** |
-| `join_ecotaxa_ecopart` | Join local `(sample_id, depth_bin 5m)`, préfixe `ecopart_*`, stocke `df_ecotaxa_ecopart` | non |
-| `audit_ecotaxa_ecopart_join` | Audite la jointure persistée : provenance profondeur, unicité objets, volumes et bins | non |
-| `enrich_ecotaxa_with_ecopart_remote` | Fetch EcoPart distant (auto-résolution projet) puis join ; `confirmed=False` seulement pour un préflight demandé | **oui** |
-
----
-
-## 4. Amundsen CTD — `tools/amundsen_sources.py` (6)
-
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_amundsen_datasets` | Datasets CTD disponibles (`amundsen12713`) | non |
-| `preview_amundsen_profile` | Aperçu profil station/cast | non |
-| `find_amundsen_data_for_table` | Vérifie la couverture CTD disponible pour la table active sans lancer l'enrichissement | non |
-| `enrich_with_amundsen_ctd` | Enrichit la table par lat/lon/temps (auto-détecte colonnes, batch ERDDAP, `zone_name`/`date_range`/`source_variable`) → `amundsen_*` | cond. |
-| `enrich_loaded_table_with_amundsen_ctd` | Variante legacy quand la table source est explicite | cond. |
-| `query_amundsen_ctd` | Download complet du dataset CTD | **oui** |
-
----
-
-## 5. Bio-ORACLE — `tools/bio_oracle_sources.py` (7)
-
-La route canonique `enrich_with_bio_oracle` enrichit le DataFrame chargé ligne
-par ligne et conserve toutes ses lignes. Avant son appel, l'agent propose la
-présélection copépodes et le catalogue complet, puis attend le choix explicite
-des variables, scénarios, couche verticale et statistique ; aucun défaut n'est
-appliqué silencieusement.
-
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_bio_oracle_datasets` | Variables & scénarios disponibles | non |
-| `preview_bio_oracle_point` | Valeur d'une variable en un point (`target_year`) | non |
-| `query_bio_oracle_zones` | Valeurs par zone(s) nommée(s) (var + scénario + `target_year`) | non |
-| `find_bio_oracle_data_for_table` | Vérifie la couverture Bio-ORACLE disponible pour la table active sans lancer l'enrichissement | non |
-| `couple_zooplankton_bio_oracle` | Couple des lignes zooplancton ↔ variables par lat/lon | cond. (>10 lignes) |
-| `enrich_with_bio_oracle` | Enrichit la table : 1 colonne par (variable × scénario) + traçabilité `_dataset_id`/`_time`/`match_status` | cond. (>10 lignes multi-var) |
-| `query_bio_oracle` | Extraction sur région / scénario | **oui** |
-
-Noms de variables « friendly » : `temperature`, `salinity`, `oxygen`,
-`chlorophyll`, `nitrate`. Scénarios : `baseline`, `SSP1-2.6`, `SSP2-4.5`,
-`SSP5-8.5`. Jamais de noms ERDDAP internes (`thetao`, `so`, `o2`…).
-
----
-
-## 6. OGSL — `tools/ogsl_sources.py` (2)
-
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `enrich_with_ogsl` | Enrichit la table avec OGSL ISMER CTD par lat/lon/temps → `ogsl_*` | cond. |
-| `query_ogsl` | Extraction OGSL | oui |
-
----
-
-## 7. Workspace SQL — `tools/sql_workspace.py` (3, conditionnel)
-
-Ajoutés seulement si `DATABASE_URL` (SQLAlchemy) est résolvable. Read-only.
-Backends : SQLite, PostgreSQL, MySQL, MariaDB (protocole MySQL).
-
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_sql_tables` | Liste tables/vues + PK/FK + cardinalité | non |
-| `preview_sql_table` | Aperçu filtré read-only | non |
-| `copy_sql_query_to_workspace` | Copie un `SELECT` (LIMIT obligatoire, row cap) en TSV | cond. (sans LIMIT) |
-
----
-
-## 8. Géographie — `tools/geo_tools.py` (2)
-
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `get_zone_info` | Résout une zone IHO/MEOW → `{canonical, source, bbox, polygon_wkt, aliases, pandas_filter}` | non |
-| `filter_dataframe_by_zone` | Filtre une source par un polygone (`zone_name`) ou par l’union ordonnée de plusieurs polygones (`zone_names`). Le multi-zone persiste un seul `df_in_<zone…>_<source>`, sans lignes dupliquées, avec colonne `zone` et comptes par zone. | non |
-| `split_dataframe_by_zone` | Annote la df chargée d'une colonne `zone` (mers/baies/détroits IHO, ou `family=meow`/`composite`/`all`), regroupe par zone avec buckets `Hors zone référencée` / `Sans coordonnées`, persiste `df_zoned_<family>_<source>` | non |
-
----
-
-## 9. Savoir & taxonomie (2)
-
-| Tool | Module | Rôle | Coûteux ? |
-|---|---|---|---|
-| `query_copepod_knowledge_base` | `tools/rag_tool.py` | Recherche vectorielle RAG NeoLab (ChromaDB, 11 docs) | non |
-| `lookup_marine_taxonomy` | `tools/taxonomy_tool.py` | Résolution taxon : RAG local → WoRMS → Wikipedia (fallback) | non |
-
----
-
-## 10. Skills & livrables (2)
-
-| Tool | Module | Rôle | Coûteux ? |
-|---|---|---|---|
-| `load_skill` | `tools/skill_tool.py` | Charge un skill Markdown (`agents/skills/`) à la demande | non |
-| `export_deliverable` | `tools/deliverable_tool.py` | Compile un PDF (WeasyPrint, fallback HTML) → `/downloads/{file}` | **oui** |
-
----
-
-## 11. Récapitulatif par famille
-
-| Famille | Module | Nb |
-|---|---|---|
-| Données & analyse | `data_tools.py` | 3 |
-| EcoTaxa | `copepod_sources.py` | 31 |
-| EcoPart | `ecopart_sources.py` | 7 |
-| Amundsen CTD | `amundsen_sources.py` | 6 |
-| Bio-ORACLE | `bio_oracle_sources.py` | 7 |
-| OGSL | `ogsl_sources.py` | 2 |
-| Workspace SQL (conditionnel) | `sql_workspace.py` | 3 |
-| Géographie | `geo_tools.py` | 3 |
-| Savoir & taxonomie | `rag_tool.py`, `taxonomy_tool.py` | 2 |
-| Skills & livrables | `skill_tool.py`, `deliverable_tool.py` | 2 |
-| **Total obligatoire** | | **68** |
-| **Total avec SQL** | | **71** |
+Les erreurs de variable, table ou colonne doivent rester structurées. Elles
+permettent à l’agent de récupérer la ressource manquante et de reprendre son
+plan au lieu d’arrêter prématurément la conversation.

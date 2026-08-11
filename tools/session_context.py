@@ -169,8 +169,6 @@ def _prioritized_columns(
     inspected rows, while preserving every available column in the underlying
     DataFrame for a subsequent targeted inspection.
     """
-    import pandas as pd
-
     columns = list(dataframe.columns)
     normalized_to_real = {normalize_column_name(column): column for column in columns}
 

@@ -188,15 +188,12 @@ from core.environment_resolver import (
     detect_column,
     haversine_km,
     parse_source_coords,
-    resolve_environment_schema,
     resolve_source_dataframe,
     build_enrichment_provenance,
 )
 from core.ctd_filename_match import ctd_filename_aliases
 from core.enrich_scoping import scope_dataframe
 from core.amundsen_ctd_client import (
-    list_amundsen_datasets as _list_amundsen_datasets,
-    preview_amundsen_profile as _preview_amundsen_profile,
     query_amundsen_ctd as _query_amundsen_ctd,
 )
 from tools.dataset_registry import (
@@ -753,10 +750,6 @@ def _run_filename_enrichment(
         pd.to_numeric(working[schema.depth_column], errors="coerce")
         if schema.depth_column else pd.Series([float("nan")] * n_rows)
     )
-    ctd_time = (
-        pd.to_datetime(ctd.get("time"), errors="coerce", utc=True)
-        if "time" in ctd.columns else pd.Series([], dtype="datetime64[ns, UTC]")
-    )
     ctd_pres = pd.to_numeric(ctd.get("PRES"), errors="coerce") if "PRES" in ctd.columns else pd.Series(dtype=float)
 
     value_columns = [
@@ -992,103 +985,8 @@ def make_amundsen_tools(thread_id: str) -> list:
             return pd.Series(float("nan"), index=dataframe.index, dtype="float64")
         return pd.to_numeric(dataframe[column], errors="coerce")
 
-    @tool(response_format="content_and_artifact")
-    def list_amundsen_datasets() -> str:
-        """Liste les datasets CTD Amundsen disponibles dans ERDDAP."""
-        try:
-            datasets = _list_amundsen_datasets()
-        except Exception as exc:
-            return _am_error(f"Erreur lors de l'accès à Amundsen : {exc}", retryable=True)
-        if not datasets:
-            return _am_empty("Aucun dataset Amundsen trouvé.")
-        return _am_success(
-            _format_table(datasets, ["dataset_id", "title", "griddap"]),
-            metrics={"datasets": len(datasets)},
-        )
 
-    @tool(response_format="content_and_artifact")
-    def preview_amundsen_profile(station: str | None = None, cast_number: int | None = None) -> str:
-        """Prévisualise un profil CTD avec des identifiants Amundsen déjà résolus.
 
-        Pour une table NeoLabs, appeler d'abord ``find_amundsen_data_for_table``
-        puis l'enrichissement canonique : un cast NeoLabs n'est pas un cast
-        Amundsen. Une requête sans station ni cast est refusée.
-        """
-        if station is None and cast_number is None:
-            return _am_blocked(
-                "Requête Amundsen non bornée refusée : préciser une station ou "
-                "un cast Amundsen déjà résolu. Pour une table NeoLabs, commencer "
-                "par `find_amundsen_data_for_table`, puis utiliser les identifiants "
-                "Amundsen retournés par l'enrichissement canonique."
-            )
-        try:
-            preview = _preview_amundsen_profile({"station": station, "cast_number": cast_number})
-            rows = preview["rows"]
-            if not rows:
-                return _am_empty("Aucun profil Amundsen trouvé.")
-            return _am_success(
-                _format_table(rows[:10], ["time", "station", "cast_number", "Pres", "Temp", "Sal", "profile_id", "station_id", "cast_id"]),
-                metrics={"rows": len(rows)},
-            )
-        except Exception as exc:
-            return _am_error(f"Erreur lors de l'accès à Amundsen : {exc}", retryable=True)
-
-    @tool(response_format="content_and_artifact")
-    def query_amundsen_ctd(station: str | None = None, cast_number: int | None = None) -> str:
-        """Extrait un profil CTD complet avec des identifiants Amundsen résolus.
-
-        Refuse une extraction non bornée. Pour NeoLabs, apparier d'abord par
-        latitude/longitude/temps et ne jamais réutiliser directement son cast.
-        """
-        if station is None and cast_number is None:
-            return _am_blocked(
-                "Requête Amundsen non bornée refusée : préciser une station ou "
-                "un cast Amundsen déjà résolu. Pour une table NeoLabs, commencer "
-                "par `find_amundsen_data_for_table`, puis utiliser les identifiants "
-                "Amundsen retournés par l'enrichissement canonique."
-            )
-        try:
-            file_id = uuid.uuid4().hex
-            output_path = _DOWNLOADS_DIR / f"{file_id}.tsv"
-            result = _query_amundsen_ctd({"station": station, "cast_number": cast_number}, output_path=output_path)
-            dataframe = pd.read_csv(output_path, sep="\t")
-            identity_parts: list[object] = [result["dataset_id"]]
-            if station is not None:
-                identity_parts.append(station)
-            if cast_number is not None:
-                identity_parts.extend(["cast", cast_number])
-            variable_name = dataset_variable_name("amundsen", *identity_parts)
-            store_dataset(
-                _store,
-                thread_id,
-                dataframe,
-                variable_name=variable_name,
-                meta={
-                    "source": f"amundsen:{result['dataset_id']}",
-                    "dataset_id": result["dataset_id"],
-                    "station": station,
-                    "cast_number": cast_number,
-                    "n_rows": len(dataframe),
-                },
-                latest_alias=CTD,
-            )
-            summary = (
-                f"Amundsen CTD chargé — {result['row_count']} lignes.\n"
-                f"Données disponibles dans `{variable_name}` et `df_ctd`.\n"
-                f"Appelle run_pandas directement pour analyser.\n"
-                f"Télécharger : {result['download_url']}"
-            )
-            return _am_success(
-                summary,
-                data_ref=variable_name,
-                artifact_refs=(result["download_url"],),
-                provenance={"dataset_id": result["dataset_id"]},
-                persisted=True,
-                method="Amundsen ERDDAP query",
-                metrics={"rows": int(result["row_count"])},
-            )
-        except Exception as exc:
-            return _am_error(f"Erreur lors de l'accès à Amundsen : {exc}", retryable=True)
 
     @tool(response_format="content_and_artifact")
     def query_amundsen_profiles_for_table(
@@ -1434,226 +1332,6 @@ def make_amundsen_tools(thread_id: str) -> list:
             },
         )
 
-    @tool(response_format="content_and_artifact")
-    def enrich_loaded_table_with_amundsen_ctd(
-        station_column: str | None = None,
-        cast_column: str | None = None,
-        time_column: str | None = None,
-        depth_column: str | None = None,
-        latitude_column: str | None = None,
-        longitude_column: str | None = None,
-        profile_column: str | None = None,
-        max_rows: int | None = None,
-    ) -> str:
-        """Enrichit la table chargée avec la CTD Amundsen quand les clés existent.
-
-        Ce tool est le point d'entrée pour "enrichis ce fichier avec Amundsen".
-        Il lit la table active en session, conserve toutes les lignes sources et
-        ajoute des colonnes `ctd_*` / `amundsen_*`.
-
-        Pour un enrichissement direct, fournir `station_column` + `cast_column`.
-        `depth_column` est optionnel mais recommandé pour prendre la mesure CTD
-        la plus proche en profondeur. Si la table n'a pas de station/cast ni de
-        latitude/longitude + temps, le tool retourne un diagnostic traçable avec
-        `ctd_match_status=missing_sample_metadata` au lieu d'une erreur opaque.
-        """
-        try:
-            source = _source_dataframe()
-            if source is None:
-                return _am_blocked("Aucune table chargée à enrichir.")
-
-            requested_columns = {
-                "station_column": station_column,
-                "cast_column": cast_column,
-                "time_column": time_column,
-                "depth_column": depth_column,
-                "latitude_column": latitude_column,
-                "longitude_column": longitude_column,
-                "profile_column": profile_column,
-            }
-            missing_requested = [
-                name
-                for name, column in requested_columns.items()
-                if column and column not in source.columns
-            ]
-            if missing_requested:
-                return _am_blocked(
-                    "Colonnes demandées absentes de la table chargée : "
-                    + ", ".join(f"{name}={requested_columns[name]!r}" for name in missing_requested)
-                )
-
-            has_station_cast = bool(
-                station_column
-                and cast_column
-                and station_column in source.columns
-                and cast_column in source.columns
-            )
-            has_spatiotemporal = bool(
-                latitude_column
-                and longitude_column
-                and time_column
-                and latitude_column in source.columns
-                and longitude_column in source.columns
-                and time_column in source.columns
-            )
-
-            dataframe = source.copy(deep=True)
-            if max_rows is not None:
-                dataframe = dataframe.head(int(max_rows)).copy()
-
-            if not has_station_cast:
-                missing_groups = []
-                if not has_spatiotemporal:
-                    if not (latitude_column and latitude_column in source.columns):
-                        missing_groups.append("latitude")
-                    if not (longitude_column and longitude_column in source.columns):
-                        missing_groups.append("longitude")
-                    if not (time_column and time_column in source.columns):
-                        missing_groups.append("time")
-                missing_groups.extend(["station", "cast_number"])
-                dataframe["ctd_match_status"] = "missing_sample_metadata"
-                dataframe["ctd_missing_columns"] = ", ".join(dict.fromkeys(missing_groups))
-                if profile_column and profile_column in dataframe.columns:
-                    dataframe["ctd_profile_key"] = dataframe[profile_column].astype(str)
-
-                query_fingerprint = hashlib.sha256(
-                    (
-                        f"{list(dataframe.columns)}|missing_sample_metadata|"
-                        f"{len(dataframe.index)}"
-                    ).encode("utf-8")
-                ).hexdigest()[:12]
-                variable_name = dataset_variable_name("amundsen_enriched", query_fingerprint)
-                output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
-                dataframe.to_csv(output_path, sep="\t", index=False)
-                store_dataset(
-                    _store,
-                    thread_id,
-                    dataframe,
-                    variable_name=variable_name,
-                    meta={
-                        "source": "amundsen_enrichment",
-                        "match_status": "missing_sample_metadata",
-                        "missing_columns": list(dict.fromkeys(missing_groups)),
-                        "n_rows": len(dataframe),
-                    },
-                    latest_alias=CTD_ENRICHED,
-                )
-                preview = dataframe.head(20).to_markdown(index=False)
-                summary = (
-                    "Enrichissement Amundsen impossible avec les métadonnées actuelles : "
-                    "station/cast ou latitude/longitude/temps manquants.\n"
-                    f"Données diagnostiques disponibles dans `{variable_name}`.\n"
-                    f"Aperçu :\n\n{preview}\n\n"
-                    f"Télécharger : {download_url(output_path.name)}"
-                )
-                return _am_blocked(
-                    summary,
-                    data_ref=variable_name,
-                    artifact_refs=(download_url(output_path.name),),
-                    persisted=True,
-                    metrics={"rows": len(dataframe), "matched": 0},
-                )
-
-            cache: dict[tuple[str, str], pd.DataFrame] = {}
-            statuses = []
-            matched_rows: list[dict] = []
-            for _, row in dataframe.iterrows():
-                station = row.get(station_column)
-                cast_number = row.get(cast_column)
-                key = (str(station), str(cast_number))
-                if pd.isna(station) or pd.isna(cast_number):
-                    statuses.append("missing_sample_metadata")
-                    matched_rows.append({})
-                    continue
-                if key not in cache:
-                    try:
-                        result = _query_amundsen_ctd(
-                            {"station": str(station), "cast_number": int(float(cast_number))}
-                        )
-                        cache[key] = pd.DataFrame(result["rows"]) if "rows" in result else pd.read_csv(result["file_path"], sep="\t")
-                    except Exception:
-                        cache[key] = pd.DataFrame()
-                nearest = _nearest_ctd_row(
-                    cache[key],
-                    row.get(depth_column) if depth_column else None,
-                )
-                if nearest is None:
-                    statuses.append("no_match")
-                    matched_rows.append({})
-                    continue
-                statuses.append("matched")
-                depth_value = row.get(depth_column) if depth_column else None
-                ctd_depth = nearest.get("Pres", nearest.get("PRES", nearest.get("depth")))
-                try:
-                    depth_delta = abs(float(depth_value) - float(ctd_depth)) if depth_value is not None else None
-                except (TypeError, ValueError):
-                    depth_delta = None
-                matched_rows.append(
-                    {
-                        "amundsen_nearest_time": nearest.get("time"),
-                        "amundsen_nearest_lat": nearest.get("latitude"),
-                        "amundsen_nearest_lon": nearest.get("longitude"),
-                        "amundsen_nearest_depth_m": ctd_depth,
-                        "amundsen_nearest_depth_delta_m": depth_delta,
-                        "amundsen_temperature_degC_nearest": nearest.get("TE90", nearest.get("Temp")),
-                        "amundsen_salinity_psu_nearest": nearest.get("PSAL", nearest.get("Sal")),
-                        "amundsen_station": nearest.get("station", station),
-                        "amundsen_cast_number": nearest.get("cast_number", cast_number),
-                    }
-                )
-
-            dataframe["ctd_match_status"] = statuses
-            matched = pd.DataFrame(matched_rows)
-            for column in matched.columns:
-                dataframe[column] = matched[column].values
-
-            query_fingerprint = hashlib.sha256(
-                (
-                    f"{station_column}|{cast_column}|{depth_column}|"
-                    f"{dataframe[[station_column, cast_column]].to_json(orient='records')}"
-                ).encode("utf-8")
-            ).hexdigest()[:12]
-            variable_name = dataset_variable_name("amundsen_enriched", query_fingerprint)
-            output_path = _DOWNLOADS_DIR / f"{uuid.uuid4().hex}.tsv"
-            dataframe.to_csv(output_path, sep="\t", index=False)
-            store_dataset(
-                _store,
-                thread_id,
-                dataframe,
-                variable_name=variable_name,
-                meta={
-                    "source": "amundsen_enrichment",
-                    "station_column": station_column,
-                    "cast_column": cast_column,
-                    "depth_column": depth_column,
-                    "n_rows": len(dataframe),
-                    "matched_rows": int((dataframe["ctd_match_status"] == "matched").sum()),
-                },
-                latest_alias=CTD_ENRICHED,
-            )
-            preview = dataframe.head(20).to_markdown(index=False)
-            summary = (
-                f"Enrichissement Amundsen terminé — {len(dataframe)} lignes, "
-                f"{int((dataframe['ctd_match_status'] == 'matched').sum())} matchées.\n"
-                f"Données disponibles dans `{variable_name}` et `df_ctd_enriched`.\n"
-                f"Aperçu :\n\n{preview}\n\n"
-                f"Télécharger : {download_url(output_path.name)}"
-            )
-            return _am_success(
-                summary,
-                data_ref=variable_name,
-                artifact_refs=(download_url(output_path.name),),
-                persisted=True,
-                method="Amundsen station-cast enrichment",
-                metrics={
-                    "rows": len(dataframe),
-                    "matched": int((dataframe["ctd_match_status"] == "matched").sum()),
-                },
-            )
-        except Exception as exc:
-            return _am_error(
-                f"Erreur lors de l'enrichissement Amundsen : {exc}", retryable=True
-            )
 
     @tool(response_format="content_and_artifact")
     def find_amundsen_data_for_table(
@@ -2224,11 +1902,7 @@ def make_amundsen_tools(thread_id: str) -> list:
 
 
     return [
-        list_amundsen_datasets,
-        preview_amundsen_profile,
-        query_amundsen_ctd,
         query_amundsen_profiles_for_table,
         find_amundsen_data_for_table,
-        enrich_loaded_table_with_amundsen_ctd,
         enrich_with_amundsen_ctd,
     ]

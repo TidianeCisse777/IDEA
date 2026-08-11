@@ -24,7 +24,6 @@ from tools.ecopart_sources import make_ecopart_tools
 from tools.geo_tools import get_zone_info, make_geo_tools
 from tools.ogsl_sources import make_ogsl_tools
 from tools.rag_tool import make_rag_tool
-from tools.skill_tool import SKILLS_DIR, make_skill_tool
 from tools.sql_workspace import SQLWorkspaceNotConfiguredError, make_sql_tools
 from tools.taxonomy_tool import make_taxonomy_tool
 from tools.tool_input import apply_strict_tool_schema
@@ -43,7 +42,6 @@ ToolSource = Literal[
     "geography",
     "knowledge",
     "taxonomy",
-    "skill",
     "deliverable",
 ]
 ToolExposureGroup: TypeAlias = Literal[
@@ -61,15 +59,7 @@ ToolExposureGroup: TypeAlias = Literal[
     "enrichment_ogsl",
     "sql_workspace",
     "ecotaxa_discovery",
-    "ecotaxa_preview",
-    "ecotaxa_samples",
-    "ecotaxa_objects",
-    "ecotaxa_geo_time",
-    "ecotaxa_taxonomy",
-    "ecotaxa_schema",
-    "ecotaxa_audit",
     "ecotaxa_export",
-    "hidden_legacy",
 ]
 TOOL_EXPOSURE_GROUPS = frozenset(get_args(ToolExposureGroup))
 
@@ -112,7 +102,6 @@ class ToolPolicy:
     expensive: bool
     reversible: bool
     requires_confirmation: bool
-    required_skill: str | None
     allowed_workflows: tuple[str, ...]
     max_calls_per_turn: int
     exposure_group: ToolExposureGroup
@@ -225,74 +214,29 @@ TOOL_PRESENTATION: Mapping[str, ToolPresentation] = MappingProxyType({
     "run_pandas": _presentation("Analyse du tableau", "Table analysis", "data"),
     "run_graph": _presentation("Génération du graphique", "Chart generation", "data"),
     # EcoTaxa.
-    "find_ecotaxa_projects": _source("EcoTaxa · recherche de projets", "EcoTaxa · project search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "find_ecotaxa_samples_in_region": _source("EcoTaxa · samples par zone / période", "EcoTaxa · samples by region / period", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "combine_ecotaxa_selections": _source("EcoTaxa · combiner les sélections zonées", "EcoTaxa · combine zoned selections", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "group_ecotaxa_samples_by_year": _source("EcoTaxa · samples par année", "EcoTaxa · samples by year", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "find_ecotaxa_projects_in_region": _source("EcoTaxa · projets par zone", "EcoTaxa · projects by region", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "group_ecotaxa_project_samples_by_region": _source("EcoTaxa · répartition régionale", "EcoTaxa · regional distribution", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "rank_ecotaxa_samples_by_region": _source("EcoTaxa · classement par zone", "EcoTaxa · regional ranking", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "find_ecotaxa_observations": _source("EcoTaxa · recherche d’observations", "EcoTaxa · observation search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "get_ecotaxa_sample": _source("EcoTaxa · métadonnées du sample", "EcoTaxa · sample metadata", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "list_ecotaxa_sample_objects": _source("EcoTaxa · objets du sample", "EcoTaxa · sample objects", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "get_ecotaxa_object": _source("EcoTaxa · détail d'un objet", "EcoTaxa · object detail", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "summarize_ecotaxa_sample_deployment": _source("EcoTaxa · déploiement du sample", "EcoTaxa · sample deployment", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "inspect_ecotaxa_project_schema": _source("EcoTaxa · schéma du projet", "EcoTaxa · project schema", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "inspect_ecotaxa_column": _source("EcoTaxa · inspection de colonne", "EcoTaxa · column inspection", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "count_ecotaxa_taxa": _source("EcoTaxa · comptage des taxons", "EcoTaxa · taxon counts", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "search_ecotaxa_taxa": _source("EcoTaxa · recherche de taxons", "EcoTaxa · taxon search", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "describe_ecotaxa_project_coverage": _source("EcoTaxa · couverture du projet (réseau vs cache)", "EcoTaxa · project coverage (network vs cache)", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "compare_ecotaxa_projects": _source("EcoTaxa · comparaison de projets", "EcoTaxa · project comparison", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "list_ecotaxa_projects": _source("EcoTaxa · projets accessibles", "EcoTaxa · accessible projects", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "list_ecotaxa_campaigns": _source("EcoTaxa · campagnes", "EcoTaxa · campaigns", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "preview_ecotaxa_project": _source("EcoTaxa · aperçu du projet", "EcoTaxa · project preview", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "query_ecotaxa": _source("EcoTaxa · export du projet", "EcoTaxa · project export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True, progress_fr="Export EcoTaxa en cours — cela peut prendre 1–2 minutes", progress_en="EcoTaxa export in progress — this may take 1–2 minutes"),
-    "query_ecotaxa_sample": _source("EcoTaxa · export du sample", "EcoTaxa · sample export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True, progress_fr="Export du sample EcoTaxa en cours — cela peut prendre 1–2 minutes", progress_en="EcoTaxa sample export in progress — this may take 1–2 minutes"),
-    "summarize_ecotaxa_sample": _source("EcoTaxa · résumé du sample", "EcoTaxa · sample summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "summarize_ecotaxa_samples": _source("EcoTaxa · résumé de samples", "EcoTaxa · samples summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "summarize_ecotaxa_project": _source("EcoTaxa · résumé du projet", "EcoTaxa · project summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "summarize_ecotaxa_projects": _source("EcoTaxa · résumé des projets", "EcoTaxa · projects summary", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "export_ecotaxa_samples": _source("EcoTaxa · export des samples", "EcoTaxa · samples export", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr", slow=True, progress_fr="Export des samples EcoTaxa en cours — les projets sont traités successivement", progress_en="EcoTaxa samples export in progress — projects are processed sequentially"),
-    "resolve_ecotaxa_sample": _source("EcoTaxa · résolution de sample", "EcoTaxa · sample resolver", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "audit_ecotaxa_spatial_coverage": _source("EcoTaxa · audit de couverture spatiale", "EcoTaxa · spatial coverage audit", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "list_ecotaxa_cache_tables": _source("EcoTaxa · tables du cache", "EcoTaxa · cache tables", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "describe_ecotaxa_cache_table": _source("EcoTaxa · schéma d'une table cache", "EcoTaxa · cache table schema", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     "query_ecotaxa_cache": _source("EcoTaxa · SQL cache", "EcoTaxa · SQL cache", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
-    "summarize_ecotaxa_profiles_for_map": _source("EcoTaxa · profils pour carte", "EcoTaxa · map-ready profiles", "ecotaxa", ECOTAXA_SOURCE, "https://ecotaxa.obs-vlfr.fr"),
     # Bio-ORACLE.
-    "list_bio_oracle_datasets": _source("Bio-ORACLE · jeux de données", "Bio-ORACLE · datasets", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
-    "preview_bio_oracle_point": _source("Bio-ORACLE · aperçu ponctuel", "Bio-ORACLE · point preview", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
-    "query_bio_oracle": _source("Bio-ORACLE · extraction", "Bio-ORACLE · extraction", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap", slow=True, progress_fr="Extraction Bio-ORACLE en cours — cela peut prendre 1–2 minutes", progress_en="Bio-ORACLE extraction in progress — this may take 1–2 minutes"),
-    "couple_zooplankton_bio_oracle": _source("Bio-ORACLE · couplage environnemental", "Bio-ORACLE · environmental coupling", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap", slow=True),
-    "query_bio_oracle_zones": _source("Bio-ORACLE · extraction par zones", "Bio-ORACLE · zone extraction", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
-    "find_bio_oracle_data_for_table": _source("Bio-ORACLE · disponibilité pour le tableau", "Bio-ORACLE · availability for table", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap"),
     "enrich_with_bio_oracle": _source("Bio-ORACLE · enrichissement du tableau", "Bio-ORACLE · table enrichment", "bio_oracle", BIO_ORACLE_SOURCE, "https://erddap.bio-oracle.org/erddap", slow=True, progress_fr="Préparation de l’enrichissement Bio-ORACLE", progress_en="Preparing Bio-ORACLE enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     # Amundsen CTD.
-    "list_amundsen_datasets": _source("Amundsen · jeux de données CTD", "Amundsen · CTD datasets", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap"),
-    "preview_amundsen_profile": _source("Amundsen · aperçu du profil CTD", "Amundsen · CTD profile preview", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap"),
-    "query_amundsen_ctd": _source("Amundsen · extraction CTD", "Amundsen · CTD extraction", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Extraction Amundsen CTD en cours — cela peut prendre 1–2 minutes", progress_en="Amundsen CTD extraction in progress — this may take 1–2 minutes"),
     "query_amundsen_profiles_for_table": _source("Amundsen · profils complets appariés", "Amundsen · complete matched profiles", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Chargement des profils Amundsen complets", progress_en="Loading complete Amundsen profiles"),
     "find_amundsen_data_for_table": _source("Amundsen · disponibilité pour le tableau", "Amundsen · availability for table", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap"),
-    "enrich_loaded_table_with_amundsen_ctd": _source("Amundsen · enrichissement du tableau chargé", "Amundsen · loaded table enrichment", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Préparation de l’enrichissement CTD", progress_en="Preparing CTD enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     "enrich_with_amundsen_ctd": _source("Amundsen · enrichissement CTD", "Amundsen · CTD enrichment", "amundsen", AMUNDSEN_SOURCE, "https://erddap.amundsenscience.com/erddap", slow=True, progress_fr="Préparation de l’enrichissement CTD", progress_en="Preparing CTD enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     # OGSL.
-    "query_ogsl": _source("OGSL · extraction CTD", "OGSL · CTD extraction", "ogsl", OGSL_SOURCE, "https://erddap.ogsl.ca/erddap", slow=True),
     "enrich_with_ogsl": _source("OGSL · enrichissement CTD", "OGSL · CTD enrichment", "ogsl", OGSL_SOURCE, "https://erddap.ogsl.ca/erddap", slow=True, progress_fr="Préparation de l’enrichissement OGSL", progress_en="Preparing OGSL enrichment", progress_detail_fr="Le cache de données sera vérifié automatiquement avant le calcul.", progress_detail_en="The data cache will be checked automatically before computation."),
     # EcoPart.
-    "list_ecopart_samples": _source("EcoPart · samples accessibles", "EcoPart · accessible samples", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     "preview_ecopart_sample": _source("EcoPart · aperçu du sample", "EcoPart · sample preview", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
-    "query_ecopart": _source("EcoPart · extraction", "EcoPart · extraction", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr", slow=True, progress_fr="Téléchargement EcoPart en cours — cela peut prendre 1–2 minutes", progress_en="EcoPart download in progress — this may take 1–2 minutes"),
-    "join_ecotaxa_ecopart": _source("EcoTaxa/EcoPart · jumelage", "EcoTaxa/EcoPart · join", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     "enrich_ecotaxa_with_ecopart_remote": _source("EcoTaxa/EcoPart · enrichissement distant", "EcoTaxa/EcoPart · remote enrichment", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr", slow=True, progress_fr="Enrichissement EcoPart en cours — cela peut prendre plusieurs minutes.", progress_en="EcoPart enrichment in progress — this may take several minutes.", progress_detail_fr="L'export EcoPart puis la jointure sont en cours ; cette page peut rester ouverte pendant le traitement.", progress_detail_en="The EcoPart export and join are running; this page can remain open during processing."),
     "find_ecopart_project_for_ecotaxa": _source("EcoPart · projet correspondant", "EcoPart · matching project", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
-    "audit_ecotaxa_ecopart_join": _source("EcoTaxa/EcoPart · audit de jumelage", "EcoTaxa/EcoPart · join audit", "ecopart", ECOPART_SOURCE, "https://ecopart.obs-vlfr.fr"),
     # Geography and core services.
     "filter_dataframe_by_zone": _presentation("Filtrage géographique", "Geographic filtering", "geography"),
     "split_dataframe_by_zone": _presentation("Découpage géographique", "Geographic split", "geography"),
     "get_zone_info": _presentation("Information géographique", "Geographic information", "geography"),
     "query_copepod_knowledge_base": _presentation("Recherche documentaire", "Knowledge-base search", "core"),
     "lookup_marine_taxonomy": _presentation("Recherche taxonomique", "Taxonomy lookup", "core"),
-    "load_skill": _presentation("Chargement des instructions spécialisées", "Specialized instructions loading", "core"),
     "export_deliverable": _presentation("Export du livrable", "Deliverable export", "core", slow=True),
     # Optional read-only SQL workspace.
     "list_sql_tables": _source("SQL · tables accessibles", "SQL · accessible tables", "sql", SQL_SOURCE, None),
@@ -323,7 +267,6 @@ _POLICY_PROFILES: Mapping[str, _PolicyProfile] = MappingProxyType({
     "local_session": _PolicyProfile("medium", False, True, False, False, True, False, 3),
     "local_artifact": _PolicyProfile("medium", False, True, False, True, True, False, 2),
     "local_heavy": _PolicyProfile("high", False, True, False, True, True, True, 1),
-    "skill_session": _PolicyProfile("medium", False, True, True, False, True, False, 3),
     "remote_read": _PolicyProfile("low", True, False, True, False, True, False, 3),
     "remote_session": _PolicyProfile("medium", False, True, True, False, True, False, 2),
     "remote_heavy": _PolicyProfile("high", False, True, True, True, True, True, 1),
@@ -340,75 +283,30 @@ _TOOL_PROFILE_BY_NAME: Mapping[str, str] = MappingProxyType({
     "run_pandas": "local_session",
     "run_graph": "local_artifact",
     # EcoTaxa read-only/cache navigation.
-    "audit_ecotaxa_spatial_coverage": "remote_read",
     "list_ecotaxa_cache_tables": "local_source_read",
     "describe_ecotaxa_cache_table": "local_source_read",
     "query_ecotaxa_cache": "local_source_read",
-    "summarize_ecotaxa_profiles_for_map": "local_source_session",
-    "compare_ecotaxa_projects": "remote_read",
-    "count_ecotaxa_taxa": "remote_read",
-    "describe_ecotaxa_project_coverage": "remote_read",
-    "find_ecotaxa_projects": "remote_read",
-    "find_ecotaxa_projects_in_region": "remote_read",
-    "get_ecotaxa_sample": "remote_read",
-    "list_ecotaxa_sample_objects": "remote_read",
-    "get_ecotaxa_object": "remote_read",
-    "group_ecotaxa_project_samples_by_region": "remote_read",
-    "inspect_ecotaxa_column": "remote_read",
-    "inspect_ecotaxa_project_schema": "remote_read",
-    "list_ecotaxa_campaigns": "remote_read",
-    "resolve_ecotaxa_sample": "remote_read",
-    "list_ecotaxa_projects": "remote_read",
-    "preview_ecotaxa_project": "remote_read",
-    "rank_ecotaxa_samples_by_region": "remote_read",
-    "search_ecotaxa_taxa": "remote_read",
-    "summarize_ecotaxa_project": "remote_read",
-    "summarize_ecotaxa_projects": "remote_read",
-    "summarize_ecotaxa_sample": "remote_read",
-    "summarize_ecotaxa_sample_deployment": "remote_read",
-    "summarize_ecotaxa_samples": "remote_read",
     # EcoTaxa selection/session and heavy extraction.
-    "find_ecotaxa_observations": "remote_session",
-    "find_ecotaxa_samples_in_region": "remote_session",
-    "combine_ecotaxa_selections": "remote_session",
-    "group_ecotaxa_samples_by_year": "remote_session",
     "export_ecotaxa_samples": "remote_heavy",
     "query_ecotaxa": "remote_heavy",
-    "query_ecotaxa_sample": "remote_heavy",
     # Bio-ORACLE.
-    "find_bio_oracle_data_for_table": "remote_read",
-    "list_bio_oracle_datasets": "remote_read",
-    "preview_bio_oracle_point": "remote_read",
-    "query_bio_oracle_zones": "remote_session",
-    "couple_zooplankton_bio_oracle": "remote_heavy",
     "enrich_with_bio_oracle": "remote_heavy",
-    "query_bio_oracle": "remote_heavy",
     # Amundsen CTD.
     "find_amundsen_data_for_table": "remote_read",
-    "list_amundsen_datasets": "remote_read",
-    "preview_amundsen_profile": "remote_read",
-    "enrich_loaded_table_with_amundsen_ctd": "remote_heavy",
     "enrich_with_amundsen_ctd": "remote_heavy",
-    "query_amundsen_ctd": "remote_heavy",
     "query_amundsen_profiles_for_table": "remote_heavy",
     # OGSL.
     "enrich_with_ogsl": "remote_heavy",
-    "query_ogsl": "remote_heavy",
     # EcoPart. Local join/audit are explicitly distinguished from remote I/O.
     "find_ecopart_project_for_ecotaxa": "remote_read",
-    "list_ecopart_samples": "remote_read",
     "preview_ecopart_sample": "remote_read",
-    "audit_ecotaxa_ecopart_join": "local_source_read",
-    "join_ecotaxa_ecopart": "local_source_session",
     "enrich_ecotaxa_with_ecopart_remote": "remote_heavy",
-    "query_ecopart": "remote_heavy",
     # Geography and core services.
     "get_zone_info": "local_read",
     "filter_dataframe_by_zone": "local_session",
     "split_dataframe_by_zone": "local_session",
     "query_copepod_knowledge_base": "local_read",
     "lookup_marine_taxonomy": "remote_read",
-    "load_skill": "skill_session",
     "export_deliverable": "local_heavy",
     # Optional SQL workspace.
     "list_sql_tables": "remote_read",
@@ -431,14 +329,12 @@ _SOURCE_BY_FAMILY: Mapping[str, ToolSource] = MappingProxyType({
 _CORE_SOURCE_BY_NAME: Mapping[str, ToolSource] = MappingProxyType({
     "query_copepod_knowledge_base": "knowledge",
     "lookup_marine_taxonomy": "taxonomy",
-    "load_skill": "skill",
     "export_deliverable": "deliverable",
 })
 
 _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # Permanent core and state-gated local tools.
     "load_file": "core",
-    "load_skill": "core",
     "query_copepod_knowledge_base": "core",
     "run_pandas": "file_analysis",
     "run_graph": "visualization",
@@ -460,48 +356,19 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     # EcoTaxa discovery is cache-first. The former project/sample convenience
     # wrappers stay registered for compatibility but are no longer advertised
     # to the model; their read-only use cases are covered by cache SQL.
-    "list_ecotaxa_projects": "hidden_legacy",
-    "find_ecotaxa_projects": "hidden_legacy",
-    "list_ecotaxa_campaigns": "hidden_legacy",
-    "preview_ecotaxa_project": "hidden_legacy",
     "list_ecotaxa_cache_tables": "ecotaxa_discovery",
     "describe_ecotaxa_cache_table": "ecotaxa_discovery",
-    "describe_ecotaxa_project_coverage": "hidden_legacy",
-    "resolve_ecotaxa_sample": "hidden_legacy",
-    "get_ecotaxa_sample": "hidden_legacy",
     # A paginated API page is neither persistent nor suitable for an object-level
     # analysis. Keep these compatibility tools out of the LLM's normal routing.
-    "list_ecotaxa_sample_objects": "hidden_legacy",
-    "get_ecotaxa_object": "hidden_legacy",
-    "summarize_ecotaxa_sample": "hidden_legacy",
-    "summarize_ecotaxa_samples": "hidden_legacy",
-    "summarize_ecotaxa_sample_deployment": "hidden_legacy",
     # EcoTaxa geography and time — replaced by query_ecotaxa_cache SQL.
-    "find_ecotaxa_samples_in_region": "hidden_legacy",
-    "combine_ecotaxa_selections": "hidden_legacy",
-    "group_ecotaxa_samples_by_year": "hidden_legacy",
-    "find_ecotaxa_projects_in_region": "hidden_legacy",
-    "group_ecotaxa_project_samples_by_region": "hidden_legacy",
-    "rank_ecotaxa_samples_by_region": "hidden_legacy",
     # EcoTaxa taxonomy — cached taxon counts/searches go through cache SQL;
     # marine-name resolution is handled by the dedicated taxonomy tool.
-    "search_ecotaxa_taxa": "hidden_legacy",
-    "count_ecotaxa_taxa": "hidden_legacy",
-    "find_ecotaxa_observations": "hidden_legacy",
     # EcoTaxa schema — cache table description plus one SQL query is the
     # normal route; project wrappers remain registered only for compatibility.
-    "inspect_ecotaxa_project_schema": "hidden_legacy",
-    "inspect_ecotaxa_column": "hidden_legacy",
-    "compare_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa audit — cache-only tools replaced by query_ecotaxa_cache SQL.
-    "audit_ecotaxa_spatial_coverage": "hidden_legacy",
     "query_ecotaxa_cache": "ecotaxa_discovery",
-    "summarize_ecotaxa_profiles_for_map": "hidden_legacy",
-    "summarize_ecotaxa_project": "hidden_legacy",
-    "summarize_ecotaxa_projects": "hidden_legacy",
     # EcoTaxa exports.
     "query_ecotaxa": "ecotaxa_export",
-    "query_ecotaxa_sample": "hidden_legacy",
     "export_ecotaxa_samples": "ecotaxa_export",
     # Optional SQL workspace.
     "list_sql_tables": "sql_workspace",
@@ -509,40 +376,14 @@ _EXPOSURE_GROUP_BY_NAME: Mapping[str, ToolExposureGroup] = MappingProxyType({
     "copy_sql_query_to_workspace": "sql_workspace",
     # Read-only EcoTaxa↔EcoPart correspondence lookup.  It is distinct from
     # enrichment and must remain available before any export.
-    "list_ecopart_samples": "hidden_legacy",
     "preview_ecopart_sample": "ecopart_preview",
     "find_ecopart_project_for_ecotaxa": "ecopart_preview",
-    "query_ecopart": "hidden_legacy",
-    "join_ecotaxa_ecopart": "hidden_legacy",
-    "audit_ecotaxa_ecopart_join": "hidden_legacy",
-    "list_amundsen_datasets": "hidden_legacy",
-    "preview_amundsen_profile": "hidden_legacy",
-    "enrich_loaded_table_with_amundsen_ctd": "hidden_legacy",
-    "query_amundsen_ctd": "hidden_legacy",
-    "list_bio_oracle_datasets": "hidden_legacy",
-    "preview_bio_oracle_point": "hidden_legacy",
-    "query_bio_oracle_zones": "hidden_legacy",
-    "find_bio_oracle_data_for_table": "hidden_legacy",
-    "couple_zooplankton_bio_oracle": "hidden_legacy",
-    "query_bio_oracle": "hidden_legacy",
-    "query_ogsl": "hidden_legacy",
-})
-
-_REQUIRED_SKILL_BY_FAMILY: Mapping[str, str] = MappingProxyType({
-    "ecotaxa": "ecotaxa_navigation",
-    "ecopart": "ecopart_query",
-    "amundsen": "amundsen_ctd_query",
-    "bio_oracle": "bio_oracle_query",
-    "ogsl": "ogsl_query",
 })
 
 def _build_policy(name: str, profile_name: str) -> ToolPolicy:
     presentation = TOOL_PRESENTATION[name]
     profile = _POLICY_PROFILES[profile_name]
     source = _CORE_SOURCE_BY_NAME.get(name) or _SOURCE_BY_FAMILY[presentation.family]
-    required_skill = _REQUIRED_SKILL_BY_FAMILY.get(presentation.family)
-    if name == "export_deliverable":
-        required_skill = "deliverable_writer"
     workflows = (
         ("visualization",)
         if name == "run_graph"
@@ -560,7 +401,6 @@ def _build_policy(name: str, profile_name: str) -> ToolPolicy:
         expensive=profile.expensive,
         reversible=profile.reversible,
         requires_confirmation=profile.requires_confirmation,
-        required_skill=required_skill,
         allowed_workflows=workflows,
         max_calls_per_turn=profile.max_calls_per_turn,
         exposure_group=_EXPOSURE_GROUP_BY_NAME[name],
@@ -699,7 +539,6 @@ def validate_catalog(
         )
 
     policy_issues = []
-    local_skills = {path.stem for path in SKILLS_DIR.glob("*.md")}
     for name in sorted(names | optional):
         presentation = TOOL_PRESENTATION[name]
         policy = TOOL_POLICIES[name]
@@ -718,8 +557,6 @@ def validate_catalog(
             issues.append("legacy result schema")
         if not policy.allowed_workflows:
             issues.append("allowed_workflows")
-        if policy.required_skill and policy.required_skill not in local_skills:
-            issues.append(f"unknown_skill={policy.required_skill}")
         if issues:
             policy_issues.append(f"{name} ({', '.join(issues)})")
     if policy_issues:
@@ -765,7 +602,6 @@ def build_tool_catalog(thread_id: str) -> ToolCatalog:
         *make_geo_tools(thread_id),
         make_rag_tool(thread_id),
         make_taxonomy_tool(),
-        make_skill_tool(thread_id=thread_id),
         export_deliverable,
         get_zone_info,
     ]

@@ -44,7 +44,7 @@ def test_build_turn_context_bundles_state(tmp_path):
     assert ("df_in_baffin_base", "baffin-bay", "1") in ctx.derived_zone_subsets
     assert ctx.authorized_sources == ("file",)
     assert ctx.primary_source == "file"
-    assert "ACTIVE SOURCE SCOPE" in ctx.capsule
+    assert "ACTIVE DATASET STATE" in ctx.capsule
     assert "df_in_baffin_base" in ctx.capsule
 
 

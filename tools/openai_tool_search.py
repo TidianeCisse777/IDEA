@@ -84,8 +84,6 @@ _NAMESPACE_DESCRIPTIONS: Mapping[str, str] = {
 
 
 def _namespace_name(policy: ToolPolicy) -> str | None:
-    if policy.exposure_group == "hidden_legacy":
-        return None
     if policy.source in {"ecotaxa", "ecopart", "geography"}:
         return policy.source
     if policy.source in {"amundsen", "bio_oracle", "ogsl"}:
@@ -139,7 +137,7 @@ def build_openai_tool_search_projection(
 ) -> ToolSearchProjection:
     """Build the compact OpenAI declaration without changing executable tools.
 
-    Hidden legacy tools and ``load_skill`` are absent from the provider surface.
+    Only catalogued canonical tools are included in the provider surface.
     A forced retry/recovery tool is temporarily lifted out of its namespace so
     ``tool_choice`` can reference a directly visible function.
     """
@@ -157,7 +155,7 @@ def build_openai_tool_search_projection(
             excluded.append(tool.name)
             continue
         namespace = _namespace_name(policy)
-        if tool.name == "load_skill" or namespace is None:
+        if namespace is None:
             excluded.append(tool.name)
         elif tool.name in forced or namespace == "":
             immediate.append(tool)

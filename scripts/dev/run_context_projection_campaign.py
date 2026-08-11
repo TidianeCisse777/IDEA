@@ -2355,15 +2355,16 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         _check(
             scenario,
             "tools",
-            "specialized schemas are deferred rather than top-level on unrelated turns",
-            "enrich_with_bio_oracle" not in after_bio_names
-            and "enrich_with_bio_oracle" not in graph_names
-            and (
-                not tool_search_active
-                or all(
+            "provider route either defers namespaces or exposes the full canonical catalog",
+            (
+                "enrich_with_bio_oracle" not in after_bio_names
+                and "enrich_with_bio_oracle" not in graph_names
+                and all(
                     "environmental_enrichment" in capture.tool_names
                     for capture in captures
                 )
+                if tool_search_active
+                else all(set(capture.tool_names) == catalog_names for capture in captures)
             ),
             f"turn_6={sorted(after_bio_names)}; turn_7={sorted(graph_names)}",
             turn_range="turns 6-7",
@@ -2371,8 +2372,8 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         _check(
             scenario,
             "tools",
-            "provider surface stays cache-stable while specialized schemas stay deferred",
-            len(distinct_lists) == 1 if tool_search_active else len(distinct_lists) >= 3,
+            "provider surface stays cache-stable across turns",
+            len(distinct_lists) == 1,
             f"distinct_provider_tool_lists={len(distinct_lists)}",
             turn_range="turns 1-7",
         ),

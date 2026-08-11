@@ -1,341 +1,243 @@
-# ARCHITECTURE.md — Architecture logicielle · IDEA
+# Architecture simplifiée — IDEA
 
-> Comment `agent.py`, `serve.py`, les tools, le RAG, le MCP EcoTaxa et Open WebUI
-> sont câblés. Pour le périmètre fonctionnel voir [`SPEC.md`](SPEC.md), pour les
-> flux détaillés voir [`SEQUENCES.md`](SEQUENCES.md), pour le déploiement voir
-> [`PARTAGE.md`](PARTAGE.md).
+Ce document présente les composants réellement actifs et leur circulation de
+données. Le périmètre fonctionnel est résumé dans [PRESENTATION.md](PRESENTATION.md)
+et les fonctions disponibles dans [TOOLS.md](TOOLS.md).
 
----
-
-## 1. Vue d'ensemble
-
-Le système est composé de **quatre services** orchestrés par Docker Compose,
-plus des dépendances externes (LLM, sources ERDDAP/EcoTaxa).
+## Vue d’ensemble
 
 ```mermaid
 flowchart TB
-    User[Utilisateur<br/>professeur / étudiant]
-
-    subgraph Stack["Stack Docker Compose"]
-        OW["open-webui<br/>UI chat, uploads, historique<br/>:3000 → 8080"]
-        AGENT["copepod-agent<br/>serve.py FastAPI + agent.py LangGraph<br/>:8000"]
-        MCP["mcp-ecotaxa<br/>Cache EcoTaxa read-only<br/>:8001"]
-        PG[("postgres<br/>métadonnées session<br/>:5433 → 5432")]
-    end
-
-    subgraph Externe["Services externes"]
-        LLM["API LLM<br/>OpenAI-compatible<br/>LLM_MODEL"]
-        ECOTAXA["EcoTaxa / EcoPart<br/>obs-vlfr.fr"]
-        ERDDAP["ERDDAP<br/>Amundsen / Bio-ORACLE / OGSL"]
-        LS["LangSmith / Langfuse<br/>tracing (optionnel)"]
-    end
-
-    User --> OW
-    OW <-->|"POST /v1/chat/completions (SSE)"| AGENT
-    AGENT <--> LLM
-    AGENT <-->|"fonctions Python"| MCP
-    AGENT <--> PG
-    AGENT -.->|export| ECOTAXA
-    AGENT -.->|enrich| ERDDAP
-    MCP -.->|sync cache| ECOTAXA
-    AGENT -.-> LS
+    U["Utilisateur"] --> OW["Open WebUI"]
+    OW -->|"API OpenAI-compatible / SSE"| API["serve.py / FastAPI"]
+    API --> AG["agent.py / LangGraph ReAct"]
+    AG --> LLM["OpenAI"]
+    AG --> CAT["Tool catalog"]
+    AG --> CKPT[("Checkpoints LangGraph")]
+    AG --> STORE[("Session store")]
+    CAT --> FILES["Fichiers, pandas, graphes"]
+    CAT --> ECO["Cache et exports EcoTaxa"]
+    CAT --> ENRICH["EcoPart, Amundsen, Bio-ORACLE, OGSL"]
+    CAT --> KNOW["RAG et taxonomie"]
+    CAT --> SQL["Workspace SQL optionnel"]
+    MCP["MCP EcoTaxa"] --> CACHE[("Cache SQLite partagé")]
+    ECO --> CACHE
 ```
 
-**Points structurants :**
-- Un **seul agent ReAct**. Pas de « mode ». Le modèle suit le system prompt; les autorisations critiques, dont la source, sont appliquées par le control plane Python.
-- Le code est monté en volume (`.:/app`) avec `uvicorn --reload` en dev : hot-reload, pas de rebuild.
-- L'agent IDEA n'appelle **pas** le MCP EcoTaxa via HTTP : il réutilise les mêmes fonctions Python (`core/ecotaxa_browser/`) via les wrappers LangChain de `tools/copepod_sources.py`. Le service `mcp-ecotaxa` HTTP sert surtout aux agents externes et au cache partagé.
+IDEA utilise un seul agent ReAct. Il n’existe ni mode de session, ni planner
+séparé, ni chargeur de skills. Le plan analytique est produit par le même modèle
+dans la boucle ReAct, puis vérifié par les résultats des tools.
 
----
+## Les quatre couches
 
-## 2. Couche transport — `serve.py` (FastAPI, port 8000)
+### 1. Interface et transport
 
-Expose une API OpenAI-compatible consommée par Open WebUI.
+`serve.py` expose une API OpenAI-compatible consommée par Open WebUI.
 
-| Route | Méthode | Rôle |
-|---|---|---|
-| `/` | GET | Health check |
-| `/version` | GET | Version de l'image |
-| `/v1/models` | GET | Liste des modèles (compat OpenAI) |
-| `/v1/embeddings` | POST | Embeddings (compat OpenAI) |
-| `/v1/chat/completions` | POST | **Point d'entrée principal**, streaming SSE |
-| `/graphs/{filename}` | GET | Sert les PNG générés par `run_graph` |
-| `/downloads/{filename}` | GET | Sert les exports/livrables téléchargeables |
-| `/feedback` | POST | Réception du feedback Open WebUI |
-| `/feedback/tap/ping` | POST | Polling temps réel du feedback |
-| `/debug/context-audit` | GET | Audit du contexte injecté |
+| Route | Rôle |
+|---|---|
+| `GET /` | santé du service |
+| `GET /v1/models` | modèle IDEA exposé à Open WebUI |
+| `POST /v1/chat/completions` | conversation et streaming SSE |
+| `GET /graphs/{filename}` | graphiques PNG |
+| `GET /downloads/{filename}` | exports et livrables |
+| `GET /debug/context-audit` | dernière projection du contexte modèle |
 
-Responsabilités : streaming SSE des tokens et de la progression des tools,
-hébergement des images et des downloads, polling du feedback Open WebUI,
-mapping requête OpenAI ↔ invocation LangGraph.
+La couche transport traduit les messages Open WebUI, diffuse les appels et
+résultats de tools, puis héberge les artefacts locaux.
 
-### Cartographie autonome et stockage des PNG
+### 2. Agent et état LangGraph
 
-Les quatre fonds Natural Earth 110m utilisés par les gabarits Cartopy (terre,
-océan, côtes et frontières nationales) sont embarqués sous `assets/cartopy/`,
-hors du volume runtime `/app/data`.
-`core/cartography.py` valide ce bundle et le déclare comme
-`pre_existing_data_dir` avant chaque exécution de `run_graph` : une première
-carte ne déclenche donc aucun téléchargement Cartopy.
+`agent.py` construit le catalogue puis appelle `create_agent` :
 
-`core/runtime_paths.py` donne un répertoire commun au producteur graphique et à
-la route `/graphs/`. Par défaut local, il s'agit de `data/graphs`; les fichiers
-Compose définissent `GRAPHS_DIR=/app/data/graphs`, à l'intérieur du volume
-persistant `copepod_data`.
+```python
+catalog = build_tool_catalog(thread_id)
+agent = create_agent(model, list(catalog.tools), ...)
+```
 
----
+Deux mécanismes préparent chaque appel modèle :
 
-## 3. Couche agent — `agent.py` (LangGraph ReAct)
+- `ExplorationStateMiddleware` conserve objectif, livrables, ressources,
+  étapes, dépendances et preuves dans le checkpoint LangGraph;
+- `_ContextMiddleware` construit le contexte transitoire, compacte l’historique,
+  borne les résultats de tools et choisit leur représentation côté provider.
+
+Le contexte transitoire est organisé ainsi :
+
+```text
+SYSTEM MESSAGE stable
+historique utile
+application_turn_context
+  CURRENT TASK
+  profil métier éventuel
+  AVAILABLE DATAFRAMES
+  faits du dernier graphique
+  EXPLORATION FRONTIER
+  directive de récupération après erreur, si nécessaire
+demande utilisateur originale
+appels et résultats ReAct du tour
+schémas de tools transmis séparément
+```
+
+Le message système reste stable et cacheable. Les données propres au tour ne
+sont pas ajoutées durablement au checkpoint comme instructions système.
+
+### 3. Catalogue et exécution des tools
+
+`tools/tool_catalog.py` est la source de vérité du runtime :
+
+- 22 tools obligatoires;
+- 3 tools SQL ajoutés seulement si `DATABASE_URL` est valide;
+- noms uniques, schémas d’entrée stricts et politiques explicites;
+- résultats structurés `ToolResult`;
+- labels français/anglais pour l’interface.
+
+Le `ToolNode` LangGraph conserve toujours les vraies fonctions exécutables.
+Seule leur présentation au provider change :
 
 ```mermaid
 flowchart LR
-    IN[Message utilisateur] --> HOOK
-
-    subgraph Agent["create_agent"]
-        STATE["ExplorationStateMiddleware<br/>objective + deliverables + resources<br/>steps + dependencies + evidence"]
-        HOOK["_ContextMiddleware<br/>prepare model request : trim + audit<br/>inject memory"]
-        MODEL["LLM<br/>ChatOpenAI"]
-        TOOLS["Tools node<br/>59 tools (+3 SQL optionnels)"]
-        STATE --> HOOK
-        HOOK --> MODEL
-        MODEL -->|tool call| TOOLS
-        TOOLS -->|observation| STATE
-        MODEL -->|réponse finale| OUT[Réponse]
-    end
-
-    CKPT[("AsyncSqliteSaver<br/>data/checkpoints.sqlite")]
-    STORE[("Store<br/>mémoire long terme")]
-    STATE <--> CKPT
-    HOOK <--> STORE
+    C["25 tools canoniques"] --> Q{"Tool Search compatible ?"}
+    Q -->|"oui"| D["tools locaux immédiats + 4 namespaces différés"]
+    Q -->|"non"| F["catalogue canonique complet"]
+    D --> N["EcoTaxa / EcoPart / Geography / Environmental enrichment"]
 ```
 
-### Construction (`agent.py`)
-- **System prompt** : `COPEPOD_SYSTEM_PROMPT` local et permanent. Le runtime ne tire pas le prompt depuis le Hub. Les informations variables du tour n'y sont plus concaténées.
-- **LLM** : `ChatOpenAI(model=LLM_MODEL)`, `max_tokens=LLM_MAX_OUTPUT_TOKENS` (défaut 16000), `max_retries=2`. Quand `OPENAI_TOOL_SEARCH_ENABLED=true`, avec l'endpoint OpenAI direct et un modèle `gpt-5.4+`, le runtime force la Responses API afin d'utiliser le Tool Search hébergé.
-- **Assemblage des tools** :
-  ```python
-  catalog = build_tool_catalog(thread_id)
-  create_agent(llm, list(catalog.tools), ...)
-  ```
-  `tools/tool_catalog.py` est le seam unique de composition et de présentation :
-  il appelle les factories par famille, ajoute les 3 tools SQL seulement si
-  `DATABASE_URL` est résolvable, valide les noms uniques et fournit les libellés
-  utilisateur français/anglais. Les noms internes et les schémas LangChain ne
-  changent pas.
-- **Présentation dynamique au modèle** : le catalogue complet reste enregistré
-  auprès du `ToolNode` LangGraph, qui continue donc d'exécuter les mêmes
-  `BaseTool`. Avec `OPENAI_TOOL_SEARCH_ENABLED=true`,
-  `tools/openai_tool_search.py` remplace uniquement leur déclaration côté
-  provider : les capacités locales (`load_file`, RAG, `run_pandas`,
-  `run_graph`, etc.) restent immédiatement visibles et les schémas spécialisés
-  sont rangés dans quatre namespaces recherchables : `ecotaxa`, `ecopart`,
-  `geography` et `environmental_enrichment` (Amundsen, Bio-ORACLE, OGSL).
-  Le modèle voit d'abord seulement le nom et la description de ces familles;
-  OpenAI ajoute un `tool_search_call`, charge les schémas pertinents à la fin du
-  contexte, puis peut appeler la fonction trouvée dans la même réponse. Aucune
-  étape utilisateur et aucun nouveau tool métier ne sont ajoutés. Les routes
-  `hidden_legacy` et `load_skill` sont exclues de l'index. Une récupération ou
-  un retry forcé sort temporairement la fonction concernée de son namespace
-  pour que `tool_choice` puisse la cibler directement. La garde d'exposition
-  lexicale est désactivée dans ce chemin, car elle contredirait la sélection
-  sémantique du Tool Search; les validations d'identifiants et les confirmations
-  des opérations lourdes restent appliquées. Si l'option, le provider ou le
-  modèle ne sont pas compatibles, l'allowlist déterministe historique de
-  `tools/tool_exposure.py` reste le fallback.
-- **Skills manifestés** : `tools/skill_manifest.py` valide les 15 manifests et leurs budgets. `load_skill` n'accepte une copie Hub que si son hash correspond au fichier local revu; version, environnement, hash et source sont renvoyés dans la provenance. Les résultats de skills utilisent leur plafond déclaré au lieu de la troncature générique à 8 000 caractères.
-- **`_ContextMiddleware`** (agent construit via `create_agent`, LangChain 1.x) :
-  - `wrap_model_call` / `awrap_model_call` préparent la requête réellement envoyée au LLM : kernel système fixe et cacheable, allowlist dynamique des tools, troncature du contenu des résultats de tools au-delà de `MAX_TOOL_RESULT_CHARS` (défaut 8000), puis conservation du suffixe récent sous `MAX_CONTEXT_TOKENS` (défaut 100000), à partir d'un message humain pour préserver les paires `tool_call` / `ToolMessage`. Le budget des schémas est recalculé après filtrage.
-  - Le trim utilise `request.override(messages=...)` : il borne le contexte du modèle sans supprimer l'historique complet conservé dans le checkpoint LangGraph.
-  - Les mêmes wrappers composent un contexte transitoire non checkpointé : mémoire pertinente, `CURRENT TASK`, profil métier, `AVAILABLE DATAFRAMES`, faits du dernier artefact, `EXPLORATION FRONTIER`, puis récupération éventuelle. Ce bloc préfixe uniquement la copie provider du message humain courant ; le contenu utilisateur exact reste son dernier bloc et les appels/résultats de tools du tour conservent leur ordre.
-  - `AVAILABLE DATAFRAMES` projette l'inventaire checkpointé comme tableau de décision : l'index complet ne répète que les noms exacts; les fiches donnent statut actif comme simple métadonnée, dernier usage, source, description, grain, schéma groupé par rôle et dtype, clés, portée et lignée. Les fichiers chargés restent toujours détaillés. Les exports, résultats de cache et enrichissements sont des ancres durables jamais supprimées automatiquement : au plus huit fiches sont développées selon la demande, l'usage, le statut actif et la lignée; les autres restent indexées et une référence exacte les réactive. Les tables de calcul intermédiaires disposent de huit emplacements distincts. Le middleware ne présélectionne aucune table. La première étape du `### Plan` nomme le ou les candidats `df_*` et leurs critères de qualification; un `run_pandas` éphémère vérifie ensuite grain, colonnes, clés, portée et nullité sur les données réelles. Le modèle doit attendre ce résultat avant d'accepter le DataFrame puis de calculer ou tracer.
-  - Cycle de vie : un dérivé pandas automatique inutilisé est masqué après six tours et supprimé après vingt, sauf s'il reste parent d'une table visible. Les fichiers, exports, résultats de cache et enrichissements ne sont pas supprimés par ce nettoyage; ils passent seulement entre fiche détaillée et entrée d'index. Toute mention exacte dans la demande ou dans un appel de tool actualise leur dernier usage.
-  - Chaque résultat de `query_ecotaxa_cache` possède une identité durable. Un résultat contenant `sample_id` reste une `df_ecotaxa_selection_*` exportable; tout autre SELECT, y compris une agrégation, est conservé sous `df_ecotaxa_cache_result_<nom>_<hash>`. L'alias `df_ecotaxa_cache_query` pointe toujours vers la dernière requête, mais les résultats antérieurs restent accessibles par leur nom stable et conservent description, SQL, portée et lignage.
-  - L'audit `/debug/context-audit` décrit la requête préparée, avec les tokens du kernel, du contexte transitoire et des tools, la position d'injection, les champs `TurnContext` (variable active, sources préférées, nb de dérivés), les groupes/noms de tools exposés, les schémas économisés et un indicateur explicite lorsque le dernier tour complet dépasse à lui seul la limite.
-  - `wrap_tool_call` / `awrap_tool_call` appliquent aussi la garde graphique. Elle n'appelle le classifieur structuré qu'à la première tentative graphique du tour, partage la décision par un verrou single-flight sync/async, puis autorise uniquement une intention `visual`. La progression planner → writer → rendu est reconstruite depuis les ToolMessages `success` postérieurs au dernier message humain; les anciennes activations et les lots parallèles ne donnent aucune autorisation.
-- **`ExplorationStateMiddleware`** (`agents/exploration_middleware.py`) : maintient sans appel LLM un `exploration_run_v1` dans l'état LangGraph. Un nouveau tour initialise l'objectif et les livrables. Le bloc `### Plan` que le modèle produit déjà avec son premier appel est capturé comme frontière prospective (`planned`), sans tool de planification ni appel modèle supplémentaire; les appels réels sont ensuite rapprochés de la première étape compatible, tandis qu'une action imprévue reste une étape `observed`. Une nouvelle version du plan conserve les étapes terminées et marque seulement le suffixe non exécuté `superseded`. Chaque `ToolResult` est normalisé en preuve avec statut, `data_ref`, artefacts, provenance, métriques et validations.
-- **Inventaire de ressources** (`tools/resource_inventory.py`) : reconstruit après chaque observation les tables, sélections, sources autorisées et le RAG disponibles. Pour les tables, il conserve un profil borné et mis en cache : types, manque, rôles sémantiques, clés déclarées ou probables, grain, périmètre, fraîcheur et relations de jointure candidates. La couverture des clés est estimée sur au plus 5 000 lignes et reste explicitement une indication à vérifier avant jointure. La projection modèle privilégie les tables et reste compacte; l'inventaire complet demeure dans le checkpoint.
-- **Récupération exploratoire** : une erreur de table ou colonne devient une dépendance de données persistante. Le middleware recherche les tables candidates, conserve les capacités de récupération déjà autorisées, puis exige la reprise du calcul. Une étape planifiée échouée peut être reprise par un appel compatible et n'est complétée qu'après une nouvelle preuve réussie. Deux tentatives de réponse prématurée au maximum sont automatiquement renvoyées vers le modèle; les limites des tools, les confirmations lourdes et `SourceDecision` restent applicables. `_ContextMiddleware` injecte une projection compacte de l'état au modèle pour qu'il puisse adapter la suite de l'exploration.
-- **Checkpointer** : `AsyncSqliteSaver` sur `CHECKPOINTS_DB` (`data/checkpoints.sqlite`), clé par `thread_id`. Il conserve l'historique des messages et l'état d'exploration (`objective`, `deliverables`, `resources_available`, `steps`, `dependencies`, `evidence`, `completion`). Fallback `MemorySaver` selon le contexte.
-- **Store** : mémoire long terme (`InMemoryStore` ou store persistant).
+Avec OpenAI Tool Search, les schémas spécialisés sont chargés à la demande.
+Une capacité différée reste disponible même si son schéma détaillé n’apparaît
+pas initialement. Sans Tool Search, aucun filtre lexical ne retire de capacité.
 
-### Flux de sélection du DataFrame et d'exécution
+La `SourceDecision` est une préférence contextuelle, jamais une autorisation :
+elle aide le modèle à choisir une source, mais ne bloque pas la récupération
+d’une table ou colonne manquante dans une autre source pertinente.
 
-Pour une demande non triviale de calcul, d'analyse ou de graphique, le planner
-qualifie le DataFrame de départ avant l'opération finale. Le contrôle
-`run_pandas` est éphémère : il retourne un petit dictionnaire de preuve, sans
-`print`, sans `persist_as` et sans créer un DataFrame supplémentaire.
+### 4. Données et sources
+
+| Ressource | Accès |
+|---|---|
+| Fichiers utilisateur | `load_file`, workspace pandas persistant |
+| EcoTaxa | cache SQLite read-only et exports confirmés |
+| EcoPart | correspondance, aperçu et enrichissement distant |
+| Amundsen CTD | disponibilité, profils appariés et enrichissement |
+| Bio-ORACLE | enrichissement guidé d’un DataFrame |
+| OGSL | enrichissement CTD d’un DataFrame |
+| Géographie | registre de zones IHO/MEOW |
+| RAG | index ChromaDB de 14 documents métier |
+| Taxonomie | RAG local, WoRMS, puis Wikipedia en fallback |
+| SQL | base externe read-only optionnelle |
+
+L’agent IDEA et le service MCP EcoTaxa partagent le même cache SQLite. IDEA
+appelle directement les fonctions Python du cœur EcoTaxa; le serveur MCP HTTP
+permet principalement l’accès à d’autres agents et l’administration du cache.
+
+## Flux d’une analyse
 
 ```mermaid
 flowchart TD
-    A["Demande utilisateur"] --> B["Contexte injecté<br/>CURRENT TASK + DataFrame Decision Board + Frontier"]
-    B --> C["### Plan<br/>Définition du besoin et des critères du DataFrame"]
-    C --> D["Choix d'un candidat df_*"]
-    D --> E["run_pandas de qualification<br/>contrôle éphémère, sans calcul final"]
-    E --> F{"qualified ?"}
-    F -- "false" --> G["Essayer un autre df_*<br/>ou récupérer la donnée manquante"]
-    G --> E
-    F -- "true" --> H{"Méthode RAG nécessaire ?"}
-    H -- "oui" --> I["Appeler le RAG et attendre sa réponse"]
-    H -- "non" --> J["Exécution"]
-    I --> J
-    J --> K{"Livrable"}
-    K -- "Calcul/tableau" --> L["run_pandas sur le df_* validé"]
-    K -- "Graphique" --> M["Préparation éventuelle avec run_pandas"]
-    M --> N["run_graph sur le df_* validé ou préparé"]
-    L --> O["Réponse fondée sur le résultat"]
-    N --> O
+    A["Demande utilisateur"] --> B["Construire CURRENT TASK et inventaire des ressources"]
+    B --> C{"Méthode documentaire nécessaire ?"}
+    C -->|"oui"| R["Appeler le RAG seul et attendre son résultat"]
+    C -->|"non"| P["Plan analytique"]
+    R --> P
+    P --> D["Nommer le ou les DataFrames candidats et les critères"]
+    D --> Q["run_pandas de qualification"]
+    Q --> V{"Candidat qualifié ?"}
+    V -->|"non"| X["Essayer un autre candidat ou récupérer la dépendance manquante"]
+    X --> Q
+    V -->|"oui"| E{"Sortie demandée"}
+    E -->|"calcul ou table"| PA["run_pandas"]
+    E -->|"graphique"| GR["run_graph"]
+    E -->|"enrichissement/export"| ST["tool canonique de source"]
+    PA --> Z["Réponse fondée sur le résultat"]
+    GR --> Z
+    ST --> Z
 ```
 
-### Boucle ReAct
-Raisonnement → appel de tool → observation → raisonnement, jusqu'à la réponse
-finale. Le modèle choisit le tool à l'intérieur de l'allowlist calculée pour
-l'appel courant. `tools/source_scope.py` calcule une `SourceDecision`
-persistante et filtre d'abord les familles externes; `tools/tool_exposure.py`
-réduit ensuite le choix selon le contexte et les intentions non géographiques,
-tout en conservant les capacités géographiques. Les deux décisions sont rejouées
-avant exécution afin de bloquer fail-closed un appel hors source ou masqué. Le
-bloc prompt de sélection des sources reste généré depuis la même politique.
+La qualification vérifie le grain, les colonnes requises, les clés, le
+périmètre, les doublons et la nullité utile. Elle renvoie une petite preuve et
+ne produit ni graphique ni table persistée. Le calcul final n’est exécuté
+qu’après lecture de cette preuve.
 
----
+## Gestion des DataFrames
 
-## 4. Couche tools (`tools/`)
+Chaque table persistée reçoit un nom `df_*` et une fiche de ressource :
 
-Chaque famille est produite par une factory `make_*_tools(thread_id)` qui capture
-le `thread_id` pour scoper la session. Un tool est une fonction décorée `@tool`
-dont la **docstring** est lue par le LLM pour décider quand l'appeler.
+- source et parents;
+- description générée ou déterministe;
+- grain et portée;
+- colonnes regroupées par rôle et type;
+- clés, filtres, transformations et fraîcheur;
+- dernier usage et statut actif, utilisés seulement comme indices.
 
-| Module | Famille | Détail SPEC |
-|---|---|---|
-| `tool_catalog.py` | Composition, validation, groupes d'exposition et présentation bilingue des 59/62 tools | §3, §4 |
-| `tool_exposure.py` | Allowlist déterministe par appel modèle (maximum 20) | §3 |
-| `data_tools.py` | Fichier & analyse & graphe | §4.1 |
-| `copepod_sources.py` | EcoTaxa (read-only + export) | §4.2 |
-| `ecopart_sources.py` | EcoPart + join/enrichissement | §4.3 |
-| `amundsen_sources.py` | Amundsen CTD | §4.4 |
-| `bio_oracle_sources.py` | Bio-ORACLE | §4.5 |
-| `ogsl_sources.py` | OGSL ISMER CTD | §4.6 |
-| `sql_workspace.py` | Workspace SQL read-only | §4.7 |
-| `geo_tools.py` | Zones IHO/MEOW | §4.8 |
-| `rag_tool.py` | RAG NeoLab | §4.9 |
-| `taxonomy_tool.py` | Taxonomie WoRMS | §4.9 |
-| `skill_tool.py` | Chargement de skills | §4.10 |
-| `deliverable_tool.py` | Export PDF | §4.10 |
+Les fichiers chargés, exports, résultats de cache et enrichissements sont des
+ancres durables. Les dérivés intermédiaires inutilisés sont masqués après six
+tours et supprimés après vingt, sauf s’ils restent nécessaires à une lignée
+visible. Toutes les tables conservées restent présentes dans l’index compact.
 
-Modules de support (non exposés au LLM) : `file_loader.py`, `dataset_registry.py`,
-`run_store.py`, `session_store.py` / `session_store_pg.py`, `public_url.py`,
-`openwebui_uploads.py`, `feedback.py`, `ecotaxa_client.py`.
+`query_ecotaxa_cache` peut monter temporairement des DataFrames explicitement
+cités dans `dataframe_refs` comme tables SQLite en mémoire. Le cache EcoTaxa
+reste attaché en lecture seule; la base temporaire disparaît après le `SELECT`,
+et seul le résultat avec sa requête et sa lignée est persisté.
 
----
+## Persistance
 
-## 5. État de session
-
-L'état d'une conversation est réparti sur trois supports :
-
-| Support | Contenu | Persistance |
-|---|---|---|
-| LangGraph checkpoints (`AsyncSqliteSaver`) | Historique des messages par `thread_id` | `data/checkpoints.sqlite` |
-| Session store (`session_store*.py`) | DataFrames nommées, métadonnées de session | PostgreSQL si `SESSION_STORE_DATABASE_URL`, sinon fichiers locaux dans `data/` |
-| Store LangGraph | Mémoire long terme (préférences, contexte) | InMemory ou persistant |
-
-Une conversation portant la même identité utilisateur et le même `chat_id`
-reprend ses DataFrames et alias persistés après un redémarrage du serveur.
-Aucune requête ne réinitialise cet état implicitement. La remise à zéro interne
-passe par `clear_conversation(thread_id)`, qui supprime la clé active et toute
-sa famille `thread_id:*`; `clear(key)` reste une suppression ciblée.
-
-Les DataFrames de session sont référencées par variables explicites
-(`df_ecotaxa`, `df_ecopart`, `df_ecotaxa_ecopart_105`, `df_ctd`, `df_bio_oracle`,
-`df_sql`, `df_in_<zone>_<source>`, …). `df` seul = dernière table active,
-instable en multi-source.
-
-`query_ecotaxa_cache(dataframe_refs=[...])` peut monter temporairement une ou
-plusieurs de ces variables comme tables SQLite sous leur nom exact. Une base en
-mémoire reçoit seulement les DataFrames explicitement cités et attache le cache
-EcoTaxa en `mode=ro`; des vues temporaires conservent les noms usuels
-`samples_cache`, `projects_cache`, etc. Après le `SELECT`, cette base disparaît
-et seul le DataFrame résultat, sa description SQL et sa lignée sont persistés
-dans le session store. Le fichier du cache et les DataFrames sources ne sont
-jamais modifiés.
-
----
-
-## 6. Cœur métier (`core/`)
-
-| Module | Rôle |
+| Support | Contenu |
 |---|---|
-| `copepod_rag/` | ChromaDB + 11 docs Markdown, `build_index.py` |
-| `ecotaxa_browser/` | Logique pure Python d'exploration EcoTaxa (partagée agent + MCP) |
-| `mcp/` | Serveur MCP EcoTaxa (HTTP streamable), `README.md` technique |
-| `amundsen_ctd_client.py`, `bio_oracle_client.py`, `ecopart_client.py`, `ogsl_client.py` | Clients ERDDAP / API sources |
-| `erddap_batching.py`, `erddap_cache.py`, `canonical_grid.py` | Robustesse et cache des requêtes ERDDAP |
-| `geo/`, `environment_resolver/`, `enrich_scoping.py` | Résolution zones + scoping des enrichissements |
-| `taxonomy_lookup/` | Résolution taxon (WoRMS/Wikipedia) |
-| `instruction_renderer/` | Composition des system prompts |
+| Checkpointer LangGraph | messages et état d’exploration par `thread_id` |
+| Session store | DataFrames, métadonnées, lignées et artefacts |
+| PostgreSQL | backend partagé lorsque `SESSION_STORE_DATABASE_URL` est configuré |
+| Fichiers locaux | fallback du session store |
 
----
+Le même `chat_id` reprend les ressources persistées après un redémarrage. Une
+nouvelle conversation ne réutilise pas automatiquement les tables d’une autre.
 
-## 7. MCP EcoTaxa (`mcp-ecotaxa`, port 8001)
+## Récupération après erreur
 
-Service séparé qui maintient un **cache SQLite read-only** d'EcoTaxa (samples,
-projets, schémas, zones) pour une découverte géographique/temporelle rapide.
+Une erreur de variable, table ou colonne devient une dépendance d’exploration.
+L’agent reçoit le diagnostic structuré, retrouve la ressource pertinente, puis
+reprend l’étape qui a échoué. Il ne doit ni demander inutilement les données à
+l’utilisateur, ni remplacer silencieusement la métrique ou le périmètre.
 
-- Transport : MCP streamable HTTP sur `http://…:8001/mcp`, protégé par `MCP_AUTH_TOKEN` (Bearer).
-- Endpoints admin : `/health`, `POST /admin/resync`.
-- Sync nocturne optionnel (`ECOTAXA_NIGHTLY_SYNC`, `ECOTAXA_SYNC_HOUR`).
-- États : `CACHE_EMPTY`, `SYNC_IN_PROGRESS`, réponses `partial=True`.
-- L'agent IDEA consomme la **même logique en Python** (pas via HTTP). Le service HTTP est destiné aux agents MCP externes — voir [`PARTAGE.md`](PARTAGE.md).
+## Composants principaux
 
-Détails : `docs/mcp/MCP_ECOTAXA_SHARE_GUIDE.md`, `docs/mcp/MCP_CAPABILITIES.md`, et le dépôt autonome [`mcp-ecotaxa`](https://github.com/TidianeCisse777/mcp-ecotaxa).
-
----
-
-## 8. Configuration (variables d'environnement)
-
-| Variable | Rôle | Défaut |
-|---|---|---|
-| `OPENAI_API_KEY` | Provider LLM | requis |
-| `LLM_MODEL` | Modèle | `gpt-5.4-mini` |
-| `OPENAI_TOOL_SEARCH_ENABLED` | Active les namespaces différés via OpenAI Responses API (`gpt-5.4+`, endpoint direct uniquement) | `false` |
-| `LLM_MAX_OUTPUT_TOKENS` | Tokens de sortie max | 16000 |
-| `MAX_CONTEXT_TOKENS` | Plafond de qualité et seuil de trim de l'historique | 100000 |
-| `MAX_TOOL_RESULT_CHARS` | Seuil de troncature des résultats de tools | 8000 |
-| `CHECKPOINTS_DB` | SQLite des checkpoints | `data/checkpoints.sqlite` |
-| `DATABASE_URL` | Workspace SQL read-only | optionnel |
-| `SESSION_STORE_DATABASE_URL` | PostgreSQL métadonnées session | fallback fichiers |
-| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL | `copepod_dev` (dev) |
-| `MCP_AUTH_TOKEN` | Bearer du MCP EcoTaxa | requis pour MCP |
-| `ECOTAXA_USERNAME` / `ECOTAXA_PASSWORD` | Credentials EcoTaxa/EcoPart | requis pour sources |
-| `OPENWEBUI_URL` | Backend Open WebUI (feedback polling) | `http://open-webui:8080` |
-| `LANGCHAIN_TRACING_V2` / `LANGSMITH_API_KEY` | Tracing + pull Hub des skills (system prompt lu localement) | optionnel |
-| `LANGFUSE_*` | Langfuse self-hosted | optionnel |
-
-`.env` porte les credentials — jamais commité, jamais affiché.
-
----
-
-## 9. Points d'entrée & scripts
-
-| Fichier | Rôle |
+| Fichier ou module | Responsabilité |
 |---|---|
-| `serve.py` | Serveur FastAPI (prod + dev) |
-| `agent.py` | Agent + REPL CLI (`python agent.py`, ou `python agent.py fichier.tsv "question"`) |
-| `studio.py` | Entrée LangGraph Studio |
-| `langgraph.json` | Config LangGraph |
-| `start.sh` | Orchestration Docker (Postgres + MCP + agent + Open WebUI) |
-| `scripts/dev/push_prompt.py` | Legacy : copie le prompt vers le Hub, sans consommateur runtime |
-| `scripts/dev/push_skills.py` | Sync skills → LangSmith Hub |
+| `serve.py` | API, SSE, images et téléchargements |
+| `agent.py` | agent, contexte, modèle et guards |
+| `agents/copepod_system_prompt.py` | comportement permanent |
+| `agents/exploration_middleware.py` | état d’exploration |
+| `tools/tool_catalog.py` | catalogue exécutable et politiques |
+| `tools/openai_tool_search.py` | projection Tool Search |
+| `tools/data_tools.py` | fichier, pandas et graphes |
+| `tools/copepod_sources.py` | cache et exports EcoTaxa |
+| `tools/ecopart_sources.py` | correspondance et enrichissement EcoPart |
+| `tools/amundsen_sources.py` | Amundsen CTD |
+| `tools/bio_oracle_sources.py` | Bio-ORACLE |
+| `tools/ogsl_sources.py` | OGSL |
+| `tools/resource_inventory.py` | inventaire et profils de DataFrames |
+| `tools/session_store*.py` | persistance des ressources |
+| `core/copepod_rag/` | base documentaire métier |
+| `core/mcp/` | serveur MCP EcoTaxa |
 
----
+## Décisions structurantes
 
-## 10. Décisions d'architecture (ADR condensés)
+1. Un seul agent ReAct, sans mode ni sous-agent obligatoire.
+2. Le choix du dataset appartient au plan de l’agent, pas au DataFrame actif.
+3. Une préférence de source guide sans filtrer les capacités.
+4. Le RAG porte le savoir; les tools portent les données et les calculs.
+5. Tous les résultats numériques viennent d’une exécution ou d’une source.
+6. Les opérations lourdes demandent une confirmation explicite.
+7. Le catalogue ne contient que des tools canoniques exécutables.
 
-| # | Décision | Raison |
-|---|---|---|
-| A1 | Un seul agent ReAct, pas de modes | Simplicité de raisonnement ; le comportement vient du prompt, pas d'états à gérer |
-| A2 | Choix du tool expliqué dans le prompt; autorisation de source en Python | Le modèle garde la souplesse de navigation, mais une source non sélectionnée reste inexécutable |
-| A3 | RAG (savoir) ≠ Skills (geste) | Séparer recherche vectorielle et chargement en bloc de procédures |
-| A4 | MCP EcoTaxa comme cache read-only séparé | Découverte géo/temps rapide sans re-frapper EcoTaxa ; réutilisable par agents externes |
-| A5 | Agent IDEA appelle le cœur Python, pas le MCP HTTP | Moins de latence, pas de dépendance réseau interne |
-| A6 | Source en ligne nommée à la première utilisation, puis affinité persistante; confirmation séparée pour le coûteux | Éviter les bascules involontaires sans imposer de répéter le nom à chaque suivi |
-| A7 | Session state réparti (checkpoints + session store + store) | Séparer historique de conversation, DataFrames, et mémoire long terme |
-| A8 | Images multi-arch sur GHCR + Watchtower | Déploiement provider-agnostic, mise à jour continue |
+## Configuration essentielle
+
+| Variable | Rôle |
+|---|---|
+| `OPENAI_API_KEY` | accès au modèle |
+| `LLM_MODEL` | modèle OpenAI |
+| `OPENAI_TOOL_SEARCH_ENABLED` | namespaces différés compatibles OpenAI |
+| `MAX_CONTEXT_TOKENS` | plafond de contexte |
+| `MAX_TOOL_RESULT_CHARS` | borne des observations |
+| `CHECKPOINTS_DB` | checkpoints SQLite |
+| `SESSION_STORE_DATABASE_URL` | session store PostgreSQL optionnel |
+| `DATABASE_URL` | workspace SQL read-only optionnel |

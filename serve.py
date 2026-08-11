@@ -8,7 +8,6 @@ import os
 import re
 import shutil
 import sqlite3
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,7 +35,6 @@ from agent import (
     make_agent,
     _make_tracer,
     _CHECKPOINTS_DB,
-    repair_invalid_tool_history,
     arepair_invalid_tool_history,
     get_context_audit,
     get_harness_trace,
@@ -48,7 +46,6 @@ from tools.public_url import (
     activate_request_origin,
     graph_url,
     request_public_origin,
-    serve_base_url,
 )
 from tools.sql_workspace import extract_sql_workspace_database_url, set_sql_workspace_database_url
 from tools.session_store import default_store
@@ -783,7 +780,6 @@ def _format_tool_line(
 
     - run_graph / run_pandas : bloc replié avec le code Python
     - load_file : affiche le nom du fichier
-    - skill_tool : affiche le nom du skill
     - autres : bloc replié avec paramètres utiles
     """
     args = args or {}
@@ -802,12 +798,6 @@ def _format_tool_line(
         filename = Path(args["path"]).name
         return _format_tool_call_details(
             label, f"{_parameters_prefix(language)} path=`{filename}`"
-        )
-
-    if name == "load_skill" and "skill_name" in args:
-        skill = args["skill_name"]
-        return _format_tool_call_details(
-            label, f"{_parameters_prefix(language)} skill_name=`{skill}`"
         )
 
     if name == "query_copepod_knowledge_base" and "question" in args:

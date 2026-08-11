@@ -96,13 +96,6 @@ _CONTEXT_RESERVE_TOKENS = int(os.getenv("CONTEXT_RESERVE_TOKENS", "2000"))
 _MAX_MODEL_CALLS_PER_TURN = int(os.getenv("MAX_MODEL_CALLS_PER_TURN", "10"))
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
-# A manifest may budget a substantial skill, but it must not override the
-# context safety ceiling.  A single 40k-character skill body repeatedly fed to
-# a ReAct loop is enough to drown out both the user request and tool results.
-# A selected EcoTaxa/NeoLabs procedure is roughly 15–19k characters. It is
-# admitted in full for the one turn that selected it, then compacted normally;
-# truncating it here would defeat IDEA-style on-demand reading.
-_MAX_SKILL_RESULT_CHARS = int(os.getenv("MAX_SKILL_RESULT_CHARS", "20000"))
 _KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "1"))
 # Second-pass budget: if total tool-result chars after first compaction exceeds
 # this, oldest eligible messages are compacted further (never the current turn).
@@ -494,26 +487,6 @@ def _compact_old_tool_results(
         if len(human_indexes) > keep_turns
         else 0
     )
-    # A skill's full body is expensive and re-loaded per turn when needed
-    # (exposure gates on the current turn; the run_graph execution guard reads
-    # the session record, not this message). So keep only the LATEST load of each
-    # skill full: earlier duplicates are dead weight, and a load outside the
-    # recent window is stale. Both compact to a short reference.
-    def _skill_name(message) -> str | None:
-        artifact = message.artifact if isinstance(message.artifact, dict) else {}
-        provenance = artifact.get("provenance")
-        if isinstance(provenance, dict):
-            skill = provenance.get("skill")
-            return str(skill) if skill else None
-        return None
-
-    latest_skill_index: dict[str, int] = {}
-    for index, message in enumerate(messages):
-        if isinstance(message, ToolMessage) and message.name == "load_skill":
-            skill = _skill_name(message)
-            if skill:
-                latest_skill_index[skill] = index
-
     output: list = []
     metrics = {
         "old_tool_messages_compacted": 0,
@@ -584,22 +557,6 @@ def _compact_old_tool_results(
             and len(message.content) > 320
         ):
             output.append(message)
-            continue
-
-        if message.name == "load_skill":
-            skill = _skill_name(message)
-            superseded = skill is not None and latest_skill_index.get(skill) != index
-            stale = index < cutoff
-            if superseded or stale:
-                reason = "déjà rechargé plus tard" if superseded else "hors fenêtre récente"
-                compact = (
-                    f"[Skill {skill or 'inconnu'} compacté — {reason} ; "
-                    "recharger avec load_skill si besoin]"
-                )
-                _record_compaction(len(message.content), compact)
-                output.append(message.model_copy(update={"content": compact}))
-            else:
-                output.append(message)
             continue
 
         if index < cutoff:
@@ -710,7 +667,7 @@ def _tool_schema_tokens(tools) -> int:
 
 
 def _truncate_tool_results(messages):
-    """Cap tool results, including manifest-validated skill bodies."""
+    """Cap tool results before sending them back to the model."""
     output = []
     metrics = {
         "tool_messages_seen": 0,
@@ -725,20 +682,6 @@ def _truncate_tool_results(messages):
             metrics["tool_messages_seen"] += 1
             metrics["tool_result_chars_before"] += len(message.content)
             limit = _MAX_TOOL_RESULT_CHARS
-            artifact = message.artifact if isinstance(message.artifact, dict) else {}
-            provenance = artifact.get("provenance")
-            if (
-                message.name == "load_skill"
-                and artifact.get("status") == "success"
-                and artifact.get("method") == "skill loader"
-                and isinstance(provenance, dict)
-                and isinstance(provenance.get("max_tokens"), int)
-            ):
-                declared_tokens = min(12_000, max(1, provenance["max_tokens"]))
-                limit = max(
-                    limit,
-                    min(_MAX_SKILL_RESULT_CHARS, declared_tokens * 4),
-                )
             if len(message.content) > limit:
                 content = (
                     message.content[:limit]
@@ -976,11 +919,6 @@ class _ContextMiddleware(AgentMiddleware):
 
         graph_reference_phase = "none"
 
-        # Source and dataset skills are catalogued in the lightweight
-        # `load_skill` tool description. Their full bodies are loaded only when
-        # the model selects one for the current task, never pre-injected.
-        preseeded_source_skills: list[str] = []
-
         # Rebuild typed runtime state once. The active variable remains metadata
         # for the uniform resource catalog; it never determines catalog order.
         turn_ctx = build_turn_context(
@@ -1115,7 +1053,6 @@ class _ContextMiddleware(AgentMiddleware):
         # assigning the remaining history budget. With OpenAI Tool Search the
         # provider sees compact namespaces and loads specialized schemas on
         # demand; the LangGraph ToolNode still owns every executable BaseTool.
-        from tools.source_scope import filter_tools_for_decision
         from tools.openai_tool_search import (
             build_openai_tool_search_projection,
             openai_tool_search_enabled,
@@ -1124,11 +1061,7 @@ class _ContextMiddleware(AgentMiddleware):
         from tools.tool_exposure import decide_tool_exposure
 
         original_tools = list(request.tools)
-        scoped_tools = filter_tools_for_decision(
-            original_tools,
-            source_decision,
-            TOOL_POLICIES,
-        )
+        scoped_tools = original_tools
         exposure_decision = decide_tool_exposure(
             [getattr(item, "name", "") for item in scoped_tools],
             TOOL_POLICIES,
@@ -1287,7 +1220,7 @@ class _ContextMiddleware(AgentMiddleware):
             "turn_output_intent": "agent_decides",
             "turn_output_intent_confidence": "not_applicable",
             "preseeded_graph_skills": [],
-            "preseeded_source_skills": list(preseeded_source_skills),
+            "preseeded_source_skills": [],
             "graph_reference_phase": graph_reference_phase,
             "graph_reference_chars": 0,
             "source_reference_chars": 0,
@@ -1394,30 +1327,6 @@ class _ContextMiddleware(AgentMiddleware):
                 fallback_overrides["tool_choice"] = retry_tool_choice
             return request.override(**fallback_overrides)
 
-    def _source_scope_rejection(self, request) -> str | None:
-        from tools.session_store import default_store as session_store
-        from tools.source_scope import (
-            source_decision_for_turn,
-            source_rejection_for_call,
-        )
-        from tools.tool_catalog import TOOL_POLICIES
-
-        tool_call = request.tool_call
-        name = str(tool_call.get("name") or "")
-        args = dict(tool_call.get("args") or {})
-        messages = request.state.get("messages") or []
-        decision = source_decision_for_turn(
-            session_store,
-            self.thread_id,
-            messages,
-        )
-        return source_rejection_for_call(
-            decision,
-            name,
-            args,
-            TOOL_POLICIES,
-        )
-
     @staticmethod
     def _blocked_tool_message(
         request,
@@ -1453,78 +1362,12 @@ class _ContextMiddleware(AgentMiddleware):
             dict(tool_call.get("args") or {}),
         )
 
-    def _tool_exposure_rejection(self, request) -> str | None:
-        """Reject a tool absent from the deterministic allowlist for this turn."""
-
-        from tools.openai_tool_search import openai_tool_search_enabled
-
-        # When hosted Tool Search is active, OpenAI's loaded namespace member
-        # is the exposure decision. Reapplying the legacy keyword allowlist
-        # here would defeat dynamic discovery and block valid selected tools.
-        if openai_tool_search_enabled():
-            return None
-
-        from tools.session_store import default_store as session_store
-        from tools.source_scope import source_decision_for_turn
-        from tools.tool_catalog import TOOL_POLICIES
-        from tools.tool_exposure import decide_tool_exposure
-        from tools.turn_context import build_turn_context
-
-        messages = list(request.state.get("messages") or [])
-        source_decision = source_decision_for_turn(
-            session_store,
-            self.thread_id,
-            messages,
-            persist=False,
-        )
-        turn_ctx = build_turn_context(
-            session_store,
-            self.thread_id,
-            messages,
-            persist_source=False,
-        )
-        available_names = self.catalog_names or tuple(TOOL_POLICIES)
-        decision = decide_tool_exposure(
-            available_names,
-            TOOL_POLICIES,
-            turn_ctx,
-            source_decision,
-            messages,
-        )
-        name = str(request.tool_call.get("name") or "")
-        if name in decision.tool_names:
-            return None
-        if name in recovery_tool_names(request.state.get("exploration")):
-            # Source authorization already ran immediately before this guard;
-            # this exception only keeps a checkpointed recovery capability
-            # reachable after the original user wording is no longer enough
-            # for keyword-based exposure.
-            return None
-        retry = _code_retry_plan(messages)
-        if retry is not None and retry[0] == name:
-            return None
-        return (
-            "Action unavailable in the current turn of the workflow. "
-            "Continue with the visible actions or request the missing "
-            "information before retrying."
-        )
-
     def wrap_tool_call(self, request, handler):
         trace_id = _start_harness_tool_call(self.thread_id, request.tool_call)
-        rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
+        rejection = self._tool_identifier_rejection(request)
         if rejection:
             result = self._blocked_tool_message(request, rejection)
             _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="source_policy")
-            return result
-        rejection = self._tool_exposure_rejection(request)
-        if rejection:
-            result = self._blocked_tool_message(
-                request,
-                rejection,
-                provenance_source="tool_exposure_policy",
-                method="deterministic tool exposure guard",
-            )
-            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="tool_exposure_policy")
             return result
         try:
             result = handler(request)
@@ -1536,20 +1379,10 @@ class _ContextMiddleware(AgentMiddleware):
 
     async def awrap_tool_call(self, request, handler):
         trace_id = _start_harness_tool_call(self.thread_id, request.tool_call)
-        rejection = self._source_scope_rejection(request) or self._tool_identifier_rejection(request)
+        rejection = self._tool_identifier_rejection(request)
         if rejection:
             result = self._blocked_tool_message(request, rejection)
             _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="source_policy")
-            return result
-        rejection = self._tool_exposure_rejection(request)
-        if rejection:
-            result = self._blocked_tool_message(
-                request,
-                rejection,
-                provenance_source="tool_exposure_policy",
-                method="deterministic tool exposure guard",
-            )
-            _finish_harness_tool_call(self.thread_id, trace_id, result, blocked_by="tool_exposure_policy")
             return result
         try:
             result = await handler(request)
@@ -1764,8 +1597,6 @@ def run_query(file_path: str, question: str, thread_id: str | None = None) -> st
         Réponse finale de l'agent.
     """
     thread_id = thread_id or str(uuid.uuid4())
-    file_name = Path(file_path).name
-
     tracer = LangChainTracer(
         project_name=os.getenv("LANGCHAIN_PROJECT", "copepod-agent"),
         tags=["copepod", "data-analysis"],

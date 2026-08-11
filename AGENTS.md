@@ -9,9 +9,9 @@ Utilisateurs : professeurs et étudiants. Réponses en français par défaut.
 
 | Doc | Pour quoi faire |
 |---|---|
-| `CONTEXT.md` | Identité métier de l'agent, périmètre, ce qu'il fait / ne fait pas, sources, skills, RAG |
+| `CONTEXT.md` | Identité métier de l'agent, périmètre, sources et RAG |
 | `ARCHITECTURE.md` | Comment `agent.py`, `serve.py`, les tools, le RAG, OpenWebUI sont câblés |
-| `TOOLS.md` | Inventaire des 59 tools (62 avec SQL optionnel) exposés au LLM, par catégorie |
+| `TOOLS.md` | Inventaire des 22 tools (25 avec SQL optionnel), par catégorie |
 | `agents/copepod_system_prompt.py` | System prompt complet (choix des tools, périmètre, sécurité) |
 | `tools/source_scope.py` | Décision de source exécutable, affinité persistante et bloc Gateway généré |
 | `assistant-copepodes-specs/` | Repo des specs métier (PRD V1.2, 14 UC, 29 contraintes, glossaire) |
@@ -34,18 +34,17 @@ agent.py — LangChain create_agent (ex-create_react_agent)
     │
     ├── tools/data_tools.py         → load_file, run_pandas, run_graph
     ├── tools/rag_tool.py           → query_copepod_knowledge_base
-    ├── tools/skill_tool.py         → load_skill
-    ├── tools/copepod_sources.py    → list/preview/query EcoTaxa
-    ├── tools/ecopart_sources.py    → list/preview/query EcoPart + join
-    ├── tools/amundsen_sources.py   → list/preview/query Amundsen CTD
-    ├── tools/bio_oracle_sources.py → list/preview/query Bio-ORACLE + coupling
-    ├── tools/ogsl_sources.py       → query/enrichissement OGSL CTD
+    ├── tools/copepod_sources.py    → cache SQL + exports EcoTaxa
+    ├── tools/ecopart_sources.py    → correspondance + enrichissement EcoPart
+    ├── tools/amundsen_sources.py   → disponibilité/profils/enrichissement CTD
+    ├── tools/bio_oracle_sources.py → enrichissement Bio-ORACLE
+    ├── tools/ogsl_sources.py       → enrichissement OGSL CTD
     ├── tools/sql_workspace.py      → list/preview/copy SQL (read-only)
     └── tools/deliverable_tool.py   → export_deliverable (PDF via WeasyPrint)
 
 core/copepod_rag/    ChromaDB (11 docs RAG)
 core/ecotaxa_client/ core/ecopart_client/ core/amundsen_ctd_client/ core/bio_oracle_client/
-agents/skills/       15 skills Markdown chargeables à la demande
+agents/skills/       anciennes références métier, non chargées au runtime
 ```
 
 Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction, puis les familles de sources externes sont filtrées par `SourceDecision` avant chaque appel modèle. Il n'y a pas de « mode » de session.
@@ -80,7 +79,7 @@ python serve.py                          # serveur FastAPI seul
 |---|---|
 | `OPENAI_API_KEY` | Provider LLM |
 | `LLM_MODEL` | ex. `openai/gpt-5.4-mini`, `Codex-sonnet-4-6` |
-| `LANGSMITH_API_KEY` | Tracing + pull Hub des skills (le system prompt est lu localement) |
+| `LANGSMITH_API_KEY` | Tracing LangSmith (le system prompt est lu localement) |
 | `LANGCHAIN_TRACING_V2` | `true` pour activer LangSmith |
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |
 | `MAX_CONTEXT_TOKENS` | Défaut 100000 — plafond de qualité ; au-delà, trim_messages |

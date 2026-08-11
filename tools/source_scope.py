@@ -110,8 +110,6 @@ _SWITCH_SIGNAL = re.compile(
     re.IGNORECASE,
 )
 
-# Skills that drive the remote EcoTaxa navigation/query flows.
-_ECOTAXA_SKILLS = {"ecotaxa_navigation", "ecotaxa_query"}
 _SOURCE_AFFINITY_SUFFIX = "source_affinity"
 _EXTERNAL_SOURCES = frozenset({
     "ecotaxa",
@@ -121,15 +119,6 @@ _EXTERNAL_SOURCES = frozenset({
     "ogsl",
     "sql",
 })
-_SOURCE_SKILLS: dict[str, SourceName] = {
-    "ecotaxa_navigation": "ecotaxa",
-    "ecotaxa_query": "ecotaxa",
-    "ecopart_query": "ecopart",
-    "amundsen_ctd_query": "amundsen",
-    "bio_oracle_query": "bio_oracle",
-    "ogsl_query": "ogsl",
-    "sql_workspace_query": "sql",
-}
 # Source tools are visible only when their source is active.  A persisted
 # EcoTaxa selection keeps that source affinity for a follow-up export; a plain
 # local-file turn must not carry an unrelated remote export schema.
@@ -427,61 +416,6 @@ def source_decision_for_turn(
     return decision
 
 
-def source_for_tool_call(
-    name: str | None,
-    args: dict | None,
-    policies: Any,
-) -> SourceName | None:
-    """Classify an external-source tool call from the catalog policy."""
-    normalized_name = str(name or "")
-    if normalized_name == "load_skill":
-        skill_name = str((args or {}).get("skill_name", "")).strip().lower()
-        return _SOURCE_SKILLS.get(skill_name)
-    policy = policies.get(normalized_name) if policies is not None else None
-    source = getattr(policy, "source", None)
-    if source in _EXTERNAL_SOURCES:
-        return cast(SourceName, source)
-    return None
-
-
-def filter_tools_for_decision(
-    tools: list,
-    decision: SourceDecision,
-    policies: Any,
-) -> list:
-    """Compatibility hook: source preference never removes tools."""
-    return list(tools)
-
-
-def source_rejection_for_call(
-    decision: SourceDecision,
-    name: str | None,
-    args: dict | None,
-    policies: Any,
-) -> str | None:
-    """Compatibility hook: source preference never rejects a tool call."""
-    return None
-
-
-def ecotaxa_signal(text: str | None) -> bool:
-    """Compatibility facade for an explicit EcoTaxa/EcoPart source name."""
-    return bool({"ecotaxa", "ecopart"}.intersection(parse_explicit_sources(text)))
-
-
-def is_ecotaxa_scoped_tool(name: str | None) -> bool:
-    """True for the EcoTaxa/EcoPart *source* tools (find/summarize/query/... )."""
-    n = (name or "").lower()
-    return "ecotaxa" in n or "ecopart" in n
-
-
-def is_ecotaxa_skill_load(name: str | None, args: dict | None) -> bool:
-    """True when the call is `load_skill(skill_name=<an EcoTaxa skill>)`."""
-    if (name or "") != "load_skill":
-        return False
-    skill = str((args or {}).get("skill_name", "")).strip().lower()
-    return skill in _ECOTAXA_SKILLS
-
-
 def _message_role(message: Any) -> str:
     role = getattr(message, "type", None)
     if role is None and isinstance(message, dict):
@@ -526,37 +460,3 @@ def is_file_loaded(store: Any, thread_id: str) -> bool:
         # a dataframe and no provenance metadata.
         return True
     return str(source).startswith("file:")
-
-
-def is_file_scoped_turn(store: Any, thread_id: str, messages: list | None) -> bool:
-    """True when the turn must stay on the loaded file (hide EcoTaxa routes).
-
-    Compatibility facade backed by the same decision as the runtime middleware.
-    """
-    if not is_file_loaded(store, thread_id):
-        return False
-    decision = source_decision_for_turn(
-        store,
-        thread_id,
-        messages,
-        persist=False,
-    )
-    return not bool(
-        {"ecotaxa", "ecopart"}.intersection(decision.authorized_sources)
-    )
-
-
-def filter_tools_for_scope(tools: list, file_scoped: bool) -> list:
-    """Drop EcoTaxa/EcoPart source tools when the turn is file-scoped."""
-    if not file_scoped:
-        return tools
-    return [t for t in tools if not is_ecotaxa_scoped_tool(getattr(t, "name", ""))]
-
-
-FILE_SCOPE_REDIRECT = (
-    "Périmètre fichier : un fichier est chargé et aucune affinité EcoTaxa/EcoPart "
-    "n'est active. Reste sur le fichier — utilise `filter_dataframe_by_zone` "
-    "pour une zone nommée, puis `run_pandas` / `run_graph` sur le DataFrame "
-    "chargé. Pour une première utilisation externe, l'utilisateur doit nommer "
-    "explicitement EcoTaxa ou EcoPart."
-)
