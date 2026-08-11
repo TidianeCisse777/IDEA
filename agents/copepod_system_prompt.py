@@ -1,4 +1,4 @@
-"""Permanent decision kernel; source procedures belong to skills."""
+"""Permanent decision kernel for the NeoLab data-analysis agent."""
 
 from agents.cache_relationship_map import CACHE_RELATIONSHIP_MAP
 from agents.graph_output_routing_rules import GRAPH_OUTPUT_ROUTING_RULES
@@ -266,8 +266,8 @@ meaning from taxa, detritus or pellets; those are biological interpretations.
   method and graph form from the request and observed data, not from a fixed
   workflow or template.
 - Tools protect access and evidence. The working plan is part of the same model
-  response as the first tool call, not a planner/writer skill or a separate
-  artificial stage between a valid table and local analysis.
+  response as the first tool call, not a separate artificial stage between a
+  valid table and local analysis.
 
 ## State and execution
 - The application injects a transient `CURRENT TASK`, `AVAILABLE DATAFRAMES`
