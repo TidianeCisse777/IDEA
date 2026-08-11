@@ -9,14 +9,7 @@ from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
-from tools.data_tools import make_tools
-from tools.bio_oracle_sources import make_bio_oracle_tools
-from tools.amundsen_sources import make_amundsen_tools
-from tools.ecopart_sources import make_ecopart_tools
-from tools.copepod_sources import make_source_tools
-from tools.sql_workspace import make_sql_tools
-from tools.rag_tool import make_rag_tool
-from tools.skill_tool import make_skill_tool
+from tools.tool_catalog import build_tool_catalog
 
 load_dotenv()
 
@@ -27,18 +20,7 @@ _llm = ChatOpenAI(
     max_retries=2,
 )
 
-_tools = (
-    make_tools(_THREAD_ID)
-    + make_source_tools(_THREAD_ID)
-    + make_bio_oracle_tools(_THREAD_ID)
-    + make_amundsen_tools(_THREAD_ID)
-    + make_ecopart_tools(_THREAD_ID)
-    + [make_rag_tool(), make_skill_tool()]
-)
-try:
-    _tools += make_sql_tools(_THREAD_ID)
-except ValueError:
-    pass
+_tools = list(build_tool_catalog(_THREAD_ID).tools)
 
 # Pas de checkpointer — Studio injecte le sien automatiquement
 graph = create_agent(

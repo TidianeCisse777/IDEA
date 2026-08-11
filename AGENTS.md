@@ -13,7 +13,7 @@ Utilisateurs : professeurs et étudiants. Réponses en français par défaut.
 | `ARCHITECTURE.md` | Comment `agent.py`, `serve.py`, les tools, le RAG, OpenWebUI sont câblés |
 | `TOOLS.md` | Inventaire des 22 tools (25 avec SQL optionnel), par catégorie |
 | `agents/copepod_system_prompt.py` | System prompt complet (choix des tools, périmètre, sécurité) |
-| `tools/source_scope.py` | Décision de source exécutable, affinité persistante et bloc Gateway généré |
+| `tools/source_scope.py` | Préférence contextuelle de source et affinité persistante, sans blocage de tool |
 | `assistant-copepodes-specs/` | Repo des specs métier (PRD V1.2, 14 UC, 29 contraintes, glossaire) |
 
 ---
@@ -42,12 +42,12 @@ agent.py — LangChain create_agent (ex-create_react_agent)
     ├── tools/sql_workspace.py      → list/preview/copy SQL (read-only)
     └── tools/deliverable_tool.py   → export_deliverable (PDF via WeasyPrint)
 
-core/copepod_rag/    ChromaDB (11 docs RAG)
+core/copepod_rag/    ChromaDB (14 docs RAG)
 core/ecotaxa_client/ core/ecopart_client/ core/amundsen_ctd_client/ core/bio_oracle_client/
 agents/skills/       anciennes références métier, non chargées au runtime
 ```
 
-Le runtime est **un seul agent ReAct**. Tous les tools sont déclarés à la construction, puis les familles de sources externes sont filtrées par `SourceDecision` avant chaque appel modèle. Il n'y a pas de « mode » de session.
+Le runtime est **un seul agent ReAct**. Les 22 tools canoniques sont tous disponibles (25 avec SQL). `SourceDecision` indique une préférence contextuelle au modèle mais ne filtre, ne masque et ne bloque aucun tool. Il n'y a pas de « mode » de session.
 
 ---
 
@@ -102,15 +102,14 @@ agent.py                  Agent ReAct + CLI
 serve.py                  FastAPI : /v1/chat/completions (SSE), /v1/models, /graphs/, /downloads/
 docker-compose.yml        copepod-agent + open-webui + watchtower
 scripts/dev/push_prompt.py
-scripts/dev/push_skills.py
 studio.py                 LangGraph Studio entry
 
 agents/
   copepod_system_prompt.py  Kernel permanent compact (anglais, ≤ 3 500 tokens)
-  skills/                   15 skills Markdown
+  skills/                   références métier legacy, non chargées au runtime
   (copepod_prompt.py déprécié → archivé dans docs/legacy/copepod_prompt_DEPRECATED.py)
 
-tools/                    59 tools @tool LangChain (62 avec SQL optionnel — voir TOOLS.md)
+tools/                    22 tools canoniques (25 avec SQL optionnel — voir TOOLS.md)
 
 core/
   copepod_rag/            ChromaDB + 11 docs RAG
@@ -118,7 +117,7 @@ core/
   instruction_renderer/   Composition des system prompts
   mcp/                    MCP integrations (si actives)
 
-tests/                    pytest (~104 modules)
+tests/                    pytest (27 fichiers, 248 tests)
 evals/                    Évaluations LangSmith (copepod graph happy path…)
 SPEC.md ARCHITECTURE.md TOOLS.md PARTAGE.md SEQUENCES.md   Docs de référence figées (racine)
 docs/                     Notes internes / test maps (gitignored sauf exceptions)
@@ -135,17 +134,16 @@ scripts/                  Outils CLI ponctuels
 - **Pas de mode**. Si tu te poses la question « est-ce que je suis dans le bon mode », c'est non — il n'y a qu'un agent. Le comportement vient du system prompt.
 - **TDD** pour chaque tool : test d'abord, implémentation après. Fixtures dans `tests/`.
 - **Docstring claire** sur chaque `@tool` : le LLM la lit pour décider quand l'appeler.
-- **Routage des tools** : le choix souple du tool se décrit dans le prompt. Toute règle d'autorisation de source modifie `tools/source_scope.py`; son bloc prompt doit être généré depuis la même politique, jamais recopié manuellement.
+- **Routage des tools** : tous les tools canoniques restent disponibles. `SourceDecision` et le contexte des ressources guident le choix du modèle sans créer d'autorisation, de filtre lexical ou de blocage.
 - **Pas d'interprétation** scientifique ou biologique des résultats, ni par l'agent, ni par les docstrings de tools.
 - **Pas de valeur inventée** : tout chiffre vient de `run_pandas`, d'un tool, ou du RAG.
 - **Pas de credentials** dans le code, les logs, les docstrings, les commits.
 - **Pas de nom interne de tool** exposé à l'utilisateur dans les réponses LLM.
 - **Confirmation avant op coûteuse (CT-AG-06)** : si tu ajoutes un nouveau tool qui télécharge ou compute lourd, ajoute-le à la liste « Confirmation before heavy operations » du system prompt.
-- **Ton clinique (CT-AG-26)** : pas de « je / moi / en tant qu'IA » dans les réponses LLM ; format Résultat / Source / Méthode / Limite / Prochaine action. Si tu modifies un skill, garde la même règle.
-- **Incertitude visible (CT-AG-27)** : si tu ajoutes un type de graphique dans `graph_writer.md`, applique la palette confirmed/exploratory/uncertain et le stamp de confiance.
+- **Ton clinique (CT-AG-26)** : pas de « je / moi / en tant qu'IA » dans les réponses LLM ; format Résultat / Source / Méthode / Limite / Prochaine action.
+- **Incertitude visible (CT-AG-27)** : tout nouveau type de graphique doit appliquer la palette confirmed/exploratory/uncertain et le stamp de confiance.
 - **Rebuilt RAG** : `python core/copepod_rag/build_index.py` après modification de `core/copepod_rag/docs/*.md`.
 - **Prompt local** : `agent.py` consomme exclusivement `agents/copepod_system_prompt.py`; `scripts/dev/push_prompt.py` est legacy et n'alimente pas le runtime.
-- **Push skills** : `python scripts/dev/push_skills.py` pour synchroniser `agents/skills/*.md` vers LangSmith Hub.
 
 ---
 

@@ -130,7 +130,7 @@ result = pd.DataFrame(list(slopes.items()), columns=["sample_id", "m3_slope"])
 ## m4 — Morpho-Shannon index (not computable from EcoPart alone)
 
 m4 is computed from **EcoTaxa images** (particle morphology), not from EcoPart.
-See skill `uvp_ecotaxa` and the Vilgrain & Bourgouin 2026 report for the full procedure.
+Retrieve the Vilgrain & Bourgouin 2026 method from the RAG for the full procedure.
 
 ---
 
@@ -145,7 +145,7 @@ df["depth_bin"] = (df["Depth [m]"] // 5) * 5 + 2.5
 df_ecopart_join = df[["Profile", "depth_bin", "Sampled volume [L]"]].rename(
     columns={"Profile": "sample_id"}
 )
-# → use df_ecopart_join in the m5/m6 template in skill uvp_ecotaxa
+# → qualify and reuse df_ecopart_join with the documented m5/m6 method
 ```
 
 ---

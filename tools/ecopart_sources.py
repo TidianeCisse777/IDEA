@@ -435,9 +435,9 @@ def _perform_enrichment(
                 zero_rows[column] = missing_bins[column].values
         merged = pd.concat([merged, zero_rows], ignore_index=True, sort=False)
 
-    # Keep the 5 m bin used for the join as a first-class `depth_bin` column — the
-    # m5/m6 density templates (skill uvp_ecotaxa) group by (sample_id, depth_bin,
-    # sampled volume). Only the internal sample-key helper is dropped.
+    # Keep the 5 m bin used for the join as a first-class `depth_bin` column so
+    # documented density calculations can group by sample, depth bin and sampled
+    # volume. Only the internal sample-key helper is dropped.
     merged = merged.rename(columns={"_join_depth_bin": "depth_bin"})
     merged = merged.drop(columns=["_join_sample_id"], errors="ignore")
 
@@ -568,7 +568,7 @@ def _perform_enrichment(
         f"Colonnes EcoPart préfixées `ecopart_` — `ecopart_Sampled volume [L]` est le volume "
         f"filtré du bin. Pour l'abondance/densité (m5/m6), grouper par bin "
         f"(`sample_id`, `depth_bin`) : densité = nb objets du bin / volume du bin, jamais "
-        f"sum(objets)/sum(volume) global — voir skill `uvp_ecotaxa`.\n"
+        f"sum(objets)/sum(volume) global — consulter la méthode documentée dans le RAG.\n"
         f"Données disponibles dans `{joined_variable_name}` et `df_ecotaxa_ecopart` — "
         "une comparaison filet↔UVP auditée passe maintenant par la jointure "
         "certifiée locale ; les autres analyses peuvent continuer sur cette table."

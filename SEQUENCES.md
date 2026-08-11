@@ -59,19 +59,19 @@ sequenceDiagram
 
     Note over AG,LLM: « charge ce TSV et trace le profil vertical »
     AG->>T: load_file(path)
-    T-->>AG: colonnes, types, (hint UVP éventuel)
-    Note over AG: I2 — séquence graphique obligatoire
-    AG->>T: load_skill("graph_planner")
-    T-->>AG: règles de planification
-    AG->>T: load_skill("graph_writer")
-    T-->>AG: template matplotlib
-    alt planner = visual
+    T-->>AG: description, grain, colonnes et lignée du DataFrame
+    Note over AG: plan + qualification du DataFrame candidat
+    AG->>T: run_pandas(contrôle ciblé, résultat non persisté)
+    T-->>AG: qualified=true/false + preuves
+    alt candidat qualifié et sortie visuelle
         AG->>T: run_graph(code matplotlib)
         T->>API: héberge PNG → /graphs/{file}
         T-->>AG: markdown image + URL
-    else planner = table
+    else candidat qualifié et sortie tabulaire
         AG->>T: run_pandas(code)
         T-->>AG: table markdown
+    else candidat refusé
+        Note over AG: choisir un autre DataFrame ou récupérer les colonnes manquantes
     end
     Note over AG: réponse = image (I10 stamp confiance)<br/>ou tableau, 1 phrase neutre max
 ```
@@ -109,11 +109,9 @@ sequenceDiagram
     participant MCP as cache EcoTaxa
 
     Note over AG: « samples EcoTaxa en Baie de Baffin 2024 »
-    AG->>T: load_skill("ecotaxa_navigation")
-    T-->>AG: routage read-only
     AG->>T: get_zone_info("Baie de Baffin")
     T-->>AG: bbox + polygone IHO/NeoLab
-    AG->>T: find_ecotaxa_samples_in_region(bbox, date_range)
+    AG->>T: query_ecotaxa_cache(SQL zone/période)
     T->>MCP: lecture cache read-only
     alt cache prêt
         MCP-->>T: samples (sample_id, project_id, lat/lon, dates)
@@ -144,8 +142,7 @@ sequenceDiagram
     alt succès
         EXT-->>T: données objets
         T-->>AG: df_ecotaxa en session + lien download
-        AG->>T: load_skill("ecotaxa_query")
-        T-->>AG: guides d'interprétation
+        Note over AG: la description, le grain, les colonnes et la lignée du DataFrame sont ajoutés au contexte
     else EXPORT_FAILED (droits manquants)
         EXT-->>T: EXPORT_FAILED + message serveur
         Note over AG: citer le message verbatim,<br/>proposer preview/list — pas de fallback silencieux
@@ -245,8 +242,6 @@ sequenceDiagram
     participant API as serve.py
 
     Note over AG: « fais un rapport PDF de cette session »
-    AG->>T: load_skill("deliverable_writer")
-    T-->>AG: structure + templates de citation
     Note over AG: compile le markdown depuis l'historique de session
     Note over AG,U: I6 / CT-AG-06 — export_deliverable = confirmé
     AG->>T: export_deliverable(content, filename)

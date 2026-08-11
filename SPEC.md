@@ -67,7 +67,7 @@ Regroupement des usages réels de l'agent, du plus stable au plus expérimental.
 | Code | Use case |
 |---|---|
 | UC-A1 | Charger un fichier tabulaire (CSV, TSV, Excel, JSON, Parquet) et inspecter colonnes, types, manquants, plages, rôles sémantiques (station, depth, lat/lon, taxon, morphométrie). |
-| UC-A2 | Détecter automatiquement un export UVP EcoTaxa / EcoPart et charger le skill associé. |
+| UC-A2 | Détecter automatiquement le profil d’un fichier EcoTaxa / EcoPart et exposer sa description, son grain et ses colonnes dans le contexte. |
 | UC-A3 | Exécuter une analyse pandas contrôlée : filtre, groupby, agrégation, variable dérivée, contrôle qualité, doublons, manquants, jointure simple. |
 | UC-A4 | Calculer abondance / biomasse / densité (m5, m6) quand les champs requis existent. |
 
@@ -117,7 +117,7 @@ Regroupement des usages réels de l'agent, du plus stable au plus expérimental.
 | UC-G2 | Enrichir avec OGSL ISMER CTD (Golfe du Saint-Laurent) (`enrich_with_ogsl`). |
 | UC-G3 | Enrichir avec Bio-ORACLE (variables actuelles + scénarios SSP futurs) par ligne, par station ou par zone (`enrich_with_bio_oracle`, `query_bio_oracle_zones`). |
 | UC-G4 | Enrichissements scopés zone/date et chaînés sur la même table (via `source_variable`). |
-| UC-G5 | Jointure environnementale non standard (custom station/cast/time/depth) via skill `environmental_join` + `run_pandas`. |
+| UC-G5 | Jointure environnementale non standard (station/cast/time/depth) via les enrichissements canoniques ou `run_pandas`. |
 
 ### UC-H · Workspace SQL read-only *(implémenté)*
 | Code | Use case |
@@ -135,151 +135,62 @@ Regroupement des usages réels de l'agent, du plus stable au plus expérimental.
 ### UC-J · Livrables *(en développement)*
 | Code | Use case |
 |---|---|
-| UC-J1 | Compiler le matériel de session (sections markdown, figures, sources, méthodes, limites) en PDF via `deliverable_writer` + `export_deliverable` (WeasyPrint, fallback HTML). |
+| UC-J1 | Compiler le matériel de session (sections markdown, figures, sources, méthodes, limites) en PDF via `export_deliverable` (WeasyPrint, fallback HTML). |
 
 ---
 
-## 4. Inventaire complet des capacités (tools exposés au LLM)
+## 4. Catalogue canonique des tools
 
-L'agent expose **59 tools** (62 avec les tools SQL optionnels) répartis en 12
-familles. Ils sont tous déclarés à la construction dans `agent.py`
-(`create_agent`, ex-`create_react_agent`). Les tools SQL ne sont ajoutés que si
-`DATABASE_URL` est résolvable.
+L’agent expose **22 tools obligatoires**, ou **25 lorsque le workspace SQL
+optionnel est configuré**. Le catalogue exact est construit et validé dans
+`tools/tool_catalog.py`; son inventaire généré est la référence dans
+`TOOLS.md`.
 
-> Note : CLAUDE.md et d'anciens docs mentionnent « 23 tools » — chiffre obsolète.
-> Le compte réel ci-dessous fait foi.
+Tous les tools canoniques restent disponibles. OpenAI Tool Search peut différer
+le chargement de certains schémas, mais `SourceDecision` ne sert jamais de
+filtre, d’autorisation ou de blocage.
 
-### 4.1 Données & analyse (`tools/data_tools.py`)
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `load_file` | Charger CSV/TSV/Excel/JSON/Parquet, inspecter, détecter UVP | non |
-| `run_pandas` | Exécuter du pandas contrôlé sur données de session | non |
-| `run_graph` | Exécuter du code matplotlib et héberger le PNG | non |
+| Famille | Nombre |
+|---|---:|
+| Fichier, analyse et graphe | 3 |
+| EcoTaxa | 5 |
+| EcoPart | 3 |
+| Amundsen CTD | 3 |
+| Bio-ORACLE | 1 |
+| OGSL | 1 |
+| Géographie | 3 |
+| RAG et taxonomie | 2 |
+| Livrable | 1 |
+| SQL optionnel | 3 |
+| **Total obligatoire** | **22** |
+| **Total avec SQL** | **25** |
 
-### 4.2 EcoTaxa read-only & export (`tools/copepod_sources.py`)
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_ecotaxa_projects` | Lister projets accessibles | non |
-| `find_ecotaxa_projects` | Chercher projets par titre/instrument | non |
-| `list_ecotaxa_campaigns` | Grouper projets par campagne/leg | non |
-| `preview_ecotaxa_project` | Aperçu objets d'un projet | non |
-| `inspect_ecotaxa_project_schema` | Colonnes par niveau (sample/acq/object) | non |
-| `inspect_ecotaxa_column` | Distribution/stats d'une colonne | non |
-| `compare_ecotaxa_projects` | Compatibilité de schémas avant merge | non |
-| `count_ecotaxa_taxa` | Counts V/P/D/U par projet et taxon | non |
-| `search_ecotaxa_taxa` | Résoudre `taxon_id` candidats | non |
-| `find_ecotaxa_samples_in_region` | Samples par zone/période/instrument | non |
-| `find_ecotaxa_projects_in_region` | Projets par zone/période | non |
-| `group_ecotaxa_project_samples_by_region` | Samples d'un projet groupés par zone | non |
-| `find_ecotaxa_observations` | Samples dont le projet atteste un taxon | non |
-| `get_ecotaxa_sample` | Métadonnées / free fields d'un sample | non |
-| `summarize_ecotaxa_project` / `summarize_ecotaxa_projects` | Résumé(s) projet | non |
-| `summarize_ecotaxa_sample` / `summarize_ecotaxa_samples` | Résumé(s) sample | non |
-| `summarize_ecotaxa_sample_deployment` | Position, dates, profondeurs, acquisition | non |
-| `get_ecotaxa_cache_status` | État du cache MCP | non |
-| `query_ecotaxa` | **Export projet complet** | **oui** |
-| `query_ecotaxa_sample` | **Export d'un sample** | **oui** |
-| `export_ecotaxa_samples` | **Export d'une sélection nommée de samples** | **oui** |
-
-### 4.3 EcoPart (`tools/ecopart_sources.py`)
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_ecopart_samples` | Lister samples EcoPart | non |
-| `preview_ecopart_sample` | Aperçu d'un sample | non |
-| `find_ecopart_project_for_ecotaxa` | Disponibilité EcoPart (read-only) | non |
-| `query_ecopart` | **Export projet EcoPart** | **oui** |
-| `join_ecotaxa_ecopart` | Join local `(sample_id, depth_bin)` | non |
-| `enrich_ecotaxa_with_ecopart_remote` | **Fetch EcoPart distant + join** | **oui** |
-
-### 4.4 Amundsen CTD (`tools/amundsen_sources.py`)
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_amundsen_datasets` | Datasets CTD disponibles | non |
-| `preview_amundsen_profile` | Aperçu profil station/cast | non |
-| `enrich_with_amundsen_ctd` | Enrichir table par lat/lon/temps | non* |
-| `enrich_loaded_table_with_amundsen_ctd` | Variante legacy table explicite | non* |
-| `query_amundsen_ctd` | **Download dataset complet** | **oui** |
-
-### 4.5 Bio-ORACLE (`tools/bio_oracle_sources.py`)
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_bio_oracle_datasets` | Variables/scénarios disponibles | non |
-| `preview_bio_oracle_point` | Valeur en un point | non |
-| `query_bio_oracle_zones` | Valeurs par zone nommée | non |
-| `couple_zooplankton_bio_oracle` | Coupler lignes zooplancton ↔ variables | oui si >10 lignes |
-| `enrich_with_bio_oracle` | Enrichir table (var × scénario par point) | oui si >10 lignes × multi-var |
-| `query_bio_oracle` | **Extraction région/scénario** | **oui** |
-
-### 4.6 OGSL (`tools/ogsl_sources.py`)
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `enrich_with_ogsl` | Enrichir table avec OGSL ISMER CTD | non* |
-| `query_ogsl` | Extraction OGSL | oui |
-
-### 4.7 Workspace SQL (`tools/sql_workspace.py`, conditionnel)
-| Tool | Rôle | Coûteux ? |
-|---|---|---|
-| `list_sql_tables` | Lister tables/vues + PK/FK | non |
-| `preview_sql_table` | Aperçu filtré | non |
-| `copy_sql_query_to_workspace` | Copier un `SELECT` (LIMIT requis) en TSV | oui si sans LIMIT |
-
-### 4.8 Géographie (`tools/geo_tools.py`)
-| Tool | Rôle |
-|---|---|
-| `get_zone_info` | Résoudre zone IHO/MEOW → bbox + polygone |
-| `filter_dataframe_by_zone` | Filtrer df par polygone (point-in-polygon) |
-
-### 4.9 Savoir & taxonomie
-| Tool | Module | Rôle |
-|---|---|---|
-| `query_copepod_knowledge_base` | `tools/rag_tool.py` | RAG NeoLab (ChromaDB, 11 docs) |
-| `lookup_marine_taxonomy` | `tools/taxonomy_tool.py` | Résolution taxon (RAG local → WoRMS → Wikipedia) |
-
-### 4.10 Skills & livrables
-| Tool | Module | Rôle |
-|---|---|---|
-| `load_skill` | `tools/skill_tool.py` | Charger un skill Markdown à la demande |
-| `export_deliverable` | `tools/deliverable_tool.py` | **Générer un PDF** (WeasyPrint) — coûteux |
-
-\* Les tools d'enrichissement `enrich_with_*` sont considérés légers par ligne
-mais franchissent la porte de confirmation au-delà des seuils CT-AG-06
-(ex. Bio-ORACLE > 10 lignes multi-variables).
+Le runtime ne possède plus de tool `load_skill`. Les règles actives vivent
+dans le system prompt local, les docstrings des tools, le contexte de session et
+le RAG.
 
 ---
 
-## 5. Skills chargeables (`agents/skills/`, 15 fichiers)
+## 5. Contexte et planification
 
-Un **skill** est un document Markdown chargé en bloc via `load_skill(name)`. Il
-porte le **geste** (comment faire), tandis que le RAG porte le **savoir**.
+Le même agent ReAct planifie, choisit ses DataFrames et exécute les tools. Avant
+un calcul ou un graphique, il qualifie le DataFrame candidat selon la demande,
+le grain, les colonnes requises, la portée, les clés et la nullité. Le harness
+injecte notamment `CURRENT TASK`, `AVAILABLE DATAFRAMES`, les faits du dernier
+graphique et `EXPLORATION FRONTIER`.
 
-| Skill | Rôle |
-|---|---|
-| `graph_planner` | Décide type de graphique, colonnes, filtres, unités |
-| `graph_writer` | Template de code matplotlib exécutable |
-| `ecotaxa_navigation` | Routage list/scan/export, counts, schéma, dry-run |
-| `ecotaxa_query` | Interprétation d'un export EcoTaxa |
-| `ecopart_query` | Interprétation d'un export EcoPart |
-| `amundsen_ctd_query` | Extraction Amundsen CTD via ERDDAP |
-| `bio_oracle_query` | Extraction Bio-ORACLE par scénario/couche |
-| `environmental_join` | Stratégie de jointure bio ↔ environnemental |
-| `sql_workspace_query` | Règles du workspace SQL read-only |
-| `neolabs_abundance_analysis` | Abondance/diversité/ordination NeoLabs |
-| `copepod_hydrodynamic_micro_zoom` | Garde-fous micro-hydrodynamique |
-| `uvp_ecotaxa` | Auto-chargé sur export UVP EcoTaxa (m5/m6) |
-| `uvp_ecopart` | Auto-chargé sur export UVP EcoPart |
-| `deliverable_writer` | Structure de livrable PDF + templates de citation |
+Les fichiers Markdown conservés dans `agents/skills/` sont des références
+legacy non chargées au runtime. Ils ne constituent ni une capacité ni une étape
+du flux agentique.
 
 ---
 
-## 6. Base de connaissances RAG (`core/copepod_rag/docs/`, 11 docs)
+## 6. Base de connaissances RAG (`core/copepod_rag/docs/`, 14 documents)
 
-`colonnes_instruments.md`, `colonnes_labo.md`, `colonnes_sources.md`,
-`copepodes_domaine.md`, `ecoregions_meow.md`, `geographie_nord_quebec.md`,
-`jointures_environnementales.md`, `methodes_calcul.md`, `sources_en_ligne.md`,
-`taxonomie_worms.md`, `zones_geographiques.md`.
-
-Index ChromaDB généré localement (non commité) :
-`python core/copepod_rag/build_index.py`.
+Le RAG apporte les méthodes, unités, définitions de colonnes, protocoles,
+sources et règles métier documentées. Lorsqu’il est appelé, l’agent attend son
+résultat avant de poursuivre la boucle ReAct. Il ne remplace jamais l’analyse
+des DataFrames réels.
 
 ---
 

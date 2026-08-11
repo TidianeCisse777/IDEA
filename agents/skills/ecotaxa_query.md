@@ -105,8 +105,8 @@ to the tool when the target samples are known.
    result = [c for c in df.columns if c.startswith("fre_") or c.startswith("object_")]
    ```
 
-3. **If UVP columns are detected** → apply the `uvp_ecotaxa` m5/m6 calculation
-   procedure.
+3. **If UVP columns are detected** → retrieve the documented m5/m6 method from
+   the RAG before calculating it on the real DataFrame.
 
 ---
 
