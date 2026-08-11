@@ -76,7 +76,7 @@ Configurer au minimum :
 
 ```dotenv
 OPENAI_API_KEY=...
-LLM_MODEL=gpt-5.4-mini
+LLM_MODEL=gpt-5.6-luna
 ```
 
 Pour utiliser OpenAI Tool Search avec un modèle compatible et l’endpoint
@@ -151,7 +151,7 @@ sans réseau et sans crédit modèle.
 | Variable | Rôle | Défaut |
 |---|---|---|
 | `OPENAI_API_KEY` | Provider LLM | requis |
-| `LLM_MODEL` | Modèle | `gpt-5.4-mini` |
+| `LLM_MODEL` | Modèle | `gpt-5.6-luna` |
 | `OPENAI_TOOL_SEARCH_ENABLED` | Tool Search OpenAI | `false` |
 | `LLM_MAX_OUTPUT_TOKENS` | Plafond de sortie | `16000` |
 | `MAX_CONTEXT_TOKENS` | Budget du contexte modèle | `100000` |

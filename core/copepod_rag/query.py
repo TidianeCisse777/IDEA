@@ -8,12 +8,156 @@ Usage (module):
 Usage (CLI):
     python query.py "acq_pixel signification"
 """
+
 from __future__ import annotations
 
 import contextlib
 import os
+import re
+import unicodedata
 from pathlib import Path
 from typing import Optional
+
+
+_LEXICAL_STOPWORDS = frozenset(
+    {
+        "a",
+        "au",
+        "aux",
+        "avec",
+        "comment",
+        "d",
+        "dans",
+        "de",
+        "des",
+        "du",
+        "en",
+        "est",
+        "et",
+        "l",
+        "la",
+        "le",
+        "les",
+        "ou",
+        "par",
+        "pour",
+        "pourquoi",
+        "qu",
+        "que",
+        "quel",
+        "quelle",
+        "quelles",
+        "quels",
+        "sans",
+        "sont",
+        "sur",
+        "un",
+        "une",
+        "an",
+        "are",
+        "from",
+        "how",
+        "is",
+        "of",
+        "the",
+        "to",
+        "what",
+        "which",
+        "with",
+    }
+)
+
+
+def _normalized_text(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value).casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return " ".join(re.findall(r"[a-z0-9_]+", text))
+
+
+def _lexical_tokens(value: object) -> set[str]:
+    return {
+        token
+        for token in _normalized_text(value).split()
+        if token not in _LEXICAL_STOPWORDS
+        and (len(token) > 1 or any(char.isdigit() for char in token))
+    }
+
+
+def _lexical_relevance_bonus(question: str, chunk: dict) -> float:
+    """Add a bounded lexical and intent signal to local vector retrieval.
+
+    The ONNX embedding model is intentionally small and can under-rank exact
+    column names (``dataframe_refs``), metric labels (``m5``) or named zones.
+    This deterministic hybrid score improves those cases without another model
+    call and without excluding any candidate document.
+    """
+    question_tokens = _lexical_tokens(question)
+    if not question_tokens:
+        return 0.0
+
+    title_tokens = _lexical_tokens(chunk.get("title", ""))
+    content_tokens = _lexical_tokens(chunk.get("content", ""))
+    title_overlap = len(question_tokens & title_tokens) / len(question_tokens)
+    content_overlap = len(question_tokens & content_tokens) / len(question_tokens)
+    bonus = (0.16 * title_overlap) + (0.05 * content_overlap)
+
+    identifiers = {
+        token
+        for token in question_tokens
+        if "_" in token or any(char.isdigit() for char in token)
+    }
+    if identifiers:
+        matched = identifiers & (title_tokens | content_tokens)
+        bonus += 0.08 * len(matched) / len(identifiers)
+
+    normalized_question = _normalized_text(question)
+    document = str(chunk.get("doc", ""))
+    source_choice = any(
+        phrase in normalized_question
+        for phrase in ("quelle source", "source utiliser", "ou obtenir", "acceder a")
+    )
+    if source_choice and document in {
+        "sources_en_ligne.md",
+        "jointures_environnementales.md",
+    }:
+        bonus += 0.14
+
+    geographic_filter = any(
+        term in normalized_question
+        for term in ("filtrer", "zone", "polygone", "bbox", "region")
+    ) and any(
+        term in normalized_question
+        for term in (
+            "baffin",
+            "beaufort",
+            "geograph",
+            "hudson",
+            "labrador",
+            "nunavik",
+            "ungava",
+        )
+    )
+    if geographic_filter:
+        if document == "zones_geographiques.md":
+            bonus += 0.25
+        elif document == "ecoregions_meow.md" and "ecoregion" in normalized_question:
+            bonus += 0.22
+        elif document in {"ecoregions_meow.md", "geographie_nord_quebec.md"}:
+            bonus += 0.08
+
+    if "aphiaid" in question_tokens and document == "taxonomie_worms.md":
+        bonus += 0.16
+    if (
+        any(
+            term in normalized_question
+            for term in ("axe", "figure", "graphe", "graphique", "tracer")
+        )
+        and document == "visualisation_graphes.md"
+    ):
+        bonus += 0.10
+
+    return min(bonus, 0.30)
+
 
 def _routing_guidance_bonus(question: str, chunk: dict) -> float:
     """Prioritize the RAG decision section for explicit source-route questions.
@@ -50,14 +194,11 @@ def _routing_guidance_bonus(question: str, chunk: dict) -> float:
         if "correspondance filet ↔ uvp" in title:
             return 0.08
 
-    dataframe_cache_bridge_question = (
-        "ecotaxa" in q
-        and (
-            "dataframe_refs" in q
-            or (
-                "dataframe" in q
-                and any(term in q for term in ("sql", "join", "joindre", "jointure"))
-            )
+    dataframe_cache_bridge_question = "ecotaxa" in q and (
+        "dataframe_refs" in q
+        or (
+            "dataframe" in q
+            and any(term in q for term in ("sql", "join", "joindre", "jointure"))
         )
     )
     if dataframe_cache_bridge_question:
@@ -67,8 +208,25 @@ def _routing_guidance_bonus(question: str, chunk: dict) -> float:
         ):
             return 0.22
 
-    if named_sources >= 2 and any(word in q for word in ("choisir", "quelle source", "source utiliser")):
+    if named_sources >= 2 and any(
+        word in q for word in ("choisir", "quelle source", "source utiliser")
+    ):
         if "quelle source utiliser" in title:
+            return 0.18
+
+    source_choice_question = any(
+        phrase in q
+        for phrase in ("quelle source", "source utiliser", "où obtenir", "ou obtenir")
+    )
+    if source_choice_question and "quelle source utiliser" in title:
+        return 0.20
+
+    if {"m5", "m6"}.issubset(_lexical_tokens(question)):
+        if "calculer m5 et m6" in title:
+            return 0.20
+
+    if "samples_cache" in q and "grain" in q:
+        if "tables centrales et grain" in title:
             return 0.18
 
     if any(word in q for word in ("joindre", "jointure", "join")):
@@ -80,14 +238,15 @@ def _routing_guidance_bonus(question: str, chunk: dict) -> float:
 
     if (
         any(word in q for word in ("calculer", "méthode", "methode"))
-        and any(word in q for word in ("abondance", "concentration", "ind m3", "ind./m3"))
+        and any(
+            word in q for word in ("abondance", "concentration", "ind m3", "ind./m3")
+        )
         and chunk.get("doc") == "methodes_calcul.md"
     ):
         if "calculer une abondance ou concentration" in title:
             return 0.12
         return 0.05
     return 0.0
-
 
 
 @contextlib.contextmanager
@@ -114,6 +273,7 @@ def _silence_native_fds():
         os.close(devnull)
         os.close(saved_stdout)
         os.close(saved_stderr)
+
 
 CHROMA_DIR = Path(__file__).parent / "chroma_db"
 COLLECTION_NAME = "copepod_rag"
@@ -198,22 +358,50 @@ def query_copepod_rag(
                 seen_ids.add(cid)
                 content = results["documents"][0][i]
                 distance = round(results["distances"][0][i], 4)
-                chunks.append({
-                    "chunk_id": cid,
-                    "doc": results["metadatas"][0][i]["doc"],
-                    "title": results["metadatas"][0][i]["title"],
-                    "content": content,
-                    "score": distance,
-                })
+                chunks.append(
+                    {
+                        "chunk_id": cid,
+                        "doc": results["metadatas"][0][i]["doc"],
+                        "title": results["metadatas"][0][i]["title"],
+                        "content": content,
+                        "score": distance,
+                    }
+                )
 
-        chunks.sort(key=lambda c: (c["score"] - _routing_guidance_bonus(question, c), c["score"]))
-        return chunks[:top_k]
+        chunks.sort(
+            key=lambda chunk: (
+                chunk["score"]
+                - min(
+                    0.40,
+                    _routing_guidance_bonus(question, chunk)
+                    + _lexical_relevance_bonus(question, chunk),
+                ),
+                chunk["score"],
+            )
+        )
+
+        # Oversized source sections may produce overlapping child chunks with
+        # the same title. Keep only the best child so top-k remains informative
+        # and does not repeat one table fragment three times.
+        selected: list[dict] = []
+        seen_sections: set[tuple[str, str]] = set()
+        for chunk in chunks:
+            section = (str(chunk.get("doc", "")), str(chunk.get("title", "")))
+            if section in seen_sections:
+                continue
+            seen_sections.add(section)
+            selected.append(chunk)
+            if len(selected) >= top_k:
+                break
+        return selected
     finally:
         if os.getenv("PYTEST_CURRENT_TEST"):
             _close()
 
+
 if __name__ == "__main__":
     import sys
+
     q = " ".join(sys.argv[1:]) or "colonnes EcoTaxa UVP5"
     print(f"Query: {q!r}\n")
     for r in query_copepod_rag(q):

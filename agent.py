@@ -103,8 +103,8 @@ _MAX_TOTAL_TOOL_CHARS = int(os.getenv("MAX_TOTAL_TOOL_RESULT_CHARS", "40000"))
 # A successful plot normally needs one more model call for its user-facing
 # caption.  Give that already-required call a bounded thumbnail so the model
 # can check the *actual* image, not merely assume that a PNG means a good plot.
-# GPT-5.4-mini accepts image input through the current OpenRouter route.  This
-# can be disabled for a text-only provider without changing graph execution.
+# The configured OpenAI model accepts image input for this review. This can be
+# disabled for a text-only provider without changing graph execution.
 _GRAPH_VISION_REVIEW_ENABLED = os.getenv(
     "GRAPH_VISION_REVIEW_ENABLED", "true"
 ).lower() in {"1", "true", "yes", "on"}
@@ -1521,7 +1521,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
 
     tool_search_active = openai_tool_search_enabled()
     llm = ChatOpenAI(
-        model=os.getenv("LLM_MODEL", "gpt-5.4-mini"),
+        model=os.getenv("LLM_MODEL", "gpt-5.6-luna"),
         max_retries=2,
         max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "16000")),
         use_responses_api=tool_search_active,

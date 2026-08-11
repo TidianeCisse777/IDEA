@@ -78,7 +78,7 @@ python serve.py                          # serveur FastAPI seul
 | Variable | Rôle |
 |---|---|
 | `OPENAI_API_KEY` | Provider LLM |
-| `LLM_MODEL` | ex. `openai/gpt-5.4-mini`, `Codex-sonnet-4-6` |
+| `LLM_MODEL` | ex. `gpt-5.6-luna` |
 | `LANGSMITH_API_KEY` | Tracing LangSmith (le system prompt est lu localement) |
 | `LANGCHAIN_TRACING_V2` | `true` pour activer LangSmith |
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |

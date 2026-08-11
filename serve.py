@@ -450,7 +450,7 @@ async def lifespan(app: FastAPI):
                 _agent_module._store = pg_store
                 from langchain_openai import ChatOpenAI as _ChatOpenAI
                 _mem_llm = _ChatOpenAI(
-                    model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+                    model=os.getenv("LLM_MODEL", "gpt-5.6-luna"),
                     max_retries=1,
                     **chat_openai_connection_kwargs(),
                 )
