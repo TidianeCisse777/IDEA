@@ -169,12 +169,14 @@ OBIS n'est **pas** une source autorisée. Toute mention résiduelle est du legac
 
 ```bash
 pytest tests/                              # tous
-pytest tests/test_agent_factory.py -v      # construction de l'agent
-pytest tests/test_copepod_rag_advanced.py  # RAG
-pytest tests/test_serve_streaming.py       # SSE / OpenWebUI
+pytest tests/test_agent_harness.py -v      # construction et comportement permanent
+pytest tests/test_tool_catalog.py -v       # catalogue canonique
+pytest tests/test_context_projection_campaign.py -v  # harness multi-tour hors ligne
 ```
 
-Suite pytest verte au dernier merge sur `main` (~104 modules de test). Voir `assistant-copepodes-specs/` pour la liste des scénarios comportementaux (`TEST_SCENARIOS.md`).
+La suite compacte contient 26 fichiers et 235 tests centrés sur les tools et le
+harness. Voir `assistant-copepodes-specs/` pour les scénarios comportementaux
+détaillés (`TEST_SCENARIOS.md`).
 
 ---
 

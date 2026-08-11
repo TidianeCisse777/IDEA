@@ -1,4 +1,4 @@
-"""ToolResult contracts for all EcoTaxa tools (family == "ecotaxa")."""
+"""Structured-result contracts for the canonical EcoTaxa tools."""
 
 from __future__ import annotations
 
@@ -9,19 +9,17 @@ from langchain_core.messages import ToolMessage
 
 
 def _call(item, call_id: str, **arguments) -> ToolMessage:
-    message = item.invoke(
-        {
-            "type": "tool_call",
-            "id": call_id,
-            "name": item.name,
-            "args": arguments,
-        }
-    )
+    message = item.invoke({
+        "type": "tool_call",
+        "id": call_id,
+        "name": item.name,
+        "args": arguments,
+    })
     assert isinstance(message, ToolMessage)
     return message
 
 
-def test_all_ecotaxa_tools_declare_structured_results(monkeypatch):
+def test_five_ecotaxa_tools_use_structured_results(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "")
     from tools.tool_catalog import build_tool_catalog
 
@@ -32,39 +30,16 @@ def test_all_ecotaxa_tools_declare_structured_results(monkeypatch):
     }
     by_name = {item.name: item for item in catalog.tools}
 
-    assert len(names) == 33
-    for name in names:
-        assert by_name[name].response_format == "content_and_artifact", name
-        assert catalog.policy(name).result_schema == "tool_result_v1", name
-
-
-def test_ecotaxa_search_distinguishes_success_empty_and_error():
-    from tools.copepod_sources import make_source_tools
-    from tools.tool_result import validate_tool_artifact
-
-    project = {
-        "project_id": 42,
-        "name": "UVP test",
-        "instrument": "UVP6",
-        "status": "active",
-        "object_count": 10,
-        "percent_validated": 100,
+    assert names == {
+        "describe_ecotaxa_cache_table",
+        "export_ecotaxa_samples",
+        "list_ecotaxa_cache_tables",
+        "query_ecotaxa",
+        "query_ecotaxa_cache",
     }
-    item = {tool.name: tool for tool in make_source_tools("ecotaxa-status")}["find_ecotaxa_projects"]
-
-    with patch("tools.copepod_sources.search_projects", return_value=[project]):
-        success_message = _call(item, "eco-success", title="UVP")
-    with patch("tools.copepod_sources.search_projects", return_value=[]):
-        empty_message = _call(item, "eco-empty", title="missing")
-    with patch("tools.copepod_sources.search_projects", side_effect=RuntimeError("offline")):
-        error_message = _call(item, "eco-error", title="UVP")
-
-    success_result = validate_tool_artifact(success_message.artifact)
-    assert success_result.status == "success"
-    assert success_result.provenance["source"] == "ecotaxa"
-    assert success_result.metrics["projects"] == 1
-    assert validate_tool_artifact(empty_message.artifact).status == "empty"
-    assert validate_tool_artifact(error_message.artifact).status == "error"
+    for name in names:
+        assert by_name[name].response_format == "content_and_artifact"
+        assert catalog.policy(name).result_schema == "tool_result_v1"
 
 
 def test_ecotaxa_export_reports_persisted_dataset_and_artifact():

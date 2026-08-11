@@ -3,7 +3,7 @@
 from langchain_core.messages import HumanMessage, ToolMessage
 
 
-def test_harness_trace_exposes_model_tools_skill_provenance_and_usage():
+def test_harness_trace_exposes_model_tools_provenance_and_usage():
     import agent
     from serve import debug_harness_trace
 
@@ -17,7 +17,7 @@ def test_harness_trace_exposes_model_tools_skill_provenance_and_usage():
             "approx_tokens_base_system": 2896,
             "approx_tokens_tool_schemas": 900,
             "approx_tokens_after_trim": 400,
-            "tools_exposed": ["load_skill", "run_graph"],
+            "tools_exposed": ["run_pandas", "run_graph"],
             "tool_exposure_groups": ["core", "visualization"],
             "turn_authorized_sources": ["file"],
             "turn_active_variable": "df_file_stations",
@@ -26,22 +26,19 @@ def test_harness_trace_exposes_model_tools_skill_provenance_and_usage():
     trace_id = agent._start_harness_tool_call(
         thread_id,
         {
-            "id": "call-skill",
-            "name": "load_skill",
-            "args": {"skill_name": "graph_writer", "api_key": "secret"},
+            "id": "call-analysis",
+            "name": "run_pandas",
+            "args": {"code": "result = 1", "api_key": "secret"},
         },
     )
     result = ToolMessage(
-        content="# graph writer",
-        tool_call_id="call-skill",
+        content="1",
+        tool_call_id="call-analysis",
         artifact={
             "status": "success",
             "persisted": True,
             "provenance": {
-                "skill": "graph_writer",
-                "version": "1.0.0",
-                "sha256": "a" * 64,
-                "source": "local skill file",
+                "source": "controlled pandas execution",
             },
         },
     )
@@ -53,10 +50,10 @@ def test_harness_trace_exposes_model_tools_skill_provenance_and_usage():
 
     trace = debug_harness_trace(thread_id)["trace"]
 
-    assert trace["model_calls"][0]["tools_exposed"] == ["load_skill", "run_graph"]
+    assert trace["model_calls"][0]["tools_exposed"] == ["run_pandas", "run_graph"]
     assert trace["tool_calls"][0]["status"] == "success"
     assert trace["tool_calls"][0]["arguments"]["api_key"] == "[REDACTED]"
-    assert trace["tool_calls"][0]["provenance"]["version"] == "1.0.0"
+    assert trace["tool_calls"][0]["provenance"]["source"] == "controlled pandas execution"
     assert trace["usage"]["total_tokens"] == 5250
 
 

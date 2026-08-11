@@ -375,7 +375,9 @@ def test_make_sql_tools_expose_list_and_copy(tmp_path, monkeypatch):
     from tools.data_tools import make_tools as make_data_tools
 
     run_pandas = next(t for t in make_data_tools("thread-sql") if t.name == "run_pandas")
-    assert run_pandas.invoke({"code": "result = len(df_sql)"}) == "2"
+    content, artifact = run_pandas.invoke({"code": "result = len(df_sql)"})
+    assert content == "2"
+    assert artifact["status"] == "success"
 
 
 def test_list_sql_tables_tool_returns_database_overview(tmp_path, monkeypatch):

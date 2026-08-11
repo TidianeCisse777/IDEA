@@ -22,20 +22,19 @@ def test_every_runtime_tool_forbids_extra_arguments_and_coercion(catalog):
 
     by_name = {item.name: item for item in catalog.tools}
     with pytest.raises(ValidationError):
-        by_name["preview_ecotaxa_project"].invoke({"project_id": "105"})
+        by_name["query_ecotaxa"].invoke({"project_id": "105"})
     with pytest.raises(ValidationError):
         by_name["get_zone_info"].invoke(
             {"zone_name": "Labrador Sea", "unexpected": "ignored-before-2A.2"}
         )
 
 
-@pytest.mark.parametrize("name", ["list_ecopart_samples", "query_ecopart"])
-def test_ecopart_project_id_has_no_implicit_project_105(catalog, name):
-    item = {tool.name: tool for tool in catalog.tools}[name]
+def test_ecopart_sample_id_is_explicit(catalog):
+    item = {tool.name: tool for tool in catalog.tools}["preview_ecopart_sample"]
     schema = item.args_schema.model_json_schema()
 
-    assert "project_id" in schema.get("required", []), name
-    assert "default" not in schema["properties"]["project_id"], name
+    assert "sample_id" in schema.get("required", [])
+    assert "default" not in schema["properties"]["sample_id"]
     with pytest.raises(ValidationError):
         item.invoke({})
 
