@@ -128,3 +128,55 @@ def test_harness_monitor_preserves_context_and_model_decisions_by_turn():
     first_turn = debug_harness_turns(thread_id, turn_index=1)
     assert first_turn["turn"]["turn_index"] == 1
     assert first_turn["total_turns"] == 2
+
+
+def test_harness_accepts_openai_stream_metadata_with_null_token_usage():
+    import agent
+
+    thread_id = "harness-null-token-usage"
+    agent.clear_harness_trace(thread_id)
+    agent._begin_harness_turn(
+        thread_id,
+        [HumanMessage(content="Bonjour", id="null-token-usage")],
+    )
+    agent._append_harness_model_call(thread_id, {})
+
+    agent._finish_harness_model_call(
+        thread_id,
+        AIMessage(
+            content="Bonjour.",
+            response_metadata={"token_usage": None},
+            usage_metadata={
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "total_tokens": 12,
+                "input_token_details": {
+                    "cache_read": 6,
+                    "cache_creation": 3,
+                },
+            },
+        ),
+    )
+    agent.record_harness_usage(
+        thread_id,
+        {
+            "prompt_tokens": 10,
+            "completion_tokens": 2,
+            "total_tokens": 12,
+            "prompt_tokens_details": {
+                "cached_tokens": 6,
+                "cache_creation_tokens": 3,
+            },
+        },
+    )
+
+    call = agent.get_harness_trace(thread_id)["model_calls"][0]
+    assert call["provider_usage"]["cached_tokens"] == 6
+    assert call["provider_usage"]["cache_creation_tokens"] == 3
+    assert call["response_preview"] == "Bonjour."
+    assert (
+        agent.get_harness_trace(thread_id)["usage"]["cumulative_model_calls"][
+            "cache_creation_tokens"
+        ]
+        == 3
+    )

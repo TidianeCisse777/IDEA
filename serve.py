@@ -16,7 +16,7 @@ from urllib.parse import quote
 from urllib.request import Request as UrlRequest, urlopen
 
 import uvicorn
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,10 +24,19 @@ from fastapi import Header, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from openai import RateLimitError
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from core.llm_config import chat_openai_connection_kwargs
+from core.llm_config import (
+    cache_creation_tokens_from_metadata,
+    cached_tokens_from_metadata,
+    chat_openai_connection_kwargs,
+)
 from core.runtime_paths import graphs_dir
+from core.thread_run_coordinator import (
+    ThreadRunLease,
+    default_thread_run_coordinator,
+)
 
 load_dotenv()
 
@@ -77,6 +86,36 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("copepod.serve")
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro, *, label: str) -> asyncio.Task:  # noqa: ANN001
+    """Track detached work and always retrieve its terminal exception."""
+    task = asyncio.create_task(coro, name=f"copepod:{label}")
+    _background_tasks.add(task)
+
+    def _completed(done: asyncio.Task) -> None:
+        _background_tasks.discard(done)
+        if done.cancelled():
+            return
+        try:
+            exc = done.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            logger.warning("background_task_failed label=%s err=%s", label, exc)
+
+    task.add_done_callback(_completed)
+    return task
+
+
+async def _cancel_background_tasks() -> None:
+    """Drain tracked detached work during an application shutdown/reload."""
+    tasks = list(_background_tasks)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _openwebui_user_lookup_token() -> str | None:
@@ -293,11 +332,12 @@ def _log_turn(thread_id: str, user_msg: str, assistant_msg: str, usage: dict, us
     with log_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     logger.info(
-        "thread=%s prompt=%s completion=%s cached=%s ctx_before=%s ctx_after=%s ctx_trimmed=%s tool_truncated=%s",
+        "thread=%s prompt=%s completion=%s cached=%s cache_created=%s ctx_before=%s ctx_after=%s ctx_trimmed=%s tool_truncated=%s",
         thread_id,
         usage.get("prompt_tokens", 0),
         usage.get("completion_tokens", 0),
         usage.get("prompt_tokens_details", {}).get("cached_tokens", 0),
+        usage.get("prompt_tokens_details", {}).get("cache_creation_tokens", 0),
         context_audit.get("approx_tokens_before", 0),
         context_audit.get("approx_tokens_after_trim", 0),
         context_audit.get("messages_trimmed", 0),
@@ -447,6 +487,7 @@ async def lifespan(app: FastAPI):
     # ── PostgreSQL long-term memory store ──────────────────────────────────────
     pg_dsn_raw = os.getenv("SESSION_STORE_DATABASE_URL", "")
     pg_dsn = _normalize_postgres_dsn_for_langgraph(pg_dsn_raw)
+    await default_thread_run_coordinator.configure_postgres(pg_dsn)
     if pg_dsn:
         try:
             from langgraph.store.postgres import AsyncPostgresStore
@@ -476,6 +517,8 @@ async def lifespan(app: FastAPI):
                         yield
                     finally:
                         poll_task.cancel()
+                        await asyncio.gather(poll_task, return_exceptions=True)
+                        await _cancel_background_tasks()
         except Exception as e:
             logger.warning("AsyncPostgresStore unavailable (%s) — memory disabled", e)
             # Fall through to SQLite-only path
@@ -489,6 +532,8 @@ async def lifespan(app: FastAPI):
                 yield
             finally:
                 poll_task.cancel()
+                await asyncio.gather(poll_task, return_exceptions=True)
+                await _cancel_background_tasks()
 
 
 app = FastAPI(title="Copepod Agent API", lifespan=lifespan)
@@ -552,6 +597,24 @@ def _extract_and_host_images(text: str) -> str:
         return f"![{match.group(1)}]({graph_url(filename)})"
 
     return _LOCAL_PNG_MARKDOWN.sub(host_local_png, hosted)
+
+
+def _assistant_message_text(message) -> str:
+    """Normalize LangChain/OpenAI assistant content blocks to visible text."""
+
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content or "")
+    parts = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text = block.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+    return "".join(parts)
 
 class Message(BaseModel):
     role: str
@@ -1193,6 +1256,7 @@ async def _stream_agent_sse(
     last_user_text: str = "",
     user_id: str = "anonymous",
     language: str = "fr",
+    run_lease: ThreadRunLease | None = None,
 ) -> AsyncGenerator[str, None]:
     """Génère les chunks SSE depuis l'agent LangGraph (stream_mode='updates').
 
@@ -1213,10 +1277,16 @@ async def _stream_agent_sse(
 
     async def _run_agent() -> None:
         try:
+            if run_lease is not None:
+                await run_lease.ensure_current()
             async for update in agent.astream(messages, config, stream_mode="updates"):
+                if run_lease is not None:
+                    await run_lease.ensure_current()
                 if "__run_id" in update:
                     default_run_store.set(thread_id, str(update["__run_id"]))
                 for node, state in update.items():
+                    if not isinstance(state, dict):
+                        continue
                     msgs = state.get("messages", [])
                     if not msgs:
                         continue
@@ -1224,7 +1294,7 @@ async def _stream_agent_sse(
 
                     if node == "model":
                         shared["last_ai_msg"] = last_msg
-                        content = getattr(last_msg, "content", "") or ""
+                        content = _assistant_message_text(last_msg)
                         tool_calls = getattr(last_msg, "tool_calls", []) or []
 
                         if content:
@@ -1316,69 +1386,96 @@ async def _stream_agent_sse(
             await chunk_queue.put(None)  # sentinel
 
     agent_task = asyncio.create_task(_run_agent())
+    try:
+        while True:
+            try:
+                chunk = await asyncio.wait_for(
+                    chunk_queue.get(), timeout=_HEARTBEAT_INTERVAL
+                )
+            except asyncio.TimeoutError:
+                # Keep the SSE connection warm during long tool calls without
+                # polluting the message: a comment line (":") is ignored by the
+                # client and never appended to the assistant content.
+                if shared["in_slow_tool"]:
+                    yield ": keepalive\n\n"
+                continue
+            if chunk is None:
+                break
+            yield chunk
 
-    while True:
-        try:
-            chunk = await asyncio.wait_for(chunk_queue.get(), timeout=_HEARTBEAT_INTERVAL)
-        except asyncio.TimeoutError:
-            # Keep the SSE connection warm during long tool calls without
-            # polluting the message: a comment line (":") is ignored by the
-            # client and never appended to the assistant content.
-            if shared["in_slow_tool"]:
-                yield ": keepalive\n\n"
-            continue
-        if chunk is None:
-            break
-        yield chunk
+        await agent_task
 
-    await agent_task
-
-    usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-             "prompt_tokens_details": {"cached_tokens": 0}}
-
-    last_ai_msg = shared["last_ai_msg"]
-    if last_ai_msg is not None:
-        meta = getattr(last_ai_msg, "usage_metadata", None) or {}
-        rmeta = getattr(last_ai_msg, "response_metadata", {}) or {}
-        prompt_tokens     = meta.get("input_tokens", 0)
-        completion_tokens = meta.get("output_tokens", 0)
-        cached_tokens = (
-            rmeta.get("token_usage", {}).get("prompt_tokens_details", {}).get("cached_tokens", 0)
-            or meta.get("input_token_details", {}).get("cache_read", 0)
-        )
         usage = {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-            "prompt_tokens_details": {"cached_tokens": cached_tokens},
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "prompt_tokens_details": {
+                "cached_tokens": 0,
+                "cache_creation_tokens": 0,
+            },
         }
-        final_text = getattr(last_ai_msg, "content", "") or ""
-        _log_turn(thread_id, last_user_text, final_text, usage, user_id=user_id)
-        if cached_tokens > 0:
-            logger.info("CACHE HIT thread=%s cached=%s (%.0f%% of prompt)",
-                thread_id, cached_tokens, 100 * cached_tokens / prompt_tokens if prompt_tokens else 0)
 
-        # ── long-term memory extraction (background, non-blocking) ────────────
-        import agent as _agent_module
-        mgr = getattr(_agent_module, "_memory_manager", None)
-        if mgr and last_user_text and final_text:
-            from langchain_core.messages import HumanMessage, AIMessage as _AI
-            mem_messages = [HumanMessage(content=last_user_text), _AI(content=final_text)]
-            mem_config = {"configurable": {"langgraph_user_id": user_id}}
-            asyncio.create_task(mgr.ainvoke({"messages": mem_messages}, config=mem_config))
+        last_ai_msg = shared["last_ai_msg"]
+        if last_ai_msg is not None:
+            meta = getattr(last_ai_msg, "usage_metadata", None) or {}
+            rmeta = getattr(last_ai_msg, "response_metadata", {}) or {}
+            prompt_tokens = meta.get("input_tokens", 0)
+            completion_tokens = meta.get("output_tokens", 0)
+            cached_tokens = cached_tokens_from_metadata(rmeta, meta)
+            cache_creation_tokens = cache_creation_tokens_from_metadata(rmeta, meta)
+            usage = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+                "prompt_tokens_details": {
+                    "cached_tokens": cached_tokens,
+                    "cache_creation_tokens": cache_creation_tokens,
+                },
+            }
+            final_text = _assistant_message_text(last_ai_msg)
+            _log_turn(thread_id, last_user_text, final_text, usage, user_id=user_id)
+            if cached_tokens > 0:
+                logger.info(
+                    "CACHE HIT thread=%s cached=%s (%.0f%% of prompt)",
+                    thread_id,
+                    cached_tokens,
+                    100 * cached_tokens / prompt_tokens if prompt_tokens else 0,
+                )
 
-    # Chunk final avec usage — Open WebUI l'affiche en bas du message
-    stop_chunk = {
-        "id": completion_id,
-        "object": "chat.completion.chunk",
-        "model": "copepod-agent",
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        "usage": usage,
-    }
-    yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n"
-    logger.info("thread=%s STREAM done", thread_id)
-    await _flush_tracers()
-    yield "data: [DONE]\n\n"
+            # ── long-term memory extraction (background, non-blocking) ────────
+            import agent as _agent_module
+
+            mgr = getattr(_agent_module, "_memory_manager", None)
+            if mgr and last_user_text and final_text:
+                from langchain_core.messages import AIMessage as _AI
+
+                mem_messages = [
+                    HumanMessage(content=last_user_text),
+                    _AI(content=final_text),
+                ]
+                mem_config = {"configurable": {"langgraph_user_id": user_id}}
+                _spawn_background_task(
+                    mgr.ainvoke({"messages": mem_messages}, config=mem_config),
+                    label=f"memory:{thread_id}",
+                )
+
+        # Chunk final avec usage — Open WebUI l'affiche en bas du message
+        stop_chunk = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "model": "copepod-agent",
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "usage": usage,
+        }
+        yield f"data: {json.dumps(stop_chunk, ensure_ascii=False)}\n\n"
+        logger.info("thread=%s STREAM done", thread_id)
+        await _flush_tracers()
+        yield "data: [DONE]\n\n"
+    finally:
+        if not agent_task.done():
+            agent_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await agent_task
 
 
 async def _stream_with_request_origin(
@@ -1387,6 +1484,36 @@ async def _stream_with_request_origin(
     """Keep the public request origin alive while an SSE body is consumed."""
     with activate_request_origin(origin):
         async for chunk in stream:
+            yield chunk
+
+
+async def _coordinated_agent_sse(
+    agent,
+    messages: dict,
+    config: dict,
+    thread_id: str,
+    message_id: str,
+    *,
+    last_user_text: str,
+    user_id: str,
+    language: str,
+) -> AsyncGenerator[str, None]:
+    """Own, repair and stream one conversation generation atomically."""
+    async with default_thread_run_coordinator.run(
+        thread_id, message_id
+    ) as lease:
+        run_config = lease.bind_config(config)
+        await arepair_invalid_tool_history(agent, run_config)
+        async for chunk in _stream_agent_sse(
+            agent,
+            messages,
+            run_config,
+            thread_id,
+            last_user_text=last_user_text,
+            user_id=user_id,
+            language=language,
+            run_lease=lease,
+        ):
             yield chunk
 
 
@@ -1407,6 +1534,7 @@ async def chat_completions(
         request.headers.get("accept-language"),
     )
     openwebui_message_id = _openwebui_message_id(req, x_openwebui_message_id)
+    turn_message_id = openwebui_message_id or f"user-{uuid.uuid4().hex}"
     tid = _thread_id(
         req.messages,
         chat_id=x_openwebui_chat_id or req.chat_id,
@@ -1460,7 +1588,10 @@ async def chat_completions(
     if fast_cast_map is not None:
         _log_turn(tid, last_user_text, fast_cast_map, {
             "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-            "prompt_tokens_details": {"cached_tokens": 0},
+            "prompt_tokens_details": {
+                "cached_tokens": 0,
+                "cache_creation_tokens": 0,
+            },
         }, user_id=user_id)
         if req.stream:
             return StreamingResponse(
@@ -1529,7 +1660,7 @@ async def chat_completions(
             "conversation_key": conversation_key,
             "conversation_id": x_openwebui_chat_id or req.chat_id,
             "session_id": req.session_id,
-            "message_id": openwebui_message_id,
+            "message_id": turn_message_id,
             "user_id": user_id,
             "user_name": x_openwebui_user_name,
             "user_email": user_email,
@@ -1538,26 +1669,30 @@ async def chat_completions(
         },
         "callbacks": _request_callbacks(
             tid,
-            openwebui_message_id,
+            turn_message_id,
             chat_id=x_openwebui_chat_id or req.chat_id,
             user_id=user_id,
             user_email=user_email,
         ),
     }
-    messages = {"messages": [{"role": "user", "content": last_user_content}]}
+    messages = {
+        "messages": [
+            HumanMessage(content=last_user_content, id=turn_message_id)
+        ]
+    }
 
     logger.info("thread=%s stream=%s", tid, req.stream)
-    await arepair_invalid_tool_history(agent, config)
     if req.stream:
         logger.info("thread=%s STREAM start", tid)
         return StreamingResponse(
             _stream_with_request_origin(
                 request_public_origin(request),
-                _stream_agent_sse(
+                _coordinated_agent_sse(
                     agent,
                     messages,
                     config,
                     tid,
+                    turn_message_id,
                     last_user_text=last_user_text,
                     user_id=user_id,
                     language=language,
@@ -1567,7 +1702,12 @@ async def chat_completions(
         )
 
     try:
-        result = await agent.ainvoke(messages, config=config)
+        async with default_thread_run_coordinator.run(
+            tid, turn_message_id
+        ) as lease:
+            run_config = lease.bind_config(config)
+            await arepair_invalid_tool_history(agent, run_config)
+            result = await agent.ainvoke(messages, config=run_config)
     except RateLimitError as exc:
         logger.warning(
             "provider_rate_limit thread=%s retry_after=%s",
@@ -1586,12 +1726,14 @@ async def chat_completions(
     await _flush_tracers()
 
     text = _append_generated_graph_images(
-        _extract_and_host_images(result["messages"][-1].content),
+        _extract_and_host_images(
+            _assistant_message_text(result["messages"][-1])
+        ),
         result.get("messages", []),
     )
 
     # Usage du dernier AIMessage uniquement (pas l'historique entier)
-    prompt_tokens = completion_tokens = cached_tokens = 0
+    prompt_tokens = completion_tokens = cached_tokens = cache_creation_tokens = 0
     for msg in reversed(result.get("messages", [])):
         meta = getattr(msg, "usage_metadata", None)
         if meta:
@@ -1599,19 +1741,18 @@ async def chat_completions(
             completion_tokens = meta.get("output_tokens", 0)
             # cached_tokens : priorité response_metadata (OpenRouter) > usage_metadata
             rmeta = getattr(msg, "response_metadata", {})
-            cached_tokens = (
-                rmeta.get("token_usage", {})
-                     .get("prompt_tokens_details", {})
-                     .get("cached_tokens", 0)
-                or meta.get("input_token_details", {}).get("cache_read", 0)
-            )
+            cached_tokens = cached_tokens_from_metadata(rmeta, meta)
+            cache_creation_tokens = cache_creation_tokens_from_metadata(rmeta, meta)
             break
 
     usage = {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
-        "prompt_tokens_details": {"cached_tokens": cached_tokens},
+        "prompt_tokens_details": {
+            "cached_tokens": cached_tokens,
+            "cache_creation_tokens": cache_creation_tokens,
+        },
     }
 
     _log_turn(tid, last_user_text, text, usage, user_id=user_id)

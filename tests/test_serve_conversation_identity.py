@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
 def test_conversation_key_prefers_openwebui_chat_id():
@@ -125,3 +125,82 @@ def test_repair_invalid_tool_history_removes_dangling_messages():
     assert fake.updated is not None
     removal_ids = [msg.id for msg in fake.updated["messages"]]
     assert "ai-2" in removal_ids
+
+
+def test_repair_invalid_tool_history_never_removes_a_newer_user_turn():
+    from agent import repair_invalid_tool_history
+
+    class FakeAgent:
+        def __init__(self):
+            self.messages = [
+                HumanMessage(content="ancien tour", id="human-old"),
+                AIMessage(
+                    content="",
+                    id="ai-orphan",
+                    tool_calls=[
+                        {
+                            "name": "query_amundsen_ctd",
+                            "args": {},
+                            "id": "tc-orphan",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                HumanMessage(content="prends tout le cache", id="human-new"),
+                AIMessage(content="résultat global", id="ai-new"),
+            ]
+            self.updated = None
+
+        def get_state(self, config):
+            return SimpleNamespace(values={"messages": self.messages})
+
+        def update_state(self, config, values):
+            self.updated = values
+            return config
+
+    fake = FakeAgent()
+    assert repair_invalid_tool_history(
+        fake, {"configurable": {"thread_id": "tid"}}
+    ) is True
+
+    removal_ids = [message.id for message in fake.updated["messages"]]
+    assert removal_ids == ["ai-orphan"]
+    assert "human-new" not in removal_ids
+    assert "ai-new" not in removal_ids
+
+
+def test_repair_removes_only_partial_messages_from_the_orphan_tool_group():
+    from agent import repair_invalid_tool_history
+
+    class FakeAgent:
+        def __init__(self):
+            self.messages = [
+                AIMessage(
+                    content="",
+                    id="ai-orphan",
+                    tool_calls=[
+                        {"name": "first", "args": {}, "id": "tc-1", "type": "tool_call"},
+                        {"name": "second", "args": {}, "id": "tc-2", "type": "tool_call"},
+                    ],
+                ),
+                ToolMessage(content="ok", id="tool-1", tool_call_id="tc-1"),
+                HumanMessage(content="nouveau tour", id="human-new"),
+            ]
+            self.updated = None
+
+        def get_state(self, config):
+            return SimpleNamespace(values={"messages": self.messages})
+
+        def update_state(self, config, values):
+            self.updated = values
+            return config
+
+    fake = FakeAgent()
+    assert repair_invalid_tool_history(
+        fake, {"configurable": {"thread_id": "tid"}}
+    ) is True
+
+    assert [message.id for message in fake.updated["messages"]] == [
+        "ai-orphan",
+        "tool-1",
+    ]

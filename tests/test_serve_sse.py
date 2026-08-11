@@ -98,7 +98,14 @@ async def test_stream_displays_agent_text_usage_and_done():
     from serve import _stream_agent_sse
 
     answer = AIMessage(content="Résultat final visible.", tool_calls=[])
-    answer.usage_metadata = {"input_tokens": 12, "output_tokens": 4}
+    answer.usage_metadata = {
+        "input_tokens": 12,
+        "output_tokens": 4,
+        "input_token_details": {
+            "cache_read": 8,
+            "cache_creation": 3,
+        },
+    }
     chunks = [
         chunk
         async for chunk in _stream_agent_sse(
@@ -114,6 +121,64 @@ async def test_stream_displays_agent_text_usage_and_done():
     stop_payload = json.loads(chunks[-2].removeprefix("data: "))
     assert stop_payload["choices"][0]["finish_reason"] == "stop"
     assert stop_payload["usage"]["total_tokens"] == 16
+    assert stop_payload["usage"]["prompt_tokens_details"] == {
+        "cached_tokens": 8,
+        "cache_creation_tokens": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_accepts_openai_response_content_blocks_and_null_token_usage():
+    from serve import _stream_agent_sse
+
+    answer = AIMessage(
+        content=[{"type": "text", "text": "Bonjour depuis OpenAI."}],
+        response_metadata={"token_usage": None},
+        usage_metadata={
+            "input_tokens": 12,
+            "output_tokens": 5,
+            "total_tokens": 17,
+        },
+        tool_calls=[],
+    )
+    chunks = [
+        chunk
+        async for chunk in _stream_agent_sse(
+            _mock_agent([{"model": {"messages": [answer]}}]),
+            {},
+            {},
+            "sse-openai-content-blocks",
+        )
+    ]
+
+    assert _visible_text(chunks) == "Bonjour depuis OpenAI."
+    stop_payload = json.loads(chunks[-2].removeprefix("data: "))
+    assert stop_payload["usage"]["total_tokens"] == 17
+    assert "Erreur" not in _visible_text(chunks)
+
+
+@pytest.mark.asyncio
+async def test_stream_ignores_langgraph_updates_without_node_state():
+    from serve import _stream_agent_sse
+
+    answer = AIMessage(content="Réponse après update vide.", tool_calls=[])
+    chunks = [
+        chunk
+        async for chunk in _stream_agent_sse(
+            _mock_agent(
+                [
+                    {"model": None},
+                    {"model": {"messages": [answer]}},
+                ]
+            ),
+            {},
+            {},
+            "sse-none-node-state",
+        )
+    ]
+
+    assert _visible_text(chunks) == "Réponse après update vide."
+    assert "Erreur" not in _visible_text(chunks)
 
 
 @pytest.mark.asyncio
@@ -341,6 +406,49 @@ async def test_stream_error_is_visible_and_connection_closes_cleanly():
 
     assert "[Erreur : provider unavailable]" in _visible_text(chunks)
     assert chunks[-1] == "data: [DONE]\n\n"
+
+
+@pytest.mark.asyncio
+async def test_closing_sse_stream_cancels_the_detached_agent_task():
+    from serve import _stream_agent_sse
+
+    agent_started = asyncio.Event()
+    agent_cancelled = asyncio.Event()
+    agent = MagicMock()
+
+    async def _astream(*_args, **_kwargs):
+        try:
+            agent_started.set()
+            yield {"model": {"messages": [AIMessage(content="début", tool_calls=[])]}}
+            await asyncio.Event().wait()
+        finally:
+            agent_cancelled.set()
+
+    agent.astream = _astream
+    stream = _stream_agent_sse(agent, {}, {}, "sse-client-disconnect")
+
+    first_chunk = await anext(stream)
+    assert "début" in first_chunk
+    await agent_started.wait()
+    await stream.aclose()
+
+    await asyncio.wait_for(agent_cancelled.wait(), timeout=0.2)
+
+
+@pytest.mark.asyncio
+async def test_background_task_exception_is_retrieved_and_logged(caplog):
+    from serve import _background_tasks, _spawn_background_task
+
+    async def _fails():
+        raise RuntimeError("memory provider failed")
+
+    task = _spawn_background_task(_fails(), label="memory:test")
+    await asyncio.gather(task, return_exceptions=True)
+    await asyncio.sleep(0)
+
+    assert task not in _background_tasks
+    assert "background_task_failed" in caplog.text
+    assert "memory provider failed" in caplog.text
 
 
 def test_non_stream_response_keeps_only_current_turn_graph():

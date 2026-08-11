@@ -36,7 +36,14 @@ from agents.exploration_state import (
     render_exploration_frontier,
     render_task_context,
 )
-from core.llm_config import chat_openai_connection_kwargs
+from core.llm_config import (
+    cache_creation_tokens_from_metadata,
+    cached_tokens_from_metadata,
+    chat_openai_connection_kwargs,
+    openai_explicit_prompt_cache_enabled,
+    openai_prompt_cache_settings,
+    with_explicit_prompt_cache_breakpoint,
+)
 from tools.tool_catalog import build_tool_catalog
 
 load_dotenv()
@@ -222,6 +229,10 @@ def record_harness_usage(
                 "prompt_tokens": sum(int(item.get("input_tokens", 0) or 0) for item in model_usage),
                 "completion_tokens": sum(int(item.get("output_tokens", 0) or 0) for item in model_usage),
                 "cached_tokens": sum(int(item.get("cached_tokens", 0) or 0) for item in model_usage),
+                "cache_creation_tokens": sum(
+                    int(item.get("cache_creation_tokens", 0) or 0)
+                    for item in model_usage
+                ),
             }
             cumulative["total_tokens"] = (
                 cumulative["prompt_tokens"] + cumulative["completion_tokens"]
@@ -273,6 +284,7 @@ def record_harness_fast_route(
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "cached_tokens": 0,
+                    "cache_creation_tokens": 0,
                     "total_tokens": 0,
                 },
             },
@@ -349,16 +361,13 @@ def _finish_harness_model_call(thread_id: str, result) -> None:
         started = float(call.pop("_started_epoch", time.time()))
         usage = getattr(result, "usage_metadata", None) or {}
         response = getattr(result, "response_metadata", None) or {}
-        cached = (
-            response.get("token_usage", {})
-            .get("prompt_tokens_details", {})
-            .get("cached_tokens", 0)
-            or usage.get("input_token_details", {}).get("cache_read", 0)
-        )
+        cached = cached_tokens_from_metadata(response, usage)
+        cache_creation = cache_creation_tokens_from_metadata(response, usage)
         call["provider_usage"] = {
             "input_tokens": int(usage.get("input_tokens", 0) or 0),
             "output_tokens": int(usage.get("output_tokens", 0) or 0),
             "cached_tokens": int(cached or 0),
+            "cache_creation_tokens": int(cache_creation or 0),
         }
         call["duration_seconds"] = round(max(0.0, time.time() - started), 3)
         content = getattr(result, "content", "")
@@ -934,11 +943,13 @@ class _ContextMiddleware(AgentMiddleware):
         user_id: str = "anonymous",
         thread_id: str = "unknown",
         catalog_names=None,
+        prompt_cache_enabled: bool = False,
     ):
         super().__init__()
         self.user_id = user_id
         self.thread_id = thread_id
         self.catalog_names = tuple(catalog_names or ())
+        self.prompt_cache_enabled = prompt_cache_enabled
 
     def _prepare_request(self, request, memories):
         original_messages = list(request.messages)
@@ -1208,6 +1219,10 @@ class _ContextMiddleware(AgentMiddleware):
         )
         final_tokens = _approx_tokens(trimmed_messages)
         prepared_system_message = system_message
+        if self.prompt_cache_enabled and system_message is not None:
+            prepared_system_message = with_explicit_prompt_cache_breakpoint(
+                system_message
+            )
         system_tokens = (
             _approx_tokens([prepared_system_message])
             if prepared_system_message is not None
@@ -1545,8 +1560,69 @@ def _find_invalid_tool_history_cut_index(messages: Sequence) -> int | None:
     return None
 
 
+def _invalid_tool_history_message_ids(messages: Sequence) -> list[str]:
+    """Return only invalid AI/tool groups, never later conversation turns.
+
+    A run interrupted between an ``AIMessage.tool_calls`` and all matching
+    ``ToolMessage`` objects leaves a malformed group.  The following human turn
+    is independent evidence and must survive recovery.
+    """
+    invalid_ids: list[str] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        tool_calls = (
+            getattr(message, "tool_calls", None)
+            if isinstance(message, AIMessage)
+            else None
+        )
+        if tool_calls:
+            pending = {
+                str(
+                    tool_call.get("id")
+                    if isinstance(tool_call, dict)
+                    else getattr(tool_call, "id", "")
+                )
+                for tool_call in tool_calls
+                if (
+                    tool_call.get("id")
+                    if isinstance(tool_call, dict)
+                    else getattr(tool_call, "id", None)
+                )
+            }
+            group = [message]
+            unexpected_tool_ids: list[str] = []
+            cursor = index + 1
+            while cursor < len(messages) and isinstance(
+                messages[cursor], ToolMessage
+            ):
+                tool_message = messages[cursor]
+                group.append(tool_message)
+                tool_call_id = str(getattr(tool_message, "tool_call_id", ""))
+                if tool_call_id in pending:
+                    pending.remove(tool_call_id)
+                elif getattr(tool_message, "id", None):
+                    unexpected_tool_ids.append(str(tool_message.id))
+                cursor += 1
+            if pending:
+                invalid_ids.extend(
+                    str(item.id)
+                    for item in group
+                    if getattr(item, "id", None)
+                )
+            else:
+                invalid_ids.extend(unexpected_tool_ids)
+            index = cursor
+            continue
+        if isinstance(message, ToolMessage):
+            if getattr(message, "id", None):
+                invalid_ids.append(str(message.id))
+        index += 1
+    return list(dict.fromkeys(invalid_ids))
+
+
 def repair_invalid_tool_history(agent, config: dict) -> bool:
-    """Nettoie un thread LangGraph si un tool_call est resté sans ToolMessage.
+    """Retire les groupes d'outils orphelins sans toucher aux tours suivants.
 
     Retourne True si l'historique a été modifié.
     """
@@ -1557,14 +1633,13 @@ def repair_invalid_tool_history(agent, config: dict) -> bool:
 
     values = getattr(snapshot, "values", {}) or {}
     messages = list(values.get("messages") or [])
-    cut_index = _find_invalid_tool_history_cut_index(messages)
-    if cut_index is None:
+    invalid_ids = _invalid_tool_history_message_ids(messages)
+    if not invalid_ids:
         return False
 
     removals = [
-        RemoveMessage(id=message.id)
-        for message in messages[cut_index:]
-        if getattr(message, "id", None)
+        RemoveMessage(id=message_id)
+        for message_id in invalid_ids
     ]
     if not removals:
         return False
@@ -1577,7 +1652,7 @@ def repair_invalid_tool_history(agent, config: dict) -> bool:
 
 
 async def arepair_invalid_tool_history(agent, config: dict) -> bool:
-    """Async version of repair_invalid_tool_history for AsyncSqliteSaver."""
+    """Async version of the bounded orphan-tool repair."""
     try:
         snapshot = await agent.aget_state(config)
     except Exception:
@@ -1585,14 +1660,13 @@ async def arepair_invalid_tool_history(agent, config: dict) -> bool:
 
     values = getattr(snapshot, "values", {}) or {}
     messages = list(values.get("messages") or [])
-    cut_index = _find_invalid_tool_history_cut_index(messages)
-    if cut_index is None:
+    invalid_ids = _invalid_tool_history_message_ids(messages)
+    if not invalid_ids:
         return False
 
     removals = [
-        RemoveMessage(id=message.id)
-        for message in messages[cut_index:]
-        if getattr(message, "id", None)
+        RemoveMessage(id=message_id)
+        for message_id in invalid_ids
     ]
     if not removals:
         return False
@@ -1606,17 +1680,39 @@ async def arepair_invalid_tool_history(agent, config: dict) -> bool:
 
 def make_agent(thread_id: str, user_id: str = "anonymous"):
     """Crée un agent ReAct copépodes pour un thread donné."""
-    from tools.openai_tool_search import openai_tool_search_enabled
+    from tools.openai_tool_search import (
+        build_openai_tool_search_projection,
+        openai_tool_search_enabled,
+    )
+    from tools.tool_catalog import TOOL_POLICIES
 
     tool_search_active = openai_tool_search_enabled()
+    model_name = os.getenv("LLM_MODEL", "gpt-5.6-luna")
+    catalog = build_tool_catalog(thread_id)
+    prompt_cache_enabled = openai_explicit_prompt_cache_enabled(
+        model=model_name,
+        base_url=os.getenv("OPENAI_BASE_URL"),
+        use_responses_api=tool_search_active,
+    )
+    prompt_cache_kwargs: dict = {}
+    if prompt_cache_enabled:
+        default_projection = build_openai_tool_search_projection(
+            list(catalog.tools),
+            TOOL_POLICIES,
+        )
+        prompt_cache_kwargs = openai_prompt_cache_settings(
+            model=model_name,
+            system_prompt=_SYSTEM_PROMPT,
+            tools=default_projection.provider_tools,
+        )
     llm = ChatOpenAI(
-        model=os.getenv("LLM_MODEL", "gpt-5.6-luna"),
+        model=model_name,
         max_retries=2,
         max_tokens=int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "16000")),
         use_responses_api=tool_search_active,
+        **prompt_cache_kwargs,
         **chat_openai_connection_kwargs(),
     )
-    catalog = build_tool_catalog(thread_id)
     return create_agent(
         llm,
         list(catalog.tools),
@@ -1631,6 +1727,7 @@ def make_agent(thread_id: str, user_id: str = "anonymous"):
                 user_id=user_id,
                 thread_id=thread_id,
                 catalog_names=catalog.names,
+                prompt_cache_enabled=prompt_cache_enabled,
             )
         ],
         state_schema=IdeaAgentState,
