@@ -92,6 +92,12 @@ CONTINUITY_STALE_ACTIVE = "df_derived_vertical_object_environment_14844"
 CONTINUITY_TOTAL = 14
 CONTINUITY_EXPANDED = 12
 CONTINUITY_INDEX_ONLY = CONTINUITY_TOTAL - CONTINUITY_EXPANDED
+HISTORY_REPLAY_UVP = "df_file_fichier_sample"
+HISTORY_REPLAY_ABUNDANCE = "df_file_neolabs_abundance"
+HISTORY_REPLAY_MATCHES = "df_derived_uvp_filet_ecart_10h"
+HISTORY_REPLAY_BAD_JOIN = (
+    "df_derived_reprise_comparaison_uvp_filet_abondance_copepoda"
+)
 
 
 def _long_turn_questions(count: int = LONG_TURN_COUNT) -> tuple[str, ...]:
@@ -1081,6 +1087,338 @@ def _catalog_audit_counts(capture: ModelCapture) -> tuple[int, int, int]:
     )
 
 
+def _seed_uvp_net_history_replay(store: SessionStore, thread_id: str) -> None:
+    """Seed the four factual tables involved in the observed failed dialogue."""
+
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({
+            "sample_profileid": ["UVP-01", "UVP-02"],
+            "sample_stationid": ["M1b", "M2b"],
+            "object_annotation_hierarchy": ["Copepoda", "Copepoda"],
+        }),
+        variable_name=HISTORY_REPLAY_UVP,
+        meta={
+            "source": "file:/uploads/Fichier sample.tsv",
+            "description": "Objets EcoTaxa exportés avec profil et station.",
+            "grain": "une ligne par objet EcoTaxa",
+        },
+        set_active=False,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({
+            "SAMPLE_ID": [8001, 8002],
+            "STATION_NAME": ["101", "102"],
+            "TAXON_ID": ["Copepoda", "Copepoda"],
+            "ALL_STAGES_ABUND": [12.0, 8.0],
+        }),
+        variable_name=HISTORY_REPLAY_ABUNDANCE,
+        meta={
+            "source": "file:/uploads/neolabs_abundance.csv",
+            "description": "Abondances NeoLabs par taxon et analyse.",
+            "grain": "une ligne par taxon et analyse NeoLabs",
+        },
+        set_active=False,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({
+            "sample_profileid": ["UVP-01", "UVP-02"],
+            "sample_stationid": ["M1b", "M2b"],
+            "sample_id": [49342, 49373],
+            "ecart_heures": [3.7, 4.2],
+        }),
+        variable_name=HISTORY_REPLAY_MATCHES,
+        meta={
+            "source": "analysis:derived",
+            "description": "Profils UVP et prélèvements filet appariés par station et temps.",
+            "grain": "une ligne par profil UVP et prélèvement filet correspondant",
+            "parent_variables": [HISTORY_REPLAY_UVP],
+            "filters": {"time_delta_max_hours": 10},
+        },
+        set_active=False,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({
+            "sample_profileid": ["UVP-01", "UVP-02"],
+            "sample_stationid": ["M1b", "M2b"],
+            "abondance_copepoda": [pd.NA, pd.NA],
+        }),
+        variable_name=HISTORY_REPLAY_BAD_JOIN,
+        meta={
+            "source": "analysis:derived",
+            "description": "Tentative de jointure dont l'abondance est absente.",
+            "grain": "une ligne par correspondance UVP-filet",
+            "parent_variables": [
+                HISTORY_REPLAY_MATCHES,
+                HISTORY_REPLAY_ABUNDANCE,
+            ],
+        },
+    )
+
+
+def _uvp_net_history_replay_messages() -> dict[str, list[BaseMessage]]:
+    """Build three checkpoints from the observed correction sequence."""
+
+    match_call = "history-replay-match-call"
+    join_call = "history-replay-join-call"
+    shared: list[BaseMessage] = [
+        HumanMessage(
+            content=(
+                "Prends l'export EcoTaxa et identifie les profils filet qui "
+                "correspondent par station et proximité temporelle."
+            ),
+            id="history-replay-human-match",
+        ),
+        AIMessage(
+            content="",
+            id="history-replay-ai-match",
+            tool_calls=[{
+                "name": "run_pandas",
+                "args": {
+                    "code": (
+                        f"result = {HISTORY_REPLAY_UVP}.copy()  # "
+                        f"persist as {HISTORY_REPLAY_MATCHES}"
+                    )
+                },
+                "id": match_call,
+                "type": "tool_call",
+            }],
+        ),
+        ToolMessage(
+            content="2 correspondances station-temps persistées.",
+            name="run_pandas",
+            tool_call_id=match_call,
+            id="history-replay-tool-match",
+            artifact={
+                "status": "success",
+                "persisted": True,
+                "data_ref": HISTORY_REPLAY_MATCHES,
+                "summary": "2 correspondances station-temps",
+            },
+        ),
+        AIMessage(
+            content=f"Correspondances conservées dans `{HISTORY_REPLAY_MATCHES}`.",
+            id="history-replay-ai-match-final",
+        ),
+        HumanMessage(
+            content=(
+                "Par station, compare le nombre d'objets Copepoda EcoTaxa et "
+                "l'abondance Copepoda filet."
+            ),
+            id="history-replay-human-compare",
+        ),
+        AIMessage(
+            content="",
+            id="history-replay-ai-join",
+            tool_calls=[{
+                "name": "run_pandas",
+                "args": {
+                    "code": (
+                        f"result = {HISTORY_REPLAY_MATCHES}.merge("
+                        f"{HISTORY_REPLAY_ABUNDANCE}, how='left')"
+                    )
+                },
+                "id": join_call,
+                "type": "tool_call",
+            }],
+        ),
+        ToolMessage(
+            content=(
+                "Jointure persistée mais abondance entièrement absente.\n"
+                + "x" * 16_000
+            ),
+            name="run_pandas",
+            tool_call_id=join_call,
+            id="history-replay-tool-join",
+            artifact={
+                "status": "success",
+                "persisted": True,
+                "data_ref": HISTORY_REPLAY_BAD_JOIN,
+                "summary": "2 lignes; abondance Copepoda absente",
+            },
+        ),
+        AIMessage(
+            content=(
+                f"La jointure `{HISTORY_REPLAY_BAD_JOIN}` ne retrouve aucune "
+                "abondance. " + "J" * 8_000
+            ),
+            id="history-replay-ai-join-final",
+        ),
+    ]
+    no_join = HumanMessage(
+        content=(
+            "Ne fais pas de jointure : calcule deux tableaux séparés et "
+            "présente-les en parallèle."
+        ),
+        id="history-replay-human-no-join",
+    )
+    limit_scope = HumanMessage(
+        content=(
+            "Limite-les bien aux profils et aux stations sur lesquels on travaille."
+        ),
+        id="history-replay-human-limit",
+    )
+    make_tables = HumanMessage(
+        content="Fais maintenant les deux tableaux.",
+        id="history-replay-human-make",
+    )
+    no_join_history = [*shared, no_join]
+    limit_history = [
+        *no_join_history,
+        AIMessage(
+            content="Compris : deux tableaux séparés. " + "S" * 8_000,
+            id="history-replay-ai-no-join-final",
+        ),
+        limit_scope,
+    ]
+    make_history = [
+        *limit_history,
+        AIMessage(
+            content="Périmètre limité. " + "P" * 8_000,
+            id="history-replay-ai-limit-final",
+        ),
+        make_tables,
+    ]
+    return {
+        "sans jointure": no_join_history,
+        "périmètre limité": limit_history,
+        "deux tableaux": make_history,
+    }
+
+
+def _campaign_uvp_net_history_replay(
+    store: SessionStore,
+) -> list[CampaignCheck]:
+    """Replay the failed dialogue and inspect only the provider-bound context."""
+
+    scenario = "uvp-net-separate-tables-history-replay"
+    thread_id = f"{BASE_THREAD}-uvp-net-history-replay"
+    _seed_uvp_net_history_replay(store, thread_id)
+    histories = _uvp_net_history_replay_messages()
+    captures = {
+        label: _capture(
+            store,
+            thread_id,
+            _content_text(messages[-1]),
+            f"history-replay-{index}",
+            input_messages=messages,
+        )
+        for index, (label, messages) in enumerate(histories.items(), start=1)
+    }
+    final = captures["deux tableaux"]
+    raw_history = final.messages[1:-1]
+    raw_history_text = "\n".join(_content_text(message) for message in raw_history)
+    snapshots = {
+        label: {
+            "history_shape": ">".join(
+                f"{message.type}:{len(_content_text(message))}"
+                for message in capture.messages
+            ),
+            "objective": next(
+                (
+                    line.removeprefix("Objective: ")
+                    for line in capture.task_context.splitlines()
+                    if line.startswith("Objective: ")
+                ),
+                "",
+            ),
+            "details": _detail_names(capture.dataset_context),
+            "has_primary": "focus=primary" in capture.dataset_context,
+        }
+        for label, capture in captures.items()
+    }
+    all_required_resources = {
+        HISTORY_REPLAY_UVP,
+        HISTORY_REPLAY_ABUNDANCE,
+        HISTORY_REPLAY_MATCHES,
+        HISTORY_REPLAY_BAD_JOIN,
+    }
+    return [
+        _check(
+            scenario,
+            "continuity",
+            "cumulative user instructions survive raw-history collapse",
+            len(raw_history) < len(histories["deux tableaux"]) - 1
+            and "Prends l'export EcoTaxa" not in raw_history_text
+            and "Ne fais pas de jointure" not in raw_history_text
+            and "Ne fais pas de jointure" in final.task_context
+            and "Limite-les bien aux profils" in final.task_context
+            and "Objective: Fais maintenant les deux tableaux." in final.task_context,
+            json.dumps(
+                {
+                    "final": snapshots["deux tableaux"],
+                    "raw_messages_retained": len(raw_history),
+                    "original_messages_before_current": (
+                        len(histories["deux tableaux"]) - 1
+                    ),
+                    "capsule_has": [
+                        "objectif initial",
+                        "comparaison",
+                        "sans jointure",
+                        "périmètre limité",
+                    ],
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+            turn_range="correction turns 3-5",
+        ),
+        _check(
+            scenario,
+            "continuity",
+            "previous-turn tool results never remain primary",
+            all(
+                "focus=primary" not in capture.dataset_context
+                for capture in captures.values()
+            )
+            and all(
+                re.search(
+                    rf"^- {re.escape(HISTORY_REPLAY_BAD_JOIN)}$\n"
+                    rf"  status=.*focus=recent;",
+                    capture.dataset_context,
+                    re.MULTILINE,
+                )
+                for capture in captures.values()
+            ),
+            json.dumps(
+                {
+                    label: {
+                        "has_primary": snapshot["has_primary"],
+                        "bad_join_focus": "recent",
+                    }
+                    for label, snapshot in snapshots.items()
+                },
+                ensure_ascii=False,
+            ),
+            turn_range="correction turns 3-5",
+        ),
+        _check(
+            scenario,
+            "continuity",
+            "matching scope and both independent measure sources stay visible",
+            all(
+                all_required_resources <= set(_detail_names(capture.dataset_context))
+                for capture in captures.values()
+            ),
+            json.dumps(
+                {
+                    label: snapshot["details"]
+                    for label, snapshot in snapshots.items()
+                },
+                ensure_ascii=False,
+            ),
+            turn_range="correction turns 3-5",
+        ),
+    ]
+
+
 def campaign_continuity(store: SessionStore) -> list[CampaignCheck]:
     """Replay the real derived-table disappearance without lexical hints."""
 
@@ -1151,7 +1489,7 @@ def campaign_continuity(store: SessionStore) -> list[CampaignCheck]:
     )
     oversized_details = _detail_names(oversized.dataset_context)
 
-    return [
+    checks = [
         _check(
             scenario,
             "continuity",
@@ -1233,6 +1571,8 @@ def campaign_continuity(store: SessionStore) -> list[CampaignCheck]:
             f"expanded={oversized_details}; chars={len(oversized.dataset_context)}",
         ),
     ]
+    checks.extend(_campaign_uvp_net_history_replay(store))
+    return checks
 
 
 def _current_tool_turn_messages(question: str) -> list[BaseMessage]:

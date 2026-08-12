@@ -27,3 +27,7 @@ def test_context_projection_campaign_is_offline_and_green():
     assert report["network_calls"] == 0
     assert report["summary"]["failed"] == 0
     assert report["summary"]["passed"] == report["summary"]["total"]
+    assert any(
+        check["scenario"] == "uvp-net-separate-tables-history-replay"
+        for check in report["checks"]
+    )
