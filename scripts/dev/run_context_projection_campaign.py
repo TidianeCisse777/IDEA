@@ -65,7 +65,8 @@ from tools.tool_catalog import build_tool_catalog  # noqa: E402
 
 FACETS = (
     "current_task", "dataframes", "frontier", "graph", "history",
-    "tools", "memory", "long_turns", "thread_isolation",
+    "continuity", "cache", "budget", "tools", "memory", "long_turns",
+    "thread_isolation",
 )
 DEFAULT_FACETS = FACETS
 BASE_THREAD = "context-projection-campaign"
@@ -85,6 +86,12 @@ LIFECYCLE_ORPHAN = "df_mt_orphan"
 LIFECYCLE_REVIVABLE = "df_mt_revivable"
 LIFECYCLE_PARENT = "df_mt_parent"
 LIFECYCLE_CHILD = "df_mt_child"
+CONTINUITY_RAW = "df_ecotaxa_cache_result_neolabs_candidates_5h"
+CONTINUITY_DERIVED = "df_derived_neolabs_ecotaxa_matched_deployments_5h"
+CONTINUITY_STALE_ACTIVE = "df_derived_vertical_object_environment_14844"
+CONTINUITY_TOTAL = 14
+CONTINUITY_EXPANDED = 12
+CONTINUITY_INDEX_ONLY = CONTINUITY_TOTAL - CONTINUITY_EXPANDED
 
 
 def _long_turn_questions(count: int = LONG_TURN_COUNT) -> tuple[str, ...]:
@@ -512,13 +519,10 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "six-dataframes-misleading-active",
             "dataframes",
-            "source anchors precede request-relevant intermediates",
-            set(details[:3]) == {
-                "df_ecotaxa_cache_query",
-                "df_neolabs_abundance",
-                "df_neolabs_sample",
-            }
-            and details[3] == "df_station_summary",
+            "factual inventory order does not promote the stale active pointer",
+            details[0] == "df_ecotaxa_cache_query"
+            and details[0] != "df_uvp_net_candidates"
+            and set(details) == set(DATAFRAME_NAMES),
             f"details={details}",
         ),
         _check(
@@ -560,8 +564,8 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "explicit-dataframe-reference",
             "dataframes",
-            "explicit intermediate leads the intermediate subset",
-            len(explicit_details) >= 4 and explicit_details[3] == "df_old_plot",
+            "explicit intermediate leads the factual working set",
+            bool(explicit_details) and explicit_details[0] == "df_old_plot",
             f"details={explicit_details}",
         )
     )
@@ -615,15 +619,17 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "mixed-file-and-derived-dataframes",
             "dataframes",
-            "file sources are always expanded before derived candidates",
-            mixed_details[:2] == mixed_file_names,
+            "explicit derived target precedes fallback file resources",
+            mixed_details[0] == mixed_target
+            and set(mixed_file_names) <= set(mixed_details),
             f"details={mixed_details}",
         ),
         _check(
             "mixed-file-and-derived-dataframes",
             "dataframes",
-            "file cards do not consume the non-file detail quota",
-            len(mixed_non_file_details) == 8
+            "working-set expansion uses one shared twelve-card budget",
+            len(mixed_details) == 12
+            and len(mixed_non_file_details) == 10
             and mixed_non_file_details[0] == mixed_target,
             f"non_file_details={mixed_non_file_details}",
         ),
@@ -652,9 +658,11 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "twenty-six-dataframes",
             "dataframes",
-            "all file-backed dataframes remain expanded",
-            set(many_details) == set(many_names)
-            and len(many_details) == MANY_DATAFRAME_COUNT,
+            "detail cards are capped while the complete index remains available",
+            len(many_details) == 12
+            and int(many.audit.get("dataframe_catalog_total") or 0) == 26
+            and int(many.audit.get("dataframe_catalog_expanded") or 0) == 12
+            and int(many.audit.get("dataframe_catalog_index_only") or 0) == 14,
             f"expanded={len(many_details)}",
         ),
         _check(
@@ -668,7 +676,7 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
             "twenty-six-dataframes",
             "dataframes",
             "catalog remains within configured budget",
-            len(many.dataset_context) <= 12_000,
+            len(many.dataset_context) <= 9_000,
             f"characters={len(many.dataset_context)}",
         ),
     ])
@@ -765,15 +773,16 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "source-export-enrichment-anchors",
             "dataframes",
-            "files exports cache results and enrichments are all expanded",
-            set(anchor_details[:len(anchor_names)]) == set(anchor_names),
-            f"anchor_details={anchor_details[:len(anchor_names)]}",
+            "all source and enrichment resources remain discoverable in the index",
+            set(anchor_names) <= set(_index_names(anchor_capture.dataset_context))
+            and anchor_details[0] == anchor_target,
+            f"anchor_details={anchor_details}",
         ),
         _check(
             "source-export-enrichment-anchors",
             "dataframes",
-            "intermediate expansion remains bounded and request-ranked",
-            len(expanded_intermediates) <= 8
+            "intermediate expansion remains bounded and fact-ranked",
+            len(expanded_intermediates) <= 12
             and expanded_intermediates
             and expanded_intermediates[0] == anchor_target,
             f"intermediates={expanded_intermediates}",
@@ -781,16 +790,15 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "source-export-enrichment-anchors",
             "dataframes",
-            "enrichment lineage remains visible on the decision board",
-            "source_variable:df_ecotaxa_ecopart_42" in anchor_capture.dataset_context
-            and "source_variable:df_amundsen_enriched_42" in anchor_capture.dataset_context,
-            "Amundsen and Bio-ORACLE parent variables are visible",
+            "selected enrichment lineage remains visible on the working set",
+            "source_variable:df_ecotaxa_ecopart_42" in anchor_capture.dataset_context,
+            "selected Amundsen parent variable is visible",
         ),
         _check(
             "source-export-enrichment-anchors",
             "dataframes",
             "decision board remains within configured budget",
-            len(anchor_capture.dataset_context) <= 12_000,
+            len(anchor_capture.dataset_context) <= 9_000,
             f"characters={len(anchor_capture.dataset_context)}",
         ),
     ])
@@ -852,10 +860,9 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "durable-anchor-history",
             "dataframes",
-            "durable source detail cards are capped independently",
-            len(aged_details) == 8
-            and "durable source anchors are index-only"
-            in aged_capture.dataset_context,
+            "durable source detail cards share the bounded working-set budget",
+            len(aged_details) == 12
+            and int(aged_capture.audit.get("dataframe_catalog_index_only") or 0) == 0,
             f"expanded={aged_details}",
         ),
         _check(
@@ -881,11 +888,755 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
             "durable-anchor-history",
             "dataframes",
             "history-managed catalog remains within budget",
-            len(revived_capture.dataset_context) <= 12_000,
+            len(revived_capture.dataset_context) <= 9_000,
             f"characters={len(revived_capture.dataset_context)}",
         ),
     ])
     return checks
+
+
+def _seed_context_continuity_dataframes(
+    store: SessionStore,
+    thread_id: str,
+) -> tuple[str, ...]:
+    """Seed the 14-resource shape from the observed NeoLabs/EcoTaxa failure."""
+
+    file_frame = pd.DataFrame({
+        "deployment_id": ["NET-001", "NET-002"],
+        "station": ["Hebron", "Sentinel"],
+    })
+    for name in ("df_file_neolabs_samples", "df_file_neolabs_abundance"):
+        store_dataset(
+            store,
+            thread_id,
+            file_frame.copy(),
+            variable_name=name,
+            meta={
+                "source": f"file:/uploads/{name}.csv",
+                "description": f"Canonical uploaded fixture {name}.",
+                "grain": "one row per NeoLabs deployment",
+                "primary_key": "deployment_id",
+            },
+            set_active=False,
+        )
+
+    raw = pd.DataFrame({
+        "deployment_id": [f"NET-{index % 222:03d}" for index in range(1_632)],
+        "profile_id": [f"UVP-{index:04d}" for index in range(1_632)],
+        "time_delta_hours": [float(index % 11) for index in range(1_632)],
+        "match_status": ["candidate"] * 1_632,
+    })
+    store_dataset(
+        store,
+        thread_id,
+        raw,
+        variable_name=CONTINUITY_RAW,
+        meta={
+            "source": "ecotaxa_cache_result",
+            "description": (
+                "Raw NeoLabs-to-EcoTaxa candidates before the matched-only and "
+                "five-hour filters."
+            ),
+            "grain": "one candidate EcoTaxa profile per NeoLabs deployment",
+            "primary_keys": ["deployment_id", "profile_id"],
+            "filters": {"station_exact_normalized": True},
+        },
+        set_active=False,
+    )
+    store_dataset(
+        store,
+        thread_id,
+        pd.DataFrame({
+            "project_id": [14844],
+            "profile_count": [1_632],
+        }),
+        variable_name="df_ecotaxa_cache_project_14844",
+        meta={
+            "source": "ecotaxa_cache_result",
+            "description": "Durable project-level EcoTaxa cache summary.",
+            "grain": "one row per EcoTaxa project",
+            "primary_key": "project_id",
+        },
+        set_active=False,
+    )
+
+    matched = raw.iloc[:222].copy()
+    matched["match_status"] = "matched"
+    store_dataset(
+        store,
+        thread_id,
+        matched,
+        variable_name=CONTINUITY_DERIVED,
+        meta={
+            "source": "analysis:derived",
+            "description": (
+                "Matched NeoLabs deployments and EcoTaxa UVP profiles within "
+                "the verified five-hour window."
+            ),
+            "grain": "one matched candidate per NeoLabs deployment",
+            "primary_keys": ["deployment_id", "profile_id"],
+            "parent_variable": CONTINUITY_RAW,
+            "filters": {
+                "instrument_like": "UVP%",
+                "time_window_hours": 5,
+                "match_status": "matched",
+            },
+        },
+        set_active=False,
+    )
+
+    filler_names = tuple(
+        f"df_derived_context_fixture_{index:02d}" for index in range(8)
+    )
+    filler_frame = pd.DataFrame({"profile_id": ["UVP-0001"], "value": [1.0]})
+    for name in filler_names:
+        store_dataset(
+            store,
+            thread_id,
+            filler_frame.copy(),
+            variable_name=name,
+            meta={
+                "source": "analysis:derived",
+                "description": f"Unrelated persisted analysis fixture {name}.",
+                "grain": "one row per profile",
+                "primary_key": "profile_id",
+            },
+            set_active=False,
+        )
+    store_dataset(
+        store,
+        thread_id,
+        filler_frame.copy(),
+        variable_name=CONTINUITY_STALE_ACTIVE,
+        meta={
+            "source": "analysis:derived",
+            "description": "Older vertical environment result from another task.",
+            "grain": "one row per profile and depth",
+            "primary_key": "profile_id",
+        },
+    )
+    names = (
+        "df_file_neolabs_samples",
+        "df_file_neolabs_abundance",
+        CONTINUITY_RAW,
+        "df_ecotaxa_cache_project_14844",
+        CONTINUITY_DERIVED,
+        *filler_names,
+        CONTINUITY_STALE_ACTIVE,
+    )
+    if len(names) != CONTINUITY_TOTAL:
+        raise AssertionError(f"continuity fixture has {len(names)} resources")
+    return names
+
+
+def _continuity_history(question: str) -> list[BaseMessage]:
+    """Return factual tool evidence followed by a generic, name-free follow-up."""
+
+    prior_question = "Compare les déploiements NeoLabs aux profils UVP disponibles."
+    return [
+        HumanMessage(content=prior_question, id="continuity-human-1"),
+        AIMessage(
+            content="",
+            id="continuity-ai-tool",
+            tool_calls=[{
+                "name": "run_pandas",
+                "args": {"code": "result = matched_candidates.copy()"},
+                "id": "continuity-tool-call",
+                "type": "tool_call",
+            }],
+        ),
+        ToolMessage(
+            content=(
+                "status=success; rows=222; grain=one matched candidate per "
+                "NeoLabs deployment; persisted=true"
+            ),
+            name="run_pandas",
+            tool_call_id="continuity-tool-call",
+            id="continuity-tool-result",
+            artifact={
+                "status": "success",
+                "persisted": True,
+                "data_ref": CONTINUITY_DERIVED,
+                "rows": 222,
+                "grain": "one matched candidate per NeoLabs deployment",
+                "provenance": {
+                    "source": "analysis:derived",
+                    "parent_variable": CONTINUITY_RAW,
+                },
+            },
+        ),
+        AIMessage(
+            content="La comparaison demandée est prête.",
+            id="continuity-ai-final",
+        ),
+        HumanMessage(content=question, id="continuity-human-2"),
+    ]
+
+
+def _catalog_audit_counts(capture: ModelCapture) -> tuple[int, int, int]:
+    return (
+        int(capture.audit.get("dataframe_catalog_total") or 0),
+        int(capture.audit.get("dataframe_catalog_expanded") or 0),
+        int(capture.audit.get("dataframe_catalog_index_only") or 0),
+    )
+
+
+def campaign_continuity(store: SessionStore) -> list[CampaignCheck]:
+    """Replay the real derived-table disappearance without lexical hints."""
+
+    scenario = "fourteen-dataframe-working-set-continuity"
+    thread_id = f"{BASE_THREAD}-continuity"
+    expected_names = _seed_context_continuity_dataframes(store, thread_id)
+    generic_questions = (
+        "Continue avec ce résultat.",
+        "ZXQ-17.",
+    )
+    captures = tuple(
+        _capture(
+            store,
+            thread_id,
+            question,
+            f"continuity-{index}",
+            input_messages=_continuity_history(question),
+        )
+        for index, question in enumerate(generic_questions, start=1)
+    )
+    indexes = tuple(_index_names(capture.dataset_context) for capture in captures)
+    details = tuple(_detail_names(capture.dataset_context) for capture in captures)
+    audit_counts = tuple(_catalog_audit_counts(capture) for capture in captures)
+    central_positions = tuple(
+        cards.index(CONTINUITY_DERIVED) if CONTINUITY_DERIVED in cards else -1
+        for cards in details
+    )
+    stale_positions = tuple(
+        cards.index(CONTINUITY_STALE_ACTIVE)
+        if CONTINUITY_STALE_ACTIVE in cards else len(cards)
+        for cards in details
+    )
+
+    oversized_thread = f"{BASE_THREAD}-oversized-card"
+    long_columns = {
+        f"sample_{index:02d}_" + ("x" * 1_500): [index]
+        for index in range(8)
+    }
+    store_dataset(
+        store,
+        oversized_thread,
+        pd.DataFrame(long_columns),
+        variable_name="df_a_oversized_active_card",
+        meta={
+            "source": "analysis:derived",
+            "description": "Intentionally oversized schema card.",
+            "grain": "one row per synthetic sample",
+        },
+    )
+    store_dataset(
+        store,
+        oversized_thread,
+        pd.DataFrame({"sample_id": [1], "value": [2.0]}),
+        variable_name="df_z_small_card_after_oversized",
+        meta={
+            "source": "analysis:derived",
+            "description": "Small card that must survive an earlier oversized card.",
+            "grain": "one row per sample",
+            "primary_key": "sample_id",
+        },
+        set_active=False,
+    )
+    oversized = _capture(
+        store,
+        oversized_thread,
+        "Continue.",
+        "oversized-card",
+    )
+    oversized_details = _detail_names(oversized.dataset_context)
+
+    return [
+        _check(
+            scenario,
+            "continuity",
+            "all fourteen live resources remain indexed on generic follow-ups",
+            all(
+                len(index) == CONTINUITY_TOTAL
+                and set(index) == set(expected_names)
+                for index in indexes
+            ),
+            f"indexed_counts={tuple(map(len, indexes))}",
+            turn_range="two generic follow-ups",
+        ),
+        _check(
+            scenario,
+            "continuity",
+            "the 222-row derived result stays detailed with its 1632-row parent",
+            all(
+                CONTINUITY_DERIVED in cards and CONTINUITY_RAW in cards
+                for cards in details
+            )
+            and all(
+                "rows=222" in capture.dataset_context
+                and "rows=1632" in capture.dataset_context
+                for capture in captures
+            ),
+            f"details={details}",
+            turn_range="two generic follow-ups",
+        ),
+        _check(
+            scenario,
+            "continuity",
+            "stale active metadata never outranks the latest successful work result",
+            all(
+                central >= 0 and central < stale
+                for central, stale in zip(
+                    central_positions, stale_positions, strict=True
+                )
+            ),
+            f"central_positions={central_positions}; stale_positions={stale_positions}",
+            turn_range="two generic follow-ups",
+        ),
+        _check(
+            scenario,
+            "continuity",
+            "catalog accounting is exact and mutually exclusive",
+            all(
+                counts == (
+                    CONTINUITY_TOTAL,
+                    CONTINUITY_EXPANDED,
+                    CONTINUITY_INDEX_ONLY,
+                )
+                for counts in audit_counts
+            )
+            and all(
+                len(index) == len(cards) + CONTINUITY_INDEX_ONLY
+                and set(cards) <= set(index)
+                for index, cards in zip(indexes, details, strict=True)
+            ),
+            f"audit_counts={audit_counts}; expanded={tuple(map(len, details))}",
+            turn_range="two generic follow-ups",
+        ),
+        _check(
+            scenario,
+            "continuity",
+            "resource focus is invariant to unrelated lexical content",
+            len(details) == 2
+            and details[0] == details[1]
+            and CONTINUITY_DERIVED not in " ".join(generic_questions)
+            and CONTINUITY_RAW not in " ".join(generic_questions),
+            f"questions={generic_questions}; details_equal={details[0] == details[1]}",
+            turn_range="two generic follow-ups",
+            violated_contract="working-set selection must use factual references, not lexical ranking",
+        ),
+        _check(
+            "oversized-card-packing",
+            "continuity",
+            "one oversized card cannot block later selected cards",
+            "df_z_small_card_after_oversized" in oversized_details,
+            f"expanded={oversized_details}; chars={len(oversized.dataset_context)}",
+        ),
+    ]
+
+
+def _current_tool_turn_messages(question: str) -> list[BaseMessage]:
+    return [
+        HumanMessage(content=question, id="cache-human-tool-turn"),
+        AIMessage(
+            content="",
+            id="cache-ai-tool-turn",
+            tool_calls=[{
+                "name": "run_pandas",
+                "args": {"code": "result = df_single_sample.copy()"},
+                "id": "cache-tool-call",
+                "type": "tool_call",
+            }],
+        ),
+        ToolMessage(
+            content="status=success; persisted=true; data_ref=df_single_sample",
+            name="run_pandas",
+            tool_call_id="cache-tool-call",
+            id="cache-tool-result",
+            artifact={
+                "status": "success",
+                "persisted": True,
+                "data_ref": "df_single_sample",
+            },
+        ),
+    ]
+
+
+def _capture_cache_enabled_request(
+    store: SessionStore,
+    thread_id: str,
+    question: str,
+    message_id: str,
+    *,
+    input_messages: Sequence[BaseMessage] | None = None,
+) -> ModelCapture:
+    """Capture the real middleware with its explicit cache breakpoint enabled."""
+
+    spy = _SpyChatModel(responses=[AIMessage(content="cache capture complete")])
+    with patch("tools.session_store.default_store", store):
+        catalog = build_tool_catalog(thread_id)
+        graph = create_agent(
+            spy,
+            list(catalog.tools),
+            system_prompt=agent_module._SYSTEM_PROMPT,
+            middleware=[
+                ModelCallLimitMiddleware(
+                    run_limit=agent_module._MAX_MODEL_CALLS_PER_TURN,
+                    exit_behavior="end",
+                ),
+                ExplorationStateMiddleware(thread_id=thread_id),
+                agent_module._ContextMiddleware(
+                    user_id="context-cache-harness",
+                    thread_id=thread_id,
+                    catalog_names=catalog.names,
+                    prompt_cache_enabled=True,
+                ),
+            ],
+            state_schema=IdeaAgentState,
+            store=InMemoryStore(),
+        )
+        graph_input: dict[str, Any] = {
+            "messages": list(input_messages)
+            if input_messages is not None
+            else [HumanMessage(content=question, id=message_id)]
+        }
+        result = graph.invoke(
+            graph_input,
+            config={"configurable": {"thread_id": thread_id}},
+        )
+    return ModelCapture(
+        system=str(spy.capture.get("system") or ""),
+        messages=tuple(spy.capture.get("messages") or ()),
+        tool_names=tuple(spy.capture.get("tool_names") or ()),
+        tool_choice=spy.capture.get("tool_choice"),
+        audit=agent_module.get_context_audit(thread_id),
+        state_messages=tuple(result.get("messages") or ()),
+        tool_definitions=tuple(spy.capture.get("tool_definitions") or ()),
+    )
+
+
+def campaign_cache(store: SessionStore) -> list[CampaignCheck]:
+    """Verify the stable cache prefix and the variable suffix independently."""
+
+    scenario = "three-call-cache-and-suffix-accounting"
+    thread_id = f"{BASE_THREAD}-cache"
+    _seed_one_dataframe(store, thread_id)
+    first_question = "Prépare le tableau disponible."
+    tool_question = "Affiche maintenant le résultat."
+    final_question = "Continue."
+    first = _capture_cache_enabled_request(
+        store, thread_id, first_question, "cache-turn-1"
+    )
+    tool_turn_messages = _current_tool_turn_messages(tool_question)
+    tool_turn = _capture_cache_enabled_request(
+        store,
+        thread_id,
+        tool_question,
+        "cache-turn-2",
+        input_messages=tool_turn_messages,
+    )
+    final_history = [
+        *tool_turn_messages,
+        AIMessage(content="Résultat affiché.", id="cache-ai-final"),
+        HumanMessage(content=final_question, id="cache-human-final"),
+    ]
+    return _finish_cache_campaign(
+        store=store,
+        thread_id=thread_id,
+        final_question=final_question,
+        final_history=final_history,
+        first=first,
+        tool_turn=tool_turn,
+        scenario=scenario,
+    )
+
+
+def _budget_tool_exchange(
+    index: int,
+    tool_name: str,
+    *,
+    data_ref: str | None = None,
+) -> tuple[AIMessage, ToolMessage]:
+    """Build one successful structural tool exchange for the cost campaign."""
+
+    call_id = f"budget-call-{index}"
+    artifact: dict[str, Any] = {
+        "status": "success",
+        "persisted": bool(data_ref),
+        "rows": 12,
+    }
+    if data_ref:
+        artifact["data_ref"] = data_ref
+    return (
+        AIMessage(
+            content="",
+            id=f"budget-ai-{index}",
+            tool_calls=[{
+                "name": tool_name,
+                "args": {"campaign_probe": index},
+                "id": call_id,
+                "type": "tool_call",
+            }],
+        ),
+        ToolMessage(
+            content=f"status=success; tool={tool_name}; rows=12",
+            name=tool_name,
+            tool_call_id=call_id,
+            id=f"budget-tool-{index}",
+            status="success",
+            artifact=artifact,
+        ),
+    )
+
+
+def campaign_budget(store: SessionStore) -> list[CampaignCheck]:
+    """Verify the live five-call and run_pandas cost contract offline."""
+
+    scenario = "five-model-call-two-pandas-budget"
+    thread_id = f"{BASE_THREAD}-budget"
+    _seed_one_dataframe(store, thread_id)
+    question = "Produis le résultat demandé à partir des données disponibles."
+    first = _capture(store, thread_id, question, "budget-first")
+
+    history: list[BaseMessage] = [
+        HumanMessage(content=question, id="budget-human"),
+    ]
+    for exchange in (
+        _budget_tool_exchange(
+            1,
+            "query_ecotaxa_cache",
+            data_ref="df_ecotaxa_cache_result_budget",
+        ),
+        _budget_tool_exchange(
+            2,
+            "run_pandas",
+            data_ref="df_derived_budget_qualification",
+        ),
+        _budget_tool_exchange(
+            3,
+            "run_pandas",
+            data_ref="df_derived_budget_result",
+        ),
+    ):
+        history.extend(exchange)
+    fourth = _capture(
+        store,
+        thread_id,
+        question,
+        "budget-fourth",
+        input_messages=history,
+    )
+
+    history.extend(
+        _budget_tool_exchange(4, "run_graph")
+    )
+    fifth = _capture(
+        store,
+        thread_id,
+        question,
+        "budget-fifth",
+        input_messages=history,
+    )
+
+    first_audit = first.audit
+    fourth_audit = fourth.audit
+    fifth_audit = fifth.audit
+    return [
+        _check(
+            scenario,
+            "budget",
+            "permanent prompt defines an economical five-call target and two run_pandas calls",
+            "within about five model calls" in first.system
+            and "at most two `run_pandas` calls" in first.system,
+            "system cost contract present",
+            turn_range="permanent system",
+        ),
+        _check(
+            scenario,
+            "budget",
+            "first provider call receives the live budget",
+            first_audit.get("model_call_number_current_turn") == 1
+            and first_audit.get("target_model_calls_per_turn") == 5
+            and first_audit.get("max_model_calls_per_turn") == 10
+            and first_audit.get("target_run_pandas_calls_per_turn") == 2
+            and "Model call: 1; economy target" in first.runtime_context,
+            str({
+                "call": first_audit.get("model_call_number_current_turn"),
+                "max": first_audit.get("max_model_calls_per_turn"),
+                "pandas_target": first_audit.get(
+                    "target_run_pandas_calls_per_turn"
+                ),
+            }),
+            turn_range="model call 1",
+        ),
+        _check(
+            scenario,
+            "budget",
+            "two actual run_pandas results spend the normal budget",
+            fourth_audit.get("model_call_number_current_turn") == 4
+            and fourth_audit.get("run_pandas_attempts_current_turn") == 2
+            and fourth_audit.get("run_pandas_successes_current_turn") == 2
+            and "normal run_pandas budget is already spent"
+            in fourth.runtime_context,
+            str({
+                "call": fourth_audit.get("model_call_number_current_turn"),
+                "pandas_attempts": fourth_audit.get(
+                    "run_pandas_attempts_current_turn"
+                ),
+                "pandas_successes": fourth_audit.get(
+                    "run_pandas_successes_current_turn"
+                ),
+            }),
+            turn_range="model call 4",
+        ),
+        _check(
+            scenario,
+            "budget",
+            "fifth call strongly signals economy without disabling tools",
+            fifth_audit.get("model_call_number_current_turn") == 5
+            and fifth_audit.get("economy_target_reached") is True
+            and fifth.tool_choice != "none"
+            and "ECONOMY TARGET REACHED" in fifth.runtime_context,
+            str({
+                "call": fifth_audit.get("model_call_number_current_turn"),
+                "economy_target_reached": fifth_audit.get("economy_target_reached"),
+                "tool_choice": fifth.tool_choice,
+            }),
+            turn_range="model call 5",
+        ),
+        _check(
+            scenario,
+            "budget",
+            "budget remains variable suffix context and does not alter cache prefix",
+            "execution_budget"
+            in (fifth_audit.get("dynamic_context_tokens_by_block") or {})
+            and fifth_audit.get("cacheable_prefix_tokens")
+            == first_audit.get("cacheable_prefix_tokens"),
+            "execution_budget is separately metered; prefix token count is stable",
+            turn_range="model calls 1–5",
+        ),
+    ]
+
+
+def _finish_cache_campaign(
+    *,
+    store: SessionStore,
+    thread_id: str,
+    final_question: str,
+    final_history: Sequence[BaseMessage],
+    first: ModelCapture,
+    tool_turn: ModelCapture,
+    scenario: str,
+) -> list[CampaignCheck]:
+    """Complete cache assertions after building the three provider requests."""
+
+    final = _capture_cache_enabled_request(
+        store,
+        thread_id,
+        final_question,
+        "cache-turn-3",
+        input_messages=final_history,
+    )
+    captures = (first, tool_turn, final)
+    audits = tuple(capture.audit for capture in captures)
+    prefix_tokens = tuple(
+        int(audit.get("cacheable_prefix_tokens") or 0) for audit in audits
+    )
+    block_tokens = tuple(
+        audit.get("dynamic_context_tokens_by_block") for audit in audits
+    )
+    current_tool_tokens = tuple(
+        int(audit.get("current_turn_tool_tokens") or 0) for audit in audits
+    )
+    cache_keys = tuple(
+        str(audit.get("prompt_cache_contract_key") or "") for audit in audits
+    )
+
+    def projected_ledger_tokens(capture: ModelCapture) -> dict[str, int]:
+        return {
+            str(item.get("name")): int(item.get("projected_tokens") or 0)
+            for item in capture.context_ledger
+        }
+
+    return [
+        _check(
+            scenario,
+            "cache",
+            "cacheable prefix is exactly the breakpointed permanent system",
+            all(value > 0 for value in prefix_tokens)
+            and all(
+                value == int(audit.get("approx_tokens_base_system") or 0)
+                for value, audit in zip(prefix_tokens, audits, strict=True)
+            ),
+            f"prefix_tokens={prefix_tokens}; base_system="
+            f"{tuple(audit.get('approx_tokens_base_system') for audit in audits)}",
+            turn_range="three provider calls",
+        ),
+        _check(
+            scenario,
+            "cache",
+            "cache prefix and versioned contract key stay stable across suffix changes",
+            len(set(prefix_tokens)) == 1
+            and len(set(cache_keys)) == 1
+            and bool(cache_keys[0])
+            and len({capture.system for capture in captures}) == 1,
+            f"prefixes={prefix_tokens}; distinct_keys={len(set(cache_keys))}",
+            turn_range="three provider calls",
+        ),
+        _check(
+            scenario,
+            "cache",
+            "dynamic suffix tokens are reported for every projected block",
+            all(isinstance(item, dict) and item for item in block_tokens)
+            and all(
+                all(
+                    int(item.get(name) or 0) == tokens
+                    for name, tokens in projected_ledger_tokens(capture).items()
+                )
+                and set(item) <= {
+                    *projected_ledger_tokens(capture),
+                    "__wrapper_and_separators__",
+                }
+                and sum(int(value or 0) for value in item.values())
+                == int(capture.audit.get("dynamic_context_tokens") or 0)
+                for item, capture in zip(block_tokens, captures, strict=True)
+                if isinstance(item, dict)
+            ),
+            f"block_tokens={block_tokens}",
+            turn_range="three provider calls",
+        ),
+        _check(
+            scenario,
+            "cache",
+            "current-turn tool tokens are isolated from history and cacheable prefix",
+            current_tool_tokens[0] == 0
+            and current_tool_tokens[1] > 0
+            and current_tool_tokens[2] == 0
+            and prefix_tokens[0] == prefix_tokens[1] == prefix_tokens[2],
+            f"current_tool_tokens={current_tool_tokens}; prefixes={prefix_tokens}",
+            turn_range="plain turn, tool continuation, following turn",
+        ),
+        _check(
+            scenario,
+            "cache",
+            "variable suffix accounting fits inside every estimated request",
+            all(
+                prefix + sum(int(value or 0) for value in blocks.values())
+                + current_tool
+                <= int(audit.get("approx_tokens_model_request") or 0)
+                for prefix, blocks, current_tool, audit in zip(
+                    prefix_tokens,
+                    block_tokens,
+                    current_tool_tokens,
+                    audits,
+                    strict=True,
+                )
+                if isinstance(blocks, dict)
+            ),
+            "prefix + projected blocks + current tool turn <= request on all calls",
+            turn_range="three provider calls",
+        ),
+    ]
 
 
 def campaign_frontier(store: SessionStore) -> list[CampaignCheck]:
@@ -2087,6 +2838,7 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
         "ecopart",
         "geography",
         "environmental_enrichment",
+        "deliverable",
     }
     provider_builtin_names = namespace_names | {"tool_search"}
     valid_provider_names = catalog_names | (
@@ -2740,6 +3492,9 @@ def campaign_thread_isolation(store: SessionStore) -> list[CampaignCheck]:
 CAMPAIGNS: dict[str, Callable[[SessionStore], list[CampaignCheck]]] = {
     "current_task": campaign_current_task,
     "dataframes": campaign_dataframes,
+    "continuity": campaign_continuity,
+    "cache": campaign_cache,
+    "budget": campaign_budget,
     "frontier": campaign_frontier,
     "graph": campaign_graph,
     "history": campaign_history,

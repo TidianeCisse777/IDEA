@@ -1042,14 +1042,24 @@ def _run_pandas_dataframe_metadata(
     parent_variables: tuple[str, ...],
     fallback_description: str,
 ) -> dict[str, Any]:
-    """Build metadata shared by every run_pandas persistence path."""
+    """Build facts and bounded LLM claims for run_pandas persistence.
+
+    Free-form descriptions, grains and filters are useful explanations of the
+    model's intent, but they are not evidence about the resulting dataframe.
+    Keep them available for audit without promoting them to factual resource
+    metadata consumed by the WorkingSet.
+    """
     clean_description = str(description or "").strip()[:500]
     clean_grain = str(grain or "").strip()[:160]
     clean_filters = _clean_dataframe_filters(filters)
-    return {
-        "description": clean_description or fallback_description,
+    claims = {
+        **({"description": clean_description} if clean_description else {}),
         **({"grain": clean_grain} if clean_grain else {}),
         **({"filters": clean_filters} if clean_filters else {}),
+    }
+    return {
+        "description": fallback_description,
+        **({"llm_claims": claims} if claims else {}),
         **(
             {"parent_variables": list(parent_variables)}
             if parent_variables

@@ -232,26 +232,6 @@ class ExplorationRun(_StateModel):
     updated_at: str
 
 
-_VISUAL_PATTERN = re.compile(
-    r"\b(graph(?:ique)?|carte|figure|visualis|plot|chart|map)\w*\b",
-    re.IGNORECASE,
-)
-_FILE_PATTERN = re.compile(
-    r"\b(export|t[ée]l[ée]charg|pdf|csv|xlsx|livrable|rapport)\w*\b",
-    re.IGNORECASE,
-)
-_TABLE_PATTERN = re.compile(
-    r"\b(tableau|table|liste|classement|r[ée]sum[ée])\w*\b",
-    re.IGNORECASE,
-)
-_PLAN_HEADING_PATTERN = re.compile(
-    r"(?im)^#{2,4}\s*plan(?:\s+d['’]action)?\s*$"
-)
-_PLAN_ITEM_PATTERN = re.compile(
-    r"^\s*(?:[-*+]\s+|\d+[.)]\s+)(?:\[[ xX]\]\s*)?(?P<item>.+?)\s*$"
-)
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -295,23 +275,14 @@ def request_fingerprint(objective: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:20]
 
 
-def infer_deliverables(objective: str) -> tuple[ExplorationDeliverable, ...]:
-    deliverables: list[ExplorationDeliverable] = [
-        ExplorationDeliverable(kind="answer", description=objective or "Répondre à la demande")
-    ]
-    if _TABLE_PATTERN.search(objective):
-        deliverables.append(
-            ExplorationDeliverable(kind="table", description="Présenter les résultats structurés")
-        )
-    if _VISUAL_PATTERN.search(objective):
-        deliverables.append(
-            ExplorationDeliverable(kind="visualization", description="Produire la visualisation demandée")
-        )
-    if _FILE_PATTERN.search(objective):
-        deliverables.append(
-            ExplorationDeliverable(kind="file", description="Produire le fichier livrable demandé")
-        )
-    return tuple(deliverables)
+def default_deliverables(objective: str) -> tuple[ExplorationDeliverable, ...]:
+    """Start with an answer only; never infer intent from words in user prose."""
+    return (
+        ExplorationDeliverable(
+            kind="answer",
+            description=objective or "Répondre à la demande",
+        ),
+    )
 
 
 def new_exploration_run(
@@ -323,7 +294,7 @@ def new_exploration_run(
         run_id=f"explore-{uuid.uuid4().hex}",
         request_fingerprint=request_fingerprint(objective),
         objective=objective,
-        deliverables=infer_deliverables(objective),
+        deliverables=default_deliverables(objective),
         resources_available=resources,
         status="running",
         created_at=now,
@@ -341,240 +312,44 @@ def validate_exploration_run(payload: object) -> ExplorationRun | None:
         return None
 
 
+_CAPABILITY_BY_TOOL: dict[str, ExplorationCapability] = {
+    "load_file": "retrieve_data",
+    "run_pandas": "compute_metric",
+    "run_graph": "visualize_data",
+    "query_copepod_knowledge_base": "ground_method",
+    "lookup_marine_taxonomy": "retrieve_data",
+    "export_deliverable": "export_deliverable",
+    "list_ecotaxa_cache_tables": "inspect_resources",
+    "describe_ecotaxa_cache_table": "inspect_resources",
+    "query_ecotaxa_cache": "retrieve_data",
+    "query_ecotaxa": "retrieve_data",
+    "export_ecotaxa_samples": "retrieve_data",
+    "preview_ecopart_sample": "inspect_resources",
+    "find_ecopart_project_for_ecotaxa": "inspect_resources",
+    "enrich_ecotaxa_with_ecopart_remote": "join_data",
+    "query_amundsen_profiles_for_table": "retrieve_data",
+    "find_amundsen_data_for_table": "inspect_resources",
+    "enrich_with_amundsen_ctd": "join_data",
+    "enrich_with_bio_oracle": "join_data",
+    "enrich_with_ogsl": "join_data",
+    "get_zone_info": "inspect_resources",
+    "filter_dataframe_by_zone": "filter_data",
+    "split_dataframe_by_zone": "filter_data",
+    "list_sql_tables": "inspect_resources",
+    "preview_sql_table": "inspect_resources",
+    "copy_sql_query_to_workspace": "retrieve_data",
+}
+
+
 def capability_for_tool(tool_name: str) -> ExplorationCapability:
-    name = tool_name.casefold()
-    if name == "query_copepod_knowledge_base":
-        return "ground_method"
-    if name == "run_graph":
-        return "visualize_data"
-    if name == "export_deliverable" or name.startswith("export_"):
-        return "export_deliverable"
-    if "join" in name or "couple" in name or "enrich" in name:
-        return "join_data"
-    if name.startswith(("filter_", "split_")):
-        return "filter_data"
-    if name == "run_pandas":
-        return "compute_metric"
-    if name.startswith(("compare_", "rank_", "group_", "count_")):
-        return "compare_data"
-    if name.startswith(("summarize_", "audit_")):
-        return "summarize_data"
-    if name.startswith(("list_", "preview_", "inspect_", "describe_", "find_", "get_", "resolve_")):
-        return "inspect_resources"
-    if name.startswith(("load_", "query_", "copy_")):
-        return "retrieve_data"
-    return "validate_data"
+    """Classify only an exact executed tool name; never inspect user prose."""
+    return _CAPABILITY_BY_TOOL.get(tool_name, "validate_data")
 
 
 def _expected_evidence(tool_name: str) -> tuple[str, ...]:
-    if tool_name == "run_graph" or tool_name.startswith("export_"):
+    if tool_name in {"run_graph", "export_deliverable"}:
         return ("successful_status", "artifact_ref")
     return ("successful_status",)
-
-
-def _capability_for_instruction(instruction: str) -> ExplorationCapability:
-    """Infer analytical intent from the already-visible human-readable plan."""
-    text = instruction.casefold()
-    patterns: tuple[tuple[ExplorationCapability, tuple[str, ...]], ...] = (
-        ("export_deliverable", ("export", "livrable", "pdf", "csv", "xlsx", "télécharg")),
-        ("visualize_data", ("grap", "visual", "figure", "carte", "plot", "chart", "map")),
-        ("join_data", ("joint", "join", "merge", "coupl", "enrich", "relier", "combiner")),
-        ("filter_data", ("filtr", "sous-ensemble", "sélectionner", "restreindre", "split")),
-        ("retrieve_data", ("récup", "charger", "extraire", "interroger", "query", "télécharg")),
-        ("inspect_resources", ("inspect", "schéma", "schema", "colonne", "source", "structure")),
-        ("validate_data", ("vérif", "valid", "contrôl", "audit", "couverture")),
-        ("compare_data", ("compar", "class", "rang", "différence")),
-        ("summarize_data", ("résum", "synth", "décrire", "profil")),
-        ("ground_method", ("rag", "méthod", "documentation", "connaissance")),
-    )
-    for capability, markers in patterns:
-        if any(marker in text for marker in markers):
-            return capability
-    return "compute_metric"
-
-
-def _extract_plan_items(message: AIMessage) -> tuple[str, ...]:
-    text = _message_text(message)
-    heading = _PLAN_HEADING_PATTERN.search(text)
-    if heading is None:
-        return ()
-    items: list[str] = []
-    for line in text[heading.end():].splitlines():
-        if line.lstrip().startswith("#"):
-            break
-        match = _PLAN_ITEM_PATTERN.match(line)
-        if match:
-            item = re.sub(r"\s+", " ", match.group("item")).strip()
-            if item:
-                items.append(item[:500])
-        elif items and line.strip():
-            items[-1] = f"{items[-1]} {line.strip()}"[:500]
-    return tuple(items[:6])
-
-
-def _plan_message_id(message: AIMessage) -> str:
-    explicit = getattr(message, "id", None)
-    if explicit:
-        return str(explicit)
-    payload = {
-        "content": _message_text(message),
-        "tool_calls": getattr(message, "tool_calls", None) or [],
-    }
-    digest = hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()[:20]
-    return f"plan-message-{digest}"
-
-
-def _expected_resources_for_instruction(
-    instruction: str,
-    resources: tuple[ResourceRecord, ...],
-) -> tuple[str, ...]:
-    text = instruction.casefold()
-    matched: list[str] = []
-    for resource in resources:
-        names = {resource.name.casefold(), resource.source.casefold()}
-        if any(len(name) >= 3 and name in text for name in names):
-            matched.append(resource.name)
-    return tuple(dict.fromkeys(matched))
-
-
-def capture_prospective_plan(
-    payload: object,
-    messages: list[Any],
-) -> dict[str, Any] | None:
-    """Persist the existing ``### Plan`` response without another model call."""
-    run = validate_exploration_run(payload)
-    if run is None:
-        return None
-    latest_ai = next(
-        (
-            message
-            for message in reversed(_current_turn_messages(messages))
-            if isinstance(message, AIMessage)
-        ),
-        None,
-    )
-    if latest_ai is None:
-        return run.model_dump(mode="json")
-    message_id = _plan_message_id(latest_ai)
-    if message_id in run.processed_plan_message_ids:
-        return run.model_dump(mode="json")
-    items = _extract_plan_items(latest_ai)
-    if not items:
-        return run.model_dump(mode="json")
-
-    revision = run.plan_revision + 1
-    steps: list[ExplorationStep] = []
-    for step in run.steps:
-        if step.origin == "planned" and step.status in {"pending", "blocked"}:
-            steps.append(step.model_copy(update={"status": "superseded"}))
-        else:
-            steps.append(step)
-
-    dependencies = list(run.dependencies)
-    anchor = next(
-        (
-            step.step_id
-            for step in reversed(steps)
-            if step.status == "complete"
-        ),
-        None,
-    )
-    previous_step_id = anchor
-    first_step_id: str | None = None
-    for position, instruction in enumerate(items, start=1):
-        digest = hashlib.sha256(
-            f"{run.request_fingerprint}:{revision}:{position}:{instruction}".encode("utf-8")
-        ).hexdigest()[:12]
-        step_id = f"plan-r{revision}-{digest}"
-        if first_step_id is None:
-            first_step_id = step_id
-        capability = _capability_for_instruction(instruction)
-        depends_on = (previous_step_id,) if previous_step_id else ()
-        steps.append(
-            ExplorationStep(
-                step_id=step_id,
-                capability=capability,
-                instruction=instruction,
-                origin="planned",
-                plan_position=position,
-                depends_on=depends_on,
-                expected_resources=_expected_resources_for_instruction(
-                    instruction,
-                    run.resources_available,
-                ),
-                expected_evidence=(
-                    ("successful_status", "artifact_ref")
-                    if capability in {"visualize_data", "export_deliverable"}
-                    else ("successful_status",)
-                ),
-                status="pending",
-            )
-        )
-        if previous_step_id:
-            parent = next(
-                (step for step in steps if step.step_id == previous_step_id),
-                None,
-            )
-            dependencies.append(
-                ExplorationDependency(
-                    dependency_id=f"dep-{previous_step_id}-{step_id}",
-                    step_id=step_id,
-                    depends_on_step_id=previous_step_id,
-                    status=(
-                        "satisfied"
-                        if parent is not None and parent.status == "complete"
-                        else "blocked"
-                        if parent is not None and parent.status in {"failed", "blocked"}
-                        else "pending"
-                    ),
-                    description="Cette étape planifiée dépend de l’étape précédente.",
-                )
-            )
-        previous_step_id = step_id
-
-    processed = (*run.processed_plan_message_ids, message_id)
-    return run.model_copy(
-        update={
-            "steps": tuple(steps),
-            "dependencies": tuple(dependencies),
-            "active_step_id": first_step_id or run.active_step_id,
-            "processed_plan_message_ids": tuple(dict.fromkeys(processed)),
-            "plan_revision": revision,
-            "status": "running",
-            "updated_at": _now(),
-        }
-    ).model_dump(mode="json")
-
-
-def _planned_step_for_call(
-    steps: list[ExplorationStep],
-    capability: ExplorationCapability,
-    tool_name: str,
-) -> int | None:
-    completed = {step.step_id for step in steps if step.status == "complete"}
-    compatible = {capability}
-    if tool_name == "run_pandas":
-        compatible.update(
-            {
-                "inspect_resources",
-                "filter_data",
-                "join_data",
-                "validate_data",
-                "summarize_data",
-                "compare_data",
-            }
-        )
-    for index, step in enumerate(steps):
-        if (
-            step.origin == "planned"
-            and step.status in {"pending", "failed"}
-            and step.capability in compatible
-            and all(parent in completed for parent in step.depends_on)
-        ):
-            return index
-    return None
 
 
 def register_tool_steps(payload: object, messages: list[Any]) -> dict[str, Any] | None:
@@ -604,22 +379,6 @@ def register_tool_steps(payload: object, messages: list[Any]) -> dict[str, Any] 
         call_id = str(call.get("id") or uuid.uuid4().hex)
         tool_name = str(call.get("name") or "unknown")
         capability = capability_for_tool(tool_name)
-        planned_index = _planned_step_for_call(steps, capability, tool_name)
-        if planned_index is not None:
-            planned = steps[planned_index]
-            steps[planned_index] = planned.model_copy(
-                update={
-                    "tool_name": tool_name,
-                    "tool_call_id": call_id,
-                    "expected_evidence": _expected_evidence(tool_name),
-                    "status": "running",
-                    "attempts": planned.attempts + 1,
-                }
-            )
-            processed.add(call_id)
-            active_step_id = planned.step_id
-            parent_step_id = planned.step_id
-            continue
         step_id = f"step-{call_id}"
         parent = next(
             (item for item in steps if item.step_id == parent_step_id),
@@ -698,28 +457,10 @@ def _validation_results(
 
 
 def _next_active_step(steps: list[ExplorationStep]) -> ExplorationStep | None:
-    running = next(
+    return next(
         (step for step in reversed(steps) if step.status == "running"),
         None,
     )
-    if running is not None:
-        return running
-    completed = {step.step_id for step in steps if step.status == "complete"}
-    ready = next(
-        (
-            step
-            for step in steps
-            if step.status == "pending"
-            and all(parent in completed for parent in step.depends_on)
-        ),
-        None,
-    )
-    if ready is not None:
-        return ready
-    # A finished or failed step is evidence, not work still to execute. Keeping
-    # the last completed step active made the model believe the plan was still
-    # running and every extra tool call then became a new observed step.
-    return None
 
 
 def ingest_tool_evidence(payload: object, messages: list[Any]) -> dict[str, Any] | None:
@@ -837,16 +578,15 @@ def ingest_tool_evidence(payload: object, messages: list[Any]) -> dict[str, Any]
         processed.add(message_key)
 
     active_step = _next_active_step(steps)
-    plan_complete = bool(steps) and all(
-        step.status in {"complete", "superseded"} for step in steps
-    )
     updated = run.model_copy(
         update={
             "steps": tuple(steps),
             "dependencies": tuple(dependencies),
             "evidence": tuple(evidence),
             "active_step_id": active_step.step_id if active_step else None,
-            "status": "complete" if plan_complete else run.status,
+            # Tool completion never decides that the user's request is done.
+            # Only a tool-free final model response closes the exploration.
+            "status": "running",
             "processed_tool_message_ids": tuple(sorted(processed)),
             "updated_at": _now(),
         }
@@ -1011,21 +751,18 @@ def finish_exploration_run(payload: object, messages: list[Any]) -> dict[str, An
     model_finalized = bool(latest_ai and not (getattr(latest_ai, "tool_calls", None) or []))
     completed = sum(step.status == "complete" for step in run.steps)
     failed = sum(step.status in {"failed", "blocked"} for step in run.steps)
-    unresolved = active_data_dependencies(run.model_dump(mode="json"))
     completion = ExplorationCompletion(
         model_finalized=model_finalized,
         evidence_count=len(run.evidence),
         completed_step_count=completed,
         failed_step_count=failed,
         note=(
-            "Fin décidée par le modèle; la suffisance globale sera validée par une étape ultérieure."
-            if model_finalized and not unresolved
-            else "Une dépendance de données reste à récupérer ou une analyse doit être reprise."
-            if unresolved
+            "Réponse finale produite par le modèle."
+            if model_finalized
             else "Exécution interrompue avant une réponse finale."
         ),
     )
-    status: ExplorationStatus = "complete" if model_finalized and not unresolved else "failed"
+    status: ExplorationStatus = "complete" if model_finalized else "failed"
     return run.model_copy(
         update={
             "status": status,
@@ -1131,8 +868,22 @@ def _render_scope(scope: dict[str, Any]) -> str:
     """Keep scope useful without injecting long identifier lists."""
     if not scope:
         return "not declared"
+    filters = {
+        key: value
+        for key, value in scope.items()
+        if str(key).startswith("filter.")
+    }
     compact: dict[str, Any] = {}
     for key, value in scope.items():
+        if key in {
+            "scope_basis",
+            "scope_columns",
+            "time_columns",
+            "declared_conflicts",
+        } or str(key).startswith("filter."):
+            continue
+        if key.endswith("_count") and key[:-6] in scope:
+            continue
         if isinstance(value, list):
             if key in {"project_ids"} and len(value) <= 6:
                 compact[key] = value
@@ -1140,7 +891,39 @@ def _render_scope(scope: dict[str, Any]) -> str:
                 compact[key] = {"count": len(value)}
         else:
             compact[key] = value
-    return json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+    rendered_filters = (
+        json.dumps(filters, ensure_ascii=False, separators=(",", ":"))
+        if filters
+        else ""
+    )
+    rendered_observed = (
+        json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+        if compact
+        else ""
+    )
+    if rendered_filters and rendered_observed:
+        return f"{rendered_filters}; observed={rendered_observed}"
+    return rendered_filters or rendered_observed or "not established"
+
+
+_PARENT_RELATION_KINDS = frozenset({
+    "alias_of",
+    "parent_variable",
+    "parent_variables",
+    "source_variable",
+    "input_dataframes",
+    "raw_export_variables",
+})
+
+
+def _resource_parents(resource: ResourceRecord) -> tuple[str, ...]:
+    """Return explicit parent table names without exposing relation syntax."""
+    parents: list[str] = []
+    for relation in resource.relations:
+        kind, separator, target = relation.partition(":")
+        if separator and kind in _PARENT_RELATION_KINDS and target:
+            parents.append(target)
+    return tuple(dict.fromkeys(parents))
 
 
 def _is_file_backed_resource(resource: ResourceRecord) -> bool:
@@ -1267,15 +1050,29 @@ def _render_source_anchor_block(
 def render_task_context(
     payload: object,
     *,
+    messages: tuple[Any, ...] | list[Any] = (),
     preferred_sources: tuple[str, ...] = (),
     primary_source: str | None = None,
-    max_chars: int = 1_200,
+    max_chars: int = 2_600,
 ) -> str:
-    """Render turn facts; permanent planning rules stay in the system prompt."""
+    """Render the current request plus a bounded user-only continuity capsule."""
     run = validate_exploration_run(payload)
     if run is None:
         return ""
     deliverables = ", ".join(item.kind for item in run.deliverables) or "answer"
+    human_instructions = [
+        " ".join(_message_text(message).split())[:360]
+        for message in messages
+        if isinstance(message, HumanMessage) and _message_text(message).strip()
+    ]
+    prior_instructions = human_instructions[:-1][-4:]
+    continuity = ""
+    if prior_instructions:
+        continuity = (
+            "\nRecent user instructions (oldest to newest; context only, "
+            "the current objective wins):\n"
+            + "\n".join(f"- {instruction}" for instruction in prior_instructions)
+        )
     source_line = ""
     if preferred_sources or primary_source:
         source_line = (
@@ -1287,7 +1084,8 @@ def render_task_context(
         "\n\n## CURRENT TASK (authoritative for this turn)\n"
         f"Objective: {run.objective}\n"
         f"Required deliverables: {deliverables}\n"
-        "\n\n## PLANNER DATASET CHOICE\n"
+        + continuity
+        + "\n\n## PLANNER DATASET CHOICE\n"
         "Application selection: none. Candidate choice and qualification remain "
         "the planner's responsibility under the permanent DataFrame contract."
         + source_line
@@ -1299,13 +1097,13 @@ def render_dataframe_context(
     payload: object,
     *,
     active_variable: str | None = None,
-    max_chars: int = 12_000,
+    messages: tuple[Any, ...] | list[Any] = (),
+    max_chars: int = 9_000,
 ) -> str:
-    """Present every live table by name, with bounded relevant details."""
+    """Render the factual working set plus a complete compact table index."""
     run = validate_exploration_run(payload)
     if run is None:
         return ""
-    objective = run.objective.casefold()
     tables = [
         item
         for item in run.resources_available
@@ -1315,89 +1113,39 @@ def render_dataframe_context(
         tables,
         key=lambda item: (item.name.casefold(), item.source.casefold()),
     )
-    objective_tokens = {
-        token
-        for token in re.findall(r"[a-zà-ÿ0-9_]+", objective)
-        if len(token) >= 3
-    }
 
-    def detail_priority(
-        resource: ResourceRecord,
-    ) -> tuple[int, int, int, int, str, str]:
-        searchable = " ".join([
-            resource.name,
-            resource.source,
-            resource.description or "",
-            resource.grain or "",
-            *resource.columns,
-        ]).casefold()
-        overlap = sum(token in searchable for token in objective_tokens)
-        return (
-            0 if resource.name.casefold() in objective else 1,
-            -overlap,
-            0 if resource.name == active_variable else 1,
-            resource.age_turns if resource.age_turns is not None else 0,
+    from agents.context_working_set import build_working_set
+
+    working_set = build_working_set(
+        tables,
+        messages,
+        active_variable=active_variable,
+    )
+    resources_by_name = {resource.name: resource for resource in tables}
+    entries_by_name = {entry.data_ref: entry for entry in working_set.entries}
+    latest_tool_fact_by_name = {
+        fact.produced_ref: fact
+        for fact in working_set.ledger.tool_facts
+        if fact.produced_ref and fact.status == "success"
+    }
+    ordered_names = list(working_set.ordered_names)
+    remaining = sorted(
+        (resource for resource in tables if resource.name not in ordered_names),
+        key=lambda resource: (
+            resource.age_turns is None,
+            resource.age_turns if resource.age_turns is not None else 10**9,
             resource.name.casefold(),
             resource.source.casefold(),
-        )
-
-    file_tables = sorted(
-        (resource for resource in tables if _is_file_backed_resource(resource)),
-        key=detail_priority,
-    )
-    non_file_source_anchors = sorted(
-        (
-            resource
-            for resource in tables
-            if _is_source_anchor_resource(resource)
-            and not _is_file_backed_resource(resource)
         ),
-        key=detail_priority,
     )
-    anchors_by_name = {
-        resource.name: resource for resource in non_file_source_anchors
-    }
-
-    def declared_parent_names(resource: ResourceRecord) -> tuple[str, ...]:
-        names: list[str] = []
-        for relation in resource.relations:
-            _separator, _found, target = relation.partition(":")
-            if target.startswith("df_") and target in anchors_by_name:
-                names.append(target)
-        return tuple(dict.fromkeys(names))
-
-    selected_anchor_names: list[str] = []
-
-    def add_anchor_with_parents(name: str) -> None:
-        if name in selected_anchor_names or len(selected_anchor_names) >= 8:
-            return
-        selected_anchor_names.append(name)
-        for parent in declared_parent_names(anchors_by_name[name]):
-            add_anchor_with_parents(parent)
-
-    for resource in non_file_source_anchors:
-        add_anchor_with_parents(resource.name)
-        if len(selected_anchor_names) >= 8:
-            break
-    detailed_non_file_anchors = [
-        anchors_by_name[name] for name in selected_anchor_names
-    ]
-    archived_source_anchors = [
-        resource
-        for resource in non_file_source_anchors
-        if resource.name not in selected_anchor_names
-    ]
-    source_anchor_tables = sorted(
-        [*file_tables, *detailed_non_file_anchors],
-        key=detail_priority,
-    )
-    request_relevant_tables = sorted(
-        (resource for resource in tables if not _is_source_anchor_resource(resource)),
-        key=detail_priority,
-    )[:8]
+    ordered_names.extend(resource.name for resource in remaining)
+    detailed_names = ordered_names[: min(12, len(ordered_names))]
     header_lines = [
         "\n\n## AVAILABLE DATAFRAMES (current session)",
-        "All live names are indexed; detailed cards are relevance-bounded.",
+        "Structured tool facts override resource metadata; resource metadata "
+        "overrides older assistant prose.",
+        "The working set uses exact references, executed tools and declared "
+        "lineage; no lexical plan ranking is used.",
         "DATAFRAME INDEX (all live resources):",
     ]
     full_index_lines = [f"* {resource.name}" for resource in alphabetical_tables]
@@ -1408,70 +1156,104 @@ def render_dataframe_context(
             "* " + " | ".join(resource.name for resource in alphabetical_tables),
         ]
     rendered_blocks.append(
-        "DATAFRAME DECISION BOARD (files + selected source anchors + relevant intermediates):"
+        "DATAFRAME WORKING SET (pinned facts first, then inventory recency):"
     )
 
-    entry_blocks: list[str] = []
-    remaining_for_cards = max_chars - len("\n".join(rendered_blocks)) - 600
-    anchor_card_budget = (
-        max(220, min(900, remaining_for_cards // len(source_anchor_tables)))
-        if source_anchor_tables
+    remaining_for_cards = max_chars - len("\n".join(rendered_blocks)) - 500
+    card_budget = (
+        max(300, min(700, remaining_for_cards // len(detailed_names)))
+        if detailed_names
         else 0
     )
-    for resource in source_anchor_tables:
-        renderer = (
-            _render_file_resource_block
-            if _is_file_backed_resource(resource)
-            else _render_source_anchor_block
-        )
-        entry_blocks.append(renderer(
-            resource,
-            active_variable=active_variable,
-            max_chars=anchor_card_budget,
-        ))
-
-    for resource in request_relevant_tables:
+    entry_blocks: list[tuple[str, str]] = []
+    for name in detailed_names:
+        resource = resources_by_name[name]
+        entry = entries_by_name.get(name)
+        tool_fact = latest_tool_fact_by_name.get(name)
         schema, shown = _render_resource_schema(resource)
         total_columns = len(resource.columns)
         partial = resource.columns_truncated or shown < total_columns
-        description = resource.description or (
-            f"Persisted {resource.kind} from {resource.source}; no richer "
-            "description was supplied by the producing operation."
+        description = (
+            (tool_fact.summary if tool_fact and tool_fact.summary else None)
+            or resource.description
+            or (
+                f"Persisted {resource.kind} from {resource.source}; no richer "
+                "description was supplied by the producing operation."
+            )
+        )
+        rows = tool_fact.rows if tool_fact and tool_fact.rows is not None else resource.rows
+        grain = tool_fact.grain if tool_fact and tool_fact.grain else resource.grain
+        scope = tool_fact.scope if tool_fact and tool_fact.scope else resource.scope
+        source = (
+            str(tool_fact.provenance.get("source"))
+            if tool_fact and tool_fact.provenance.get("source")
+            else resource.source
         )
         status = "active" if resource.name == active_variable else "available"
-        entry_blocks.append(
-            "\n".join([
-                f"- {resource.name}",
-                f"  status={status}; kind={resource.kind}; source={resource.source}; "
-                f"last_used={_usage_label(resource)}; "
-                f"rows={resource.rows if resource.rows is not None else 'unknown'}",
-                f"  description={description}",
-                f"  grain={resource.grain or 'not established'}",
-                f"  schema_by_role={schema}",
-                f"  schema_visibility={shown}/{total_columns}"
-                + (" (partial; inspect the persisted table for omitted columns)" if partial else " (complete)"),
-                "  keys=" + (",".join(resource.key_candidates[:8]) or "not established"),
-                f"  scope={_render_scope(resource.scope)}",
-                "  lineage=" + (" | ".join(resource.relations[:8]) or "not declared"),
-            ])
+        focus = entry.role if entry is not None else "inventory"
+        authority = entry.authority if entry is not None else "resource"
+        pinned = bool(entry and entry.pinned)
+        reasons = ",".join(entry.reasons) if entry is not None else "inventory_recency"
+        parents = _resource_parents(resource)
+        value_budget = max(80, card_budget - len(resource.name) - 290)
+        description_budget = max(24, value_budget * 24 // 100)
+        schema_budget = (
+            max(300, value_budget * 45 // 100)
+            if partial
+            else max(80, value_budget * 35 // 100)
         )
+        scope_budget = max(20, value_budget * 18 // 100)
+        lineage_budget = max(
+            24,
+            value_budget - description_budget - schema_budget - scope_budget,
+        )
+        block = "\n".join([
+            f"- {resource.name}",
+            f"  status={status}; focus={focus}; pinned={str(pinned).lower()}; "
+            f"authority={authority}; reasons={_bounded_inline(reasons, 100)}",
+            f"  kind={resource.kind}; source={_bounded_inline(source, 80)}; "
+            f"parents={','.join(parents) or 'none'}; "
+            f"last_used={_usage_label(resource)}; "
+            f"rows={rows if rows is not None else 'unknown'}; "
+            f"grain={_bounded_inline(grain, 90)}",
+            f"  description={_bounded_inline(description, description_budget)}",
+            f"  schema_by_role={_bounded_inline(schema, schema_budget)}; "
+            f"schema_visibility={shown}/{total_columns}"
+            f"{' partial' if partial else ' complete'}; "
+            "identifiers_present="
+            f"{','.join(resource.identifiers[:12]) or 'none'}; "
+            "keys="
+            f"{','.join(resource.key_candidates[:8]) or 'not established'}",
+            f"  scope={_bounded_inline(_render_scope(scope), scope_budget)}; "
+            "lineage="
+            f"{_bounded_inline(' | '.join(resource.relations[:8]), lineage_budget)}",
+        ])
+        entry_blocks.append((name, block))
 
-    for block in entry_blocks:
+    expanded_names: list[str] = []
+    for name, block in entry_blocks:
         candidate = "\n".join([*rendered_blocks, block])
-        if len(candidate) + 600 > max_chars:
-            break
+        if len(candidate) + 350 > max_chars:
+            # One unusual wide card must not hide every smaller card after it.
+            continue
         rendered_blocks.append(block)
+        expanded_names.append(name)
 
-    expanded_count = sum(block in rendered_blocks for block in entry_blocks)
-    if archived_source_anchors:
+    expanded_count = len(expanded_names)
+    index_only_count = len(tables) - expanded_count
+    rendered_blocks.append(
+        "DATAFRAME CATALOG COUNTS: "
+        f"total={len(tables)}; expanded={expanded_count}; "
+        f"index_only={index_only_count}."
+    )
+    if index_only_count:
         rendered_blocks.append(
-            f"* {len(archived_source_anchors)} durable source anchors are index-only "
-            "in this turn; cite an exact name to reactivate its detailed card."
-        )
-    if len(tables) > expanded_count:
-        rendered_blocks.append(
-            f"* {len(tables) - expanded_count} indexed DataFrames are not expanded; "
-            "their exact names above remain available."
+            "INDEX-ONLY DATAFRAMES: "
+            + " | ".join(
+                resource.name
+                for resource in alphabetical_tables
+                if resource.name not in expanded_names
+            )
         )
 
     other_resources = [
@@ -1492,20 +1274,36 @@ def render_dataframe_context(
     return "\n".join(rendered_blocks)[:max_chars]
 
 
+def dataframe_context_metrics(context: str) -> dict[str, int]:
+    """Read the renderer's explicit catalog counts for audit telemetry."""
+
+    match = re.search(
+        r"DATAFRAME CATALOG COUNTS: total=(\d+); expanded=(\d+); "
+        r"index_only=(\d+)\.",
+        context,
+    )
+    if match is None:
+        return {
+            "dataframe_catalog_total": 0,
+            "dataframe_catalog_expanded": 0,
+            "dataframe_catalog_index_only": 0,
+        }
+    total, expanded, index_only = (int(value) for value in match.groups())
+    return {
+        "dataframe_catalog_total": total,
+        "dataframe_catalog_expanded": expanded,
+        "dataframe_catalog_index_only": index_only,
+    }
+
+
 def render_exploration_frontier(payload: object, *, max_chars: int = 4_500) -> str:
-    """Render only live progress, dependencies and evidence."""
+    """Render factual tool progress, dependencies and evidence only."""
     run = validate_exploration_run(payload)
     if run is None:
         return ""
     steps = [
         {
             "id": item.step_id,
-            "instruction": item.instruction[:240],
-            "capability": item.capability,
-            "origin": item.origin,
-            "position": item.plan_position,
-            "depends_on": list(item.depends_on),
-            "expected_resources": list(item.expected_resources),
             "tool": item.tool_name,
             "status": item.status,
             "evidence": list(item.observation_refs),
@@ -1539,11 +1337,17 @@ def render_exploration_frontier(payload: object, *, max_chars: int = 4_500) -> s
         if item.kind == "data"
         and (item.status == "pending" or item.resume_required)
     ]
+    lifecycle = (
+        "tool_running"
+        if run.active_step_id
+        else "awaiting_model"
+        if run.status == "running"
+        else run.status
+    )
     rendered = (
         "\n\n## EXPLORATION FRONTIER (checkpointed working memory)\n"
-        f"Run status: {run.status}; plan_revision={run.plan_revision}; "
-        f"active_step={run.active_step_id or 'none'}\n"
-        "Steps and dependencies: "
+        f"Lifecycle: {lifecycle}; active_call={run.active_step_id or 'none'}\n"
+        "Actual tool calls: "
         + json.dumps(steps, ensure_ascii=False, separators=(",", ":"))
         + "\nEvidence collected: "
         + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))

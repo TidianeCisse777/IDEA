@@ -48,6 +48,23 @@ Pour un calcul ou un graphique, le plan nomme d'abord les DataFrames candidats e
 
 **Confirmation utilisateur explicite avant opération coûteuse (CT-AG-06)** — le prompt impose un « oui / go / lance / confirme » avant les exports distants, enrichissements lourds, copies SQL non bornées et livrables. Les opérations locales légères restent immédiates.
 
+### Contexte de travail factuel
+
+Le **WorkingSet** est la petite vue factuelle des DataFrames utiles au travail
+courant. Il est construit à partir des ressources produites ou consommées par
+les tools, des noms de DataFrames explicitement cités et de leur lignée. Le
+pointeur `active_variable` reste un raccourci d'exécution; il ne détermine jamais
+à lui seul le sujet courant ni l'ordre des ressources montrées au modèle.
+
+Le **FactLedger** est le registre structuré des observations de tools : statut,
+`data_ref`, grain, lignes, colonnes, périmètre, provenance et relations entre
+tables. Son autorité est supérieure aux métadonnées de ressource, elles-mêmes
+supérieures à une ancienne formulation de l'assistant. La prose conversationnelle
+peut conserver le fil du dialogue, mais ne constitue jamais une preuve numérique.
+Le rôle `primary` ne traverse pas automatiquement un nouveau message utilisateur :
+un ancien résultat de tool reste disponible comme ressource récente, sauf si
+l'utilisateur le désigne explicitement comme sujet du nouveau tour.
+
 ---
 
 ## RAG

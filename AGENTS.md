@@ -83,6 +83,9 @@ python serve.py                          # serveur FastAPI seul
 | `LANGCHAIN_TRACING_V2` | `true` pour activer LangSmith |
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |
 | `MAX_CONTEXT_TOKENS` | Défaut 100000 — plafond de qualité ; au-delà, trim_messages |
+| `MAX_MODEL_CALLS_PER_TURN` | Défaut 10 — limite technique de sécurité contre une boucle incontrôlée |
+| `TARGET_MODEL_CALLS_PER_TURN` | Défaut 5 — cible comportementale d'économie, sans arrêt forcé |
+| `TARGET_RUN_PANDAS_CALLS_PER_TURN` | Défaut 2 — cible comportementale pour regrouper qualification et calcul |
 | `KEEP_FULL_TOOL_TURNS` | Défaut 3 — anciens résultats de tools compactés au-delà de ces tours |
 | `MAX_TOOL_RESULT_CHARS` | Défaut 8000 — au-delà, troncature des résultats de tools |
 | `CHECKPOINTS_DB` | Chemin SQLite des checkpoints LangGraph (`data/checkpoints.sqlite`) |

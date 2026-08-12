@@ -31,6 +31,7 @@ from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 from agents.exploration_middleware import ExplorationStateMiddleware
 from agents.exploration_state import (
     IdeaAgentState,
+    dataframe_context_metrics,
     recovery_tool_names,
     render_dataframe_context,
     render_exploration_frontier,
@@ -40,6 +41,7 @@ from core.llm_config import (
     cache_creation_tokens_from_metadata,
     cached_tokens_from_metadata,
     chat_openai_connection_kwargs,
+    explicit_prompt_cache_token_breakdown,
     openai_explicit_prompt_cache_enabled,
     openai_prompt_cache_key,
     openai_prompt_cache_settings,
@@ -109,6 +111,10 @@ _MAX_PROVIDER_HISTORY_TOKENS = int(
     os.getenv("MAX_PROVIDER_HISTORY_TOKENS", "3000")
 )
 _MAX_MODEL_CALLS_PER_TURN = int(os.getenv("MAX_MODEL_CALLS_PER_TURN", "10"))
+_TARGET_MODEL_CALLS_PER_TURN = int(os.getenv("TARGET_MODEL_CALLS_PER_TURN", "5"))
+_TARGET_RUN_PANDAS_CALLS_PER_TURN = int(
+    os.getenv("TARGET_RUN_PANDAS_CALLS_PER_TURN", "2")
+)
 # Tool results over this many chars get truncated before being sent to the LLM
 _MAX_TOOL_RESULT_CHARS = int(os.getenv("MAX_TOOL_RESULT_CHARS", "8000"))
 _KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "1"))
@@ -336,6 +342,17 @@ def _append_harness_model_call(thread_id: str, audit: dict) -> None:
             "approx_tokens_history": audit.get("approx_tokens_after_trim", 0),
             "approx_tokens_memory_and_capsule": audit.get("approx_tokens_memory_and_capsule", 0),
             "approx_tokens_runtime_context": audit.get("approx_tokens_runtime_context", 0),
+            "cacheable_prefix_tokens": audit.get("cacheable_prefix_tokens", 0),
+            "tool_schema_tokens": audit.get("tool_schema_tokens", 0),
+            "dynamic_context_tokens": audit.get("dynamic_context_tokens", 0),
+            "dynamic_context_tokens_by_block": copy.deepcopy(
+                audit.get("dynamic_context_tokens_by_block") or {}
+            ),
+            "current_turn_tool_tokens": audit.get("current_turn_tool_tokens", 0),
+            "variable_suffix_tokens": audit.get("variable_suffix_tokens", 0),
+            "dataframe_catalog_total": audit.get("dataframe_catalog_total", 0),
+            "dataframe_catalog_expanded": audit.get("dataframe_catalog_expanded", 0),
+            "dataframe_catalog_index_only": audit.get("dataframe_catalog_index_only", 0),
             "context_projection_ledger": copy.deepcopy(
                 audit.get("context_projection_ledger") or []
             ),
@@ -700,6 +717,222 @@ def _compact_old_tool_results(
     metrics["old_tool_result_chars_saved"] = (
         metrics["old_tool_result_chars_before"]
         - metrics["old_tool_result_chars_after"]
+    )
+    return output, metrics
+
+
+def _current_turn_tool_tokens(messages: Sequence) -> int:
+    """Estimate only ToolMessage tokens after the latest user message."""
+
+    last_human_index = max(
+        (
+            index
+            for index, message in enumerate(messages)
+            if isinstance(message, HumanMessage)
+        ),
+        default=len(messages),
+    )
+    return sum(
+        _approx_tokens([message])
+        for message in messages[last_human_index + 1 :]
+        if isinstance(message, ToolMessage)
+    )
+
+
+def _current_turn_execution_budget(messages: Sequence) -> dict[str, int | bool]:
+    """Count structural ReAct work since the latest user message."""
+
+    last_human_index = max(
+        (
+            index
+            for index, message in enumerate(messages)
+            if isinstance(message, HumanMessage)
+        ),
+        default=len(messages),
+    )
+    current_turn = list(messages[last_human_index + 1 :])
+    model_calls_used = sum(
+        isinstance(message, AIMessage) for message in current_turn
+    )
+    pandas_results = [
+        message
+        for message in current_turn
+        if isinstance(message, ToolMessage) and message.name == "run_pandas"
+    ]
+    pandas_successes = 0
+    pandas_failures = 0
+    for message in pandas_results:
+        artifact = message.artifact if isinstance(message.artifact, dict) else {}
+        status = str(artifact.get("status") or message.status or "success").casefold()
+        if status == "success":
+            pandas_successes += 1
+        else:
+            pandas_failures += 1
+    model_call_number = model_calls_used + 1
+    return {
+        "model_calls_used": model_calls_used,
+        "model_call_number": model_call_number,
+        "model_calls_remaining_including_current": max(
+            0, _MAX_MODEL_CALLS_PER_TURN - model_calls_used
+        ),
+        "run_pandas_attempts": len(pandas_results),
+        "run_pandas_successes": pandas_successes,
+        "run_pandas_failures": pandas_failures,
+        "economy_target_reached": model_call_number >= _TARGET_MODEL_CALLS_PER_TURN,
+    }
+
+
+def _render_execution_budget(messages: Sequence) -> tuple[str, dict[str, int | bool]]:
+    """Render the live cost budget included in every provider-bound turn."""
+
+    budget = _current_turn_execution_budget(messages)
+    call_number = int(budget["model_call_number"])
+    pandas_attempts = int(budget["run_pandas_attempts"])
+    economy_instruction = (
+        "\nECONOMY TARGET REACHED: answer now when the requested evidence exists. "
+        "Continue only for a concrete missing dependency or failed required step, "
+        "never for optional exploration or rechecking."
+        if budget["economy_target_reached"]
+        else ""
+    )
+    pandas_instruction = (
+        "The normal run_pandas budget is already spent. Reuse its persisted "
+        "results and answer; call it again only to correct a concrete execution "
+        "error that left no usable evidence."
+        if pandas_attempts >= _TARGET_RUN_PANDAS_CALLS_PER_TURN
+        else (
+            "Prefer at most "
+            f"{_TARGET_RUN_PANDAS_CALLS_PER_TURN} run_pandas calls for the whole "
+            "turn. Combine schema inspection, filtering, aggregation and validation "
+            "in one call whenever they use the same available DataFrame."
+        )
+    )
+    rendered = (
+        "\n\n## EXECUTION BUDGET (current user turn)\n"
+        f"Model call: {call_number}; economy target: finish within about "
+        f"{_TARGET_MODEL_CALLS_PER_TURN} calls when sufficient evidence is available "
+        f"(technical safety limit: {_MAX_MODEL_CALLS_PER_TURN}).\n"
+        f"run_pandas so far: {pandas_attempts} attempt(s), "
+        f"{budget['run_pandas_successes']} success(es), "
+        f"{budget['run_pandas_failures']} failure(s).\n"
+        f"{pandas_instruction}\n"
+        "Do not split one calculation into several tool calls, recheck successful "
+        "evidence, or continue exploring after the requested evidence exists."
+        f"{economy_instruction}"
+    )
+    return rendered, budget
+
+
+def _compact_observed_current_turn_tool_results(messages: Sequence):
+    """Compact only successful persisted results already seen by the model.
+
+    A ToolMessage is eligible only after a later AIMessage proves that the
+    model consumed it.  The whole newest tool batch (all ToolMessages after the
+    latest AIMessage) remains verbatim, as do errors, empty/blocked outcomes,
+    non-persisted results and the latest ToolMessage.  The compact form contains
+    the complete structured summary plus the artifact fields that identify the
+    durable resource; if that representation is not materially smaller, the
+    original message is retained.
+
+    This transforms only the provider-bound copy.  Checkpoint history and the
+    persisted DataFrame/artifact remain untouched.
+    """
+
+    output = list(messages)
+    metrics = {
+        "intra_turn_tool_messages_seen": 0,
+        "intra_turn_tool_messages_eligible": 0,
+        "intra_turn_tool_messages_compacted": 0,
+        "intra_turn_tool_messages_protected_unseen": 0,
+        "intra_turn_tool_messages_protected_latest": 0,
+        "intra_turn_tool_result_chars_before": 0,
+        "intra_turn_tool_result_chars_after": 0,
+        "intra_turn_tool_result_chars_saved": 0,
+    }
+    last_human_index = max(
+        (
+            index
+            for index, message in enumerate(output)
+            if isinstance(message, HumanMessage)
+        ),
+        default=len(output),
+    )
+    tool_indexes = [
+        index
+        for index in range(last_human_index + 1, len(output))
+        if isinstance(output[index], ToolMessage)
+    ]
+    if not tool_indexes:
+        return output, metrics
+
+    latest_tool_index = tool_indexes[-1]
+    latest_ai_index = max(
+        (
+            index
+            for index in range(last_human_index + 1, len(output))
+            if isinstance(output[index], AIMessage)
+        ),
+        default=last_human_index,
+    )
+
+    for index in tool_indexes:
+        message = output[index]
+        metrics["intra_turn_tool_messages_seen"] += 1
+        if index == latest_tool_index:
+            metrics["intra_turn_tool_messages_protected_latest"] += 1
+            continue
+        # Every result after the latest AI request belongs to the tool batch the
+        # model is about to see for the first time. Protect the complete batch,
+        # not merely its final message.
+        if index > latest_ai_index or not any(
+            isinstance(later, AIMessage) for later in output[index + 1 :]
+        ):
+            metrics["intra_turn_tool_messages_protected_unseen"] += 1
+            continue
+        if not isinstance(message.content, str):
+            continue
+        artifact = message.artifact if isinstance(message.artifact, dict) else {}
+        if artifact.get("status") != "success" or artifact.get("persisted") is not True:
+            continue
+        data_ref = artifact.get("data_ref")
+        artifact_refs = artifact.get("artifact_refs")
+        if not data_ref and not artifact_refs:
+            continue
+        summary = str(artifact.get("summary") or "").strip()
+        # A long free-form summary is not a structured representation. Keep it
+        # verbatim instead of silently dropping table values or diagnostics.
+        if not summary or len(summary) > 1_600:
+            continue
+
+        capsule = {
+            "status": "success",
+            "summary": summary,
+            "persisted": True,
+            "data_ref": data_ref,
+            "artifact_refs": list(artifact_refs or []),
+            "method": artifact.get("method"),
+            "metrics": artifact.get("metrics") or {},
+            "provenance": artifact.get("provenance") or {},
+        }
+        compact = (
+            "[Résultat antérieur du tour — déjà observé; ressource persistée]"
+            "\n"
+            + json.dumps(capsule, ensure_ascii=False, sort_keys=True, default=str)
+        )
+        before = len(message.content)
+        # Require a meaningful reduction; otherwise the extra transformation is
+        # pure complexity with no suffix benefit.
+        if before < 700 or len(compact) >= int(before * 0.8):
+            continue
+        metrics["intra_turn_tool_messages_eligible"] += 1
+        metrics["intra_turn_tool_messages_compacted"] += 1
+        metrics["intra_turn_tool_result_chars_before"] += before
+        metrics["intra_turn_tool_result_chars_after"] += len(compact)
+        output[index] = message.model_copy(update={"content": compact})
+
+    metrics["intra_turn_tool_result_chars_saved"] = (
+        metrics["intra_turn_tool_result_chars_before"]
+        - metrics["intra_turn_tool_result_chars_after"]
     )
     return output, metrics
 
@@ -1093,12 +1326,18 @@ class _ContextMiddleware(AgentMiddleware):
             pass
 
         original_tokens = _approx_tokens(original_messages)
+        current_turn_tool_tokens_before = _current_turn_tool_tokens(
+            original_messages
+        )
         compacted_messages, compact_metrics = _compact_old_tool_results(
             original_messages,
             max_total_chars=_MAX_TOTAL_TOOL_CHARS,
         )
+        intra_turn_messages, intra_turn_compact_metrics = (
+            _compact_observed_current_turn_tool_results(compacted_messages)
+        )
         truncated_messages, truncate_metrics = _truncate_tool_results(
-            compacted_messages
+            intra_turn_messages
         )
         truncated_tokens = _approx_tokens(truncated_messages)
 
@@ -1134,8 +1373,12 @@ class _ContextMiddleware(AgentMiddleware):
         )
         task_block = render_task_context(
             exploration_payload,
+            messages=original_messages,
             preferred_sources=source_decision.authorized_sources,
             primary_source=source_decision.primary_source,
+        )
+        execution_budget_block, execution_budget = _render_execution_budget(
+            original_messages
         )
         display_only_followup = _is_display_only_followup(
             _latest_user_text(original_messages)
@@ -1153,7 +1396,9 @@ class _ContextMiddleware(AgentMiddleware):
         dataset_block = render_dataframe_context(
             exploration_payload,
             active_variable=turn_ctx.active_variable,
+            messages=original_messages,
         )
+        dataset_catalog_metrics = dataframe_context_metrics(dataset_block)
         from agents.domain_profiles import domain_profile_prompt
 
         domain_profile_block = domain_profile_prompt(turn_ctx.domain_profile)
@@ -1362,6 +1607,12 @@ class _ContextMiddleware(AgentMiddleware):
         context_projection = project_context_blocks(
             [
                 ContextBlock("current_task", task_block, priority=100, required=True),
+                ContextBlock(
+                    "execution_budget",
+                    execution_budget_block,
+                    priority=120,
+                    required=True,
+                ),
                 ContextBlock("domain_profile", domain_profile_block, priority=60),
                 ContextBlock("available_dataframes", dataset_block, priority=90),
                 ContextBlock("last_graph", graph_grounding_block, priority=70),
@@ -1375,6 +1626,11 @@ class _ContextMiddleware(AgentMiddleware):
             item.name: item.text for item in context_projection.blocks
         }
         injected_context = context_projection.text
+        dynamic_context_tokens_by_block = {
+            item.name: _approx_tokens([HumanMessage(content=item.text)])
+            for item in context_projection.blocks
+            if item.text
+        }
         runtime_context_tokens = (
             _approx_tokens([
                 HumanMessage(content=_turn_context_prefix(injected_context))
@@ -1382,6 +1638,11 @@ class _ContextMiddleware(AgentMiddleware):
             if injected_context
             else 0
         )
+        represented_dynamic_tokens = sum(dynamic_context_tokens_by_block.values())
+        if runtime_context_tokens > represented_dynamic_tokens:
+            dynamic_context_tokens_by_block["__wrapper_and_separators__"] = (
+                runtime_context_tokens - represented_dynamic_tokens
+            )
         history_budget = compute_history_budget(
             max_input_tokens=_MAX_CONTEXT_TOKENS,
             system_tokens=base_system_tokens,
@@ -1399,6 +1660,9 @@ class _ContextMiddleware(AgentMiddleware):
         )
         current_react_turn_tokens = _approx_tokens(
             truncated_messages[last_human_index:]
+        )
+        current_turn_tool_tokens_after_compaction = _current_turn_tool_tokens(
+            truncated_messages
         )
         provider_history_cap = max(
             _MAX_PROVIDER_HISTORY_TOKENS,
@@ -1443,6 +1707,17 @@ class _ContextMiddleware(AgentMiddleware):
                 + final_tokens
             )
 
+        current_turn_tool_tokens = _current_turn_tool_tokens(trimmed_messages)
+        cache_breakdown = explicit_prompt_cache_token_breakdown(
+            enabled=self.prompt_cache_enabled,
+            system_prompt_tokens=base_system_tokens,
+            tool_schema_tokens=tool_schema_tokens,
+            dynamic_context_tokens=runtime_context_tokens,
+            history_tokens=final_tokens,
+            current_turn_tool_tokens=current_turn_tool_tokens,
+            estimated_request_tokens=estimated_request_tokens,
+        )
+
         cache_contract_key = openai_prompt_cache_key(
             model=self.model_name,
             system_prompt=str(base),
@@ -1451,6 +1726,7 @@ class _ContextMiddleware(AgentMiddleware):
 
         harness_context = {
             "current_task": projected_blocks.get("current_task", "").strip(),
+            "execution_budget": projected_blocks.get("execution_budget", "").strip(),
             "available_dataframes": projected_blocks.get("available_dataframes", "").strip(),
             "domain_profile": projected_blocks.get("domain_profile", "").strip(),
             "last_graph": projected_blocks.get("last_graph", "").strip(),
@@ -1473,6 +1749,7 @@ class _ContextMiddleware(AgentMiddleware):
             "messages_before": len(original_messages),
             "messages_after_tool_truncation": len(truncated_messages),
             "messages_after_old_tool_compaction": len(compacted_messages),
+            "messages_after_intra_turn_tool_compaction": len(intra_turn_messages),
             "messages_after_trim": len(trimmed_messages),
             "messages_trimmed": max(
                 0, len(truncated_messages) - len(trimmed_messages)
@@ -1500,6 +1777,9 @@ class _ContextMiddleware(AgentMiddleware):
             "history_budget_tokens": history_budget,
             "provider_history_cap_tokens": provider_history_cap,
             "current_react_turn_tokens": current_react_turn_tokens,
+            "current_turn_tool_tokens_before_compaction": current_turn_tool_tokens_before,
+            "current_turn_tool_tokens_after_compaction": current_turn_tool_tokens_after_compaction,
+            "current_turn_tool_tokens": current_turn_tool_tokens,
             "context_reserve_tokens": _CONTEXT_RESERVE_TOKENS,
             "approx_tokens_model_request": estimated_request_tokens,
             "total_estimated": estimated_request_tokens,
@@ -1515,6 +1795,7 @@ class _ContextMiddleware(AgentMiddleware):
             ),
             **truncate_metrics,
             **compact_metrics,
+            **intra_turn_compact_metrics,
             "max_total_tool_result_chars": _MAX_TOTAL_TOOL_CHARS,
             **metrics,
             "context_projection_budget_tokens": dynamic_budget,
@@ -1523,10 +1804,43 @@ class _ContextMiddleware(AgentMiddleware):
             "context_projection_ledger": context_projection.ledger,
             "dataset_capsule_injected": bool(projected_blocks.get("available_dataframes")),
             "dataset_capsule_chars": len(projected_blocks.get("available_dataframes", "")),
+            **dataset_catalog_metrics,
             "dataframe_context_injected": bool(projected_blocks.get("available_dataframes")),
             "dataframe_context_chars": len(projected_blocks.get("available_dataframes", "")),
             "task_context_injected": bool(projected_blocks.get("current_task")),
             "task_context_chars": len(projected_blocks.get("current_task", "")),
+            "execution_budget_injected": bool(
+                projected_blocks.get("execution_budget")
+            ),
+            "execution_budget_chars": len(
+                projected_blocks.get("execution_budget", "")
+            ),
+            "model_call_number_current_turn": execution_budget[
+                "model_call_number"
+            ],
+            "model_calls_used_current_turn": execution_budget[
+                "model_calls_used"
+            ],
+            "model_calls_remaining_including_current": execution_budget[
+                "model_calls_remaining_including_current"
+            ],
+            "max_model_calls_per_turn": _MAX_MODEL_CALLS_PER_TURN,
+            "target_model_calls_per_turn": _TARGET_MODEL_CALLS_PER_TURN,
+            "run_pandas_attempts_current_turn": execution_budget[
+                "run_pandas_attempts"
+            ],
+            "run_pandas_successes_current_turn": execution_budget[
+                "run_pandas_successes"
+            ],
+            "run_pandas_failures_current_turn": execution_budget[
+                "run_pandas_failures"
+            ],
+            "target_run_pandas_calls_per_turn": (
+                _TARGET_RUN_PANDAS_CALLS_PER_TURN
+            ),
+            "economy_target_reached": execution_budget[
+                "economy_target_reached"
+            ],
             "exploration_state_injected": bool(projected_blocks.get("exploration_frontier")),
             "exploration_state_chars": len(projected_blocks.get("exploration_frontier", "")),
             "memory_projected": bool(projected_blocks.get("memory")),
@@ -1552,17 +1866,33 @@ class _ContextMiddleware(AgentMiddleware):
             "fish_larvae_reference_chars": 0,
             "static_reference_chars": len(static_reference_block),
             "dynamic_context_chars": len(injected_context),
+            "dynamic_context_tokens": runtime_context_tokens,
+            "dynamic_context_tokens_by_block": dynamic_context_tokens_by_block,
             "prompt_cache_contract_key": cache_contract_key,
             "prompt_cache_configured_key": self.configured_cache_key,
             "prompt_cache_contract_matches_configured": (
                 self.configured_cache_key is None
                 or cache_contract_key == self.configured_cache_key
             ),
-            "estimated_stable_prefix_tokens": base_system_tokens + tool_schema_tokens,
-            "estimated_stable_prefix_share": (
-                (base_system_tokens + tool_schema_tokens) / estimated_request_tokens
-                if estimated_request_tokens else 0.0
+            # Legacy fields remain available, but now describe the actual
+            # explicit breakpoint instead of incorrectly including schemas.
+            "estimated_stable_prefix_tokens": cache_breakdown[
+                "estimated_cacheable_system_prefix_tokens"
+            ],
+            "estimated_stable_prefix_share": cache_breakdown[
+                "estimated_cacheable_prefix_share"
+            ],
+            "cacheable_prefix_tokens": cache_breakdown[
+                "estimated_cacheable_system_prefix_tokens"
+            ],
+            "tool_schema_tokens": tool_schema_tokens,
+            "variable_suffix_tokens": cache_breakdown[
+                "estimated_variable_suffix_tokens"
+            ],
+            "estimated_prompt_contract_tokens": (
+                base_system_tokens + tool_schema_tokens
             ),
+            **cache_breakdown,
             "tools_before_policy": [
                 getattr(item, "name", "") for item in original_tools
             ],

@@ -43,6 +43,7 @@ from agent import (
     make_agent,
     _make_tracer,
     _CHECKPOINTS_DB,
+    _is_display_only_followup,
     arepair_invalid_tool_history,
     get_context_audit,
     get_harness_trace,
@@ -1119,6 +1120,29 @@ def _format_tool_result_details(
     )
 
 
+def _run_pandas_table_preview(content: str) -> str:
+    """Extract only the user-facing table preview from a pandas tool result."""
+
+    markers = ("Aperçu du résultat :", "Result preview:")
+    preview = ""
+    for marker in markers:
+        if marker in content:
+            preview = content.split(marker, 1)[1].strip()
+            break
+    if not preview:
+        return ""
+    for suffix in ("\n\nAttention :", "\n\nWarning:"):
+        preview = preview.split(suffix, 1)[0].strip()
+    return preview if "|" in preview else ""
+
+
+def _is_exact_dataframe_display(args: dict | None) -> bool:
+    """Recognize the contract's side-effect-free ``result = df_name`` display."""
+
+    code = str((args or {}).get("code") or "")
+    return bool(re.fullmatch(r"\s*result\s*=\s*df_[A-Za-z0-9_]+\s*", code))
+
+
 def _has_graph_markdown_image(text: str) -> bool:
     return bool(re.search(r"!\[[^\]]*\]\([^\)]*/graphs/[^\)]*\.png\)", text))
 
@@ -1197,6 +1221,7 @@ async def _stream_agent_sse(
         "pending_tool_names": {},
         "streamed_graph_urls": set(),
     }
+    display_only_request = _is_display_only_followup(last_user_text)
 
     async def _run_agent() -> None:
         try:
@@ -1280,6 +1305,18 @@ async def _stream_agent_sse(
                                 if img_match:
                                     shared["streamed_graph_urls"].update(_graph_image_urls(img_match.group(0)))
                                     await chunk_queue.put(_make_sse_chunk(completion_id, f"\n{img_match.group(0)}\n"))
+                            elif tool_name == "run_pandas" and (
+                                display_only_request
+                                or _is_exact_dataframe_display(tool_args)
+                            ):
+                                table_preview = _run_pandas_table_preview(tool_content)
+                                if table_preview:
+                                    await chunk_queue.put(
+                                        _make_sse_chunk(
+                                            completion_id,
+                                            f"\n\n{table_preview}\n\n",
+                                        )
+                                    )
                             if tool_name and tool_content and _is_data_source_tool(tool_name):
                                 await chunk_queue.put(_make_sse_chunk(
                                     completion_id,
@@ -1388,9 +1425,17 @@ async def _stream_with_request_origin(
     origin: str, stream: AsyncGenerator[str, None]
 ) -> AsyncGenerator[str, None]:
     """Keep the public request origin alive while an SSE body is consumed."""
-    with activate_request_origin(origin):
-        async for chunk in stream:
-            yield chunk
+    try:
+        with activate_request_origin(origin):
+            async for chunk in stream:
+                yield chunk
+    finally:
+        # Open WebUI stops a generation by closing its upstream response body.
+        # Closing this public wrapper must therefore close the nested stream;
+        # ``async for`` alone does not guarantee that propagation when this
+        # generator is interrupted while yielding a chunk.
+        with suppress(asyncio.CancelledError):
+            await stream.aclose()
 
 
 async def _coordinated_agent_sse(
@@ -1410,7 +1455,7 @@ async def _coordinated_agent_sse(
     ) as lease:
         run_config = lease.bind_config(config)
         await arepair_invalid_tool_history(agent, run_config)
-        async for chunk in _stream_agent_sse(
+        agent_stream = _stream_agent_sse(
             agent,
             messages,
             run_config,
@@ -1419,8 +1464,15 @@ async def _coordinated_agent_sse(
             user_id=user_id,
             language=language,
             run_lease=lease,
-        ):
-            yield chunk
+        )
+        try:
+            async for chunk in agent_stream:
+                yield chunk
+        finally:
+            # Ensure client cancellation reaches _stream_agent_sse, whose
+            # cleanup cancels and awaits the detached LangGraph task.
+            with suppress(asyncio.CancelledError):
+                await agent_stream.aclose()
 
 
 @app.post("/v1/chat/completions")

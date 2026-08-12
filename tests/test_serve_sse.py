@@ -219,6 +219,56 @@ async def test_stream_shows_tool_panel_before_final_answer():
 
 
 @pytest.mark.asyncio
+async def test_display_followup_streams_run_pandas_table_rows():
+    from serve import _stream_agent_sse
+
+    updates = [
+        {"model": {"messages": [AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "run_pandas",
+                "args": {"code": "result = df_station_summary"},
+                "id": "display-1",
+                "type": "tool_call",
+            }],
+        )]}},
+        {"tools": {"messages": [ToolMessage(
+            content=(
+                "2 lignes × 2 colonnes\n"
+                "Persistence: persisted=false; variable=null\n\n"
+                "Aperçu du résultat :\n"
+                "| station | copepoda |\n"
+                "|:---|---:|\n"
+                "| M1b | 161 |\n"
+                "| M2b | 818 |"
+            ),
+            name="run_pandas",
+            tool_call_id="display-1",
+        )]}},
+        {"model": {"messages": [AIMessage(
+            content="Le tableau est affiché.",
+            tool_calls=[],
+        )]}},
+    ]
+
+    chunks = [
+        chunk
+        async for chunk in _stream_agent_sse(
+            _mock_agent(updates),
+            {},
+            {},
+            "sse-display-table",
+            last_user_text="affuche les",
+        )
+    ]
+    visible = _visible_text(chunks)
+
+    assert "| M1b | 161 |" in visible
+    assert "| M2b | 818 |" in visible
+    assert "Persistence:" not in visible
+
+
+@pytest.mark.asyncio
 async def test_run_pandas_raw_output_is_hidden_but_final_table_is_visible():
     from serve import _stream_agent_sse
 
@@ -430,6 +480,43 @@ async def test_closing_sse_stream_cancels_the_detached_agent_task():
     first_chunk = await anext(stream)
     assert "début" in first_chunk
     await agent_started.wait()
+    await stream.aclose()
+
+    await asyncio.wait_for(agent_cancelled.wait(), timeout=0.2)
+
+
+@pytest.mark.asyncio
+async def test_closing_public_sse_wrapper_propagates_to_agent_task():
+    from serve import _coordinated_agent_sse, _stream_with_request_origin
+
+    agent_cancelled = asyncio.Event()
+    agent = MagicMock()
+
+    async def _astream(*_args, **_kwargs):
+        try:
+            yield {"model": {"messages": [AIMessage(
+                content="début",
+                tool_calls=[],
+            )]}}
+            await asyncio.Event().wait()
+        finally:
+            agent_cancelled.set()
+
+    agent.astream = _astream
+    coordinated = _coordinated_agent_sse(
+        agent,
+        {},
+        {},
+        "sse-public-client-disconnect",
+        "message-1",
+        last_user_text="",
+        user_id="user-1",
+        language="fr",
+    )
+    stream = _stream_with_request_origin("http://test", coordinated)
+
+    first_chunk = await anext(stream)
+    assert "début" in first_chunk
     await stream.aclose()
 
     await asyncio.wait_for(agent_cancelled.wait(), timeout=0.2)

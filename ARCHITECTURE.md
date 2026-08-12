@@ -47,6 +47,9 @@ dans la boucle ReAct, puis vérifié par les résultats des tools.
 
 La couche transport traduit les messages Open WebUI, diffuse les appels et
 résultats de tools, puis héberge les artefacts locaux.
+Lorsqu'un appel Pandas est une lecture exacte de DataFrame (`result = df_*`),
+son aperçu tabulaire est également diffusé directement : une réponse finale
+qui dit seulement « affiché » ne peut plus laisser l'interface vide.
 
 ### 2. Agent et état LangGraph
 
@@ -85,6 +88,11 @@ appels et résultats ReAct du tour
 schémas de tools transmis séparément
 ```
 
+`CURRENT TASK` contient aussi une capsule bornée des quatre instructions
+utilisateur précédentes. Les réponses de l'assistant en sont exclues : les
+contraintes multi-tours survivent ainsi à la compaction sans promouvoir une
+ancienne affirmation du modèle au rang de fait.
+
 Le message système reste stable et cacheable. Les données propres au tour ne
 sont pas ajoutées durablement au checkpoint comme instructions système.
 Avec OpenAI compatible, un breakpoint explicite termine ce préfixe stable et
@@ -92,6 +100,12 @@ la clé versionnée est calculée depuis le modèle, le system prompt et la surf
 de tools réellement déclarée. Les reprises ReAct conservent la même surface
 Tool Search; les tools différés sont retrouvés dans leur namespace au lieu de
 modifier le contrat cacheable.
+
+Le moniteur distingue `cacheable_prefix_tokens`, les schémas de tools, les
+tokens de chaque bloc dynamique et les résultats de tools du tour courant. Un
+résultat persistant déjà observé par le modèle peut être compacté dans la copie
+provider lorsqu'un résumé structuré complet existe; le checkpoint, le dernier
+lot non observé, les erreurs et les blocages restent intacts.
 
 ### 3. Catalogue et exécution des tools
 
@@ -180,6 +194,17 @@ Chaque table persistée reçoit un nom `df_*` et une fiche de ressource :
 - clés, filtres, transformations et fraîcheur;
 - dernier usage et statut actif, utilisés seulement comme indices.
 
+`agents/context_working_set.py` reconstruit un `FactLedger` depuis les résultats
+de tools réellement retournés et les fiches de ressources. Son `WorkingSet`
+épingle d'abord les références exactes, les résultats produits ou consommés et
+leurs parents déclarés. Il n'infère aucun plan par classement lexical. Le
+pointeur actif est seulement un fallback. Les cartes suivent l'autorité
+`tool > ressource > ancienne prose assistant`, partagent un budget de douze
+fiches détaillées et conservent toujours l'index complet.
+Un résultat de tool n'est `primary` que pendant le tour où il est produit. Au
+tour utilisateur suivant, il reste une ressource récente réutilisable; seul un
+nom explicitement cité par l'utilisateur peut alors redevenir `primary`.
+
 Les fichiers chargés, exports, résultats de cache et enrichissements sont des
 ancres durables. Les dérivés intermédiaires inutilisés sont masqués après six
 tours et supprimés après vingt, sauf s’ils restent nécessaires à une lignée
@@ -216,6 +241,7 @@ l’utilisateur, ni remplacer silencieusement la métrique ou le périmètre.
 | `serve.py` | API, SSE, images et téléchargements |
 | `agent.py` | agent, contexte, modèle et guards |
 | `core/context_projection.py` | projection transitoire structurée, priorités et ledger de tokens |
+| `agents/context_working_set.py` | FactLedger et WorkingSet factuels des DataFrames |
 | `agents/copepod_system_prompt.py` | comportement permanent |
 | `agents/exploration_middleware.py` | état d’exploration |
 | `tools/tool_catalog.py` | catalogue exécutable et politiques |

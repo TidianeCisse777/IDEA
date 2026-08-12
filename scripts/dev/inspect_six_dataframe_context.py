@@ -37,7 +37,6 @@ import agent as agent_module
 from agents.exploration_middleware import ExplorationStateMiddleware
 from agents.exploration_state import IdeaAgentState
 from agents.exploration_state import (
-    capture_prospective_plan,
     ingest_tool_evidence,
     new_exploration_run,
     reconcile_data_dependencies,
@@ -956,7 +955,6 @@ def build_frontier_payload(
         ),
         id="frontier-plan",
     )
-    payload = capture_prospective_plan(payload, [human, plan]) or payload
     call = AIMessage(
         content="",
         id="frontier-call-message",
@@ -1038,11 +1036,11 @@ def validate_frontier_capture(
     resolved_text = resolved.exploration_context
     return [
         _check(
-            "frontière avec plan réel",
-            "plan_revision=1" in pending_text
-            and "Inspecter les colonnes" in pending_text
-            and "Calculer le nombre" in pending_text,
-            "les étapes planifiées sont visibles",
+            "plan visible non interprété par le harness",
+            "Actual tool calls:" in pending_text
+            and "Inspecter les colonnes" not in pending_text
+            and "Calculer le nombre" not in pending_text,
+            "le plan reste dans les messages du modèle sans classification lexicale",
         ),
         _check(
             "frontière avec preuve d’échec",

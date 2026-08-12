@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from langchain.agents.middleware import AgentMiddleware, hook_config
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from agents.exploration_state import (
     IdeaAgentState,
-    active_data_dependencies,
-    capture_prospective_plan,
     finish_exploration_run,
-    increment_forced_dependency_continuation,
     ingest_tool_evidence,
     latest_user_objective,
     new_exploration_run,
@@ -22,6 +20,77 @@ from agents.exploration_state import (
     request_fingerprint,
     validate_exploration_run,
 )
+
+
+def _tool_call_identity(tool_call: dict[str, Any]) -> str:
+    """Canonical identity for an exact tool name + arguments pair."""
+    return json.dumps(
+        {
+            "name": str(tool_call.get("name") or ""),
+            "args": tool_call.get("args") or {},
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _successful_duplicate(
+    messages: list[Any],
+    current_call: dict[str, Any],
+) -> ToolMessage | None:
+    """Find an identical successful call earlier in the current user turn."""
+    last_human = max(
+        (
+            index
+            for index, message in enumerate(messages)
+            if isinstance(message, HumanMessage)
+        ),
+        default=-1,
+    )
+    current_id = str(current_call.get("id") or "")
+    target = _tool_call_identity(current_call)
+    matching_ids: set[str] = set()
+    for message in messages[last_human + 1 :]:
+        if isinstance(message, AIMessage):
+            for call in getattr(message, "tool_calls", None) or []:
+                call_id = str(call.get("id") or "")
+                if call_id and call_id != current_id and _tool_call_identity(call) == target:
+                    matching_ids.add(call_id)
+            continue
+        if not isinstance(message, ToolMessage):
+            continue
+        if str(message.tool_call_id or "") not in matching_ids:
+            continue
+        artifact = message.artifact if isinstance(message.artifact, dict) else {}
+        status = str(artifact.get("status") or message.status or "")
+        if status == "success":
+            return message
+    return None
+
+
+def _reuse_duplicate_result(request, previous: ToolMessage) -> ToolMessage:  # noqa: ANN001
+    """Return prior successful evidence without executing the duplicate call."""
+    artifact = dict(previous.artifact or {}) if isinstance(previous.artifact, dict) else {}
+    metrics = dict(artifact.get("metrics") or {})
+    metrics["duplicate_skipped"] = True
+    artifact["metrics"] = metrics
+    previous_content = (
+        previous.content
+        if isinstance(previous.content, str)
+        else json.dumps(previous.content, ensure_ascii=False, default=str)
+    )
+    return ToolMessage(
+        content=(
+            "Appel strictement identique déjà réussi; résultat réutilisé sans "
+            f"réexécution.\n{previous_content}"
+        ),
+        artifact=artifact,
+        tool_call_id=str(request.tool_call.get("id") or ""),
+        name=str(request.tool_call.get("name") or previous.name or ""),
+        status="success",
+    )
 
 
 class ExplorationStateMiddleware(AgentMiddleware):
@@ -112,43 +181,44 @@ class ExplorationStateMiddleware(AgentMiddleware):
         payload = reconcile_data_dependencies(payload) or payload
         return {"exploration": payload}
 
-    @hook_config(can_jump_to=["model"])
     def after_model(self, state: IdeaAgentState, runtime) -> dict[str, Any] | None:  # noqa: ANN001
         messages = list(state.get("messages") or [])
-        payload = capture_prospective_plan(
-            state.get("exploration"),
-            messages,
-        )
-        payload = register_tool_steps(payload, messages)
+        payload = register_tool_steps(state.get("exploration"), messages)
         if payload is None:
             return None
         latest_ai = next(
             (message for message in reversed(messages) if isinstance(message, AIMessage)),
             None,
         )
-        if latest_ai is not None and (getattr(latest_ai, "tool_calls", None) or []):
+        if latest_ai is not None:
             from tools.dataframe_cleanup import touch_dataframes
             from tools.session_store import default_store
 
+            tool_calls = getattr(latest_ai, "tool_calls", None) or []
             touch_dataframes(
                 default_store,
                 self.thread_id,
-                str(latest_ai.tool_calls),
+                f"{tool_calls}\n{latest_ai.content}",
             )
-        run = validate_exploration_run(payload)
-        attempted_final_answer = bool(
-            latest_ai is not None
-            and not (getattr(latest_ai, "tool_calls", None) or [])
-        )
-        if (
-            attempted_final_answer
-            and active_data_dependencies(payload)
-            and run is not None
-            and run.forced_dependency_continuations < 2
-        ):
-            payload = increment_forced_dependency_continuation(payload) or payload
-            return {"exploration": payload, "jump_to": "model"}
         return {"exploration": payload}
+
+    def wrap_tool_call(self, request, handler):  # noqa: ANN001
+        previous = _successful_duplicate(
+            list(request.state.get("messages") or []),
+            request.tool_call,
+        )
+        if previous is not None:
+            return _reuse_duplicate_result(request, previous)
+        return handler(request)
+
+    async def awrap_tool_call(self, request, handler):  # noqa: ANN001
+        previous = _successful_duplicate(
+            list(request.state.get("messages") or []),
+            request.tool_call,
+        )
+        if previous is not None:
+            return _reuse_duplicate_result(request, previous)
+        return await handler(request)
 
     def after_agent(self, state: IdeaAgentState, runtime) -> dict[str, Any] | None:  # noqa: ANN001
         messages = list(state.get("messages") or [])

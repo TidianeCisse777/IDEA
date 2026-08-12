@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import OrderedDict
 from typing import Any, Iterable
 
@@ -22,6 +23,12 @@ _MAX_PROFILE_ROWS = 5_000
 _MAX_JOIN_CANDIDATES = 8
 _MAX_PROFILE_CACHE_ENTRIES = 256
 _MAX_VALUE_CACHE_ENTRIES = 512
+_SCOPE_VALUE_LIMITS = {
+    "project_ids": 100,
+    "profile_ids": 500,
+    "sample_ids": 50,
+    "stations": 200,
+}
 _IDENTIFIER_TOKENS = (
     "id",
     "sample",
@@ -276,7 +283,7 @@ def _freshness(meta: dict[str, Any]) -> str | None:
     return None
 
 
-def _scope(meta: dict[str, Any]) -> dict[str, Any]:
+def _declared_scope(meta: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "project_id",
         "project_ids",
@@ -306,6 +313,142 @@ def _scope(meta: dict[str, Any]) -> dict[str, Any]:
             )
         })
     return _clean_json_mapping(scope)
+
+
+def _normalized_column_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).casefold())
+
+
+def _scope_role(column: object) -> str | None:
+    normalized = _normalized_column_name(column)
+    if normalized.endswith("projectid"):
+        return "project_ids"
+    if normalized.endswith("profileid"):
+        return "profile_ids"
+    if normalized in {"sampleid", "netsampleid"}:
+        return "sample_ids"
+    if normalized in {
+        "station",
+        "stationname",
+        "samplestation",
+        "neolabsstation",
+        "ecotaxastation",
+    }:
+        return "stations"
+    return None
+
+
+def _json_scalar(value: object) -> object:
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            pass
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _observed_values(series: pd.Series, *, limit: int) -> tuple[list[object], int, bool]:
+    unique = series.dropna().drop_duplicates()
+    count = int(len(unique))
+    values = [_json_scalar(value) for value in unique.head(limit).tolist()]
+    try:
+        values.sort()
+    except TypeError:
+        values.sort(key=str)
+    return values, count, count > limit
+
+
+def _observed_scope(dataframe: pd.DataFrame) -> dict[str, Any]:
+    """Derive bounded scope facts from actual dataframe values."""
+    observed: dict[str, Any] = {}
+    columns_by_role: dict[str, list[str]] = {}
+    for column in dataframe.columns:
+        role = _scope_role(column)
+        if role is not None:
+            columns_by_role.setdefault(role, []).append(str(column))
+
+    for role, columns in columns_by_role.items():
+        raw_columns = [
+            raw
+            for name in columns
+            for raw in dataframe.columns
+            if str(raw) == name
+        ]
+        combined = pd.concat(
+            [dataframe[column] for column in raw_columns],
+            ignore_index=True,
+        )
+        values, count, truncated = _observed_values(
+            combined,
+            limit=_SCOPE_VALUE_LIMITS[role],
+        )
+        observed[role] = values
+        observed[f"{role}_count"] = count
+        if truncated:
+            observed[f"{role}_truncated"] = True
+
+    time_columns = []
+    for column in dataframe.columns:
+        normalized = _normalized_column_name(column)
+        series = dataframe[column]
+        is_named_time = (
+            "datetime" in normalized
+            or "timestamp" in normalized
+            or normalized.endswith("date")
+            or normalized
+            in {
+                "date",
+                "sampledate",
+                "startdate",
+                "enddate",
+            }
+        )
+        if is_named_time or pd.api.types.is_datetime64_any_dtype(series.dtype):
+            time_columns.append(column)
+    parsed_times: list[pd.Series] = []
+    for column in time_columns:
+        series = dataframe[column]
+        if pd.api.types.is_numeric_dtype(series.dtype):
+            continue
+        parsed = pd.to_datetime(series, errors="coerce", utc=True).dropna()
+        if not parsed.empty:
+            parsed_times.append(parsed)
+    if parsed_times:
+        combined_times = pd.concat(parsed_times, ignore_index=True)
+        observed["date_from"] = combined_times.min().isoformat()
+        observed["date_to"] = combined_times.max().isoformat()
+        observed["time_columns"] = [str(column) for column in time_columns]
+
+    if observed:
+        observed["scope_basis"] = "dataframe_values"
+        observed["scope_columns"] = columns_by_role
+    return observed
+
+
+def _scope(meta: dict[str, Any], dataframe: pd.DataFrame | None) -> dict[str, Any]:
+    declared = _declared_scope(meta)
+    if dataframe is None:
+        return {
+            **declared,
+            **({"scope_basis": "declared_metadata"} if declared else {}),
+        }
+    observed = _observed_scope(dataframe)
+    if not observed:
+        return {
+            **declared,
+            **({"scope_basis": "declared_metadata"} if declared else {}),
+        }
+    conflicts = {
+        key: value
+        for key, value in declared.items()
+        if key in observed and observed[key] != value
+    }
+    scope = {**declared, **observed}
+    if conflicts:
+        scope["declared_conflicts"] = conflicts
+    return scope
 
 
 def _table_capabilities(dataframe: pd.DataFrame | None) -> tuple[ExplorationCapability, ...]:
@@ -377,7 +520,7 @@ def _record_for_entry(key: str, entry: dict[str, Any]) -> ResourceRecord | None:
         column_profiles=column_profiles,
         key_candidates=key_candidates,
         freshness=_freshness(meta),
-        scope=_scope(meta),
+        scope=_scope(meta, dataframe if isinstance(dataframe, pd.DataFrame) else None),
         capabilities=_table_capabilities(dataframe if isinstance(dataframe, pd.DataFrame) else None),
         provenance=provenance,
     )

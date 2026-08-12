@@ -86,6 +86,49 @@ def cache_creation_tokens_from_metadata(
         return 0
 
 
+def explicit_prompt_cache_token_breakdown(
+    *,
+    enabled: bool,
+    system_prompt_tokens: int,
+    tool_schema_tokens: int,
+    dynamic_context_tokens: int,
+    history_tokens: int,
+    current_turn_tool_tokens: int,
+    estimated_request_tokens: int,
+) -> dict[str, int | float | bool]:
+    """Describe the explicit-cache boundary without counting tools as cached.
+
+    The explicit breakpoint is attached to the permanent ``SystemMessage``.
+    Tool schemas are part of the versioned cache key, but they are sent after
+    that breakpoint and therefore belong to the variable suffix for accounting
+    purposes.  Keeping those two concepts separate avoids reporting an
+    optimistic cacheable-prefix share.
+    """
+
+    system = max(0, int(system_prompt_tokens))
+    tools = max(0, int(tool_schema_tokens))
+    dynamic = max(0, int(dynamic_context_tokens))
+    history = max(0, int(history_tokens))
+    current_tools = max(0, int(current_turn_tool_tokens))
+    total = max(0, int(estimated_request_tokens))
+    breakpoint = system if enabled else 0
+    suffix = max(0, total - breakpoint)
+    return {
+        "prompt_cache_explicit_enabled": bool(enabled),
+        "estimated_system_prompt_tokens": system,
+        "estimated_cacheable_system_prefix_tokens": breakpoint,
+        "estimated_tool_schema_suffix_tokens": tools,
+        "estimated_dynamic_context_suffix_tokens": dynamic,
+        "estimated_history_suffix_tokens": history,
+        "estimated_current_turn_tool_tokens": current_tools,
+        "estimated_variable_suffix_tokens": suffix,
+        "estimated_cacheable_prefix_share": (
+            breakpoint / total if total else 0.0
+        ),
+        "estimated_variable_suffix_share": suffix / total if total else 0.0,
+    }
+
+
 def with_explicit_prompt_cache_breakpoint(
     message: SystemMessage,
 ) -> SystemMessage:
