@@ -1065,14 +1065,6 @@ def render_task_context(
         for message in messages
         if isinstance(message, HumanMessage) and _message_text(message).strip()
     ]
-    prior_instructions = human_instructions[:-1][-4:]
-    continuity = ""
-    if prior_instructions:
-        continuity = (
-            "\nRecent user instructions (oldest to newest; context only, "
-            "the current objective wins):\n"
-            + "\n".join(f"- {instruction}" for instruction in prior_instructions)
-        )
     source_line = ""
     if preferred_sources or primary_source:
         source_line = (
@@ -1080,16 +1072,36 @@ def render_task_context(
             + (",".join(preferred_sources) or "none")
             + f"; primary={primary_source or 'none'}."
         )
-    rendered = (
+    prefix = (
         "\n\n## CURRENT TASK (authoritative for this turn)\n"
         f"Objective: {run.objective}\n"
         f"Required deliverables: {deliverables}\n"
-        + continuity
-        + "\n\n## PLANNER DATASET CHOICE\n"
+    )
+    suffix = (
+        "\n\n## PLANNER DATASET CHOICE\n"
         "Application selection: none. Candidate choice and qualification remain "
         "the planner's responsibility under the permanent DataFrame contract."
         + source_line
     )
+    continuity_header = (
+        "\nRecent user instructions (oldest to newest; context only, "
+        "the current objective wins):\n"
+    )
+    remaining = max_chars - len(prefix) - len(suffix) - len(continuity_header)
+    selected_reversed: list[str] = []
+    for instruction in reversed(human_instructions[:-1]):
+        line = f"- {instruction}"
+        cost = len(line) + (1 if selected_reversed else 0)
+        if cost > remaining:
+            break
+        selected_reversed.append(line)
+        remaining -= cost
+    continuity = (
+        continuity_header + "\n".join(reversed(selected_reversed))
+        if selected_reversed
+        else ""
+    )
+    rendered = prefix + continuity + suffix
     return rendered[:max_chars]
 
 

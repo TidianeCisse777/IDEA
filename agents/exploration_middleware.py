@@ -102,7 +102,12 @@ class ExplorationStateMiddleware(AgentMiddleware):
         super().__init__()
         self.thread_id = thread_id
 
-    def _inventory(self, messages: list[Any]):
+    def _inventory(
+        self,
+        messages: list[Any],
+        *,
+        include_hidden: bool = False,
+    ):
         from tools.dataframe_cleanup import hidden_dataframes
         from tools.resource_inventory import build_resource_inventory
         from tools.session_store import default_store
@@ -122,7 +127,39 @@ class ExplorationStateMiddleware(AgentMiddleware):
             default_store,
             self.thread_id,
             authorized_sources=authorized,
-            excluded_variables=hidden_dataframes(default_store, self.thread_id),
+            excluded_variables=(
+                ()
+                if include_hidden
+                else hidden_dataframes(default_store, self.thread_id)
+            ),
+        )
+
+    def _retain_structured_working_set(
+        self,
+        messages: list[Any],
+        store,
+    ) -> None:  # noqa: ANN001
+        """Keep tool/user-grounded working tables alive across short follow-ups."""
+
+        from agents.context_working_set import build_working_set
+        from tools.dataframe_cleanup import touch_dataframe_names
+
+        inventory = self._inventory(messages, include_hidden=True)
+        tables = [
+            resource
+            for resource in inventory
+            if resource.kind in {"table", "selection"}
+        ]
+        working_set = build_working_set(tables, messages)
+        retained_names = [
+            entry.data_ref
+            for entry in working_set.entries
+            if entry.pinned and entry.authority in {"tool", "user_reference"}
+        ]
+        touch_dataframe_names(
+            store,
+            self.thread_id,
+            retained_names,
         )
 
     def before_agent(self, state: IdeaAgentState, runtime) -> dict[str, Any] | None:  # noqa: ANN001
@@ -135,6 +172,7 @@ class ExplorationStateMiddleware(AgentMiddleware):
 
         humans = [message for message in messages if isinstance(message, HumanMessage)]
         marker = str(getattr(humans[-1], "id", None) or f"human-{len(humans)}")
+        self._retain_structured_working_set(messages, default_store)
         advance_dataframe_cleanup(
             default_store,
             self.thread_id,

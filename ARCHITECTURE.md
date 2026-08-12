@@ -88,10 +88,18 @@ appels et résultats ReAct du tour
 schémas de tools transmis séparément
 ```
 
-`CURRENT TASK` contient aussi une capsule bornée des quatre instructions
-utilisateur précédentes. Les réponses de l'assistant en sont exclues : les
-contraintes multi-tours survivent ainsi à la compaction sans promouvoir une
-ancienne affirmation du modèle au rang de fait.
+`CURRENT TASK` contient aussi une capsule utilisateur bornée par son budget de
+caractères. Elle conserve autant d'instructions précédentes que le budget le
+permet, en donnant priorité aux plus récentes puis en les rendant dans l'ordre
+chronologique. Les réponses de l'assistant en sont exclues : les contraintes
+multi-tours survivent ainsi à la compaction sans promouvoir une ancienne
+affirmation du modèle au rang de fait.
+
+Les DataFrames transitoires appartenant encore au working set sont rafraîchis
+uniquement lorsqu'un résultat de tool ou une référence utilisateur exacte les
+justifie. Une table orpheline continue donc de vieillir, tandis qu'une table de
+correspondances encore soutenue par les preuves structurées reste visible dans
+les tours de suivi.
 
 Le message système reste stable et cacheable. Les données propres au tour ne
 sont pas ajoutées durablement au checkpoint comme instructions système.

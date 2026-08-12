@@ -33,6 +33,29 @@ def test_task_context_keeps_recent_user_instructions_for_short_followup():
     assert "Les deux tableaux resteront séparés" not in context
 
 
+def test_task_context_uses_its_budget_for_a_long_sequence_of_short_followups():
+    instructions = [
+        "Prends l'export EcoTaxa et identifie les profils filet correspondants.",
+        "Compare les objets Copepoda UVP et l'abondance Copepoda filet.",
+        "Ne fais pas de jointure; présente deux tableaux séparés.",
+        "Limite-les aux profils et stations déjà retenus.",
+        "Présente les stations dans le même ordre.",
+        "Ajoute une ligne Total.",
+        "Indique aussi le nombre de profils.",
+        "Affiche des valeurs arrondies.",
+        "Continue avec la même demande.",
+        "Donne maintenant la réponse finale.",
+    ]
+    messages = [HumanMessage(content=text) for text in instructions]
+    run = new_exploration_run(instructions[-1], ())
+
+    context = render_task_context(run, messages=messages)
+
+    assert len(context) <= 2_600
+    for instruction in instructions[:-1]:
+        assert instruction in context
+
+
 def test_old_assistant_reference_cannot_become_primary_dataframe():
     resources = (
         ResourceRecord(

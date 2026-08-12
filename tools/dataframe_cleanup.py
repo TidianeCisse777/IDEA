@@ -173,15 +173,30 @@ def advance_dataframe_cleanup(
     return hidden
 
 
-def touch_dataframes(store: SessionStore, thread_id: str, text: str) -> None:
+def touch_dataframe_names(
+    store: SessionStore,
+    thread_id: str,
+    variable_names: tuple[str, ...] | list[str] | set[str],
+) -> None:
+    """Refresh exact live variables selected by structured runtime evidence."""
+
     state = _load(store, thread_id)
     changed = False
-    for variable in state["last_used"]:
-        if variable in text:
+    for variable in dict.fromkeys(str(name) for name in variable_names if name):
+        if variable in state["last_used"]:
             state["last_used"][variable] = state["turn"]
             changed = True
     if changed:
         _save(store, thread_id, state)
+
+
+def touch_dataframes(store: SessionStore, thread_id: str, text: str) -> None:
+    state = _load(store, thread_id)
+    touch_dataframe_names(
+        store,
+        thread_id,
+        [variable for variable in state["last_used"] if variable in text],
+    )
 
 
 def hidden_dataframes(store: SessionStore, thread_id: str) -> set[str]:

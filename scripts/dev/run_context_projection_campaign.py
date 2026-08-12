@@ -98,6 +98,14 @@ HISTORY_REPLAY_MATCHES = "df_derived_uvp_filet_ecart_10h"
 HISTORY_REPLAY_BAD_JOIN = (
     "df_derived_reprise_comparaison_uvp_filet_abondance_copepoda"
 )
+HISTORY_REPLAY_FOLLOWUPS = (
+    "Présente les stations dans le même ordre.",
+    "Ajoute une ligne Total à la fin.",
+    "Indique aussi le nombre de profils.",
+    "Affiche les résultats avec des valeurs arrondies.",
+    "Continue avec ce qu'on avait demandé.",
+    "Donne maintenant la réponse finale.",
+)
 
 
 def _long_turn_questions(count: int = LONG_TURN_COUNT) -> tuple[str, ...]:
@@ -1340,6 +1348,53 @@ def _campaign_uvp_net_history_replay(
         HISTORY_REPLAY_MATCHES,
         HISTORY_REPLAY_BAD_JOIN,
     }
+    evolution_messages = list(histories["deux tableaux"])
+    evolution_captures: list[ModelCapture] = []
+    for index, question in enumerate(HISTORY_REPLAY_FOLLOWUPS, start=6):
+        evolution_messages.extend([
+            AIMessage(
+                content="Réponse intermédiaire détaillée. " + "R" * 8_000,
+                id=f"history-replay-ai-followup-{index}",
+            ),
+            HumanMessage(
+                content=question,
+                id=f"history-replay-human-followup-{index}",
+            ),
+        ])
+        evolution_captures.append(
+            _capture(
+                store,
+                thread_id,
+                question,
+                f"history-replay-followup-{index}",
+                input_messages=evolution_messages,
+            )
+        )
+    evolution = {
+        str(index): {
+            "objective": next(
+                (
+                    line.removeprefix("Objective: ")
+                    for line in capture.task_context.splitlines()
+                    if line.startswith("Objective: ")
+                ),
+                "",
+            ),
+            "remembered": [
+                label
+                for label, text in {
+                    "initial": "Prends l'export EcoTaxa",
+                    "comparison": "compare le nombre d'objets Copepoda",
+                    "no_join": "Ne fais pas de jointure",
+                    "scope": "Limite-les bien aux profils",
+                }.items()
+                if text in capture.task_context
+            ],
+            "dataframes": len(_detail_names(capture.dataset_context)),
+        }
+        for index, capture in enumerate(evolution_captures, start=6)
+    }
+    final_evolution = evolution_captures[-1]
     return [
         _check(
             scenario,
@@ -1415,6 +1470,26 @@ def _campaign_uvp_net_history_replay(
                 ensure_ascii=False,
             ),
             turn_range="correction turns 3-5",
+        ),
+        _check(
+            scenario,
+            "continuity",
+            "critical user instructions survive six short follow-ups",
+            "Prends l'export EcoTaxa" in final_evolution.task_context
+            and "compare le nombre d'objets Copepoda" in final_evolution.task_context
+            and "Ne fais pas de jointure" in final_evolution.task_context
+            and "Limite-les bien aux profils" in final_evolution.task_context,
+            json.dumps(evolution, ensure_ascii=False),
+            turn_range="follow-up turns 6-11",
+        ),
+        _check(
+            scenario,
+            "continuity",
+            "working dataframes survive six short follow-ups",
+            all_required_resources
+            <= set(_detail_names(final_evolution.dataset_context)),
+            json.dumps(evolution, ensure_ascii=False),
+            turn_range="follow-up turns 6-11",
         ),
     ]
 
