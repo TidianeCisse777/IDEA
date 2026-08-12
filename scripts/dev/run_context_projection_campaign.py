@@ -105,6 +105,9 @@ HISTORY_REPLAY_FOLLOWUPS = (
     "Affiche les résultats avec des valeurs arrondies.",
     "Continue avec ce qu'on avait demandé.",
     "Donne maintenant la réponse finale.",
+) + tuple(
+    f"Poursuis la même présentation, étape de suivi {turn}."
+    for turn in range(12, 51)
 )
 
 
@@ -1394,7 +1397,13 @@ def _campaign_uvp_net_history_replay(
         }
         for index, capture in enumerate(evolution_captures, start=6)
     }
-    final_evolution = evolution_captures[-1]
+    evolution_evidence = {
+        "turns_checked": len(evolution_captures),
+        "milestones": {
+            turn: evolution[str(turn)]
+            for turn in (6, 11, 20, 30, 40, 43, 50)
+        },
+    }
     return [
         _check(
             scenario,
@@ -1474,22 +1483,28 @@ def _campaign_uvp_net_history_replay(
         _check(
             scenario,
             "continuity",
-            "critical user instructions survive six short follow-ups",
-            "Prends l'export EcoTaxa" in final_evolution.task_context
-            and "compare le nombre d'objets Copepoda" in final_evolution.task_context
-            and "Ne fais pas de jointure" in final_evolution.task_context
-            and "Limite-les bien aux profils" in final_evolution.task_context,
-            json.dumps(evolution, ensure_ascii=False),
-            turn_range="follow-up turns 6-11",
+            "critical user instructions survive through turn fifty",
+            all(
+                "Prends l'export EcoTaxa" in capture.task_context
+                and "compare le nombre d'objets Copepoda" in capture.task_context
+                and "Ne fais pas de jointure" in capture.task_context
+                and "Limite-les bien aux profils" in capture.task_context
+                for capture in evolution_captures
+            ),
+            json.dumps(evolution_evidence, ensure_ascii=False),
+            turn_range="follow-up turns 6-50",
         ),
         _check(
             scenario,
             "continuity",
-            "working dataframes survive six short follow-ups",
-            all_required_resources
-            <= set(_detail_names(final_evolution.dataset_context)),
-            json.dumps(evolution, ensure_ascii=False),
-            turn_range="follow-up turns 6-11",
+            "working dataframes survive through turn fifty",
+            all(
+                all_required_resources
+                <= set(_detail_names(capture.dataset_context))
+                for capture in evolution_captures
+            ),
+            json.dumps(evolution_evidence, ensure_ascii=False),
+            turn_range="follow-up turns 6-50",
         ),
     ]
 

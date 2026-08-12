@@ -89,11 +89,12 @@ schémas de tools transmis séparément
 ```
 
 `CURRENT TASK` contient aussi une capsule utilisateur bornée par son budget de
-caractères. Elle conserve autant d'instructions précédentes que le budget le
-permet, en donnant priorité aux plus récentes puis en les rendant dans l'ordre
-chronologique. Les réponses de l'assistant en sont exclues : les contraintes
-multi-tours survivent ainsi à la compaction sans promouvoir une ancienne
-affirmation du modèle au rang de fait.
+caractères. Elle réserve les quatre premières instructions comme ancrage de la
+demande, puis utilise le budget restant pour les instructions les plus récentes;
+l'ensemble est rendu clairement dans l'ordre chronologique de chaque groupe.
+Les réponses de l'assistant en sont exclues : les contraintes multi-tours
+survivent ainsi à la compaction sans promouvoir une ancienne affirmation du
+modèle au rang de fait.
 
 Les DataFrames transitoires appartenant encore au working set sont rafraîchis
 uniquement lorsqu'un résultat de tool ou une référence utilisateur exacte les

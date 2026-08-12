@@ -27,7 +27,7 @@ def test_task_context_keeps_recent_user_instructions_for_short_followup():
     context = render_task_context(run, messages=messages)
 
     assert "Objective: Fais les deux tableaux." in context
-    assert "Recent user instructions" in context
+    assert "User instruction continuity" in context
     assert "sans jointure" in context
     assert "Limite-les aux profils et aux stations" in context
     assert "Les deux tableaux resteront séparés" not in context
@@ -54,6 +54,28 @@ def test_task_context_uses_its_budget_for_a_long_sequence_of_short_followups():
     assert len(context) <= 2_600
     for instruction in instructions[:-1]:
         assert instruction in context
+
+
+def test_task_context_preserves_initial_anchors_under_fifty_turn_pressure():
+    anchors = [
+        "Prends l'export EcoTaxa et identifie les profils filet correspondants.",
+        "Compare les objets Copepoda UVP et l'abondance Copepoda filet.",
+        "Ne fais pas de jointure; présente deux tableaux séparés.",
+        "Limite-les aux profils et stations déjà retenus.",
+    ]
+    followups = [
+        f"Poursuis la même présentation, étape de suivi {turn}."
+        for turn in range(5, 51)
+    ]
+    messages = [HumanMessage(content=text) for text in [*anchors, *followups]]
+    run = new_exploration_run(followups[-1], ())
+
+    context = render_task_context(run, messages=messages)
+
+    assert len(context) <= 2_600
+    for instruction in anchors:
+        assert instruction in context
+    assert followups[-2] in context
 
 
 def test_old_assistant_reference_cannot_become_primary_dataframe():

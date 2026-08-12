@@ -1084,21 +1084,31 @@ def render_task_context(
         + source_line
     )
     continuity_header = (
-        "\nRecent user instructions (oldest to newest; context only, "
-        "the current objective wins):\n"
+        "\nUser instruction continuity (initial anchors followed by the most "
+        "recent instructions; context only, the current objective wins):\n"
     )
     remaining = max_chars - len(prefix) - len(suffix) - len(continuity_header)
-    selected_reversed: list[str] = []
-    for instruction in reversed(human_instructions[:-1]):
-        line = f"- {instruction}"
-        cost = len(line) + (1 if selected_reversed else 0)
+    prior_instructions = human_instructions[:-1]
+    anchor_lines: list[str] = []
+    for instruction in prior_instructions[:4]:
+        line = f"- [initial anchor] {instruction}"
+        cost = len(line) + (1 if anchor_lines else 0)
         if cost > remaining:
             break
-        selected_reversed.append(line)
+        anchor_lines.append(line)
         remaining -= cost
+    recent_reversed: list[str] = []
+    for instruction in reversed(prior_instructions[4:]):
+        line = f"- {instruction}"
+        cost = len(line) + (1 if anchor_lines or recent_reversed else 0)
+        if cost > remaining:
+            break
+        recent_reversed.append(line)
+        remaining -= cost
+    continuity_lines = [*anchor_lines, *reversed(recent_reversed)]
     continuity = (
-        continuity_header + "\n".join(reversed(selected_reversed))
-        if selected_reversed
+        continuity_header + "\n".join(continuity_lines)
+        if continuity_lines
         else ""
     )
     rendered = prefix + continuity + suffix
