@@ -80,11 +80,15 @@ _NAMESPACE_DESCRIPTIONS: Mapping[str, str] = {
         "DataFrames: Amundsen CTD profiles, Bio-ORACLE layers, and OGSL CTD data. "
         "Choose the source whose coverage and variables answer the user request."
     ),
+    "deliverable": (
+        "Deliverable generation for an explicitly requested report or downloadable "
+        "document. Load only when the user asks for a compiled deliverable."
+    ),
 }
 
 
 def _namespace_name(policy: ToolPolicy) -> str | None:
-    if policy.source in {"ecotaxa", "ecopart", "geography"}:
+    if policy.source in {"ecotaxa", "ecopart", "geography", "deliverable"}:
         return policy.source
     if policy.source in {"amundsen", "bio_oracle", "ogsl"}:
         return "environmental_enrichment"

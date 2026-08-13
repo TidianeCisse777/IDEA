@@ -27,6 +27,17 @@ def test_permanent_prompt_matches_current_harness():
     assert "exactly one `run_pandas` call" in prompt
 
 
+def test_permanent_prompt_requires_rag_and_clarification_before_method_sensitive_comparison():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = COPEPOD_SYSTEM_PROMPT.lower()
+    assert "cross-instrument quantitative comparison" in prompt
+    assert "rag before the first calculation" in prompt
+    assert "ask one short clarification before calculation" in prompt
+    assert "never validate a corrected-looking derived table by name" in prompt
+    assert "recompute from the nearest authoritative source" in prompt
+
+
 def test_display_only_followup_is_narrow_and_excludes_new_analysis():
     from agent import _is_display_only_followup
 

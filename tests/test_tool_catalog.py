@@ -231,3 +231,15 @@ def test_catalog_presentation_mappings_are_immutable(monkeypatch):
         tool_catalog.TOOL_PRESENTATION["load_file"] = catalog.presentation(
             "load_file"
         )
+
+
+def test_ecopart_progress_does_not_claim_export_before_confirmation(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "")
+    catalog = build_tool_catalog("catalog-ecopart-progress")
+
+    presentation = catalog.presentation("enrich_ecotaxa_with_ecopart_remote")
+
+    assert presentation.progress.fr == "Traitement EcoPart en cours."
+    assert presentation.progress_detail.fr == (
+        "Le préflight ne télécharge rien; l’export démarre après confirmation."
+    )

@@ -85,6 +85,63 @@ Feedback si le calcul n'est pas possible :
 - Si le volume vient d'un autre profil ou d'une autre profondeur non reliée, expliquer que la jointure doit être validée avant usage.
 
 ---
+# Comment comparer une abondance UVP avec une abondance de filet NeoLabs ?
+
+Mots-clés : comparaison UVP filet, EcoTaxa, EcoPart, NeoLabs, copépodes,
+abondance, concentration, ind m-3, profondeur, profil, volume échantillonné,
+depth volume, flowmeter volume, agrégation pondérée
+
+Cette comparaison exige deux concentrations exprimées en `ind m-3`, le même
+périmètre biologique et un appariement de prélèvements documenté. Un comptage
+EcoTaxa brut ne doit jamais être comparé directement à une colonne NeoLabs déjà
+normalisée.
+
+Questions à résoudre avant le calcul :
+- périmètre biologique : taxon, copépodites seulement, nauplii, tous stades, ou
+  fraction de taille ;
+- intervalle de profondeur et règle exacte d'inclusion des bornes ;
+- colonne NeoLabs à utiliser : volume calculé par profondeur ou volume du
+  débitmètre ;
+- traitement de plusieurs profils UVP associés au même filet : profils séparés,
+  profil certifié le plus proche, ou regroupement pondéré par le volume ;
+- règle d'appariement filet–UVP et preuve de correspondance, notamment
+  `ctdrosettefilename` partagé et `join_eligible=true` lorsqu'ils sont requis.
+
+Calcul UVP pour un profil et l'intervalle demandé :
+```text
+nombre_uvp = nombre d'object_id uniques du groupe cible dans les bins retenus
+volume_uvp_m3 = somme des volumes EcoPart uniques par profil + bin / 1000
+concentration_uvp_ind_m3 = nombre_uvp / volume_uvp_m3
+```
+
+Si plusieurs bins ou profils doivent être regroupés, la concentration pondérée
+est toujours **somme des individus / somme des volumes**. Ne pas prendre la
+moyenne simple des concentrations de bins. Après une jointure objets–volumes,
+dédupliquer les volumes par profil et bin avant la somme : le volume répété sur
+chaque ligne objet ne doit être compté qu'une fois. Ne pas proratiser un bin qui
+chevauche partiellement l'intervalle sans règle de volume partiel documentée.
+
+Côté NeoLabs, sélectionner une seule colonne normalisée correspondant exactement
+au périmètre demandé, par exemple `ALL_STAGES_ABUND`, `COPEPODID_ABUND`, une
+colonne de stade, ou une fraction de taille. Conserver le suffixe `depth vol.` ou
+`flowmeter vol.` dans la provenance. Ne pas sommer des colonnes de stades si une
+colonne agrégée équivalente est disponible, et ne pas moyenner des répétitions
+d'`ANALYSIS_ID` sans vérifier leur grain.
+
+Sortie minimale de vérification :
+- identifiants filet, profil UVP et bins EcoPart retenus ;
+- groupe taxonomique/stades/fraction retenu des deux côtés ;
+- `nombre_uvp`, volumes uniques en L et m3, concentration UVP calculée ;
+- nom exact et valeur de la colonne NeoLabs utilisée ;
+- règle d'appariement, delta temporel/profondeur et unité commune ;
+- formule et statut des hypothèses ou clarifications.
+
+Si un de ces choix reste ambigu, poser une question courte à l'utilisateur avant
+le calcul. Une table dérivée nommée « corrected », « final » ou équivalent n'est
+pas une preuve : repartir des tables sources et recomputer les entrées de la
+formule.
+
+---
 # Comment calculer une biomasse en mg C m⁻² ?
 
 La biomasse integree en mg C m⁻² se calcule en deux etapes : obtenir une biomasse volumique par profondeur, puis sommer sur l'epaisseur des bins.

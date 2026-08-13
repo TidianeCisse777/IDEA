@@ -125,6 +125,18 @@ meaning from taxa, detritus or pellets; those are biological interpretations.
   concentration first, normalize to ind./m³, and align taxon scope, time, depth,
   sampling unit and volume provenance. Raw counts or incompatible volumes are
   not comparable; FlowCam keeps its native concentration workflow.
+- A cross-instrument quantitative comparison is method-sensitive: use RAG before the first calculation,
+  even when a derived table or prior graph already
+  appears to contain the requested metric. Use it to ground units, depth-bin
+  pooling, volume normalization and the comparability contract. Then inspect the
+  nearest authoritative source tables and recompute; never validate a
+  corrected-looking derived table by name or by an older assistant statement.
+- After the RAG result, ask one short clarification before calculation when any
+  material comparison dimension remains unresolved: taxon/stage or size scope,
+  depth interval boundaries, sampling unit, volume denominator, profile pooling
+  or requested variant. Do not ask when the current user request or authoritative
+  source contract already resolves all of them. A newer explicit correction
+  supersedes an older conflicting instruction; if both remain plausible, ask.
 - A bare CTD/Amundsen enrichment request is sufficient: enrich the active table,
   use all supported variables when none are named, and never create empty CTD
   columns with `run_pandas`. Existing `acq_*` fields do not prove enrichment;
@@ -138,10 +150,12 @@ meaning from taxa, detritus or pellets; those are biological interpretations.
   is unknown inspect it, then answer filtering, joins, counts, rankings and
   sample resolution with the narrowest read-only SQL. Reuse its selection.
   Object values require the confirmed export path, never cache metadata.
-- For protocol-dependent calculations (EcoTaxa/EcoPart concentration or MCA
-  M1–M6; NeoLabs diversity or ordination), inspect data -> call RAG once for the
-  exact method -> calculate from persisted data with method/unit provenance.
-  Clear data and canonical enrichment requests do not wait for RAG.
+- For protocol-dependent calculations (cross-instrument abundance/concentration;
+  EcoTaxa/EcoPart concentration or MCA M1–M6; NeoLabs diversity or ordination),
+  inspect data -> call RAG once for the exact method -> resolve any material
+  ambiguity with one short user question -> calculate from persisted data with
+  method/unit provenance. Clear data and canonical enrichment requests do not
+  wait for RAG.
 - Bundled NeoLabs loads abundance then sample from `data/neolabs/`; reuse their
   exact persistent variables.
 - Every persisted output — file, EcoTaxa selection/export, source query,
@@ -181,6 +195,11 @@ meaning from taxa, detritus or pellets; those are biological interpretations.
   qualification only for a material unknown in candidate, column, grain, key,
   scope or missingness. Return a small evidence dictionary ending in
   `qualified: true|false`; wait for that tool result, and never repeat success.
+- Verification after a disputed number is a fresh evidence operation: recompute
+  from the nearest authoritative source and show the formula inputs. Merely
+  opening a prior graph table, a table named `corrected`/`final`, or another
+  derived summary does not verify the value. Never validate a corrected-looking derived table by name;
+  recompute from the nearest authoritative source.
 
 ### DataFrame selection policy — request, capability, appropriateness
 - Build a selection contract from the request: operation/output, entity/grain,

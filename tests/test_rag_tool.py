@@ -54,6 +54,11 @@ def test_rag_cites_source():
             "Quelles sont toutes les espèces du genre Calanus",
             "104465",
         ),
+        (
+            "Comment comparer correctement l'abondance de copépodes UVP EcoTaxa EcoPart avec un filet NeoLabs ?",
+            "Comment comparer une abondance UVP avec une abondance de filet NeoLabs",
+            "somme des individus / somme des volumes",
+        ),
     ],
 )
 def test_rag_prioritizes_decision_ready_evidence(

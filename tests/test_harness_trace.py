@@ -180,3 +180,33 @@ def test_harness_accepts_openai_stream_metadata_with_null_token_usage():
         ]
         == 3
     )
+
+
+def test_harness_exposes_checkpoint_and_dataframe_lifecycle_limits():
+    import agent
+
+    thread_id = "harness-state-limits"
+    agent.clear_harness_trace(thread_id)
+    agent._begin_harness_turn(
+        thread_id,
+        [HumanMessage(content="Continue", id="state-limit-turn")],
+    )
+    agent._append_harness_model_call(
+        thread_id,
+        {
+            "messages_before": 39,
+            "checkpoint_message_cap": 40,
+            "max_live_derived_dataframes": 20,
+            "derived_dataframes_total": 25,
+            "derived_dataframes_visible": 20,
+            "derived_dataframes_hidden": 5,
+            "derived_dataframes_capacity_hidden": 5,
+            "derived_dataframes_age_hidden": 0,
+        },
+    )
+
+    call = agent.get_harness_trace(thread_id)["model_calls"][0]
+    assert call["checkpoint_messages_observed"] == 39
+    assert call["checkpoint_message_cap"] == 40
+    assert call["derived_dataframes_visible"] == 20
+    assert call["derived_dataframes_capacity_hidden"] == 5

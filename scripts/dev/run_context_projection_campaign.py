@@ -31,6 +31,7 @@ os.environ["LANGSMITH_TRACING"] = "false"
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableLambda
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelCallLimitMiddleware
 from langgraph.checkpoint.memory import MemorySaver
@@ -115,6 +116,8 @@ def _long_turn_questions(count: int = LONG_TURN_COUNT) -> tuple[str, ...]:
     return tuple(
         PENDING_WINDOW_QUESTION
         if 20 <= turn <= 25
+        else f"Tour 07 — poursuis précisément {LIFECYCLE_CHILD}."
+        if turn == 7
         else f"Tour 08 — analyse précisément {LIFECYCLE_REVIVABLE}."
         if turn == 8
         else "Tour 12 — analyse précisément df_neolabs_sample."
@@ -649,6 +652,65 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
             and len(mixed_non_file_details) == 10
             and mixed_non_file_details[0] == mixed_target,
             f"non_file_details={mixed_non_file_details}",
+        ),
+    ])
+
+    capacity_thread = f"{BASE_THREAD}-df-derived-capacity"
+    capacity_source = "df_file_capacity_source"
+    capacity_derived = tuple(
+        f"df_derived_capacity_{index:02d}" for index in range(25)
+    )
+    store_dataset(
+        store,
+        capacity_thread,
+        mixed_frame.copy(),
+        variable_name=capacity_source,
+        meta={
+            "source": "file:/uploads/capacity-source.csv",
+            "description": "Canonical source outside the derived capacity.",
+            "grain": "one row per sample",
+        },
+        set_active=False,
+    )
+    for name in capacity_derived:
+        store_dataset(
+            store,
+            capacity_thread,
+            mixed_frame.copy(),
+            variable_name=name,
+            meta={
+                "source": "analysis:explicit-derived",
+                "description": f"Capacity candidate {name}.",
+                "grain": "one row per sample",
+                "parent_variable": capacity_source,
+            },
+            set_active=False,
+        )
+    capacity = _capture(
+        store,
+        capacity_thread,
+        "Continue l'analyse avec les ressources actives.",
+        "df-derived-capacity",
+    )
+    capacity_index = set(_index_names(capacity.dataset_context))
+    visible_capacity_derived = set(capacity_derived) & capacity_index
+    checks.extend([
+        _check(
+            "twenty-live-derived-dataframes",
+            "dataframes",
+            "derived dataframe capacity is a hard twenty",
+            len(visible_capacity_derived) == 20
+            and int(capacity.audit.get("max_live_derived_dataframes") or 0) == 20
+            and int(capacity.audit.get("derived_dataframes_capacity_hidden") or 0) == 5,
+            f"visible={len(visible_capacity_derived)}; "
+            f"capacity_hidden={capacity.audit.get('derived_dataframes_capacity_hidden')}",
+        ),
+        _check(
+            "twenty-live-derived-dataframes",
+            "dataframes",
+            "source dataframe is excluded from derived capacity",
+            capacity_source in capacity_index,
+            f"source_visible={capacity_source in capacity_index}",
         ),
     ])
 
@@ -2988,12 +3050,15 @@ def _dataframe_lifecycle_checks(
 
     lineage_violation = first_presence_violation(
         LIFECYCLE_PARENT,
-        ((range(1, LONG_TURN_COUNT + 1), True),),
+        (
+            (range(1, 13), True),
+            (range(13, LONG_TURN_COUNT + 1), False),
+        ),
     )
     if lineage_violation is None:
         parent_entry = store.get(f"{thread_id}:dataset:{LIFECYCLE_PARENT}")
         child_entry = store.get(f"{thread_id}:dataset:{LIFECYCLE_CHILD}")
-        if parent_entry is None or child_entry is None:
+        if parent_entry is not None or child_entry is not None:
             lineage_violation = (
                 LONG_TURN_COUNT,
                 f"parent_persisted={parent_entry is not None}; "
@@ -3050,9 +3115,10 @@ def _dataframe_lifecycle_checks(
             f"{LIFECYCLE_REVIVABLE} hidden on 7 and leads intermediate details on turn 8",
         ),
         result(
-            "visible child preserves its transient lineage parent",
+            "visible child preserves its parent until both become unused",
             lineage_violation,
-            f"{LIFECYCLE_PARENT} remains visible and persisted through turn 50",
+            f"{LIFECYCLE_PARENT} stays visible while {LIFECYCLE_CHILD} is live, "
+            "then both age out and are deleted",
         ),
         result(
             "source dataframes remain available throughout cleanup",
@@ -3088,6 +3154,7 @@ def campaign_long_turns(store: SessionStore) -> list[CampaignCheck]:
         *_long_turn_checks(snapshots, questions, thread_id),
         *_dataframe_lifecycle_checks(snapshots, store, thread_id),
         *_history_pressure_checks(store),
+        *_durable_checkpoint_cap_checks(),
     ]
 
 
@@ -3114,6 +3181,62 @@ def _large_history(
         id="pressure-current-human",
     ))
     return messages
+
+
+def _durable_checkpoint_cap_checks() -> list[CampaignCheck]:
+    """Prove that a completed graph checkpoint is physically bounded."""
+
+    scenario = "durable-checkpoint-hard-cap"
+    graph = create_agent(
+        RunnableLambda(lambda _request: AIMessage(content="Réponse finale bornée.")),
+        [],
+        checkpointer=MemorySaver(),
+    )
+    config = {"configurable": {"thread_id": f"{BASE_THREAD}-checkpoint-cap"}}
+    graph.invoke({"messages": _large_history(turns=60, answer_chars=1_000)}, config=config)
+    before = list(graph.get_state(config).values["messages"])
+    changed = agent_module.compact_checkpoint_history(
+        graph,
+        config,
+        max_messages=40,
+    )
+    after = list(graph.get_state(config).values["messages"])
+    summaries = [
+        message
+        for message in after
+        if message.additional_kwargs.get("checkpoint_summary") is True
+    ]
+    current_humans = [
+        message
+        for message in after
+        if isinstance(message, HumanMessage)
+        and message.id == "pressure-current-human"
+    ]
+    invalid_tool_ids = agent_module._invalid_tool_history_message_ids(after)
+
+    return [
+        _check(
+            scenario,
+            "long_turns",
+            "completed checkpoint is physically rewritten under forty messages",
+            changed and len(before) > 40 and len(after) <= 40,
+            f"checkpoint_messages={len(before)}->{len(after)}; changed={changed}",
+            turn_range="completed graph checkpoint",
+        ),
+        _check(
+            scenario,
+            "long_turns",
+            "checkpoint archive marker is unique and current request survives",
+            len(summaries) == 1
+            and len(current_humans) == 1
+            and len(after) >= 2
+            and isinstance(after[1], HumanMessage)
+            and not invalid_tool_ids,
+            f"summaries={len(summaries)}; current_humans={len(current_humans)}; "
+            f"invalid_tool_ids={invalid_tool_ids}",
+            turn_range="completed graph checkpoint",
+        ),
+    ]
 
 
 def _history_pressure_checks(store: SessionStore) -> list[CampaignCheck]:

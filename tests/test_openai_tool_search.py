@@ -44,7 +44,10 @@ def test_projection_keeps_core_immediate_and_defers_specialized_families():
         "ecopart",
         "geography",
         "environmental_enrichment",
+        "deliverable",
     }
+    assert "export_deliverable" not in projection.immediate_names
+    assert "export_deliverable" in projection.searchable_member_names
     assert all(len(namespace.member_names) < 10 for namespace in projection.namespaces)
     assert projection.excluded_names == ()
     assert set(projection.immediate_names) | set(
@@ -120,6 +123,7 @@ def test_real_middleware_projects_the_exact_tool_search_surface(monkeypatch, tmp
         "ecopart",
         "geography",
         "environmental_enrichment",
+        "deliverable",
     } <= set(capture.tool_names)
     assert capture.audit["openai_tool_search_namespaces"]["ecotaxa"] == [
         "query_ecotaxa",

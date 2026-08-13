@@ -40,6 +40,7 @@ from core.thread_run_coordinator import (
 load_dotenv()
 
 from agent import (
+    acompact_checkpoint_history,
     make_agent,
     _make_tracer,
     _CHECKPOINTS_DB,
@@ -1455,6 +1456,7 @@ async def _coordinated_agent_sse(
     ) as lease:
         run_config = lease.bind_config(config)
         await arepair_invalid_tool_history(agent, run_config)
+        await acompact_checkpoint_history(agent, run_config)
         agent_stream = _stream_agent_sse(
             agent,
             messages,
@@ -1465,14 +1467,18 @@ async def _coordinated_agent_sse(
             language=language,
             run_lease=lease,
         )
+        completed = False
         try:
             async for chunk in agent_stream:
                 yield chunk
+            completed = True
         finally:
             # Ensure client cancellation reaches _stream_agent_sse, whose
             # cleanup cancels and awaits the detached LangGraph task.
             with suppress(asyncio.CancelledError):
                 await agent_stream.aclose()
+            if completed:
+                await acompact_checkpoint_history(agent, run_config)
 
 
 @app.post("/v1/chat/completions")
@@ -1665,7 +1671,9 @@ async def chat_completions(
         ) as lease:
             run_config = lease.bind_config(config)
             await arepair_invalid_tool_history(agent, run_config)
+            await acompact_checkpoint_history(agent, run_config)
             result = await agent.ainvoke(messages, config=run_config)
+            await acompact_checkpoint_history(agent, run_config)
     except RateLimitError as exc:
         logger.warning(
             "provider_rate_limit thread=%s retry_after=%s",

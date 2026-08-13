@@ -709,11 +709,10 @@ def _preflight_ecopart_partition(
             # without declaring the whole pair impossible before the actual
             # EcoPart table has been read and the canonical join attempted.
             uncertain.append(
-                "aucun libellé de profil strictement identique au préflight : "
-                f"0/{len(local_profiles)} identifiant(s) de profil EcoTaxa "
-                f"retrouvé(s) parmi {len(project_profiles)} profil(s) accessibles "
-                f"du projet EcoPart {ecopart_project_id}; les données EcoPart "
-                "restent accessibles et la jointure réelle vérifiera les clés"
+                "correspondance textuelle non confirmée : "
+                f"0/{len(local_profiles)} identifiant(s) candidat(s) EcoTaxa parmi "
+                f"{len(project_profiles)} profil(s) EcoPart; ce contrôle ne teste "
+                "pas la jointure canonique"
             )
         else:
             reasons.append(
@@ -737,8 +736,10 @@ def _preflight_ecopart_partition(
 
     if reasons:
         verdict = "BLOQUÉ"
+    elif not profiles_checked:
+        verdict = "TIMEOUT"
     elif uncertain:
-        verdict = "PARTIEL"
+        verdict = "INCONCLUSIF"
     else:
         verdict = "PRÊT"
     result = {
@@ -752,7 +753,7 @@ def _preflight_ecopart_partition(
         "cache_hit": False,
     }
     if cache_key:
-        ttl = _ecopart_cache_ttl() if verdict != "PARTIEL" else 60.0
+        ttl = _ecopart_cache_ttl() if verdict == "PRÊT" else 60.0
         _store.set(
             cache_key,
             None,
@@ -770,7 +771,13 @@ def _preflight_ecopart_partition(
 def _preflight_profile_status(preflight: dict[str, object]) -> str:
     """Describe profile availability without mistaking a timeout for zero rows."""
     if not bool(preflight.get("profiles_checked", True)):
-        return "liste des profils EcoPart non obtenue (préflight non conclusif)"
+        return "liste des profils EcoPart non obtenue; disponibilité inconnue"
+    if preflight.get("verdict") == "INCONCLUSIF":
+        return (
+            f"{preflight.get('ecopart_project_profiles', '?')} profils EcoPart lus; "
+            f"{preflight.get('ecotaxa_profile_candidates', '?')} identifiants candidats "
+            "EcoTaxa; jointure canonique non exécutée"
+        )
     return (
         f"{preflight['exportable_profiles']}/{preflight['matching_profiles']} "
         "profils EcoPart correspondants exportables; "
@@ -909,7 +916,7 @@ def _lookup_ecopart_project_for_ecotaxa(
         return result
 
     def _cache_transient_error(message: str) -> dict:
-        result = {"error": message, "verdict": "PARTIEL"}
+        result = {"error": message, "verdict": "TIMEOUT"}
         if known_ecotaxa_pid is not None and thread_id:
             _store.set(
                 f"{thread_id}:ecopart_resolution:{int(known_ecotaxa_pid)}",
@@ -1226,7 +1233,7 @@ def _enrich_ecotaxa_campaign_with_ecopart(
     resolved: list[tuple[int, int, pd.DataFrame, str]] = []
     failures: list[str] = []
     failed_project_ids: set[int] = set()
-    resolution_partial_count = 0
+    resolution_timeout_count = 0
     if n_invalid_project_rows:
         failures.append(
             f"BLOQUÉ — {n_invalid_project_rows} ligne(s) avec `export_project_id` invalide "
@@ -1245,11 +1252,11 @@ def _enrich_ecotaxa_campaign_with_ecopart(
         )
         if "error" in resolution:
             failed_project_ids.add(ecotaxa_pid)
-            is_partial = resolution.get("verdict") == "PARTIEL"
-            resolution_partial_count += int(is_partial)
+            is_timeout = resolution.get("verdict") == "TIMEOUT"
+            resolution_timeout_count += int(is_timeout)
             cache_note = " (cache court)" if resolution.get("cache_hit") else ""
             failures.append(
-                f"{'PARTIEL' if is_partial else 'BLOQUÉ'} — EcoTaxa "
+                f"{'TIMEOUT' if is_timeout else 'BLOQUÉ'} — EcoTaxa "
                 f"{ecotaxa_pid} : {resolution['error']}{cache_note}"
             )
             continue
@@ -1290,10 +1297,15 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             preflight["verdict"] == "PRÊT"
             for _ecotaxa_pid, _ecopart_pid, _resolution, preflight in preflights
         )
-        partial_count = resolution_partial_count + sum(
-            preflight["verdict"] == "PARTIEL"
+        inconclusive_count = sum(
+            preflight["verdict"] == "INCONCLUSIF"
             for _ecotaxa_pid, _ecopart_pid, _resolution, preflight in preflights
         )
+        timeout_count = resolution_timeout_count + sum(
+            preflight["verdict"] == "TIMEOUT"
+            for _ecotaxa_pid, _ecopart_pid, _resolution, preflight in preflights
+        )
+        partial_count = inconclusive_count + timeout_count
         blocked_count = len(normalized_project_ids) - ready_count - partial_count
         coverage = f"{ready_count}/{len(normalized_project_ids)} projets prêts"
         return _ep_blocked(
@@ -1306,7 +1318,12 @@ def _enrich_ecotaxa_campaign_with_ecopart(
             + (
                 "Confirme pour lancer avec `confirmed=True`."
                 if ready_count == len(normalized_project_ids)
-                else "Ne confirme pas tant que les verdicts PARTIEL/BLOQUÉ ne sont pas résolus."
+                else (
+                    "INCONCLUSIF ne signifie pas impossible : la correspondance réelle "
+                    "reste à vérifier par l'export et la jointure. Demande une confirmation "
+                    "explicite pour les projets INCONCLUSIF; réessaie les TIMEOUT; ne lance "
+                    "pas les projets BLOQUÉ."
+                )
             ),
             metrics={
                 "projects": len(normalized_project_ids),
@@ -1314,6 +1331,8 @@ def _enrich_ecotaxa_campaign_with_ecopart(
                 "projects_failed": len(failed_project_ids),
                 "projects_ready": ready_count,
                 "projects_partial": partial_count,
+                "projects_inconclusive": inconclusive_count,
+                "projects_timeout": timeout_count,
                 "projects_blocked": blocked_count,
                 "invalid_export_project_rows": n_invalid_project_rows,
             },
@@ -1624,8 +1643,10 @@ def make_ecopart_tools(thread_id: str) -> list:
         L'enrichissement démarre directement par défaut. `confirmed=False` →
         préflight explicite sans téléchargement : lien EcoTaxa→EcoPart, accessibilité et
         validation des profils EcoPart, identifiant de profil et profondeur
-        nécessaires à la jointure, avec verdict PRÊT / PARTIEL / BLOQUÉ par
-        projet. La vérification distante de la liste des profils peut prendre
+        nécessaires à la jointure, avec verdict PRÊT / INCONCLUSIF / TIMEOUT /
+        BLOQUÉ par projet. INCONCLUSIF signifie que la jointure canonique reste
+        à essayer, jamais que l'enrichissement est impossible. La vérification
+        distante de la liste des profils peut prendre
         jusqu'à 60 secondes.
         """
         session_et = _ecotaxa_session_for_project(thread_id, ecotaxa_project_id)
@@ -1715,10 +1736,10 @@ def make_ecopart_tools(thread_id: str) -> list:
                 request_timeout=_ecopart_preflight_timeout(),
             )
             if "error" in result:
-                transient = result.get("verdict") == "PARTIEL"
+                transient = result.get("verdict") == "TIMEOUT"
                 factory = _ep_error if transient else _ep_blocked
                 return factory(
-                    f"Résolution EcoPart automatique {'PARTIEL' if transient else 'BLOQUÉ'} — "
+                    f"Résolution EcoPart automatique {'TIMEOUT' if transient else 'BLOQUÉ'} — "
                     f"{result['error']}\nAucune donnée téléchargée.",
                     retryable=transient,
                 )
@@ -1738,11 +1759,11 @@ def make_ecopart_tools(thread_id: str) -> list:
                     request_timeout=_ecopart_preflight_timeout(),
                 )
                 if "error" in resolution:
-                    transient = resolution.get("verdict") == "PARTIEL"
+                    transient = resolution.get("verdict") == "TIMEOUT"
                     factory = _ep_error if transient else _ep_blocked
                     return factory(
                         "Préflight d'enrichissement EcoPart (dry-run) — "
-                        f"{'PARTIEL' if transient else 'BLOQUÉ'}.\n"
+                        f"{'TIMEOUT' if transient else 'BLOQUÉ'}.\n"
                         f"Projet EcoTaxa {ecotaxa_project_id} : "
                         f"{resolution['error']}\nAucune donnée téléchargée.",
                         retryable=transient,
@@ -1752,7 +1773,7 @@ def make_ecopart_tools(thread_id: str) -> list:
 
             if ecotaxa_project_id is None or ecopart_project_id is None:
                 return _ep_blocked(
-                    "Préflight d'enrichissement EcoPart (dry-run) — PARTIEL.\n"
+                    "Préflight d'enrichissement EcoPart (dry-run) — INCONCLUSIF.\n"
                     "La paire EcoTaxa→EcoPart n'a pas pu être résolue avec certitude. "
                     "Aucune donnée téléchargée."
                 )
@@ -1765,23 +1786,48 @@ def make_ecopart_tools(thread_id: str) -> list:
                 thread_id=thread_id,
                 request_timeout=_ecopart_preflight_timeout(),
             )
+            if preflight["verdict"] == "INCONCLUSIF":
+                preflight_summary = (
+                    "Préflight EcoPart — aucun téléchargement.\n"
+                    f"EcoTaxa {ecotaxa_project_id} → EcoPart "
+                    f"{ecopart_project_id} : INCONCLUSIF.\n"
+                    "Contrôle rapide : 0 correspondance textuelle "
+                    f"({preflight['ecotaxa_profile_candidates']} identifiants "
+                    f"EcoTaxa, {preflight['ecopart_project_profiles']} profils "
+                    "EcoPart).\n"
+                    "Jointure réelle non exécutée; confirmation requise pour "
+                    "l’essayer."
+                )
+            else:
+                preflight_summary = (
+                    "Préflight EcoPart (aucune donnée téléchargée).\n"
+                    f"EcoTaxa {ecotaxa_project_id} → EcoPart "
+                    f"{ecopart_project_id} : {preflight['verdict']} — "
+                    f"{preflight['reason']} "
+                    f"({_preflight_profile_status(preflight)}).\n"
+                    + (
+                        "Confirmation requise pour lancer l'export et la jointure."
+                        if preflight["verdict"] == "PRÊT"
+                        else (
+                            "Vérification distante expirée : réessayer le préflight; "
+                            "ne pas conclure à une absence de profils."
+                            if preflight["verdict"] == "TIMEOUT"
+                            else "Blocage confirmé : ne pas lancer la jointure."
+                        )
+                    )
+                )
             return _ep_blocked(
-                "Préflight d'enrichissement EcoPart (dry-run ; la vérification des "
-                "profils peut prendre jusqu'à 60 s).\n"
-                f"EcoTaxa {ecotaxa_project_id} → EcoPart {ecopart_project_id} : "
-                f"{preflight['verdict']} — {preflight['reason']} "
-                f"({_preflight_profile_status(preflight)}).\n"
-                f"Résolution : {resolution_note or 'identifiants explicites'}.\n"
-                "Aucune donnée téléchargée. "
-                + (
-                    "Confirme pour lancer l'export et la jointure."
-                    if preflight["verdict"] == "PRÊT"
-                    else "Ne confirme pas tant que le blocage n'est pas résolu."
-                ),
+                preflight_summary,
                 metrics={
                     "projects": 1,
                     "projects_ready": int(preflight["verdict"] == "PRÊT"),
-                    "projects_partial": int(preflight["verdict"] == "PARTIEL"),
+                    "projects_partial": int(
+                        preflight["verdict"] in {"INCONCLUSIF", "TIMEOUT"}
+                    ),
+                    "projects_inconclusive": int(
+                        preflight["verdict"] == "INCONCLUSIF"
+                    ),
+                    "projects_timeout": int(preflight["verdict"] == "TIMEOUT"),
                     "projects_blocked": int(preflight["verdict"] == "BLOQUÉ"),
                     "matching_profiles": preflight["matching_profiles"],
                     "exportable_profiles": preflight["exportable_profiles"],

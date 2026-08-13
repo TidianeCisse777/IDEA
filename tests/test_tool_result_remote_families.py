@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 from langchain_core.messages import ToolMessage
 
@@ -55,3 +56,55 @@ def test_enrichments_without_a_dataframe_are_blocked(monkeypatch, name, argument
     message = _call(item, f"blocked-{name}", **arguments)
 
     assert validate_tool_artifact(message.artifact).status == "blocked"
+
+
+def test_ecopart_inconclusive_preflight_is_short_and_unambiguous(
+    tmp_path,
+    monkeypatch,
+):
+    from tools import ecopart_sources
+    from tools.session_store import SessionStore
+
+    class FakeEcopartClient:
+        def login(self):
+            return None
+
+        def search_samples(self, **kwargs):
+            assert kwargs["project_id"] == 1100
+            return [
+                {"name": f"EP-{index:02d}", "visibility": "PUBLIC Y"}
+                for index in range(64)
+            ]
+
+    thread_id = "ecopart-short-preflight"
+    store = SessionStore(tmp_path / "sessions")
+    store.set(
+        f"{thread_id}:ecotaxa",
+        pd.DataFrame({
+            "sample_profileid": [f"UVP-{index:02d}" for index in range(23)],
+            "object_depth_min": range(23),
+        }),
+        {"project_id": 17498},
+    )
+    monkeypatch.setattr(ecopart_sources, "_store", store)
+    monkeypatch.setattr(ecopart_sources, "EcopartClient", FakeEcopartClient)
+    monkeypatch.setattr(ecopart_sources, "bootstrap_consumer_cache", lambda *_: None)
+
+    item = {
+        tool.name: tool for tool in ecopart_sources.make_ecopart_tools(thread_id)
+    }["enrich_ecotaxa_with_ecopart_remote"]
+    message = _call(
+        item,
+        "ecopart-short-preflight-call",
+        ecotaxa_project_id=17498,
+        ecopart_project_id=1100,
+        confirmed=False,
+    )
+
+    assert message.content == (
+        "Préflight EcoPart — aucun téléchargement.\n"
+        "EcoTaxa 17498 → EcoPart 1100 : INCONCLUSIF.\n"
+        "Contrôle rapide : 0 correspondance textuelle "
+        "(23 identifiants EcoTaxa, 64 profils EcoPart).\n"
+        "Jointure réelle non exécutée; confirmation requise pour l’essayer."
+    )

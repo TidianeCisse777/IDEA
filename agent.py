@@ -26,6 +26,7 @@ from langchain_core.messages import (
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
 from agents.exploration_middleware import ExplorationStateMiddleware
@@ -121,6 +122,13 @@ _KEEP_FULL_TOOL_TURNS = int(os.getenv("KEEP_FULL_TOOL_TURNS", "1"))
 # Second-pass budget: if total tool-result chars after first compaction exceeds
 # this, oldest eligible messages are compacted further (never the current turn).
 _MAX_TOTAL_TOOL_CHARS = int(os.getenv("MAX_TOTAL_TOOL_RESULT_CHARS", "40000"))
+# Durable checkpoint state is independent from the provider-bound projection.
+# Keep it bounded too, otherwise a long Open WebUI chat accumulates hundreds of
+# messages even though each model call is trimmed correctly.
+_MAX_CHECKPOINT_MESSAGES = max(
+    8,
+    int(os.getenv("MAX_CHECKPOINT_MESSAGES", "40")),
+)
 # A successful plot normally needs one more model call for its user-facing
 # caption.  Give that already-required call a bounded thumbnail so the model
 # can check the *actual* image, not merely assume that a PNG means a good plot.
@@ -353,6 +361,22 @@ def _append_harness_model_call(thread_id: str, audit: dict) -> None:
             "dataframe_catalog_total": audit.get("dataframe_catalog_total", 0),
             "dataframe_catalog_expanded": audit.get("dataframe_catalog_expanded", 0),
             "dataframe_catalog_index_only": audit.get("dataframe_catalog_index_only", 0),
+            "checkpoint_messages_observed": audit.get("messages_before", 0),
+            "checkpoint_message_cap": audit.get(
+                "checkpoint_message_cap", _MAX_CHECKPOINT_MESSAGES
+            ),
+            "max_live_derived_dataframes": audit.get(
+                "max_live_derived_dataframes", 0
+            ),
+            "derived_dataframes_total": audit.get("derived_dataframes_total", 0),
+            "derived_dataframes_visible": audit.get("derived_dataframes_visible", 0),
+            "derived_dataframes_hidden": audit.get("derived_dataframes_hidden", 0),
+            "derived_dataframes_capacity_hidden": audit.get(
+                "derived_dataframes_capacity_hidden", 0
+            ),
+            "derived_dataframes_age_hidden": audit.get(
+                "derived_dataframes_age_hidden", 0
+            ),
             "context_projection_ledger": copy.deepcopy(
                 audit.get("context_projection_ledger") or []
             ),
@@ -1317,6 +1341,7 @@ class _ContextMiddleware(AgentMiddleware):
         _begin_harness_turn(self.thread_id, original_messages)
         try:
             from tools.data_tools import reset_graph_block_on_new_turn
+            from tools.dataframe_cleanup import dataframe_cleanup_metrics
             from tools.session_store import default_store as session_store
 
             reset_graph_block_on_new_turn(
@@ -1324,6 +1349,14 @@ class _ContextMiddleware(AgentMiddleware):
             )
         except Exception:
             pass
+
+        try:
+            dataframe_lifecycle_metrics = dataframe_cleanup_metrics(
+                session_store,
+                self.thread_id,
+            )
+        except Exception:
+            dataframe_lifecycle_metrics = {}
 
         original_tokens = _approx_tokens(original_messages)
         current_turn_tool_tokens_before = _current_turn_tool_tokens(
@@ -1747,6 +1780,7 @@ class _ContextMiddleware(AgentMiddleware):
             "thread_id": self.thread_id,
             "user_id": self.user_id,
             "messages_before": len(original_messages),
+            "checkpoint_message_cap": _MAX_CHECKPOINT_MESSAGES,
             "messages_after_tool_truncation": len(truncated_messages),
             "messages_after_old_tool_compaction": len(compacted_messages),
             "messages_after_intra_turn_tool_compaction": len(intra_turn_messages),
@@ -1798,6 +1832,7 @@ class _ContextMiddleware(AgentMiddleware):
             **intra_turn_compact_metrics,
             "max_total_tool_result_chars": _MAX_TOTAL_TOOL_CHARS,
             **metrics,
+            **dataframe_lifecycle_metrics,
             "context_projection_budget_tokens": dynamic_budget,
             "context_projection_original_tokens": context_projection.original_tokens,
             "context_projection_tokens": context_projection.projected_tokens,
@@ -2181,6 +2216,137 @@ def _invalid_tool_history_message_ids(messages: Sequence) -> list[str]:
     return list(dict.fromkeys(invalid_ids))
 
 
+def _is_checkpoint_summary(message) -> bool:
+    return bool(
+        isinstance(message, AIMessage)
+        and (getattr(message, "additional_kwargs", None) or {}).get(
+            "checkpoint_summary"
+        )
+    )
+
+
+def compact_checkpoint_messages(
+    messages: Sequence,
+    *,
+    max_messages: int = _MAX_CHECKPOINT_MESSAGES,
+) -> list:
+    """Return one bounded, tool-valid checkpoint suffix.
+
+    Open WebUI remains the complete transcript. The LangGraph checkpoint keeps
+    only a recent suffix plus one deliberately non-factual archive marker. Old
+    assistant prose is not summarized into claims because it has lower
+    authority than the FactLedger and could reintroduce a disproved value.
+    """
+
+    limit = max(2, int(max_messages))
+    message_list = list(messages)
+    summaries = [message for message in message_list if _is_checkpoint_summary(message)]
+    if len(message_list) <= limit and len(summaries) <= 1:
+        return message_list
+
+    prior_archived = sum(
+        int(
+            (getattr(message, "additional_kwargs", None) or {}).get(
+                "archived_messages", 0
+            )
+            or 0
+        )
+        for message in summaries
+    )
+    ordinary = [message for message in message_list if not _is_checkpoint_summary(message)]
+    payload_limit = limit - 1
+    cut = max(0, len(ordinary) - payload_limit)
+    # A provider/checkpoint suffix must begin on a user boundary. This also
+    # prevents retaining a ToolMessage without its preceding AI tool call.
+    while cut < len(ordinary) and not isinstance(ordinary[cut], HumanMessage):
+        cut += 1
+    suffix = ordinary[cut:]
+    archived_messages = prior_archived + (len(ordinary) - len(suffix))
+    summary = AIMessage(
+        id=f"checkpoint-summary-{uuid.uuid4().hex}",
+        content=(
+            "[Historique LangGraph compacté] "
+            f"{archived_messages} messages antérieurs sont archivés dans "
+            "l’interface. Leurs formulations ne constituent pas une preuve; "
+            "utiliser la demande actuelle, le FactLedger et les ressources "
+            "persistées, puis clarifier tout périmètre ambigu."
+        ),
+        additional_kwargs={
+            "checkpoint_summary": True,
+            "archived_messages": archived_messages,
+        },
+    )
+    return [summary, *suffix]
+
+
+def compact_checkpoint_history(
+    agent,
+    config: dict,
+    *,
+    max_messages: int = _MAX_CHECKPOINT_MESSAGES,
+) -> bool:
+    """Compact a completed synchronous checkpoint when it exceeds its cap."""
+
+    try:
+        snapshot = agent.get_state(config)
+    except Exception:
+        return False
+    values = getattr(snapshot, "values", {}) or {}
+    messages = list(values.get("messages") or [])
+    compacted = compact_checkpoint_messages(messages, max_messages=max_messages)
+    if len(compacted) == len(messages) and all(
+        left is right for left, right in zip(compacted, messages)
+    ):
+        return False
+    try:
+        agent.update_state(
+            config,
+            {
+                "messages": [
+                    RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                    *compacted,
+                ]
+            },
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def acompact_checkpoint_history(
+    agent,
+    config: dict,
+    *,
+    max_messages: int = _MAX_CHECKPOINT_MESSAGES,
+) -> bool:
+    """Compact a completed asynchronous checkpoint when it exceeds its cap."""
+
+    try:
+        snapshot = await agent.aget_state(config)
+    except Exception:
+        return False
+    values = getattr(snapshot, "values", {}) or {}
+    messages = list(values.get("messages") or [])
+    compacted = compact_checkpoint_messages(messages, max_messages=max_messages)
+    if len(compacted) == len(messages) and all(
+        left is right for left, right in zip(compacted, messages)
+    ):
+        return False
+    try:
+        await agent.aupdate_state(
+            config,
+            {
+                "messages": [
+                    RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                    *compacted,
+                ]
+            },
+        )
+        return True
+    except Exception:
+        return False
+
+
 def repair_invalid_tool_history(agent, config: dict) -> bool:
     """Retire les groupes d'outils orphelins sans toucher aux tours suivants.
 
@@ -2322,6 +2488,7 @@ def invoke_verbose(agent, messages: dict, config: dict) -> dict:
         config = {**config, "callbacks": [tracer]}
 
     repair_invalid_tool_history(agent, config)
+    compact_checkpoint_history(agent, config)
 
     final_state = None
     for chunk in agent.stream(messages, config=config, stream_mode="values"):
@@ -2334,6 +2501,7 @@ def invoke_verbose(agent, messages: dict, config: dict) -> dict:
                     name = tc["name"] if isinstance(tc, dict) else tc.name
                     args = tc.get("args", {}) if isinstance(tc, dict) else tc.args
                     print(f"  → tool: {name}  args: {str(args)[:120]}")
+    compact_checkpoint_history(agent, config)
     return final_state or {}
 
 
@@ -2364,6 +2532,7 @@ def run_query(file_path: str, question: str, thread_id: str | None = None) -> st
     load_msg = f"Charge ce fichier : {file_path}"
     repair_invalid_tool_history(agent, config)
     agent.invoke({"messages": [{"role": "user", "content": load_msg}]}, config=config)
+    compact_checkpoint_history(agent, config)
 
     # Poser la question
     repair_invalid_tool_history(agent, config)
@@ -2371,6 +2540,7 @@ def run_query(file_path: str, question: str, thread_id: str | None = None) -> st
         {"messages": [{"role": "user", "content": question}]},
         config=config,
     )
+    compact_checkpoint_history(agent, config)
     return result["messages"][-1].content
 
 
@@ -2392,5 +2562,7 @@ if __name__ == "__main__":
             if not q:
                 continue
             repair_invalid_tool_history(ag, cfg)
+            compact_checkpoint_history(ag, cfg)
             res = ag.invoke({"messages": [{"role": "user", "content": q}]}, config=cfg)
+            compact_checkpoint_history(ag, cfg)
             print(f"\nAgent : {res['messages'][-1].content}\n")

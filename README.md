@@ -44,8 +44,9 @@ flowchart LR
     AG --> PG[("Session store PostgreSQL optionnel")]
 ```
 
-Le code du dépôt est monté dans le conteneur agent et `uvicorn --reload`
-recharge les changements en développement.
+Le code du dépôt est monté dans le conteneur agent. Uvicorn tourne sans
+`--reload` afin de ne pas couper les réponses SSE actives; après un changement,
+redémarrer explicitement le service `copepod-agent` (sans rebuild).
 
 ## Capacités principales
 
@@ -168,6 +169,8 @@ Voir [`MONITORING.md`](MONITORING.md) pour la navigation locale pas à pas.
 | `OPENAI_TOOL_SEARCH_ENABLED` | Tool Search OpenAI | `false` |
 | `LLM_MAX_OUTPUT_TOKENS` | Plafond de sortie | `16000` |
 | `MAX_CONTEXT_TOKENS` | Budget du contexte modèle | `100000` |
+| `MAX_CHECKPOINT_MESSAGES` | Messages structurés conservés dans le checkpoint LangGraph | `40` |
+| `MAX_LIVE_DERIVED_DATAFRAMES` | DataFrames dérivés simultanément visibles; les sources sont exclues | `20` |
 | `MAX_TOOL_RESULT_CHARS` | Troncature d’un résultat de tool | `8000` |
 | `HARNESS_TRACE_MAX_TURNS` | Tours de monitoring gardés en mémoire par conversation | `50` |
 | `CHECKPOINTS_DB` | Checkpoints LangGraph | `data/checkpoints.sqlite` |

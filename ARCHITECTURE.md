@@ -285,6 +285,8 @@ l’utilisateur, ni remplacer silencieusement la métrique ou le périmètre.
 | `OPENAI_TOOL_SEARCH_ENABLED` | namespaces différés compatibles OpenAI |
 | `MAX_CONTEXT_TOKENS` | plafond de contexte |
 | `MAX_PROVIDER_HISTORY_TOKENS` | plafond de l’historique brut ancien (le tour ReAct courant reste entier dans le plafond global) |
+| `MAX_CHECKPOINT_MESSAGES` | plafond durable de messages LangGraph; défaut 40, le transcript complet reste dans Open WebUI |
+| `MAX_LIVE_DERIVED_DATAFRAMES` | plafond de dérivés visibles; défaut 20, hors fichiers et sources durables |
 | `MAX_TOOL_RESULT_CHARS` | borne des observations |
 | `HARNESS_TRACE_MAX_TURNS` | nombre de tours de monitoring conservés en mémoire |
 | `CHECKPOINTS_DB` | checkpoints SQLite |

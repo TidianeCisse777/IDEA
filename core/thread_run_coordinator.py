@@ -186,21 +186,26 @@ class ThreadRunCoordinator:
     ) -> None:
         if conn is None:
             return
-        with suppress(Exception):
-            await conn.execute(
-                """
-                UPDATE agent_thread_runs
-                SET status = %s, updated_at = NOW()
-                WHERE thread_id = %s AND generation = %s AND run_id = %s
-                """,
-                (status, lease.thread_id, lease.generation, lease.run_id),
-            )
-        with suppress(Exception):
-            await conn.execute(
-                "SELECT pg_advisory_unlock(%s)",
-                (self._advisory_key(lease.thread_id),),
-            )
-        await conn.close()
+        try:
+            with suppress(Exception):
+                await conn.execute(
+                    """
+                    UPDATE agent_thread_runs
+                    SET status = %s, updated_at = NOW()
+                    WHERE thread_id = %s AND generation = %s AND run_id = %s
+                    """,
+                    (status, lease.thread_id, lease.generation, lease.run_id),
+                )
+            with suppress(Exception):
+                await conn.execute(
+                    "SELECT pg_advisory_unlock(%s)",
+                    (self._advisory_key(lease.thread_id),),
+                )
+        finally:
+            # Closing the PostgreSQL session is the final safety net for its
+            # session-scoped advisory lock.  Keep it in ``finally`` so a
+            # cancellation during the status update cannot strand the lock.
+            await conn.close()
 
     async def is_current(self, lease: ThreadRunLease) -> bool:
         """Check local ownership and, when configured, the DB generation."""
@@ -266,7 +271,16 @@ class ThreadRunCoordinator:
                 self._active[lease.thread_id] = active
                 if previous is not None and previous.task is not owner:
                     previous.lease.cancel_event.set()
-                    previous.task.cancel()
+                    # A client disconnect already cancels the ASGI task.  A
+                    # second cancel while that task awaits PostgreSQL cleanup
+                    # can interrupt the unlock/close sequence and strand every
+                    # following turn behind the advisory lock.
+                    already_cancelling = (
+                        previous.task.done()
+                        or previous.task.cancelling() > 0
+                    )
+                    if not already_cancelling:
+                        previous.task.cancel()
 
             if previous is not None and previous.task is not owner:
                 with suppress(asyncio.CancelledError):

@@ -61,7 +61,7 @@ docker compose up --build
 # Agent FastAPI → http://localhost:8000
 ```
 
-Le compose monte `.:/app` et lance `uvicorn --reload` : les changements de code sont rechargés à chaud, pas besoin de rebuild ni `docker cp`.
+Le compose monte `.:/app` et lance Uvicorn sans `--reload` pour ne pas interrompre les réponses SSE. Après un changement, redémarrer explicitement `copepod-agent`; aucun rebuild ni `docker cp` n'est requis.
 
 ### Local (CLI rapide)
 
@@ -83,6 +83,8 @@ python serve.py                          # serveur FastAPI seul
 | `LANGCHAIN_TRACING_V2` | `true` pour activer LangSmith |
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |
 | `MAX_CONTEXT_TOKENS` | Défaut 100000 — plafond de qualité ; au-delà, trim_messages |
+| `MAX_CHECKPOINT_MESSAGES` | Défaut 40 — plafond durable des messages LangGraph; Open WebUI garde le transcript complet. |
+| `MAX_LIVE_DERIVED_DATAFRAMES` | Défaut 20 — dérivés simultanément visibles; fichiers et sources exclus. |
 | `MAX_MODEL_CALLS_PER_TURN` | Défaut 10 — limite technique de sécurité contre une boucle incontrôlée |
 | `TARGET_MODEL_CALLS_PER_TURN` | Défaut 5 — cible comportementale d'économie, sans arrêt forcé |
 | `TARGET_RUN_PANDAS_CALLS_PER_TURN` | Défaut 2 — cible comportementale pour regrouper qualification et calcul |
