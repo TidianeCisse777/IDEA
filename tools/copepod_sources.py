@@ -48,6 +48,12 @@ from tools.public_url import download_url
 from tools.session_store import default_store as _store
 from tools.data_tools import _uvp_skill_hint
 from tools.tool_result import blocked, empty, error, success
+from tools.user_turn_scope import current_user_turn_marker
+from tools.confirmation_ledger import (
+    check_confirmation,
+    clear_confirmation,
+    record_confirmation_preflight,
+)
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
@@ -1125,8 +1131,9 @@ def make_source_tools(thread_id: str) -> list:
         profils sont résolus automatiquement vers leurs samples dans le cache.
 
         Le préflight est obligatoire et s'exécute par défaut sans télécharger
-        les objets. `confirmed=True` n'est accepté qu'après un préflight réussi
-        portant sur la même sélection, le même statut et le même taxon.
+        les objets. `confirmed=True` n'est accepté que dans un tour utilisateur
+        ultérieur à un préflight réussi portant sur la même sélection, le même
+        statut et le même taxon.
 
         `status` : statut des annotations à exporter — `"V"` (validé),
         `"P"` (prédit), `""` (tous).
@@ -1167,15 +1174,41 @@ def make_source_tools(thread_id: str) -> list:
             "taxon": taxon,
         }
         if confirmed:
-            active_meta = dict((_store.get(thread_id) or {}).get("meta") or {})
-            pending_plan = active_meta.get("pending_ecotaxa_export_plan")
-            if pending_plan != requested_export_plan:
+            confirmation_decision = check_confirmation(
+                _store,
+                thread_id,
+                operation="export_ecotaxa_samples",
+                plan=requested_export_plan,
+            )
+            if confirmation_decision == "operation_mismatch":
+                return _eco_blocked(
+                    "Confirmation refusée : le dernier préflight présenté concerne "
+                    "une autre opération. Exécute uniquement l'opération confirmée "
+                    "par l'utilisateur.",
+                    metrics={"confirmation_operation_mismatch": True},
+                )
+            if confirmation_decision in {"missing", "plan_mismatch"}:
                 return _eco_blocked(
                     "Préflight EcoTaxa obligatoire avant export. Relance exactement "
                     "la même sélection avec `confirmed=False`, présente son plan "
                     "et attends la confirmation explicite de l'utilisateur avant "
                     "d'utiliser `confirmed=True`.",
                     metrics={"preflight_required": True},
+                )
+            if confirmation_decision == "not_confirmable":
+                return _eco_blocked(
+                    "Confirmation EcoTaxa refusée : le dernier préflight n'est pas "
+                    "exportable. Corrige la sélection avant de redemander une "
+                    "confirmation.",
+                    metrics={"preflight_not_confirmable": True},
+                )
+            if confirmation_decision == "fresh_user_confirmation_required":
+                return _eco_blocked(
+                    "Confirmation EcoTaxa refusée : le préflight doit d'abord être "
+                    "présenté, puis confirmé par un nouveau message utilisateur. "
+                    "N'exécute pas `confirmed=True` dans le même tour que "
+                    "`confirmed=False`.",
+                    metrics={"fresh_user_confirmation_required": True},
                 )
 
         try:
@@ -1262,6 +1295,7 @@ def make_source_tools(thread_id: str) -> list:
                 {
                     "pending_ecotaxa_export_plan": {
                         **requested_export_plan,
+                        "preflight_user_turn_marker": current_user_turn_marker(),
                     }
                 },
             )
@@ -1302,6 +1336,13 @@ def make_source_tools(thread_id: str) -> list:
             ready_projects = sum(
                 item["verdict"] == "PRÊT" for item in project_preflight.values()
             )
+            record_confirmation_preflight(
+                _store,
+                thread_id,
+                operation="export_ecotaxa_samples",
+                plan=requested_export_plan,
+                confirmable=bool(ready_projects),
+            )
             lines.append(
                 f"Préflight : {ready_projects}/{len(groups)} projets exportables."
             )
@@ -1324,6 +1365,7 @@ def make_source_tools(thread_id: str) -> list:
             )
 
         # Exécution réelle.
+        clear_confirmation(_store, thread_id)
         _store.update_meta(thread_id, {"pending_ecotaxa_export_plan": None})
         cache_source = pd.DataFrame(
             [

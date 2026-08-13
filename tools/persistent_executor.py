@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import hashlib
 import io
 import multiprocessing as mp
 import os
@@ -31,16 +32,28 @@ ExecutionMode = Literal["pandas", "graph"]
 _THREAD_ID = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
+def _is_dataframe_payload(value: object) -> bool:
+    """Identify pandas-compatible tabular inputs without importing pandas here."""
+
+    module = type(value).__module__
+    return (
+        module.startswith(("pandas.", "geopandas."))
+        and hasattr(value, "columns")
+        and hasattr(value, "dtypes")
+    )
+
+
 @dataclass
 class ExecutionResult:
     result: Any = None
     result_available: bool = False
-    dataframes: dict[str, pd.DataFrame] | None = None
+    dataframes: dict[str, Any] | None = None
     stdout: str = ""
     error: str | None = None
     image_png: bytes | None = None
     graph_contract: dict[str, Any] | None = None
     produced_figure: bool = False
+    dataframe_input_names: tuple[str, ...] = ()
 
 
 def _assigned_names(code: str) -> set[str]:
@@ -162,6 +175,12 @@ def _worker_main(connection) -> None:
         try:
             mode: ExecutionMode = request["mode"]
             code = request["code"]
+            allowed_dataframe_names = request.get("allowed_dataframe_names")
+            if allowed_dataframe_names is not None:
+                allowed = set(allowed_dataframe_names)
+                for name, value in tuple(namespace.items()):
+                    if isinstance(value, pd.DataFrame) and name not in allowed:
+                        namespace.pop(name, None)
             namespace.update(request.get("inputs") or {})
             # These are per-call outputs.  Keep genuine user intermediates
             # warm, but never let an omitted assignment reuse a prior result
@@ -296,7 +315,7 @@ def _worker_main(connection) -> None:
 class _Worker:
     process: Any
     connection: Any
-    input_versions: dict[str, int]
+    input_versions: dict[str, object]
     lock: Lock
     last_used: float
 
@@ -354,33 +373,59 @@ class PersistentExecutor:
         mode: ExecutionMode,
         code: str,
         inputs: dict[str, Any],
+        *,
+        allowed_dataframe_names: set[str] | None = None,
     ) -> ExecutionResult:
         worker = self._worker(thread_id)
         with worker.lock:
             transportable_inputs: dict[str, Any] = {}
+            input_versions: dict[str, object] = {}
             for name, value in inputs.items():
                 try:
-                    pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+                    serialized = pickle.dumps(
+                        value,
+                        protocol=pickle.HIGHEST_PROTOCOL,
+                    )
                 except Exception:
                     # ``pd``/``plt`` and other trusted runtime helpers are
                     # recreated by the worker; only data and scalar context
                     # belong on the process boundary.
                     continue
                 transportable_inputs[name] = value
-            # Only transfer a DataFrame again when its in-process source object
-            # changed. The durable SessionStore reconstructs inputs after an
-            # agent restart, which naturally gives them new identities.
+                input_versions[name] = (
+                    hashlib.blake2b(serialized, digest_size=16).digest()
+                    if _is_dataframe_payload(value)
+                    else id(value)
+                )
+            if allowed_dataframe_names is not None:
+                worker.input_versions = {
+                    name: version
+                    for name, version in worker.input_versions.items()
+                    if name in allowed_dataframe_names
+                }
+            # A SessionStore entry may retain the same Python DataFrame object
+            # while its schema or values change. Content identity prevents the
+            # hot worker from serving that stale pre-mutation payload; ``id``
+            # alone cannot detect it and may also be reused by Python.
             fresh_inputs = {
                 name: value
                 for name, value in transportable_inputs.items()
-                if worker.input_versions.get(name) != id(value)
+                if worker.input_versions.get(name) != input_versions[name]
             }
-            worker.input_versions.update(
-                {name: id(value) for name, value in transportable_inputs.items()}
-            )
+            worker.input_versions.update(input_versions)
             try:
                 worker.connection.send(
-                    {"op": "execute", "mode": mode, "code": code, "inputs": fresh_inputs}
+                    {
+                        "op": "execute",
+                        "mode": mode,
+                        "code": code,
+                        "inputs": fresh_inputs,
+                        "allowed_dataframe_names": (
+                            sorted(allowed_dataframe_names)
+                            if allowed_dataframe_names is not None
+                            else None
+                        ),
+                    }
                 )
                 if not worker.connection.poll(self._timeout):
                     raise TimeoutError(f"controlled execution exceeded {self._timeout:g} seconds")
@@ -400,6 +445,11 @@ class PersistentExecutor:
             image_png=payload.get("image_png"),
             graph_contract=payload.get("graph_contract"),
             produced_figure=bool(payload.get("produced_figure")),
+            dataframe_input_names=tuple(sorted(
+                name
+                for name, value in inputs.items()
+                if _is_dataframe_payload(value)
+            )),
         )
 
     def close(self, thread_id: str) -> None:

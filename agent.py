@@ -361,6 +361,14 @@ def _append_harness_model_call(thread_id: str, audit: dict) -> None:
             "dataframe_catalog_total": audit.get("dataframe_catalog_total", 0),
             "dataframe_catalog_expanded": audit.get("dataframe_catalog_expanded", 0),
             "dataframe_catalog_index_only": audit.get("dataframe_catalog_index_only", 0),
+            "dataframe_anchor_count": audit.get("dataframe_anchor_count", 0),
+            "dataframe_derived_current_count": audit.get(
+                "dataframe_derived_current_count", 0
+            ),
+            "dataframe_detailed_count": audit.get("dataframe_detailed_count", 0),
+            "dataframe_omitted_derived_count": audit.get(
+                "dataframe_omitted_derived_count", 0
+            ),
             "checkpoint_messages_observed": audit.get("messages_before", 0),
             "checkpoint_message_cap": audit.get(
                 "checkpoint_message_cap", _MAX_CHECKPOINT_MESSAGES
@@ -368,9 +376,17 @@ def _append_harness_model_call(thread_id: str, audit: dict) -> None:
             "max_live_derived_dataframes": audit.get(
                 "max_live_derived_dataframes", 0
             ),
+            "dataframes_stored_total": audit.get("dataframes_stored_total", 0),
+            "dataframe_anchors_total": audit.get("dataframe_anchors_total", 0),
             "derived_dataframes_total": audit.get("derived_dataframes_total", 0),
             "derived_dataframes_visible": audit.get("derived_dataframes_visible", 0),
             "derived_dataframes_hidden": audit.get("derived_dataframes_hidden", 0),
+            "derived_dataframes_archived": audit.get(
+                "derived_dataframes_archived", 0
+            ),
+            "derived_versions_superseded": audit.get(
+                "derived_versions_superseded", 0
+            ),
             "derived_dataframes_capacity_hidden": audit.get(
                 "derived_dataframes_capacity_hidden", 0
             ),
@@ -1441,7 +1457,6 @@ class _ContextMiddleware(AgentMiddleware):
         # line reports real counts/encodings instead of fabricating them. Kept
         # in transient application context, never in the streamed tool output.
         graph_grounding_block = ""
-        graph_edit_block = ""
         try:
             grounding = session_store.get(f"{self.thread_id}:last_graph_grounding")
             facts = ((grounding or {}).get("meta") or {}).get("facts")
@@ -1647,7 +1662,12 @@ class _ContextMiddleware(AgentMiddleware):
                     required=True,
                 ),
                 ContextBlock("domain_profile", domain_profile_block, priority=60),
-                ContextBlock("available_dataframes", dataset_block, priority=90),
+                ContextBlock(
+                    "available_dataframes",
+                    dataset_block,
+                    priority=90,
+                    required=True,
+                ),
                 ContextBlock("last_graph", graph_grounding_block, priority=70),
                 ContextBlock("exploration_frontier", exploration_block, priority=80),
                 ContextBlock("recovery", recovery_block, priority=110, required=True),

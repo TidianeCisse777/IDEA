@@ -16,6 +16,7 @@ from agents.exploration_state import (
     ResourceRecord,
 )
 from tools.session_store import SessionStore
+from tools.dataset_registry import dataframe_retention_class
 
 _MAX_COLUMNS_PER_RESOURCE = 500
 _MAX_PROFILED_COLUMNS = 80
@@ -469,6 +470,9 @@ def _table_capabilities(dataframe: pd.DataFrame | None) -> tuple[ExplorationCapa
 
 def _record_for_entry(key: str, entry: dict[str, Any]) -> ResourceRecord | None:
     meta = dict(entry.get("meta") or {})
+    lifecycle_state = str(meta.get("lifecycle_state") or "current")
+    if lifecycle_state != "current":
+        return None
     dataframe = entry.get("df")
     variable = str(
         meta.get("variable_name")
@@ -523,6 +527,22 @@ def _record_for_entry(key: str, entry: dict[str, Any]) -> ResourceRecord | None:
         scope=_scope(meta, dataframe if isinstance(dataframe, pd.DataFrame) else None),
         capabilities=_table_capabilities(dataframe if isinstance(dataframe, pd.DataFrame) else None),
         provenance=provenance,
+        retention_class=str(
+            meta.get("retention_class")
+            or dataframe_retention_class(source)
+        ),
+        lifecycle_state="current",
+        analysis_key=(
+            str(meta.get("analysis_key"))
+            if meta.get("analysis_key")
+            else None
+        ),
+        version=max(1, int(meta.get("version") or 1)),
+        superseded_by=(
+            str(meta.get("superseded_by"))
+            if meta.get("superseded_by")
+            else None
+        ),
     )
 
 
@@ -639,6 +659,7 @@ def build_resource_inventory(
     keys = [
         key for key in store.keys()
         if key == thread_id or key.startswith(f"{thread_id}:")
+        if not key.startswith(f"{thread_id}:archive:")
     ]
     for key in keys:
         entry = store.get(key)

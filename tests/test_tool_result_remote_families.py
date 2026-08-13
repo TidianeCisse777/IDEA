@@ -104,6 +104,9 @@ def test_ecopart_inconclusive_preflight_is_short_and_unambiguous(
     assert message.content == (
         "Préflight EcoPart — aucun téléchargement.\n"
         "EcoTaxa 17498 → EcoPart 1100 : INCONCLUSIF.\n"
+        "Profils EcoTaxa examinés (23) : UVP-00, UVP-01, UVP-02, UVP-03, "
+        "UVP-04, UVP-05, UVP-06, UVP-07, +15 autres.\n"
+        "Profils EcoPart reconnus exactement (0) : aucun.\n"
         "Contrôle rapide : 0 correspondance textuelle "
         "(23 identifiants EcoTaxa, 64 profils EcoPart).\n"
         "Jointure réelle non exécutée; confirmation requise pour l’essayer."

@@ -164,6 +164,21 @@ L’agent IDEA et le service MCP EcoTaxa partagent le même cache SQLite. IDEA
 appelle directement les fonctions Python du cœur EcoTaxa; le serveur MCP HTTP
 permet principalement l’accès à d’autres agents et l’administration du cache.
 
+Le préflight EcoPart accepte un identifiant EcoPart absent : il résout d'abord
+la correspondance depuis le projet EcoTaxa, sans téléchargement, puis affiche
+les profils EcoTaxa examinés et les profils EcoPart reconnus exactement. Les
+listes visibles sont bornées à huit identifiants avec un compteur pour le reste.
+`INCONCLUSIF` signifie seulement que cette comparaison textuelle rapide n'a pas
+prouvé la correspondance; la jointure canonique peut encore réussir après
+confirmation.
+
+Les confirmations des opérations lourdes passent par un ledger unique. Le
+dernier préflight remplace toute ancienne opération en attente et enregistre
+l'opération, le plan exact, l'empreinte de la table source et le tour utilisateur.
+Une exécution confirmée n'est autorisée que dans un tour utilisateur ultérieur,
+pour la même opération et le même plan. Le texte utilisateur est interprété par
+le modèle; aucun mot-clé ou regex de confirmation n'est utilisé par le ledger.
+
 ## Flux d’une analyse
 
 ```mermaid
@@ -174,11 +189,12 @@ flowchart TD
     C -->|"non"| P["Plan analytique"]
     R --> P
     P --> D["Nommer le ou les DataFrames candidats et les critères"]
-    D --> Q["run_pandas de qualification"]
-    Q --> V{"Candidat qualifié ?"}
-    V -->|"non"| X["Essayer un autre candidat ou récupérer la dépendance manquante"]
-    X --> Q
-    V -->|"oui"| E{"Sortie demandée"}
+    D --> K{"Colonnes et méthode déjà établies ?"}
+    K -->|"oui"| E{"Sortie demandée"}
+    K -->|"non"| Q["Une qualification pandas ciblée ou un appel RAG"]
+    Q --> V{"Une seule colonne ou méthode autoritative ?"}
+    V -->|"oui"| E
+    V -->|"non"| H["Afficher les candidats et demander le choix utilisateur"]
     E -->|"calcul ou table"| PA["run_pandas"]
     E -->|"graphique"| GR["run_graph"]
     E -->|"enrichissement/export"| ST["tool canonique de source"]
@@ -187,10 +203,12 @@ flowchart TD
     ST --> Z
 ```
 
-La qualification vérifie le grain, les colonnes requises, les clés, le
-périmètre, les doublons et la nullité utile. Elle renvoie une petite preuve et
-ne produit ni graphique ni table persistée. Le calcul final n’est exécuté
-qu’après lecture de cette preuve.
+La qualification est conditionnelle : elle n'est pas relancée lorsque le
+résultat d'un tool ou la fiche de ressource établit déjà la colonne et le grain.
+Sinon, un unique contrôle ciblé vérifie les noms exacts, types, unités, exemples,
+clés, périmètre et nullité utile. Si plusieurs colonnes restent plausibles,
+l'agent les présente avec leur impact et attend le choix utilisateur; il ne
+multiplie pas les appels Pandas et ne dégrade pas silencieusement le grain.
 
 ## Gestion des DataFrames
 
@@ -208,16 +226,31 @@ de tools réellement retournés et les fiches de ressources. Son `WorkingSet`
 épingle d'abord les références exactes, les résultats produits ou consommés et
 leurs parents déclarés. Il n'infère aucun plan par classement lexical. Le
 pointeur actif est seulement un fallback. Les cartes suivent l'autorité
-`tool > ressource > ancienne prose assistant`, partagent un budget de douze
-fiches détaillées et conservent toujours l'index complet.
+`tool > ressource > ancienne prose assistant` et partagent un budget maximal de
+huit fiches détaillées. Toutes les ancres durables restent dans un index compact;
+les dérivés hors WorkingSet ne sont pas énumérés.
 Un résultat de tool n'est `primary` que pendant le tour où il est produit. Au
 tour utilisateur suivant, il reste une ressource récente réutilisable; seul un
 nom explicitement cité par l'utilisateur peut alors redevenir `primary`.
 
 Les fichiers chargés, exports, résultats de cache et enrichissements sont des
 ancres durables. Les dérivés intermédiaires inutilisés sont masqués après six
-tours et supprimés après vingt, sauf s’ils restent nécessaires à une lignée
-visible. Toutes les tables conservées restent présentes dans l’index compact.
+tours puis archivés sans suppression, sauf s’ils restent nécessaires à une
+lignée visible. Une analyse nommée conserve une `analysis_key`, une `version`
+et `superseded_by`; seul son dernier état courant entre dans le WorkingSet.
+
+`run_pandas` analyse les références exactes du code et ne matérialise dans le
+worker que ces DataFrames. Le worker retire les anciennes tables absentes de la
+liste autorisée tout en gardant le `SessionStore` comme source durable pouvant
+les recharger à la demande.
+
+L'inventaire conserve jusqu'à 500 noms de colonnes par ressource et profile au
+plus 80 colonnes. La projection modèle reste plus petite : chaque fiche affiche
+un schéma regroupé par rôle, un compteur `schema_visibility=X/Y` et seulement
+les colonnes prioritaires compatibles avec son budget. Une table large peut donc
+être entièrement connue du registre sans exposer ses centaines de colonnes au
+modèle; une colonne requise absente de la fiche déclenche au plus une inspection
+ciblée.
 
 `query_ecotaxa_cache` peut monter temporairement des DataFrames explicitement
 cités dans `dataframe_refs` comme tables SQLite en mémoire. Le cache EcoTaxa
@@ -238,10 +271,12 @@ nouvelle conversation ne réutilise pas automatiquement les tables d’une autre
 
 ## Récupération après erreur
 
-Une erreur de variable, table ou colonne devient une dépendance d’exploration.
-L’agent reçoit le diagnostic structuré, retrouve la ressource pertinente, puis
-reprend l’étape qui a échoué. Il ne doit ni demander inutilement les données à
-l’utilisateur, ni remplacer silencieusement la métrique ou le périmètre.
+Une erreur de variable, table ou colonne devient une dépendance d’exploration
+seulement si son identité est déjà établie. L’agent utilise alors une fois le
+diagnostic structuré pour retrouver la ressource et reprendre l’étape. Si le
+diagnostic laisse plusieurs colonnes ou méthodes plausibles, la récupération
+interne s'arrête et l'utilisateur choisit. La métrique, le dénominateur et le
+grain ne sont jamais remplacés silencieusement.
 
 ## Composants principaux
 
@@ -258,6 +293,8 @@ l’utilisateur, ni remplacer silencieusement la métrique ou le périmètre.
 | `tools/data_tools.py` | fichier, pandas et graphes |
 | `tools/copepod_sources.py` | cache et exports EcoTaxa |
 | `tools/ecopart_sources.py` | correspondance et enrichissement EcoPart |
+| `tools/confirmation_ledger.py` | opération lourde et plan exact en attente de confirmation |
+| `tools/user_turn_scope.py` | identité du tour utilisateur courant pour les tools |
 | `tools/amundsen_sources.py` | Amundsen CTD |
 | `tools/bio_oracle_sources.py` | Bio-ORACLE |
 | `tools/ogsl_sources.py` | OGSL |

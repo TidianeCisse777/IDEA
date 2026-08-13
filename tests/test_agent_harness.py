@@ -38,6 +38,28 @@ def test_permanent_prompt_requires_rag_and_clarification_before_method_sensitive
     assert "recompute from the nearest authoritative source" in prompt
 
 
+def test_permanent_prompt_stops_repeated_column_or_method_guessing():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = " ".join(COPEPOD_SYSTEM_PROMPT.lower().split())
+    assert "one evidence attempt only" in prompt
+    assert "stop and ask one short user question" in prompt
+    assert "never launch another `run_pandas` to guess aliases" in prompt
+    assert "never continue at a reduced grain" in prompt
+
+
+def test_permanent_prompt_requires_user_choice_between_plausible_columns():
+    from agents.copepod_system_prompt import COPEPOD_SYSTEM_PROMPT
+
+    prompt = " ".join(COPEPOD_SYSTEM_PROMPT.lower().split())
+    assert "column choice is a material analytical decision" in prompt
+    assert "ask which exact column to use" in prompt
+    assert "name the observed candidates" in prompt
+    assert "never choose a data column by name similarity" in prompt
+    assert "defaults apply only to non-material presentation choices" in prompt
+    assert "does not override the mandatory user question" in prompt
+
+
 def test_display_only_followup_is_narrow_and_excludes_new_analysis():
     from agent import _is_display_only_followup
 

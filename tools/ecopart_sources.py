@@ -65,6 +65,11 @@ from tools.ecotaxa_client import EcotaxaClient
 from tools.public_url import download_url
 from tools.session_store import default_store as _store
 from tools.tool_result import blocked, empty, error, success, validate_tool_artifact
+from tools.confirmation_ledger import (
+    check_confirmation,
+    clear_confirmation,
+    record_confirmation_preflight,
+)
 
 _DOWNLOADS_DIR = Path("/tmp/copepod_downloads")
 _DOWNLOADS_DIR.mkdir(exist_ok=True)
@@ -208,6 +213,25 @@ def _ecotaxa_session_for_project(
                     },
                 }
     return None
+
+
+def _ecopart_confirmation_plan(
+    session_et: dict,
+    *,
+    ecotaxa_project_id: int,
+    ecopart_project_id: int,
+) -> dict[str, object]:
+    """Bind one EcoPart confirmation to its exact EcoTaxa source payload."""
+    dataframe = session_et.get("df")
+    if not isinstance(dataframe, pd.DataFrame):
+        raise ValueError("EcoTaxa dataframe missing from confirmation plan")
+    meta = dict(session_et.get("meta") or {})
+    return {
+        "ecotaxa_project_id": int(ecotaxa_project_id),
+        "ecopart_project_id": int(ecopart_project_id),
+        "source_variable": meta.get("variable_name"),
+        "source_fingerprint": dataframe_fingerprint(dataframe),
+    }
 
 
 def _session_for_variable(thread_id: str, variable_name: str | None) -> dict | None:
@@ -616,6 +640,18 @@ def _candidate_ecotaxa_profile_labels(df_et: pd.DataFrame) -> list[str]:
     return labels
 
 
+def _format_profile_names(values: object, *, limit: int = 8) -> str:
+    """Render a bounded, stable profile list for the model-facing preflight."""
+    if not isinstance(values, (list, tuple, set)):
+        return "aucun"
+    names = sorted({str(value).strip() for value in values if str(value).strip()})
+    if not names:
+        return "aucun"
+    visible = names[:limit]
+    suffix = f", +{len(names) - limit} autres" if len(names) > limit else ""
+    return ", ".join(visible) + suffix
+
+
 def _preflight_ecopart_partition(
     dataframe: pd.DataFrame,
     *,
@@ -628,7 +664,7 @@ def _preflight_ecopart_partition(
     """Check EcoPart exportability at the profile grain without exporting."""
     fingerprint = dataframe_fingerprint(dataframe)
     cache_key = (
-        f"{thread_id}:ecopart_preflight:v5-profile:{ecotaxa_project_id}:{ecopart_project_id}"
+        f"{thread_id}:ecopart_preflight:v6-profile:{ecotaxa_project_id}:{ecopart_project_id}"
         if thread_id else None
     )
     if cache_key:
@@ -701,6 +737,11 @@ def _preflight_ecopart_partition(
         profile for profile in project_profiles
         if str(profile.get("name") or "").strip() in local_profiles
     ]
+    matching_profile_names = sorted({
+        str(profile.get("name") or "").strip()
+        for profile in matching_profiles
+        if str(profile.get("name") or "").strip()
+    })
     if not matching_profiles and not uncertain:
         if project_profiles:
             # A profile label is a useful fast signal, but it is not the data
@@ -746,8 +787,10 @@ def _preflight_ecopart_partition(
         "verdict": verdict,
         "reason": "; ".join([*reasons, *uncertain]) or "export et jointure prévalidés",
         "matching_profiles": len(matching_profiles),
+        "matching_profile_names": matching_profile_names,
         "exportable_profiles": len(exportable),
         "ecotaxa_profile_candidates": len(local_profiles),
+        "ecotaxa_profile_labels": sorted(local_profiles),
         "ecopart_project_profiles": len(project_profiles),
         "profiles_checked": profiles_checked,
         "cache_hit": False,
@@ -1791,6 +1834,12 @@ def make_ecopart_tools(thread_id: str) -> list:
                     "Préflight EcoPart — aucun téléchargement.\n"
                     f"EcoTaxa {ecotaxa_project_id} → EcoPart "
                     f"{ecopart_project_id} : INCONCLUSIF.\n"
+                    "Profils EcoTaxa examinés "
+                    f"({preflight['ecotaxa_profile_candidates']}) : "
+                    f"{_format_profile_names(preflight.get('ecotaxa_profile_labels'))}.\n"
+                    "Profils EcoPart reconnus exactement "
+                    f"({preflight['matching_profiles']}) : "
+                    f"{_format_profile_names(preflight.get('matching_profile_names'))}.\n"
                     "Contrôle rapide : 0 correspondance textuelle "
                     f"({preflight['ecotaxa_profile_candidates']} identifiants "
                     f"EcoTaxa, {preflight['ecopart_project_profiles']} profils "
@@ -1805,6 +1854,12 @@ def make_ecopart_tools(thread_id: str) -> list:
                     f"{ecopart_project_id} : {preflight['verdict']} — "
                     f"{preflight['reason']} "
                     f"({_preflight_profile_status(preflight)}).\n"
+                    "Profils EcoTaxa examinés "
+                    f"({preflight['ecotaxa_profile_candidates']}) : "
+                    f"{_format_profile_names(preflight.get('ecotaxa_profile_labels'))}.\n"
+                    "Profils EcoPart reconnus exactement "
+                    f"({preflight['matching_profiles']}) : "
+                    f"{_format_profile_names(preflight.get('matching_profile_names'))}.\n"
                     + (
                         "Confirmation requise pour lancer l'export et la jointure."
                         if preflight["verdict"] == "PRÊT"
@@ -1816,6 +1871,17 @@ def make_ecopart_tools(thread_id: str) -> list:
                         )
                     )
                 )
+            record_confirmation_preflight(
+                _store,
+                thread_id,
+                operation="enrich_ecotaxa_with_ecopart_remote",
+                plan=_ecopart_confirmation_plan(
+                    session_et,
+                    ecotaxa_project_id=int(ecotaxa_project_id),
+                    ecopart_project_id=int(ecopart_project_id),
+                ),
+                confirmable=preflight["verdict"] in {"PRÊT", "INCONCLUSIF"},
+            )
             return _ep_blocked(
                 preflight_summary,
                 metrics={
@@ -1833,6 +1899,51 @@ def make_ecopart_tools(thread_id: str) -> list:
                     "exportable_profiles": preflight["exportable_profiles"],
                 },
             )
+
+        if ecotaxa_project_id is None or ecopart_project_id is None:
+            return _ep_blocked(
+                "Préflight EcoPart exact requis avant confirmation : les projets "
+                "EcoTaxa et EcoPart doivent tous deux être résolus.",
+                metrics={"preflight_required": True},
+            )
+        confirmation_decision = check_confirmation(
+            _store,
+            thread_id,
+            operation="enrich_ecotaxa_with_ecopart_remote",
+            plan=_ecopart_confirmation_plan(
+                session_et,
+                ecotaxa_project_id=int(ecotaxa_project_id),
+                ecopart_project_id=int(ecopart_project_id),
+            ),
+        )
+        if confirmation_decision == "operation_mismatch":
+            return _ep_blocked(
+                "Confirmation refusée : le dernier préflight présenté concerne "
+                "une autre opération. Exécute uniquement l'opération confirmée "
+                "par l'utilisateur.",
+                metrics={"confirmation_operation_mismatch": True},
+            )
+        if confirmation_decision in {"missing", "plan_mismatch"}:
+            return _ep_blocked(
+                "Préflight EcoPart obligatoire avant enrichissement. Relance le "
+                "préflight sur les mêmes projets et la même table EcoTaxa, puis "
+                "attends la confirmation de l'utilisateur.",
+                metrics={"preflight_required": True},
+            )
+        if confirmation_decision == "not_confirmable":
+            return _ep_blocked(
+                "Confirmation EcoPart refusée : le dernier préflight a établi un "
+                "blocage ou un timeout. Corrige ou relance le préflight.",
+                metrics={"preflight_not_confirmable": True},
+            )
+        if confirmation_decision == "fresh_user_confirmation_required":
+            return _ep_blocked(
+                "Confirmation EcoPart refusée : présente d'abord le préflight, "
+                "puis attends un nouveau message utilisateur avant l'export et "
+                "la jointure.",
+                metrics={"fresh_user_confirmation_required": True},
+            )
+        clear_confirmation(_store, thread_id)
 
         cache_key = build_result_cache_key(
             session_et["df"],

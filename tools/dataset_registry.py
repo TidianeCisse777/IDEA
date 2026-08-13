@@ -37,6 +37,20 @@ SOURCE_ALIASES: tuple[str, ...] = (
     ECOTAXA_ECOPART,
 )
 
+DERIVED_DATAFRAME_SOURCES = frozenset({
+    "analysis:derived",
+    "analysis:explicit-derived",
+    "analysis:join",
+    "analysis:graph-plot",
+    "analysis:plot_df",
+})
+
+
+def dataframe_retention_class(source: object) -> str:
+    """Return the durable retention class for one persisted DataFrame."""
+
+    return "derived" if str(source or "") in DERIVED_DATAFRAME_SOURCES else "anchor"
+
 
 def source_variable(alias: str) -> str:
     """Variable exposée à run_pandas/run_graph pour une source : df_{alias}."""
@@ -108,14 +122,64 @@ def store_dataset(
         f"Table {source}, {len(dataframe)} lignes × {len(dataframe.columns)} colonnes, "
         f"au {grain}; colonnes repères : {columns or 'aucune'}."
     )
+    dataset_key = f"{thread_id}:dataset:{variable_name}"
+    existing = store.get(dataset_key)
+    existing_meta = dict((existing or {}).get("meta") or {})
+    retention_class = str(
+        meta.get("retention_class")
+        or dataframe_retention_class(source)
+    )
+    analysis_key = str(
+        meta.get("analysis_key")
+        or f"{retention_class}:{variable_name}"
+    )
+    existing_analysis_key = str(
+        existing_meta.get("analysis_key")
+        or (
+            f"{dataframe_retention_class(existing_meta.get('source'))}:"
+            f"{variable_name}"
+        )
+    )
+    existing_version = int(existing_meta.get("version") or 0)
+    version = existing_version + 1 if existing is not None else 1
+
+    if existing is not None and existing.get("df") is not None:
+        if existing_analysis_key != analysis_key:
+            raise ValueError(
+                f"La table `{variable_name}` appartient déjà à l'analyse "
+                f"`{existing_analysis_key}` et ne peut pas être remplacée par "
+                f"`{analysis_key}`."
+            )
+        archive_key = (
+            f"{thread_id}:archive:dataset:{variable_name}:v{existing_version or 1}"
+        )
+        archived_meta = {
+            **existing_meta,
+            "analysis_key": existing_analysis_key,
+            "version": existing_version or 1,
+            "retention_class": str(
+                existing_meta.get("retention_class")
+                or dataframe_retention_class(existing_meta.get("source"))
+            ),
+            "lifecycle_state": "superseded",
+            "superseded_by": f"{variable_name}@v{version}",
+            "logical_variable_name": variable_name,
+        }
+        store.set(archive_key, existing["df"], archived_meta)
+
     dataset_meta = {
         **meta,
         **({"domain_profile": inherited_profile} if inherited_profile else {}),
         **({"grain": inherited_grain} if inherited_grain else {}),
         "variable_name": variable_name,
         "description": str(meta.get("description") or fallback_description)[:500],
+        "retention_class": retention_class,
+        "analysis_key": analysis_key,
+        "version": version,
+        "lifecycle_state": "current",
+        "superseded_by": None,
+        "logical_variable_name": variable_name,
     }
-    dataset_key = f"{thread_id}:dataset:{variable_name}"
     # Write the payload once.  The active table and convenient source aliases
     # are durable references to that canonical entry, avoiding several full
     # pickle writes for the same large export.

@@ -79,3 +79,80 @@ def test_derived_copy_of_join_is_reusable(tmp_path):
         code=f"result = {derived['data_ref']}['cast_id'].tolist()",
     )
     assert "10_100" in content and "20_200" in content
+
+
+def test_recomputing_named_analysis_versions_result_and_preserves_source(tmp_path):
+    store, tools = _tools(tmp_path)
+    _load(
+        tools,
+        tmp_path,
+        "observations",
+        pd.DataFrame({"sample_id": [1, 2], "value": [2.0, 3.0]}),
+    )
+
+    _, first = _invoke(
+        tools["run_pandas"],
+        code="result = df_file_observations.assign(score=lambda frame: frame['value'])",
+        persist_as="df_observation_scores",
+        description="Scores par observation.",
+        grain="une ligne par observation",
+        filters={},
+    )
+    _, second = _invoke(
+        tools["run_pandas"],
+        code=(
+            "result = df_file_observations.assign("
+            "score=lambda frame: frame['value'] * 10)"
+        ),
+        persist_as="df_observation_scores",
+        description="Scores corrigés par observation.",
+        grain="une ligne par observation",
+        filters={},
+    )
+
+    assert first["status"] == second["status"] == "success"
+    assert first["data_ref"] == second["data_ref"] == "df_observation_scores"
+    current = store.get("join-thread:dataset:df_observation_scores")
+    assert current is not None
+    assert current["meta"]["analysis_key"] == "run_pandas:df_observation_scores"
+    assert current["meta"]["version"] == 2
+    assert current["meta"]["lifecycle_state"] == "current"
+    assert current["df"]["score"].tolist() == [20.0, 30.0]
+
+    archive_keys = store.keys(
+        "join-thread:archive:dataset:df_observation_scores:"
+    )
+    assert len(archive_keys) == 1
+    archived = store.get(archive_keys[0])
+    assert archived is not None
+    assert archived["meta"]["version"] == 1
+    assert archived["meta"]["lifecycle_state"] == "superseded"
+    assert archived["meta"]["superseded_by"] == "df_observation_scores@v2"
+    assert archived["df"]["score"].tolist() == [2.0, 3.0]
+
+    source = store.get("join-thread:dataset:df_file_observations")
+    assert source is not None
+    assert source["meta"]["retention_class"] == "anchor"
+    assert source["meta"]["lifecycle_state"] == "current"
+
+
+def test_run_pandas_materializes_only_exactly_referenced_dataframes(tmp_path):
+    _, tools = _tools(tmp_path)
+    for index in range(10):
+        _load(
+            tools,
+            tmp_path,
+            f"source_{index:02d}",
+            pd.DataFrame({"sample_id": [index], "value": [float(index)]}),
+        )
+
+    _, artifact = _invoke(
+        tools["run_pandas"],
+        code="result = df_file_source_09.head(1)",
+    )
+
+    assert artifact["status"] == "success"
+    assert artifact["metrics"]["executor_dataframe_input_count"] == 1
+    assert artifact["metrics"]["executor_dataframe_inputs"] == [
+        "df_file_source_09"
+    ]

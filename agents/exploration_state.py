@@ -147,6 +147,11 @@ class ResourceRecord(_StateModel):
     scope: dict[str, Any] = Field(default_factory=dict)
     capabilities: tuple[ExplorationCapability, ...] = ()
     provenance: dict[str, Any] = Field(default_factory=dict)
+    retention_class: Literal["anchor", "derived"] = "anchor"
+    lifecycle_state: Literal["current", "archived", "superseded"] = "current"
+    analysis_key: str | None = None
+    version: int = 1
+    superseded_by: str | None = None
 
 
 class ExplorationDependency(_StateModel):
@@ -1122,7 +1127,7 @@ def render_dataframe_context(
     messages: tuple[Any, ...] | list[Any] = (),
     max_chars: int = 9_000,
 ) -> str:
-    """Render the factual working set plus a complete compact table index."""
+    """Render durable anchors plus a bounded factual working set."""
     run = validate_exploration_run(payload)
     if run is None:
         return ""
@@ -1131,8 +1136,8 @@ def render_dataframe_context(
         for item in run.resources_available
         if item.kind in {"table", "selection"}
     ]
-    alphabetical_tables = sorted(
-        tables,
+    anchor_tables = sorted(
+        (item for item in tables if item.retention_class == "anchor"),
         key=lambda item: (item.name.casefold(), item.source.casefold()),
     )
 
@@ -1150,33 +1155,22 @@ def render_dataframe_context(
         for fact in working_set.ledger.tool_facts
         if fact.produced_ref and fact.status == "success"
     }
-    ordered_names = list(working_set.ordered_names)
-    remaining = sorted(
-        (resource for resource in tables if resource.name not in ordered_names),
-        key=lambda resource: (
-            resource.age_turns is None,
-            resource.age_turns if resource.age_turns is not None else 10**9,
-            resource.name.casefold(),
-            resource.source.casefold(),
-        ),
-    )
-    ordered_names.extend(resource.name for resource in remaining)
-    detailed_names = ordered_names[: min(12, len(ordered_names))]
+    detailed_names = list(working_set.ordered_names[:8])
     header_lines = [
         "\n\n## AVAILABLE DATAFRAMES (current session)",
         "Structured tool facts override resource metadata; resource metadata "
         "overrides older assistant prose.",
         "The working set uses exact references, executed tools and declared "
         "lineage; no lexical plan ranking is used.",
-        "DATAFRAME INDEX (all live resources):",
+        "DATAFRAME ANCHORS (durable, compact, always available):",
     ]
-    full_index_lines = [f"* {resource.name}" for resource in alphabetical_tables]
-    rendered_blocks = [*header_lines, *full_index_lines]
-    if len("\n".join(rendered_blocks)) > max_chars - 600:
-        rendered_blocks = [
-            *header_lines,
-            "* " + " | ".join(resource.name for resource in alphabetical_tables),
-        ]
+    anchor_lines = [
+        f"* {resource.name} | source={_bounded_inline(resource.source, 70)} | "
+        f"rows={resource.rows if resource.rows is not None else 'unknown'} | "
+        f"last_used={_usage_label(resource)}"
+        for resource in anchor_tables
+    ] or ["* none"]
+    rendered_blocks = [*header_lines, *anchor_lines]
     rendered_blocks.append(
         "DATAFRAME WORKING SET (pinned facts first, then inventory recency):"
     )
@@ -1238,6 +1232,8 @@ def render_dataframe_context(
             f"last_used={_usage_label(resource)}; "
             f"rows={rows if rows is not None else 'unknown'}; "
             f"grain={_bounded_inline(grain, 90)}",
+            f"  analysis={_bounded_inline(resource.analysis_key, 100)}; "
+            f"version={resource.version}; lifecycle={resource.lifecycle_state}",
             f"  description={_bounded_inline(description, description_budget)}",
             f"  schema_by_role={_bounded_inline(schema, schema_budget)}; "
             f"schema_visibility={shown}/{total_columns}"
@@ -1263,20 +1259,24 @@ def render_dataframe_context(
 
     expanded_count = len(expanded_names)
     index_only_count = len(tables) - expanded_count
+    derived_count = sum(
+        resource.retention_class == "derived" for resource in tables
+    )
+    omitted_derived_count = sum(
+        resource.retention_class == "derived"
+        and resource.name not in expanded_names
+        for resource in tables
+    )
     rendered_blocks.append(
         "DATAFRAME CATALOG COUNTS: "
         f"total={len(tables)}; expanded={expanded_count}; "
         f"index_only={index_only_count}."
     )
-    if index_only_count:
-        rendered_blocks.append(
-            "INDEX-ONLY DATAFRAMES: "
-            + " | ".join(
-                resource.name
-                for resource in alphabetical_tables
-                if resource.name not in expanded_names
-            )
-        )
+    rendered_blocks.append(
+        "DATAFRAME VISIBILITY COUNTS: "
+        f"anchors={len(anchor_tables)}; derived_current={derived_count}; "
+        f"detailed={expanded_count}; omitted_derived={omitted_derived_count}."
+    )
 
     other_resources = [
         item
@@ -1304,17 +1304,40 @@ def dataframe_context_metrics(context: str) -> dict[str, int]:
         r"index_only=(\d+)\.",
         context,
     )
+    visibility_match = re.search(
+        r"DATAFRAME VISIBILITY COUNTS: anchors=(\d+); "
+        r"derived_current=(\d+); detailed=(\d+); omitted_derived=(\d+)\.",
+        context,
+    )
+    defaults = {
+        "dataframe_anchor_count": 0,
+        "dataframe_derived_current_count": 0,
+        "dataframe_detailed_count": 0,
+        "dataframe_omitted_derived_count": 0,
+    }
+    if visibility_match is not None:
+        anchors, derived, detailed, omitted = (
+            int(value) for value in visibility_match.groups()
+        )
+        defaults = {
+            "dataframe_anchor_count": anchors,
+            "dataframe_derived_current_count": derived,
+            "dataframe_detailed_count": detailed,
+            "dataframe_omitted_derived_count": omitted,
+        }
     if match is None:
         return {
             "dataframe_catalog_total": 0,
             "dataframe_catalog_expanded": 0,
             "dataframe_catalog_index_only": 0,
+            **defaults,
         }
     total, expanded, index_only = (int(value) for value in match.groups())
     return {
         "dataframe_catalog_total": total,
         "dataframe_catalog_expanded": expanded,
         "dataframe_catalog_index_only": index_only,
+        **defaults,
     }
 
 

@@ -241,22 +241,30 @@ class ExplorationStateMiddleware(AgentMiddleware):
         return {"exploration": payload}
 
     def wrap_tool_call(self, request, handler):  # noqa: ANN001
+        from tools.user_turn_scope import bind_user_turn, user_turn_marker
+
         previous = _successful_duplicate(
             list(request.state.get("messages") or []),
             request.tool_call,
         )
         if previous is not None:
             return _reuse_duplicate_result(request, previous)
-        return handler(request)
+        messages = list(request.state.get("messages") or [])
+        with bind_user_turn(user_turn_marker(messages)):
+            return handler(request)
 
     async def awrap_tool_call(self, request, handler):  # noqa: ANN001
+        from tools.user_turn_scope import bind_user_turn, user_turn_marker
+
         previous = _successful_duplicate(
             list(request.state.get("messages") or []),
             request.tool_call,
         )
         if previous is not None:
             return _reuse_duplicate_result(request, previous)
-        return await handler(request)
+        messages = list(request.state.get("messages") or [])
+        with bind_user_turn(user_turn_marker(messages)):
+            return await handler(request)
 
     def after_agent(self, state: IdeaAgentState, runtime) -> dict[str, Any] | None:  # noqa: ANN001
         messages = list(state.get("messages") or [])

@@ -273,6 +273,7 @@ def _cartopy_safe_tight_layout(plt):
 from tools.file_loader import load_file as _load_file
 from tools.dataset_registry import (
     SOURCE_ALIASES,
+    dataframe_retention_class,
     dataset_variable_name,
     loaded_file_dataset,
     source_variable,
@@ -626,9 +627,9 @@ def _file_variable_name(path: str) -> str:
 def _referenced_names(code: str) -> set[str]:
     """Return identifiers explicitly read by a user-provided Python snippet.
 
-    ``run_graph`` synchronises only the named DataFrames into its persistent
-    worker. This avoids eagerly materialising every historical dataset just to
-    draw a figure from a small derived table.
+    ``run_pandas`` and ``run_graph`` synchronise only those named DataFrames
+    into their persistent worker. This avoids eagerly materialising every
+    historical dataset for a calculation that reads only a small working set.
     """
     try:
         tree = ast.parse(code)
@@ -1117,9 +1118,9 @@ def _dataframe_vars(
 ) -> dict[str, Any]:
     """Build the DataFrame namespace shared by pandas and graph tools.
 
-    ``run_pandas`` keeps the historical all-datasets namespace so analysis can
-    freely combine persisted inputs.  ``run_graph`` supplies its parsed names:
-    only the explicitly referenced DataFrames are then materialised.
+    Both execution tools supply their parsed identifiers so only explicitly
+    referenced DataFrames are materialised. Passing ``None`` retains the
+    compatibility path used by internal callers and tests.
     """
     from tools.dataframe_cleanup import hidden_dataframes
 
@@ -1163,7 +1164,9 @@ def _dataframe_vars(
         normalized_frames[frame_id] = frame
         return frame
 
-    local_vars: dict[str, Any] = {"df": analysis_frame(df), "pd": pd}
+    local_vars: dict[str, Any] = {"pd": pd}
+    if required("df"):
+        local_vars["df"] = analysis_frame(df)
     if required("loaded_file") or required("loaded_file_variable"):
         loaded = loaded_file_dataset(store, thread_id)
         if loaded and loaded.get("df") is not None:
@@ -1583,7 +1586,13 @@ def _data_dependency_recovery(
         for key in store.keys():
             if key != thread_id and not key.startswith(f"{thread_id}:"):
                 continue
+            if key.startswith(f"{thread_id}:archive:"):
+                continue
             entry = store.get(key) or {}
+            if str(
+                ((entry.get("meta") or {}).get("lifecycle_state")) or "current"
+            ) != "current":
+                continue
             dataframe = entry.get("df")
             if not isinstance(dataframe, pd.DataFrame) or canonical_name not in dataframe.columns:
                 continue
@@ -1598,7 +1607,11 @@ def _data_dependency_recovery(
             family
             for key in store.keys()
             if key == thread_id or key.startswith(f"{thread_id}:")
+            if not key.startswith(f"{thread_id}:archive:")
             for entry in (store.get(key) or {},)
+            if str(
+                ((entry.get("meta") or {}).get("lifecycle_state")) or "current"
+            ) == "current"
             for family in (_source_family((entry.get("meta") or {}).get("source")),)
             if family not in {None, "file"}
         }
@@ -2240,7 +2253,13 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     retryable=True,
                     method="data lineage validation",
                 )
-            local_vars = _dataframe_vars(_store, thread_id, df)
+            referenced_names = _referenced_names(code)
+            local_vars = _dataframe_vars(
+                _store,
+                thread_id,
+                df,
+                referenced_names,
+            )
             injected_keys = set(local_vars) | {"__builtins__"}
             dataframe_parents = _referenced_dataframe_parents(
                 code,
@@ -2263,7 +2282,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                 return blocked(guard, method="controlled pandas execution")
 
             execution = default_executor.execute(
-                thread_id, "pandas", code, local_vars
+                thread_id,
+                "pandas",
+                code,
+                local_vars,
+                allowed_dataframe_names=referenced_names,
             )
             if execution.error:
                 raise RuntimeError(execution.error)
@@ -2312,13 +2335,18 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     )
                 existing = _store.get(f"{thread_id}:dataset:{persist_as}")
                 if existing and isinstance(existing.get("df"), pd.DataFrame):
-                    return blocked(
-                        f"`persist_as={persist_as}` remplacerait une table déjà "
-                        "persistée. Conserve la table source et choisis un nouveau "
-                        "nom dérivé (par exemple `df_derived_<nom>`).",
-                        retryable=True,
-                        method="controlled pandas execution",
+                    existing_meta = dict(existing.get("meta") or {})
+                    existing_retention = str(
+                        existing_meta.get("retention_class")
+                        or dataframe_retention_class(existing_meta.get("source"))
                     )
+                    if existing_retention != "derived":
+                        return blocked(
+                            f"`persist_as={persist_as}` désigne une source durable. "
+                            "Conserve cette ancre et choisis un nom d'analyse dérivée.",
+                            retryable=True,
+                            method="controlled pandas execution",
+                        )
                 explicit_variable = persist_as
                 store_dataset(
                     _store,
@@ -2327,6 +2355,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     variable_name=explicit_variable,
                     meta={
                         "source": "analysis:explicit-derived",
+                        "analysis_key": f"run_pandas:{explicit_variable}",
                         "n_rows": int(result.shape[0]),
                         "n_cols": int(result.shape[1]),
                         **_run_pandas_dataframe_metadata(
@@ -2340,6 +2369,7 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                         ),
                     },
                     latest_alias=explicit_variable,
+                    set_active=False,
                 )
 
             join_variable = None
@@ -2535,7 +2565,16 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     data_ref=persisted_variable,
                     persisted=bool(persisted_variable),
                     method="controlled pandas execution",
-                    metrics={"rows": int(n_rows), "columns": int(n_cols)},
+                    metrics={
+                        "rows": int(n_rows),
+                        "columns": int(n_cols),
+                        "executor_dataframe_input_count": len(
+                            execution.dataframe_input_names
+                        ),
+                        "executor_dataframe_inputs": list(
+                            execution.dataframe_input_names
+                        ),
+                    },
                 )
             persistence_note = ""
             if join_variable:
@@ -2670,7 +2709,11 @@ def make_tools(thread_id: str, store: SessionStore | None = None) -> list:
                     method="cartography coordinate preflight",
                 )
             execution = default_executor.execute(
-                thread_id, "graph", effective_code, local_vars
+                thread_id,
+                "graph",
+                effective_code,
+                local_vars,
+                allowed_dataframe_names=_referenced_names(effective_code),
             )
             if execution.error:
                 raise RuntimeError(execution.error)

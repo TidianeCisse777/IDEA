@@ -1,4 +1,4 @@
-"""Small session registry for aging automatic derived DataFrames."""
+"""Bound and archive derived DataFrames without deleting durable payloads."""
 
 from __future__ import annotations
 
@@ -7,18 +7,12 @@ from typing import Any
 
 import pandas as pd
 
+from tools.dataset_registry import DERIVED_DATAFRAME_SOURCES
 from tools.session_store import SessionStore
 
 _STATE_SUFFIX = "dataframe_usage"
-_TRANSIENT_SOURCES = {
-    "analysis:derived",
-    "analysis:explicit-derived",
-    "analysis:join",
-    "analysis:graph-plot",
-    "analysis:plot_df",
-}
+_TRANSIENT_SOURCES = DERIVED_DATAFRAME_SOURCES
 TRANSIENT_HIDE_AFTER_TURNS = 6
-TRANSIENT_DELETE_AFTER_TURNS = 20
 DEFAULT_MAX_LIVE_DERIVED_DATAFRAMES = 20
 
 
@@ -35,12 +29,14 @@ def _load(store: SessionStore, thread_id: str) -> dict[str, Any]:
             "marker": None,
             "last_used": {},
             "capacity_hidden": [],
+            "hidden": [],
         }
     return {
         "turn": int(value.get("turn") or 0),
         "marker": value.get("marker"),
         "last_used": dict(value.get("last_used") or {}),
         "capacity_hidden": list(value.get("capacity_hidden") or []),
+        "hidden": list(value.get("hidden") or []),
     }
 
 
@@ -80,17 +76,32 @@ def _reanchor_if_needed(
             return
 
 
-def _delete_family(store: SessionStore, thread_id: str, variable: str) -> None:
-    keys = []
-    for key in store.keys():
-        if key != thread_id and not key.startswith(f"{thread_id}:"):
-            continue
-        entry = store.get(key) or {}
-        if str(((entry.get("meta") or {}).get("variable_name")) or "") == variable:
-            keys.append(key)
-    canonical = f"{thread_id}:dataset:{variable}"
-    for key in sorted(set(keys), key=lambda item: item == canonical):
-        store.clear(key)
+def _set_lifecycle_state(
+    store: SessionStore,
+    key: str,
+    *,
+    state: str,
+    reason: str | None = None,
+) -> None:
+    """Persist one lifecycle transition without changing the DataFrame payload."""
+
+    entry = store.get(key) or {}
+    dataframe = entry.get("df")
+    if not isinstance(dataframe, pd.DataFrame):
+        return
+    meta = dict(entry.get("meta") or {})
+    if (
+        meta.get("lifecycle_state") == state
+        and meta.get("archived_reason") == reason
+    ):
+        return
+    meta["retention_class"] = "derived"
+    meta["lifecycle_state"] = state
+    if reason:
+        meta["archived_reason"] = reason
+    else:
+        meta.pop("archived_reason", None)
+    store.set(key, dataframe, meta)
 
 
 def _declared_parents(meta: dict[str, Any]) -> tuple[str, ...]:
@@ -172,15 +183,16 @@ def advance_dataframe_cleanup(
     marker: str,
     referenced_text: str = "",
 ) -> set[str]:
-    """Bound live derivatives, then age unused ones out of durable storage.
+    """Bound live derivatives, then archive unused ones outside model context.
 
     At most ``MAX_LIVE_DERIVED_DATAFRAMES`` (20 by default) automatic
     derivatives remain visible to the runtime. Capacity-hidden tables stay in
-    ``SessionStore`` and can be revived by an exact user/tool reference. Tables
-    unused for twenty turns are still deleted by the existing durable cleanup.
-    Source/file DataFrames never count toward this capacity.
+    ``SessionStore`` and can be revived by an exact user/tool reference. Hidden
+    tables are archived in place and never deleted by automatic cleanup.
+    Source/file/export/enrichment DataFrames never count toward this capacity.
     """
     state = _load(store, thread_id)
+    previously_hidden = set(state.get("hidden") or ())
     if marker != state["marker"]:
         state["turn"] += 1
         state["marker"] = marker
@@ -278,18 +290,23 @@ def advance_dataframe_cleanup(
 
     hidden = age_hidden | capacity_hidden
     _reanchor_if_needed(store, thread_id, hidden, datasets)
-    for variable in tuple(hidden):
-        if (
-            turn - int(state["last_used"].get(variable, turn))
-            >= TRANSIENT_DELETE_AFTER_TURNS
-        ):
-            _delete_family(store, thread_id, variable)
-            state["last_used"].pop(variable, None)
-            capacity_hidden.discard(variable)
-            hidden.remove(variable)
+    for key, variable, meta in datasets:
+        if variable not in transient:
+            continue
+        if variable in hidden:
+            reason = "capacity" if variable in capacity_hidden else "unused"
+            _set_lifecycle_state(
+                store,
+                key,
+                state="archived",
+                reason=reason,
+            )
+        elif str(meta.get("lifecycle_state") or "current") != "current":
+            _set_lifecycle_state(store, key, state="current")
     state["capacity_hidden"] = sorted(capacity_hidden)
+    state["hidden"] = sorted(hidden)
     _save(store, thread_id, state)
-    if newly_capacity_hidden:
+    if hidden - previously_hidden:
         # The executor is only a hot cache. Closing it is the safest way to
         # guarantee that capacity-hidden intermediates do not remain alive in
         # its Python namespace; durable tables are reloaded on demand.
@@ -347,7 +364,14 @@ def hidden_dataframes(store: SessionStore, thread_id: str) -> set[str]:
         for variable in state.get("capacity_hidden", [])
         if str(variable) in transient
     }
-    return age_hidden | capacity_hidden
+    lifecycle_hidden = {
+        variable
+        for _key_name, variable, meta in _datasets(store, thread_id)
+        if variable in transient
+        and str(meta.get("lifecycle_state") or "current")
+        in {"archived", "superseded"}
+    }
+    return age_hidden | capacity_hidden | lifecycle_hidden
 
 
 def dataframe_cleanup_metrics(
@@ -358,9 +382,10 @@ def dataframe_cleanup_metrics(
 
     state = _load(store, thread_id)
     turn = state["turn"]
+    datasets = _datasets(store, thread_id)
     transient = {
         variable
-        for _key_name, variable, meta in _datasets(store, thread_id)
+        for _key_name, variable, meta in datasets
         if str(meta.get("source") or "") in _TRANSIENT_SOURCES
     }
     age_hidden = {
@@ -374,12 +399,29 @@ def dataframe_cleanup_metrics(
         for variable in state.get("capacity_hidden", [])
         if str(variable) in transient
     }
-    hidden = age_hidden | capacity_hidden
+    lifecycle_hidden = {
+        variable
+        for _key_name, variable, meta in datasets
+        if variable in transient
+        and str(meta.get("lifecycle_state") or "current")
+        in {"archived", "superseded"}
+    }
+    hidden = age_hidden | capacity_hidden | lifecycle_hidden
+    anchors = {
+        variable
+        for _key_name, variable, meta in datasets
+        if str(meta.get("source") or "") not in _TRANSIENT_SOURCES
+    }
+    superseded_versions = len(store.keys(f"{thread_id}:archive:dataset:"))
     return {
         "max_live_derived_dataframes": _max_live_derived_dataframes(),
+        "dataframes_stored_total": len(datasets) + superseded_versions,
+        "dataframe_anchors_total": len(anchors),
         "derived_dataframes_total": len(transient),
         "derived_dataframes_visible": len(transient - hidden),
         "derived_dataframes_hidden": len(hidden),
+        "derived_dataframes_archived": len(lifecycle_hidden),
+        "derived_versions_superseded": superseded_versions,
         "derived_dataframes_capacity_hidden": len(capacity_hidden),
         "derived_dataframes_age_hidden": len(age_hidden),
     }

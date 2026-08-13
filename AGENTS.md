@@ -84,7 +84,7 @@ python serve.py                          # serveur FastAPI seul
 | `LANGFUSE_*` | Self-hosted Langfuse (port 3001) — voir `assistant-copepodes-specs` mémo |
 | `MAX_CONTEXT_TOKENS` | Défaut 100000 — plafond de qualité ; au-delà, trim_messages |
 | `MAX_CHECKPOINT_MESSAGES` | Défaut 40 — plafond durable des messages LangGraph; Open WebUI garde le transcript complet. |
-| `MAX_LIVE_DERIVED_DATAFRAMES` | Défaut 20 — dérivés simultanément visibles; fichiers et sources exclus. |
+| `MAX_LIVE_DERIVED_DATAFRAMES` | Défaut 20 — dérivés courants simultanément visibles au runtime; fichiers, exports et enrichissements exclus. |
 | `MAX_MODEL_CALLS_PER_TURN` | Défaut 10 — limite technique de sécurité contre une boucle incontrôlée |
 | `TARGET_MODEL_CALLS_PER_TURN` | Défaut 5 — cible comportementale d'économie, sans arrêt forcé |
 | `TARGET_RUN_PANDAS_CALLS_PER_TURN` | Défaut 2 — cible comportementale pour regrouper qualification et calcul |
@@ -97,6 +97,11 @@ python serve.py                          # serveur FastAPI seul
 | `OPENWEBUI_URL` | Backend Open WebUI pour le feedback polling (`http://open-webui:8080` en compose) |
 
 `.env` contient des credentials EcoTaxa/EcoPart/SQL — jamais commité, jamais affiché.
+
+Le contexte n'affiche pas toutes les colonnes des tables larges : les fiches du
+WorkingSet montrent un schéma borné et `schema_visibility=X/Y`. Une colonne
+absente ou ambiguë autorise une seule qualification ciblée; plusieurs candidates
+plausibles exigent une question utilisateur avant calcul.
 
 ---
 

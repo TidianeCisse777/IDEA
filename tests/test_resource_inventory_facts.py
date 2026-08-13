@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import pandas as pd
+from langchain_core.messages import HumanMessage
 
 from agents.exploration_state import new_exploration_run, render_dataframe_context
 from tools.data_tools import make_tools
+from tools.dataset_registry import store_dataset
 from tools.resource_inventory import build_resource_inventory
 from tools.session_store import SessionStore
 
@@ -133,3 +135,61 @@ def test_dataframe_card_names_source_parents_and_present_identifiers(tmp_path):
     assert "source=analysis:join" in context
     assert "parents=df_neolabs_sample,df_ecotaxa_export" in context
     assert "identifiers_present=project_id,profile_id,net_sample_id,station" in context
+
+
+def test_context_keeps_all_anchors_compact_and_hides_unselected_derivatives(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    thread_id = "bounded-dataframe-view"
+    frame = pd.DataFrame({"sample_id": [1], "value": [2.0]})
+    anchor_names = ("df_file_samples", "df_amundsen_enriched")
+    for name, source in zip(
+        anchor_names,
+        ("file:/uploads/samples.csv", "amundsen_enrichment"),
+        strict=True,
+    ):
+        store_dataset(
+            store,
+            thread_id,
+            frame.copy(),
+            variable_name=name,
+            meta={"source": source, "grain": "une ligne par sample"},
+            set_active=False,
+        )
+    derived_names = tuple(f"df_analysis_{index:02d}" for index in range(12))
+    for name in derived_names:
+        store_dataset(
+            store,
+            thread_id,
+            frame.copy(),
+            variable_name=name,
+            meta={
+                "source": "analysis:explicit-derived",
+                "grain": "une ligne par sample",
+                "parent_variable": "df_file_samples",
+            },
+            set_active=False,
+        )
+
+    target = derived_names[-1]
+    resources = build_resource_inventory(store, thread_id)
+    run = new_exploration_run(f"Analyse précisément {target}.", resources)
+    context = render_dataframe_context(
+        run,
+        messages=[HumanMessage(content=f"Analyse précisément {target}.")],
+    )
+
+    detailed_names = tuple(
+        line.removeprefix("- ")
+        for line in context.splitlines()
+        if line.startswith("- df_")
+    )
+    assert "DATAFRAME ANCHORS" in context
+    assert set(anchor_names) <= {
+        line.split(" | ", 1)[0].removeprefix("* ")
+        for line in context.splitlines()
+        if line.startswith("* df_")
+    }
+    assert target in detailed_names
+    assert len(detailed_names) <= 8
+    for omitted in set(derived_names) - set(detailed_names):
+        assert omitted not in context

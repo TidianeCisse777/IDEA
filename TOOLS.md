@@ -24,6 +24,7 @@
 - Chaque namespace contient moins de dix fonctions. Tous ses membres portent `defer_loading: true`; OpenAI charge leurs descriptions et schémas seulement après la recherche sémantique.
 - Le catalogue ne contient que des tools canoniques exécutables. Un retry ou une récupération forcée rend temporairement la fonction visée immédiatement visible, sans duplication dans son namespace.
 - `run_pandas` et `run_graph` ne sont jamais différés : la qualification, le calcul et le rendu restent disponibles à chaque étape ReAct.
+- `run_pandas` matérialise seulement les DataFrames nommés exactement dans le code; les autres tables restent dans le `SessionStore` et les versions superseded restent archivées hors contexte.
 
 ## Choisir la bonne famille
 
@@ -41,8 +42,10 @@
 | Créer un rapport | `export_deliverable` | artefact téléchargeable |
 
 Un tool de consultation ou d’aperçu ne remplace pas une preuve sur le DataFrame
-réel. Avant une analyse finale, le candidat doit toujours être qualifié selon la
-demande courante.
+réel. La qualification Pandas est toutefois conditionnelle : elle est inutile
+si le résultat structuré ou la fiche de ressource établit déjà la colonne, le
+grain et la portée. Sinon, une seule qualification ciblée est permise; plusieurs
+colonnes plausibles entraînent une question utilisateur avant le calcul.
 
 <!-- TOOL-INVENTORY:START -->
 Inventaire généré : **22 tools obligatoires**, **25 avec SQL**.
@@ -98,6 +101,9 @@ Inventaire généré : **22 tools obligatoires**, **25 avec SQL**.
 - Les entrées sont des schémas Pydantic stricts; les champs inconnus sont refusés.
 - Chaque résultat porte un artefact `ToolResult` structuré en plus du texte affiché.
 - Les opérations lourdes conservent leur confirmation explicite.
+- Le dernier préflight lourd remplace l'ancien et lie la confirmation à un tour
+  utilisateur ultérieur, à l'opération, au plan exact et à l'empreinte source;
+  aucun regex de confirmation n'est appliqué au texte utilisateur.
 - `run_pandas`, `run_graph`, le RAG et `lookup_marine_taxonomy` restent directement visibles.
 - OpenAI Tool Search diffère seulement les familles EcoTaxa, EcoPart, géographie et enrichissement environnemental.
 - Sans Tool Search, les 25 tools canoniques sont tous exposés; aucune règle lexicale ne bloque une capacité valide.
@@ -113,5 +119,17 @@ Inventaire généré : **22 tools obligatoires**, **25 avec SQL**.
 | `cancelled` | opération explicitement abandonnée |
 
 Les erreurs de variable, table ou colonne doivent rester structurées. Elles
-permettent à l’agent de récupérer la ressource manquante et de reprendre son
-plan au lieu d’arrêter prématurément la conversation.
+permettent à l’agent de récupérer une fois une dépendance dont l'identité est
+déjà établie. Une ambiguïté entre plusieurs colonnes ou méthodes ne déclenche
+pas une boucle de récupération : l'agent affiche les candidats et interroge
+l'utilisateur.
+
+### Préflight EcoPart
+
+`enrich_ecotaxa_with_ecopart_remote(ecotaxa_project_id=<id>,
+ecopart_project_id=None, confirmed=False)` résout d'abord le projet EcoPart sans
+télécharger les données. La réponse affiche la paire résolue, les profils
+EcoTaxa examinés et les profils EcoPart reconnus exactement; chaque liste est
+bornée à huit noms puis résumée par `+N autres`. Après confirmation dans un
+nouveau tour, l'appel `confirmed=True` doit reprendre les deux identifiants
+résolus et la même table source.

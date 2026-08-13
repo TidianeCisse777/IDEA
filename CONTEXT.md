@@ -21,7 +21,7 @@ Ce document définit l'identité métier de l'agent qui tourne dans ce repo et l
 - Exécute des calculs pandas via `run_pandas`.
 - Produit des graphiques matplotlib via `run_graph` après qualification du DataFrame choisi dans son plan.
 - Interroge un workspace SQL en lecture seule via `list_sql_tables`, `preview_sql_table`, `copy_sql_query_to_workspace`.
-- Interroge la base de connaissances copépodes (11 docs RAG, ChromaDB) via `query_copepod_knowledge_base`.
+- Interroge la base de connaissances copépodes (14 docs RAG, ChromaDB) via `query_copepod_knowledge_base`.
 - Génère des livrables PDF via `export_deliverable`.
 
 ## Ce que l'agent ne fait pas
@@ -42,11 +42,11 @@ L'agent est un **LangGraph ReAct unique**. Tous les outils exécutables restent 
 Le system prompt compact est lu localement depuis `agents/copepod_system_prompt.py`. Il n'existe plus de tool de chargement de skills : les règles actives vivent dans le prompt, les docstrings et le RAG.
 
 1. **File analysis** — quand l'utilisateur travaille un fichier chargé : `load_file`, `run_pandas`.
-2. **Knowledge base** — quand l'utilisateur pose une question sur colonnes, méthodes, taxonomie : `query_copepod_knowledge_base` d'abord, jamais de réponse de mémoire.
+2. **Knowledge base** — pour la définition d'une colonne observée, une méthode ou la taxonomie : `query_copepod_knowledge_base` d'abord, jamais de réponse de mémoire. Les noms réellement présents viennent toujours du schéma du DataFrame.
 
-Pour un calcul ou un graphique, le plan nomme d'abord les DataFrames candidats et leurs critères de grain, colonnes, clés, portée et valeurs manquantes. Un petit contrôle `run_pandas` qualifie le candidat; après son résultat seulement, l'agent poursuit avec le calcul ou `run_graph`. `run_pandas` et `run_graph` restent visibles directement et ne passent jamais par Tool Search.
+Pour un calcul ou un graphique, le plan nomme d'abord les DataFrames candidats et leurs critères de grain, colonnes, clés, portée et valeurs manquantes. Si ces faits ne sont pas déjà établis, un seul contrôle `run_pandas` ciblé qualifie le candidat. Une colonne autoritative unique est utilisée directement; plusieurs colonnes plausibles sont présentées à l'utilisateur avant tout calcul. `run_pandas` et `run_graph` restent visibles directement et ne passent jamais par Tool Search.
 
-**Confirmation utilisateur explicite avant opération coûteuse (CT-AG-06)** — le prompt impose un « oui / go / lance / confirme » avant les exports distants, enrichissements lourds, copies SQL non bornées et livrables. Les opérations locales légères restent immédiates.
+**Confirmation utilisateur explicite avant opération coûteuse (CT-AG-06)** — après le préflight, un nouveau message utilisateur doit confirmer l'opération. Le ledger vérifie le tour, l'opération, le plan exact et l'empreinte de la source; il ne recherche aucun mot-clé ou regex dans le texte. Un préflight plus récent remplace l'ancienne opération en attente. Les opérations locales légères restent immédiates.
 
 ### Contexte de travail factuel
 
@@ -65,11 +65,25 @@ Le rôle `primary` ne traverse pas automatiquement un nouveau message utilisateu
 un ancien résultat de tool reste disponible comme ressource récente, sauf si
 l'utilisateur le désigne explicitement comme sujet du nouveau tour.
 
+Les fichiers, exports et enrichissements sont des ancres durables. Une analyse
+nommée possède une `analysis_key` et une version courante; son recalcul archive
+la version précédente avec `superseded_by`. Le stockage durable peut donc
+conserver la lignée complète sans exposer toutes ses versions au modèle. Le
+contexte montre toutes les ancres sous forme compacte et au plus huit fiches
+détaillées du WorkingSet; les autres dérivés restent récupérables par référence
+exacte sans être énumérés à chaque tour.
+
+Une fiche détaillée montre un schéma borné par rôles et son ratio
+`schema_visibility=X/Y`, pas nécessairement toutes les colonnes d'une table
+large. Si la colonne requise n'est pas visible, l'agent l'inspecte une seule fois.
+Si plusieurs candidates restent sémantiquement valides, il demande laquelle
+utiliser plutôt que de choisir par ressemblance de nom, récence ou commodité.
+
 ---
 
 ## RAG
 
-`query_copepod_knowledge_base` recherche les 11 documents de `core/copepod_rag/docs/`.
+`query_copepod_knowledge_base` recherche les 14 documents de `core/copepod_rag/docs/`.
 Il fournit le savoir métier sur les colonnes, méthodes, taxonomie et sources. Si
 le RAG est appelé, l'agent attend son résultat avant de poursuivre.
 
@@ -111,7 +125,7 @@ verticale et statistique. Aucune présélection implicite n'est appliquée.
 
 - Toute valeur numérique vient d'un `run_pandas`, d'un tool ou du RAG. Sinon : « valeur inconnue ».
 - Toute production graphique utilise directement `run_graph` après qualification du DataFrame candidat.
-- Toute question factuelle sur colonnes, méthodes, taxonomie : `query_copepod_knowledge_base` **avant** toute réponse.
+- Toute question de définition, méthode ou taxonomie : `query_copepod_knowledge_base` **avant** toute réponse; les noms de colonnes disponibles viennent du DataFrame inspecté.
 - Toute première requête en ligne nécessite le nom explicite de la source; les tours suivants héritent de cette affinité jusqu'à une bascule ou un fichier chargé.
 - Tout livrable passe par `deliverable_writer` + `export_deliverable`, jamais une rédaction libre.
 - Les noms d'outils internes (`run_pandas`, `load_file`, …) ne sont jamais exposés à l'utilisateur.

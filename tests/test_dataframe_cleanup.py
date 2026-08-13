@@ -156,9 +156,42 @@ def test_cleanup_metrics_explain_the_twenty_dataframe_policy(tmp_path):
 
     assert dataframe_cleanup_metrics(store, thread_id) == {
         "max_live_derived_dataframes": 20,
+        "dataframes_stored_total": 25,
+        "dataframe_anchors_total": 0,
         "derived_dataframes_total": 25,
         "derived_dataframes_visible": 20,
         "derived_dataframes_hidden": 5,
+        "derived_dataframes_archived": 5,
+        "derived_versions_superseded": 0,
         "derived_dataframes_capacity_hidden": 5,
         "derived_dataframes_age_hidden": 0,
     }
+
+
+def test_unused_derived_dataframe_is_archived_instead_of_deleted(tmp_path):
+    store = SessionStore(tmp_path)
+    thread_id = "archive-unused-derived"
+    _store_frame(
+        store,
+        thread_id,
+        "df_file_source",
+        source="file:/uploads/source.tsv",
+    )
+    _store_frame(
+        store,
+        thread_id,
+        "df_derived_old",
+        source="analysis:explicit-derived",
+    )
+
+    for turn in range(1, 26):
+        advance_dataframe_cleanup(store, thread_id, marker=f"turn-{turn}")
+
+    archived = store.get(f"{thread_id}:dataset:df_derived_old")
+    assert archived is not None
+    assert archived["meta"]["lifecycle_state"] == "archived"
+    assert archived["meta"]["archived_reason"] == "unused"
+    assert "df_derived_old" in hidden_dataframes(store, thread_id)
+    source = store.get(f"{thread_id}:dataset:df_file_source")
+    assert source is not None
+    assert source["meta"].get("lifecycle_state", "current") == "current"

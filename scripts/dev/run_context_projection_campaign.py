@@ -42,7 +42,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.dev.inspect_six_dataframe_context import (  # noqa: E402
-    DATAFRAME_NAMES,
     MANY_DATAFRAME_COUNT,
     ModelCapture,
     build_frontier_payload,
@@ -67,7 +66,7 @@ from tools.tool_catalog import build_tool_catalog  # noqa: E402
 FACETS = (
     "current_task", "dataframes", "frontier", "graph", "history",
     "continuity", "cache", "budget", "tools", "memory", "long_turns",
-    "thread_isolation",
+    "dataframe_pressure", "thread_isolation",
 )
 DEFAULT_FACETS = FACETS
 BASE_THREAD = "context-projection-campaign"
@@ -76,6 +75,13 @@ CURRENT_QUESTION = (
     "prélèvement et le delta temporel moyen."
 )
 LONG_TURN_COUNT = 50
+DATAFRAME_PRESSURE_TURN_COUNT = 50
+PRESSURE_ANALYSIS = "df_pressure_recalculation"
+PRESSURE_ANCHORS = (
+    "df_file_pressure_source",
+    "df_ecotaxa_pressure_export",
+    "df_amundsen_pressure_enriched",
+)
 PENDING_WINDOW_QUESTION = (
     "Tours 20–25 — reprends la même analyse avec la dépendance en cours."
 )
@@ -507,6 +513,63 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         ),
     ])
 
+    version_thread = f"{BASE_THREAD}-df-analysis-version"
+    version_frame = pd.DataFrame({"sample_id": [1], "score": [2.0]})
+    store_dataset(
+        store,
+        version_thread,
+        version_frame,
+        variable_name="df_file_version_source",
+        meta={"source": "file:/uploads/version-source.csv"},
+        set_active=False,
+    )
+    for multiplier in (1.0, 10.0):
+        store_dataset(
+            store,
+            version_thread,
+            version_frame.assign(score=version_frame["score"] * multiplier),
+            variable_name="df_versioned_analysis",
+            meta={
+                "source": "analysis:explicit-derived",
+                "analysis_key": "run_pandas:df_versioned_analysis",
+                "parent_variable": "df_file_version_source",
+            },
+            set_active=False,
+        )
+    versioned = _capture(
+        store,
+        version_thread,
+        "Analyse précisément df_versioned_analysis.",
+        "df-analysis-version",
+    )
+    checks.extend([
+        _check(
+            "versioned-analysis",
+            "dataframes",
+            "only the latest logical analysis version reaches model context",
+            _detail_names(versioned.dataset_context)[0]
+            == "df_versioned_analysis"
+            and "version=2" in versioned.dataset_context
+            and int(versioned.audit.get("derived_versions_superseded") or 0)
+            == 1,
+            versioned.dataset_context[:1_000],
+        ),
+        _check(
+            "versioned-analysis",
+            "dataframes",
+            "superseded payload remains archived while source remains anchored",
+            len(
+                store.keys(
+                    f"{version_thread}:archive:dataset:df_versioned_analysis:"
+                )
+            )
+            == 1
+            and "df_file_version_source"
+            in _index_names(versioned.dataset_context),
+            "one archived v1 and one compact source anchor",
+        ),
+    ])
+
     six_thread = f"{BASE_THREAD}-df-six"
     seed_six_dataframes(store, six_thread)
     six = _capture(store, six_thread, CURRENT_QUESTION, "df-six")
@@ -516,24 +579,32 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "six-dataframes-misleading-active",
             "dataframes",
-            "all live dataframe names remain visible",
-            set(index) == set(DATAFRAME_NAMES) and len(index) == len(DATAFRAME_NAMES),
+            "all durable anchors remain compactly visible",
+            set(index) == {
+                "df_ecotaxa_cache_query",
+                "df_neolabs_abundance",
+                "df_neolabs_sample",
+            },
+            f"anchors={index}",
+        ),
+        _check(
+            "six-dataframes-misleading-active",
+            "dataframes",
+            "anchor index is alphabetical rather than active-first",
+            index == tuple(sorted(index)),
             f"index={index}",
         ),
         _check(
             "six-dataframes-misleading-active",
             "dataframes",
-            "index is alphabetical rather than active-first",
-            index == tuple(sorted(DATAFRAME_NAMES)),
-            f"index={index}",
-        ),
-        _check(
-            "six-dataframes-misleading-active",
-            "dataframes",
-            "active status does not hide alternatives",
+            "active derived table does not hide source anchors",
             "- df_uvp_net_candidates\n  status=active" in six.dataset_context
-            and "- df_station_summary\n  status=available" in six.dataset_context
-            and set(details) == set(DATAFRAME_NAMES),
+            and set(index) == {
+                "df_ecotaxa_cache_query",
+                "df_neolabs_abundance",
+                "df_neolabs_sample",
+            }
+            and len(details) <= 8,
             f"expanded={details}",
         ),
         _check(
@@ -542,7 +613,7 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
             "factual inventory order does not promote the stale active pointer",
             details[0] == "df_ecotaxa_cache_query"
             and details[0] != "df_uvp_net_candidates"
-            and set(details) == set(DATAFRAME_NAMES),
+            and len(details) <= 8,
             f"details={details}",
         ),
         _check(
@@ -639,17 +710,17 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "mixed-file-and-derived-dataframes",
             "dataframes",
-            "explicit derived target precedes fallback file resources",
+            "explicit derived target precedes while file anchors stay compact",
             mixed_details[0] == mixed_target
-            and set(mixed_file_names) <= set(mixed_details),
+            and set(mixed_file_names) <= set(_index_names(mixed.dataset_context)),
             f"details={mixed_details}",
         ),
         _check(
             "mixed-file-and-derived-dataframes",
             "dataframes",
-            "working-set expansion uses one shared twelve-card budget",
-            len(mixed_details) == 12
-            and len(mixed_non_file_details) == 10
+            "working-set expansion stays below the eight-card budget",
+            1 <= len(mixed_details) <= 8
+            and len(mixed_non_file_details) == len(mixed_details)
             and mixed_non_file_details[0] == mixed_target,
             f"non_file_details={mixed_non_file_details}",
         ),
@@ -693,16 +764,19 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         "df-derived-capacity",
     )
     capacity_index = set(_index_names(capacity.dataset_context))
-    visible_capacity_derived = set(capacity_derived) & capacity_index
+    visible_capacity_derived = int(
+        capacity.audit.get("derived_dataframes_visible") or 0
+    )
     checks.extend([
         _check(
             "twenty-live-derived-dataframes",
             "dataframes",
             "derived dataframe capacity is a hard twenty",
-            len(visible_capacity_derived) == 20
+            visible_capacity_derived == 20
             and int(capacity.audit.get("max_live_derived_dataframes") or 0) == 20
-            and int(capacity.audit.get("derived_dataframes_capacity_hidden") or 0) == 5,
-            f"visible={len(visible_capacity_derived)}; "
+            and int(capacity.audit.get("derived_dataframes_capacity_hidden") or 0) == 5
+            and int(capacity.audit.get("derived_dataframes_archived") or 0) == 5,
+            f"visible={visible_capacity_derived}; "
             f"capacity_hidden={capacity.audit.get('derived_dataframes_capacity_hidden')}",
         ),
         _check(
@@ -737,11 +811,12 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "twenty-six-dataframes",
             "dataframes",
-            "detail cards are capped while the complete index remains available",
-            len(many_details) == 12
+            "detail cards are capped while all durable anchors remain available",
+            1 <= len(many_details) <= 8
             and int(many.audit.get("dataframe_catalog_total") or 0) == 26
-            and int(many.audit.get("dataframe_catalog_expanded") or 0) == 12
-            and int(many.audit.get("dataframe_catalog_index_only") or 0) == 14,
+            and int(many.audit.get("dataframe_catalog_expanded") or 0)
+            == len(many_details)
+            and int(many.audit.get("dataframe_anchor_count") or 0) == 26,
             f"expanded={len(many_details)}",
         ),
         _check(
@@ -939,9 +1014,9 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "durable-anchor-history",
             "dataframes",
-            "durable source detail cards share the bounded working-set budget",
-            len(aged_details) == 12
-            and int(aged_capture.audit.get("dataframe_catalog_index_only") or 0) == 0,
+            "durable source detail cards share the eight-card working-set budget",
+            1 <= len(aged_details) <= 8
+            and int(aged_capture.audit.get("dataframe_anchor_count") or 0) == 12,
             f"expanded={aged_details}",
         ),
         _check(
@@ -957,7 +1032,7 @@ def campaign_dataframes(store: SessionStore) -> list[CampaignCheck]:
         _check(
             "durable-anchor-history",
             "dataframes",
-            "exact reference revives an archived source card",
+            "exact reference promotes a compact source anchor to detail",
             archived_target in revived_details
             and revived_details[0] == archived_target
             and "last_used=current" in revived_capture.dataset_context,
@@ -1645,10 +1720,10 @@ def campaign_continuity(store: SessionStore) -> list[CampaignCheck]:
         _check(
             scenario,
             "continuity",
-            "all fourteen live resources remain indexed on generic follow-ups",
+            "all four durable anchors remain indexed on generic follow-ups",
             all(
-                len(index) == CONTINUITY_TOTAL
-                and set(index) == set(expected_names)
+                len(index) == 4
+                and set(index) == set(expected_names[:4])
                 for index in indexes
             ),
             f"indexed_counts={tuple(map(len, indexes))}",
@@ -1686,18 +1761,15 @@ def campaign_continuity(store: SessionStore) -> list[CampaignCheck]:
         _check(
             scenario,
             "continuity",
-            "catalog accounting is exact and mutually exclusive",
+            "catalog accounting separates storage, anchors and detail",
             all(
-                counts == (
-                    CONTINUITY_TOTAL,
-                    CONTINUITY_EXPANDED,
-                    CONTINUITY_INDEX_ONLY,
-                )
+                counts[0] == CONTINUITY_TOTAL
+                and 1 <= counts[1] <= 8
+                and counts[2] == CONTINUITY_TOTAL - counts[1]
                 for counts in audit_counts
             )
             and all(
-                len(index) == len(cards) + CONTINUITY_INDEX_ONLY
-                and set(cards) <= set(index)
+                len(index) == 4 and len(cards) <= 8
                 for index, cards in zip(indexes, details, strict=True)
             ),
             f"audit_counts={audit_counts}; expanded={tuple(map(len, details))}",
@@ -3015,18 +3087,21 @@ def _dataframe_lifecycle_checks(
     )
     if (
         orphan_violation is None
-        and store.get(f"{thread_id}:dataset:{LIFECYCLE_ORPHAN}") is not None
+        and (
+            (entry := store.get(f"{thread_id}:dataset:{LIFECYCLE_ORPHAN}"))
+            is None
+            or (entry.get("meta") or {}).get("lifecycle_state") != "archived"
+        )
     ):
         orphan_violation = (
             21,
-            f"{LIFECYCLE_ORPHAN} hidden but not deleted after twenty unused turns",
+            f"{LIFECYCLE_ORPHAN} was not retained as an archived dataframe",
         )
 
     revival_violation = first_presence_violation(
         LIFECYCLE_REVIVABLE,
         (
-            (range(1, 7), True),
-            (range(7, 8), False),
+            (range(1, 8), False),
             (range(8, 14), True),
             (range(14, LONG_TURN_COUNT + 1), False),
         ),
@@ -3058,11 +3133,17 @@ def _dataframe_lifecycle_checks(
     if lineage_violation is None:
         parent_entry = store.get(f"{thread_id}:dataset:{LIFECYCLE_PARENT}")
         child_entry = store.get(f"{thread_id}:dataset:{LIFECYCLE_CHILD}")
-        if parent_entry is not None or child_entry is not None:
+        if (
+            parent_entry is None
+            or child_entry is None
+            or (parent_entry.get("meta") or {}).get("lifecycle_state")
+            != "archived"
+            or (child_entry.get("meta") or {}).get("lifecycle_state")
+            != "archived"
+        ):
             lineage_violation = (
                 LONG_TURN_COUNT,
-                f"parent_persisted={parent_entry is not None}; "
-                f"child_persisted={child_entry is not None}",
+                "parent/child were not both retained in archived state",
             )
 
     source_violation: tuple[int, str] | None = None
@@ -3105,9 +3186,9 @@ def _dataframe_lifecycle_checks(
 
     return [
         result(
-            "unused transient is hidden after six turns and later deleted",
+            "unused transient leaves the working set and archives without deletion",
             orphan_violation,
-            f"{LIFECYCLE_ORPHAN} visible on 1-6, hidden from 7, deleted by 21",
+            f"{LIFECYCLE_ORPHAN} visible on 1-6 then retained archived",
         ),
         result(
             "explicit reference revives and prioritizes a hidden dataframe",
@@ -3118,7 +3199,7 @@ def _dataframe_lifecycle_checks(
             "visible child preserves its parent until both become unused",
             lineage_violation,
             f"{LIFECYCLE_PARENT} stays visible while {LIFECYCLE_CHILD} is live, "
-            "then both age out and are deleted",
+            "then both age out and remain archived",
         ),
         result(
             "source dataframes remain available throughout cleanup",
@@ -3155,6 +3236,254 @@ def campaign_long_turns(store: SessionStore) -> list[CampaignCheck]:
         *_dataframe_lifecycle_checks(snapshots, store, thread_id),
         *_history_pressure_checks(store),
         *_durable_checkpoint_cap_checks(),
+    ]
+
+
+def _seed_dataframe_pressure(store: SessionStore, thread_id: str) -> None:
+    """Seed the 34-table state observed in the overloaded conversation."""
+
+    frame = pd.DataFrame({"sample_id": [1, 2], "value": [2.0, 3.0]})
+    for name, source in zip(
+        PRESSURE_ANCHORS,
+        (
+            "file:/uploads/pressure-source.csv",
+            "ecotaxa:pressure-export",
+            "amundsen_enrichment",
+        ),
+        strict=True,
+    ):
+        store_dataset(
+            store,
+            thread_id,
+            frame.copy(),
+            variable_name=name,
+            meta={"source": source, "grain": "one row per sample"},
+            set_active=False,
+        )
+    for index in range(30):
+        store_dataset(
+            store,
+            thread_id,
+            frame.assign(value=frame["value"] + index),
+            variable_name=f"df_pressure_intermediate_{index:02d}",
+            meta={
+                "source": "analysis:explicit-derived",
+                "analysis_key": f"pressure:intermediate:{index:02d}",
+                "parent_variable": PRESSURE_ANCHORS[0],
+                "grain": "one row per sample",
+            },
+            set_active=False,
+        )
+    store_dataset(
+        store,
+        thread_id,
+        frame.assign(score=frame["value"]),
+        variable_name=PRESSURE_ANALYSIS,
+        meta={
+            "source": "analysis:explicit-derived",
+            "analysis_key": f"run_pandas:{PRESSURE_ANALYSIS}",
+            "parent_variable": PRESSURE_ANCHORS[0],
+            "grain": "one row per sample",
+        },
+    )
+
+
+def _mutate_dataframe_pressure(thread_id: str) -> TurnMutation:
+    """Return a mutation that versions one stable logical analysis every turn."""
+
+    def mutate(
+        turn: int,
+        store: SessionStore,
+        _graph: Any,
+        _config: dict[str, Any],
+    ) -> None:
+        frame = pd.DataFrame({
+            "sample_id": [1, 2],
+            "score": [2.0 * turn, 3.0 * turn],
+        })
+        store_dataset(
+            store,
+            thread_id,
+            frame,
+            variable_name=PRESSURE_ANALYSIS,
+            meta={
+                "source": "analysis:explicit-derived",
+                "analysis_key": f"run_pandas:{PRESSURE_ANALYSIS}",
+                "parent_variable": PRESSURE_ANCHORS[0],
+                "grain": "one row per sample",
+            },
+        )
+
+    return mutate
+
+
+def _run_dataframe_pressure_snapshots(
+    store: SessionStore,
+) -> tuple[list[TurnSnapshot], list[int]]:
+    """Run the pressure harness and compact its checkpoint after every turn."""
+
+    thread_id = f"{BASE_THREAD}-dataframe-pressure"
+    _seed_dataframe_pressure(store, thread_id)
+    session = CheckpointedProjectionSession(
+        store,
+        thread_id,
+        response_count=(
+            DATAFRAME_PRESSURE_TURN_COUNT
+            * agent_module._MAX_MODEL_CALLS_PER_TURN
+        ),
+    )
+    snapshots: list[TurnSnapshot] = []
+    checkpoint_counts: list[int] = []
+    mutate = _mutate_dataframe_pressure(thread_id)
+    for turn in range(1, DATAFRAME_PRESSURE_TURN_COUNT + 1):
+        snapshots.append(session.invoke(
+            f"Recalcule précisément {PRESSURE_ANALYSIS}, itération {turn}.",
+            mutate_before=mutate,
+        ))
+        agent_module.compact_checkpoint_history(session.graph, session.config)
+        state = session.graph.get_state(session.config)
+        checkpoint_counts.append(len((state.values or {}).get("messages") or ()))
+    return snapshots, checkpoint_counts
+
+
+def dataframe_pressure_timeline(
+    snapshots: Sequence[TurnSnapshot],
+    checkpoint_counts: Sequence[int],
+) -> list[dict[str, int]]:
+    """Return graph-ready metrics captured at the actual model boundary."""
+
+    timeline: list[dict[str, int]] = []
+    for snapshot, checkpoint_after in zip(
+        snapshots,
+        checkpoint_counts,
+        strict=True,
+    ):
+        audit = snapshot.capture.audit
+        timeline.append({
+            "turn": snapshot.turn,
+            "dataframes_stored_total": int(
+                audit.get("dataframes_stored_total") or 0
+            ),
+            "dataframe_anchors_total": int(
+                audit.get("dataframe_anchors_total") or 0
+            ),
+            "derived_dataframes_visible": int(
+                audit.get("derived_dataframes_visible") or 0
+            ),
+            "derived_dataframes_archived": int(
+                audit.get("derived_dataframes_archived") or 0
+            ),
+            "derived_versions_superseded": int(
+                audit.get("derived_versions_superseded") or 0
+            ),
+            "dataframe_detailed_count": int(
+                audit.get("dataframe_detailed_count") or 0
+            ),
+            "dataframe_omitted_derived_count": int(
+                audit.get("dataframe_omitted_derived_count") or 0
+            ),
+            "checkpoint_messages_before": int(audit.get("messages_before") or 0),
+            "checkpoint_messages_after": int(checkpoint_after),
+            "provider_messages": len(snapshot.capture.messages),
+            "model_request_tokens": int(
+                audit.get("approx_tokens_model_request") or 0
+            ),
+            "dynamic_context_tokens": int(
+                audit.get("dynamic_context_tokens") or 0
+            ),
+            "dataframe_context_chars": len(snapshot.capture.dataset_context),
+        })
+    return timeline
+
+
+def run_dataframe_pressure_timeline() -> list[dict[str, int]]:
+    """Execute the complete offline pressure scenario for graph generation."""
+
+    with TemporaryDirectory(prefix="idea-dataframe-pressure-") as directory:
+        store = SessionStore(directory)
+        with offline_only():
+            snapshots, checkpoint_counts = _run_dataframe_pressure_snapshots(
+                store
+            )
+        return dataframe_pressure_timeline(snapshots, checkpoint_counts)
+
+
+def campaign_dataframe_pressure(store: SessionStore) -> list[CampaignCheck]:
+    """Prove bounded model state while durable data and versions accumulate."""
+
+    scenario = "fifty-turn-thirty-four-dataframe-pressure"
+    snapshots, checkpoint_counts = _run_dataframe_pressure_snapshots(store)
+    timeline = dataframe_pressure_timeline(snapshots, checkpoint_counts)
+    final = timeline[-1]
+    return [
+        _check(
+            scenario,
+            "dataframe_pressure",
+            "all fifty pressure turns complete offline",
+            len(timeline) == DATAFRAME_PRESSURE_TURN_COUNT,
+            f"turns={len(timeline)}",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "dataframe_pressure",
+            "derived working population never exceeds twenty",
+            timeline[0]["derived_dataframes_visible"] == 20
+            and max(item["derived_dataframes_visible"] for item in timeline) <= 20,
+            "visible derived starts at 20 and never exceeds the hard cap",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "dataframe_pressure",
+            "model detail remains bounded while storage accumulates versions",
+            max(item["dataframe_detailed_count"] for item in timeline) <= 8
+            and final["dataframes_stored_total"] == 84
+            and final["derived_versions_superseded"] == 50,
+            f"final={final}",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "dataframe_pressure",
+            "all permanent file export and enrichment anchors stay visible",
+            all(
+                set(PRESSURE_ANCHORS)
+                <= set(_index_names(snapshot.capture.dataset_context))
+                for snapshot in snapshots
+            )
+            and all(item["dataframe_anchors_total"] == 3 for item in timeline),
+            "three durable anchors present on every turn",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "dataframe_pressure",
+            "the latest logical analysis version is selected every turn",
+            all(
+                _detail_names(snapshot.capture.dataset_context)[0]
+                == PRESSURE_ANALYSIS
+                and f"version={snapshot.turn + 1}"
+                in snapshot.capture.dataset_context
+                for snapshot in snapshots
+            ),
+            "logical analysis remains stable while version increments 2..51",
+            turn_range="turns 1-50",
+        ),
+        _check(
+            scenario,
+            "dataframe_pressure",
+            "checkpoint and provider requests remain bounded",
+            max(checkpoint_counts) <= 40
+            and all(
+                item["model_request_tokens"] <= agent_module._MAX_CONTEXT_TOKENS
+                and item["dataframe_context_chars"] <= 9_000
+                for item in timeline
+            ),
+            f"checkpoint_max={max(checkpoint_counts)}; "
+            f"request_token_max={max(item['model_request_tokens'] for item in timeline)}",
+            turn_range="turns 1-50",
+        ),
     ]
 
 
@@ -3305,8 +3634,12 @@ def _history_pressure_checks(store: SessionStore) -> list[CampaignCheck]:
         _check(
             scenario,
             "long_turns",
-            "all current dataframe resources survive history trimming",
-            set(DATAFRAME_NAMES).issubset(set(_index_names(capture.dataset_context))),
+            "all durable dataframe anchors survive history trimming",
+            {
+                "df_ecotaxa_cache_query",
+                "df_neolabs_abundance",
+                "df_neolabs_sample",
+            }.issubset(set(_index_names(capture.dataset_context))),
             f"indexed={_index_names(capture.dataset_context)}",
             turn_range="current turn after 120 historical turns",
         ),
@@ -3566,29 +3899,6 @@ def campaign_tools(store: SessionStore) -> list[CampaignCheck]:
     turn_one_lists = {
         capture.tool_names for capture in react_calls if capture.turn == 1
     }
-    turn_one_captures = tuple(
-        capture for capture in react_calls if capture.turn == 1
-    )
-    shortest_turn_one_surface = set(
-        min(turn_one_lists, key=len) if turn_one_lists else ()
-    )
-    expected_recovery_lifts = {
-        "list_ecotaxa_cache_tables",
-        "describe_ecotaxa_cache_table",
-        "query_ecotaxa_cache",
-    }
-    recovery_lifts_are_bounded = bool(turn_one_captures) and all(
-        set(capture.tool_names) - shortest_turn_one_surface
-        <= expected_recovery_lifts
-        and not (
-            (set(capture.tool_names) & catalog_names)
-            & set().union(*(
-                namespace_members(capture, namespace_name)
-                for namespace_name in namespace_names
-            ))
-        )
-        for capture in turn_one_captures
-    )
     from core.llm_config import openai_prompt_cache_key
 
     react_contract_keys = {
@@ -4054,6 +4364,7 @@ CAMPAIGNS: dict[str, Callable[[SessionStore], list[CampaignCheck]]] = {
     "tools": campaign_tools,
     "memory": campaign_memory,
     "long_turns": campaign_long_turns,
+    "dataframe_pressure": campaign_dataframe_pressure,
     "thread_isolation": campaign_thread_isolation,
 }
 
