@@ -4,10 +4,17 @@
 
 Répondre en français par défaut. Adapter IDEA Hawaii aux besoins NeoLab,
 Université Laval. La priorité est la fiabilité des use cases, pas le nombre
-d'outils migrés. Lire le README, [ARCHITECTURE.md](ARCHITECTURE.md) et
-`docs/NEOLAB_MIGRATION.md` avant de travailler. La cartographie décrit le code
-actuel et indique les modules et tests à consulter pour chaque intervention.
-Mettre à jour le plan quand une étape est réellement exécutée ou validée.
+d'outils migrés. Lire le README, [ROADMAP.md](ROADMAP.md),
+[ARCHITECTURE.md](ARCHITECTURE.md) et `docs/NEOLAB_MIGRATION.md` avant de
+travailler. La cartographie décrit le code actuel et indique les modules et
+tests à consulter pour chaque intervention.
+
+`ROADMAP.md` est la source de vérité pour les phases, échéances, livrables,
+critères de sortie et statuts. Au début d’un travail, identifier la phase et le
+résultat attendu concernés. Après chaque travail réellement exécuté, mettre à
+jour le statut et le journal du plan avec les preuves, échecs et limites
+observés. Ne jamais déclarer une phase terminée tant que son critère de réussite
+n’est pas vérifié. Garder le suivi GitHub Project synchronisé avec ce fichier.
 
 Le socle actif est celui de Hawaii. L'ancien projet est une archive locale dans
 `../IDEA-archive-20260911`, à consulter sans la modifier. Ne pas recopier son

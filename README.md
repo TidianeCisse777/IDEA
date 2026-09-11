@@ -13,7 +13,18 @@ données et configuration locale. Elle sert de référence pour récupérer les
 composants utiles progressivement. Ce chemin est local et n'est pas distribué
 avec un clone de ce dépôt.
 
-### Démarche
+### Plan de route
+
+Le [plan de route de la refonte](ROADMAP.md) est la source de vérité pour les
+phases, les échéances, les livrables, les critères de réussite et l’avancement.
+Toute contribution doit identifier la phase concernée et mettre ce plan à jour
+après un travail réellement exécuté ou validé. Une phase ne peut être clôturée
+que lorsque son critère de réussite est vérifié.
+
+Le [plan de migration et de validation](docs/NEOLAB_MIGRATION.md) complète cette
+feuille de route avec les scénarios de référence et le protocole de preuve.
+
+### Démarche technique
 
 1. Configurer IDEA Hawaii avec notre modèle et vérifier toute la chaîne
    Open WebUI → agent → outil → noyau Python → résultat visible.
@@ -30,12 +41,12 @@ La [cartographie de l'architecture actuelle](ARCHITECTURE.md) présente les
 services, les flux de données, la persistance et les points d'extension ; elle
 est à lire avant toute intervention sur le code.
 
-Le [plan de migration et de validation](docs/NEOLAB_MIGRATION.md) est la source
-de vérité du suivi. Les [instructions pour les agents de développement](AGENTS.md)
-définissent la manière de contribuer.
+Les [instructions pour les agents de développement](AGENTS.md) définissent la
+manière de contribuer et rendent obligatoire la mise à jour du plan de route.
 
-**État initial :** socle cloné et archive conservée ; modèle non raccordé,
-application non démarrée et aucun use case encore validé sur cette base.
+**État au 11 septembre 2026 :** socle cloné, archive conservée, stack locale
+démarrée et modèle raccordé. Aucun use case scientifique NeoLab n’est encore
+validé sur cette base.
 La documentation Hawaii ci-dessous est conservée comme référence technique ;
 ses modèles et assistants par défaut ne constituent pas nos choix NeoLab.
 
