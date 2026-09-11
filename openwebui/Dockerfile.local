@@ -1,3 +1,22 @@
-# Public multi-architecture fallback for macOS development. The production
-# deployment keeps using the pinned IDEA fork from Dockerfile.
-FROM ghcr.io/open-webui/open-webui:main
+# Build the v0.11.3 frontend with NeoLab's global raw-upload policy. The
+# private Hawaii image is unavailable on local ARM64 machines, so this keeps
+# the same behavior without depending on that registry.
+FROM node:22-alpine AS frontend
+
+RUN apk add --no-cache git python3
+RUN git clone --depth 1 --branch v0.11.3 \
+    https://github.com/open-webui/open-webui.git /src/open-webui
+WORKDIR /src/open-webui
+RUN npm ci --force
+COPY disable_rag_uploads.py /tmp/disable_rag_uploads.py
+RUN python3 /tmp/disable_rag_uploads.py frontend src/lib/apis/files/index.ts
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
+
+# Public multi-architecture fallback for macOS development, pinned so the
+# patched frontend and backend remain on the same Open WebUI release.
+FROM ghcr.io/open-webui/open-webui:v0.11.3@sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933
+
+COPY --from=frontend /src/open-webui/build /app/build
+COPY disable_rag_uploads.py /tmp/disable_rag_uploads.py
+RUN python /tmp/disable_rag_uploads.py backend \
+    /app/backend/open_webui/routers/files.py

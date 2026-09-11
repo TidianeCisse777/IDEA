@@ -134,7 +134,18 @@ avec un flux plus simple, vérifiable et reproductible.
 - 268 tests de la suite principale et 11 tests du sandbox réussis ;
 - exécution Python réelle et persistance d’un DataFrame dans un noyau actif
   vérifiées.
+- RAG natif Open WebUI désactivé globalement pour les nouveaux téléversements
+  locaux : le client demande `process=false` et le serveur impose ce choix même
+  lorsqu’un ancien client demande `process=true` ; test HTTP réussi avec
+  réponse `data: {}`, journal serveur `process=False`, sans suivi de traitement
+  ni génération d’embeddings ;
+- 24 tests ciblés réussis pour la politique sans RAG et le déploiement des
+  assistants Open WebUI ;
+- traitement d’embeddings lancé par l’ancien chemin sur un CSV arrêté avant le
+  déploiement du correctif.
 
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
-déclaré validé sur ce socle.
+déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation
+de nouveaux fichiers dans Open WebUI Knowledge ; le flux PaperQA devra être
+validé séparément avant sa réactivation.

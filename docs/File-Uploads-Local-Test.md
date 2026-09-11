@@ -1,5 +1,24 @@
 # Local file upload testing
 
+## NeoLab local policy: Open WebUI RAG disabled globally
+
+The macOS ARM64 development image now stores every upload with
+`process=false`. This is enforced in both the browser upload client and the
+server handler, so a stale browser that still requests `process=true` cannot
+start extraction or embeddings. IDEA receives the stored original and copies
+it into its sandbox as before.
+
+This local policy also disables native Open WebUI indexing for uploads made in
+Workspace > Knowledge. Do not rely on a newly uploaded Knowledge collection
+while the policy is active; validate literature ingestion separately before
+re-enabling PaperQA collection workflows. Existing vector data is not deleted
+by this change.
+
+Regression evidence: upload a small file while explicitly requesting
+`process=true`. The response must contain an empty `data` object, the server log
+must report `file.content_type: ... False`, and no processing-status or
+`generating embeddings for file-...` line may follow.
+
 Local testing passed, as reported by the user on 2026-09-06, after building
 with the 4 GB heap and reconciling the official assistant capabilities.
 
