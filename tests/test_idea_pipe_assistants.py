@@ -431,6 +431,8 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         payload = client.post.call_args.kwargs["json"]
         self.assertEqual(payload["assistant_id"], "sea")
         self.assertEqual(payload["assistant_system_prompt"], "You are SEA.")
+        self.assertEqual(payload["user_id"], "user-1")
+        self.assertEqual(payload["user_email"], "scientist@example.org")
         self.assertEqual(payload["session_id"], "chat-123")
         self.assertNotIn("model", payload)
         self.assertEqual(payload["agent_variant"], "standard")

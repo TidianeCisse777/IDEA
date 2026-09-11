@@ -145,6 +145,11 @@ avec un flux plus simple, vérifiable et reproductible.
   401 causé par l’hôte local et un caractère non ASCII dans la clé secrète,
   correction de la paire, hôte Compose rendu configurable, puis trace d’un
   appel `gpt-5.5` validée par l’API Cloud ;
+- suivi utilisateur/session du mode Normal validé de bout en bout via
+  Open WebUI/LangGraph/LiteLLM : la trace Cloud contient l’email comme
+  `userId` et la conversation comme `sessionId` ; le mode Advanced reste hors
+  de ce périmètre tant que son chemin `/v1/responses` ne conserve pas ces
+  attributs avec la version LiteLLM épinglée ;
 - traitement d’embeddings lancé par l’ancien chemin sur un CSV arrêté avant le
   déploiement du correctif.
 

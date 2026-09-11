@@ -285,17 +285,22 @@ See `openwebui/README.md` for full details on both.
 ## LLM Observability (Langfuse)
 
 Every call `litellm` makes - from LangGraph's `TerminalAgent`, PaperQA, and Open
-WebUI's background-task model - is traced to a self-hosted
-[Langfuse](https://langfuse.com/) instance (`langfuse` service), grouped by
-conversation (`session_id`) and end user (`trace_user_id`), matching what
-`LITELLM_END_USER_HEADER` already does for spend tracking. This uses Langfuse
-**v2** (Postgres-only self-host), not the current v3, which additionally
-requires ClickHouse, S3/MinIO, and a dedicated Redis; v2 only receives
-security patches (no new features) per Langfuse's own docs, so revisit this
-choice if that becomes a blocker. See
+WebUI's background-task model - is traced to the configured
+[Langfuse](https://langfuse.com/) project, grouped by conversation
+(`session_id`) and end user (`trace_user_id`), matching what
+`LITELLM_END_USER_HEADER` already does for spend tracking. The default target
+is the bundled Postgres-only Langfuse v2 service; local NeoLab development can
+instead set `LANGFUSE_HOST` to its Langfuse Cloud region. See
 `docker-compose.yml`'s `langfuse` service and
 `litellm/litellm_config.yaml`'s `success_callback`/`failure_callback` for the
 wiring.
+
+For the standard IDEA agent, Open WebUI's authenticated email becomes the
+Langfuse user ID and the Open WebUI chat ID becomes the conversation session.
+This makes the **Users** and **Sessions** views usable without creating a
+second identity system. The Advanced Responses API path is outside this
+validated baseline while the pinned LiteLLM release does not preserve these
+two fields reliably on `/v1/responses`.
 
 1. Generate the four Langfuse secrets shown in step 2 above and run
    `./langfuse/setup_langfuse_db.sh` (step 3 above) before first start.
