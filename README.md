@@ -310,6 +310,9 @@ wiring.
    and save them into `.env` as `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`
    (or, if you used `LANGFUSE_INIT_*`, they already match the project's
    actual keys - no extra step needed).
+   To use Langfuse Cloud instead of the bundled local instance, also set
+   `LANGFUSE_HOST` to the project region, such as
+   `https://us.cloud.langfuse.com`.
 4. Restart `litellm` so it picks up the keys:
    ```bash
    docker compose up -d litellm

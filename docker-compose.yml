@@ -262,7 +262,7 @@ services:
       # NOT re-declared here for the same reason OPENAI_API_KEY isn't above -
       # env_file already injects them literally from .env once generated
       # through the `langfuse` service's own UI (see example.env).
-      - LANGFUSE_HOST=http://langfuse:3000
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://langfuse:3000}
     volumes:
       # Lets the config be edited without rebuilding the image.
       - ./litellm/litellm_config.yaml:/app/litellm_config.yaml:ro

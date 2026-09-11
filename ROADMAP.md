@@ -141,6 +141,10 @@ avec un flux plus simple, vérifiable et reproductible.
   ni génération d’embeddings ;
 - 24 tests ciblés réussis pour la politique sans RAG et le déploiement des
   assistants Open WebUI ;
+- observabilité branchée sur le projet Langfuse US Cloud : diagnostic du rejet
+  401 causé par l’hôte local et un caractère non ASCII dans la clé secrète,
+  correction de la paire, hôte Compose rendu configurable, puis trace d’un
+  appel `gpt-5.5` validée par l’API Cloud ;
 - traitement d’embeddings lancé par l’ancien chemin sur un CSV arrêté avant le
   déploiement du correctif.
 
