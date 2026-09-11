@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     git \
     curl \
     wget \
+    docker.io \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
@@ -38,6 +39,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy service code
 COPY msb_sandbox.py .
+COPY docker_sandbox.py .
 COPY terminal_registry.py .
 COPY main.py .
 COPY entrypoint.sh .

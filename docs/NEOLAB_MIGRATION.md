@@ -14,16 +14,20 @@ mesurable ; ajouter un outil ne constitue pas, à lui seul, une validation.
 - Archive locale : `../IDEA-archive-20260911`, historique, données et modifications
   non commitées préservés. Elle n'est pas une dépendance runtime.
 - Aucun composant métier NeoLab encore porté.
-- Modèle cible, fournisseur et endpoint effectifs : à établir lors du raccordement.
-- Application et use cases : non testés. Docker était indisponible lors de
-  l'archivage ; vérifier de nouveau l'environnement au démarrage.
+- Raccordement local validé sur macOS ARM64 avec OpenAI via LiteLLM, modèle
+  `gpt-5.5`, runtime `langgraph` et sandbox Docker. Les secrets restent dans le
+  `.env` local ignoré par Git.
+- Services démarrés : PostgreSQL, Redis, LiteLLM, Langfuse, sandbox, LangGraph
+  et Open WebUI. Le parcours conversationnel a appelé Python avec succès via
+  l'API LangGraph. Le Pipe est enregistré et son authentification interne a été
+  corrigée dans Open WebUI.
 
 ## Étapes et critères de sortie
 
 | Étape | Travail | Preuve requise avant la suivante | État |
 |---|---|---|---|
 | 0. Préserver et repartir | Archiver NeoLab, cloner Hawaii | Archive intacte et clone identifié | Terminé |
-| 1. Raccorder notre modèle | Configurer et démarrer le socle | Un échange réel, un appel Python et un résultat visible dans Open WebUI | À faire |
+| 1. Raccorder notre modèle | Configurer et démarrer le socle | Un échange réel, un appel Python et un résultat visible dans Open WebUI | En cours : modèle, agent, Python et Pipe UI raccordés ; fichiers et figure à valider |
 | 2. Évaluer le socle | Exécuter les parcours locaux ci-dessous | Résultats de référence, traces et limites de reprise documentés | À faire |
 | 3. Choisir le premier use case métier | Fixer demande, données, oracle et ambiguïtés | Fiche de scénario priorisée avec NeoLab | À faire |
 | 4. Intégrer une capacité | Porter les seuls éléments nécessaires | Tests du contrat et scénario complet répété avec succès | À faire |
@@ -51,6 +55,26 @@ uniquement un nom de modèle ne garantit pas un raccordement fonctionnel.
   checkpointé, puis vérifier que la configuration est réellement consommée.
 - Vérifier appel d'outil, streaming, exécution Python, fichiers et affichage
   d'une figure. Enregistrer le modèle réellement appelé et les erreurs éventuelles.
+
+### Preuves locales du 11 septembre 2026
+
+- LiteLLM a retourné une réponse réelle du modèle `gpt-5.5` et a transmis ses
+  traces à Langfuse sans erreur signalée.
+- Le sandbox Docker a conservé un DataFrame dans le même noyau entre deux
+  appels Python : somme `12`, puis moyenne `4.0` au tour suivant.
+- Un run complet de l'agent via `/chat-runs` a produit `AGENT_OK` après un appel
+  d'outil Python.
+- Les 268 tests du dossier `tests/` et les 11 tests du service sandbox passent
+  dans leurs images Docker locales.
+- Open WebUI public `v0.11.3` a été utilisé comme image locale ARM64, car
+  l'image Hawaii sur GHCR exige une authentification. Son endpoint `/health`
+  répond avec HTTP 200 sur `http://localhost:3001`.
+
+Ces preuves valident le démarrage du socle et le chemin modèle-agent-sandbox.
+Le premier administrateur et `openwebui/functions/idea_pipe.py` sont configurés.
+L'étape 1 restera en cours jusqu'à la validation, depuis Open WebUI, d'un appel
+Python avec résultat visible, puis de la production d'un fichier et d'une
+figure téléchargeables.
 
 ## 2. Parcours de référence avant migration métier
 

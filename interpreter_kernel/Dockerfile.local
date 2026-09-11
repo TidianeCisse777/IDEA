@@ -1,0 +1,25 @@
+# Local macOS development image. It preserves IDEA's persistent IPython
+# semantics without requiring Linux KVM or microsandbox.
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash curl git procps tini \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir \
+        ipykernel==7.2.0 jupyter-client==8.8.0 \
+        pandas==3.0.1 numpy==2.4.2 matplotlib==3.10.8 seaborn==0.13.2 \
+        scipy==1.17.1 xarray==2026.2.0 netCDF4==1.7.4 \
+        openpyxl==3.1.5 pyarrow==23.0.1 requests==2.32.5
+
+WORKDIR /opt/oi_kernel
+RUN mkdir -p vendor/interpreter/core /workspace /outputs
+COPY interpreter/core/computer vendor/interpreter/core/computer
+RUN touch vendor/interpreter/__init__.py vendor/interpreter/core/__init__.py
+COPY daemon.py client.py ./
+RUN printf 'def completion(*args, **kwargs):\n    raise RuntimeError("LLM input detection is disabled in the IDEA kernel")\n' > /opt/oi_kernel/litellm.py
+
+ENV PYTHONUNBUFFERED=1
+ENV OI_KERNEL_PORT=8721
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["sleep", "infinity"]

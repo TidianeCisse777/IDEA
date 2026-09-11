@@ -764,12 +764,13 @@ class Pipe:
             description="Matches the terminal agent's own 30-minute exec timeout.",
         )
         INTERNAL_SERVICE_TOKEN: str = Field(
-            default="",
+            default=os.getenv("INTERNAL_SERVICE_TOKEN", ""),
             description=(
                 "Must match INTERNAL_SERVICE_TOKEN in the langgraph service's "
-                "own .env (docker-compose.yml) - sent as a Bearer token on "
-                "every request. Leave blank only if langgraph_service.py's "
-                "own copy is also unset (dev-only; see example.env)."
+                "own environment. Docker Compose injects the shared value "
+                "automatically; an explicit Valve value overrides that "
+                "default. Leave blank only if langgraph_service.py's own "
+                "copy is also unset (dev-only; see example.env)."
             ),
         )
         PAPERQA_ASSISTANT_IDS: str = Field(

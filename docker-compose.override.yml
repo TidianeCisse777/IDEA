@@ -53,9 +53,20 @@ services:
     ports:
       - "8020:8020"
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./sandbox_service:/app
     environment:
+      - SANDBOX_BACKEND=docker
+      - DOCKER_SANDBOX_IMAGE=idea-oi-kernel-local:dev
       - PYTHONUNBUFFERED=1
+
+  openwebui:
+    # The Hawaii IDEA image is private. Use the public ARM64-capable image for
+    # local startup; the IDEA Pipe remains mounted and is registered in the UI.
+    build:
+      context: ./openwebui
+      dockerfile: Dockerfile.local
+    image: idea-openwebui:local
 
   litellm:
     # Dev-only direct access for debugging (curl localhost:8030/health,

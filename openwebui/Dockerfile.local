@@ -1,0 +1,3 @@
+# Public multi-architecture fallback for macOS development. The production
+# deployment keeps using the pinned IDEA fork from Dockerfile.
+FROM ghcr.io/open-webui/open-webui:main

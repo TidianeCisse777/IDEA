@@ -20,6 +20,22 @@ SPEC.loader.exec_module(idea_pipe)
 
 
 class IdeaPipeAssistantTests(unittest.TestCase):
+    def test_internal_service_token_defaults_from_container_environment(self):
+        spec = importlib.util.spec_from_file_location(
+            "idea_pipe_with_internal_token", SCRIPT_PATH
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        with patch.dict(
+            "os.environ", {"INTERNAL_SERVICE_TOKEN": "local-service-token"}
+        ):
+            spec.loader.exec_module(module)
+
+        self.assertEqual(
+            module.Pipe().valves.INTERNAL_SERVICE_TOKEN,
+            "local-service-token",
+        )
+
     def test_registers_standard_and_advanced_models(self):
         self.assertEqual(
             idea_pipe.Pipe().pipes(),

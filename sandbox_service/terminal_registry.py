@@ -17,6 +17,7 @@ import uuid
 import pexpect
 
 from msb_sandbox import MicrosandboxTerminal, microsandbox_available
+from docker_sandbox import DockerTerminal
 
 # "auto" picks microsandbox when it's importable and /dev/kvm is available,
 # otherwise falls back to a plain local shell. Override with "local" or
@@ -237,6 +238,10 @@ def _use_microsandbox() -> bool:
     return microsandbox_available()
 
 
+def _is_isolated_terminal(terminal) -> bool:
+    return isinstance(terminal, (MicrosandboxTerminal, DockerTerminal))
+
+
 def _get_lock(sandbox_id: str) -> threading.Lock:
     """Get or create the execution lock for a given sandbox_id's terminal."""
     with _registry_lock:
@@ -251,7 +256,9 @@ def _get_terminal(sandbox_id: str):
     """Get or create the terminal (sandboxed or local) for a given sandbox_id."""
     with _registry_lock:
         if sandbox_id not in _terminals:
-            if _use_microsandbox():
+            if SANDBOX_BACKEND == "docker":
+                _terminals[sandbox_id] = DockerTerminal(sandbox_id)
+            elif _use_microsandbox():
                 _terminals[sandbox_id] = MicrosandboxTerminal(sandbox_id)
             else:
                 _terminals[sandbox_id] = PersistentTerminal()
@@ -326,7 +333,7 @@ def write_file(filepath: str, content: str, sandbox_id: str, append: bool = Fals
     """
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
+        if _is_isolated_terminal(terminal):
             terminal.write_file(filepath, content, append=append)
         else:
             mode = 'a' if append else 'w'
@@ -341,7 +348,7 @@ def write_file_bytes(filepath: str, source, sandbox_id: str) -> None:
     """Atomically stream raw bytes into sandbox_id's private filesystem."""
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
+        if _is_isolated_terminal(terminal):
             terminal.write_file_bytes(filepath, source)
             return
 
@@ -379,7 +386,7 @@ def run_python(
     """
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
+        if _is_isolated_terminal(terminal):
             if run_id:
                 with _registry_lock:
                     _active_python_runs[run_id] = (sandbox_id, kernel_id, terminal)
@@ -436,7 +443,7 @@ def _recover_python_run(run_id: str, reason: str) -> None:
         return
 
     _set_python_recovery_state(run_id, "interrupt_requested", reason=reason)
-    if active and len(active) > 2 and isinstance(active[2], MicrosandboxTerminal):
+    if active and len(active) > 2 and _is_isolated_terminal(active[2]):
         signal_sent = active[2].signal_python_run(run_id, signal.SIGINT)
         _set_python_recovery_state(
             run_id,
@@ -445,9 +452,7 @@ def _recover_python_run(run_id: str, reason: str) -> None:
         )
 
     transport_completed = completion.wait(PYTHON_INTERRUPT_GRACE_SECONDS)
-    if transport_completed and active and len(active) > 2 and isinstance(
-        active[2], MicrosandboxTerminal
-    ):
+    if transport_completed and active and len(active) > 2 and _is_isolated_terminal(active[2]):
         kernel_status = active[2].python_kernel_status(str(active[1]))
         if (
             kernel_status is not None
@@ -477,9 +482,7 @@ def _recover_python_run(run_id: str, reason: str) -> None:
         # entry even though the guest kernel is still executing. Retain the
         # original terminal reference for precisely that escalation case.
         active = _active_python_runs.get(run_id) or active
-    if not active or len(active) < 3 or not isinstance(
-        active[2], MicrosandboxTerminal
-    ):
+    if not active or len(active) < 3 or not _is_isolated_terminal(active[2]):
         # Cancellation during VM creation is remembered; submission checks the
         # marker before running Python and will complete without escalation.
         _set_python_recovery_state(run_id, "interrupt_pending", reason=reason)
@@ -592,10 +595,10 @@ def run_python_stream(
     try:
         terminal = _get_terminal(sandbox_id)
         with _get_lock(sandbox_id):
-            if not isinstance(terminal, MicrosandboxTerminal):
+            if not _is_isolated_terminal(terminal):
                 yield {
                     "type": "console", "format": "error",
-                    "content": "✗ Streaming Python requires the microsandbox backend.",
+                    "content": "✗ Streaming Python requires an isolated sandbox backend.",
                 }
                 return
             if run_id:
@@ -658,7 +661,7 @@ def _python_run_cancelled(run_id: str) -> bool:
 def run_codex(request: dict, sandbox_id: str) -> dict:
     """Execute Codex inside the user's microVM; never fall back to the host."""
     terminal = _get_terminal(sandbox_id)
-    if not isinstance(terminal, MicrosandboxTerminal):
+    if not hasattr(terminal, "run_codex"):
         return {
             "ok": False,
             "status": "failed",
@@ -710,7 +713,7 @@ def interrupt_run(sandbox_id: str, run_id: str) -> bool:
     _, kernel_id, terminal = active[:3]
     if terminal is None:
         return False
-    if not isinstance(terminal, MicrosandboxTerminal):
+    if not _is_isolated_terminal(terminal):
         return False
     return terminal.interrupt_python(kernel_id)
 
@@ -725,7 +728,7 @@ def grep_search(sandbox_id: str, **kwargs) -> dict:
     """
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if not isinstance(terminal, MicrosandboxTerminal):
+        if not hasattr(terminal, "grep_search"):
             raise RuntimeError(
                 "grep_search requires the microsandbox backend with an "
                 "Open Terminal-based sandbox image - see interpreter_kernel/."
@@ -737,7 +740,7 @@ def glob_search(sandbox_id: str, **kwargs) -> dict:
     """Search files by name in sandbox_id's VM via Open Terminal - see grep_search's docstring."""
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if not isinstance(terminal, MicrosandboxTerminal):
+        if not hasattr(terminal, "glob_search"):
             raise RuntimeError(
                 "glob_search requires the microsandbox backend with an "
                 "Open Terminal-based sandbox image - see interpreter_kernel/."
@@ -749,7 +752,7 @@ def read_file_bytes(filepath: str, sandbox_id: str) -> bytes:
     """Read raw file bytes from inside sandbox_id's sandbox, or the host disk."""
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
+        if _is_isolated_terminal(terminal):
             return terminal.read_file(filepath)
         with open(filepath, 'rb') as f:
             return f.read()
@@ -759,6 +762,6 @@ def file_exists(filepath: str, sandbox_id: str) -> bool:
     """Check whether filepath exists in sandbox_id's sandbox, or the host disk."""
     terminal = _get_terminal(sandbox_id)
     with _get_lock(sandbox_id):
-        if isinstance(terminal, MicrosandboxTerminal):
+        if _is_isolated_terminal(terminal):
             return terminal.file_exists(filepath)
         return os.path.isfile(filepath)
