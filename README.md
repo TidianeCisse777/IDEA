@@ -1,5 +1,44 @@
 # Intelligent Data Exploring Assistant (IDEA)
 
+## Adaptation NeoLab — Université Laval
+
+Ce dépôt repart du socle [IDEA Hawaii](https://github.com/uhsealevelcenter/IDEA),
+branche `next-dev`, commit initial `5b1322dbe68fefd31fc1de29a076b1746a36c5d7`.
+Notre priorité est la réussite reproductible des use cases métier, en particulier
+l'accès aux données, les calculs et les suivis de conversation.
+
+L'ancienne version NeoLab est conservée intégralement dans
+`../IDEA-archive-20260911` : code, historique Git, modifications non commitées,
+données et configuration locale. Elle sert de référence pour récupérer les
+composants utiles progressivement. Ce chemin est local et n'est pas distribué
+avec un clone de ce dépôt.
+
+### Démarche
+
+1. Configurer IDEA Hawaii avec notre modèle et vérifier toute la chaîne
+   Open WebUI → agent → outil → noyau Python → résultat visible.
+2. Établir une référence sur fichiers locaux : inspection, calcul, graphique,
+   correction multi-tour et récupération après perte du noyau.
+3. Prioriser les use cases avec NeoLab et fixer leurs entrées, résultats attendus
+   et critères de réussite avant chaque intégration.
+4. Adapter les composants nécessaires de l'archive (EcoTaxa, EcoPart,
+   Bio-ORACLE, Amundsen, etc.), une capacité à la fois, au runtime Hawaii.
+5. Valider chaque use case de bout en bout, répéter les essais et rejouer les
+   scénarios déjà validés avant de passer à l'intégration suivante.
+
+La [cartographie de l'architecture actuelle](ARCHITECTURE.md) présente les
+services, les flux de données, la persistance et les points d'extension ; elle
+est à lire avant toute intervention sur le code.
+
+Le [plan de migration et de validation](docs/NEOLAB_MIGRATION.md) est la source
+de vérité du suivi. Les [instructions pour les agents de développement](AGENTS.md)
+définissent la manière de contribuer.
+
+**État initial :** socle cloné et archive conservée ; modèle non raccordé,
+application non démarrée et aucun use case encore validé sur cette base.
+La documentation Hawaii ci-dessous est conservée comme référence technique ;
+ses modèles et assistants par défaut ne constituent pas nos choix NeoLab.
+
 IDEA is a tool-using AI assistant for scientific data exploration. It is designed to help researchers go from question to analysis and figures quickly while keeping results transparent and reproducible. IDEA is a framework for building domain-focused assistants that run code, generate plots, save outputs, work directly with uploaded datasets, and pull data from the web via its internet-connected environment.
 
 ## IDEA vs. SEA
