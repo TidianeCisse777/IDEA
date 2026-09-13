@@ -590,6 +590,23 @@ class IdeaPipeAssistantTests(unittest.TestCase):
         )
         self.assertEqual(referenced, {"file-encoded"})
 
+    def test_resolves_bare_output_path_and_localhost_preview(self):
+        resolved, referenced = idea_pipe._resolve_output_links(
+            "HTML: `/outputs/report/page.html`. "
+            "Legacy: http://localhost:3001/idea-file-preview/file-page/page.html",
+            [{
+                "filename": "/outputs/report/page.html",
+                "openwebui_file_id": "file-page",
+            }],
+        )
+
+        self.assertEqual(
+            resolved,
+            "HTML: [page.html](/idea-file-preview/file-page/page.html). "
+            "Legacy: /idea-file-preview/file-page/page.html",
+        )
+        self.assertEqual(referenced, {"file-page"})
+
     def test_pipe_replaces_final_sandbox_link_without_duplicate_attachment(self):
         response = Mock()
         response.raise_for_status.return_value = None

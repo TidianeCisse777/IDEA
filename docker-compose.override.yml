@@ -58,6 +58,7 @@ services:
     environment:
       - SANDBOX_BACKEND=docker
       - DOCKER_SANDBOX_IMAGE=idea/oi-kernel:research-local
+      - SHARED_DATA_DOCKER_VOLUME=idea_idea_shared_data
       - PYTHONUNBUFFERED=1
 
   openwebui:

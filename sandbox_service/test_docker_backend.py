@@ -52,6 +52,24 @@ class DockerBackendSelectionTests(unittest.TestCase):
         self.assertEqual(content, b"abc")
         self.assertTrue(exists)
 
+    def test_docker_terminal_mounts_shared_data_volume(self):
+        with patch("docker_sandbox.SHARED_DATA_DOCKER_VOLUME", "idea_idea_shared_data"), patch.object(
+            DockerTerminal,
+            "_docker",
+            side_effect=[
+                Mock(returncode=1, stdout=b"", stderr=b"not found"),
+                Mock(returncode=0, stdout=b"container-id", stderr=b""),
+            ],
+        ) as docker:
+            DockerTerminal("user-1", image="research-image")
+
+        create_args = docker.call_args_list[-1].args
+        self.assertIn("--mount", create_args)
+        self.assertIn(
+            "type=volume,source=idea_idea_shared_data,target=/app/data,readonly",
+            create_args,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

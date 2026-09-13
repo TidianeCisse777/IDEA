@@ -23,6 +23,12 @@ from collections.abc import Callable
 
 DEFAULT_IMAGE = os.getenv("DOCKER_SANDBOX_IMAGE", "idea-oi-kernel-local:dev")
 CLIENT_PATH = os.getenv("OI_KERNEL_CLIENT_PATH", "/opt/oi_kernel/client.py")
+RUNTIME_VENV = "/opt/idea-venv"
+RUNTIME_PATH = f"{RUNTIME_VENV}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Docker-backed sandboxes are created by the sandbox service through the
+# Docker socket, so they need the volume name (not the service container's
+# /srv/idea_shared_data path) to access administrator-managed data.
+SHARED_DATA_DOCKER_VOLUME = os.getenv("SHARED_DATA_DOCKER_VOLUME", "").strip()
 
 
 class DockerTerminal:
@@ -52,13 +58,18 @@ class DockerTerminal:
                 if started.returncode:
                     raise RuntimeError(started.stderr.decode(errors="replace"))
             return
-        created = self._docker(
+        run_args = [
             "run", "-d", "--name", self.container_name,
             "--label", "idea.local-sandbox=true",
             "--label", f"idea.session-sha256={hashlib.sha256(self.session_id.encode()).hexdigest()}",
-            self.image,
-            timeout=180,
-        )
+        ]
+        if SHARED_DATA_DOCKER_VOLUME:
+            run_args.extend([
+                "--mount",
+                f"type=volume,source={SHARED_DATA_DOCKER_VOLUME},target=/app/data,readonly",
+            ])
+        run_args.append(self.image)
+        created = self._docker(*run_args, timeout=180)
         if created.returncode:
             raise RuntimeError(
                 f"Could not create local IDEA container from {self.image}: "
@@ -67,7 +78,15 @@ class DockerTerminal:
 
     def _exec(self, *args: str, input_bytes: bytes | None = None, timeout: float = 1800) -> subprocess.CompletedProcess:
         self._ensure_container()
-        return self._docker("exec", *( ["-i"] if input_bytes is not None else []), self.container_name, *args, input_bytes=input_bytes, timeout=timeout)
+        exec_args = [
+            "exec",
+            *( ["-i"] if input_bytes is not None else []),
+            "-e", f"VIRTUAL_ENV={RUNTIME_VENV}",
+            "-e", f"PATH={RUNTIME_PATH}",
+            self.container_name,
+            *args,
+        ]
+        return self._docker(*exec_args, input_bytes=input_bytes, timeout=timeout)
 
     def run(self, command: str) -> tuple[bool, str, float]:
         started = time.time()

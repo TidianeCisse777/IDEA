@@ -66,6 +66,12 @@ ARTIFACT_TARGET_PREFIXES = (
 )
 MAX_PENDING_MARKDOWN_LABEL = 512
 RAW_ARTIFACT_REFERENCE_RE = re.compile(r"(?:sandbox|file):/outputs/")
+BARE_OUTPUT_REFERENCE_RE = re.compile(
+    r"(?P<tick>`?)(?P<path>(?<![\w:/])/outputs/[^\s)`<>]+)(?P=tick)"
+)
+LOCALHOST_ARTIFACT_URL_RE = re.compile(
+    r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?(?=/idea-file-preview/)"
+)
 MARKDOWN_ARTIFACT_REFERENCE_RE = re.compile(
     rf"\[[^\]\n]{{0,{MAX_PENDING_MARKDOWN_LABEL}}}\]\("
     r"(?:(?:sandbox|file):)?/outputs/"
@@ -169,6 +175,7 @@ def _split_streamable_message(content: str) -> tuple[str, str, bool]:
         match.start()
         for pattern in (
             RAW_ARTIFACT_REFERENCE_RE,
+            BARE_OUTPUT_REFERENCE_RE,
             MARKDOWN_ARTIFACT_REFERENCE_RE,
         )
         if (match := pattern.search(content))
@@ -180,7 +187,7 @@ def _split_streamable_message(content: str) -> tuple[str, str, bool]:
     possible_starts: list[int] = []
 
     # Preserve a suffix that may be the beginning of a raw artifact URL.
-    for prefix in ("sandbox:/outputs/", "file:/outputs/"):
+    for prefix in ("sandbox:/outputs/", "file:/outputs/", "/outputs/"):
         for length in range(1, min(len(content), len(prefix) - 1) + 1):
             if content.endswith(prefix[:length]):
                 possible_starts.append(len(content) - length)
@@ -679,7 +686,21 @@ def _resolve_output_links(
         referenced_file_ids.add(file_id)
         return _file_link(file_id, normalized_path, public_base_url)
 
-    return SANDBOX_URL_RE.sub(replace_url, content), referenced_file_ids
+    content = SANDBOX_URL_RE.sub(replace_url, content)
+
+    def replace_bare_path(match: re.Match) -> str:
+        raw_filepath = match.group("path")
+        filepath = raw_filepath.rstrip(".,;:!?)]}")
+        trailing = raw_filepath[len(filepath):]
+        normalized_path = _normalized_output_path(filepath)
+        file_id = files_by_path.get(normalized_path)
+        if not file_id:
+            return match.group(0)
+        referenced_file_ids.add(file_id)
+        return _file_link(file_id, normalized_path, public_base_url) + trailing
+
+    content = BARE_OUTPUT_REFERENCE_RE.sub(replace_bare_path, content)
+    return LOCALHOST_ARTIFACT_URL_RE.sub("", content), referenced_file_ids
 
 
 def _resolve_displayed_images(
