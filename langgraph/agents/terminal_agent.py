@@ -65,6 +65,7 @@ from idea_config import (
     LITELLM_VIRTUAL_KEY,
 )
 from idea_graph.memory import bounded_text_bytes
+from utils.langfuse_prompt import load_system_prompt
 from progress import (
     progress_chunk,
     tool_call_chunk_names,
@@ -296,6 +297,9 @@ class TerminalAgent:
         self.paperqa_direct_file_names: tuple[str, ...] = ()
         self.paperqa_warnings: tuple[str, ...] = ()
         self._shown_image_hashes: set = set()  # Dedup identical images shown within a single run()
+        self.base_system_prompt, self.langfuse_prompt_metadata = load_system_prompt(
+            SYSTEM_PROMPT_PATH.read_text()
+        )
         
         # The sandbox/shell is keyed by user_id (stable across page reloads
         # and browser tabs) rather than session_id (a new random ID minted
@@ -449,6 +453,8 @@ class TerminalAgent:
                 "session_id": session_id,
             },
         }
+        if self.langfuse_prompt_metadata:
+            extra_body["metadata"]["langfuse_prompt"] = self.langfuse_prompt_metadata
         if _supports_prompt_caching(model):
             # Supported models' implicit breakpoint includes the changing
             # latest user or tool message. Route calls from this session
@@ -1165,7 +1171,7 @@ class TerminalAgent:
         
         # Load system prompt from the consolidated markdown file
         system_prompt = compose_system_prompt(
-            SYSTEM_PROMPT_PATH.read_text(),
+            self.base_system_prompt,
             self.assistant_system_prompt,
             self.builtin_skill_loader.render_manifest(),
         )

@@ -12,7 +12,7 @@ openai-codex==0.144.4
 pydantic>=2.12.5,<3
 
 # Numerical, tabular, array, and oceanographic analysis
-numpy>=1.26.4,<2
+numpy>=2,<3
 pandas>=2.2.3,<3
 scipy>=1.14.1,<1.17
 xarray>=2025.1,<2026
@@ -49,6 +49,7 @@ rioxarray>=0.18,<0.21
 folium>=0.17,<0.21
 geopy>=2.4,<3
 timezonefinder>=6.5,<9
+gsw>=3.6,<4
 
 # Plotting and report graphics
 matplotlib>=3.9.2,<3.11

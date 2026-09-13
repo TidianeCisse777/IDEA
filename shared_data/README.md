@@ -10,6 +10,7 @@ The allowlist in `manifest.toml` intentionally includes only:
 - `benchmarks/all_benchmarks.json`
 - `altimetry/cmems_altimetry_regrid.nc`
 - `InSight/`
+- `geo/zones_registry.geojson` (IHO and MEOW maritime polygons)
 
 Pointing the importer at legacy IDEA's complete `data/` directory cannot copy
 its papers, HCDP, SJW, `.pqa`, prompts, or any other unlisted path.

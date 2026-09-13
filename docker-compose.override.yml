@@ -57,7 +57,7 @@ services:
       - ./sandbox_service:/app
     environment:
       - SANDBOX_BACKEND=docker
-      - DOCKER_SANDBOX_IMAGE=idea-oi-kernel-local:dev
+      - DOCKER_SANDBOX_IMAGE=idea/oi-kernel:research-local
       - PYTHONUNBUFFERED=1
 
   openwebui:

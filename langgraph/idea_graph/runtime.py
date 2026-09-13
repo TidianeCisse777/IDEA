@@ -148,7 +148,7 @@ class TerminalGraphRuntime:
         self.displayed_image_paths: set[str] = set()
         self.early_synced_outputs: dict[str, dict[str, Any]] = {}
         self.system_prompt = compose_system_prompt(
-            SYSTEM_PROMPT_PATH.read_text(),
+            self.agent.base_system_prompt,
             assistant_system_prompt,
             self.agent.builtin_skill_loader.render_manifest(),
         )

@@ -30,3 +30,9 @@ relative_path = "InSight"
 kind = "directory"
 required = true
 required_globs = ["*.csv"]
+
+[[datasets]]
+name = "marine_zones"
+relative_path = "geo/zones_registry.geojson"
+kind = "geojson"
+required = true
