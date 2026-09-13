@@ -118,6 +118,12 @@ RUN playwright install-deps chromium \
 
 WORKDIR /opt/oi_kernel
 
+# The kernel daemon runs as the unprivileged Open Terminal user. Keep both
+# private workspaces writable so Python can create deliverables before IDEA's
+# output-sync step publishes them through Open WebUI.
+RUN mkdir -p /workspace /outputs \
+    && chown -R user:user /workspace /outputs
+
 # Vendored, unmodified Open Interpreter execution engine. Only the leaf Python
 # and shell runners are imported by daemon.py.
 RUN mkdir -p vendor/interpreter/core

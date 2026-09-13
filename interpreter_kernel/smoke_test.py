@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import json
+import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -39,8 +42,27 @@ IMPORTS = (
 
 
 def main() -> None:
+    assert Path(sys.executable).resolve() == Path(
+        "/opt/idea-venv/bin/python"
+    ), f"unexpected Python executable: {sys.executable}"
+
+    outputs = Path("/outputs")
+    assert outputs.is_dir() and os.access(outputs, os.W_OK), (
+        "/outputs must be writable by the kernel user"
+    )
+    output_probe = outputs / ".idea-environment-smoke"
+    output_probe.write_text("ok", encoding="utf-8")
+    output_probe.unlink()
+
     for name in IMPORTS:
         importlib.import_module(name)
+
+    geojson_path = Path("/app/data/geo/zones_registry.geojson")
+    if os.getenv("IDEA_REQUIRE_SHARED_DATA") == "1":
+        assert geojson_path.is_file(), f"missing shared GeoJSON: {geojson_path}"
+        payload = json.loads(geojson_path.read_text(encoding="utf-8"))
+        assert payload.get("type") == "FeatureCollection"
+        assert payload.get("features"), "shared GeoJSON has no features"
 
     import matplotlib
 

@@ -33,8 +33,22 @@ docker run --rm --entrypoint /opt/guarddog-venv/bin/python "${IMAGE_TAG}" -m pip
 echo "==> Running Python/science/document smoke tests"
 docker run --rm \
   --env MPLCONFIGDIR=/tmp/matplotlib \
+  --user user \
   --entrypoint /opt/idea-venv/bin/python \
   "${IMAGE_TAG}" /opt/oi_kernel/smoke_test.py
+
+if [ -n "${SHARED_DATA_DOCKER_VOLUME:-}" ]; then
+  echo "==> Validating the mounted IHO/MEOW GeoJSON"
+  docker run --rm \
+    --user user \
+    --env IDEA_REQUIRE_SHARED_DATA=1 \
+    --env MPLCONFIGDIR=/tmp/matplotlib \
+    --mount "type=volume,source=${SHARED_DATA_DOCKER_VOLUME},target=/app/data,readonly" \
+    --entrypoint /opt/idea-venv/bin/python \
+    "${IMAGE_TAG}" /opt/oi_kernel/smoke_test.py
+else
+  echo "==> Shared GeoJSON check skipped (set SHARED_DATA_DOCKER_VOLUME)"
+fi
 
 echo "==> Testing legacy system tools, Codex, LaTeX, and Chromium"
 docker run --rm --entrypoint bash "${IMAGE_TAG}" -lc '
