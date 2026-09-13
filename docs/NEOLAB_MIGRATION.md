@@ -17,10 +17,13 @@ mesurable ; ajouter un outil ne constitue pas, à lui seul, une validation.
 - Raccordement local validé sur macOS ARM64 avec OpenAI via LiteLLM, modèle
   `gpt-5.5`, runtime `langgraph` et sandbox Docker. Les secrets restent dans le
   `.env` local ignoré par Git.
-- Services démarrés : PostgreSQL, Redis, LiteLLM, Langfuse, sandbox, LangGraph
-  et Open WebUI. Le parcours conversationnel a appelé Python avec succès via
-  l'API LangGraph. Le Pipe est enregistré et son authentification interne a été
-  corrigée dans Open WebUI.
+- Services démarrés : PostgreSQL, Redis, LiteLLM, sandbox, LangGraph et Open
+  WebUI, avec les traces envoyées au projet Langfuse US Cloud. Le parcours
+  conversationnel a appelé Python avec succès via l'API LangGraph. Le Pipe est
+  enregistré et son authentification interne a été corrigée dans Open WebUI.
+- Les nouveaux téléversements sont stockés sans traitement RAG Open WebUI. La
+  politique est imposée côté navigateur et serveur ; elle désactive aussi
+  l'indexation de nouvelles collections Knowledge tant qu'elle reste active.
 
 ## Étapes et critères de sortie
 
@@ -59,7 +62,13 @@ uniquement un nom de modèle ne garantit pas un raccordement fonctionnel.
 ### Preuves locales du 11 septembre 2026
 
 - LiteLLM a retourné une réponse réelle du modèle `gpt-5.5` et a transmis ses
-  traces à Langfuse sans erreur signalée.
+  traces au projet Langfuse US Cloud sans erreur signalée.
+- Le mode Normal a créé une trace avec l'email Open WebUI dans `userId` et la
+  conversation dans `sessionId`, vérifiée par l'API Langfuse. Le mode Advanced
+  reste exclu de cette preuve : le chemin `/v1/responses` de LiteLLM `v1.92.0`
+  ne conserve pas correctement ces deux attributs.
+- Un téléversement demandant explicitement `process=true` a été forcé à
+  `process=false`, sans extraction ni génération d'embeddings.
 - Le sandbox Docker a conservé un DataFrame dans le même noyau entre deux
   appels Python : somme `12`, puis moyenne `4.0` au tour suivant.
 - Un run complet de l'agent via `/chat-runs` a produit `AGENT_OK` après un appel
@@ -152,6 +161,8 @@ l'effet de la correction.
 |---|---|---|---|
 | 2026-09-11 | Archive NeoLab et clone Hawaii | Empreintes des modifications préservées ; clone au commit initial | Raccorder le modèle et démarrer |
 | 2026-09-11 | Documentation de migration | README, AGENTS.md et présent plan ; aucun test runtime effectué | Identifier la configuration modèle et l'environnement cible |
+| 2026-09-11 | Téléversements locaux sans RAG Open WebUI | Test HTTP et test utilisateur réussis ; aucun traitement ni embedding déclenché | Valider les parcours fichiers et figures |
+| 2026-09-11 | Langfuse Cloud et identité du mode Normal | Trace `gpt-5.5`, utilisateur et session retrouvés par l'API Cloud | Utiliser ces dimensions pendant les validations de use cases |
 
 Ajouter ici les références vers les comptes rendus d'essai expurgés des secrets.
 Ne pas enregistrer de credentials, de données privées ni de liens publics vers

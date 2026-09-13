@@ -39,7 +39,7 @@ flowchart TD
     Runtime --> Agent[TerminalAgent : modèle et outils]
     Agent --> Proxy[LiteLLM]
     Proxy --> Provider[Fournisseur LLM]
-    Proxy --> LF[Langfuse]
+    Proxy --> LF[Langfuse configuré : Cloud ou local]
     Runtime --> HTTP[Client des outils terminal]
     HTTP --> Sandbox[Service sandbox]
     Sandbox --> VM[MicroVM utilisateur]
@@ -52,6 +52,13 @@ Ce diagramme représente le chemin principal du modèle conversationnel. Certain
 outils auxiliaires ont leur propre appel LLM et ne suivent pas nécessairement
 la même route de proxy. Le service LangGraph exécute aussi les outils de
 documentation et de données qui n'ont pas besoin du noyau.
+
+En mode Normal, le Pipe transmet l'identifiant, l'email authentifié et le
+`chat_id` Open WebUI à LangGraph. `TerminalAgent` place l'email dans
+`trace_user_id` et l'identité de conversation dans `session_id`; LiteLLM les
+publie comme `userId` et `sessionId` dans Langfuse. Ce contrat a été validé sur
+Langfuse US Cloud. Le mode Advanced passe par `/v1/responses` et n'est pas dans
+ce périmètre avec la version LiteLLM actuellement épinglée.
 
 ## 3. Carte des répertoires
 
@@ -326,7 +333,7 @@ Voir [Codex-Integration.md](docs/Codex-Integration.md).
 | `sandbox` | API d'exécution, port interne 8020, gestion microsandbox |
 | `shared-data` | Opérations d'import/synchronisation du volume scientifique |
 | `litellm` | Proxy modèles, stockage de consommation et callbacks |
-| `langfuse` | Observabilité LLM |
+| `langfuse` | Instance locale optionnelle ; l'hôte configuré peut être Langfuse Cloud |
 | `openwebui` | Interface et stockage utilisateur |
 | `nginx` via overlays | Routage HTTP/HTTPS |
 

@@ -93,6 +93,16 @@ changes remain persistent and editable. `WEBUI_ADMIN_EMAIL` and
 is available. When run interactively, the script instead prompts for any
 missing admin credentials and does not save the password.
 
+## Langfuse identity tracking
+
+For the standard IDEA agent, the Pipe sends Open WebUI's authenticated user ID,
+email, and `chat_id` to LangGraph. The model call uses the email as Langfuse's
+`userId` and the conversation identity as `sessionId`, allowing per-user cost
+analysis and multi-turn replay in the Langfuse **Users** and **Sessions** views.
+This path has been verified end to end against the NeoLab Langfuse Cloud
+project. The Advanced variant's `/v1/responses` path is not part of that
+validated contract with the currently pinned LiteLLM version.
+
 ## PaperQA2 literature collections
 
 Welcome, SEA, and Mars are PaperQA-enabled by `assistants/manifest.json`.
@@ -100,6 +110,12 @@ Their deployment metadata forces legacy function handling so attached
 Knowledge collection descriptors reach the IDEA Pipe, while
 `capabilities.file_context` is disabled to prevent Open WebUI's native RAG
 from injecting a second copy of the same literature context.
+
+The current macOS ARM64 development image additionally disables native Open
+WebUI RAG for every new upload at both the browser and server boundaries.
+Directly attached documents remain available to PaperQA through IDEA's raw-file
+path, but newly uploaded Workspace > Knowledge collections cannot be indexed
+while this local policy is active.
 
 The Pipe's `PAPERQA_ASSISTANT_IDS` Valve defaults to
 `welcome-assistant,sea,mars-assistant`. Keep this list in sync with manifest

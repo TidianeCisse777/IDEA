@@ -121,7 +121,10 @@ or changing defaults.
    (Langfuse)" section), create an org/project, and generate an API key pair
    under **Project Settings > API Keys**. Save them as `LANGFUSE_PUBLIC_KEY`
    and `LANGFUSE_SECRET_KEY` in `.env` (or set the `LANGFUSE_INIT_*`
-   variables beforehand to skip this manual step entirely).
+   variables beforehand to skip this manual step entirely). To send traces to
+   Langfuse Cloud, set `LANGFUSE_HOST` to the project's regional host, for
+   example `https://us.cloud.langfuse.com`; leave it unset for the bundled
+   local service.
 
 9. In **Admin Panel > Functions > IDEA Agent > Valves**, set
    `INTERNAL_SERVICE_TOKEN` to the same value used in `.env`. Signup is
@@ -147,6 +150,10 @@ Log in through the public HTTPS URL and confirm that Welcome Assistant can
 answer a prompt, run Python, read an uploaded file and image, use PaperQA on
 attached PDF and Word documents, delegate one read-only and one workspace-write task to Codex,
 and return a downloadable artifact whose link still works on a later turn.
+For the standard IDEA agent, also confirm in Langfuse that the trace has the
+authenticated Open WebUI email as `userId` and the chat conversation as
+`sessionId`. Do not use the Advanced Responses API path as evidence for this
+check while LiteLLM remains pinned to `v1.92.0`.
 
 ## Production HTTPS
 
