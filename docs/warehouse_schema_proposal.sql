@@ -408,6 +408,8 @@ JOIN warehouse.ecotaxa_sample e ON e.id = l.ecotaxa_sample_id;
 CREATE VIEW explore.uvp_objects AS
 SELECT
     u.id AS uvp_profile_id,
+    u.dataset_version_id,
+    u.ecopart_project_id,
     u.sample_name,
     u.cruise_key,
     u.station_key,

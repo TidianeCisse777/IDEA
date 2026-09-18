@@ -161,3 +161,154 @@ jointure.
 3. dictionnaire des variables CTD et contrôle des unités ;
 4. sélection d’un agrégat UVP lorsqu’un taxon couvre plusieurs bins ;
 5. mapping taxonomique FILET/UVP et gestion des correspondances ambiguës.
+
+## Cas de découverte et de contrôle des lacunes
+
+Ces requêtes servent à comprendre ce qui est disponible avant de formuler une
+analyse scientifique. Elles produisent des tableaux de contrôle directement
+chargeables dans le notebook.
+
+## 9. Inventorier les données disponibles
+
+Question : « Quelles campagnes, projets, profils, samples et objets sont
+présents dans le warehouse ? »
+
+```sql
+SELECT dataset_version_id,
+       COUNT(DISTINCT uvp_profile_id) AS n_profiles,
+       COUNT(DISTINCT ecotaxa_sample_id) AS n_samples,
+       COUNT(DISTINCT ecotaxa_object_id) AS n_objects,
+       MIN(sampled_at) AS first_sample,
+       MAX(sampled_at) AS last_sample
+FROM explore.uvp_objects
+GROUP BY dataset_version_id
+ORDER BY first_sample;
+```
+
+Friction détectée : version d’export présente mais vide, profil sans sample
+EcoTaxa, ou sample sans objet exporté.
+
+## 10. Vérifier la complétude des métadonnées des samples
+
+Question : « Quels samples sont incomplets et quelles métadonnées manquent ? »
+
+```sql
+SELECT sample_name, station_key, sampled_at,
+       (sample_name IS NULL) AS missing_sample_name,
+       (station_key IS NULL) AS missing_station,
+       (sampled_at IS NULL) AS missing_time,
+       (latitude IS NULL OR longitude IS NULL) AS missing_position,
+       (marine_zone_key IS NULL) AS missing_zone,
+       (ctd_rosette_filename IS NULL) AS missing_ctd_filename,
+       (object_count IS NULL) AS missing_object_count
+FROM explore.uvp_samples
+WHERE sample_name IS NULL
+   OR station_key IS NULL
+   OR sampled_at IS NULL
+   OR latitude IS NULL OR longitude IS NULL
+   OR marine_zone_key IS NULL
+   OR ctd_rosette_filename IS NULL
+   OR object_count IS NULL;
+```
+
+Friction détectée : les colonnes manquantes doivent rester distinguées d’une
+valeur zéro ou d’un sample réellement sans objet.
+
+## 11. Mesurer la couverture CTD
+
+Question : « Quelle proportion des samples possède un profil CTD accepté ? »
+
+```sql
+SELECT
+    COUNT(*) AS n_samples,
+    COUNT(*) FILTER (WHERE ctd_profile_id IS NOT NULL) AS n_with_ctd_candidate,
+    COUNT(*) FILTER (WHERE match_status = 'accepted') AS n_with_ctd_accepted,
+    COUNT(*) FILTER (WHERE match_status = 'ambiguous') AS n_ctd_ambiguous,
+    COUNT(*) FILTER (WHERE match_status = 'rejected') AS n_ctd_rejected,
+    ROUND(
+        100.0 * COUNT(*) FILTER (WHERE match_status = 'accepted')
+        / NULLIF(COUNT(*), 0), 2
+    ) AS pct_ctd_accepted
+FROM explore.ecotaxa_ctd_profile;
+```
+
+Friction détectée : un nom de fichier CTD présent ne signifie pas que la
+correspondance Amundsen a été confirmée.
+
+## 12. Auditer la jointure EcoTaxa/EcoPart
+
+Question : « Combien d’objets sont correctement rattachés à un bin avec un
+volume valide ? »
+
+```sql
+SELECT mapping_status,
+       COUNT(*) AS n_objects,
+       COUNT(*) FILTER (WHERE sampled_volume_l > 0) AS n_with_volume,
+       MAX(ABS(depth_delta_m)) AS max_depth_delta_m
+FROM explore.uvp_objects
+GROUP BY mapping_status
+ORDER BY mapping_status;
+```
+
+Friction détectée : objets non rattachés, volumes absents ou écarts de
+profondeur anormaux. La règle de bin reste celle de `object_depth_min`.
+
+## 13. Décrire les taxons réellement observés
+
+Question : « Quels taxons sont présents, dans quels projets et à quelle
+profondeur ? »
+
+```sql
+SELECT ecopart_project_id, marine_zone_key, taxon_id, taxon_name,
+       COUNT(*) AS n_objects,
+       MIN(object_depth_min_m) AS min_depth_m,
+       MAX(object_depth_max_m) AS max_depth_m
+FROM explore.uvp_objects
+WHERE mapping_status = 'accepted'
+GROUP BY ecopart_project_id, marine_zone_key, taxon_id, taxon_name
+ORDER BY ecopart_project_id, n_objects DESC;
+```
+
+Friction détectée : plusieurs libellés pour un même taxon, catégories
+non-validées ou taxonomie trop agrégée pour une comparaison FILET.
+
+## 14. Voir la couverture spatiale et verticale
+
+Question : « Où et à quelles profondeurs les samples sont-ils disponibles ? »
+
+```sql
+SELECT marine_zone_key, station_key,
+       COUNT(DISTINCT sample_name) AS n_samples,
+       MIN(latitude) AS latitude_min, MAX(latitude) AS latitude_max,
+       MIN(longitude) AS longitude_min, MAX(longitude) AS longitude_max,
+       MIN(depth_min) AS depth_min_m, MAX(depth_max) AS depth_max_m
+FROM explore.uvp_samples
+GROUP BY marine_zone_key, station_key
+ORDER BY marine_zone_key, station_key;
+```
+
+Friction détectée : stations sans zone, coordonnées incohérentes ou
+profondeurs manquantes. Cette vue alimente une carte ou un profil global sans
+reconstruire les jointures dans le notebook.
+
+## 15. Construire une table globale pour un graphique exploratoire
+
+Question : « Donne-moi une ligne par sample, bin et taxon avec les variables
+de contexte nécessaires à un graphique. »
+
+```sql
+SELECT a.sample_name, a.cruise_key, a.station_key,
+       s.marine_zone_key, s.sampled_at,
+       a.taxon_key, a.depth_min_m, a.depth_max_m,
+       a.n_objects_taxon, a.sampled_volume_l,
+       a.abundance_uvp_ind_m3
+FROM explore.uvp_taxon_abundance a
+JOIN explore.uvp_samples s ON s.uvp_profile_id = a.profile_id
+WHERE (:project_id IS NULL OR s.ecopart_project_id = :project_id)
+  AND (:zone_key IS NULL OR s.marine_zone_key = :zone_key)
+  AND (:taxon IS NULL OR a.taxon_key = :taxon)
+ORDER BY a.sampled_at, a.station_key, a.depth_min_m;
+```
+
+Cette sortie est le format cible pour un DataFrame et des graphiques de
+distribution verticale, de comparaison entre stations ou de suivi temporel.

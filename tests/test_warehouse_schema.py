@@ -11,12 +11,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 DDL = ROOT / "docs" / "warehouse_schema_proposal.sql"
+USE_CASES = ROOT / "docs" / "UVP_USE_CASES_SQL.md"
 
 
 class WarehouseSchemaContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.sql = DDL.read_text(encoding="utf-8")
+        cls.use_cases = USE_CASES.read_text(encoding="utf-8")
 
     def test_declares_source_and_exploration_layers(self):
         self.assertIn("CREATE SCHEMA warehouse;", self.sql)
@@ -72,6 +74,18 @@ class WarehouseSchemaContractTests(unittest.TestCase):
         ):
             self.assertIn(column, self.sql)
         self.assertIn("COUNT(DISTINCT u.cast_key) AS n_casts", self.sql)
+
+    def test_documents_discovery_use_cases_with_sql(self):
+        for title in (
+            "Inventorier les données disponibles",
+            "Vérifier la complétude des métadonnées",
+            "Mesurer la couverture CTD",
+            "Auditer la jointure EcoTaxa/EcoPart",
+            "Décrire les taxons réellement observés",
+            "Voir la couverture spatiale et verticale",
+        ):
+            self.assertIn(title, self.use_cases)
+        self.assertGreaterEqual(self.use_cases.count("```sql"), 14)
 
     def test_exposes_filet_ctd_and_comparison_contracts(self):
         self.assertIn("CREATE TABLE warehouse.filet_uvp_match", self.sql)

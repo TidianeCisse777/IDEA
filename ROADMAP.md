@@ -292,6 +292,18 @@ complet avec appel d’outil depuis Open WebUI.
 - 14 tests de contrat réussissent et le DDL complet s'exécute dans PostgreSQL
   temporaire.
 
+### 18 septembre 2026 Cas de découverte et diagnostic des lacunes
+
+- `docs/UVP_USE_CASES_SQL.md` couvre désormais l'inventaire des sources, la
+  complétude des métadonnées, la couverture CTD, l'audit des jointures
+  EcoTaxa/EcoPart, les taxons observés, la couverture spatiale/verticale et la
+  table globale destinée aux graphiques.
+- Les vues existantes exposent les colonnes nécessaires à ces diagnostics,
+  notamment `dataset_version_id`, `ecopart_project_id` et les zones dans
+  `explore.uvp_objects`.
+- 15 tests de contrat réussissent ; le DDL complet s'exécute dans PostgreSQL
+  temporaire.
+
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
 déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation
