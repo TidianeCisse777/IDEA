@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DDL = ROOT / "docs" / "warehouse_schema_proposal.sql"
 USE_CASES = ROOT / "docs" / "UVP_USE_CASES_SQL.md"
 FRICTIONS = ROOT / "docs" / "UVP_FRICTIONS_OPEN.md"
+POPULATION_PLAN = ROOT / "docs" / "WAREHOUSE_POPULATION_PLAN.md"
 
 
 class WarehouseSchemaContractTests(unittest.TestCase):
@@ -21,6 +22,7 @@ class WarehouseSchemaContractTests(unittest.TestCase):
         cls.sql = DDL.read_text(encoding="utf-8")
         cls.use_cases = USE_CASES.read_text(encoding="utf-8")
         cls.frictions = FRICTIONS.read_text(encoding="utf-8")
+        cls.population_plan = POPULATION_PLAN.read_text(encoding="utf-8")
 
     def test_declares_source_and_exploration_layers(self):
         self.assertIn("CREATE SCHEMA warehouse;", self.sql)
@@ -113,6 +115,14 @@ class WarehouseSchemaContractTests(unittest.TestCase):
             self.assertIn(phrase, self.frictions)
         self.assertIn("unmatched", self.frictions)
         self.assertIn("dataset_version_id", self.frictions)
+
+    def test_documents_population_order_and_historical_ecotaxa_reference(self):
+        for source in ("EcoTaxa", "EcoPart", "CTD Amundsen", "FILET"):
+            self.assertIn(source, self.population_plan)
+        self.assertIn("core/ecotaxa_browser/cache/sync.py", self.population_plan)
+        self.assertIn("core/ecotaxa_ecopart_join.py", self.population_plan)
+        self.assertIn("core/ctd_filename_match.py", self.population_plan)
+        self.assertIn("SAMPLE_ID + ANALYSIS_ID", self.population_plan)
 
     def test_exposes_filet_ctd_and_comparison_contracts(self):
         self.assertIn("CREATE TABLE warehouse.filet_uvp_match", self.sql)

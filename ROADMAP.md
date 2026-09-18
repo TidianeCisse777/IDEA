@@ -326,6 +326,16 @@ complet avec appel d’outil depuis Open WebUI.
   les critères de clôture. L'agent doit exposer les statuts au lieu de choisir
   une valeur absente ou ambiguë.
 
+### 18 septembre 2026 Plan de peuplement V1
+
+- Le plan est documenté dans
+  [docs/WAREHOUSE_POPULATION_PLAN.md](docs/WAREHOUSE_POPULATION_PLAN.md).
+- L'ordre retenu est manifeste → EcoTaxa → EcoPart → CTD → liens → FILET →
+  vues et contrôles finaux.
+- Le script historique `core/ecotaxa_browser/cache/sync.py` est utilisé comme
+  référence d'extraction, de signatures, de retries et de contrôles ; son cache
+  SQLite ne remplace pas le warehouse PostgreSQL.
+
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
 déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation
