@@ -304,6 +304,18 @@ complet avec appel d’outil depuis Open WebUI.
 - 15 tests de contrat réussissent ; le DDL complet s'exécute dans PostgreSQL
   temporaire.
 
+### 18 septembre 2026 Analyses UVP concrètes par zone
+
+- Les use cases couvrent maintenant les agrégats zone, station, profil,
+  sample, bin et objet, avec abondance moyenne par profondeur.
+- Des requêtes combinent EcoTaxa, EcoPart et CTD au grain sample, et une vue
+  séparée conserve les objets EcoTaxa au grain objet pour l'audit des images et
+  des rattachements de bins.
+- La moyenne d'abondance est calculée après agrégation objets/volume par profil
+  afin de ne pas surpondérer les profils ayant davantage de bins.
+- 16 tests de contrat réussissent ; le DDL complet s'exécute dans PostgreSQL
+  temporaire.
+
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
 déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation

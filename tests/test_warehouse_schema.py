@@ -87,6 +87,19 @@ class WarehouseSchemaContractTests(unittest.TestCase):
             self.assertIn(title, self.use_cases)
         self.assertGreaterEqual(self.use_cases.count("```sql"), 14)
 
+    def test_documents_zone_level_uvp_ecotaxa_ecopart_ctd_analyses(self):
+        for phrase in (
+            "Résumer une zone maritime",
+            "Résumer les profils par zone et par station",
+            "Abondance moyenne par zone et profondeur",
+            "Relier abondance et contexte CTD par sample",
+            "Explorer les objets d’une zone avec leur contexte EcoPart",
+            "Couverture CTD par zone et par station",
+        ):
+            self.assertIn(phrase, self.use_cases)
+        self.assertIn("SUM(a.n_objects_taxon)", self.use_cases)
+        self.assertIn("SUM(a.sampled_volume_l)", self.use_cases)
+
     def test_exposes_filet_ctd_and_comparison_contracts(self):
         self.assertIn("CREATE TABLE warehouse.filet_uvp_match", self.sql)
         self.assertIn("CREATE TABLE warehouse.taxon_mapping", self.sql)

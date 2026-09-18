@@ -312,3 +312,160 @@ ORDER BY a.sampled_at, a.station_key, a.depth_min_m;
 
 Cette sortie est le format cible pour un DataFrame et des graphiques de
 distribution verticale, de comparaison entre stations ou de suivi temporel.
+
+## Analyses concrètes par zone
+
+## 16. Résumer une zone maritime
+
+Question : « Dans la zone `:zone_key`, combien avons-nous de projets, profils,
+samples et objets ? »
+
+```sql
+SELECT marine_zone_key,
+       COUNT(DISTINCT ecotaxa_project_id) AS n_projects,
+       COUNT(DISTINCT uvp_profile_id) AS n_profiles,
+       COUNT(DISTINCT ecotaxa_sample_id) AS n_samples,
+       SUM(COALESCE(object_count, 0)) AS n_objects
+FROM explore.uvp_samples
+WHERE marine_zone_key = :zone_key
+GROUP BY marine_zone_key;
+```
+
+Grain : une ligne par zone. Cette sortie donne immédiatement la taille réelle
+du jeu disponible avant une analyse.
+
+## 17. Résumer les profils par zone et par station
+
+Question : « Comment les profils sont-ils répartis dans la zone ? »
+
+```sql
+SELECT marine_zone_key, station_key,
+       COUNT(DISTINCT uvp_profile_id) AS n_profiles,
+       COUNT(DISTINCT ecotaxa_sample_id) AS n_samples,
+       COUNT(DISTINCT cast_key) AS n_casts,
+       MIN(sampled_at) AS first_profile,
+       MAX(sampled_at) AS last_profile,
+       MIN(depth_min) AS shallowest_m,
+       MAX(depth_max) AS deepest_m
+FROM explore.uvp_samples
+WHERE marine_zone_key = :zone_key
+GROUP BY marine_zone_key, station_key
+ORDER BY station_key;
+```
+
+Grain : zone × station. Les doublons de profil sont évités par les comptes
+`DISTINCT`.
+
+## 18. Abondance moyenne par zone et profondeur
+
+Question : « Quelle est l’abondance moyenne du taxon `:taxon` dans la zone,
+par profondeur ? »
+
+```sql
+WITH profile_bin AS (
+    SELECT s.marine_zone_key,
+           a.profile_id,
+           a.depth_min_m,
+           a.depth_max_m,
+           SUM(a.n_objects_taxon) AS n_objects,
+           SUM(a.sampled_volume_l) AS volume_l
+    FROM explore.uvp_taxon_abundance a
+    JOIN explore.uvp_samples s ON s.uvp_profile_id = a.profile_id
+    WHERE s.marine_zone_key = :zone_key
+      AND a.taxon_key = :taxon
+    GROUP BY s.marine_zone_key, a.profile_id,
+             a.depth_min_m, a.depth_max_m
+), profile_concentration AS (
+    SELECT *, n_objects / NULLIF(volume_l, 0) * 1000 AS abundance_ind_m3
+    FROM profile_bin
+)
+SELECT marine_zone_key, depth_min_m, depth_max_m,
+       COUNT(*) AS n_profiles,
+       AVG(abundance_ind_m3) AS mean_abundance_ind_m3,
+       STDDEV_SAMP(abundance_ind_m3) AS sd_abundance_ind_m3
+FROM profile_concentration
+GROUP BY marine_zone_key, depth_min_m, depth_max_m
+ORDER BY depth_min_m;
+```
+
+L’agrégation est faite en deux étapes : volume et objets sont d’abord regroupés
+par profil, puis la moyenne est calculée entre profils. On évite ainsi de
+surpondérer les profils qui possèdent davantage de bins.
+
+## 19. Relier abondance et contexte CTD par sample
+
+Question : « Pour chaque sample de la zone, quelle est l’abondance et la
+température/salinité CTD associée ? »
+
+```sql
+WITH ctd_context AS (
+    SELECT ecotaxa_sample_id,
+           AVG(value) FILTER (WHERE variable_key = 'temperature') AS temperature_mean,
+           AVG(value) FILTER (WHERE variable_key = 'salinity') AS salinity_mean
+    FROM explore.ecotaxa_ctd
+    WHERE match_status = 'accepted'
+    GROUP BY ecotaxa_sample_id
+), abundance AS (
+    SELECT s.ecotaxa_sample_id, s.sample_name, s.marine_zone_key,
+           a.taxon_key,
+           SUM(a.n_objects_taxon) AS n_objects,
+           SUM(a.sampled_volume_l) AS volume_l
+    FROM explore.uvp_taxon_abundance a
+    JOIN explore.uvp_samples s ON s.uvp_profile_id = a.profile_id
+    WHERE s.marine_zone_key = :zone_key
+      AND (:taxon IS NULL OR a.taxon_key = :taxon)
+    GROUP BY s.ecotaxa_sample_id, s.sample_name, s.marine_zone_key, a.taxon_key
+)
+SELECT a.*, a.n_objects / NULLIF(a.volume_l, 0) * 1000 AS abundance_ind_m3,
+       c.temperature_mean, c.salinity_mean
+FROM abundance a
+LEFT JOIN ctd_context c ON c.ecotaxa_sample_id = a.ecotaxa_sample_id;
+```
+
+Grain : sample × taxon. Le CTD est résumé au niveau du sample ; les mesures
+verticales détaillées restent accessibles dans `explore.ecotaxa_ctd`.
+
+## 20. Explorer les objets d’une zone avec leur contexte EcoPart
+
+Question : « Quels objets EcoTaxa sont observés dans cette zone, avec leur bin,
+volume, taxon et statut de rattachement ? »
+
+```sql
+SELECT marine_zone_key, sample_name, station_key, sampled_at,
+       ecotaxa_object_id, object_id, taxon_id, taxon_name,
+       object_depth_min_m, object_depth_max_m,
+       source_bin_key, depth_min_m, depth_max_m,
+       sampled_volume_l, mapping_status
+FROM explore.uvp_objects
+WHERE marine_zone_key = :zone_key
+  AND (:taxon IS NULL OR taxon_id = :taxon)
+ORDER BY sampled_at, station_key, object_depth_min_m;
+```
+
+Grain : objet EcoTaxa. Cette sortie est adaptée à l’exploration d’images,
+à la vérification des annotations et au contrôle de la jointure EcoPart.
+
+## 21. Couverture CTD par zone et par station
+
+Question : « Dans quelles stations de la zone avons-nous réellement un CTD
+complet ? »
+
+```sql
+SELECT s.marine_zone_key, s.station_key,
+       COUNT(DISTINCT s.uvp_profile_id) AS n_profiles,
+       COUNT(DISTINCT p.ecotaxa_sample_id) AS n_samples_with_ctd,
+       COUNT(DISTINCT p.ctd_profile_id) AS n_ctd_profiles,
+       COUNT(DISTINCT m.variable_key) AS n_ctd_variables
+FROM explore.uvp_samples s
+LEFT JOIN explore.ecotaxa_ctd_profile p
+       ON p.ecotaxa_sample_id = s.ecotaxa_sample_id
+      AND p.match_status = 'accepted'
+LEFT JOIN explore.ecotaxa_ctd m
+       ON m.ecotaxa_sample_id = p.ecotaxa_sample_id
+WHERE s.marine_zone_key = :zone_key
+GROUP BY s.marine_zone_key, s.station_key
+ORDER BY s.station_key;
+```
+
+Cette requête distingue présence d’un lien CTD et richesse réelle des mesures
+CTD disponibles.
