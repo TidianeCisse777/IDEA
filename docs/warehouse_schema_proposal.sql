@@ -152,13 +152,25 @@ CREATE TABLE warehouse.ctd_profile (
     longitude double precision,
     UNIQUE (dataset_version_id, source_profile_key)
 );
+CREATE TABLE warehouse.ctd_variable (
+    variable_key text PRIMARY KEY,
+    canonical_name text NOT NULL,
+    canonical_unit text,
+    description text NOT NULL,
+    source_code text NOT NULL,
+    source_instance text NOT NULL,
+    UNIQUE (source_instance, source_code)
+);
+-- Catalogue Amundsen historique : les codes sources sont normalises avant
+-- insertion des mesures. Les valeurs canoniques restent stables pour l'agent.
+-- PRES/TE90/PSAL/SIGT/OXYM/pH/NTRA/FLOR.
 CREATE TABLE warehouse.ctd_measurement (
     profile_id bigint NOT NULL REFERENCES warehouse.ctd_profile,
     source_row_key text NOT NULL,
     scan_key text NOT NULL,
     depth_m double precision,
     pressure_dbar double precision,
-    variable_key text NOT NULL,
+    variable_key text NOT NULL REFERENCES warehouse.ctd_variable,
     variable_definition text NOT NULL,
     sensor_channel text NOT NULL,
     value double precision,

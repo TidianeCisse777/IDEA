@@ -57,6 +57,8 @@ Le [brouillon SQL](warehouse_schema_proposal.sql) décrit les relations centrale
 - `ecotaxa_sample`, `ecotaxa_object` : échantillons et objets annotés ;
 - `uvp_profile`, `uvp_bin`, `uvp_particle` : profils, tranches et spectres ;
 - `ctd_profile`, `ctd_measurement` : profils et mesures natives ;
+- `ctd_variable` : dictionnaire des codes CTD sources et des unités canoniques
+  (`PRES`, `TE90`, `PSAL`, `SIGT`, `OXYM`, `pH`, `NTRA`, `FLOR`) ;
 - `filet_sample`, `filet_analysis`, `filet_abundance` : prélèvement, analyse,
   observations au grain source ;
 - `uvp_ecotaxa`, `uvp_ctd`, `filet_ecotaxa`, `filet_ctd` : uniquement les liens
@@ -97,10 +99,20 @@ Le warehouse les conserve telles quelles, avec leurs deux dénominateurs et
 la colonne `*_SAMPLE_ABUND`; il ne les recalcule pas à l'import. Une vue de
 comparaison choisit explicitement la méthode FILET et la variable UVP dérivée.
 
-Les variables CTD sont conservées avec définition, unité et canal. Une vue
-large (température, salinité, oxygène...) sera définie après inspection des
-variables et capteurs réels, sans confondre variantes physiques ni pression
-et profondeur. Les concentrations déjà fournies ne sont pas recalculées.
+Les variables CTD sont conservées avec définition, unité et canal. Le catalogue
+Amundsen historique est normalisé dans `ctd_variable` : `PRES` (pression/
+profondeur), `TE90` (température), `PSAL` (salinité), `SIGT` (densité), `OXYM`
+(oxygène), `pH`, `NTRA` (nitrate) et `FLOR` (fluorescence). Les noms demandés
+par l'utilisateur sont traduits vers ces codes avant la requête SQL. La pression
+CTD et la profondeur dérivée restent distinctes dans la documentation de la
+mesure. Les concentrations déjà fournies ne sont pas recalculées.
+
+Le lien EcoTaxa/Amundsen suit la méthode historique retrouvée dans Git :
+`ctd_rosette_filename` est comparé au `filename` Amundsen, puis la station, le
+temps et la position confirment le candidat. Les seuils historiques de 2 km et
+90 minutes sont conservés comme paramètres de méthode, pas comme des constantes
+scientifiques universelles. Un candidat non confirmé reste auditable et ne
+devient pas une jointure acceptée.
 
 La surface `explore` suit maintenant le parcours utilisateur :
 

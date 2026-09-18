@@ -278,8 +278,19 @@ complet avec appel d’outil depuis Open WebUI.
 - Le modèle expose désormais la zone maritime, sa source, sa version et son
   statut d'affectation sur les profils/samples, ainsi que `cast_key` et le
   nombre de casts par projet.
-- Les frictions sont explicitées : projet multi-zone, point-dans-polygone,
-  objet chevauchant un bin, dictionnaire CTD et mapping taxonomique.
+- Les frictions sont explicitées : point-dans-polygone, dictionnaire CTD,
+  agrégation multi-bins et mapping taxonomique. Le rattachement objet/bin est
+  déterministe via `object_depth_min` et la grille de 5 m historique.
+
+### 18 septembre 2026 Intégration du contrat CTD historique
+
+- Le catalogue `warehouse.ctd_variable` reprend les codes Amundsen validés dans
+  l'historique Git (`PRES`, `TE90`, `PSAL`, `SIGT`, `OXYM`, `pH`, `NTRA`, `FLOR`).
+- La documentation décrit le rattachement par nom de fichier CTD, puis la
+  confirmation station/temps/position, ainsi que la distinction entre point
+  CTD enrichi et profil vertical complet.
+- 14 tests de contrat réussissent et le DDL complet s'exécute dans PostgreSQL
+  temporaire.
 
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore

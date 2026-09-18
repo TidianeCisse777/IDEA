@@ -75,9 +75,9 @@ WHERE sample_name = :sample_name
 ORDER BY object_depth_min_m, ecotaxa_object_id;
 ```
 
-Friction à vérifier : un objet peut être `ambiguous` ou `unmatched` lorsqu’il
-ne se rattache pas proprement à un bin. La vue doit le montrer au lieu de
-choisir silencieusement un bin.
+La règle de rattachement est déterministe dans la V1 : le bin est calculé à
+partir de `object_depth_min` avec `floor(object_depth_min / 5) * 5 + 2.5`.
+`mapping_status` reste exposé pour auditer les lignes sans objet ou sans volume.
 
 ## 5. Obtenir les objets d’une tranche de profondeur
 
@@ -94,9 +94,9 @@ WHERE sample_name = :sample_name
   AND (:taxon IS NULL OR taxon_id = :taxon);
 ```
 
-Friction à vérifier : la règle d’inclusion doit être documentée pour les
-objets qui chevauchent une limite de bin. La V1 conserve `depth_delta_m` pour
-contrôler cette décision.
+La règle d’inclusion suit le centre du bin calculé depuis `object_depth_min`.
+La V1 conserve `depth_delta_m` pour contrôler la distance entre l’objet et ce
+centre.
 
 ## 6. Comparer l’abondance taxonomique entre bins
 
@@ -126,9 +126,10 @@ WHERE ecotaxa_native_sample_id = :sample_id
   AND variable_key IN ('temperature', 'salinity', 'oxygen');
 ```
 
-Friction à vérifier : le nom exact des variables CTD et leurs unités doivent
-être normalisés dans le dictionnaire d’ingestion. La vue ne doit pas joindre
-les objets EcoTaxa aux scans CTD, sinon le nombre de lignes explose.
+Les noms demandés sont traduits par le dictionnaire `ctd_variable` vers les
+codes Amundsen `PRES`, `TE90`, `PSAL`, `SIGT`, `OXYM`, `pH`, `NTRA` ou `FLOR`.
+La vue ne joint pas les objets EcoTaxa aux scans CTD, sinon le nombre de lignes
+explose.
 
 ## 8. Comparer UVP et FILET après sélection taxonomique
 
@@ -157,7 +158,6 @@ jointure.
 
 1. ingestion des polygones marins et versionnement de l’affectation des zones ;
 2. définition de `cast_key` et cardinalité projet × zone ;
-3. règle objet chevauchant plusieurs bins EcoPart ;
-4. dictionnaire des variables CTD et contrôle des unités ;
-5. sélection d’un agrégat UVP lorsqu’un taxon couvre plusieurs bins ;
-6. mapping taxonomique FILET/UVP et gestion des correspondances ambiguës.
+3. dictionnaire des variables CTD et contrôle des unités ;
+4. sélection d’un agrégat UVP lorsqu’un taxon couvre plusieurs bins ;
+5. mapping taxonomique FILET/UVP et gestion des correspondances ambiguës.

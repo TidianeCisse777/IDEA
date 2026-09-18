@@ -40,12 +40,21 @@ class WarehouseSchemaContractTests(unittest.TestCase):
         self.assertIn("Les abondances FILET sont des valeurs source", self.sql)
 
     def test_keeps_native_ctd_links_and_profile_level_navigation(self):
-        for table in ("ctd_profile", "ctd_measurement", "uvp_ctd", "ecotaxa_ctd", "filet_ctd"):
+        for table in ("ctd_profile", "ctd_variable", "ctd_measurement", "uvp_ctd", "ecotaxa_ctd", "filet_ctd"):
             self.assertRegex(self.sql, rf"CREATE TABLE warehouse\.{table}\b")
         self.assertIn("CREATE VIEW explore.uvp_ctd AS", self.sql)
         self.assertIn("CREATE VIEW explore.uvp_objects AS", self.sql)
         self.assertIn("CREATE VIEW explore.ecotaxa_ctd_profile AS", self.sql)
         self.assertIn("CREATE VIEW explore.ecotaxa_ctd AS", self.sql)
+
+    def test_ctd_catalog_preserves_amundsen_source_codes(self):
+        for code in ("PRES", "TE90", "PSAL", "SIGT", "OXYM", "pH", "NTRA", "FLOR"):
+            self.assertIn(code, self.sql)
+        self.assertIn("variable_key text NOT NULL REFERENCES warehouse.ctd_variable", self.sql)
+
+    def test_ecotaxa_ctd_match_keeps_auditable_evidence(self):
+        for column in ("relation_type", "filename_match", "station_match", "distance_km", "time_gap_minutes", "evidence"):
+            self.assertIn(column, self.sql)
 
     def test_exposes_simple_project_sample_object_navigation(self):
         for view in ("uvp_projects", "uvp_samples", "uvp_objects", "uvp_taxon_abundance"):
