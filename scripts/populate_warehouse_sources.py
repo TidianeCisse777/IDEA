@@ -126,12 +126,12 @@ def register_version(database_url: str, *, source: str, key: str, path: Path) ->
     return returned_id(output)
 
 
-def load_ecopart(database_url: str, path: Path, *, project_id: int, ecotaxa_project_id: int | None) -> dict:
-    header = pd.read_csv(path, sep="\t", nrows=0)
+def load_ecopart(database_url: str, path: Path, *, project_id: int, ecotaxa_project_id: int | None, encoding: str = "utf-8") -> dict:
+    header = pd.read_csv(path, sep="\t", nrows=0, encoding=encoding)
     missing = sorted(ECOPART_REQUIRED.difference(map(str, header.columns)))
     if missing:
         raise ValueError("Export EcoPart invalide, colonnes absentes : " + ", ".join(missing))
-    frame = pd.read_csv(path, sep="\t")
+    frame = pd.read_csv(path, sep="\t", encoding=encoding)
     frame["Profile"] = frame["Profile"].astype(str).str.strip()
     frame["Depth [m]"] = pd.to_numeric(frame["Depth [m]"], errors="coerce")
     frame["Sampled volume [L]"] = pd.to_numeric(frame["Sampled volume [L]"], errors="coerce")
@@ -172,7 +172,7 @@ def load_ecopart(database_url: str, path: Path, *, project_id: int, ecotaxa_proj
         source_key = f"{row['Profile']}:{row['Depth [m]']}"
         bin_rows.append(
             f"{profile_id}\t{csv_escape(source_key)}\t{row['Depth [m]'] - 2.5:g}\t"
-            f"{row['Depth [m]'] + 2.5:g}\t{row['Depth [m]'] - 2.5:g}\t{row['Sampled volume [L]']:g}"
+            f"{row['Depth [m]'] + 2.5:g}\t" + r"\N" + f"\t{row['Sampled volume [L]']!r}"
         )
     copy_sql = (
         "COPY warehouse.uvp_bin(profile_id,source_bin_key,depth_min_m,depth_max_m," 
@@ -248,7 +248,7 @@ def load_ctd(database_url: str, path: Path, *, dataset_key: str) -> dict:
                         profile_id,
                         f"{index}:{code}",
                         index,
-                        depth,
+                        r"\N",
                         depth,
                         code,
                         CTD_CODES[code][0],
@@ -275,6 +275,7 @@ def main() -> int:
     parser.add_argument("--state-file", type=Path)
     parser.add_argument("--ecopart-tsv", type=Path)
     parser.add_argument("--ecopart-url")
+    parser.add_argument("--ecopart-encoding", default="utf-8")
     parser.add_argument("--ecopart-project-id", type=int)
     parser.add_argument("--ecotaxa-project-id", type=int)
     parser.add_argument("--ctd-tsv", type=Path)
@@ -286,6 +287,11 @@ def main() -> int:
     args.staging_dir.mkdir(parents=True, exist_ok=True)
     state_file = args.state_file or (args.staging_dir / "load_state.json")
     state = load_state(state_file)
+    target_key = hashlib.sha256(args.database_url.encode()).hexdigest()
+    if state.get("target_key") != target_key:
+        state = {"target_key": target_key}
+    if (args.ecopart_tsv or args.ecopart_url) and args.ecopart_project_id is None:
+        parser.error("--ecopart-project-id est requis pour EcoPart")
     if args.ecopart_project_id and not (args.ecopart_tsv or args.ecopart_url):
         parser.error("--ecopart-project-id nécessite --ecopart-tsv ou --ecopart-url")
     if not (args.ecopart_tsv or args.ecopart_url or args.ctd_tsv or args.ctd_url):
@@ -307,6 +313,7 @@ def main() -> int:
                     args.database_url, path,
                     project_id=args.ecopart_project_id,
                     ecotaxa_project_id=args.ecotaxa_project_id,
+                    encoding=args.ecopart_encoding,
                 )
             except Exception:
                 state["ecopart"] = {"status": "failed", "sha256": digest}
