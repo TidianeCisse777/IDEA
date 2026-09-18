@@ -34,6 +34,12 @@ Le warehouse conserve les données sources et leurs clés natives. Les tables
 métadonnées nécessaires (campagne, station, date, position, instrument et
 profondeur) pour éviter des tours de jointure dans le notebook.
 
+Le support cible est PostgreSQL avec PostGIS. PostgreSQL porte les contraintes,
+les liens, les agrégations et les vues ; PostGIS affecte les samples aux zones
+maritimes à l'ingestion. Les fichiers bruts et Parquet restent référencés par
+leur manifeste et leur empreinte, sans devenir des blobs SQL. Voir la
+[décision de stockage](WAREHOUSE_STORAGE_DECISION.md).
+
 L'abondance UVP taxonomique est dérivée de `COUNT(EcoTaxa objects)` et du
 `Sampled volume [L]` EcoPart. L'abondance FILET est importée depuis les colonnes
 NeoLab déjà normalisées. Les filtres de taxon, stade, profondeur et fenêtre

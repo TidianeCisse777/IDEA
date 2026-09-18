@@ -336,6 +336,16 @@ complet avec appel d’outil depuis Open WebUI.
   référence d'extraction, de signatures, de retries et de contrôles ; son cache
   SQLite ne remplace pas le warehouse PostgreSQL.
 
+### 18 septembre 2026 Décision de stockage PostgreSQL/PostGIS
+
+- La décision est documentée dans
+  [docs/WAREHOUSE_STORAGE_DECISION.md](docs/WAREHOUSE_STORAGE_DECISION.md).
+- PostgreSQL devient la source de vérité ; PostGIS calcule l'affectation des
+  samples aux zones à l'ingestion. Les fichiers bruts et Parquet restent
+  référencés par manifeste et empreinte.
+- La prochaine étape est le plan opérationnel d'accès aux sources, de
+  téléchargement vérifié, de staging et de chargement.
+
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
 déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation
