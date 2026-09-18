@@ -5,6 +5,9 @@ cas doit produire un DataFrame directement exploitable. Les valeurs entre `:`
 sont des paramètres fournis par l’agent ; les jointures structurelles sont déjà
 encapsulées dans les vues `explore`.
 
+Les cas non résolus et leurs critères de clôture sont suivis dans
+[docs/UVP_FRICTIONS_OPEN.md](UVP_FRICTIONS_OPEN.md).
+
 ## 1. Lister les projets UVP
 
 Question : « Quels projets existent, combien de profils, de samples et de

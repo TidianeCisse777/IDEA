@@ -316,6 +316,16 @@ complet avec appel d’outil depuis Open WebUI.
 - 16 tests de contrat réussissent ; le DDL complet s'exécute dans PostgreSQL
   temporaire.
 
+### 18 septembre 2026 Registre des frictions ouvertes
+
+- Les cas qui n'ont pas encore de solution validée sont suivis dans
+  [docs/UVP_FRICTIONS_OPEN.md](docs/UVP_FRICTIONS_OPEN.md) : métadonnées
+  manquantes, couverture CTD, unités, taxonomie, versions et grains de
+  jointure.
+- Chaque entrée précise son statut, la gestion prévue, la preuve attendue et
+  les critères de clôture. L'agent doit exposer les statuts au lieu de choisir
+  une valeur absente ou ambiguë.
+
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
 déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation
