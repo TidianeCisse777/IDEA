@@ -251,9 +251,25 @@ complet avec appel d’outil depuis Open WebUI.
 - Neuf tests de contrat ajoutés dans `tests/test_warehouse_schema.py` : couches,
   grains, formule UVP, agrégation pondérée, conservation des valeurs FILET,
   liens CTD et conservation des non-appariés. Résultat : 9/9 réussis.
-- Limites : DDL PostgreSQL non déployé et vue finale `filet_uvp_abundance`
-  encore à implémenter après validation des colonnes CTD et du support vertical.
-  Phase 1 reste en cours ; aucun use case conversationnel déclaré validé.
+- Cette entrée documente l'état initial de la proposition ; la couche
+  `filet_uvp_abundance` et le DDL exécutable sont détaillés dans l'entrée
+  suivante. Phase 1 reste en cours ; aucun use case conversationnel déclaré
+  validé.
+
+### 18 septembre 2026 Couche d'exploration EcoTaxa/EcoPart/CTD
+
+- Le brouillon SQL expose le parcours direct
+  `uvp_projects → uvp_samples → uvp_objects → uvp_taxon_abundance`, avec
+  rattachement objet → bin EcoPart, volume échantillonné et métadonnées
+  EcoTaxa conservées.
+- Les liens `ecotaxa_ctd_profile`/`ecotaxa_ctd` donnent accès au profil puis
+  aux mesures CTD sans refaire la jointure dans l'agent. La comparaison FILET
+  reste disponible par `filet_uvp_matches` et `filet_uvp_abundance`, avec une
+  table de mapping taxonomique explicite.
+- Validation : 11 tests de contrat Python réussis, `git diff --check` réussi,
+  et exécution complète du DDL dans une base PostgreSQL temporaire réussie.
+- Limites : ingestion réelle, cardinalités CTD et taxonomie doivent encore
+  être vérifiées sur un jeu de campagne avant de déclarer le use case validé.
 
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore

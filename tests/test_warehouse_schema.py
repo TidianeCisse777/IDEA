@@ -40,10 +40,27 @@ class WarehouseSchemaContractTests(unittest.TestCase):
         self.assertIn("Les abondances FILET sont des valeurs source", self.sql)
 
     def test_keeps_native_ctd_links_and_profile_level_navigation(self):
-        for table in ("ctd_profile", "ctd_measurement", "uvp_ctd"):
+        for table in ("ctd_profile", "ctd_measurement", "uvp_ctd", "ecotaxa_ctd", "filet_ctd"):
             self.assertRegex(self.sql, rf"CREATE TABLE warehouse\.{table}\b")
         self.assertIn("CREATE VIEW explore.uvp_ctd AS", self.sql)
         self.assertIn("CREATE VIEW explore.uvp_objects AS", self.sql)
+        self.assertIn("CREATE VIEW explore.ecotaxa_ctd_profile AS", self.sql)
+        self.assertIn("CREATE VIEW explore.ecotaxa_ctd AS", self.sql)
+
+    def test_exposes_simple_project_sample_object_navigation(self):
+        for view in ("uvp_projects", "uvp_samples", "uvp_objects", "uvp_taxon_abundance"):
+            self.assertIn(f"CREATE VIEW explore.{view} AS", self.sql)
+        self.assertIn("sample_orig_id", self.sql)
+        self.assertIn("ctd_rosette_filename", self.sql)
+        self.assertIn("sampled_volume_l", self.sql)
+
+    def test_exposes_filet_ctd_and_comparison_contracts(self):
+        self.assertIn("CREATE TABLE warehouse.filet_uvp_match", self.sql)
+        self.assertIn("CREATE TABLE warehouse.taxon_mapping", self.sql)
+        self.assertIn("CREATE VIEW explore.filet_ctd AS", self.sql)
+        self.assertIn("CREATE VIEW explore.filet_uvp_matches AS", self.sql)
+        self.assertIn("CREATE VIEW explore.filet_uvp_abundance AS", self.sql)
+        self.assertIn("time_gap_hours", self.sql)
 
     def test_keeps_unmatched_filet_rows_with_left_join(self):
         view = self.sql.split("CREATE VIEW explore.filet_data AS", 1)[1]

@@ -102,6 +102,26 @@ large (température, salinité, oxygène...) sera définie après inspection des
 variables et capteurs réels, sans confondre variantes physiques ni pression
 et profondeur. Les concentrations déjà fournies ne sont pas recalculées.
 
+La surface `explore` suit maintenant le parcours utilisateur :
+
+```text
+uvp_projects
+  → uvp_samples
+  → uvp_objects (EcoTaxa + bin/volume EcoPart)
+  → uvp_taxon_abundance
+  → ecotaxa_ctd_profile / ecotaxa_ctd
+
+filet_samples
+  → filet_data / filet_totals
+  → filet_ctd
+  → filet_uvp_matches / filet_uvp_abundance
+```
+
+`uvp_object_bin` enregistre le rattachement objet → bin, son écart de
+profondeur et son statut. `taxon_mapping` évite de comparer implicitement deux
+identifiants taxonomiques qui ne représenteraient pas le même concept. La vue
+de comparaison ne produit des paires d'abondance que pour un mapping accepté.
+
 ## Limites et prochaine vérification
 
 DDL illustratif non exécuté, sans ingestion ni connexion notebook. Il ne
