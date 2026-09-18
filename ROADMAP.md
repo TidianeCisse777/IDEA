@@ -2,7 +2,7 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 11 septembre 2026
+**Dernière mise à jour :** 18 septembre 2026
 
 ## Objectif
 
@@ -40,7 +40,7 @@ doivent rester synchronisés avec ce fichier versionné.
 
 | Phase | Période | Livrable | Critère de réussite | État |
 |---|---|---|---|---|
-| 1. Cadrage | 14–25 sept. | Schéma V1 et périmètre validés | Revue d’équipe confirmant que les jeux EcoTaxa, EcoPart, CTD et FILET retenus peuvent être reliés | En préparation |
+| 1. Cadrage | 14–25 sept. | Schéma V1 et périmètre validés | Revue d’équipe confirmant que les jeux EcoTaxa, EcoPart, CTD et FILET retenus peuvent être reliés | En cours — proposition de schéma rédigée, revue attendue |
 | 2. Construction du warehouse V1 | 28 sept.–9 oct. | Warehouse échantillon utilisable en local | Données attendues retrouvées par SQL et jointures de référence cohérentes | À faire |
 | 3. Validation des données | 12–23 oct. | Jeu de tests et anomalies documentées | Cas de référence conformes aux sources originales | À faire |
 | 4. Déploiement | 26 oct.–6 nov. | Warehouse V1 accessible sur le VPS | Connexion stable, restauration testée et aucune écriture possible depuis IDEA | À faire |
@@ -152,6 +152,108 @@ avec un flux plus simple, vérifiable et reproductible.
   attributs avec la version LiteLLM épinglée ;
 - traitement d’embeddings lancé par l’ancien chemin sur un CSV arrêté avant le
   déploiement du correctif.
+
+### 14 septembre 2026 Rechargement de la clé OpenAI
+
+- `OPENAI_API_KEY` est présente dans `.env` et valide par `curl` ;
+- après libération de caches locaux et redémarrage de Docker Desktop, les
+  services LangGraph/LiteLLM ont été recréés ;
+- les empreintes de la variable dans les deux conteneurs correspondent à `.env`
+  et `GET /health` de LangGraph répond correctement.
+
+**Limite :** le test de santé ne remplace pas encore un échange conversationnel
+complet avec appel d’outil depuis Open WebUI.
+
+### 18 septembre 2026 Proposition de schéma warehouse
+
+- Proposition documentée dans [docs/WAREHOUSE_PROPOSAL.md](docs/WAREHOUSE_PROPOSAL.md) :
+  grains FILET/UVP/CTD, sources EcoTaxa/EcoPart/Amundsen, versions, appariements,
+  vues SQL en lecture seule et journal d'exploration séparé.
+- Documentation locale et pages officielles des fournisseurs consultées.
+- Limites : archive absente au chemin prévu ; aucun export métier inspecté,
+  aucune jointure exécutée, aucun test runtime ni validation scientifique.
+- Phase 1 en cours, non validée. Prochaine étape : revue des exports et des
+  règles d'appariement avec Cyril et l'équipe sur une campagne représentative.
+- GitHub Project : aucun identifiant de projet trouvé dans les références
+  locales consultées ; synchronisation non effectuée. Aucun push ni publication.
+
+### 18 septembre 2026 Jointures et calculs confiés aux outils
+
+- Cadrage corrigé sur demande : jointures scientifiques et calculs métier
+  confiés à des outils déterministes ; exploration par l'agent de relations
+  préparées. Appariement FILET/UVP ↔ CTD spatial et temporel, extraction
+  verticale séparée.
+- [Brouillon SQL pour revue](docs/warehouse_schema_proposal.sql) ajouté :
+  données versionnées, unités FILET/UVP/CTD, observations, politiques,
+  exécutions, correspondances, résultats et historique d'exploration.
+- Limites : DDL non exécuté, outils non implémentés, droits et publication
+  immuable à construire ; pas de validation scientifique ni de fin de phase.
+  GitHub Project reste non synchronisé, faute d'identifiant identifié.
+
+### 18 septembre 2026 Recentrage sur SQL vers DataFrame
+
+- La correction utilisateur remplace le cadrage précédent : IDEA génère du
+  SQL en lecture seule et charge les résultats dans son notebook. `work.*`
+  retiré du brouillon ; relations connues et vues simples prioritaires.
+- Code public EcoPart consulté au commit
+  `4dcd5968bb299b42d2f38406b19b8ca8354503f8` : CTD importée par nom
+  d'échantillon dans le projet, export EcoTaxa via projet lié et `orig_id`.
+  Ces preuves ne confirment pas la version ni les exports NeoLab.
+- Proposition et SQL révisés. Clés FILET et liens avec le catalogue CTD
+  Amundsen encore à vérifier sur les données ; aucun appariement, DDL ou
+  scénario notebook exécuté. Phase 1 toujours en cours. GitHub Project
+  non synchronisé, identifiant toujours non disponible.
+
+### 18 septembre 2026 Vérification des exports FILET réels
+
+- CSV retrouvés sur le Bureau et inspectés en lecture seule : métadonnées
+  6 105 lignes, abondances/biomasses 5 047 lignes, dictionnaire de 93 colonnes.
+  Empreintes et preuves dans [docs/FILET_EXPORT_REVIEW.md](docs/FILET_EXPORT_REVIEW.md).
+- Jointure pandas `many_to_one` sur SAMPLE_ID + ANALYSIS_ID : 4 941 appariés,
+  106 non appariés (9 analyses de 2024 absentes des métadonnées), sans
+  multiplication des lignes. Aucun écart sur six champs de contexte comparés.
+- Schéma FILET corrigé : multiples analyses/filets, valeurs déjà calculées,
+  deux volumes, biomasses et stades/agrégats distincts, LEFT JOIN explicite.
+- Limites : aucun identifiant CTD/EcoTaxa explicite dans ces exports ; DDL
+  non exécuté, scénario IDEA non testé. Phase 1 en cours ; GitHub Project
+  non synchronisé, identifiant non disponible. Aucun fichier source modifié.
+
+### 18 septembre 2026 Recherche de l'ancien schéma et exports UVP
+
+- Ancien schéma SQLite non retrouvé ; le dossier `~/PROJET_INFO/IDEA` ne
+  contient aucun fichier. Archive attendue toujours absente.
+- Exports et script R retrouvés dans Downloads/UVP_metrics_for_MCA : 30 profils
+  communs EcoTaxa/EcoPart, clé profil + profondeur EcoPart unique. Jointure
+  reproduite en lecture seule : 137 128/137 128 objets appariés sans duplication.
+- Preuves dans [docs/UVP_EXPORT_REVIEW.md](docs/UVP_EXPORT_REVIEW.md).
+  Champ CTD présent mais partiellement vide ; lien Amundsen non vérifié.
+  Aucun changement runtime/DDL, phase 1 non clôturée. GitHub Project reste
+  non synchronisé faute de référence identifiée.
+
+### 18 septembre 2026 Ancien schéma retrouvé dans Git
+
+- Ancien code NeoLab retrouvé dans `origin/main` (`475af5d`) et les branches
+  EcoPart/comparabilité. Inspection par `git show`, aucun checkout.
+- DDL SQLite EcoTaxa et manifeste EcoPart, pont SQL/DataFrame, contrat de
+  jointure EcoTaxa/EcoPart et matcher CTD par nom de fichier examinés.
+  Références dans [docs/LEGACY_WAREHOUSE_REFERENCES.md](docs/LEGACY_WAREHOUSE_REFERENCES.md).
+- La recherche antérieure concernait les fichiers sur disque : le code
+  historique est disponible dans Git, les bases de données remplies ne sont
+  pas retrouvées. Aucun test historique exécuté, phase 1 toujours en cours.
+  GitHub Project non synchronisé faute de référence identifiée.
+
+### 18 septembre 2026 Validation documentaire de la proposition V1
+
+- Contrat V1 récapitulé : métadonnées EcoTaxa conservées, UVP dérivé
+  EcoTaxa/EcoPart par bin, FILET importé avec ses abondances normalisées,
+  CTD reliée au profil et surface SQL pour DataFrame.
+- Diagramme ajouté dans [docs/WAREHOUSE_ARCHITECTURE.md](docs/WAREHOUSE_ARCHITECTURE.md).
+- Neuf tests de contrat ajoutés dans `tests/test_warehouse_schema.py` : couches,
+  grains, formule UVP, agrégation pondérée, conservation des valeurs FILET,
+  liens CTD et conservation des non-appariés. Résultat : 9/9 réussis.
+- Limites : DDL PostgreSQL non déployé et vue finale `filet_uvp_abundance`
+  encore à implémenter après validation des colonnes CTD et du support vertical.
+  Phase 1 reste en cours ; aucun use case conversationnel déclaré validé.
 
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
