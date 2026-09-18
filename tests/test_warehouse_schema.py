@@ -54,6 +54,16 @@ class WarehouseSchemaContractTests(unittest.TestCase):
         self.assertIn("ctd_rosette_filename", self.sql)
         self.assertIn("sampled_volume_l", self.sql)
 
+    def test_exposes_versioned_marine_zone_on_uvp_navigation(self):
+        for column in (
+            "marine_zone_key",
+            "marine_zone_source",
+            "marine_zone_version",
+            "marine_zone_assignment_status",
+        ):
+            self.assertIn(column, self.sql)
+        self.assertIn("COUNT(DISTINCT u.cast_key) AS n_casts", self.sql)
+
     def test_exposes_filet_ctd_and_comparison_contracts(self):
         self.assertIn("CREATE TABLE warehouse.filet_uvp_match", self.sql)
         self.assertIn("CREATE TABLE warehouse.taxon_mapping", self.sql)

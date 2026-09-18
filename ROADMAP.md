@@ -271,6 +271,16 @@ complet avec appel d’outil depuis Open WebUI.
 - Limites : ingestion réelle, cardinalités CTD et taxonomie doivent encore
   être vérifiées sur un jeu de campagne avant de déclarer le use case validé.
 
+### 18 septembre 2026 Premiers cas d'usage UVP
+
+- Cas documentés dans [docs/UVP_USE_CASES_SQL.md](docs/UVP_USE_CASES_SQL.md) :
+  projets, zones maritimes, samples, objets, bins, abondances et CTD.
+- Le modèle expose désormais la zone maritime, sa source, sa version et son
+  statut d'affectation sur les profils/samples, ainsi que `cast_key` et le
+  nombre de casts par projet.
+- Les frictions sont explicitées : projet multi-zone, point-dans-polygone,
+  objet chevauchant un bin, dictionnaire CTD et mapping taxonomique.
+
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
 déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation
