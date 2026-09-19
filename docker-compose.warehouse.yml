@@ -1,0 +1,18 @@
+services:
+  neolab-warehouse-db:
+    image: postgis/postgis:16-3.4
+    container_name: neolab-warehouse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${WAREHOUSE_POSTGRES_DB:-neolab_warehouse}
+      POSTGRES_USER: ${WAREHOUSE_POSTGRES_USER:-neolab}
+      POSTGRES_PASSWORD: ${WAREHOUSE_POSTGRES_PASSWORD:?set WAREHOUSE_POSTGRES_PASSWORD in .env.warehouse}
+    ports:
+      - "${WAREHOUSE_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - neolab_warehouse_pgdata:/var/lib/postgresql/data
+      - ./docs/warehouse_schema_proposal.sql:/docker-entrypoint-initdb.d/001_warehouse_schema.sql:ro
+
+volumes:
+  neolab_warehouse_pgdata:
+    name: neolab_warehouse_pgdata

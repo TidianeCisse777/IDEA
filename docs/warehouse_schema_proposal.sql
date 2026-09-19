@@ -16,6 +16,18 @@ CREATE TABLE warehouse.dataset_version (
     UNIQUE (source_instance, dataset_key, version_key)
 );
 
+-- Métadonnées du projet EcoTaxa, séparées des samples pour une exploration
+-- directe projet → samples sans demander à l'agent de reconstruire le lien.
+CREATE TABLE warehouse.ecotaxa_project (
+    project_id bigint PRIMARY KEY,
+    title text NOT NULL,
+    instrument text,
+    status text,
+    object_count bigint,
+    source_instance text NOT NULL,
+    dataset_version_id bigint NOT NULL REFERENCES warehouse.dataset_version
+);
+
 CREATE TABLE warehouse.ecotaxa_sample (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     dataset_version_id bigint NOT NULL REFERENCES warehouse.dataset_version,
@@ -57,6 +69,7 @@ CREATE TABLE warehouse.ecotaxa_object (
     category_id text,
     category_name text,
     annotation_status text,
+    object_datetime timestamptz,
     depth_min_m double precision,
     depth_max_m double precision,
     object_lat double precision,

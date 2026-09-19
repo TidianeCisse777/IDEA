@@ -226,3 +226,5 @@ local_scripts/
 /data
 # Production TLS certificates, private keys, and ACME account material
 /certbot/
+.env.warehouse
+data/warehouse_backups/

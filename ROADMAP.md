@@ -346,6 +346,22 @@ complet avec appel d’outil depuis Open WebUI.
 - La prochaine étape est le plan opérationnel d'accès aux sources, de
   téléchargement vérifié, de staging et de chargement.
 
+### 18 septembre 2026 Validation technique du warehouse V1 EcoTaxa/CTD
+
+- PostgreSQL/PostGIS local est opérationnel dans Docker (`neolab-warehouse-db`)
+  avec sauvegarde compressée versionnée hors Git.
+- EcoTaxa contient 23 projets, 6 138 samples et 15 050 002 objets chargés.
+- Amundsen contient 456 profils CTD et 5 130 421 mesures ; 904 samples
+  EcoTaxa sont reliés, dont les codes courts 2023/2024 résolus par date et
+  position. Les références sans correspondance restent conservées et
+  qualifiées.
+- Les vues `explore.*` de navigation UVP, EcoTaxa–CTD et FILET–UVP/CTD sont
+  créées dans le DDL et présentes dans la base. Les vues UVP/EcoPart restent
+  vides jusqu'au prochain chargement EcoPart.
+- La couverture et les limites sont détaillées dans
+  [docs/WAREHOUSE_ECOTAXA_QA.md](docs/WAREHOUSE_ECOTAXA_QA.md). La prochaine
+  étape est l'accès, l'extraction et le chargement EcoPart.
+
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
 déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation
