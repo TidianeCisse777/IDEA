@@ -362,6 +362,16 @@ complet avec appel d’outil depuis Open WebUI.
   [docs/WAREHOUSE_ECOTAXA_QA.md](docs/WAREHOUSE_ECOTAXA_QA.md). La prochaine
   étape est l'accès, l'extraction et le chargement EcoPart.
 
+### 21 septembre 2026 Chargement et validation EcoPart
+
+- Les outils historiques EcoPart/EcoTaxa retrouvés dans Git ont été examinés : résolution serveur `filt_proj`, métadonnées du profil, jointure exacte au profil et grille de profondeur de 5 m. L'archive locale reste absente.
+- Un chargeur idempotent a téléchargé et conservé les archives originales de 11 projets EcoPart accessibles, avec empreinte, tâche serveur et manifeste local ignoré par Git. Les données sont chargées au grain profil/bin ; les lignes ZOO et métadonnées source restent séparées des particules.
+- Le warehouse contient 585 profils EcoPart, 59 801 bins et 10 479 780 objets EcoTaxa reliés à un bin. Les 228 objets sans bin restent explicitement non appariés ; la vue d'objets en expose donc 10 480 008. La couche d'abondance conserve les zéros des bins sans objet dans les dénominateurs.
+- Validation réelle : 11 archives comparées aux bins PostgreSQL sans écart ; six audits de jointure, profondeur, cardinalité, formule et provenance CTD retournent 0 anomalie. Les tests ciblés, dont la base PostgreSQL temporaire, réussissent.
+- Les sources, limites et commandes de reprise sont documentées dans `docs/WAREHOUSE_ECOPART.md` et `docs/WAREHOUSE_ECOTAXA_QA.md`.
+
+**Limites :** EcoPart n'a retourné aucun lien pour dix projets EcoTaxa ; le projet 10101 n'est pas classé car son endpoint a expiré. Aucun use case conversationnel IDEA ni validation scientifique d'équipe n'est déclaré achevé. La prochaine étape reste l'ingestion FILET, puis les jointures FILET–UVP/CTD sur correspondances vérifiées.
+
 **Limites restantes :** aucun schéma warehouse V1 ni jeu de campagnes n’est
 encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est encore
 déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation

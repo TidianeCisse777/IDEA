@@ -81,3 +81,17 @@ le jeu Amundsen interrogé.
   395** (**75,19 %**)
 - Projet Amundsen 2025 `17808` : **0/11** tant que la source CTD 2025 n'est
   pas publiée.
+
+## EcoPart et jointures EcoTaxa — 21 septembre 2026
+
+- Projets EcoPart liés et accessibles : **11**, reliés à **12** projets EcoTaxa. EcoTaxa 149 est relié aux projets EcoPart 86 et 87 ; les projets EcoTaxa 20880 et 20890 réutilisent respectivement ces deux sources.
+- Profils EcoPart chargés : **585** ; bins de 5 m : **59 801** ; volumes nuls ou négatifs : **0**.
+- Objets EcoTaxa reliés à un bin EcoPart : **10 479 780**. Avec les **228** objets restant sans bin, `explore.uvp_objects` expose **10 480 008** objets EcoTaxa, les non-appariés ayant un bin NULL sans approximation de profondeur.
+- La vue `explore.uvp_taxon_abundance` contient **2 703 052** lignes, dont **2 244 582** zéros explicites pour les bins échantillonnés sans objet du taxon considéré. Les dénominateurs conservent donc ces bins.
+- Liens UVP → CTD propagés seulement depuis les correspondances EcoTaxa–CTD acceptées : **413** liens pour **413** profils UVP.
+
+Le validateur a comparé les **11** archives EcoPart brutes aux bins chargés : aucun écart de profil, profondeur normalisée ou volume. Les audits SQL suivants retournent tous **0** : objet relié au mauvais sample, profondeur hors bin, plusieurs bins pour un objet dans une même version, formule d'abondance incorrecte, différence entre les comptes d'objets et les abondances, et lien UVP–CTD sans preuve EcoTaxa–CTD acceptée.
+
+Les cinq samples EcoTaxa 149 non liés (`ge_2016_146`, `ge_2016_147`, `ge_2016_148`, `ge_2016_001b`, `ge_2016_002b`) ne figurent dans aucun profil EcoPart exporté et restent non appariés. Les projets EcoTaxa 801, 802, 2331, 3068, 11469, 12063, 13224, 14622, 14669 et 17808 ne retournent pas de lien serveur EcoPart. Le projet 10101 n'a pas été classé : l'endpoint EcoPart `searchsample?filt_proj=10101` n'a pas répondu avant le délai client. Cette absence de réponse ne doit pas être interprétée comme une absence de données.
+
+Les objets EcoTaxa chargés ne portent pas actuellement de statut d'annotation. Les abondances dérivées utilisent donc tous les objets chargés et sont explicitement étiquetées par `annotation_policy`; elles ne sont pas assimilées aux abondances ZOO validées fournies par EcoPart.
