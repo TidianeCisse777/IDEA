@@ -207,6 +207,11 @@ CREATE TABLE warehouse.filet_sample (
     cast_number text,                   -- numero du trait ; PAS un ID CTD prouve
     latitude double precision,
     longitude double precision,
+    marine_zone_key text,
+    marine_zone_name text,
+    marine_zone_source text,
+    marine_zone_version text,
+    marine_zone_assignment_status text CHECK (marine_zone_assignment_status IN ('assigned', 'ambiguous', 'outside', 'unresolved')),
     gear text,
     tow_type text,
     min_sample_depth numeric,
@@ -507,7 +512,9 @@ LEFT JOIN warehouse.filet_analysis a ON a.sample_ref = s.id
 GROUP BY s.id, s.dataset_version_id, s.sample_id, s.deployment_id,
          s.sampling_year, s.sampling_platform, s.station_name,
          s.deployment_datetime_start, s.deployment_datetime_end, s.cast_number,
-         s.latitude, s.longitude, s.gear, s.tow_type, s.min_sample_depth,
+         s.latitude, s.longitude, s.marine_zone_key, s.marine_zone_name,
+         s.marine_zone_source, s.marine_zone_version, s.marine_zone_assignment_status,
+         s.gear, s.tow_type, s.min_sample_depth,
          s.max_sample_depth, s.net_mesh_size, s.depth_calc_net_filtered_vol,
          s.flowmeter_calc_vol, s.number_of_nets, s.sample_nets,
          s.net_sampling_ids, s.subsampling_quantity, s.subsampling_unit;

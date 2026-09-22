@@ -164,6 +164,13 @@ avec un flux plus simple, vérifiable et reproductible.
 **Limite :** le test de santé ne remplace pas encore un échange conversationnel
 complet avec appel d’outil depuis Open WebUI.
 
+### 21 septembre 2026 Enrichissement spatial FILET
+
+- `warehouse.filet_sample` porte désormais les mêmes métadonnées de zone maritime versionnées que les profils : clé, nom, source, version et statut d’affectation ; migration idempotente dans `docs/warehouse_filet_zone_migration.sql`.
+- Les **6 102** échantillons FILET géolocalisés ont été classés avec `shared_data/geo/zones_registry.geojson` (`registry-v1`) : **5 239 assigned**, **863 ambiguous**. Les cas ambigus restent explicites, sans choix arbitraire entre zones qui se chevauchent.
+- Le chargeur FILET réapplique cette affectation lors de chaque recharge, et `explore.filet_samples` expose les colonnes.
+- Le navigateur filtre maintenant FILET directement sur `filet_sample.marine_zone_name` ; contrôle : la Baie de Baffin retourne **1 467** échantillons FILET à la fois dans la synthèse et sur la carte.
+
 ### 18 septembre 2026 Proposition de schéma warehouse
 
 - Proposition documentée dans [docs/WAREHOUSE_PROPOSAL.md](docs/WAREHOUSE_PROPOSAL.md) :
@@ -374,6 +381,51 @@ complet avec appel d’outil depuis Open WebUI.
 - **Simulation SQL de parcours, 21 septembre :** la requête « profils de la Baie de Baffin en 2024 » retourne 123 profils EcoPart, tous géolocalisés. Pour la carte, le taxon explicite `ecotaxa:name:Copepoda<Multicrustacea` retourne une série d'abondance pour chacun des 123 profils, sans double politique d'annotation ; l'abondance cartographiée est `SUM(objets) / SUM(volume_L) × 1000`, au grain profil. Les autres clés contenant « Copepoda » sont des catégories distinctes et ne sont pas fusionnées implicitement.
 - **Validation au grain bin, 21 septembre :** ces 123 profils ont 13 800 bins, tous avec intervalle de profondeur et volume échantillonné valides, sans doublon de profondeur dans un profil. Pour `am_leg3_RA02_1`, la série Copépodes restitue notamment 132 objets sur 64 L entre 20 et 25 m (2 062,50 ind/m³) et des zéros explicites lorsque le bin n'a aucun objet du taxon.
 - **Test de rendu Python, 21 septembre :** l'image LangGraph reconstruite contient `psycopg` et Matplotlib. Un script exécuté dans cette image a lu les 95 bins de `am_leg3_RA02_1` via PostgreSQL et produit un PNG Matplotlib. Aucun outil warehouse n'est encore enregistré dans `langgraph/` : cette preuve valide le runtime, pas encore le use case conversationnel d'accès libre aux données.
+
+### 21 septembre 2026 Chargement FILET
+
+- Les trois exports FILET validés du 26 mai 2026 ont été chargés par
+  `scripts/populate_filet.py` avec leurs trois empreintes SHA-256 dans une
+  version unique `filet/neolab-filet/2026-05-26`. Les fichiers bruts du Bureau
+  restent inchangés.
+- Le warehouse contient 6 102 échantillons, 1 502 analyses, 6 229 appartenances
+  échantillon-filet et 90 780 lignes au grain ligne source × taxon × stade,
+  issues de 5 047 lignes larges. Les valeurs explicites à zéro et l'absence de
+  biomasse pour nauplii/totaux sont conservées ; aucun volume ni abondance n'a
+  été recalculé.
+- La jointure interne des métadonnées conserve 4 941 lignes source appariées
+  et 106 non appariées (1 908 lignes de stades), comme dans la vérification
+  initiale. Aucun orphelin de clé n'est trouvé. Les tables de liens FILET vers
+  EcoTaxa, CTD ou UVP restent vides : les exports ne fournissent pas de preuve
+  de ces relations.
+
+### 21 septembre 2026 Navigateur de couverture V1
+
+- Un navigateur local, indépendant de l'agent conversationnel, est disponible
+  dans `warehouse_navigator/` et exposé par le service Docker
+  `warehouse-navigator` sur `http://localhost:8090`. Il lit PostgreSQL en
+  lecture seule et ne présente aucun objet individuel.
+- Les filtres zone, année, projet EcoTaxa/EcoPart et recherche textuelle
+  retournent les couvertures agrégées réelles : profils, bins, volume, objets
+  EcoTaxa associés, séries taxonomiques, CTD, FILET et liens prouvés. FILET
+  reste explicitement indépendant des filtres spatiaux/projets tant qu'un lien
+  externe n'est pas démontré.
+- Contrôle réel : « Baie de Baffin, 2024 » retourne 123 profils, 13 800 bins,
+  4 279 581 objets associés, 117 séries taxonomiques, 94 profils CTD et 558
+  échantillons FILET de 2024. Une recherche `21916` retourne l'échantillon
+  FILET correspondant sans lui attribuer de lien UVP.
+
+### 21 septembre 2026 Candidats FILET–UVP par station et temps
+
+- `scripts/populate_filet_uvp_matches.py` crée des correspondances sans utiliser
+  les identifiants de projets ou d'échantillons des deux méthodes. Il normalise
+  uniquement le libellé de station puis applique une fenêtre temporelle passée
+  explicitement par paramètre.
+- Première exécution avec une fenêtre de 10 h : 130 liens uniques sont
+  `accepted` et 288 lignes restent `ambiguous` lorsqu'un échantillon FILET a
+  plusieurs profils UVP candidats. Les preuves stockent stations source et
+  normalisée, dates, écart temporel, fenêtre et nombre de candidats. Aucun lien
+  chargé ne dépasse 10 h.
 
 **Limites :** EcoPart n'a retourné aucun lien pour dix projets EcoTaxa ; le projet 10101 n'est pas classé car son endpoint a expiré. Aucun use case conversationnel IDEA ni validation scientifique d'équipe n'est déclaré achevé. La prochaine étape reste l'ingestion FILET, puis les jointures FILET–UVP/CTD sur correspondances vérifiées.
 

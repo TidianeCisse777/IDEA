@@ -13,6 +13,25 @@ services:
       - neolab_warehouse_pgdata:/var/lib/postgresql/data
       - ./docs/warehouse_schema_proposal.sql:/docker-entrypoint-initdb.d/001_warehouse_schema.sql:ro
 
+  warehouse-navigator:
+    build:
+      context: ./warehouse_navigator
+    container_name: neolab-warehouse-navigator
+    restart: unless-stopped
+    environment:
+      WAREHOUSE_POSTGRES_HOST: neolab-warehouse-db
+      WAREHOUSE_POSTGRES_PORT: "5432"
+      WAREHOUSE_POSTGRES_DB: ${WAREHOUSE_POSTGRES_DB:-neolab_warehouse}
+      WAREHOUSE_POSTGRES_USER: ${WAREHOUSE_POSTGRES_USER:-neolab}
+      WAREHOUSE_POSTGRES_PASSWORD: ${WAREHOUSE_POSTGRES_PASSWORD:?set WAREHOUSE_POSTGRES_PASSWORD in .env.warehouse}
+    ports:
+      - "${WAREHOUSE_NAVIGATOR_PORT:-8090}:8090"
+    depends_on:
+      neolab-warehouse-db:
+        condition: service_started
+    volumes:
+      - ./shared_data/geo/zones_registry.geojson:/data/zones_registry.geojson:ro
+
 volumes:
   neolab_warehouse_pgdata:
     name: neolab_warehouse_pgdata

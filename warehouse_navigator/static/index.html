@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Couverture NeoLab</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    :root { --ink:#152d3b; --muted:#58707c; --line:#d5e0e4; --paper:#fff; --ground:#eef3f4; --uvp:#007b88; --ctd:#6854b8; --filet:#c35b2d; --match:#17844b; --ambiguous:#b87514; --focus:#075d68; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-width:320px; background:var(--ground); color:var(--ink); font:15px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    button, select, input { font:inherit; }
+    button, input, select { touch-action:manipulation; }
+    :focus-visible { outline:3px solid #f2b653; outline-offset:2px; }
+    .topbar { height:68px; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:0 24px; background:var(--paper); border-bottom:1px solid var(--line); }
+    .brand { display:flex; align-items:baseline; gap:12px; min-width:0; }
+    h1 { margin:0; font-size:18px; letter-spacing:-.02em; white-space:nowrap; }
+    .subtitle { color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .status { display:flex; gap:7px; align-items:center; color:var(--muted); font-size:12px; white-space:nowrap; }
+    .status-dot { width:8px; height:8px; border-radius:50%; background:#29915b; }
+    .app { height:calc(100vh - 68px); min-height:550px; display:grid; grid-template-columns:292px minmax(0,1fr) 300px; }
+    .panel { background:var(--paper); overflow:auto; }
+    .filters { border-right:1px solid var(--line); padding:20px 18px 24px; }
+    .summary { border-left:1px solid var(--line); padding:22px 18px; }
+    .eyebrow { margin:0 0 6px; color:var(--muted); font-size:11px; font-weight:750; letter-spacing:.12em; text-transform:uppercase; }
+    h2 { margin:0; font-size:19px; letter-spacing:-.02em; }
+    .hint { margin:6px 0 18px; color:var(--muted); font-size:13px; }
+    .section { padding:16px 0; border-top:1px solid var(--line); }
+    .section:first-of-type { border-top:0; padding-top:0; }
+    .section-title { margin:0 0 10px; font-size:12px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+    .layer-toggle { display:flex; align-items:center; gap:9px; min-height:44px; cursor:pointer; }
+    .layer-toggle input { width:18px; height:18px; margin:0; accent-color:var(--focus); }
+    .symbol { flex:0 0 auto; width:11px; height:11px; border-radius:50%; background:var(--uvp); border:1px solid #fff; box-shadow:0 0 0 1px color-mix(in srgb, var(--uvp), #000 14%); }
+    .symbol.filet { background:var(--filet); box-shadow:0 0 0 1px color-mix(in srgb, var(--filet), #000 14%); }
+    .symbol.ctd { background:var(--ctd); box-shadow:0 0 0 1px color-mix(in srgb, var(--ctd), #000 14%); }
+    .toggle-copy { font-size:14px; font-weight:650; }
+    .toggle-copy small { display:block; color:var(--muted); font-size:12px; font-weight:400; }
+    .field { display:block; margin-top:13px; color:var(--ink); font-size:13px; font-weight:650; }
+    select { width:100%; height:42px; margin-top:5px; padding:0 10px; color:var(--ink); border:1px solid #b7c8ce; border-radius:7px; background:#fff; }
+    .range-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+    output { color:var(--focus); font-variant-numeric:tabular-nums; }
+    input[type=range] { width:100%; margin:10px 0 2px; accent-color:var(--focus); }
+    .range-note { color:var(--muted); font-size:12px; }
+    .apply { width:100%; min-height:44px; margin-top:18px; border:0; border-radius:7px; background:var(--focus); color:#fff; font-weight:700; cursor:pointer; transition:background .18s ease, transform .18s ease; }
+    .apply:hover { background:#044d56; }
+    .apply:active { transform:scale(.98); }
+    .map-wrap { position:relative; min-width:0; background:#dce9ec; }
+    #map { height:100%; width:100%; }
+    .map-key { position:absolute; z-index:900; left:16px; bottom:18px; display:grid; gap:6px; max-width:230px; padding:10px 12px; background:rgba(255,255,255,.94); border:1px solid var(--line); border-radius:8px; box-shadow:0 3px 12px rgba(21,45,59,.12); font-size:12px; }
+    .map-key div { display:flex; align-items:center; gap:7px; }
+    .map-key .line { width:19px; height:0; border-top:2px solid var(--match); }
+    .map-key .line.ambiguous { border-top-color:var(--ambiguous); border-top-style:dashed; }
+    .metric { padding:15px 0; border-bottom:1px solid var(--line); }
+    .metric strong { display:block; font-size:30px; letter-spacing:-.04em; font-variant-numeric:tabular-nums; line-height:1; }
+    .metric span { display:block; margin-top:5px; color:var(--muted); font-size:13px; }
+    .date-range { margin:7px 0 20px; color:var(--muted); font-variant-numeric:tabular-nums; }
+    .links { display:grid; gap:8px; }
+    .link-row { padding:10px 10px 10px 12px; border-left:4px solid var(--uvp); border-radius:0 7px 7px 0; background:#f6f9fa; }
+    .link-row.ctd { border-left-color:var(--ctd); }
+    .link-row.filet { border-left-color:var(--filet); }
+    .link-row strong { display:block; font-size:17px; line-height:1.1; font-variant-numeric:tabular-nums; }
+    .link-row small { display:block; margin-top:4px; color:var(--muted); font-size:12px; }
+    .empty { color:var(--muted); font-size:13px; }
+    .leaflet-popup-content { min-width:220px; font-size:13px; line-height:1.5; }
+    .leaflet-popup-content hr { border:0; border-top:1px solid var(--line); margin:8px 0; }
+    .zone-label { background:rgba(255,255,255,.86); border:0; border-radius:4px; color:var(--ink); font-size:12px; font-weight:700; padding:2px 5px; box-shadow:none; }
+    .zone-label:before { display:none; }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; animation:none!important; } }
+    @media (max-width:1024px) { .app { grid-template-columns:260px minmax(0,1fr); } .summary { display:none; } }
+    @media (max-width:680px) { .topbar { height:auto; min-height:62px; padding:12px 16px; } .subtitle,.status { display:none; } .app { height:auto; min-height:0; display:block; } .filters { border-right:0; border-bottom:1px solid var(--line); } .map-wrap { height:58vh; min-height:390px; } .summary { display:block; border-left:0; border-top:1px solid var(--line); } .section { padding:13px 0; } }
+  </style>
+</head>
+<body>
+  <header class="topbar"><div class="brand"><h1>Couverture NeoLab</h1><span class="subtitle">Explorer les profils et échantillons disponibles</span></div><div class="status"><span class="status-dot"></span>Warehouse disponible</div></header>
+  <div class="app">
+    <aside class="panel filters" aria-label="Filtres de couverture">
+      <p class="eyebrow">Affichage</p><h2>Explorer la couverture</h2><p class="hint">Choisissez les couches et le périmètre. Les points agrègent les profils ou échantillons à une même position.</p>
+      <section class="section"><h3 class="section-title">Couches</h3>
+        <label class="layer-toggle"><input checked id="uvp" type="checkbox"><i class="symbol" aria-hidden="true"></i><span class="toggle-copy">Profils UVP<small>EcoTaxa et EcoPart · violet si CTD relié</small></span></label>
+        <label class="layer-toggle"><input checked id="filet" type="checkbox"><i class="symbol filet" aria-hidden="true"></i><span class="toggle-copy">Échantillons FILET</span></label>
+      </section>
+      <section class="section"><h3 class="section-title">Correspondances</h3>
+        <label class="layer-toggle"><input id="matches" type="checkbox"><i class="symbol filet" aria-hidden="true"></i><span class="toggle-copy">Comparer FILET et UVP<small>Affiche seulement les paires acceptées</small></span></label>
+        <label class="field"><span class="range-head">Écart temporel maximal <output id="hoursOut">10 h</output></span><input id="hours" type="range" min="1" max="10" value="10"><span class="range-note">Une correspondance utilise la station normalisée et l’heure.</span></label>
+      </section>
+      <section class="section"><h3 class="section-title">Périmètre</h3>
+        <label class="field">Année<select id="year"><option value="">Toutes les années</option></select></label>
+        <label class="field">Zone de l’Arctique canadien<select id="zone"><option value="">Toutes les zones</option></select></label>
+        <label class="field">Projet EcoTaxa<select id="ecotaxa"><option value="">Tous les projets</option></select></label>
+        <label class="field">Projet EcoPart<select id="ecopart"><option value="">Tous les projets</option></select></label>
+        <button class="apply" id="go">Mettre à jour la carte</button>
+      </section>
+    </aside>
+    <main class="map-wrap" aria-label="Carte de couverture"><div id="map"></div><div class="map-key" aria-label="Légende"><div><i class="symbol"></i> UVP</div><div><i class="symbol ctd"></i> UVP avec CTD relié</div><div><i class="symbol filet"></i> FILET</div><div><i class="line"></i> correspondance acceptée</div><div><i class="line ambiguous"></i> correspondance ambiguë</div></div></main>
+    <aside class="panel summary" aria-live="polite"><p class="eyebrow">Couverture sélectionnée</p><h2 id="title">Toutes les données</h2><p class="date-range" id="period">Chargement…</p><div class="metric"><strong id="profiles">—</strong><span>profils UVP</span></div><div class="metric"><strong id="objects">—</strong><span>objets EcoTaxa associés</span></div><div class="metric"><strong id="ctds">—</strong><span>profils CTD</span></div><div class="metric"><strong id="filets">—</strong><span>échantillons FILET</span></div></aside>
+  </div>
+<script>
+const $=x=>document.getElementById(x),fmt=x=>new Intl.NumberFormat('fr-CA').format(+x||0),dateTime=x=>{if(!x)return '—';let d=new Date(x);return Number.isNaN(d.valueOf())?x:new Intl.DateTimeFormat('fr-CA',{timeZone:'UTC',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(d)+' UTC'},gap=x=>{let m=Math.round(Number(x)*60);if(!Number.isFinite(m))return '—';if(m<1)return '< 1 min';let h=Math.floor(m/60),r=m%60;return h?(h+' h'+(r?' '+String(r).padStart(2,'0'):'') ):m+' min'};
+let map=L.map('map',{zoomAnimation:false,fadeAnimation:false,markerZoomAnimation:false}).setView([70,-80],3),layers={},zoneLayer,matchLayer,loadSequence=0;
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19}).addTo(map);
+function opts(id,a){a.forEach(x=>$(id).add(new Option(x,x)))}
+function qs(){let q=new URLSearchParams;[['year','year'],['zone','zone'],['ecotaxa','ecotaxa_project'],['ecopart','ecopart_project']].forEach(([a,b])=>$(a).value&&q.set(b,$(a).value));return q}
+function focusPoint(e){map.setView(e.latlng,Math.max(map.getZoom(),7),{animate:false})}
+function group(ps,col,name){let g=L.layerGroup();ps.forEach(p=>{let info=`<b>${name}</b><br>${fmt(p.count)} profil(s) / échantillon(s)<br>Station : ${p.stations||'—'}<br>Sample : ${p.samples||'—'}<br>Date et heure : ${dateTime(p.sampled_at)}${p.ecotaxa_projects?'<br>EcoTaxa : '+p.ecotaxa_projects:''}<br>Données EcoPart : ${p.ecopart_projects?'oui (projet '+p.ecopart_projects+')':'non'}${p.ctd_profiles?'<br>CTD lié : oui':'<br>CTD lié : non'}`;L.circleMarker([p.latitude,p.longitude],{radius:Math.min(12,4+Math.log2(p.count)),color:'#fff',weight:1,fillColor:(p.ctd_profiles>0?'#6854b8':col),fillOpacity:.9}).bindPopup(info).on('click',focusPoint).addTo(g)});return g}
+function comparePopup(x){return `<b>Comparaison FILET ↔ UVP</b><br><span>Statut : ${x.match_status} · écart ${gap(x.time_gap_hours)}</span><hr><b>FILET</b><br>Sample : ${x.sample_id}<br>Station : ${x.station_name}<br>Date et heure : ${dateTime(x.filet_time)}<hr><b>UVP</b><br>Profil : ${x.sample_name}<br>Station : ${x.station_key}<br>Date et heure : ${dateTime(x.uvp_time)}`}
+async function load(){let sequence=++loadSequence,button=$('go');button.disabled=true;button.textContent='Mise à jour…';try{let q=qs(),params=new URLSearchParams(q);if($('matches').checked){params.set('matched_only','true');params.set('max_gap_hours',$('hours').value)}let[d,m]=await Promise.all([fetch('/api/coverage?'+params).then(r=>r.json()),fetch('/api/map?'+params).then(r=>r.json())]);Object.values(layers).forEach(x=>map.removeLayer(x));if(zoneLayer)map.removeLayer(zoneLayer);if($('zone').value){let z=await fetch('/api/zone?name='+encodeURIComponent($('zone').value)).then(r=>r.json());if(sequence!==loadSequence)return;zoneLayer=L.geoJSON(z,{style:{color:'#0b6975',weight:2,fillOpacity:.06},onEachFeature:(f,l)=>l.bindTooltip(f.properties.canonical,{permanent:true,direction:'center',className:'zone-label'})}).addTo(map)}layers={uvp:group(m.uvp,'#007b88','Profil UVP'),filet:group(m.filet,'#c35b2d','Échantillon FILET')};for(let x of ['uvp','filet'])if($(x).checked)layers[x].addTo(map);if(matchLayer)map.removeLayer(matchLayer);let matchInfo={accepted:0,ambiguous:0};if($('matches').checked){let r=await fetch('/api/filet-uvp?max_gap_hours='+$('hours').value+'&'+q).then(x=>x.json());matchLayer=L.layerGroup();r.matches.forEach(x=>{let accepted=x.match_status==='accepted';L.polyline([[x.filet_latitude,x.filet_longitude],[x.uvp_latitude,x.uvp_longitude]],{color:accepted?'#17844b':'#b87514',weight:2,opacity:.75,dashArray:accepted?'':'5 5'}).addTo(matchLayer);let info=comparePopup(x);L.circleMarker([x.filet_latitude,x.filet_longitude],{radius:7,color:'#fff',weight:2,fillColor:'#c35b2d',fillOpacity:1}).bindPopup(info).on('click',focusPoint).addTo(matchLayer);L.circleMarker([x.uvp_latitude,x.uvp_longitude],{radius:7,color:'#fff',weight:2,fillColor:'#007b88',fillOpacity:1}).bindPopup(info).on('click',focusPoint).addTo(matchLayer)});matchLayer.addTo(map);matchInfo=r}$('title').textContent=d.filters.zone||'Toutes les données';$('period').textContent=d.uvp.first_date?d.uvp.first_date+' → '+d.uvp.last_date:'Aucun profil UVP';$('profiles').textContent=fmt(d.uvp.profiles);$('objects').textContent=fmt(d.uvp.objects_mapped);$('ctds').textContent=fmt(d.ctd.profiles);$('filets').textContent=fmt(d.filet.samples);}catch(error){$('period').textContent='La carte n’a pas pu être mise à jour. Réessayez.';console.error(error)}finally{if(sequence===loadSequence){button.disabled=false;button.textContent='Mettre à jour la carte'}}}
+['uvp','filet'].forEach(x=>$(x).onchange=()=>$(x).checked?layers[x]?.addTo(map):layers[x]&&map.removeLayer(layers[x]));$('hours').oninput=()=>{$('hoursOut').textContent=$('hours').value+' h'};$('hours').onchange=load;$('matches').onchange=load;['year','zone','ecotaxa','ecopart'].forEach(x=>$(x).onchange=load);$('go').onclick=load;fetch('/api/options').then(r=>r.json()).then(o=>{opts('year',o.years);opts('zone',o.zones);opts('ecotaxa',o.ecotaxa_projects);opts('ecopart',o.ecopart_projects);load()}).catch(()=>{$('period').textContent='Les options n’ont pas pu être chargées.'});
+</script>
+</body>
+</html>
