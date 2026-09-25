@@ -49,40 +49,53 @@ def db():
         conn.close()
 
 
-def profile_filter(zone: str | None, year: int | None, ecotaxa_project: int | None, ecopart_project: int | None, search: str | None):
+def profile_filter(zones: list[str], year_from: int | None, year_to: int | None, ecotaxa_projects: list[int], ecopart_project: int | None, search: str | None):
+    """Build a shared UVP predicate for cumulative map filters."""
     clauses, values = ["1=1"], []
-    for column, value in (("p.marine_zone_name", zone), ("p.ecotaxa_project_id", ecotaxa_project), ("p.ecopart_project_id", ecopart_project)):
-        if value is not None and value != "":
-            clauses.append(f"{column} = %s")
-            values.append(value)
-    if year:
-        clauses.append("EXTRACT(YEAR FROM p.sampled_at) = %s")
-        values.append(year)
+    if zones:
+        clauses.append("p.marine_zone_name = ANY(%s)")
+        values.append(zones)
+    if ecotaxa_projects:
+        clauses.append("p.ecotaxa_project_id = ANY(%s)")
+        values.append(ecotaxa_projects)
+    if ecopart_project is not None:
+        clauses.append("p.ecopart_project_id = %s")
+        values.append(ecopart_project)
+    if year_from:
+        clauses.append("EXTRACT(YEAR FROM p.sampled_at) >= %s")
+        values.append(year_from)
+    if year_to:
+        clauses.append("EXTRACT(YEAR FROM p.sampled_at) <= %s")
+        values.append(year_to)
     if search:
         clauses.append("(p.sample_name ILIKE %s OR p.station_key ILIKE %s OR p.cruise_key ILIKE %s)")
         values.extend([f"%{search}%"] * 3)
     return " AND ".join(clauses), values
 
 
-def filet_filter(zone: str | None, year: int | None, ecotaxa_project: int | None, ecopart_project: int | None, search: str | None):
-    """Filter FILET directly by its own fields and, for UVP facets, by linked UVP profiles."""
+def filet_filter(zones: list[str], year_from: int | None, year_to: int | None, ecotaxa_projects: list[int], ecopart_project: int | None, search: str | None):
+    """Build the FILET predicate; project facets use only proven FILET–UVP candidates."""
     clauses, values = ["1=1"], []
-    if year:
-        clauses.append("s.sampling_year = %s")
-        values.append(year)
+    if year_from:
+        clauses.append("s.sampling_year >= %s")
+        values.append(year_from)
+    if year_to:
+        clauses.append("s.sampling_year <= %s")
+        values.append(year_to)
     if search:
         clauses.append("(s.sample_id ILIKE %s OR s.station_name ILIKE %s OR s.deployment_id ILIKE %s)")
         values.extend([f"%{search}%"] * 3)
-
-    if zone:
-        clauses.append("s.marine_zone_name = %s")
-        values.append(zone)
+    if zones:
+        clauses.append("s.marine_zone_name = ANY(%s)")
+        values.append(zones)
 
     uvp_clauses, uvp_values = [], []
-    for column, value in (("p.ecotaxa_project_id", ecotaxa_project), ("p.ecopart_project_id", ecopart_project)):
-        if value is not None and value != "":
-            uvp_clauses.append(f"{column} = %s")
-            uvp_values.append(value)
+    if ecotaxa_projects:
+        uvp_clauses.append("p.ecotaxa_project_id = ANY(%s)")
+        uvp_values.append(ecotaxa_projects)
+    if ecopart_project is not None:
+        uvp_clauses.append("p.ecopart_project_id = %s")
+        uvp_values.append(ecopart_project)
     if uvp_clauses:
         clauses.append("""EXISTS (
             SELECT 1 FROM warehouse.filet_uvp_match m
@@ -94,14 +107,14 @@ def filet_filter(zone: str | None, year: int | None, ecotaxa_project: int | None
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/zone")
-def zone_shape(name: str | None = Query(None, max_length=120)):
-    """Official local zone boundary used during warehouse zone assignment."""
+def zone_shape(name: list[str] = Query(default=[])):
+    """Official local zone boundaries selected by the cumulative geographic filter."""
     collection = json.loads(ZONES.read_text(encoding="utf-8"))
-    features = [f for f in collection["features"] if not name or f.get("properties", {}).get("canonical") == name]
+    features = [f for f in collection["features"] if not name or f.get("properties", {}).get("canonical") in name]
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -132,16 +145,22 @@ def options():
 
 @app.get("/api/coverage")
 def coverage(
-    zone: str | None = None,
+    zone: list[str] = Query(default=[]),
     year: int | None = Query(None, ge=1900, le=2100),
-    ecotaxa_project: int | None = None,
+    year_from: int | None = Query(None, ge=1900, le=2100),
+    year_to: int | None = Query(None, ge=1900, le=2100),
+    ecotaxa_project: list[int] = Query(default=[]),
     ecopart_project: int | None = None,
     search: str | None = Query(None, max_length=100),
     matched_only: bool = False,
     max_gap_hours: float = Query(10, gt=0, le=72),
 ):
-    where, values = profile_filter(zone, year, ecotaxa_project, ecopart_project, search)
-    filet_where, filet_values = filet_filter(zone, year, ecotaxa_project, ecopart_project, search)
+    year_from = year if year_from is None else year_from
+    year_to = year if year_to is None else year_to
+    if year_from and year_to and year_from > year_to:
+        year_from, year_to = year_to, year_from
+    where, values = profile_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, search)
+    filet_where, filet_values = filet_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, search)
     if matched_only:
         where += " AND EXISTS (SELECT 1 FROM warehouse.filet_uvp_match m WHERE m.uvp_profile_id=p.id AND m.match_status='accepted' AND m.time_gap_hours <= %s)"
         values.append(max_gap_hours)
@@ -189,21 +208,26 @@ def coverage(
             results += conn.execute(f"""SELECT 'FILET' AS source,s.sample_id AS identifier,s.deployment_datetime_start::date AS date,s.station_name AS station_key,
                  s.marine_zone_name,s.latitude,s.longitude FROM warehouse.filet_sample s WHERE {filet_where}
                  ORDER BY s.deployment_datetime_start DESC NULLS LAST LIMIT 30""", filet_values).fetchall()
-    return {"filters": {"zone": zone, "year": year, "ecotaxa_project": ecotaxa_project, "ecopart_project": ecopart_project, "search": search}, "uvp": {**uvp, **bins, **objects, **taxa}, "ctd": ctd, "filet": filet, "links": links, "spatial": spatial, "timeline": timeline, "projects": projects, "results": results[:30]}
+    return {"filters": {"zones": zone, "year_from": year_from, "year_to": year_to, "ecotaxa_projects": ecotaxa_project, "ecopart_project": ecopart_project, "search": search}, "uvp": {**uvp, **bins, **objects, **taxa}, "ctd": ctd, "filet": filet, "links": links, "spatial": spatial, "timeline": timeline, "projects": projects, "results": results[:30]}
 
 
 @app.get("/api/map")
 def map_points(
-    zone: str | None = None, year: int | None = Query(None, ge=1900, le=2100),
-    ecotaxa_project: int | None = None, ecopart_project: int | None = None,
+    zone: list[str] = Query(default=[]), year: int | None = Query(None, ge=1900, le=2100),
+    year_from: int | None = Query(None, ge=1900, le=2100), year_to: int | None = Query(None, ge=1900, le=2100),
+    ecotaxa_project: list[int] = Query(default=[]), ecopart_project: int | None = None,
     matched_only: bool = False, max_gap_hours: float = Query(10, gt=0, le=72),
 ):
     """One aggregated point per source coordinate: map coverage, never objects."""
-    where, values = profile_filter(zone, year, ecotaxa_project, ecopart_project, None)
+    year_from = year if year_from is None else year_from
+    year_to = year if year_to is None else year_to
+    if year_from and year_to and year_from > year_to:
+        year_from, year_to = year_to, year_from
+    where, values = profile_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, None)
     if matched_only:
         where += " AND EXISTS (SELECT 1 FROM warehouse.filet_uvp_match m WHERE m.uvp_profile_id=p.id AND m.match_status='accepted' AND m.time_gap_hours <= %s)"
         values.append(max_gap_hours)
-    filet_filter_sql, filet_values = filet_filter(zone, year, ecotaxa_project, ecopart_project, None)
+    filet_filter_sql, filet_values = filet_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, None)
     filet_where = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL", filet_filter_sql]
     if matched_only:
         filet_where.append("EXISTS (SELECT 1 FROM warehouse.filet_uvp_match m WHERE m.filet_sample_id=s.id AND m.match_status='accepted' AND m.time_gap_hours <= %s)")
@@ -241,9 +265,17 @@ def map_points(
 
 
 @app.get("/api/filet-uvp")
-def filet_uvp(max_gap_hours: float = Query(10, gt=0, le=72), year: int | None = None, zone: str | None = None,
-              ecotaxa_project: int | None = None, ecopart_project: int | None = None):
-    """Read-only view of the loaded station/time candidates for a user threshold."""
+def filet_uvp(
+    max_gap_hours: float = Query(10, gt=0, le=72),
+    zone: list[str] = Query(default=[]), year: int | None = Query(None, ge=1900, le=2100),
+    year_from: int | None = Query(None, ge=1900, le=2100), year_to: int | None = Query(None, ge=1900, le=2100),
+    ecotaxa_project: list[int] = Query(default=[]), ecopart_project: int | None = None,
+):
+    """Read-only, mappable FILET–UVP candidates for the cumulative filter."""
+    year_from = year if year_from is None else year_from
+    year_to = year if year_to is None else year_to
+    if year_from and year_to and year_from > year_to:
+        year_from, year_to = year_to, year_from
     with db() as conn:
         rows = conn.execute("""SELECT m.match_status,m.time_gap_hours,s.sample_id,s.station_name,
           s.deployment_datetime_start AS filet_time,s.sampling_platform,s.gear,s.tow_type,s.net_mesh_size,s.number_of_nets,
@@ -255,11 +287,16 @@ def filet_uvp(max_gap_hours: float = Query(10, gt=0, le=72), year: int | None = 
           WHERE m.time_gap_hours <= %s
             AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
             AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
-            AND (%s::int IS NULL OR EXTRACT(YEAR FROM p.sampled_at)=%s)
-            AND (%s::text IS NULL OR p.marine_zone_name=%s)
-            AND (%s::text IS NULL OR s.marine_zone_name=%s)
-            AND (%s::int IS NULL OR p.ecotaxa_project_id=%s)
+            AND (%s::int IS NULL OR EXTRACT(YEAR FROM p.sampled_at)>=%s)
+            AND (%s::int IS NULL OR EXTRACT(YEAR FROM p.sampled_at)<=%s)
+            AND (cardinality(%s::text[]) = 0 OR p.marine_zone_name = ANY(%s::text[]))
+            AND (cardinality(%s::text[]) = 0 OR s.marine_zone_name = ANY(%s::text[]))
+            AND (cardinality(%s::bigint[]) = 0 OR p.ecotaxa_project_id = ANY(%s::bigint[]))
             AND (%s::int IS NULL OR p.ecopart_project_id=%s)
-          ORDER BY m.time_gap_hours LIMIT 500""", (max_gap_hours, year, year, zone, zone, zone, zone, ecotaxa_project, ecotaxa_project, ecopart_project, ecopart_project)).fetchall()
+          ORDER BY m.time_gap_hours LIMIT 500""", (
+              max_gap_hours, year_from, year_from, year_to, year_to,
+              zone, zone, zone, zone, ecotaxa_project, ecotaxa_project,
+              ecopart_project, ecopart_project,
+          )).fetchall()
     return {"max_gap_hours": max_gap_hours, "accepted": sum(r["match_status"] == "accepted" for r in rows),
             "ambiguous": sum(r["match_status"] == "ambiguous" for r in rows), "matches": rows}

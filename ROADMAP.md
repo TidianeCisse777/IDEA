@@ -458,3 +458,9 @@ validé séparément avant sa réactivation.
 
 - La fiche de comparaison affichait les horodatages FILET sans fuseau comme heure locale puis les étiquetait « UTC », créant une incohérence visible avec l’écart calculé. La paire FILET `41471` / UVP `am_leg5_TCA_T3_19_02` est stockée à 07:06:56 contre 04:00 UTC, soit 3 h 07.
 - Le formateur de la carte interprète désormais les horodatages FILET sans suffixe comme UTC, conformément au calcul de `filet_uvp_match`. La fiche affiche donc 07 h 06 UTC, ce qui concorde avec l’écart de 3 h 07.
+
+### 25 septembre 2026 Filtres cumulables du navigateur
+
+- Le navigateur accepte une plage d’années « De / À » et plusieurs zones ou projets EcoTaxa par cases à cocher. Les mêmes paramètres sont appliqués aux compteurs, points UVP/FILET, contours de zones et correspondances FILET–UVP.
+- Les sélections sont cumulatives ; chaque liste possède son action d’effacement. Une plage inversée est normalisée côté API.
+- Recette réelle : deux zones et deux projets sélectionnés en 2024 retournent 39 profils UVP et 7 échantillons FILET ; après effacement, la couverture revient à 585 profils et 6 102 échantillons. La page locale est servie avec `Cache-Control: no-store` pour éviter l’interface périmée après redémarrage.
