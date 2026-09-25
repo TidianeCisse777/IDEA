@@ -233,7 +233,9 @@ def map_points(
           string_agg(DISTINCT NULLIF(s.gear, ''), ', ') AS gear,
           string_agg(DISTINCT NULLIF(s.tow_type, ''), ', ') AS tow_type,
           string_agg(DISTINCT s.net_mesh_size::text, ', ') AS net_mesh_size,
-          string_agg(DISTINCT s.number_of_nets::text, ', ') AS number_of_nets
+          string_agg(DISTINCT s.number_of_nets::text, ', ') AS number_of_nets,
+          min(s.min_sample_depth) AS min_sample_depth,
+          max(s.max_sample_depth) AS max_sample_depth
           FROM warehouse.filet_sample s WHERE {' AND '.join(filet_where)} GROUP BY 1,2""", filet_values).fetchall()
     return {"uvp": uvp, "ctd": ctd, "filet": filet}
 
@@ -245,12 +247,14 @@ def filet_uvp(max_gap_hours: float = Query(10, gt=0, le=72), year: int | None = 
     with db() as conn:
         rows = conn.execute("""SELECT m.match_status,m.time_gap_hours,s.sample_id,s.station_name,
           s.deployment_datetime_start AS filet_time,s.sampling_platform,s.gear,s.tow_type,s.net_mesh_size,s.number_of_nets,
-          p.sample_name,p.station_key,p.sampled_at AS uvp_time,ep.title AS uvp_project,
+          s.min_sample_depth,s.max_sample_depth,p.sample_name,p.station_key,p.sampled_at AS uvp_time,ep.title AS uvp_project,
           s.latitude AS filet_latitude,s.longitude AS filet_longitude,p.latitude AS uvp_latitude,p.longitude AS uvp_longitude
           FROM warehouse.filet_uvp_match m JOIN warehouse.filet_sample s ON s.id=m.filet_sample_id
           JOIN warehouse.uvp_profile p ON p.id=m.uvp_profile_id
           LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id=p.ecotaxa_project_id
           WHERE m.time_gap_hours <= %s
+            AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+            AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
             AND (%s::int IS NULL OR EXTRACT(YEAR FROM p.sampled_at)=%s)
             AND (%s::text IS NULL OR p.marine_zone_name=%s)
             AND (%s::text IS NULL OR s.marine_zone_name=%s)

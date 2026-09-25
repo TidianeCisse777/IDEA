@@ -447,3 +447,9 @@ validé séparément avant sa réactivation.
 - Les infobulles de comparaison FILET–UVP affichent désormais le titre du projet UVP/EcoTaxa associé au profil, provenant de `warehouse.ecotaxa_project`.
 - Les fiches FILET et les comparaisons présentent les métadonnées d’équipement disponibles au grain échantillon : support, engin, type de trait, maille déclarée et nombre de filets. Elles sont agrégées explicitement lorsqu’un point représente plusieurs échantillons.
 - Contrôle réel : la correspondance FILET `39908` ↔ UVP `am_leg2_killinik2` restitue le projet `uvp6_sn000006hf_2024_am_leg2`; les métadonnées FILET retournent notamment `CCGS Amundsen`, `2x1m2`, `O-Tow`, une maille de 50 et un filet.
+
+### 25 septembre 2026 Hiérarchie des fiches de carte
+
+- Les infobulles UVP, FILET et FILET–UVP utilisent désormais la même hiérarchie : titre, résumé, sections, libellés en gras et valeurs en texte normal. La légende suit également ce système typographique.
+- Les profondeurs FILET min–max sont affichées dans les fiches, au grain de l’échantillon ou de l’agrégat cartographique. Exemple de recette visuelle : un groupe FILET affiche `0 à 511`; une comparaison affiche `0 à 100`.
+- Une régression du mode comparaison a été trouvée puis corrigée : 132 candidats FILET–UVP ne possédaient pas de coordonnées UVP et provoquaient une erreur Leaflet. La vue cartographique exclut désormais ces seules paires non cartographiables ; les 286 paires localisables sont affichables, dont 130 acceptées et 156 ambiguës.
