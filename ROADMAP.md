@@ -434,3 +434,10 @@ encore validé avec l’équipe. Aucun use case scientifique NeoLab n’est enco
 déclaré validé sur ce socle. Cette politique globale empêche aussi l’indexation
 de nouveaux fichiers dans Open WebUI Knowledge ; le flux PaperQA devra être
 validé séparément avant sa réactivation.
+
+### 25 septembre 2026 Recette du navigateur de couverture
+
+- Recette locale du service `warehouse-navigator` : `/health`, options et couvertures agrégées répondent sans erreur. Les contrôles Python ciblés ont réussi (22 tests).
+- Les compteurs de la carte suivent les filtres réellement appliqués : toutes données (585 profils UVP, 6 102 échantillons FILET), puis Baie de Baffin (199, 1 467). En mode FILET–UVP, le seuil de 10 h retourne 6 profils UVP et 30 échantillons FILET dans cette zone ; 4 h les réduit à 2 et 4.
+- L’interface a été vérifiée avec les couches, la zone, le projet EcoTaxa et le mode de comparaison. Le seuil horaire est masqué hors de ce mode ; le filtre EcoPart est retiré. Les points FILET indiquent désormais qu’ils regroupent des échantillons au même emplacement et présentent une plage temporelle lorsque nécessaire.
+- Aucun avertissement ou erreur JavaScript n’a été relevé durant la recette. La carte a été restaurée à son état initial après test.

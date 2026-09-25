@@ -122,7 +122,10 @@ def options():
         return {
             "zones": zones,
             "years": [int(row["value"]) for row in conn.execute("SELECT DISTINCT EXTRACT(YEAR FROM sampled_at)::int AS value FROM warehouse.uvp_profile WHERE sampled_at IS NOT NULL UNION SELECT DISTINCT sampling_year FROM warehouse.filet_sample WHERE sampling_year IS NOT NULL ORDER BY 1 DESC")],
-            "ecotaxa_projects": [row["value"] for row in conn.execute("SELECT DISTINCT ecotaxa_project_id AS value FROM warehouse.uvp_profile WHERE ecotaxa_project_id IS NOT NULL ORDER BY 1")],
+            "ecotaxa_projects": conn.execute("""SELECT DISTINCT p.ecotaxa_project_id AS value,
+                ep.title AS label FROM warehouse.uvp_profile p
+                JOIN warehouse.ecotaxa_project ep ON ep.project_id=p.ecotaxa_project_id
+                WHERE p.ecotaxa_project_id IS NOT NULL ORDER BY ep.title""").fetchall(),
             "ecopart_projects": [row["value"] for row in conn.execute("SELECT DISTINCT ecopart_project_id AS value FROM warehouse.uvp_profile WHERE ecopart_project_id IS NOT NULL ORDER BY 1")],
         }
 
@@ -209,10 +212,11 @@ def map_points(
         uvp = conn.execute(f"""SELECT p.latitude,p.longitude,count(DISTINCT p.id) AS count,
           string_agg(DISTINCT p.sample_name, ', ') AS samples,
           string_agg(DISTINCT p.station_key, ', ') AS stations,
-          string_agg(DISTINCT p.ecotaxa_project_id::text, ', ') AS ecotaxa_projects,
+          string_agg(DISTINCT ep.title, ', ') AS ecotaxa_projects,
           string_agg(DISTINCT p.ecopart_project_id::text, ', ') AS ecopart_projects,
           min(p.sampled_at) AS sampled_at,count(DISTINCT l.ctd_profile_id) AS ctd_profiles
           FROM warehouse.uvp_profile p LEFT JOIN warehouse.uvp_ctd l ON l.uvp_profile_id=p.id
+          LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id=p.ecotaxa_project_id
           WHERE {where} AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL GROUP BY 1,2""", values).fetchall()
         ctd = conn.execute(f"""SELECT c.latitude,c.longitude,count(DISTINCT c.id) AS count,
           string_agg(DISTINCT p.sample_name, ', ') AS samples,
@@ -223,7 +227,8 @@ def map_points(
           WHERE {where} AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL GROUP BY 1,2""", values).fetchall()
         filet = conn.execute(f"""SELECT s.latitude,s.longitude,count(*) AS count,
           string_agg(s.sample_id, ', ') AS samples,string_agg(DISTINCT s.station_name, ', ') AS stations,
-          min(s.deployment_datetime_start) AS sampled_at
+          min(s.deployment_datetime_start) AS sampled_at,
+          max(s.deployment_datetime_start) AS last_sampled_at
           FROM warehouse.filet_sample s WHERE {' AND '.join(filet_where)} GROUP BY 1,2""", filet_values).fetchall()
     return {"uvp": uvp, "ctd": ctd, "filet": filet}
 
