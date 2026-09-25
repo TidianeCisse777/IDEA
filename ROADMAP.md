@@ -453,3 +453,8 @@ validé séparément avant sa réactivation.
 - Les infobulles UVP, FILET et FILET–UVP utilisent désormais la même hiérarchie : titre, résumé, sections, libellés en gras et valeurs en texte normal. La légende suit également ce système typographique.
 - Les profondeurs FILET min–max sont affichées dans les fiches, au grain de l’échantillon ou de l’agrégat cartographique. Exemple de recette visuelle : un groupe FILET affiche `0 à 511`; une comparaison affiche `0 à 100`.
 - Une régression du mode comparaison a été trouvée puis corrigée : 132 candidats FILET–UVP ne possédaient pas de coordonnées UVP et provoquaient une erreur Leaflet. La vue cartographique exclut désormais ces seules paires non cartographiables ; les 286 paires localisables sont affichables, dont 130 acceptées et 156 ambiguës.
+
+### 25 septembre 2026 Correctif d’affichage des heures FILET–UVP
+
+- La fiche de comparaison affichait les horodatages FILET sans fuseau comme heure locale puis les étiquetait « UTC », créant une incohérence visible avec l’écart calculé. La paire FILET `41471` / UVP `am_leg5_TCA_T3_19_02` est stockée à 07:06:56 contre 04:00 UTC, soit 3 h 07.
+- Le formateur de la carte interprète désormais les horodatages FILET sans suffixe comme UTC, conformément au calcul de `filet_uvp_match`. La fiche affiche donc 07 h 06 UTC, ce qui concorde avec l’écart de 3 h 07.
