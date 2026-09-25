@@ -441,3 +441,9 @@ validé séparément avant sa réactivation.
 - Les compteurs de la carte suivent les filtres réellement appliqués : toutes données (585 profils UVP, 6 102 échantillons FILET), puis Baie de Baffin (199, 1 467). En mode FILET–UVP, le seuil de 10 h retourne 6 profils UVP et 30 échantillons FILET dans cette zone ; 4 h les réduit à 2 et 4.
 - L’interface a été vérifiée avec les couches, la zone, le projet EcoTaxa et le mode de comparaison. Le seuil horaire est masqué hors de ce mode ; le filtre EcoPart est retiré. Les points FILET indiquent désormais qu’ils regroupent des échantillons au même emplacement et présentent une plage temporelle lorsque nécessaire.
 - Aucun avertissement ou erreur JavaScript n’a été relevé durant la recette. La carte a été restaurée à son état initial après test.
+
+### 25 septembre 2026 Métadonnées des fiches cartographiques
+
+- Les infobulles de comparaison FILET–UVP affichent désormais le titre du projet UVP/EcoTaxa associé au profil, provenant de `warehouse.ecotaxa_project`.
+- Les fiches FILET et les comparaisons présentent les métadonnées d’équipement disponibles au grain échantillon : support, engin, type de trait, maille déclarée et nombre de filets. Elles sont agrégées explicitement lorsqu’un point représente plusieurs échantillons.
+- Contrôle réel : la correspondance FILET `39908` ↔ UVP `am_leg2_killinik2` restitue le projet `uvp6_sn000006hf_2024_am_leg2`; les métadonnées FILET retournent notamment `CCGS Amundsen`, `2x1m2`, `O-Tow`, une maille de 50 et un filet.
