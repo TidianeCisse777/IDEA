@@ -2,7 +2,24 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 18 septembre 2026
+**Dernière mise à jour :** 5 octobre 2026
+
+### 5 octobre 2026 — Vérification pré-démo des données affichées (phases 2 et 3)
+
+- La chaîne en lecture seule PostgreSQL → API → interface concorde sur la vue globale : 585 profils UVP, dont 386 géolocalisés et 199 sans coordonnées, 10 479 780 objets EcoTaxa associés, 380 profils CTD et 6 102 échantillons FILET. La période combinée des couches visibles est du 9 juillet 2010 au 17 octobre 2025.
+- Le scénario « Baie de Baffin, 2024 » a été rejoué dans l’interface et comparé à l’API : 123 profils UVP, 4 279 581 objets, 94 profils CTD et 272 échantillons FILET, du 12 août au 13 octobre 2024. Ce total FILET remplace le chiffre historique de 558 obtenu avant l’application stricte des polygones aux coordonnées.
+- Le mode FILET–UVP à 10 h affiche uniquement les paires acceptées cartographiables : 20 profils UVP, 130 échantillons FILET, 12 profils CTD et 554 752 objets EcoTaxa. Les dates affichées combinent correctement les deux couches, du 14 juillet au 18 octobre 2024.
+- Preuves automatisées : 68 contrôles live SQL/API réussis, 45 zones GeoJSON hors périmètre canadien ignorées explicitement, et 6 contrats UI réussis. Les 20 zones proposées par l’interface passent un oracle spatial Shapely indépendant ; les années, unions de zones, projets, compteurs, dates et correspondances sont couverts.
+- Limite visible et assumée : la vue « Toutes les données » inventorie tout le warehouse, y compris les positions hors Arctique canadien. Les 199 profils UVP sans coordonnées sont comptés globalement mais exclus de tout filtre spatial.
+- Correctif UX pré-démo : chaque mise à jour de filtre affiche désormais un indicateur léger sur la carte. Les contours de zones sont recalculés d’après les points des couches visibles ; une zone sans UVP disparaît lorsque FILET est masqué, y compris dans une sélection de plusieurs zones. Le cas Baie d’Hudson confirme 235 FILET et 0 UVP. La recette réelle et 8 contrats UI passent après reconstruction du service local.
+
+### 27 septembre 2026 — Recette MVP en cours (contribution à la phase 3)
+
+- Suite opt-in `NAVIGATOR_LIVE=1 pytest -q tests/test_navigator_live.py` : comparaison en lecture seule SQL/API, identité des échantillons par polygone avec un oracle Shapely indépendant, plages temporelles, métadonnées et écarts horaires, paramètres invalides.
+- Premier audit exploitable : 27 réussites, 8 échecs spatiaux MEOW, 45 zones hors périmètre ignorées. Exemple : 1 576 FILET géographiquement dans MEOW Baffin Bay–Davis Strait étaient omis malgré la concordance carte/compteur. Cause : les FILET déjà affectés à une zone unique n’étaient pas testés contre les autres polygones.
+- Correctif local : appliquer l’intersection géographique à tous les FILET géolocalisés, en conservant les métadonnées d’affectation. Nouvelle exécution en cours. Les couches, dates affichées, mode comparaison et interactions restent à vérifier avant clôture ; aucune validation complète annoncée.
+- Décision confirmée : les filtres spatiaux UVP suivent eux aussi uniquement les coordonnées et les polygones du registre. Un profil sans coordonnées reste dans l’inventaire global mais ne peut plus entrer dans une zone via un ancien nom de zone.
+- Audit final : 68 contrôles live SQL/API réussis et 45 cas hors périmètre canadien explicitement ignorés ; les 20 zones exposées par le navigateur passent l’oracle géographique indépendant. Les six contrats UI, les 22 tests warehouse et le build Docker du navigateur passent. La recette MVP locale est clôturée ; les validations scientifiques d’équipe et le déploiement VPS restent hors de cette recette.
 
 ## Objectif
 
@@ -464,3 +481,9 @@ validé séparément avant sa réactivation.
 - Le navigateur accepte une plage d’années « De / À » et plusieurs zones ou projets EcoTaxa par cases à cocher. Les mêmes paramètres sont appliqués aux compteurs, points UVP/FILET, contours de zones et correspondances FILET–UVP.
 - Les sélections sont cumulatives ; chaque liste possède son action d’effacement. Une plage inversée est normalisée côté API.
 - Recette réelle : deux zones et deux projets sélectionnés en 2024 retournent 39 profils UVP et 7 échantillons FILET ; après effacement, la couverture revient à 585 profils et 6 102 échantillons. La page locale est servie avec `Cache-Control: no-store` pour éviter l’interface périmée après redémarrage.
+
+### 25 septembre 2026 Inclusion des chevauchements FILET dans les filtres de zone
+
+- Les 863 échantillons FILET dont les coordonnées croisent plusieurs polygones restent qualifiés `ambiguous` dans leur provenance ; cette qualification ne les exclut plus d’un filtre spatial.
+- Pour chaque zone sélectionnée, le navigateur teste les coordonnées de ces chevauchements contre le registre GeoJSON canonique local et inclut les points qui se trouvent réellement dans le polygone demandé. Aucune zone unique n’est donc assignée arbitrairement.
+- Recette réelle : le filtre « Baie d’Hudson », auparavant à 0 à cause de cette politique de provenance, restitue désormais 235 échantillons FILET. Les 20 filtres de zone ont été contrôlés : pour chacun, le total des échantillons agrégés sur la carte égale le compteur de couverture retourné par l’API. Les 22 tests ciblés ont réussi.

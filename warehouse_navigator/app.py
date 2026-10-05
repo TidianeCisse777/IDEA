@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import json
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 
 import psycopg
@@ -53,8 +54,8 @@ def profile_filter(zones: list[str], year_from: int | None, year_to: int | None,
     """Build a shared UVP predicate for cumulative map filters."""
     clauses, values = ["1=1"], []
     if zones:
-        clauses.append("p.marine_zone_name = ANY(%s)")
-        values.append(zones)
+        clauses.append("p.id = ANY(%s::bigint[])")
+        values.append(profile_ids_in_zones(zones))
     if ecotaxa_projects:
         clauses.append("p.ecotaxa_project_id = ANY(%s)")
         values.append(ecotaxa_projects)
@@ -73,7 +74,103 @@ def profile_filter(zones: list[str], year_from: int | None, year_to: int | None,
     return " AND ".join(clauses), values
 
 
-def filet_filter(zones: list[str], year_from: int | None, year_to: int | None, ecotaxa_projects: list[int], ecopart_project: int | None, search: str | None):
+def geometry_bbox(geometry: dict) -> tuple[float, float, float, float]:
+    """Return a geometry bounding box before the more expensive point test."""
+    def coordinates(value):
+        if isinstance(value[0], (int, float)):
+            yield value
+        else:
+            for nested in value:
+                yield from coordinates(nested)
+
+    points = list(coordinates(geometry["coordinates"]))
+    longitudes, latitudes = zip(*points)
+    return min(longitudes), min(latitudes), max(longitudes), max(latitudes)
+
+
+def point_on_segment(lon: float, lat: float, a: list[float], b: list[float]) -> bool:
+    cross = (lon - a[0]) * (b[1] - a[1]) - (lat - a[1]) * (b[0] - a[0])
+    if abs(cross) > 1e-10:
+        return False
+    return min(a[0], b[0]) - 1e-10 <= lon <= max(a[0], b[0]) + 1e-10 and min(a[1], b[1]) - 1e-10 <= lat <= max(a[1], b[1]) + 1e-10
+
+
+def ring_covers(lon: float, lat: float, ring: list[list[float]]) -> bool:
+    inside = False
+    for index, current in enumerate(ring):
+        previous = ring[index - 1]
+        if point_on_segment(lon, lat, previous, current):
+            return True
+        if (current[1] > lat) != (previous[1] > lat):
+            crossing_lon = (previous[0] - current[0]) * (lat - current[1]) / (previous[1] - current[1]) + current[0]
+            if lon < crossing_lon:
+                inside = not inside
+    return inside
+
+
+def geometry_covers(lon: float, lat: float, geometry: dict) -> bool:
+    polygons = [geometry["coordinates"]] if geometry["type"] == "Polygon" else geometry["coordinates"]
+    if geometry["type"] not in {"Polygon", "MultiPolygon"}:
+        raise ValueError(f"Géométrie de zone non prise en charge : {geometry['type']}")
+    return any(
+        ring_covers(lon, lat, polygon[0]) and not any(ring_covers(lon, lat, hole) for hole in polygon[1:])
+        for polygon in polygons
+    )
+
+
+@lru_cache(maxsize=1)
+def zone_geometries() -> dict[str, list[tuple[dict, tuple[float, float, float, float]]]]:
+    """Index the local canonical registry; the GeoJSON is mounted read-only."""
+    registry = json.loads(ZONES.read_text(encoding="utf-8"))
+    geometries: dict[str, list[tuple[dict, tuple[float, float, float, float]]]] = {}
+    for feature in registry["features"]:
+        name = feature.get("properties", {}).get("canonical")
+        if name in CANADIAN_ARCTIC_ZONES:
+            geometry = feature["geometry"]
+            geometries.setdefault(name, []).append((geometry, geometry_bbox(geometry)))
+    return geometries
+
+
+@lru_cache(maxsize=50000)
+def point_matches_zone(lon: float, lat: float, zones: tuple[str, ...]) -> bool:
+    for zone in zones:
+        for geometry, bbox in zone_geometries().get(zone, []):
+            if bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3] and geometry_covers(lon, lat, geometry):
+                return True
+    return False
+
+
+def filet_ids_in_zones(zones: list[str]) -> list[int] | None:
+    """Return FILET samples in selected polygons, including overlapping assignments.
+
+    ``marine_zone_name`` is intentionally a single-value provenance field.  It
+    marks geometric overlaps as ``AMBIGUOUS`` instead of silently choosing one
+    zone.  Navigation must nevertheless include an ambiguous point when its
+    coordinates fall within a zone selected by the user.
+    """
+    if not zones:
+        return None
+    with db() as conn:
+        rows = conn.execute("""SELECT id, latitude, longitude
+                               FROM warehouse.filet_sample
+                               WHERE latitude IS NOT NULL AND longitude IS NOT NULL""").fetchall()
+    return [
+        row["id"] for row in rows
+        if point_matches_zone(float(row["longitude"]), float(row["latitude"]), tuple(sorted(set(zones))))
+    ]
+
+
+def profile_ids_in_zones(zones: list[str]) -> list[int]:
+    """Return only profiles whose coordinates are covered by the selected zones."""
+    with db() as conn:
+        rows = conn.execute("""SELECT id,latitude,longitude
+                               FROM warehouse.uvp_profile
+                               WHERE latitude IS NOT NULL AND longitude IS NOT NULL""").fetchall()
+    selected = tuple(sorted(set(zones)))
+    return [r["id"] for r in rows if point_matches_zone(float(r["longitude"]), float(r["latitude"]), selected)]
+
+
+def filet_filter(zone_sample_ids: list[int] | None, year_from: int | None, year_to: int | None, ecotaxa_projects: list[int], ecopart_project: int | None, search: str | None):
     """Build the FILET predicate; project facets use only proven FILET–UVP candidates."""
     clauses, values = ["1=1"], []
     if year_from:
@@ -85,9 +182,12 @@ def filet_filter(zones: list[str], year_from: int | None, year_to: int | None, e
     if search:
         clauses.append("(s.sample_id ILIKE %s OR s.station_name ILIKE %s OR s.deployment_id ILIKE %s)")
         values.extend([f"%{search}%"] * 3)
-    if zones:
-        clauses.append("s.marine_zone_name = ANY(%s)")
-        values.append(zones)
+    if zone_sample_ids is not None:
+        if zone_sample_ids:
+            clauses.append("s.id = ANY(%s)")
+            values.append(zone_sample_ids)
+        else:
+            clauses.append("FALSE")
 
     uvp_clauses, uvp_values = [], []
     if ecotaxa_projects:
@@ -104,6 +204,23 @@ def filet_filter(zones: list[str], year_from: int | None, year_to: int | None, e
         values.extend(uvp_values)
     return " AND ".join(clauses), values
 
+
+
+def accepted_pair_ids(zones, year_from, year_to, projects, ecopart_project, search, hours):
+    """Both endpoints must satisfy the filters and be mappable."""
+    pw, pv = profile_filter(zones, year_from, year_to, projects, ecopart_project, search)
+    fw, fv = filet_filter(filet_ids_in_zones(zones), year_from, year_to, [], None, search)
+    with db() as conn:
+        rows = conn.execute(f"""
+            SELECT DISTINCT p.id AS profile_id, s.id AS sample_id
+            FROM warehouse.filet_uvp_match m
+            JOIN warehouse.uvp_profile p ON p.id=m.uvp_profile_id
+            JOIN warehouse.filet_sample s ON s.id=m.filet_sample_id
+            WHERE m.match_status='accepted' AND m.time_gap_hours <= %s
+              AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+              AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+              AND {pw} AND {fw}""", [hours] + pv + fv).fetchall()
+    return sorted({r["profile_id"] for r in rows}), sorted({r["sample_id"] for r in rows})
 
 @app.get("/")
 def index():
@@ -160,12 +277,13 @@ def coverage(
     if year_from and year_to and year_from > year_to:
         year_from, year_to = year_to, year_from
     where, values = profile_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, search)
-    filet_where, filet_values = filet_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, search)
+    filet_where, filet_values = filet_filter(filet_ids_in_zones(zone), year_from, year_to, ecotaxa_project, ecopart_project, search)
     if matched_only:
-        where += " AND EXISTS (SELECT 1 FROM warehouse.filet_uvp_match m WHERE m.uvp_profile_id=p.id AND m.match_status='accepted' AND m.time_gap_hours <= %s)"
-        values.append(max_gap_hours)
-        filet_where += " AND EXISTS (SELECT 1 FROM warehouse.filet_uvp_match m WHERE m.filet_sample_id=s.id AND m.match_status='accepted' AND m.time_gap_hours <= %s)"
-        filet_values.append(max_gap_hours)
+        profile_ids, sample_ids = accepted_pair_ids(zone, year_from, year_to, ecotaxa_project, ecopart_project, search, max_gap_hours)
+        where += " AND p.id = ANY(%s::bigint[])"
+        values.append(profile_ids)
+        filet_where += " AND s.id = ANY(%s::bigint[])"
+        filet_values.append(sample_ids)
     with db() as conn:
         uvp = conn.execute(f"""
           SELECT count(*) AS profiles,
@@ -185,6 +303,8 @@ def coverage(
         ctd = conn.execute(f"""SELECT count(DISTINCT l.ctd_profile_id) AS profiles
           FROM warehouse.uvp_ctd l JOIN warehouse.uvp_profile p ON p.id=l.uvp_profile_id WHERE {where}""", values).fetchone()
         filet = conn.execute(f"""SELECT count(DISTINCT s.id) AS samples, count(DISTINCT a.id) AS analyses,
+                 min(s.deployment_datetime_start)::date AS first_date,
+                 max(s.deployment_datetime_start)::date AS last_date,
                  count(DISTINCT f.source_row_number) AS abundance_source_rows
           FROM warehouse.filet_sample s LEFT JOIN warehouse.filet_analysis a ON a.sample_ref=s.id
           LEFT JOIN warehouse.filet_abundance f ON f.metadata_dataset_version_id=a.dataset_version_id AND f.sample_id=a.sample_id AND f.analysis_id=a.analysis_id
@@ -224,21 +344,22 @@ def map_points(
     if year_from and year_to and year_from > year_to:
         year_from, year_to = year_to, year_from
     where, values = profile_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, None)
-    if matched_only:
-        where += " AND EXISTS (SELECT 1 FROM warehouse.filet_uvp_match m WHERE m.uvp_profile_id=p.id AND m.match_status='accepted' AND m.time_gap_hours <= %s)"
-        values.append(max_gap_hours)
-    filet_filter_sql, filet_values = filet_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, None)
+    filet_filter_sql, filet_values = filet_filter(filet_ids_in_zones(zone), year_from, year_to, ecotaxa_project, ecopart_project, None)
     filet_where = ["s.latitude IS NOT NULL", "s.longitude IS NOT NULL", filet_filter_sql]
     if matched_only:
-        filet_where.append("EXISTS (SELECT 1 FROM warehouse.filet_uvp_match m WHERE m.filet_sample_id=s.id AND m.match_status='accepted' AND m.time_gap_hours <= %s)")
-        filet_values.append(max_gap_hours)
+        profile_ids, sample_ids = accepted_pair_ids(zone, year_from, year_to, ecotaxa_project, ecopart_project, None, max_gap_hours)
+        where += " AND p.id = ANY(%s::bigint[])"
+        values.append(profile_ids)
+        filet_where.append("s.id = ANY(%s::bigint[])")
+        filet_values.append(sample_ids)
     with db() as conn:
         uvp = conn.execute(f"""SELECT p.latitude,p.longitude,count(DISTINCT p.id) AS count,
           string_agg(DISTINCT p.sample_name, ', ') AS samples,
           string_agg(DISTINCT p.station_key, ', ') AS stations,
           string_agg(DISTINCT ep.title, ', ') AS ecotaxa_projects,
           string_agg(DISTINCT p.ecopart_project_id::text, ', ') AS ecopart_projects,
-          min(p.sampled_at) AS sampled_at,count(DISTINCT l.ctd_profile_id) AS ctd_profiles
+          min(p.sampled_at) AS sampled_at,max(p.sampled_at) AS last_sampled_at,
+          count(DISTINCT l.ctd_profile_id) AS ctd_profiles
           FROM warehouse.uvp_profile p LEFT JOIN warehouse.uvp_ctd l ON l.uvp_profile_id=p.id
           LEFT JOIN warehouse.ecotaxa_project ep ON ep.project_id=p.ecotaxa_project_id
           WHERE {where} AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL GROUP BY 1,2""", values).fetchall()
@@ -276,9 +397,12 @@ def filet_uvp(
     year_to = year if year_to is None else year_to
     if year_from and year_to and year_from > year_to:
         year_from, year_to = year_to, year_from
+    pw, pv = profile_filter(zone, year_from, year_to, ecotaxa_project, ecopart_project, None)
+    fw, fv = filet_filter(filet_ids_in_zones(zone), year_from, year_to, [], None, None)
     with db() as conn:
-        rows = conn.execute("""SELECT m.match_status,m.time_gap_hours,s.sample_id,s.station_name,
+        rows = conn.execute(f"""SELECT m.match_status,m.time_gap_hours,s.sample_id,s.station_name,
           s.deployment_datetime_start AS filet_time,s.sampling_platform,s.gear,s.tow_type,s.net_mesh_size,s.number_of_nets,
+          (SELECT count(*) FROM warehouse.uvp_ctd c WHERE c.uvp_profile_id=p.id) AS ctd_profiles,
           s.min_sample_depth,s.max_sample_depth,p.sample_name,p.station_key,p.sampled_at AS uvp_time,ep.title AS uvp_project,
           s.latitude AS filet_latitude,s.longitude AS filet_longitude,p.latitude AS uvp_latitude,p.longitude AS uvp_longitude
           FROM warehouse.filet_uvp_match m JOIN warehouse.filet_sample s ON s.id=m.filet_sample_id
@@ -287,16 +411,7 @@ def filet_uvp(
           WHERE m.time_gap_hours <= %s
             AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
             AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
-            AND (%s::int IS NULL OR EXTRACT(YEAR FROM p.sampled_at)>=%s)
-            AND (%s::int IS NULL OR EXTRACT(YEAR FROM p.sampled_at)<=%s)
-            AND (cardinality(%s::text[]) = 0 OR p.marine_zone_name = ANY(%s::text[]))
-            AND (cardinality(%s::text[]) = 0 OR s.marine_zone_name = ANY(%s::text[]))
-            AND (cardinality(%s::bigint[]) = 0 OR p.ecotaxa_project_id = ANY(%s::bigint[]))
-            AND (%s::int IS NULL OR p.ecopart_project_id=%s)
-          ORDER BY m.time_gap_hours LIMIT 500""", (
-              max_gap_hours, year_from, year_from, year_to, year_to,
-              zone, zone, zone, zone, ecotaxa_project, ecotaxa_project,
-              ecopart_project, ecopart_project,
-          )).fetchall()
+            AND {pw} AND {fw}
+          ORDER BY m.time_gap_hours, s.id, p.id""", [max_gap_hours] + pv + fv).fetchall()
     return {"max_gap_hours": max_gap_hours, "accepted": sum(r["match_status"] == "accepted" for r in rows),
             "ambiguous": sum(r["match_status"] == "ambiguous" for r in rows), "matches": rows}
