@@ -53,15 +53,33 @@
     input[type=range] { width:100%; margin:10px 0 2px; accent-color:var(--focus); }
     .range-note { color:var(--muted); font-size:12px; }
     .apply { width:100%; min-height:44px; margin-top:18px; border:0; border-radius:7px; background:var(--focus); color:#fff; font-weight:700; cursor:pointer; transition:background .18s ease, transform .18s ease; }
+    .apply[data-dirty="true"] { background:#0a7581; box-shadow:0 0 0 3px rgba(10,117,129,.13); }
+    .apply:disabled { cursor:wait; opacity:.72; }
     .apply:hover { background:#044d56; }
     .apply:active { transform:scale(.98); }
+    .filter-state { min-height:18px; margin:7px 0 0; color:var(--muted); font-size:12px; }
+    .filter-state[data-dirty="true"] { color:var(--focus); font-weight:700; }
+    .filter-chips { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 15px; }
+    .filter-chips[hidden] { display:none; }
+    .filter-chip { display:inline-flex; align-items:center; gap:5px; min-height:30px; max-width:100%; padding:3px 7px 3px 9px; border:1px solid #b7c8ce; border-radius:999px; background:#f6f9fa; color:var(--ink); font-size:12px; }
+    .filter-chip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .filter-chip button { width:22px; height:22px; padding:0; border:0; border-radius:50%; background:transparent; color:var(--muted); cursor:pointer; font-size:16px; line-height:1; }
+    .filter-chip button:hover { background:#e5eef0; color:var(--ink); }
+    .filter-clear { min-height:30px; padding:3px 9px; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--focus); font-size:12px; font-weight:700; cursor:pointer; }
+    .filter-clear:hover { background:#f0f7f8; }
     .map-wrap { position:relative; min-width:0; background:#dce9ec; }
     #map { height:100%; width:100%; }
     .map-loading { position:absolute; z-index:1100; top:16px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:9px; min-height:38px; padding:8px 13px; border:1px solid rgba(7,93,104,.2); border-radius:999px; background:rgba(255,255,255,.96); box-shadow:0 4px 16px rgba(21,45,59,.16); color:var(--ink); font-size:13px; font-weight:700; pointer-events:none; }
     .map-loading[hidden] { display:none; }
     .loader-ring { width:16px; height:16px; border:2px solid #bfd4d8; border-top-color:var(--focus); border-radius:50%; animation:loader-spin .7s linear infinite; }
     @keyframes loader-spin { to { transform:rotate(360deg); } }
+    .summary-compact { position:absolute; z-index:900; top:16px; right:16px; display:none; width:min(260px,calc(100% - 32px)); padding:10px 12px; background:rgba(255,255,255,.96); border:1px solid var(--line); border-radius:8px; box-shadow:0 3px 12px rgba(21,45,59,.12); }
+    .summary-compact[hidden] { display:none; }
+    .summary-compact h2 { font-size:14px; }
+    .summary-compact p { margin:3px 0 0; color:var(--muted); font-size:12px; }
+    .summary-compact .compact-metrics { margin-top:7px; color:var(--ink); font-size:12px; font-weight:700; line-height:1.5; }
     .map-key { position:absolute; z-index:900; left:16px; bottom:18px; display:grid; gap:6px; max-width:230px; padding:10px 12px; background:rgba(255,255,255,.94); border:1px solid var(--line); border-radius:8px; box-shadow:0 3px 12px rgba(21,45,59,.12); font-size:12px; }
+    .map-key [hidden] { display:none; }
     .map-key div { display:flex; align-items:center; gap:7px; }
     .map-key .line { width:19px; height:0; border-top:2px solid var(--match); }
     .map-key .line.ambiguous { border-top-color:var(--ambiguous); border-top-style:dashed; }
@@ -76,6 +94,8 @@
     .link-row strong { display:block; font-size:17px; line-height:1.1; font-variant-numeric:tabular-nums; }
     .link-row small { display:block; margin-top:4px; color:var(--muted); font-size:12px; }
     .empty { color:var(--muted); font-size:13px; }
+    .empty-detail { margin:13px 0 0; padding:10px 11px; border:1px dashed #a9bdc3; border-radius:7px; background:#f6f9fa; color:var(--muted); font-size:12px; }
+    .empty-detail[hidden] { display:none; }
     .leaflet-popup-content-wrapper { border:1px solid var(--line); border-radius:10px; box-shadow:0 10px 26px rgba(21,45,59,.18); }
     .leaflet-popup-content { min-width:270px; max-width:360px; margin:0!important; font-size:13px; line-height:1.45; }
     .popup { padding:14px 15px; }
@@ -92,7 +112,7 @@
     .zone-label { background:rgba(255,255,255,.86); border:0; border-radius:4px; color:var(--ink); font-size:12px; font-weight:700; padding:2px 5px; box-shadow:none; }
     .zone-label:before { display:none; }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; animation:none!important; } }
-    @media (max-width:1024px) { .app { grid-template-columns:260px minmax(0,1fr); } .app { height:auto; grid-template-rows:minmax(550px,calc(100vh - 68px)) auto; } .summary { display:block; grid-column:1 / -1; border-top:1px solid var(--line); } .summary .metric { display:inline-block; width:24%; vertical-align:top; } }
+    @media (max-width:1024px) { .app { grid-template-columns:260px minmax(0,1fr); } .app { height:auto; grid-template-rows:minmax(550px,calc(100vh - 68px)) auto; } .summary { display:block; grid-column:1 / -1; border-top:1px solid var(--line); } .summary .metric { display:inline-block; width:24%; vertical-align:top; } .summary-compact { display:block; } }
     @media (max-width:680px) { .topbar { height:auto; min-height:62px; padding:12px 16px; } .subtitle,.status { display:none; } .app { height:auto; min-height:0; display:block; } .filters { border-right:0; border-bottom:1px solid var(--line); } .map-wrap { height:58vh; min-height:390px; } .summary { display:block; border-left:0; border-top:1px solid var(--line); } .section { padding:13px 0; } }
   </style>
 </head>
@@ -113,11 +133,12 @@
         <div class="year-range" role="group" aria-label="Plage d’années"><label class="field">De<select id="yearFrom"><option value="">Début</option></select></label><label class="field">À<select id="yearTo"><option value="">Fin</option></select></label></div>
         <details class="multi-field" id="zonesField"><summary><span>Zones de l’Arctique canadien</span><span class="multi-summary" id="zonesSummary">Toutes les zones</span></summary><div class="multi-options" id="zonesChoices"></div><button class="clear-multi" id="clearZones" type="button">Effacer les zones</button></details>
         <details class="multi-field" id="projectsField"><summary><span>Projets EcoTaxa</span><span class="multi-summary" id="projectsSummary">Tous les projets</span></summary><div class="multi-options" id="projectsChoices"></div><button class="clear-multi" id="clearProjects" type="button">Effacer les projets</button></details>
-        <button class="apply" id="go">Mettre à jour la carte</button>
+        <div id="activeFilters" class="filter-chips" aria-label="Filtres actifs" hidden><button class="filter-clear" id="clearAllFilters" type="button">Tout effacer</button></div>
+        <button class="apply" id="go" type="button">Appliquer les filtres</button><p class="filter-state" id="filterStatus" aria-live="polite">Aucune modification en attente.</p>
       </section>
     </aside>
-    <main class="map-wrap" id="mapRegion" aria-label="Carte de couverture"><div id="map"></div><div class="map-loading" id="mapLoading" role="status" aria-live="polite" hidden><span class="loader-ring" aria-hidden="true"></span><span>Mise à jour de la carte…</span></div><div class="map-key" aria-label="Légende"><strong class="key-title">Légende</strong><div><i class="symbol"></i> UVP</div><div><i class="symbol ctd"></i> UVP avec CTD relié</div><div><i class="symbol filet"></i> FILET</div><div><i class="line"></i> correspondance acceptée</div></div></main>
-    <aside class="panel summary" aria-live="polite"><p class="eyebrow">Couverture sélectionnée</p><h2 id="title">Toutes les données</h2><p class="date-range" id="period">Chargement…</p><div class="metric"><strong id="profiles">—</strong><span>profils UVP</span><small id="unmapped"></small></div><div class="metric"><strong id="objects">—</strong><span>objets EcoTaxa associés</span></div><div class="metric"><strong id="ctds">—</strong><span>profils CTD</span></div><div class="metric"><strong id="filets">—</strong><span>échantillons FILET</span></div></aside>
+    <main class="map-wrap" id="mapRegion" aria-label="Carte de couverture"><div id="map"></div><div class="map-loading" id="mapLoading" role="status" aria-live="polite" hidden><span class="loader-ring" aria-hidden="true"></span><span>Mise à jour de la carte…</span></div><div class="summary-compact" id="summaryCompact" aria-label="Résumé de la couverture" hidden><h2 id="compactTitle">Toutes les données</h2><p id="compactPeriod">Chargement…</p><div class="compact-metrics" id="compactMetrics">—</div></div><div class="map-key" aria-label="Légende"><strong class="key-title">Légende</strong><div id="legendUvp"><i class="symbol"></i> UVP</div><div id="legendCtd"><i class="symbol ctd"></i> UVP avec CTD relié</div><div id="legendFilet"><i class="symbol filet"></i> FILET</div><div id="legendMatch"><i class="line"></i> correspondance acceptée</div><div id="legendEmpty" class="empty" hidden>Aucune couche visible</div></div></main>
+    <aside class="panel summary" aria-live="polite"><p class="eyebrow">Couverture sélectionnée</p><h2 id="title">Toutes les données</h2><p class="date-range" id="period">Chargement…</p><div class="metric"><strong id="profiles">—</strong><span>profils UVP</span><small id="unmapped"></small></div><div class="metric"><strong id="objects">—</strong><span>objets EcoTaxa associés</span></div><div class="metric"><strong id="ctds">—</strong><span>profils CTD</span></div><div class="metric"><strong id="filets">—</strong><span>échantillons FILET</span></div><p id="emptyDetail" class="empty-detail" role="status" hidden></p></aside>
   </div>
 <script>
 const $=x=>document.getElementById(x),fmt=x=>new Intl.NumberFormat('fr-CA').format(+x||0),dateTime=x=>{if(!x)return '—';let raw=String(x),utc=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(raw)?raw+'Z':raw,d=new Date(utc);return Number.isNaN(d.valueOf())?x:new Intl.DateTimeFormat('fr-CA',{timeZone:'UTC',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(d)+' UTC'},gap=x=>{let m=Math.round(Number(x)*60);if(!Number.isFinite(m))return '—';if(m<1)return '< 1 min';let h=Math.floor(m/60),r=m%60;return h?(h+' h'+(r?' '+String(r).padStart(2,'0'):'') ):m+' min'};
@@ -126,7 +147,13 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'�
 function opts(id,a){a.forEach(x=>{let value=typeof x==='object'?x.value:x,label=typeof x==='object'?x.label:x;$(id).add(new Option(label,value))})}
 function selected(id){return [...document.querySelectorAll('#'+id+'Choices input:checked')].map(input=>input.value)}
 function updateMultiSummary(id,empty){let values=selected(id),summary=$(id+'Summary');summary.textContent=values.length===0?empty:values.length===1?document.querySelector('#'+id+'Choices input:checked').dataset.label:values.length+' sélectionnés'}
-function multiOptions(id,items,empty){let root=$(id+'Choices');items.forEach(item=>{let value=typeof item==='object'?item.value:item,label=typeof item==='object'?item.label:item,option=document.createElement('label'),input=document.createElement('input'),text=document.createElement('span');option.className='multi-option';input.type='checkbox';input.value=value;input.dataset.label=label;input.onchange=()=>{updateMultiSummary(id,empty);load()};text.textContent=label;option.append(input,text);root.append(option)});updateMultiSummary(id,empty)}
+let appliedFilterSignature='';
+function filterSignature(){return qs().toString()+'|matches='+$('matches').checked+'|hours='+$('hours').value}
+function renderFilterState(){let dirty=Boolean(appliedFilterSignature)&&filterSignature()!==appliedFilterSignature,button=$('go'),status=$('filterStatus');button.dataset=button.dataset||{};status.dataset=status.dataset||{};button.dataset.dirty=dirty?'true':'false';button.textContent=dirty?'Appliquer les filtres':'Filtres appliqués';status.dataset.dirty=dirty?'true':'false';status.textContent=dirty?'Filtres modifiés — appliquez-les pour actualiser la carte.':'Aucune modification en attente.'}
+function markFiltersDirty(){renderActiveFilters();renderFilterState();if(coverageData)renderSummary()}
+function removeFilter(kind,value){if(kind==='yearFrom'||kind==='yearTo')$(kind).value='';else document.querySelectorAll('#'+kind+'Choices input').forEach(input=>{if(input.value===value)input.checked=false});if(kind==='zones')updateMultiSummary('zones','Toutes les zones');if(kind==='projects')updateMultiSummary('projects','Tous les projets');markFiltersDirty()}
+function renderActiveFilters(){let root=$('activeFilters');if(!root)return;while(root.firstChild&&root.firstChild!==$('clearAllFilters'))root.removeChild(root.firstChild);let chips=[];const from=$('yearFrom').value,to=$('yearTo').value;if(from||to)chips.push({kind:'yearFrom',value:'',label:from&&to?`Années ${from}–${to}`:`Année ${from||to}`});selected('zones').forEach(value=>{let input=[...document.querySelectorAll('#zonesChoices input')].find(candidate=>candidate.value===value);chips.push({kind:'zones',value,label:input?.dataset.label||value})});selected('projects').forEach(value=>{let input=[...document.querySelectorAll('#projectsChoices input')].find(candidate=>candidate.value===value);chips.push({kind:'projects',value,label:input?.dataset.label||value})});chips.forEach(chip=>{let item=document.createElement('span'),text=document.createElement('span'),remove=document.createElement('button');item.className='filter-chip';text.textContent=chip.label;remove.type='button';remove.setAttribute('aria-label','Retirer '+chip.label);remove.textContent='×';remove.onclick=()=>removeFilter(chip.kind,chip.value);item.append(text,remove);root.insertBefore(item,$('clearAllFilters'))});root.hidden=chips.length===0}
+function multiOptions(id,items,empty){let root=$(id+'Choices');items.forEach(item=>{let value=typeof item==='object'?item.value:item,label=typeof item==='object'?item.label:item,option=document.createElement('label'),input=document.createElement('input'),text=document.createElement('span');option.className='multi-option';input.type='checkbox';input.value=value;input.dataset.label=label;input.onchange=()=>{updateMultiSummary(id,empty);markFiltersDirty()};text.textContent=label;option.append(input,text);root.append(option)});updateMultiSummary(id,empty)}
 function qs(){let q=new URLSearchParams;let from=$('yearFrom').value,to=$('yearTo').value;if(from)q.set('year_from',from);if(to)q.set('year_to',to);selected('zones').forEach(value=>q.append('zone',value));selected('projects').forEach(value=>q.append('ecotaxa_project',value));return q}
 function setLoading(active){$('mapLoading').hidden=!active;if(active)$('mapRegion').setAttribute('aria-busy','true');else $('mapRegion').removeAttribute('aria-busy')}
 function pointOnRing(lon,lat,a,b){const cross=(lon-a[0])*(b[1]-a[1])-(lat-a[1])*(b[0]-a[0]);return Math.abs(cross)<=1e-10&&lon>=Math.min(a[0],b[0])-1e-10&&lon<=Math.max(a[0],b[0])+1e-10&&lat>=Math.min(a[1],b[1])-1e-10&&lat<=Math.max(a[1],b[1])+1e-10}
@@ -145,6 +172,9 @@ function group(ps,col,name){let g=L.layerGroup(),isFilet=name==='Échantillon FI
 function comparePopup(x){let filet=popupSection('Échantillon FILET',[popupRow('Échantillon',x.sample_id),popupRow('Station',x.station_name),popupRow('Date et heure',dateTime(x.filet_time))])+filetEquipmentSection(x),uvp=popupSection('Profil UVP',[popupRow('Profil',x.sample_name),popupRow('Projet UVP / EcoTaxa',x.uvp_project),popupRow('Station',x.station_key),popupRow('Date et heure',dateTime(x.uvp_time))]);return `<article class="popup"><h2 class="popup-title">Comparaison FILET ↔ UVP</h2><p class="popup-summary popup-status">${escapeHtml(x.match_status)} · écart ${escapeHtml(gap(x.time_gap_hours))}</p>${filet}${uvp}</article>`}
 let coverageData=null,mapData=null,zoneData=null;
 function renderZoneLayer(){if(zoneLayer)map.removeLayer(zoneLayer);zoneLayer=null;const visible=visibleZoneFeatures(zoneData,mapData);if(visible?.features.length)zoneLayer=L.geoJSON(visible,{style:{color:'#0b6975',weight:2,fillOpacity:.06},onEachFeature:(f,l)=>l.bindTooltip(f.properties.canonical,{permanent:true,direction:'center',className:'zone-label'})}).addTo(map)}
+function renderLegend(){let comparing=$('matches').checked,showUvp=comparing||$('uvp').checked,showFilet=comparing||$('filet').checked,ctd=Boolean(coverageData?.ctd?.profiles);$('legendUvp').hidden=!showUvp;$('legendCtd').hidden=!showUvp||!ctd;$('legendFilet').hidden=!showFilet;$('legendMatch').hidden=!comparing;$('legendEmpty').hidden=showUvp||showFilet}
+function renderEmptyState(){let d=coverageData;if(!d)return;$('emptyDetail').hidden=true;const comparing=$('matches').checked,showUvp=comparing||$('uvp').checked,showFilet=comparing||$('filet').checked;if(!showUvp&&!showFilet){$('emptyDetail').textContent='Aucune couche visible. Activez UVP ou FILET pour afficher les données.';$('emptyDetail').hidden=false;return}const totalUvp=Number(d.uvp?.profiles||0),totalFilet=Number(d.filet?.samples||0),visibleTotals=[showUvp?totalUvp:null,showFilet?totalFilet:null].filter(value=>value!==null);if(visibleTotals.every(value=>value===0)){let names=[showUvp?'UVP':null,showFilet?'FILET':null].filter(Boolean).join(' et ');$('emptyDetail').textContent=`Aucune donnée ${names} pour ce périmètre. Modifiez un filtre ou réactivez une couche.`;$('emptyDetail').hidden=false}}
+function updateCompactSummary(title,period,metrics){$('compactTitle').textContent=title;$('compactPeriod').textContent=period;$('compactMetrics').textContent=metrics;$('summaryCompact').hidden=false}
 function renderSummary(){
   if(!coverageData)return;
   const d=coverageData, comparing=$('matches').checked;
@@ -161,6 +191,7 @@ function renderSummary(){
   $('objects').textContent=fmt(showUvp?d.uvp.objects_mapped:0);
   $('ctds').textContent=fmt(showUvp?d.ctd.profiles:0);
   $('filets').textContent=fmt(showFilet?d.filet.samples:0);
+  const metrics=[];if(showUvp)metrics.push(`UVP ${fmt(d.uvp.profiles)}`);if(showUvp)metrics.push(`CTD ${fmt(d.ctd.profiles)}`);if(showFilet)metrics.push(`FILET ${fmt(d.filet.samples)}`);updateCompactSummary($('title').textContent,$('period').textContent,metrics.join(' · ')||'Aucune couche visible');renderLegend();renderEmptyState();
 }
 async function fetchJson(url){
   const response=await fetch(url);
@@ -199,7 +230,7 @@ async function load(){
     }else{
       for(const name of ['uvp','filet'])if($(name).checked)layers[name].addTo(map);
     }
-    coverageData=d;renderSummary();
+    coverageData=d;appliedFilterSignature=filterSignature();renderSummary();renderFilterState();
   }catch(error){
     if(sequence!==loadSequence)return;
     Object.values(layers).forEach(layer=>map.removeLayer(layer));
@@ -208,13 +239,23 @@ async function load(){
     zoneLayer=null;matchLayer=null;coverageData=null;mapData=null;zoneData=null;
     for(const name of ['profiles','objects','ctds','filets'])$(name).textContent='—';
     $('unmapped').textContent='';
-    $('period').textContent='La carte n’a pas pu être mise à jour. Réessayez.';
+    $('period').textContent='La carte n’a pas pu être mise à jour. Réessayez.';$('emptyDetail').hidden=false;$('emptyDetail').textContent='La requête a échoué. Vérifiez les filtres puis réessayez.';
     console.error(error);
   }finally{
-    if(sequence===loadSequence){button.disabled=false;button.textContent='Mettre à jour la carte';setLoading(false)}
+    if(sequence===loadSequence){button.disabled=false;setLoading(false);renderFilterState()}
   }
 }
-['uvp','filet'].forEach(x=>$(x).onchange=()=>{if(!$('matches').checked){if($(x).checked)layers[x]?.addTo(map);else if(layers[x])map.removeLayer(layers[x]);}renderZoneLayer();renderSummary()});$('hours').oninput=()=>{$('hoursOut').textContent=$('hours').value+' h'};$('hours').onchange=load;$('matches').onchange=()=>{$('matchOptions').hidden=!$('matches').checked;['uvp','filet'].forEach(x=>{if($('matches').checked)$(x).checked=true;$(x).disabled=$('matches').checked});load()};$('yearFrom').onchange=()=>{if($('yearTo').value&&$('yearFrom').value>$('yearTo').value)$('yearTo').value=$('yearFrom').value;load()};$('yearTo').onchange=()=>{if($('yearFrom').value&&$('yearTo').value<$('yearFrom').value)$('yearFrom').value=$('yearTo').value;load()};$('clearZones').onclick=()=>{document.querySelectorAll('#zonesChoices input').forEach(input=>input.checked=false);updateMultiSummary('zones','Toutes les zones');load()};$('clearProjects').onclick=()=>{document.querySelectorAll('#projectsChoices input').forEach(input=>input.checked=false);updateMultiSummary('projects','Tous les projets');load()};$('go').onclick=load;fetch('/api/options').then(r=>r.json()).then(o=>{opts('yearFrom',o.years);opts('yearTo',o.years);multiOptions('zones',o.zones,'Toutes les zones');multiOptions('projects',o.ecotaxa_projects,'Tous les projets');load()}).catch(()=>{$('period').textContent='Les options n’ont pas pu être chargées.'});
+['uvp','filet'].forEach(x=>$(x).onchange=()=>{if(!$('matches').checked){if($(x).checked)layers[x]?.addTo(map);else if(layers[x])map.removeLayer(layers[x]);}renderZoneLayer();renderSummary()});
+$('hours').oninput=()=>{$('hoursOut').textContent=$('hours').value+' h'};
+$('hours').onchange=load;
+$('matches').onchange=()=>{$('matchOptions').hidden=!$('matches').checked;['uvp','filet'].forEach(x=>{if($('matches').checked)$(x).checked=true;$(x).disabled=$('matches').checked});load()};
+$('yearFrom').onchange=()=>{if($('yearTo').value&&$('yearFrom').value>$('yearTo').value)$('yearTo').value=$('yearFrom').value;markFiltersDirty()};
+$('yearTo').onchange=()=>{if($('yearFrom').value&&$('yearTo').value<$('yearFrom').value)$('yearFrom').value=$('yearTo').value;markFiltersDirty()};
+$('clearZones').onclick=()=>{document.querySelectorAll('#zonesChoices input').forEach(input=>input.checked=false);updateMultiSummary('zones','Toutes les zones');markFiltersDirty()};
+$('clearProjects').onclick=()=>{document.querySelectorAll('#projectsChoices input').forEach(input=>input.checked=false);updateMultiSummary('projects','Tous les projets');markFiltersDirty()};
+$('clearAllFilters').onclick=()=>{$('yearFrom').value='';$('yearTo').value='';document.querySelectorAll('#zonesChoices input,#projectsChoices input').forEach(input=>input.checked=false);updateMultiSummary('zones','Toutes les zones');updateMultiSummary('projects','Tous les projets');markFiltersDirty()};
+$('go').onclick=load;
+fetch('/api/options').then(r=>r.json()).then(o=>{opts('yearFrom',o.years);opts('yearTo',o.years);multiOptions('zones',o.zones,'Toutes les zones');multiOptions('projects',o.ecotaxa_projects,'Tous les projets');renderActiveFilters();renderFilterState();load()}).catch(()=>{$('period').textContent='Les options n’ont pas pu être chargées.';$('filterStatus').textContent='Les filtres n’ont pas pu être chargés.'});
 </script>
 </body>
 </html>

@@ -75,3 +75,16 @@ test('loading state is visible and announced while filters update',()=>{
   assert.equal(s.element('mapLoading').hidden,true);
   assert.equal(s.element('mapRegion').attributes['aria-busy'],undefined);
 });
+test('legend follows visible layers and comparison mode',()=>{
+  const s=setup();s.context.fixture=coverage;s.run('coverageData=fixture');
+  s.element('uvp').checked=true;s.element('filet').checked=false;s.element('matches').checked=false;s.run('renderLegend()');
+  assert.equal(s.element('legendUvp').hidden,false);assert.equal(s.element('legendCtd').hidden,false);assert.equal(s.element('legendFilet').hidden,true);assert.equal(s.element('legendMatch').hidden,true);assert.equal(s.element('legendEmpty').hidden,true);
+  s.element('uvp').checked=false;s.element('matches').checked=false;s.run('renderLegend()');assert.equal(s.element('legendEmpty').hidden,false);
+  s.element('matches').checked=true;s.run('renderLegend()');assert.equal(s.element('legendMatch').hidden,false);assert.equal(s.element('legendEmpty').hidden,true);
+});
+test('empty state names the visible layers and compact summary mirrors the selection',()=>{
+  const s=setup();s.context.fixture={...coverage,uvp:{...coverage.uvp,profiles:0},filet:{...coverage.filet,samples:0}};s.run('coverageData=fixture');
+  s.element('uvp').checked=true;s.element('filet').checked=false;s.run('renderSummary()');
+  assert.match(s.element('emptyDetail').textContent,/Aucune donnée UVP/);assert.equal(s.element('emptyDetail').hidden,false);assert.match(s.element('compactMetrics').textContent,/UVP 0/);
+  s.element('uvp').checked=false;s.element('filet').checked=false;s.run('renderSummary()');assert.match(s.element('emptyDetail').textContent,/Aucune couche visible/);assert.equal(s.element('legendEmpty').hidden,false);
+});

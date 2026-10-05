@@ -11,19 +11,19 @@ des objets.
 
 ## Périmètre utilisateur
 
-L'utilisateur peut restreindre l'inventaire par espace, temps, projet et
-sample. L'interface résume ensuite les sources disponibles : EcoTaxa, EcoPart,
-CTD Amundsen et FILET.
+L'utilisateur peut restreindre l'inventaire par espace, temps et projet.
+L'interface résume ensuite les sources disponibles : EcoTaxa, EcoPart, CTD
+Amundsen et FILET. Le détail d'un sample est consultable depuis son point sur
+la carte.
 
 Pour le périmètre choisi, elle affiche seulement :
 
 - zones, positions, périodes, campagnes et projets couverts ;
-- nombre de samples, profils et bins ;
+- nombre de samples FILET et de profils UVP et CTD ;
 - nombre d'objets EcoTaxa associés à EcoPart, sans liste d'objets ;
-- disponibilité d'une série d'abondance taxonomique ;
 - disponibilité CTD et FILET ;
-- liens disponibles entre EcoTaxa, EcoPart, CTD et FILET ;
-- manques, non-appariés et ambiguïtés, avec leur statut.
+- correspondances FILET–UVP acceptées selon une fenêtre temporelle choisie ;
+- profils sans coordonnées, absences et données associées disponibles.
 
 Une vue détaillée n'est ouverte qu'après une demande explicite de l'utilisateur.
 
@@ -44,10 +44,15 @@ Une vue détaillée n'est ouverte qu'après une demande explicite de l'utilisate
 
 ## Première interface
 
-La première page comporte une matrice de disponibilité par source, des cartes
-de métriques, des filtres espace/temps/projet/sample et des tableaux de
-couverture. Elle doit rendre immédiatement lisible un état tel que :
+La première page comporte une carte, des couches UVP et FILET, des filtres
+espace/temps/projet et un résumé de couverture. Elle doit rendre immédiatement
+lisible un état tel que :
 
-> Baie de Baffin · 2024 : 123 profils EcoPart, 13 800 bins, 3 projets
-> EcoTaxa liés, 121 358 objets `Copepoda<Multicrustacea`, CTD partiellement
-> disponible, FILET absent du filtre.
+> Baie de Baffin · 2024 : 123 profils UVP, 4 279 581 objets EcoTaxa associés,
+> 94 profils CTD et 272 échantillons FILET, du 12 août au 13 octobre 2024.
+
+## Suivi UX
+
+L’état de l’interface, les références de conception, les priorités et leurs
+critères de réussite sont suivis dans
+[WAREHOUSE_NAVIGATOR_UX_AUDIT.md](WAREHOUSE_NAVIGATOR_UX_AUDIT.md).
