@@ -131,8 +131,8 @@ actifs, combien de données sont disponibles, et pourquoi une carte est vide.
 | UX-06 | Ajouter une liste courte synchronisée avec la carte | Une carte dense ne permet pas de parcourir méthodiquement les résultats. | Une liste de positions/profils visibles affiche type, station, date et projet ; sélectionner une ligne zoome et ouvre le même détail que le point. | À faire |
 | UX-07 | Adapter les symboles au niveau de zoom | Les points superposés masquent la distribution à l’échelle arctique. | À faible zoom, des agrégats indiquent le nombre ; les points individuels apparaissent à un seuil documenté. Aucun total ne change. | À faire |
 | UX-08 | Simplifier les fiches agrégées | Une longue liste d’identifiants ou de matériels masque l’information principale. | La fiche montre d’abord quantité, période, stations et disponibilité ; les identifiants complets sont révélés sur demande. | À faire |
-| UX-09 | Synchroniser sélection, résumé et fiche | Il faut maintenir le contexte quand l’utilisateur passe de la carte aux détails. | Le point actif est visuellement distinct, son résumé est repris dans le panneau et la fermeture restaure l’état précédent. | À faire |
-| UX-10 | Encoder l’état utile dans l’URL | Une vue de couverture doit être reproductible pour une discussion ou une démonstration. | Une URL recharge les années, zones, projets, couches et fenêtre FILET–UVP sans stocker de secret. | À faire |
+| UX-09 | Synchroniser sélection, résumé et fiche | Il faut maintenir le contexte quand l’utilisateur passe de la carte aux détails. | Le point actif est visuellement distinct, son résumé est repris dans le panneau et la fermeture restaure l’état précédent. | Partiel — liste, zoom, popup et point actif sont synchronisés ; le résumé global reste inchangé |
+| UX-10 | Encoder l’état utile dans l’URL | Une vue de couverture doit être reproductible pour une discussion ou une démonstration. | Une URL recharge les années, zones, projets, couches et fenêtre FILET–UVP sans stocker de secret. | Terminé — URL vérifiée avec année et conservation du mode |
 
 **Critère de sortie du lot B :** l’utilisateur peut parcourir les résultats sans
 chercher au hasard sur la carte et partager exactement le même périmètre avec
@@ -156,11 +156,12 @@ la souris.
 1. UX-01, UX-02 et UX-04 : rendre l’état courant explicite.
 2. UX-03 : conserver le résumé dans le champ visuel de la démonstration.
 3. UX-05 : supprimer l’ambiguïté entre application automatique et bouton.
-4. Rejouer les scénarios de référence Baie de Baffin 2024, Baie d’Hudson UVP
+4. UX-06 et UX-10 : parcourir les résultats et partager le périmètre.
+5. Rejouer les scénarios de référence Baie de Baffin 2024, Baie d’Hudson UVP
    seul et comparaison FILET–UVP à 10 h.
-5. UX-06 et UX-07 : résoudre l’exploration à l’aveugle et la densité.
-6. UX-08 à UX-10 : améliorer le détail et la reproductibilité.
-7. UX-11 à UX-14 : décider la projection et terminer l’accessibilité.
+6. UX-07 : résoudre la densité à faible zoom.
+7. UX-08 et UX-09 : améliorer le détail et la synchronisation du résumé.
+8. UX-11 à UX-14 : décider la projection et terminer l’accessibilité.
 
 ## Scénarios de recette communs
 
@@ -191,5 +192,6 @@ Chaque lot doit préserver les scénarios suivants :
 Le tableau des lots constitue le suivi UX. Une ligne passe à `Terminé` seulement
 si son critère de réussite est vérifié dans l’interface et si les scénarios de
 recette affectés réussissent. Une modification CSS ou un test unitaire isolé ne
-suffit pas. Le lot A est terminé pour les cinq lignes ci-dessus ; les lots B et
-C restent ouverts.
+suffit pas. Le lot A est terminé pour les cinq lignes correspondantes. Dans le
+lot B, seule l’URL reproductible (UX-10) est terminée ; la liste, la densité, la
+fiche et la reprise du résumé restent ouvertes.

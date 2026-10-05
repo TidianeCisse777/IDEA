@@ -142,7 +142,7 @@
   </div>
 <script>
 const $=x=>document.getElementById(x),fmt=x=>new Intl.NumberFormat('fr-CA').format(+x||0),dateTime=x=>{if(!x)return '—';let raw=String(x),utc=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(raw)?raw+'Z':raw,d=new Date(utc);return Number.isNaN(d.valueOf())?x:new Intl.DateTimeFormat('fr-CA',{timeZone:'UTC',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(d)+' UTC'},gap=x=>{let m=Math.round(Number(x)*60);if(!Number.isFinite(m))return '—';if(m<1)return '< 1 min';let h=Math.floor(m/60),r=m%60;return h?(h+' h'+(r?' '+String(r).padStart(2,'0'):'') ):m+' min'};
-let map=L.map('map',{zoomAnimation:false,fadeAnimation:false,markerZoomAnimation:false,wheelPxPerZoomLevel:180}).setView([70,-80],3),layers={},zoneLayer,matchLayer,loadSequence=0;
+let map=L.map('map',{zoomAnimation:false,fadeAnimation:false,markerZoomAnimation:false,wheelPxPerZoomLevel:180}).setView([70,-80],3),layers={},zoneLayer,matchLayer,loadSequence=0,selectedMarker=null;
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19}).addTo(map);
 function opts(id,a){a.forEach(x=>{let value=typeof x==='object'?x.value:x,label=typeof x==='object'?x.label:x;$(id).add(new Option(label,value))})}
 function selected(id){return [...document.querySelectorAll('#'+id+'Choices input:checked')].map(input=>input.value)}
@@ -161,20 +161,23 @@ function ringCovers(lon,lat,ring){let inside=false;for(let index=0;index<ring.le
 function geometryCovers(lon,lat,geometry){if(!geometry||!['Polygon','MultiPolygon'].includes(geometry.type))return false;const polygons=geometry.type==='Polygon'?[geometry.coordinates]:geometry.coordinates;return polygons.some(polygon=>ringCovers(lon,lat,polygon[0])&&!polygon.slice(1).some(hole=>ringCovers(lon,lat,hole)))}
 function geometryBounds(geometry){let minLon=Infinity,minLat=Infinity,maxLon=-Infinity,maxLat=-Infinity;function visit(value){if(typeof value[0]==='number'){minLon=Math.min(minLon,value[0]);minLat=Math.min(minLat,value[1]);maxLon=Math.max(maxLon,value[0]);maxLat=Math.max(maxLat,value[1]);return}value.forEach(visit)}visit(geometry.coordinates);return [minLon,minLat,maxLon,maxLat]}
 function visibleZoneFeatures(collection,points){if(!collection)return null;const comparing=$('matches').checked,visible=[];if(comparing||$('uvp').checked)visible.push(...(points?.uvp||[]));if(comparing||$('filet').checked)visible.push(...(points?.filet||[]));const located=visible.map(point=>[Number(point.longitude),Number(point.latitude)]).filter(([lon,lat])=>Number.isFinite(lon)&&Number.isFinite(lat));return {...collection,features:collection.features.filter(feature=>{const bounds=geometryBounds(feature.geometry);return located.some(([lon,lat])=>lon>=bounds[0]&&lon<=bounds[2]&&lat>=bounds[1]&&lat<=bounds[3]&&geometryCovers(lon,lat,feature.geometry))})}}
-function focusPoint(e){e.target.closePopup();map.setView(e.latlng,Math.max(map.getZoom(),7),{animate:false});e.target.openPopup()}
+function selectMarker(marker){if(selectedMarker&&selectedMarker!==marker)selectedMarker.setStyle({weight:selectedMarker._baseWeight||1});selectedMarker=marker;marker._baseWeight=marker._baseWeight||marker.options?.weight||1;marker.setStyle({weight:Math.max(3,marker._baseWeight+1)})}
+function focusPoint(e){selectMarker(e.target);e.target.closePopup();map.setView(e.latlng,Math.max(map.getZoom(),7),{animate:false});e.target.openPopup()}
 function escapeHtml(value){return String(value??'—').replace(/[&<>'"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[char]))}
 function popupRow(label,value){return value===null||value===undefined||value===''?'':`<div class="popup-row"><span class="popup-label">${escapeHtml(label)}</span><span class="popup-value">${escapeHtml(value)}</span></div>`}
 function popupSection(title,rows){let visible=rows.filter(Boolean).join('');return visible?`<section class="popup-section"><h3 class="popup-section-title">${escapeHtml(title)}</h3><div class="popup-list">${visible}</div></section>`:''}
 function depthRange(x){let min=x.min_sample_depth,max=x.max_sample_depth;if(min!==null&&min!==undefined&&max!==null&&max!==undefined)return `${min} à ${max}`;if(min!==null&&min!==undefined)return `à partir de ${min}`;if(max!==null&&max!==undefined)return `jusqu’à ${max}`;return ''}
 function filetEquipmentSection(x){return popupSection('Équipement FILET',[popupRow('Support',x.sampling_platform),popupRow('Engin',x.gear),popupRow('Type de trait',x.tow_type),popupRow('Maille déclarée',x.net_mesh_size),popupRow('Nombre de filets',x.number_of_nets),popupRow('Profondeur',depthRange(x))])}
 function profilePopup(p,name,isFilet){let quantity=isFilet?`${fmt(p.count)} échantillon${p.count>1?'s':''} FILET au même emplacement`:`${fmt(p.count)} profil${p.count>1?'s':''} UVP au même emplacement`,time=p.last_sampled_at&&p.last_sampled_at!==p.sampled_at?`${dateTime(p.sampled_at)} → ${dateTime(p.last_sampled_at)}`:dateTime(p.sampled_at),identity=popupSection(isFilet?'Échantillon FILET':'Profil UVP',[popupRow(isFilet?'Échantillon(s)':'Profil(s)',p.samples),popupRow('Station',p.stations),popupRow('Date et heure',time)]),provenance=isFilet?filetEquipmentSection(p):popupSection('Données associées',[popupRow('Projet UVP / EcoTaxa',p.ecotaxa_projects),popupRow('Données EcoPart',p.ecopart_projects?'oui (projet '+p.ecopart_projects+')':'non'),popupRow('CTD lié',p.ctd_profiles?'oui':'non')]);return `<article class="popup"><h2 class="popup-title">${escapeHtml(name)}</h2><p class="popup-summary">${escapeHtml(quantity)}</p>${identity}${provenance}</article>`}
-function group(ps,col,name){let g=L.layerGroup(),isFilet=name==='Échantillon FILET';ps.forEach(p=>{let info=profilePopup(p,name,isFilet);L.circleMarker([p.latitude,p.longitude],{radius:Math.min(12,4+Math.log2(p.count)),color:'#fff',weight:1,fillColor:(p.ctd_profiles>0?'#6854b8':col),fillOpacity:.9}).bindPopup(info,{maxHeight:320}).on('click',focusPoint).addTo(g)});return g}
+function group(ps,col,name){let g=L.layerGroup(),isFilet=name==='Échantillon FILET';ps.forEach(p=>{let info=profilePopup(p,name,isFilet),marker=L.circleMarker([p.latitude,p.longitude],{radius:Math.min(12,4+Math.log2(p.count)),color:'#fff',weight:1,fillColor:(p.ctd_profiles>0?'#6854b8':col),fillOpacity:.9});marker._baseWeight=1;marker.bindPopup(info,{maxHeight:320}).on('click',focusPoint).addTo(g)});return g}
 function comparePopup(x){let filet=popupSection('Échantillon FILET',[popupRow('Échantillon',x.sample_id),popupRow('Station',x.station_name),popupRow('Date et heure',dateTime(x.filet_time))])+filetEquipmentSection(x),uvp=popupSection('Profil UVP',[popupRow('Profil',x.sample_name),popupRow('Projet UVP / EcoTaxa',x.uvp_project),popupRow('Station',x.station_key),popupRow('Date et heure',dateTime(x.uvp_time))]);return `<article class="popup"><h2 class="popup-title">Comparaison FILET ↔ UVP</h2><p class="popup-summary popup-status">${escapeHtml(x.match_status)} · écart ${escapeHtml(gap(x.time_gap_hours))}</p>${filet}${uvp}</article>`}
 let coverageData=null,mapData=null,zoneData=null;
 function renderZoneLayer(){if(zoneLayer)map.removeLayer(zoneLayer);zoneLayer=null;const visible=visibleZoneFeatures(zoneData,mapData);if(visible?.features.length)zoneLayer=L.geoJSON(visible,{style:{color:'#0b6975',weight:2,fillOpacity:.06},onEachFeature:(f,l)=>l.bindTooltip(f.properties.canonical,{permanent:true,direction:'center',className:'zone-label'})}).addTo(map)}
 function renderLegend(){let comparing=$('matches').checked,showUvp=comparing||$('uvp').checked,showFilet=comparing||$('filet').checked,ctd=Boolean(coverageData?.ctd?.profiles);$('legendUvp').hidden=!showUvp;$('legendCtd').hidden=!showUvp||!ctd;$('legendFilet').hidden=!showFilet;$('legendMatch').hidden=!comparing;$('legendEmpty').hidden=showUvp||showFilet}
 function renderEmptyState(){let d=coverageData;if(!d)return;$('emptyDetail').hidden=true;const comparing=$('matches').checked,showUvp=comparing||$('uvp').checked,showFilet=comparing||$('filet').checked;if(!showUvp&&!showFilet){$('emptyDetail').textContent='Aucune couche visible. Activez UVP ou FILET pour afficher les données.';$('emptyDetail').hidden=false;return}const totalUvp=Number(d.uvp?.profiles||0),totalFilet=Number(d.filet?.samples||0),visibleTotals=[showUvp?totalUvp:null,showFilet?totalFilet:null].filter(value=>value!==null);if(visibleTotals.every(value=>value===0)){let names=[showUvp?'UVP':null,showFilet?'FILET':null].filter(Boolean).join(' et ');$('emptyDetail').textContent=`Aucune donnée ${names} pour ce périmètre. Modifiez un filtre ou réactivez une couche.`;$('emptyDetail').hidden=false}}
 function updateCompactSummary(title,period,metrics){$('compactTitle').textContent=title;$('compactPeriod').textContent=period;$('compactMetrics').textContent=metrics;$('summaryCompact').hidden=false}
+function syncUrlState(){if(typeof history==='undefined'||typeof location==='undefined')return;let params=new URLSearchParams;const from=$('yearFrom').value,to=$('yearTo').value;if(from)params.set('year_from',from);if(to)params.set('year_to',to);selected('zones').forEach(value=>params.append('zone',value));selected('projects').forEach(value=>params.append('ecotaxa_project',value));let active=[];if($('uvp').checked)active.push('uvp');if($('filet').checked)active.push('filet');if(active.length<2)params.set('layers',active.join(','));if($('matches').checked){params.set('matches','1');params.set('hours',$('hours').value)}const query=params.toString(),version=new URLSearchParams(location.search).get('version');if(version)params.set('version',version);history.replaceState(null,'',location.pathname+'?'+params.toString())}
+function restoreUrlState(options){if(typeof location==='undefined')return;let params=new URLSearchParams(location.search),from=params.get('year_from'),to=params.get('year_to'),years=(options.years||[]).map(String);if(from&&years.includes(from))$('yearFrom').value=from;if(to&&years.includes(to))$('yearTo').value=to;const zones=params.getAll('zone'),projects=params.getAll('ecotaxa_project');document.querySelectorAll('#zonesChoices input').forEach(input=>{input.checked=zones.includes(input.value)});document.querySelectorAll('#projectsChoices input').forEach(input=>{input.checked=projects.includes(input.value)});if(params.get('layers')){let active=params.get('layers').split(',');$('uvp').checked=active.includes('uvp');$('filet').checked=active.includes('filet')}if(params.get('matches')==='1'){$('matches').checked=true;let hours=params.get('hours');if(hours&&Number.isFinite(Number(hours)))$('hours').value=Math.min(10,Math.max(1,Number(hours)))}updateMultiSummary('zones','Toutes les zones');updateMultiSummary('projects','Tous les projets')}
 function renderSummary(){
   if(!coverageData)return;
   const d=coverageData, comparing=$('matches').checked;
@@ -214,7 +217,7 @@ async function load(){
     Object.values(layers).forEach(layer=>map.removeLayer(layer));
     if(zoneLayer)map.removeLayer(zoneLayer);
     if(matchLayer)map.removeLayer(matchLayer);
-    zoneLayer=null;matchLayer=null;
+    zoneLayer=null;matchLayer=null;selectedMarker=null;
     mapData=m;zoneData=z;renderZoneLayer();
     layers={uvp:group(m.uvp,'#007b88','Profil UVP'),filet:group(m.filet,'#c35b2d','Échantillon FILET')};
     if(comparing){
@@ -230,13 +233,13 @@ async function load(){
     }else{
       for(const name of ['uvp','filet'])if($(name).checked)layers[name].addTo(map);
     }
-    coverageData=d;appliedFilterSignature=filterSignature();renderSummary();renderFilterState();
+    coverageData=d;appliedFilterSignature=filterSignature();renderSummary();renderFilterState();syncUrlState();
   }catch(error){
     if(sequence!==loadSequence)return;
     Object.values(layers).forEach(layer=>map.removeLayer(layer));
     if(zoneLayer)map.removeLayer(zoneLayer);
     if(matchLayer)map.removeLayer(matchLayer);
-    zoneLayer=null;matchLayer=null;coverageData=null;mapData=null;zoneData=null;
+    zoneLayer=null;matchLayer=null;coverageData=null;mapData=null;zoneData=null;selectedMarker=null;
     for(const name of ['profiles','objects','ctds','filets'])$(name).textContent='—';
     $('unmapped').textContent='';
     $('period').textContent='La carte n’a pas pu être mise à jour. Réessayez.';$('emptyDetail').hidden=false;$('emptyDetail').textContent='La requête a échoué. Vérifiez les filtres puis réessayez.';
@@ -245,7 +248,7 @@ async function load(){
     if(sequence===loadSequence){button.disabled=false;setLoading(false);renderFilterState()}
   }
 }
-['uvp','filet'].forEach(x=>$(x).onchange=()=>{if(!$('matches').checked){if($(x).checked)layers[x]?.addTo(map);else if(layers[x])map.removeLayer(layers[x]);}renderZoneLayer();renderSummary()});
+['uvp','filet'].forEach(x=>$(x).onchange=()=>{if(!$('matches').checked){if($(x).checked)layers[x]?.addTo(map);else if(layers[x])map.removeLayer(layers[x]);}renderZoneLayer();renderSummary();syncUrlState()});
 $('hours').oninput=()=>{$('hoursOut').textContent=$('hours').value+' h'};
 $('hours').onchange=load;
 $('matches').onchange=()=>{$('matchOptions').hidden=!$('matches').checked;['uvp','filet'].forEach(x=>{if($('matches').checked)$(x).checked=true;$(x).disabled=$('matches').checked});load()};
@@ -255,7 +258,7 @@ $('clearZones').onclick=()=>{document.querySelectorAll('#zonesChoices input').fo
 $('clearProjects').onclick=()=>{document.querySelectorAll('#projectsChoices input').forEach(input=>input.checked=false);updateMultiSummary('projects','Tous les projets');markFiltersDirty()};
 $('clearAllFilters').onclick=()=>{$('yearFrom').value='';$('yearTo').value='';document.querySelectorAll('#zonesChoices input,#projectsChoices input').forEach(input=>input.checked=false);updateMultiSummary('zones','Toutes les zones');updateMultiSummary('projects','Tous les projets');markFiltersDirty()};
 $('go').onclick=load;
-fetch('/api/options').then(r=>r.json()).then(o=>{opts('yearFrom',o.years);opts('yearTo',o.years);multiOptions('zones',o.zones,'Toutes les zones');multiOptions('projects',o.ecotaxa_projects,'Tous les projets');renderActiveFilters();renderFilterState();load()}).catch(()=>{$('period').textContent='Les options n’ont pas pu être chargées.';$('filterStatus').textContent='Les filtres n’ont pas pu être chargés.'});
+fetch('/api/options').then(r=>r.json()).then(o=>{opts('yearFrom',o.years);opts('yearTo',o.years);multiOptions('zones',o.zones,'Toutes les zones');multiOptions('projects',o.ecotaxa_projects,'Tous les projets');restoreUrlState(o);renderActiveFilters();renderFilterState();load()}).catch(()=>{$('period').textContent='Les options n’ont pas pu être chargées.';$('filterStatus').textContent='Les filtres n’ont pas pu être chargés.'});
 </script>
 </body>
 </html>
