@@ -75,6 +75,10 @@ test('loading state is visible and announced while filters update',()=>{
   assert.equal(s.element('mapLoading').hidden,true);
   assert.equal(s.element('mapRegion').attributes['aria-busy'],undefined);
 });
+test('removing a year chip clears both ends of the year range',()=>{
+  const s=setup();s.element('yearFrom').value='2023';s.element('yearTo').value='2024';s.run("removeFilter('yearRange','')");
+  assert.equal(s.element('yearFrom').value,'');assert.equal(s.element('yearTo').value,'');
+});
 test('legend follows visible layers and comparison mode',()=>{
   const s=setup();s.context.fixture=coverage;s.run('coverageData=fixture');
   s.element('uvp').checked=true;s.element('filet').checked=false;s.element('matches').checked=false;s.run('renderLegend()');
