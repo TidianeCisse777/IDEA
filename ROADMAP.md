@@ -2,7 +2,64 @@
 
 **Période proposée :** du 14 septembre au 30 novembre 2026
 
-**Dernière mise à jour :** 5 octobre 2026
+**Dernière mise à jour :** 8 octobre 2026
+
+### 8 octobre 2026 - Brouillon PGD/DMP et audit des métadonnées (phases 1 et 2)
+
+- Audit live en lecture seule : métadonnées EcoTaxa et FILET, versions,
+  manifestes, empreintes et relations de provenance inventoriés.
+- Constats : `dataset_version` conserve source, version, URI et SHA-256; EcoTaxa
+  compte 6 137/6 138 samples datés, 3 944 géolocalisés et aucun `instrument`
+  ou `annotation_status` chargé; FILET conserve les métadonnées d'échantillon
+  mais les deux volumes sont partiels (4 483/6 102 et 2 377/6 102).
+- Brouillon ajouté dans [docs/WAREHOUSE_DMP_DRAFT.md](docs/WAREHOUSE_DMP_DRAFT.md)
+  avec inventaire, cycle de vie, standards, accès, préservation, décisions et
+  proposition de catalogue `dataset_metadata`, `dataset_file`,
+  `column_metadata` et `validation_run`.
+- Aucune migration scientifique ou publication n'a été exécutée : noms,
+  licence, dépôt, rôles et conservation doivent être validés avant publication;
+  le contrat SQL additif de catalogue est préparé et appliqué localement dans
+  `docs/warehouse_metadata_migration.sql`.
+- Les métadonnées sources ont été vérifiées : EcoTaxa conserve 70 noms de
+  champs JSON sur 6 118 samples ayant au moins une clé; EcoPart conserve
+  59 801 lignes source de bins, 585 lignes `metadata` et 3 535 lignes
+  `zooplankton`. Aucun champ EcoTaxa absent n'est complété automatiquement par
+  EcoPart sans lien prouvé.
+- Sauvegarde opérationnelle vérifiée :
+  `data/warehouse_backups/neolab_warehouse_20261008.dump` (format custom
+  PostgreSQL 16, environ 243 Mo). Le rôle `warehouse_reader` a été créé et
+  testé : lecture des vues `explore.*` uniquement, accès aux tables
+  `warehouse.*` et opérations DDL refusés. Les identifiants restent dans le
+  fichier local ignoré `data/warehouse_backups/warehouse_reader.env`.
+
+### 7 octobre 2026 - Redémarrage du warehouse local (phase 2)
+
+- Docker Desktop démarré, puis stack reconstruite et lancée avec
+  `docker-compose.warehouse.yml` et la configuration locale ignorée par Git.
+- PostgreSQL `neolab-warehouse-db` accepte les connexions sur le port hôte
+  `55432`; le navigateur `neolab-warehouse-navigator` répond sur
+  `http://localhost:8090`, avec `/health` et les routes `/api/options` et
+  `/api/coverage` en HTTP 200.
+- Contrôle de couverture après démarrage : 585 profils UVP, 10 479 780 objets
+  mappés, 380 profils CTD et 6 102 échantillons FILET. Le volume persistant
+  existant a été réutilisé; aucune recharge de données ni migration exécutée.
+- Limite : ce démarrage local ne valide ni le déploiement VPS, ni la
+  restauration, ni l'accès IDEA strictement en lecture seule. La phase 2 reste
+  en cours.
+
+### 7 octobre 2026 - Diagramme de classes du warehouse (phases 1 et 2)
+
+- Diagramme de classes consolidé à partir du DDL principal et des migrations
+  additives EcoPart et zones FILET : 26 tables persistantes, clés, relations,
+  grains métier et inventaire des vues `explore.*`.
+- Livrables : `docs/warehouse_class_diagram.mmd` modifiable,
+  `docs/WAREHOUSE_CLASS_DIAGRAM.md` et
+  `output/pdf/warehouse_database_class_diagram.pdf` en A3 paysage.
+- Preuve de livraison : génération PDF reproductible avec ReportLab, rendu des
+  sept pages en PNG et inspection visuelle sans texte coupé ni chevauchement.
+- Limite : le service PostgreSQL warehouse n'était pas actif pendant la
+  génération. Le document représente le schéma versionné dans le dépôt, pas
+  une introspection live. La phase 1 reste en cours jusqu'à la revue d'équipe.
 
 ### 5 octobre 2026 — Vérification pré-démo des données affichées (phases 2 et 3)
 
@@ -60,7 +117,7 @@ doivent rester synchronisés avec ce fichier versionné.
 | Phase | Période | Livrable | Critère de réussite | État |
 |---|---|---|---|---|
 | 1. Cadrage | 14–25 sept. | Schéma V1 et périmètre validés | Revue d’équipe confirmant que les jeux EcoTaxa, EcoPart, CTD et FILET retenus peuvent être reliés | En cours — proposition de schéma rédigée, revue attendue |
-| 2. Construction du warehouse V1 | 28 sept.–9 oct. | Warehouse échantillon utilisable en local | Données attendues retrouvées par SQL et jointures de référence cohérentes | À faire |
+| 2. Construction du warehouse V1 | 28 sept.–9 oct. | Warehouse échantillon utilisable en local | Données attendues retrouvées par SQL et jointures de référence cohérentes | En cours - stack locale et API actives; validation des jointures à consolider |
 | 3. Validation des données | 12–23 oct. | Jeu de tests et anomalies documentées | Cas de référence conformes aux sources originales | À faire |
 | 4. Déploiement | 26 oct.–6 nov. | Warehouse V1 accessible sur le VPS | Connexion stable, restauration testée et aucune écriture possible depuis IDEA | À faire |
 | 5. Intégration IDEA | 9–20 nov. | IDEA travaille directement sur le warehouse | Plusieurs scénarios exécutés sans export ni enrichissement externe intermédiaire | À faire |

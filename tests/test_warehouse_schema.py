@@ -11,6 +11,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 DDL = ROOT / "docs" / "warehouse_schema_proposal.sql"
+METADATA_DDL = ROOT / "docs" / "warehouse_metadata_migration.sql"
 USE_CASES = ROOT / "docs" / "UVP_USE_CASES_SQL.md"
 FRICTIONS = ROOT / "docs" / "UVP_FRICTIONS_OPEN.md"
 POPULATION_PLAN = ROOT / "docs" / "WAREHOUSE_POPULATION_PLAN.md"
@@ -21,6 +22,7 @@ class WarehouseSchemaContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.sql = DDL.read_text(encoding="utf-8")
+        cls.metadata_sql = METADATA_DDL.read_text(encoding="utf-8")
         cls.use_cases = USE_CASES.read_text(encoding="utf-8")
         cls.frictions = FRICTIONS.read_text(encoding="utf-8")
         cls.population_plan = POPULATION_PLAN.read_text(encoding="utf-8")
@@ -30,6 +32,19 @@ class WarehouseSchemaContractTests(unittest.TestCase):
         self.assertIn("CREATE SCHEMA warehouse;", self.sql)
         self.assertIn("CREATE SCHEMA explore;", self.sql)
         self.assertIn("CREATE TABLE warehouse.dataset_version", self.sql)
+
+    def test_declares_additive_metadata_catalog(self):
+        for table in ("dataset_metadata", "dataset_file", "column_metadata", "validation_run"):
+            self.assertRegex(self.metadata_sql, rf"CREATE TABLE IF NOT EXISTS warehouse\.{table}\b")
+        for phrase in (
+            "sha256 text NOT NULL",
+            "source_uri text NOT NULL",
+            "missing_value_policy text",
+            "provenance_kind text",
+            "summary_json jsonb",
+        ):
+            self.assertIn(phrase, self.metadata_sql)
+        self.assertIn("REFERENCES warehouse.dataset_version", self.metadata_sql)
 
     def test_preserves_uvp_sources_and_derives_taxonomic_abundance(self):
         for table in ("uvp_profile", "uvp_bin", "uvp_particle", "uvp_taxon_abundance"):

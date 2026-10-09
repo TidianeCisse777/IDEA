@@ -1,0 +1,279 @@
+classDiagram
+direction LR
+
+class dataset_version {
+  +bigint id PK
+  +text source_instance
+  +text dataset_key
+  +text version_key
+  +text file_manifest_uri
+  +text sha256
+}
+
+class ecotaxa_project {
+  +bigint project_id PK
+  +bigint dataset_version_id FK
+  +text title
+  +text instrument
+  +text source_instance
+}
+class ecotaxa_sample {
+  +bigint id PK
+  +bigint dataset_version_id FK
+  +bigint project_id logical_ref
+  +text sample_id
+  +text sample_orig_id
+  +text profile_id
+  +text ctd_rosette_filename
+  +timestamptz datetime_min
+  +timestamptz datetime_max
+  +double lat_avg
+  +double lon_avg
+  +text marine_zone_key
+}
+class ecotaxa_object {
+  +bigint id PK
+  +bigint sample_id FK
+  +text object_id
+  +text category_id
+  +text category_name
+  +text annotation_status
+  +double depth_min_m
+  +double depth_max_m
+}
+
+class uvp_profile {
+  +bigint id PK
+  +bigint dataset_version_id FK
+  +bigint ecotaxa_project_id logical_ref
+  +bigint ecopart_project_id
+  +text ecopart_sample_id
+  +text sample_name
+  +text station_key
+  +timestamptz sampled_at
+  +double latitude
+  +double longitude
+}
+class uvp_bin {
+  +bigint id PK
+  +bigint profile_id FK
+  +text source_bin_key
+  +double depth_min_m
+  +double depth_max_m
+  +numeric sampled_volume_l
+}
+class uvp_particle {
+  +bigint bin_id PK,FK
+  +text size_class_key PK
+  +double size_min_um
+  +double size_max_um
+  +bigint particle_count
+  +double supplied_concentration
+  +text concentration_unit
+}
+class uvp_object_bin {
+  +bigint ecotaxa_object_id PK,FK
+  +bigint uvp_bin_id PK,FK
+  +numeric depth_delta_m
+  +text mapping_method
+  +text mapping_status
+}
+class uvp_taxon_abundance {
+  +bigint dataset_version_id PK,FK
+  +bigint profile_id FK
+  +bigint bin_id PK,FK
+  +text taxon_key PK
+  +text annotation_policy PK
+  +bigint n_objects_taxon
+  +numeric sampled_volume_l
+  +numeric abundance_uvp_ind_m3 generated
+}
+class ecopart_project_import {
+  +bigint dataset_version_id PK,FK
+  +bigint ecopart_project_id
+  +bigint[] ecotaxa_project_ids
+  +jsonb manifest_json
+  +timestamptz imported_at
+}
+class ecopart_bin_source {
+  +bigint bin_id PK,FK
+  +double source_depth_m
+  +jsonb source_row_json
+}
+class ecopart_auxiliary_row {
+  +bigint dataset_version_id PK,FK
+  +text member_name PK
+  +integer row_number PK
+  +text content_kind
+  +text profile_name
+  +jsonb source_row_json
+}
+
+class ctd_profile {
+  +bigint id PK
+  +bigint dataset_version_id FK
+  +text source_profile_key
+  +text cruise_key
+  +text station_key
+  +timestamptz sampled_at
+  +double latitude
+  +double longitude
+}
+class ctd_variable {
+  +text variable_key PK
+  +text canonical_name
+  +text canonical_unit
+  +text description
+  +text source_code
+  +text source_instance
+}
+class ctd_measurement {
+  +bigint profile_id PK,FK
+  +text source_row_key PK
+  +text scan_key
+  +double depth_m
+  +double pressure_dbar
+  +text variable_key FK
+  +double value
+  +text unit
+  +text qc
+}
+
+class filet_sample {
+  +bigint id PK
+  +bigint dataset_version_id FK
+  +text sample_id
+  +text deployment_id
+  +integer sampling_year
+  +text station_name
+  +timestamp deployment_datetime_start
+  +double latitude
+  +double longitude
+  +text marine_zone_key
+  +text gear
+  +numeric min_sample_depth
+  +numeric max_sample_depth
+  +numeric depth_calc_net_filtered_vol
+  +numeric flowmeter_calc_vol
+}
+class filet_sample_net {
+  +bigint sample_ref PK,FK
+  +text net_sampling_id PK
+}
+class filet_analysis {
+  +bigint id PK
+  +bigint dataset_version_id FK
+  +bigint sample_ref FK
+  +text sample_id FK
+  +text analysis_id
+  +text analysis_type
+  +timestamp analysis_datetime
+}
+class filet_abundance {
+  +bigint dataset_version_id PK,FK
+  +integer source_row_number
+  +text sample_id PK,FK
+  +text analysis_id PK,FK
+  +text taxon_id PK
+  +text stage PK
+  +boolean is_aggregate generated
+  +numeric sample_abundance
+  +numeric abundance_depth_ind_m3
+  +numeric abundance_flowmeter_ind_m3
+  +numeric biomass_depth_ug_c_m3
+  +numeric biomass_flowmeter_ug_c_m3
+  +bigint metadata_dataset_version_id FK
+}
+
+class uvp_ecotaxa {
+  +bigint uvp_profile_id PK,FK
+  +bigint ecotaxa_sample_id PK,FK
+  +text source_evidence
+}
+class uvp_ctd {
+  +bigint uvp_profile_id PK,FK
+  +bigint ctd_profile_id PK,FK
+  +text source_evidence
+}
+class ecotaxa_ctd {
+  +bigint ecotaxa_sample_id PK,FK
+  +bigint ctd_profile_id PK,FK
+  +text relation_type
+  +boolean filename_match
+  +numeric distance_km
+  +numeric time_gap_minutes
+  +text match_status
+}
+class filet_ecotaxa {
+  +bigint filet_analysis_id PK,FK
+  +bigint ecotaxa_sample_id PK,FK
+  +text source_evidence
+}
+class filet_ctd {
+  +bigint filet_sample_id PK,FK
+  +bigint ctd_profile_id PK,FK
+  +text source_evidence
+}
+class filet_uvp_match {
+  +bigint id PK
+  +bigint dataset_version_id FK
+  +text station_id
+  +bigint filet_sample_id FK
+  +bigint filet_analysis_id FK_nullable
+  +bigint uvp_profile_id FK
+  +numeric time_gap_hours
+  +text match_status
+  +text match_method
+}
+class taxon_mapping {
+  +text filet_taxon_id PK
+  +text uvp_taxon_id PK
+  +text mapping_version PK
+  +text mapping_relation
+  +text mapping_status
+  +text evidence
+}
+
+dataset_version "1" --> "0..*" ecotaxa_project : versionne
+dataset_version "1" --> "0..*" ecotaxa_sample : versionne
+dataset_version "1" --> "0..*" uvp_profile : versionne
+dataset_version "1" --> "0..*" uvp_taxon_abundance : versionne
+dataset_version "1" --> "0..*" ctd_profile : versionne
+dataset_version "1" --> "0..*" filet_sample : versionne
+dataset_version "1" --> "0..*" filet_analysis : versionne
+dataset_version "1" --> "0..*" filet_abundance : versionne
+dataset_version "1" --> "0..*" filet_uvp_match : versionne
+dataset_version "1" --> "0..1" ecopart_project_import : manifeste
+dataset_version "1" --> "0..*" ecopart_auxiliary_row : conserve
+
+ecotaxa_project "1" ..> "0..*" ecotaxa_sample : project_id logique
+ecotaxa_sample "1" --> "0..*" ecotaxa_object : contient
+uvp_profile "1" --> "0..*" uvp_bin : decoupe
+uvp_bin "1" --> "0..*" uvp_particle : tailles
+uvp_bin "1" --> "0..1" ecopart_bin_source : ligne_source
+uvp_bin "1" --> "0..*" uvp_taxon_abundance : normalise
+uvp_profile "1" --> "0..*" uvp_taxon_abundance : agrege
+ecotaxa_object "1" --> "0..*" uvp_object_bin : affectation
+uvp_bin "1" --> "0..*" uvp_object_bin : affectation
+
+ctd_profile "1" --> "0..*" ctd_measurement : mesure
+ctd_variable "1" --> "0..*" ctd_measurement : decrit
+filet_sample "1" --> "0..*" filet_sample_net : membres
+filet_sample "1" --> "0..*" filet_analysis : analyse
+filet_analysis "1" --> "0..*" filet_abundance : metadata_nullable
+
+uvp_profile "1" --> "0..*" uvp_ecotaxa
+ecotaxa_sample "1" --> "0..*" uvp_ecotaxa
+uvp_profile "1" --> "0..*" uvp_ctd
+ctd_profile "1" --> "0..*" uvp_ctd
+ecotaxa_sample "1" --> "0..*" ecotaxa_ctd
+ctd_profile "1" --> "0..*" ecotaxa_ctd
+filet_analysis "1" --> "0..*" filet_ecotaxa
+ecotaxa_sample "1" --> "0..*" filet_ecotaxa
+filet_sample "1" --> "0..*" filet_ctd
+ctd_profile "1" --> "0..*" filet_ctd
+filet_sample "1" --> "0..*" filet_uvp_match
+filet_analysis "0..1" --> "0..*" filet_uvp_match
+uvp_profile "1" --> "0..*" filet_uvp_match
+filet_abundance "0..*" ..> "0..*" taxon_mapping : filet_taxon_id logique
+uvp_taxon_abundance "0..*" ..> "0..*" taxon_mapping : uvp_taxon_id logique

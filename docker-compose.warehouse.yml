@@ -12,6 +12,7 @@ services:
     volumes:
       - neolab_warehouse_pgdata:/var/lib/postgresql/data
       - ./docs/warehouse_schema_proposal.sql:/docker-entrypoint-initdb.d/001_warehouse_schema.sql:ro
+      - ./docs/warehouse_metadata_migration.sql:/docker-entrypoint-initdb.d/002_warehouse_metadata.sql:ro
 
   warehouse-navigator:
     build:

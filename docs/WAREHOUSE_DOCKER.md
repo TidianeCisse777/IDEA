@@ -41,3 +41,24 @@ pg_restore --clean --if-exists --no-owner --no-acl \
 ```
 
 Les dumps et le fichier `.env.warehouse` ne doivent jamais être commités.
+
+## Accès lecture pour un agent ou DbHub
+
+Le rôle `warehouse_reader` est séparé du rôle de chargement `neolab`. Il peut
+lire les 16 vues du schéma `explore` (`uvp_projects`, `uvp_samples`,
+`uvp_objects`, `uvp_ctd`, `filet_samples`, `filet_uvp_matches`, etc.) et ne
+peut pas lire les tables brutes `warehouse`, écrire dans la base ou créer des
+objets. Sa transaction est en lecture seule et son délai est limité à 30 s.
+
+Les paramètres locaux et le mot de passe sont conservés dans
+`data/warehouse_backups/warehouse_reader.env`, ignoré par Git. Pour un DbHub
+sur l’ordinateur hôte, utiliser `127.0.0.1:55432`, la base
+`neolab_warehouse` et l’utilisateur `warehouse_reader`. Un DbHub exécuté dans
+un autre conteneur doit utiliser le réseau Docker ou un tunnel ; le port
+PostgreSQL ne doit pas être publié sur Internet.
+
+Le dump de référence créé le 8 octobre 2026 est
+`data/warehouse_backups/neolab_warehouse_20261008.dump`. Il est au format
+custom PostgreSQL 16 et a été vérifié avec `pg_restore` dans le conteneur
+`neolab-warehouse-db`. Le SHA-256 est conservé dans le journal d’exécution,
+pas dans Git.
